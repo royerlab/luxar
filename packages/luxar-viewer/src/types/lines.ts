@@ -239,6 +239,19 @@ export interface LoadedLinesData {
  * - Per-segment attributes ready for instanced rendering
  * - Clipped endpoints have interpolated attributes
  */
+export interface LinesProjectionBounds {
+  /** AABB min corner over start+end positions [x, y, z]. */
+  min: [number, number, number];
+  /** AABB max corner over start+end positions [x, y, z]. */
+  max: [number, number, number];
+  /**
+   * Max finite half-width over start/end widths — the conservative
+   * per-segment footprint used to expand the cull box (matches
+   * `computeLineBounds`' expansion semantics exactly).
+   */
+  maxWidth: number;
+}
+
 export interface ProcessedLinesData {
   /** Segment start positions in 3D display space (M * 3) */
   startPositions: Float32Array;
@@ -308,6 +321,17 @@ export interface ProcessedLinesData {
 
   /** Number of visible segments after clipping */
   segmentCount: number;
+
+  /**
+   * Fused-scan cull metadata from projection (AABB over start+end
+   * positions + max finite width — see {@link LinesProjectionBounds}).
+   * Mirrors the Points `metadata.bounds` / gsplats `bounds` pattern:
+   * when present, `computeLineBounds` skips its O(N) per-segment scan;
+   * absent (zero visible segments, or a producer that didn't scan) ⇒
+   * scan fallback. Plain scalars so the object survives the worker
+   * structured clone.
+   */
+  bounds?: LinesProjectionBounds;
 }
 
 // ============================================================================

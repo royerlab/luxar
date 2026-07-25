@@ -14,12 +14,14 @@
 import * as THREE from 'three';
 import {
   attachSplatStorage,
+  computeMaxCholeskyRowNorm,
   getSplatTexture,
   stampGSplatPresenceFlags,
   writeSplatTexels,
 } from '../gsplat-geometry';
 import { writeSortedIndexIdentity, writeSortedIndexIdentityRange } from '../element-storage';
 import { clampSplatCapacity } from '../element-texture-layout';
+import type { GSplatsProjectionBounds } from '../../types/gsplats';
 import type { PooledBuffer } from './pool-stats';
 import { chooseCapacity } from './capacity';
 
@@ -34,12 +36,18 @@ import { chooseCapacity } from './capacity';
 export interface PackedGSplatsData {
   centers3D: Float32Array; // M * 3
   amplitudes: Float32Array; // M
-  cholesky01: Float32Array; // M * 2 [L00, L10]
-  cholesky23: Float32Array; // M * 2 [L11, L20]
-  cholesky45: Float32Array; // M * 2 [L21, L22]
+  /** M * 6, row-major [L00, L10, L11, L20, L21, L22] per splat */
+  choleskyFactors: Float32Array;
   colors: Float32Array; // M * 3 (RGB) or M * 4 (RGBA — alpha = per-splat opacity)
   /** Components per color item: 3 (RGB) or 4 (RGBA). Absent means 3. */
   colorComponents?: 3 | 4;
+  /**
+   * Precomputed cull metadata from the projection's fused scan (AABB of
+   * `centers3D` + max Cholesky row norm). When present, `updateGeometry`
+   * skips its two O(N) main-thread scans (mirrors the points adapter's
+   * `data.metadata.bounds` fast path); absent ⇒ scan fallback.
+   */
+  bounds?: GSplatsProjectionBounds;
 }
 
 function createGSplatsGeometry(splatCapacity: number): THREE.InstancedBufferGeometry {
@@ -282,9 +290,7 @@ export class GSplatsBufferAdapter {
       texture,
       {
         centers: data.centers3D,
-        cholesky01: data.cholesky01,
-        cholesky23: data.cholesky23,
-        cholesky45: data.cholesky45,
+        choleskyFactors: data.choleskyFactors,
         amplitudes: data.amplitudes,
         colors: data.colors,
         colorComponents: data.colorComponents,
@@ -324,30 +330,26 @@ export class GSplatsBufferAdapter {
     // σ_d = ||L[d,:]|| (the row norm of the Cholesky factor). We use the
     // max row norm across all splats and axes as a conservative expansion.
     //
-    // Cholesky layout (packed as attribute pairs):
-    //   cholesky01 = [L00, L10], cholesky23 = [L11, L20], cholesky45 = [L21, L22]
-    // Row norms: ||row0|| = |L00|, ||row1|| = sqrt(L10² + L11²),
-    //            ||row2|| = sqrt(L20² + L21² + L22²)
+    // Fast path: the projection's fused scan precomputed both (AABB +
+    // max row norm) — no O(N) main-thread scans per commit. Computed
+    // over the FULL projected set: if `count` was capacity-clamped
+    // below it, the box is a conservative superset (safe for frustum
+    // culling — same trade the points adapter's metadata.bounds path
+    // accepts). Fallback: direct scans over the written count.
     const box = new THREE.Box3();
-    const v = new THREE.Vector3();
-    for (let i = 0; i < count; i++) {
-      v.set(data.centers3D[i * 3], data.centers3D[i * 3 + 1], data.centers3D[i * 3 + 2]);
-      box.expandByPoint(v);
-    }
-
-    let maxRowNorm = 0;
-    for (let i = 0; i < count; i++) {
-      const L00 = data.cholesky01[i * 2];
-      const L10 = data.cholesky01[i * 2 + 1];
-      const L11 = data.cholesky23[i * 2];
-      const L20 = data.cholesky23[i * 2 + 1];
-      const L21 = data.cholesky45[i * 2];
-      const L22 = data.cholesky45[i * 2 + 1];
-
-      const row0 = Math.abs(L00);
-      const row1 = Math.sqrt(L10 * L10 + L11 * L11);
-      const row2 = Math.sqrt(L20 * L20 + L21 * L21 + L22 * L22);
-      maxRowNorm = Math.max(maxRowNorm, row0, row1, row2);
+    let maxRowNorm: number;
+    if (data.bounds) {
+      const { min, max } = data.bounds;
+      box.min.set(min[0], min[1], min[2]);
+      box.max.set(max[0], max[1], max[2]);
+      maxRowNorm = data.bounds.maxRowNorm;
+    } else {
+      const v = new THREE.Vector3();
+      for (let i = 0; i < count; i++) {
+        v.set(data.centers3D[i * 3], data.centers3D[i * 3 + 1], data.centers3D[i * 3 + 2]);
+        box.expandByPoint(v);
+      }
+      maxRowNorm = computeMaxCholeskyRowNorm(data.choleskyFactors, count);
     }
     const expansion = maxRowNorm * truncationRadius;
     box.expandByScalar(expansion);

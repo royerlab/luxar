@@ -256,9 +256,7 @@ describe('custom LUT byte-loading', () => {
       try {
         const meshConfig: InstancedGSplatsMeshConfig = {
           centers: new Float32Array([0, 0, 0]),
-          cholesky01: new Float32Array([1, 0]),
-          cholesky23: new Float32Array([1, 0]),
-          cholesky45: new Float32Array([0, 1]),
+          choleskyFactors: new Float32Array([1, 0, 1, 0, 0, 1]),
           amplitudes: new Float32Array([1.0]),
           colors: new Float32Array([1, 1, 1]),
           splatCount: 1,

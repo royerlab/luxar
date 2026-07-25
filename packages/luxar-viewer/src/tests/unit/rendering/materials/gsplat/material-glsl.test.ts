@@ -6,7 +6,6 @@ import {
   createGSplatQuadGeometry,
   createInstancedGSplatsMesh,
   getSplatTexture,
-  packCholeskyForShader,
   updateInstancedGSplatsMesh,
 } from '../../../../../rendering/gsplat-geometry';
 
@@ -756,8 +755,8 @@ describe('createGSplatQuadGeometry', () => {
   });
 });
 
-describe('packCholeskyForShader', () => {
-  it('should pack Cholesky factors into shader attribute format', () => {
+describe('6-stride cholesky texel layout (packCholeskyForShader retirement)', () => {
+  it('writes texel floats identical to the retired split→re-interleave path', () => {
     // 2 splats, 6 elements each: [L00, L10, L11, L20, L21, L22]
     const choleskyFactors = new Float32Array([
       1.0,
@@ -774,25 +773,32 @@ describe('packCholeskyForShader', () => {
       6.0, // Splat 1
     ]);
 
-    const { cholesky01, cholesky23, cholesky45 } = packCholeskyForShader(choleskyFactors, 2);
+    const material = new GSplatMaterial();
+    const mesh = createInstancedGSplatsMesh(
+      {
+        centers: new Float32Array([0, 0, 0, 1, 1, 1]),
+        choleskyFactors,
+        amplitudes: new Float32Array([1.0, 0.5]),
+        colors: new Float32Array([1, 0, 0, 0, 1, 0]),
+        splatCount: 2,
+      },
+      material
+    );
+    const texels = getSplatTexture(mesh.geometry)!.image.data as Float32Array;
 
-    // Check cholesky01: [L00, L10] per splat
-    expect(cholesky01[0]).toBeCloseTo(1.0, 5); // L00 splat 0
-    expect(cholesky01[1]).toBeCloseTo(0.5, 5); // L10 splat 0
-    expect(cholesky01[2]).toBeCloseTo(4.0, 5); // L00 splat 1
-    expect(cholesky01[3]).toBeCloseTo(0.1, 5); // L10 splat 1
-
-    // Check cholesky23: [L11, L20] per splat
-    expect(cholesky23[0]).toBeCloseTo(2.0, 5); // L11 splat 0
-    expect(cholesky23[1]).toBeCloseTo(0.3, 5); // L20 splat 0
-    expect(cholesky23[2]).toBeCloseTo(5.0, 5); // L11 splat 1
-    expect(cholesky23[3]).toBeCloseTo(0.2, 5); // L20 splat 1
-
-    // Check cholesky45: [L21, L22] per splat
-    expect(cholesky45[0]).toBeCloseTo(0.4, 5); // L21 splat 0
-    expect(cholesky45[1]).toBeCloseTo(3.0, 5); // L22 splat 0
-    expect(cholesky45[2]).toBeCloseTo(0.6, 5); // L21 splat 1
-    expect(cholesky45[3]).toBeCloseTo(6.0, 5); // L22 splat 1
+    // Texel 1 = [cholesky01.xy, cholesky23.xy], texel 2 starts with
+    // cholesky45.xy — exactly what the retired packCholeskyForShader
+    // split (pairs [L00,L10], [L11,L20], [L21,L22]) re-interleaved to.
+    for (let i = 0; i < 2; i++) {
+      const o = i * 16;
+      const c6 = i * 6;
+      expect(texels[o + 4]).toBe(choleskyFactors[c6]); // L00
+      expect(texels[o + 5]).toBe(choleskyFactors[c6 + 1]); // L10
+      expect(texels[o + 6]).toBe(choleskyFactors[c6 + 2]); // L11
+      expect(texels[o + 7]).toBe(choleskyFactors[c6 + 3]); // L20
+      expect(texels[o + 8]).toBe(choleskyFactors[c6 + 4]); // L21
+      expect(texels[o + 9]).toBe(choleskyFactors[c6 + 5]); // L22
+    }
   });
 });
 
@@ -801,9 +807,7 @@ describe('createInstancedGSplatsMesh', () => {
     const material = new GSplatMaterial();
     const config = {
       centers: new Float32Array([0, 0, 0, 1, 1, 1]), // 2 splats
-      cholesky01: new Float32Array([1, 0, 1, 0]),
-      cholesky23: new Float32Array([1, 0, 1, 0]),
-      cholesky45: new Float32Array([0, 1, 0, 1]),
+      choleskyFactors: new Float32Array([1, 0, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1]),
       amplitudes: new Float32Array([1.0, 0.5]),
       colors: new Float32Array([1, 0, 0, 0, 1, 0]), // Red and green
       splatCount: 2,
@@ -840,9 +844,7 @@ describe('createInstancedGSplatsMesh', () => {
     const material = new GSplatMaterial();
     const config = {
       centers: new Float32Array([0, 0, 0, 10, 20, 30]), // 2 splats
-      cholesky01: new Float32Array([1, 0, 1, 0]),
-      cholesky23: new Float32Array([1, 0, 1, 0]),
-      cholesky45: new Float32Array([0, 1, 0, 1]),
+      choleskyFactors: new Float32Array([1, 0, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1]),
       amplitudes: new Float32Array([1.0, 1.0]),
       colors: new Float32Array([1, 1, 1, 1, 1, 1]),
       splatCount: 2,
@@ -869,9 +871,7 @@ describe('updateInstancedGSplatsMesh', () => {
     const material = new GSplatMaterial();
     const initialConfig = {
       centers: new Float32Array([0, 0, 0, 1, 1, 1]),
-      cholesky01: new Float32Array([1, 0, 1, 0]),
-      cholesky23: new Float32Array([1, 0, 1, 0]),
-      cholesky45: new Float32Array([0, 1, 0, 1]),
+      choleskyFactors: new Float32Array([1, 0, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1]),
       amplitudes: new Float32Array([1.0, 0.5]),
       colors: new Float32Array([1, 0, 0, 0, 1, 0]),
       splatCount: 2,
@@ -882,9 +882,7 @@ describe('updateInstancedGSplatsMesh', () => {
     // Update with new data, same count
     const updateConfig = {
       centers: new Float32Array([2, 2, 2, 3, 3, 3]),
-      cholesky01: new Float32Array([2, 0, 2, 0]),
-      cholesky23: new Float32Array([2, 0, 2, 0]),
-      cholesky45: new Float32Array([0, 2, 0, 2]),
+      choleskyFactors: new Float32Array([2, 0, 2, 0, 0, 2, 2, 0, 2, 0, 0, 2]),
       amplitudes: new Float32Array([0.8, 0.3]),
       colors: new Float32Array([0, 0, 1, 1, 1, 0]),
       splatCount: 2,
@@ -907,9 +905,7 @@ describe('updateInstancedGSplatsMesh', () => {
     const material = new GSplatMaterial();
     const initialConfig = {
       centers: new Float32Array([0, 0, 0, 1, 1, 1]),
-      cholesky01: new Float32Array([1, 0, 1, 0]),
-      cholesky23: new Float32Array([1, 0, 1, 0]),
-      cholesky45: new Float32Array([0, 1, 0, 1]),
+      choleskyFactors: new Float32Array([1, 0, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1]),
       amplitudes: new Float32Array([1.0, 0.5]),
       colors: new Float32Array([1, 0, 0, 0, 1, 0]),
       splatCount: 2,
@@ -920,9 +916,7 @@ describe('updateInstancedGSplatsMesh', () => {
     // Update with different count
     const updateConfig = {
       centers: new Float32Array([0, 0, 0, 1, 1, 1, 2, 2, 2]),
-      cholesky01: new Float32Array([1, 0, 1, 0, 1, 0]),
-      cholesky23: new Float32Array([1, 0, 1, 0, 1, 0]),
-      cholesky45: new Float32Array([0, 1, 0, 1, 0, 1]),
+      choleskyFactors: new Float32Array([1, 0, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1]),
       amplitudes: new Float32Array([1.0, 0.5, 0.3]),
       colors: new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]),
       splatCount: 3,

@@ -20,7 +20,6 @@ import * as THREE from 'three';
 import {
   createInstancedGSplatsMesh,
   updateInstancedGSplatsMesh,
-  packCholeskyForShader,
   type InstancedGSplatsMeshConfig,
 } from '../../../rendering/gsplat-geometry';
 import { writeSortedIndexOrdering } from '../../../rendering/element-storage';
@@ -35,13 +34,9 @@ import {
  * `maxRowNorm === 2`.
  */
 function makeSingleSplatConfig(): InstancedGSplatsMeshConfig {
-  const factors = new Float32Array([2, 0, 2, 0, 0, 2]);
-  const { cholesky01, cholesky23, cholesky45 } = packCholeskyForShader(factors, 1);
   return {
     centers: new Float32Array([0, 0, 0]),
-    cholesky01,
-    cholesky23,
-    cholesky45,
+    choleskyFactors: new Float32Array([2, 0, 2, 0, 0, 2]),
     amplitudes: new Float32Array([1]),
     colors: new Float32Array([1, 1, 1]),
     splatCount: 1,
@@ -89,9 +84,7 @@ describe('createInstancedGSplatsMesh — bounding-box footprint expansion', () =
 function makeConfig(count: number): InstancedGSplatsMeshConfig {
   return {
     centers: new Float32Array(count * 3),
-    cholesky01: new Float32Array(count * 2),
-    cholesky23: new Float32Array(count * 2),
-    cholesky45: new Float32Array(count * 2),
+    choleskyFactors: new Float32Array(count * 6),
     amplitudes: new Float32Array(count),
     colors: new Float32Array(count * 3),
     splatCount: count,
@@ -163,5 +156,48 @@ describe('updateInstancedGSplatsMesh — preserveOrdering (same-node same-count 
     const rebuilt = updateInstancedGSplatsMesh(mesh, makeConfig(6), { preserveOrdering: true });
     expect(rebuilt).toBe(true);
     expect(orderingOf(mesh, 6)).toEqual([0, 1, 2, 3, 4, 5]);
+  });
+});
+
+describe('non-pool writers — precomputed projection bounds fast path', () => {
+  it('bounds-present and scan-fallback configs produce identical cull bounds', async () => {
+    const { computeGSplatsProjectionBounds } =
+      await import('../../../workers/data-worker/projection/gsplats');
+    // Two splats with negative coordinates and anisotropic factors.
+    const base: InstancedGSplatsMeshConfig = {
+      centers: new Float32Array([-10, -20, -30, 5, 6, 7]),
+      choleskyFactors: new Float32Array([2, 0.5, 3, -0.7, 0.2, 4, 0.5, 0, 0.5, 0, 0, 0.5]),
+      amplitudes: new Float32Array([1, 1]),
+      colors: new Float32Array(6).fill(1),
+      splatCount: 2,
+    };
+
+    // Fallback: no bounds metadata → the builder scans.
+    const scanMesh = createInstancedGSplatsMesh(base, materialWithTruncate(2.5));
+
+    // Fast path: fused-scan metadata supplied → the scans are skipped.
+    const fastMesh = createInstancedGSplatsMesh(
+      {
+        ...base,
+        bounds: computeGSplatsProjectionBounds(base.centers, base.choleskyFactors, base.splatCount),
+      },
+      materialWithTruncate(2.5)
+    );
+
+    const scanBox = scanMesh.geometry.boundingBox!;
+    const fastBox = fastMesh.geometry.boundingBox!;
+    // Bit-exact equality (same float ops in the fused scan).
+    expect(fastBox.min.toArray()).toEqual(scanBox.min.toArray());
+    expect(fastBox.max.toArray()).toEqual(scanBox.max.toArray());
+    expect(fastMesh.geometry.boundingSphere!.radius).toBe(scanMesh.geometry.boundingSphere!.radius);
+
+    // updateInstancedGSplatsMesh honors the same fast path.
+    const updated = createInstancedGSplatsMesh(makeConfig(2), materialWithTruncate(2.5));
+    updateInstancedGSplatsMesh(updated, {
+      ...base,
+      bounds: computeGSplatsProjectionBounds(base.centers, base.choleskyFactors, base.splatCount),
+    });
+    expect(updated.geometry.boundingBox!.min.toArray()).toEqual(scanBox.min.toArray());
+    expect(updated.geometry.boundingBox!.max.toArray()).toEqual(scanBox.max.toArray());
   });
 });

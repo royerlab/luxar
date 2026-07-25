@@ -18,6 +18,59 @@ import { pickBackend, type WasmCtx } from '../state';
 import { validateProjectionInputs, validateLineSegmentReferences } from '../validation';
 import { coerceColorsToFloat32, coerceScalarsToFloat32, fillColorsWhite } from '../../color-utils';
 import type { ProjectionViewState } from '../types';
+import type { LinesProjectionBounds } from '../../../types/lines';
+
+/**
+ * Fused output scan: AABB over start+end positions + max finite width,
+ * in ONE pass over the projected arrays — computed here, where the data
+ * is already hot (and, for the nD worker path, OFF the main thread), so
+ * `computeLineBounds` doesn't re-run its O(N) per-segment scan on the
+ * main thread per commit (see `LinesProjectionBounds`). Float semantics
+ * match `computeLineBounds`' fallback scan exactly: `Math.min`/`Math.max`
+ * per component (Box3.expandByPoint) and the `Number.isFinite` width
+ * guard.
+ *
+ * Exported for the fused-vs-brute-force unit tests.
+ *
+ * @param count - Visible segment count (must be > 0; callers skip the
+ *   scan and omit `bounds` for empty results)
+ */
+export function computeLinesProjectionBounds(
+  startPositions: Float32Array,
+  endPositions: Float32Array,
+  startWidths: Float32Array,
+  endWidths: Float32Array,
+  count: number
+): LinesProjectionBounds {
+  let minX = Infinity;
+  let minY = Infinity;
+  let minZ = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  let maxZ = -Infinity;
+  let maxWidth = 0;
+  for (let i = 0; i < count; i++) {
+    const si = i * 3;
+    const sx = startPositions[si];
+    const sy = startPositions[si + 1];
+    const sz = startPositions[si + 2];
+    const ex = endPositions[si];
+    const ey = endPositions[si + 1];
+    const ez = endPositions[si + 2];
+    minX = Math.min(minX, sx, ex);
+    minY = Math.min(minY, sy, ey);
+    minZ = Math.min(minZ, sz, ez);
+    maxX = Math.max(maxX, sx, ex);
+    maxY = Math.max(maxY, sy, ey);
+    maxZ = Math.max(maxZ, sz, ez);
+
+    const sw = startWidths[i];
+    const ew = endWidths[i];
+    if (Number.isFinite(sw) && sw > maxWidth) maxWidth = sw;
+    if (Number.isFinite(ew) && ew > maxWidth) maxWidth = ew;
+  }
+  return { min: [minX, minY, minZ], max: [maxX, maxY, maxZ], maxWidth };
+}
 
 export async function projectLinesTo3D(
   ctx: WasmCtx,
@@ -80,6 +133,12 @@ export async function projectLinesTo3D(
   startClipped: Uint8Array;
   endClipped: Uint8Array;
   visibleSegmentCount: number;
+  /**
+   * Fused-scan cull metadata (AABB over start+end positions + max
+   * finite width) — present whenever `visibleSegmentCount > 0`. Plain
+   * scalars, structured-clone safe.
+   */
+  bounds?: LinesProjectionBounds;
 }> {
   const wasmModule = pickBackend(ctx, params.ndim); // >16D -> uncapped TS reference
 
@@ -367,6 +426,13 @@ export async function projectLinesTo3D(
       startClipped,
       endClipped,
       visibleSegmentCount: visibleCount,
+      bounds: computeLinesProjectionBounds(
+        startPositions,
+        endPositions,
+        startWidths,
+        endWidths,
+        visibleCount
+      ),
     },
     transferables
   );

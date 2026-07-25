@@ -75,7 +75,7 @@ export function commitGSplatsGeometry(
     return;
   }
 
-  const { processed, cholesky01, cholesky23, cholesky45 } = staged;
+  const { processed } = staged;
 
   // SEMANTIC clamp at the commit choke point: the GPU writers below clamp
   // the WRITTEN splats to the per-node texture bound (element-texture-layout),
@@ -171,11 +171,10 @@ export function commitGSplatsGeometry(
           {
             centers3D: processed.centers3D,
             amplitudes: processed.amplitudes,
-            cholesky01,
-            cholesky23,
-            cholesky45,
+            choleskyFactors: processed.choleskyFactors3D,
             colors: processed.colors,
             colorComponents: processed.colorComponents,
+            bounds: processed.bounds,
           },
           splatCount,
           truncationRadius,
@@ -233,13 +232,12 @@ export function commitGSplatsGeometry(
         mesh,
         {
           centers: processed.centers3D,
-          cholesky01,
-          cholesky23,
-          cholesky45,
+          choleskyFactors: processed.choleskyFactors3D,
           amplitudes: processed.amplitudes,
           colors: processed.colors,
           colorComponents: processed.colorComponents,
           splatCount,
+          bounds: processed.bounds,
         },
         { preserveOrdering }
       );
