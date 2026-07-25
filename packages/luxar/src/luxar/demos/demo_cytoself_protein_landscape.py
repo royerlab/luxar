@@ -56,7 +56,7 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import cache_computed, launch_viewer
+from luxar.demos import cache_computed, launch_viewer, require_module
 from luxar.utils._umap_utils import (
     attribute_to_color,
     build_legend_html,
@@ -134,13 +134,15 @@ def _download_from_google_drive(
     Returns:
         Path to downloaded file.
     """
-    import requests
-
     # Check if already downloaded
     if output_path.exists() and output_path.stat().st_size > expected_min_size * 0.9:
         aprint(f"File already downloaded: {output_path.name}")
         aprint(f"  Size: {output_path.stat().st_size / (1024**2):.1f} MB")
         return output_path
+
+    # `requests` is a CORE Luxar dependency, so it needs no gate (only the
+    # `demos`-extra modules below are optional).
+    import requests
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     url = f"https://drive.google.com/uc?export=download&id={file_id}"
@@ -279,7 +281,8 @@ def load_cytoself_data(
         - attributes: dict of attribute arrays (numeric indices)
         - category_maps: dict of attribute name -> list of category labels
     """
-    import pandas as pd
+    # Gated here, not in main(): label.csv parsing needs pandas on every run.
+    pd = require_module("pandas")
 
     if cache_dir is None:
         cache_dir = DEFAULT_CACHE_DIR
@@ -336,7 +339,8 @@ def load_cytoself_data(
 
     # --- Compute or load cached 3D UMAP ---
     def _compute_umap3d() -> np.ndarray:
-        from umap import UMAP
+        # Gated here, not in main(): a warm cytoself UMAP cache never calls this.
+        UMAP = require_module("umap").UMAP
 
         with asection("Computing 3D UMAP (this may take 10-30 minutes)"):
             aprint("Loading embeddings into memory...")
@@ -384,7 +388,9 @@ def _encode_crops_to_webp(
     """
     import io
 
-    from PIL import Image as PILImage
+    # Optional dep, gated per helper: the soft check in main() lives in a
+    # different function, so calling this directly would raise a bare error.
+    PILImage = require_module("PIL.Image")
 
     n_crops = images.shape[0]
 
@@ -438,7 +444,8 @@ def _build_test_index_mapping(
         test_row_index -> global_image_row_index and n_test is the total
         number of test rows.
     """
-    import pandas as pd
+    # Gated here, not in main(): only the image-thumbnail path reaches this.
+    pd = require_module("pandas")
 
     with asection("Building test-to-image index mapping"):
         # Download the 10 Label_data CSVs (small: ~5-10 MB each)
@@ -613,7 +620,9 @@ def load_cytoself_images(
     # Fill any unmatched slots with a 1x1 transparent placeholder
     import io
 
-    from PIL import Image as PILImage
+    # Optional dep, gated per helper: the soft check in main() lives in a
+    # different function, so calling this directly would raise a bare error.
+    PILImage = require_module("PIL.Image")
 
     placeholder = io.BytesIO()
     PILImage.new("RGB", (1, 1), (0, 0, 0)).save(placeholder, format="webp")
@@ -873,19 +882,6 @@ def main() -> None:
     aprint("      Subsequent runs load from cache.")
     aprint("      Use --without-images to skip image download.")
     aprint("")
-
-    # Check runtime dependencies
-    for module_name, pip_name in [
-        ("umap", "umap-learn"),
-        ("pandas", "pandas"),
-        ("requests", "requests"),
-    ]:
-        try:
-            __import__(module_name)
-        except ImportError:
-            aprint(f"Missing dependency: {pip_name}")
-            aprint(f"Install with: pip install {pip_name}")
-            sys.exit(1)
 
     recompute = "--recompute" in sys.argv
     without_images = "--without-images" in sys.argv

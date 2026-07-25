@@ -56,7 +56,13 @@ import { wrap, transfer, type Remote } from 'comlink';
 // worker-pool.ts for why `new Worker(new URL(...))` is not used).
 import SortWorker from '../workers/sort-worker?worker';
 import type { SortWorkerAPI } from '../workers/sort-worker';
-import { writeSortedIndexOrdering } from './element-storage';
+import {
+  cancelAllSortedIndexOrderingApplies,
+  cancelSortedIndexOrderingApply,
+  hasPendingSortedIndexOrderingApply,
+  pumpSortedIndexOrderingApply,
+  writeSortedIndexOrdering,
+} from './element-storage';
 import { needsDepthSort } from './blending-state';
 import { clearCommittedData, hasCommittedData } from '../types/committed-data';
 import type { BlendingMode } from '../types/blending';
@@ -462,6 +468,17 @@ function scheduleSort(mesh: THREE.Mesh, nodeId: string): void {
     state.resortQueued = true;
     return;
   }
+  // Apply-gate (perf lever L8): while a chunked ordering apply is
+  // streaming for this geometry (or holding a newest ordering), a new
+  // sort could only produce another ordering the stream can't consume
+  // yet — sorting faster than the apply cadence measurably doubled the
+  // sort count and starved the stream. Queue exactly like the in-flight
+  // case; the per-frame pump drains the queue when the apply completes.
+  const geometry = mesh.geometry as THREE.InstancedBufferGeometry | undefined;
+  if (geometry && hasPendingSortedIndexOrderingApply(geometry)) {
+    state.resortQueued = true;
+    return;
+  }
   state.inFlight = true;
 
   const generation = state.generation;
@@ -519,6 +536,12 @@ function scheduleSort(mesh: THREE.Mesh, nodeId: string): void {
       if (result && result.generation === current.generation && stillCommitted) {
         const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
         if (geometry?.getAttribute?.('aSortedIndex')) {
+          // Large orderings apply CHUNKED across frames (element-storage
+          // routes internally, perf lever L8): the write below only
+          // records the pending state; the per-frame pump in
+          // evaluateDepthSortPerFrame streams the slices, one per
+          // rendered frame, kept alive by its own requestRender chain
+          // (bootstrapped by the requestRender just under this write).
           writeSortedIndexOrdering(geometry, result.ordering, result.ordering.length);
           // Ordering upload = 4 bytes/splat through the attribute
           // update-range machinery (the architecture's headline number).
@@ -599,6 +622,48 @@ function isEffectivelyVisible(mesh: THREE.Object3D): boolean {
 }
 
 /**
+ * Advance every in-flight chunked ordering application by one slice
+ * (perf lever L8 — chunk mechanics + the transient-mix trade are
+ * documented in `element-storage.ts`). Runs once per rendered frame
+ * from {@link evaluateDepthSortPerFrame}, ahead of its early-returns.
+ *
+ * - A cleared `committedData` stamp (LOD demotion — the geometry went
+ *   back to the evictable pool, possibly already serving another node)
+ *   ABORTS the apply: the remaining slices describe the demoted
+ *   commit's population. (The commit path's identity writers cancel
+ *   independently; this catches demotions with no follow-up write.)
+ * - While slices remain, request another frame — the pump is the only
+ *   thing keeping the on-demand loop alive between slices. The slice
+ *   just written rides THIS frame's flush (per-frame callbacks run
+ *   before render), so the final slice needs no extra frame.
+ * - On COMPLETION, drain a queued re-sort (a commit or the apply-gate
+ *   in scheduleSort parked it) — the counterpart of the resolve path's
+ *   drain, restoring the natural cadence: sort → apply N frames → next
+ *   sort.
+ *
+ * Per-node bound: one slice per pending node per frame — several large
+ * nodes resolving simultaneously each add one slice's cost to a frame
+ * (bounded per node, not globally; simultaneous 10M-scale resolves are
+ * already serialized by the per-node single-in-flight sort rule).
+ */
+function pumpChunkedOrderingApplies(): void {
+  for (const [nodeId, state] of nodeStates) {
+    const geometry = state.mesh.geometry as THREE.InstancedBufferGeometry | undefined;
+    if (!geometry || !hasPendingSortedIndexOrderingApply(geometry)) continue;
+    if (!hasCommittedData(state.mesh)) {
+      cancelSortedIndexOrderingApply(geometry);
+      continue;
+    }
+    if (pumpSortedIndexOrderingApply(geometry)) {
+      requestRender?.();
+    } else if (state.resortQueued) {
+      state.resortQueued = false;
+      scheduleSort(state.mesh, nodeId);
+    }
+  }
+}
+
+/**
  * Per-frame camera-motion re-sort scheduler (depth-sorting Phase 3, spec
  * §6). Registered as the 'depth-sort-scheduler' per-frame callback beside
  * 'lod-group-selector'.
@@ -622,7 +687,9 @@ function isEffectivelyVisible(mesh: THREE.Object3D): boolean {
  * the threshold AGAIN. Frames between dispatch and resolve render the
  * previous order — bounded staleness, standard 3DGS behavior. Skips:
  * pending view updates (the commit will sort anyway), in-flight sorts
- * (the resolve is at most a frame away), invisible/demoted meshes, and
+ * (the resolve is at most a frame away), in-flight chunked ordering
+ * applies (the L8 apply-gate — a new ordering couldn't be consumed
+ * until the stream completes anyway), invisible/demoted meshes, and
  * nodes whose live mode is no longer order-dependent.
  */
 export function evaluateDepthSortPerFrame(): void {
@@ -630,6 +697,11 @@ export function evaluateDepthSortPerFrame(): void {
   // early-return — so a disposed/dataset-switched frame can't leave the
   // module-scoped rank memo holding stale partition-wrapper subtrees alive.
   clearRenderOrderFrameState();
+  // Chunked ordering applies advance BEFORE every early-return below:
+  // they need neither a camera nor an idle loader (stalling them during
+  // a load would just extend the mixed-ordering window), and a paused
+  // stream must always drain to a valid permutation.
+  pumpChunkedOrderingApplies();
   // Deliberately NOT gated on `api`: the cross-node renderOrder pass is
   // pure main-thread and must keep ordering meshes back-to-front even
   // when the SortWorker was never constructed (`api` stays null forever
@@ -690,6 +762,13 @@ export function evaluateDepthSortPerFrame(): void {
 
     // === Within-mesh re-sort trigger (Phase 3) ===
     if (state.inFlight) continue;
+    // Apply-gate (L8): no new dispatches while an ordering is still
+    // streaming into this geometry — post-completion frames compare the
+    // live pose against the last DISPATCH pose, so accumulated orbit
+    // motion triggers the next sort immediately once the stream ends.
+    if (hasPendingSortedIndexOrderingApply(mesh.geometry as THREE.InstancedBufferGeometry)) {
+      continue;
+    }
     if (!state.lastSortAxis) {
       // Registered with the worker but no sort ever dispatched — the
       // first commit raced a null camera (init ordering / renderer
@@ -794,6 +873,12 @@ export function noteDepthSortBlendingModeSwitch(
 export function releaseDepthSortNode(mesh: THREE.Mesh): void {
   const nodeId = mesh.uuid;
   if (!nodeStates.delete(nodeId)) return;
+  // With the node state gone the per-frame pump would never visit this
+  // geometry again — abort any in-flight chunked apply so the map
+  // doesn't pin the geometry + its (up to 40 MB) ordering until the
+  // pool's next identity write.
+  const geometry = mesh.geometry as THREE.InstancedBufferGeometry | undefined;
+  if (geometry) cancelSortedIndexOrderingApply(geometry);
   releaseWorkerNode(nodeId);
 }
 
@@ -806,6 +891,9 @@ export function releaseDepthSortNode(mesh: THREE.Mesh): void {
  */
 export function releaseAllDepthSortNodes(): void {
   nodeStates.clear();
+  // Same orphan hazard as releaseDepthSortNode, swept globally (a
+  // dataset switch tears everything down anyway).
+  cancelAllSortedIndexOrderingApplies();
   api?.releaseAllNodes().catch(() => {});
 }
 
@@ -815,6 +903,9 @@ export function releaseAllDepthSortNodes(): void {
  */
 export function disposeDepthSort(): void {
   nodeStates.clear();
+  // Module-state reset completeness: in-flight chunked applies hold
+  // geometry + ordering references in element-storage's map.
+  cancelAllSortedIndexOrderingApplies();
   // Module-state reset completeness: both per-frame containers can hold
   // THREE object references between calls (the rank memo until the next
   // evaluate's clear; the slots only if an evaluate threw mid-collect) —

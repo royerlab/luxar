@@ -44,7 +44,12 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import cache_computed, cached_download, launch_viewer
+from luxar.demos import (
+    cache_computed,
+    cached_download,
+    launch_viewer,
+    require_module,
+)
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -144,7 +149,8 @@ def load_spotify_data(
     Returns:
         Tuple of (features, track_names, artists, genres, popularity)
     """
-    import pandas as pd
+    # Gated here, not in main(): the CSV is parsed with pandas on every run.
+    pd = require_module("pandas")
 
     with asection("Downloading Spotify dataset (~20 MB)"):
         csv_path = cached_download(DATASET_URL, "spotify", "dataset.csv")
@@ -199,7 +205,8 @@ def reduce_to_3d(features: np.ndarray) -> np.ndarray:
 
     Returns centered 3D positions.
     """
-    from umap import UMAP
+    # Gated here, not in main(): a warm spotify UMAP cache never calls this.
+    UMAP = require_module("umap").UMAP
 
     with asection(
         f"UMAP reduction ({features.shape[0]:,} × {features.shape[1]}D → 3D)"
@@ -362,21 +369,6 @@ def main() -> None:
         if arg.startswith("--sample="):
             sample_size = int(arg.split("=")[1])
             aprint(f"Sample size: {sample_size:,}")
-
-    # Check dependencies
-    try:
-        import pandas  # noqa: F401
-    except ImportError:
-        aprint("Missing dependency: pandas")
-        aprint("Install with: pip install luxar[demos]")
-        sys.exit(1)
-
-    try:
-        import umap  # noqa: F401
-    except ImportError:
-        aprint("Missing dependency: umap-learn")
-        aprint("Install with: pip install luxar[demos]")
-        sys.exit(1)
 
     if "--no-serve" in sys.argv:
         output_path = get_demos_output_dir() / "spotify_tracks.luxar.zarr"

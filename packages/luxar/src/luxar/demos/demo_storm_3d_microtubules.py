@@ -122,7 +122,7 @@ import requests
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import launch_viewer
+from luxar.demos import launch_viewer, require_module
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -365,7 +365,8 @@ def parse_storm_localizations(
         Dictionary with keys: x, y, z, precision_x, precision_y, precision_z,
         photons, frame, etc.
     """
-    import pandas as pd
+    # Gated here, not in main(): the localization CSV is parsed with pandas.
+    pd = require_module("pandas")
 
     with asection("Parsing STORM localizations"):
         aprint(f"CSV file: {csv_path.name}")
@@ -809,16 +810,6 @@ def main() -> None:
     aprint(f"  • Field of view: {field}")
     aprint(f"  • Max localizations: {max_loc:,}")
     aprint("")
-
-    # Check dependencies
-    try:
-        import pandas  # noqa: F401
-    except ImportError as e:
-        aprint(f"Missing dependency: {e}")
-        aprint("")
-        aprint("Install with:")
-        aprint("  pip install pandas")
-        sys.exit(1)
 
     try:
         # Download localizations
