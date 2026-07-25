@@ -112,9 +112,15 @@ export function computeBoundsFromMetadata(scene: THREE.Scene): BoundingBox | nul
 
 /**
  * Search for `userData.positionBounds` in the scene graph. Returns
- * the first match (root-level metadata is set on the root group
- * by the scene loader, so traversal short-circuits immediately in
- * normal use).
+ * the first match. Root-level metadata is set on the root group by
+ * the scene loader, so the match is normally found on the first
+ * visited node — but `THREE.Object3D.traverse` cannot stop early
+ * (the `if (result) return` below skips visit bodies, not the
+ * recursion), so this walks the WHOLE graph on every call, hit or
+ * miss. Callers must cache the result (`SceneBoundsCache.ensure`
+ * caches the hit; a metadata-less scene re-pays the full walk each
+ * call — measured harmless at real scene sizes, ~0.1 ms at ~2k
+ * objects, since Luxar geometry is instanced and graphs stay small).
  */
 export function findPositionBoundsInScene(
   scene: THREE.Scene
