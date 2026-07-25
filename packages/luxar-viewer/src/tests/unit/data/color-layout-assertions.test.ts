@@ -56,3 +56,53 @@ describe('projectPointsTo3D — strict color layout at the projection entry', ()
     ).toThrow(/colors length 16 does not match count 4 × colorComponents 3/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// CALL-SITE pins for the lines + gsplats param-builder chokepoints. The
+// helper tests above cannot catch a SEVERED call — deleting either
+// `assertColorLayout(...)` line in the processors survived the entire unit
+// suite until these pins existed (deep-campaign mutation lap). Both entry
+// functions run their builder BEFORE any worker dispatch, so the rejection
+// is observable without a worker.
+// ---------------------------------------------------------------------------
+
+describe('buildLinesParams — strict color layout at the processor chokepoint', () => {
+  it('rejects an RGBA-sized colors array with an undeclared colorComponents', async () => {
+    const { projectLinesTo3DUsingWorker } =
+      await import('../../../data/scene-loader/process/data-processor-lines');
+    const data = {
+      positions: new Float32Array(4 * 3),
+      segments: new Uint32Array([0, 1, 2, 3]),
+      widths: new Float32Array(4),
+      colors: new Float32Array(4 * 4), // RGBA-sized…
+      // …but colorComponents omitted → defaults to 3 → 16 ≠ 12 → throw.
+      sharpness: null,
+      segmentCount: 2,
+      vertexCount: 4,
+      ndim: 3,
+    };
+    const view = { displayDims: [0, 1, 2], slicePosition: [0, 0, 0], tolerance: [0, 0, 0] };
+    await expect(
+      projectLinesTo3DUsingWorker(data as never, view as never, [0, 0, 0], 0)
+    ).rejects.toThrow(/buildLinesParams: colors length 16 does not match count 4/);
+  });
+});
+
+describe('buildGSplatsParams — strict color layout at the processor chokepoint', () => {
+  it('rejects an RGBA-sized colors array with an undeclared colorComponents', async () => {
+    const { projectGSplatsTo3DUsingWorker } =
+      await import('../../../data/scene-loader/process/data-processor-gsplats');
+    const data = {
+      positions: new Float32Array(4 * 3),
+      choleskyFactors: new Float32Array(4 * 6),
+      amplitudes: new Float32Array(4).fill(1),
+      colors: new Float32Array(4 * 4), // RGBA-sized, layout undeclared
+      splatCount: 4,
+      ndim: 3,
+    };
+    const view = { displayDims: [0, 1, 2], slicePosition: [0, 0, 0], tolerance: [0, 0, 0] };
+    await expect(
+      projectGSplatsTo3DUsingWorker(data as never, view as never, 3.0, 0)
+    ).rejects.toThrow(/buildGSplatsParams: colors length 16 does not match count 4/);
+  });
+});

@@ -11,8 +11,8 @@
  * in fixed creation order, NOT back-to-front. This module gives THREE a
  * real signal via `renderOrder` (compared before z, ascending → lowest
  * drawn first), on ONE global integer scale across every visible
- * sorted-mode mesh the coordinator tracks (gsplats + points today;
- * needsDepthSort on the effective mode).
+ * sorted-mode mesh the coordinator tracks (all three geometry types —
+ * gsplats, points, and lines; needsDepthSort on the live mode).
  *
  * Per-frame protocol (driven by `evaluateDepthSortPerFrame`):
  * 1. {@link clearRenderOrderFrameState} at the top of the frame,

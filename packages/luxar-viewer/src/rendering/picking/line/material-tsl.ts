@@ -49,7 +49,8 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
       uLineTex: texture(getPlaceholderElementTexture()),
       uResolution: uniform(new THREE.Vector2(1, 1)),
       uIsOrtho: uniform(0),
-      uNearCull: uniform(0.05),
+      // 0.1 matches the visual line material ctor default (pre-first-broadcast only).
+      uNearCull: uniform(0.1),
       uMaxLinePixelWidth: uniform(540),
       uNodeId: uniform(config.nodeId),
       uPerspectiveLineScale: uniform(1.0),

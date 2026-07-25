@@ -20,8 +20,9 @@ class BlendingMode(str, Enum):
     - VOLUMETRIC: Emission-absorption compositing (Max 1995): adds emitted
       light AND exponentially attenuates what is behind, scaled by the
       node's ``absorption`` (kappa) attr; kappa=0 renders exactly like
-      ADDITIVE. GSplats only in phase 1 (points/lines fall back to additive
-      until phases 3-4). See docs/guides/specs/VOLUMETRIC_BLENDING_SPEC.md.
+      ADDITIVE. All three geometry types render the real math (gsplats
+      phase 1, points phase 3, lines phase 4).
+      See docs/guides/specs/VOLUMETRIC_BLENDING_SPEC.md.
 
     Depth behavior:
     - ADDITIVE: depthTest=false, depthWrite=false (ignores depth entirely)
@@ -45,7 +46,9 @@ class BlendingMode(str, Enum):
     MAX = "max"  # Maximum of source and destination (brightest wins)
     OPAQUE = "opaque"  # Solid rendering with depth write
     LUMINOUS = "luminous"  # Same visual as additive, but respects depth occlusion
-    VOLUMETRIC = "volumetric"  # Emission-absorption: adds light AND absorbs what's behind
+    VOLUMETRIC = (
+        "volumetric"  # Emission-absorption: adds light AND absorbs what's behind
+    )
 
 
 class NodeType(str, Enum):
