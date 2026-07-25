@@ -4,7 +4,7 @@
  * premultiply, volumetric emission–absorption, colormap LUT,
  * perspective sizing, subpixel floor, near fade, behind-camera guard,
  * sorted-index permutation) plus the point-pick counterparts.
- * 17 registry entries (incl. the multi-row texture-orientation variant).
+ * 18 registry entries (incl. the multi-row texture-orientation variant).
  *
  * @module tests/e2e/harnesses/tsl-harness/points
  */
@@ -333,8 +333,8 @@ export const POINT_SHADERS: Record<string, RegistryEntry> = {
       radiusScale: { value: 1.0 },
       uIsOrtho: { value: 1 },
       uResolution: { value: new THREE.Vector2(64, 64) },
-      opacity: { value: 1.0 },
-      invGamma: { value: 1.0 / 2.2 },
+      uOpacity: { value: 1.0 },
+      uInvGamma: { value: 1.0 / 2.2 },
       uIntensity: { value: 1.0 },
       uOffset: { value: 0.0 },
     }),
@@ -368,8 +368,8 @@ export const POINT_SHADERS: Record<string, RegistryEntry> = {
       radiusScale: { value: 1.0 },
       uIsOrtho: { value: 1 },
       uResolution: { value: new THREE.Vector2(64, 64) },
-      opacity: { value: 1.0 },
-      invGamma: { value: 1.0 / 2.2 },
+      uOpacity: { value: 1.0 },
+      uInvGamma: { value: 1.0 / 2.2 },
       uIntensity: { value: 1.0 },
       uOffset: { value: 0.0 },
     }),
@@ -397,8 +397,8 @@ export const POINT_SHADERS: Record<string, RegistryEntry> = {
       radiusScale: { value: 1.0 },
       uIsOrtho: { value: 1 },
       uResolution: { value: new THREE.Vector2(64, 64) },
-      opacity: { value: 1.0 },
-      invGamma: { value: 1.0 / 2.2 },
+      uOpacity: { value: 1.0 },
+      uInvGamma: { value: 1.0 / 2.2 },
       uIntensity: { value: 1.0 },
       uOffset: { value: 0.0 },
     }),
@@ -422,8 +422,8 @@ export const POINT_SHADERS: Record<string, RegistryEntry> = {
       radiusScale: { value: 1.0 },
       uIsOrtho: { value: 1 },
       uResolution: { value: new THREE.Vector2(64, 64) },
-      opacity: { value: 1.0 },
-      invGamma: { value: 1.0 / 2.2 },
+      uOpacity: { value: 1.0 },
+      uInvGamma: { value: 1.0 / 2.2 },
       uIntensity: { value: 1.0 },
       uOffset: { value: 0.0 },
     }),
@@ -451,8 +451,8 @@ export const POINT_SHADERS: Record<string, RegistryEntry> = {
       radiusScale: { value: 1.0 },
       uIsOrtho: { value: 1 },
       uResolution: { value: new THREE.Vector2(64, 64) },
-      opacity: { value: 1.0 },
-      invGamma: { value: 1.0 },
+      uOpacity: { value: 1.0 },
+      uInvGamma: { value: 1.0 },
       uIntensity: { value: 1.0 },
       uOffset: { value: 0.0 },
     }),
@@ -460,6 +460,36 @@ export const POINT_SHADERS: Record<string, RegistryEntry> = {
     buildTSLMaterial: (uniforms) => {
       const m = pointWebGPUFactory(buildPointTSLNodesFromUniforms(uniforms, {}), {
         gammaOne: true,
+      }) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: buildPointInstancedMesh,
+  },
+  // Point with the no-GOG fast path. Same geometry as `point`,
+  // but the TSL factory is built with `noGOG: true` so the
+  // `vColor * uIntensity + uOffset` + `max(..., 0)` chain is replaced
+  // with `adjusted = vColor`. The GLSL counterpart defines
+  // `LUXAR_NO_GOG`. Mirrors `line-no-gog` (three-geometry symmetry).
+  'point-no-gog': {
+    source: POINT_SOURCE,
+    buildUniforms: () => ({
+      uPointTex: { value: buildPointDataTexture() },
+      pointSizeFactor: { value: 32.0 },
+      maxPointSize: { value: 32.0 },
+      radiusScale: { value: 1.0 },
+      uIsOrtho: { value: 1 },
+      uResolution: { value: new THREE.Vector2(64, 64) },
+      uOpacity: { value: 1.0 },
+      uInvGamma: { value: 1.0 / 2.2 }, // gamma kept slow path; only no-GOG is exercised
+      uIntensity: { value: 1.0 },
+      uOffset: { value: 0.0 },
+    }),
+    buildDefines: () => ({ LUXAR_NO_GOG: '' }),
+    buildTSLMaterial: (uniforms) => {
+      const m = pointWebGPUFactory(buildPointTSLNodesFromUniforms(uniforms, {}), {
+        noGOG: true,
       }) as unknown as THREE.Material;
       m.transparent = false;
       m.blending = THREE.NoBlending;
@@ -483,8 +513,8 @@ export const POINT_SHADERS: Record<string, RegistryEntry> = {
       radiusScale: { value: 1.0 },
       uIsOrtho: { value: 1 },
       uResolution: { value: new THREE.Vector2(64, 64) },
-      opacity: { value: 1.0 },
-      invGamma: { value: 1.0 / 2.2 },
+      uOpacity: { value: 1.0 },
+      uInvGamma: { value: 1.0 / 2.2 },
       uIntensity: { value: 1.0 },
       uOffset: { value: 0.0 },
     }),
@@ -514,8 +544,8 @@ export const POINT_SHADERS: Record<string, RegistryEntry> = {
       radiusScale: { value: 1.0 },
       uIsOrtho: { value: 1 },
       uResolution: { value: new THREE.Vector2(64, 64) },
-      opacity: { value: 0.7 },
-      invGamma: { value: 1.0 / 2.2 },
+      uOpacity: { value: 0.7 },
+      uInvGamma: { value: 1.0 / 2.2 },
       uIntensity: { value: 1.0 },
       uOffset: { value: 0.0 },
       uAbsorption: { value: 1.5 },
@@ -537,6 +567,11 @@ export const POINT_SHADERS: Record<string, RegistryEntry> = {
   // into τ — both defines co-compiled off the SAME single texel2 fetch.
   // Would catch either branch displacing the other (the
   // untested-combination flag from the phase-4 double-check).
+  // (Deep-campaign note: this combination is UNREACHABLE from the Python
+  // scene API — all three adders make colors/colormap mutually exclusive
+  // and scalars require a colormap, so real data never has both an RGBA
+  // alpha column and LUT scalars. The coverage is deliberately defensive:
+  // hand-crafted zarr can reach it, and the shader must stay correct.)
   'point-volumetric-colormap': {
     source: POINT_SOURCE,
     buildUniforms: () => ({
@@ -546,8 +581,8 @@ export const POINT_SHADERS: Record<string, RegistryEntry> = {
       radiusScale: { value: 1.0 },
       uIsOrtho: { value: 1 },
       uResolution: { value: new THREE.Vector2(64, 64) },
-      opacity: { value: 0.7 },
-      invGamma: { value: 1.0 / 2.2 },
+      uOpacity: { value: 0.7 },
+      uInvGamma: { value: 1.0 / 2.2 },
       uIntensity: { value: 1.0 },
       uOffset: { value: 0.0 },
       uAbsorption: { value: 1.5 },
@@ -583,8 +618,8 @@ export const POINT_SHADERS: Record<string, RegistryEntry> = {
       radiusScale: { value: 1.0 },
       uIsOrtho: { value: 1 },
       uResolution: { value: new THREE.Vector2(64, 64) },
-      opacity: { value: 1.0 },
-      invGamma: { value: 1.0 / 2.2 },
+      uOpacity: { value: 1.0 },
+      uInvGamma: { value: 1.0 / 2.2 },
       uIntensity: { value: 1.5 },
       uOffset: { value: 0.05 },
       uColormapTex: { value: buildColormapTexture() },
@@ -638,8 +673,8 @@ export const POINT_SHADERS: Record<string, RegistryEntry> = {
       radiusScale: { value: 1.0 },
       uIsOrtho: { value: 0 },
       uResolution: { value: new THREE.Vector2(64, 64) },
-      opacity: { value: 1.0 },
-      invGamma: { value: 1.0 / 2.2 },
+      uOpacity: { value: 1.0 },
+      uInvGamma: { value: 1.0 / 2.2 },
       uIntensity: { value: 1.0 },
       uOffset: { value: 0.0 },
     }),
@@ -693,8 +728,8 @@ export const POINT_SHADERS: Record<string, RegistryEntry> = {
       uIsOrtho: { value: 0 },
       uNearCull: { value: 0.01 },
       uResolution: { value: new THREE.Vector2(64, 64) },
-      opacity: { value: 1.0 },
-      invGamma: { value: 1.0 / 2.2 },
+      uOpacity: { value: 1.0 },
+      uInvGamma: { value: 1.0 / 2.2 },
       uIntensity: { value: 1.0 },
       uOffset: { value: 0.0 },
     }),
@@ -720,8 +755,8 @@ export const POINT_SHADERS: Record<string, RegistryEntry> = {
       uIsOrtho: { value: 0 },
       uNearCull: { value: 0.01 },
       uResolution: { value: new THREE.Vector2(64, 64) },
-      opacity: { value: 1.0 },
-      invGamma: { value: 1.0 / 2.2 },
+      uOpacity: { value: 1.0 },
+      uInvGamma: { value: 1.0 / 2.2 },
       uIntensity: { value: 1.0 },
       uOffset: { value: 0.0 },
     }),
@@ -757,8 +792,8 @@ export const POINT_SHADERS: Record<string, RegistryEntry> = {
       uIsOrtho: { value: 1 },
       uNearCull: { value: 0.01 },
       uResolution: { value: new THREE.Vector2(64, 64) },
-      opacity: { value: 1.0 },
-      invGamma: { value: 1.0 / 2.2 },
+      uOpacity: { value: 1.0 },
+      uInvGamma: { value: 1.0 / 2.2 },
       uIntensity: { value: 1.0 },
       uOffset: { value: 0.0 },
     }),
@@ -786,8 +821,8 @@ export const POINT_SHADERS: Record<string, RegistryEntry> = {
       uIsOrtho: { value: 0 },
       uNearCull: { value: 0.7 },
       uResolution: { value: new THREE.Vector2(64, 64) },
-      opacity: { value: 1.0 },
-      invGamma: { value: 1.0 / 2.2 },
+      uOpacity: { value: 1.0 },
+      uInvGamma: { value: 1.0 / 2.2 },
       uIntensity: { value: 1.0 },
       uOffset: { value: 0.0 },
     }),
@@ -821,8 +856,8 @@ export const POINT_SHADERS: Record<string, RegistryEntry> = {
       radiusScale: { value: 1.0 },
       uIsOrtho: { value: 1 },
       uResolution: { value: new THREE.Vector2(64, 64) },
-      opacity: { value: 1.0 },
-      invGamma: { value: 1.0 / 2.2 },
+      uOpacity: { value: 1.0 },
+      uInvGamma: { value: 1.0 / 2.2 },
       uIntensity: { value: 1.0 },
       uOffset: { value: 0.0 },
     }),

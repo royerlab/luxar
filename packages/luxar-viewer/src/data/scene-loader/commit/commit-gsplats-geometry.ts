@@ -247,13 +247,11 @@ export function commitGSplatsGeometry(
       if (rebuilt) invalidateRenderObjectFor(mesh);
     }
 
-    // Declare the committed color layout to the render material: RGBA colors
-    // carry a per-splat opacity alpha, and the volumetric shader branch gates
-    // its alpha → optical-depth mapping on this uniform. Plain uniform write
-    // (no recompile); the pick material has no such uniform (picking stays
-    // brightness-as-depth, deliberately alpha-free in phase 2).
-    const renderMat = mesh.material as { updateHasElementAlpha?: (v: boolean) => void };
-    renderMat.updateHasElementAlpha?.(processed.colorComponents === 4);
+    // (The committed color layout reaches the render material's
+    // uHasElementAlpha gate via stampGSplatPresenceFlags at the texel
+    // writers + syncGSplatMaterialWithGeometry above — the same
+    // chokepoint decomposition as points/lines. The pick material has no
+    // such uniform: picking stays brightness-as-depth, alpha-free.)
 
     if (isGSplatsUserData(mesh.userData)) {
       mesh.userData.visibleSplatCount = splatCount;

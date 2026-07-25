@@ -25,6 +25,12 @@ import { describe, it, expect, vi } from 'vitest';
 import * as THREE from 'three';
 import { GSplatMaterial } from '../../../../../rendering/materials/gsplat/material-glsl';
 import { GSplatTSLMaterial } from '../../../../../rendering/materials/gsplat/material-tsl';
+import {
+  getCompleteBlendingState,
+  getGSplatNormalBlendingState,
+  isNormalMode,
+} from '../../../../../rendering/blending-state';
+import type { BlendingMode } from '../../../../../rendering/material-manager';
 
 describe('GSplatMaterial.applyBlendingMode (GLSL)', () => {
   it('max mode sets CustomBlending + MaxEquation + OneFactor/OneFactor and peak projection', () => {
@@ -203,6 +209,25 @@ describe('GSplatMaterial.applyBlendingMode (GLSL)', () => {
     expect(mat.fragmentShader).toContain('defined(LUXAR_VOLUMETRIC)');
     expect(mat.fragmentShader).toContain('uAbsorption');
     expect(mat.fragmentShader).toContain('exp(-tau)');
+    // Per-splat alpha → optical depth map, gated by uHasElementAlpha.
+    // The gate must be pinned at its USAGE inside the mix() — a bare
+    // `toContain('uHasElementAlpha')` also matches the uniform
+    // DECLARATION and survives a mutation that hardwires the gate to
+    // 1.0 (the point twin's mutation-found w ≈ 6.24 identity-alpha
+    // blowup for RGB data would ship silently).
+    expect(mat.fragmentShader).toContain('-log(1.0 - min(vAlpha,');
+    expect(mat.fragmentShader).toContain('), uHasElementAlpha);');
+  });
+
+  it('non-volumetric fragment folds vAlpha into the contribution (alpha active in EVERY mode)', () => {
+    // Phase-2 doctrine: the per-element alpha is a plain linear
+    // contribution scale outside volumetric. Mutation-found gap (on the
+    // line twin): dropping the fold survived the entire unit suite —
+    // only the playwright-tier codegen snapshot would catch an RGBA
+    // dataset's translucent splats rendering fully opaque in
+    // additive/normal/max. Pinned at the USAGE.
+    const mat = new GSplatMaterial();
+    expect(mat.fragmentShader).toContain('intensity *= vAlpha;');
   });
 
   it('vertex shader sanitizes the per-splat alpha read (NaN/Inf → 1.0, finite clamped to [0, 1])', () => {
@@ -214,11 +239,16 @@ describe('GSplatMaterial.applyBlendingMode (GLSL)', () => {
     expect(mat.vertexShader).toContain('vAlpha = sanitizeAlpha(aAlpha);');
   });
 
-  it('clone() round-trips absorption (the layers panel clones on any first interaction)', () => {
+  it('clone() carries uAbsorption and uHasElementAlpha (the layers panel clones on any first interaction)', () => {
+    // A clone that reset κ to 1.0 or dropped the RGBA-alpha flag would
+    // silently change the volumetric render — same bug class the
+    // point/line clone tests pin (three-geometry test symmetry).
     const mat = new GSplatMaterial({ absorption: 3.5, blendingMode: 'volumetric' });
     expect(mat.getAbsorption()).toBe(3.5);
+    mat.updateHasElementAlpha(true);
     const cloned = mat.clone();
     expect(cloned.getAbsorption()).toBe(3.5);
+    expect(cloned.uniforms.uHasElementAlpha.value).toBe(1);
     expect(cloned.userData.blendingMode).toBe('volumetric');
     expect(cloned.defines.LUXAR_VOLUMETRIC).toBe('');
   });
@@ -240,6 +270,7 @@ describe('GSplatMaterial.applyBlendingMode (GLSL)', () => {
     const version = mat.version;
     mat.updateAbsorption(0.25);
     expect(mat.uniforms.uAbsorption.value).toBe(0.25);
+    expect(mat.getAbsorption()).toBe(0.25);
     expect(mat.version).toBe(version);
   });
 });
@@ -417,11 +448,16 @@ describe('GSplatTSLMaterial.applyBlendingMode (TSL)', () => {
     expect(mat.userData.blendingMode).toBe('volumetric');
   });
 
-  it('clone() round-trips absorption (TSL)', () => {
+  it('clone() carries uAbsorption and uHasElementAlpha (TSL)', () => {
+    // A clone that reset κ to 1.0 or dropped the RGBA-alpha flag would
+    // silently change the volumetric render — same bug class the
+    // point/line clone tests pin (three-geometry test symmetry).
     const mat = new GSplatTSLMaterial({ absorption: 3.5, blendingMode: 'volumetric' });
     expect(mat.getAbsorption()).toBe(3.5);
+    mat.updateHasElementAlpha(true);
     const cloned = mat.clone();
     expect(cloned.getAbsorption()).toBe(3.5);
+    expect(cloned.uniforms.uHasElementAlpha.value).toBe(1);
     expect(cloned.userData.blendingMode).toBe('volumetric');
   });
 
@@ -441,8 +477,121 @@ describe('GSplatTSLMaterial.applyBlendingMode (TSL)', () => {
     const version = mat.version;
     mat.updateAbsorption(0.25);
     expect(mat.uniforms.uAbsorption.value).toBe(0.25);
+    expect(mat.getAbsorption()).toBe(0.25);
     expect(mat.version).toBe(version);
   });
+
+  it('every non-volumetric transition clears LUXAR_VOLUMETRIC (inert tracker, TSL)', () => {
+    // The gsplat TSL define is an INERT introspection tracker (the
+    // rebuild predicates own the graph boundary — see material-tsl.ts),
+    // but its lifecycle must still mirror the point/line TSL wrappers
+    // and the gsplat GLSL twin: present iff the mode is volumetric,
+    // cleared on EVERY non-volumetric transition (no stranded define).
+    const mat = new GSplatTSLMaterial();
+    mat.applyBlendingMode('volumetric');
+    expect(mat.defines?.LUXAR_VOLUMETRIC).toBe('');
+    mat.applyBlendingMode('normal');
+    expect(mat.defines?.LUXAR_VOLUMETRIC).toBeUndefined();
+    mat.applyBlendingMode('volumetric');
+    mat.applyBlendingMode('additive');
+    expect(mat.defines?.LUXAR_VOLUMETRIC).toBeUndefined();
+  });
+
+  it('volumetric state survives TSL CONSTRUCTION and graph REBUILDS (factory-tail application)', () => {
+    // GSplat twin of the point/line ctor-survival tests. The state
+    // derivation differs: point/line factory tails INTERCEPT the output
+    // branch from defines, while the gsplat factory tail APPLIES the
+    // mode-derived blending state itself from `userData.blendingMode`
+    // (LUXAR_VOLUMETRIC is an inert introspection tracker, stamped by
+    // the ctor and applyBlendingMode). Construction and every later
+    // rebuild must land the same volumetric state.
+    const constructed = new GSplatTSLMaterial({ blendingMode: 'volumetric' });
+    expect(constructed.blending).toBe(THREE.CustomBlending);
+    expect(constructed.blendSrc).toBe(THREE.OneFactor);
+    expect(constructed.blendDst).toBe(THREE.OneMinusSrcAlphaFactor);
+    expect(constructed.defines?.LUXAR_VOLUMETRIC).toBe('');
+    expect(constructed.userData.blendingMode).toBe('volumetric');
+    expect(constructed.uniforms.uProjectionMode.value).toBe(0); // sum
+
+    // max→volumetric crosses BOTH the projection (peak→sum) and the
+    // output-branch boundary → rebuildGraph — the tail must re-derive
+    // the volumetric state, not clobber it with a stale-mode default.
+    const switched = new GSplatTSLMaterial({ blendingMode: 'max' });
+    switched.applyBlendingMode('volumetric');
+    expect(switched.blending).toBe(THREE.CustomBlending);
+    expect(switched.blendSrc).toBe(THREE.OneFactor);
+    expect(switched.blendDst).toBe(THREE.OneMinusSrcAlphaFactor);
+    expect(switched.defines?.LUXAR_VOLUMETRIC).toBe('');
+
+    // Any later rebuild while volumetric (e.g. gamma crossing 1.0)
+    // must not clobber the state — or drop the inert tracker.
+    switched.updateGamma(2.2);
+    expect(switched.blending).toBe(THREE.CustomBlending);
+    expect(switched.blendDst).toBe(THREE.OneMinusSrcAlphaFactor);
+    expect(switched.defines?.LUXAR_VOLUMETRIC).toBe('');
+  });
+
+  it('hasElementAlpha config seeds uHasElementAlpha at construction (both backends)', () => {
+    // The commit sync pushes the geometry stamp on every commit, but a
+    // material constructed FROM config (clone, cache warm-up) must seed
+    // the gate itself — a dropped seed would strand a clone at the 0
+    // default until the next commit.
+    for (const Ctor of [GSplatMaterial, GSplatTSLMaterial]) {
+      expect(new Ctor({ hasElementAlpha: true }).uniforms.uHasElementAlpha.value).toBe(1);
+      expect(new Ctor({}).uniforms.uHasElementAlpha.value).toBe(0);
+    }
+  });
+});
+
+// Both wrappers delegate to getGSplatNormalBlendingState (`normal`) +
+// the shared getCompleteBlendingState (every other mode), so for EVERY
+// mode the applied THREE state must equal the helper's canonical values
+// and the two backends must agree field-for-field. Mirrors the line
+// twin's convergence contract (three-geometry test symmetry).
+describe('GSplatMaterial ↔ GSplatTSLMaterial blending-state convergence', () => {
+  const ALL_MODES: BlendingMode[] = [
+    'additive',
+    'volumetric',
+    'normal',
+    'max',
+    'opaque',
+    'luminous',
+  ];
+  const STATE_FIELDS = [
+    'blending',
+    'blendEquation',
+    'blendSrc',
+    'blendDst',
+    'depthTest',
+    'depthWrite',
+    'transparent',
+  ] as const;
+
+  for (const mode of ALL_MODES) {
+    it(`'${mode}': GLSL state equals the canonical gsplat helper state and matches TSL`, () => {
+      const glsl = new GSplatMaterial();
+      const tsl = new GSplatTSLMaterial();
+      glsl.applyBlendingMode(mode);
+      tsl.applyBlendingMode(mode);
+      // GSplat-specific expectation: `normal` draws from
+      // getGSplatNormalBlendingState() — premultiplied coverage
+      // alpha-over (One/OneMinusSrcAlpha, depthWrite false
+      // UNCONDITIONALLY) — NOT getCompleteBlendingState('normal'),
+      // whose generic entry is SrcAlpha-factored and flips depthWrite
+      // at opacity >= 0.99 (PR #561 semantics; see the file header).
+      // Every other mode uses the shared helper, exactly like
+      // points/lines.
+      const expected = isNormalMode(mode)
+        ? getGSplatNormalBlendingState()
+        : getCompleteBlendingState(mode, 1.0);
+      for (const field of STATE_FIELDS) {
+        expect(glsl[field], `GLSL ${field} for '${mode}'`).toBe(expected[field]);
+        expect(tsl[field], `TSL ${field} for '${mode}'`).toBe(expected[field]);
+      }
+      expect(glsl.userData.blendingMode).toBe(mode);
+      expect(tsl.userData.blendingMode).toBe(mode);
+    });
+  }
 });
 
 // H — TSL constructor honors explicit transparent/depthTest overrides
@@ -458,5 +607,18 @@ describe('GSplatTSLMaterial constructor explicit overrides', () => {
   it('transparent: false survives additive construction', () => {
     const mat = new GSplatTSLMaterial({ blendingMode: 'additive', transparent: false });
     expect(mat.transparent).toBe(false);
+  });
+});
+
+describe('GSplatMaterial single-pass billboards (both backends)', () => {
+  it('forceSinglePass stays true with DoubleSide — deleting it silently DOUBLES fragment work', () => {
+    // splat quads are screen-space billboards. transparent + DoubleSide
+    // without forceSinglePass trips THREE's two-pass transparent render:
+    // measured live, the mesh rasterizes ~2x the triangles (and sorted
+    // modes split each mesh's draw independent of the depth sort).
+    for (const mat of [new GSplatMaterial(), new GSplatTSLMaterial()]) {
+      expect(mat.forceSinglePass).toBe(true);
+      expect(mat.side).toBe(THREE.DoubleSide);
+    }
   });
 });

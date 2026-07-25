@@ -109,7 +109,8 @@ export class LineTSLMaterial
       uLineTex: texture(getPlaceholderElementTexture()),
       uResolution: uniform(new THREE.Vector2(1, 1)),
       uIsOrtho: uniform(0),
-      uNearCull: uniform(0.05),
+      // 0.1 matches the point/gsplat ctor default (pre-first-broadcast only).
+      uNearCull: uniform(0.1),
       uMaxLinePixelWidth: uniform(540),
       uPerspectiveLineScale: uniform(1.0),
       uOrthoLineScale: uniform(1.0),
@@ -121,7 +122,7 @@ export class LineTSLMaterial
       // graph was built in volumetric mode; plain runtime uniforms
       // otherwise (mirrors PointTSLMaterial).
       uAbsorption: uniform(materialConfig.absorption ?? 1.0),
-      uHasElementAlpha: uniform(0),
+      uHasElementAlpha: uniform(materialConfig.hasElementAlpha ? 1 : 0),
     };
 
     // Build the public IUniform-proxy table. Mutations to
@@ -419,6 +420,11 @@ export class LineTSLMaterial
     this.uniforms.uAbsorption.value = absorption;
   }
 
+  /** Current volumetric absorption κ (mirrors GSplatMaterial.getAbsorption). */
+  getAbsorption(): number {
+    return this.uniforms.uAbsorption.value as number;
+  }
+
   /**
    * Flag whether the committed colors carry a real per-endpoint alpha
    * column (RGBA). Deliberately a uniform, not a define — toggling it
@@ -509,6 +515,7 @@ export class LineTSLMaterial
       intensity: this.uniforms.uIntensity.value,
       offset: this.uniforms.uOffset.value,
       absorption: this.uniforms.uAbsorption.value,
+      hasElementAlpha: (this.uniforms.uHasElementAlpha.value as number) === 1,
       blendingMode:
         (this.userData.blendingMode as LineMaterialConfig['blendingMode']) ?? 'additive',
       depthTest: this.userData.depthTest ?? true,
@@ -537,10 +544,6 @@ export class LineTSLMaterial
     cloned.uniforms.uPerspectiveLineScale.value = this.uniforms.uPerspectiveLineScale.value;
     cloned.uniforms.uOrthoLineScale.value = this.uniforms.uOrthoLineScale.value;
     cloned.uniforms.uInvGamma.value = this.uniforms.uInvGamma.value;
-    // Commit-written data flag: the clone shares the source's line
-    // texture, so it must share its RGBA-alpha presence too (mirrors
-    // PointTSLMaterial.clone).
-    cloned.uniforms.uHasElementAlpha.value = this.uniforms.uHasElementAlpha.value;
     if (sourceIsOrtho) {
       cloned.rebuildGraph();
     }

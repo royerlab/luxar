@@ -113,6 +113,17 @@ export interface GSplatTSLConfig {
    */
   readonly gammaOne?: boolean;
   /**
+   * Fast path: skip the `vColor * uIntensity + uOffset` GOG chain
+   * (and its `max(..., vec3(0))` clamp) when the wrapper knows
+   * intensity == 1 && offset == 0 — the default and most common
+   * configuration. Mirrors the GLSL3 `LUXAR_NO_GOG` define and the
+   * line/point factories' `noGOG` flag (three-geometry symmetry).
+   * The gain-aware visibility discard keeps reading `uIntensity` —
+   * under noGOG uIntensity == 1, so `max(uIntensity, 1.0)` is 1.0
+   * and behavior is identical.
+   */
+  readonly noGOG?: boolean;
+  /**
    * Luxar blending mode. GSplats premultiply intensity into RGB in
    * every mode; `normal` ADDITIONALLY emits a clamped coverage alpha
    * (premultiplied alpha-over — mirrors the GLSL
@@ -653,7 +664,13 @@ export function gsplatWebGPUFactory(
     // uIntensity (gain) + uOffset apply in BOTH modes so the layer
     // intensity/offset controls work for a colormapped gsplat too (GLSL parity).
     // Colormap mode still skips the post-LUT gamma (already applied pre-LUT).
-    const adjusted: TSLNode = max(vColor.mul(uIntensity).add(uOffset), vec3(0.0));
+    // Fast path: when the wrapper knows intensity==1 && offset==0, the
+    // mul/add/clamp chain is identity for non-negative vColor (noGOG —
+    // mirrors the line/point factories; the gain-aware discard above
+    // keeps reading uIntensity, which is exactly 1 in that regime).
+    const adjusted: TSLNode = config.noGOG
+      ? vColor
+      : max(vColor.mul(uIntensity).add(uOffset), vec3(0.0));
     const maxAdjusted: TSLNode = max(adjusted.r, max(adjusted.g, adjusted.b));
     const volumetric = volumetricGraph;
     // Volumetric optical depth τ = κ·opacity·intensity (pre-GOG density

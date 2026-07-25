@@ -87,12 +87,15 @@ export function createGSplatsNode(
     const pickNode = new THREE.Mesh(mesh.geometry, pickMaterial);
     pickNode.matrixWorld.copy(mesh.matrixWorld);
     pickingSystem.registerNode(mesh, pickNode, pickId);
-    // Bind the mesh-owned splat texture on BOTH materials (the render
-    // material was already bound by createInstancedGSplatsMesh; this
-    // covers the just-created pick material so picking works before
-    // the first commit's sync).
-    syncGSplatMaterialWithGeometry(mesh);
   }
+
+  // Bind the mesh-owned splat texture + presence flags on the render
+  // material (and, when picking is on, the just-created pick material)
+  // UNCONDITIONALLY — points/lines sync here regardless of picking, and
+  // a node created WITH RGBA initial data must reach the volumetric
+  // w(a) gate before its first commit (the picking-gated sync left
+  // uHasElementAlpha at 0 in that window when picking was disabled).
+  syncGSplatMaterialWithGeometry(mesh);
 
   return mesh;
 }

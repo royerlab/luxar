@@ -34,9 +34,10 @@
 > (the line integral of the Gaussian-profile ball; K = ln 100 truncates at
 > T = √(2K) ≈ 3.03σ, nearly the gsplat T = 3, so point and gsplat κ scales
 > agree; `POINT_CHORD_SCALE` in `rendering/materials/point/math.ts`) —
-> with τ = κ·density·rayMass where density = falloff·opacity·sizeScale²·
-> nearFade (every "how much of this point is there" factor scales τ, so
-> fades leave no ghost fog). Points also gained RGBA colors: the alpha
+> with τ = κ·density·rayMass where density = opacity·sizeScale²·nearFade
+> (the profile enters τ exactly ONCE, via rayMass; every "how much of this
+> point is there" factor scales τ, so fades leave no ghost fog). Points
+> also gained RGBA colors: the alpha
 > column rides texel2.y, active in every mode, mapped through w(a) under
 > volumetric exactly like gsplats (§5.4.1), gated by `uHasElementAlpha`.
 > `effectiveGeometryMode` at this point fell back to additive for LINES
@@ -237,7 +238,8 @@ thin splats, and invariant I2 below fails.
 
 S(τ) = (1 − e^(−τ))/τ is 0/0 at τ = 0. Required implementation:
 
-- α via `-expm1(-tau)` where available (TS/TSL); in GLSL use
+- α via `-expm1(-tau)` in TS reference math (unit tests); both SHADER
+  backends deliberately use the plain form for codegen bit-identity — GLSL/TSL
   `1.0 - exp(-tau)` guarded by the branch below (float32 is adequate here — the
   error of `1-exp(-τ)` at τ ≈ 1e-4 is ~1e-8, invisible at 8–10 bpc output).
 - S(τ): for τ < 1e-3 use the series `S(τ) ≈ 1 − τ/2 + τ²/6` (relative error
@@ -384,14 +386,18 @@ oversights):
   per-element alpha (points texel2.y / lines texel5.zw / gsplat
   texel3.y) — their brightness derives from the coverage chain only. An
   element with alpha ≈ 0 is visually absent (emission scaled to ~0;
-  under volumetric it is not even discarded when its color is
-  non-black, since a black-but-dense occluder keeps its τ) yet remains
+  under volumetric, points and lines do not even discard it when
+  its color is non-black, since a black-but-dense occluder keeps its τ;
+  gsplats DO discard it — their gain-aware intensity discard folds alpha
+  in first, and a ~zero-alpha splat neither emits nor absorbs) yet remains
   fully pickable. Making picking alpha-aware would follow the same
   τ-threshold follow-up as front-most picking above.
 - **`normal`-mode depthWrite ignores per-element alpha**:
-  `normalModeDepthWrite` keys on NODE opacity alone, so an RGBA node in
-  `normal` mode at node-opacity 1.0 writes depth even for its
-  near-transparent (alpha ≈ 0) elements, which can occlude content
+  `normalModeDepthWrite` keys on NODE opacity alone — the decision never
+  consults per-element alpha (uniform across geometry types). For POINTS
+  and LINES an RGBA node in `normal` mode at node-opacity 1.0 therefore
+  writes depth even for its near-transparent (alpha ≈ 0) elements
+  (gsplat normal mode never depth-writes regardless), which can occlude content
   behind them. Per-element depthWrite is not expressible in a single
   draw call; the workaround is the volumetric mode itself (never
   depth-writes) or lowering node opacity below the 0.99 threshold.
@@ -481,8 +487,11 @@ so the two decouple emission from opacity):
 | normal | coverage-alpha × aᵢ (true per-element alpha compositing) |
 | volumetric | `intensity *= w(aᵢ)` **before** τ, where `w(aᵢ) = −ln(1 − min(aᵢ, 1−1/512))` |
 
-The volumetric mapping makes a splat's peak rendered alpha reproduce aᵢ exactly
-(3DGS-faithful) and self-screens emission to ≈ c·aᵢ. Dilute limit: `w ≈ a` as
+The volumetric mapping makes per-element alpha compose as OPTICAL DEPTH; the
+"peak rendered alpha = aᵢ" reproduction is exact when the remaining τ factor
+equals 1 (the normalized 3DGS-import case for gsplats; for points/lines the
+factor also carries the world-unit size × chord scale, so the reproduction is
+up to that normalization) and emission self-screens to ≈ c·aᵢ in that case. Dilute limit: `w ≈ a` as
 a → 0, so volumetric and additive agree there (the same κ→0 coherence carried to
 per-splat alpha); at large a volumetric is intentionally denser
 (optical-depth semantics). Mid-alpha renders therefore differ between modes —

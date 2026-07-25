@@ -40,7 +40,7 @@ describe('TSL opacity tail stays inert (volumetric double-check tripwire)', () =
       (mat as { updateOpacity(v: number): void }).updateOpacity(0.4);
       expect(mat.opacity, `${name}: updateOpacity leaked into THREE .opacity`).toBe(1.0);
       const uniforms = (mat as { uniforms: Record<string, { value: unknown }> }).uniforms;
-      const custom = uniforms.uOpacity ?? uniforms.opacity;
+      const custom = uniforms.uOpacity;
       expect(custom.value, `${name}: custom opacity uniform not updated`).toBe(0.4);
     }
   });
