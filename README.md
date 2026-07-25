@@ -582,11 +582,23 @@ scene.luxar.zarr/
 
 ### Performance Characteristics
 
-| Scale | Memory | Load Time | Frame Rate |
-|-------|--------|-----------|------------|
-| 100K elements | ~5MB | <1s | 60 FPS |
-| 1M elements | ~50MB | ~3s | 30-60 FPS |
-| 10M elements | ~500MB | ~15s | 15-30 FPS |
+Measured on an **NVIDIA RTX 3070 at 1280×720**, adaptive DPR pinned to 1.0 for
+measurement, in interactive orbit at the reference 4-pixel primitive size. Median
+per-frame GPU time through the full HDR composer chain:
+
+| Elements | Lines | Points | Gaussian splats |
+|----------|-------|--------|-----------------|
+| 100K | 0.42 ms | 0.86 ms | 1.34 ms |
+| 1M | 60 FPS | 60 FPS | 60 FPS |
+| 10M | — | 65 ms † | 101 ms † |
+
+† Exceeds the 16.7 ms vsync budget at full resolution, so raw rendering drops to
+half-rate; the viewer's adaptive DPR (on by default, and disabled for these
+measurements) buys back frame rate by downscaling the render buffer.
+
+Frame rate is GPU-, resolution- and geometry-dependent, so treat these as one
+reference point rather than a guarantee. Load time is dominated by transfer and
+decode, so it tracks your link and cache state rather than element count alone.
 
 ### Spatial Indexing
 
