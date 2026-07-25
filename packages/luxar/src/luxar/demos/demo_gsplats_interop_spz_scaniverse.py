@@ -98,9 +98,14 @@ def build_scene(scene_key: str = "hornedlizard") -> Path:
     )
     src = cached_download(f"{BASE_URL}/{spec['file']}", DEMO_NAME, spec["file"])
     cache_file = src.with_suffix(".gsplats.zarr")
-    # Small scans → a stream ladder gives fast first paint without tiling.
+    # Small scans → a streaming ladder (geometric ~14k → doubling) gives fast
+    # first paint without tiling; the first chunk carries most of the energy.
     build_gsplats_cache(
-        src, cache_file, recipe="stream", recompute=FLAGS["recompute"], n_lods=3
+        src,
+        cache_file,
+        recipe="stream",
+        recompute=FLAGS["recompute"],
+        breakpoints="stream:14000",
     )
     out = get_demos_output_dir() / f"gsplats_interop_spz_{scene_key}.luxar.zarr"
     return build_interop_scene(
