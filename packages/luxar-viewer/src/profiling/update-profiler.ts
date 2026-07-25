@@ -78,6 +78,26 @@ export interface TimingMetadata {
   skipReason?: string;
   /** Custom string data */
   info?: string;
+  /**
+   * Depth-sort split (set on 'Depth Sort' passes only): ms inside the
+   * backend `sort_splats_by_depth` call on the worker. LAST-WRITE on
+   * merge (not in {@link SUMMED_METADATA_KEYS}) — these are per-sort
+   * latencies of the most recent sort, not counters; summing across
+   * merged sessions would be meaningless.
+   */
+  kernelMs?: number;
+  /**
+   * Depth-sort split: worker-side overhead around the kernel
+   * (= workerMs − kernelMs; sortNode body minus backend call: registry
+   * lookup + ordering allocation). Last-write on merge, see kernelMs.
+   */
+  boundaryMs?: number;
+  /**
+   * Depth-sort split: dispatch→resolve round-trip minus the worker-side
+   * time (= roundTripMs − workerMs; Comlink RPC + structured-clone +
+   * event-loop queueing on both sides). Last-write on merge, see kernelMs.
+   */
+  queueMs?: number;
 }
 
 /** Numeric metadata fields that SUM when same-name sessions merge within one update. */
@@ -146,8 +166,10 @@ const EMA_ALPHA = 0.1;
 const FRAME_BUDGET_MS = 16.67;
 
 /**
- * Merge metadata from a same-update sibling session: numeric fields sum,
- * `skipped` survives only if BOTH were skipped, string fields last-wins.
+ * Merge metadata from a same-update sibling session: the numeric fields
+ * listed in {@link SUMMED_METADATA_KEYS} sum, `skipped` survives only if
+ * BOTH were skipped, every other field (strings AND the per-sort latency
+ * numbers kernelMs/boundaryMs/queueMs) is last-write.
  */
 function mergeMetadata(
   a: TimingMetadata | undefined,
@@ -463,8 +485,10 @@ export class UpdateProfiler {
    * mid-update cannot disable the update's own profiling.
    *
    * The depth-sort coordinator opens one per SortWorker dispatch, stamps
-   * `setMetadata({ splats, info })` (splat count + uploaded ordering
-   * bytes), and ends it when the ordering is applied (or the RPC fails).
+   * `setMetadata({ splats, info, kernelMs, boundaryMs, queueMs })` (splat
+   * count, uploaded ordering bytes, and the worker/boundary/queue timing
+   * split — the latency numbers are last-write on merge), and ends it
+   * when the ordering is applied (or the RPC fails).
    */
   beginDepthSortPass(): UpdateSession {
     this.sortSeq++;
