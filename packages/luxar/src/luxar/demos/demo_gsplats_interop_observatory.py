@@ -113,9 +113,15 @@ def build_scene(scene_key: str = "rubin") -> Path:
     )
     src = cached_download(spec["url"], DEMO_NAME, spec["file"])
     cache_file = src.with_name(f"{scene_key}.gsplats.zarr")
-    # Moderate size → a stream ladder (fast first paint) is enough; no tiling.
+    # Moderate size → a streaming ladder (geometric ~14k → doubling) for fast
+    # first paint; no tiling needed. The first ~14k splats carry most of the
+    # energy, so the scene shows almost immediately, then refines.
     build_gsplats_cache(
-        src, cache_file, recipe="stream", recompute=FLAGS["recompute"], n_lods=4
+        src,
+        cache_file,
+        recipe="stream",
+        recompute=FLAGS["recompute"],
+        breakpoints="stream:14000",
     )
     out = get_demos_output_dir() / f"gsplats_interop_observatory_{scene_key}.luxar.zarr"
     return build_interop_scene(

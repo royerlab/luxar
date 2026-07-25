@@ -134,13 +134,15 @@ def build_scene() -> Path:
     )
     if not (CACHE_GSPLATS.exists() and not FLAGS["recompute"]):
         fetch_member()
-    # Small single object → a stream ladder gives fast first paint, no tiling.
+    # Small single object → a streaming ladder (geometric ~14k → doubling)
+    # gives fast first paint, no tiling. The first chunk carries most of the
+    # energy, so the fly shows almost immediately, then refines.
     build_gsplats_cache(
         CACHE_PLY,
         CACHE_GSPLATS,
         recipe="stream",
         recompute=FLAGS["recompute"],
-        n_lods=3,
+        breakpoints="stream:14000",
     )
     out = get_demos_output_dir() / "gsplats_interop_macro_clusterfly.luxar.zarr"
     return build_interop_scene(
