@@ -203,10 +203,11 @@ stream:
 | **Tribolium embryo** — light-sheet, 1 timepoint | 965 × 1871 × 991 = 1.8 G voxels (3.3 GB as TIFF) | 256K splats · **2.6 MB** |
 | **C. elegans embryo** — confocal, 400 timepoints | 400 × 41 × 512 × 512 = 4.3 G voxels | 5.5M splats · **72 MB** (180 KB per timepoint) |
 
-Both are the cached fits bundled with this repository (`demos/data/gsplats_tribolium/`
-and `demos/data/gsplats_celegans/`), fitted at full source resolution — about
-10 bytes per splat on disk. They then render in any WebGL2 browser: no 3D textures,
-no ray-marching, and no CUDA on the viewing machine.
+Both are the cached fits bundled with this repository under
+`packages/luxar/src/luxar/demos/data/`, fitted at full source resolution — the
+single-file Tribolium fit works out to about 10 bytes per splat on disk. They then
+render in any WebGL2 desktop browser: no 3D textures, no ray-marching, and no CUDA
+on the viewing machine.
 
 This is lossy, so fidelity is measured rather than asserted. Across a 13-dataset
 microscopy benchmark (4–107 M voxels; confocal, spinning-disk and light-sheet), fits
@@ -240,7 +241,7 @@ luxar gsplat convert fit.gsplats.zarr scene.luxar.zarr \
 ```
 
 The other modes cover the rest of the classical spectrum: `additive`/`luminous`
-(pure emission, the default), `max` (maximum-intensity projection), and
+(pure emission — `additive` is the default), `max` (maximum-intensity projection), and
 `normal`/`opaque` (surfaces). Full derivation and invariants in the
 [Volumetric Blending Spec](docs/guides/specs/VOLUMETRIC_BLENDING_SPEC.md).
 
@@ -290,7 +291,7 @@ The recipes are named by intent and ordered by dataset scale:
 | `adaptive` | tiles where every tile picks its own level | largest scenes, locally adaptive |
 
 Apart from `flat`, every recipe carries a progressive streaming ladder by default:
-splats are reordered so that *any* prefix is the best L² approximation of the whole,
+splats are reordered so that early prefixes carry as much of the signal as possible,
 which means the first chunk to arrive is already a meaningful picture and later
 chunks only refine it. Where levels replace each other, the viewer picks between
 them using a viewport-relative `coverage_fraction = sqrt(N_i / N_finest)` — the
