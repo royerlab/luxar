@@ -573,6 +573,8 @@ to ship after). Sequencing is at the bottom.
 
 ## Bugs
 
+27 - ~~**Demos can't be stopped with Ctrl-C; a new demo shows the old one**~~: **DONE** (2026-07-24, #652). `luxar demo run` spawned a 3-level tree (`demo run` → demo script → `luxar serve` uvicorn) with no process-group isolation or owned teardown, so Ctrl-C orphaned the server on ports 8000/5173; `pick_port` then auto-incremented and the stale browser tab kept showing the old scene. Fix: new stdlib-only `luxar/utils/process.py::run_child_process` runs the child in its own session (`start_new_session`) and, on any exit, tears the whole subtree down with escalating SIGINT → SIGTERM → SIGKILL in a `finally` (SIGTERM/SIGHUP routed in too; a second Ctrl-C jumps straight to SIGKILL). Wired into `demo_run`/`demo_run_all` (isolate the group) and `launch_viewer` (stay in the group so the group-kill cascades). Verified with a real foreground Ctrl-C via a PTY: exits 130, zero survivors, ports freed. Also folded in demo-CLI robustness (installed-wheel guard, clean `DEMO_META` errors, run-all GPU/large-download skips + `--include-gpu`/`--max-download-mb`, corrupt-download classification, honest cache-clear totals, no `datasets/` dir creation on `demo list`).
+
 23 - **Fix bugs surfaced by examples** (reproduced & triaged 2026-06-30):
     - ✅ `scene_dimensions_example` — **FIXED.** `[`/`]` navigation emptied the
       view because `step` (time 0.5 s, z 0.1 µm) was finer than the data
