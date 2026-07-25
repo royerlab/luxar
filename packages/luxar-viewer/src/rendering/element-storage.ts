@@ -170,6 +170,196 @@ interface ElementStorageUserData {
   elementTexture?: THREE.DataTexture;
 }
 
+// ────────────────────────────────────────────────────────────────────
+// Chunked ordering application (perf lever L8)
+//
+// A depth-sort resolve on a large node used to apply its whole
+// permutation in one shot: a full-array `set()` memcpy plus ONE
+// `[0, n)` update range that the classic WebGLRenderer uploads in a
+// single `bufferSubData` on the next flush. At 10M splats that is a
+// 40 MB upload + 40 MB memcpy on the GL thread — measured on the
+// campaign baseline (Mac M4 Max, synthetic 10M-splat orbit) as
+// sort-adjacent frame p99 of 119–563 ms vs ~27–35 ms idle-orbit p99.
+// Even 5M (20 MB) showed sort-adjacent tail spikes on some runs.
+//
+// Large orderings are therefore applied CHUNKED: one slice of
+// `SORTED_INDEX_CHUNK_ELEMENTS` indices per rendered frame (write the
+// slice + register just its update range), driven by a per-frame pump
+// (the depth-sort coordinator's scheduler). 1M indices = 4 MB/frame,
+// which by the baseline's linear-in-bytes scaling bounds the added
+// per-frame cost to roughly 1/10th of the 10M stall (~12–56 ms worst
+// case → low-single-digit ms typical) instead of one 119–563 ms hitch.
+//
+// CORRECTNESS TRADE (documented, deliberate): mid-application the
+// attribute holds `new ordering[0, cursor) ∪ old ordering[cursor, n)`.
+// Both halves are valid storage-slot indices, but the MIX is not a
+// permutation: an element indexed by both halves draws twice and the
+// one it displaced draws zero times. Visually that is transient
+// shimmer of the same class as the stale-order frames every 3DGS
+// renderer shows between camera move and sort resolve — strictly
+// bounded by `ceil(n / chunk)` frames (≤ 10 frames at 10M), after
+// which the buffer EXACTLY equals the new ordering. Order-independent
+// (additive/commutative) modes never receive orderings (identity is
+// pinned), so only normal/volumetric see it. The pick path shares the
+// same attribute: a transiently duplicated index means two instances
+// briefly resolve to the same element id — a hover mid-shimmer can
+// pick either duplicate, equally acceptable and equally transient.
+//
+// WebGPU: both WebGPU backends ignore attribute update ranges and
+// re-upload the whole buffer on every `needsUpdate`, so chunking there
+// would turn ONE full upload into `ceil(n / chunk)` full uploads
+// (only the JS memcpy would be bounded). Chunking is therefore
+// feature-gated to the classic WebGL backend via
+// {@link configureSortedIndexChunkedApply} (renderer-setup calls it
+// with `apiSurface === 'webgl2'`); WebGPU keeps the single-shot path.
+// ────────────────────────────────────────────────────────────────────
+
+/**
+ * Chunk size AND single-shot threshold, in Uint32 indices (4 MB per
+ * chunk). Threshold = chunk size: an ordering that fits one chunk
+ * gains nothing from deferral (the chunked path would apply it in one
+ * slice anyway), and the baseline showed sort-adjacent tail spikes
+ * already at 5M (20 MB) single-shot uploads, so the cutoff sits well
+ * below that — a 1M single-shot upload is the spec §6 exit-criterion
+ * size (4 MB @ 1M) that held target FPS on the Phase-3 perf gate.
+ */
+export const SORTED_INDEX_CHUNK_ELEMENTS = 1_000_000;
+
+/** Live chunk size — test-overridable so unit tests stay tiny. */
+let sortedIndexChunkElements = SORTED_INDEX_CHUNK_ELEMENTS;
+
+/** Override the chunk size/threshold (tests only). `null` restores the default. */
+export function setSortedIndexChunkElementsForTests(elements: number | null): void {
+  sortedIndexChunkElements = elements ?? SORTED_INDEX_CHUNK_ELEMENTS;
+}
+
+/**
+ * Session backend gate (renderer-setup, the
+ * `configureElementTextureLayout` pattern): `true` on the classic
+ * WebGL backend (partial attribute uploads honored), `false` on the
+ * WebGPU backends (ranges ignored — chunking would multiply full
+ * uploads; see the module note above). Defaults to `true`: classic
+ * WebGL is the production default and headless/unit contexts have no
+ * renderer to misbehave.
+ */
+let chunkedApplyEnabled = true;
+
+/** Configure whether large orderings apply chunked (classic WebGL only). */
+export function configureSortedIndexChunkedApply(enabled: boolean): void {
+  chunkedApplyEnabled = enabled;
+}
+
+/** In-flight chunked application state for one geometry. */
+interface ChunkedOrderingApply {
+  /** The full new ordering (retained until completion/cancel). */
+  ordering: Uint32Array;
+  /** Total entries to write (pre-clamped against ordering + attribute). */
+  count: number;
+  /** Next unwritten index — `[0, cursor)` already holds the new ordering. */
+  cursor: number;
+}
+
+/**
+ * Active chunked applies, keyed by geometry (at most one per geometry —
+ * a new ordering replaces the previous apply wholesale). A plain Map is
+ * iterable for teardown sweeps; entries are removed on completion and on
+ * every cancellation path (new ordering, identity write, geometry
+ * dispose, coordinator release), so nothing lingers.
+ */
+const chunkedApplies = new Map<THREE.InstancedBufferGeometry, ChunkedOrderingApply>();
+
+/** Geometries whose dispose listener already cancels chunked applies. */
+const chunkedDisposeHooked = new WeakSet<THREE.InstancedBufferGeometry>();
+
+/**
+ * Write the next pending slice into `aSortedIndex` and register ITS
+ * update range (not the collapsed `[0, …)` prefix — re-registering the
+ * whole prefix each frame would upload 4+8+…+4·k MB instead of 4 MB/
+ * frame, defeating the chunking). Range discipline still honors the
+ * never-accumulate rule: any pending ranges (previous chunk not yet
+ * flushed — hidden mesh, coalesced frames) are folded WITH the new
+ * slice into ONE contiguous span (chunks are consecutive, and every
+ * other writer registers a `[0, n)` prefix, so the union is always
+ * contiguous and the array data under it is always current — a
+ * superset upload is correct, never stale).
+ *
+ * Returns true when more chunks remain after this one.
+ */
+function applyNextSortedIndexChunk(
+  geometry: THREE.InstancedBufferGeometry,
+  state: ChunkedOrderingApply
+): boolean {
+  const attr = geometry.getAttribute('aSortedIndex') as THREE.InstancedBufferAttribute | undefined;
+  if (!attr) {
+    // Attribute gone (defensive — release paths cancel first).
+    chunkedApplies.delete(geometry);
+    return false;
+  }
+  const arr = attr.array as Uint32Array;
+  const start = state.cursor;
+  const end = Math.min(state.count, start + sortedIndexChunkElements, arr.length);
+  arr.set(state.ordering.subarray(start, end), start);
+  state.cursor = end;
+
+  let rangeStart = start;
+  let rangeEnd = end;
+  for (const range of attr.updateRanges) {
+    if (range.start < rangeStart) rangeStart = range.start;
+    const rEnd = range.start + range.count;
+    if (rEnd > rangeEnd) rangeEnd = rEnd;
+  }
+  attr.clearUpdateRanges();
+  attr.addUpdateRange(rangeStart, rangeEnd - rangeStart);
+  attr.needsUpdate = true;
+
+  if (state.cursor >= state.count) {
+    chunkedApplies.delete(geometry);
+    return false;
+  }
+  return true;
+}
+
+/** True while a chunked ordering application is in flight for `geometry`. */
+export function hasPendingSortedIndexOrderingApply(
+  geometry: THREE.InstancedBufferGeometry
+): boolean {
+  return chunkedApplies.has(geometry);
+}
+
+/**
+ * Apply the next pending slice for `geometry` (one call per rendered
+ * frame — the depth-sort coordinator's per-frame scheduler is the
+ * driver). Returns true when more slices remain (the caller should
+ * request another frame); false when the application completed this
+ * call or none was pending.
+ */
+export function pumpSortedIndexOrderingApply(geometry: THREE.InstancedBufferGeometry): boolean {
+  const state = chunkedApplies.get(geometry);
+  if (!state) return false;
+  return applyNextSortedIndexChunk(geometry, state);
+}
+
+/**
+ * Abort an in-flight chunked application, leaving the attribute as-is
+ * (a valid mix of old/new indices — same transient class as
+ * mid-application frames; the caller is about to overwrite it or has
+ * released the geometry). Callers: new-ordering writes, both identity
+ * writers (the commit path), LOD-demotion detection in the
+ * coordinator's pump, node release, geometry dispose.
+ */
+export function cancelSortedIndexOrderingApply(geometry: THREE.InstancedBufferGeometry): void {
+  chunkedApplies.delete(geometry);
+}
+
+/**
+ * Abort every in-flight chunked application (dataset-switch teardown /
+ * app dispose — the coordinator's `releaseAllDepthSortNodes` /
+ * `disposeDepthSort` sweeps).
+ */
+export function cancelAllSortedIndexOrderingApplies(): void {
+  chunkedApplies.clear();
+}
+
 /**
  * Create the element data texture + `aSortedIndex` attribute pair on a
  * geometry, sized for `capacity` elements of `layout`. Returns the
@@ -256,6 +446,10 @@ export function writeSortedIndexIdentity(
   geometry: THREE.InstancedBufferGeometry,
   count: number
 ): void {
+  // A fresh commit supersedes any in-flight chunked ordering apply —
+  // its remaining slices belong to the OLD element population and
+  // would scribble a stale permutation over the identity just written.
+  cancelSortedIndexOrderingApply(geometry);
   const attr = geometry.getAttribute('aSortedIndex') as THREE.InstancedBufferAttribute;
   const arr = attr.array as Uint32Array;
   const n = Math.min(count, arr.length);
@@ -279,6 +473,10 @@ export function writeSortedIndexIdentityRange(
   from: number,
   count: number
 ): void {
+  // Same supersede rule as writeSortedIndexIdentity: the append commit
+  // invalidates the ordering an in-flight chunked apply was streaming
+  // (the coordinator re-sorts the grown population on a later frame).
+  cancelSortedIndexOrderingApply(geometry);
   const attr = geometry.getAttribute('aSortedIndex') as THREE.InstancedBufferAttribute;
   const arr = attr.array as Uint32Array;
   const n = Math.min(count, arr.length);
@@ -288,21 +486,56 @@ export function writeSortedIndexIdentityRange(
 
 /**
  * Write a depth-sort permutation into `aSortedIndex[0..count)` (the
- * SortWorker's back-to-front ordering, depth-sorting Phase 2). Same
- * collapsed-prefix update-range discipline as
- * {@link writeSortedIndexIdentity}. Returns the number of entries
- * written (clamped to both the ordering's and the attribute's length).
+ * SortWorker's back-to-front ordering, depth-sorting Phase 2). Returns
+ * the number of entries that WILL be written (clamped to both the
+ * ordering's and the attribute's length).
+ *
+ * Routing (perf lever L8 — see the chunked-apply module note):
+ * - `n ≤ SORTED_INDEX_CHUNK_ELEMENTS` or chunking disabled (WebGPU
+ *   backends): single-shot — full write + the same collapsed-prefix
+ *   update-range discipline as {@link writeSortedIndexIdentity}.
+ * - Larger orderings apply CHUNKED, and the per-frame pump
+ *   ({@link pumpSortedIndexOrderingApply} — the depth-sort
+ *   coordinator's scheduler) owns EVERY slice: this call only records
+ *   the pending state (the attribute is untouched — still the previous
+ *   fully-valid permutation), and each subsequent rendered frame
+ *   writes one slice until the buffer EXACTLY equals the ordering.
+ *   Deferring slice 1 too keeps the per-frame bound strict — a
+ *   synchronous first slice would fold into frame 1's pump slice for
+ *   a double-size first upload — and means a never-pumped ordering
+ *   degrades to "stale but valid", not "mixed". Mid-application
+ *   frames render a bounded old/new mix — the documented
+ *   transient-duplication trade.
+ *
+ * A previous in-flight chunked apply for this geometry is always
+ * cancelled first (a NEW ordering supersedes it wholesale and restarts
+ * from slice 0 — the coordinator's generation guard already ensures
+ * only current-generation orderings reach this writer).
  */
 export function writeSortedIndexOrdering(
   geometry: THREE.InstancedBufferGeometry,
   ordering: Uint32Array,
   count: number
 ): number {
+  cancelSortedIndexOrderingApply(geometry);
   const attr = geometry.getAttribute('aSortedIndex') as THREE.InstancedBufferAttribute;
   const arr = attr.array as Uint32Array;
   const n = Math.min(count, ordering.length, arr.length);
-  arr.set(ordering.subarray(0, n));
-  collapseSortedIndexRanges(attr, n);
+  if (!chunkedApplyEnabled || n <= sortedIndexChunkElements) {
+    arr.set(ordering.subarray(0, n));
+    collapseSortedIndexRanges(attr, n);
+    return n;
+  }
+
+  const state: ChunkedOrderingApply = { ordering, count: n, cursor: 0 };
+  chunkedApplies.set(geometry, state);
+  if (!chunkedDisposeHooked.has(geometry)) {
+    chunkedDisposeHooked.add(geometry);
+    // Structural cancellation on geometry death (mirrors the element
+    // texture's dispose-listener lifetime pin): a disposed geometry
+    // must not be kept alive by the applies map, nor pumped again.
+    geometry.addEventListener('dispose', () => cancelSortedIndexOrderingApply(geometry));
+  }
   return n;
 }
 

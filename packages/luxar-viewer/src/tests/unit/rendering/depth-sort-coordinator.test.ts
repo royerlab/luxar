@@ -1673,3 +1673,170 @@ describe('depth-sort coordinator — lazy-LOD mode-switch recovery + init settle
     expect(provider).not.toHaveBeenCalled();
   });
 });
+
+describe('depth-sort coordinator — chunked ordering apply (perf lever L8)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  /**
+   * The coordinator and the test must share ONE element-storage module
+   * instance — import it from the same registry AFTER loadCoordinator's
+   * vi.resetModules(). Shrinks the chunk to 4 indices; resetModules in
+   * the next test discards the override with the instance.
+   */
+  async function loadWithTinyChunks() {
+    const coord = await loadCoordinator();
+    const storage = await import('../../../rendering/element-storage');
+    storage.setSortedIndexChunkElementsForTests(4);
+    return { coord, storage };
+  }
+
+  /** Reversed permutation over [0, n). */
+  function reversed(n: number): Uint32Array {
+    const out = new Uint32Array(n);
+    for (let i = 0; i < n; i++) out[i] = n - 1 - i;
+    return out;
+  }
+
+  /** Commit + resolve one sort with `ordering` for a fresh normal-mode mesh. */
+  async function resolveLargeOrdering(
+    coord: Awaited<ReturnType<typeof loadCoordinator>>,
+    count: number
+  ) {
+    const mesh = makeGSplatsMesh(count, 'normal');
+    coord.noteDepthSortCommit(mesh, new Float32Array(count * 3), count);
+    await flush();
+    // Use the LAST dispatched sort — tests may resolve several in sequence.
+    const calls = mockApi.sort.mock.calls;
+    const generation = calls[calls.length - 1][0].generation as number;
+    const ordering = reversed(count);
+    sortResolvers[sortResolvers.length - 1]({ generation, ordering });
+    await flush();
+    return { mesh, ordering };
+  }
+
+  it('resolve records the pending apply; the per-frame pump streams the slices and keeps frames flowing', async () => {
+    const { coord, storage } = await loadWithTinyChunks();
+    const camera = makeCamera();
+    const requestRender = vi.fn();
+    coord.configureDepthSort({ getCamera: () => camera, requestRender });
+
+    const { mesh, ordering } = await resolveLargeOrdering(coord, 12);
+    const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
+    const arr = geometry.getAttribute('aSortedIndex').array as Uint32Array;
+
+    // Resolve only recorded the apply (buffer untouched — still the
+    // previous, fully valid ordering) and requested the bootstrap frame.
+    expect(storage.hasPendingSortedIndexOrderingApply(geometry)).toBe(true);
+    expect(Array.from(arr.subarray(0, 12))).toEqual(new Array(12).fill(0));
+    expect(requestRender).toHaveBeenCalled();
+
+    // Frame 1: slice [0, 4) + a follow-up frame request (the pump is the
+    // only thing keeping the on-demand loop alive between slices).
+    requestRender.mockClear();
+    coord.evaluateDepthSortPerFrame();
+    expect(Array.from(arr.subarray(0, 4))).toEqual([11, 10, 9, 8]);
+    expect(requestRender).toHaveBeenCalledTimes(1);
+
+    // Frame 2: slice [4, 8).
+    requestRender.mockClear();
+    coord.evaluateDepthSortPerFrame();
+    expect(Array.from(arr.subarray(4, 8))).toEqual([7, 6, 5, 4]);
+    expect(requestRender).toHaveBeenCalledTimes(1);
+
+    // Frame 3: final slice — completes; the just-written slice rides this
+    // frame's flush, so no extra frame is requested.
+    requestRender.mockClear();
+    coord.evaluateDepthSortPerFrame();
+    expect(storage.hasPendingSortedIndexOrderingApply(geometry)).toBe(false);
+    expect(Array.from(arr.subarray(0, 12))).toEqual(Array.from(ordering));
+    expect(requestRender).not.toHaveBeenCalled();
+
+    // Steady state: further frames neither write nor request.
+    coord.evaluateDepthSortPerFrame();
+    expect(requestRender).not.toHaveBeenCalled();
+  });
+
+  it('a cleared committedData stamp (LOD demotion) aborts the remaining slices', async () => {
+    const { coord, storage } = await loadWithTinyChunks();
+    const camera = makeCamera();
+    coord.configureDepthSort({ getCamera: () => camera, requestRender: vi.fn() });
+
+    const { mesh } = await resolveLargeOrdering(coord, 12);
+    const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
+    expect(storage.hasPendingSortedIndexOrderingApply(geometry)).toBe(true);
+
+    // Demotion: geometry returned to the pool (may already serve another
+    // node) — the remaining slices describe the demoted population.
+    delete mesh.userData.committedData;
+    const arr = geometry.getAttribute('aSortedIndex').array as Uint32Array;
+    const before = Array.from(arr);
+    coord.evaluateDepthSortPerFrame();
+    expect(storage.hasPendingSortedIndexOrderingApply(geometry)).toBe(false);
+    expect(Array.from(arr)).toEqual(before); // no further writes
+  });
+
+  it('a stale-generation resolve never starts a chunked apply; the queued re-sort does', async () => {
+    const { coord, storage } = await loadWithTinyChunks();
+    const camera = makeCamera();
+    coord.configureDepthSort({ getCamera: () => camera, requestRender: vi.fn() });
+
+    const mesh = makeGSplatsMesh(12, 'normal');
+    coord.noteDepthSortCommit(mesh, new Float32Array(36), 12);
+    await flush();
+    const staleGeneration = mockApi.sort.mock.calls[0][0].generation as number;
+    // A newer commit lands mid-sort (bumps the generation, queues a re-sort).
+    coord.noteDepthSortCommit(mesh, new Float32Array(36), 12);
+    await flush();
+
+    const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
+    sortResolvers[0]({ generation: staleGeneration, ordering: reversed(12) });
+    await flush();
+    // Stale result dropped BEFORE the writer — no partial apply started.
+    expect(storage.hasPendingSortedIndexOrderingApply(geometry)).toBe(false);
+
+    // The queued re-sort dispatched on resolve; its CURRENT-generation
+    // result streams normally.
+    expect(mockApi.sort).toHaveBeenCalledTimes(2);
+    const freshGeneration = mockApi.sort.mock.calls[1][0].generation as number;
+    const ordering = reversed(12);
+    sortResolvers[1]({ generation: freshGeneration, ordering });
+    await flush();
+    expect(storage.hasPendingSortedIndexOrderingApply(geometry)).toBe(true);
+    coord.evaluateDepthSortPerFrame();
+    coord.evaluateDepthSortPerFrame();
+    coord.evaluateDepthSortPerFrame();
+    const arr = geometry.getAttribute('aSortedIndex').array as Uint32Array;
+    expect(Array.from(arr.subarray(0, 12))).toEqual(Array.from(ordering));
+  });
+
+  it("releaseDepthSortNode cancels the node's in-flight apply (no orphaned pump entry)", async () => {
+    const { coord, storage } = await loadWithTinyChunks();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+
+    const { mesh } = await resolveLargeOrdering(coord, 12);
+    const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
+    expect(storage.hasPendingSortedIndexOrderingApply(geometry)).toBe(true);
+    coord.releaseDepthSortNode(mesh);
+    expect(storage.hasPendingSortedIndexOrderingApply(geometry)).toBe(false);
+  });
+
+  it('releaseAllDepthSortNodes and disposeDepthSort sweep every in-flight apply', async () => {
+    const { coord, storage } = await loadWithTinyChunks();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+
+    const { mesh } = await resolveLargeOrdering(coord, 12);
+    const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
+    expect(storage.hasPendingSortedIndexOrderingApply(geometry)).toBe(true);
+    coord.releaseAllDepthSortNodes();
+    expect(storage.hasPendingSortedIndexOrderingApply(geometry)).toBe(false);
+
+    // disposeDepthSort covers the app-teardown path the same way.
+    const second = await resolveLargeOrdering(coord, 12);
+    const secondGeometry = second.mesh.geometry as THREE.InstancedBufferGeometry;
+    expect(storage.hasPendingSortedIndexOrderingApply(secondGeometry)).toBe(true);
+    coord.disposeDepthSort();
+    expect(storage.hasPendingSortedIndexOrderingApply(secondGeometry)).toBe(false);
+  });
+});
