@@ -51,18 +51,16 @@ DEMO_META = {
 }
 
 import gzip
-import importlib
 import re
 import sys
 import tempfile
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import launch_viewer, stack_colorings
+from luxar.demos import launch_viewer, require_module, stack_colorings
 from luxar.utils.download import (
     QUARANTINE_SUFFIX,
     find_quarantined_files,
@@ -76,47 +74,6 @@ from luxar.utils.paths import get_demos_output_dir
 # =============================================================================
 
 DEFAULT_SAMPLE_SIZE = 0  # 0 = all (~572K)
-
-# Optional heavyweight dependencies, each demanded ONLY at the point where the
-# corresponding uncached computation happens — never as an entry-point preflight.
-# A complete embeddings cache returns before torch/esm are touched, and a
-# complete UMAP cache returns before umap-learn is, so gating up front would
-# refuse to run a machine that has every artifact it needs. Values are
-# (pip spec, luxar extra, extra note).
-_INSTALL_HINTS: dict[str, tuple[str, str, str]] = {
-    "torch": (
-        "torch>=2.2,<3.0",
-        "gsplats",
-        "Needed only to COMPUTE embeddings (a CUDA GPU is required for that).",
-    ),
-    "esm": (
-        "esm>=3.0.0",
-        "demos",
-        "Needed only to COMPUTE embeddings; a complete cached embeddings file "
-        "skips the model entirely.",
-    ),
-    "umap": (
-        "umap-learn>=0.5.0",
-        "demos",
-        "Needed only to COMPUTE the 3D projection; a cached UMAP skips it.",
-    ),
-}
-
-
-def _require_module(name: str) -> Any:
-    """Import an optional dependency, or raise with an actionable install hint.
-
-    Raises ``ImportError`` rather than exiting, so callers keep control and the
-    demo's own error reporting stays in one place.
-    """
-    try:
-        return importlib.import_module(name)
-    except ImportError as exc:
-        spec, extra, note = _INSTALL_HINTS.get(name, (name, "demos", ""))
-        raise ImportError(
-            f"Missing dependency: {name}. Install with `pip install '{spec}'` "
-            f"(or the whole extra: `pip install 'luxar[{extra}]'`). {note}".rstrip()
-        ) from exc
 
 
 SWISSPROT_FASTA_URLS = [
@@ -456,13 +413,13 @@ def _compute_esm3_embeddings(
     # (the common case: the `.npy` is already gone, so the block above never
     # fires). Without this the demo silently restarts a multi-GB fetch/compute
     # with no hint that a rejected copy is sitting in the cache.
-    quarantined = warn_if_quarantined(
-        embeddings_cache,
-        action=(
-            "re-download the complete embeddings file, or delete the quarantined "
-            "copy to reclaim the disk space and recompute from scratch"
-        ),
-    )
+    # verbose=False: `main()` already prints a dir-wide notice for this cache
+    # before anything expensive starts, so printing again here would show the
+    # user two near-identical warnings about the SAME file three lines apart —
+    # which reads like two separate corrupt artifacts. Collect the paths silently
+    # and let them enrich the RuntimeError below instead, which is where a
+    # caller that bypassed `main()` still needs them.
+    quarantined = warn_if_quarantined(embeddings_cache, verbose=False)
 
     # Past the cache check, so the compute path is genuinely being taken: this
     # is where torch becomes mandatory (the CUDA probe below needs it). `esm` is
@@ -470,7 +427,7 @@ def _compute_esm3_embeddings(
     # "supply a complete cache" message below is the actionable one, and it
     # carries the quarantine notice, so it must not be pre-empted by a
     # missing-esm error the user cannot act on anyway.
-    torch = _require_module("torch")
+    torch = require_module("torch")
 
     # Computing ESM embeddings for ~572K proteins is only practical on a CUDA
     # GPU. If no usable cache is present and no CUDA device is available, fail
@@ -500,7 +457,7 @@ def _compute_esm3_embeddings(
         )
 
     # Load model — the one place `esm` itself is genuinely needed.
-    _require_module("esm")
+    require_module("esm")
     with asection(f"Loading ESM model: {model_name}"):
         if model_name == "esmc-300m":
             from esm.models.esmc import ESMC
@@ -605,7 +562,7 @@ def _reduce_to_3d(
         aprint(f"✓ Loaded 3D UMAP from cache ({len(positions):,} points)")
         return positions
 
-    UMAP = _require_module("umap").UMAP
+    UMAP = require_module("umap").UMAP
 
     with asection(
         f"UMAP reduction ({embeddings.shape[0]:,} × {embeddings.shape[1]}D → 3D)"

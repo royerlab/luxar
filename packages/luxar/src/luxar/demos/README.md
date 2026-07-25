@@ -960,6 +960,7 @@ from luxar.demos import (
     cached_download,     # download once into ~/.cache/luxar/<name>/, skip-if-present
     cache_computed,      # cache an expensive result (UMAP, field) — versioned, param-keyed
     require_local_data,  # gate LFS-tracked local data (clear "git lfs pull" message)
+    require_module,      # gate an OPTIONAL dependency at its point of use (see #7)
     parse_demo_flags,    # --recompute / --no-serve / --serve-only
     parse_int_arg,       # --points=N / --sample N integer flags
     hsv_to_rgb,          # vectorized rainbow / hue-ramp colouring
@@ -987,6 +988,53 @@ a demo needs the same information inside its own error message.
 
 Sibling demos are importable normally
 (`from luxar.demos.demo_x import helper`) — no `importlib` file-path tricks.
+
+### 7. Gate optional dependencies at the point of use, never at the entry point
+
+Demos may need heavyweight extras (`umap-learn`, `sentence-transformers`,
+`torch`, `esm`, `anndata`, …) that the core package deliberately does not
+require. Demand them with `require_module`, **immediately before the work that
+needs them**:
+
+```python
+from luxar.demos import require_module
+
+def _compute_umap3d(features):
+    # Gated here, not in main(): a warm cache never needs UMAP.
+    UMAP = require_module("umap").UMAP
+    return UMAP(n_components=3).fit_transform(features)
+```
+
+Do **not** write a preflight in `main()`:
+
+```python
+# ❌ WRONG — refuses to run on a machine that has every artifact it needs
+def main():
+    try:
+        import umap  # noqa: F401
+    except ImportError:
+        aprint("Missing dependency: umap-learn")
+        sys.exit(1)
+```
+
+Because these demos cache their expensive results, a warm cache never touches
+the dependency that produced it — so a preflight rejects a perfectly usable
+machine. It is not merely redundant: the ESM-3 demo printed advice ("a complete
+cached embeddings file skips the model entirely") that its own preflight made
+impossible to follow. Deferring costs nothing on a cold run either, because the
+raw download is cached too: re-running after the install resumes instead of
+refetching. `tests/test_no_entrypoint_dependency_preflight.py` fails the build if
+a preflight reappears.
+
+Version constraints live in one table, `INSTALL_SPECS` in
+[`_dependencies.py`](_dependencies.py) — never advertise a bare `pip install
+<pkg>`. `anndata` is the cautionary case: unconstrained it resolves to 0.13+,
+which requires `zarr>=3.1` and would silently upgrade Luxar past its
+`zarr>=2.16,<3.0` pin, breaking every store on disk.
+`tests/test_demos_dependencies.py` fails if a spec drifts from `pyproject.toml`.
+
+Soft checks that *degrade a feature* rather than refuse to run are fine and are
+not flagged — e.g. disabling image thumbnails when `Pillow` is absent.
 
 ## Creating New Demos
 

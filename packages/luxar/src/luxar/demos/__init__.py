@@ -27,8 +27,17 @@ from ..utils.demos import (
     stack_colorings,
     warn_if_no_cuda_gpu,
 )
+from ._dependencies import (
+    INSTALL_SPECS,
+    DependencySpec,
+    MissingDependencyError,
+    require_module,
+)
 
 __all__ = [
+    "INSTALL_SPECS",
+    "DependencySpec",
+    "MissingDependencyError",
     "cache_computed",
     "cached_download",
     "create_lorenz_attractor",
@@ -42,6 +51,7 @@ __all__ = [
     "parse_demo_flags",
     "parse_int_arg",
     "require_local_data",
+    "require_module",
     "stack_colorings",
     "warn_if_no_cuda_gpu",
 ]
