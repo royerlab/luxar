@@ -70,6 +70,13 @@ from luxar.utils._umap_utils import (
 )
 from luxar.utils.paths import get_demos_output_dir
 
+# Per-cell sphere radius in scene units, sized against the measured local
+# spacing: the 641k-cell cloud has a median nearest-neighbour distance of
+# ~0.025, so ~0.4x that keeps adjacent cells just short of touching. At the
+# previous 0.02 the filament cores washed toward white (61% of lit pixels lost
+# their hue at the opening framing), hiding most of the 27 cell-type colours.
+POINT_RADIUS = 0.010
+
 
 def load_zebrahub_umap_data(
     base_url: str = "https://public.czbiohub.org/royerlab/zebrahub/sequencing/3d-umaps/peak_umap_3d_annotated_v6",
@@ -250,7 +257,7 @@ def create_zebrahub_scene(
 
             # Add points with small radii for dense point cloud
             total_points = len(positions_combined)
-            radii = np.full(total_points, 0.02, dtype=np.float32)
+            radii = np.full(total_points, POINT_RADIUS, dtype=np.float32)
             sharpnesses = np.full(total_points, 0.6, dtype=np.float32)
 
             # Hover labels: resolve integer codes to category names, repeated per view
