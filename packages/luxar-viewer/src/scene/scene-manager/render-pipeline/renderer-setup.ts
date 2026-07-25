@@ -31,6 +31,7 @@ import {
   type RendererCapabilities,
 } from '../../../rendering/renderer-capabilities';
 import { configureElementTextureLayout } from '../../../rendering/element-texture-layout';
+import { configureSortedIndexChunkedApply } from '../../../rendering/element-storage';
 import { configureHDRRenderer, logHDRCapabilities } from '../../../utils/hdr/hdr-detection';
 import { log, Modules } from '../../../utils/log';
 import { notifier } from '../../../utils/cross-layer/notifier';
@@ -119,6 +120,9 @@ export async function createWebGLRenderer(canvas: HTMLCanvasElement): Promise<Cr
 
   const capabilities = createRendererCapabilities(renderer);
   configureElementTextureLayout(capabilities.maxTextureSize);
+  // Chunked ordering applies need honored attribute update ranges —
+  // classic WebGL only (see element-storage's chunked-apply note).
+  configureSortedIndexChunkedApply(capabilities.apiSurface === 'webgl2');
 
   log.info(Modules.RENDERER, `Rendering API: ${capabilities.apiSurface}`);
 
@@ -297,6 +301,10 @@ export async function createWebGPURenderer(
 
   const capabilities = createRendererCapabilities(gpuRenderer);
   configureElementTextureLayout(capabilities.maxTextureSize);
+  // Both WebGPU backends ignore attribute update ranges (full re-upload
+  // per needsUpdate) — chunking would multiply the GPU upload, so large
+  // orderings keep the single-shot path there.
+  configureSortedIndexChunkedApply(capabilities.apiSurface === 'webgl2');
   log.info(Modules.RENDERER, `Rendering API: ${capabilities.apiSurface}`);
 
   const hdrCapabilities = capabilities.hdr;
