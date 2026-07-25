@@ -28,12 +28,30 @@ import {
 
 /**
  * Above this fraction of a texture's rows being dirty, the per-row
- * `texSubImage2D` call overhead outweighs the bytes a ranged upload
- * saves, so we fall back to three's single full-image upload. Empirical
- * knee: a full-row transfer (~64 KB at width 4096) costs ~4× a bare GL
- * call, so ranges win comfortably up to ~¾ of the rows.
+ * call overhead outweighs the bytes a ranged upload saves, so we fall
+ * back to three's single full-image upload. Backend-dependent:
+ * - Classic WebGL (default 0.75): a full-row `texSubImage2D` (~64 KB at
+ *   width 4096) costs ~4× a bare GL call, so ranges win comfortably up
+ *   to ~¾ of the rows.
+ * - Native WebGPU (set to Infinity by renderer-setup when the partial-
+ *   upload wrapper installs): probed on Dawn/Metal (M4 Max), per-row
+ *   `queue.writeTexture` is FASTER than the monolithic full-image path
+ *   at every dirty fraction (full 305 MB = 129 ms vs 40%-rows ranged =
+ *   56 ms, per-row variant 42 ms) — ranged never loses, so the knee
+ *   never fires (full uploads happen only via the pendingFullUpload
+ *   full-dirty encoding).
  */
-const FULL_UPLOAD_ROW_FRACTION = 0.75;
+let fullUploadRowFraction = 0.75;
+
+/**
+ * Configure the full-upload knee for the active renderer backend (the
+ * {@link configureSortedIndexChunkedApply} pattern — called once by
+ * renderer-setup). `Number.POSITIVE_INFINITY` disables the ranged→full
+ * collapse entirely (native WebGPU, see the knee note above).
+ */
+export function configureElementTextureFullUploadKnee(fraction: number): void {
+  fullUploadRowFraction = fraction;
+}
 
 /**
  * Register the dirty element span `[firstElement, endElement)` on an
@@ -47,22 +65,25 @@ const FULL_UPLOAD_ROW_FRACTION = 0.75;
  * Range discipline mirrors {@link collapseSortedIndexRanges}:
  * - Units are FLOAT elements of `image.data` (three's texture-range API is
  *   float-indexed with an implicit RGBA `componentStride` of 4).
- * - Ranges accumulate across commits while a mesh is hidden, and BOTH
- *   WebGPU backends (native + WebGL2-fallback) replay them verbatim and
- *   never clear them — only the classic WebGLRenderer consumes+clears at
- *   flush. So every call collapses the pending set into one contiguous
- *   span and re-splits it (a superset upload is always correct, never
- *   stale; our writers only ever register a `[0, n)` prefix or an append
- *   suffix contiguous with it).
+ * - Ranges accumulate across commits while a mesh is hidden. The classic
+ *   WebGLRenderer consumes+clears them at flush, and so does the native-
+ *   WebGPU partial-upload wrapper (`webgpu-partial-texture-upload.ts`,
+ *   depth-sorting spec §7 Stage 3); only the WebGL2-fallback WebGPU
+ *   backend ignores them without clearing. So every call collapses the
+ *   pending set into one contiguous span and re-splits it (a superset
+ *   upload is always correct, never stale; our writers only ever
+ *   register a `[0, n)` prefix or an append suffix contiguous with it).
  * - An element is exactly `floatsPerElement` floats and the texture width
  *   is a multiple of the layout's texels-per-element, so elements never
  *   straddle rows — each emitted range stays within one row (the WebGL
  *   path uploads every range with `height = 1` and would reject a
  *   row-straddling range with INVALID_VALUE).
  *
- * On the WebGPU backends this still sets `needsUpdate`; they ignore the
- * ranges and re-upload the whole image (correct, just not yet partial —
- * see the Phase-4 spec's Stage 3).
+ * On NATIVE WebGPU the ranges are consumed per-row by the Stage-3
+ * wrapper (`webgpu-partial-texture-upload.ts`); the WebGL2-fallback
+ * WebGPU backend still ignores them and re-uploads the whole image
+ * (correct, just not partial — a parity diagnostic surface, not a
+ * target).
  */
 /**
  * Textures with a FULL-image upload pending (encoded to three as
@@ -72,10 +93,10 @@ const FULL_UPLOAD_ROW_FRACTION = 0.75;
  * full upload to a partial one, leaving the prefix rendering the
  * previous commit's texels on the classic WebGL backend (found by
  * model-based fuzzing; deterministic repro: full write ≥75% of rows →
- * append before any flush). Cleared by `texture.onUpdate`, which the
- * classic renderer invokes after it actually consumes the upload (the
- * WebGPU backends may never call it — harmless, they full-upload on
- * every needsUpdate anyway).
+ * append before any flush). Cleared by `texture.onUpdate`, which every
+ * backend invokes after consuming the upload (the classic renderer from
+ * WebGLTextures; the WebGPU backends via common/Textures.js:349 —
+ * verified r184).
  */
 const pendingFullUpload = new WeakSet<THREE.DataTexture>();
 
@@ -146,7 +167,7 @@ export function registerElementTexelDirtyRange(
   const lastRow = Math.floor((endFloat - 1) / rowFloats);
   const dirtyRows = lastRow - firstRow + 1;
 
-  if (dirtyRows >= FULL_UPLOAD_ROW_FRACTION * totalRows) {
+  if (dirtyRows >= fullUploadRowFraction * totalRows) {
     // Too much dirty to bother splitting: leave updateRanges empty so
     // three takes its single full-image texSubImage2D path — and record
     // the pending-full state so a later ranged write can't downgrade it

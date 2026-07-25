@@ -31,7 +31,11 @@ import {
   type RendererCapabilities,
 } from '../../../rendering/renderer-capabilities';
 import { configureElementTextureLayout } from '../../../rendering/element-texture-layout';
-import { configureSortedIndexChunkedApply } from '../../../rendering/element-storage';
+import {
+  configureElementTextureFullUploadKnee,
+  configureSortedIndexChunkedApply,
+} from '../../../rendering/element-storage';
+import { installWebGPUPartialTextureUploads } from '../../../rendering/webgpu-partial-texture-upload';
 import { configureHDRRenderer, logHDRCapabilities } from '../../../utils/hdr/hdr-detection';
 import { log, Modules } from '../../../utils/log';
 import { notifier } from '../../../utils/cross-layer/notifier';
@@ -123,6 +127,10 @@ export async function createWebGLRenderer(canvas: HTMLCanvasElement): Promise<Cr
   // Chunked ordering applies need honored attribute update ranges —
   // classic WebGL only (see element-storage's chunked-apply note).
   configureSortedIndexChunkedApply(capabilities.apiSurface === 'webgl2');
+  // Classic WebGL keeps the measured 0.75 ranged→full knee (explicit
+  // reset — a mid-session renderer swap must not inherit the WebGPU
+  // Infinity value).
+  configureElementTextureFullUploadKnee(0.75);
 
   log.info(Modules.RENDERER, `Rendering API: ${capabilities.apiSurface}`);
 
@@ -305,6 +313,19 @@ export async function createWebGPURenderer(
   // per needsUpdate) — chunking would multiply the GPU upload, so large
   // orderings keep the single-shot path there.
   configureSortedIndexChunkedApply(capabilities.apiSurface === 'webgl2');
+  // Partial TEXTURE uploads (spec §7 Stage 3): NATIVE WebGPU only —
+  // apiSurface is 'webgpu' even under forceWebGL, so gate on the
+  // backend flag. The wrapper consumes the element textures' per-row
+  // updateRanges via queue.writeTexture; with it installed, the
+  // ranged→full knee never fires (probe: ranged always wins on Dawn —
+  // see element-storage's knee note). If the seam shape drifted, keep
+  // the stock full uploads AND the default knee.
+  const backend = (gpuRenderer as unknown as { backend?: { isWebGLBackend?: boolean } }).backend;
+  if (backend && backend.isWebGLBackend !== true) {
+    if (installWebGPUPartialTextureUploads(gpuRenderer as never)) {
+      configureElementTextureFullUploadKnee(Number.POSITIVE_INFINITY);
+    }
+  }
   log.info(Modules.RENDERER, `Rendering API: ${capabilities.apiSurface}`);
 
   const hdrCapabilities = capabilities.hdr;
