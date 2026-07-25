@@ -10,7 +10,7 @@ import { POINT_VERTEX_SHADER, POINT_FRAGMENT_SHADER } from './shader-glsl';
 import { getPlaceholderElementTexture } from '../../element-texture-layout';
 import type { CameraAwareMaterial } from '../_shared/camera-aware-material';
 import type { ColormapAwareMaterial } from '../_shared/colormap-aware-material';
-import { clampGamma, isGammaOne } from '../_shared/uniform-helpers';
+import { clampGamma, isGammaOne, isNoGOG } from '../_shared/uniform-helpers';
 import { computePointSizeFactor, computeMaxPointSize } from '../_shared/camera-uniforms';
 import {
   applyColormapTextureToMaterial,
@@ -39,6 +39,16 @@ export interface PointMaterialConfig {
    * `GSplatMaterialConfig.absorption` (three-geometry symmetry).
    */
   absorption?: number;
+  /**
+   * True when the dataset's colors carry a per-element alpha channel
+   * (RGBA). Gates the volumetric branch's alpha → optical-depth mapping
+   * (w = −ln(1−a)); the linear per-mode alpha factor needs no gate (RGB
+   * data carries the identity alpha 1.0 in the element texture). Same
+   * shape as `GSplatMaterialConfig.hasElementAlpha` (three-geometry
+   * symmetry). Normally pushed per-commit by the material sync; the
+   * config field exists so clone() round-trips it.
+   */
+  hasElementAlpha?: boolean;
   /**
    * Luxar blending mode. Same shape as `LineMaterialConfig.blendingMode`
    * and `GSplatMaterialConfig.blendingMode` (three-geometry symmetry —
@@ -102,9 +112,13 @@ export class PointMaterial
         // acquired pool entry's texture via `updatePointTexture`.
         uPointTex: { value: getPlaceholderElementTexture() },
 
-        // Color uniforms
-        opacity: { value: materialConfig.opacity ?? 1.0 },
-        invGamma: { value: 1.0 / gammaValue }, // Pre-computed inverse for performance
+        // Color uniforms. `uOpacity` / `uInvGamma` were historically the
+        // un-prefixed `opacity` / `invGamma`; renamed for three-geometry
+        // naming symmetry with the Line/GSplat materials — which also
+        // avoids shadowing THREE.Material's built-in `.opacity` property
+        // in readers' minds.
+        uOpacity: { value: materialConfig.opacity ?? 1.0 },
+        uInvGamma: { value: 1.0 / gammaValue }, // Pre-computed inverse for performance
         uIntensity: { value: materialConfig.intensity ?? 1.0 },
         uOffset: { value: materialConfig.offset ?? 0.0 },
 
@@ -112,9 +126,9 @@ export class PointMaterial
         // the LUXAR_VOLUMETRIC define; inert in every other mode.
         uAbsorption: { value: materialConfig.absorption ?? 1.0 },
         // 1 when the committed colors carry a real alpha column (RGBA);
-        // set per-commit (commit-points-geometry.ts), gates only the
-        // volumetric w(a) optical-depth map.
-        uHasElementAlpha: { value: 0 },
+        // pushed per-commit (material-sync-helpers.ts), gates only the
+        // volumetric w(a) optical-depth map; config seeds it for clone().
+        uHasElementAlpha: { value: materialConfig.hasElementAlpha ? 1 : 0 },
 
         // OPTIMIZED camera uniforms - pre-computed for shader performance
         // pointSizeFactor = 2.0 * resolution.y / tan(fov/2)
@@ -130,8 +144,11 @@ export class PointMaterial
 
         // Physical framebuffer size in pixels (used by the
         // instanced-quad vertex shader to convert pixel offsets to
-        // NDC. Defaults match the camera-uniform defaults; overridden
-        // by `updateCameraParams`.
+        // NDC. DELIBERATELY (1920, 1080) rather than the line/gsplat
+        // (1, 1) placeholder: it pairs with the pointSizeFactor /
+        // maxPointSize defaults derived from defaultResolutionY above,
+        // so the pre-first-broadcast state is self-consistent.
+        // Overridden by `updateCameraParams`.
         uResolution: { value: new THREE.Vector2(1920, defaultResolutionY) },
 
         // Colormap uniforms (only active when USE_COLORMAP define is set)
@@ -150,10 +167,16 @@ export class PointMaterial
 
       // Preprocessor defines — USE_COLORMAP enables scalar attribute + LUT
       // lookup; LUXAR_GAMMA_ONE skips the per-fragment gamma pow() when
-      // gamma == 1.0 (toggled by `updateGamma`).
+      // gamma == 1.0 (toggled by `updateGamma`); LUXAR_NO_GOG skips the
+      // GOG mul/add/clamp chain when intensity == 1 && offset == 0
+      // (toggled by `updateIntensity` / `updateOffset` — mirrors the
+      // Line material).
       defines: {
         ...(materialConfig.colormapTexture ? { USE_COLORMAP: '' } : {}),
         ...(isGammaOne(gammaValue) ? { LUXAR_GAMMA_ONE: '' } : {}),
+        ...(isNoGOG(materialConfig.intensity ?? 1.0, materialConfig.offset ?? 0.0)
+          ? { LUXAR_NO_GOG: '' }
+          : {}),
       },
 
       // GLSL ES 3.0 for consistency with other materials
@@ -218,12 +241,12 @@ export class PointMaterial
    * Update opacity
    */
   updateOpacity(opacity: number): void {
-    this.uniforms.opacity.value = opacity;
+    this.uniforms.uOpacity.value = opacity;
   }
 
   /** Current opacity multiplier (the LOD cross-fade snapshots this as its fade base). */
   getOpacity(): number {
-    return this.uniforms.opacity.value as number;
+    return this.uniforms.uOpacity.value as number;
   }
 
   /**
@@ -237,7 +260,7 @@ export class PointMaterial
   updateGamma(gamma: number): void {
     const safeGamma = clampGamma(gamma);
     this.userData.gamma = safeGamma; // Store for clone() method
-    this.uniforms.invGamma.value = 1.0 / safeGamma;
+    this.uniforms.uInvGamma.value = 1.0 / safeGamma;
 
     if (!this.defines) this.defines = {};
     const wantGammaOne = isGammaOne(safeGamma);
@@ -252,10 +275,36 @@ export class PointMaterial
   }
 
   /**
+   * Toggle the `LUXAR_NO_GOG` define based on the live uniform values
+   * for intensity + offset. Called by both `updateIntensity` and
+   * `updateOffset` because the flag depends on both values jointly.
+   * Returns true if the define changed (caller may need a rebuild).
+   * Mirrors `LineMaterial._refreshNoGOGDefine`.
+   */
+  private _refreshNoGOGDefine(): boolean {
+    if (!this.defines) this.defines = {};
+    const wantNoGOG = isNoGOG(
+      this.uniforms.uIntensity.value as number,
+      this.uniforms.uOffset.value as number
+    );
+    const hadNoGOG = 'LUXAR_NO_GOG' in this.defines;
+    if (wantNoGOG && !hadNoGOG) {
+      this.defines.LUXAR_NO_GOG = '';
+      return true;
+    }
+    if (!wantNoGOG && hadNoGOG) {
+      delete this.defines.LUXAR_NO_GOG;
+      return true;
+    }
+    return false;
+  }
+
+  /**
    * Update intensity (linear color multiplier)
    */
   updateIntensity(intensity: number): void {
     this.uniforms.uIntensity.value = intensity;
+    if (this._refreshNoGOGDefine()) this.needsUpdate = true;
   }
 
   /**
@@ -263,6 +312,7 @@ export class PointMaterial
    */
   updateOffset(offset: number): void {
     this.uniforms.uOffset.value = offset;
+    if (this._refreshNoGOGDefine()) this.needsUpdate = true;
   }
 
   /**
@@ -272,6 +322,11 @@ export class PointMaterial
    */
   updateAbsorption(absorption: number): void {
     this.uniforms.uAbsorption.value = absorption;
+  }
+
+  /** Current volumetric absorption κ (mirrors GSplatMaterial.getAbsorption). */
+  getAbsorption(): number {
+    return this.uniforms.uAbsorption.value as number;
   }
 
   /**
@@ -341,7 +396,7 @@ export class PointMaterial
    * transitions (idempotent — see `userData.blendingMode` early exit).
    */
   applyBlendingMode(mode: BlendingMode): void {
-    const opacity = (this.uniforms.opacity?.value as number | undefined) ?? 1.0;
+    const opacity = (this.uniforms.uOpacity?.value as number | undefined) ?? 1.0;
     const state: CompleteBlendingState = getCompleteBlendingState(mode, opacity);
 
     // Defensive: THREE may leave `defines` undefined when none were
@@ -403,11 +458,12 @@ export class PointMaterial
    */
   clone(): this {
     const cloned = new PointMaterial({
-      opacity: this.uniforms.opacity.value,
+      opacity: this.uniforms.uOpacity.value,
       gamma: this.userData.gamma ?? 1.0, // gamma stored in userData, not uniforms
       intensity: this.uniforms.uIntensity.value,
       offset: this.uniforms.uOffset.value,
       absorption: this.uniforms.uAbsorption.value,
+      hasElementAlpha: (this.uniforms.uHasElementAlpha.value as number) === 1,
       blendingMode: (this.userData.blendingMode as BlendingMode | undefined) ?? 'additive',
       depthTest: this.userData.depthTest ?? true, // depthTest stored in userData
       transparent: this.transparent,
@@ -431,7 +487,7 @@ export class PointMaterial
     cloned.uniforms.uPointTex.value = this.uniforms.uPointTex.value;
     cloned.uniforms.pointSizeFactor.value = this.uniforms.pointSizeFactor.value;
     cloned.uniforms.maxPointSize.value = this.uniforms.maxPointSize.value;
-    cloned.uniforms.invGamma.value = this.uniforms.invGamma.value;
+    cloned.uniforms.uInvGamma.value = this.uniforms.uInvGamma.value;
     cloned.uniforms.radiusScale.value = this.uniforms.radiusScale.value;
     // Camera-state uniforms must ride along too (mirrors
     // LineMaterial.clone, the reference implementation): a clone taken
@@ -443,10 +499,6 @@ export class PointMaterial
     (cloned.uniforms.uResolution.value as THREE.Vector2).copy(
       this.uniforms.uResolution.value as THREE.Vector2
     );
-    // Commit-written data flag: the clone shares the source's point
-    // texture, so it must share its RGBA-alpha presence too.
-    cloned.uniforms.uHasElementAlpha.value = this.uniforms.uHasElementAlpha.value;
-
     return cloned as this;
   }
 

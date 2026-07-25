@@ -502,8 +502,9 @@ export const LINE_FRAGMENT_SHADER = /* glsl */ `
       // profile, AA coverage, sub-pixel energy, width-clamp fade, near
       // fade); node opacity folds in here. This is the additive-mode
       // alpha, and volumetric scales it by the per-endpoint alpha's
-      // optical-depth map w(a) = −ln(1 − a) so a segment's peak
-      // rendered alpha reproduces a (mirrors the point/gsplat shaders;
+      // optical-depth map w(a) = −ln(1 − a) so alpha composes as
+      // optical depth ("peak rendered alpha = a" is exact when the
+      // remaining τ factor is 1; mirrors the point/gsplat shaders;
       // clamp = ALPHA_CLAMP from ../_shared/volumetric). Gated by
       // uHasElementAlpha: the identity 1.0 written for RGB data must
       // NOT map to w ≈ 6.24.

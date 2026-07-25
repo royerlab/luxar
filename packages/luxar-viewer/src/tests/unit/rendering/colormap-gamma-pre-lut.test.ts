@@ -57,7 +57,7 @@ const SHADERS: ShaderPair[] = [
     name: 'points',
     vertex: POINT_VERTEX_SHADER,
     fragment: POINT_FRAGMENT_SHADER,
-    invGamma: 'invGamma',
+    invGamma: 'uInvGamma',
   },
   {
     name: 'lines',
@@ -128,9 +128,9 @@ describe('intensity/offset apply POST-LUT to the mapped color (all modes)', () =
           `${s.name}: expected the GOG gain/offset chain on vColor in the fragment shader`
         ).toBe(true);
         // The gain/offset chain must not be gated on colormap mode. The
-        // only permitted compile-out is the line shader's LUXAR_NO_GOG
-        // identity fast path (stamped solely from intensity==1 &&
-        // offset==0, never from colormap state).
+        // only permitted compile-out is the LUXAR_NO_GOG identity fast
+        // path (all three geometries; stamped solely from intensity==1
+        // && offset==0, never from colormap state).
         const gogIndex = frag.search(/vColor\s*\*\s*uIntensity\s*\+\s*uOffset/);
         const directivesBefore = frag.slice(0, gogIndex).match(/#(?:el)?if[^\n]*/g) ?? [];
         const lastGate = directivesBefore[directivesBefore.length - 1] ?? '';

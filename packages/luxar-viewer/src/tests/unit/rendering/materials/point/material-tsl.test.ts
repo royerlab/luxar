@@ -51,12 +51,12 @@ describe('PointTSLMaterial uniform proxies', () => {
     const mat = new PointTSLMaterial();
     const nodes = nodesOf(mat);
 
-    mat.uniforms.opacity.value = 0.42;
+    mat.uniforms.uOpacity.value = 0.42;
     mat.uniforms.radiusScale.value = 3.5;
     mat.uniforms.uIntensity.value = 2.0;
     mat.uniforms.uOffset.value = 0.125;
 
-    expect(nodes.opacity.value).toBe(0.42);
+    expect(nodes.uOpacity.value).toBe(0.42);
     expect(nodes.radiusScale.value).toBe(3.5);
     expect(nodes.uIntensity.value).toBe(2.0);
     expect(nodes.uOffset.value).toBe(0.125);
@@ -71,7 +71,7 @@ describe('PointTSLMaterial uniform proxies', () => {
     mat.updateIntensity(1.5);
     mat.updateOffset(0.05);
 
-    expect(nodes.opacity.value).toBeCloseTo(0.7, 6);
+    expect(nodes.uOpacity.value).toBeCloseTo(0.7, 6);
     expect(nodes.radiusScale.value).toBeCloseTo(12.0, 6);
     expect(nodes.uIntensity.value).toBeCloseTo(1.5, 6);
     expect(nodes.uOffset.value).toBeCloseTo(0.05, 6);
@@ -177,10 +177,10 @@ describe('PointTSLMaterial clone', () => {
 
     const cloned = original.clone();
 
-    expect(cloned.uniforms.opacity.value).toBeCloseTo(0.7, 5);
+    expect(cloned.uniforms.uOpacity.value).toBeCloseTo(0.7, 5);
     expect(cloned.uniforms.uIntensity.value).toBeCloseTo(1.5, 5);
     expect(cloned.uniforms.uOffset.value).toBeCloseTo(0.25, 5);
-    expect(cloned.uniforms.invGamma.value).toBeCloseTo(1 / 2.2, 5);
+    expect(cloned.uniforms.uInvGamma.value).toBeCloseTo(1 / 2.2, 5);
     expect(cloned.uniforms.radiusScale.value).toBeCloseTo(4.0, 5);
     expect(cloned.userData.gamma).toBeCloseTo(2.2, 5);
   });
@@ -261,8 +261,8 @@ describe('PointTSLMaterial clone', () => {
     const original = new PointTSLMaterial();
     const cloned = original.clone();
 
-    cloned.uniforms.opacity.value = 0.123;
-    expect(original.uniforms.opacity.value).not.toBe(0.123);
+    cloned.uniforms.uOpacity.value = 0.123;
+    expect(original.uniforms.uOpacity.value).not.toBe(0.123);
 
     cloned.uniforms.radiusScale.value = 99;
     expect(original.uniforms.radiusScale.value).not.toBe(99);

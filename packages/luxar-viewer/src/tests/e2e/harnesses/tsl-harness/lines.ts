@@ -531,6 +531,11 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
   // w(a) into τ — both defines co-compiled, both texel5 reads live off
   // the SAME single fetch. Would catch either branch displacing the
   // other (the untested-combination flag from the phase-4 double-check).
+    // (Deep-campaign note: this combination is UNREACHABLE from the Python
+  // scene API — all three adders make colors/colormap mutually exclusive
+  // and scalars require a colormap, so real data never has both an RGBA
+  // alpha column and LUT scalars. The coverage is deliberately defensive:
+  // hand-crafted zarr can reach it, and the shader must stay correct.)
   'line-volumetric-colormap': {
     source: LINE_SOURCE,
     buildUniforms: () => ({

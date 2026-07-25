@@ -29,7 +29,9 @@ export class LinePickingMaterial extends THREE.ShaderMaterial implements CameraA
         uLineTex: { value: null },
         uResolution: { value: new THREE.Vector2(1, 1) },
         uIsOrtho: { value: 0 },
-        uNearCull: { value: 0.05 },
+        // 0.1 matches the visual line material ctor default (pre-first-
+        // broadcast only; updateCameraParams overwrites with the scene value).
+        uNearCull: { value: 0.1 },
         uMaxLinePixelWidth: { value: 540 },
         uNodeId: { value: config.nodeId },
         // CPU-precomputed pixel-width scales — see LineMaterial.
