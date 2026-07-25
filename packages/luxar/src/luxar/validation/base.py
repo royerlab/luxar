@@ -253,9 +253,10 @@ def validate_colors_for_writing(
     """Validate colors array for writing.
 
     Colors are RGB ``(n, 3)`` — or RGBA ``(n, 4)`` for geometry types that
-    have opted into per-element alpha (``channels=(3, 4)``; gsplats today,
-    points/lines in their volumetric phases). The alpha column is a
-    per-element opacity in [0, 1], not an HDR emission channel.
+    have opted into per-element alpha (``channels=(3, 4)``; all three
+    geometry types since their volumetric phases: gsplats, points, lines).
+    The alpha column is a per-element opacity in [0, 1], not an HDR
+    emission channel.
 
     Args:
         colors: Colors array to validate
