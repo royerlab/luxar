@@ -28,6 +28,24 @@ function makeSceneWithBounds(min: number[], max: number[]): THREE.Scene {
   return scene;
 }
 
+/**
+ * A node that counts how many times the bounds search reads its
+ * `userData` (one read per visit). Lets tests assert how often —
+ * and whether — the graph walk actually reaches this node.
+ */
+function makeCountingNode(): { node: THREE.Group; visits: () => number; reset: () => void } {
+  const node = new THREE.Group();
+  let count = 0;
+  Object.defineProperty(node, 'userData', {
+    configurable: true,
+    get() {
+      count++;
+      return {};
+    },
+  });
+  return { node, visits: () => count, reset: () => (count = 0) };
+}
+
 describe('SceneBoundsCache', () => {
   beforeEach(() => {
     // Default behaviour without dim init: getDims() returns null and
@@ -114,6 +132,53 @@ describe('SceneBoundsCache', () => {
     cache.ensure(scene);
     expect(cache.getBounds()).toBeNull();
   });
+
+  it('negative-caches a miss: the graph walk runs ONCE across repeated ensure() calls', () => {
+    const cache = new SceneBoundsCache();
+    const scene = new THREE.Scene(); // no positionBounds anywhere
+    const { node, visits, reset } = makeCountingNode();
+    scene.add(node);
+
+    reset();
+    cache.ensure(scene);
+    cache.ensure(scene);
+    cache.ensure(scene);
+
+    expect(cache.getBounds()).toBeNull();
+    expect(visits()).toBe(1); // searched exactly once, miss cached
+  });
+
+  it('keeps the cached miss even if metadata appears later (until invalidate())', () => {
+    const cache = new SceneBoundsCache();
+    const scene = new THREE.Scene();
+    cache.ensure(scene);
+    expect(cache.getBounds()).toBeNull();
+
+    // Metadata arrives after the first miss — WITHOUT invalidation the
+    // negcache must hold (this is the per-frame O(1) contract).
+    scene.userData.positionBounds = { min: [0, 0, 0], max: [7, 7, 7] };
+    cache.ensure(scene);
+    expect(cache.getBounds()).toBeNull();
+  });
+
+  it('invalidate() after a miss re-searches and finds late-arriving metadata', () => {
+    const cache = new SceneBoundsCache();
+    const scene = new THREE.Scene();
+    cache.ensure(scene);
+    expect(cache.getBounds()).toBeNull();
+
+    // A node with positionBounds is attached later (scene load path
+    // calls invalidate() when it adds loaded content).
+    const child = new THREE.Group();
+    child.userData = { positionBounds: { min: [0, 0, 0], max: [4, 4, 4] } };
+    scene.add(child);
+    cache.invalidate();
+    cache.ensure(scene);
+
+    expect(cache.getBounds()).not.toBeNull();
+    expect(cache.getBounds()!.max.x).toBe(4);
+    expect(cache.getSphere()).not.toBeNull();
+  });
 });
 
 describe('computeBoundsFromMetadata', () => {
@@ -166,5 +231,29 @@ describe('findPositionBoundsInScene', () => {
     const scene = new THREE.Scene();
     scene.userData = { positionBounds: { min: 'wrong', max: 'shape' } };
     expect(findPositionBoundsInScene(scene)).toBeNull();
+  });
+
+  it('early-exits on a root hit without visiting children', () => {
+    const scene = makeSceneWithBounds([0, 0, 0], [1, 1, 1]);
+    const { node, visits, reset } = makeCountingNode();
+    scene.add(node);
+
+    reset();
+    expect(findPositionBoundsInScene(scene)).toEqual({ min: [0, 0, 0], max: [1, 1, 1] });
+    expect(visits()).toBe(0); // walk stopped at the root, child never visited
+  });
+
+  it('visits nested nodes in depth-first pre-order (deep-left match wins over right sibling)', () => {
+    const scene = new THREE.Scene();
+    const left = new THREE.Group();
+    const leftChild = new THREE.Group();
+    leftChild.userData = { positionBounds: { min: [1, 1, 1], max: [2, 2, 2] } };
+    left.add(leftChild);
+    const right = new THREE.Group();
+    right.userData = { positionBounds: { min: [-9, -9, -9], max: [9, 9, 9] } };
+    scene.add(left);
+    scene.add(right);
+    // Pre-order: scene → left → leftChild (match) before right.
+    expect(findPositionBoundsInScene(scene)).toEqual({ min: [1, 1, 1], max: [2, 2, 2] });
   });
 });
