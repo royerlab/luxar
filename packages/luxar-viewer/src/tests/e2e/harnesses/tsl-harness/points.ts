@@ -4,7 +4,7 @@
  * premultiply, volumetric emission–absorption, colormap LUT,
  * perspective sizing, subpixel floor, near fade, behind-camera guard,
  * sorted-index permutation) plus the point-pick counterparts.
- * 16 registry entries (incl. the multi-row texture-orientation variant).
+ * 17 registry entries (incl. the multi-row texture-orientation variant).
  *
  * @module tests/e2e/harnesses/tsl-harness/points
  */
@@ -168,6 +168,41 @@ function buildPointVolumetricMesh(material: THREE.Material): THREE.Object3D {
   const geom = createPointQuadGeometry();
   const texture = attachPointStorage(geom, 1);
   writePointTexels(texture, pointVolumetricTexelSource(), 1);
+  writeSortedIndexIdentity(geom, 1);
+  geom.instanceCount = 1;
+  geom.setDrawRange(0, 6);
+  const mesh = new THREE.Mesh(geom, material);
+  mesh.frustumCulled = false;
+  return mesh;
+}
+
+/**
+ * Combined USE_COLORMAP + LUXAR_VOLUMETRIC texel source: texel2 fully
+ * populated (scalar 0.5 in .x for the LUT AND RGBA alpha 0.6 in .y for
+ * the w(a) map). The two branches share the single unconditional texel2
+ * fetch, so this is the case that would break if either read displaced
+ * the other. The points twin of `lines.ts`' combined variant.
+ */
+function pointVolumetricColormapTexelSource(): PointTexelSource {
+  return { ...pointVolumetricTexelSource(), scalars: new Float32Array([0.5]) };
+}
+
+/** Pre-built texture for the combined colormap + volumetric variant. */
+function buildPointVolumetricColormapDataTexture(): THREE.DataTexture {
+  const tex = new THREE.DataTexture(new Float32Array(12), 3, 1, THREE.RGBAFormat, THREE.FloatType);
+  tex.magFilter = THREE.NearestFilter;
+  tex.minFilter = THREE.NearestFilter;
+  tex.generateMipmaps = false;
+  tex.flipY = false;
+  writePointTexels(tex, pointVolumetricColormapTexelSource(), 1);
+  return tex;
+}
+
+/** Point mesh whose geometry-attached texture carries scalar + RGBA alpha. */
+function buildPointVolumetricColormapMesh(material: THREE.Material): THREE.Object3D {
+  const geom = createPointQuadGeometry();
+  const texture = attachPointStorage(geom, 1);
+  writePointTexels(texture, pointVolumetricColormapTexelSource(), 1);
   writeSortedIndexIdentity(geom, 1);
   geom.instanceCount = 1;
   geom.setDrawRange(0, 6);
@@ -496,6 +531,42 @@ export const POINT_SHADERS: Record<string, RegistryEntry> = {
       return m;
     },
     buildMesh: buildPointVolumetricMesh,
+  },
+  // COMBINED colormap + volumetric: the LUT sources colour from texel2.x
+  // while the volumetric branch maps the texel2.y alpha through w(a)
+  // into τ — both defines co-compiled off the SAME single texel2 fetch.
+  // Would catch either branch displacing the other (the
+  // untested-combination flag from the phase-4 double-check).
+  'point-volumetric-colormap': {
+    source: POINT_SOURCE,
+    buildUniforms: () => ({
+      uPointTex: { value: buildPointVolumetricColormapDataTexture() },
+      pointSizeFactor: { value: 32.0 },
+      maxPointSize: { value: 32.0 },
+      radiusScale: { value: 1.0 },
+      uIsOrtho: { value: 1 },
+      uResolution: { value: new THREE.Vector2(64, 64) },
+      opacity: { value: 0.7 },
+      invGamma: { value: 1.0 / 2.2 },
+      uIntensity: { value: 1.0 },
+      uOffset: { value: 0.0 },
+      uAbsorption: { value: 1.5 },
+      uHasElementAlpha: { value: 1 },
+      uColormapTex: { value: buildColormapTexture() },
+      uScalarMin: { value: 0.0 },
+      uScalarScale: { value: 1.0 },
+    }),
+    buildDefines: () => ({ USE_COLORMAP: '', LUXAR_VOLUMETRIC: '' }),
+    buildTSLMaterial: (uniforms) => {
+      const m = pointWebGPUFactory(
+        buildPointTSLNodesFromUniforms(uniforms, { useColormap: true }),
+        { useColormap: true, blendingMode: 'volumetric' }
+      ) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: buildPointVolumetricColormapMesh,
   },
   // Point colormap parity: USE_COLORMAP LUT path. Gamma is applied to the
   // scalar VALUE before the LUT lookup (vertex stage); intensity/offset

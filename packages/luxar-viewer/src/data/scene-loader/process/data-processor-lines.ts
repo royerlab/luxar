@@ -27,7 +27,7 @@
 import * as THREE from 'three';
 import type { LinesViewState, LoadedLinesData, ProcessedLinesData } from '../../../types/lines';
 import { isLinesUserData } from '../../../types/lines';
-import { computeTolerance } from '../../loaders';
+import { assertColorLayout, computeTolerance } from '../../loaders';
 import { EXTEND_TO_ALL_TOLERANCE } from '../view-state/extend-tolerance';
 import { config as appConfig } from '../../../config';
 import { log, Modules } from '../../../utils/log';
@@ -63,6 +63,10 @@ function buildLinesParams(
   viewState: LinesViewState,
   tolerance: readonly number[]
 ): Parameters<typeof projectLinesInProcess>[0] {
+  // Strict layout check at the chokepoint where the exact vertex count
+  // is known: catches an RGBA array whose producer forgot to declare
+  // colorComponents (see assertColorLayout).
+  assertColorLayout(data.colors, data.vertexCount, data.colorComponents ?? 3, 'buildLinesParams');
   return {
     positions: data.positions,
     segments: data.segments,

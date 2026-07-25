@@ -247,3 +247,50 @@ export function writePointTexels(
   registerElementTexelDirtyRange(texture, POINT_FLOATS_PER_POINT, from, n);
   return n;
 }
+
+/**
+ * Stamp per-point-data presence flags on the geometry's userData — the
+ * points twin of `line-geometry.ts::stampLinePresenceFlags`, extracted
+ * so the two texel-write paths (node factory + pool adapter) share ONE
+ * implementation instead of a drift-prone five-flag inline block. The
+ * fixed 3-texel layout always carries every slot (identity fills when
+ * absent), so presence is not readable off a geometry attribute:
+ * `supportsScalarColormap('points', …)` reads `hasScalars`; the
+ * commit's material sync pushes `hasElementAlpha` into the material's
+ * `uHasElementAlpha` gate (volumetric w(a) map); the sibling flags
+ * serve debug/E2E introspection (node zarr attrs lack
+ * has_colors/has_radii/has_sharpness on datasets written before the
+ * Python writer stamped them).
+ *
+ * Semantics preserved exactly from the historical inline blocks:
+ * - `hasScalars` counts a ZERO-LENGTH declared scalars array as present
+ *   (`!== undefined`) — the placeholder's declared field must pass the
+ *   fail-closed colormap guard, matching the interleaved era's empty
+ *   `aScalar` pre-bind.
+ * - `hasElementAlpha` derives from the SOURCE color layout
+ *   (`colorK === 4`), not from buffer contents.
+ *
+ * Refreshed on EVERY write (pool geometries are reused across tenants;
+ * a presence flip must not leak the previous tenant's stamp) and called
+ * AFTER the texel write: `writePointTexels` throws only at its pre-loop
+ * length guard, so a throwing write leaves the texture's PREVIOUS
+ * content fully intact — and the un-reached stamps stay consistent with
+ * it (old texels + old stamps).
+ */
+export function stampPointPresenceFlags(
+  geometry: THREE.BufferGeometry,
+  data: {
+    scalars?: unknown;
+    colors?: unknown;
+    radii?: unknown;
+    sharpness?: unknown;
+  },
+  colorK: number
+): void {
+  if (!geometry.userData) geometry.userData = {};
+  geometry.userData.hasScalars = data.scalars !== undefined;
+  geometry.userData.hasColors = !!data.colors;
+  geometry.userData.hasRadii = !!data.radii;
+  geometry.userData.hasSharpness = !!data.sharpness;
+  geometry.userData.hasElementAlpha = colorK === 4;
+}
