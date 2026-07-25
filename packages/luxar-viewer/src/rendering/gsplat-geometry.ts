@@ -27,6 +27,7 @@
  */
 
 import * as THREE from 'three';
+import type { GSplatsProjectionBounds } from '../types/gsplats';
 import {
   SPLAT_FLOATS_PER_SPLAT,
   SPLAT_TEXTURE_LAYOUT,
@@ -90,12 +91,15 @@ export function createGSplatQuadGeometry(): THREE.BufferGeometry {
 export interface InstancedGSplatsMeshConfig {
   /** Splat centers (splatCount * 3) */
   centers: Float32Array;
-  /** Packed Cholesky01 [L00, L10] (splatCount * 2) */
-  cholesky01: Float32Array;
-  /** Packed Cholesky23 [L11, L20] (splatCount * 2) */
-  cholesky23: Float32Array;
-  /** Packed Cholesky45 [L21, L22] (splatCount * 2) */
-  cholesky45: Float32Array;
+  /**
+   * Packed 3D Cholesky factors (splatCount * 6), row-major
+   * [L00, L10, L11, L20, L21, L22] per splat — the projection output
+   * layout, consumed directly (the former split into cholesky01/23/45
+   * attribute pairs was an extra O(N) pass the texel writer immediately
+   * re-interleaved; splat data lives in the texture, so no shader
+   * attribute layout forces the split).
+   */
+  choleskyFactors: Float32Array;
   /** Amplitudes (splatCount) */
   amplitudes: Float32Array;
   /** Colors RGB (splatCount * 3) or RGBA (splatCount * 4) */
@@ -104,47 +108,16 @@ export interface InstancedGSplatsMeshConfig {
   colorComponents?: 3 | 4;
   /** Number of splats */
   splatCount: number;
-}
-
-/**
- * Pack 3D Cholesky factors from flat array into attribute format.
- *
- * Input: choleskyFactors with 6 elements per splat [L00, L10, L11, L20, L21, L22]
- * Output: Three arrays for shader attributes:
- * - cholesky01: [L00, L10] per splat
- * - cholesky23: [L11, L20] per splat
- * - cholesky45: [L21, L22] per splat
- *
- * @param choleskyFactors - Flat array of packed Cholesky factors (N * 6)
- * @param splatCount - Number of splats
- * @returns Object with three packed arrays for shader attributes
- */
-export function packCholeskyForShader(
-  choleskyFactors: Float32Array,
-  splatCount: number
-): { cholesky01: Float32Array; cholesky23: Float32Array; cholesky45: Float32Array } {
-  const cholesky01 = new Float32Array(splatCount * 2);
-  const cholesky23 = new Float32Array(splatCount * 2);
-  const cholesky45 = new Float32Array(splatCount * 2);
-
-  for (let i = 0; i < splatCount; i++) {
-    const srcOffset = i * 6;
-    const dstOffset = i * 2;
-
-    // L00, L10
-    cholesky01[dstOffset] = choleskyFactors[srcOffset];
-    cholesky01[dstOffset + 1] = choleskyFactors[srcOffset + 1];
-
-    // L11, L20
-    cholesky23[dstOffset] = choleskyFactors[srcOffset + 2];
-    cholesky23[dstOffset + 1] = choleskyFactors[srcOffset + 3];
-
-    // L21, L22
-    cholesky45[dstOffset] = choleskyFactors[srcOffset + 4];
-    cholesky45[dstOffset + 1] = choleskyFactors[srcOffset + 5];
-  }
-
-  return { cholesky01, cholesky23, cholesky45 };
+  /**
+   * Precomputed cull metadata (AABB of `centers` + max Cholesky row
+   * norm), stamped by the projection's fused scan. When present the
+   * bounds/row-norm scans below are skipped (mirrors the Points
+   * `metadata.bounds` pattern). Computed over the FULL projected set:
+   * if the written count is capacity-clamped below it, the box is a
+   * conservative superset — safe for frustum culling (never clips
+   * visible splats), same trade the Points path accepts.
+   */
+  bounds?: GSplatsProjectionBounds;
 }
 
 /**
@@ -155,12 +128,8 @@ export function packCholeskyForShader(
 export interface SplatTexelSource {
   /** Splat centers (count × 3). */
   centers: Float32Array;
-  /** Packed Cholesky [L00, L10] (count × 2). */
-  cholesky01: Float32Array;
-  /** Packed Cholesky [L11, L20] (count × 2). */
-  cholesky23: Float32Array;
-  /** Packed Cholesky [L21, L22] (count × 2). */
-  cholesky45: Float32Array;
+  /** Packed 3D Cholesky factors [L00, L10, L11, L20, L21, L22] (count × 6). */
+  choleskyFactors: Float32Array;
   /** Amplitudes (count). */
   amplitudes: Float32Array;
   /** Colors RGB (count × 3) or RGBA (count × 4). */
@@ -223,23 +192,20 @@ export function writeSplatTexels(
   const arr = texture.image.data as Float32Array;
   const n = Math.min(count, elementTexelCapacity(texture, SPLAT_FLOATS_PER_SPLAT));
   const from = Math.max(0, Math.min(opts?.fromSplat ?? 0, n));
-  const { centers, cholesky01, cholesky23, cholesky45, amplitudes, colors } = src;
+  const { centers, choleskyFactors, amplitudes, colors } = src;
   const colorK = src.colorComponents ?? 3;
   // Fail loud on source/count mismatch (the interleaved-era writer
   // threw here too) — a silent short read would write NaN texels that
   // the shaders' NaN guards then drop invisibly.
   if (
     centers.length < n * 3 ||
-    cholesky01.length < n * 2 ||
-    cholesky23.length < n * 2 ||
-    cholesky45.length < n * 2 ||
+    choleskyFactors.length < n * 6 ||
     amplitudes.length < n ||
     colors.length < n * colorK
   ) {
     throw new Error(
       `writeSplatTexels: source arrays shorter than count=${n} ` +
-        `(centers=${centers.length}, cholesky01=${cholesky01.length}, ` +
-        `cholesky23=${cholesky23.length}, cholesky45=${cholesky45.length}, ` +
+        `(centers=${centers.length}, choleskyFactors=${choleskyFactors.length}, ` +
         `amplitudes=${amplitudes.length}, colors=${colors.length})`
     );
   }
@@ -247,20 +213,21 @@ export function writeSplatTexels(
     const o = i * SPLAT_FLOATS_PER_SPLAT;
     const p3 = i * 3;
     const ck = i * colorK;
-    const c2 = i * 2;
+    const c6 = i * 6;
     // texel 0: center.xyz, amplitude
     arr[o] = centers[p3];
     arr[o + 1] = centers[p3 + 1];
     arr[o + 2] = centers[p3 + 2];
     arr[o + 3] = amplitudes[i];
-    // texel 1: cholesky01.xy, cholesky23.xy
-    arr[o + 4] = cholesky01[c2];
-    arr[o + 5] = cholesky01[c2 + 1];
-    arr[o + 6] = cholesky23[c2];
-    arr[o + 7] = cholesky23[c2 + 1];
-    // texel 2: cholesky45.xy, color.rg
-    arr[o + 8] = cholesky45[c2];
-    arr[o + 9] = cholesky45[c2 + 1];
+    // texel 1: [L00, L10], [L11, L20] (straight 6-stride copy — same
+    // texel bytes as the retired cholesky01/23/45 split-then-reinterleave)
+    arr[o + 4] = choleskyFactors[c6];
+    arr[o + 5] = choleskyFactors[c6 + 1];
+    arr[o + 6] = choleskyFactors[c6 + 2];
+    arr[o + 7] = choleskyFactors[c6 + 3];
+    // texel 2: [L21, L22], color.rg
+    arr[o + 8] = choleskyFactors[c6 + 4];
+    arr[o + 9] = choleskyFactors[c6 + 5];
     arr[o + 10] = colors[ck];
     arr[o + 11] = colors[ck + 1];
     // texel 3: color.b, alpha (per-splat opacity). Alpha is written
@@ -283,21 +250,27 @@ export function writeSplatTexels(
  * The row norms determine the maximum spatial extent of any splat, used to expand
  * the bounding box so frustum culling doesn't clip visible splats at screen edges.
  *
- * Cholesky layout: cholesky01=[L00,L10], cholesky23=[L11,L20], cholesky45=[L21,L22]
+ * Cholesky layout: 6-stride [L00, L10, L11, L20, L21, L22] per splat.
+ * Row norms: ||row0|| = |L00|, ||row1|| = sqrt(L10² + L11²),
+ *            ||row2|| = sqrt(L20² + L21² + L22²).
+ *
+ * Fallback scan for payloads without precomputed projection bounds —
+ * shared with the pool adapter (`gpu-buffer-pool/gsplats-adapter.ts`).
  *
  * `count` is the WRITTEN (capacity-clamped) splat count — never
- * `meshConfig.splatCount`, whose tail past the texture bound was not
+ * the requested splat count, whose tail past the texture bound was not
  * uploaded and must not influence the cull box.
  */
-function computeMaxCholeskyRowNorm(meshConfig: InstancedGSplatsMeshConfig, count: number): number {
+export function computeMaxCholeskyRowNorm(choleskyFactors: Float32Array, count: number): number {
   let maxRowNorm = 0;
   for (let i = 0; i < count; i++) {
-    const L00 = meshConfig.cholesky01[i * 2];
-    const L10 = meshConfig.cholesky01[i * 2 + 1];
-    const L11 = meshConfig.cholesky23[i * 2];
-    const L20 = meshConfig.cholesky23[i * 2 + 1];
-    const L21 = meshConfig.cholesky45[i * 2];
-    const L22 = meshConfig.cholesky45[i * 2 + 1];
+    const c6 = i * 6;
+    const L00 = choleskyFactors[c6];
+    const L10 = choleskyFactors[c6 + 1];
+    const L11 = choleskyFactors[c6 + 2];
+    const L20 = choleskyFactors[c6 + 3];
+    const L21 = choleskyFactors[c6 + 4];
+    const L22 = choleskyFactors[c6 + 5];
 
     const row0 = Math.abs(L00);
     const row1 = Math.sqrt(L10 * L10 + L11 * L11);
@@ -305,6 +278,50 @@ function computeMaxCholeskyRowNorm(meshConfig: InstancedGSplatsMeshConfig, count
     maxRowNorm = Math.max(maxRowNorm, row0, row1, row2);
   }
   return maxRowNorm;
+}
+
+/**
+ * Compute and assign the geometry's cull bounds (box + sphere): AABB of
+ * the splat centers expanded by `maxRowNorm × truncationRadius` (the
+ * conservative per-splat spatial extent).
+ *
+ * Uses the projection's precomputed fused-scan `bounds` when present —
+ * skipping two O(N) main-thread scans per commit — and falls back to
+ * the direct scans otherwise. Shared by `createInstancedGSplatsMesh`
+ * and `updateInstancedGSplatsMesh`; the pool adapter applies the same
+ * policy on its own payload type.
+ */
+function applySplatCullBounds(
+  geometry: THREE.BufferGeometry,
+  meshConfig: InstancedGSplatsMeshConfig,
+  count: number,
+  truncationRadius: number
+): void {
+  const box = new THREE.Box3();
+  let maxRowNorm: number;
+  if (meshConfig.bounds) {
+    const { min, max } = meshConfig.bounds;
+    box.min.set(min[0], min[1], min[2]);
+    box.max.set(max[0], max[1], max[2]);
+    maxRowNorm = meshConfig.bounds.maxRowNorm;
+  } else {
+    const v = new THREE.Vector3();
+    for (let i = 0; i < count; i++) {
+      v.set(
+        meshConfig.centers[i * 3],
+        meshConfig.centers[i * 3 + 1],
+        meshConfig.centers[i * 3 + 2]
+      );
+      box.expandByPoint(v);
+    }
+    maxRowNorm = computeMaxCholeskyRowNorm(meshConfig.choleskyFactors, count);
+  }
+  box.expandByScalar(maxRowNorm * truncationRadius);
+
+  geometry.boundingBox = box;
+  const sphere = new THREE.Sphere();
+  box.getBoundingSphere(sphere);
+  geometry.boundingSphere = sphere;
 }
 
 /**
@@ -348,28 +365,15 @@ export function createInstancedGSplatsMesh(
   // Set instance count
   geometry.instanceCount = count;
 
-  // Compute bounding box from centers using direct min/max loop (no temp geometry allocation)
-  const box = new THREE.Box3();
-  const v = new THREE.Vector3();
-  for (let i = 0; i < count; i++) {
-    v.set(meshConfig.centers[i * 3], meshConfig.centers[i * 3 + 1], meshConfig.centers[i * 3 + 2]);
-    box.expandByPoint(v);
-  }
-
-  // Expand bounding box by max splat extent for correct frustum culling.
+  // Cull bounds: centers AABB expanded by max splat extent (precomputed
+  // projection bounds when present, direct scans otherwise).
   // `material` is either GSplatMaterial or GSplatTSLMaterial; both expose
   // `uniforms.uTruncate` in identical shape.
-  const maxRowNorm = computeMaxCholeskyRowNorm(meshConfig, count);
   const matWithUniforms = material as THREE.Material & {
     uniforms?: { uTruncate?: { value: number } };
   };
   const truncationRadius = matWithUniforms.uniforms?.uTruncate?.value ?? 3.0;
-  box.expandByScalar(maxRowNorm * truncationRadius);
-
-  geometry.boundingBox = box;
-  const sphere = new THREE.Sphere();
-  box.getBoundingSphere(sphere);
-  geometry.boundingSphere = sphere;
+  applySplatCullBounds(geometry, meshConfig, count, truncationRadius);
 
   // Create mesh with instanced geometry
   const mesh = new THREE.Mesh(geometry, material);
@@ -477,28 +481,15 @@ export function updateInstancedGSplatsMesh(
     }
   }
 
-  // Update bounding box from centers (direct loop, no temp geometry allocation)
-  const box = new THREE.Box3();
-  const _v = new THREE.Vector3();
-  for (let i = 0; i < count; i++) {
-    _v.set(meshConfig.centers[i * 3], meshConfig.centers[i * 3 + 1], meshConfig.centers[i * 3 + 2]);
-    box.expandByPoint(_v);
-  }
-
-  // Expand by max splat extent (Cholesky row norm × truncation radius)
-  const maxRowNorm = computeMaxCholeskyRowNorm(meshConfig, count);
+  // Cull bounds: centers AABB expanded by max splat extent (precomputed
+  // projection bounds when present, direct scans otherwise).
   // Either GSplatMaterial (ShaderMaterial-backed) or GSplatTSLMaterial
   // (NodeMaterial-backed) — both expose the same `uniforms.uTruncate`.
   const material = mesh.material as THREE.Material & {
     uniforms?: { uTruncate?: { value: number } };
   };
   const truncationRadius = material.uniforms?.uTruncate?.value ?? 3.0;
-  box.expandByScalar(maxRowNorm * truncationRadius);
-
-  liveGeometry.boundingBox = box;
-  const sphere = new THREE.Sphere();
-  box.getBoundingSphere(sphere);
-  liveGeometry.boundingSphere = sphere;
+  applySplatCullBounds(liveGeometry, meshConfig, count, truncationRadius);
 
   return rebuilt;
 }

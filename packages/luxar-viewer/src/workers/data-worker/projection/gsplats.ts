@@ -18,6 +18,7 @@ import { coerceColorsToFloat32, fillColorsWhite } from '../../color-utils';
 import { classifyHiddenDims } from './hidden-dims';
 import { MIN_AMPLITUDE, SHIFTED_GAUSSIAN_DEFAULT_TRUNCATE } from './constants';
 import type { ProjectionViewState } from '../types';
+import type { GSplatsProjectionBounds } from '../../../types/gsplats';
 
 /**
  * Coerce input colors to a normalized RGB(A) Float32Array of length
@@ -36,6 +37,61 @@ function coerceColorsOrWhite(
   const out = new Float32Array(splatCount * components);
   fillColorsWhite(out, splatCount, components);
   return out;
+}
+
+/**
+ * Fused output scan: AABB of `centers3D` + max Cholesky row norm, in
+ * ONE pass over the projected arrays — computed here, where the data is
+ * already hot (and, for the nD worker path, OFF the main thread), so
+ * the GPU commit doesn't re-run two O(N) main-thread scans per commit
+ * (see `GSplatsProjectionBounds`). Float semantics match the commit
+ * path's fallback scans exactly: `Math.min`/`Math.max` per component
+ * (Box3.expandByPoint), `|L00|`, `√(L10²+L11²)`, `√(L20²+L21²+L22²)`.
+ *
+ * Exported for the fused-vs-brute-force unit tests.
+ *
+ * @param centers3D - Visible splat centers (count × 3)
+ * @param choleskyFactors3D - 6-stride [L00, L10, L11, L20, L21, L22] (count × 6)
+ * @param count - Visible splat count (must be > 0; callers skip the
+ *   scan and omit `bounds` for empty results)
+ */
+export function computeGSplatsProjectionBounds(
+  centers3D: Float32Array,
+  choleskyFactors3D: Float32Array,
+  count: number
+): GSplatsProjectionBounds {
+  let minX = Infinity;
+  let minY = Infinity;
+  let minZ = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  let maxZ = -Infinity;
+  let maxRowNorm = 0;
+  for (let i = 0; i < count; i++) {
+    const p3 = i * 3;
+    const x = centers3D[p3];
+    const y = centers3D[p3 + 1];
+    const z = centers3D[p3 + 2];
+    minX = Math.min(minX, x);
+    minY = Math.min(minY, y);
+    minZ = Math.min(minZ, z);
+    maxX = Math.max(maxX, x);
+    maxY = Math.max(maxY, y);
+    maxZ = Math.max(maxZ, z);
+
+    const c6 = i * 6;
+    const L00 = choleskyFactors3D[c6];
+    const L10 = choleskyFactors3D[c6 + 1];
+    const L11 = choleskyFactors3D[c6 + 2];
+    const L20 = choleskyFactors3D[c6 + 3];
+    const L21 = choleskyFactors3D[c6 + 4];
+    const L22 = choleskyFactors3D[c6 + 5];
+    const row0 = Math.abs(L00);
+    const row1 = Math.sqrt(L10 * L10 + L11 * L11);
+    const row2 = Math.sqrt(L20 * L20 + L21 * L21 + L22 * L22);
+    maxRowNorm = Math.max(maxRowNorm, row0, row1, row2);
+  }
+  return { min: [minX, minY, minZ], max: [maxX, maxY, maxZ], maxRowNorm };
 }
 
 export async function projectGSplatsTo3D(
@@ -73,6 +129,11 @@ export async function projectGSplatsTo3D(
   amplitudes: Float32Array;
   colors: Float32Array;
   visibleCount: number;
+  /**
+   * Fused-scan cull metadata (AABB + max Cholesky row norm) — present
+   * whenever `visibleCount > 0`. Plain scalars, structured-clone safe.
+   */
+  bounds?: GSplatsProjectionBounds;
 }> {
   const wasmModule = pickBackend(ctx, params.ndim); // >16D -> uncapped TS reference
 
@@ -161,6 +222,7 @@ export async function projectGSplatsTo3D(
         amplitudes: outAmplitudes,
         colors: outColors,
         visibleCount: splatCount,
+        bounds: computeGSplatsProjectionBounds(centers3D, choleskyFactors3D, splatCount),
       },
       [
         centers3D.buffer as ArrayBuffer,
@@ -284,6 +346,7 @@ export async function projectGSplatsTo3D(
       amplitudes: outAmplitudes,
       colors: outColors,
       visibleCount,
+      bounds: computeGSplatsProjectionBounds(centers3D, choleskyFactors3D, visibleCount),
     },
     [
       outCentersBuf.buffer as ArrayBuffer,

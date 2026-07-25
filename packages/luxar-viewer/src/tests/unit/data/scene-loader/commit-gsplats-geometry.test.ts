@@ -26,7 +26,6 @@ vi.mock('../../../../rendering/depth-sort-coordinator', () => ({
 }));
 vi.mock('../../../../rendering/gsplat-geometry', () => ({
   updateInstancedGSplatsMesh: (...args: unknown[]) => mockUpdateInstancedMesh(...args),
-  packCholeskyForShader: vi.fn(),
   // material-sync-helpers reaches getSplatTexture through this module;
   // returning null makes syncGSplatMaterialWithGeometry a no-op here
   // (the sync itself is covered by its own describe below).
@@ -60,9 +59,6 @@ function makeStaged(splatCount = 5): StagedGSplatsCommit {
       ndim: 3,
     },
     processed: makeProcessed(splatCount),
-    cholesky01: new Float32Array(),
-    cholesky23: new Float32Array(),
-    cholesky45: new Float32Array(),
   };
 }
 

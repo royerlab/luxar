@@ -18,7 +18,7 @@ Both backends ship side-by-side through the `ShaderSource` pattern documented in
 
 ## Splat data storage (Phase 1 texture migration)
 
-Per-splat data (`center`, `cholesky01/23/45`, `amplitude`, `color`) does **not** live in vertex attributes. It lives in an RGBA32F **splat texture** (`uSplatTex`, 4 texels/splat — layout authority in `../../element-texture-layout.ts`), fetched in the vertex stage via `texelFetch` (GLSL) / `textureLoad` (TSL). The only per-instance attribute is `aSortedIndex` (Uint32): the draw-slot → storage-slot map, written as identity by every commit today and permuted by the sort worker from depth-sorting Phase 2 on. Consequences:
+Per-splat data (`center`, the 6-stride `choleskyFactors`, `amplitude`, `color`) does **not** live in vertex attributes. It lives in an RGBA32F **splat texture** (`uSplatTex`, 4 texels/splat — layout authority in `../../element-texture-layout.ts`), fetched in the vertex stage via `texelFetch` (GLSL) / `textureLoad` (TSL). The only per-instance attribute is `aSortedIndex` (Uint32): the draw-slot → storage-slot map, written as identity by every commit today and permuted by the sort worker from depth-sorting Phase 2 on. Consequences:
 
 - **Materials are per node.** Each gsplat material binds its node's texture, so the material-manager LRU is bypassed for gsplats (`getGSplatMaterial` always creates). The commit rebinds `uSplatTex` on render + pick materials via `syncGSplatMaterialWithGeometry` (pool acquire may hand the node a different geometry+texture pair on growth/reuse).
 - **Texture lifetime = geometry lifetime.** `attachSplatStorage` registers a geometry-`dispose` listener; every pool/fallback dispose site frees the texture with its geometry.

@@ -52,9 +52,7 @@ function buildGSplatInstancedMesh(
   const mesh = createInstancedGSplatsMesh(
     {
       centers: new Float32Array([center[0], center[1], center[2]]),
-      cholesky01: new Float32Array([sigma, 0]),
-      cholesky23: new Float32Array([sigma, 0]),
-      cholesky45: new Float32Array([0, sigma]),
+      choleskyFactors: new Float32Array([sigma, 0, sigma, 0, 0, sigma]),
       amplitudes: new Float32Array([1.0]),
       colors: new Float32Array([1.0, 0.5, 0.25, alpha]),
       colorComponents: 4,
@@ -98,9 +96,7 @@ function buildGSplatSplatDataTexture(
     tex,
     {
       centers: new Float32Array([center[0], center[1], center[2]]),
-      cholesky01: new Float32Array([sigma, 0]),
-      cholesky23: new Float32Array([sigma, 0]),
-      cholesky45: new Float32Array([0, sigma]),
+      choleskyFactors: new Float32Array([sigma, 0, sigma, 0, 0, sigma]),
       amplitudes: new Float32Array([1.0]),
       colors: new Float32Array([1.0, 0.5, 0.25, alpha]),
       colorComponents: 4,
@@ -131,9 +127,10 @@ function buildGSplatSplatDataTextureMultiRow(): THREE.DataTexture {
     tex,
     {
       centers: new Float32Array([0.8, 0.8, 0, 0, 0, 0]), // decoy corner, real center
-      cholesky01: new Float32Array([sigma, 0, sigma, 0]),
-      cholesky23: new Float32Array([sigma, 0, sigma, 0]),
-      cholesky45: new Float32Array([0, sigma, 0, sigma]),
+      choleskyFactors: new Float32Array([
+        ...[sigma, 0, sigma, 0, 0, sigma], // decoy
+        ...[sigma, 0, sigma, 0, 0, sigma], // real
+      ]),
       amplitudes: new Float32Array([1.0, 1.0]),
       colors: new Float32Array([0, 1, 0, 1.0, 0.5, 0.25]), // decoy green, real standard
     },
@@ -172,9 +169,7 @@ function buildThinCovSplatTexture(sx = 0.4, sy = 0.004, sz = 0.4): THREE.DataTex
     tex,
     {
       centers: new Float32Array([0, 0, 0]),
-      cholesky01: new Float32Array([sx, 0]),
-      cholesky23: new Float32Array([sy, 0]),
-      cholesky45: new Float32Array([0, sz]),
+      choleskyFactors: new Float32Array([sx, 0, sy, 0, 0, sz]),
       amplitudes: new Float32Array([1.0]),
       colors: new Float32Array([1.0, 0.5, 0.25]),
     },
@@ -198,9 +193,10 @@ function buildThinCovSplatTexture(sx = 0.4, sy = 0.004, sz = 0.4): THREE.DataTex
  */
 const SURFACE_PICK_SPLATS = {
   centers: new Float32Array([0, 0, -4, 0, 0, -8]),
-  cholesky01: new Float32Array([0.1, 0, 0.1, 0]),
-  cholesky23: new Float32Array([0.1, 0, 0.1, 0]),
-  cholesky45: new Float32Array([0, 0.1, 0, 0.1]),
+  choleskyFactors: new Float32Array([
+    ...[0.1, 0, 0.1, 0, 0, 0.1], // instance 0 (near, dim)
+    ...[0.1, 0, 0.1, 0, 0, 0.1], // instance 1 (far, bright)
+  ]),
   amplitudes: new Float32Array([0.3, 1.0]),
   colors: new Float32Array([1.0, 0.5, 0.25, 1.0, 0.5, 0.25]),
   splatCount: 2,

@@ -8,7 +8,8 @@
  * Behavior summary:
  *   - worker projection is used when `useWebWorkers && splatCount > 1000 && ndim > 3`,
  *   - truncation radius is read from the mesh material,
- *   - Cholesky factors are packed after projection,
+ *   - the projection's 6-stride `choleskyFactors3D` flows straight to the
+ *     commit (no split/re-interleave pass),
  *   - worker args derive discreteDims / discreteSteps / extendToAllDims from `viewState.dimensions`,
  *   - the non-worker path and worker failures run the shared dispatcher
  *     in-process (`workers/data-worker/projection/in-process`),
@@ -20,7 +21,6 @@
  */
 
 import * as THREE from 'three';
-import { packCholeskyForShader } from '../../../rendering/gsplat-geometry';
 import type {
   LoadedGSplatsData,
   GSplatsViewState,
@@ -46,10 +46,11 @@ export interface StagedGSplatsGeometryCommit {
   noop?: undefined;
   /** Raw loader-returned data — stamped as `committedData` on commit. */
   sourceData: LoadedGSplatsData;
+  /**
+   * Projection output, committed as-is: `choleskyFactors3D` (6-stride)
+   * flows straight into the texel writer — no split/re-interleave pass.
+   */
   processed: ProcessedGSplatsData;
-  cholesky01: Float32Array;
-  cholesky23: Float32Array;
-  cholesky45: Float32Array;
 }
 
 /**
@@ -125,6 +126,9 @@ function toProcessed(
     colors: result.colors,
     colorComponents,
     splatCount: result.visibleCount,
+    // Fused-scan cull metadata (AABB + max Cholesky row norm) — lets the
+    // GPU commit skip its two O(N) main-thread scans (see types/gsplats.ts).
+    bounds: result.bounds,
   };
 }
 
@@ -199,8 +203,8 @@ export async function projectGSplatsTo3DUsingWorker(
 
 /**
  * Async process step for a single gsplats node: project nD → 3D
- * (worker or main thread), pack the Cholesky factors for the shader,
- * and return staged commit data — without mutating any mesh geometry.
+ * (worker or main thread) and return staged commit data — without
+ * mutating any mesh geometry.
  */
 export async function processGSplatsData(
   path: string,
@@ -231,9 +235,6 @@ export async function processGSplatsData(
   const truncate = readTruncate(mesh);
 
   let processed: ProcessedGSplatsData;
-  let cholesky01: Float32Array;
-  let cholesky23: Float32Array;
-  let cholesky45: Float32Array;
 
   const project = async () => {
     if (useWorkerProjection) {
@@ -252,19 +253,11 @@ export async function processGSplatsData(
     const projectSession = session.begin('Project to 3D');
     try {
       processed = await project();
-      const packed = packCholeskyForShader(processed.choleskyFactors3D, processed.splatCount);
-      cholesky01 = packed.cholesky01;
-      cholesky23 = packed.cholesky23;
-      cholesky45 = packed.cholesky45;
     } finally {
       projectSession.end();
     }
   } else {
     processed = await project();
-    const packed = packCholeskyForShader(processed.choleskyFactors3D, processed.splatCount);
-    cholesky01 = packed.cholesky01;
-    cholesky23 = packed.cholesky23;
-    cholesky45 = packed.cholesky45;
   }
 
   // All-loaded-but-none-visible is unusual enough to warrant a warning;
@@ -278,7 +271,7 @@ export async function processGSplatsData(
     );
   }
 
-  return { path, sourceData: data, processed, cholesky01, cholesky23, cholesky45 };
+  return { path, sourceData: data, processed };
 }
 
 // Re-export the commit helper from its focused module so existing
