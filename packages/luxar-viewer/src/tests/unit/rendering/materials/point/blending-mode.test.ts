@@ -47,7 +47,7 @@ describe('PointMaterial.applyBlendingMode', () => {
     expect(mat.blending).toBe(THREE.NormalBlending);
     expect(mat.depthWrite).toBe(true);
 
-    mat.uniforms.opacity.value = 0.5;
+    mat.uniforms.uOpacity.value = 0.5;
     mat.applyBlendingMode('normal');
     expect(mat.depthWrite).toBe(false);
   });

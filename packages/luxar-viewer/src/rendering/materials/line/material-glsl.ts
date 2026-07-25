@@ -19,7 +19,7 @@ import { LINE_VERTEX_SHADER, LINE_FRAGMENT_SHADER } from './shader-glsl';
 import { getPlaceholderElementTexture } from '../../element-texture-layout';
 import type { CameraAwareMaterial } from '../_shared/camera-aware-material';
 import type { ColormapAwareMaterial } from '../_shared/colormap-aware-material';
-import { clampGamma, isGammaOne } from '../_shared/uniform-helpers';
+import { clampGamma, isGammaOne, isNoGOG } from '../_shared/uniform-helpers';
 import {
   applyColormapTextureToMaterial,
   applyScalarRangeToMaterial,
@@ -34,17 +34,10 @@ import {
 import type { BlendingMode } from '../../../types/blending';
 import { computeScalarRangeUniforms, scalarRangeUniformEntries } from '../_shared/scalar-range';
 
-/**
- * Intensity == 1 && offset == 0 (with ±1e-4 epsilon) lets the
- * fragment shader skip the GOG `vColor * uIntensity + uOffset` chain
- * and its `max(..., vec3(0))` clamp.
- */
-function isNoGOG(intensity: number, offset: number): boolean {
-  return Math.abs(intensity - 1.0) < 1e-4 && Math.abs(offset) < 1e-4;
-}
-// `isGammaOne` now lives in `../_shared/uniform-helpers` (shared across
-// all three geometry types). Re-exported here so `material-tsl.ts` and
-// existing importers keep their `./material-glsl` import path.
+// `isGammaOne` and `isNoGOG` both live in `../_shared/uniform-helpers`
+// (shared across all three geometry types). Re-exported here so
+// `material-tsl.ts` and existing importers keep their
+// `./material-glsl` import path.
 export { isGammaOne, isNoGOG };
 
 /**

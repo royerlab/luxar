@@ -58,13 +58,13 @@ depth-sorting Phase 2 on. Consequences (mirroring the gsplat stack):
 The texel fetch prologue reconstructs the historical local names, so the
 math below it is unchanged:
 
-| Texel slot | Local        | Meaning                                                                                                                                                                                                                                                                                                                 |
-| ---------- | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| texel0.xyz | `aCenter`    | World-space centre position                                                                                                                                                                                                                                                                                             |
-| texel0.w   | `aRadius`    | Per-point radius (multiplied by `radiusScale` for dtype normalisation; e.g. `1/255` for `uint8` storage)                                                                                                                                                                                                                |
-| texel1.rgb | `aColor`     | Per-point colour (HDR); the writer fills white when the dataset has none                                                                                                                                                                                                                                                |
-| texel1.w   | `aSharpness` | Per-point sharpness — a normalised `[0, 1]` knob (no scale; `uint8/255` already lands in range). Maps in-shader to the super-Gaussian exponent `β = 2^(6s − 2)`                                                                                                                                                         |
-| texel2.x   | `aScalar`    | `USE_COLORMAP` only — replaces `aColor` via LUT lookup (fetched only in colormap builds; 0.0 identity fill when the dataset has no scalars)                                                                                                                                                                             |
+| Texel slot | Local        | Meaning                                                                                                                                                                                                                                                                                                                          |
+| ---------- | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| texel0.xyz | `aCenter`    | World-space centre position                                                                                                                                                                                                                                                                                                      |
+| texel0.w   | `aRadius`    | Per-point radius (multiplied by `radiusScale` for dtype normalisation; e.g. `1/255` for `uint8` storage)                                                                                                                                                                                                                         |
+| texel1.rgb | `aColor`     | Per-point colour (HDR); the writer fills white when the dataset has none                                                                                                                                                                                                                                                         |
+| texel1.w   | `aSharpness` | Per-point sharpness — a normalised `[0, 1]` knob (no scale; `uint8/255` already lands in range). Maps in-shader to the super-Gaussian exponent `β = 2^(6s − 2)`                                                                                                                                                                  |
+| texel2.x   | `aScalar`    | `USE_COLORMAP` only — replaces `aColor` via LUT lookup (fetched only in colormap builds; 0.0 identity fill when the dataset has no scalars)                                                                                                                                                                                      |
 | texel2.y   | `vAlpha`     | Per-point opacity alpha — the RGBA color column when the dataset carries one, else the 1.0 opaque identity fill. Read through `sanitizeAlpha` (NaN/Inf → opaque 1.0; finite clamped to `[0, 1]`). Linear contribution scale in every mode; volumetric maps it into optical depth `w(a) = −ln(1 − a)` gated by `uHasElementAlpha` |
 
 Scalar PRESENCE is not knowable from the fixed layout, so the texel writers
@@ -156,21 +156,24 @@ The fragment shader runs in this order:
    `β = 2` reproduces the GSplat Gaussian exactly.
 4. **Per-node GOG (Gain/Offset/Gamma)** —
    `adjusted = vColor * uIntensity + uOffset` (clamped non-negative),
-   then `finalColor = pow(adjusted, vec3(invGamma))`. Pre-computed `invGamma`
+   then `finalColor = pow(adjusted, vec3(uInvGamma))`. Pre-computed `uInvGamma`
    moves the division out of the per-fragment path. A second discard culls
    sub-1e-4 fragments to skip cost on offset-zeroed pixels. GOG is **per-node**;
    global EOG (exposure) lives in the mega-shader post-processing pass.
    The `LUXAR_GAMMA_ONE` define (set by `updateGamma` when `gamma == 1.0 ±
 1e-4`, the default) skips this `pow()` — `pow(x, 1) == x` — and also the
-   pre-LUT value `pow()` in colormap mode. Mirrors the Line/GSplat fast path
-   (`isGammaOne` in `../_shared/uniform-helpers`).
+   pre-LUT value `pow()` in colormap mode. The `LUXAR_NO_GOG` define (set by
+   `updateIntensity`/`updateOffset` when `intensity == 1 && offset == 0`, the
+   default) skips the gain/offset mul/add/clamp chain the same way. Both
+   mirror the Line/GSplat fast paths (`isGammaOne` / `isNoGOG` in
+   `../_shared/uniform-helpers`).
    In `USE_COLORMAP` mode only the gamma `pow()` is skipped: gamma and the
    display range already shaped the scalar **value** before the LUT lookup in
    the vertex stage, so warping the mapped LUT colour again would be wrong.
    `uIntensity`/`uOffset` still apply post-LUT to the mapped colour (matching
    the GSplat shader) so the layer intensity/offset controls work on
    colormapped nodes too. See the colormap section.
-5. **Alpha** — `alpha = falloff * opacity`.
+5. **Alpha** — `alpha = falloff * uOpacity`.
 6. **Max-mode RGB premultiplication** —
    `#ifdef LUXAR_MAX_RGB_CONTRIBUTION` returns `vec4(finalColor * alpha, alpha)`;
    the default path returns `vec4(finalColor, alpha)` (for `AdditiveBlending`'s
@@ -212,7 +215,7 @@ instead of reading `aColor`. The LUT lookup runs in the vertex stage and the
 mapped colour is carried to the fragment as `vColor`.
 
 Gamma and the display range act on the scalar **value** pre-LUT, not on the
-resulting colour: `t = pow(t, invGamma)` (skipped under `LUXAR_GAMMA_ONE`) is
+resulting colour: `t = pow(t, uInvGamma)` (skipped under `LUXAR_GAMMA_ONE`) is
 applied to `t` before the texture read, and the fragment gamma `pow()` is
 skipped (see step 4 above). Intensity/offset apply **post-LUT** to the mapped
 colour, matching the GSplat shader, so the layer gain/offset controls work on
@@ -246,8 +249,8 @@ the more expensive falloff/GOG/colormap fragment work is skipped.
 
 | Name              | Type      | Source                                        | Notes                                                                                        |
 | ----------------- | --------- | --------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| `opacity`         | float     | `updateOpacity`                               | Multiplied into final alpha                                                                  |
-| `invGamma`        | float     | `updateGamma` (pre-computed `1/γ`)            | Per-node gamma; `userData.gamma` carries the original value for `clone()`                    |
+| `uOpacity`        | float     | `updateOpacity`                               | Multiplied into final alpha (historically the un-prefixed `opacity`; renamed for symmetry)   |
+| `uInvGamma`       | float     | `updateGamma` (pre-computed `1/γ`)            | Per-node gamma; `userData.gamma` carries the original value for `clone()`                    |
 | `uIntensity`      | float     | `updateIntensity`                             | Per-node GOG gain                                                                            |
 | `uOffset`         | float     | `updateOffset`                                | Per-node GOG offset                                                                          |
 | `pointSizeFactor` | float     | `updateCameraParams` (camera math)            | Pre-computed `2·resY/tan(fov/2)` (or ortho form)                                             |
@@ -276,7 +279,7 @@ The clone path:
    and `this.uniforms.uColormapTex?.value`. The constructor's
    `applyBlendingMode` re-establishes blending state and shader defines.
 2. Copies the runtime-only camera uniforms (`pointSizeFactor`, `maxPointSize`,
-   `invGamma`, `radiusScale`) verbatim so the clone starts at
+   `uInvGamma`, `radiusScale`) verbatim so the clone starts at
    the current camera frame, not the default.
 3. For `THREE.CustomBlending` (`max` mode), copies `blendEquation/Src/Dst` from
    the source — the constructor would set canonical defaults, but if the source

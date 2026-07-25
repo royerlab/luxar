@@ -34,7 +34,7 @@ import { getPlaceholderElementTexture } from '../../element-texture-layout';
 import type { CameraAwareMaterial } from '../_shared/camera-aware-material';
 import type { BlendingMode } from '../../../types/blending';
 import type { ColormapAwareMaterial } from '../_shared/colormap-aware-material';
-import { clampGamma, isGammaOne } from '../_shared/uniform-helpers';
+import { clampGamma, isGammaOne, isNoGOG } from '../_shared/uniform-helpers';
 import { computeFocalLength } from '../_shared/camera-uniforms';
 import {
   computeRayIntegralFactor,
@@ -223,10 +223,15 @@ export class GSplatMaterial
 
       // Preprocessor defines — USE_COLORMAP enables LUT lookup from amplitude;
       // LUXAR_GAMMA_ONE skips the per-fragment gamma pow() when gamma == 1.0
-      // (toggled by `updateGamma`).
+      // (toggled by `updateGamma`); LUXAR_NO_GOG skips the GOG mul/add/clamp
+      // chain when intensity == 1 && offset == 0 (toggled by
+      // `updateIntensity` / `updateOffset` — mirrors the Line material).
       defines: {
         ...(materialConfig.colormapTexture ? { USE_COLORMAP: '' } : {}),
         ...(isGammaOne(gammaValue) ? { LUXAR_GAMMA_ONE: '' } : {}),
+        ...(isNoGOG(materialConfig.intensity ?? 1.0, materialConfig.offset ?? 0.0)
+          ? { LUXAR_NO_GOG: '' }
+          : {}),
       },
 
       // GLSL ES 3.0 for flat interpolation and modern syntax
@@ -382,10 +387,36 @@ export class GSplatMaterial
   }
 
   /**
+   * Toggle the `LUXAR_NO_GOG` define based on the live uniform values
+   * for intensity + offset. Called by both `updateIntensity` and
+   * `updateOffset` because the flag depends on both values jointly.
+   * Returns true if the define changed (caller may need a rebuild).
+   * Mirrors `LineMaterial._refreshNoGOGDefine`.
+   */
+  private _refreshNoGOGDefine(): boolean {
+    if (!this.defines) this.defines = {};
+    const wantNoGOG = isNoGOG(
+      this.uniforms.uIntensity.value as number,
+      this.uniforms.uOffset.value as number
+    );
+    const hadNoGOG = 'LUXAR_NO_GOG' in this.defines;
+    if (wantNoGOG && !hadNoGOG) {
+      this.defines.LUXAR_NO_GOG = '';
+      return true;
+    }
+    if (!wantNoGOG && hadNoGOG) {
+      delete this.defines.LUXAR_NO_GOG;
+      return true;
+    }
+    return false;
+  }
+
+  /**
    * Update intensity (linear color multiplier)
    */
   updateIntensity(intensity: number): void {
     this.uniforms.uIntensity.value = intensity;
+    if (this._refreshNoGOGDefine()) this.needsUpdate = true;
   }
 
   /**
@@ -393,6 +424,7 @@ export class GSplatMaterial
    */
   updateOffset(offset: number): void {
     this.uniforms.uOffset.value = offset;
+    if (this._refreshNoGOGDefine()) this.needsUpdate = true;
   }
 
   /**

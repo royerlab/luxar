@@ -4,7 +4,7 @@
  * reject, gamma fast path, normal premult, opaque peak, thin-covariance
  * dilation, colormap LUT, behind-camera guard) plus the gsplat-pick
  * counterparts including the surface-pick depth pair and the multi-row
- * texture-orientation variant. 17 registry entries.
+ * texture-orientation variant. 18 registry entries.
  *
  * @module tests/e2e/harnesses/tsl-harness/gsplats
  */
@@ -466,6 +466,46 @@ export const GSPLAT_SHADERS: Record<string, RegistryEntry> = {
     buildTSLMaterial: (uniforms) => {
       const m = gsplatWebGPUFactory(buildGSplatTSLNodesFromUniforms(uniforms), {
         gammaOne: true,
+        blendingMode: 'max', // matches uProjectionMode=1 (see `gsplat` variant note)
+      }) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: buildGSplatInstancedMesh,
+  },
+  // GSplat with the no-GOG fast path. Same geometry as `gsplat`,
+  // but the TSL factory is built with `noGOG: true` so the
+  // `vColor * uIntensity + uOffset` + `max(..., 0)` chain is replaced
+  // with `adjusted = vColor`. The GLSL counterpart defines
+  // `LUXAR_NO_GOG`. The gain-aware visibility discard keeps reading
+  // uIntensity (== 1 in this regime). Mirrors `line-no-gog`
+  // (three-geometry symmetry).
+  'gsplat-no-gog': {
+    source: GSPLAT_SOURCE,
+    buildUniforms: () => ({
+      uSplatTex: { value: buildGSplatSplatDataTexture() },
+      uResolution: { value: new THREE.Vector2(64, 64) },
+      uFx: { value: 32.0 },
+      uFy: { value: 32.0 },
+      uTruncate: { value: 3.0 },
+      uTruncateSq: { value: 9.0 },
+      uRayIntegralFactor: { value: 2.433 },
+      uProjectionMode: { value: 1 },
+      uIsOrtho: { value: 1 },
+      uNearCull: { value: 0.01 },
+      uMaxExtentFactor: { value: 1.0 },
+      uOpacity: { value: 1.0 },
+      uInvGamma: { value: 1.0 / 2.2 }, // gamma kept slow path; only no-GOG is exercised
+      uIntensity: { value: 1.0 },
+      uOffset: { value: 0.0 },
+      uShiftC: { value: Math.exp(-0.5 * 9) },
+      uInvOneMinusC: { value: 1.0 / (1.0 - Math.exp(-0.5 * 9)) },
+    }),
+    buildDefines: () => ({ LUXAR_NO_GOG: '' }),
+    buildTSLMaterial: (uniforms) => {
+      const m = gsplatWebGPUFactory(buildGSplatTSLNodesFromUniforms(uniforms), {
+        noGOG: true,
         blendingMode: 'max', // matches uProjectionMode=1 (see `gsplat` variant note)
       }) as unknown as THREE.Material;
       m.transparent = false;

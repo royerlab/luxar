@@ -40,7 +40,7 @@ import { gsplatWebGPUFactory, type GSplatTSLNodes } from './shader-tsl';
 import type { GSplatMaterialConfig } from './material-glsl';
 import type { CameraAwareMaterial } from '../_shared/camera-aware-material';
 import type { ColormapAwareMaterial } from '../_shared/colormap-aware-material';
-import { clampGamma, isGammaOne } from '../_shared/uniform-helpers';
+import { clampGamma, isGammaOne, isNoGOG } from '../_shared/uniform-helpers';
 import { getPlaceholderElementTexture } from '../../element-texture-layout';
 import { computeFocalLength } from '../_shared/camera-uniforms';
 import {
@@ -181,6 +181,13 @@ export class GSplatTSLMaterial
     // factory flag in `rebuildGraph` so the gamma pow() is skipped at
     // gamma == 1.0. Toggled by `updateGamma`.
     if (isGammaOne(gammaValue)) this.defines.LUXAR_GAMMA_ONE = '';
+    // LUXAR_NO_GOG likewise drives the `noGOG` factory flag so the GOG
+    // mul/add/clamp chain is skipped at intensity == 1 && offset == 0.
+    // Toggled by `updateIntensity` / `updateOffset` (mirrors the Line
+    // material).
+    if (isNoGOG(materialConfig.intensity ?? 1.0, materialConfig.offset ?? 0.0)) {
+      this.defines.LUXAR_NO_GOG = '';
+    }
     // LUXAR_VOLUMETRIC is an INERT introspection tracker here: the TSL
     // factory derives the volumetric output branch from the MODE (the
     // rebuild predicates in applyBlendingMode own the boundary), but
@@ -298,6 +305,7 @@ export class GSplatTSLMaterial
       {
         useColormap: !!this.defines && 'USE_COLORMAP' in this.defines,
         gammaOne: !!this.defines && 'LUXAR_GAMMA_ONE' in this.defines,
+        noGOG: !!this.defines && 'LUXAR_NO_GOG' in this.defines,
         blendingMode: (this.userData.blendingMode as BlendingMode | undefined) ?? 'additive',
       },
       this
@@ -400,12 +408,33 @@ export class GSplatTSLMaterial
     }
   }
 
+  /** Same toggle helper as `GSplatMaterial._refreshNoGOGDefine` — see there. */
+  private _refreshNoGOGDefine(): boolean {
+    if (!this.defines) this.defines = {};
+    const wantNoGOG = isNoGOG(
+      this.uniforms.uIntensity.value as number,
+      this.uniforms.uOffset.value as number
+    );
+    const hadNoGOG = 'LUXAR_NO_GOG' in this.defines;
+    if (wantNoGOG && !hadNoGOG) {
+      this.defines.LUXAR_NO_GOG = '';
+      return true;
+    }
+    if (!wantNoGOG && hadNoGOG) {
+      delete this.defines.LUXAR_NO_GOG;
+      return true;
+    }
+    return false;
+  }
+
   updateIntensity(intensity: number): void {
     this.uniforms.uIntensity.value = intensity;
+    if (this._refreshNoGOGDefine()) this.rebuildGraph();
   }
 
   updateOffset(offset: number): void {
     this.uniforms.uOffset.value = offset;
+    if (this._refreshNoGOGDefine()) this.rebuildGraph();
   }
 
   /**

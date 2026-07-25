@@ -35,7 +35,7 @@ import { pointWebGPUFactory, type PointTSLNodes } from './shader-tsl';
 import type { PointMaterialConfig } from './material-glsl';
 import type { CameraAwareMaterial } from '../_shared/camera-aware-material';
 import type { ColormapAwareMaterial } from '../_shared/colormap-aware-material';
-import { clampGamma, isGammaOne } from '../_shared/uniform-helpers';
+import { clampGamma, isGammaOne, isNoGOG } from '../_shared/uniform-helpers';
 import { computePointSizeFactor, computeMaxPointSize } from '../_shared/camera-uniforms';
 import {
   applyColormapTextureToMaterial,
@@ -56,8 +56,9 @@ import { computeScalarRangeUniforms } from '../_shared/scalar-range';
  * Persistent TSL node table owned by the wrapper. Colormap nodes are
  * (re)created lazily inside `rebuildGraph()` when colormap mode
  * toggles — the `PointTSLNodes` factory contract treats them as
- * optional. Keys match the public `uniforms` record (the un-prefixed
- * names mirror the GLSL `PointMaterial`).
+ * optional. Keys match the public `uniforms` record, mirroring the
+ * GLSL `PointMaterial` (`uOpacity` / `uInvGamma` were historically
+ * un-prefixed; renamed for three-geometry naming symmetry).
  */
 interface PointMaterialTSLNodeTable {
   uPointTex: TSLNode;
@@ -67,8 +68,8 @@ interface PointMaterialTSLNodeTable {
   uIsOrtho: TSLNode;
   uNearCull: TSLNode;
   uResolution: TSLNode;
-  opacity: TSLNode;
-  invGamma: TSLNode;
+  uOpacity: TSLNode;
+  uInvGamma: TSLNode;
   uIntensity: TSLNode;
   uOffset: TSLNode;
   uAbsorption: TSLNode;
@@ -127,8 +128,8 @@ export class PointTSLMaterial
       // texture via `updatePointTexture` (node identity change ->
       // graph rebuild, same lifecycle as the colormap texture).
       uPointTex: texture(getPlaceholderElementTexture()),
-      opacity: uniform(materialConfig.opacity ?? 1.0),
-      invGamma: uniform(1.0 / gammaValue),
+      uOpacity: uniform(materialConfig.opacity ?? 1.0),
+      uInvGamma: uniform(1.0 / gammaValue),
       uIntensity: uniform(materialConfig.intensity ?? 1.0),
       uOffset: uniform(materialConfig.offset ?? 0.0),
       // Volumetric (emission–absorption) uniforms — read only when the
@@ -154,8 +155,8 @@ export class PointTSLMaterial
       // the Texture at build time. `updatePointTexture()` is the only
       // rebind chokepoint (fresh node + graph rebuild).
       uPointTex: proxyIUniform(this.tslNodes.uPointTex),
-      opacity: proxyIUniform(this.tslNodes.opacity),
-      invGamma: proxyIUniform(this.tslNodes.invGamma),
+      uOpacity: proxyIUniform(this.tslNodes.uOpacity),
+      uInvGamma: proxyIUniform(this.tslNodes.uInvGamma),
       uIntensity: proxyIUniform(this.tslNodes.uIntensity),
       uOffset: proxyIUniform(this.tslNodes.uOffset),
       uAbsorption: proxyIUniform(this.tslNodes.uAbsorption),
@@ -185,6 +186,13 @@ export class PointTSLMaterial
     // factory flag in `rebuildGraph` so the gamma pow() is skipped at
     // gamma == 1.0. Toggled by `updateGamma`.
     if (isGammaOne(gammaValue)) this.defines.LUXAR_GAMMA_ONE = '';
+    // LUXAR_NO_GOG likewise drives the `noGOG` factory flag so the GOG
+    // mul/add/clamp chain is skipped at intensity == 1 && offset == 0.
+    // Toggled by `updateIntensity` / `updateOffset` (mirrors the Line
+    // material).
+    if (isNoGOG(materialConfig.intensity ?? 1.0, materialConfig.offset ?? 0.0)) {
+      this.defines.LUXAR_NO_GOG = '';
+    }
     this.toneMapped = false;
 
     // userData mirrors the GLSL wrapper so `clone()` / `applyBlendingMode`
@@ -292,6 +300,7 @@ export class PointTSLMaterial
       {
         useColormap,
         gammaOne: !!this.defines && 'LUXAR_GAMMA_ONE' in this.defines,
+        noGOG: !!this.defines && 'LUXAR_NO_GOG' in this.defines,
         blendingMode: (this.userData.blendingMode as BlendingMode | undefined) ?? 'additive',
       },
       this
@@ -331,18 +340,18 @@ export class PointTSLMaterial
   }
 
   updateOpacity(opacity: number): void {
-    this.uniforms.opacity.value = opacity;
+    this.uniforms.uOpacity.value = opacity;
   }
 
   /** Current opacity multiplier (the LOD cross-fade snapshots this as its fade base). */
   getOpacity(): number {
-    return this.uniforms.opacity.value as number;
+    return this.uniforms.uOpacity.value as number;
   }
 
   updateGamma(gamma: number): void {
     const safeGamma = clampGamma(gamma);
     this.userData.gamma = safeGamma;
-    this.uniforms.invGamma.value = 1.0 / safeGamma;
+    this.uniforms.uInvGamma.value = 1.0 / safeGamma;
 
     // Toggle `LUXAR_GAMMA_ONE` define when crossing the threshold and
     // rebuild the TSL graph so the factory picks the new fast-path
@@ -359,12 +368,33 @@ export class PointTSLMaterial
     }
   }
 
+  /** Same toggle helper as `PointMaterial._refreshNoGOGDefine` — see there. */
+  private _refreshNoGOGDefine(): boolean {
+    if (!this.defines) this.defines = {};
+    const wantNoGOG = isNoGOG(
+      this.uniforms.uIntensity.value as number,
+      this.uniforms.uOffset.value as number
+    );
+    const hadNoGOG = 'LUXAR_NO_GOG' in this.defines;
+    if (wantNoGOG && !hadNoGOG) {
+      this.defines.LUXAR_NO_GOG = '';
+      return true;
+    }
+    if (!wantNoGOG && hadNoGOG) {
+      delete this.defines.LUXAR_NO_GOG;
+      return true;
+    }
+    return false;
+  }
+
   updateIntensity(intensity: number): void {
     this.uniforms.uIntensity.value = intensity;
+    if (this._refreshNoGOGDefine()) this.rebuildGraph();
   }
 
   updateOffset(offset: number): void {
     this.uniforms.uOffset.value = offset;
+    if (this._refreshNoGOGDefine()) this.rebuildGraph();
   }
 
   /**
@@ -450,7 +480,7 @@ export class PointTSLMaterial
     this._explicitDepthTest = undefined;
     this._explicitTransparent = undefined;
 
-    const opacity = (this.uniforms.opacity?.value as number | undefined) ?? 1.0;
+    const opacity = (this.uniforms.uOpacity?.value as number | undefined) ?? 1.0;
     const state: CompleteBlendingState = getCompleteBlendingState(mode, opacity);
 
     if (!this.defines) {
@@ -506,7 +536,7 @@ export class PointTSLMaterial
 
   clone(): this {
     const cloned = new PointTSLMaterial({
-      opacity: this.uniforms.opacity.value,
+      opacity: this.uniforms.uOpacity.value,
       gamma: this.userData.gamma ?? 1.0,
       intensity: this.uniforms.uIntensity.value,
       offset: this.uniforms.uOffset.value,
@@ -540,7 +570,7 @@ export class PointTSLMaterial
     // Copy current uniform values
     cloned.uniforms.pointSizeFactor.value = this.uniforms.pointSizeFactor.value;
     cloned.uniforms.maxPointSize.value = this.uniforms.maxPointSize.value;
-    cloned.uniforms.invGamma.value = this.uniforms.invGamma.value;
+    cloned.uniforms.uInvGamma.value = this.uniforms.uInvGamma.value;
     cloned.uniforms.radiusScale.value = this.uniforms.radiusScale.value;
     // Camera-state uniforms must ride along too (mirrors
     // LineTSLMaterial.clone, the reference implementation): a clone

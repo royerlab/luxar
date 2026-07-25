@@ -64,8 +64,8 @@ describe('PointMaterial', () => {
     it('should create a material with default values', () => {
       const material = new PointMaterial();
 
-      expect(material.uniforms.opacity.value).toBe(1.0);
-      expect(material.uniforms.invGamma.value).toBe(1.0);
+      expect(material.uniforms.uOpacity.value).toBe(1.0);
+      expect(material.uniforms.uInvGamma.value).toBe(1.0);
       expect(material.userData.gamma).toBe(1.0); // gamma stored in userData, not uniforms
 
       // Check pre-computed pointSizeFactor (default 60 degrees, 1080p)
@@ -90,9 +90,9 @@ describe('PointMaterial', () => {
         blendingMode: 'normal',
       });
 
-      expect(material.uniforms.opacity.value).toBe(0.5);
+      expect(material.uniforms.uOpacity.value).toBe(0.5);
       expect(material.userData.gamma).toBe(2.2); // gamma stored in userData
-      expect(material.uniforms.invGamma.value).toBeCloseTo(1.0 / 2.2, 5);
+      expect(material.uniforms.uInvGamma.value).toBeCloseTo(1.0 / 2.2, 5);
       expect(material.blending).toBe('NormalBlending');
       // depthWrite is mode-derived (normal + opacity<0.99 → false),
       // matching the Line/GSplat canonical pattern.
@@ -181,8 +181,8 @@ describe('PointMaterial', () => {
       expect(material.fragmentShader).toContain('mediump float normalizedR = sqrt(4.0 * r2)');
 
       // Check for uniforms (gamma removed from fragment shader, only invGamma used)
-      expect(material.fragmentShader).toContain('uniform mediump float opacity');
-      expect(material.fragmentShader).toContain('uniform mediump float invGamma');
+      expect(material.fragmentShader).toContain('uniform mediump float uOpacity');
+      expect(material.fragmentShader).toContain('uniform mediump float uInvGamma');
       expect(material.fragmentShader).not.toContain('uniform float gamma'); // gamma removed
 
       // Shifted-truncated super-Gaussian falloff (beta=2 reproduces the gsplat Gaussian).
@@ -192,7 +192,7 @@ describe('PointMaterial', () => {
       // GOG model: intensity * color + offset, clip, gamma
       expect(material.fragmentShader).toContain('vColor * uIntensity + uOffset');
       expect(material.fragmentShader).toContain(
-        'mediump vec3 finalColor = pow(adjusted, vec3(invGamma))'
+        'mediump vec3 finalColor = pow(adjusted, vec3(uInvGamma))'
       );
     });
   });
@@ -235,7 +235,7 @@ describe('PointMaterial', () => {
 
       material.updateOpacity(0.75);
 
-      expect(material.uniforms.opacity.value).toBe(0.75);
+      expect(material.uniforms.uOpacity.value).toBe(0.75);
     });
 
     it('should update gamma (stored in userData) and invGamma', () => {
@@ -244,7 +244,7 @@ describe('PointMaterial', () => {
       material.updateGamma(1.8);
 
       expect(material.userData.gamma).toBe(1.8); // gamma stored in userData
-      expect(material.uniforms.invGamma.value).toBeCloseTo(1.0 / 1.8, 5);
+      expect(material.uniforms.uInvGamma.value).toBeCloseTo(1.0 / 1.8, 5);
     });
 
     it('toggles the LUXAR_GAMMA_ONE fast-path define across the gamma==1 threshold', () => {
@@ -271,9 +271,9 @@ describe('PointMaterial', () => {
 
       const cloned = original.clone();
 
-      expect(cloned.uniforms.opacity.value).toBe(0.5);
+      expect(cloned.uniforms.uOpacity.value).toBe(0.5);
       expect(cloned.userData.gamma).toBe(2.0); // gamma stored in userData
-      expect(cloned.uniforms.invGamma.value).toBeCloseTo(1.0 / 2.0, 5);
+      expect(cloned.uniforms.uInvGamma.value).toBeCloseTo(1.0 / 2.0, 5);
 
       // Ensure it's a new instance
       expect(cloned).not.toBe(original);
