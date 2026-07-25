@@ -10,6 +10,8 @@ import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import { PointMaterial } from '../../../../../rendering/materials/point/material-glsl';
 import { PointTSLMaterial } from '../../../../../rendering/materials/point/material-tsl';
+import { getCompleteBlendingState } from '../../../../../rendering/blending-state';
+import type { BlendingMode } from '../../../../../rendering/material-manager';
 
 describe('PointMaterial.applyBlendingMode', () => {
   it('max mode sets CustomBlending + MaxEquation + OneFactor/OneFactor', () => {
@@ -216,6 +218,74 @@ describe('PointMaterial.applyBlendingMode', () => {
       expect(cloned.blending).toBe(THREE.CustomBlending);
     }
   });
+
+  it('updateAbsorption writes the uniform without a recompile, getAbsorption reads it back (both backends)', () => {
+    // Mirror of the gsplat twin's pin: κ is a live slider — a
+    // recompile (GLSL version bump) or graph rebuild (TSL) per tick
+    // would hitch the volumetric render on every drag step.
+    for (const mat of [
+      new PointMaterial({ blendingMode: 'volumetric' }),
+      new PointTSLMaterial({ blendingMode: 'volumetric' }),
+    ]) {
+      const version = mat.version;
+      mat.updateAbsorption(2.5);
+      expect(mat.uniforms.uAbsorption.value).toBe(2.5);
+      expect(mat.getAbsorption()).toBe(2.5);
+      expect(mat.version).toBe(version);
+    }
+  });
+
+  it('hasElementAlpha config seeds uHasElementAlpha at construction (both backends)', () => {
+    // The commit sync pushes the geometry stamp on every commit, but a
+    // material constructed FROM config (clone, cache warm-up) must seed
+    // the gate itself — a dropped seed would strand a clone at the 0
+    // default until the next commit.
+    for (const Ctor of [PointMaterial, PointTSLMaterial]) {
+      expect(new Ctor({ hasElementAlpha: true }).uniforms.uHasElementAlpha.value).toBe(1);
+      expect(new Ctor({}).uniforms.uHasElementAlpha.value).toBe(0);
+    }
+  });
+});
+
+// Both wrappers delegate to getCompleteBlendingState +
+// applyBlendingStateToMaterial, so for EVERY mode the applied THREE
+// state must equal the helper's canonical values and the two backends
+// must agree field-for-field. Mirrors the line twin's convergence
+// contract (three-geometry test symmetry).
+describe('PointMaterial ↔ PointTSLMaterial blending-state convergence', () => {
+  const ALL_MODES: BlendingMode[] = [
+    'additive',
+    'volumetric',
+    'normal',
+    'max',
+    'opaque',
+    'luminous',
+  ];
+  const STATE_FIELDS = [
+    'blending',
+    'blendEquation',
+    'blendSrc',
+    'blendDst',
+    'depthTest',
+    'depthWrite',
+    'transparent',
+  ] as const;
+
+  for (const mode of ALL_MODES) {
+    it(`'${mode}': GLSL state equals getCompleteBlendingState and matches TSL`, () => {
+      const glsl = new PointMaterial();
+      const tsl = new PointTSLMaterial();
+      glsl.applyBlendingMode(mode);
+      tsl.applyBlendingMode(mode);
+      const expected = getCompleteBlendingState(mode, 1.0);
+      for (const field of STATE_FIELDS) {
+        expect(glsl[field], `GLSL ${field} for '${mode}'`).toBe(expected[field]);
+        expect(tsl[field], `TSL ${field} for '${mode}'`).toBe(expected[field]);
+      }
+      expect(glsl.userData.blendingMode).toBe(mode);
+      expect(tsl.userData.blendingMode).toBe(mode);
+    });
+  }
 });
 
 // H — TSL constructor honors explicit transparent/depthTest overrides
@@ -231,5 +301,19 @@ describe('PointTSLMaterial constructor explicit overrides', () => {
   it('transparent: false survives additive construction', () => {
     const mat = new PointTSLMaterial({ blendingMode: 'additive', transparent: false });
     expect(mat.transparent).toBe(false);
+  });
+});
+
+describe('PointMaterial single-pass billboards (both backends)', () => {
+  it('stays OFF the transparent two-pass path (FrontSide — no DoubleSide, no second pass)', () => {
+    // THREE's two-pass transparent render trips only on
+    // transparent + DoubleSide + !forceSinglePass. Line/gsplat billboards
+    // need DoubleSide and pin forceSinglePass=true; points avoid the
+    // guard entirely by staying FrontSide (their quad winding is fixed
+    // by the screen-space expansion). Flipping side to DoubleSide here
+    // without forceSinglePass would silently DOUBLE fragment work.
+    for (const mat of [new PointMaterial(), new PointTSLMaterial()]) {
+      expect(mat.side).not.toBe(THREE.DoubleSide);
+    }
   });
 });

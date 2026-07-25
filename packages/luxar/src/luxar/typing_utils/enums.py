@@ -46,7 +46,9 @@ class BlendingMode(str, Enum):
     MAX = "max"  # Maximum of source and destination (brightest wins)
     OPAQUE = "opaque"  # Solid rendering with depth write
     LUMINOUS = "luminous"  # Same visual as additive, but respects depth occlusion
-    VOLUMETRIC = "volumetric"  # Emission-absorption: adds light AND absorbs what's behind
+    VOLUMETRIC = (
+        "volumetric"  # Emission-absorption: adds light AND absorbs what's behind
+    )
 
 
 class NodeType(str, Enum):

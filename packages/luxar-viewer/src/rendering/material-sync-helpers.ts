@@ -60,7 +60,9 @@ export function syncPointMaterialWithGeometry(points: THREE.Mesh): void {
     // RGBA-alpha presence: gates the volumetric w(a) optical-depth map
     // (uHasElementAlpha). Stamped by both texel-write paths; refreshed
     // on every commit so pool geometry swaps can't leak a previous
-    // tenant's flag. Mirrors the gsplat commit's updateHasElementAlpha.
+    // tenant's flag. All three sync helpers push it identically
+    // (stampPointPresenceFlags / stampLinePresenceFlags /
+    // stampGSplatPresenceFlags are the stamping chokepoints).
     renderMat.updateHasElementAlpha(geometry.userData?.hasElementAlpha === true);
   }
 
