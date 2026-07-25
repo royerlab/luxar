@@ -34,7 +34,7 @@ import { getPlaceholderElementTexture } from '../../element-texture-layout';
 import type { CameraAwareMaterial } from '../_shared/camera-aware-material';
 import type { BlendingMode } from '../../../types/blending';
 import type { ColormapAwareMaterial } from '../_shared/colormap-aware-material';
-import { clampGamma, isGammaOne } from '../_shared/uniform-helpers';
+import { clampGamma, isGammaOne, isNoGOG } from '../_shared/uniform-helpers';
 import { computeFocalLength } from '../_shared/camera-uniforms';
 import {
   computeRayIntegralFactor,
@@ -223,10 +223,15 @@ export class GSplatMaterial
 
       // Preprocessor defines — USE_COLORMAP enables LUT lookup from amplitude;
       // LUXAR_GAMMA_ONE skips the per-fragment gamma pow() when gamma == 1.0
-      // (toggled by `updateGamma`).
+      // (toggled by `updateGamma`); LUXAR_NO_GOG skips the GOG mul/add/clamp
+      // chain when intensity == 1 && offset == 0 (toggled by
+      // `updateIntensity` / `updateOffset` — mirrors the Line material).
       defines: {
         ...(materialConfig.colormapTexture ? { USE_COLORMAP: '' } : {}),
         ...(isGammaOne(gammaValue) ? { LUXAR_GAMMA_ONE: '' } : {}),
+        ...(isNoGOG(materialConfig.intensity ?? 1.0, materialConfig.offset ?? 0.0)
+          ? { LUXAR_NO_GOG: '' }
+          : {}),
       },
 
       // GLSL ES 3.0 for flat interpolation and modern syntax
@@ -241,6 +246,12 @@ export class GSplatMaterial
       toneMapped: false, // HDR values pass through to post-processing
       blending: THREE.NormalBlending,
       side: THREE.DoubleSide, // Splats visible from both sides
+      // Splat quads are screen-space billboards, not physically two-sided
+      // surfaces. THREE's transparent+DoubleSide guard otherwise renders
+      // a redundant back-face pass per splat layer (and, under the sorted
+      // modes, splits each mesh's draw into two passes independent of the
+      // depth sort). Mirrors the Line/Point materials.
+      forceSinglePass: true,
     });
 
     // Apply mode-specific blending state (sets blending, blendEquation,
@@ -376,10 +387,36 @@ export class GSplatMaterial
   }
 
   /**
+   * Toggle the `LUXAR_NO_GOG` define based on the live uniform values
+   * for intensity + offset. Called by both `updateIntensity` and
+   * `updateOffset` because the flag depends on both values jointly.
+   * Returns true if the define changed (caller may need a rebuild).
+   * Mirrors `LineMaterial._refreshNoGOGDefine`.
+   */
+  private _refreshNoGOGDefine(): boolean {
+    if (!this.defines) this.defines = {};
+    const wantNoGOG = isNoGOG(
+      this.uniforms.uIntensity.value as number,
+      this.uniforms.uOffset.value as number
+    );
+    const hadNoGOG = 'LUXAR_NO_GOG' in this.defines;
+    if (wantNoGOG && !hadNoGOG) {
+      this.defines.LUXAR_NO_GOG = '';
+      return true;
+    }
+    if (!wantNoGOG && hadNoGOG) {
+      delete this.defines.LUXAR_NO_GOG;
+      return true;
+    }
+    return false;
+  }
+
+  /**
    * Update intensity (linear color multiplier)
    */
   updateIntensity(intensity: number): void {
     this.uniforms.uIntensity.value = intensity;
+    if (this._refreshNoGOGDefine()) this.needsUpdate = true;
   }
 
   /**
@@ -387,6 +424,7 @@ export class GSplatMaterial
    */
   updateOffset(offset: number): void {
     this.uniforms.uOffset.value = offset;
+    if (this._refreshNoGOGDefine()) this.needsUpdate = true;
   }
 
   /**
@@ -398,6 +436,11 @@ export class GSplatMaterial
     // `null` falls back to the shared placeholder (never unbind the
     // sampler) — mirrors PointMaterial.updatePointTexture.
     this.uniforms.uSplatTex.value = texture ?? getPlaceholderElementTexture();
+  }
+
+  /** The currently bound splat data texture (mirrors getPointTexture/getLineTexture). */
+  getSplatTexture(): THREE.DataTexture | null {
+    return (this.uniforms.uSplatTex.value as THREE.DataTexture | null) ?? null;
   }
 
   /**

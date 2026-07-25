@@ -342,6 +342,7 @@ export function createInstancedGSplatsMesh(
   // non-pool fallback carries no capacity headroom).
   const texture = attachSplatStorage(geometry, count);
   writeSplatTexels(texture, meshConfig, count);
+  stampGSplatPresenceFlags(geometry, meshConfig);
   writeSortedIndexIdentity(geometry, count);
 
   // Set instance count
@@ -439,6 +440,7 @@ export function updateInstancedGSplatsMesh(
     fresh.setAttribute('aQuadCorner', geometry.getAttribute('aQuadCorner'));
     const texture = attachSplatStorage(fresh, count);
     writeSplatTexels(texture, meshConfig, count);
+    stampGSplatPresenceFlags(fresh, meshConfig);
     writeSortedIndexIdentity(fresh, count);
     fresh.instanceCount = count;
     mesh.geometry = fresh;
@@ -469,6 +471,7 @@ export function updateInstancedGSplatsMesh(
       );
     }
     writeSplatTexels(texture, meshConfig, count);
+    stampGSplatPresenceFlags(geometry, meshConfig);
     if (!options?.preserveOrdering) {
       writeSortedIndexIdentity(geometry, count);
     }
@@ -498,4 +501,25 @@ export function updateInstancedGSplatsMesh(
   liveGeometry.boundingSphere = sphere;
 
   return rebuilt;
+}
+
+/**
+ * Stamp RGBA-alpha presence on the geometry's userData — the gsplat
+ * member of the per-geometry presence-stamp trio
+ * (`stampPointPresenceFlags` / `stampLinePresenceFlags`). The fixed
+ * 4-texel layout always carries the texel3.y alpha slot (1.0 identity
+ * for RGB data), so presence is not readable off the texture;
+ * `syncGSplatMaterialWithGeometry` pushes this stamp into the render
+ * material's `uHasElementAlpha` gate (volumetric w(a) map) on every
+ * commit. Refreshed on EVERY write (pool geometries are reused across
+ * tenants) and called AFTER the texel write, matching the point/line
+ * throw-consistency ordering (`writeSplatTexels` throws only at its
+ * pre-loop guard, so old texels keep their old stamp).
+ */
+export function stampGSplatPresenceFlags(
+  geometry: THREE.BufferGeometry,
+  src: { colorComponents?: 3 | 4 }
+): void {
+  if (!geometry.userData) geometry.userData = {};
+  geometry.userData.hasElementAlpha = (src.colorComponents ?? 3) === 4;
 }

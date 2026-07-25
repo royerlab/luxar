@@ -384,6 +384,33 @@ describe('LineMaterial ↔ LineTSLMaterial blending-state convergence', () => {
       expect(cloned.blending).toBe(THREE.CustomBlending);
     }
   });
+
+  it('updateAbsorption writes the uniform without a recompile, getAbsorption reads it back (both backends)', () => {
+    // Mirror of the gsplat twin's pin: κ is a live slider — a
+    // recompile (GLSL version bump) or graph rebuild (TSL) per tick
+    // would hitch the volumetric render on every drag step.
+    for (const mat of [
+      new LineMaterial({ blendingMode: 'volumetric' }),
+      new LineTSLMaterial({ blendingMode: 'volumetric' }),
+    ]) {
+      const version = mat.version;
+      mat.updateAbsorption(2.5);
+      expect(mat.uniforms.uAbsorption.value).toBe(2.5);
+      expect(mat.getAbsorption()).toBe(2.5);
+      expect(mat.version).toBe(version);
+    }
+  });
+
+  it('hasElementAlpha config seeds uHasElementAlpha at construction (both backends)', () => {
+    // The commit sync pushes the geometry stamp on every commit, but a
+    // material constructed FROM config (clone, cache warm-up) must seed
+    // the gate itself — a dropped seed would strand a clone at the 0
+    // default until the next commit.
+    for (const Ctor of [LineMaterial, LineTSLMaterial]) {
+      expect(new Ctor({ hasElementAlpha: true }).uniforms.uHasElementAlpha.value).toBe(1);
+      expect(new Ctor({}).uniforms.uHasElementAlpha.value).toBe(0);
+    }
+  });
 });
 
 // H — TSL constructors honor explicit transparent/depthTest overrides
@@ -399,5 +426,18 @@ describe('LineTSLMaterial constructor explicit overrides', () => {
   it('transparent: false survives additive construction', () => {
     const mat = new LineTSLMaterial({ blendingMode: 'additive', transparent: false });
     expect(mat.transparent).toBe(false);
+  });
+});
+
+describe('LineMaterial single-pass billboards (both backends)', () => {
+  it('forceSinglePass stays true with DoubleSide — deleting it silently DOUBLES fragment work', () => {
+    // line quads are screen-space billboards. transparent + DoubleSide
+    // without forceSinglePass trips THREE's two-pass transparent render:
+    // measured live, the mesh rasterizes ~2x the triangles (and sorted
+    // modes split each mesh's draw independent of the depth sort).
+    for (const mat of [new LineMaterial(), new LineTSLMaterial()]) {
+      expect(mat.forceSinglePass).toBe(true);
+      expect(mat.side).toBe(THREE.DoubleSide);
+    }
   });
 });

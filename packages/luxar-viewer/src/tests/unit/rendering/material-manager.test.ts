@@ -117,8 +117,8 @@ describe('MaterialManager', () => {
       expect(material.vertexShader).toContain('out mediump vec3 vColor');
 
       // Test REAL fragment shader content (GLSL ES 3.0 uses "out vec4 fragColor")
-      expect(material.fragmentShader).toContain('uniform mediump float opacity');
-      expect(material.fragmentShader).toContain('uniform mediump float invGamma');
+      expect(material.fragmentShader).toContain('uniform mediump float uOpacity');
+      expect(material.fragmentShader).toContain('uniform mediump float uInvGamma');
       expect(material.fragmentShader).toContain('out vec4 fragColor');
 
       // [rendering.md/W2][P2] strengthened from toBeDefined() to specific
@@ -126,8 +126,8 @@ describe('MaterialManager', () => {
       // (or returns an empty `{}` for `material.uniforms`) would previously
       // pass the toBeDefined() check on a stubbed object. Now we pin the
       // constructor-time values from material-glsl.ts:93-101.
-      expect(material.uniforms.opacity.value).toBe(1.0); // props.opacity
-      expect(material.uniforms.invGamma.value).toBeCloseTo(1.0, 5); // 1/gamma=1
+      expect(material.uniforms.uOpacity.value).toBe(1.0); // props.opacity
+      expect(material.uniforms.uInvGamma.value).toBeCloseTo(1.0, 5); // 1/gamma=1
       // pointSizeFactor + maxPointSize are pre-computed from a default
       // resolution Y / FOV. They MUST be finite positives — a uniform
       // initialised to `null`/`undefined`/`NaN`/0 would surface here.
@@ -146,7 +146,7 @@ describe('MaterialManager', () => {
         offset: 0.0,
       });
 
-      expect(material.uniforms.opacity.value).toBe(0.5);
+      expect(material.uniforms.uOpacity.value).toBe(0.5);
     });
 
     it('should respect custom gamma', () => {
@@ -159,7 +159,7 @@ describe('MaterialManager', () => {
       });
 
       expect(material.userData.gamma).toBe(2.2); // gamma stored in userData
-      expect(material.uniforms.invGamma.value).toBeCloseTo(1.0 / 2.2, 5);
+      expect(material.uniforms.uInvGamma.value).toBeCloseTo(1.0 / 2.2, 5);
     });
 
     it('should set correct blending mode', () => {
@@ -826,8 +826,8 @@ describe('MaterialManager', () => {
 
       // Verify GOG model in fragment shader
       expect(material.fragmentShader).toContain('vColor * uIntensity + uOffset');
-      expect(material.fragmentShader).toContain('pow(adjusted, vec3(invGamma))');
-      expect(material.uniforms.invGamma.value).toBeCloseTo(1.0 / 2.2, 5);
+      expect(material.fragmentShader).toContain('pow(adjusted, vec3(uInvGamma))');
+      expect(material.uniforms.uInvGamma.value).toBeCloseTo(1.0 / 2.2, 5);
     });
   });
 
@@ -893,7 +893,7 @@ describe('MaterialManager', () => {
         offset: 0.0,
       });
 
-      expect(material.uniforms.opacity.value).toBe(0.0);
+      expect(material.uniforms.uOpacity.value).toBe(0.0);
       expect(material.depthWrite).toBe(false); // Transparent
     });
 
@@ -907,7 +907,7 @@ describe('MaterialManager', () => {
       });
 
       expect(material.userData.gamma).toBe(10.0); // gamma stored in userData
-      expect(material.uniforms.invGamma.value).toBeCloseTo(0.1, 5);
+      expect(material.uniforms.uInvGamma.value).toBeCloseTo(0.1, 5);
     });
 
     it('should handle very small radius scale', () => {

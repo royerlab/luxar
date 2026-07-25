@@ -6,6 +6,39 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Changed — three-geometry material-surface symmetry (deep-campaign flag closure)
+
+- **GSplat materials render single-pass** (`forceSinglePass: true`, both
+  backends): splat quads are screen-space billboards, and THREE's
+  transparent+DoubleSide guard was rendering a redundant back-face pass
+  per splat layer — measured live at ~2× the rasterized triangles.
+  Line materials already did this; points avoid the guard via FrontSide.
+  All three invariants are now unit-pinned.
+- **Material surface completion**: `getSplatTexture()` (gsplat),
+  `getAbsorption()` (point + line), and the `hasElementAlpha`
+  constructor-config field (point + line) — every wrapper now exposes the
+  same volumetric surface; clones round-trip the flag via config on all
+  three geometry types.
+- **Point uniform names u-prefixed**: `opacity`/`invGamma` →
+  `uOpacity`/`uInvGamma` (the last cross-geometry naming drift; no
+  fallback aliases).
+- **`LUXAR_NO_GOG` fast path extended to point + gsplat** (was
+  line-only): the identity gain/offset chain is skipped on all three
+  geometry types at the default intensity=1/offset=0; `isNoGOG` moved to
+  `materials/_shared/uniform-helpers`.
+- **GSplat TSL stamps `LUXAR_VOLUMETRIC` as an inert introspection
+  tracker** (rebuild boundaries unchanged) so define introspection is
+  uniform across backends and geometry types.
+- **`stampGSplatPresenceFlags`**: gsplat `hasElementAlpha` stamping
+  consolidated beside the texel writer (all four write paths) and pushed
+  by `syncGSplatMaterialWithGeometry` — the same chokepoint decomposition
+  as points/lines; the commit's duck-typed direct call is gone.
+- Ctor-default drift aligned (`uNearCull` 0.1 everywhere, incl. the line
+  picking materials); stale docstrings fixed (`enums.py`,
+  `render-order.ts`, `alpha.py`); ~30 sibling-symmetry tests added
+  (convergence loops, gsplat vAlpha-fold pin, volumetric ctor-survival,
+  clone/texture/override coverage, sync-gsplat suite).
+
 #### Changed — volumetric flag closure (double-check follow-ups)
 
 - **Strict color-layout guard** (`assertColorLayout`, all three geometry

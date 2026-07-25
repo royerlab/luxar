@@ -97,6 +97,14 @@ export interface PointTSLConfig {
    */
   readonly gammaOne?: boolean;
   /**
+   * Fast path: skip the `vColor * uIntensity + uOffset` GOG chain
+   * (and its `max(..., vec3(0))` clamp) when the wrapper knows
+   * intensity == 1 && offset == 0 — the default and most common
+   * configuration. Mirrors the GLSL3 `LUXAR_NO_GOG` define and the
+   * line factory's `noGOG` flag (three-geometry symmetry).
+   */
+  readonly noGOG?: boolean;
+  /**
    * When undefined, derived from `blendingMode === 'max'`. Explicit
    * config still wins so callers can decouple shader output from
    * framebuffer blending (rare but supported).
@@ -120,9 +128,10 @@ export interface PointTSLConfig {
  * `material.uniforms.X.value` (proxied via `proxyIUniform`) land
  * directly on `node.value`.
  *
- * Keys match the public `PointMaterial.uniforms` names (some are
- * historically un-prefixed — `opacity`, `invGamma`, …) so the wrapper
- * proxy table maps 1:1.
+ * Keys match the public `PointMaterial.uniforms` names (`uOpacity` /
+ * `uInvGamma` were historically the un-prefixed `opacity` / `invGamma`;
+ * renamed for three-geometry naming symmetry) so the wrapper proxy
+ * table maps 1:1.
  *
  * Colormap nodes are optional and bound only when the consumer is
  * built with `config.useColormap === true`. The factory throws if
@@ -146,8 +155,8 @@ export interface PointTSLNodes {
   readonly uIsOrtho: TSLNode;
   readonly uNearCull: TSLNode;
   readonly uResolution: TSLNode;
-  readonly opacity: TSLNode;
-  readonly invGamma: TSLNode;
+  readonly uOpacity: TSLNode;
+  readonly uInvGamma: TSLNode;
   readonly uIntensity: TSLNode;
   readonly uOffset: TSLNode;
   /**
@@ -213,8 +222,8 @@ export function pointWebGPUFactory(
   const uIsOrtho = nodes.uIsOrtho;
   const uNearCull = nodes.uNearCull;
   const uResolution = nodes.uResolution;
-  const uOpacity = nodes.opacity;
-  const uInvGamma = nodes.invGamma;
+  const uOpacity = nodes.uOpacity;
+  const uInvGamma = nodes.uInvGamma;
   const uIntensity = nodes.uIntensity;
   const uOffset = nodes.uOffset;
   const uAbsorption = nodes.uAbsorption;
@@ -423,8 +432,14 @@ export function pointWebGPUFactory(
     // intensity/offset controls work for a colormapped point too (GLSL
     // parity, matching the gsplat shader). Colormap mode: gamma +
     // display-range shaped the scalar VALUE pre-LUT (vertex stage), so
-    // only gain/offset apply post-LUT (no extra gamma).
-    const adjusted: TSLNode = max(vColor.mul(uIntensity).add(uOffset), vec3(0.0)).toVar();
+    // only gain/offset apply post-LUT (no extra gamma). Fast path: when
+    // the wrapper knows intensity==1 && offset==0, the mul/add/clamp
+    // chain is identity for non-negative vColor (noGOG — mirrors the
+    // line factory; the varying is already materialized, so downstream
+    // `.r/.g/.b` reads work on both branches).
+    const adjusted: TSLNode = config.noGOG
+      ? vColor
+      : max(vColor.mul(uIntensity).add(uOffset), vec3(0.0)).toVar();
     const maxAdjusted: TSLNode = max(adjusted.r, max(adjusted.g, adjusted.b));
 
     // Sub-pixel intensity compensation (mirrors the line shader's
@@ -512,7 +527,7 @@ export function pointWebGPUFactory(
   // re-runs on every rebuildGraph — so it must derive the state from
   // the same mode the output branch above used.
   const blendingMode: BlendingMode = config.blendingMode ?? 'additive';
-  const opacityValue = (nodes.opacity.value as number | undefined) ?? 1.0;
+  const opacityValue = (nodes.uOpacity.value as number | undefined) ?? 1.0;
   const blendingState = getCompleteBlendingState(blendingMode, opacityValue);
   applyBlendingStateToMaterial(material, blendingState);
   return material;
@@ -550,8 +565,8 @@ export function buildPointTSLNodesFromUniforms(
     uResolution: uniform(
       (uniforms.uResolution?.value as THREE.Vector2 | undefined) ?? new THREE.Vector2(1, 1)
     ),
-    opacity: uniform((uniforms.opacity?.value as number) ?? 1.0),
-    invGamma: uniform((uniforms.invGamma?.value as number) ?? 1.0),
+    uOpacity: uniform((uniforms.uOpacity?.value as number) ?? 1.0),
+    uInvGamma: uniform((uniforms.uInvGamma?.value as number) ?? 1.0),
     uIntensity: uniform((uniforms.uIntensity?.value as number) ?? 1.0),
     uOffset: uniform((uniforms.uOffset?.value as number) ?? 0.0),
     uAbsorption: uniform((uniforms.uAbsorption?.value as number) ?? 1.0),

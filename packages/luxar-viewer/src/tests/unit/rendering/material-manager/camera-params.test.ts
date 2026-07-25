@@ -9,7 +9,7 @@
  * they dropped `currentNearCull`, so a material created after camera
  * setup kept its constructor-default near-cull until the next
  * resize/FOV event ("splats missing until the camera moves" on scenes
- * whose world scale differs from the 0.05/0.1 defaults).
+ * whose world scale differs from the 0.1 default).
  *
  * Uses real material classes (no `vi.mock('three')`) — same pattern as
  * material-cache-lru.test.ts.
@@ -73,7 +73,9 @@ describe('MaterialManager camera params on newly created materials', () => {
     const mm = new MaterialManager();
 
     const line = mm.getLineMaterial(baseProps()) as LineMaterial;
-    expect(line.uniforms.uNearCull.value).toBe(0.05);
+    // 0.1 — aligned with the point/gsplat ctor default (deep-campaign
+    // ctor-default-drift fix; the value only matters pre-first-broadcast).
+    expect(line.uniforms.uNearCull.value).toBe(0.1);
 
     const gsplat = mm.getGSplatMaterial(baseProps()) as GSplatMaterial;
     expect(gsplat.uniforms.uNearCull.value).toBe(0.1);
