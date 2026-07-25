@@ -113,21 +113,38 @@ declare global {
       lastExportedState?: unknown;
 
       /**
-       * Inject a synthetic line scene (debug / perf-bench only). Builds
-       * an `InstancedLinesMeshConfig` in JS via
+       * Inject a synthetic scene (debug / perf-bench only). Builds a
+       * lines / points / gsplats payload in JS via
        * `scene/synthetic-scene.ts`, wires it through the existing
        * material-manager + node-factory pipeline, and adds the resulting
-       * mesh to the scene. Returns `{type, segmentCount, mesh}` so the
-       * caller can capture the actual instance count it ran against.
+       * mesh to the scene. Resolves once the node is committed and
+       * renderable, with `{type, elementCount, <per-type count>, mesh}`
+       * so the caller can capture the actual instance count it ran
+       * against (`segmentCount` for lines — the original shape —
+       * `pointCount` / `splatCount` for the others; `elementCount` is
+       * the capacity-clamped drawn count, uniform across types).
+       *
+       * `blending` defaults to 'additive' for lines (historical bench
+       * contract) and 'normal' for points/gsplats, whose injection also
+       * emits the production depth-sort commit signals so the sort
+       * subsystem engages; the first ordering lands asynchronously a
+       * frame or two later. `clusters` (points/gsplats) is the gaussian
+       * blob count, default 256.
        *
        * Not present in production bundles when `?debug` is unset.
        */
       injectSyntheticScene?: (spec: {
-        type: 'lines';
+        type: 'lines' | 'points' | 'gsplats';
         count: number;
         bounds?: number;
         seed?: number;
-      }) => Promise<{ type: 'lines'; segmentCount: number; mesh: THREE.Mesh }>;
+        clusters?: number;
+        blending?: string;
+      }) => Promise<
+        | { type: 'lines'; segmentCount: number; elementCount: number; mesh: THREE.Mesh }
+        | { type: 'points'; pointCount: number; elementCount: number; mesh: THREE.Mesh }
+        | { type: 'gsplats'; splatCount: number; elementCount: number; mesh: THREE.Mesh }
+      >;
 
       /**
        * Per-stage timing snapshot for lazy LOD level loads

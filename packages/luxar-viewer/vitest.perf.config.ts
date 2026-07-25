@@ -19,6 +19,9 @@ export default defineConfig({
     globals: true,
     globalSetup: ['./src/tests/global-setup.ts'],
     setupFiles: ['./src/tests/setup.ts'],
-    include: ['src/tests/unit/wasm/perf-budget.test.ts'],
+    include: [
+      'src/tests/unit/wasm/perf-budget.test.ts',
+      'src/tests/unit/wasm/sort-fullpath-perf.test.ts',
+    ],
   },
 });

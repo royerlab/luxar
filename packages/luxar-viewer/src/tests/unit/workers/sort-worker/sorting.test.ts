@@ -47,6 +47,19 @@ describe('sort-worker sorting tasks', () => {
     expect(Array.from(result!.ordering)).toEqual([0, 2, 1]);
   });
 
+  it('sortNode reports the kernelMs/workerMs timing split', () => {
+    registerNode(ctx, { nodeId: 'n1', generation: 1, centers3: threeSplats(), count: 3 });
+    const result = sortNode(ctx, { nodeId: 'n1', generation: 1, modelView: IDENTITY_MV });
+    expect(result).not.toBeNull();
+    // Both finite and non-negative...
+    expect(Number.isFinite(result!.kernelMs)).toBe(true);
+    expect(Number.isFinite(result!.workerMs)).toBe(true);
+    expect(result!.kernelMs).toBeGreaterThanOrEqual(0);
+    expect(result!.workerMs).toBeGreaterThanOrEqual(0);
+    // ...and the kernel is a sub-interval of the whole body.
+    expect(result!.kernelMs).toBeLessThanOrEqual(result!.workerMs);
+  });
+
   it('sortNode returns null for an unknown node', () => {
     expect(sortNode(ctx, { nodeId: 'ghost', generation: 1, modelView: IDENTITY_MV })).toBeNull();
   });

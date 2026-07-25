@@ -31,6 +31,9 @@ export default defineConfig({
       // `pnpm test:perf` (separate suite) — recommended as a
       // scheduled / nightly job rather than gating every PR.
       'src/tests/unit/wasm/perf-budget.test.ts',
+      // Full-path sortNode throughput bench (record-only, multi-minute at
+      // 5 M splats) — perf suite only, same rationale as perf-budget.
+      'src/tests/unit/wasm/sort-fullpath-perf.test.ts',
     ],
     coverage: {
       provider: 'v8',
