@@ -68,6 +68,10 @@ Robust download utilities with retry logic, resume capability, and progress trac
 - `robust_download()`: Download a file from a URL with automatic retry (exponential backoff), partial download resume via HTTP Range requests, progress tracking with ETA, and file-size verification
 - `verify_file_checksum()`: Verify a file's integrity against an expected MD5 and/or SHA256 hash
 - `download_with_checksum()`: Combine `robust_download()` with checksum verification, deleting the file if the checksum fails
+- `find_quarantined_files(target)`: Return the `.corrupt` files associated with a cache *file* (both the `foo.npy.corrupt` and `foo.corrupt` quarantine conventions) or every `*.corrupt` inside a cache *directory*
+- `format_quarantine_notice(paths, ...)`: Build an actionable multi-line notice naming each quarantined path, its size, and what to do about it (empty string when there is nothing to report)
+- `warn_if_quarantined(target, ...)`: Print that notice and return the paths. Called from `robust_download()` so a user about to re-fetch a multi-gigabyte artifact is told that a rejected earlier copy is sitting next to it — instead of watching a huge download silently start over
+- `QUARANTINE_SUFFIX`: The `.corrupt` suffix used when a cached artifact fails validation (see `demos.cache_computed`). A quarantined file is never reused
 
 ### `fields.py`
 Shared 3D vector-field helpers for flow-field demos (the PPI flow-field demo

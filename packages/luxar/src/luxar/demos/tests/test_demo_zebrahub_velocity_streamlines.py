@@ -8,12 +8,17 @@ imported lazily via ``_require_module``, so the module imports with no extras.
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
+
 import numpy as np
 import pytest
 
 # The ``luxar.demos`` package is now importable directly (the sys.modules alias
 # that used to shadow it was removed).
 from luxar.demos.demo_zebrahub_velocity_streamlines import (
+    _INSTALL_NOTES,
+    _INSTALL_SPECS,
     ZebrahubData,
     _array_hash,
     _require_module,
@@ -123,3 +128,54 @@ class TestRequireModule:
     def test_missing_module_with_pip_name_alias(self) -> None:
         with pytest.raises(ImportError, match="pip install scikit-image"):
             _require_module("nonexistent_skimage_xyz", pip_name="scikit-image")
+
+    def test_constrained_spec_and_note_surface(self, monkeypatch, capsys) -> None:
+        """A module with a version constraint advertises it, plus the reason."""
+        monkeypatch.setitem(_INSTALL_SPECS, "nonexistent_pinned_xyz", "'pkg>=1,<2'")
+        monkeypatch.setitem(
+            _INSTALL_NOTES, "nonexistent_pinned_xyz", "Because reasons."
+        )
+
+        with pytest.raises(ImportError) as excinfo:
+            _require_module("nonexistent_pinned_xyz")
+
+        assert "pip install 'pkg>=1,<2'" in str(excinfo.value)
+        assert "Because reasons." in str(excinfo.value)
+        out = capsys.readouterr().out
+        assert "'pkg>=1,<2'" in out
+        assert "Because reasons." in out
+
+    def test_explicit_pip_name_overrides_the_spec_table(self, monkeypatch) -> None:
+        monkeypatch.setitem(_INSTALL_SPECS, "nonexistent_pinned_xyz", "'pkg>=1,<2'")
+        with pytest.raises(ImportError, match=re.escape("pip install other-pkg")):
+            _require_module("nonexistent_pinned_xyz", pip_name="other-pkg")
+
+
+class TestAnndataPin:
+    """The anndata hint MUST carry the zarr-2-compatible upper bound.
+
+    anndata >= 0.13 requires ``zarr>=3.1``, which is unsatisfiable against
+    Luxar's ``zarr>=2.16,<3.0`` pin — a bare ``pip install anndata`` silently
+    upgrades zarr and breaks every Luxar store.
+    """
+
+    def test_install_spec_is_upper_bounded(self) -> None:
+        spec = _INSTALL_SPECS["anndata"]
+        assert "<0.13" in spec, f"anndata hint lost its upper bound: {spec}"
+        assert "zarr" in _INSTALL_NOTES["anndata"]
+
+    def test_pyproject_demos_extra_matches_the_hint(self) -> None:
+        root = Path(__file__).resolve().parents[6]
+        pyproject = root / "pyproject.toml"
+        if not pyproject.is_file():  # installed wheel — no source tree to check
+            pytest.skip("pyproject.toml not available (installed package)")
+
+        requirements = re.findall(
+            r'"(anndata[^"]*)"', pyproject.read_text(encoding="utf-8")
+        )
+        assert requirements, "anndata requirement vanished from pyproject.toml"
+        for requirement in requirements:
+            assert "<0.13" in requirement, (
+                "pyproject pins anndata without the zarr-2-compatible upper "
+                f"bound: {requirement}"
+            )
