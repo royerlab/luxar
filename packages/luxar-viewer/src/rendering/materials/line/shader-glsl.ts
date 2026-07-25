@@ -210,16 +210,20 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
       float aEndSharpness = lineT3.w;
 
       // Per-endpoint opacity, interpolated along the segment (1.0 for
-      // RGB data). Each endpoint is sanitized BEFORE the mix so one
-      // NaN endpoint can't poison the whole segment: alpha is
-      // load-bearing in EVERY mode (linear contribution scale) and maps
-      // into optical depth under volumetric, where a NaN/Inf poisons τ
-      // past the discard into NaN pixels — and a huge finite value
-      // would blow out the linear folds (or overflow the mediump
-      // varying). Python validation pins alpha to [0, 1] at write; this
-      // guards hand-crafted zarr. NaN/Inf → the 1.0 opaque identity
-      // (loud); finite values clamp to [0, 1]. The point/gsplat twins
-      // do the same.
+      // RGB data). Each texel read is sanitized BEFORE the mix: alpha
+      // is load-bearing in EVERY mode (linear contribution scale) and
+      // maps into optical depth under volumetric, where a NaN/Inf
+      // poisons τ past the discard into NaN pixels — and a huge finite
+      // value would blow out the linear folds (or overflow the mediump
+      // varying). The guarantee is "NaN never reaches τ/pixels", NOT
+      // per-endpoint containment: a NaN source vertex already
+      // propagates to BOTH of the segment's texel alphas upstream (the
+      // worker's lerp kernel), so the whole segment renders loud-opaque
+      // — same containment as every other lerped attribute. Python
+      // validation pins alpha to [0, 1] at write; this guards
+      // hand-crafted zarr. NaN/Inf → the 1.0 opaque identity (loud);
+      // finite values clamp to [0, 1]. The point/gsplat twins do the
+      // same.
       vAlpha = mix(sanitizeAlpha(lineT5.z), sanitizeAlpha(lineT5.w), t);
 
       // Interpolate attributes along segment.
