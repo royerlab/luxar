@@ -106,7 +106,7 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import launch_viewer, stack_colorings
+from luxar.demos import launch_viewer, require_module, stack_colorings
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -233,13 +233,14 @@ def load_go_annotations(data_dir: Path) -> dict:
     Returns:
         Dictionary mapping protein_id -> list of GO terms
     """
-    import pandas as pd
-
     tsv_files = list(data_dir.rglob("*terms.tsv"))
 
     if not tsv_files:
         aprint("⚠️  No GO annotation files found")
         return {}
+
+    # Gated here, not in main(): only reached when there is a TSV to parse.
+    pd = require_module("pandas")
 
     with asection("Loading GO term annotations"):
         go_file = tsv_files[0]
@@ -443,8 +444,6 @@ def reduce_embeddings_umap(
     Returns:
         Tuple of (positions, functions) - both cached together!
     """
-    from umap import UMAP
-
     # Check cache first (loads positions AND functions together!)
     if cache_path and cache_path.exists():
         with asection("Loading cached UMAP coordinates"):
@@ -457,6 +456,9 @@ def reduce_embeddings_umap(
 
     if embeddings is None:
         raise ValueError("Embeddings required when not loading from cache")
+
+    # Gated here, not in main(): the cache hit above returns without UMAP.
+    UMAP = require_module("umap").UMAP
 
     with asection(f"Reducing {embeddings.shape[1]}D → 3D with UMAP"):
         aprint(
@@ -750,17 +752,6 @@ def main() -> None:
         f"  Proteins: {sample_size:,}" if sample_size else "  Proteins: All (142,246)"
     )
     aprint("")
-
-    # Check dependencies
-    try:
-        import pandas  # noqa: F401
-        import umap  # noqa: F401
-    except ImportError as e:
-        aprint(f"Missing dependency: {e}")
-        aprint("")
-        aprint("Install with:")
-        aprint("  pip install umap-learn pandas")
-        sys.exit(1)
 
     # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
     if "--no-serve" in sys.argv:

@@ -60,7 +60,7 @@ from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import CameraConfig, UIConfig, ViewerConfig
-from luxar.demos import launch_viewer
+from luxar.demos import launch_viewer, require_module
 from luxar.utils._umap_utils import get_categorical_color
 from luxar.utils.fields import (
     FlowField,
@@ -189,65 +189,14 @@ class StreamlineGeometry:
 
 
 # -----------------------------------------------------------------------------
-# Auto-install helpers (mirror the demo_tabula_sapiens approach)
+# Optional dependencies
 # -----------------------------------------------------------------------------
-
-# Version-constrained install specs for lazily-imported extras, keyed by module
-# name. A bare `pip install <module>` is NOT always safe: it can silently drag
-# an incompatible transitive dependency into the environment, so the hint has to
-# carry the constraint. Keep in sync with the `demos` extra in pyproject.toml.
-_INSTALL_SPECS: dict[str, str] = {
-    # anndata >= 0.13 requires `zarr>=3.1`, which is unsatisfiable against
-    # Luxar's `zarr>=2.16,<3.0` pin: an unconstrained `pip install anndata`
-    # upgrades zarr to 3.x and breaks every Luxar store. 0.10/0.11 declare no
-    # zarr dependency at all; 0.12 asks for `zarr>=2.18.7,!=3.0.*`, satisfied by
-    # zarr 2.18.7. So `<0.13` is the safe ceiling.
-    "anndata": "'anndata>=0.10,<0.13'",
-}
-
-# Extra guidance appended to the message when the constraint needs explaining.
-_INSTALL_NOTES: dict[str, str] = {
-    "anndata": (
-        "The upper bound is REQUIRED: anndata >= 0.13 pulls zarr >= 3.1, which "
-        "conflicts with Luxar's zarr>=2.16,<3.0 pin. Installing the whole extra "
-        "(pip install 'luxar[demos]') applies the same constraint for you."
-    ),
-}
-
-
-def _require_module(module: str, pip_name: str | None = None) -> Any:
-    """Import a module, raising a clear error with install instructions if missing.
-
-    The earlier version of this helper silently ran ``pip install`` with
-    stdout/stderr suppressed, mutating the user's Python environment
-    without confirmation. That is hostile to constrained environments
-    (HPC, locked-down CI, virtualenvs with pinned deps) and hides the
-    install failure mode entirely. The PPI demo's import-error pattern is
-    safer and more transparent.
-
-    Args:
-        module: Module name to import.
-        pip_name: Explicit pip requirement to advertise; defaults to the
-            version-constrained spec from :data:`_INSTALL_SPECS`, else the
-            module name.
-    """
-    try:
-        return __import__(module)
-    except ImportError as exc:
-        pkg = pip_name or _INSTALL_SPECS.get(module, module)
-        note = _INSTALL_NOTES.get(module) if pip_name is None else None
-        aprint(f"❌ Missing dependency for the zebrahub demo: {module}")
-        aprint(f"   Install with: pip install {pkg}")
-        if note:
-            aprint(f"   ⚠ {note}")
-        message = (
-            f"{module} is required by demo_zebrahub_velocity_streamlines. "
-            f"Install with `pip install {pkg}`."
-        )
-        if note:
-            message = f"{message} {note}"
-        raise ImportError(message) from exc
-
+# Gating lives in `luxar.demos._dependencies`: one spec table for every demo,
+# kept in sync with pyproject.toml by test_demos_dependencies.py. An earlier
+# version of this demo silently ran `pip install` with output suppressed,
+# mutating the user's environment without confirmation — hostile in HPC/CI and
+# it hid the failure mode. `require_module` raises with the constrained spec
+# instead, at the point of use.
 
 # -----------------------------------------------------------------------------
 # Data resolution: download .h5ad from the shared Drive folder
@@ -278,7 +227,7 @@ def resolve_h5ad(cache_dir: Path, h5ad_override: Path | None) -> Path:
         aprint(f"Using cached AnnData: {path.name} ({size_gb:.2f} GB)")
         return path
 
-    gdown = _require_module("gdown")
+    gdown = require_module("gdown")
     with asection("Downloading Zebrahub velocity AnnData from Google Drive"):
         aprint(f"  Folder: {DRIVE_FOLDER_URL}")
         aprint(f"  Target: {cache_dir}")
@@ -366,7 +315,7 @@ def _stabilize_3d(coords: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 
 def load_zebrahub(h5ad_path: Path) -> ZebrahubData:
     """Load 3D UMAP positions, RNA-velocity vectors, and metadata."""
-    ad = _require_module("anndata")
+    ad = require_module("anndata")
 
     with asection(f"Reading {h5ad_path.name}"):
         adata = ad.read_h5ad(h5ad_path, backed="r")

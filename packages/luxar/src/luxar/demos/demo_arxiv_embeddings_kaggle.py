@@ -108,6 +108,7 @@ from luxar.demos import (
     cached_download,
     hsv_to_rgb,
     launch_viewer,
+    require_module,
     stack_colorings,
 )
 from luxar.utils.paths import get_demos_output_dir
@@ -327,7 +328,8 @@ def load_arxiv_dataset_local(
     import struct
     import zipfile
 
-    import pandas as pd
+    # Optional dep: name the pinned spec instead of a raw ModuleNotFoundError.
+    pd = require_module("pandas")
 
     with asection("Loading arXiv embeddings from local ZIP"):
         aprint(f"ZIP file: {zip_path}")
@@ -425,14 +427,8 @@ def reduce_embeddings_umap(
     Returns:
         (n_samples, n_components) reduced coordinates
     """
-    try:
-        from umap import UMAP
-    except ImportError:
-        aprint("❌ Error: umap-learn not installed")
-        aprint("")
-        aprint("Install with:")
-        aprint("  pip install umap-learn")
-        raise
+    # Gated here, not in main(): a warm arxiv_kaggle cache never needs UMAP.
+    UMAP = require_module("umap").UMAP
 
     with asection(f"Reducing {embeddings.shape[1]}D → {n_components}D with UMAP"):
         aprint(f"Input: {embeddings.shape}")
@@ -768,17 +764,6 @@ def main() -> None:
     aprint("Parameters:")
     aprint(f"  Sample size: {sample_size:,} papers")
     aprint("")
-
-    # Check dependencies
-    try:
-        import umap  # noqa: F401
-    except ImportError:
-        aprint("Missing dependency: umap-learn")
-        aprint("")
-        aprint("Install with:")
-        aprint("  pip install umap-learn")
-        aprint("")
-        sys.exit(1)
 
     # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
     if "--no-serve" in sys.argv:
