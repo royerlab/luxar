@@ -103,7 +103,13 @@ import requests
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import cache_computed, hsv_to_rgb, launch_viewer, stack_colorings
+from luxar.demos import (
+    cache_computed,
+    hsv_to_rgb,
+    launch_viewer,
+    require_module,
+    stack_colorings,
+)
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -228,15 +234,8 @@ def compute_text_embeddings(texts: list[str]) -> np.ndarray:
     Returns:
         Array of shape (n_texts, embedding_dim) with embeddings
     """
-    try:
-        from sentence_transformers import SentenceTransformer
-    except ImportError:
-        aprint("❌ Error: sentence-transformers not installed")
-        aprint("")
-        aprint("Install with:")
-        aprint("  pip install sentence-transformers")
-        aprint("")
-        raise
+    # Gated here, not in main(): a warm arxiv_paper cache never needs the model.
+    SentenceTransformer = require_module("sentence_transformers").SentenceTransformer
 
     with asection("Computing text embeddings"):
         aprint("Loading Sentence-BERT model (all-MiniLM-L6-v2)...")
@@ -275,15 +274,8 @@ def reduce_embeddings_umap(
     Returns:
         (n_samples, n_components) reduced coordinates
     """
-    try:
-        from umap import UMAP
-    except ImportError:
-        aprint("❌ Error: umap-learn not installed")
-        aprint("")
-        aprint("Install with:")
-        aprint("  pip install umap-learn")
-        aprint("")
-        raise
+    # Gated here, not in main(): a warm arxiv_paper cache never needs UMAP.
+    UMAP = require_module("umap").UMAP
 
     with asection(f"Reducing {embeddings.shape[1]}D → {n_components}D with UMAP"):
         aprint(f"Input: {embeddings.shape}")
@@ -696,18 +688,6 @@ def main() -> None:
     aprint("  • First run: 2-5 minutes (download + compute embeddings)")
     aprint("  • Cached run: <30 seconds (results cached automatically)")
     aprint("")
-
-    # Check dependencies
-    try:
-        import sentence_transformers  # noqa: F401
-        import umap  # noqa: F401
-    except ImportError as e:
-        aprint(f"Missing dependency: {e}")
-        aprint("")
-        aprint("Install required packages:")
-        aprint("  pip install sentence-transformers umap-learn")
-        aprint("")
-        sys.exit(1)
 
     # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
     if "--no-serve" in sys.argv:

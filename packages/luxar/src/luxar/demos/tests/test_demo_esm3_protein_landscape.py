@@ -16,10 +16,8 @@ import numpy as np
 import pytest
 
 from luxar.demos import demo_esm3_protein_landscape as demo
-from luxar.demos.demo_esm3_protein_landscape import (
-    _compute_esm3_embeddings,
-    _require_module,
-)
+from luxar.demos import require_module
+from luxar.demos.demo_esm3_protein_landscape import _compute_esm3_embeddings
 from luxar.utils.download import QUARANTINE_SUFFIX
 
 SEQUENCES = ["MKV", "MTL", "MGG"]
@@ -132,7 +130,7 @@ class TestDependencyGatesAreDeferred:
         self, without_heavy_deps
     ) -> None:
         with pytest.raises(ImportError) as excinfo:
-            _require_module("esm")
+            require_module("esm")
 
         message = str(excinfo.value)
         assert "pip install 'esm>=3.0.0'" in message
@@ -145,7 +143,7 @@ class TestDependencyGatesAreDeferred:
     ) -> None:
         """The PRODUCTION path must gate torch, not just the helper in isolation.
 
-        Mutation-checked: replacing the `_require_module("torch")` call with a
+        Mutation-checked: replacing the `require_module("torch")` call with a
         bare `import torch` must fail this test. Without it, a cache miss on a
         torch-less machine raises a raw ModuleNotFoundError instead of naming
         the pinned spec.
@@ -162,7 +160,7 @@ class TestDependencyGatesAreDeferred:
     ) -> None:
         """`esm` must be demanded on the model-load path, and only after CUDA.
 
-        Mutation-checked twice: deleting the `_require_module("esm")` call fails
+        Mutation-checked twice: deleting the `require_module("esm")` call fails
         this test, and moving it above the CUDA probe fails
         ``TestQuarantineReporting`` (a GPU-less machine must get the
         supply-a-cache message, which carries the quarantine notice).
