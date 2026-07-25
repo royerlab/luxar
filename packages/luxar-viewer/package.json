@@ -121,7 +121,7 @@
     "@eslint/js": "^9.39.4",
     "@playwright/test": "^1.61.1",
     "@types/node": "^26.1.1",
-    "@types/three": "~0.185.0",
+    "@types/three": "~0.185.1",
     "@typescript-eslint/eslint-plugin": "^8.61.0",
     "@typescript-eslint/parser": "^8.62.1",
     "@vitest/coverage-v8": "~4.1.5",
