@@ -821,35 +821,77 @@ async function measureZarrLadderScenario(
   scn: Extract<ScenarioSpec, { kind: 'zarr-ladder' }>
 ): Promise<ScenarioResult> {
   const notes: string[] = [];
+  // Start recording BEFORE navigation: waitForLuxarReady blocks until the
+  // app is ready, by which time a fast ladder (visible-human loads in a
+  // few seconds) has already finished growing — the post-ready polling
+  // loop then sees zero growth and can only report a lower bound. The
+  // init-script rAF loop ticks from document start, recording frame
+  // deltas and the summed visibleSplatCount so the growth window is
+  // captured from t=0 (performance.now() is relative to navigation
+  // start, so timestamps are wall-ms-from-nav).
+  await page.addInitScript(() => {
+    const rec = {
+      dts: [] as number[],
+      lastT: null as number | null,
+      lastSum: 0,
+      lastChangeAt: 0,
+      dtsUpToLastChange: 0,
+      observedGrowth: false,
+      initialCount: 0,
+    };
+    (window as unknown as { __ladderRec: typeof rec }).__ladderRec = rec;
+    const sumSplats = (): number => {
+      const debug = (window as unknown as { __luxarDebug?: any }).__luxarDebug;
+      let total = 0;
+      debug?.scene?.traverse?.((obj: any) => {
+        if (
+          obj?.userData?.nodeType === 'gsplats' &&
+          typeof obj.userData.visibleSplatCount === 'number'
+        ) {
+          total += obj.userData.visibleSplatCount;
+        }
+      });
+      return total;
+    };
+    const tick = (now: number): void => {
+      if (rec.lastT !== null) {
+        rec.dts.push(now - rec.lastT);
+        const sum = sumSplats();
+        if (sum !== rec.lastSum) {
+          if (rec.dts.length > 0 && sum > 0) rec.observedGrowth = true;
+          rec.lastSum = sum;
+          rec.lastChangeAt = now;
+          rec.dtsUpToLastChange = rec.dts.length;
+        }
+      }
+      rec.lastT = now;
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
   await page.goto(`/?src=${scn.url}&renderer=${BACKEND}&debug&dpr=1`, { timeout: 300_000 });
   await waitForLuxarReady(page, 120_000);
 
   const ladderRaw = await page.evaluate(
     (cfg: { stableMs: number; maxMs: number }) => {
       const debug = (window as unknown as { __luxarDebug: any }).__luxarDebug;
-      const sumSplats = (): number => {
-        let total = 0;
-        debug.scene?.traverse?.((obj: any) => {
-          if (
-            obj?.userData?.nodeType === 'gsplats' &&
-            typeof obj.userData.visibleSplatCount === 'number'
-          ) {
-            total += obj.userData.visibleSplatCount;
-          }
-        });
-        return total;
-      };
+      // The init-script recorder (installed before navigation) holds the
+      // full growth history from t=0; this loop only drives frames until
+      // the ladder is stable, then reads the recorder out.
+      const rec = (
+        window as unknown as {
+          __ladderRec: {
+            dts: number[];
+            lastSum: number;
+            lastChangeAt: number;
+            dtsUpToLastChange: number;
+            observedGrowth: boolean;
+            initialCount: number;
+          };
+        }
+      ).__ladderRec;
 
-      const dts: number[] = [];
-      // dtsUpToLastChange: index into `dts` at the moment of the last
-      // observed growth — the progressive-load frame window.
-      let dtsUpToLastChange = 0;
       const loopStart = performance.now();
-      let lastTime = loopStart;
-      let lastSum = sumSplats();
-      const initialSum = lastSum;
-      let lastChangeAt = loopStart;
-      let observedGrowth = false;
 
       return new Promise<{
         wallMsToLadderComplete: number;
@@ -861,31 +903,23 @@ async function measureZarrLadderScenario(
       }>((resolve) => {
         const finish = (timedOut: boolean): void => {
           resolve({
-            // performance.now() is relative to navigation start.
-            wallMsToLadderComplete: lastChangeAt,
-            observedGrowth,
-            loadWindowDtMs: dts.slice(0, Math.max(dtsUpToLastChange, 1)),
-            finalCount: sumSplats(),
-            initialCount: initialSum,
+            // performance.now() is relative to navigation start, and the
+            // recorder ran from navigation start — this IS wall ms.
+            wallMsToLadderComplete: rec.lastChangeAt,
+            observedGrowth: rec.observedGrowth,
+            loadWindowDtMs: rec.dts.slice(0, Math.max(rec.dtsUpToLastChange, 1)),
+            finalCount: rec.lastSum,
+            initialCount: rec.initialCount,
             timedOut,
           });
         };
         const tick = (): void => {
           const now = performance.now();
-          dts.push(now - lastTime);
-          lastTime = now;
-          const sum = sumSplats();
-          if (sum !== lastSum) {
-            lastSum = sum;
-            lastChangeAt = now;
-            observedGrowth = true;
-            dtsUpToLastChange = dts.length;
-          }
           if (now - loopStart > cfg.maxMs) {
             finish(true);
             return;
           }
-          if (sum > 0 && now - lastChangeAt > cfg.stableMs) {
+          if (rec.lastSum > 0 && now - rec.lastChangeAt > cfg.stableMs) {
             finish(false);
             return;
           }
