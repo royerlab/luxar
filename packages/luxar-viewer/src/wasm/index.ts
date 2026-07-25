@@ -27,7 +27,7 @@ import type { WasmModule } from './types';
 import { log, Modules } from '../utils/log';
 
 // Re-export types for convenience
-export type { WasmModule } from './types';
+export type { WasmModule, DepthSorterHandle } from './types';
 
 /**
  * Optional override for the WASM JS shim URL.

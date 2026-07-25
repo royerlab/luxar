@@ -70,14 +70,14 @@ mod projection;
 
 // Re-export all public functions for WASM binding
 pub use decode::{
-    decode_broadcasted, decode_geolog_scalar_u16, decode_geolog_scalar_u8,
-    decode_geolog_perchannel_u16, decode_geolog_perchannel_u8,
-    decode_linear_perchannel_u16, decode_linear_perchannel_u8, decode_log_perchannel_u16,
-    decode_log_perchannel_u8, decode_log_scalar_u16, decode_log_scalar_u8, decode_lut_row_u16,
-    decode_lut_row_u8, decode_lut_scalar_u16, decode_lut_scalar_u8, decode_quantized_u16,
-    decode_quantized_u8, decode_signed_log_perchannel_u16, decode_signed_log_perchannel_u8,
+    decode_broadcasted, decode_geolog_perchannel_u16, decode_geolog_perchannel_u8,
+    decode_geolog_scalar_u16, decode_geolog_scalar_u8, decode_linear_perchannel_u16,
+    decode_linear_perchannel_u8, decode_log_perchannel_u16, decode_log_perchannel_u8,
+    decode_log_scalar_u16, decode_log_scalar_u8, decode_lut_row_u16, decode_lut_row_u8,
+    decode_lut_scalar_u16, decode_lut_scalar_u8, decode_quantized_u16, decode_quantized_u8,
+    decode_signed_log_perchannel_u16, decode_signed_log_perchannel_u8,
 };
-pub use depth_sort::sort_splats_by_depth;
+pub use depth_sort::{create_depth_sorter, sort_splats_by_depth, DepthSorter};
 pub use effective_radii::calculate_effective_radii;
 pub use gsplats_processing::{
     compact_attenuated_amplitudes, compute_gsplats_attenuation, extract_cholesky_submatrix,

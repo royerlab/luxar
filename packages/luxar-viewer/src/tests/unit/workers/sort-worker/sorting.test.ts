@@ -94,10 +94,95 @@ describe('sort-worker sorting tasks', () => {
   });
 
   it('sortNode throws the not-initialized error when wasm is missing', () => {
-    ctx.wasm = null;
+    // Register with a live backend (registration now CONSTRUCTS the
+    // backend-resident sorter, so it needs one), then simulate the
+    // backend vanishing before the sort call.
     registerNode(ctx, { nodeId: 'n1', generation: 1, centers3: threeSplats(), count: 3 });
+    ctx.wasm = null;
     expect(() => sortNode(ctx, { nodeId: 'n1', generation: 1, modelView: IDENTITY_MV })).toThrow(
       NOT_INITIALIZED_MSG
     );
+  });
+
+  it('registerNode throws the not-initialized error when wasm is missing', () => {
+    // Since the sorter became backend-resident, registration itself
+    // requires the backend (the coordinator always awaits initialize()
+    // before its first register RPC).
+    ctx.wasm = null;
+    expect(() =>
+      registerNode(ctx, { nodeId: 'n1', generation: 1, centers3: threeSplats(), count: 3 })
+    ).toThrow(NOT_INITIALIZED_MSG);
+  });
+
+  describe('sorter lifecycle (leak safety)', () => {
+    /** Wrap create_depth_sorter to capture every handle + spy its free(). */
+    function trackSorters(): { frees: () => number[]; handles: () => number } {
+      const wasm = ctx.wasm!;
+      const freed: boolean[] = [];
+      const original = wasm.create_depth_sorter.bind(wasm);
+      let created = 0;
+      vi.spyOn(wasm, 'create_depth_sorter').mockImplementation((centers3, count) => {
+        const handle = original(centers3, count);
+        const index = created++;
+        freed.push(false);
+        const realFree = handle.free.bind(handle);
+        handle.free = () => {
+          freed[index] = true;
+          realFree();
+        };
+        return handle;
+      });
+      return {
+        frees: () => freed.map((f, i) => (f ? i : -1)).filter((i) => i >= 0),
+        handles: () => created,
+      };
+    }
+
+    it('re-registration frees the replaced sorter (no leak on generation bump)', () => {
+      const tracker = trackSorters();
+      registerNode(ctx, { nodeId: 'n1', generation: 1, centers3: threeSplats(), count: 3 });
+      registerNode(ctx, { nodeId: 'n1', generation: 2, centers3: threeSplats(), count: 3 });
+      expect(tracker.handles()).toBe(2);
+      expect(tracker.frees()).toEqual([0]); // old sorter freed, new one live
+      // The replacement sorter is fully functional.
+      const result = sortNode(ctx, { nodeId: 'n1', generation: 2, modelView: IDENTITY_MV });
+      expect(Array.from(result!.ordering)).toEqual([0, 2, 1]);
+    });
+
+    it('releaseNode frees the sorter', () => {
+      const tracker = trackSorters();
+      registerNode(ctx, { nodeId: 'n1', generation: 1, centers3: threeSplats(), count: 3 });
+      releaseNode(ctx, 'n1');
+      expect(tracker.frees()).toEqual([0]);
+      // Releasing an unknown node stays a safe no-op.
+      releaseNode(ctx, 'ghost');
+    });
+
+    it('releaseAllNodes frees every sorter', () => {
+      const tracker = trackSorters();
+      registerNode(ctx, { nodeId: 'a', generation: 1, centers3: threeSplats(), count: 3 });
+      registerNode(ctx, { nodeId: 'b', generation: 1, centers3: threeSplats(), count: 3 });
+      registerNode(ctx, { nodeId: 'c', generation: 1, centers3: threeSplats(), count: 3 });
+      releaseAllNodes(ctx);
+      expect(tracker.frees()).toEqual([0, 1, 2]);
+      expect(ctx.nodes.size).toBe(0);
+    });
+
+    it('a failing sorter construction keeps the previous registration intact', () => {
+      registerNode(ctx, { nodeId: 'n1', generation: 1, centers3: threeSplats(), count: 3 });
+      const survivor = ctx.nodes.get('n1')!.sorter;
+      const freeSpy = vi.spyOn(survivor, 'free');
+      vi.spyOn(ctx.wasm!, 'create_depth_sorter').mockImplementation(() => {
+        throw new Error('simulated wasm OOM');
+      });
+      expect(() =>
+        registerNode(ctx, { nodeId: 'n1', generation: 2, centers3: threeSplats(), count: 3 })
+      ).toThrow('simulated wasm OOM');
+      // Old sorter neither freed nor replaced — generation-1 sorts still work.
+      expect(freeSpy).not.toHaveBeenCalled();
+      expect(ctx.nodes.get('n1')!.sorter).toBe(survivor);
+      const result = sortNode(ctx, { nodeId: 'n1', generation: 1, modelView: IDENTITY_MV });
+      expect(Array.from(result!.ordering)).toEqual([0, 2, 1]);
+    });
   });
 });

@@ -29,6 +29,10 @@ import {
 // WASM module reference (loaded dynamically)
 let wasmModule: WasmModule | null = null;
 let tsModule: WasmModule;
+// The instance's linear memory (from initSync's InitOutput) — used by the
+// DepthSorter leak test to assert bounded memory growth across
+// register/release cycles.
+let wasmMemory: WebAssembly.Memory | null = null;
 
 // Pre-check if WASM files exist (synchronous check at module load time)
 const __filename = fileURLToPath(import.meta.url);
@@ -92,7 +96,8 @@ beforeAll(async () => {
     const wasm = await import(wasmJsPath);
 
     // Use initSync with the binary buffer (works in Node.js without fetch)
-    wasm.initSync({ module: wasmBinary });
+    const initOutput = wasm.initSync({ module: wasmBinary });
+    wasmMemory = (initOutput as { memory: WebAssembly.Memory }).memory;
 
     wasmModule = wasm as unknown as WasmModule;
     console.log('[Test] WASM module loaded successfully');
@@ -355,6 +360,189 @@ describe('WASM vs TypeScript Comparison', () => {
         const { ts, wasm, tsSorted, wasmSorted } = runBoth(centers3, mv, count);
         expect(wasmSorted).toBe(tsSorted);
         expect(arraysEqual(wasm, ts)).toBe(true);
+      }
+    );
+  });
+
+  // ============================================================================
+  // DEPTH SORT MODULE — stateful DepthSorter (WASM-resident state, lever L3)
+  // ============================================================================
+  describe('depth_sort: stateful create_depth_sorter / DepthSorter', () => {
+    /** Centers with the given view-space z values (x = index, y = 0). */
+    function centersWithZ(zs: number[]): Float32Array {
+      const centers = new Float32Array(zs.length * 3);
+      zs.forEach((z, i) => {
+        centers[i * 3] = i;
+        centers[i * 3 + 2] = z;
+      });
+      return centers;
+    }
+
+    const IDENTITY_MV = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+
+    /** A pool of model-views exercising rotation, translation, and identity. */
+    function modelViewPool(): Float32Array[] {
+      const translated = new Float32Array(IDENTITY_MV);
+      translated[14] = -5;
+      const rotated = new Float32Array([
+        0.866, 0, -0.5, 0, 0, 1, 0, 0, 0.5, 0, 0.866, 0, 10, -20, -1500, 1,
+      ]);
+      const behind = new Float32Array(IDENTITY_MV);
+      behind[14] = 1e9; // pushes typical test scenes fully behind the camera
+      return [IDENTITY_MV, translated, rotated, behind, IDENTITY_MV];
+    }
+
+    it.skipIf(!wasmFilesExist)(
+      'stateful WASM ≡ stateful TS ≡ legacy free function on adversarial inputs, across reused-scratch re-sorts',
+      () => {
+        // The three-way pin: the WASM-resident sorter, the TS twin, and
+        // the legacy stateless kernel must produce IDENTICAL permutations
+        // — including on the 2nd..Nth sort of each sorter, where dirty
+        // scratch (histogram cursors, stale keys) could leak.
+        const adversarial: number[][] = [
+          [], // count 0
+          [-7.5], // count 1 (identity fallback)
+          [-5, -1, -5, -5, -1], // duplicate depths (stability)
+          [-1, 3, -10, 0], // behind-camera mix
+          [NaN, -3, -8], // NaN center (near-bucket pin)
+          [-1, -Infinity, -5, Infinity, NaN], // non-finite soup
+          [-1e-6, -9e-6, -5e-6, -3e-6], // nm scale
+          [-1e6, -9e6, -5e6, -3e6], // km scale
+          [-1e-6, -1e6, -1, -1e3, -1e-3], // 12 orders of magnitude
+          [-4, -4, -4], // uniform depth (identity fallback)
+        ];
+        for (const zs of adversarial) {
+          const centers = centersWithZ(zs);
+          const wasmSorter = wasmModule!.create_depth_sorter(centers, zs.length);
+          const tsSorter = tsModule.create_depth_sorter(centers, zs.length);
+          expect(wasmSorter.count()).toBe(tsSorter.count());
+          for (const mv of modelViewPool()) {
+            const legacy = new Uint32Array(zs.length);
+            const legacyPlaced = tsModule.sort_splats_by_depth(centers, mv, legacy, zs.length);
+
+            const wasmPlaced = wasmSorter.sort(mv);
+            const tsPlaced = tsSorter.sort(mv);
+            const wasmOut = new Uint32Array(zs.length);
+            const tsOut = new Uint32Array(zs.length);
+            wasmSorter.read_ordering_into(wasmOut);
+            tsSorter.read_ordering_into(tsOut);
+
+            expect(wasmPlaced, `zs=${zs}`).toBe(tsPlaced);
+            expect(wasmPlaced, `zs=${zs}`).toBe(legacyPlaced);
+            expect(arraysEqual(wasmOut, tsOut), `zs=${zs}: wasm=[${wasmOut}] ts=[${tsOut}]`).toBe(
+              true
+            );
+            expect(
+              arraysEqual(wasmOut, legacy),
+              `zs=${zs}: wasm=[${wasmOut}] legacy=[${legacy}]`
+            ).toBe(true);
+          }
+          wasmSorter.free();
+          tsSorter.free();
+        }
+      }
+    );
+
+    it.skipIf(!wasmFilesExist)(
+      'stateful WASM ≡ legacy free function on 100k pseudo-random splats',
+      () => {
+        const count = 100_000;
+        const centers3 = new Float32Array(count * 3);
+        let state = 0xdeadbeef;
+        const next = () => {
+          state ^= (state << 13) >>> 0;
+          state >>>= 0;
+          state ^= state >>> 17;
+          state ^= (state << 5) >>> 0;
+          state >>>= 0;
+          return (state / 0xffffffff) * 1000 - 500;
+        };
+        for (let i = 0; i < centers3.length; i++) {
+          centers3[i] = next();
+        }
+        const sorter = wasmModule!.create_depth_sorter(centers3, count);
+        for (const mv of modelViewPool()) {
+          const legacy = new Uint32Array(count);
+          const legacyPlaced = wasmModule!.sort_splats_by_depth(centers3, mv, legacy, count);
+          const placed = sorter.sort(mv);
+          const out = new Uint32Array(count);
+          sorter.read_ordering_into(out);
+          expect(placed).toBe(legacyPlaced);
+          expect(arraysEqual(out, legacy)).toBe(true);
+        }
+        sorter.free();
+      }
+    );
+
+    it.skipIf(!wasmFilesExist)('identity ordering readable before the first sort (both)', () => {
+      const centers = centersWithZ([-1, -9, -5]);
+      const wasmSorter = wasmModule!.create_depth_sorter(centers, 3);
+      const tsSorter = tsModule.create_depth_sorter(centers, 3);
+      const wasmOut = new Uint32Array(3);
+      const tsOut = new Uint32Array(3);
+      wasmSorter.read_ordering_into(wasmOut);
+      tsSorter.read_ordering_into(tsOut);
+      expect(Array.from(wasmOut)).toEqual([0, 1, 2]);
+      expect(Array.from(tsOut)).toEqual([0, 1, 2]);
+      wasmSorter.free();
+      tsSorter.free();
+    });
+
+    it.skipIf(!wasmFilesExist)('count clamps to centers capacity (both)', () => {
+      const centers = centersWithZ([-1, -9, -5]);
+      const wasmSorter = wasmModule!.create_depth_sorter(centers, 99);
+      const tsSorter = tsModule.create_depth_sorter(centers, 99);
+      expect(wasmSorter.count()).toBe(3);
+      expect(tsSorter.count()).toBe(3);
+      wasmSorter.free();
+      tsSorter.free();
+    });
+
+    it.skipIf(!wasmFilesExist)('sort after free() throws on both backends', () => {
+      const centers = centersWithZ([-1, -9, -5]);
+      const wasmSorter = wasmModule!.create_depth_sorter(centers, 3);
+      wasmSorter.free();
+      // wasm-bindgen throws its freed-class error ("null pointer passed
+      // to rust"); the TS twin throws its own use-after-free Error. The
+      // shared contract is "throws, doesn't return garbage".
+      expect(() => wasmSorter.sort(IDENTITY_MV)).toThrow();
+      const tsSorter = tsModule.create_depth_sorter(centers, 3);
+      tsSorter.free();
+      expect(() => tsSorter.sort(IDENTITY_MV)).toThrow();
+    });
+
+    it.skipIf(!wasmFilesExist)(
+      'register/release cycles do not grow wasm memory (leak guard)',
+      { timeout: 60_000 },
+      () => {
+        // Each 500k-splat sorter holds ~11 MB of wasm linear memory
+        // (12 B centers + 4 B z + 2 B keys + 4 B ordering per splat +
+        // 256 KiB histogram). A missed free() therefore grows memory by
+        // ~11 MB per cycle — far above allocator noise. Warm up two
+        // cycles (lets dlmalloc reach its steady-state arena), then pin
+        // byteLength exactly across 10 more create/sort/free cycles.
+        const count = 500_000;
+        const centers = new Float32Array(count * 3);
+        for (let i = 0; i < centers.length; i++) {
+          centers[i] = Math.sin(i * 0.037) * 10;
+        }
+        const mv = new Float32Array(IDENTITY_MV);
+        mv[14] = -100;
+        const cycle = () => {
+          const sorter = wasmModule!.create_depth_sorter(centers, count);
+          sorter.sort(mv);
+          const out = new Uint32Array(count);
+          sorter.read_ordering_into(out);
+          sorter.free();
+        };
+        cycle();
+        cycle();
+        const before = wasmMemory!.buffer.byteLength;
+        for (let i = 0; i < 10; i++) {
+          cycle();
+        }
+        const after = wasmMemory!.buffer.byteLength;
+        expect(after).toBe(before);
       }
     );
   });

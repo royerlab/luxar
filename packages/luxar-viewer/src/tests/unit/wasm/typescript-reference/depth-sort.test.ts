@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { sort_splats_by_depth } from '../../../../wasm/typescript';
+import { sort_splats_by_depth, create_depth_sorter } from '../../../../wasm/typescript';
 
 /** Identity model-view: view z == world z (camera at origin looking -z). */
 const IDENTITY_MV = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
@@ -178,5 +178,93 @@ describe('depth_sort: sort_splats_by_depth', () => {
       expect(z).toBeGreaterThanOrEqual(prev - bucketWidth);
       prev = Math.max(prev, z);
     }
+  });
+});
+
+describe('depth_sort: stateful DepthSorter (TS twin of the WASM-resident class)', () => {
+  /** Read a sorter's current ordering into a fresh array. */
+  function readOrdering(sorter: ReturnType<typeof create_depth_sorter>): number[] {
+    const out = new Uint32Array(sorter.count());
+    sorter.read_ordering_into(out);
+    return Array.from(out);
+  }
+
+  it('matches the free function across reused-scratch re-sorts', () => {
+    // The load-bearing stateful property: dirty scratch from the previous
+    // sort (histogram cursors, stale keys/z) must not leak into the next
+    // result. Mirrors the Rust test of the same name.
+    const zs = [-1, 3, -10, -5, -5, 0, -2.5, NaN, -1e6, -1e-6];
+    const centers = centersWithZ(zs);
+    const sorter = create_depth_sorter(centers, zs.length);
+
+    const translated = new Float32Array(IDENTITY_MV);
+    translated[14] = -5;
+    const rotated = new Float32Array([0, 0, -1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1]);
+    for (const mv of [IDENTITY_MV, translated, rotated, IDENTITY_MV]) {
+      const expected = new Uint32Array(zs.length);
+      const expectedPlaced = sort_splats_by_depth(centers, mv, expected, zs.length);
+      expect(sorter.sort(mv)).toBe(expectedPlaced);
+      expect(readOrdering(sorter)).toEqual(Array.from(expected));
+    }
+    sorter.free();
+  });
+
+  it('holds the identity ordering before the first sort', () => {
+    const sorter = create_depth_sorter(centersWithZ([-1, -9, -5]), 3);
+    expect(sorter.count()).toBe(3);
+    expect(readOrdering(sorter)).toEqual([0, 1, 2]);
+    sorter.free();
+  });
+
+  it('clamps count to the centers capacity (like registerNode)', () => {
+    const sorter = create_depth_sorter(centersWithZ([-1, -9, -5]), 99);
+    expect(sorter.count()).toBe(3);
+    expect(sorter.sort(IDENTITY_MV)).toBe(3);
+    expect(readOrdering(sorter)).toEqual([1, 2, 0]);
+    sorter.free();
+  });
+
+  it('handles count 0 and count 1', () => {
+    const empty = create_depth_sorter(new Float32Array(0), 0);
+    expect(empty.count()).toBe(0);
+    expect(empty.sort(IDENTITY_MV)).toBe(0);
+    empty.free();
+
+    const single = create_depth_sorter(centersWithZ([-7.5]), 1);
+    expect(single.sort(IDENTITY_MV)).toBe(0); // identity fallback
+    expect(readOrdering(single)).toEqual([0]);
+    single.free();
+  });
+
+  it('copies the centers at construction (later caller mutation is ignored)', () => {
+    // Mirrors the wasm-bindgen boundary copy: the WASM sorter cannot see
+    // post-construction mutations of the JS buffer, so the twin must not
+    // either — exact-permutation parity would otherwise diverge.
+    const centers = centersWithZ([-1, -9, -5]);
+    const sorter = create_depth_sorter(centers, 3);
+    centers.fill(0); // caller clobbers the source after registration
+    expect(sorter.sort(IDENTITY_MV)).toBe(3);
+    expect(readOrdering(sorter)).toEqual([1, 2, 0]);
+    sorter.free();
+  });
+
+  it('rewrites the ordering to identity on a degenerate re-sort', () => {
+    const sorter = create_depth_sorter(centersWithZ([-1, -9, -5]), 3);
+    expect(sorter.sort(IDENTITY_MV)).toBe(3);
+    expect(readOrdering(sorter)).toEqual([1, 2, 0]);
+    const behind = new Float32Array(IDENTITY_MV);
+    behind[14] = 100; // everything behind the camera → identity fallback
+    expect(sorter.sort(behind)).toBe(0);
+    expect(readOrdering(sorter)).toEqual([0, 1, 2]);
+    sorter.free();
+  });
+
+  it('free() is idempotent and use-after-free throws', () => {
+    const sorter = create_depth_sorter(centersWithZ([-1, -9, -5]), 3);
+    sorter.free();
+    sorter.free(); // idempotent, like wasm-bindgen's free()
+    expect(() => sorter.sort(IDENTITY_MV)).toThrow(/after free/);
+    expect(() => sorter.read_ordering_into(new Uint32Array(3))).toThrow(/after free/);
+    expect(() => sorter.count()).toThrow(/after free/);
   });
 });

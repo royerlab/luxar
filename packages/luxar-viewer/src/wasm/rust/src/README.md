@@ -160,14 +160,17 @@ dims are looked up via a fixed-size `[bool; 16]` array.
 
 ### `depth_sort.rs` — back-to-front splat ordering
 
-| Function              | Purpose                                                                                              |
-| --------------------- | ---------------------------------------------------------------------------------------------------- |
-| `sort_splats_by_depth` | Camera-space z per splat, min/max-normalized uint16 keys, stable 65536-bucket counting sort (back-to-front permutation for `aSortedIndex`). |
+| Function / type        | Purpose                                                                                              |
+| ---------------------- | ---------------------------------------------------------------------------------------------------- |
+| `sort_splats_by_depth` | Stateless kernel: camera-space z per splat, min/max-normalized uint16 keys, stable 65536-bucket counting sort (back-to-front permutation for `aSortedIndex`). Per-call scratch + boundary copies — the raw-kernel bench/parity pin. |
+| `create_depth_sorter` / `DepthSorter` | WASM-resident stateful API (perf lever L3): centers copied across the boundary ONCE at construction; `sort(model_view)` reuses all scratch (zero allocations, only the 64-byte matrix crosses); `read_ordering_into(target)` reads the result back as a single memcpy (`js_sys::Uint32Array::view` + `target.set`); `free()` releases the resident buffers. |
 
-Scale-invariant (per-sort normalization — nm..km units; raw f16 keys were
-deliberately rejected), stable on ties, behind-camera splats key to the far
-bucket, degenerate depth ranges fall back to the identity ordering. Input is
-always projected 3D centers, so the 16-dimension cap does not apply. See
+Both entry points share one `sort_by_depth_core`, so the key math / NaN
+semantics / stability exist once. Scale-invariant (per-sort normalization —
+nm..km units; raw f16 keys were deliberately rejected), stable on ties,
+behind-camera splats key to the far bucket, degenerate depth ranges fall back
+to the identity ordering. Input is always projected 3D centers, so the
+16-dimension cap does not apply. See
 `docs/guides/specs/GSPLAT_DEPTH_SORTING_SPEC.md` §5.
 
 ### `projection.rs` — extraction, bounds, compaction

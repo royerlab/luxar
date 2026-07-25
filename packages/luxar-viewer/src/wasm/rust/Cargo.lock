@@ -104,6 +104,7 @@ checksum = "f9fbbcab51052fe104eb5e5d351cf728d30a5be1fe14d9be8a3b097481fb97de"
 name = "luxar-wasm"
 version = "0.1.0"
 dependencies = [
+ "js-sys",
  "wasm-bindgen",
  "wasm-bindgen-test",
 ]

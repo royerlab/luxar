@@ -46,6 +46,22 @@
 //!
 //! This kernel takes already-projected 3D centers (the projection stage's
 //! output), so `validate_ndim` / the 16-dimension cap are not involved.
+//!
+//! ## Two entry points, one algorithm
+//!
+//! - [`sort_splats_by_depth`] — the stateless free function (per-call
+//!   scratch allocations + wasm-bindgen boundary copies of centers and
+//!   ordering on every call). Kept as the raw-kernel benchmark target and
+//!   the TS-parity pin.
+//! - [`DepthSorter`] — the WASM-RESIDENT stateful API (perf lever L3):
+//!   centers are copied across the boundary ONCE at construction
+//!   ([`create_depth_sorter`]), every scratch buffer is reused, and each
+//!   [`DepthSorter::sort`] call crosses the boundary with only the 64-byte
+//!   model-view. The ordering is read back via
+//!   [`DepthSorter::read_ordering_into`] — a single memcpy, no allocation.
+//!
+//! Both call [`sort_by_depth_core`], so the key math / NaN semantics /
+//! stability exist exactly once.
 
 use wasm_bindgen::prelude::*;
 
@@ -55,24 +71,23 @@ const DEPTH_SORT_BUCKETS: usize = 1 << 16;
 /// Maximum key value (`DEPTH_SORT_BUCKETS - 1` as f32 for normalization).
 const DEPTH_KEY_MAX: f32 = (DEPTH_SORT_BUCKETS - 1) as f32;
 
-/// Sort splats back-to-front by camera-space depth.
+/// Shared three-pass counting-sort core (see module docs for the
+/// algorithm). Both the stateless [`sort_splats_by_depth`] and the
+/// stateful [`DepthSorter::sort`] delegate here so the algorithm exists
+/// once.
 ///
-/// # Arguments
-/// - `centers3`: Projected 3D splat centers `[count * 3]` (x, y, z triplets)
-/// - `model_view`: Column-major 4x4 model-view matrix `[16]`
-///   (`camera.matrixWorldInverse × mesh.matrixWorld`, THREE.js layout)
-/// - `ordering`: Output permutation `[count]` — `ordering[j]` is the original
-///   splat index drawn at instance slot `j` (slot 0 = farthest)
-/// - `count`: Number of splats
-///
-/// # Returns
-/// Number of splats placed via depth keys, or `0` when the identity
-/// fallback was taken (degenerate depth range — the ordering is still
-/// fully written).
-#[wasm_bindgen]
-pub fn sort_splats_by_depth(
+/// Scratch contract: `z_scratch` and `keys` need `len >= count` (contents
+/// ignored — fully overwritten); `histogram` needs
+/// `len >= DEPTH_SORT_BUCKETS` and is zeroed HERE (callers may hand back a
+/// dirty buffer from the previous sort). `ordering[..count]` is always
+/// fully written. Returns the number of splats placed via depth keys, `0`
+/// for the identity fallback.
+fn sort_by_depth_core(
     centers3: &[f32],
     model_view: &[f32],
+    z_scratch: &mut [f32],
+    keys: &mut [u16],
+    histogram: &mut [u32],
     ordering: &mut [u32],
     count: usize,
 ) -> u32 {
@@ -98,6 +113,19 @@ pub fn sort_splats_by_depth(
         "model_view too small: {} < 16",
         model_view.len()
     );
+    debug_assert!(
+        z_scratch.len() >= count && keys.len() >= count,
+        "scratch too small: z {} / keys {} < {}",
+        z_scratch.len(),
+        keys.len(),
+        count
+    );
+    debug_assert!(
+        histogram.len() >= DEPTH_SORT_BUCKETS,
+        "histogram too small: {} < {}",
+        histogram.len(),
+        DEPTH_SORT_BUCKETS
+    );
 
     if count == 0 {
         return 0;
@@ -111,7 +139,6 @@ pub fn sort_splats_by_depth(
 
     // Pass 1: camera-space z per splat + min/max over in-front splats.
     // View space looks down -z, so in-front splats have z < 0.
-    let mut z_scratch = vec![0.0f32; count];
     let mut z_min = f32::INFINITY;
     let mut z_max = f32::NEG_INFINITY;
     for i in 0..count {
@@ -139,9 +166,9 @@ pub fn sort_splats_by_depth(
 
     // Pass 2: normalized uint16 keys + histogram. zmin (farthest) -> key 0,
     // zmax (nearest in-front) -> key 65535; behind-camera -> far bucket 0.
+    // The histogram may carry the previous sort's cursors — zero it first.
+    histogram[..DEPTH_SORT_BUCKETS].fill(0);
     let inv_range = 1.0 / (z_max - z_min);
-    let mut keys = vec![0u16; count];
-    let mut histogram = vec![0u32; DEPTH_SORT_BUCKETS];
     for i in 0..count {
         let z = z_scratch[i];
         let key = if z >= 0.0 {
@@ -155,10 +182,10 @@ pub fn sort_splats_by_depth(
     }
 
     // Prefix sum: bucket k's write cursor starts after all lower (farther)
-    // buckets — ascending keys scatter back-to-front.
+    // buckets — ascending keys scatter back-to-front. Reuses the histogram
+    // slice in place as the write-cursor array.
     let mut cursor: u32 = 0;
-    let mut starts = histogram; // reuse the allocation in place
-    for slot in starts.iter_mut() {
+    for slot in histogram[..DEPTH_SORT_BUCKETS].iter_mut() {
         let bucket_count = *slot;
         *slot = cursor;
         cursor += bucket_count;
@@ -167,11 +194,165 @@ pub fn sort_splats_by_depth(
     // Pass 3: stable scatter (equal keys keep their input order).
     for i in 0..count {
         let bucket = keys[i] as usize;
-        ordering[starts[bucket] as usize] = i as u32;
-        starts[bucket] += 1;
+        ordering[histogram[bucket] as usize] = i as u32;
+        histogram[bucket] += 1;
     }
 
     count as u32
+}
+
+/// Sort splats back-to-front by camera-space depth.
+///
+/// # Arguments
+/// - `centers3`: Projected 3D splat centers `[count * 3]` (x, y, z triplets)
+/// - `model_view`: Column-major 4x4 model-view matrix `[16]`
+///   (`camera.matrixWorldInverse × mesh.matrixWorld`, THREE.js layout)
+/// - `ordering`: Output permutation `[count]` — `ordering[j]` is the original
+///   splat index drawn at instance slot `j` (slot 0 = farthest)
+/// - `count`: Number of splats
+///
+/// # Returns
+/// Number of splats placed via depth keys, or `0` when the identity
+/// fallback was taken (degenerate depth range — the ordering is still
+/// fully written).
+#[wasm_bindgen]
+pub fn sort_splats_by_depth(
+    centers3: &[f32],
+    model_view: &[f32],
+    ordering: &mut [u32],
+    count: usize,
+) -> u32 {
+    // Stateless form: per-call scratch allocations (plus the wasm-bindgen
+    // boundary copies of `centers3` in and `ordering` in/out). Hot-path
+    // callers should register a [`DepthSorter`] instead.
+    let mut z_scratch = vec![0.0f32; count];
+    let mut keys = vec![0u16; count];
+    let mut histogram = vec![0u32; DEPTH_SORT_BUCKETS];
+    sort_by_depth_core(
+        centers3,
+        model_view,
+        &mut z_scratch,
+        &mut keys,
+        &mut histogram,
+        ordering,
+        count,
+    )
+}
+
+/// WASM-resident depth-sort state for one registered node (perf lever L3).
+///
+/// Owns the node's projected 3D centers plus every scratch buffer the
+/// counting sort needs, so a camera-driven re-sort crosses the
+/// wasm-bindgen boundary with only the 64-byte model-view matrix — no
+/// per-sort centers copy (12 B/splat), no output-ordering copy-in
+/// (4 B/splat), and zero allocations.
+///
+/// Lifecycle (mirrored by the worker's node registry):
+/// - [`create_depth_sorter`] — one boundary copy of the centers, scratch
+///   sized once. `count` is clamped to the centers' capacity
+///   (`centers3.len() / 3`), matching the worker's own clamp.
+/// - [`DepthSorter::sort`] — recompute the ordering for a model-view.
+/// - [`DepthSorter::read_ordering_into`] — copy the ordering out
+///   (single memcpy; see the method docs for why this beats the
+///   alternatives).
+/// - `free()` (wasm-bindgen-generated) — releases the wasm-side buffers.
+///   The worker calls it on node release AND on re-registration; a leaked
+///   sorter would pin ~20 B/splat of wasm memory forever (MatrixCity-scale
+///   scenes hold >180 MB of centers).
+///
+/// Before the first `sort`, the stored ordering is the identity — a
+/// `read_ordering_into` is therefore always well-defined.
+#[wasm_bindgen]
+pub struct DepthSorter {
+    centers3: Vec<f32>,
+    count: usize,
+    z_scratch: Vec<f32>,
+    keys: Vec<u16>,
+    /// 65536-bucket histogram / write-cursor scratch (256 KiB per sorter;
+    /// one sorter per order-dependent node — an acceptable constant).
+    histogram: Vec<u32>,
+    ordering: Vec<u32>,
+}
+
+/// Construct a [`DepthSorter`] from projected 3D centers (`count * 3`
+/// floats). This is the ONE boundary copy of the centers; every later
+/// [`DepthSorter::sort`] reuses them wasm-side.
+///
+/// A free factory function rather than a `#[wasm_bindgen(constructor)]`
+/// so the JS surface matches the module's snake_case function style and
+/// the `WasmModule` interface can type it as a plain method.
+#[wasm_bindgen]
+pub fn create_depth_sorter(centers3: &[f32], count: usize) -> DepthSorter {
+    let count = count.min(centers3.len() / 3);
+    DepthSorter {
+        centers3: centers3[..count * 3].to_vec(),
+        count,
+        z_scratch: vec![0.0f32; count],
+        keys: vec![0u16; count],
+        histogram: vec![0u32; DEPTH_SORT_BUCKETS],
+        ordering: (0..count as u32).collect(),
+    }
+}
+
+#[wasm_bindgen]
+impl DepthSorter {
+    /// Recompute the back-to-front ordering for the given column-major
+    /// 4x4 model-view. Identical key math / NaN semantics / stability to
+    /// [`sort_splats_by_depth`] (same [`sort_by_depth_core`]); zero
+    /// allocations — every scratch buffer is reused across calls.
+    ///
+    /// Returns the number of splats placed via depth keys, or `0` when
+    /// the identity fallback was taken (the ordering is still fully
+    /// written).
+    pub fn sort(&mut self, model_view: &[f32]) -> u32 {
+        sort_by_depth_core(
+            &self.centers3,
+            model_view,
+            &mut self.z_scratch,
+            &mut self.keys,
+            &mut self.histogram,
+            &mut self.ordering,
+            self.count,
+        )
+    }
+
+    /// Number of splats (after the construction-time capacity clamp).
+    pub fn count(&self) -> u32 {
+        self.count as u32
+    }
+
+    /// Copy the current ordering into `target` (a JS `Uint32Array` with
+    /// `length >= count()`), as a SINGLE memcpy with zero allocations:
+    /// an ephemeral `Uint32Array::view` over the wasm-resident ordering +
+    /// `target.set(view)` (a JS-engine memcpy).
+    ///
+    /// Chosen over the alternatives measured/considered:
+    /// - returning `Vec<u32>` — an extra wasm-side alloc+copy per call
+    ///   before the JS-side copy (2 copies, 1 alloc);
+    /// - `&mut [u32]` out-param — wasm-bindgen round-trips it (copy in,
+    ///   kernel copy, copy out: 3 copies, 1 malloc/free);
+    /// - `ordering_ptr()` + a caller-built memory view — same single
+    ///   memcpy, but forces the worker to hold the `WebAssembly.Memory`
+    ///   object and re-derive `.buffer` after growth; this method keeps
+    ///   that hazard encapsulated (the view lives only inside this call).
+    ///
+    /// # Safety (internal)
+    /// `Uint32Array::view`'s contract is "no wasm allocation while the
+    /// view lives"; the view is created and consumed within this single
+    /// call, which performs no allocation.
+    pub fn read_ordering_into(&self, target: &js_sys::Uint32Array) {
+        let view = unsafe { js_sys::Uint32Array::view(&self.ordering) };
+        target.set(&view, 0);
+    }
+}
+
+impl DepthSorter {
+    /// Native-test accessor (NOT exported to JS — `read_ordering_into`
+    /// needs a live JS engine, which `cargo test` doesn't have).
+    #[cfg(test)]
+    pub(crate) fn ordering_slice(&self) -> &[u32] {
+        &self.ordering
+    }
 }
 
 #[cfg(test)]
@@ -226,7 +407,11 @@ mod tests {
         for w in in_front.windows(2) {
             // Equal keys may swap sub-bucket z order; allow one-bucket slack.
             let bucket = |z: f32| {
-                let zmin = zs.iter().cloned().filter(|&z| z < 0.0).fold(f32::INFINITY, f32::min);
+                let zmin = zs
+                    .iter()
+                    .cloned()
+                    .filter(|&z| z < 0.0)
+                    .fold(f32::INFINITY, f32::min);
                 let zmax = zs
                     .iter()
                     .cloned()
@@ -434,5 +619,90 @@ mod tests {
             );
             prev = prev.max(z);
         }
+    }
+
+    // ------------------------------------------------------------------
+    // Stateful DepthSorter (WASM-resident state, perf lever L3)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn test_sorter_matches_free_function_across_reused_scratch() {
+        // The load-bearing property of the stateful path: REUSED scratch
+        // (dirty histogram cursors, stale keys/z from the previous sort)
+        // must not leak into the next result. Sort the same centers under
+        // several different model-views and compare each ordering to a
+        // fresh free-function call.
+        let zs = [
+            -1.0,
+            3.0,
+            -10.0,
+            -5.0,
+            -5.0,
+            0.0,
+            -2.5,
+            f32::NAN,
+            -1.0e6,
+            -1.0e-6,
+        ];
+        let centers = centers_with_z(&zs);
+        let mut sorter = create_depth_sorter(&centers, zs.len());
+
+        let mut translated = IDENTITY_MV;
+        translated[14] = -5.0;
+        let rotated: [f32; 16] = [
+            0.0, 0.0, -1.0, 0.0, //
+            0.0, 1.0, 0.0, 0.0, //
+            1.0, 0.0, 0.0, 0.0, //
+            0.0, 0.0, 0.0, 1.0,
+        ];
+        for mv in [IDENTITY_MV, translated, rotated, IDENTITY_MV] {
+            let stateful_placed = sorter.sort(&mv);
+            let mut expected = vec![u32::MAX; zs.len()];
+            let placed = sort_splats_by_depth(&centers, &mv, &mut expected, zs.len());
+            assert_eq!(stateful_placed, placed);
+            assert_eq!(sorter.ordering_slice(), &expected[..]);
+        }
+    }
+
+    #[test]
+    fn test_sorter_identity_before_first_sort() {
+        let centers = centers_with_z(&[-1.0, -9.0, -5.0]);
+        let sorter = create_depth_sorter(&centers, 3);
+        assert_eq!(sorter.ordering_slice(), &[0, 1, 2]);
+        assert_eq!(sorter.count(), 3);
+    }
+
+    #[test]
+    fn test_sorter_clamps_count_to_capacity() {
+        // 3 splats of capacity, count 99 requested — clamped like the
+        // worker's registerNode clamp.
+        let centers = centers_with_z(&[-1.0, -9.0, -5.0]);
+        let mut sorter = create_depth_sorter(&centers, 99);
+        assert_eq!(sorter.count(), 3);
+        assert_eq!(sorter.sort(&IDENTITY_MV), 3);
+        assert_eq!(sorter.ordering_slice(), &[1, 2, 0]);
+    }
+
+    #[test]
+    fn test_sorter_empty() {
+        let mut sorter = create_depth_sorter(&[], 0);
+        assert_eq!(sorter.count(), 0);
+        assert_eq!(sorter.sort(&IDENTITY_MV), 0);
+        assert_eq!(sorter.ordering_slice(), &[] as &[u32]);
+    }
+
+    #[test]
+    fn test_sorter_identity_fallback_after_full_sort() {
+        // A degenerate sort AFTER a full sort must rewrite the ordering
+        // to identity (not leave the previous permutation behind).
+        let centers = centers_with_z(&[-1.0, -9.0, -5.0]);
+        let mut sorter = create_depth_sorter(&centers, 3);
+        assert_eq!(sorter.sort(&IDENTITY_MV), 3);
+        assert_eq!(sorter.ordering_slice(), &[1, 2, 0]);
+        // Translate everything behind the camera: identity fallback.
+        let mut behind = IDENTITY_MV;
+        behind[14] = 100.0;
+        assert_eq!(sorter.sort(&behind), 0);
+        assert_eq!(sorter.ordering_slice(), &[0, 1, 2]);
     }
 }

@@ -3,19 +3,22 @@
  *
  * Mirrors the data-worker's `WasmCtx` idiom: tasks receive the shared
  * `state` object and read `state.wasm` after `initialize()` set it.
- * Additionally holds the per-node center registry — commit-time
+ * Additionally holds the per-node sorter registry — commit-time
  * registrations transfer each order-dependent node's projected 3D
- * centers here so camera-driven re-sorts (Phase 3) never re-copy them
- * from the main thread.
+ * centers here and hand them straight to a BACKEND-RESIDENT
+ * `DepthSorterHandle` (WASM linear memory, or the TS twin's own copy),
+ * so camera-driven re-sorts (Phase 3) never re-copy them from the main
+ * thread — and, since perf lever L3, never re-copy them across the
+ * wasm-bindgen boundary per sort either.
  *
  * The depth-sort kernel is ndim-agnostic (input is always projected 3D
  * centers), so there is no `pickBackend` / 16-dimension routing here —
  * `initWasm()`'s compiled-or-TS-fallback result is used directly.
  */
 
-import type { WasmModule } from '../../wasm';
+import type { DepthSorterHandle, WasmModule } from '../../wasm';
 
-/** A node's registered sort inputs, keyed by generation. */
+/** A node's registered sort state, keyed by generation. */
 export interface RegisteredNode {
   /**
    * Per-node monotonic non-noop commit counter (NOT `loadedViewVersion` —
@@ -24,9 +27,15 @@ export interface RegisteredNode {
    * computed for; see the spec §5 generation contract.
    */
   generation: number;
-  /** Projected 3D centers [count * 3], transferred from the main thread. */
-  centers3: Float32Array;
-  /** Number of splats. */
+  /**
+   * Backend-resident sorter holding the node's centers + all sort
+   * scratch. OWNED by this registry: every path that drops the map entry
+   * (release, releaseAll, re-registration replace) MUST call
+   * `sorter.free()` — a leaked handle pins ~20 B/splat of wasm memory
+   * for the rest of the worker's life.
+   */
+  sorter: DepthSorterHandle;
+  /** Number of splats (after the registration capacity clamp). */
   count: number;
 }
 

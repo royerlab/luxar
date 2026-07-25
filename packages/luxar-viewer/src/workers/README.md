@@ -194,13 +194,18 @@ workers/
 A **single persistent** Comlink worker — deliberately NOT part of the
 round-robin pool: each gsplat node's projected 3D centers are
 TRANSFERRED into it once per non-noop commit (`registerNode`), so
-camera-driven re-sorts never re-copy them. `sort(nodeId, generation,
-modelView)` runs the WASM `sort_splats_by_depth` kernel (back-to-front
-normalized-key counting sort, `wasm/rust/src/depth_sort.rs`) and
-transfers the ordering back; requests whose `generation` no longer
-matches the node's latest registration return `null` — a stale shorter
-permutation applied to a grown buffer would be corrupt, not just
-outdated. The main-thread side — lazy spawn, the one-in-flight-per-node
+camera-driven re-sorts never re-copy them. Registration hands the
+centers straight to a backend-resident `DepthSorter`
+(`wasm/rust/src/depth_sort.rs`, perf lever L3): for compiled WASM the
+centers and all sort scratch live in wasm linear memory, so
+`sort(nodeId, generation, modelView)` crosses the wasm-bindgen boundary
+with only the 64-byte model-view, runs the back-to-front normalized-key
+counting sort with zero per-sort allocations, reads the ordering back as
+a single memcpy, and transfers it to the main thread. Sorters are
+explicitly `free()`d on release/re-registration (a leaked handle pins
+wasm memory). Requests whose `generation` no longer matches the node's
+latest registration return `null` — a stale shorter permutation applied
+to a grown buffer would be corrupt, not just outdated. The main-thread side — lazy spawn, the one-in-flight-per-node
 rule, applying orderings to `aSortedIndex`, node release and teardown,
 and the Phase-3 per-frame camera-motion re-sort scheduler that drives
 `sort()` as the camera orbits — lives in

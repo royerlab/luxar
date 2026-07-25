@@ -13,6 +13,10 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 wasm-bindgen = "0.2"
+# js-sys: used by DepthSorter::read_ordering_into for the single-memcpy
+# ordering readback (Uint32Array::view over wasm memory + target.set()).
+# Compiles fine for native `cargo test` targets (JS calls are never made there).
+js-sys = "0.3"
 # Note: Manual SIMD (wide crate) was tested but showed no benefit over simple loops
 # when compiled to WASM. The compiler auto-vectorization is sufficient.
 

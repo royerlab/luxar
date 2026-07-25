@@ -5,9 +5,12 @@
  * through the wasm-bindgen shim on pre-allocated buffers. This bench
  * instead exercises the FULL worker-side `sortNode` path — registry
  * lookup, fresh `Uint32Array` ordering allocation per sort, and the
- * backend call with its wasm-bindgen boundary costs (per-sort
- * 12 B/splat centers copy-in + 4 B/splat ordering copy-in +
- * 4 B/splat copy-out + 3 mallocs) — so before/after comparisons of
+ * backend calls with their wasm-bindgen boundary costs. Since the L3
+ * lever landed (WASM-resident `DepthSorter`, constructed once in
+ * `registerNode`), the per-sort boundary traffic is only the 64-byte
+ * model-view copy-in + the 4 B/splat `read_ordering_into` memcpy-out;
+ * the legacy path's per-sort 12 B/splat centers copy-in, 4 B/splat
+ * ordering copy-in, and 3 mallocs are gone. Before/after comparisons of
  * boundary-copy optimizations show up here even when the raw kernel
  * number is unchanged.
  *

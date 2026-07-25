@@ -4,6 +4,43 @@
  * This interface defines the contract between TypeScript and the WASM module.
  * Both the compiled WASM and the TypeScript fallback implement this interface.
  */
+
+/**
+ * Stateful depth-sorter handle (perf lever L3) — the surface shared by
+ * the wasm-bindgen `DepthSorter` class and the TypeScript twin.
+ *
+ * Lifecycle: obtain via {@link WasmModule.create_depth_sorter} (the ONE
+ * centers boundary copy), call {@link DepthSorterHandle.sort} per
+ * camera pose (only the 64-byte model-view crosses the boundary; all
+ * scratch is resident and reused — zero allocations per sort), read the
+ * result with {@link DepthSorterHandle.read_ordering_into} (single
+ * memcpy), and RELEASE with {@link DepthSorterHandle.free} — a dropped
+ * handle leaks wasm linear memory (~20 B/splat) until then. Methods on
+ * a freed handle throw.
+ */
+export interface DepthSorterHandle {
+  /**
+   * Recompute the back-to-front ordering for a column-major 4x4
+   * model-view [16]. Returns the number of splats placed via depth keys,
+   * or 0 when the identity fallback was taken (ordering still fully
+   * written). Identical key math / NaN semantics / stability to
+   * {@link WasmModule.sort_splats_by_depth}.
+   */
+  sort(modelView: Float32Array): number;
+
+  /** Number of splats (after the construction-time capacity clamp). */
+  count(): number;
+
+  /**
+   * Copy the current ordering (identity before the first sort) into
+   * `target` (`length >= count()`) as a single memcpy.
+   */
+  read_ordering_into(target: Uint32Array): void;
+
+  /** Release the resident buffers (idempotent). */
+  free(): void;
+}
+
 export interface WasmModule {
   /**
    * Calculate effective radii for nD points when sliced.
@@ -53,6 +90,15 @@ export interface WasmModule {
     ordering: Uint32Array,
     count: number
   ): number;
+
+  /**
+   * Construct a WASM-resident (or TS-twin) stateful depth sorter from
+   * projected 3D centers [count * 3] — the ONE boundary copy of the
+   * centers; every later `sort(modelView)` reuses them plus all scratch.
+   * `count` is clamped to `floor(centers3.length / 3)`. The caller OWNS
+   * the handle and must call `free()` (including before replacing it).
+   */
+  create_depth_sorter(centers3: Float32Array, count: number): DepthSorterHandle;
 
   // ============================================================================
   // DECODE FUNCTIONS - Dequantize compressed data formats

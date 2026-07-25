@@ -14,7 +14,7 @@
  */
 
 export { calculate_effective_radii } from './effective-radii';
-export { sort_splats_by_depth } from './depth-sort';
+export { sort_splats_by_depth, create_depth_sorter, DepthSorter } from './depth-sort';
 export {
   decode_quantized_u8,
   decode_quantized_u16,
@@ -68,7 +68,7 @@ export {
 // Re-export as a module class for compatibility with WasmModule interface
 import type { WasmModule } from '../types';
 import { calculate_effective_radii } from './effective-radii';
-import { sort_splats_by_depth } from './depth-sort';
+import { sort_splats_by_depth, create_depth_sorter } from './depth-sort';
 import {
   decode_quantized_u8,
   decode_quantized_u16,
@@ -125,6 +125,7 @@ import {
 export class TypeScriptFallback implements WasmModule {
   calculate_effective_radii = calculate_effective_radii;
   sort_splats_by_depth = sort_splats_by_depth;
+  create_depth_sorter = create_depth_sorter;
   decode_quantized_u8 = decode_quantized_u8;
   decode_quantized_u16 = decode_quantized_u16;
   decode_log_scalar_u8 = decode_log_scalar_u8;
