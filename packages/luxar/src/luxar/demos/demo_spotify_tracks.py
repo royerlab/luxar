@@ -53,6 +53,15 @@ from luxar.utils.paths import get_demos_output_dir
 
 DEFAULT_SAMPLE_SIZE = 114000  # All tracks
 
+# Per-track radius ramp (unpopular -> popular), in scene units. Sized against the
+# measured local spacing: the track cloud has a median nearest-neighbour distance
+# of ~0.051, so the median radius here (~0.020) is ~0.4x that. The previous ramp
+# (0.03 + 0.08*p, median 0.058) exceeded the spacing outright, and because this
+# UMAP is one dense ball rather than separated clusters it fused into a uniform
+# pale blur — 97% of lit pixels lost their hue, so no genre was distinguishable.
+RADIUS_BASE = 0.010
+RADIUS_POPULARITY_GAIN = 0.028
+
 DATASET_URL = "https://huggingface.co/datasets/maharshipandya/spotify-tracks-dataset/resolve/main/dataset.csv"
 
 # Audio features used for embedding (9 dimensions)
@@ -256,7 +265,7 @@ def generate_spotify_landscape(
 
         # Size by popularity (more popular = larger)
         pop_norm = popularity / max(popularity.max(), 1.0)
-        radii = (0.03 + 0.08 * pop_norm).astype(np.float32)
+        radii = (RADIUS_BASE + RADIUS_POPULARITY_GAIN * pop_norm).astype(np.float32)
 
         # Hover labels: track — artist (genre)
         labels = [

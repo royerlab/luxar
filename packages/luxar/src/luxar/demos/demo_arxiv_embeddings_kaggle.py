@@ -118,6 +118,16 @@ from luxar.utils.paths import get_demos_output_dir
 
 DEFAULT_SAMPLE_SIZE = 500000  # 500k papers
 
+# Per-paper radius ramp (older -> newer), in scene units. Sized against the
+# measured local spacing rather than by eye: the 500k-paper cloud has a median
+# nearest-neighbour distance of ~0.021, so the median radius here (~0.009) is
+# ~0.4x that and adjacent papers stop just short of touching. The previous ramp
+# (0.03 + 0.07*t, median 0.053) was 2.5x the spacing, so one sphere covered a
+# median of 9 papers (p90 38) and the cloud clipped to white — the category
+# colours this demo exists to show were unreadable at every zoom.
+RADIUS_BASE = 0.005
+RADIUS_RECENCY_GAIN = 0.011
+
 # ArXiv category colors (comprehensive coverage of all major categories)
 CATEGORY_COLORS = {
     # Computer Science
@@ -611,7 +621,7 @@ def generate_paper_landscape(
         aprint(f"  Year range: {int(year_array.min())} to {int(year_array.max())}")
 
         # Per-point radii by recency (newer=larger); tiled across views below.
-        radii_pp = (0.03 + 0.07 * yr_t).astype(np.float32)
+        radii_pp = (RADIUS_BASE + RADIUS_RECENCY_GAIN * yr_t).astype(np.float32)
 
         def _title(i: int) -> str:
             if titles is not None:

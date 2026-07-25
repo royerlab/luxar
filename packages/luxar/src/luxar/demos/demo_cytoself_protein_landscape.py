@@ -106,6 +106,15 @@ GDRIVE_LABEL_DATA_IDS = {
 
 DEFAULT_CACHE_DIR = Path.home() / ".cache" / "luxar" / "cytoself"
 
+# Per-cell sphere radius in scene units. Deliberately LARGER than the ~0.4x
+# median-nearest-neighbour rule the other embedding demos follow (median NN here
+# is ~0.016, so that rule would give ~0.0065). This landscape is 115k cells on
+# thin filaments rather than a dense ball: shrinking to 0.0065 cut lit coverage
+# from 16% to 6% of frame and left the localization clusters too faint to read,
+# with no gain in colour fidelity. The spacing rule screens for fusion; it is not
+# a lower bound on legibility for sparse, filamentary clouds.
+POINT_RADIUS = 0.02
+
 
 # =============================================================================
 # Google Drive Download
@@ -712,7 +721,7 @@ def create_cytoself_scene(
             scene = compiler.create_scene(dimensions=dims)
 
             total_points = len(positions_combined)
-            radii = np.full(total_points, 0.02, dtype=np.float32)
+            radii = np.full(total_points, POINT_RADIUS, dtype=np.float32)
             sharpnesses = np.full(total_points, 0.6, dtype=np.float32)
 
             # Hover labels: resolve codes to category names, repeated per view
