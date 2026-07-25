@@ -24,7 +24,14 @@ Usage:
     python -m luxar.demos.demo_esm3_protein_landscape --model=esmc-300m
 
 Dependencies:
-    pip install luxar[demos] esm
+    pip install 'luxar[demos]'   # includes esm>=3.0.0, umap-learn, h5py
+    pip install 'torch>=2.2,<3.0'  # CUDA build, to compute embeddings
+
+Cache hygiene:
+    A cached artifact that fails validation is quarantined to ``<name>.corrupt``
+    and never reused. The demo reports any quarantined file (path + size) before
+    doing anything expensive — re-download the complete file or delete the
+    quarantined copy, otherwise the run starts over from scratch.
 """
 
 DEMO_META = {
@@ -54,6 +61,12 @@ from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.demos import launch_viewer, stack_colorings
+from luxar.utils.download import (
+    QUARANTINE_SUFFIX,
+    find_quarantined_files,
+    format_quarantine_notice,
+    warn_if_quarantined,
+)
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -373,7 +386,6 @@ def _compute_esm3_embeddings(
     # shaped or unreadable file (e.g. a partial download) is quarantined to
     # `<name>.corrupt` and treated as absent, so the demo never silently
     # proceeds with malformed embeddings.
-    quarantined_corrupt = False
     if embeddings_cache.exists():
         with asection("Loading cached ESM embeddings"):
             try:
@@ -391,11 +403,22 @@ def _compute_esm3_embeddings(
                 embeddings_cache.name + ".corrupt"
             )
             embeddings_cache.rename(corrupt_path)
-            quarantined_corrupt = True
             aprint(
                 f"⚠ Cached embeddings are invalid ({actual}, expected "
                 f"{expected_shape}); quarantined to {corrupt_path.name} — recomputing."
             )
+
+    # Report ANY quarantined copy — including one left behind by an EARLIER run
+    # (the common case: the `.npy` is already gone, so the block above never
+    # fires). Without this the demo silently restarts a multi-GB fetch/compute
+    # with no hint that a rejected copy is sitting in the cache.
+    quarantined = warn_if_quarantined(
+        embeddings_cache,
+        action=(
+            "re-download the complete embeddings file, or delete the quarantined "
+            "copy to reclaim the disk space and recompute from scratch"
+        ),
+    )
 
     import torch
 
@@ -404,12 +427,15 @@ def _compute_esm3_embeddings(
     # fast with an actionable message rather than downloading the model and then
     # crashing on `.to("cuda")` (or grinding for many hours on CPU/MPS).
     if not torch.cuda.is_available():
-        quarantine_note = (
-            "    A truncated/incomplete copy was quarantined to "
-            f"'{embeddings_cache.name}.corrupt' — re-fetch the full file and rerun.\n"
-            if quarantined_corrupt
-            else ""
+        notice = format_quarantine_notice(
+            quarantined,
+            indent="  ",
+            action=(
+                "re-download the complete file to that path, or delete the "
+                "quarantined copy and rerun on a CUDA machine"
+            ),
         )
+        quarantine_note = f"{notice}\n" if notice else ""
         raise RuntimeError(
             "No usable cached embeddings were found and CUDA is not available, "
             "so ESM embeddings cannot be (re)computed on this machine.\n"
@@ -835,29 +861,54 @@ def main() -> None:
     aprint(f"Model: {model_name}")
     aprint("")
 
-    # Check dependencies
+    cache_dir = Path.home() / ".cache" / "luxar" / "esm3_swissprot"
+
+    # Report the cache's real state FIRST. A quarantined `.corrupt` artifact is
+    # the difference between "instant run" and "multi-GB re-download", so the
+    # user learns about it even when a dependency gate below also trips.
+    quarantined = find_quarantined_files(cache_dir)
+    if quarantined:
+        aprint(
+            format_quarantine_notice(
+                quarantined,
+                indent="",
+                action=(
+                    "re-download the complete file under the same name (minus "
+                    f"'{QUARANTINE_SUFFIX}') into {cache_dir}, or delete the "
+                    "quarantined copy to reclaim the disk space — otherwise this "
+                    "run recomputes/re-downloads it from scratch"
+                ),
+            )
+        )
+        aprint("")
+
+    # Check dependencies. Each hint names the constrained requirement (and the
+    # `demos` extra, which pins compatible versions) rather than a bare package.
     try:
         import torch  # noqa: F401
     except ImportError:
-        aprint("Missing dependency: torch")
-        aprint("Install with: pip install torch")
+        aprint("❌ Missing dependency: torch (CUDA build needed to embed proteins)")
+        aprint("   Install with: pip install 'torch>=2.2,<3.0'")
+        aprint("   Or the whole extra: pip install 'luxar[gsplats]'")
         sys.exit(1)
 
     try:
         import esm  # noqa: F401
     except ImportError:
-        aprint("Missing dependency: esm")
-        aprint("Install with: pip install esm")
+        aprint("❌ Missing dependency: esm (EvolutionaryScale ESM-3 / ESM-C models)")
+        aprint("   Install with: pip install 'esm>=3.0.0'")
+        aprint("   Or the whole extra: pip install 'luxar[demos]'")
+        aprint("   Needed to COMPUTE embeddings; a complete cached embeddings")
+        aprint(f"   file under {cache_dir} skips the model entirely.")
         sys.exit(1)
 
     try:
         import umap  # noqa: F401
     except ImportError:
-        aprint("Missing dependency: umap-learn")
-        aprint("Install with: pip install umap-learn")
+        aprint("❌ Missing dependency: umap-learn")
+        aprint("   Install with: pip install 'umap-learn>=0.5.0'")
+        aprint("   Or the whole extra: pip install 'luxar[demos]'")
         sys.exit(1)
-
-    cache_dir = Path.home() / ".cache" / "luxar" / "esm3_swissprot"
 
     if "--no-serve" in sys.argv:
         output_path = get_demos_output_dir() / "esm3_protein_landscape.luxar.zarr"

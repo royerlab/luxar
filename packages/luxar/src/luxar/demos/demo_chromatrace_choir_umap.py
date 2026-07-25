@@ -155,7 +155,12 @@ def load_chromatrace_data(
         df = pd.read_parquet(parquet_path)
         aprint(f"  {len(df):,} cells loaded")
 
-        coords = df[["UMAP1", "UMAP2", "UMAP3"]].to_numpy(dtype=np.float32)
+        # copy=True is REQUIRED: the parquet stores UMAP1..3 as float32, so a
+        # same-dtype `to_numpy()` hands back a READ-ONLY view onto the
+        # DataFrame's block under pandas' copy-on-write (always on in pandas
+        # >= 3). Every in-place op below (`coords -= center`) would then raise
+        # "ValueError: output array is read-only".
+        coords = df[["UMAP1", "UMAP2", "UMAP3"]].to_numpy(dtype=np.float32, copy=True)
         # Recenter so the viewer orbits around the cluster centroid
         # (raw UMAP coords can be asymmetric around the origin).
         center = 0.5 * (coords.min(axis=0) + coords.max(axis=0))
