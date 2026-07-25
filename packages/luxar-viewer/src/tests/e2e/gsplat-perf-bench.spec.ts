@@ -112,7 +112,9 @@ type ScenarioSpec =
  * by a foreign document root — Playwright's `reuseExistingServer`
  * would otherwise silently reuse it and 404 every dataset.
  */
-const DATA_BASE = process.env.LUXAR_PERF_DATA_BASE ?? 'http://localhost:9000';
+const DATA_BASE =
+  process.env.LUXAR_PERF_DATA_BASE ??
+  `http://localhost:${process.env.LUXAR_PERF_DATA_PORT ?? 9000}`;
 
 const BOOTSTRAP_URL = `${DATA_BASE}/datasets/examples/lines_basic_example.luxar.zarr`;
 

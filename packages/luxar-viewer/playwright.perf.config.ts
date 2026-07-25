@@ -27,6 +27,19 @@ import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const headless = process.env.LUXAR_PERF_HEADLESS === '1';
+// Port overrides so perf runs can avoid ports squatted by other checkouts'
+// dev servers (`reuseExistingServer` would silently reuse a foreign server —
+// the stale-bundle pitfall). Defaults match the standard dev ports.
+const viewerPort = Number(process.env.LUXAR_PERF_PORT ?? 5173);
+const dataPort = Number(process.env.LUXAR_PERF_DATA_PORT ?? 9000);
+// Extra Chromium switches, comma-separated. Example: on a Linux/NVIDIA box
+// where `--use-gl=egl` yields NO GL context and default headless falls back
+// to SwiftShader, pass LUXAR_PERF_CHROME_ARGS=--use-angle=vulkan to get the
+// real GPU (verified on the obsidian bench box: ANGLE/Vulkan → RTX 3070).
+const extraChromeArgs = (process.env.LUXAR_PERF_CHROME_ARGS ?? '')
+  .split(',')
+  .map((a) => a.trim())
+  .filter(Boolean);
 
 export default defineConfig({
   globalSetup: path.join(__dirname, 'src/tests/e2e/global-setup.ts'),
@@ -41,7 +54,7 @@ export default defineConfig({
   reporter: [['list']],
 
   use: {
-    baseURL: 'http://localhost:5173',
+    baseURL: `http://localhost:${viewerPort}`,
     trace: 'off',
     screenshot: 'off',
     video: 'off',
@@ -68,6 +81,7 @@ export default defineConfig({
         '--enable-unsafe-webgpu',
         '--enable-webgpu-developer-features',
         '--enable-features=Vulkan,WebGPU',
+        ...extraChromeArgs,
       ],
     },
   },
@@ -89,8 +103,8 @@ export default defineConfig({
   // Reuse the standard viewer + dataset dev servers.
   webServer: [
     {
-      command: 'pnpm dev',
-      url: 'http://localhost:5173',
+      command: `pnpm dev --port ${viewerPort} --strictPort`,
+      url: `http://localhost:${viewerPort}`,
       reuseExistingServer: !process.env.CI,
       timeout: 120000,
       stdout: 'pipe',
@@ -102,8 +116,8 @@ export default defineConfig({
       },
     },
     {
-      command: 'python3 -m http.server 9000',
-      url: 'http://localhost:9000',
+      command: `python3 -m http.server ${dataPort}`,
+      url: `http://localhost:${dataPort}`,
       cwd: path.resolve(__dirname, '../..'),
       reuseExistingServer: !process.env.CI,
       timeout: 15000,
