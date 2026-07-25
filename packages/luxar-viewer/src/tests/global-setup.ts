@@ -172,7 +172,7 @@ function isExpectationsStale(fixtureNames: string[]): boolean {
  *   - if `LUXAR_REQUIRE_WASM_TESTS=1` (CI), a missing/unbuildable module is a
  *     hard failure.
  */
-function ensureWasmBuilt(): void {
+export function ensureWasmBuilt(): void {
   if (existsSync(WASM_JS_PATH) && existsSync(WASM_BIN_PATH)) return;
 
   const require = process.env.LUXAR_REQUIRE_WASM_TESTS === '1';
