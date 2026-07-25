@@ -51,7 +51,7 @@ export const POINT_VERTEX_SHADER = /* glsl */ `
     uniform sampler2D uColormapTex;    // 256x1 LUT texture
     uniform float uScalarMin;          // Scalar range minimum (display-range window)
     uniform float uScalarScale;        // 1.0 / (max - min)
-    uniform mediump float invGamma;    // Gamma applied to the VALUE, pre-LUT (see note below)
+    uniform mediump float uInvGamma;   // Gamma applied to the VALUE, pre-LUT (see note below)
     #endif
 
     uniform float pointSizeFactor; // Pre-computed: 2.0 * resolution.y / tanHalfFov (or 4.0 * resolution.y / frustumHeight for ortho)
@@ -112,7 +112,7 @@ export const POINT_VERTEX_SHADER = /* glsl */ `
       #ifdef USE_COLORMAP
       float t = clamp((aScalar - uScalarMin) * uScalarScale, 0.0, 1.0);
       #ifndef LUXAR_GAMMA_ONE
-      t = pow(t, invGamma);              // gamma on the value, pre-LUT
+      t = pow(t, uInvGamma);             // gamma on the value, pre-LUT
       #endif
       vColor = texture(uColormapTex, vec2(t, 0.5)).rgb;
       #else
@@ -206,8 +206,8 @@ export const POINT_VERTEX_SHADER = /* glsl */ `
 export const POINT_FRAGMENT_SHADER = /* glsl */ `
     precision highp float;
 
-    uniform mediump float opacity;
-    uniform mediump float invGamma; // Pre-computed 1/gamma for performance
+    uniform mediump float uOpacity;
+    uniform mediump float uInvGamma; // Pre-computed 1/gamma for performance
     uniform mediump float uIntensity; // Per-node linear color multiplier (gain)
     uniform mediump float uOffset; // Per-node additive brightness shift (black level)
 
@@ -267,7 +267,15 @@ export const POINT_FRAGMENT_SHADER = /* glsl */ `
       // the scalar VALUE before the LUT lookup (vertex shader), so only
       // gain/offset apply post-LUT (no extra gamma). Direct-color mode: full
       // GOG on the raw color.
+      // When the wrapper knows intensity==1 && offset==0 (the default),
+      // the mul/add/clamp chain is identity for the common non-negative
+      // vColor range; the wrapper stamps LUXAR_NO_GOG to skip it
+      // (mirrors the line shader).
+      #ifdef LUXAR_NO_GOG
+      mediump vec3 adjusted = vColor;
+      #else
       mediump vec3 adjusted = max(vColor * uIntensity + uOffset, vec3(0.0));
+      #endif
 
       // Sub-pixel intensity compensation (mirrors the line shader's
       // widthScale, SQUARED because both sprite dimensions clamp:
@@ -278,11 +286,12 @@ export const POINT_FRAGMENT_SHADER = /* glsl */ `
       // Screen density of this fragment — falloff scaled by every
       // "how much of this point is there" factor (node opacity,
       // sub-pixel energy, near fade). This is the additive-mode alpha.
-      mediump float alpha = falloff * opacity * sizeScale * sizeScale * vNearFade;
+      mediump float alpha = falloff * uOpacity * sizeScale * sizeScale * vNearFade;
 
       #ifdef LUXAR_VOLUMETRIC
-      // Per-point alpha maps into optical depth w(a) = −ln(1 − a) so a
-      // point's peak rendered alpha reproduces a (mirrors the gsplat
+      // Per-point alpha maps into optical depth w(a) = −ln(1 − a) so
+      // alpha composes as optical depth ("peak rendered alpha = a" is
+      // exact when the remaining τ factor is 1; mirrors the gsplat
       // shader; clamp = ALPHA_CLAMP from ../_shared/volumetric). Gated by
       // uHasElementAlpha: the identity 1.0 written for RGB data must
       // NOT map to w ≈ 6.24.
@@ -308,7 +317,7 @@ export const POINT_FRAGMENT_SHADER = /* glsl */ `
       #if defined(USE_COLORMAP) || defined(LUXAR_GAMMA_ONE)
       mediump vec3 finalColor = adjusted;
       #else
-      mediump vec3 finalColor = pow(adjusted, vec3(invGamma));
+      mediump vec3 finalColor = pow(adjusted, vec3(uInvGamma));
       #endif
 
       #if defined(LUXAR_VOLUMETRIC)

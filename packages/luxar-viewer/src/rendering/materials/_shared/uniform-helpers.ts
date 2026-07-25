@@ -46,3 +46,19 @@ export function clampGamma(gamma: number | undefined): number {
 export function isGammaOne(gamma: number): boolean {
   return Math.abs(gamma - 1.0) < 1e-4;
 }
+
+/**
+ * Whether `intensity == 1.0 && offset == 0.0` (with ±1e-4 epsilon) —
+ * the default GOG (Gain-Offset-Gamma) configuration. When true, the
+ * fragment shader can skip the `vColor * uIntensity + uOffset` chain
+ * and its `max(..., vec3(0))` clamp — identity for the non-negative
+ * `vColor` range — by compiling in the `LUXAR_NO_GOG` define (GLSL) /
+ * `noGOG` config flag (TSL).
+ *
+ * Shared across all three geometry types (Point / Line / GSplat) ×
+ * both backends, like {@link isGammaOne}, so the fast-path threshold
+ * is identical everywhere.
+ */
+export function isNoGOG(intensity: number, offset: number): boolean {
+  return Math.abs(intensity - 1.0) < 1e-4 && Math.abs(offset) < 1e-4;
+}

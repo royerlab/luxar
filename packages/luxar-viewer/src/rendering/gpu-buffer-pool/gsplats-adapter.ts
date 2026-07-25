@@ -12,7 +12,12 @@
  */
 
 import * as THREE from 'three';
-import { attachSplatStorage, getSplatTexture, writeSplatTexels } from '../gsplat-geometry';
+import {
+  attachSplatStorage,
+  getSplatTexture,
+  stampGSplatPresenceFlags,
+  writeSplatTexels,
+} from '../gsplat-geometry';
 import { writeSortedIndexIdentity, writeSortedIndexIdentityRange } from '../element-storage';
 import { clampSplatCapacity } from '../element-texture-layout';
 import type { PooledBuffer } from './pool-stats';
@@ -287,6 +292,9 @@ export class GSplatsBufferAdapter {
       count,
       { fromSplat }
     );
+    // Presence stamp — shared chokepoint with the non-pool writer paths;
+    // see stampGSplatPresenceFlags (refresh on every update: pool tenants).
+    stampGSplatPresenceFlags(geometry, { colorComponents: data.colorComponents });
     if (fromSplat > 0) {
       // Append: keep the prefix's existing permutation and give the appended
       // splats identity ordering until the re-sort lands (append and

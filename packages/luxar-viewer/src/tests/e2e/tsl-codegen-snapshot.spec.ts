@@ -143,6 +143,9 @@ const SHADERS = [
   'point',
   'point-pick',
   'point-gamma-one',
+  // No-GOG fast path (points; GLSL twin: LUXAR_NO_GOG) — the GOG
+  // mul/add/clamp chain drops from the generated code.
+  'point-no-gog',
   // Max-mode premultiplied RGB-contribution fragment (points; GLSL twin:
   // LUXAR_MAX_RGB_CONTRIBUTION) — distinct generated code vs `point`.
   'point-max',
@@ -158,6 +161,10 @@ const SHADERS = [
   'gsplat',
   'gsplat-pick',
   'gsplat-gamma-one',
+  // No-GOG fast path (gsplats; GLSL twin: LUXAR_NO_GOG) — the GOG
+  // mul/add/clamp chain drops from the generated code (the gain-aware
+  // visibility discard keeps reading uIntensity).
+  'gsplat-no-gog',
   // Blending-mode-specialized gsplat builds: `normal` emits the
   // premultiplied coverage-alpha fragment branch (peak projection,
   // GLSL twin: LUXAR_NORMAL_PREMULT), and the colormap variant emits

@@ -143,10 +143,10 @@ export class LayerApplyEngine {
 
     const opacityUniform = (
       mat as unknown as {
-        uniforms?: { opacity?: { value?: number }; uOpacity?: { value?: number } };
+        uniforms?: { uOpacity?: { value?: number } };
       }
     ).uniforms;
-    const liveOpacity = opacityUniform?.opacity?.value ?? opacityUniform?.uOpacity?.value ?? 1.0;
+    const liveOpacity = opacityUniform?.uOpacity?.value ?? 1.0;
     const state = getBlendingState(mode, liveOpacity);
     mat.blending = state.blending;
     mat.depthTest = state.depthTest;

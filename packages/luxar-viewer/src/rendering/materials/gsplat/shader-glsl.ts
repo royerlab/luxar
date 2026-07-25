@@ -500,7 +500,16 @@ export const GSPLAT_FRAGMENT_SHADER = /* glsl */ `
         // display-range window already shaped the scalar VALUE (amplitude) before
         // the LUT lookup, so only gain/offset apply post-LUT (no extra gamma).
         // Direct-color mode: full GOG on the raw color.
+        // When the wrapper knows intensity==1 && offset==0 (the default), the
+        // mul/add/clamp chain is identity for the common non-negative vColor
+        // range; the wrapper stamps LUXAR_NO_GOG to skip it (mirrors the line
+        // shader). The gain-aware discard above KEEPS reading uIntensity —
+        // under NO_GOG uIntensity == 1 so max(uIntensity, 1.0) == 1.0 anyway.
+        #ifdef LUXAR_NO_GOG
+        vec3 adjusted = vColor;
+        #else
         vec3 adjusted = max(vColor * uIntensity + uOffset, vec3(0.0));
+        #endif
 
         #ifdef LUXAR_VOLUMETRIC
         // Volumetric optical depth: tau = kappa*opacity*intensity, where
