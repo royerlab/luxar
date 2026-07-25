@@ -83,9 +83,6 @@ function makeGSplatsStaged(splatCount: number, rgba: boolean): StagedGSplatsComm
       colorComponents: rgba ? 4 : undefined,
       splatCount,
     },
-    cholesky01: new Float32Array(splatCount * 2).fill(0.1),
-    cholesky23: new Float32Array(splatCount * 2).fill(0.1),
-    cholesky45: new Float32Array(splatCount * 2).fill(0.1),
   };
 }
 

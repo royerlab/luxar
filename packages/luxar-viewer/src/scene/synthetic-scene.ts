@@ -362,8 +362,8 @@ export function generateSyntheticPoints(spec: SyntheticSceneSpec): SyntheticPoin
  * Amplitudes are positive and varied ([0.2, 1.0)); colors vivid random
  * RGB.
  *
- * Packing matches `packCholeskyForShader`: cholesky01 = [L00, L10],
- * cholesky23 = [L11, L20], cholesky45 = [L21, L22].
+ * Packing matches `SplatTexelSource.choleskyFactors`: 6-stride
+ * row-major [L00, L10, L11, L20, L21, L22] per splat.
  */
 export function generateSyntheticGSplats(spec: SyntheticSceneSpec): InstancedGSplatsMeshConfig {
   const count = spec.count;
@@ -373,9 +373,7 @@ export function generateSyntheticGSplats(spec: SyntheticSceneSpec): InstancedGSp
 
   const { positions: centers } = sampleClusteredPositions(rand, count, clusters, bounds);
 
-  const cholesky01 = new Float32Array(count * 2);
-  const cholesky23 = new Float32Array(count * 2);
-  const cholesky45 = new Float32Array(count * 2);
+  const choleskyFactors = new Float32Array(count * 6);
   const amplitudes = new Float32Array(count);
   const colors = new Float32Array(count * 3);
 
@@ -394,12 +392,13 @@ export function generateSyntheticGSplats(spec: SyntheticSceneSpec): InstancedGSp
     const L20 = (rand() * 2 - 1) * 0.8 * d2;
     const L21 = (rand() * 2 - 1) * 0.8 * d2;
 
-    cholesky01[i * 2] = d0; // L00
-    cholesky01[i * 2 + 1] = L10; // L10
-    cholesky23[i * 2] = d1; // L11
-    cholesky23[i * 2 + 1] = L20; // L20
-    cholesky45[i * 2] = L21; // L21
-    cholesky45[i * 2 + 1] = d2; // L22
+    const c6 = i * 6;
+    choleskyFactors[c6] = d0; // L00
+    choleskyFactors[c6 + 1] = L10; // L10
+    choleskyFactors[c6 + 2] = d1; // L11
+    choleskyFactors[c6 + 3] = L20; // L20
+    choleskyFactors[c6 + 4] = L21; // L21
+    choleskyFactors[c6 + 5] = d2; // L22
 
     amplitudes[i] = 0.2 + 0.8 * rand();
     colors[i * 3] = rand();
@@ -409,9 +408,7 @@ export function generateSyntheticGSplats(spec: SyntheticSceneSpec): InstancedGSp
 
   return {
     centers,
-    cholesky01,
-    cholesky23,
-    cholesky45,
+    choleskyFactors,
     amplitudes,
     colors,
     splatCount: count,

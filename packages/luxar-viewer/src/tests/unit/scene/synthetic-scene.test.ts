@@ -379,9 +379,7 @@ describe('generateSyntheticGSplats', () => {
     expect(cfg.splatCount).toBe(30);
     expect(cfg.centers).toBeInstanceOf(Float32Array);
     expect(cfg.centers.length).toBe(30 * 3);
-    expect(cfg.cholesky01.length).toBe(30 * 2);
-    expect(cfg.cholesky23.length).toBe(30 * 2);
-    expect(cfg.cholesky45.length).toBe(30 * 2);
+    expect(cfg.choleskyFactors.length).toBe(30 * 6);
     expect(cfg.amplitudes.length).toBe(30);
     expect(cfg.colors.length).toBe(30 * 3);
   });
@@ -391,9 +389,7 @@ describe('generateSyntheticGSplats', () => {
     const a = generateSyntheticGSplats(spec);
     const b = generateSyntheticGSplats(spec);
     expect(a.centers).toEqual(b.centers);
-    expect(a.cholesky01).toEqual(b.cholesky01);
-    expect(a.cholesky23).toEqual(b.cholesky23);
-    expect(a.cholesky45).toEqual(b.cholesky45);
+    expect(a.choleskyFactors).toEqual(b.choleskyFactors);
     expect(a.amplitudes).toEqual(b.amplitudes);
     expect(a.colors).toEqual(b.colors);
   });
@@ -402,22 +398,21 @@ describe('generateSyntheticGSplats', () => {
     const a = generateSyntheticGSplats({ type: 'gsplats', count: 40, seed: 1 });
     const b = generateSyntheticGSplats({ type: 'gsplats', count: 40, seed: 2 });
     expect(a.centers).not.toEqual(b.centers);
-    expect(a.cholesky01).not.toEqual(b.cholesky01);
+    expect(a.choleskyFactors).not.toEqual(b.choleskyFactors);
   });
 
   it('emits VALID Cholesky factors: finite everywhere, strictly positive diagonal', () => {
-    // Layout (packCholeskyForShader): cholesky01=[L00,L10],
-    // cholesky23=[L11,L20], cholesky45=[L21,L22]. Diagonals are
+    // 6-stride layout [L00, L10, L11, L20, L21, L22]. Diagonals are
     // L00, L11, L22 — any lower-triangular L with positive diagonal is
     // the Cholesky factor of the SPD covariance L·Lᵀ.
     const cfg = generateSyntheticGSplats({ type: 'gsplats', count: 500, seed: 3 });
     for (let i = 0; i < cfg.splatCount; i++) {
-      const L00 = cfg.cholesky01[i * 2];
-      const L10 = cfg.cholesky01[i * 2 + 1];
-      const L11 = cfg.cholesky23[i * 2];
-      const L20 = cfg.cholesky23[i * 2 + 1];
-      const L21 = cfg.cholesky45[i * 2];
-      const L22 = cfg.cholesky45[i * 2 + 1];
+      const L00 = cfg.choleskyFactors[i * 6];
+      const L10 = cfg.choleskyFactors[i * 6 + 1];
+      const L11 = cfg.choleskyFactors[i * 6 + 2];
+      const L20 = cfg.choleskyFactors[i * 6 + 3];
+      const L21 = cfg.choleskyFactors[i * 6 + 4];
+      const L22 = cfg.choleskyFactors[i * 6 + 5];
       for (const v of [L00, L10, L11, L20, L21, L22]) {
         expect(Number.isFinite(v)).toBe(true);
       }
@@ -433,13 +428,13 @@ describe('generateSyntheticGSplats', () => {
     let maxDiag = 0;
     let offDiagNonZero = 0;
     for (let i = 0; i < cfg.splatCount; i++) {
-      const L00 = cfg.cholesky01[i * 2];
+      const L00 = cfg.choleskyFactors[i * 6];
       minDiag = Math.min(minDiag, L00);
       maxDiag = Math.max(maxDiag, L00);
       if (
-        cfg.cholesky01[i * 2 + 1] !== 0 ||
-        cfg.cholesky23[i * 2 + 1] !== 0 ||
-        cfg.cholesky45[i * 2] !== 0
+        cfg.choleskyFactors[i * 6 + 1] !== 0 ||
+        cfg.choleskyFactors[i * 6 + 3] !== 0 ||
+        cfg.choleskyFactors[i * 6 + 4] !== 0
       ) {
         offDiagNonZero++;
       }
@@ -469,7 +464,7 @@ describe('generateSyntheticGSplats', () => {
     const cfg = generateSyntheticGSplats({ type: 'gsplats', count: 0, seed: 1 });
     expect(cfg.splatCount).toBe(0);
     expect(cfg.centers.length).toBe(0);
-    expect(cfg.cholesky01.length).toBe(0);
+    expect(cfg.choleskyFactors.length).toBe(0);
     expect(cfg.amplitudes.length).toBe(0);
   });
 });

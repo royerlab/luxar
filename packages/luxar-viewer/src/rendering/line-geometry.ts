@@ -65,6 +65,7 @@ import {
   elementTexelCapacity,
   writeSortedIndexIdentity,
 } from './element-storage';
+import type { LinesProjectionBounds } from '../types/lines';
 
 /**
  * Create the base quad geometry for line instances.
@@ -158,6 +159,16 @@ export interface LineTexelSource {
    */
   startAlphas?: Float32Array;
   endAlphas?: Float32Array;
+  /**
+   * Precomputed cull metadata from the projection's fused scan (AABB
+   * over start+end positions + max finite width). When present,
+   * `computeLineBounds` skips its O(N) per-segment scan (mirrors the
+   * points adapter's `metadata.bounds` fast path); absent ⇒ scan
+   * fallback. Computed over the FULL projected set: if the written
+   * count is capacity-clamped below it, the box is a conservative
+   * superset — safe for frustum culling.
+   */
+  bounds?: LinesProjectionBounds;
 }
 
 /**
@@ -316,7 +327,9 @@ export function writeLineTexels(
 
 /**
  * Compute bounding box and sphere from line segment start/end positions.
- * Uses a direct min/max pass without temporary geometry or array allocations.
+ * Uses the projection's precomputed fused-scan `bounds` when present
+ * (skipping the O(N) per-segment main-thread scan), else a direct
+ * min/max pass without temporary geometry or array allocations.
  *
  * bounds are expanded conservatively by `maxWidth` to capture the
  * rendered footprint. Without this, frustum culling and camera-framing
@@ -335,28 +348,39 @@ export function computeLineBounds(
     new THREE.Vector3(Infinity, Infinity, Infinity),
     new THREE.Vector3(-Infinity, -Infinity, -Infinity)
   );
-  const v = new THREE.Vector3();
   let maxWidth = 0;
 
-  for (let i = 0; i < segmentCount; i++) {
-    const si = i * 3;
-    v.set(
-      meshConfig.startPositions[si],
-      meshConfig.startPositions[si + 1],
-      meshConfig.startPositions[si + 2]
-    );
-    box.expandByPoint(v);
-    v.set(
-      meshConfig.endPositions[si],
-      meshConfig.endPositions[si + 1],
-      meshConfig.endPositions[si + 2]
-    );
-    box.expandByPoint(v);
+  if (meshConfig.bounds && segmentCount > 0) {
+    // Fast path: the projection's fused scan precomputed the AABB and
+    // max width — no O(N) main-thread scan per commit. Computed over
+    // the FULL projected set (conservative superset if `segmentCount`
+    // was capacity-clamped below it — safe for frustum culling).
+    const { min, max } = meshConfig.bounds;
+    box.min.set(min[0], min[1], min[2]);
+    box.max.set(max[0], max[1], max[2]);
+    maxWidth = meshConfig.bounds.maxWidth;
+  } else {
+    const v = new THREE.Vector3();
+    for (let i = 0; i < segmentCount; i++) {
+      const si = i * 3;
+      v.set(
+        meshConfig.startPositions[si],
+        meshConfig.startPositions[si + 1],
+        meshConfig.startPositions[si + 2]
+      );
+      box.expandByPoint(v);
+      v.set(
+        meshConfig.endPositions[si],
+        meshConfig.endPositions[si + 1],
+        meshConfig.endPositions[si + 2]
+      );
+      box.expandByPoint(v);
 
-    const sw = meshConfig.startWidths[i];
-    const ew = meshConfig.endWidths[i];
-    if (Number.isFinite(sw) && sw > maxWidth) maxWidth = sw;
-    if (Number.isFinite(ew) && ew > maxWidth) maxWidth = ew;
+      const sw = meshConfig.startWidths[i];
+      const ew = meshConfig.endWidths[i];
+      if (Number.isFinite(sw) && sw > maxWidth) maxWidth = sw;
+      if (Number.isFinite(ew) && ew > maxWidth) maxWidth = ew;
+    }
   }
 
   if (segmentCount > 0 && maxWidth > 0) {

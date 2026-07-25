@@ -43,20 +43,17 @@ import { GSplatPickingMaterial } from '../../../rendering/picking/gsplat/materia
 
 function makeSource(count: number): SplatTexelSource {
   const centers = new Float32Array(count * 3);
-  const cholesky01 = new Float32Array(count * 2);
-  const cholesky23 = new Float32Array(count * 2);
-  const cholesky45 = new Float32Array(count * 2);
+  const choleskyFactors = new Float32Array(count * 6);
   const amplitudes = new Float32Array(count);
   const colors = new Float32Array(count * 3);
   for (let i = 0; i < count; i++) {
     centers.set([i, i + 0.25, i + 0.5], i * 3);
-    cholesky01.set([1 + i, 0.1 * i], i * 2);
-    cholesky23.set([2 + i, 0.2 * i], i * 2);
-    cholesky45.set([0.3 * i, 3 + i], i * 2);
+    // [L00, L10, L11, L20, L21, L22]
+    choleskyFactors.set([1 + i, 0.1 * i, 2 + i, 0.2 * i, 0.3 * i, 3 + i], i * 6);
     amplitudes[i] = 0.5 + i;
     colors.set([i * 0.01, i * 0.02, i * 0.03], i * 3);
   }
-  return { centers, cholesky01, cholesky23, cholesky45, amplitudes, colors };
+  return { centers, choleskyFactors, amplitudes, colors };
 }
 
 afterEach(() => {
@@ -128,14 +125,14 @@ describe('attachSplatStorage / writeSplatTexels — fused writer round-trip', ()
       expect(arr[o + 1]).toBe(src.centers[i * 3 + 1]);
       expect(arr[o + 2]).toBe(src.centers[i * 3 + 2]);
       expect(arr[o + 3]).toBe(src.amplitudes[i]);
-      // texel 1: cholesky01.xy, cholesky23.xy
-      expect(arr[o + 4]).toBe(src.cholesky01[i * 2]);
-      expect(arr[o + 5]).toBe(src.cholesky01[i * 2 + 1]);
-      expect(arr[o + 6]).toBe(src.cholesky23[i * 2]);
-      expect(arr[o + 7]).toBe(src.cholesky23[i * 2 + 1]);
-      // texel 2: cholesky45.xy, color.rg
-      expect(arr[o + 8]).toBe(src.cholesky45[i * 2]);
-      expect(arr[o + 9]).toBe(src.cholesky45[i * 2 + 1]);
+      // texel 1: [L00, L10, L11, L20]
+      expect(arr[o + 4]).toBe(src.choleskyFactors[i * 6]);
+      expect(arr[o + 5]).toBe(src.choleskyFactors[i * 6 + 1]);
+      expect(arr[o + 6]).toBe(src.choleskyFactors[i * 6 + 2]);
+      expect(arr[o + 7]).toBe(src.choleskyFactors[i * 6 + 3]);
+      // texel 2: [L21, L22], color.rg
+      expect(arr[o + 8]).toBe(src.choleskyFactors[i * 6 + 4]);
+      expect(arr[o + 9]).toBe(src.choleskyFactors[i * 6 + 5]);
       expect(arr[o + 10]).toBe(src.colors[i * 3]);
       expect(arr[o + 11]).toBe(src.colors[i * 3 + 1]);
       // texel 3: color.b, alpha (per-splat opacity). RGB source ⇒ alpha
@@ -574,9 +571,7 @@ describe('pool adapter — growth, dispose, byte accounting', () => {
         {
           centers3D: src.centers,
           amplitudes: src.amplitudes,
-          cholesky01: src.cholesky01,
-          cholesky23: src.cholesky23,
-          cholesky45: src.cholesky45,
+          choleskyFactors: src.choleskyFactors,
           colors: src.colors,
         },
         1000
@@ -597,9 +592,7 @@ describe('pool adapter — growth, dispose, byte accounting', () => {
       {
         centers3D: src.centers,
         amplitudes: src.amplitudes,
-        cholesky01: src.cholesky01,
-        cholesky23: src.cholesky23,
-        cholesky45: src.cholesky45,
+        choleskyFactors: src.choleskyFactors,
         colors: src.colors,
       },
       4
@@ -616,9 +609,7 @@ describe('pool adapter — growth, dispose, byte accounting', () => {
     const packed = (amplitudes: Float32Array) => ({
       centers3D: src.centers,
       amplitudes,
-      cholesky01: src.cholesky01,
-      cholesky23: src.cholesky23,
-      cholesky45: src.cholesky45,
+      choleskyFactors: src.choleskyFactors,
       colors: src.colors,
     });
     pool.updateGSplatsGeometry(geom, packed(src.amplitudes), 4);
@@ -646,9 +637,7 @@ describe('pool adapter — growth, dispose, byte accounting', () => {
     const packed = (s: SplatTexelSource, count: number) => ({
       centers3D: s.centers.subarray(0, count * 3),
       amplitudes: s.amplitudes.subarray(0, count),
-      cholesky01: s.cholesky01.subarray(0, count * 2),
-      cholesky23: s.cholesky23.subarray(0, count * 2),
-      cholesky45: s.cholesky45.subarray(0, count * 2),
+      choleskyFactors: s.choleskyFactors.subarray(0, count * 6),
       colors: s.colors.subarray(0, count * 3),
     });
     // Prefix commit of 4 splats, then a real permutation lands on it.
@@ -713,5 +702,168 @@ describe('syncGSplatMaterialWithGeometry — commit material rebind', () => {
   it('no-ops on a geometry without splat storage (points/lines meshes)', () => {
     const mesh = new THREE.Mesh(new THREE.BufferGeometry(), new GSplatMaterial());
     expect(() => syncGSplatMaterialWithGeometry(mesh)).not.toThrow();
+  });
+});
+
+/**
+ * Deterministic PRNG for randomized-but-reproducible fixtures below
+ * (mulberry32, same generator the synthetic-scene module uses).
+ */
+function prng(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/**
+ * Random splat set with NEGATIVE coordinates and ANISOTROPIC Cholesky
+ * factors (large axis spreads + signed off-diagonals) — the stress case
+ * for both the texel-byte identity and the fused-bounds tests.
+ */
+function makeRandomSource(count: number, seed = 42) {
+  const rand = prng(seed);
+  const centers = new Float32Array(count * 3);
+  const choleskyFactors = new Float32Array(count * 6);
+  const amplitudes = new Float32Array(count);
+  const colors = new Float32Array(count * 4);
+  for (let i = 0; i < count; i++) {
+    centers.set([rand() * 200 - 100, rand() * 200 - 100, rand() * 200 - 100], i * 3);
+    // Anisotropic: diagonals spread over ~3 decades, signed off-diagonals.
+    const d0 = Math.pow(10, rand() * 3 - 1.5);
+    const d1 = Math.pow(10, rand() * 3 - 1.5);
+    const d2 = Math.pow(10, rand() * 3 - 1.5);
+    choleskyFactors.set(
+      [d0, (rand() * 2 - 1) * d1, d1, (rand() * 2 - 1) * d2, (rand() * 2 - 1) * d2, d2],
+      i * 6
+    );
+    amplitudes[i] = rand();
+    colors.set([rand(), rand(), rand(), rand()], i * 4);
+  }
+  return { centers, choleskyFactors, amplitudes, colors, colorComponents: 4 as const };
+}
+
+describe('writeSplatTexels — texel-byte identity vs the retired packed-triple path', () => {
+  /**
+   * Test-local reference implementation of the RETIRED pipeline:
+   * `packCholeskyForShader` split the 6-stride factors into three
+   * [x, y] attribute pairs, and the texel writer re-interleaved them.
+   * Kept verbatim here so the direct 6-stride path can be byte-compared
+   * against exactly what the old code produced.
+   */
+  function writeSplatTexelsPackedReference(
+    arr: Float32Array,
+    src: ReturnType<typeof makeRandomSource>,
+    count: number
+  ): void {
+    // packCholeskyForShader (retired):
+    const cholesky01 = new Float32Array(count * 2);
+    const cholesky23 = new Float32Array(count * 2);
+    const cholesky45 = new Float32Array(count * 2);
+    for (let i = 0; i < count; i++) {
+      const srcOffset = i * 6;
+      const dstOffset = i * 2;
+      cholesky01[dstOffset] = src.choleskyFactors[srcOffset];
+      cholesky01[dstOffset + 1] = src.choleskyFactors[srcOffset + 1];
+      cholesky23[dstOffset] = src.choleskyFactors[srcOffset + 2];
+      cholesky23[dstOffset + 1] = src.choleskyFactors[srcOffset + 3];
+      cholesky45[dstOffset] = src.choleskyFactors[srcOffset + 4];
+      cholesky45[dstOffset + 1] = src.choleskyFactors[srcOffset + 5];
+    }
+    // Re-interleaving texel writer (retired shape):
+    const colorK = src.colorComponents ?? 3;
+    for (let i = 0; i < count; i++) {
+      const o = i * SPLAT_FLOATS_PER_SPLAT;
+      const p3 = i * 3;
+      const ck = i * colorK;
+      const c2 = i * 2;
+      arr[o] = src.centers[p3];
+      arr[o + 1] = src.centers[p3 + 1];
+      arr[o + 2] = src.centers[p3 + 2];
+      arr[o + 3] = src.amplitudes[i];
+      arr[o + 4] = cholesky01[c2];
+      arr[o + 5] = cholesky01[c2 + 1];
+      arr[o + 6] = cholesky23[c2];
+      arr[o + 7] = cholesky23[c2 + 1];
+      arr[o + 8] = cholesky45[c2];
+      arr[o + 9] = cholesky45[c2 + 1];
+      arr[o + 10] = src.colors[ck];
+      arr[o + 11] = src.colors[ck + 1];
+      arr[o + 12] = src.colors[ck + 2];
+      arr[o + 13] = colorK === 4 ? src.colors[ck + 3] : 1.0;
+    }
+  }
+
+  it('produces byte-identical texture content on a randomized anisotropic splat set', () => {
+    const count = 64;
+    const src = makeRandomSource(count, 1234);
+
+    const geometry = new THREE.InstancedBufferGeometry();
+    const texture = attachSplatStorage(geometry, count);
+    const written = writeSplatTexels(texture, src, count);
+    expect(written).toBe(count);
+    const direct = texture.image.data as Float32Array;
+
+    const reference = new Float32Array(count * SPLAT_FLOATS_PER_SPLAT);
+    writeSplatTexelsPackedReference(reference, src, count);
+
+    // BYTE identity over every written float (bit-exact, not toBeCloseTo).
+    const directBytes = new Uint8Array(
+      direct.buffer,
+      direct.byteOffset,
+      count * SPLAT_FLOATS_PER_SPLAT * 4
+    );
+    const referenceBytes = new Uint8Array(reference.buffer, 0, reference.byteLength);
+    expect(directBytes).toEqual(referenceBytes);
+  });
+});
+
+describe('pool adapter — precomputed projection bounds fast path', () => {
+  it('bounds-present and scan-fallback commits produce identical cull bounds', async () => {
+    const { computeGSplatsProjectionBounds } =
+      await import('../../../workers/data-worker/projection/gsplats');
+    const count = 128;
+    const src = makeRandomSource(count, 777);
+    const pool = new GPUBufferPool(20, 300, 5, () => Infinity);
+    try {
+      const payload = {
+        centers3D: src.centers,
+        amplitudes: src.amplitudes,
+        choleskyFactors: src.choleskyFactors,
+        colors: src.colors,
+        colorComponents: src.colorComponents,
+      };
+
+      // Fallback: no bounds metadata → the adapter scans.
+      const scanGeom = pool.acquireGSplatsGeometry('scan', count);
+      pool.updateGSplatsGeometry(scanGeom, payload, count, 2.5);
+      expect(scanGeom.boundingBox).not.toBeNull();
+
+      // Fast path: fused-scan metadata supplied → scans skipped.
+      const fastGeom = pool.acquireGSplatsGeometry('fast', count);
+      pool.updateGSplatsGeometry(
+        fastGeom,
+        {
+          ...payload,
+          bounds: computeGSplatsProjectionBounds(src.centers, src.choleskyFactors, count),
+        },
+        count,
+        2.5
+      );
+
+      // Bit-exact equality (same float ops in the fused scan).
+      expect(fastGeom.boundingBox!.min.toArray()).toEqual(scanGeom.boundingBox!.min.toArray());
+      expect(fastGeom.boundingBox!.max.toArray()).toEqual(scanGeom.boundingBox!.max.toArray());
+      expect(fastGeom.boundingSphere!.center.toArray()).toEqual(
+        scanGeom.boundingSphere!.center.toArray()
+      );
+      expect(fastGeom.boundingSphere!.radius).toBe(scanGeom.boundingSphere!.radius);
+    } finally {
+      pool.dispose();
+    }
   });
 });

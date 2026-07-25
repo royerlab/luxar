@@ -110,9 +110,7 @@ export function createEmptyGSplatsNode(
 ): THREE.Mesh {
   const emptyConfig: InstancedGSplatsMeshConfig = {
     centers: new Float32Array(0),
-    cholesky01: new Float32Array(0),
-    cholesky23: new Float32Array(0),
-    cholesky45: new Float32Array(0),
+    choleskyFactors: new Float32Array(0),
     amplitudes: new Float32Array(0),
     colors: new Float32Array(0),
     splatCount: 0,

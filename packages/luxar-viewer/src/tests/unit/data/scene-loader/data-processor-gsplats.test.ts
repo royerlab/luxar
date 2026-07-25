@@ -5,9 +5,9 @@
  *   - Real `THREE.Group` + `THREE.Mesh` for `rootGroup` so the
  *     getObjectByName + nodeType guard is exercised in full.
  *   - Mock `projectGSplatsInProcess` (the in-process dispatcher that
- *     replaced the deleted main-thread `projectGSplats` copy) and
- *     `packCholeskyForShader` so tests aren't coupled to the real
- *     Mahalanobis math; we only verify orchestration.
+ *     replaced the deleted main-thread `projectGSplats` copy) so tests
+ *     aren't coupled to the real Mahalanobis math; we only verify
+ *     orchestration.
  *   - Mock the worker pool so we can control success / failure /
  *     fallback paths.
  */
@@ -23,10 +23,8 @@ vi.mock('../../../../workers/data-worker/projection/in-process', () => ({
   projectGSplatsInProcess: (...args: unknown[]) => mockProcessGSplats(...args),
 }));
 
-const mockPackCholesky = vi.fn();
 const mockUpdateInstancedMesh = vi.fn();
 vi.mock('../../../../rendering/gsplat-geometry', () => ({
-  packCholeskyForShader: (...args: unknown[]) => mockPackCholesky(...args),
   updateInstancedGSplatsMesh: (...args: unknown[]) => mockUpdateInstancedMesh(...args),
 }));
 
@@ -63,6 +61,11 @@ function makeDispatcherResult(visibleCount = 2) {
     amplitudes: new Float32Array(visibleCount),
     colors: new Float32Array(visibleCount * 3),
     visibleCount,
+    bounds: {
+      min: [0, 0, 0] as [number, number, number],
+      max: [1, 1, 1] as [number, number, number],
+      maxRowNorm: 0.5,
+    },
   };
 }
 
@@ -104,11 +107,6 @@ function makeMesh(name: string, attrs: Record<string, unknown> = {}): THREE.Mesh
 
 beforeEach(() => {
   mockProcessGSplats.mockReset().mockImplementation(() => makeDispatcherResult());
-  mockPackCholesky.mockReset().mockReturnValue({
-    cholesky01: new Float32Array(),
-    cholesky23: new Float32Array(),
-    cholesky45: new Float32Array(),
-  });
   mockUpdateInstancedMesh.mockReset();
   mockGetWorkerPool.mockReset();
 });
@@ -219,14 +217,22 @@ describe('processGSplatsData', () => {
     }
   });
 
-  it('packs cholesky factors after projection', async () => {
+  it('stages the projection output directly (6-stride cholesky + fused-scan bounds)', async () => {
     const root = new THREE.Group();
     root.add(makeMesh('/g'));
     const result = await processGSplatsData('/g', makeData(50), makeViewState(), root, 1);
     expect(result).not.toBeNull();
-    expect(mockPackCholesky).toHaveBeenCalledTimes(1);
     if (!result || result.noop) throw new Error('expected a geometry staged commit');
-    expect(result.cholesky01).toBeDefined();
+    // No split/re-interleave pass: the dispatcher's choleskyFactors3D is
+    // the staged commit's cholesky source, and the fused-scan bounds
+    // metadata rides through toProcessed untouched.
+    expect(result.processed.choleskyFactors3D).toBeInstanceOf(Float32Array);
+    expect(result.processed.choleskyFactors3D.length).toBe(2 * 6);
+    expect(result.processed.bounds).toEqual({
+      min: [0, 0, 0],
+      max: [1, 1, 1],
+      maxRowNorm: 0.5,
+    });
   });
 });
 

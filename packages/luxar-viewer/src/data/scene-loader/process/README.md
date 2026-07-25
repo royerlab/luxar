@@ -10,10 +10,10 @@ atomic commit phase.
 
 ## Files
 
-| File                        | Role                                                                                                                                                                                                                                                                                                                                                                                |
-| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `data-processor-lines.ts`   | Lines pipeline. Computes per-dim tolerance via `loaders/tolerance-computer`, applies `EXTEND_TO_ALL_TOLERANCE` for any `extend_to_all` dim, then projects via worker (`projectLinesTo3DUsingWorker`) when `useWebWorkers && segmentCount > 1000`, else `projectLinesInProcess` (the same dispatcher kernel run in-process, from `workers/data-worker/projection/in-process.ts`). Returns `StagedLinesCommit`.                                                          |
-| `data-processor-gsplats.ts` | GSplats pipeline. Reads the mesh's `uTruncate` uniform (or `DEFAULT_TRUNCATE = 3.0`), derives `discreteDims` / `discreteSteps` / `extendToAllDims` from `viewState.dimensions`, projects via worker (`projectGSplatsTo3DUsingWorker`) when `useWebWorkers && splatCount > 1000 && ndim > 3`, packs Cholesky factors via `packCholeskyForShader`, and returns `StagedGSplatsCommit`. |
+| File                        | Role                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `data-processor-lines.ts`   | Lines pipeline. Computes per-dim tolerance via `loaders/tolerance-computer`, applies `EXTEND_TO_ALL_TOLERANCE` for any `extend_to_all` dim, then projects via worker (`projectLinesTo3DUsingWorker`) when `useWebWorkers && segmentCount > 1000`, else `projectLinesInProcess` (the same dispatcher kernel run in-process, from `workers/data-worker/projection/in-process.ts`). Returns `StagedLinesCommit`.                 |
+| `data-processor-gsplats.ts` | GSplats pipeline. Reads the mesh's `uTruncate` uniform (or `DEFAULT_TRUNCATE = 3.0`), derives `discreteDims` / `discreteSteps` / `extendToAllDims` from `viewState.dimensions`, projects via worker (`projectGSplatsTo3DUsingWorker`) when `useWebWorkers && splatCount > 1000 && ndim > 3`, and returns `StagedGSplatsCommit` (the projection's 6-stride `choleskyFactors3D` + fused-scan `bounds` flow through unmodified). |
 
 Both files also **re-export** their sibling commit helper
 (`commitLinesGeometry`, `commitGSplatsGeometry`) from
@@ -47,10 +47,10 @@ export { commitLinesGeometry } from '../commit/commit-lines-geometry';
 // GSplats
 export interface StagedGSplatsCommit {
   path: string;
+  // `processed.choleskyFactors3D` (6-stride) flows straight to the GPU
+  // commit — no split/re-interleave pass; `processed.bounds` carries the
+  // projection's fused-scan cull metadata (AABB + max Cholesky row norm).
   processed: ProcessedGSplatsData;
-  cholesky01: Float32Array;
-  cholesky23: Float32Array;
-  cholesky45: Float32Array;
 }
 export async function processGSplatsData(
   path: string,
@@ -123,5 +123,3 @@ in `nodes/build-ctx.ts`, never via direct import.
 - `../view-state/extend-tolerance.ts` — `EXTEND_TO_ALL_TOLERANCE` sentinel.
 - `../../../workers/worker-pool.ts` — `runWithTimeout` dispatch used
   by both worker projection paths.
-- `../../../rendering/gsplat-geometry.ts` — `packCholeskyForShader`
-  used to lay out the three `cholesky*` Float32Arrays.

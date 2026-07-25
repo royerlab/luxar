@@ -109,9 +109,6 @@ function makeStagedGSplats(splatCount = 2): StagedGSplatsCommit {
       colors: new Float32Array(splatCount * 3),
       splatCount,
     },
-    cholesky01: new Float32Array(splatCount * 2),
-    cholesky23: new Float32Array(splatCount * 2),
-    cholesky45: new Float32Array(splatCount * 2),
   } as StagedGSplatsCommit;
 }
 

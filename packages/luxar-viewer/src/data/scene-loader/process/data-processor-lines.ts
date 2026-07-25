@@ -132,6 +132,9 @@ function toProcessedLines(
     startClipped: result.startClipped,
     endClipped: result.endClipped,
     segmentCount: result.visibleSegmentCount,
+    // Fused-scan cull metadata (AABB + max width) — lets computeLineBounds
+    // skip its O(N) main-thread scan per commit (see types/lines.ts).
+    bounds: result.bounds,
   };
 }
 

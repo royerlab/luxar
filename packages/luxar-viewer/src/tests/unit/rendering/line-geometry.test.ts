@@ -72,3 +72,50 @@ describe('createInstancedLinesMesh — bounding-box footprint expansion', () => 
     expect(box.max.y).toBeCloseTo(0, 5);
   });
 });
+
+describe('computeLineBounds — precomputed projection bounds fast path', () => {
+  it('bounds-present and scan-fallback configs produce identical cull bounds', async () => {
+    const { computeLinesProjectionBounds } =
+      await import('../../../workers/data-worker/projection/lines');
+    // Two segments with negative coordinates and distinct end widths.
+    const base: InstancedLinesMeshConfig = {
+      startPositions: new Float32Array([-4, -5, -6, 1, 2, 3]),
+      endPositions: new Float32Array([7, 8, 9, -1, -2, -3]),
+      startColors: new Float32Array(6).fill(1),
+      endColors: new Float32Array(6).fill(1),
+      startWidths: new Float32Array([0.25, 2.0]),
+      endWidths: new Float32Array([1.0, 0.5]),
+      startSharpness: new Float32Array([2, 2]),
+      endSharpness: new Float32Array([2, 2]),
+      segmentLengths: new Float32Array([1, 1]),
+      startClipped: new Uint8Array([0, 0]),
+      endClipped: new Uint8Array([0, 0]),
+      segmentCount: 2,
+    };
+
+    // Fallback: no bounds metadata → computeLineBounds scans.
+    const scanMesh = createInstancedLinesMesh(base, new THREE.MeshBasicMaterial());
+
+    // Fast path: fused-scan metadata supplied → the scan is skipped.
+    const fastMesh = createInstancedLinesMesh(
+      {
+        ...base,
+        bounds: computeLinesProjectionBounds(
+          base.startPositions,
+          base.endPositions,
+          base.startWidths,
+          base.endWidths,
+          base.segmentCount
+        ),
+      },
+      new THREE.MeshBasicMaterial()
+    );
+
+    const scanBox = scanMesh.geometry.boundingBox!;
+    const fastBox = fastMesh.geometry.boundingBox!;
+    // Bit-exact equality (same float ops in the fused scan).
+    expect(fastBox.min.toArray()).toEqual(scanBox.min.toArray());
+    expect(fastBox.max.toArray()).toEqual(scanBox.max.toArray());
+    expect(fastMesh.geometry.boundingSphere!.radius).toBe(scanMesh.geometry.boundingSphere!.radius);
+  });
+});

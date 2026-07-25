@@ -196,6 +196,29 @@ export interface LoadedGSplatsData {
 }
 
 /**
+ * Cull metadata computed by the projection's fused output scan
+ * (worker or in-process): AABB of `centers3D` plus the max Cholesky
+ * row norm over the visible splats. Mirrors the Points
+ * `metadata.bounds` pattern — when present, the GPU commit uses these
+ * seven scalars instead of re-scanning the arrays on the main thread
+ * (two O(N) loops per commit); when absent, consumers fall back to the
+ * scans. Plain arrays/numbers (not `THREE.Box3`) so the object
+ * survives the worker structured clone unchanged.
+ */
+export interface GSplatsProjectionBounds {
+  /** AABB min corner of centers3D [x, y, z]. */
+  min: [number, number, number];
+  /** AABB max corner of centers3D [x, y, z]. */
+  max: [number, number, number];
+  /**
+   * Max over splats of the Cholesky row norms — the conservative
+   * per-splat spatial extent used to expand the cull box
+   * (× truncationRadius).
+   */
+  maxRowNorm: number;
+}
+
+/**
  * Processed gsplats data ready for GPU rendering.
  *
  * After nD → 3D slicing:
@@ -225,6 +248,14 @@ export interface ProcessedGSplatsData {
 
   /** Number of visible splats after nD clipping */
   splatCount: number;
+
+  /**
+   * Fused-scan cull metadata from projection (see
+   * {@link GSplatsProjectionBounds}). Optional: absent (e.g. zero
+   * visible splats, or a producer that didn't scan) ⇒ the commit path
+   * falls back to its own O(N) scans.
+   */
+  bounds?: GSplatsProjectionBounds;
 }
 
 // ============================================================================
