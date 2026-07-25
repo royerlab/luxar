@@ -104,11 +104,17 @@ category, what it needs, and whether you have already built it:
 ```
 🎬 [Luxar] 75 demos
 
-  #  KEY                       GEOM         CATEGORY       NEEDS                STATUS
-─────────────────────────────────────────────────────────────────────────────────────
-  1  lorenz                    points       synthetic                           output ✓
- ..
- 42  gsplats_4d_neuromast_2ch  gsplats      microscopy     ⬇1200MB GPU*         cached
+  #  KEY                                    GEOM         CATEGORY       NEEDS                STATUS
+───────────────────────────────────────────────────────────────────────────────────────────────────
+  1  arxiv_papers                           points       embeddings     ⬇20MB                cached
+  6  cellxgene_census_umap                  points       embeddings     ⬇12MB LFS
+  8  chromatrace_choir_umap_sequence        points       embeddings     📁manual              cached
+ 24  gsplats_2d_codex_pancreas              gsplats      microscopy     ⬇5900MB GPU          cached
+ 26  gsplats_3d_cells3d_multichannel        gsplats      microscopy     ⬇1MB GPU* LFS        cached
+ ...
+
+Run one:  luxar demo run <key|#>       Details:  luxar demo info <key|#>
+Caches:   luxar demo cache list        Clear:    luxar demo cache clear …
 ```
 
 **NEEDS** tells you the cost before you commit: `⬇NNMB` for a download, `GPU`
