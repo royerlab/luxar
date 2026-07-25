@@ -20,7 +20,8 @@ Three ideas carry most of the design:
   current view actually intersects — and starts drawing before the rest arrives.
 - **n dimensions are first class.** Time, channel, camera, or any abstract axis is
   a real dimension with units and extent, not a folder of frames. Geometry is
-  sliced by nD proximity, and every non-displayed axis becomes a slider.
+  sliced by nD proximity, and every non-displayed axis becomes a navigable
+  control — a slider, or a toggle or dropdown for categorical axes.
 - **Represent, don't rasterize.** Image volumes are *fitted* to sparse oriented
   Gaussians instead of shipped as voxel grids — which is what lets a 3.3 GB
   light-sheet stack, or a 400-timepoint timelapse, travel over a network at all.
@@ -66,7 +67,7 @@ is the slow exception).
 | **Appearance** | HDR 16-bit float color, bloom and tone mapping, matplotlib/colorcet colormaps, and six blending modes from additive to physically-based [emission–absorption](#emission-and-absorption-not-just-glow) |
 | **Fitting pipeline** | `cal → fit → lod` with cross-validated splat budgets, optional CUDA, and whole-timelapse fitting across many GPUs or a Slurm cluster |
 | **Interoperable** | Reads classical 3D-Gaussian-splatting captures (INRIA, `.splat`, `.spz`, SuperSplat, PlayCanvas SOG); writes INRIA PLY |
-| **Shareable** | `luxar export` produces a standalone offline folder or a double-clickable native macOS/Linux app — no Luxar install needed to view |
+| **Shareable** | `luxar export` produces a standalone offline folder, or a native bundle — a double-clickable macOS `.app`, a portable Linux folder — that opens with no Luxar install |
 
 > **Requirements:** The Luxar viewer targets **desktop browsers** with **WebGL2** support (Chrome, Firefox, Edge, Safari 15+). Touch/mobile devices are not currently supported.
 
