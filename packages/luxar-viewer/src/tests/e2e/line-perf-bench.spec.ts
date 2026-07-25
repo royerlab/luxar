@@ -603,15 +603,33 @@ test('line perf bench — JS frame timing across backends', async ({ page }) => 
     }
   }
 
+  const outPath = path.join(outDir, 'results.json');
+  // Merge-write: the per-SHA results.json is shared with the other
+  // *-perf-bench specs (the gsplat bench merges `scenarioId`-keyed rows
+  // into the same file) — a wholesale write here would clobber their
+  // rows when this spec runs later in the same `pnpm test:perf:e2e`
+  // invocation. Keep every existing row this run did not re-measure.
+  const rowKey = (r: { id?: string; scenarioId?: string; backend?: string }): string =>
+    `${r.scenarioId ?? r.id}/${r.backend}`;
+  let keptRows: unknown[] = [];
+  if (fs.existsSync(outPath)) {
+    try {
+      const prev = JSON.parse(fs.readFileSync(outPath, 'utf8')) as PerfRunResult;
+      const ours = new Set(scenarios.map((s) => rowKey(s)));
+      keptRows = (prev.scenarios ?? []).filter(
+        (s) => !ours.has(rowKey(s as { id?: string; scenarioId?: string; backend?: string }))
+      );
+    } catch {
+      // Corrupt/foreign file — fall back to writing just this run's rows.
+    }
+  }
   const output: PerfRunResult = {
     capturedAt: new Date().toISOString(),
     commit: sha,
     sampleWindowMs: SAMPLE_WINDOW_MS,
     warmupFrames: WARMUP_FRAMES,
-    scenarios,
+    scenarios: [...keptRows, ...scenarios] as PerfRunResult['scenarios'],
   };
-
-  const outPath = path.join(outDir, 'results.json');
   fs.writeFileSync(outPath, JSON.stringify(output, null, 2));
 
   console.log(`\n📊 perf-bench results written to ${outPath}`);
