@@ -537,6 +537,11 @@ export const POINT_SHADERS: Record<string, RegistryEntry> = {
   // into τ — both defines co-compiled off the SAME single texel2 fetch.
   // Would catch either branch displacing the other (the
   // untested-combination flag from the phase-4 double-check).
+    // (Deep-campaign note: this combination is UNREACHABLE from the Python
+  // scene API — all three adders make colors/colormap mutually exclusive
+  // and scalars require a colormap, so real data never has both an RGBA
+  // alpha column and LUT scalars. The coverage is deliberately defensive:
+  // hand-crafted zarr can reach it, and the shader must stay correct.)
   'point-volumetric-colormap': {
     source: POINT_SOURCE,
     buildUniforms: () => ({

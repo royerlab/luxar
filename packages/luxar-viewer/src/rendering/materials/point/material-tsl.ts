@@ -135,7 +135,7 @@ export class PointTSLMaterial
       // graph was built in volumetric mode; plain runtime uniforms
       // otherwise (no rebuild on value changes).
       uAbsorption: uniform(materialConfig.absorption ?? 1.0),
-      uHasElementAlpha: uniform(0),
+      uHasElementAlpha: uniform(materialConfig.hasElementAlpha ? 1 : 0),
       pointSizeFactor: uniform((2.0 * defaultResolutionY) / defaultTanHalfFov),
       maxPointSize: uniform(defaultResolutionY * 0.5),
       radiusScale: uniform(materialConfig.radiusScale ?? 1.0),
@@ -376,6 +376,11 @@ export class PointTSLMaterial
     this.uniforms.uAbsorption.value = absorption;
   }
 
+  /** Current volumetric absorption κ (mirrors GSplatMaterial.getAbsorption). */
+  getAbsorption(): number {
+    return this.uniforms.uAbsorption.value as number;
+  }
+
   /**
    * Flag whether the committed colors carry a real per-point alpha
    * column (RGBA). Deliberately a uniform, not a define — toggling it
@@ -506,6 +511,7 @@ export class PointTSLMaterial
       intensity: this.uniforms.uIntensity.value,
       offset: this.uniforms.uOffset.value,
       absorption: this.uniforms.uAbsorption.value,
+      hasElementAlpha: (this.uniforms.uHasElementAlpha.value as number) === 1,
       blendingMode: (this.userData.blendingMode as BlendingMode | undefined) ?? 'additive',
       depthTest: this.userData.depthTest ?? true,
       transparent: this.transparent,
@@ -548,9 +554,6 @@ export class PointTSLMaterial
     (cloned.uniforms.uResolution.value as THREE.Vector2).copy(
       this.uniforms.uResolution.value as THREE.Vector2
     );
-    // Commit-written data flag: the clone shares the source's point
-    // texture, so it must share its RGBA-alpha presence too.
-    cloned.uniforms.uHasElementAlpha.value = this.uniforms.uHasElementAlpha.value;
 
     return cloned as this;
   }

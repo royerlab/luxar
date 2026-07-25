@@ -66,6 +66,16 @@ export interface LineMaterialConfig {
    * (three-geometry symmetry).
    */
   absorption?: number;
+  /**
+   * True when the dataset's colors carry a per-element alpha channel
+   * (RGBA). Gates the volumetric branch's alpha → optical-depth mapping
+   * (w = −ln(1−a)); the linear per-mode alpha factor needs no gate (RGB
+   * data carries the identity alpha 1.0 in the element texture). Same
+   * shape as `GSplatMaterialConfig.hasElementAlpha` (three-geometry
+   * symmetry). Normally pushed per-commit by the material sync; the
+   * config field exists so clone() round-trips it.
+   */
+  hasElementAlpha?: boolean;
   /** Blending mode */
   blendingMode?: BlendingMode;
   /** Whether material is transparent (default true) */
@@ -146,11 +156,13 @@ export class LineMaterial
         // the LUXAR_VOLUMETRIC define; inert in every other mode.
         uAbsorption: { value: materialConfig.absorption ?? 1.0 },
         // 1 when the committed colors carry a real alpha column (RGBA);
-        // set per-commit (material-sync-helpers.ts), gates only the
-        // volumetric w(a) optical-depth map.
-        uHasElementAlpha: { value: 0 },
+        // pushed per-commit (material-sync-helpers.ts), gates only the
+        // volumetric w(a) optical-depth map; config seeds it for clone().
+        uHasElementAlpha: { value: materialConfig.hasElementAlpha ? 1 : 0 },
         // near-plane safety + max-pixel-width clamp uniforms.
-        uNearCull: { value: 0.05 },
+        // 0.1 matches the point/gsplat ctor default (pre-first-broadcast
+        // window only; updateCameraParams overwrites with the scene value).
+        uNearCull: { value: 0.1 },
         uMaxLinePixelWidth: { value: 540 }, // ≈ resolution.y * 0.5 default; updated in updateCameraParams
         // CPU-precomputed pixel-width scales so the shader avoids
         // per-vertex tan() and one divide. Updated in updateCameraParams.
@@ -363,6 +375,11 @@ export class LineMaterial
     this.uniforms.uAbsorption.value = absorption;
   }
 
+  /** Current volumetric absorption κ (mirrors GSplatMaterial.getAbsorption). */
+  getAbsorption(): number {
+    return this.uniforms.uAbsorption.value as number;
+  }
+
   /**
    * Flag whether the committed colors carry a real per-endpoint alpha
    * column (RGBA). Set per-commit by `syncLineMaterialWithGeometry`;
@@ -400,6 +417,7 @@ export class LineMaterial
       intensity: this.uniforms.uIntensity.value,
       offset: this.uniforms.uOffset.value,
       absorption: this.uniforms.uAbsorption.value,
+      hasElementAlpha: (this.uniforms.uHasElementAlpha.value as number) === 1,
       blendingMode: this.userData.blendingMode ?? 'additive',
       transparent: this.transparent,
       depthTest: this.userData.depthTest ?? true,
@@ -426,11 +444,6 @@ export class LineMaterial
     cloned.uniforms.uPerspectiveLineScale.value = this.uniforms.uPerspectiveLineScale.value;
     cloned.uniforms.uOrthoLineScale.value = this.uniforms.uOrthoLineScale.value;
     cloned.uniforms.uInvGamma.value = this.uniforms.uInvGamma.value;
-    // Commit-written data flag: the clone shares the source's line
-    // texture, so it must share its RGBA-alpha presence too (mirrors
-    // PointMaterial.clone).
-    cloned.uniforms.uHasElementAlpha.value = this.uniforms.uHasElementAlpha.value;
-
     return cloned as this;
   }
 

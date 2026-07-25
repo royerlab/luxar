@@ -181,8 +181,19 @@ export class GSplatTSLMaterial
     // factory flag in `rebuildGraph` so the gamma pow() is skipped at
     // gamma == 1.0. Toggled by `updateGamma`.
     if (isGammaOne(gammaValue)) this.defines.LUXAR_GAMMA_ONE = '';
+    // LUXAR_VOLUMETRIC is an INERT introspection tracker here: the TSL
+    // factory derives the volumetric output branch from the MODE (the
+    // rebuild predicates in applyBlendingMode own the boundary), but
+    // point/line TSL and the gsplat GLSL twin all expose the mode via
+    // this define — stamping it keeps cross-backend/cross-geometry
+    // introspection (tests, debug tooling) uniform.
+    if (isVolumetricMode(materialConfig.blendingMode ?? 'additive')) {
+      this.defines.LUXAR_VOLUMETRIC = '';
+    }
     this.toneMapped = false;
     this.side = THREE.DoubleSide;
+    // Single-pass billboards — see the GLSL twin's forceSinglePass note.
+    this.forceSinglePass = true;
 
     // depthTest is stamped after `rebuildGraph` below, from the
     // mode-derived state the factory tail applies.
@@ -413,6 +424,11 @@ export class GSplatTSLMaterial
     this.rebuildGraph();
   }
 
+  /** The currently bound splat data texture (mirrors getPointTexture/getLineTexture). */
+  getSplatTexture(): THREE.DataTexture | null {
+    return (this.uniforms.uSplatTex?.value as THREE.DataTexture | null | undefined) ?? null;
+  }
+
   updateColormapTexture(tex: THREE.DataTexture | null): void {
     const oldTexture =
       (this.uniforms.uColormapTex?.value as THREE.Texture | null | undefined) ?? null;
@@ -471,6 +487,16 @@ export class GSplatTSLMaterial
 
     this.userData.blendingMode = mode;
     this.userData.depthTest = state.depthTest;
+
+    // Keep the INERT LUXAR_VOLUMETRIC introspection tracker in sync
+    // (see the constructor note — the rebuild predicates below own the
+    // actual graph boundary; this define changes nothing structurally).
+    if (!this.defines) this.defines = {};
+    if (isVolumetricMode(mode)) {
+      this.defines.LUXAR_VOLUMETRIC = '';
+    } else {
+      delete this.defines.LUXAR_VOLUMETRIC;
+    }
 
     // Two boundaries force a graph rebuild (the factory JS-conditions
     // fragments/vertex blocks on the mode):

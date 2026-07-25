@@ -241,6 +241,12 @@ export class GSplatMaterial
       toneMapped: false, // HDR values pass through to post-processing
       blending: THREE.NormalBlending,
       side: THREE.DoubleSide, // Splats visible from both sides
+      // Splat quads are screen-space billboards, not physically two-sided
+      // surfaces. THREE's transparent+DoubleSide guard otherwise renders
+      // a redundant back-face pass per splat layer (and, under the sorted
+      // modes, splits each mesh's draw into two passes independent of the
+      // depth sort). Mirrors the Line/Point materials.
+      forceSinglePass: true,
     });
 
     // Apply mode-specific blending state (sets blending, blendEquation,
@@ -398,6 +404,11 @@ export class GSplatMaterial
     // `null` falls back to the shared placeholder (never unbind the
     // sampler) — mirrors PointMaterial.updatePointTexture.
     this.uniforms.uSplatTex.value = texture ?? getPlaceholderElementTexture();
+  }
+
+  /** The currently bound splat data texture (mirrors getPointTexture/getLineTexture). */
+  getSplatTexture(): THREE.DataTexture | null {
+    return (this.uniforms.uSplatTex.value as THREE.DataTexture | null) ?? null;
   }
 
   /**

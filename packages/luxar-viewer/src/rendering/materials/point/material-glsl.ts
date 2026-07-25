@@ -40,6 +40,16 @@ export interface PointMaterialConfig {
    */
   absorption?: number;
   /**
+   * True when the dataset's colors carry a per-element alpha channel
+   * (RGBA). Gates the volumetric branch's alpha → optical-depth mapping
+   * (w = −ln(1−a)); the linear per-mode alpha factor needs no gate (RGB
+   * data carries the identity alpha 1.0 in the element texture). Same
+   * shape as `GSplatMaterialConfig.hasElementAlpha` (three-geometry
+   * symmetry). Normally pushed per-commit by the material sync; the
+   * config field exists so clone() round-trips it.
+   */
+  hasElementAlpha?: boolean;
+  /**
    * Luxar blending mode. Same shape as `LineMaterialConfig.blendingMode`
    * and `GSplatMaterialConfig.blendingMode` (three-geometry symmetry —
    * Points/Lines/GSplats expose the same surface). Default `'additive'`.
@@ -112,9 +122,9 @@ export class PointMaterial
         // the LUXAR_VOLUMETRIC define; inert in every other mode.
         uAbsorption: { value: materialConfig.absorption ?? 1.0 },
         // 1 when the committed colors carry a real alpha column (RGBA);
-        // set per-commit (commit-points-geometry.ts), gates only the
-        // volumetric w(a) optical-depth map.
-        uHasElementAlpha: { value: 0 },
+        // pushed per-commit (material-sync-helpers.ts), gates only the
+        // volumetric w(a) optical-depth map; config seeds it for clone().
+        uHasElementAlpha: { value: materialConfig.hasElementAlpha ? 1 : 0 },
 
         // OPTIMIZED camera uniforms - pre-computed for shader performance
         // pointSizeFactor = 2.0 * resolution.y / tan(fov/2)
@@ -130,8 +140,11 @@ export class PointMaterial
 
         // Physical framebuffer size in pixels (used by the
         // instanced-quad vertex shader to convert pixel offsets to
-        // NDC. Defaults match the camera-uniform defaults; overridden
-        // by `updateCameraParams`.
+        // NDC. DELIBERATELY (1920, 1080) rather than the line/gsplat
+        // (1, 1) placeholder: it pairs with the pointSizeFactor /
+        // maxPointSize defaults derived from defaultResolutionY above,
+        // so the pre-first-broadcast state is self-consistent.
+        // Overridden by `updateCameraParams`.
         uResolution: { value: new THREE.Vector2(1920, defaultResolutionY) },
 
         // Colormap uniforms (only active when USE_COLORMAP define is set)
@@ -274,6 +287,11 @@ export class PointMaterial
     this.uniforms.uAbsorption.value = absorption;
   }
 
+  /** Current volumetric absorption κ (mirrors GSplatMaterial.getAbsorption). */
+  getAbsorption(): number {
+    return this.uniforms.uAbsorption.value as number;
+  }
+
   /**
    * Flag whether the committed colors carry a real per-point alpha
    * column (RGBA). Set per-commit by `commit-points-geometry.ts`;
@@ -408,6 +426,7 @@ export class PointMaterial
       intensity: this.uniforms.uIntensity.value,
       offset: this.uniforms.uOffset.value,
       absorption: this.uniforms.uAbsorption.value,
+      hasElementAlpha: (this.uniforms.uHasElementAlpha.value as number) === 1,
       blendingMode: (this.userData.blendingMode as BlendingMode | undefined) ?? 'additive',
       depthTest: this.userData.depthTest ?? true, // depthTest stored in userData
       transparent: this.transparent,
@@ -443,10 +462,6 @@ export class PointMaterial
     (cloned.uniforms.uResolution.value as THREE.Vector2).copy(
       this.uniforms.uResolution.value as THREE.Vector2
     );
-    // Commit-written data flag: the clone shares the source's point
-    // texture, so it must share its RGBA-alpha presence too.
-    cloned.uniforms.uHasElementAlpha.value = this.uniforms.uHasElementAlpha.value;
-
     return cloned as this;
   }
 
