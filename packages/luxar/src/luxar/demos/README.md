@@ -291,7 +291,7 @@ Visualizes 142k proteins from the CAFA5 challenge in 3D embedding space, showing
 
 **Run**: `luxar demo run esm3_protein_landscape [-- --no-serve] [-- --sample=100000] [-- --model=esmc-300m]`
 
-**Requires**: Internet access (downloads Swiss-Prot from UniProt), `esm>=3.0.0` (in the `demos` extra); a CUDA GPU to compute embeddings (first run computes ESM embeddings + UMAP, ~5h). Subsequent runs load cached results. If an earlier run left a quarantined `*.corrupt` artifact in `~/.cache/luxar/esm3_swissprot/`, the demo now reports its path and size up front — re-download the complete file or delete the quarantined copy, otherwise the run starts over from scratch.
+**Requires**: Internet access (downloads Swiss-Prot from UniProt), `esm>=3.0.0` (in the `demos` extra); a CUDA GPU to compute embeddings (first run computes ESM embeddings + UMAP, ~5h). Subsequent runs load cached results — and load them without `torch`, `esm` or `umap-learn` installed at all, because each is demanded only at the point where the corresponding uncached computation happens rather than as an entry-point preflight. If an earlier run left a quarantined `*.corrupt` artifact in `~/.cache/luxar/esm3_swissprot/`, the demo reports its path and size up front — re-download the complete file or delete the quarantined copy, otherwise the run starts over from scratch.
 
 **Demonstrates**: Protein language model embeddings (ESM-3 / ESM C), large-scale embedding visualization (~572k proteins), UMAP dimensionality reduction, taxonomic-kingdom coloring, hover labels.
 

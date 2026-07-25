@@ -51,10 +51,12 @@ DEMO_META = {
 }
 
 import gzip
+import importlib
 import re
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 from arbol import aprint, asection
@@ -74,6 +76,48 @@ from luxar.utils.paths import get_demos_output_dir
 # =============================================================================
 
 DEFAULT_SAMPLE_SIZE = 0  # 0 = all (~572K)
+
+# Optional heavyweight dependencies, each demanded ONLY at the point where the
+# corresponding uncached computation happens — never as an entry-point preflight.
+# A complete embeddings cache returns before torch/esm are touched, and a
+# complete UMAP cache returns before umap-learn is, so gating up front would
+# refuse to run a machine that has every artifact it needs. Values are
+# (pip spec, luxar extra, extra note).
+_INSTALL_HINTS: dict[str, tuple[str, str, str]] = {
+    "torch": (
+        "torch>=2.2,<3.0",
+        "gsplats",
+        "Needed only to COMPUTE embeddings (a CUDA GPU is required for that).",
+    ),
+    "esm": (
+        "esm>=3.0.0",
+        "demos",
+        "Needed only to COMPUTE embeddings; a complete cached embeddings file "
+        "skips the model entirely.",
+    ),
+    "umap": (
+        "umap-learn>=0.5.0",
+        "demos",
+        "Needed only to COMPUTE the 3D projection; a cached UMAP skips it.",
+    ),
+}
+
+
+def _require_module(name: str) -> Any:
+    """Import an optional dependency, or raise with an actionable install hint.
+
+    Raises ``ImportError`` rather than exiting, so callers keep control and the
+    demo's own error reporting stays in one place.
+    """
+    try:
+        return importlib.import_module(name)
+    except ImportError as exc:
+        spec, extra, note = _INSTALL_HINTS.get(name, (name, "demos", ""))
+        raise ImportError(
+            f"Missing dependency: {name}. Install with `pip install '{spec}'` "
+            f"(or the whole extra: `pip install 'luxar[{extra}]'`). {note}".rstrip()
+        ) from exc
+
 
 SWISSPROT_FASTA_URLS = [
     # ExPASy mirror (faster, more reliable)
@@ -420,7 +464,13 @@ def _compute_esm3_embeddings(
         ),
     )
 
-    import torch
+    # Past the cache check, so the compute path is genuinely being taken: this
+    # is where torch becomes mandatory (the CUDA probe below needs it). `esm` is
+    # demanded later, just before the model load — on a machine without CUDA the
+    # "supply a complete cache" message below is the actionable one, and it
+    # carries the quarantine notice, so it must not be pre-empted by a
+    # missing-esm error the user cannot act on anyway.
+    torch = _require_module("torch")
 
     # Computing ESM embeddings for ~572K proteins is only practical on a CUDA
     # GPU. If no usable cache is present and no CUDA device is available, fail
@@ -449,7 +499,8 @@ def _compute_esm3_embeddings(
             "scratch."
         )
 
-    # Load model
+    # Load model — the one place `esm` itself is genuinely needed.
+    _require_module("esm")
     with asection(f"Loading ESM model: {model_name}"):
         if model_name == "esmc-300m":
             from esm.models.esmc import ESMC
@@ -554,7 +605,7 @@ def _reduce_to_3d(
         aprint(f"✓ Loaded 3D UMAP from cache ({len(positions):,} points)")
         return positions
 
-    from umap import UMAP
+    UMAP = _require_module("umap").UMAP
 
     with asection(
         f"UMAP reduction ({embeddings.shape[0]:,} × {embeddings.shape[1]}D → 3D)"
@@ -882,33 +933,11 @@ def main() -> None:
         )
         aprint("")
 
-    # Check dependencies. Each hint names the constrained requirement (and the
-    # `demos` extra, which pins compatible versions) rather than a bare package.
-    try:
-        import torch  # noqa: F401
-    except ImportError:
-        aprint("❌ Missing dependency: torch (CUDA build needed to embed proteins)")
-        aprint("   Install with: pip install 'torch>=2.2,<3.0'")
-        aprint("   Or the whole extra: pip install 'luxar[gsplats]'")
-        sys.exit(1)
-
-    try:
-        import esm  # noqa: F401
-    except ImportError:
-        aprint("❌ Missing dependency: esm (EvolutionaryScale ESM-3 / ESM-C models)")
-        aprint("   Install with: pip install 'esm>=3.0.0'")
-        aprint("   Or the whole extra: pip install 'luxar[demos]'")
-        aprint("   Needed to COMPUTE embeddings; a complete cached embeddings")
-        aprint(f"   file under {cache_dir} skips the model entirely.")
-        sys.exit(1)
-
-    try:
-        import umap  # noqa: F401
-    except ImportError:
-        aprint("❌ Missing dependency: umap-learn")
-        aprint("   Install with: pip install 'umap-learn>=0.5.0'")
-        aprint("   Or the whole extra: pip install 'luxar[demos]'")
-        sys.exit(1)
+    # NO dependency preflight here on purpose. torch / esm / umap-learn are
+    # demanded by `_require_module` at the exact points that need them, so a
+    # machine holding complete caches runs the demo without any of them
+    # installed. Gating up front would refuse the cache-only path that the
+    # quarantine notice above tells the user to aim for.
 
     if "--no-serve" in sys.argv:
         output_path = get_demos_output_dir() / "esm3_protein_landscape.luxar.zarr"
