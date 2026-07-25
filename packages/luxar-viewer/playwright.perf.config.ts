@@ -63,9 +63,13 @@ export default defineConfig({
     headless,
     launchOptions: {
       args: [
-        // GPU-related flags — keep parity with the main config so the
-        // perf result is comparable to standard E2E rendering.
-        '--use-gl=egl',
+        // NOTE: deliberately NOT passing the main config's `--use-gl=egl`.
+        // In headless mode that flag yields NO GL context on both macOS
+        // (ANGLE Metal works fine without it — verified: "Apple M4 Max")
+        // and Linux/NVIDIA (needs `--use-angle=vulkan` instead, via
+        // LUXAR_PERF_CHROME_ARGS), so Chrome silently falls back to the
+        // SwiftShader software rasterizer — the exact trap the benches'
+        // renderer-string probe exists to catch.
         '--ignore-gpu-blocklist',
         '--enable-webgl-developer-extensions',
         '--enable-webgl-draft-extensions',
