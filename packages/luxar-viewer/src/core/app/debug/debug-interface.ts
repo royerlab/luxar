@@ -1,3 +1,4 @@
+import * as THREE from 'three';
 import { log, Modules } from '../../../utils/log';
 import { consoleInterceptor } from '../../../utils/console-interceptor';
 import { sceneDimsManager } from '../../../scene/scene-dims-manager';
@@ -5,9 +6,23 @@ import { SceneLoaderManager } from '../../../data/scene-loader-manager';
 import { getWorkerPool } from '../../../workers/worker-pool';
 import { showError } from '../../../ui/error-overlay';
 import { createInstancedLinesMesh } from '../../../rendering/line-geometry';
-import { clampLineCapacity } from '../../../rendering/element-texture-layout';
-import { syncLineMaterialWithGeometry } from '../../../rendering/material-sync-helpers';
-import { materialManager } from '../../../rendering/material-manager';
+import { createInstancedGSplatsMesh } from '../../../rendering/gsplat-geometry';
+import { createPointsGeometry } from '../../../rendering/node-factory/create-points-node';
+import {
+  clampLineCapacity,
+  clampPointCapacity,
+  clampSplatCapacity,
+} from '../../../rendering/element-texture-layout';
+import {
+  syncLineMaterialWithGeometry,
+  syncPointMaterialWithGeometry,
+} from '../../../rendering/material-sync-helpers';
+import { materialManager, type BlendingMode } from '../../../rendering/material-manager';
+import { normalizeBlendingMode } from '../../../rendering/blending-state';
+import { noteDepthSortCommit } from '../../../rendering/depth-sort-coordinator';
+import { setCommittedData } from '../../../types/committed-data';
+import type { LoadedPointsData } from '../../../types/points';
+import type { SyntheticInjectionResult, SyntheticSceneSpec } from '../../../scene/synthetic-scene';
 import { computeDebugState } from './debug-state';
 import { buildDebugCacheHelpers } from './debug-cache-helpers';
 import {
@@ -146,25 +161,29 @@ export function installDebugInterface(ports: InstallDebugInterfacePorts): void {
     showError,
 
     // Debug-only synthetic-scene injector for the perf bench. Builds
-    // a large `InstancedLinesMeshConfig` purely in JS, wires it
+    // a large lines / points / gsplats payload purely in JS, wires it
     // through the existing material-manager + node-factory pipeline,
     // and adds the resulting mesh to the scene. Returns `{type,
-    // segmentCount, mesh}` so the bench can capture the actual
-    // instance count it ran against. `synthetic-scene.ts` is imported
-    // dynamically so the synthetic-line builder stays out of the main
-    // chunk; `line-geometry` and `material-manager` are already in
+    // elementCount, <per-type count>, mesh}` so the bench can capture
+    // the actual instance count it ran against. `synthetic-scene.ts`
+    // is imported dynamically so the synthetic builders stay out of
+    // the main chunk; the geometry/material modules are already in
     // the main bundle (they're production modules), so importing them
     // statically here costs nothing extra.
-    injectSyntheticScene: async (spec: {
-      type: 'lines';
-      count: number;
-      bounds?: number;
-      seed?: number;
-    }) => {
+    //
+    // Blending defaults preserve the historical lines contract
+    // ('additive') while points/gsplats default to 'normal' so the
+    // depth-sort subsystem engages; `spec.blending` overrides either.
+    // Points/gsplats also stamp `committedData` and call
+    // `noteDepthSortCommit` — the same signals the production commit
+    // path emits — so the SortWorker registers the node and orderings
+    // actually apply (the coordinator drops orderings for meshes
+    // without the stamp).
+    injectSyntheticScene: async (spec: SyntheticSceneSpec): Promise<SyntheticInjectionResult> => {
       // [core OOS] Wrap the dynamic synthetic-scene import +
       // injection body in try/catch. Pre-fix, a rejection in the
       // dynamic import (bundle issue, transient network failure,
-      // code-split chunk missing) or in `generateSyntheticLines` /
+      // code-split chunk missing) or in the generators /
       // material creation became an unhandled promise rejection.
       // Debug consumers (`__luxarDebug.injectSyntheticScene({...})`)
       // typically don't `await` with their own try/catch, so a URL
@@ -173,39 +192,152 @@ export function installDebugInterface(ports: InstallDebugInterfacePorts): void {
       // the user-facing error overlay + log.error AND re-throw so
       // callers that DO `await` still see the rejection.
       try {
-        const { generateSyntheticLines } = await import('../../../scene/synthetic-scene');
-        const cfg = generateSyntheticLines(spec);
-        // Build the visual material directly through the
-        // material-manager so the same blending / dispatch logic
-        // production uses applies. Picking material is intentionally
-        // skipped — the synthetic scenarios don't exercise picking.
-        const material = materialManager.getLineMaterial({
-          blendingMode: 'additive',
-          opacity: 1.0,
-          gamma: 1.0,
-          intensity: 1.0,
-          offset: 0.0,
-        });
-        const mesh = createInstancedLinesMesh(cfg, material);
-        mesh.userData = {
-          nodeType: 'lines',
-          attrs: {},
-          maxWidth: 1.0,
-          visibleSegmentCount: clampLineCapacity(cfg.segmentCount),
-          synthetic: true,
-        };
-        // Bind the geometry-owned line texture on the per-node material —
-        // without this the shader samples the shared zero placeholder and
-        // the bench renders N invisible instances (segment data lives in
-        // `uLineTex` since the texture-storage migration; the production
-        // paths bind via createLinesNode / the commit sync, neither of
-        // which runs for this debug injection).
-        syncLineMaterialWithGeometry(mesh);
-        ports.sceneManager.scene.add(mesh);
-        // Kick the renderer so the new mesh is uploaded before the
-        // bench's first measurement frame.
-        ports.animationController.startAnimation();
-        return { type: spec.type, segmentCount: cfg.segmentCount, mesh };
+        const scene = ports.sceneManager.scene;
+        // 'additive' default for lines = the historical bench contract
+        // (and normalizeBlendingMode's undefined→'additive' identity);
+        // points/gsplats default to 'normal' (order-dependent).
+        const blendingMode: BlendingMode =
+          spec.blending !== undefined
+            ? normalizeBlendingMode(spec.blending)
+            : spec.type === 'lines'
+              ? 'additive'
+              : 'normal';
+
+        if (spec.type === 'lines') {
+          const { generateSyntheticLines } = await import('../../../scene/synthetic-scene');
+          const cfg = generateSyntheticLines(spec);
+          // Build the visual material directly through the
+          // material-manager so the same blending / dispatch logic
+          // production uses applies. Picking material is intentionally
+          // skipped — the synthetic scenarios don't exercise picking.
+          const material = materialManager.getLineMaterial({
+            blendingMode,
+            opacity: 1.0,
+            gamma: 1.0,
+            intensity: 1.0,
+            offset: 0.0,
+          });
+          const mesh = createInstancedLinesMesh(cfg, material);
+          const clamped = clampLineCapacity(cfg.segmentCount);
+          mesh.userData = {
+            nodeType: 'lines',
+            attrs: {},
+            maxWidth: 1.0,
+            visibleSegmentCount: clamped,
+            synthetic: true,
+          };
+          // Bind the geometry-owned line texture on the per-node material —
+          // without this the shader samples the shared zero placeholder and
+          // the bench renders N invisible instances (segment data lives in
+          // `uLineTex` since the texture-storage migration; the production
+          // paths bind via createLinesNode / the commit sync, neither of
+          // which runs for this debug injection).
+          syncLineMaterialWithGeometry(mesh);
+          scene.add(mesh);
+          // Kick the renderer so the new mesh is uploaded before the
+          // bench's first measurement frame.
+          ports.animationController.startAnimation();
+          return { type: 'lines', segmentCount: cfg.segmentCount, elementCount: clamped, mesh };
+        }
+
+        if (spec.type === 'gsplats') {
+          const { generateSyntheticGSplats } = await import('../../../scene/synthetic-scene');
+          const cfg = generateSyntheticGSplats(spec);
+          const material = materialManager.getGSplatMaterial({
+            blendingMode,
+            opacity: 1.0,
+            absorption: 1.0,
+            gamma: 1.0,
+            intensity: 1.0,
+            offset: 0.0,
+            truncationRadius: 3.0,
+          });
+          // The real gsplat mesh path: splat texture + `aSortedIndex`
+          // storage, identity ordering, footprint-expanded bounds, and
+          // the creation-time `updateSplatTexture` bind (no sync helper
+          // needed — there is no pick node here).
+          const mesh = createInstancedGSplatsMesh(cfg, material);
+          mesh.name = 'synthetic-gsplats';
+          const clamped = clampSplatCapacity(cfg.splatCount);
+          mesh.userData = {
+            nodeType: 'gsplats',
+            attrs: {},
+            visibleSplatCount: clamped,
+            synthetic: true,
+            _layerMaterialCloned: true,
+          };
+          // Commit stamp — the depth-sort coordinator drops resolved
+          // orderings (and skips per-frame re-sort triggers) for meshes
+          // without it: absence is its LOD-demotion signal.
+          setCommittedData(mesh, cfg);
+          scene.add(mesh);
+          // The production commit chokepoint: registers the centers
+          // with the SortWorker and dispatches the first sort when the
+          // live mode is order-dependent. The thunk hands the worker a
+          // FRESH buffer (it is transferred) and only pays the copy on
+          // the sorted path.
+          noteDepthSortCommit(mesh, () => cfg.centers.slice(0, clamped * 3), clamped);
+          ports.animationController.startAnimation();
+          return { type: 'gsplats', splatCount: cfg.splatCount, elementCount: clamped, mesh };
+        }
+
+        if (spec.type === 'points') {
+          const { generateSyntheticPoints } = await import('../../../scene/synthetic-scene');
+          const cfg = generateSyntheticPoints(spec);
+          const data: LoadedPointsData = {
+            positions: cfg.positions,
+            colors: cfg.colors,
+            radii: cfg.radii,
+            sharpness: cfg.sharpness,
+            pointCount: cfg.pointCount,
+            ndim: 3,
+            metadata: {
+              totalPoints: cfg.pointCount,
+              loadedPoints: cfg.pointCount,
+              bounds: new THREE.Box3(
+                new THREE.Vector3(...cfg.boundsMin),
+                new THREE.Vector3(...cfg.boundsMax)
+              ),
+              usedSpatialIndex: false,
+              dtypes: {},
+            },
+          };
+          // The real points geometry path: point texture +
+          // `aSortedIndex` storage, identity ordering,
+          // footprint-expanded bounds, presence stamps.
+          const geometry = createPointsGeometry(data, cfg.maxRadius);
+          const material = materialManager.getPointMaterial({
+            blendingMode,
+            opacity: 1.0,
+            absorption: 1.0,
+            gamma: 1.0,
+            intensity: 1.0,
+            offset: 0.0,
+            radiusScale: (geometry.userData.radiusScale as number | undefined) ?? 1.0,
+          });
+          const mesh = new THREE.Mesh(geometry, material);
+          mesh.name = 'synthetic-points';
+          mesh.frustumCulled = true;
+          const clamped = clampPointCapacity(cfg.pointCount);
+          mesh.userData = {
+            nodeType: 'points',
+            attrs: {},
+            maxRadius: cfg.maxRadius,
+            visiblePointCount: clamped,
+            synthetic: true,
+            _layerMaterialCloned: true,
+          };
+          // Bind the geometry-owned point texture on the render
+          // material (mirrors createPointsNode's creation-time bind).
+          syncPointMaterialWithGeometry(mesh);
+          setCommittedData(mesh, data);
+          scene.add(mesh);
+          noteDepthSortCommit(mesh, () => cfg.positions.slice(0, clamped * 3), clamped);
+          ports.animationController.startAnimation();
+          return { type: 'points', pointCount: cfg.pointCount, elementCount: clamped, mesh };
+        }
+
+        throw new Error(`Unknown synthetic scene type: ${String(spec.type)}`);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         log.error(Modules.LUXAR, `__luxarDebug.injectSyntheticScene failed: ${message}`, error);
