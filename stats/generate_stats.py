@@ -732,18 +732,23 @@ def _run_python_tests(
         if run_coverage:
             cmd[3:3] = ["--cov=packages/luxar/src/luxar", "--cov-report=term"]
         aprint(f"Running: {' '.join(cmd)}")
-        # 30 min budget: the full Python suite (3K+ tests with coverage) is
-        # the long pole of the report. Bump if the suite keeps growing.
+        # 90 min budget: the full Python suite (5.8K+ tests with coverage) is
+        # the long pole of the report. The previous 30 min budget was exceeded
+        # once the suite passed ~5K tests, and a timeout here is silent —
+        # coverage stays at its 0.0% default and the weighted total silently
+        # halves — so the budget is generous on purpose. Bump it again rather
+        # than let the report publish a zero.
         try:
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=1800,
+                timeout=5400,
                 cwd=root,
             )
         except subprocess.TimeoutExpired:
-            aprint("Python test run timed out after 30 minutes")
+            aprint("Python test run timed out after 90 minutes")
+            test_stats["python"]["timed_out"] = True
             return
         except FileNotFoundError:
             aprint("hatch not found; skipping Python test run")
@@ -1065,6 +1070,23 @@ def _fmt_size(bytes_count: int) -> str:
     return f"{bytes_count} B"
 
 
+def weighted_coverage(
+    py_cov: float, py_loc: int, ts_cov: float, ts_loc: int
+) -> float:
+    """LOC-weighted coverage across Python and TypeScript.
+
+    A language whose coverage is 0.0 is treated as UNMEASURED and left out of
+    the average, rather than averaged in as a real zero. Neither suite can
+    plausibly sit at a true 0%, so a zero here means its run failed or timed
+    out — and folding that in silently halves the headline number (a timed-out
+    Python run once turned a genuine 84% into a published 47%).
+    """
+    parts = [(cov, loc) for cov, loc in ((py_cov, py_loc), (ts_cov, ts_loc)) if cov > 0]
+    if not parts:
+        return 0.0
+    return sum(cov * loc for cov, loc in parts) / max(1, sum(loc for _, loc in parts))
+
+
 def generate_html_report(stats: dict[str, Any], output_file: Path) -> None:
     now = datetime.now()
     langs = stats["languages"]
@@ -1119,8 +1141,8 @@ def generate_html_report(stats: dict[str, Any], output_file: Path) -> None:
 
     py_cov = tests["python"]["coverage_percent"]
     ts_cov = tests["typescript"]["coverage_percent"]
-    weighted_cov = (py_cov * py["code_lines"] + ts_cov * ts["code_lines"]) / max(
-        1, py["code_lines"] + ts["code_lines"]
+    weighted_cov = weighted_coverage(
+        py_cov, py["code_lines"], ts_cov, ts["code_lines"]
     )
 
     git = stats["git"]
@@ -1685,7 +1707,7 @@ def generate_markdown_report(stats: dict[str, Any], output_file: Path) -> None:
     ts_loc = ts["code_lines"]
     py_cov = tests["python"]["coverage_percent"]
     ts_cov = tests["typescript"]["coverage_percent"]
-    weighted_cov = (py_cov * py_loc + ts_cov * ts_loc) / max(1, py_loc + ts_loc)
+    weighted_cov = weighted_coverage(py_cov, py_loc, ts_cov, ts_loc)
 
     total_test_files = (
         tests["python"]["test_files"]
@@ -1981,6 +2003,21 @@ def main() -> None:
         else script_path.parent
     )
 
+    # A path component that matches a skipped directory name makes the walker
+    # prune EVERY file, and the report then publishes zeros as if measured.
+    # `.claude` is the one that bites: agent worktrees live under
+    # `<repo>/.claude/worktrees/<name>/`, so a run from there scans nothing.
+    # Fail loudly instead — a stale report beats a zeroed one.
+    shadowed = SKIP_DIR_NAMES.intersection(project_root.parts)
+    if shadowed:
+        raise SystemExit(
+            f"Refusing to run: the project root {project_root} contains path "
+            f"component(s) {sorted(shadowed)} that the scanner skips, so every "
+            "file would be pruned and the report would read 0 files / 0% "
+            "coverage. Run from a checkout whose path has no such component "
+            "(e.g. a worktree under ~/workspace/... rather than .claude/worktrees/...)."
+        )
+
     with asection("Analyzing Luxar project"):
         all_stats: dict[str, Any] = {"languages": {}}
 
@@ -1990,6 +2027,13 @@ def main() -> None:
                 all_stats["languages"][name] = ls.as_dict()
                 if ls.files:
                     aprint(f"{name:12s} {ls.files:4d} files, {ls.code_lines:6,} LOC")
+
+        if not sum(all_stats["languages"][n]["files"] for n in all_stats["languages"]):
+            raise SystemExit(
+                f"Refusing to run: scanned {project_root} and found 0 source "
+                "files. Something is wrong with the checkout or the skip rules; "
+                "writing this report would replace real numbers with zeros."
+            )
 
         with asection("Per-package breakdown"):
             all_stats["package_breakdown"] = {
