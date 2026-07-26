@@ -496,6 +496,35 @@ Points in nD space are treated as **hyperspheres**. When viewing a 3D slice:
 | `[` / `]` | Step backward/forward in selected dimension |
 | `N` | Toggle dimension panel |
 
+### Per-Axis Transforms
+
+The 4×4 `transform` moves geometry through the three displayed dimensions. The
+separate `nd_transform` attribute does the same for the *non-displayed* ones — so
+two datasets recorded on different clocks, sampling rates, or channel orders can be
+aligned in one scene instead of being resampled first.
+
+Each axis takes the operation its domain allows: continuous and discrete axes take
+an affine `scale`/`offset`, categorical axes take a `permutation`. Like spatial
+transforms, they compose down the scene graph.
+
+```python
+group = scene.add_group(
+    "DatasetB",
+    transform=transforms.translate(10, 0, 0),      # displayed dims (4x4)
+    nd_transform={
+        "time": {"scale": 0.001, "offset": 50.0},  # ms → s, shifted
+        "channel": {"permutation": [2, 1, 0]},     # reorder channels
+    },
+)
+group.add_points("cells", positions_5d)            # children inherit it
+```
+
+The viewer applies these by inverse-transforming the *query* — the slice position
+and tolerance — from world to local space once per view change, rather than
+transforming millions of element coordinates. See the
+[nD Transforms Spec](docs/guides/specs/ND_TRANSFORMS_SPEC.md) for the domain rules
+and composition semantics.
+
 ---
 
 ## Viewer Controls
@@ -786,6 +815,8 @@ layout and how to add a new skill.
 | [Zarr Format Spec](docs/guides/user/LUXAR_ZARR_FORMAT.md) | Complete data format specification |
 | [HDR Guide](docs/guides/user/HDR_GUIDE.md) | HDR color workflow |
 | [Gaussian Splatting](packages/luxar/src/luxar/gsplats/README.md) | n-Dimensional Gaussian fitting |
+| [Volumetric Blending Spec](docs/guides/specs/VOLUMETRIC_BLENDING_SPEC.md) | Emission–absorption compositing: the optical model, the κ maths, and the testable invariants |
+| [nD Transforms Spec](docs/guides/specs/ND_TRANSFORMS_SPEC.md) | Per-axis transforms on non-displayed dimensions — domains, composition, inverse-query design |
 | [Agent Skills](.agents/skills/README.md) | Cross-tool AI agent skills (Claude Code, Codex, …) shipped with Luxar |
 | [Build System](docs/guides/developer/BUILD_SYSTEM_SPEC.md) | Development environment setup |
 | [Project Statistics](stats/PROJECT_STATS.md) | Codebase size, language mix, test coverage, git activity (see [`project_stats.html`](stats/project_stats.html) for the styled report) |
