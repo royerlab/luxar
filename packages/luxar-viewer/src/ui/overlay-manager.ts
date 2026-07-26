@@ -41,7 +41,7 @@ const ANCHOR_TRANSFORM: Record<string, string> = {
   'bottom-right': 'translate(-100%, -100%)',
 };
 
-/** Allowed HTML tags for client-side sanitization (defense-in-depth) */
+/** Allowed HTML tags for client-side sanitization (see `sanitizeHtml`) */
 const ALLOWED_TAGS = new Set([
   'b',
   'i',
@@ -73,6 +73,29 @@ const ALLOWED_TAGS = new Set([
   'thead',
   'tbody',
 ]);
+
+/** ASCII whitespace + C0 controls — see {@link normalizeUrlForScheme}. */
+// eslint-disable-next-line no-control-regex
+const URL_NOISE_RE = /[\u0000-\u0020]/g;
+
+/**
+ * Strip the characters a URL parser discards, for scheme comparison only.
+ *
+ * `trim()` is not enough: the parser removes ASCII tab/LF/CR from ANYWHERE in
+ * a URL and strips leading C0 controls, so `javascript&Tab;:`,
+ * `java&NewLine;script:` and `&#1;javascript:` all resolve to the
+ * `javascript:` scheme and fire. Python's `sanitize_html` does not catch these
+ * either — it matches the literal `javascript:` and never HTML-decodes — so
+ * this guard covers the ordinary `scene.add_html(...)` authoring path as well
+ * as hand-crafted zarrs.
+ *
+ * Deliberately stricter than the parser (an interior plain space is not
+ * actually stripped by it), which errs toward blocking. Compares only; the
+ * stored attribute value is never rewritten.
+ */
+function normalizeUrlForScheme(value: string): string {
+  return value.replace(URL_NOISE_RE, '').toLowerCase();
+}
 
 /** Escape HTML entities to prevent XSS in template substitution. */
 function escapeHtml(text: string): string {
@@ -518,7 +541,8 @@ export class OverlayManager {
   private createHtmlContent(el: HTMLDivElement, config: OverlayConfig): void {
     el.classList.add('luxar-overlay--html');
 
-    // Client-side sanitization (defense-in-depth, Python already sanitizes)
+    // Sanitize before injecting — see sanitizeHtml: for remote scene data
+    // this is the only control, not a second layer behind Python.
     const sanitized = this.sanitizeHtml(config.html ?? '');
     el.innerHTML = sanitized;
 
@@ -553,53 +577,66 @@ export class OverlayManager {
   }
 
   /**
-   * Client-side HTML sanitization using DOM allowlist.
-   * Defense-in-depth — the Python side sanitizes first.
+   * Client-side HTML sanitization against a DOM tag allowlist.
+   *
+   * A disallowed tag is *unwrapped*, not dropped — its children are lifted
+   * into its parent — so every element has to be scrubbed whether or not its
+   * own tag survives. Skipping the descendants of a disallowed tag hoists
+   * them into the output verbatim; that was issue #720.
+   *
+   * Invariant: pass 1 scrubs attributes on every element unconditionally, and
+   * pass 2 only moves existing nodes and drops the elements it unwraps — it
+   * never creates, clones or re-parses one, so nothing can reach the output
+   * unscrubbed. An unwrapped element is removed only after its children have
+   * been lifted, so nothing still awaiting pass 2 is ever detached: every
+   * element left in the snapshot is still connected, and still scrubbed, when
+   * pass 2 reaches it. Pass 2 runs outermost-first so each node moves exactly
+   * once; bottom-up would re-lift the same payload once per enclosing wrapper.
+   *
+   * Note: a nested `<template>` keeps its payload in a separate `.content`
+   * fragment that `querySelectorAll` never sees. It is discarded because
+   * `template` is not allowlisted — allowlisting it would ship that subtree
+   * unsanitized.
    */
   private sanitizeHtml(html: string): string {
     const template = document.createElement('template');
     template.innerHTML = html;
 
-    const walk = (parent: Element | DocumentFragment) => {
-      const toRemove: Element[] = [];
+    // One snapshot of every element at every depth, in document order
+    // (ancestors before descendants) — both passes iterate it.
+    const elements = Array.from(template.content.querySelectorAll('*'));
 
-      for (const child of Array.from(parent.children)) {
-        const tagName = child.tagName.toLowerCase();
-
-        if (!ALLOWED_TAGS.has(tagName)) {
-          toRemove.push(child);
-          continue;
+    // Pass 1 — attribute scrub, applied to allowed and disallowed alike.
+    for (const el of elements) {
+      for (const attr of Array.from(el.attributes)) {
+        const attrName = attr.name.toLowerCase();
+        // Tags are allowlisted; attributes are not. Anything not matched
+        // below is kept — blocked here are `on*` event handlers and
+        // `javascript:` URLs in `href`/`src`.
+        if (attrName.startsWith('on')) {
+          el.removeAttribute(attr.name);
+        } else if (
+          (attrName === 'href' || attrName === 'src') &&
+          normalizeUrlForScheme(attr.value).startsWith('javascript:')
+        ) {
+          el.removeAttribute(attr.name);
         }
-
-        // Remove disallowed attributes
-        for (const attr of Array.from(child.attributes)) {
-          const attrName = attr.name.toLowerCase();
-          // Allow: style, href, src, alt, class, target
-          // Block: on* event handlers, javascript: URLs
-          if (attrName.startsWith('on')) {
-            child.removeAttribute(attr.name);
-          } else if (
-            (attrName === 'href' || attrName === 'src') &&
-            attr.value.trim().toLowerCase().startsWith('javascript:')
-          ) {
-            child.removeAttribute(attr.name);
-          }
-        }
-
-        // Recurse into children
-        walk(child);
       }
+    }
 
-      for (const el of toRemove) {
-        // Move children up before removing the disallowed tag
-        while (el.firstChild) {
-          parent.insertBefore(el.firstChild, el);
-        }
-        el.remove();
+    // Pass 2 — unwrap disallowed tags, outermost first (one move per node).
+    for (const el of elements) {
+      if (ALLOWED_TAGS.has(el.tagName.toLowerCase())) continue;
+      const parent = el.parentNode;
+      // Unreachable: children are lifted before their element is removed, so
+      // nothing still awaiting pass 2 has been detached.
+      if (!parent) continue;
+      while (el.firstChild) {
+        parent.insertBefore(el.firstChild, el);
       }
-    };
+      el.remove();
+    }
 
-    walk(template.content);
     return template.innerHTML;
   }
 
