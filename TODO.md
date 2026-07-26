@@ -277,8 +277,10 @@ to ship after). Sequencing is at the bottom.
     hook. Points/Lines ride the same gate through
     `writeInterleavedAttribute(…, { fromInstance })` (order-preservation
     verified; plus an optional-field presence conjunct and the Lines
-    missing-sharpness 0.5-fill fix). **[POST]:** Stage 3 (WebGPU range parity)
-    — see the spec §7.
+    missing-sharpness 0.5-fill fix). Stage 3 (WebGPU range parity):
+    **MEASURED-REJECT 2026-07-25** — built, unit-tested, and rejected at the
+    ≥10% in-app bar (archived as a closed PR; numbers + revisit criteria in
+    the spec §7).
   - ⏭️ **[POST] residue from the campaign reviews:** instance-based coordinator
     DI (only if multi-instance embedding lands), front-most picking in MIXED
     normal+additive scenes (single shared pick depth buffer — documented in
