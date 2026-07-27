@@ -8,6 +8,8 @@ exercised on the already-cached branch.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -45,7 +47,9 @@ def test_cache_computed_version_and_recompute():
     # A new version key must not read the v1 cache.
     assert demo_utils.cache_computed("demoX", "k", compute, version=2) == 2
     # recompute=True bypasses the cache.
-    assert demo_utils.cache_computed("demoX", "k", compute, version=2, recompute=True) == 3
+    assert (
+        demo_utils.cache_computed("demoX", "k", compute, version=2, recompute=True) == 3
+    )
 
 
 def test_cache_computed_corrupt_is_quarantined(tmp_path):
@@ -74,7 +78,9 @@ def test_cached_download_returns_present_file_without_network(tmp_path, monkeypa
     monkeypatch.setattr("luxar.utils.download.robust_download", _boom)
     monkeypatch.setattr("luxar.utils.download.download_with_checksum", _boom)
 
-    p = demo_utils.cached_download("http://example.invalid/data.bin", "demoZ", "data.bin")
+    p = demo_utils.cached_download(
+        "http://example.invalid/data.bin", "demoZ", "data.bin"
+    )
     assert p.read_bytes() == b"hello world"
 
 
@@ -185,3 +191,113 @@ def test_hsv_to_rgb_primaries_and_shape():
     # Value/saturation scaling.
     grey = demo_utils.hsv_to_rgb(np.array([0.0]), s=0.0, v=0.5)
     np.testing.assert_allclose(grey[0], [0.5, 0.5, 0.5], atol=1e-5)
+
+
+def test_cached_download_quarantines_a_checksum_failing_cache(tmp_path, monkeypatch):
+    """A complete-but-wrong cached file must move aside BEFORE re-downloading.
+
+    robust_download resumes onto whatever bytes are at the destination, so
+    leaving them appends the new download to the old garbage (or trips a 416).
+    """
+    import hashlib
+
+    from luxar.utils.download import find_quarantined_files
+
+    monkeypatch.setattr(demo_utils, "_DEFAULT_CACHE_ROOT", tmp_path / "cache")
+    cache_dir = (tmp_path / "cache") / "demoQ"
+    cache_dir.mkdir(parents=True)
+    dest = cache_dir / "data.bin"
+    dest.write_bytes(b"wrong bytes")
+    good = b"right bytes"
+
+    def _fake(url, output_path, expected_sha256=None, **kw):
+        assert not Path(output_path).exists(), "would have resumed onto stale bytes"
+        Path(output_path).write_bytes(good)
+        return Path(output_path)
+
+    monkeypatch.setattr("luxar.utils.download.download_with_checksum", _fake)
+
+    out = demo_utils.cached_download(
+        "http://example.invalid/data.bin",
+        "demoQ",
+        "data.bin",
+        sha256=hashlib.sha256(good).hexdigest(),
+    )
+
+    assert out.read_bytes() == good
+    assert find_quarantined_files(dest)
+
+
+def test_cached_download_keeps_a_short_file_so_it_can_resume(tmp_path, monkeypatch):
+    """Shorter than expected IS a resumable partial download — do not touch it."""
+    monkeypatch.setattr(demo_utils, "_DEFAULT_CACHE_ROOT", tmp_path / "cache")
+    cache_dir = (tmp_path / "cache") / "demoQ3"
+    cache_dir.mkdir(parents=True)
+    (cache_dir / "data.bin").write_bytes(b"half")
+    seen: dict = {}
+
+    def _fake(url, output_path, **kw):
+        seen["existed"] = Path(output_path).exists()
+        Path(output_path).write_bytes(b"halfhalf")
+        return Path(output_path)
+
+    monkeypatch.setattr("luxar.utils.download.robust_download", _fake)
+
+    demo_utils.cached_download(
+        "http://example.invalid/data.bin", "demoQ3", "data.bin", expected_size=8
+    )
+
+    assert seen["existed"] is True, "partial file must survive for the resume"
+
+
+def test_cached_download_quarantines_an_overlong_file(tmp_path, monkeypatch):
+    """Longer than expected is NOT resumable — a Range past EOF answers 416."""
+    from luxar.utils.download import find_quarantined_files
+
+    monkeypatch.setattr(demo_utils, "_DEFAULT_CACHE_ROOT", tmp_path / "cache")
+    cache_dir = (tmp_path / "cache") / "demoQ4"
+    cache_dir.mkdir(parents=True)
+    dest = cache_dir / "data.bin"
+    dest.write_bytes(b"way too many bytes")
+
+    def _fake(url, output_path, **kw):
+        assert not Path(output_path).exists()
+        Path(output_path).write_bytes(b"12345678")
+        return Path(output_path)
+
+    monkeypatch.setattr("luxar.utils.download.robust_download", _fake)
+
+    demo_utils.cached_download(
+        "http://example.invalid/data.bin", "demoQ4", "data.bin", expected_size=8
+    )
+
+    assert find_quarantined_files(dest)
+
+
+def test_cached_download_quarantines_an_lfs_pointer(tmp_path, monkeypatch):
+    """A pointer stub is not data, and is exactly what a resume would append to."""
+    from luxar.utils.download import find_quarantined_files
+
+    monkeypatch.setattr(demo_utils, "_DEFAULT_CACHE_ROOT", tmp_path / "cache")
+    cache_dir = (tmp_path / "cache") / "demoQ5"
+    cache_dir.mkdir(parents=True)
+    dest = cache_dir / "data.bin"
+    dest.write_bytes(
+        b"version https://git-lfs.github.com/spec/v1\noid sha256:"
+        + b"0" * 64
+        + b"\nsize 11\n"
+    )
+
+    def _fake(url, output_path, **kw):
+        assert not Path(output_path).exists()
+        Path(output_path).write_bytes(b"real bytes")
+        return Path(output_path)
+
+    monkeypatch.setattr("luxar.utils.download.robust_download", _fake)
+
+    out = demo_utils.cached_download(
+        "http://example.invalid/data.bin", "demoQ5", "data.bin"
+    )
+
+    assert out.read_bytes() == b"real bytes"
+    assert find_quarantined_files(dest)

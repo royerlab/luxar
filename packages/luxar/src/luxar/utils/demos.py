@@ -299,7 +299,12 @@ def cached_download(
     Returns:
         Path to the cached file.
     """
-    from .download import download_with_checksum, robust_download
+    from .download import (
+        download_with_checksum,
+        quarantine_file,
+        robust_download,
+        verify_file_checksum,
+    )
 
     cache_dir = _DEFAULT_CACHE_ROOT / name
     cache_dir.mkdir(parents=True, exist_ok=True)
@@ -307,20 +312,37 @@ def cached_download(
         filename = url.split("?")[0].rstrip("/").rsplit("/", 1)[-1] or "download.bin"
     dest = cache_dir / filename
 
-    # Skip-if-present: a complete cached file (not an LFS pointer) is reused.
-    if dest.exists() and not is_lfs_pointer(dest):
-        if sha256 is not None:
-            from .download import verify_file_checksum
-
+    # Skip-if-present. Anything not returned from here must be dealt with before
+    # falling through: robust_download RESUMES onto whatever bytes are already at
+    # `dest` (Range request + append mode), so a complete-but-wrong file left in
+    # place gets the fresh download glued onto its tail, or trips an HTTP 416.
+    if dest.exists():
+        if is_lfs_pointer(dest):
+            # A pointer stub is not data — and it is exactly the ~130 bytes that
+            # robust_download would otherwise happily resume from.
+            quarantine_file(dest, reason="unpulled git-LFS pointer", verbose=verbose)
+        elif sha256 is not None:
             if verify_file_checksum(dest, None, sha256):
                 if verbose:
                     aprint(f"✓ Cached (checksum ok): {dest}")
                 return dest
+            quarantine_file(dest, reason="sha256 mismatch", verbose=verbose)
         elif expected_size is not None:
-            if dest.stat().st_size == expected_size:
+            size = dest.stat().st_size
+            if size == expected_size:
                 if verbose:
                     aprint(f"✓ Cached: {dest}")
                 return dest
+            if size > expected_size:
+                # Longer than the remote object, so not a resumable partial: a
+                # Range request starting past EOF is answered with 416.
+                quarantine_file(
+                    dest,
+                    reason=f"{size} bytes, expected {expected_size}",
+                    verbose=verbose,
+                )
+            # size < expected_size is a genuine truncated download — LEAVE IT,
+            # resuming from it is the whole point of the retry path.
         else:
             if verbose:
                 aprint(f"✓ Cached: {dest}")
@@ -723,9 +745,7 @@ def launch_viewer(
         aprint("If using hatch: run this demo with 'hatch run python <demo.py>'")
     else:
         aprint(f"\n❌ Error: luxar serve exited with code {code}.")
-        aprint(
-            "Make sure the viewer is built: cd packages/luxar-viewer && pnpm build"
-        )
+        aprint("Make sure the viewer is built: cd packages/luxar-viewer && pnpm build")
     sys.exit(1)
 
 
