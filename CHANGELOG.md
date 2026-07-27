@@ -39,12 +39,13 @@ stay as-is. Regenerate demo datasets to pick up the fix.
   validator counted rows via `len()`, not elements; it now uses
   `indices.size`. Odd-edge-count geometry (e.g. most L-system trees)
   previously could not be written as pairs at all.
-- **`luxar serve` now sends `Cache-Control: no-cache`**: StaticFiles
-  responses carried only ETag/Last-Modified, so browsers used HEURISTIC
-  freshness and silently served stale chunks after a dataset was
-  regenerated in place (same URLs, new bytes) — no viewer-side cache
-  clearing could fix it. `no-cache` forces ETag revalidation; unchanged
-  chunks still return as cheap 304s.
+- **`luxar serve` (and the standalone `serve.py` that `luxar export`
+  generates) now send `Cache-Control: no-cache`**: responses carried only
+  ETag/Last-Modified (or just Last-Modified for exports), so browsers used
+  HEURISTIC freshness and silently served stale chunks after a dataset was
+  regenerated — or a folder re-exported — in place (same URLs, new bytes);
+  no viewer-side cache clearing could fix it. `no-cache` forces
+  revalidation; unchanged files still return as cheap 304s.
 
 #### Fixed — `gsplat transform --rotate-*` rotated the wrong center dims on stacked nD data (#722)
 

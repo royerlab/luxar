@@ -443,6 +443,14 @@ def _haplotype_geometry(
             f"chr{p['chrom']}:{mb:.1f} Mb ({HAPLOTYPE_NAMES[p['haplotype']]})"
             for mb in pos_mb
         )
+    if not vparts:
+        # Every arm degenerate (<2 beads) — np.concatenate([]) would raise.
+        return (
+            np.empty((0, 4), dtype=np.float32),
+            np.empty((0, 3), dtype=np.float32),
+            [],
+            np.empty((0, 2), dtype=np.uint32),
+        )
     return (
         np.concatenate(vparts),
         np.concatenate(cparts),
@@ -498,7 +506,10 @@ def build_scene(output_path: Path, polylines: list[dict]) -> int:
                 eparts.append((edges + vertex_offset).astype(np.uint32))
                 vertex_offset += len(verts)
 
-            if vparts:
+            # Require actual edges, not just vertex parts: a haplotype whose
+            # arms were all degenerate contributes empty arrays, and the
+            # indexed writer rejects an empty edge list.
+            if vparts and any(len(e) for e in eparts):
                 all_verts = np.concatenate(vparts)
                 all_colors = np.concatenate(cparts)
                 all_edges = np.concatenate(eparts)
