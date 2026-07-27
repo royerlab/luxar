@@ -142,6 +142,39 @@ def test_axes_forwarded_to_argv_and_sbatch_parity() -> None:
     assert "--axes z,y,x" in script
 
 
+def test_uniform_argv_allows_empty_tile() -> None:
+    """Uniform tasks must tolerate a tile wholly below the background floor:
+    the worker writes an ``.empty`` marker and exits 0 instead of the task
+    failing (and re-failing on every re-fit) at the empty-store save."""
+    from luxar.gsplats.batch.slurm_gen import generate_fit_sbatch
+
+    m = BatchManifest(
+        input_path="in.zarr",
+        mode="uniform",
+        n_tiles=4,
+        tile_size=256,
+        tile_overlap=32,
+        n_timepoints=1,
+        n_channels=1,
+        output_dir="/o",
+    )
+    argv = build_task_fit_argv(m, _job(k=2), "out.tmp", argv0=_ARGV0)
+    assert "--allow-empty-tile" in argv
+    # Slurm parity: the sbatch template carries the flag AND finalizes the
+    # .tmp.empty marker for uniform tiles too (not just content boxes).
+    script = generate_fit_sbatch(m, "# preamble\n")
+    assert "--allow-empty-tile" in script
+    assert '"${OUTPUT}.tmp.empty"' in script
+    assert 'touch "${OUTPUT}.empty"' in script
+    # The pre-fit cleanup must also remove a STALE .tmp.empty marker (from a
+    # killed/preempted run), or the finalize branch would see FIT_RC=0 plus
+    # the stale marker, delete the freshly written real .tmp store, and mark
+    # the task empty — a silent spatial hole the merge skips without error.
+    # Two occurrences: the pre-fit cleanup and the finalize branch itself.
+    assert script.count('rm -f "${OUTPUT}.tmp.empty"') == 2
+    assert script.index('rm -f "${OUTPUT}.tmp.empty"') < script.index("local FIT_RC")
+
+
 def test_denoise_h_appended_for_on_the_fly_auto() -> None:
     m = BatchManifest(
         input_path="in.zarr",
