@@ -887,6 +887,157 @@ def _resolve_floor(V: np.ndarray, floor: "str | float | None") -> "float | None"
     return value
 
 
+# Sampling budget for resolve_volume_floor: the floor level is estimated from
+# at most this many voxels (~128 MB as float32), drawn as a bounded number of
+# evenly spaced contiguous slabs along the volume's LONGEST axis — cheap I/O
+# on chunked zarr stores, unlike a stride which touches essentially every
+# chunk.
+FLOOR_SAMPLE_BUDGET_VOXELS = 32_000_000
+# Maximum number of evenly spaced contiguous sample blocks along the sampled axis.
+_FLOOR_SAMPLE_BLOCKS = 32
+
+
+def _sample_volume_for_floor(volume: Any, budget: int) -> "np.ndarray | None":
+    """Read a bounded, deterministic sample of ``volume`` as flat float32.
+
+    Samples evenly spaced contiguous slab blocks along the **longest** axis
+    (ties -> lowest index), so a small leading axis — e.g. an unsqueezed
+    ``(1, Z, Y, X)`` store — cannot defeat the budget the way hard-coded
+    axis-0 slabs would. When the budget allows only one block, it is placed
+    at the middle of the axis (the first slab is systematically biased).
+    The sample is a pure function of ``volume.shape`` and ``budget``.
+    Returns ``None`` for an empty volume.
+    """
+    shape = tuple(int(s) for s in volume.shape)
+    total = 1
+    for s in shape:
+        total *= s
+    if total == 0:
+        return None
+    if total <= budget:
+        return np.asarray(volume[...], dtype=np.float32).ravel()
+
+    axis = shape.index(max(shape))  # longest axis; ties -> lowest index
+    slab_voxels = max(1, total // shape[axis])  # voxels per slab along `axis`
+    n_slabs = max(1, budget // slab_voxels)  # total slabs within budget
+    if n_slabs >= shape[axis]:
+        return np.asarray(volume[...], dtype=np.float32).ravel()
+    n_blocks = min(_FLOOR_SAMPLE_BLOCKS, n_slabs)
+    block_len = n_slabs // n_blocks
+    span = shape[axis] - block_len
+    if n_blocks == 1:
+        # A single block is read from the MIDDLE of the axis: the first slab
+        # of a stack is systematically atypical (vignetting, empty leading
+        # planes, axial intensity gradients).
+        starts = [span // 2]
+    else:
+        starts = sorted(
+            {int(round(span * i / (n_blocks - 1))) for i in range(n_blocks)}
+        )
+    prefix = (slice(None),) * axis
+    return np.concatenate(
+        [
+            np.asarray(
+                volume[prefix + (slice(s, s + block_len),)], dtype=np.float32
+            ).ravel()
+            for s in starts
+        ]
+    )
+
+
+def resolve_volume_floor(
+    volume: Any,
+    floor: "str | float | None",
+    *,
+    guard_numeric: bool = False,
+    verbose: bool = False,
+) -> "float | None":
+    """Resolve a ``floor`` spec against a whole volume, without loading it all.
+
+    The whole-volume counterpart of :func:`_resolve_floor` for tiled fitting:
+    the returned level is a property of the *volume*, never of any tile, so
+    independent workers (``--tile k/M``, ``-j N``, batch-fit) all subtract one
+    identical pedestal.
+
+    Parameters
+    ----------
+    volume : np.ndarray or zarr.Array
+        Full volume (may be a lazy zarr array; only a bounded sample is read).
+    floor : str, float, or None
+        Floor spec (see :func:`_resolve_floor`). A numeric spec (float or
+        numeric string) short-circuits and is echoed back without touching
+        the volume — unless ``guard_numeric`` is set; ``"none"``/``None``/``0``
+        return ``None``.
+    guard_numeric : bool, default False
+        Also apply the "floor >= max would erase all signal" guard to a
+        numeric spec (one bounded sample read). Pass ``True`` where a
+        USER-supplied spec is first turned into a level; leave ``False`` for
+        levels already resolved and guarded upstream (e.g. the concrete level
+        the parent hands each tile worker), preserving the read-free
+        short-circuit.
+    verbose : bool, default False
+        Print the resolved level via arbol.
+
+    Returns
+    -------
+    float or None
+        The concrete background level to subtract, or ``None`` (disabled,
+        nothing to subtract, or the guard below refused the level).
+
+    Notes
+    -----
+    - **Memory bound**: at most :data:`FLOOR_SAMPLE_BUDGET_VOXELS` voxels are
+      sampled, as evenly spaced contiguous slab blocks along the volume's
+      longest axis. Residual caveat: if even a single slab along the longest
+      axis exceeds the budget, that one slab is still read. A volume within
+      the budget is read whole.
+    - **Determinism**: the sample is a pure function of ``volume.shape`` and
+      the fixed budget, so two independent processes given the same volume
+      and spec always resolve the same level.
+    - A **negative** resolved level (dark-frame-corrected / deconvolved data
+      with a negative background) is returned like any other: floor
+      suppression means "put the background at 0", so a background sitting at
+      ``-2`` is shifted up by ``V - (-2)`` — exactly what the non-tiled
+      path's ``image_min = max(resolved_floor, image_min)`` does when
+      ``resolved_floor`` is negative.
+    - The "floor >= max would erase all signal" guard is applied against the
+      **sampled** max: such a level is refused with an ``aprint`` warning and
+      ``None`` is returned. For numeric specs the guard runs only with
+      ``guard_numeric=True``.
+    """
+    if floor is None:
+        return None
+    needs_data = guard_numeric
+    if isinstance(floor, str):
+        f = floor.strip().lower()
+        if f in ("none", ""):
+            return None
+        if f == "auto" or f.startswith("p"):
+            needs_data = True
+    if not needs_data:
+        # Numeric spec: echo the constant back — never sample the volume.
+        # 0 disables; a negative level is legitimate (see Notes).
+        return _resolve_floor(np.empty(0, dtype=np.float32), floor)
+
+    sample = _sample_volume_for_floor(volume, int(FLOOR_SAMPLE_BUDGET_VOXELS))
+    if sample is None:
+        return None
+
+    resolved = _resolve_floor(sample, floor)
+    if resolved is None:
+        return None
+    sample_max = float(sample.max())
+    if resolved >= sample_max:
+        aprint(
+            f"Warning: floor {resolved:.6g} >= sampled volume max "
+            f"{sample_max:.6g}; ignoring (would erase all signal)."
+        )
+        return None
+    if verbose:
+        aprint(f"Resolved whole-volume background floor: {resolved:.6g}")
+    return float(resolved)
+
+
 def _normalize_data(
     V: np.ndarray,
     norm_percentile: float,
