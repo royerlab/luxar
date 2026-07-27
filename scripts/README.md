@@ -16,6 +16,7 @@ scripts/
 | Script | Purpose |
 |--------|---------|
 | `check_documentation.py` | Validate README/docstring/JSDoc coverage across the repo |
+| `gen_data_manifest.py` | Regenerate the demo-data manifest (`demos/data_manifest.json`); `--check` is the CI drift gate |
 | `generate_galaxy_simple.py` | Fetch Gaia DR3 stars → raw zarr table for demos |
 | `generate_builtin_colormaps.py` | Regenerate built-in colormap LUTs (Python + TS) |
 | `build_cuda_slurm.py` | Submit a CUDA extension build job to Slurm |
