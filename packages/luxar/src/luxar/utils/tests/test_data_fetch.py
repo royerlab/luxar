@@ -8,8 +8,10 @@ staleness guard) and the ``ensure_dataset`` resolution logic (cache → in-repo 
 from __future__ import annotations
 
 import hashlib
+import importlib.util
+import json
 import os
-import subprocess
+import runpy
 import sys
 from pathlib import Path
 
@@ -17,6 +19,7 @@ import pytest
 
 from luxar.utils import data_fetch
 from luxar.utils.data_fetch import (
+    MANIFEST_PATH,
     DatasetNotFound,
     LocalComputeDataset,
     ensure_dataset,
@@ -28,6 +31,17 @@ from luxar.utils.download import QUARANTINE_SUFFIX, find_quarantined_files
 REPO_ROOT = Path(__file__).resolve().parents[6]
 DATA_DIR = Path(data_fetch._DEMOS_DATA_DIR)
 VALID_BUCKETS = {"zenodo", "local-compute", "regenerate"}
+GEN_SCRIPT = REPO_ROOT / "scripts" / "gen_data_manifest.py"
+_NO_SCRIPT = "generator script not present (packaged install without repo scripts/)"
+
+
+def _load_generator():
+    """Import scripts/gen_data_manifest.py as a module (scripts/ is not a package)."""
+    spec = importlib.util.spec_from_file_location("gen_data_manifest", GEN_SCRIPT)
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
 
 def _all_files(dataset: dict) -> list[dict]:
@@ -118,6 +132,8 @@ def test_gaia_is_local_compute_not_hosted():
 
 def test_manifest_matches_files_on_disk():
     """Every in-repo dataset file appears in the manifest with a matching name."""
+    if not DATA_DIR.is_dir():  # installed wheel, or post-R17 checkout
+        pytest.skip("demos/data/ not available (data no longer in the repo)")
     m = load_manifest()
     listed = {f["name"] for d in m["datasets"].values() for f in _all_files(d)}
     for sub in DATA_DIR.iterdir():
@@ -129,15 +145,106 @@ def test_manifest_matches_files_on_disk():
                     )
 
 
-def test_generator_check_reports_manifest_current():
-    """The committed manifest matches what the generator would produce."""
-    res = subprocess.run(
-        [sys.executable, "scripts/gen_data_manifest.py", "--check"],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
+@pytest.mark.skipif(not GEN_SCRIPT.exists(), reason=_NO_SCRIPT)
+def test_committed_manifest_matches_generator():
+    """The same drift gate CI runs: the committed manifest must be current."""
+    argv = sys.argv[:]
+    sys.argv = [str(GEN_SCRIPT), "--check"]
+    try:
+        with pytest.raises(SystemExit) as exc:
+            runpy.run_path(str(GEN_SCRIPT), run_name="__main__")
+    finally:
+        sys.argv = argv
+    assert exc.value.code == 0, (
+        "demo-data manifest is stale — run `make gen-data-manifest` and commit"
     )
-    assert res.returncode == 0, f"manifest stale:\n{res.stdout}\n{res.stderr}"
+
+
+@pytest.mark.skipif(not GEN_SCRIPT.exists(), reason=_NO_SCRIPT)
+def test_drift_gate_detects_a_stale_manifest(monkeypatch):
+    """The gate must actually gate: a mutated dataset table makes --check fail."""
+    mod = _load_generator()
+    monkeypatch.setitem(
+        mod.DATASETS,
+        "totally_not_a_dataset",
+        dict(bucket="regenerate", license="cc0-1.0", dir=""),
+    )
+    monkeypatch.setattr(sys, "argv", [str(GEN_SCRIPT), "--check"])
+    assert mod.main() == 1, "drift gate should return non-zero on a stale manifest"
+
+
+@pytest.mark.skipif(not GEN_SCRIPT.exists(), reason=_NO_SCRIPT)
+def test_regeneration_preserves_entries_when_the_data_is_gone(tmp_path, monkeypatch):
+    """R17 step 4 safety: `git rm`-ing demos/data must not wipe the checksums."""
+    mod = _load_generator()
+    monkeypatch.setattr(mod, "DATA_DIR", tmp_path / "absent")
+    committed = json.loads(mod.MANIFEST.read_text())
+
+    preserved = mod.build(committed, prune=False)
+
+    assert preserved["datasets"] == committed["datasets"], (
+        "a checkout that cannot see the data must not rewrite the manifest"
+    )
+    # --prune is the explicit opt-in that DOES empty them.
+    assert mod.build(committed, prune=True)["datasets"]["gsplats_kidney"]["files"] == []
+
+
+# --------------------------------------------------------------------------- #
+# The manifest must remain shippable
+# --------------------------------------------------------------------------- #
+def test_manifest_lives_outside_the_lfs_data_tree():
+    """Dependency-free companion guard — runs everywhere, including Python 3.10.
+
+    demos/data/ is ~450 MB of git-LFS payload excluded from BOTH the wheel and
+    the sdist. The manifest must never drift back inside it.
+    """
+    assert data_fetch._DEMOS_DATA_DIR not in MANIFEST_PATH.parents, (
+        f"{MANIFEST_PATH} is inside the excluded demos/data/ tree — "
+        "load_manifest() would raise FileNotFoundError for every pip user"
+    )
+
+
+def test_manifest_is_shippable_in_the_wheel_and_sdist():
+    """The manifest must be inside the packaged tree and outside every exclude.
+
+    Re-runs hatchling's own matcher over the committed build config, so a future
+    glob cannot silently un-ship the manifest again. Hatchling compiles
+    ``exclude`` with ``pathspec.GitIgnoreSpec.from_lines`` over the whole pattern
+    list (hatchling/builders/config.py), so the spec is built the same way here —
+    per-pattern matching would misjudge gitignore negation precedence.
+    """
+    tomllib = pytest.importorskip("tomllib")  # stdlib >= 3.11
+    # pathspec rides in via mypy, i.e. the `dev` feature CI's test env uses.
+    pathspec = pytest.importorskip("pathspec")
+
+    pyproject = REPO_ROOT / "pyproject.toml"
+    if not pyproject.is_file():  # installed wheel — no source tree to check
+        pytest.skip("pyproject.toml not available (installed package)")
+    try:
+        rel = MANIFEST_PATH.resolve().relative_to(REPO_ROOT).as_posix()
+    except ValueError:
+        pytest.skip("manifest resolves outside the source tree (installed package)")
+
+    targets = tomllib.loads(pyproject.read_text(encoding="utf-8"))["tool"]["hatch"][
+        "build"
+    ]["targets"]
+    for target in ("wheel", "sdist"):
+        roots = targets[target]["packages"]
+        assert any(rel.startswith(f"{root.rstrip('/')}/") for root in roots), (
+            f"{rel} is outside the {target} target's packages={roots}"
+        )
+        patterns = targets[target].get("exclude", [])
+        if pathspec.GitIgnoreSpec.from_lines(patterns).match_file(rel):
+            culprits = [
+                p
+                for p in patterns
+                if pathspec.GitIgnoreSpec.from_lines([p]).match_file(rel)
+            ]
+            raise AssertionError(
+                f"{rel} is excluded from the {target} by {culprits}. It is a "
+                "packaged resource that load_manifest() opens at runtime — move "
+                "the manifest or narrow the glob."
+            )
 
 
 # --------------------------------------------------------------------------- #
