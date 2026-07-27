@@ -33,19 +33,31 @@ from ._dependencies import (
     MissingDependencyError,
     require_module,
 )
+from .data_fetch import (
+    DatasetNotFound,
+    LocalComputeDataset,
+    dataset_spec,
+    ensure_dataset,
+    load_manifest,
+)
 
 __all__ = [
     "INSTALL_SPECS",
+    "DatasetNotFound",
     "DependencySpec",
+    "LocalComputeDataset",
     "MissingDependencyError",
     "cache_computed",
     "cached_download",
     "create_lorenz_attractor",
     "create_random_spheres",
     "create_time_series_demo",
+    "dataset_spec",
     "detect_device",
+    "ensure_dataset",
     "hsv_to_rgb",
     "launch_viewer",
+    "load_manifest",
     "load_precomputed_bundle",
     "load_precomputed_gsplats",
     "parse_demo_flags",
