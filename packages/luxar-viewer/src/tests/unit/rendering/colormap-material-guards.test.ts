@@ -185,7 +185,7 @@ describe('Material colormap guards', () => {
       // The scalar USE sits inside a still-open #ifdef USE_COLORMAP
       // block: the nearest preceding #ifdef USE_COLORMAP comes after any
       // #endif.
-      const scalarUse = 'mix(lineT5.x, lineT5.y, t)';
+      const scalarUse = 'mix(lineT5.x, lineT5.y, tEff)';
       const useIdx = shader.indexOf(scalarUse);
       expect(useIdx).toBeGreaterThan(-1);
       const preceding = shader.slice(0, useIdx);

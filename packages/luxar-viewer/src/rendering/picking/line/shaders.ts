@@ -141,6 +141,34 @@ export const LINE_PICK_VERTEX_SHADER = /* glsl */ `
         return;
       }
 
+      // Near-plane SEGMENT clipping — visual-shader parity (see
+      // shader-glsl.ts for the full rationale: a behind-camera endpoint
+      // has clip w <= 0, which flips the clip-space expansion and
+      // rasterizes the quad as a twisted bowtie whose near-clip boundary
+      // cuts through the pick footprint). Keeps every vertex at
+      // viewZ >= nearCull and remaps t (tEff) so the cap math and the
+      // per-endpoint attributes keep the original parameterization.
+      float tA = 0.0;
+      float tB = 1.0;
+      if (uIsOrtho == 0) {
+        if (startDepth < nearCull && endDepth >= nearCull) {
+          tA = (nearCull - startDepth) / (endDepth - startDepth);
+        } else if (endDepth < nearCull && startDepth >= nearCull) {
+          tB = (startDepth - nearCull) / (startDepth - endDepth);
+        }
+        vec4 mvStartClipped = mix(mvStart, mvEnd, tA);
+        vec4 mvEndClipped = mix(mvStart, mvEnd, tB);
+        mvStart = mvStartClipped;
+        mvEnd = mvEndClipped;
+      }
+      float tEff = mix(tA, tB, t);
+      vT = tEff;
+      mvPos = mix(mvStart, mvEnd, t);
+      vViewZ = mvPos.z;
+      width = mix(startW, endW, tEff);
+      vWidthAtT = width;
+      vSharpness = mix(startS, endS, tEff);
+
       vec4 clipStart = projectionMatrix * mvStart;
       vec4 clipEnd = projectionMatrix * mvEnd;
       // projection is linear, so proj * mix(a,b,t) == mix(proj*a, proj*b, t).
