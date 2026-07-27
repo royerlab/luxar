@@ -10,7 +10,7 @@
  *                       all-hidden visibility → loop never iterates → return 0.
  *   - [wasm.md G12][P5] calculate_segment_lengths: visibleCount=0 (no-op) and
  *                       NaN positions (NaN propagates through Math.sqrt).
- *   - [wasm.md G13][P5] mark_clipped_endpoints: all-hidden, and t1=t2=0.5
+ *   - [wasm.md G13][P5] compute_cap_suppression: all-hidden, and t1=t2=0.5
  *                       (both clipped) plus t1=0/t2=1 (neither clipped).
  *   - [wasm.md G14][P5] distance_3d: NaN inputs, a===b (zero distance, no
  *                       sqrt underflow).
@@ -26,7 +26,7 @@ import {
   interpolate_scalars_batch,
   interpolate_colors_batch,
   calculate_segment_lengths,
-  mark_clipped_endpoints,
+  compute_cap_suppression,
   distance_3d,
 } from '../../../wasm/typescript/lines-clipping';
 
@@ -344,52 +344,104 @@ describe('calculate_segment_lengths — boundaries and NaN [wasm.md G12]', () =>
   });
 });
 
-describe('mark_clipped_endpoints — empty / boundary [wasm.md G13]', () => {
+describe('compute_cap_suppression — empty / boundary [wasm.md G13]', () => {
+  /** Disjoint segments (no shared vertices) → the clipped-flag path alone. */
+  const disjointSegs = (n: number): Uint32Array => Uint32Array.from({ length: n * 2 }, (_, i) => i);
+  /** Positions for `n` disjoint unit-length segments along +x. */
+  const disjointPos = (n: number): [Float32Array, Float32Array] => {
+    const s = new Float32Array(n * 3);
+    const e = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) {
+      s[i * 3] = i * 10;
+      e[i * 3] = i * 10 + 1;
+    }
+    return [s, e];
+  };
+
   it('[G13] all visibility=0: loop never executes, output untouched, return 0', () => {
     const visibility = new Uint8Array([0, 0, 0]);
     const t1Params = new Float32Array([0.5, 0.5, 0.5]);
     const t2Params = new Float32Array([0.5, 0.5, 0.5]);
-    const outStart = new Uint8Array(3).fill(99);
-    const outEnd = new Uint8Array(3).fill(99);
-    const n = mark_clipped_endpoints(visibility, t1Params, t2Params, 3, outStart, outEnd);
+    const outStart = new Float32Array(3).fill(99);
+    const outEnd = new Float32Array(3).fill(99);
+    const [sp, ep] = disjointPos(3);
+    const n = compute_cap_suppression(
+      disjointSegs(3),
+      visibility,
+      t1Params,
+      t2Params,
+      3,
+      6,
+      sp,
+      ep,
+      outStart,
+      outEnd
+    );
     expect(n).toBe(0);
     expect(Array.from(outStart)).toEqual([99, 99, 99]);
     expect(Array.from(outEnd)).toEqual([99, 99, 99]);
   });
 
-  it('[G13] t1=t2=0.5 (both clipped from outside): both flags = 1', () => {
-    // t1=0.5 > 0 → start clipped. t2=0.5 < 1 → end clipped. Both flags = 1.
-    const visibility = new Uint8Array([1]);
-    const t1Params = new Float32Array([0.5]);
-    const t2Params = new Float32Array([0.5]);
-    const outStart = new Uint8Array(1);
-    const outEnd = new Uint8Array(1);
-    const n = mark_clipped_endpoints(visibility, t1Params, t2Params, 1, outStart, outEnd);
+  it('[G13] t1=t2=0.5 (both clipped from outside): both suppressions = 1', () => {
+    // t1=0.5 > 0 → start clipped. t2=0.5 < 1 → end clipped. Both = 1.
+    const outStart = new Float32Array(1);
+    const outEnd = new Float32Array(1);
+    const [sp, ep] = disjointPos(1);
+    const n = compute_cap_suppression(
+      disjointSegs(1),
+      new Uint8Array([1]),
+      new Float32Array([0.5]),
+      new Float32Array([0.5]),
+      1,
+      2,
+      sp,
+      ep,
+      outStart,
+      outEnd
+    );
     expect(n).toBe(1);
     expect(outStart[0]).toBe(1);
     expect(outEnd[0]).toBe(1);
   });
 
-  it('[G13] t1=0, t2=1 (neither clipped): both flags = 0', () => {
-    // The strict-inequality contract: `t1 > 0` and `t2 < 1`. With exact
-    // endpoints, both produce 0.
-    const visibility = new Uint8Array([1]);
-    const t1Params = new Float32Array([0]);
-    const t2Params = new Float32Array([1]);
-    const outStart = new Uint8Array(1);
-    const outEnd = new Uint8Array(1);
-    mark_clipped_endpoints(visibility, t1Params, t2Params, 1, outStart, outEnd);
+  it('[G13] t1=0, t2=1, no neighbour (free ends): both suppressions = 0', () => {
+    // The strict-inequality clipped contract (`t1 > 0` / `t2 < 1`) yields 0,
+    // and with no segment sharing either vertex there is no joint to suppress.
+    const outStart = new Float32Array(1);
+    const outEnd = new Float32Array(1);
+    const [sp, ep] = disjointPos(1);
+    compute_cap_suppression(
+      disjointSegs(1),
+      new Uint8Array([1]),
+      new Float32Array([0]),
+      new Float32Array([1]),
+      1,
+      2,
+      sp,
+      ep,
+      outStart,
+      outEnd
+    );
     expect(outStart[0]).toBe(0);
     expect(outEnd[0]).toBe(0);
   });
 
-  it('[G13] asymmetry: t1=0 / t2=0.7 → start untouched, end clipped', () => {
-    const visibility = new Uint8Array([1]);
-    const t1Params = new Float32Array([0]);
-    const t2Params = new Float32Array([0.7]);
-    const outStart = new Uint8Array(1);
-    const outEnd = new Uint8Array(1);
-    mark_clipped_endpoints(visibility, t1Params, t2Params, 1, outStart, outEnd);
+  it('[G13] asymmetry: t1=0 / t2=0.7 → start free (0), end clipped (1)', () => {
+    const outStart = new Float32Array(1);
+    const outEnd = new Float32Array(1);
+    const [sp, ep] = disjointPos(1);
+    compute_cap_suppression(
+      disjointSegs(1),
+      new Uint8Array([1]),
+      new Float32Array([0]),
+      new Float32Array([0.7]),
+      1,
+      2,
+      sp,
+      ep,
+      outStart,
+      outEnd
+    );
     expect(outStart[0]).toBe(0);
     expect(outEnd[0]).toBe(1);
   });
@@ -398,16 +450,28 @@ describe('mark_clipped_endpoints — empty / boundary [wasm.md G13]', () => {
     const visibility = new Uint8Array([0, 1, 0, 1]);
     const t1Params = new Float32Array([0, 0.3, 0, 0]);
     const t2Params = new Float32Array([1, 1, 1, 0.9]);
-    const outStart = new Uint8Array(4).fill(99); // sentinel
-    const outEnd = new Uint8Array(4).fill(99);
-    const n = mark_clipped_endpoints(visibility, t1Params, t2Params, 4, outStart, outEnd);
+    const outStart = new Float32Array(4).fill(99); // sentinel
+    const outEnd = new Float32Array(4).fill(99);
+    const [sp, ep] = disjointPos(4);
+    const n = compute_cap_suppression(
+      disjointSegs(4),
+      visibility,
+      t1Params,
+      t2Params,
+      4,
+      8,
+      sp,
+      ep,
+      outStart,
+      outEnd
+    );
     expect(n).toBe(2);
-    // Compacted: outStart[0] = (seg 1 → t1=0.3 > 0) = 1; outStart[1] = (seg 3 → t1=0 > 0) = 0.
+    // Compacted: outStart[0] = (seg 1 → t1=0.3 > 0) = 1; outStart[1] = (seg 3 → free) = 0.
     expect(outStart[0]).toBe(1);
     expect(outStart[1]).toBe(0);
     expect(outStart[2]).toBe(99); // untouched
-    expect(outEnd[0]).toBe(0); // seg 1: t2=1
-    expect(outEnd[1]).toBe(1); // seg 3: t2=0.9 < 1
+    expect(outEnd[0]).toBe(0); // seg 1: t2=1, no neighbour → free end
+    expect(outEnd[1]).toBe(1); // seg 3: t2=0.9 < 1 → clipped
   });
 });
 

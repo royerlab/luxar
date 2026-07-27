@@ -129,7 +129,14 @@ export function commitLinesGeometry(
       // order-preserving drop + in-place endpoint clip (never splits or
       // reorders), so under an unchanged view state the longer projection's
       // first `prevCount` surviving segments are byte-identical to the
-      // previous commit's whole output. Conjuncts as in the points/gsplats
+      // previous commit's whole output. For cap suppression this
+      // additionally rests on `concatenateLinesData`
+      // (lines-progressive-loader.ts) offset-adjusting each additive-LOD
+      // level's segment indices into a DISJOINT vertex-index range
+      // (`part.segments[i] + vertexOffset`): suppression joints are keyed
+      // on SHARED vertex indices, so an appended level can never register
+      // a joint on — and thereby alter — a prefix endpoint's suppression.
+      // Conjuncts as in the points/gsplats
       // twins (see commit-gsplats-geometry.ts for the full rationale), plus:
       // - optional-field presence must MATCH the committed parent: a
       //   presence flip (e.g. the new level introduces colors) re-fills the

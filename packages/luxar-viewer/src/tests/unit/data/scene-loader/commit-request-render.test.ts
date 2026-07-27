@@ -84,8 +84,8 @@ function makeStagedLines(segmentCount = 2): StagedLinesCommit {
       startSharpness: new Float32Array(segmentCount),
       endSharpness: new Float32Array(segmentCount),
       segmentLengths: new Float32Array(segmentCount),
-      startClipped: new Uint8Array(segmentCount),
-      endClipped: new Uint8Array(segmentCount),
+      startCapSuppression: new Float32Array(segmentCount),
+      endCapSuppression: new Float32Array(segmentCount),
       segmentCount,
     },
   } as StagedLinesCommit;
