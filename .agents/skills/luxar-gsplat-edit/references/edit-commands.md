@@ -17,7 +17,8 @@ scale-intensity → normalize-intensity**.
 | Flag | Meaning |
 | --- | --- |
 | `--scale` / `-s` | per-axis scale, e.g. `4,1,1,1` |
-| `--rotate-x` / `--rotate-y` / `--rotate-z` | degrees |
+| `--rotate-x` / `--rotate-y` / `--rotate-z` | degrees; rotates the 3 center dims given by `--spatial-dims` (default `0,1,2` — first-3-spatial / stack-last convention), other dims left unrotated |
+| `--spatial-dims` | which 3 center dims `--rotate-*` acts on, e.g. `1,2,3` for a direct nD fit with a leading time axis; listed order assigns the X/Y/Z rotation roles (`3,2,1` ≠ `1,2,3`, unlike `filter`'s order-insensitive `--spatial-dims`) |
 | `--translate` / `-t` | per-axis offset, e.g. `0,100,0` |
 | `--center` | recenter at amplitude-weighted centroid (default off) |
 | `--scale-intensity` | multiply amplitudes |

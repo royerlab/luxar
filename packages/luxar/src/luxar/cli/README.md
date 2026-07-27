@@ -348,7 +348,7 @@ luxar gsplat transform in.gsplats.zarr out.gsplats.zarr --normalize-intensity 1.
 luxar gsplat transform in.gsplats.zarr out.gsplats.zarr --translate 0,100,0 --scale-intensity 0.5
 ```
 
-**Spatial options**: `--scale/-s` (per-axis factors), `--translate/-t` (per-axis offset), `--rotate-x/--rotate-y/--rotate-z` (degrees, 3D only), `--center` (center at amplitude-weighted centroid).
+**Spatial options**: `--scale/-s` (per-axis factors), `--translate/-t` (per-axis offset), `--rotate-x/--rotate-y/--rotate-z` (degrees; rotates the three `--spatial-dims` center dims, default `0,1,2` — the first three, matching the partitioner and the stack-last time/channel convention — other dims are left unrotated), `--spatial-dims i,j,k` (which 3 center dims the rotation acts on, e.g. `1,2,3` for a direct nD fit whose leading axis is time; the listed order assigns the rotation frame's X/Y/Z roles, so `3,2,1` is a different transform from `1,2,3` — unlike `filter`'s order-insensitive `--spatial-dims`), `--center` (center at amplitude-weighted centroid).
 **Intensity options**: `--scale-intensity` (multiply amplitudes), `--normalize-intensity` (normalize max amplitude to value).
 **Output options**: `--encoding/-e` (auto/precision/memory), `--compress/-c` (zip/tar.gz).
 

@@ -22,6 +22,7 @@ def run_transform_dataset(
     rotate_x_deg: Optional[float],
     rotate_y_deg: Optional[float],
     rotate_z_deg: Optional[float],
+    spatial_dims: Optional[str] = None,
     center: bool,
     scale_intensity_factor: Optional[float],
     normalize_intensity: Optional[float],
@@ -68,6 +69,43 @@ def run_transform_dataset(
             aprint("❌ No transforms specified. Use --help to see available options.")
             raise typer.Exit(1)
 
+        # ── Validate the --spatial-dims FORMAT before loading anything: a typo
+        # should not cost a multi-GB store load. Only the range check (needs
+        # the dataset's d) stays after the load. ──
+        has_rotation = any(
+            r is not None for r in [rotate_x_deg, rotate_y_deg, rotate_z_deg]
+        )
+        if spatial_dims is not None and not has_rotation:
+            aprint(
+                "❌ --spatial-dims only affects --rotate-x/--rotate-y/"
+                "--rotate-z; add a rotation or remove --spatial-dims."
+            )
+            raise typer.Exit(1)
+        explicit_rot_axes: Optional[list[int]] = None
+        if spatial_dims is not None:
+            # No empty-token filtering: '0,,1,2' and '0,1,2,' are rejected
+            # (the empty token is not an integer) rather than silently fixed.
+            tokens = [t.strip() for t in spatial_dims.split(",")]
+            explicit_rot_axes = []
+            for token in tokens:
+                try:
+                    explicit_rot_axes.append(int(token))
+                except ValueError:
+                    aprint(
+                        f"❌ Invalid --spatial-dims '{spatial_dims}': "
+                        f"'{token}' is not an integer axis index"
+                    )
+                    raise typer.Exit(1) from None
+            if len(explicit_rot_axes) != 3:
+                aprint(
+                    f"❌ --spatial-dims must list exactly 3 axis indices, "
+                    f"got {len(explicit_rot_axes)}: '{spatial_dims}'"
+                )
+                raise typer.Exit(1)
+            if len(set(explicit_rot_axes)) != 3:
+                aprint(f"❌ --spatial-dims axes must be distinct, got '{spatial_dims}'")
+                raise typer.Exit(1)
+
         with asection(f"Transforming: {input_path.name}"):
             # Load the raw node tree so partitions / nested trees are preserved.
             # A matrix-shaped tree (a leaf, or a lod group of leaves) flattens to a
@@ -90,17 +128,56 @@ def run_transform_dataset(
                 transforms_applied.append(f"scale({scale_factors})")
 
             rot_matrix = None
-            has_rotation = any(
-                r is not None for r in [rotate_x_deg, rotate_y_deg, rotate_z_deg]
-            )
             if has_rotation:
-                # nD convention: the last 3 dims are spatial (XYZ); any preceding
-                # dims (e.g. time) are left unrotated.
+                # nD convention: by default the FIRST 3 center columns are
+                # spatial (X/Y/Z) — matching the partitioner
+                # (positions[:, :3]) and the stacking convention
+                # (embed_dimension / merge --as-dimension append time/channel
+                # LAST); every other dim is left unrotated. --spatial-dims
+                # overrides which three center dims the rotation acts on
+                # (e.g. a direct nD fit whose leading axis is time); its
+                # listed order assigns the rotation frame's X/Y/Z roles.
                 if d < 3:
                     aprint(
                         f"❌ Rotation requires at least 3 spatial dimensions, got {d}D data"
                     )
                     raise typer.Exit(1)
+                if explicit_rot_axes is not None:
+                    rot_axes = explicit_rot_axes
+                    out_of_range = [a for a in rot_axes if not 0 <= a < d]
+                    if out_of_range:
+                        aprint(
+                            f"❌ --spatial-dims axis {out_of_range[0]} is out of "
+                            f"range for {d}D data (valid indices: 0..{d - 1})"
+                        )
+                        raise typer.Exit(1)
+                else:
+                    rot_axes = [0, 1, 2]
+                    if d > 3:
+                        # The default is a guess on >3D data — say exactly what
+                        # is rotated and how to override it. When more than
+                        # three axes carry real extent this likely is a direct
+                        # nD fit whose dims 0,1,2 need not be spatial, so warn
+                        # more sharply (but keep it a warning: a legitimate
+                        # stacked dataset may have a continuous stacked axis).
+                        unrotated = [i for i in range(d) if i not in rot_axes]
+                        n_extent = len(nondegenerate_axes(node))
+                        if n_extent > 3:
+                            aprint(
+                                f"⚠️ {d}D data has {n_extent} axes with real "
+                                f"extent — this looks like a direct nD fit, "
+                                f"where dims 0, 1, 2 may not be the spatial "
+                                f"ones. Defaulting to rotating dims 0, 1, 2 "
+                                f"and leaving dims {unrotated} unrotated; "
+                                f"pass --spatial-dims i,j,k to pick the three "
+                                f"spatial axes explicitly."
+                            )
+                        else:
+                            aprint(
+                                f"⚠️ {d}D data: rotating dims 0, 1, 2 (assumed "
+                                f"spatial X/Y/Z) and leaving dims {unrotated} "
+                                f"unrotated — pass --spatial-dims to override."
+                            )
                 rot3 = np.eye(3, dtype=np.float64)
                 if rotate_x_deg is not None:
                     rad = np.radians(rotate_x_deg)
@@ -118,7 +195,8 @@ def run_transform_dataset(
                     rot3 = np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]]) @ rot3
                     transforms_applied.append(f"rotate_z({rotate_z_deg}°)")
                 rot_matrix = np.eye(d, dtype=np.float64)
-                rot_matrix[d - 3 :, d - 3 :] = rot3
+                axes_arr = np.asarray(rot_axes, dtype=int)
+                rot_matrix[np.ix_(axes_arr, axes_arr)] = rot3
 
             translate_vec = None
             if translate_offset is not None:

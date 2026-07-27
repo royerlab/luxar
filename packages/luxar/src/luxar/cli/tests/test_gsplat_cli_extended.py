@@ -7,11 +7,15 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pytest
 import yaml
 from typer.testing import CliRunner
+
+if TYPE_CHECKING:
+    from luxar.gsplats.gsplat_data import GSplatData
 
 from luxar.cli import app
 from luxar.cli.gsplat_config import (
@@ -58,6 +62,43 @@ def sample_gsplats(tmp_path: Path) -> Path:
     )
     out = tmp_path / "test.gsplats.zarr"
     data.save(out)
+    return out
+
+
+@pytest.fixture
+def sample_gsplats_4d(tmp_path: Path) -> Path:
+    """A 4D stacked .gsplats.zarr: spatial x,y,z + a trailing time column.
+
+    Built with ``combine_as_new_dimension`` (the repo's stacking convention:
+    the new axis is appended LAST, with sigma=0 so the time axis is
+    degenerate). Two distinct timepoints (t=0 and t=7); each splat carries a
+    unique amplitude so rows can be re-aligned after the spatial reordering
+    that save/load applies (amplitudes are rotation-invariant).
+    """
+    from luxar.gsplats.gsplat_data import GSplatData
+
+    centers = np.array(
+        [[1.0, 2.0, 3.0], [4.0, -5.0, 6.0], [-7.0, 8.0, 9.0]],
+        dtype=np.float32,
+    )
+    identity_chol = np.tile(
+        np.array([1.0, 0, 1.0, 0, 0, 1.0], dtype=np.float32), (3, 1)
+    )
+
+    def _make_timepoint(amplitudes: list[float]) -> GSplatData:
+        return GSplatData(
+            centers=centers.copy(),
+            amplitudes=np.array(amplitudes, dtype=np.float32),
+            cholesky_factors=identity_chol.copy(),
+        )
+
+    combined = GSplatData.combine_as_new_dimension(
+        [_make_timepoint([0.1, 0.2, 0.3]), _make_timepoint([0.4, 0.5, 0.6])],
+        values=[0.0, 7.0],
+        sigma=0.0,
+    )
+    out = tmp_path / "test4d.gsplats.zarr"
+    combined.save(out)
     return out
 
 
@@ -1989,6 +2030,314 @@ class TestTransformCommand:
         np.testing.assert_allclose(
             np.sort(rotated.centers[:, 2]), expected_z, atol=1e-3
         )
+
+    @staticmethod
+    def _aligned_by_amplitude(data: "GSplatData") -> np.ndarray:
+        """Centers sorted by the per-splat unique amplitude key.
+
+        Save/load reorders splats spatially; amplitudes are unique in the 4D
+        fixture and invariant under rotation, so sorting by them re-aligns
+        rows between the original and transformed datasets.
+        """
+        order = np.argsort(data.amplitudes)
+        return np.asarray(data.centers[order])
+
+    def test_transform_rotate_x_4d_preserves_time(
+        self, runner: CliRunner, sample_gsplats_4d: Path, tmp_path: Path
+    ) -> None:
+        """--rotate-x on 4D stacked data rotates dims 1,2 and leaves time alone.
+
+        Regression test for the rotation being embedded in the LAST 3 center
+        dims: on (x, y, z, t) data that mixed z with t, collapsing all
+        timepoints and corrupting the time column.
+        """
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        original = GSplatData.load(sample_gsplats_4d)
+        out = tmp_path / "rotated4d.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "transform",
+                str(sample_gsplats_4d),
+                str(out),
+                "--rotate-x",
+                "90",
+            ],
+        )
+        assert result.exit_code == 0, f"transform failed: {result.stdout}"
+
+        rotated = GSplatData.load(out)
+        orig_c = self._aligned_by_amplitude(original)
+        rot_c = self._aligned_by_amplitude(rotated)
+
+        # Time column (trailing stacked dim) is exactly preserved per splat.
+        np.testing.assert_array_equal(rot_c[:, 3], orig_c[:, 3])
+        # 90° X rotation acts on dims 1,2: new_y = -z, new_z = y; x unchanged.
+        np.testing.assert_allclose(rot_c[:, 0], orig_c[:, 0], atol=1e-3)
+        np.testing.assert_allclose(rot_c[:, 1], -orig_c[:, 2], atol=1e-3)
+        np.testing.assert_allclose(rot_c[:, 2], orig_c[:, 1], atol=1e-3)
+
+    def test_transform_rotate_4d_time_axis_stays_degenerate(
+        self, runner: CliRunner, sample_gsplats_4d: Path, tmp_path: Path
+    ) -> None:
+        """Rotation must not leak spatial covariance into the time axis.
+
+        Covariance transforms as A·Σ·Aᵀ, so a rotation placed on the wrong
+        dims gives the zero-variance time axis a spatial sigma — breaking the
+        degenerate-axis auto-detection every scale/eccentricity/isolation
+        filter depends on. Uses the same max-marginal-sigma notion as
+        ``luxar.gsplats.utils.spatial_axes``.
+        """
+        from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.gsplats.utils.spatial_axes import (
+            SPATIAL_SIGMA_EPS,
+            spatial_axes_from_max_sigma,
+        )
+
+        out = tmp_path / "rotated4d.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "transform",
+                str(sample_gsplats_4d),
+                str(out),
+                "--rotate-x",
+                "90",
+            ],
+        )
+        assert result.exit_code == 0, f"transform failed: {result.stdout}"
+
+        rotated = GSplatData.load(out)
+        max_sigma = rotated.marginal_sigmas().max(axis=0)
+        assert max_sigma[3] <= SPATIAL_SIGMA_EPS, (
+            f"time axis gained spatial sigma {max_sigma[3]} after rotation"
+        )
+        np.testing.assert_array_equal(
+            spatial_axes_from_max_sigma(max_sigma), np.array([0, 1, 2])
+        )
+
+    def test_transform_rotate_z_4d_matches_3d_plane(
+        self, runner: CliRunner, sample_gsplats_4d: Path, tmp_path: Path
+    ) -> None:
+        """--rotate-z on 4D rotates the same (x, y) plane it does on 3D."""
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        original = GSplatData.load(sample_gsplats_4d)
+        out = tmp_path / "rotated4d_z.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "transform",
+                str(sample_gsplats_4d),
+                str(out),
+                "--rotate-z",
+                "90",
+            ],
+        )
+        assert result.exit_code == 0, f"transform failed: {result.stdout}"
+
+        rotated = GSplatData.load(out)
+        orig_c = self._aligned_by_amplitude(original)
+        rot_c = self._aligned_by_amplitude(rotated)
+
+        # Same plane as the 3D test: new_x = -y, new_y = x; z and t unchanged.
+        np.testing.assert_allclose(rot_c[:, 0], -orig_c[:, 1], atol=1e-3)
+        np.testing.assert_allclose(rot_c[:, 1], orig_c[:, 0], atol=1e-3)
+        np.testing.assert_allclose(rot_c[:, 2], orig_c[:, 2], atol=1e-3)
+        np.testing.assert_array_equal(rot_c[:, 3], orig_c[:, 3])
+
+    def test_transform_spatial_dims_escape_hatch(
+        self, runner: CliRunner, sample_gsplats_4d: Path, tmp_path: Path
+    ) -> None:
+        """--spatial-dims 0,2,3 rotates dims 0,2,3 and leaves dim 1 untouched.
+
+        The escape hatch for a direct nD fit: the user picks which three
+        center dims the 3x3 rotation acts on. The non-contiguous selection
+        with a Z rotation (which moves the X role) discriminates against BOTH
+        regressions: the legacy last-3 embedding (would rotate dims 1,2,3)
+        and a parsed-but-ignored flag (would rotate dims 0,1,2).
+        """
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        original = GSplatData.load(sample_gsplats_4d)
+        out = tmp_path / "rotated4d_dims023.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "transform",
+                str(sample_gsplats_4d),
+                str(out),
+                "--rotate-z",
+                "90",
+                "--spatial-dims",
+                "0,2,3",
+            ],
+        )
+        assert result.exit_code == 0, f"transform failed: {result.stdout}"
+
+        rotated = GSplatData.load(out)
+        orig_c = self._aligned_by_amplitude(original)
+        rot_c = self._aligned_by_amplitude(rotated)
+
+        # Dim 1 is exactly untouched (not selected).
+        np.testing.assert_array_equal(rot_c[:, 1], orig_c[:, 1])
+        # 90° Z rotation with (X,Y,Z) roles = dims (0,2,3): new X = -Y,
+        # new Y = X, Z unchanged → new dim0 = -dim2, new dim2 = dim0,
+        # dim3 (the Z role, here time) exactly unchanged.
+        np.testing.assert_allclose(rot_c[:, 0], -orig_c[:, 2], atol=1e-3)
+        np.testing.assert_allclose(rot_c[:, 2], orig_c[:, 0], atol=1e-3)
+        np.testing.assert_array_equal(rot_c[:, 3], orig_c[:, 3])
+
+    @pytest.mark.parametrize(
+        ("bad_value", "expected_msg"),
+        [
+            ("0,1", "exactly 3 axis indices"),
+            ("0,1,9", "out of range"),
+            ("0,1,1", "must be distinct"),
+            ("0,1,x", "is not an integer"),
+            ("0,,1,2", "is not an integer"),  # empty tokens are rejected,
+            ("0,1,2,", "is not an integer"),  # not silently filtered out
+        ],
+    )
+    def test_transform_spatial_dims_validation_errors(
+        self,
+        runner: CliRunner,
+        sample_gsplats_4d: Path,
+        tmp_path: Path,
+        bad_value: str,
+        expected_msg: str,
+    ) -> None:
+        """Malformed --spatial-dims exits non-zero, naming the problem."""
+        out = tmp_path / "bad.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "transform",
+                str(sample_gsplats_4d),
+                str(out),
+                "--rotate-x",
+                "90",
+                "--spatial-dims",
+                bad_value,
+            ],
+        )
+        assert result.exit_code != 0
+        assert expected_msg in _plain(result.stdout)
+        assert not out.exists(), "no output must be written on a failed run"
+
+    def test_transform_spatial_dims_without_rotation_errors(
+        self, runner: CliRunner, sample_gsplats_4d: Path, tmp_path: Path
+    ) -> None:
+        """--spatial-dims without any --rotate-* is a clear error."""
+        out = tmp_path / "noop.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "transform",
+                str(sample_gsplats_4d),
+                str(out),
+                "--translate",
+                "1,2,3,0",
+                "--spatial-dims",
+                "0,1,2",
+            ],
+        )
+        assert result.exit_code != 0
+        plain = _plain(result.stdout)
+        assert "--spatial-dims" in plain
+        assert "rotate" in plain
+        assert not out.exists(), "no output must be written on a failed run"
+
+    def test_transform_spatial_dims_alone_hits_no_transforms_error(
+        self, runner: CliRunner, sample_gsplats_4d: Path, tmp_path: Path
+    ) -> None:
+        """--spatial-dims as the ONLY flag keeps the 'No transforms' precedence."""
+        out = tmp_path / "noop2.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "transform",
+                str(sample_gsplats_4d),
+                str(out),
+                "--spatial-dims",
+                "0,1,2",
+            ],
+        )
+        assert result.exit_code != 0
+        assert "No transforms specified" in _plain(result.stdout)
+        assert not out.exists()
+
+    def test_transform_rotate_4d_default_warns(
+        self, runner: CliRunner, sample_gsplats_4d: Path, tmp_path: Path
+    ) -> None:
+        """Rotating >3D data without --spatial-dims warns about the guess."""
+        out = tmp_path / "rotated4d_warn.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "transform",
+                str(sample_gsplats_4d),
+                str(out),
+                "--rotate-x",
+                "90",
+            ],
+        )
+        assert result.exit_code == 0, f"transform failed: {result.stdout}"
+        plain = _plain(result.stdout)
+        assert "rotating dims 0, 1, 2" in plain
+        assert "--spatial-dims" in plain
+
+    def test_transform_rotate_4d_all_extent_warns_direct_nd_fit(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """The warning sharpens when >3 axes carry real extent (direct nD fit)."""
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        n = 4
+        identity_chol_4d = np.tile(
+            np.array([1.0, 0, 1.0, 0, 0, 1.0, 0, 0, 0, 1.0], dtype=np.float32),
+            (n, 1),
+        )
+        data = GSplatData(
+            centers=np.arange(n * 4, dtype=np.float32).reshape(n, 4),
+            amplitudes=np.linspace(0.1, 0.4, n).astype(np.float32),
+            cholesky_factors=identity_chol_4d,
+        )
+        src = tmp_path / "direct4d.gsplats.zarr"
+        data.save(src)
+
+        out = tmp_path / "direct4d_rot.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            ["gsplat", "transform", str(src), str(out), "--rotate-x", "90"],
+        )
+        assert result.exit_code == 0, f"transform failed: {result.stdout}"
+        plain = _plain(result.stdout)
+        assert "direct nD fit" in plain
+        assert "--spatial-dims" in plain
+
+    def test_transform_rotate_3d_default_no_warning(
+        self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """No spatial-dims warning on plain 3D data."""
+        out = tmp_path / "rotated3d.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            ["gsplat", "transform", str(sample_gsplats), str(out), "--rotate-z", "90"],
+        )
+        assert result.exit_code == 0, f"transform failed: {result.stdout}"
+        plain = _plain(result.stdout)
+        assert "rotating dims 0, 1, 2" not in plain
+        assert "--spatial-dims" not in plain
 
     def test_transform_combined(
         self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
