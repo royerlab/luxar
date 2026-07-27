@@ -47,6 +47,18 @@ from luxar.gsplats.lod._kernels import (
 )
 from luxar.gsplats.utils.alpha import effective_amplitudes
 from luxar.gsplats.utils.trils import unpack_tril
+from luxar.utils.lod_breakpoints import DEFAULT_BANDWIDTH_MBPS as DEFAULT_BANDWIDTH_MBPS
+from luxar.utils.lod_breakpoints import (
+    DEFAULT_STREAM_MAX_LEVELS as DEFAULT_STREAM_MAX_LEVELS,
+)
+from luxar.utils.lod_breakpoints import BreakpointSpec as _BreakpointSpec
+from luxar.utils.lod_breakpoints import parse_stream_chunk, stream_cuts
+from luxar.utils.lod_breakpoints import (
+    sibling_aware_stream_breakpoints as sibling_aware_stream_breakpoints,
+)
+from luxar.utils.lod_breakpoints import (
+    streaming_chunk_splats as streaming_chunk_splats,
+)
 from luxar.utils.spatial_hash import BatchedSpatialHashGrid
 
 MethodName = Literal["greedy", "self_energy", "mass", "amplitude", "spectral", "random"]
@@ -94,46 +106,17 @@ def resolve_additive_method(method: AutoOrMethod, n: int) -> MethodName:
     return "greedy" if n <= _AUTO_ADDITIVE_MAX_N else "self_energy"
 
 
-#: Assumed downlink for streaming-breakpoint sizing when the caller gives none —
-#: a conservative "typical broadband" figure that also covers good 4G.
-DEFAULT_BANDWIDTH_MBPS = 25.0
-
-#: Hard cap on the number of levels a ``stream:<c>`` ladder may produce. The
-#: geometric doubling schedule gives ~log2(N/c) levels, so 16 covers c·2^15
-#: splats (≈ 460 M at c=14 k) — far beyond realistic leaves. On hitting the cap
-#: the last cut jumps straight to N.
-DEFAULT_STREAM_MAX_LEVELS = 16
-
-
-def streaming_chunk_splats(
-    target_ms: float,
-    bandwidth_mbps: float,
-    bytes_per_splat: float,
-) -> int:
-    """Splat count whose download takes ``target_ms`` at ``bandwidth_mbps``.
-
-    Pure sizing math for the ``stream:<c>`` breakpoint spec:
-    ``bandwidth_mbps × 125_000 B/s/Mbps × target_ms/1000 ÷ bytes_per_splat``.
-    E.g. 200 ms @ 25 Mbps @ 45 B/splat → ~13.9 k splats.
-    """
-    if target_ms <= 0:
-        raise ValueError(f"target_ms must be positive; got {target_ms}")
-    if bandwidth_mbps <= 0:
-        raise ValueError(f"bandwidth_mbps must be positive; got {bandwidth_mbps}")
-    if bytes_per_splat <= 0:
-        raise ValueError(f"bytes_per_splat must be positive; got {bytes_per_splat}")
-    return max(
-        1, round(bandwidth_mbps * 125_000.0 * (target_ms / 1000.0) / bytes_per_splat)
-    )
-
-
 #: Breakpoint specification for the additive ladder. String forms:
 #: ``"equal-count"`` (n_lods equal levels) and ``"stream:<c>"`` (geometric
 #: cumulative cuts ``[c, 2c, 4c, …, N]`` — a bandwidth-derived first chunk that
 #: doubles; resolved per-N inside :func:`_resolve_breakpoints`, so the same spec
 #: adapts to every part/level size). List forms: ``list[int]`` explicit
 #: cumulative counts; ``list[float]`` cumulative energy fractions in (0, 1].
-BreakpointSpec = Union[str, Sequence[int], Sequence[float]]
+#:
+#: The cut geometry itself lives in :mod:`luxar.utils.lod_breakpoints` so all
+#: three geometries derive identical cuts from an identical spec; the names below
+#: are re-exported here because they are part of this module's public surface.
+BreakpointSpec = _BreakpointSpec
 
 
 def clamp_counts_breakpoints(breakpoints: BreakpointSpec, n: int) -> BreakpointSpec:
@@ -201,46 +184,6 @@ def _det_L(data: GSplatData) -> np.ndarray:
     diag = data._cholesky_diag_elements()  # (N, d)
     out: np.ndarray = np.abs(np.prod(diag.astype(np.float64), axis=1))
     return out
-
-
-def sibling_aware_stream_breakpoints(
-    breakpoints: BreakpointSpec,
-    leaf_n: int,
-    compression_factor: int,
-) -> BreakpointSpec:
-    """Raise a ``stream:C`` ladder's first chunk for a leaf that has a
-    COARSER SIBLING in its lod group.
-
-    Measured pathology (h2afva vrefit, 23.4M splats): with every level's
-    geometric ladder starting at the SAME small base chunk, the point where a
-    finer level's committed content catches up with its coarser sibling —
-    whether by count, energy, or measured L² quality — structurally lands
-    ``log2(sibling_total / base)`` sequential network passes into the ladder,
-    i.e. always 2-3 chunks from the END. Upgrades therefore feel like
-    "waits until fully loaded".
-
-    Fix the geometry instead of the currency: a leaf whose group contains a
-    coarser sibling starts its ladder at ``ceil(leaf_n / (2·K))`` — half the
-    sibling's expected size — so the catch-up fires at chunk 1-2 by
-    construction (energy-ordered first chunks of that size carry ~70%+ of the
-    leaf's energy on real data, comfortably past the viewer's committed-energy
-    switch threshold). The user's ``stream:C`` base still applies wherever it
-    is LARGER, and — crucially — the group's COARSEST leaf must NOT go through
-    this helper: it is the eager default level whose small first chunk is the
-    fast-first-paint path.
-
-    Non-``stream:`` specs (equal-count, explicit counts, energy fractions)
-    pass through untouched — their chunk structure has no shared-base
-    pathology (e.g. equal-count crosses the sibling at chunk 1 already).
-    """
-    if not (isinstance(breakpoints, str) and breakpoints.startswith("stream:")):
-        return breakpoints
-    try:
-        user_base = int(breakpoints[len("stream:") :])
-    except ValueError:
-        return breakpoints
-    sibling_base = math.ceil(leaf_n / (2.0 * max(2, compression_factor)))
-    return f"stream:{max(user_base, sibling_base)}"
 
 
 def _self_energy_score(data: GSplatData) -> np.ndarray:
@@ -600,28 +543,7 @@ def _resolve_breakpoints(
             # (unlike explicit counts — deliberate: per-part N is unknowable to
             # the user). Capped at DEFAULT_STREAM_MAX_LEVELS; a final increment
             # smaller than c/2 folds into the previous cut (no sliver levels).
-            body = breakpoints[len("stream:") :]
-            try:
-                c = int(body)
-            except ValueError as e:
-                raise ValueError(
-                    "stream breakpoints must be 'stream:<c>' with integer "
-                    f"c >= 1; got {breakpoints!r}"
-                ) from e
-            if c < 1:
-                raise ValueError(f"stream first-chunk size must be >= 1; got {c}")
-            if n <= c:
-                return [n], "stream"
-            cuts: list[int] = []
-            cum = c
-            while cum < n and len(cuts) < DEFAULT_STREAM_MAX_LEVELS - 1:
-                cuts.append(cum)
-                cum *= 2
-            # Fold a sliver tail (< c/2 remaining) into the previous cut.
-            if cuts and (n - cuts[-1]) < c / 2:
-                cuts.pop()
-            cuts.append(n)
-            return cuts, "stream"
+            return stream_cuts(n, parse_stream_chunk(breakpoints)), "stream"
         if breakpoints != "equal-count":
             raise ValueError(
                 f"unknown breakpoints string {breakpoints!r}; "
