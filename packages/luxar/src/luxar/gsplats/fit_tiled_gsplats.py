@@ -3,7 +3,10 @@
 
 Splits a volume into overlapping tiles with cosine (Hann) apodization,
 fits Gaussian splats independently per tile, and concatenates results.
-The Hann partition-of-unity property ensures seamless blending without
+The background floor is resolved once against the whole volume and
+subtracted from each raw tile *before* apodization (floor subtraction and
+windowing do not commute); on the floor-subtracted data the Hann
+partition-of-unity property then ensures seamless blending without
 post-merge pruning.
 """
 
@@ -16,6 +19,8 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar.gsplats.fit_gsplats import fit_gaussian_splats
+from luxar.gsplats.fitting.preprocessing import resolve_volume_floor
+from luxar.gsplats.fitting.validation import _validate_floor
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.tiling import TileSpec, compute_tile_specs, cosine_window
 
@@ -33,9 +38,11 @@ def fit_tile(
 ) -> GSplatData:
     """Fit Gaussian splats on a single tile of a larger volume.
 
-    Extracts the tile subvolume, applies cosine apodization, fits splats,
-    and translates centers to global volume coordinates. This is the atomic
-    unit for tiled fitting — each call is independent and Slurm-ready.
+    Extracts the tile subvolume, subtracts the background floor (resolved
+    against the *whole* volume, never the tile), applies cosine apodization,
+    fits splats, and translates centers to global volume coordinates. This is
+    the atomic unit for tiled fitting — each call is independent and
+    Slurm-ready.
 
     Parameters
     ----------
@@ -61,6 +68,17 @@ def fit_tile(
         Maximum number of progressive passes (None = unlimited).
     **fit_kwargs
         All other keyword arguments forwarded to the fitting function.
+        ``floor`` (default ``"auto"``) is intercepted here: a spec string is
+        resolved once against the whole ``volume`` via
+        :func:`~luxar.gsplats.fitting.preprocessing.resolve_volume_floor`
+        (so independent tile workers agree on one level), with the
+        "would erase all signal" guard applied. A numeric value is taken at
+        face value — the caller is expected to have guarded it (as
+        :func:`fit_tiled` and the single-tile CLI worker do with
+        ``guard_numeric=True``). The level is subtracted from the raw tile
+        *before* apodization; the inner fit then runs with ``floor="none"``
+        and the applied level is recorded in
+        ``result.stats["applied_floor"]``.
 
     Returns
     -------
@@ -82,6 +100,20 @@ def fit_tile(
             "Use an integer (count per tile), float (compression ratio), or None (auto)."
         )
 
+    # Background floor: resolve the spec against the WHOLE volume (never the
+    # tile) so every tile — including independent --tile k/M workers —
+    # subtracts one identical, deterministic pedestal. A per-tile estimate
+    # would be meaningless on apodized data and would subtract signal on a
+    # densely labelled tile. Only str specs are validated here: a numeric
+    # floor reaching this point is by contract an already-resolved level
+    # taken at face value (possibly negative for dark-frame-corrected data),
+    # not a user spec — _validate_floor guards user input and would reject
+    # a legitimate negative resolved level.
+    floor_spec = fit_kwargs.pop("floor", "auto")
+    if isinstance(floor_spec, str):
+        _validate_floor(floor_spec)
+    applied_floor = resolve_volume_floor(volume, floor_spec)
+
     # 1. Extract tile subvolume (materializes from zarr if needed)
     tile_data = np.asarray(volume[spec.slices], dtype=np.float32)
 
@@ -99,6 +131,17 @@ def fit_tile(
 
     # Pop cull_retention — per-tile culling is disabled (fit_tiled culls the merged result)
     fit_kwargs.pop("cull_retention", None)
+
+    # 1c. Subtract the floor from the RAW tile, BEFORE apodization. The two
+    # do not commute: subtracting m after windowing turns a two-tile overlap
+    # (w_A + w_B = 1) into V - 2m instead of V - m, and clip(..., 0) erases
+    # signal wherever V*w < m. No per-tile "floor >= tile max" guard on
+    # purpose: a tile entirely below the global floor legitimately becomes
+    # empty (handled by the near-zero skip below).
+    if applied_floor is not None:
+        tile_data = np.clip(tile_data - applied_floor, 0.0, None)
+    # The pedestal is already gone — the inner fits must not subtract again.
+    fit_kwargs["floor"] = "none"
 
     # 2. Apply cosine apodization window
     window = cosine_window(spec)
@@ -176,6 +219,7 @@ def fit_tile(
     result.stats["tile_index"] = spec.index
     result.stats["tile_grid_index"] = spec.grid_index
     result.stats["tile_origin"] = spec.origin
+    result.stats["applied_floor"] = applied_floor
 
     return result
 
@@ -201,7 +245,10 @@ def fit_tiled(
 
     Splits the volume into overlapping tiles with cosine apodization
     (Hann window), fits each tile independently, and merges results.
-    The Hann partition-of-unity property guarantees seamless blending.
+    The background floor (``floor`` in ``fit_kwargs``, default ``"auto"``)
+    is resolved once against the whole volume and subtracted from each raw
+    tile before windowing; on the floor-subtracted data the Hann
+    partition-of-unity property guarantees seamless blending.
 
     When ``progressive=True``, each tile is fitted using progressive
     residual decomposition, producing a multi-LOD result where LODs are
@@ -258,6 +305,21 @@ def fit_tiled(
     # explicitly provided a different value in fit_kwargs.
     fit_kwargs.setdefault("verbose", verbose)
 
+    # Resolve the background floor ONCE for the whole run and hand every tile
+    # the same concrete level (no tile re-scans, no per-tile drift). This is
+    # where a USER-supplied spec becomes a level, so a numeric spec is guarded
+    # against "floor >= max erases everything" too (matching the non-tiled
+    # path, which warns and ignores such a floor).
+    floor_spec = fit_kwargs.pop("floor", "auto")
+    _validate_floor(floor_spec)
+    applied_floor = resolve_volume_floor(volume, floor_spec, guard_numeric=True)
+    if verbose and applied_floor is not None:
+        aprint(
+            f"Floor suppression: subtracting background level "
+            f"{applied_floor:.6g} from every tile"
+        )
+    fit_kwargs["floor"] = applied_floor if applied_floor is not None else "none"
+
     volume_shape = tuple(volume.shape)
     specs = compute_tile_specs(volume_shape, tile_size, overlap)
 
@@ -305,6 +367,7 @@ def fit_tiled(
         partition=partition,
         recipe=recipe,
         recipe_params=recipe_params,
+        applied_floor=applied_floor,
     )
 
 
@@ -322,6 +385,7 @@ def merge_tile_results(
     partition: bool = False,
     recipe: Optional[str] = None,
     recipe_params: "Optional[Any]" = None,
+    applied_floor: "float | None" = None,
 ) -> "Any":
     """Merge per-tile fit results into a single (optionally multi-LOD) dataset.
 
@@ -358,6 +422,16 @@ def merge_tile_results(
         Wall-clock seconds for the fitting stage, recorded in stats.
     verbose : bool, default True
         Print a summary line via arbol.
+    applied_floor : float or None, default None
+        The background level subtracted from every raw tile before
+        apodization. Supplied by the sequential :func:`fit_tiled` path; the
+        subprocess-based paths leave it ``None`` (a worker records the level
+        it applied in its own tile's in-memory stats, which do not survive
+        the reload at merge). Recorded in the flat merged result's stats;
+        on the ``partition=True`` path it is
+        stamped into the returned node's ``meta["applied_floor"]``
+        (in-memory bookkeeping only — the tree writer does not persist this
+        key).
 
     Returns
     -------
@@ -400,6 +474,10 @@ def merge_tile_results(
         node = GSplatData.partition_from_regions(
             regions, recipe=recipe, recipe_params=recipe_params
         )
+        # In-memory bookkeeping only: "applied_floor" is not among the
+        # round-tripped node attrs, so it is visible on the returned node
+        # but not persisted by the tree writer.
+        node.meta["applied_floor"] = applied_floor
         if verbose:
             lod_note = f", per-part recipe={recipe}" if recipe else ""
             aprint(
@@ -426,6 +504,7 @@ def merge_tile_results(
             "volume_shape": volume_shape,
             "time_seconds": elapsed,
             "splats_per_tile": [r.n_splats for r in results],
+            "applied_floor": applied_floor,
         }
     )
 
