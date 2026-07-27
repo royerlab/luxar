@@ -10,6 +10,14 @@ To run a demo:
 See demos/README.md for more information on creating new demos.
 """
 
+from ..utils.data_fetch import (
+    DatasetNotFound,
+    LocalComputeDataset,
+    dataset_spec,
+    ensure_dataset,
+    load_dataset_gsplats,
+    load_manifest,
+)
 from ..utils.demos import (
     cache_computed,
     cached_download,
@@ -33,13 +41,6 @@ from ._dependencies import (
     MissingDependencyError,
     require_module,
 )
-from ..utils.data_fetch import (
-    DatasetNotFound,
-    LocalComputeDataset,
-    dataset_spec,
-    ensure_dataset,
-    load_manifest,
-)
 
 __all__ = [
     "INSTALL_SPECS",
@@ -57,6 +58,7 @@ __all__ = [
     "ensure_dataset",
     "hsv_to_rgb",
     "launch_viewer",
+    "load_dataset_gsplats",
     "load_manifest",
     "load_precomputed_bundle",
     "load_precomputed_gsplats",

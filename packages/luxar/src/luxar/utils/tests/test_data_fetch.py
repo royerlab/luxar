@@ -20,6 +20,7 @@ from luxar.utils.data_fetch import (
     DatasetNotFound,
     LocalComputeDataset,
     ensure_dataset,
+    load_dataset_gsplats,
     load_manifest,
 )
 from luxar.utils.download import QUARANTINE_SUFFIX, find_quarantined_files
@@ -481,3 +482,130 @@ def test_cache_copy_leaves_no_temporary_files(fake_repo):
         p.name for p in (cache / "gsplats_toy").iterdir() if p.name.startswith(".tmp_")
     ]
     assert leftovers == []
+
+
+# --------------------------------------------------------------------------- #
+# load_dataset_gsplats (the migration wrapper)
+# --------------------------------------------------------------------------- #
+@pytest.fixture()
+def fake_gsplats_repo(tmp_path, monkeypatch):
+    """Like ``fake_repo``, but the payload is a real (tiny) gsplats archive."""
+    import numpy as np
+
+    from luxar.gsplats.gsplat_data import GSplatData
+
+    lfs_root = tmp_path / "demos_data"
+    (lfs_root / "gsplats_toy").mkdir(parents=True)
+    payload = lfs_root / "gsplats_toy" / "toy_ch0.gsplats.zarr.zip"
+    n = 8
+    chol = np.zeros((n, 6), dtype=np.float32)
+    chol[:, [0, 2, 5]] = 1.0
+    GSplatData(
+        centers=np.random.rand(n, 3).astype(np.float32),
+        amplitudes=np.ones(n, dtype=np.float32),
+        cholesky_factors=chol,
+    ).save(payload, ordering="none", compress="zip")
+
+    # A non-gsplat sidecar, exactly as gsplats_ct_totalsegmentator really ships.
+    sidecar = lfs_root / "gsplats_toy" / "toy_labels.npz"
+    np.savez(sidecar, labels=np.zeros(n, dtype=np.uint8))
+
+    manifest = {
+        "schema_version": 1,
+        "records": {"cc-by": {"zenodo_record": None, "base_url": None}},
+        "datasets": {
+            "gsplats_toy": {
+                "bucket": "zenodo",
+                "record": "cc-by",
+                "license": "cc0-1.0",
+                "files": [
+                    {"name": p.name, "sha256": _sha256(p), "bytes": p.stat().st_size}
+                    for p in (payload, sidecar)
+                ],
+            },
+            "toy_local": {
+                "bucket": "local-compute",
+                "license": "cc-by-nc-3.0-igo",
+                "reason": "not redistributable",
+                "strategy": "query the archive and fit",
+                "files": [],
+            },
+        },
+    }
+    monkeypatch.setattr(data_fetch, "_DEMOS_DATA_DIR", lfs_root)
+    return manifest, tmp_path / "cache"
+
+
+def test_wrapper_loads_only_the_gsplat_files(fake_gsplats_repo):
+    manifest, cache = fake_gsplats_repo
+
+    out = load_dataset_gsplats(
+        "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
+    )
+
+    assert out is not None and len(out) == 1, "the .npz sidecar must be skipped"
+    assert len(out[0].amplitudes) == 8
+
+
+def test_wrapper_recompute_returns_none(fake_gsplats_repo):
+    manifest, cache = fake_gsplats_repo
+    assert (
+        load_dataset_gsplats(
+            "gsplats_toy",
+            recompute=True,
+            manifest=manifest,
+            cache_root=cache,
+            verbose=False,
+        )
+        is None
+    )
+
+
+def test_wrapper_maps_local_compute_to_the_none_sentinel(fake_gsplats_repo):
+    """The sentinel reconciliation: ensure_dataset RAISES, the wrapper returns None."""
+    manifest, cache = fake_gsplats_repo
+    with pytest.raises(LocalComputeDataset):
+        ensure_dataset("toy_local", manifest=manifest, cache_root=cache, verbose=False)
+
+    assert (
+        load_dataset_gsplats(
+            "toy_local", manifest=manifest, cache_root=cache, verbose=False
+        )
+        is None
+    )
+
+
+def test_wrapper_rejects_a_file_that_is_not_a_manifest_entry(fake_gsplats_repo):
+    manifest, cache = fake_gsplats_repo
+    with pytest.raises(FileNotFoundError, match="runtime-computed file list"):
+        load_dataset_gsplats(
+            "gsplats_toy",
+            ["zebrafish_frame0007.gsplats.zarr.zip"],
+            manifest=manifest,
+            cache_root=cache,
+            verbose=False,
+        )
+
+
+def test_wrapper_propagates_unknown_dataset(fake_gsplats_repo):
+    manifest, cache = fake_gsplats_repo
+    with pytest.raises(DatasetNotFound):
+        load_dataset_gsplats("nope", manifest=manifest, cache_root=cache, verbose=False)
+
+
+def test_wrapper_repairs_a_corrupt_cache_before_loading(fake_gsplats_repo):
+    """End to end: the wrapper inherits ensure_dataset's checksum authority."""
+    manifest, cache = fake_gsplats_repo
+    first = load_dataset_gsplats(
+        "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
+    )
+    cached = cache / "gsplats_toy" / "toy_ch0.gsplats.zarr.zip"
+    _corrupt_in_place_preserving_stat(cached)
+
+    second = load_dataset_gsplats(
+        "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
+    )
+
+    assert first is not None and second is not None
+    assert len(second[0].amplitudes) == len(first[0].amplitudes)
+    assert find_quarantined_files(cached)

@@ -358,3 +358,119 @@ class _null_ctx:
     ) -> None:
         # Returning None (not False) so mypy knows exceptions are never swallowed.
         return None
+
+
+#: Suffixes the gsplat loader understands. A dataset may legitimately carry
+#: sidecars (gsplats_ct_totalsegmentator ships ct_atlas_labels.npz next to its
+#: fit), so the default selection filters on these rather than loading every
+#: file the manifest lists.
+_GSPLAT_SUFFIXES = (".gsplats.zarr.zip", ".gsplats.zarr")
+
+
+def load_dataset_gsplats(
+    name: str,
+    file_names: Optional[list[str]] = None,
+    *,
+    variant: Optional[str] = None,
+    recompute: bool = False,
+    cache_root: Optional[Path] = None,
+    manifest: Optional[Manifest] = None,
+    verbose: bool = True,
+) -> Optional[list[Any]]:
+    """Manifest-driven stand-in for :func:`luxar.utils.demos.load_precomputed_gsplats`.
+
+    Same contract as the helper it is meant to replace — a list of ``GSplatData``
+    in the requested order, or ``None`` when the caller must build the data
+    itself — but the files are resolved through :func:`ensure_dataset`
+    (checksum-verified cache → in-repo git-LFS → Zenodo) instead of an unverified
+    ``shutil.copy2``. Migrating a demo is then a one-line swap.
+
+    ``None`` is returned when:
+
+    * ``recompute`` is True (mirrors the demos' ``--recompute`` flag), or
+    * the dataset is not hosted (``local-compute`` / ``regenerate``): the
+      manifest's reason/strategy is printed and the caller's existing
+      "fit from scratch" branch takes over.
+
+    Everything else raises — an unknown dataset, an unknown variant, a file that
+    is neither cached nor in-repo nor hosted, a checksum that will not verify.
+    Those are faults a demo must not silently route around.
+
+    Args:
+        name: Manifest dataset key (e.g. ``"gsplats_kidney"``).
+        file_names: Explicit basenames, in load order. Must all be manifest
+            entries of this dataset. Defaults to every ``*.gsplats.zarr[.zip]``
+            file, in manifest order.
+        variant: Size variant; see :func:`ensure_dataset`.
+        recompute: Return ``None`` immediately.
+        cache_root: Override the cache root (tests).
+        manifest: Pre-loaded manifest (tests).
+        verbose: Print progress.
+
+    Returns:
+        ``list[GSplatData]``, or ``None`` when the caller should build the data.
+
+    Deliberately NOT supported:
+        * **Bundle datasets.** ``gsplats_zebrafish`` / ``gsplats_celegans`` ship
+          one outer zip holding many per-frame files; the manifest addresses the
+          bundle, not its members. Those demos stay on
+          :func:`~luxar.utils.demos.load_precomputed_bundle`.
+        * **Runtime-computed file lists** that are not manifest entries (e.g.
+          zebrafish's subsampled frame names). A *subset* of the manifest's own
+          files is fine; anything else raises rather than fetching the wrong data.
+        * **Non-gsplat payloads.** Use :func:`ensure_dataset`, which returns paths
+          and assumes nothing about the format.
+        * **Datasets whose bucket is not ``zenodo``.** ``gsplats_tribolium``,
+          ``gsplats_acto3d_heart``, ``gsplats_tng_cosmic_web`` and
+          ``milky_way_gaia_3m`` still ship files in-repo but are marked
+          ``local-compute``, so this returns ``None`` for them and the demo would
+          fit from scratch on a GPU instead of loading the file that is sitting
+          right there. Migrate a demo only once its dataset is ``zenodo``.
+    """
+    if recompute:
+        return None
+
+    from ..gsplats.gsplat_data import GSplatData
+
+    try:
+        paths = ensure_dataset(
+            name,
+            variant=variant,
+            recompute=False,
+            cache_root=cache_root,
+            manifest=manifest,
+            verbose=verbose,
+        )
+    except LocalComputeDataset as exc:
+        # Not hosted → the caller's own build path. Say why, loudly: this is the
+        # difference between an instant demo and twenty minutes of GPU time.
+        aprint(f"⚠️  {exc}")
+        return None
+
+    if file_names is not None:
+        by_name = {p.name: p for p in paths}
+        missing = [f for f in file_names if f not in by_name]
+        if missing:
+            raise FileNotFoundError(
+                f"Dataset {name!r} does not list {missing} in the manifest "
+                f"(available: {sorted(by_name)}). A runtime-computed file list is "
+                "not supported — see load_dataset_gsplats's docstring."
+            )
+        selected = [by_name[f] for f in file_names]
+    else:
+        selected = [p for p in paths if p.name.endswith(_GSPLAT_SUFFIXES)]
+        if not selected:
+            raise FileNotFoundError(
+                f"Dataset {name!r} lists no *.gsplats.zarr[.zip] file "
+                f"({[p.name for p in paths]}). Use ensure_dataset() for "
+                "non-gsplat payloads."
+            )
+
+    results: list[Any] = []
+    with asection(f"Loading gsplats ({name})") if verbose else _null_ctx():
+        for path in selected:
+            gsplats = GSplatData.load(path, include_stats=False)
+            if verbose:
+                aprint(f"Loaded {path.name}: {len(gsplats.amplitudes):,} splats")
+            results.append(gsplats)
+    return results
