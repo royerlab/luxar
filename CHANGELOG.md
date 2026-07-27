@@ -6,6 +6,46 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Fixed — demos authored continuous curves as exploded `segments`, defeating joint continuity (bead-chain gaps)
+
+Seven demo line nodes built genuinely continuous curves (helix particle
+tracks, detector rings, chromosome paths, jellyfish tentacles, L-system
+tree skeletons, cell tracks and trails) and then exploded them into
+duplicated start/end vertex pairs with `line_type="segments"`. The
+viewer's joint-cap suppression matches joints by shared vertex INDEX, so
+exploded authoring hides every joint — thick lines rendered as bead
+chains (visible gaps between segments) even after the shader-side joint
+fix. All seven nodes are now authored as `line_type="indexed"`: unique
+per-vertex arrays + explicit per-curve edge lists, which also roughly
+halves their vertex data. Converted: `collision` (particle tracks +
+detector rings; neutral-particle tracks are now solid, dropping the
+accidental bead-dashing), `collision_animated` (same, 4D), `dipc_3d_genome`
+(chromosome paths), `bioluminescent_ocean` (tentacles/oral arms — the
+per-segment 5%/2% end-of-segment tapers became smooth per-vertex tapers),
+`lsystem_forest` (tree skeletons — a branching topology, deduplicated
+exactly during turtle interpretation with branch points shared by 3+
+edges), and `gsplats_4d_celegans_tracking` (cell tracks + fading trails —
+the per-hop discrete fade became a smooth per-vertex fade). The other
+five `segments` users (connectome/interactome/AS-graph edges, velocity
+comets, earthquake spikes, grid lines) are genuinely disconnected and
+stay as-is. Regenerate demo datasets to pick up the fix.
+
+- **Writer authoring lint**: `write_lines` now warns when
+  `line_type="segments"` input looks like exploded continuous polylines
+  (most consecutive segments sharing an endpoint coordinate), pointing at
+  `polyline`/`indexed` authoring — the trap class is now self-diagnosing.
+- **Indexed validation fix**: `(E, 2)` edge arrays with an ODD number of
+  edges were wrongly rejected ("Indices must have even length") — the
+  validator counted rows via `len()`, not elements; it now uses
+  `indices.size`. Odd-edge-count geometry (e.g. most L-system trees)
+  previously could not be written as pairs at all.
+- **`luxar serve` now sends `Cache-Control: no-cache`**: StaticFiles
+  responses carried only ETag/Last-Modified, so browsers used HEURISTIC
+  freshness and silently served stale chunks after a dataset was
+  regenerated in place (same URLs, new bytes) — no viewer-side cache
+  clearing could fix it. `no-cache` forces ETag revalidation; unchanged
+  chunks still return as cheap 304s.
+
 #### Fixed — `gsplat transform --rotate-*` rotated the wrong center dims on stacked nD data (#722)
 
 The 3x3 rotation was embedded in the **last** three center dims, a convention

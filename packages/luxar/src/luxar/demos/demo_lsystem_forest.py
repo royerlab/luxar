@@ -6,7 +6,9 @@ generated using L-system grammars - formal languages that create organic
 branching structures through simple rules.
 
 Showcases:
-- The new Lines node type with thousands of segments
+- The new Lines node type with thousands of indexed segments
+- Indexed line topology: unique vertices + explicit edge list, so joints
+  and branch points share vertex indices (seamless thick trunks)
 - Width tapering from trunk to twigs (fractal realism)
 - Color gradients (bark to foliage)
 - 3D branching in all directions
@@ -79,6 +81,10 @@ class TurtleState:
     up: np.ndarray = field(default_factory=lambda: np.array([1.0, 0.0, 0.0]))
     width: float = 1.0
     depth: int = 0
+    # Index of the vertex at the current position in the growing vertex
+    # table (-1 = position not yet emitted). Pushed/popped with the
+    # branching stack so branch points share one exact vertex index.
+    vertex_index: int = -1
 
     def copy(self) -> TurtleState:
         """Create a deep copy of the state."""
@@ -89,6 +95,7 @@ class TurtleState:
             up=self.up.copy(),
             width=self.width,
             depth=self.depth,
+            vertex_index=self.vertex_index,
         )
 
 
@@ -131,31 +138,53 @@ class LSystem:
 
     def interpret(
         self, string: str, rng: Optional[np.random.Generator] = None
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Interpret L-system string and generate segments.
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """Interpret L-system string and generate an indexed line network.
+
+        Vertices are deduplicated exactly during interpretation: the turtle
+        carries the index of the vertex at its current position (pushed and
+        popped with the branching stack), so consecutive segments and
+        branches emanating from a branch point share the same vertex index
+        with no position hashing or float comparisons. Shared indices let
+        the viewer suppress joint caps, so thick trunks render as smooth
+        tubes instead of bead chains.
 
         Returns:
-            Tuple of (start_positions, end_positions, depths) for each segment
+            Tuple of (vertices, edges, edge_depths, vertex_depths):
+            vertices: (V, 3) float32 unique vertex positions
+            edges: (E, 2) uint32 vertex-index pairs, one per segment
+            edge_depths: (E,) int32 branching depth of each segment
+            vertex_depths: (V,) int32 depth of the segment that first
+                introduced each vertex (the parent side at joints)
         """
         if rng is None:
             rng = np.random.default_rng(42)
 
         state = TurtleState(width=self.width)
         stack: list[TurtleState] = []
-        segments_start: list[np.ndarray] = []
-        segments_end: list[np.ndarray] = []
-        depths: list[int] = []
+        vertices: list[np.ndarray] = []
+        vertex_depths: list[int] = []
+        edges: list[tuple[int, int]] = []
+        edge_depths: list[int] = []
         current_length = self.length
 
         for char in string:
             angle_var = 1.0 + (rng.random() - 0.5) * 2 * self.randomness
 
             if char == "F":
-                start = state.position.copy()
+                # Lazily emit the vertex at the current position the first
+                # time a segment is drawn from it (e.g. the tree root)
+                if state.vertex_index < 0:
+                    vertices.append(state.position.copy())
+                    vertex_depths.append(state.depth)
+                    state.vertex_index = len(vertices) - 1
+                start_index = state.vertex_index
                 state.position = state.position + state.heading * current_length
-                segments_start.append(start)
-                segments_end.append(state.position.copy())
-                depths.append(state.depth)
+                vertices.append(state.position.copy())
+                vertex_depths.append(state.depth)
+                state.vertex_index = len(vertices) - 1
+                edges.append((start_index, state.vertex_index))
+                edge_depths.append(state.depth)
 
             elif char == "+":
                 angle = self.angle * angle_var
@@ -204,13 +233,19 @@ class LSystem:
                     state = stack.pop()
                     current_length = self.length * (self.length_decay**state.depth)
 
-        if not segments_start:
-            return np.array([]).reshape(0, 3), np.array([]).reshape(0, 3), np.array([])
+        if not edges:
+            return (
+                np.array([], dtype=np.float32).reshape(0, 3),
+                np.array([], dtype=np.uint32).reshape(0, 2),
+                np.array([], dtype=np.int32),
+                np.array([], dtype=np.int32),
+            )
 
         return (
-            np.array(segments_start, dtype=np.float32),
-            np.array(segments_end, dtype=np.float32),
-            np.array(depths, dtype=np.int32),
+            np.array(vertices, dtype=np.float32),
+            np.array(edges, dtype=np.uint32),
+            np.array(edge_depths, dtype=np.int32),
+            np.array(vertex_depths, dtype=np.int32),
         )
 
 
@@ -307,48 +342,51 @@ def create_tree(
     color_scheme: str = "autumn",
     seed: int = 42,
     add_leaves: bool = True,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, Optional[dict]]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, Optional[dict]]:
     """Create a single tree with all attributes.
 
     Returns:
-        Tuple of (vertices, widths, colors, sharpness, leaves_dict) for segments line type
+        Tuple of (vertices, widths, colors, sharpness, edges, leaves_dict)
+        for the indexed line type: unique vertices plus an (E, 2) uint32
+        edge list (consumed via ``line_type="indexed"`` + ``indices=``).
         leaves_dict contains: positions, colors, radii, sharpness for leaf points (or None)
     """
     rng = np.random.default_rng(seed)
     string = lsystem.expand(iterations)
-    starts, ends, depths = lsystem.interpret(string, rng)
+    vertices, edges, edge_depths, vertex_depths = lsystem.interpret(string, rng)
 
-    if len(starts) == 0:
+    if len(edges) == 0:
         empty = np.array([], dtype=np.float32).reshape(0, 3)
-        return empty, np.array([]), empty, np.array([]), None
+        empty_edges = np.array([], dtype=np.uint32).reshape(0, 2)
+        return empty, np.array([]), empty, np.array([]), empty_edges, None
 
-    max_depth = depths.max() if len(depths) > 0 else 1
+    max_depth = edge_depths.max() if len(edge_depths) > 0 else 1
 
-    # Colors and widths - use same values at both ends for continuity at joints
-    # The depth-based taper (create_tree_widths) handles trunk-to-twig transition
-    start_colors = create_tree_colors(depths, max_depth, color_scheme)
-    end_colors = start_colors  # Same color at joints for continuity
-    start_widths = create_tree_widths(
-        depths, max_depth, lsystem.width * scale, 0.005 * scale
+    # Colors and widths - one value per unique vertex, derived from the
+    # depth of the segment that FIRST introduced the vertex (the parent
+    # side at joints and branch points). Adjacent segments at different
+    # branching depth therefore take the parent's thicker/barkier value
+    # at the shared vertex; the depth-based taper (create_tree_widths)
+    # still handles the trunk-to-twig transition along each segment.
+    colors = create_tree_colors(vertex_depths, max_depth, color_scheme)
+    widths = create_tree_widths(
+        vertex_depths, max_depth, lsystem.width * scale, 0.005 * scale
     )
-    end_widths = start_widths  # Same width at joints for continuity
 
     # Apply transform
     if rotation != 0:
         R = rotation_matrix(np.array([0, 0, 1]), rotation)
-        starts = (R @ starts.T).T
-        ends = (R @ ends.T).T
+        vertices = (R @ vertices.T).T
 
-    starts = starts * scale + np.array(position)
-    ends = ends * scale + np.array(position)
+    vertices = (vertices * scale + np.array(position)).astype(np.float32)
 
     # Find branch tips (deepest segments) for leaves
     leaves_dict = None
     if add_leaves and max_depth >= 2:
         # Get positions at the tips (high depth segments)
         tip_threshold = max_depth * 0.6  # Top 40% of depth
-        tip_mask = depths >= tip_threshold
-        tip_ends = ends[tip_mask]
+        tip_mask = edge_depths >= tip_threshold
+        tip_ends = vertices[edges[tip_mask, 1]]
 
         if len(tip_ends) > 0:
             # Sample some tip positions for leaves (not too many)
@@ -385,29 +423,16 @@ def create_tree(
                 "sharpness": leaf_sharpness,
             }
 
-    # Interleave for segments line type
-    n = len(starts)
-    vertices = np.zeros((n * 2, 3), dtype=np.float32)
-    vertices[0::2] = starts
-    vertices[1::2] = ends
-
-    widths = np.zeros(n * 2, dtype=np.float32)
-    widths[0::2] = start_widths
-    widths[1::2] = end_widths
-
-    colors = np.zeros((n * 2, 3), dtype=np.float32)
-    colors[0::2] = start_colors
-    colors[1::2] = end_colors
-
     # Sharpness: crisp trunk, softer tips (normalized knob, valid range: 0.0 to 1.0)
-    t = depths / max(max_depth, 1)
+    # One value per unique vertex from its introducing-segment depth; the old
+    # per-end asymmetry (end = max(base * 0.95, 0.25)) is dropped because a
+    # shared vertex can only hold one sharpness - the depth gradient below
+    # provides the same crisp-trunk-to-soft-tip transition.
+    t = vertex_depths / max(max_depth, 1)
     # Trunk: 0.65, tips: 0.3 - nice gradient from sharp to soft
-    sharpness_base = 0.65 - t * 0.35
-    sharpness = np.zeros(n * 2, dtype=np.float32)
-    sharpness[0::2] = sharpness_base
-    sharpness[1::2] = np.maximum(sharpness_base * 0.95, 0.25)
+    sharpness = (0.65 - t * 0.35).astype(np.float32)
 
-    return vertices, widths, colors, sharpness, leaves_dict
+    return vertices, widths, colors, sharpness, edges, leaves_dict
 
 
 # =============================================================================
@@ -614,6 +639,8 @@ def generate_forest(
                 (len(grid_vertices), 3), [0.12, 0.2, 0.08], dtype=np.float32
             )
 
+            # Genuinely disconnected full-span lines (no shared endpoints),
+            # so the duplicated-endpoint segments authoring is correct here
             scene.add_lines(
                 "ground",
                 vertices=grid_vertices,
@@ -693,7 +720,7 @@ def generate_forest(
                 # Same iterations for all trees (consistent detail level)
                 tree_iterations = iterations - 1
 
-                vertices, widths, colors, sharpness, leaves_dict = create_tree(
+                vertices, widths, colors, sharpness, edges, leaves_dict = create_tree(
                     varied_lsystem,
                     iterations=tree_iterations,
                     position=(x, y, 0),
@@ -709,13 +736,17 @@ def generate_forest(
                 brightness = rng.uniform(0.88, 1.12)
                 colors = np.clip(colors * brightness + color_shift, 0.0, 1.0)
 
+                # Indexed line type: joints and branch points share vertex
+                # indices, so the viewer suppresses joint caps (no bead-chain
+                # look on thick trunks)
                 scene.add_lines(
                     f"tree_{i:04d}",
                     vertices=vertices,
                     widths=widths,
                     colors=colors,
                     sharpness=sharpness,
-                    line_type="segments",
+                    indices=edges,
+                    line_type="indexed",
                 )
 
                 # Collect leaves
@@ -729,7 +760,7 @@ def generate_forest(
                     all_leaf_radii.append(leaves_dict["radii"])
                     all_leaf_sharpness.append(leaves_dict["sharpness"])
 
-                n = len(vertices) // 2
+                n = len(edges)
                 if i % 100 == 0:
                     aprint(
                         f"  Tree {i:04d}/{len(positions)} ({scheme} {tree_type}): {n:,} segments"
