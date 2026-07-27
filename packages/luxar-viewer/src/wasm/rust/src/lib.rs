@@ -70,12 +70,12 @@ mod projection;
 
 // Re-export all public functions for WASM binding
 pub use decode::{
-    decode_broadcasted, decode_geolog_scalar_u16, decode_geolog_scalar_u8,
-    decode_geolog_perchannel_u16, decode_geolog_perchannel_u8,
-    decode_linear_perchannel_u16, decode_linear_perchannel_u8, decode_log_perchannel_u16,
-    decode_log_perchannel_u8, decode_log_scalar_u16, decode_log_scalar_u8, decode_lut_row_u16,
-    decode_lut_row_u8, decode_lut_scalar_u16, decode_lut_scalar_u8, decode_quantized_u16,
-    decode_quantized_u8, decode_signed_log_perchannel_u16, decode_signed_log_perchannel_u8,
+    decode_broadcasted, decode_geolog_perchannel_u16, decode_geolog_perchannel_u8,
+    decode_geolog_scalar_u16, decode_geolog_scalar_u8, decode_linear_perchannel_u16,
+    decode_linear_perchannel_u8, decode_log_perchannel_u16, decode_log_perchannel_u8,
+    decode_log_scalar_u16, decode_log_scalar_u8, decode_lut_row_u16, decode_lut_row_u8,
+    decode_lut_scalar_u16, decode_lut_scalar_u8, decode_quantized_u16, decode_quantized_u8,
+    decode_signed_log_perchannel_u16, decode_signed_log_perchannel_u8,
 };
 pub use depth_sort::sort_splats_by_depth;
 pub use effective_radii::calculate_effective_radii;
@@ -84,9 +84,9 @@ pub use gsplats_processing::{
     extract_visible_cholesky_3d, mahalanobis_distance, project_gsplats_nd_to_3d,
 };
 pub use lines_clipping::{
-    calculate_segment_lengths, clip_segment_single, clip_segments_batch, distance_3d,
-    interpolate_clipped_positions, interpolate_colors_batch, interpolate_scalars_batch, lerp,
-    lerp_vec3, mark_clipped_endpoints,
+    calculate_segment_lengths, clip_segment_single, clip_segments_batch, compute_cap_suppression,
+    distance_3d, interpolate_clipped_positions, interpolate_colors_batch,
+    interpolate_scalars_batch, lerp, lerp_vec3,
 };
 pub use projection::{
     calculate_bounds_3d, compact_by_mask, count_visible, extract_3d_positions,
