@@ -253,7 +253,8 @@ class TestBuildWorkerCmd:
         assert "--floor" in cmd and cmd[cmd.index("--floor") + 1] == "none"
         cmd_p = self._cmd(floor="p10")
         assert cmd_p[cmd_p.index("--floor") + 1] == "p10"
-        # Not emitted when unset (worker then defaults to 'auto').
+        # Not emitted when unset (the worker then resolves its own
+        # --config/--preset merge, defaulting to 'auto').
         assert "--floor" not in self._cmd()
 
     def test_forwards_config_and_progressive_and_denoise_values(self) -> None:
