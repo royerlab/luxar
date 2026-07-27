@@ -7,7 +7,8 @@
 #   nohup bash scripts/refit_gsplat_demos.sh > /tmp/refit.log 2>&1 &  # background
 
 set -u
-cd /home/royer/PycharmProjects/luxar
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$REPO_ROOT"
 
 LOGDIR=/tmp/luxar-refit
 mkdir -p "$LOGDIR"

@@ -10,9 +10,9 @@ rendering controls, help overlay) currently live one level up in
 a sibling `<name>/` folder for pure helpers.
 
 When a shared panel base class or registry is introduced, it will land
-here. Until then this README exists only so the cross-reference from
-`../README.md` (`[panels/](./panels/README.md) — Shared panel framework
-used by multiple top-level panels.`) does not dangle.
+here. Until then this README documents why the reserved `panels/` namespace
+exists and prevents the package overview from implying that a shared panel
+framework has already shipped.
 
 ## See Also
 

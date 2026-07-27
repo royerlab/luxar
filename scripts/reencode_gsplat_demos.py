@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Upgrade the git-LFS gsplat demo baselines to format v3.2 + modern quantization.
+"""Upgrade the git-LFS gsplat demo baselines to format v3.3 + modern quantization.
 
 The committed `.gsplats.zarr.zip` demo datasets under
 ``packages/luxar/src/luxar/demos/data/gsplats_*/`` are format **v3.0** and
@@ -57,9 +57,7 @@ def run_cli(*args: str) -> None:
 def find_store_dir(extract_root: Path) -> Path | None:
     """Return the single `*.gsplats.zarr` store dir at the top of an extract, or None."""
     candidates = [
-        p
-        for p in extract_root.iterdir()
-        if p.is_dir() and (p / ".zgroup").exists()
+        p for p in extract_root.iterdir() if p.is_dir() and (p / ".zgroup").exists()
     ]
     if len(candidates) == 1:
         return candidates[0]
@@ -104,8 +102,14 @@ def reencode_store(src_store: Path, out_store: Path, recipe: str, tmp: Path) -> 
             shutil.rmtree(flat)
         run_cli("gsplat", "flatten", str(src_store), str(flat))
         run_cli(
-            "gsplat", "lod", str(flat), str(out_store),
-            "--recipe", recipe, "-e", "auto",
+            "gsplat",
+            "lod",
+            str(flat),
+            str(out_store),
+            "--recipe",
+            recipe,
+            "-e",
+            "auto",
         )
         shutil.rmtree(flat, ignore_errors=True)
     return kind
@@ -191,14 +195,28 @@ def is_bundle(src_zip: Path) -> bool:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--only", nargs="*", default=None,
-                    help="Process only these dataset dir names (e.g. gsplats_dapi).")
-    ap.add_argument("--staging", default=str(REPO / "delme/gsplat_upgrade/staged"),
-                    help="Directory for re-encoded output (not the LFS path).")
-    ap.add_argument("--recipe", default="stream", choices=["stream", "overview"],
-                    help="LOD recipe for flat-leaf datasets.")
-    ap.add_argument("--apply", action="store_true",
-                    help="Overwrite the committed LFS files instead of staging.")
+    ap.add_argument(
+        "--only",
+        nargs="*",
+        default=None,
+        help="Process only these dataset dir names (e.g. gsplats_dapi).",
+    )
+    ap.add_argument(
+        "--staging",
+        default=str(REPO / "delme/gsplat_upgrade/staged"),
+        help="Directory for re-encoded output (not the LFS path).",
+    )
+    ap.add_argument(
+        "--recipe",
+        default="stream",
+        choices=["stream", "overview"],
+        help="LOD recipe for flat-leaf datasets.",
+    )
+    ap.add_argument(
+        "--apply",
+        action="store_true",
+        help="Overwrite the committed LFS files instead of staging.",
+    )
     args = ap.parse_args()
 
     staging = Path(args.staging)
@@ -223,7 +241,7 @@ def main() -> int:
             if src.stat().st_size < 1024:
                 print(f"SKIP (LFS pointer, run git lfs pull): {rel}")
                 continue
-            out = (src if args.apply else staging / rel)
+            out = src if args.apply else staging / rel
             try:
                 if is_bundle(src):
                     rep = process_bundle_zip(src, out, args.recipe, tmp)
@@ -231,8 +249,10 @@ def main() -> int:
                     rep = process_single_zip(src, out, args.recipe, tmp)
                 rows.append((str(rel), rep))
                 ratio = rep["old_bytes"] / max(rep["new_bytes"], 1)
-                print(f"OK  {rel}  [{rep['kind']}]  "
-                      f"{rep['old_bytes']:,} -> {rep['new_bytes']:,}  ({ratio:.2f}x)")
+                print(
+                    f"OK  {rel}  [{rep['kind']}]  "
+                    f"{rep['old_bytes']:,} -> {rep['new_bytes']:,}  ({ratio:.2f}x)"
+                )
             except Exception as e:  # noqa: BLE001
                 print(f"FAIL {rel}: {e}")
 
@@ -242,10 +262,14 @@ def main() -> int:
     total_new = sum(r["new_bytes"] for _, r in rows)
     for name, r in rows:
         ratio = r["old_bytes"] / max(r["new_bytes"], 1)
-        print(f"  {name:<60} {r['old_bytes']:>12,} -> {r['new_bytes']:>12,}  ({ratio:.2f}x)")
+        print(
+            f"  {name:<60} {r['old_bytes']:>12,} -> {r['new_bytes']:>12,}  ({ratio:.2f}x)"
+        )
     if total_new:
-        print(f"  {'TOTAL':<60} {total_old:>12,} -> {total_new:>12,}  "
-              f"({total_old / total_new:.2f}x)")
+        print(
+            f"  {'TOTAL':<60} {total_old:>12,} -> {total_new:>12,}  "
+            f"({total_old / total_new:.2f}x)"
+        )
     print(f"\nOutput: {'COMMITTED LFS PATHS (--apply)' if args.apply else staging}")
     return 0
 

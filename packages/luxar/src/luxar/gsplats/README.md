@@ -628,13 +628,15 @@ print(f"PSNR={metrics['psnr_db']:.1f} dB, SSIM={metrics['ssim']:.4f}")
 
 ## Calibration (Blind-Spot Cross-Validation)
 
-The `calibration` module implements the manuscript's Noise2Self model-selection protocol — sweep splat count K, fit each at against a 5%-donut-median-filled volume, and pick the K that maximises *held-out* PSNR. As a free byproduct, the module estimates the per-dataset noise floor (Laplacian + Haar HH + background MAD ensemble), giving an absolute PSNR ceiling for the dataset.
+The `calibration` module implements the manuscript's Noise2Self model-selection protocol — sweep splat count K, fit each against a 5%-donut-median-filled volume, and pick the K that maximises *held-out* PSNR. As a free byproduct, the module estimates the per-dataset noise floor (Laplacian + Haar HH + background MAD ensemble), giving an absolute PSNR ceiling for the dataset.
 
 Held-out PSNR is fundamentally a *capacity*-selection criterion (across K), not an *iteration*-selection one. Within a single fit at fixed K, bounded splat parameters and L1 amplitude regularisation prevent the held-out trajectory from peak-and-declining over iterations — the patience-based early stop in `fit_gaussian_splats` already handles that regime. The calibration module therefore wraps `fit_gaussian_splats` unchanged at each K rather than augmenting it.
 
 ### Quick Example
 
 ```python
+from pathlib import Path
+
 from luxar.gsplats.calibration import calibrate, build_k_grid
 
 ks = build_k_grid(n_points=10, k_min=1_000, k_max=512_000)  # manuscript-style sweep
@@ -646,7 +648,7 @@ print(f"Noise floor σ̂ = {result.noise_floor.sigma_hat:.4f}")
 print(f"PSNR ceiling   = {result.noise_floor.psnr_max_db:.1f} dB")
 
 # Persist or re-load the sweep curves
-result.to_json("cal.json")
+result.to_json(Path("cal.json"))
 ```
 
 ### CLI
@@ -736,7 +738,7 @@ matrix = make_lod_pyramid(
 ### CLI
 
 ```bash
-# One command, one `--recipe` flag (REQUIRED); output is a standalone v3.2 .gsplats.zarr.
+# One command, one `--recipe` flag (REQUIRED); output is a standalone v3.3 .gsplats.zarr.
 # flat / stream — single leaf, optionally with an additive (prefix-sum) ladder
 luxar gsplat lod fit.gsplats.zarr stream.gsplats.zarr --recipe stream --n-lods 4
 luxar gsplat lod fit.gsplats.zarr out.gsplats.zarr --recipe stream --method self_energy   # cheap O(N log N)
@@ -747,7 +749,7 @@ luxar gsplat lod fit.gsplats.zarr out.gsplats.zarr --recipe stream -m mass -b co
 luxar gsplat lod fit.gsplats.zarr part.gsplats.zarr --recipe tiles --max-elements 250000
 luxar gsplat lod fit.gsplats.zarr ms.gsplats.zarr --recipe overview --compression-factor 8
 
-# levels — synthesised representative levels; v3.2 kind=lod group
+# levels — synthesised representative levels; v3.3 kind=lod group
 luxar gsplat lod fit.gsplats.zarr levels.gsplats.zarr --recipe levels -L 3 -K 4
 luxar gsplat lod fit.gsplats.zarr pyramid.gsplats.zarr --recipe levels -K 4 -L 3 --n-lods 4
 
@@ -755,7 +757,7 @@ luxar gsplat lod fit.gsplats.zarr pyramid.gsplats.zarr --recipe levels -K 4 -L 3
 luxar gsplat flatten partitioned.gsplats.zarr flat.gsplats.zarr
 
 # Migrate legacy v1.0 / v1.1 / v2.0 / pre-v2.0 substitutive-directory /
-# v3.0-v3.1 (pre-v3.2 pixel_size selector attrs) layouts → v3.2
+# v3.0-v3.1 (pre-v3.2 pixel_size selector attrs) layouts → v3.3
 luxar gsplat migrate-format legacy.gsplats.zarr v3.gsplats.zarr
 ```
 
@@ -894,7 +896,7 @@ with LuxarZarrCompiler('scene.luxar.zarr') as compiler:
 > `coverage_fraction` thresholds derived as `sqrt(N_i / N_finest)` from the
 > per-level splat counts (a dimensionless, viewport-relative value in
 > `[0, 1]`; coarsest = 0.0, finest = 1.0), so the viewer view-switches
-> between levels identically on any monitor. In v3.2 a saved `.gsplats.zarr`
+> between levels identically on any monitor. In v3.3 a saved `.gsplats.zarr`
 > is already a `kind=lod` group on disk; scene embedding grafts that subtree
 > directly. No substitutive work is discarded. Pass `lod_group=False` to
 > collapse to the finest level, or `lod_group=dict(coverage_fractions=[...])`
@@ -1158,7 +1160,7 @@ gsplats/
 │   ├── save_gsplats.py            # Save GSplatData to .gsplats.zarr
 │   ├── load_gsplats.py            # Load GSplatData from .gsplats.zarr
 │   ├── inspect_gsplats.py         # Inspect and summarize .gsplats.zarr files
-│   └── migrate.py                 # Migrate legacy v1.0 / v1.1 / v2.0 / substitutive-dir / v3.0-v3.1 (pre-v3.2 pixel_size attrs) layouts → v3.2
+│   └── migrate.py                 # Migrate legacy v1.0 / v1.1 / v2.0 / substitutive-dir / v3.0-v3.1 (pre-v3.2 pixel_size attrs) layouts → v3.3
 │
 ├── batch/                         # HPC batch fitting (Slurm integration)
 │   ├── manifest.py                # Batch job manifest management
