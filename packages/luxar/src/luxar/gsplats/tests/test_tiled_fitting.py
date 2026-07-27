@@ -493,3 +493,622 @@ class TestTiledProgressive:
             verbose=False,
         )
         assert result.n_additive_sublods == 1
+
+
+# ── Background floor handling in tiled fitting ───────────────────
+
+
+def _empty_result(ndim: int):
+    """A fresh 0-splat GSplatData (fresh stats dict per call)."""
+    from luxar.gsplats.gsplat_data import GSplatData
+    from luxar.gsplats.utils.trils import tril_size
+
+    return GSplatData(
+        centers=np.zeros((0, ndim), dtype=np.float32),
+        amplitudes=np.zeros((0,), dtype=np.float32),
+        cholesky_factors=np.zeros((0, tril_size(ndim)), dtype=np.float32),
+        stats={"time_seconds": 0.0},
+    )
+
+
+def _recording_stub(records: list):
+    """Stub fitter that records the tile array + floor kwarg it was handed."""
+
+    def stub(tile_data, **kwargs):
+        result = _empty_result(tile_data.ndim)
+        records.append(
+            {
+                "data": np.array(tile_data, copy=True),
+                "floor": kwargs.get("floor"),
+                "result": result,
+            }
+        )
+        return result
+
+    return stub
+
+
+def _one_splat_stub(records: list):
+    """Stub fitter returning a 1-splat result (merge paths need non-empty)."""
+
+    def stub(tile_data, **kwargs):
+        from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.gsplats.utils.trils import tril_size
+
+        ndim = tile_data.ndim
+        chol = np.zeros((1, tril_size(ndim)), dtype=np.float32)
+        k = 0  # identity, packed lower-triangular row-major
+        for i in range(ndim):
+            for j in range(i + 1):
+                if i == j:
+                    chol[0, k] = 1.0
+                k += 1
+        result = GSplatData(
+            centers=np.full((1, ndim), 1.0, dtype=np.float32),
+            amplitudes=np.ones((1,), dtype=np.float32),
+            cholesky_factors=chol,
+            stats={"time_seconds": 0.0},
+        )
+        records.append({"floor": kwargs.get("floor"), "result": result})
+        return result
+
+    return stub
+
+
+@pytest.mark.skipif(not HAS_TORCH, reason="torch not available")
+class TestTiledFloorHandling:
+    """The floor must be resolved once per run and subtracted BEFORE windowing."""
+
+    def _pedestal_volume(
+        self, pedestal: float = 100.0, base: float = 0.5
+    ) -> np.ndarray:
+        """96x96 volume: pedestal + small base + a bump straddling a tile seam."""
+        yy, xx = np.meshgrid(np.arange(96), np.arange(96), indexing="ij")
+        # tile_size=48, overlap=16 -> the bump sits inside overlap zones
+        bump = 50.0 * np.exp(-(((yy - 40) ** 2 + (xx - 48) ** 2) / (2 * 8.0**2)))
+        # `base` keeps every floor-subtracted tile above the near-zero skip,
+        # so tiles map 1:1 onto the recorded stub calls.
+        return (pedestal + base + bump).astype(np.float32)
+
+    def test_partition_of_unity_with_floor(self, monkeypatch) -> None:
+        """Recorded tiles must sum to clip(V - m, 0) everywhere, incl. overlaps.
+
+        Subtracting the floor AFTER windowing breaks this: an overlap zone
+        (w_A + w_B = 1) merges to V - 2m instead of V - m, and clip erases a
+        seam-centred bump entirely.
+        """
+        import luxar.gsplats.fit_tiled_gsplats as ftg
+
+        records: list = []
+        monkeypatch.setattr(ftg, "fit_gaussian_splats", _recording_stub(records))
+
+        pedestal = 100.0
+        volume = self._pedestal_volume(pedestal=pedestal)
+        ftg.fit_tiled(volume, tile_size=48, overlap=16, floor=pedestal, verbose=False)
+
+        specs = compute_tile_specs(volume.shape, tile_size=48, overlap=16)
+        assert len(records) == len(specs)
+
+        accumulated = np.zeros(volume.shape, dtype=np.float64)
+        for spec, rec in zip(specs, records):
+            assert rec["data"].shape == spec.shape
+            accumulated[spec.slices] += rec["data"].astype(np.float64)
+
+        expected = np.clip(volume.astype(np.float64) - pedestal, 0.0, None)
+        np.testing.assert_allclose(accumulated, expected, atol=1e-3)
+
+    def test_inner_fit_receives_floor_none_standard(self, monkeypatch) -> None:
+        """No live floor spec may reach fit_gaussian_splats (standard branch)."""
+        import luxar.gsplats.fit_tiled_gsplats as ftg
+
+        records: list = []
+        monkeypatch.setattr(ftg, "fit_gaussian_splats", _recording_stub(records))
+
+        volume = self._pedestal_volume()
+        ftg.fit_tiled(volume, tile_size=48, overlap=16, floor="auto", verbose=False)
+
+        assert len(records) > 1
+        for rec in records:
+            assert rec["floor"] == "none"
+
+    def test_inner_fit_receives_floor_none_progressive(self, monkeypatch) -> None:
+        """No live floor spec may reach the progressive fitter either."""
+        import luxar.gsplats.fit_progressive_gsplats as fpg
+        import luxar.gsplats.fit_tiled_gsplats as ftg
+
+        records: list = []
+        monkeypatch.setattr(
+            fpg, "fit_progressive_gaussian_splats", _recording_stub(records)
+        )
+
+        volume = self._pedestal_volume()
+        ftg.fit_tiled(
+            volume,
+            tile_size=48,
+            overlap=16,
+            floor="auto",
+            progressive=True,
+            verbose=False,
+        )
+
+        assert len(records) > 1
+        for rec in records:
+            assert rec["floor"] == "none"
+
+    def test_one_shared_floor_level_across_tiles(self, monkeypatch) -> None:
+        """Every tile subtracts the identical, whole-volume-resolved level."""
+        import luxar.gsplats.fit_tiled_gsplats as ftg
+        from luxar.gsplats.fitting.preprocessing import resolve_volume_floor
+
+        records: list = []
+        monkeypatch.setattr(ftg, "fit_gaussian_splats", _recording_stub(records))
+
+        # Mostly a noisy pedestal ~100, plus one densely signalled interior
+        # region — a per-tile "auto" there would estimate a wildly different
+        # (signal-level) floor and subtract real signal.
+        rng = np.random.RandomState(0)
+        volume = rng.normal(100.0, 1.0, size=(96, 96)).astype(np.float32)
+        volume[40:80, 40:80] += 150.0
+
+        ftg.fit_tiled(volume, tile_size=48, overlap=16, floor="auto", verbose=False)
+
+        assert len(records) > 1
+        floors = [rec["result"].stats["applied_floor"] for rec in records]
+        assert all(f is not None for f in floors)
+        assert all(f == floors[0] for f in floors)
+        expected = resolve_volume_floor(volume, "auto")
+        assert floors[0] == pytest.approx(expected)
+
+    def test_numeric_floor_subtracted_verbatim(self, monkeypatch) -> None:
+        """An explicit numeric floor is subtracted exactly as given."""
+        import luxar.gsplats.fit_tiled_gsplats as ftg
+
+        records: list = []
+        monkeypatch.setattr(ftg, "fit_gaussian_splats", _recording_stub(records))
+
+        volume = self._pedestal_volume(pedestal=100.0)
+        ftg.fit_tiled(volume, tile_size=48, overlap=16, floor=100.0, verbose=False)
+
+        specs = compute_tile_specs(volume.shape, tile_size=48, overlap=16)
+        for spec, rec in zip(specs, records):
+            w = cosine_window(spec)
+            expected = np.clip(volume[spec.slices] - 100.0, 0.0, None) * w
+            np.testing.assert_allclose(rec["data"], expected, atol=1e-4)
+            assert rec["result"].stats["applied_floor"] == 100.0
+
+    def test_negative_background_level_is_subtracted(self, monkeypatch) -> None:
+        """A negative resolved level (dark-frame-corrected data) IS subtracted.
+
+        Floor suppression means "put the background at 0": if the background
+        sits at -2, then V - (-2) = V + 2 is correct — and it is what the
+        non-tiled path's ``image_min = max(resolved_floor, image_min)`` does
+        with a negative level. Dropping a negative level here would silently
+        fall back to per-tile hard-min normalization of the windowed tile —
+        exactly the seam-producing bug tiled floor resolution exists to fix.
+        A constant offset subtracted before windowing also preserves the
+        partition-of-unity invariant.
+        """
+        import luxar.gsplats.fit_tiled_gsplats as ftg
+        from luxar.gsplats.fitting.preprocessing import resolve_volume_floor
+
+        rng = np.random.RandomState(5)
+        volume = rng.normal(-2.0, 1.0, size=(96, 96)).astype(np.float32)
+        yy, xx = np.meshgrid(np.arange(96), np.arange(96), indexing="ij")
+        volume += (
+            50.0 * np.exp(-(((yy - 48) ** 2 + (xx - 48) ** 2) / (2 * 8.0**2)))
+        ).astype(np.float32)
+
+        level = resolve_volume_floor(volume, "auto")
+        assert level is not None and level < 0.0
+
+        records: list = []
+        monkeypatch.setattr(ftg, "fit_gaussian_splats", _recording_stub(records))
+        # Must complete without raising (the resolved negative level is a
+        # contract-level value for fit_tile, not a user spec to re-validate).
+        ftg.fit_tiled(volume, tile_size=48, overlap=16, floor="auto", verbose=False)
+
+        specs = compute_tile_specs(volume.shape, tile_size=48, overlap=16)
+        assert len(records) == len(specs)
+
+        # Every tile subtracts the SAME negative level ...
+        floors = [rec["result"].stats["applied_floor"] for rec in records]
+        assert all(f == level for f in floors)
+
+        # ... and the recorded tiles still sum to clip(V - m, 0) everywhere.
+        accumulated = np.zeros(volume.shape, dtype=np.float64)
+        for spec, rec in zip(specs, records):
+            accumulated[spec.slices] += rec["data"].astype(np.float64)
+        expected = np.clip(volume.astype(np.float64) - level, 0.0, None)
+        np.testing.assert_allclose(accumulated, expected, atol=1e-3)
+
+    def test_too_high_numeric_floor_refused_not_erasing(self, monkeypatch) -> None:
+        """A numeric floor above the volume max is refused, not silently fatal.
+
+        Matches the non-tiled path's semantics (warn + ignore): every tile is
+        still fitted on unmodified data instead of the whole dataset silently
+        emptying and the save step erroring.
+        """
+        import luxar.gsplats.fit_tiled_gsplats as ftg
+        from luxar.gsplats.fitting.preprocessing import resolve_volume_floor
+
+        volume = self._pedestal_volume(pedestal=100.0)
+        assert resolve_volume_floor(volume, 10_000.0, guard_numeric=True) is None
+        # Pre-resolved levels handed down to tiles keep the read-free
+        # short-circuit (no guard) by default.
+        assert resolve_volume_floor(_ExplodingArray(), 10_000.0) == 10_000.0
+
+        records: list = []
+        monkeypatch.setattr(ftg, "fit_gaussian_splats", _recording_stub(records))
+        ftg.fit_tiled(volume, tile_size=48, overlap=16, floor=10_000.0, verbose=False)
+
+        specs = compute_tile_specs(volume.shape, tile_size=48, overlap=16)
+        assert len(records) == len(specs)  # every tile still fitted
+        for spec, rec in zip(specs, records):
+            w = cosine_window(spec)
+            np.testing.assert_allclose(rec["data"], volume[spec.slices] * w, rtol=1e-5)
+            assert rec["result"].stats["applied_floor"] is None
+
+    def test_fit_tile_resolves_live_spec_against_whole_volume(
+        self, monkeypatch
+    ) -> None:
+        """fit_tile with a LIVE spec must resolve it on the WHOLE volume.
+
+        Exercises fit_tile's own spec-resolution branch (the --tile k/M worker
+        path, which fit_tiled bypasses by pre-resolving): a regression back to
+        per-tile estimation would subtract a different, tile-local level.
+        """
+        import luxar.gsplats.fit_tiled_gsplats as ftg
+        from luxar.gsplats.fitting.preprocessing import resolve_volume_floor
+
+        rng = np.random.RandomState(6)
+        volume = rng.normal(100.0, 1.0, size=(96, 96)).astype(np.float32)
+        volume[40:80, 40:80] += 150.0  # bright/dense region skews one tile
+
+        whole = resolve_volume_floor(volume, "auto")
+        assert whole is not None
+
+        # Pick a tile that overlaps the bright region (so the fitter runs)
+        # AND whose tile-local estimate differs from the whole-volume one.
+        specs = compute_tile_specs(volume.shape, tile_size=48, overlap=16)
+        chosen = None
+        for s in specs:
+            if float(volume[s.slices].max()) < 200.0:
+                continue
+            local = resolve_volume_floor(np.asarray(volume[s.slices]), "auto")
+            if local is not None and abs(local - whole) > 1e-9:
+                chosen = (s, local)
+                break
+        assert chosen is not None, "no bright tile with a distinct local estimate"
+        spec, local = chosen
+
+        records: list = []
+        monkeypatch.setattr(ftg, "fit_gaussian_splats", _recording_stub(records))
+        result = ftg.fit_tile(volume, spec, floor="auto", verbose=False)
+
+        applied = result.stats["applied_floor"]
+        assert applied == pytest.approx(whole)
+        assert applied != pytest.approx(local)
+        # And the tile handed to the fitter had the WHOLE-volume level removed.
+        w = cosine_window(spec)
+        expected = np.clip(volume[spec.slices] - whole, 0.0, None) * w
+        np.testing.assert_allclose(records[-1]["data"], expected, atol=1e-4)
+
+    def test_all_background_tile_skipped_as_empty(self) -> None:
+        """A tile wholly at/below the global floor clips to zero and is
+        skipped with a 0-splat result (no fitter call, no error)."""
+        import luxar.gsplats.fit_tiled_gsplats as ftg
+
+        volume = np.full((96, 96), 100.0, dtype=np.float32)
+        volume[64:, 64:] += 50.0  # signal elsewhere keeps the floor meaningful
+
+        specs = compute_tile_specs(volume.shape, tile_size=48, overlap=16)
+        background_spec = specs[0]  # origin (0, 0): constant pedestal only
+        assert float(volume[background_spec.slices].max()) == 100.0
+
+        result = ftg.fit_tile(volume, background_spec, floor=100.0, verbose=False)
+        assert result.n_splats == 0
+        assert result.stats.get("skipped") is True
+        assert result.stats["applied_floor"] == 100.0
+
+    def test_applied_floor_recorded_on_merge_paths(self, monkeypatch) -> None:
+        """Flat merge stamps stats['applied_floor']; the partition path stamps
+        the returned node's meta['applied_floor'] (in-memory bookkeeping)."""
+        import luxar.gsplats.fit_tiled_gsplats as ftg
+        from luxar.gsplats.fitting.preprocessing import resolve_volume_floor
+
+        volume = self._pedestal_volume(pedestal=100.0)
+        expected = resolve_volume_floor(volume, "auto")
+        assert expected is not None
+
+        records: list = []
+        monkeypatch.setattr(ftg, "fit_gaussian_splats", _one_splat_stub(records))
+
+        flat = ftg.fit_tiled(
+            volume,
+            tile_size=48,
+            overlap=16,
+            floor="auto",
+            cull_retention=None,
+            verbose=False,
+        )
+        assert flat.stats["applied_floor"] == pytest.approx(expected)
+
+        node = ftg.fit_tiled(
+            volume,
+            tile_size=48,
+            overlap=16,
+            floor="auto",
+            cull_retention=None,
+            partition=True,
+            verbose=False,
+        )
+        assert node.meta["applied_floor"] == pytest.approx(expected)
+
+    def test_floor_none_subtracts_nothing(self, monkeypatch) -> None:
+        """floor='none' leaves the tile untouched (behaviour unchanged)."""
+        import luxar.gsplats.fit_tiled_gsplats as ftg
+
+        records: list = []
+        monkeypatch.setattr(ftg, "fit_gaussian_splats", _recording_stub(records))
+
+        volume = self._pedestal_volume()
+        ftg.fit_tiled(volume, tile_size=48, overlap=16, floor="none", verbose=False)
+
+        specs = compute_tile_specs(volume.shape, tile_size=48, overlap=16)
+        assert len(records) == len(specs)
+        for spec, rec in zip(specs, records):
+            w = cosine_window(spec)
+            np.testing.assert_allclose(rec["data"], volume[spec.slices] * w, rtol=1e-5)
+            assert rec["floor"] == "none"
+            assert rec["result"].stats["applied_floor"] is None
+
+
+class _CountingArray:
+    """Array shim that counts the number of elements returned by reads."""
+
+    def __init__(self, arr: np.ndarray) -> None:
+        self._arr = arr
+        self.voxels_read = 0
+
+    @property
+    def shape(self) -> tuple:
+        return self._arr.shape
+
+    @property
+    def ndim(self) -> int:
+        return self._arr.ndim
+
+    def __getitem__(self, key):
+        out = self._arr[key]
+        self.voxels_read += int(np.asarray(out).size)
+        return out
+
+
+class _ExplodingArray:
+    """Array shim that fails on any read — data must never be touched."""
+
+    shape = (1024, 1024, 1024)
+    ndim = 3
+
+    def __getitem__(self, key):
+        raise AssertionError("volume data must not be read for this spec")
+
+
+@pytest.mark.skipif(not HAS_TORCH, reason="torch not available")
+class TestResolveVolumeFloor:
+    """Unit tests for the bounded whole-volume floor resolver."""
+
+    def _pedestal_volume(self) -> np.ndarray:
+        rng = np.random.RandomState(1)
+        vol = rng.normal(100.0, 2.0, size=(32, 64, 64)).astype(np.float32)
+        vol[10:20, 20:40, 20:40] += 300.0  # bright signal region
+        return vol
+
+    def test_recovers_known_pedestal(self) -> None:
+        from luxar.gsplats.fitting.preprocessing import resolve_volume_floor
+
+        f = resolve_volume_floor(self._pedestal_volume(), "auto")
+        assert f is not None
+        assert f == pytest.approx(100.0, abs=5.0)
+
+    def test_deterministic_across_calls_and_access_patterns(self) -> None:
+        from luxar.gsplats.fitting.preprocessing import resolve_volume_floor
+
+        vol = self._pedestal_volume()
+        f1 = resolve_volume_floor(vol, "auto")
+        f2 = resolve_volume_floor(vol, "auto")
+        f3 = resolve_volume_floor(_CountingArray(vol), "auto")
+        assert f1 == f2 == f3
+
+    def test_memory_bound_respected(self, monkeypatch) -> None:
+        import luxar.gsplats.fitting.preprocessing as pp
+
+        budget = 4096
+        monkeypatch.setattr(pp, "FLOOR_SAMPLE_BUDGET_VOXELS", budget)
+        rng = np.random.RandomState(2)
+        base = rng.normal(100.0, 5.0, size=(256, 16, 16)).astype(np.float32)
+        shim = _CountingArray(base)  # 65,536 voxels >> budget
+
+        f = pp.resolve_volume_floor(shim, "p10")
+        assert f is not None
+        assert 0 < shim.voxels_read <= budget
+
+    def test_bounded_sample_is_deterministic(self, monkeypatch) -> None:
+        import luxar.gsplats.fitting.preprocessing as pp
+
+        monkeypatch.setattr(pp, "FLOOR_SAMPLE_BUDGET_VOXELS", 4096)
+        rng = np.random.RandomState(3)
+        base = rng.normal(100.0, 5.0, size=(256, 16, 16)).astype(np.float32)
+        f1 = pp.resolve_volume_floor(base, "p10")
+        f2 = pp.resolve_volume_floor(_CountingArray(base), "p10")
+        assert f1 == f2
+
+    def test_guard_floor_at_or_above_max_returns_none(self) -> None:
+        from luxar.gsplats.fitting.preprocessing import resolve_volume_floor
+
+        rng = np.random.RandomState(4)
+        vol = rng.normal(100.0, 5.0, size=(16, 16, 16)).astype(np.float32)
+        # p100 resolves to the sampled max -> would erase all signal
+        assert resolve_volume_floor(vol, "p100") is None
+
+    def test_numeric_specs_short_circuit(self) -> None:
+        from luxar.gsplats.fitting.preprocessing import resolve_volume_floor
+
+        shim = _ExplodingArray()
+        assert resolve_volume_floor(shim, 42.0) == 42.0
+        assert resolve_volume_floor(shim, "17.5") == 17.5
+        assert resolve_volume_floor(shim, "none") is None
+        assert resolve_volume_floor(shim, None) is None
+        assert resolve_volume_floor(shim, 0.0) is None  # 0 disables
+        assert resolve_volume_floor(shim, -3.0) == -3.0  # negative level, verbatim
+
+    def test_negative_background_level_is_resolved(self) -> None:
+        """auto/pN can go negative on dark-frame-corrected float data; the
+        negative level is returned (subtracting it shifts the background up
+        to 0, matching the non-tiled path), not discarded."""
+        from luxar.gsplats.fitting.preprocessing import resolve_volume_floor
+
+        rng = np.random.RandomState(7)
+        vol = rng.normal(-2.0, 1.0, size=(32, 32, 32)).astype(np.float32)
+        vol[10:20, 10:20, 10:20] += 100.0
+        auto = resolve_volume_floor(vol, "auto")
+        assert auto is not None and auto < 0.0
+        assert auto == pytest.approx(-2.0, abs=1.0)  # near the background mode
+        p10 = resolve_volume_floor(vol, "p10")
+        assert p10 is not None and p10 < 0.0
+        assert p10 == pytest.approx(float(np.percentile(vol, 10.0)))
+
+    def test_numeric_guard_refuses_floor_above_max(self) -> None:
+        from luxar.gsplats.fitting.preprocessing import resolve_volume_floor
+
+        rng = np.random.RandomState(8)
+        vol = rng.normal(100.0, 5.0, size=(16, 16, 16)).astype(np.float32)
+        assert resolve_volume_floor(vol, 1e6, guard_numeric=True) is None
+        # Below the max: passes the guard and is returned verbatim.
+        assert resolve_volume_floor(vol, 50.0, guard_numeric=True) == 50.0
+        # Without the guard the numeric short-circuits (never sampled).
+        assert resolve_volume_floor(_ExplodingArray(), 1e6) == 1e6
+
+    def test_memory_bound_respected_small_leading_axis(self, monkeypatch) -> None:
+        """A small leading axis must not defeat the budget: the sampler slabs
+        along the LONGEST axis, not hard-coded axis 0."""
+        import luxar.gsplats.fitting.preprocessing as pp
+
+        budget = 4096
+        monkeypatch.setattr(pp, "FLOOR_SAMPLE_BUDGET_VOXELS", budget)
+        rng = np.random.RandomState(9)
+        base = rng.normal(100.0, 5.0, size=(1, 256, 256)).astype(np.float32)
+        shim = _CountingArray(base)  # 65,536 voxels >> budget
+
+        f = pp.resolve_volume_floor(shim, "p10")
+        assert f is not None
+        assert 0 < shim.voxels_read <= budget
+
+    def test_single_block_sample_reads_the_middle(self) -> None:
+        """When the budget allows only one block, it is taken from the middle
+        of the sampled axis: the first slab of a real stack is systematically
+        atypical (vignetting, no sample in frame, axial gradients)."""
+        import luxar.gsplats.fitting.preprocessing as pp
+
+        # 64 slabs of 16x16 = 256 voxels each; budget 256 -> exactly 1 slab.
+        vol = np.broadcast_to(
+            np.arange(64, dtype=np.float32)[:, None, None], (64, 16, 16)
+        ).copy()
+        sample = pp._sample_volume_for_floor(vol, 256)
+        assert sample is not None
+        assert sample.size == 256
+        # The single slab comes from the middle of axis 0, not index 0.
+        assert np.unique(sample).tolist() == [31.0]
+
+
+def _single_tile_ctx(tile: str, tile_size: int = 48, overlap: int = 16):
+    """A minimal FitPipelineCtx for exercising the single-tile worker path.
+
+    Only the fields ``fit_single_tile`` reads are given meaningful values;
+    everything else is None/inert.
+    """
+    import dataclasses
+
+    from luxar.cli.gsplat_ops.fitting_fit_utils import FitPipelineCtx
+
+    kwargs: dict = {f.name: None for f in dataclasses.fields(FitPipelineCtx)}
+    kwargs.update(
+        tile=tile,
+        tile_size=tile_size,
+        tile_overlap=overlap,
+        progressive=False,
+        max_splats_per_pass=5000,
+        psnr_patience=0.5,
+        max_passes=None,
+    )
+    return FitPipelineCtx(**kwargs)
+
+
+@pytest.mark.skipif(not HAS_TORCH, reason="torch not available")
+class TestSingleTileWorkerFloor:
+    """The standalone ``--tile k/M`` worker resolves the user's floor spec
+    itself, guarded — it is that worker's own user-spec entry point."""
+
+    def _pedestal_volume(self) -> np.ndarray:
+        rng = np.random.RandomState(11)
+        vol = rng.normal(100.0, 1.0, size=(96, 96)).astype(np.float32)
+        vol[40:80, 40:80] += 150.0
+        return vol
+
+    def test_live_spec_resolved_against_whole_volume(self, monkeypatch) -> None:
+        import luxar.gsplats.fit_tiled_gsplats as ftg
+        from luxar.cli.gsplat_ops.fitting_fit_utils import fit_single_tile
+        from luxar.gsplats.fitting.preprocessing import resolve_volume_floor
+
+        volume = self._pedestal_volume()
+        expected = resolve_volume_floor(volume, "auto")
+        assert expected is not None
+
+        records: list = []
+        monkeypatch.setattr(ftg, "fit_gaussian_splats", _recording_stub(records))
+        result = fit_single_tile(
+            _single_tile_ctx("0/4"), volume, {"floor": "auto"}, None
+        )
+        assert result.stats["applied_floor"] == pytest.approx(expected)
+
+    def test_too_high_numeric_floor_is_guarded(self, monkeypatch) -> None:
+        """A numeric floor above the volume max is refused HERE (the guard),
+        not taken at face value by fit_tile — which would silently clip the
+        whole tile to zero and skip the fit."""
+        import luxar.gsplats.fit_tiled_gsplats as ftg
+        from luxar.cli.gsplat_ops.fitting_fit_utils import fit_single_tile
+
+        volume = self._pedestal_volume()
+        records: list = []
+        monkeypatch.setattr(ftg, "fit_gaussian_splats", _recording_stub(records))
+        result = fit_single_tile(
+            _single_tile_ctx("0/4"), volume, {"floor": 10_000.0}, None
+        )
+        # Refused level -> the tile is fitted on unmodified (windowed) data.
+        assert len(records) == 1
+        assert result.stats["applied_floor"] is None
+        specs = compute_tile_specs(volume.shape, 48, 16)
+        w = cosine_window(specs[0])
+        np.testing.assert_allclose(
+            records[0]["data"], volume[specs[0].slices] * w, rtol=1e-5
+        )
+
+    def test_null_floor_config_means_disabled(self, monkeypatch) -> None:
+        """``floor: null`` in a --config YAML disables the floor on the
+        single-tile worker, exactly as on the sequential and non-tiled paths
+        (it must not be remapped to 'auto')."""
+        import luxar.gsplats.fit_tiled_gsplats as ftg
+        from luxar.cli.gsplat_ops.fitting_fit_utils import fit_single_tile
+
+        volume = self._pedestal_volume()
+        records: list = []
+        monkeypatch.setattr(ftg, "fit_gaussian_splats", _recording_stub(records))
+        result = fit_single_tile(_single_tile_ctx("0/4"), volume, {"floor": None}, None)
+        assert len(records) == 1
+        assert records[0]["floor"] == "none"
+        assert result.stats["applied_floor"] is None
+        specs = compute_tile_specs(volume.shape, 48, 16)
+        w = cosine_window(specs[0])
+        np.testing.assert_allclose(
+            records[0]["data"], volume[specs[0].slices] * w, rtol=1e-5
+        )

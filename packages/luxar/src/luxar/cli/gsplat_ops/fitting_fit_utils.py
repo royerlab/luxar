@@ -439,6 +439,10 @@ def dispatch_parallel_tiled(
                 config=ctx.config,
                 loss=ctx.loss,
                 lr=ctx.lr,
+                # Forward the user's SPEC verbatim: each worker resolves it
+                # against the same volume with the deterministic sampler, so
+                # every worker subtracts one identical level. (An unset floor
+                # lets each worker apply its own --config/--preset merge.)
                 floor=ctx.floor,
                 seed_method=ctx.seed_method,
                 downscale=ds_arg,
@@ -528,6 +532,21 @@ def fit_single_tile(
     # "got multiple values" conflicts with **fit_config
     fc_voxel_size = fit_config.pop("voxel_size", None)
     fc_output_space = fit_config.pop("output_space", "real")
+
+    # This is the standalone worker's own user-spec entry point: validate the
+    # spec (rejecting e.g. a negative --floor, as every other entry point
+    # does), then resolve it GUARDED so fit_tile is never handed an unguarded
+    # numeric — a too-high explicit floor is warned about and dropped instead
+    # of silently erasing the tile. ``None`` in the merged config (a
+    # ``floor: null`` YAML) means DISABLED, exactly as on the sequential
+    # tiled and non-tiled paths.
+    from luxar.gsplats.fitting.preprocessing import resolve_volume_floor
+    from luxar.gsplats.fitting.validation import _validate_floor
+
+    floor_spec = fit_config.get("floor", "auto")
+    _validate_floor(floor_spec)
+    resolved_floor = resolve_volume_floor(volume, floor_spec, guard_numeric=True)
+    fit_config["floor"] = resolved_floor if resolved_floor is not None else "none"
 
     with asection(
         f"Fitting tile {tile_idx}/{len(specs)} grid={specs[tile_idx].grid_index}"
