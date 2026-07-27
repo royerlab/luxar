@@ -57,12 +57,10 @@ def add_lines_impl(
     partition: Any = None,
     **attrs: Any,
 ) -> Union[Lines, "Group"]:
-    if additive_lod is not None and substitutive_lod is not None:
-        raise ValueError(
-            "additive_lod and substitutive_lod are mutually exclusive coarsening "
-            "strategies for Lines (append vs replace on the same LOD axis); "
-            "pass only one."
-        )
+    # additive_lod and substitutive_lod COMPOSE: substitutive chooses WHICH level
+    # renders at the current zoom, additive describes HOW each level streams in.
+    # Passing substitutive_lod alone ladders every level by default; pass
+    # additive_lod=False to opt out. See lod/group.py's "Composed axes" section.
     if substitutive_lod is not None and partition is not None:
         raise ValueError(
             "partition= and substitutive_lod= cannot be combined yet "
@@ -135,6 +133,7 @@ def add_lines_impl(
                     parent=parent,
                     extend_to_all=extend_to_all,
                     spec=substitutive_spec,
+                    additive_lod=additive_lod,
                     **attrs,
                 )
 
@@ -699,6 +698,7 @@ def add_lines_substitutive_lod_wrapper_impl(
     parent: Optional["Node"],
     extend_to_all: Optional[Union[List[str], str]],
     spec: Dict[str, Any],
+    additive_lod: Any = None,
     **attrs: Any,
 ) -> Union["Group", Lines]:
     """Write a Lines node whose coarse LOD levels are synthesised gsplats.
@@ -715,6 +715,33 @@ def add_lines_substitutive_lod_wrapper_impl(
     :func:`add_points_substitutive_lod_wrapper_impl`.
     """
     from ....gsplats.lift import coarse_substitutive_levels, lift_lines_to_gsplats
+    from ..lod.group import (
+        compose_additive_under_substitutive,
+        gsplat_additive_lod_from,
+        level_additive_lod,
+    )
+    from ..lod.lines import resolve_additive_axis_lines
+
+    # Resolve the streaming ladder ONCE for the whole group; each level is
+    # specialized from it below. Default ON — a substitutive level is by
+    # construction the largest node in the scene and the last one loaded.
+    composed_additive = compose_additive_under_substitutive(
+        additive_lod,
+        resolve=resolve_additive_axis_lines,
+        name=name,
+        suppress_reason=(
+            # The multi-LOD writer has no image_labels channel, so laddering
+            # would silently drop them. Refuse the ladder, not the labels.
+            "image_labels is set"
+            if image_labels is not None
+            # One polyline cannot be split without breaking segment topology,
+            # so a ladder here is a no-op the builder would only warn about.
+            else f"line_type={line_type!r} is a single polyline"
+            if line_type in ("polyline", "loop")
+            else None
+        ),
+    )
+    compression_factor = int(spec["compression_factor"])
     from ..lod.group import coverage_fractions
 
     # Scalar+colormap lines: pass scalars+colormap THROUGH to the lift, which
@@ -789,6 +816,9 @@ def add_lines_substitutive_lod_wrapper_impl(
             parent=parent,
             extend_to_all=extend_to_all,
             partition=False,
+            # Forward the ladder: too small to coarsen is not too small to
+            # stream, and dropping it here silently lost the ladder.
+            additive_lod=composed_additive,
             **attrs,
         )
 
@@ -831,6 +861,14 @@ def add_lines_substitutive_lod_wrapper_impl(
 
     # Coarse gsplat children (coarsest first). vert_arr already dim_order-applied.
     for idx, lvl_data in enumerate(coarse_first):
+        # Every level gets its own ladder (mirrors gsplats/lod/pyramid.py), with
+        # the sibling-aware first chunk on all but the coarsest.
+        lvl_spec = level_additive_lod(
+            composed_additive,
+            level_n=int(lvl_data.n_splats),
+            compression_factor=compression_factor,
+            is_coarsest=(idx == 0),
+        )
         lod_group_node.add_gsplats_from_data(
             name=f"child_{idx}",
             result=lvl_data,
@@ -838,7 +876,7 @@ def add_lines_substitutive_lod_wrapper_impl(
             dim_order=None,
             fill=None,
             lod_group=None,
-            additive_lod=None,
+            additive_lod=gsplat_additive_lod_from(lvl_spec, int(lvl_data.n_splats)),
             coverage_fraction=coverage_vals[idx],
             **gsplat_child_attrs,
         )
@@ -858,7 +896,12 @@ def add_lines_substitutive_lod_wrapper_impl(
         extend_to_all=extend_to_all,
         dim_order=None,
         fill=None,
-        additive_lod=None,
+        additive_lod=level_additive_lod(
+            composed_additive,
+            level_n=int(vert_arr.shape[0]),
+            compression_factor=compression_factor,
+            is_coarsest=False,
+        ),
         substitutive_lod=None,
         partition=False,
         coverage_fraction=coverage_vals[-1],

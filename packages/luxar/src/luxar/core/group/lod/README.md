@@ -147,7 +147,11 @@ coarse levels, default 3.0; `None` disables)).
 3. **Assembles** a `kind=lod` group: coarse gsplat children (coarsest-first) +
    the original Points node as the finest child; `display_type="points"`.
 
-Mutually exclusive with `additive_lod` (append vs replace on the same axis).
+Composes with `additive_lod`: substitutive chooses WHICH level renders at the
+current zoom, additive describes HOW each level streams in. Every level is given
+a `stream:` ladder by default (`additive_lod=False` opts out), so the finest
+level paints progressively instead of committing all-at-once — see "Composed
+axes" in `group.py`.
 The lift is strictly isotropic (brightness stays view-independent). Scalar +
 colormap points are supported by **baking** `scalars`→RGB through the colormap
 LUT (`luxar.colormaps.scalars_to_colors`, same normalisation the viewer uses)
@@ -209,7 +213,10 @@ so the two can't drift). `add_lines_substitutive_lod_wrapper_impl`
    on one scale) — no method selector or per-dataset anchor knob; pass explicit
    `coverage_fractions=[...]` in the `substitutive_lod=` spec to override.
 
-Mutually exclusive with `additive_lod` and `partition`. `scalars`+`colormap` are
+Composes with `additive_lod` (laddered per level by default, as for Points);
+mutually exclusive with `partition`. A single-polyline `line_type`
+(`polyline`/`loop`) skips the ladder, since a polyline cannot be split without
+breaking its segment topology. `scalars`+`colormap` are
 mapped per bead (scalar interpolated along each segment, *then* the LUT — matching
 the line shader's interpolate-then-LUT order; same colormap/gamma caveats as
 Points). All `line_type`s (segments/polyline/loop/indexed) are supported.

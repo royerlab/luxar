@@ -327,15 +327,201 @@ class TestAddPointsSubstitutiveLod:
             assert li == pytest.approx(lights[0], rel=0.03)
 
 
-class TestSubstitutiveLodGuards:
-    def test_mutually_exclusive_with_additive(self, tmp_path) -> None:
-        out = tmp_path / "t.luxar.zarr"
-        pos = np.random.RandomState(0).rand(100, 3).astype(np.float32)
+class TestSubstitutiveComposedWithAdditive:
+    """``additive_lod`` composes with ``substitutive_lod`` (it used to raise).
+
+    Substitutive chooses WHICH level renders at the current zoom; additive
+    describes HOW each level streams in. Without the composition the finest level
+    of a substitutive Points ladder was the one node in the system that could not
+    paint progressively — it committed all-or-nothing however large it was, which
+    is what made the 9.75M-point DESI demo freeze the main thread for ~85s.
+
+    Every build here runs a real CPU k-means, so unlike the rest of this file
+    these tests share ONE module-scoped scene and assert many things against it.
+    """
+
+    N = 4000
+
+    @pytest.fixture(scope="class")
+    def composed(self, tmp_path_factory) -> tuple:
+        out = tmp_path_factory.mktemp("composed") / "t.luxar.zarr"
+        rng = np.random.RandomState(0)
+        pos = rng.normal(0, 20, (self.N, 3)).astype(np.float32)
+        colors = rng.uniform(0.1, 1.0, (self.N, 3)).astype(np.float32)
+        radii = rng.uniform(0.5, 1.5, self.N).astype(np.float32)
         with LuxarZarrCompiler(out) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-            with pytest.raises(ValueError, match="mutually exclusive"):
-                scene.add_points("pts", pos, additive_lod=True, substitutive_lod=True)
+            scene.add_points(
+                "cloud",
+                pos,
+                colors=colors,
+                radii=radii,
+                substitutive_lod=dict(
+                    compression_factor=4, levels=2, device="cpu", seed=0
+                ),
+                additive_lod=dict(counts="stream:400", method="random", seed=0),
+            )
+        return zarr.open(str(out), mode="r")["cloud"], self.N
 
+    @staticmethod
+    def _children(grp) -> list:
+        return sorted(k for k in grp.keys() if k.startswith("child_"))
+
+    def test_finest_child_carries_a_ladder(self, composed) -> None:
+        grp, n = composed
+        finest = grp[self._children(grp)[-1]]
+
+        assert finest.attrs["type"] == "points"
+        n_sub = int(finest.attrs["n_additive_sublods"])
+        assert n_sub > 1
+        subs = sorted(k for k in finest.keys() if k.startswith("additive_"))
+        assert subs == [f"additive_{i}" for i in range(n_sub)]
+        assert sum(int(finest[s].attrs["n_points"]) for s in subs) == n
+
+    def test_coarse_levels_are_laddered_too(self, composed) -> None:
+        # Full symmetry with the gsplat pyramid, which ladders every level.
+        # A coarse level smaller than one stream chunk stays a flat leaf —
+        # that fallback is what keeps tiny levels from growing useless subgroups.
+        grp, _ = composed
+        children = self._children(grp)
+
+        for name in children[:-1]:
+            child = grp[name]
+            assert child.attrs["type"] == "gsplats"
+            n_splats = int(child.attrs.get("n_splats", 0) or 0)
+            if int(child.attrs.get("n_additive_sublods", 1)) > 1:
+                assert any(k.startswith("additive_") for k in child.keys())
+            else:
+                # Only legitimate when the level is too small to split.
+                assert n_splats <= 400 or n_splats == 0
+
+    def test_ladder_is_not_degenerate(self, composed) -> None:
+        # The trap this guards: global_rivers' terrain ladder puts 99.98% of its
+        # 8M points in the LAST level, so it streams in name only. A ladder whose
+        # biggest level is most of the data does not fix anything.
+        grp, n = composed
+        finest = grp[self._children(grp)[-1]]
+        n_sub = int(finest.attrs["n_additive_sublods"])
+
+        sizes = [int(finest[f"additive_{i}"].attrs["n_points"]) for i in range(n_sub)]
+        assert max(sizes) / n <= 0.6, sizes
+
+    def test_first_level_is_one_stream_chunk(self, composed) -> None:
+        grp, _ = composed
+        finest = grp[self._children(grp)[-1]]
+
+        # The finest level has a coarser sibling, so the sibling-aware rule
+        # raises its first chunk to ceil(n/(2K)) = 4000/8 = 500 > the 400 asked.
+        assert int(finest["additive_0"].attrs["n_points"]) == 500
+
+    def test_lod_group_invariants_survive_composition(self, composed) -> None:
+        grp, _ = composed
+        children = self._children(grp)
+
+        assert grp.attrs["kind"] == "lod"
+        assert grp.attrs["display_type"] == "points"
+        assert grp.attrs["selector"] == "coverage"
+        assert int(grp.attrs["default_level"]) == 0
+        assert "position_bounds" in grp.attrs
+        cf = [float(grp[c].attrs["coverage_fraction"]) for c in children]
+        assert cf[0] == 0.0
+        assert cf[-1] == 1.0
+        assert all(a < b for a, b in zip(cf, cf[1:])), cf
+
+    def test_every_level_is_energy_stamped(self, composed) -> None:
+        # Both halves of the viewer's display-gate contract, end to end: the
+        # per-prefix fraction and the leaf's total. Missing either makes the gate
+        # fall back to counting elements.
+        grp, _ = composed
+        finest = grp[self._children(grp)[-1]]
+        n_sub = int(finest.attrs["n_additive_sublods"])
+
+        fracs = [
+            finest[f"additive_{i}"].attrs["lod_stats"]["energy_fraction_cum"]
+            for i in range(n_sub)
+        ]
+        assert all(a <= b for a, b in zip(fracs, fracs[1:])), fracs
+        assert fracs[-1] == pytest.approx(1.0)
+        assert dict(finest.attrs["level_stats"])["reference_energy"] > 0
+
+    def test_sublods_keep_their_spatial_index(self, composed) -> None:
+        # Losing the per-sub-LOD index would regress frustum-culled range reads
+        # on nD-sliced scenes.
+        grp, _ = composed
+        finest = grp[self._children(grp)[-1]]
+
+        for i in range(int(finest.attrs["n_additive_sublods"])):
+            sub = finest[f"additive_{i}"]
+            assert "chunk_bounds" in sub
+            assert sub.attrs["ordering"] == "hilbert"
+
+    def test_default_on_without_an_explicit_additive_lod(self, tmp_path) -> None:
+        # The behaviour that fixes the existing demos with no demo edits.
+        out = tmp_path / "t.luxar.zarr"
+        rng = np.random.RandomState(1)
+        pos = rng.normal(0, 20, (3000, 3)).astype(np.float32)
+        with LuxarZarrCompiler(out) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_points(
+                "cloud",
+                pos,
+                radii=np.full(3000, 1.0, dtype=np.float32),
+                substitutive_lod=dict(
+                    compression_factor=4, levels=2, device="cpu", seed=0
+                ),
+            )
+
+        grp = zarr.open(str(out), mode="r")["cloud"]
+        finest = grp[sorted(k for k in grp.keys() if k.startswith("child_"))[-1]]
+        # 3000 points against the default 39062-element first chunk: the whole
+        # level fits in one chunk, so it correctly stays a flat leaf.
+        assert finest.attrs["type"] == "points"
+        assert int(finest.attrs.get("n_additive_sublods", 1)) == 1
+
+    def test_additive_false_opts_out(self, tmp_path) -> None:
+        out = tmp_path / "t.luxar.zarr"
+        rng = np.random.RandomState(2)
+        pos = rng.normal(0, 20, (3000, 3)).astype(np.float32)
+        with LuxarZarrCompiler(out) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_points(
+                "cloud",
+                pos,
+                radii=np.full(3000, 1.0, dtype=np.float32),
+                substitutive_lod=dict(
+                    compression_factor=4, levels=2, device="cpu", seed=0
+                ),
+                additive_lod=False,
+            )
+
+        grp = zarr.open(str(out), mode="r")["cloud"]
+        for name in (k for k in grp.keys() if k.startswith("child_")):
+            assert "n_additive_sublods" not in grp[name].attrs
+
+    def test_degenerate_input_still_gets_its_ladder(self, tmp_path) -> None:
+        # Too small to synthesise coarse levels -> flat Points node. It used to
+        # drop the caller's ladder on this path, silently.
+        out = tmp_path / "t.luxar.zarr"
+        pos = np.random.RandomState(3).rand(300, 3).astype(np.float32) * 0.001
+        with LuxarZarrCompiler(out) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            node = scene.add_points(
+                "cloud",
+                pos,
+                radii=np.full(300, 1e-6, dtype=np.float32),
+                substitutive_lod=dict(
+                    compression_factor=4, levels=2, device="cpu", seed=0
+                ),
+                additive_lod=dict(counts=[50, 150]),
+            )
+        assert node is not None
+
+        grp = zarr.open(str(out), mode="r")["cloud"]
+        if "child_0" not in grp:  # took the degenerate flat path
+            assert int(grp.attrs["n_additive_sublods"]) == 3
+
+
+class TestSubstitutiveLodGuards:
     def test_partition_and_substitutive_raises(self, tmp_path) -> None:
         # Must not silently drop the substitutive ladder when partition= is set.
         out = tmp_path / "t.luxar.zarr"
