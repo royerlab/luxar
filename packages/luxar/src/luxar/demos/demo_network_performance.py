@@ -225,6 +225,12 @@ def generate_performance_test_dataset(
 
     # Write to zarr with performance-optimized settings
     with asection("Writing to Zarr (optimized for large datasets)"):
+        # X/Y/Z are Gaussian around cluster centers, so their extent depends on
+        # the drawn centers and spreads — take it from the data rather than a
+        # fixed guess, which the tails overshoot.
+        xyz_min = positions[:, 1:4].min(axis=0)
+        xyz_max = positions[:, 1:4].max(axis=0)
+
         dims = Dimensions(
             [
                 # W is the slicing dimension (slider appears because display=False)
@@ -239,9 +245,24 @@ def generate_performance_test_dataset(
                     display=False,
                 ),
                 # X, Y, Z are the displayed dimensions (shown in 3D space)
-                Dimension("x", unit="units", range=(-150, 150), display=True),
-                Dimension("y", unit="units", range=(-150, 150), display=True),
-                Dimension("z", unit="units", range=(-150, 150), display=True),
+                Dimension(
+                    "x",
+                    unit="units",
+                    range=(float(xyz_min[0]), float(xyz_max[0])),
+                    display=True,
+                ),
+                Dimension(
+                    "y",
+                    unit="units",
+                    range=(float(xyz_min[1]), float(xyz_max[1])),
+                    display=True,
+                ),
+                Dimension(
+                    "z",
+                    unit="units",
+                    range=(float(xyz_min[2]), float(xyz_max[2])),
+                    display=True,
+                ),
             ]
         )
 
