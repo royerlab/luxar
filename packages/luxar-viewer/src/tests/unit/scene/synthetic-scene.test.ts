@@ -46,7 +46,7 @@ describe('generateSyntheticLines', () => {
       expect(result.startSharpness.length).toBe(50);
       expect(result.endSharpness.length).toBe(50);
       expect(result.segmentLengths.length).toBe(50);
-      // Clipped flags: Uint8
+      // Cap suppression: continuous per-endpoint [0, 1] scalars, Float32
       expect(result.startCapSuppression).toBeInstanceOf(Float32Array);
       expect(result.startCapSuppression.length).toBe(50);
       expect(result.endCapSuppression).toBeInstanceOf(Float32Array);
@@ -63,12 +63,47 @@ describe('generateSyntheticLines', () => {
       }
     });
 
-    it('marks all segment endpoints as unclipped (synthetic scene has no slicing)', () => {
-      const result = generateSyntheticLines({ type: 'lines', count: 30, seed: 3 });
+    it('emits faithful cap suppression: free ends 0, interior joints share clamp(cos θ, 0, 1)', () => {
+      // 130 segments straddles two chain breaks (i = 64 and i = 128), so
+      // both the interior-joint and the re-anchor paths are exercised.
+      const result = generateSyntheticLines({ type: 'lines', count: 130, seed: 3 });
+      let nonZeroJoints = 0;
       for (let i = 0; i < result.segmentCount; i++) {
-        expect(result.startCapSuppression[i]).toBe(0);
-        expect(result.endCapSuppression[i]).toBe(0);
+        // Suppression is a continuous [0, 1] scalar on both sides.
+        for (const v of [result.startCapSuppression[i], result.endCapSuppression[i]]) {
+          expect(v).toBeGreaterThanOrEqual(0);
+          expect(v).toBeLessThanOrEqual(1);
+        }
+        if (i % 64 === 0) {
+          // Chain break (walk re-anchor): free start, and the previous
+          // segment's end is a free end too.
+          expect(result.startCapSuppression[i]).toBe(0);
+          if (i > 0) expect(result.endCapSuppression[i - 1]).toBe(0);
+        } else {
+          // Interior joint: both endpoint sides carry the SAME value,
+          // equal to what compute_cap_suppression emits for connected
+          // geometry: clamp(dot(dir_prev, dir_cur), 0, 1).
+          expect(result.startCapSuppression[i]).toBe(result.endCapSuppression[i - 1]);
+          const dir = (k: number): [number, number, number] => {
+            const k3 = k * 3;
+            const dx = result.endPositions[k3] - result.startPositions[k3];
+            const dy = result.endPositions[k3 + 1] - result.startPositions[k3 + 1];
+            const dz = result.endPositions[k3 + 2] - result.startPositions[k3 + 2];
+            const len = Math.hypot(dx, dy, dz);
+            return [dx / len, dy / len, dz / len];
+          };
+          const a = dir(i - 1);
+          const b = dir(i);
+          const expected = Math.min(Math.max(a[0] * b[0] + a[1] * b[1] + a[2] * b[2], 0), 1);
+          expect(result.startCapSuppression[i]).toBeCloseTo(expected, 5);
+          if (result.startCapSuppression[i] > 0) nonZeroJoints++;
+        }
       }
+      // The last segment's end is always a free end.
+      expect(result.endCapSuppression[result.segmentCount - 1]).toBe(0);
+      // A random walk turns by less than 90° about half the time — the
+      // generator must actually be producing non-zero joint suppression.
+      expect(nonZeroJoints).toBeGreaterThan(0);
     });
   });
 

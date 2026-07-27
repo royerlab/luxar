@@ -64,12 +64,12 @@ to the super-Gaussian.
 
 ## The cap factor and its suppression
 
-Each segment fades to `0.5` at its true endpoints
-(`baseCap = 0.5 + 0.5 × distToNearest / vWidthAtT`), giving a soft cap at a
-free polyline end rather than a hard flat cut. The cap is computed
-fragment-side rather than vertex-side because with only 4 vertices per
-quad, a vertex-side `min(t, 1−t) × segLen / width` collapses to `0.5`
-everywhere — there's no vertex at the body midpoint to interpolate from.
+Each segment fades to `0.5` at its true endpoints (a per-endpoint ramp
+`0.5 + 0.5 × dist / vWidthAtT`), giving a soft cap at a free polyline end
+rather than a hard flat cut. The cap is computed fragment-side rather than
+vertex-side because with only 4 vertices per quad, a vertex-side
+`min(t, 1−t) × segLen / width` collapses to `0.5` everywhere — there's no
+vertex at the body midpoint to interpolate from.
 
 **That dimming is only correct where a neighbouring quad overlaps the
 endpoint.** The quad spans exactly `[start, end]` — there is no longitudinal
@@ -83,7 +83,22 @@ the inner side of the turn, and at a branch point, where three or more quads
 stack around the hub.
 
 So the endpoint dimming is gated by a per-endpoint **suppression scalar** in
-`[0, 1]` (texel4.yz), applied as `capFactor = mix(baseCap, 1.0, suppression)`:
+`[0, 1]` (texel4.yz). Each endpoint's ramp is lifted by its own suppression
+and the two caps combine with `min()`:
+`capFactor = min(mix(startRamp, 1.0, suppressStart), mix(endRamp, 1.0, suppressEnd))`
+— evaluated independently per endpoint (not keyed on the nearest one), which
+makes the cap field continuous **within** each segment: the nearest-endpoint
+pick used to jump at the midpoint of segments shorter than `2 × width` when
+the two suppressions differ, the routine case for a polyline's first/last
+segment (issue #796). The old form was exactly continuous **across** the
+joint seam, so the `min()` form _relocates_ the discontinuity rather than
+leaving one behind: a strictly smaller step at the seam, appearing only when
+a segment is shorter than one width (its far-end ramp cannot reach `1.0`
+before the neighbour takes over) — at worst `0.5 × (1 − clamp(L/w))` (far
+end fully free, joint fully suppressed), scaling with `(1 − s_far)` in
+general, always ≤ the old midpoint jump, and zero for `L ≥ width`.
+Polyline-wide C⁰ continuity would need join geometry, not a per-endpoint
+scalar:
 
 | Endpoint                        | Suppression                                             | Why                                                                          |
 | ------------------------------- | ------------------------------------------------------- | ---------------------------------------------------------------------------- |
@@ -93,6 +108,10 @@ So the endpoint dimming is gated by a per-endpoint **suppression scalar** in
 | 90° or sharper                  | `0.0`                                                   | quads genuinely overlap; `0.5 + 0.5` is what makes the joint flat            |
 | Branch point (3+ segments)      | `0.0`                                                   | suppressing would stack the quads into a bright nub                          |
 | Free polyline end               | `0.0`                                                   | keep the soft cap                                                            |
+
+(The "tile"/"overlap" reasoning in this table is stated for the
+**data-space** angle; whether the quads actually tile or overlap on screen
+depends on the projected angle — see the projection caveat below.)
 
 Joints are matched by vertex **index**, not by position: a chain whose
 segments each carry their own duplicate copy of the shared point (what
@@ -109,7 +128,22 @@ culled or slice-trimmed neighbour does not anchor a joint. Because the
 suppression is a plain scalar multiplier on the intensity chain, it behaves
 identically in every blending mode.
 
-The remaining known artifact is the **outer-side miter wedge**: at a sharp
+**Known limitation — the suppression angle is data-space, the overlap is
+screen-space.** `compute_cap_suppression` measures the bend from the dot
+product of segment directions in display/data space, once per data commit;
+but the quads are expanded perpendicular to the **projected** segment
+direction, so whether two quads tile or overlap depends on the camera, and
+the scalar is never revisited as the camera moves. A sharp 3D bend viewed
+nearly in its own plane projects almost straight, keeps suppression `0`, and
+stays notched (exactly what every joint did before suppression existed — not
+a regression); a gentle 3D bend that happens to project sharp keeps
+suppression near `1` while the quads genuinely do overlap, summing to up to
+~2× body brightness over a width-sized lens that moves as the camera orbits.
+Straight joints are projection-invariant, so the bead-chain case the scalar
+targets is correct under every camera. A true fix needs a screen-space
+(per-frame) suppression, which is a design change tracked separately.
+
+The other known artifact is the **outer-side miter wedge**: at a sharp
 bend the two quads leave a small uncovered wedge on the outside of the turn.
 Closing it needs real join geometry (extending the quads longitudinally by a
 half-width), which is tracked separately.

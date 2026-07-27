@@ -266,16 +266,19 @@ export const LINE_PICK_FRAGMENT_SHADER = /* glsl */ `
       // cap factor in fragment (matches visual shader).
       float distFromStart = vT * vSegmentLength;
       float distFromEnd = (1.0 - vT) * vSegmentLength;
-      float distToNearest = min(distFromStart, distFromEnd);
       // Scale-free ratio; 1e-20 = pure div-by-zero guard (visual twin).
-      float capRamp = vWidthAtT > 1e-20
-        ? clamp(distToNearest / vWidthAtT, 0.0, 1.0)
+      float startRamp = vWidthAtT > 1e-20
+        ? clamp(distFromStart / vWidthAtT, 0.0, 1.0)
         : 1.0;
-      float baseCap = 0.5 + 0.5 * capRamp;
-      // step(distFromStart, distFromEnd) is 1 when start is closer (distFromEnd >= distFromStart).
-      float nearestIsStart = step(distFromStart, distFromEnd);
-      float nearestSuppress = mix(vCapSuppressEnd, vCapSuppressStart, nearestIsStart);
-      float capFactor = mix(baseCap, 1.0, nearestSuppress);
+      float endRamp = vWidthAtT > 1e-20
+        ? clamp(distFromEnd / vWidthAtT, 0.0, 1.0)
+        : 1.0;
+      // Per-endpoint cap lifted by its own suppression, combined with
+      // min() — removes the intra-segment midpoint jump (visual twin;
+      // a residual sub-width joint-seam step is documented there).
+      float startCap = mix(0.5 + 0.5 * startRamp, 1.0, vCapSuppressStart);
+      float endCap = mix(0.5 + 0.5 * endRamp, 1.0, vCapSuppressEnd);
+      float capFactor = min(startCap, endCap);
 
       // 1e-20 floor = degenerate-smoothstep guard only (scene-relative
       // uNearCull; see the vertex-stage nearCull note).

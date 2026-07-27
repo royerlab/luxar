@@ -325,6 +325,20 @@ describe('lines_clipping: calculate_segment_lengths', () => {
     expect(output[0]).toBe(5); // 3-4-5 triangle
     expect(output[1]).toBeCloseTo(Math.sqrt(3), 5);
   });
+
+  it('returns the finite true length on huge coordinates (no f32 squared-length overflow)', () => {
+    // Component delta 2e30 squares to 4e60 — far past f32::MAX (~3.4e38).
+    // The reference reads f32 inputs but accumulates in f64 (the contract
+    // the Rust kernel must match — see the WASM parity twin, #793).
+    const startPos = new Float32Array([-1e30, 0, 0]);
+    const endPos = new Float32Array([1e30, 0, 0]);
+    const output = new Float32Array(1);
+
+    calculate_segment_lengths(startPos, endPos, 1, output);
+
+    expect(Number.isFinite(output[0])).toBe(true);
+    expect(output[0]).toBe(Math.fround(endPos[0] - startPos[0]));
+  });
 });
 
 describe('lines_clipping: compute_cap_suppression', () => {
@@ -438,8 +452,9 @@ describe('lines_clipping: compute_cap_suppression', () => {
     // differ (sign = -1), making the raw value -1. Every other geometry keeps
     // it in [0, 1], so this is the sole case that exercises the LOWER clamp —
     // without it a fold-back would emit a negative suppression, which the
-    // shader's mix(baseCap, 1.0, s) would turn into a cap BELOW 0.5 (a
-    // darker-than-intended notch) instead of the full cap the overlap needs.
+    // shader's per-endpoint mix(0.5 + 0.5 * ramp, 1.0, s) would turn into a
+    // cap BELOW 0.5 (a darker-than-intended notch) instead of the full cap
+    // the overlap needs.
     const foldStart = new Float32Array(2);
     const foldEnd = new Float32Array(2);
     compute_cap_suppression(

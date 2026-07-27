@@ -49,7 +49,6 @@ import {
   clamp,
   mix,
   length,
-  step,
   smoothstep,
   exp,
   texture,
@@ -273,7 +272,8 @@ export function lineWebGPUFactory(
   // band). Ortho graphs skip the varying entirely (compile-time
   // variant; fade is identically 1).
   const vViewZ: TSLNode | null = config.isOrtho ? null : varying(float(0.0));
-  // Clipped flags are per-instance — same across all 4 quad verts.
+  // Continuous [0, 1] cap-suppression scalars, one per endpoint —
+  // per-instance, same across all 4 quad verts.
   const vCapSuppressStart: TSLNode = varying(float(0.0)).setInterpolation('flat');
   const vCapSuppressEnd: TSLNode = varying(float(0.0)).setInterpolation('flat');
   // Per-endpoint opacity, interpolated along the segment (deliberately
@@ -535,21 +535,32 @@ export function lineWebGPUFactory(
     // endpoints and straight-through interior joints). Mirrors GLSL.
     const distFromStart: TSLNode = vT.mul(vSegmentLength);
     const distFromEnd: TSLNode = float(1.0).sub(vT).mul(vSegmentLength);
-    const distToNearest: TSLNode = min(distFromStart, distFromEnd);
-    // distToNearest / vWidthAtT is a scale-free ratio (both world
-    // units) — the guard is a pure div-by-zero threshold at 1e-20 (an
-    // absolute 1e-4 skipped the ramp for valid sub-1e-4-unit widths).
-    const capRamp: TSLNode = vWidthAtT
+    // dist / vWidthAtT is a scale-free ratio (both world units) — the
+    // guard is a pure div-by-zero threshold at 1e-20 (an absolute 1e-4
+    // skipped the ramp for valid sub-1e-4-unit widths).
+    const startRamp: TSLNode = vWidthAtT
       .greaterThan(float(1e-20))
       // `.toVar()` on the chained branch — see the vertex-stage
       // rawPixelWidth select for why this is needed.
-      .select(clamp(distToNearest.div(vWidthAtT), 0.0, 1.0).toVar(), float(1.0));
-    const baseCap: TSLNode = float(0.5).add(capRamp.mul(0.5));
-    // nearestIsStart = step(distFromStart, distFromEnd): 1 when
-    // distFromEnd ≥ distFromStart → start is nearest.
-    const nearestIsStart: TSLNode = step(distFromStart, distFromEnd);
-    const nearestSuppress: TSLNode = mix(vCapSuppressEnd, vCapSuppressStart, nearestIsStart);
-    const capFactor: TSLNode = mix(baseCap, float(1.0), nearestSuppress);
+      .select(clamp(distFromStart.div(vWidthAtT), 0.0, 1.0).toVar(), float(1.0));
+    const endRamp: TSLNode = vWidthAtT
+      .greaterThan(float(1e-20))
+      .select(clamp(distFromEnd.div(vWidthAtT), 0.0, 1.0).toVar(), float(1.0));
+    // Each endpoint's cap ramp is lifted by ITS OWN suppression, then
+    // combined with min() — a nearest-endpoint pick was discontinuous at
+    // the midpoint of segments shorter than 2*width with unequal
+    // suppressions. Continuous WITHIN a segment; a residual sub-width
+    // seam step remains across a joint (always <= the old midpoint jump,
+    // zero for L >= width — see the GLSL twin's note). Reduces to the old
+    // single-ramp behaviour for equal suppressions or non-overlapping cap
+    // regions. Mirrors GLSL.
+    const startCap: TSLNode = mix(
+      float(0.5).add(startRamp.mul(0.5)),
+      float(1.0),
+      vCapSuppressStart
+    );
+    const endCap: TSLNode = mix(float(0.5).add(endRamp.mul(0.5)), float(1.0), vCapSuppressEnd);
+    const capFactor: TSLNode = min(startCap, endCap);
 
     const intensity: TSLNode = capFactor
       .mul(perpFalloff)

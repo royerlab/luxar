@@ -167,9 +167,11 @@ describe('LineMaterial', () => {
       expect(material.fragmentShader).not.toContain('1.0 - p * p');
       expect(material.fragmentShader).not.toContain('LUXAR_SHARPNESS_TWO');
 
-      // cap factor is computed in fragment from vT/vSegmentLength/etc.
+      // cap factor is computed in fragment from vT/vSegmentLength/etc.,
+      // one ramp per endpoint (#796).
       expect(material.fragmentShader).toContain('capFactor');
-      expect(material.fragmentShader).toContain('distToNearest');
+      expect(material.fragmentShader).toContain('distFromStart');
+      expect(material.fragmentShader).toContain('distFromEnd');
       expect(material.fragmentShader).toContain('vT');
 
       // Check for anti-aliasing and intensity scaling
@@ -264,18 +266,25 @@ describe('LineMaterial', () => {
       const material = new LineMaterial();
 
       // cap factor at endpoints should be 0.5 for seamless joints.
-      // Now computed in the fragment shader from interpolated vT.
+      // Now computed in the fragment shader from interpolated vT, with
+      // one ramp per endpoint (issue #796: a single nearest-endpoint
+      // ramp was discontinuous on short segments).
       expect(material.fragmentShader).toContain('0.5 + 0.5');
-      expect(material.fragmentShader).toContain('distToNearest');
+      expect(material.fragmentShader).toContain('distFromStart');
+      expect(material.fragmentShader).toContain('distFromEnd');
     });
 
     it('should handle clipped endpoints correctly (in fragment)', () => {
       const material = new LineMaterial();
 
-      // clipped endpoints should use full intensity (1.0). Cap-clipping
-      // logic now lives in the fragment shader.
-      expect(material.fragmentShader).toContain('nearestSuppress');
-      expect(material.fragmentShader).toContain('mix(baseCap, 1.0, nearestSuppress)');
+      // Clipped/suppressed endpoints should lift THEIR OWN ramp to full
+      // intensity (1.0), and the two per-endpoint caps combine with min()
+      // (issue #796). Cap-clipping logic lives in the fragment shader.
+      expect(material.fragmentShader).toContain(
+        'mix(0.5 + 0.5 * startRamp, 1.0, vCapSuppressStart)'
+      );
+      expect(material.fragmentShader).toContain('mix(0.5 + 0.5 * endRamp, 1.0, vCapSuppressEnd)');
+      expect(material.fragmentShader).toContain('min(startCap, endCap)');
     });
 
     it('should use world-space to pixel conversion', () => {

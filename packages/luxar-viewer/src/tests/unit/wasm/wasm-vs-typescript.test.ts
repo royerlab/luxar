@@ -1322,17 +1322,49 @@ describe('WASM vs TypeScript Comparison', () => {
       expect(arraysAlmostEqual(wasmOutput, tsOutput)).toBe(true);
     });
 
+    it.skipIf(!wasmFilesExist)(
+      'calculate_segment_lengths should match on huge coordinates (f32 squared-length overflow)',
+      () => {
+        // Regression (#793): Rust accumulated the squared length in f32,
+        // overflowing to Infinity once a component delta passed
+        // sqrt(f32::MAX) ≈ 1.8e19, while the TS mirror reads the same f32
+        // inputs but widens to f64 and returned the true value. Both now
+        // accumulate in f64 and must agree on the finite result.
+        const startPos = new Float32Array([-1e30, 0, 0]);
+        const endPos = new Float32Array([1e30, 0, 0]);
+        const tsOutput = new Float32Array(1);
+        const wasmOutput = new Float32Array(1);
+
+        tsModule.calculate_segment_lengths(startPos, endPos, 1, tsOutput);
+        wasmModule!.calculate_segment_lengths(startPos, endPos, 1, wasmOutput);
+
+        expect(Number.isFinite(tsOutput[0])).toBe(true);
+        expect(Number.isFinite(wasmOutput[0])).toBe(true);
+        expect(wasmOutput[0]).toBe(tsOutput[0]);
+        // Exact expected value: the f64 delta of the f32 inputs, rounded
+        // back to f32 on store.
+        expect(tsOutput[0]).toBe(Math.fround(endPos[0] - startPos[0]));
+      }
+    );
+
     it.skipIf(!wasmFilesExist)('compute_cap_suppression should match', () => {
       // A 4-segment chain that exercises every branch of the kernel in one
-      // shot: a straight-through joint, a 90-degree bend, a clipped endpoint,
-      // and a culled neighbour.
-      //   v0 -> v1 -> v2 (straight, +x), v2 -> v3 (turns +y), v3 -> v4 (culled)
+      // shot: a straight-through joint, a FRACTIONAL 45-degree bend, a
+      // genuinely clipped endpoint (t2 < 1), and a culled neighbour.
+      //   v0 -> v1 -> v2 (straight, +x), v2 -> v3 (45° towards +y, its far
+      //   end slice-trimmed at t2 = 0.6), v3 -> v4 (culled)
+      // The 45° joint pins a real fractional value (cos 45° ≈ 0.7071) on
+      // BOTH backends — a Rust build that quantised the scalar to a boolean
+      // would pass a 0/1-only fixture but fails here.
+      const d = Math.SQRT1_2;
       const segments = new Uint32Array([0, 1, 1, 2, 2, 3, 3, 4]);
       const visibility = new Uint8Array([1, 1, 1, 0]);
       const t1Params = new Float32Array([0.0, 0.0, 0.0, 0.0]);
-      const t2Params = new Float32Array([1.0, 1.0, 1.0, 1.0]);
+      const t2Params = new Float32Array([1.0, 1.0, 0.6, 1.0]);
       const startPositions = new Float32Array([0, 0, 0, 1, 0, 0, 2, 0, 0]);
-      const endPositions = new Float32Array([1, 0, 0, 2, 0, 0, 2, 1, 0]);
+      // Segment 2 heads 45° off +x; its stored end is the clipped position
+      // at t = 0.6 along the way to v3 (direction is unchanged by the trim).
+      const endPositions = new Float32Array([1, 0, 0, 2, 0, 0, 2 + 0.6 * d, 0.6 * d, 0]);
 
       const tsStart = new Float32Array(3);
       const tsEnd = new Float32Array(3);
@@ -1367,9 +1399,22 @@ describe('WASM vs TypeScript Comparison', () => {
       expect(wasmCount).toBe(tsCount);
       expect(arraysAlmostEqual(wasmStart, tsStart)).toBe(true);
       expect(arraysAlmostEqual(wasmEnd, tsEnd)).toBe(true);
-      // Pin the expected shape too, so a matched-but-wrong pair still fails.
-      expect(Array.from(tsStart)).toEqual([0, 1, 0]);
-      expect(Array.from(tsEnd)).toEqual([1, 0, 0]);
+      // Pin the expected values on BOTH backends, so a matched-but-wrong
+      // pair still fails — including the fractional 45° suppression.
+      for (const [start, end] of [
+        [tsStart, tsEnd],
+        [wasmStart, wasmEnd],
+      ]) {
+        // seg0: free start; straight joint at v1.
+        expect(start[0]).toBe(0);
+        expect(end[0]).toBeCloseTo(1, 6);
+        // seg1: straight joint at v1; 45° joint at v2 — fractional cos 45°.
+        expect(start[1]).toBeCloseTo(1, 6);
+        expect(end[1]).toBeCloseTo(d, 5);
+        // seg2: 45° joint at v2; clipped far end (t2 = 0.6 < 1) -> 1.
+        expect(start[2]).toBeCloseTo(d, 5);
+        expect(end[2]).toBe(1);
+      }
     });
 
     it.skipIf(!wasmFilesExist)(

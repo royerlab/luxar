@@ -485,18 +485,26 @@ pub fn calculate_segment_lengths(
         visible_count
     );
 
+    // The squared length is accumulated in f64: in f32 it overflows to
+    // infinity once a component delta exceeds sqrt(f32::MAX) ≈ 1.8e19, while
+    // the TypeScript mirror reads the same f32 inputs and computes in f64,
+    // returning the true value — the two backends must agree (same fix as
+    // the compute_cap_suppression direction loop below). The result is
+    // stored back as f32.
     for i in 0..visible_count {
-        let dx = end_positions[i * 3] - start_positions[i * 3];
-        let dy = end_positions[i * 3 + 1] - start_positions[i * 3 + 1];
-        let dz = end_positions[i * 3 + 2] - start_positions[i * 3 + 2];
-        output[i] = (dx * dx + dy * dy + dz * dz).sqrt();
+        let dx = end_positions[i * 3] as f64 - start_positions[i * 3] as f64;
+        let dy = end_positions[i * 3 + 1] as f64 - start_positions[i * 3 + 1] as f64;
+        let dz = end_positions[i * 3 + 2] as f64 - start_positions[i * 3 + 2] as f64;
+        output[i] = (dx * dx + dy * dy + dz * dz).sqrt() as f32;
     }
 }
 
 /// Per-endpoint cap suppression in [0, 1] (drives the shader cap factor).
 ///
 /// The line fragment shader dims each segment towards `0.5` at its own
-/// endpoints (`capFactor = mix(baseCap, 1.0, suppression)`). That dimming is
+/// endpoints, with each endpoint's ramp lifted by its own suppression
+/// (`capFactor = min(mix(startRamp, 1.0, suppress_start), mix(endRamp, 1.0,
+/// suppress_end))`). That dimming is
 /// only correct where a neighbouring quad *overlaps* the endpoint and adds the
 /// missing half back — the quads span exactly `[start, end]`, so collinear
 /// neighbours tile instead of overlapping and the dimming becomes a dark notch
@@ -543,8 +551,10 @@ pub fn calculate_segment_lengths(
 ///
 /// Unlike the other lines kernels, this one allocates inside wasm: `code_sum`
 /// + `degree` (5 B per source vertex) and `dirs` (12 B per visible segment).
-/// On the largest bundled lines scene (2.7M segments) that is a ~34 MB
-/// marginal high-water mark on the module's linear memory, on top of the
+/// On the largest bundled lines scene (2.7M segments) `dirs` alone is
+/// ~32.4 MB, and for polyline-shaped data (vertices ≈ segments) the two
+/// vertex tables add another ~13.5 MB — a ~46 MB marginal high-water mark
+/// (before allocator overhead) on the module's linear memory, on top of the
 /// ~138 MB the four pre-existing lines kernels already reach through
 /// wasm-bindgen slice marshalling — and wasm memory is never returned to the
 /// OS, so it stays reserved for the worker's lifetime. Both alternatives are
@@ -958,6 +968,24 @@ mod tests {
         assert!((output[2] - 0.0).abs() < 1e-6);
     }
 
+    /// Component deltas past sqrt(f32::MAX) ≈ 1.8e19 must not overflow to
+    /// infinity: the squared length accumulates in f64 (matching the
+    /// TypeScript mirror, which computes in f64 from the same f32 inputs).
+    #[test]
+    fn test_calculate_segment_lengths_huge_coordinates_no_f32_overflow() {
+        let starts: Vec<f32> = vec![-1e30, 0.0, 0.0];
+        let ends: Vec<f32> = vec![1e30, 0.0, 0.0];
+        let mut output = vec![0.0f32; 1];
+
+        calculate_segment_lengths(&starts, &ends, 1, &mut output);
+
+        assert!(output[0].is_finite());
+        // Exact expected value: the f64 delta of the two f32 inputs, rounded
+        // back to f32 — bit-identical to the TypeScript mirror.
+        let expected = (1e30f32 as f64 - (-1e30f32) as f64) as f32;
+        assert_eq!(output[0], expected);
+    }
+
     /// 4 disjoint segments (no shared vertices) → clipped-flag path only.
     #[test]
     fn test_compute_cap_suppression_clipped_flags() {
@@ -1039,6 +1067,7 @@ mod tests {
     fn test_compute_cap_suppression_bend_and_branch() {
         // v0 -> v1 along +x, then v1 -> v2 along +y.
         let mut out_start = vec![0.0f32; 2];
+        let mut out_end = [0.0f32; 2];
         compute_cap_suppression(
             &[0, 1, 1, 2],
             &[1, 1],
@@ -1049,12 +1078,13 @@ mod tests {
             &[0.0, 0.0, 0.0, 1.0, 0.0, 0.0],
             &[1.0, 0.0, 0.0, 1.0, 1.0, 0.0],
             &mut out_start,
-            &mut vec![0.0f32; 2],
+            &mut out_end,
         );
         assert_eq!(out_start[1], 0.0);
 
         // Three segments radiating from vertex 0 — a hub, not a joint.
         let mut hub = vec![0.0f32; 3];
+        let mut hub_end = [0.0f32; 3];
         compute_cap_suppression(
             &[0, 1, 0, 2, 0, 3],
             &[1, 1, 1],
@@ -1065,9 +1095,88 @@ mod tests {
             &[0.0; 9],
             &[1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
             &mut hub,
-            &mut vec![0.0f32; 3],
+            &mut hub_end,
         );
         assert_eq!(hub, vec![0.0, 0.0, 0.0]);
+    }
+
+    /// A gentle 45-degree bend interpolates: suppression = cos(45°) ≈ 0.7071
+    /// (mirrors the TypeScript reference test — the value must be genuinely
+    /// fractional, not quantised to 0/1).
+    #[test]
+    fn test_compute_cap_suppression_fractional_bend() {
+        let d = std::f32::consts::FRAC_1_SQRT_2;
+        let mut out_start = vec![0.0f32; 2];
+        let mut out_end = vec![0.0f32; 2];
+        compute_cap_suppression(
+            &[0, 1, 1, 2],
+            &[1, 1],
+            &[0.0, 0.0],
+            &[1.0, 1.0],
+            2,
+            3,
+            &[0.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+            &[1.0, 0.0, 0.0, 1.0 + d, d, 0.0],
+            &mut out_start,
+            &mut out_end,
+        );
+        assert!((out_end[0] - d).abs() < 1e-5);
+        assert!((out_start[1] - d).abs() < 1e-5);
+    }
+
+    /// Both segments END at the shared vertex (v0 -> v1 <- v2): opposing
+    /// stored orientation, but geometrically a straight continuation — the
+    /// endpoint-bit sign flip must still yield full suppression.
+    #[test]
+    fn test_compute_cap_suppression_opposing_orientation() {
+        let mut out_start = vec![0.0f32; 2];
+        let mut out_end = vec![0.0f32; 2];
+        compute_cap_suppression(
+            &[0, 1, 2, 1],
+            &[1, 1],
+            &[0.0, 0.0],
+            &[1.0, 1.0],
+            2,
+            3,
+            &[0.0, 0.0, 0.0, 2.0, 0.0, 0.0],
+            &[1.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+            &mut out_start,
+            &mut out_end,
+        );
+        assert!((out_end[0] - 1.0).abs() < 1e-6);
+        assert!((out_end[1] - 1.0).abs() < 1e-6);
+        assert_eq!(out_start[0], 0.0);
+        assert_eq!(out_start[1], 0.0);
+    }
+
+    /// Non-contiguous visibility: the invisible middle segment must not shift
+    /// the compacted output indexing — the two SURVIVING segments share vertex
+    /// 1 and form a straight joint (guards against a source-order vs
+    /// compacted-index mixup in the direction table).
+    #[test]
+    fn test_compute_cap_suppression_non_contiguous_visibility() {
+        // seg0: v0 -> v1 (visible), seg1: v3 -> v4 (culled, disjoint),
+        // seg2: v1 -> v2 (visible). Positions are compacted: 2 visible only.
+        let mut out_start = vec![0.0f32; 2];
+        let mut out_end = vec![0.0f32; 2];
+        let count = compute_cap_suppression(
+            &[0, 1, 3, 4, 1, 2],
+            &[1, 0, 1],
+            &[0.0, 0.0, 0.0],
+            &[1.0, 1.0, 1.0],
+            3,
+            5,
+            &[0.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+            &[1.0, 0.0, 0.0, 2.0, 0.0, 0.0],
+            &mut out_start,
+            &mut out_end,
+        );
+        assert_eq!(count, 2);
+        // Straight-through joint at v1; free outer ends keep the cap.
+        assert_eq!(out_start[0], 0.0);
+        assert!((out_end[0] - 1.0).abs() < 1e-6);
+        assert!((out_start[1] - 1.0).abs() < 1e-6);
+        assert_eq!(out_end[1], 0.0);
     }
 
     #[test]

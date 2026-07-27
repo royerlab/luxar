@@ -450,31 +450,46 @@ export const LINE_FRAGMENT_SHADER = /* glsl */ `
       // cap factor in fragment. With the 4-vertex quad, vertex-side
       // computation produced 0.5 everywhere. Compute it here so the
       // segment body reaches the documented 1.0.
-      // - distance to nearest endpoint along the segment (world units)
+      // - one ramp per endpoint, from the distance to that endpoint
+      //   along the segment (world units)
       // - the per-endpoint suppression scalar (texel4.yz, [0, 1]) lifts
-      //   the ramp back to 1.0 wherever dimming would be wrong: a
+      //   its endpoint's ramp back to 1.0 wherever dimming would be wrong: a
       //   slice-clipped endpoint, or a straight-through interior joint
       //   whose neighbouring quad TILES rather than overlaps (nothing
       //   there to add the missing half back). Computed once per commit
       //   in compute_cap_suppression (wasm/rust/src/lines_clipping.rs).
       float distFromStart = vT * vSegmentLength;
       float distFromEnd = (1.0 - vT) * vSegmentLength;
-      float distToNearest = min(distFromStart, distFromEnd);
-      // distToNearest / vWidthAtT is a scale-free ratio (both world
-      // units), so the guard is a pure div-by-zero threshold at 1e-20 —
-      // an absolute 1e-4 skipped the cap ramp for valid sub-1e-4-unit
+      // dist / vWidthAtT is a scale-free ratio (both world units), so
+      // the guard is a pure div-by-zero threshold at 1e-20 — an
+      // absolute 1e-4 skipped the cap ramp for valid sub-1e-4-unit
       // widths (tiny-unit scenes). clamp() bounds the quotient.
-      float capRamp = vWidthAtT > 1e-20
-        ? clamp(distToNearest / vWidthAtT, 0.0, 1.0)
+      float startRamp = vWidthAtT > 1e-20
+        ? clamp(distFromStart / vWidthAtT, 0.0, 1.0)
         : 1.0;
-      float baseCap = 0.5 + 0.5 * capRamp;
+      float endRamp = vWidthAtT > 1e-20
+        ? clamp(distFromEnd / vWidthAtT, 0.0, 1.0)
+        : 1.0;
 
-      // Blend towards full intensity by the nearest endpoint's suppression.
-      // step(distFromStart, distFromEnd) is 1 when distFromEnd >= distFromStart,
-      // i.e. the START is the nearest endpoint.
-      float nearestIsStart = step(distFromStart, distFromEnd);
-      float nearestSuppress = mix(vCapSuppressEnd, vCapSuppressStart, nearestIsStart);
-      float capFactor = mix(baseCap, 1.0, nearestSuppress);
+      // Each endpoint's cap ramp is lifted towards full intensity by ITS
+      // OWN suppression, then the two are combined with min(). Keying the
+      // ramp on the nearest endpoint only was discontinuous at the
+      // midpoint of segments shorter than 2*width when the suppressions
+      // differ (the first/last segment of every polyline: one free end,
+      // one suppressed joint) — though exactly continuous ACROSS the
+      // joint seam. min() RELOCATES that discontinuity: continuous within
+      // the segment, with a strictly smaller step moved to the seam, and
+      // only when the segment is shorter than ONE width (its far-end ramp
+      // cannot reach 1.0 before the neighbour takes over). Worst case
+      // 0.5*(1 - clamp(L/w)) (far end fully free, joint fully
+      // suppressed); the general case scales by (1 - s_far). Always <=
+      // the old midpoint jump, zero for L >= width. min() reduces to the
+      // old single-ramp behaviour when both suppressions are equal or the
+      // two width-sized cap regions do not overlap (the far ramp
+      // saturates at 1.0).
+      float startCap = mix(0.5 + 0.5 * startRamp, 1.0, vCapSuppressStart);
+      float endCap = mix(0.5 + 0.5 * endRamp, 1.0, vCapSuppressEnd);
+      float capFactor = min(startCap, endCap);
 
       // Apply cap factor for correct joint intensity
       // Per-fragment near fade from the interpolated view depth (see
