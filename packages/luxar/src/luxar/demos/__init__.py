@@ -33,7 +33,7 @@ from ._dependencies import (
     MissingDependencyError,
     require_module,
 )
-from .data_fetch import (
+from ..utils.data_fetch import (
     DatasetNotFound,
     LocalComputeDataset,
     dataset_spec,

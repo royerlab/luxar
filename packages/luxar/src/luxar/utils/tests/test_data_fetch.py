@@ -14,8 +14,8 @@ from pathlib import Path
 
 import pytest
 
-from luxar.demos import data_fetch
-from luxar.demos.data_fetch import (
+from luxar.utils import data_fetch
+from luxar.utils.data_fetch import (
     DatasetNotFound,
     LocalComputeDataset,
     ensure_dataset,

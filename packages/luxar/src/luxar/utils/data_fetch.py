@@ -31,22 +31,30 @@ import json
 import shutil
 from functools import lru_cache
 from pathlib import Path
-from typing import Optional
+from types import TracebackType
+from typing import Any, Optional
 
 from arbol import aprint, asection
 
 # Reuse the cache root, packaged-data dir, and LFS/staleness helpers so this
 # module and load_precomputed_gsplats share one notion of "the cache".
-from ..utils.demos import (
+from .demos import (
     _DEFAULT_CACHE_ROOT,
     _DEMOS_DATA_DIR,
     _cache_is_stale,
     is_lfs_pointer,
 )
 
-#: Packaged manifest. Anchored to this file rather than derived from
-#: ``_DEMOS_DATA_DIR`` so it stays reachable once R17 step 4 removes the data tree.
-MANIFEST_PATH = Path(__file__).resolve().parent / "data_manifest.json"
+#: Packaged manifest, resolved the same way ``demos._DEMOS_DATA_DIR`` is: this
+#: module lives in ``luxar/utils/`` and the manifest ships in ``luxar/demos/``.
+#: Anchored to ``__file__`` rather than derived from ``_DEMOS_DATA_DIR`` so it
+#: stays reachable once R17 step 4 removes the data tree.
+MANIFEST_PATH = Path(__file__).resolve().parent.parent / "demos" / "data_manifest.json"
+
+#: A decoded JSON object out of the manifest — the manifest itself, a dataset
+#: spec, a Zenodo record, or a single file entry. The values are heterogeneous
+#: JSON (str / int / list / nested object), so ``Any`` is the honest element type.
+Manifest = dict[str, Any]
 
 # Buckets that this module does NOT fetch (caller builds them locally).
 _LOCAL_BUCKETS = {"local-compute", "regenerate"}
@@ -63,7 +71,7 @@ class LocalComputeDataset(RuntimeError):
     CPU rebuild) datasets. Carries the manifest ``strategy``/``reason`` text.
     """
 
-    def __init__(self, name: str, spec: dict):
+    def __init__(self, name: str, spec: Manifest) -> None:
         self.name = name
         self.spec = spec
         reason = spec.get("reason", "")
@@ -77,12 +85,13 @@ class LocalComputeDataset(RuntimeError):
 
 
 @lru_cache(maxsize=1)
-def load_manifest(path: Optional[str] = None) -> dict:
+def load_manifest(path: Optional[str] = None) -> Manifest:
     """Load and cache the demo-data manifest (JSON)."""
     p = Path(path) if path else MANIFEST_PATH
     try:
         with open(p, "r") as f:
-            return json.load(f)
+            manifest: Manifest = json.load(f)
+            return manifest
     except FileNotFoundError:
         raise FileNotFoundError(
             f"Demo-data manifest not found at {p}. It is a packaged resource that "
@@ -92,18 +101,19 @@ def load_manifest(path: Optional[str] = None) -> dict:
         ) from None
 
 
-def dataset_spec(name: str, manifest: Optional[dict] = None) -> dict:
+def dataset_spec(name: str, manifest: Optional[Manifest] = None) -> Manifest:
     """Return the manifest entry for *name* (raises :class:`DatasetNotFound`)."""
     m = manifest or load_manifest()
     try:
-        return m["datasets"][name]
+        spec: Manifest = m["datasets"][name]
+        return spec
     except KeyError:
         raise DatasetNotFound(
             f"{name!r} not in manifest ({sorted(m['datasets'])[:6]}…)"
         ) from None
 
 
-def zenodo_file_url(record: dict, filename: str) -> Optional[str]:
+def zenodo_file_url(record: Manifest, filename: str) -> Optional[str]:
     """Build a Zenodo file-download URL for *filename* in *record*, or None.
 
     Prefers an explicit ``base_url``; otherwise derives the standard
@@ -121,8 +131,8 @@ def zenodo_file_url(record: dict, filename: str) -> Optional[str]:
 
 
 def resolve_variant(
-    name: str, spec: dict, variant: Optional[str]
-) -> tuple[list[dict], Optional[str]]:
+    name: str, spec: Manifest, variant: Optional[str]
+) -> tuple[list[Manifest], Optional[str]]:
     """Return ``(files, variant_name)`` for a dataset, honouring size variants.
 
     A dataset with a ``variants`` map (e.g. h2afva's light ``51tp`` default vs
@@ -153,7 +163,7 @@ def ensure_dataset(
     variant: Optional[str] = None,
     recompute: bool = False,
     cache_root: Optional[Path] = None,
-    manifest: Optional[dict] = None,
+    manifest: Optional[Manifest] = None,
     verbose: bool = True,
 ) -> list[Path]:
     """Ensure a ``zenodo`` dataset's files are present locally; return their paths.
@@ -218,11 +228,11 @@ def _ensure_one(
     fname: str,
     sha: Optional[str],
     lfs_dir: Path,
-    record: dict,
+    record: Manifest,
     verbose: bool,
 ) -> Path:
     """Resolve a single file: cache → in-repo LFS → Zenodo, in that order."""
-    from ..utils.download import download_with_checksum, verify_file_checksum
+    from .download import download_with_checksum, verify_file_checksum
 
     # 1. Cache hit (checksum-verified when we know it).
     if dest.exists() and not is_lfs_pointer(dest):
@@ -256,8 +266,14 @@ def _ensure_one(
 class _null_ctx:
     """No-op context manager for the non-verbose path."""
 
-    def __enter__(self):
+    def __enter__(self) -> "_null_ctx":
         return self
 
-    def __exit__(self, *exc):
-        return False
+    def __exit__(
+        self,
+        exc_type: Optional[type[BaseException]],
+        exc: Optional[BaseException],
+        tb: Optional[TracebackType],
+    ) -> None:
+        # Returning None (not False) so mypy knows exceptions are never swallowed.
+        return None
