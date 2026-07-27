@@ -736,6 +736,13 @@ def generate_forest(
                 brightness = rng.uniform(0.88, 1.12)
                 colors = np.clip(colors * brightness + color_shift, 0.0, 1.0)
 
+                # Degenerate expansion (no F moves — possible only with
+                # hand-edited rules): the old "segments" authoring wrote a
+                # silent empty node; indexed authoring would be rejected by
+                # the writer ("requires at least 2 indices"), so skip.
+                if len(edges) == 0:
+                    continue
+
                 # Indexed line type: joints and branch points share vertex
                 # indices, so the viewer suppresses joint caps (no bead-chain
                 # look on thick trunks)

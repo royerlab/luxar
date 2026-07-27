@@ -8,14 +8,14 @@ All notable changes to Luxar are documented in this file.
 
 #### Fixed — demos authored continuous curves as exploded `segments`, defeating joint continuity (bead-chain gaps)
 
-Seven demo line nodes built genuinely continuous curves (helix particle
+Nine demo line nodes (across six demos) built genuinely continuous curves (helix particle
 tracks, detector rings, chromosome paths, jellyfish tentacles, L-system
 tree skeletons, cell tracks and trails) and then exploded them into
 duplicated start/end vertex pairs with `line_type="segments"`. The
 viewer's joint-cap suppression matches joints by shared vertex INDEX, so
 exploded authoring hides every joint — thick lines rendered as bead
 chains (visible gaps between segments) even after the shader-side joint
-fix. All seven nodes are now authored as `line_type="indexed"`: unique
+fix. All nine nodes are now authored as `line_type="indexed"`: unique
 per-vertex arrays + explicit per-curve edge lists, which also roughly
 halves their vertex data. Converted: `collision` (particle tracks +
 detector rings; neutral-particle tracks are now solid, dropping the
@@ -26,7 +26,7 @@ per-segment 5%/2% end-of-segment tapers became smooth per-vertex tapers),
 exactly during turtle interpretation with branch points shared by 3+
 edges), and `gsplats_4d_celegans_tracking` (cell tracks + fading trails —
 the per-hop discrete fade became a smooth per-vertex fade). The other
-five `segments` users (connectome/interactome/AS-graph edges, velocity
+seven `segments` call sites (connectome/interactome/AS-graph edges, velocity
 comets, earthquake spikes, grid lines) are genuinely disconnected and
 stay as-is. Regenerate demo datasets to pick up the fix.
 
