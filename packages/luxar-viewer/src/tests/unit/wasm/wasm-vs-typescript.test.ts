@@ -1371,6 +1371,62 @@ describe('WASM vs TypeScript Comparison', () => {
       expect(Array.from(tsStart)).toEqual([0, 1, 0]);
       expect(Array.from(tsEnd)).toEqual([1, 0, 0]);
     });
+
+    it.skipIf(!wasmFilesExist)(
+      'compute_cap_suppression should match on huge coordinates (f32 squared-length overflow)',
+      () => {
+        // Regression: the direction loop accumulated the squared length in f32,
+        // which overflows to infinity once a component delta passes
+        // sqrt(f32::MAX) ≈ 1.8e19. Rust then zeroed the direction and dropped
+        // the joint (suppression 0) while the TS mirror — reading the same f32
+        // inputs but accumulating in f64 — kept it (suppression 1). Since the TS
+        // backend is the PRODUCTION path above 16 dimensions, the same scene
+        // rendered differently at 17D than at 16D. Both now accumulate in f64.
+        const segments = new Uint32Array([0, 1, 1, 2]);
+        const visibility = new Uint8Array([1, 1]);
+        const t1Params = new Float32Array([0, 0]);
+        const t2Params = new Float32Array([1, 1]);
+        const C = 1e30; // well past the 1.8e19 f32 overflow threshold
+        const startPositions = new Float32Array([-C, 0, 0, 0, 0, 0]);
+        const endPositions = new Float32Array([0, 0, 0, C, 0, 0]);
+
+        const tsStart = new Float32Array(2);
+        const tsEnd = new Float32Array(2);
+        const wasmStart = new Float32Array(2);
+        const wasmEnd = new Float32Array(2);
+
+        tsModule.compute_cap_suppression(
+          segments,
+          visibility,
+          t1Params,
+          t2Params,
+          2,
+          3,
+          startPositions,
+          endPositions,
+          tsStart,
+          tsEnd
+        );
+        wasmModule!.compute_cap_suppression(
+          segments,
+          visibility,
+          t1Params,
+          t2Params,
+          2,
+          3,
+          startPositions,
+          endPositions,
+          wasmStart,
+          wasmEnd
+        );
+
+        // The shared vertex is a straight-through joint at any scale.
+        expect(tsEnd[0]).toBeCloseTo(1, 6);
+        expect(wasmEnd[0]).toBeCloseTo(1, 6);
+        expect(arraysAlmostEqual(wasmStart, tsStart)).toBe(true);
+        expect(arraysAlmostEqual(wasmEnd, tsEnd)).toBe(true);
+      }
+    );
   });
 
   // ============================================================================

@@ -530,8 +530,9 @@ export function lineWebGPUFactory(
 
     const widthScale: TSLNode = min(vPixelWidth.div(minPW), float(1.0));
 
-    // Cap factor — ramps to 1 inside body, 0.5 at endpoints; full at
-    // clipped endpoints. Mirrors the GLSL implementation.
+    // Cap factor — ramps to 1 inside body, 0.5 at FREE endpoints; lifted
+    // back to 1 by the per-endpoint suppression scalar (slice-clipped
+    // endpoints and straight-through interior joints). Mirrors GLSL.
     const distFromStart: TSLNode = vT.mul(vSegmentLength);
     const distFromEnd: TSLNode = float(1.0).sub(vT).mul(vSegmentLength);
     const distToNearest: TSLNode = min(distFromStart, distFromEnd);

@@ -93,11 +93,11 @@ function mulberry32(seed: number): () => number {
  *
  *   source arrays:   count × 17 Float32 (positions×2=6, colors×2=6,
  *                       widths×2=2, sharpness×2=2, length×1=1) × 4 B
- *                    + count × 2 Uint8  (clipped flags) × 1 B
- *                  = count × 70 B
+ *                    + count × 2 Float32 (cap suppression) × 4 B
+ *                  = count × 76 B
  *   line texture:    count × 24 floats × 4 B = count × 96 B
  *                    (6 texels/segment RGBA32F — see line-geometry.ts)
- *   ≈ 2.4× the source-array figure as a working JS heap estimate.
+ *   ≈ 2.3× the source-array figure as a working JS heap estimate.
  *
  * For 10 M segments: ~700 MB of source arrays → ~1.4 GB peak JS
  * heap during construction + packing. The bench machine needs the

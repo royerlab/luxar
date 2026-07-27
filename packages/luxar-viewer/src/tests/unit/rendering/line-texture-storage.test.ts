@@ -144,8 +144,8 @@ describe('attachLineStorage / writeLineTexels — fused writer round-trip', () =
       expect(arr[o + 13]).toBe(src.endColors[p3 + 1]);
       expect(arr[o + 14]).toBe(src.endColors[p3 + 2]);
       expect(arr[o + 15]).toBe(src.endSharpness[i]);
-      // texel 4: segmentLength, startCapSuppression, endCapSuppression, 0 (the Uint8
-      // clipped flags are read element-wise — 0/1 exact in Float32).
+      // texel 4: segmentLength, startCapSuppression, endCapSuppression, 0
+      // (suppression is a continuous [0, 1] Float32 scalar, copied verbatim).
       expect(arr[o + 16]).toBe(src.segmentLengths[i]);
       expect(arr[o + 17]).toBe(src.startCapSuppression[i]);
       expect(arr[o + 18]).toBe(src.endCapSuppression[i]);

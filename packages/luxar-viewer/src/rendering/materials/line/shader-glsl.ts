@@ -8,7 +8,8 @@
  *   - Cap factor is evaluated in the fragment shader. The vertex shader
  *     passes `vT`, `vSegmentLength`, `vWidthAtT`, `vCapSuppressStart`, and
  *     `vCapSuppressEnd`; the fragment evaluates the documented "0.5 at
- *     endpoints, 1.0 in body" profile per fragment.
+ *     FREE endpoints, 1.0 in body" profile per fragment, with the
+ *     suppression scalars lifting interior joints and clipped ends to 1.0.
  *   - Near-plane / behind-camera safety rejects segments where both
  *     endpoints are behind/near the camera (clipPos.w → 0/negative
  *     produces invalid NDC and a full-screen quad). When `uNearCull` is

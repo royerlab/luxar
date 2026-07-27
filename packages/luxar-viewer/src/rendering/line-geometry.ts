@@ -40,10 +40,10 @@
  *
  * All source arrays consumed by the texel writer arrive as the worker
  * projection's Float32 output (`ProcessedLinesData` — endpoint
- * interpolation always emits Float32), except the Uint8 clipped flags,
- * which the writer reads element-wise (0/1 values are exact in Float32,
- * so no widening allocation is needed — the interleaved era paid one
- * `new Float32Array(uint8)` per update for the same bits).
+ * interpolation always emits Float32), the per-endpoint cap suppression
+ * included: it is a continuous [0, 1] scalar, not a flag, so it needs no
+ * widening allocation (the interleaved era paid one
+ * `new Float32Array(uint8)` per update back when it was a 0/1 byte).
  *
  * Mirrors `point-geometry.ts` / `gsplat-geometry.ts` so the geometry
  * types share one storage model; the geometry-agnostic helpers live in
@@ -115,7 +115,7 @@ export function createLineQuadGeometry(): THREE.InstancedBufferGeometry {
 /**
  * The per-segment arrays the texel writer consumes — the worker
  * projection's Float32 endpoint output (see the module header; the
- * Uint8 clipped flags are read element-wise, no widening needed).
+ * cap-suppression scalars arrive Float32 too, no widening needed).
  */
 export interface LineTexelSource {
   /** Segment start positions (count × 3). */

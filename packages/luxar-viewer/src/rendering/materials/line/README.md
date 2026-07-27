@@ -94,6 +94,13 @@ So the endpoint dimming is gated by a per-endpoint **suppression scalar** in
 | Branch point (3+ segments)      | `0.0`                                                   | suppressing would stack the quads into a bright nub                          |
 | Free polyline end               | `0.0`                                                   | keep the soft cap                                                            |
 
+Joints are matched by vertex **index**, not by position: a chain whose
+segments each carry their own duplicate copy of the shared point (what
+`line_type="segments"` emits for abutting segments) has no shared index, so
+it keeps the cap at every joint and still shows the notch. Author connected
+geometry as `line_type="polyline"` to get continuous joints — position
+matching would also fuse two unrelated lines that merely touch.
+
 The scalar is computed once per commit, off the main thread, by
 `compute_cap_suppression` (`wasm/rust/src/lines_clipping.rs`, with the
 uncapped TypeScript reference in `wasm/typescript/lines-clipping.ts`). It

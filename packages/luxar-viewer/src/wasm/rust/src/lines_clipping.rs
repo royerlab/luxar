@@ -530,6 +530,28 @@ pub fn calculate_segment_lengths(
 /// (`t1 > 0` / `t2 < 1`) does not anchor a joint, and an invisible neighbour
 /// does not either.
 ///
+/// Joints are matched by vertex **index**, not by position. A chain whose
+/// segments each carry their own duplicate copy of the shared point (what
+/// `line_type="segments"` emits for abutting segments) is geometrically
+/// continuous but has no shared index, so it keeps the cap at every joint and
+/// still shows the notch. That is deliberate: a shared index means "the same
+/// vertex of the same polyline", whereas position matching would also fuse two
+/// unrelated lines that merely touch. Author connected geometry as
+/// `line_type="polyline"` (or reuse indices) to get continuous joints.
+///
+/// # Cost
+///
+/// Unlike the other lines kernels, this one allocates inside wasm: `code_sum`
+/// + `degree` (5 B per source vertex) and `dirs` (12 B per visible segment).
+/// On the largest bundled lines scene (2.7M segments) that is a ~34 MB
+/// marginal high-water mark on the module's linear memory, on top of the
+/// ~138 MB the four pre-existing lines kernels already reach through
+/// wasm-bindgen slice marshalling — and wasm memory is never returned to the
+/// OS, so it stays reserved for the worker's lifetime. Both alternatives are
+/// worse: dropping `dirs` and normalising per endpoint-pair costs ~2x the
+/// runtime of the whole lines projection, and quantising it breaks the
+/// bit-exact agreement with the TypeScript mirror.
+///
 /// # Arguments
 /// - `segments`: Vertex index pairs [numSegments * 2]
 /// - `visibility`: Visibility mask [numSegments]
@@ -605,17 +627,25 @@ pub fn compute_cap_suppression(
     // exactly the wanted fallback. Normalising per endpoint-pair instead cost
     // ~4 sqrt and two scattered position reads per segment and dominated the
     // whole lines projection.
+    // The squared length is accumulated in f64. In f32 it overflows to
+    // infinity once a component delta exceeds sqrt(f32::MAX) ≈ 1.8e19, which
+    // would zero the direction and silently drop the joint on a huge-coordinate
+    // scene — and, worse, disagree with the TypeScript mirror (which reads the
+    // same f32 inputs but computes in f64, so it does NOT overflow). That
+    // divergence is observable: the >16D TS backend would render the joint
+    // suppressed while the WASM path rendered it capped. f64 here is both the
+    // scale-free answer and the one that keeps the two backends identical.
     let mut dirs: Vec<f32> = vec![0.0; visible_count * 3];
     for i in 0..visible_count {
         let o = i * 3;
-        let dx = end_positions[o] - start_positions[o];
-        let dy = end_positions[o + 1] - start_positions[o + 1];
-        let dz = end_positions[o + 2] - start_positions[o + 2];
+        let dx = end_positions[o] as f64 - start_positions[o] as f64;
+        let dy = end_positions[o + 1] as f64 - start_positions[o + 1] as f64;
+        let dz = end_positions[o + 2] as f64 - start_positions[o + 2] as f64;
         let len = (dx * dx + dy * dy + dz * dz).sqrt();
         if len.is_finite() && len > 0.0 {
-            dirs[o] = dx / len;
-            dirs[o + 1] = dy / len;
-            dirs[o + 2] = dz / len;
+            dirs[o] = (dx / len) as f32;
+            dirs[o + 1] = (dy / len) as f32;
+            dirs[o + 2] = (dz / len) as f32;
         }
     }
 
@@ -700,7 +730,11 @@ fn joint_suppression(
     if mo + 2 >= dirs.len() || po + 2 >= dirs.len() {
         return 0.0;
     }
-    let dot = dirs[mo] * dirs[po] + dirs[mo + 1] * dirs[po + 1] + dirs[mo + 2] * dirs[po + 2];
+    // f64 to stay bit-identical to the TypeScript mirror, which reads the same
+    // f32 directions but accumulates in f64 (see the direction loop above).
+    let dot = dirs[mo] as f64 * dirs[po] as f64
+        + dirs[mo + 1] as f64 * dirs[po + 1] as f64
+        + dirs[mo + 2] as f64 * dirs[po + 2] as f64;
     // away = +dir at a start endpoint, -dir at an end endpoint, so the product
     // of the two signs is +1 exactly when the endpoint bits agree.
     let sign = if (my_code & 1) == (partner & 1) {
@@ -708,7 +742,7 @@ fn joint_suppression(
     } else {
         -1.0
     };
-    (-(sign * dot)).clamp(0.0, 1.0)
+    (-(sign * dot)).clamp(0.0, 1.0) as f32
 }
 
 #[cfg(test)]

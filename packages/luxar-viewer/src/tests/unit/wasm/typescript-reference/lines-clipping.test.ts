@@ -432,6 +432,32 @@ describe('lines_clipping: compute_cap_suppression', () => {
     expect(gentle[1]).toBeCloseTo(Math.SQRT1_2, 5);
   });
 
+  it('clamps a 180-degree fold-back joint to 0 (the only case with a negative raw value)', () => {
+    // v0 -> v1 travelling +x, then v1 -> v2 travelling BACK along -x. The two
+    // "away" vectors coincide, so dot(dirA, dirB) = -1 and the endpoint bits
+    // differ (sign = -1), making the raw value -1. Every other geometry keeps
+    // it in [0, 1], so this is the sole case that exercises the LOWER clamp —
+    // without it a fold-back would emit a negative suppression, which the
+    // shader's mix(baseCap, 1.0, s) would turn into a cap BELOW 0.5 (a
+    // darker-than-intended notch) instead of the full cap the overlap needs.
+    const foldStart = new Float32Array(2);
+    const foldEnd = new Float32Array(2);
+    compute_cap_suppression(
+      new Uint32Array([0, 1, 1, 2]),
+      new Uint8Array([1, 1]),
+      new Float32Array([0, 0]),
+      new Float32Array([1, 1]),
+      2,
+      3,
+      new Float32Array([0, 0, 0, 1, 0, 0]),
+      new Float32Array([1, 0, 0, 0, 0, 0]),
+      foldStart,
+      foldEnd
+    );
+    expect(foldEnd[0]).toBe(0);
+    expect(foldStart[1]).toBe(0);
+  });
+
   it('keeps the cap at a branch point (three segments meeting)', () => {
     // Three segments all starting at vertex 0 — a star hub. Suppressing here
     // would stack three quads into a bright nub.

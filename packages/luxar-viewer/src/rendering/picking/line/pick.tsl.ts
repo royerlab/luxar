@@ -137,7 +137,7 @@ export function linePickWebGPUFactory(
   const nearCull: TSLNode = max(uNearCull, float(1e-20));
 
   // Varyings declared up front, `.assign()`ed inside the vertex body.
-  // Per-segment-constant values (segment length, clipped flags, node
+  // Per-segment-constant values (segment length, cap suppression, node
   // id, element id) use `flat` interpolation — matches the GLSL3
   // `flat` qualifier on the same fields.
   const vSharpness: TSLNode = varying(float(0.0));
