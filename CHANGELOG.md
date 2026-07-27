@@ -6,6 +6,46 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Fixed — overlay HTML sanitizer: unsanitized nested subtrees + obfuscated `javascript:` URLs (#720)
+
+`OverlayManager.sanitizeHtml` _unwraps_ a tag outside its allowlist — lifting
+the children into the parent — rather than dropping it. Two bugs followed.
+
+- **Descendants of a disallowed tag were never sanitized.** The walk
+  `continue`d past such an element without scrubbing it or descending into it,
+  then lifted its subtree into the output verbatim, so the handlers on
+  `<x><img src=x onerror=…></x>` and `<form><p onclick=…>` survived, as did a
+  `javascript:` href under any unknown wrapper. Reachable through
+  `scene.add_html(...)`: Python's handler regex wants whitespace before the
+  attribute name, so the HTML-legal `<img/onerror=…>` separator walks past it.
+  And reachable without any evasion through `?src=<url>`, since a hand-crafted
+  zarr never meets the Python compiler at all — on that path this function is
+  the only control. Now two flat passes: scrub every element's attributes
+  regardless of its tag, then unwrap the disallowed ones.
+- **`javascript:` URLs survived trivial obfuscation.** The scheme test used
+  `value.trim()`, so it missed both interior tab/LF/CR (which the URL parser
+  strips from anywhere in a URL) and leading C0 controls (which it also
+  strips): `javascript&Tab;:`, `java&NewLine;script:` and `&#1;javascript:`
+  all reached the browser and fired. Reachable through `scene.add_html(...)`
+  too — `sanitize_html` matches the literal `javascript:` and never
+  HTML-decodes entities, so
+  `scene.add_html('<a href="javascript&Tab;:alert(1)">x</a>')` produced live
+  XSS in the viewer. ASCII whitespace and C0 controls are now stripped before
+  the scheme comparison. Still uncovered: `vbscript:`, `data:` and
+  `style: url(...)`. (`xlink:href` is inert only because SVG tags are not
+  allowlisted.)
+
+Design note: the unwrap pass runs outermost-first, so each node moves exactly
+once; the naive bottom-up ordering re-lifts the same payload once per enclosing
+wrapper.
+
+**Rendering change:** `ALLOWED_TAGS` and the attribute policy are unchanged,
+but a tag outside the allowlist nested inside another such tag no longer
+survives verbatim. `<section><hr></section>` rendered `<hr>` and now renders
+nothing; `<figure><figcaption>Cap</figcaption><img>` collapses to `Cap<img>`.
+The old walk stopped at the first disallowed tag on each path, so which
+wrappers survived depended on nesting depth; the new behaviour is uniform.
+
 #### Changed — three-geometry material-surface symmetry (deep-campaign flag closure)
 
 - **GSplat materials render single-pass** (`forceSinglePass: true`, both
