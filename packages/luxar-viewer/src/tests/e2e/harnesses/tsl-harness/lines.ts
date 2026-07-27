@@ -676,6 +676,43 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
     buildMesh: (m) => buildLineInstancedMesh(m, [-0.5, 0, 3], [0.5, 0, 3]),
     buildCamera: buildBehindCamera,
   },
+  // Segment CROSSING the camera plane: start at world z=1.5 (view depth
+  // -0.5, BEHIND the camera at z=1), end at the origin (view depth 1.0,
+  // in front). Exercises the vertex-stage near-plane SEGMENT clipping:
+  // the behind endpoint must be moved onto the nearCull plane before the
+  // screen-space expansion. Pre-clip, the w <= 0 endpoint turned the
+  // quad into an external (wrapped) primitive whose visible half drooped
+  // off the centerline with a razor edge through the profile — the
+  // close-zoom "one-sided profile" artifact. The parity test also
+  // asserts a CONTENT property (every lit column's centroid stays on the
+  // projected centerline), so this entry fails pre-fix, not just on
+  // backend divergence.
+  'line-crossing': {
+    source: LINE_SOURCE,
+    buildUniforms: () => ({
+      uLineTex: { value: buildLineDataTexture([0.15, 0, 1.5], [0.15, 0, 0]) },
+      uResolution: { value: new THREE.Vector2(64, 64) },
+      uIsOrtho: { value: 0 },
+      uNearCull: { value: 0.01 },
+      uMaxLinePixelWidth: { value: 32.0 },
+      uPerspectiveLineScale: { value: 64.0 },
+      uOrthoLineScale: { value: 1.0 },
+      uOpacity: { value: 1.0 },
+      uInvGamma: { value: 1.0 / 2.2 },
+      uIntensity: { value: 1.0 },
+      uOffset: { value: 0.0 },
+    }),
+    buildTSLMaterial: (uniforms) => {
+      const m = lineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
+        isOrtho: false,
+      }) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: (m) => buildLineInstancedMesh(m, [0.15, 0, 1.5], [0.15, 0, 0]),
+    buildCamera: buildBehindCamera,
+  },
   // B9c BUG-A regression: ortho line INSIDE the frustum but within the
   // uNearCull slab (view depth 0.15 < nearCull 0.5, camera near 0.1).
   // Pre-fix the ungated bothBehind cull hid it (while a point/gsplat at

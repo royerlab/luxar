@@ -1404,6 +1404,55 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     ).toBeGreaterThan(20);
   });
 
+  test('line-crossing: camera-plane-crossing segment clips at nearCull — no wrapped-quad band', async ({
+    page,
+  }) => {
+    await bootHarness(page);
+
+    const glslPixels = await runGLSL(page, 'line-crossing');
+    const tslResult = await runTSL(page, 'line-crossing');
+
+    // The in-front part of the segment must render on both backends…
+    assertBothRendered(glslPixels, tslResult.pixels, 'line-crossing');
+    expect(
+      meanAbsDiffPerCoveredPixel(glslPixels, tslResult.pixels),
+      'line-crossing parity'
+    ).toBeLessThan(2.0);
+
+    // …and the CONTENT assertion that fails pre-fix: the segment is
+    // horizontal (world y = 0), so the rendered band must be SYMMETRIC
+    // about the screen centerline — every lit column's centroid sits at
+    // y ≈ 31.5. Before the vertex-stage near-plane segment clipping, the
+    // behind-camera endpoint (clip w < 0) wrapped the quad into an
+    // external primitive whose visible half drooped to the bottom of the
+    // frame (per-column centroids drifting to ~44+) with a razor edge
+    // through the profile — the close-zoom "one-sided profile" bug.
+    const maxCentroidError = (px: number[]): number => {
+      let worst = 0;
+      for (let x = 0; x < 64; x++) {
+        let n = 0;
+        let sy = 0;
+        for (let y = 0; y < 64; y++) {
+          const o = (y * 64 + x) * 4;
+          if (px[o] + px[o + 1] + px[o + 2] > 10) {
+            n++;
+            sy += y;
+          }
+        }
+        if (n >= 3) worst = Math.max(worst, Math.abs(sy / n - 31.5));
+      }
+      return worst;
+    };
+    expect(
+      maxCentroidError(glslPixels),
+      'GLSL: band must stay centered on the projected centerline (drooping wedge = wrapped-quad regression)'
+    ).toBeLessThan(2.0);
+    expect(
+      maxCentroidError(tslResult.pixels),
+      'TSL: band must stay centered on the projected centerline (drooping wedge = wrapped-quad regression)'
+    ).toBeLessThan(2.0);
+  });
+
   test('mega with USE_VIGNETTE matches across backends', async ({ page }) => {
     await bootHarness(page);
 
