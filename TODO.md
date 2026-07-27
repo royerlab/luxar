@@ -620,6 +620,13 @@ to ship after). Sequencing is at the bottom.
 
 26 - **Lines compiler auto-partition heuristic** (three-geometry symmetry gap, staged): `add_points` auto-partitions large clouds at the compiler level; `add_lines` does not (documented at the seam in `core/group/adders/lines.py` — the `partition=False` sentinel is already normalized for the day it's wired). Wire the same heuristic for Lines (and evaluate GSplats parity) or decide it's permanently Points-only and update the adder docs.
 
+27 - **Probed-and-parked perf backlog** (measure-first campaign 2026-07-25/26 — verdicts + calibrated revisit triggers; raw archives `~/luxar-perf-campaign/`, method + numbers in the campaign memory. Campaign shipped L1 #693 + L8 #696; rejected-by-measurement archives #690/#694/#695; do NOT rebuild any of these without re-running the probe):
+    - **OPFS segment packing — DROPPED, definitive.** OPFS-warm reload steps cost exactly network-cold-localhost steps (44 ms = 44 ms; 100% L2-served, decode dominates); writes are off the critical path since #574. No revisit trigger — there is no workload where per-file overhead shows.
+    - **Decoded-f32 chunk cache — DROPPED.** Warm scrub steps already skip decode via the S-cache (23 ms); the cold-arm L0-hit share (~35%) bounds the savable dequant at ≲15 ms/step. Trigger: only if a future workload shows high cross-slice chunk re-reads WITH S-cache misses (none known — chunks are time-local).
+    - **Post-projection cache for gsplats/lines (fold `uTruncate` into the S-cache key) — DROPPED at current scales.** Warm step ≈ 23 ms, mostly re-projection (10–19 ms; gsplat S-cache is pre-projection); saving ~15 ms/step is imperceptible. **Trigger: timepoints ≥ ~2 M splats** (cost is linear in N/tp — h2afva-class ~2.5 M/tp ⇒ ~50–60 ms/step, then this is a small, mechanical win).
+    - **Manual-scrub prefetch (t±1 during keyboard/slider nav) — CONDITIONAL, remote-only.** Local ceiling 21 ms/step (imperceptible). At `luxar serve --profile 4g`: 208 → 105 ms/step (~50%) IF dwell allows the prefetch and it wins the throttled link from background ladder deepening (shared bandwidth — a reallocation policy, not a free win). **Trigger: remote-dataset scrub UX becomes a goal** (hosted demos / shared exports over real networks).
+    - Instrument notes for whoever re-probes: the timelapse bench's perTp includes a 250–350 ms settle floor (not step latency); CDP `emulateNetworkConditions` does NOT throttle data-worker fetches — use `luxar serve --profile`; under throttle measure time-to-FIRST-commit (background deepening pollutes quiet-based metrics).
+
 ---
 
 ## Completed (Archive)
