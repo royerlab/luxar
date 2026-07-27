@@ -695,13 +695,32 @@ def transform_dataset(
         help="Per-axis translation, comma-separated (e.g. '0,0,0,100')",
     ),
     rotate_x_deg: Optional[float] = typer.Option(
-        None, "--rotate-x", help="Rotate around X axis (degrees, 3D spatial dims only)"
+        None,
+        "--rotate-x",
+        help="Rotate around X axis (degrees; acts on the three --spatial-dims "
+        "center dims, default 0,1,2 — other dims are left unrotated)",
     ),
     rotate_y_deg: Optional[float] = typer.Option(
-        None, "--rotate-y", help="Rotate around Y axis (degrees, 3D spatial dims only)"
+        None,
+        "--rotate-y",
+        help="Rotate around Y axis (degrees; acts on the three --spatial-dims "
+        "center dims, default 0,1,2 — other dims are left unrotated)",
     ),
     rotate_z_deg: Optional[float] = typer.Option(
-        None, "--rotate-z", help="Rotate around Z axis (degrees, 3D spatial dims only)"
+        None,
+        "--rotate-z",
+        help="Rotate around Z axis (degrees; acts on the three --spatial-dims "
+        "center dims, default 0,1,2 — other dims are left unrotated)",
+    ),
+    spatial_dims: Optional[str] = typer.Option(
+        None,
+        "--spatial-dims",
+        help="Comma-separated 3 axis indices the --rotate-* rotation acts on "
+        "(default: 0,1,2 — the first three center dims, matching the "
+        "stack-last convention; e.g. '1,2,3' for a direct nD fit whose "
+        "leading axis is time). The listed order assigns the rotation "
+        "frame's X/Y/Z roles, so '3,2,1' is a different transform from "
+        "'1,2,3' (unlike the order-insensitive filter --spatial-dims)",
     ),
     center: bool = typer.Option(
         False,
@@ -744,6 +763,10 @@ def transform_dataset(
         # Rotate 90 degrees around Z axis
         luxar gsplat transform in.gsplats.zarr out.gsplats.zarr --rotate-z 90
 
+        # Rotate a direct nD fit whose leading axis is time (t,z,y,x)
+        luxar gsplat transform in.gsplats.zarr out.gsplats.zarr \\
+            --rotate-z 90 --spatial-dims 1,2,3
+
         # Just recenter at centroid
         luxar gsplat transform in.gsplats.zarr out.gsplats.zarr --center
 
@@ -761,6 +784,7 @@ def transform_dataset(
         rotate_x_deg=rotate_x_deg,
         rotate_y_deg=rotate_y_deg,
         rotate_z_deg=rotate_z_deg,
+        spatial_dims=spatial_dims,
         center=center,
         scale_intensity_factor=scale_intensity_factor,
         normalize_intensity=normalize_intensity,

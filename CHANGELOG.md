@@ -6,6 +6,31 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Fixed — `gsplat transform --rotate-*` rotated the wrong center dims on stacked nD data (#722)
+
+The 3x3 rotation was embedded in the **last** three center dims, a convention
+that exists nowhere else in the codebase and is backwards: the repo appends
+time/channel **last** (`embed_dimension`, `combine_as_new_dimension`,
+`merge --as-dimension`, the batch-fit merge) and treats the **first** three
+dims as spatial (the partitioner's `positions[:, :3]`). On a 4D `(x, y, z, t)`
+dataset `--rotate-x 90` therefore mixed z with t — collapsing all timepoints
+onto one value — and, because covariance transforms as A·Σ·Aᵀ, gave the
+zero-variance time axis a spatial sigma, silently breaking the
+degenerate-axis auto-detection the scale/eccentricity/isolation filters
+depend on.
+
+- The rotation now acts on the **first three** center dims by default
+  (bit-identical for 3D data).
+- New `--spatial-dims i,j,k` option selects which three center dims the
+  `--rotate-*` matrix acts on — the escape hatch for a **direct nD fit**
+  (e.g. a TZYX volume fitted as-is, where the spatial dims are `1,2,3`).
+  Exactly 3 distinct in-range integer indices; passing it without a
+  `--rotate-*` flag is an error.
+- Rotating >3D data without `--spatial-dims` now warns, naming which dims
+  are rotated and which are left alone — sharper when more than three axes
+  carry real extent (the direct-nD-fit signature), but never an error, since
+  a legitimate stacked dataset may carry a continuous stacked axis.
+
 #### Fixed — overlay HTML sanitizer: unsanitized nested subtrees + obfuscated `javascript:` URLs (#720)
 
 `OverlayManager.sanitizeHtml` _unwraps_ a tag outside its allowlist — lifting
