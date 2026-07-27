@@ -1,9 +1,14 @@
 """Manifest-driven demo-dataset fetch (R17: retire git-LFS heavy data → Zenodo).
 
-``demos/data/manifest.json`` is the single source of truth for how every demo
+``demos/data_manifest.json`` is the single source of truth for how every demo
 dataset is obtained (see :mod:`scripts.gen_data_manifest`). This module reads it
 and resolves a dataset's files into the local cache, so demos can migrate off
 in-repo git-LFS to fetch-on-demand from Zenodo without changing their own logic.
+
+The manifest is a *packaged resource* — it ships inside the wheel and is always
+present. It deliberately does NOT live under ``demos/data/``: that whole tree is
+excluded from the wheel and sdist (~450 MB of git-LFS payload), so a manifest
+kept there would be missing for exactly the installed users this module serves.
 
 Resolution order for a ``zenodo`` dataset (per file):
     1. Local cache ``~/.cache/luxar/<dataset>/<file>`` (checksum-verified if known).
@@ -39,7 +44,9 @@ from ..utils.demos import (
     is_lfs_pointer,
 )
 
-MANIFEST_PATH = _DEMOS_DATA_DIR / "manifest.json"
+#: Packaged manifest. Anchored to this file rather than derived from
+#: ``_DEMOS_DATA_DIR`` so it stays reachable once R17 step 4 removes the data tree.
+MANIFEST_PATH = Path(__file__).resolve().parent / "data_manifest.json"
 
 # Buckets that this module does NOT fetch (caller builds them locally).
 _LOCAL_BUCKETS = {"local-compute", "regenerate"}
@@ -73,8 +80,16 @@ class LocalComputeDataset(RuntimeError):
 def load_manifest(path: Optional[str] = None) -> dict:
     """Load and cache the demo-data manifest (JSON)."""
     p = Path(path) if path else MANIFEST_PATH
-    with open(p, "r") as f:
-        return json.load(f)
+    try:
+        with open(p, "r") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        raise FileNotFoundError(
+            f"Demo-data manifest not found at {p}. It is a packaged resource that "
+            "ships inside luxar/demos/, so a missing file means a broken install "
+            "or a packaging exclude that swallowed it — see "
+            "test_manifest_is_shippable_in_the_wheel_and_sdist."
+        ) from None
 
 
 def dataset_spec(name: str, manifest: Optional[dict] = None) -> dict:

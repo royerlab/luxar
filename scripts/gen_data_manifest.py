@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
-"""Generate ``demos/data/manifest.json`` — the single source of truth for demo
+"""Generate ``demos/data_manifest.json`` — the single source of truth for demo
 dataset disposition (R17: retire git-LFS heavy datasets → Zenodo).
+
+The manifest lives one level ABOVE ``demos/data/`` on purpose: everything under
+that directory is excluded from the wheel and the sdist (it is ~450 MB of
+git-LFS payload), so a manifest kept inside it would never reach an installed
+user — the very audience fetch-on-demand exists for.
 
 The manifest records, per dataset:
   * ``bucket``  — how the data is obtained:
@@ -43,7 +48,7 @@ from typing import Optional
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = REPO_ROOT / "packages/luxar/src/luxar/demos/data"
-MANIFEST = DATA_DIR / "manifest.json"
+MANIFEST = REPO_ROOT / "packages/luxar/src/luxar/demos/data_manifest.json"
 
 # Zenodo records, grouped by license family. IDs/DOIs/base_url are null until the
 # depositions are created and files uploaded (R17 step 2); once set, the fetch
