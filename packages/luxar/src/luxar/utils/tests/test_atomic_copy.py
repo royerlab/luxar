@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 import pytest
 
-from luxar.utils.atomic_copy import atomic_copytree
+from luxar.utils.atomic_copy import atomic_copy_file, atomic_copytree
 
 
 class TestAtomicCopytree:
@@ -121,3 +121,48 @@ class TestAtomicCopytree:
         assert not dst.exists()
         leaked = list(tmp_path.glob(".tmp_dst_*"))
         assert leaked == [], f"half-populated temp dirs leaked: {leaked}"
+
+
+class TestAtomicCopyFile:
+    """File-level counterpart to atomic_copytree (cache-refresh semantics)."""
+
+    def test_copies_content_and_preserves_mtime(self, tmp_path: Path) -> None:
+        src = tmp_path / "src.bin"
+        src.write_bytes(b"payload")
+        dst = tmp_path / "sub" / "dst.bin"
+
+        out = atomic_copy_file(src, dst)
+
+        assert out == dst
+        assert dst.read_bytes() == b"payload"
+        assert dst.stat().st_mtime == pytest.approx(src.stat().st_mtime, abs=1e-3)
+
+    def test_existing_destination_is_replaced(self, tmp_path: Path) -> None:
+        """Unlike atomic_copytree, overwrite is the point — this refreshes a cache."""
+        src = tmp_path / "src.bin"
+        src.write_bytes(b"new")
+        dst = tmp_path / "dst.bin"
+        dst.write_bytes(b"old-and-longer")
+
+        atomic_copy_file(src, dst)
+
+        assert dst.read_bytes() == b"new"
+
+    def test_missing_source_raises(self, tmp_path: Path) -> None:
+        with pytest.raises(FileNotFoundError):
+            atomic_copy_file(tmp_path / "nope", tmp_path / "dst")
+
+    def test_failure_leaves_destination_and_directory_clean(
+        self, tmp_path: Path
+    ) -> None:
+        src = tmp_path / "src.bin"
+        src.write_bytes(b"payload")
+        dst = tmp_path / "dst.bin"
+        dst.write_bytes(b"previous")
+
+        with patch("shutil.copy2", side_effect=OSError("disk full")):
+            with pytest.raises(OSError):
+                atomic_copy_file(src, dst)
+
+        assert dst.read_bytes() == b"previous"
+        assert [p.name for p in tmp_path.iterdir() if p.name.startswith(".tmp_")] == []

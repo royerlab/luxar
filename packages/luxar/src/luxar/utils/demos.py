@@ -373,10 +373,10 @@ def cache_computed(
                 aprint(f"✓ Loaded cached result: {cache_file.name}")
             return result
         except Exception as exc:  # truncated / incompatible pickle
-            corrupt = cache_file.with_suffix(".pkl.corrupt")
-            cache_file.replace(corrupt)
-            aprint(
-                f"⚠️  Cached result unreadable ({exc}); quarantined to {corrupt.name}"
+            from .download import quarantine_file
+
+            quarantine_file(
+                cache_file, reason=f"unreadable pickle ({exc})", verbose=True
             )
 
     result = compute_fn()

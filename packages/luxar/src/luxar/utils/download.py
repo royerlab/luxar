@@ -37,10 +37,11 @@ def find_quarantined_files(target: Union[str, Path]) -> list[Path]:
     """Return the quarantined ``.corrupt`` files associated with *target*.
 
     Args:
-        target: A cache *file* (both ``foo.npy.corrupt`` and the
-            ``Path.with_suffix`` form ``foo.corrupt`` are checked, matching the
-            two quarantine conventions in the codebase) or a cache *directory*
-            (every ``*.corrupt`` inside it is reported).
+        target: A cache *file* (both the appended form ``foo.npy.corrupt`` that
+            :func:`quarantine_file` writes and the bare ``Path.with_suffix``
+            form ``foo.corrupt`` are checked, so older hand-rolled quarantines
+            stay discoverable) or a cache *directory* (every ``*.corrupt``
+            inside it is reported).
 
     Returns:
         Existing quarantined paths, sorted and de-duplicated (empty when clean).
@@ -105,6 +106,57 @@ def warn_if_quarantined(
     if quarantined and verbose:
         aprint(format_quarantine_notice(quarantined, indent="", action=action))
     return quarantined
+
+
+def quarantine_file(
+    path: Union[str, Path],
+    *,
+    reason: str = "",
+    verbose: bool = True,
+) -> Path:
+    """Rename a rejected cache artifact out of the way; return its new path.
+
+    The producer side of the ``.corrupt`` convention that
+    :func:`find_quarantined_files` and :func:`warn_if_quarantined` already read.
+
+    Quarantining rather than deleting keeps the bytes for inspection or salvage
+    and, critically, gets them out from under the canonical name so that
+    :func:`robust_download` cannot RESUME onto them — it opens the destination in
+    append mode whenever a file is already there, so a complete-but-wrong file
+    left in place would be appended to rather than replaced.
+
+    The suffix is APPENDED (``foo.zip`` -> ``foo.zip.corrupt``) so the original
+    name and extension survive intact; that is also the form ``luxar demo clear``
+    classifies correctly. A pre-existing quarantine for the same file is
+    REPLACED, not stacked: one slot per file, so a repeated corrupt-fetch loop
+    cannot fill a disk with copies of a multi-gigabyte artifact, and the finders
+    (which match the exact ``.corrupt`` name) keep working.
+
+    Args:
+        path: The rejected artifact. Must be an existing regular file.
+        reason: Short cause ("sha256 mismatch", "truncated"), shown in the notice.
+        verbose: Print the notice. The rename happens either way.
+
+    Returns:
+        Path of the quarantined file.
+
+    Raises:
+        FileNotFoundError: *path* is missing or is not a regular file.
+    """
+    path = Path(path)
+    if not path.is_file():
+        raise FileNotFoundError(f"Cannot quarantine (not a regular file): {path}")
+
+    target = path.with_name(path.name + QUARANTINE_SUFFIX)
+    path.replace(target)  # atomic; silently clobbers an older quarantine
+    if verbose:
+        detail = f" ({reason})" if reason else ""
+        aprint(
+            f"⚠️  Quarantined cache file{detail}: {path.name} → {target.name}. "
+            "It will never be reused; delete it (or run 'luxar demo clear') to "
+            f"reclaim {_format_bytes(target.stat().st_size)}."
+        )
+    return target
 
 
 def robust_download(
