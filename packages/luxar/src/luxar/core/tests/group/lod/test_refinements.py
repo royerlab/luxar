@@ -12,14 +12,14 @@ import zarr
 
 from luxar.core.dimensions import Dimensions
 from luxar.core.group.lod.lines import (
-    _compute_lines_energy,
+    compute_lines_energy,
     make_additive_lod_lines,
     resolve_additive_axis_lines,
 )
 from luxar.core.group.lod.points import (
-    _compute_points_energy,
     _energy_breakpoints_to_counts,
     _perceptual_luminance,
+    compute_points_energy,
     make_additive_lod_points,
     resolve_additive_axis_points,
 )
@@ -156,31 +156,31 @@ class TestPointsEnergy:
         lum = _perceptual_luminance(c)
         np.testing.assert_allclose(lum, [0.2126, 0.7152, 0.0722], atol=1e-6)
 
-    def test_compute_points_energy_with_colors(self):
+    def testcompute_points_energy_with_colors(self):
         radii = np.array([1.0, 2.0, 3.0], dtype=np.float32)
         # All-white colors → uniform luminance 1; energy ∝ radii^3.
         colors = np.ones((3, 3), dtype=np.float32)
-        energy = _compute_points_energy(3, radii, colors, None)
+        energy = compute_points_energy(3, radii, colors, None)
         # 1 * 1, 1 * 8, 1 * 27
         np.testing.assert_allclose(energy, [1.0, 8.0, 27.0])
 
-    def test_compute_points_energy_falls_back_to_scalars(self):
+    def testcompute_points_energy_falls_back_to_scalars(self):
         radii = np.array([1.0, 1.0, 1.0], dtype=np.float32)
         scalars = np.array([0.5, 1.0, 2.0], dtype=np.float32)
-        energy = _compute_points_energy(3, radii, None, scalars)
+        energy = compute_points_energy(3, radii, None, scalars)
         np.testing.assert_allclose(energy, [0.5, 1.0, 2.0])
 
-    def test_compute_points_energy_no_colors_no_scalars(self):
+    def testcompute_points_energy_no_colors_no_scalars(self):
         radii = np.array([1.0, 2.0], dtype=np.float32)
-        energy = _compute_points_energy(2, radii, None, None)
+        energy = compute_points_energy(2, radii, None, None)
         # luminance defaults to 1 → energy = radii^3.
         np.testing.assert_allclose(energy, [1.0, 8.0])
 
-    def test_compute_points_energy_clips_negatives(self):
+    def testcompute_points_energy_clips_negatives(self):
         # Negative luminance (e.g. signed scalars) clipped to 0.
         radii = np.array([1.0, 1.0], dtype=np.float32)
         scalars = np.array([-0.5, 0.5], dtype=np.float32)
-        energy = _compute_points_energy(2, radii, None, scalars)
+        energy = compute_points_energy(2, radii, None, scalars)
         np.testing.assert_allclose(energy, [0.0, 0.5])
 
     def test_energy_breakpoints_to_counts_basic(self):
@@ -283,7 +283,7 @@ class TestPointsEnergy:
 
 
 class TestLinesEnergy:
-    def test_compute_lines_energy_segments(self):
+    def testcompute_lines_energy_segments(self):
         # 2 unit-length segments along x, widths 1 and 2 → tube_volume
         # ratio 4×. White colors → mean_luminance = 1.
         v = np.array(
@@ -295,12 +295,12 @@ class TestLinesEnergy:
             np.array([2, 3], dtype=np.intp),
         ]
         widths = np.array([1.0, 1.0, 2.0, 2.0], dtype=np.float32)
-        energy = _compute_lines_energy(v, polylines, widths, None, None)
+        energy = compute_lines_energy(v, polylines, widths, None, None)
         # Segment 0: length 1 × width^2 1 = 1.
         # Segment 1: length 1 × width^2 4 = 4.
         np.testing.assert_allclose(energy, [1.0, 4.0])
 
-    def test_compute_lines_energy_with_colors(self):
+    def testcompute_lines_energy_with_colors(self):
         v = np.array(
             [[0, 0, 0], [1, 0, 0], [0, 1, 0], [1, 1, 0]],
             dtype=np.float32,
@@ -315,11 +315,11 @@ class TestLinesEnergy:
             [[1, 1, 1], [1, 1, 1], [0.1, 0.1, 0.1], [0.1, 0.1, 0.1]],
             dtype=np.float32,
         )
-        energy = _compute_lines_energy(v, polylines, widths, colors, None)
+        energy = compute_lines_energy(v, polylines, widths, colors, None)
         # Tube volume is identical (1 × 1 = 1). Brighter polyline wins.
         assert energy[0] > energy[1]
 
-    def test_compute_lines_energy_zero_length_segment(self):
+    def testcompute_lines_energy_zero_length_segment(self):
         """B9-M1/[P5]: a segment with coincident endpoints has zero length →
         zero tube volume → zero energy, while a normal segment scores
         positively. Exercises the degenerate seg-length branch."""
@@ -332,15 +332,15 @@ class TestLinesEnergy:
             np.array([2, 3], dtype=np.intp),
         ]
         widths = np.ones(4, dtype=np.float32)
-        energy = _compute_lines_energy(v, polylines, widths, None, None)
+        energy = compute_lines_energy(v, polylines, widths, None, None)
         assert energy[0] == 0.0  # zero-length segment contributes no energy
         assert energy[1] > 0.0
 
-    def test_compute_lines_energy_falls_back_to_scalars(self):
+    def testcompute_lines_energy_falls_back_to_scalars(self):
         """B9-M2/[P5]: with no colors but per-vertex scalars present, mean
         luminance is taken from the scalars (the elif branch), so a
         high-scalar polyline outscores a low-scalar one of identical
-        geometry. Mirrors ``test_compute_lines_energy_with_colors``."""
+        geometry. Mirrors ``testcompute_lines_energy_with_colors``."""
         v = np.array(
             [[0, 0, 0], [1, 0, 0], [0, 1, 0], [1, 1, 0]],
             dtype=np.float32,
@@ -352,7 +352,7 @@ class TestLinesEnergy:
         # widths=None too: exercises the default unit-width path alongside the
         # scalars-luminance fallback.
         scalars = np.array([1.0, 1.0, 0.1, 0.1], dtype=np.float32)
-        energy = _compute_lines_energy(v, polylines, None, None, scalars)
+        energy = compute_lines_energy(v, polylines, None, None, scalars)
         # Identical tube volume; the high-scalar polyline wins on luminance.
         assert energy[0] > energy[1]
         np.testing.assert_allclose(energy, [1.0, 0.1], rtol=1e-5)

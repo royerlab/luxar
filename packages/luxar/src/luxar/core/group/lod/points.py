@@ -162,7 +162,7 @@ def _perceptual_luminance(colors: NDArray) -> NDArray[np.float64]:
     return 0.2126 * c[:, 0] + 0.7152 * c[:, 1] + 0.0722 * c[:, 2]
 
 
-def _compute_points_energy(
+def compute_points_energy(
     n: int,
     radii: Optional[NDArray],
     colors: Optional[NDArray],
@@ -352,7 +352,7 @@ def make_additive_lod_points(
     # breakpoint resolution below.
     energy: Optional[NDArray[np.float64]] = None
     if method == "salience" and salience_kind == "energy":
-        energy = _compute_points_energy(n, radii, colors, scalars)
+        energy = compute_points_energy(n, radii, colors, scalars)
         perm = np.argsort(-energy, kind="stable").astype(np.intp)
         natural_counts: List[int] = []
     else:
@@ -377,7 +377,7 @@ def make_additive_lod_points(
     if isinstance(counts, str) and counts.startswith("energy:") and energy is None:
         # Compute energy on demand for energy: breakpoints under any
         # ordering method.
-        energy = _compute_points_energy(n, radii, colors, scalars)
+        energy = compute_points_energy(n, radii, colors, scalars)
 
     breakpoints = _parse_breakpoints_spec(counts, n, energy=energy, perm=perm)
     if breakpoints is None:

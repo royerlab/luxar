@@ -314,6 +314,10 @@ def add_lines_impl(
                         parent=parent,
                         extend_to_all=extend_to_all,
                         method=additive_spec["method"],
+                        counts=additive_spec["counts"],
+                        widths_for_energy=widths_arr,
+                        colors_for_energy=colors_for_energy,
+                        scalars_for_energy=scalars_for_energy,
                         **attrs,
                     )
                 # 1 level (degenerate single polyline) → fall through.
@@ -559,6 +563,10 @@ def add_lines_multi_lod_wrapper_impl(
     parent: Optional["Node"],
     extend_to_all: Optional[Union[List[str], str]],
     method: str,
+    counts: Any = None,
+    widths_for_energy: Optional[np.ndarray] = None,
+    colors_for_energy: Optional[np.ndarray] = None,
+    scalars_for_energy: Optional[np.ndarray] = None,
     **attrs: Any,
 ) -> Lines:
     """Write a Lines node with multi-additive-LOD subgroups.
@@ -568,14 +576,46 @@ def add_lines_multi_lod_wrapper_impl(
     each subgroup. The parent lines node carries
     ``n_additive_sublods``, the global ``position_bounds``, and the
     standard compositing attrs.
+
+    ``counts`` and the ``*_for_energy`` arrays only feed the ladder's quality
+    stamps — see the Points twin for what the viewer does with them.
     """
     scene = group._find_scene()
     writer = group._require_scene_writer(scene)
     parent_node = parent or group
     path = f"{parent_node.path}/{name}" if parent_node.path else name
 
+    # Ladder quality stamps, in the Lines energy currency (mean luminance x
+    # tube volume per polyline). Energy is per-POLYLINE here, so the levels are
+    # summed over their member polylines; the flattened polyline list is
+    # rebuilt in level order, which is exactly the order the builder sliced.
+    from ..lod.group import additive_level_stats, breakpoints_kind_of
+    from ..lod.lines import compute_lines_energy
+
+    flat_polylines = [poly for level in polyline_levels for poly in level]
+    poly_energy = compute_lines_energy(
+        vert_arr,
+        flat_polylines,
+        widths_for_energy,
+        colors_for_energy,
+        scalars_for_energy,
+    )
+    level_energies: List[float] = []
+    cursor = 0
+    for level in polyline_levels:
+        level_energies.append(float(poly_energy[cursor : cursor + len(level)].sum()))
+        cursor += len(level)
+    per_level_stats, _reference_energy, parent_level_stats = additive_level_stats(
+        level_energies,
+        [int(sum(int(poly.size) for poly in level)) for level in polyline_levels],
+        method=method,
+        breakpoints_kind=breakpoints_kind_of(counts),
+        energy_kind="lines-tube-volume",
+    )
+    attrs.setdefault("level_stats", parent_level_stats)
+
     level_slices: List[Dict[str, Any]] = []
-    for level_polylines in polyline_levels:
+    for level_i, level_polylines in enumerate(polyline_levels):
         # Concatenate vertex indices across all polylines in this
         # level; build local segment indices per polyline.
         level_vertex_indices: List[int] = []
@@ -612,6 +652,7 @@ def add_lines_multi_lod_wrapper_impl(
                 "labels": slice_optional_array(labels, vertex_index_arr, n_vertices),
                 "segments": level_segments,
                 "n_polylines": len(level_polylines),
+                "lod_stats": per_level_stats[level_i],
             }
         )
 

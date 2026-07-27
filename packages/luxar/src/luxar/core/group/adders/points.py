@@ -283,6 +283,10 @@ def add_points_impl(
                         extend_to_all=extend_to_all,
                         grid_shape=grid_shape,
                         method=additive_spec["method"],
+                        counts=additive_spec["counts"],
+                        radii_for_energy=radii_arr,
+                        colors_for_energy=colors_for_energy,
+                        scalars_for_energy=scalars_for_energy,
                         **attrs,
                     )
                 # 1 level (degenerate) → fall through to single-leaf.
@@ -436,6 +440,10 @@ def add_points_multi_lod_wrapper_impl(
     extend_to_all: Optional[Union[List[str], str]],
     grid_shape: Optional[Tuple[int, ...]],
     method: str,
+    counts: Any = None,
+    radii_for_energy: Optional[np.ndarray] = None,
+    colors_for_energy: Optional[np.ndarray] = None,
+    scalars_for_energy: Optional[np.ndarray] = None,
     **attrs: Any,
 ) -> Points:
     """Write a Points node with multi-additive-LOD subgroups.
@@ -448,15 +456,38 @@ def add_points_multi_lod_wrapper_impl(
     The returned :class:`Points` node is the parent (the user's
     logical "one node"). The viewer's progressive loader walks the
     subgroups; the user never sees the decomposition.
+
+    ``counts`` and the three ``*_for_energy`` arrays are only used to stamp the
+    ladder's quality metadata (``lod_stats.energy_fraction_cum`` per level plus
+    ``level_stats.reference_energy`` on the parent), which lets the viewer
+    release a LOD swap on committed energy instead of raw element count.
     """
     scene = group._find_scene()
     writer = group._require_scene_writer(scene)
     parent_node = parent or group
     path = f"{parent_node.path}/{name}" if parent_node.path else name
 
+    # Ladder quality stamps. The energy is a pure per-element function of the
+    # same inputs the ordering used, so summing it per level reproduces the
+    # ladder's cumulative curve exactly — no need to thread it out of the
+    # builder (whose List[level] return shape many tests depend on).
+    from ..lod.group import additive_level_stats, breakpoints_kind_of
+    from ..lod.points import compute_points_energy
+
+    energy = compute_points_energy(
+        n_points, radii_for_energy, colors_for_energy, scalars_for_energy
+    )
+    per_level_stats, _reference_energy, parent_level_stats = additive_level_stats(
+        [float(energy[idx].sum()) for idx in levels],
+        [int(idx.size) for idx in levels],
+        method=method,
+        breakpoints_kind=breakpoints_kind_of(counts),
+        energy_kind="points-luminance-volume",
+    )
+
     # Build per-level slice tuples for the writer.
     level_slices: List[Dict[str, Any]] = []
-    for level_indices in levels:
+    for level_i, level_indices in enumerate(levels):
         level_slices.append(
             {
                 "positions": pos_arr[level_indices].astype(np.float32),
@@ -465,8 +496,10 @@ def add_points_multi_lod_wrapper_impl(
                 "sharpness": slice_optional_array(sharpness, level_indices, n_points),
                 "scalars": slice_optional_array(scalars, level_indices, n_points),
                 "labels": slice_optional_array(labels, level_indices, n_points),
+                "lod_stats": per_level_stats[level_i],
             }
         )
+    attrs.setdefault("level_stats", parent_level_stats)
 
     aprint(
         f"  📐 Additive-LOD '{name}': {len(levels)} levels "

@@ -102,7 +102,9 @@ class TestSiblingAwareStreamBreakpoints:
         )
 
     def test_non_stream_specs_pass_through_untouched(self) -> None:
-        assert sibling_aware_stream_breakpoints("equal-count", 1_000, 4) == "equal-count"
+        assert (
+            sibling_aware_stream_breakpoints("equal-count", 1_000, 4) == "equal-count"
+        )
         assert sibling_aware_stream_breakpoints([10, 50], 1_000, 4) == [10, 50]
         assert sibling_aware_stream_breakpoints("energy:0.5,1.0", 1_000, 4) == (
             "energy:0.5,1.0"

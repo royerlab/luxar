@@ -222,7 +222,7 @@ def compute_additive_order_lines(
 # ─────────────────────────────────────────────────────────────────────
 
 
-def _compute_lines_energy(
+def compute_lines_energy(
     vertices: NDArray,
     polylines: List[NDArray[np.intp]],
     widths: Optional[NDArray],
@@ -361,7 +361,7 @@ def make_additive_lod_lines(
     # with a per-polyline luminance × tube-volume score.
     energy: Optional[NDArray[np.float64]] = None
     if method == "salience" and salience_kind == "energy":
-        energy = _compute_lines_energy(vertices, polylines, widths, colors, scalars)
+        energy = compute_lines_energy(vertices, polylines, widths, colors, scalars)
         perm = np.argsort(-energy, kind="stable").astype(np.intp)
         natural_counts: List[int] = []
     else:
@@ -389,7 +389,7 @@ def make_additive_lod_lines(
 
     # random / salience: slice the polyline permutation by breakpoints.
     if isinstance(counts, str) and counts.startswith("energy:") and energy is None:
-        energy = _compute_lines_energy(vertices, polylines, widths, colors, scalars)
+        energy = compute_lines_energy(vertices, polylines, widths, colors, scalars)
 
     if isinstance(counts, str) and counts.startswith("stream:"):
         # `stream:C` is sized in VERTICES — the payload currency, symmetric with
@@ -412,7 +412,7 @@ def make_additive_lod_lines(
                 "'stream:<c>' (e.g. 'stream:40000')"
             )
         if energy is None:
-            energy = _compute_lines_energy(vertices, polylines, widths, colors, scalars)
+            energy = compute_lines_energy(vertices, polylines, widths, colors, scalars)
         fracs = [float(s) for s in counts[len("energy:") :].split(",") if s.strip()]
         breakpoints = _energy_breakpoints_to_counts(energy, perm, fracs)
     elif counts is not None:

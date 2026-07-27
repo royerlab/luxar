@@ -501,3 +501,110 @@ def resolve_substitutive_axis(spec: Any, geometry: str) -> Optional[Dict[str, An
         "coarsen_dims": coarsen_dims,
         "max_aspect": max_aspect,
     }
+
+
+# ────────────────────────────────────────────────────────────────────────
+# Additive-ladder quality stamps (Points + Lines)
+# ────────────────────────────────────────────────────────────────────────
+#
+# The viewer's never-downgrade display gate can release a coarse→fine LOD swap
+# as soon as the committed prefix carries enough of the level's energy, instead
+# of waiting for the raw element count to pass the coarser sibling. That needs
+# two numbers on disk, and it needs BOTH or it silently falls back to the count
+# rule (``lod-display-gate.ts`` foldProgress poisons the whole subtree aggregate
+# to null if either is missing on any visible leaf):
+#
+#   * ``lod_stats.energy_fraction_cum`` on each ``additive_<i>/`` subgroup — the
+#     cumulative fraction of the leaf's energy carried by that prefix.
+#   * ``level_stats.reference_energy`` on the leaf itself — the leaf's total
+#     energy, used as a relative weight when several leaves fold together.
+#
+# GSplats have stamped these since the Q·e work (``gsplats/lod/additive.py``);
+# these helpers give Points and Lines the same stamps in their own energy
+# currency. Key names and the clamping/guard behaviour mirror the gsplat side
+# exactly so the viewer needs no per-geometry branch.
+
+
+def breakpoints_kind_of(counts: Any) -> str:
+    """Name the breakpoint vocabulary that produced a ladder, for the stamps.
+
+    Mirrors the ``kind`` string the gsplat ladder records, so a reader can tell
+    a bandwidth-derived geometric ladder from an equal-count or energy split
+    without re-deriving it.
+    """
+    if isinstance(counts, str):
+        if counts.startswith("stream:"):
+            return "stream"
+        if counts.startswith("energy:"):
+            return "energy-fractions"
+        return counts
+    if counts is None:
+        return "equal-count"
+    return "explicit-counts"
+
+
+def additive_level_stats(
+    level_energies: List[float],
+    level_counts: List[int],
+    *,
+    method: str,
+    breakpoints_kind: str,
+    energy_kind: str,
+) -> tuple[List[Dict[str, Any]], Optional[float], Dict[str, Any]]:
+    """Build the per-sub-LOD and per-leaf stamps for an additive ladder.
+
+    Args:
+        level_energies: Per-level (not cumulative) energy sums, level order.
+        level_counts: Per-level element counts, same order and length.
+        method: The ordering method that produced the ladder.
+        breakpoints_kind: From :func:`breakpoints_kind_of`.
+        energy_kind: Provenance of the energy quantity, e.g.
+            ``"points-luminance-volume"``. The viewer ignores it; it documents
+            that this currency is not comparable with the gsplat one.
+
+    Returns:
+        ``(per_level_lod_stats, reference_energy, parent_level_stats)``.
+        ``reference_energy`` is ``None`` — and no ``energy_fraction_cum`` is
+        stamped — when the total energy is not positive and finite (all-black
+        colors, zero radii). That is deliberate: an absent stamp makes the
+        viewer fall back to its count rule, whereas a fabricated 0.0 would make
+        it release swaps on data that carries no energy at all.
+    """
+    if len(level_energies) != len(level_counts):
+        raise ValueError(
+            f"level_energies has {len(level_energies)} entries but level_counts "
+            f"has {len(level_counts)}; internal error"
+        )
+
+    total = float(sum(level_energies))
+    usable = total > 0.0 and total == total and total != float("inf")
+
+    per_level: List[Dict[str, Any]] = []
+    cum_energy = 0.0
+    cum_n = 0
+    for i, (energy, count) in enumerate(zip(level_energies, level_counts)):
+        cum_energy += float(energy)
+        cum_n += int(count)
+        stats: Dict[str, Any] = {
+            "lod_method": method,
+            "lod_level": i,
+            "lod_breakpoints_kind": breakpoints_kind,
+            "lod_n_elements": int(count),
+            "lod_cumulative_n": cum_n,
+        }
+        if usable:
+            frac = cum_energy / total
+            if frac == frac:  # not NaN
+                stats["energy_fraction_cum"] = min(1.0, max(0.0, frac))
+        per_level.append(stats)
+
+    parent: Dict[str, Any] = {
+        "energy_kind": energy_kind,
+        "lod_method": method,
+        "lod_n_lods": len(level_counts),
+        "lod_breakpoints_kind": breakpoints_kind,
+    }
+    if usable:
+        parent["reference_energy"] = total
+
+    return per_level, (total if usable else None), parent
