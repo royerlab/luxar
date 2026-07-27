@@ -150,8 +150,8 @@ export function linePickWebGPUFactory(
   // View-space z to the fragment (fade computed per-fragment; see the
   // visual line TSL). Ortho graphs skip it.
   const vViewZ: TSLNode | null = config.isOrtho ? null : varying(float(0.0));
-  const vClippedStart: TSLNode = varying(float(0.0)).setInterpolation('flat');
-  const vClippedEnd: TSLNode = varying(float(0.0)).setInterpolation('flat');
+  const vCapSuppressStart: TSLNode = varying(float(0.0)).setInterpolation('flat');
+  const vCapSuppressEnd: TSLNode = varying(float(0.0)).setInterpolation('flat');
   const vNodeId: TSLNode = varying(uNodeId).setInterpolation('flat');
   // Storage slot, NOT instanceIndex (the draw slot): identical under
   // identity ordering, and stays correct once the sort worker permutes
@@ -181,8 +181,8 @@ export function linePickWebGPUFactory(
     const aStartSharpness: TSLNode = lineT2.w.toVar();
     const aEndSharpness: TSLNode = lineT3.w.toVar();
     const aSegmentLength: TSLNode = lineT4.x.toVar();
-    const aStartClipped: TSLNode = lineT4.y.toVar();
-    const aEndClipped: TSLNode = lineT4.z.toVar();
+    const aStartCapSuppress: TSLNode = lineT4.y.toVar();
+    const aEndCapSuppress: TSLNode = lineT4.z.toVar();
 
     // Branchless: aQuadCorner.x ∈ {-1, +1} by construction.
     const t: TSLNode = aQuadCorner.x.mul(0.5).add(0.5).toVar();
@@ -296,8 +296,8 @@ export function linePickWebGPUFactory(
     vPixelWidth.assign(rawPixelWidth);
     vWidthFade.assign(vWidthFadeVal);
     if (vViewZ) vViewZ.assign(mvPos.z);
-    vClippedStart.assign(aStartClipped);
-    vClippedEnd.assign(aEndClipped);
+    vCapSuppressStart.assign(aStartCapSuppress);
+    vCapSuppressEnd.assign(aEndCapSuppress);
 
     return clipPosOut;
   });
@@ -335,8 +335,8 @@ export function linePickWebGPUFactory(
       .select(clamp(distToNearest.div(vWidthAtT), 0.0, 1.0).toVar(), float(1.0));
     const baseCap: TSLNode = float(0.5).add(capRamp.mul(0.5));
     const nearestIsStart: TSLNode = step(distFromStart, distFromEnd);
-    const nearestClipped: TSLNode = mix(vClippedEnd, vClippedStart, nearestIsStart);
-    const capFactor: TSLNode = mix(baseCap, float(1.0), nearestClipped);
+    const nearestSuppress: TSLNode = mix(vCapSuppressEnd, vCapSuppressStart, nearestIsStart);
+    const capFactor: TSLNode = mix(baseCap, float(1.0), nearestSuppress);
 
     return capFactor
       .mul(perpFalloff)

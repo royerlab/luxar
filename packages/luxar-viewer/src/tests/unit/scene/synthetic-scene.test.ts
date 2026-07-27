@@ -47,10 +47,10 @@ describe('generateSyntheticLines', () => {
       expect(result.endSharpness.length).toBe(50);
       expect(result.segmentLengths.length).toBe(50);
       // Clipped flags: Uint8
-      expect(result.startClipped).toBeInstanceOf(Uint8Array);
-      expect(result.startClipped.length).toBe(50);
-      expect(result.endClipped).toBeInstanceOf(Uint8Array);
-      expect(result.endClipped.length).toBe(50);
+      expect(result.startCapSuppression).toBeInstanceOf(Float32Array);
+      expect(result.startCapSuppression.length).toBe(50);
+      expect(result.endCapSuppression).toBeInstanceOf(Float32Array);
+      expect(result.endCapSuppression.length).toBe(50);
     });
 
     it('produces widths=1.0 and sharpness=0.5 (the [0,1] knob Gaussian midpoint, beta=2) for every endpoint', () => {
@@ -66,8 +66,8 @@ describe('generateSyntheticLines', () => {
     it('marks all segment endpoints as unclipped (synthetic scene has no slicing)', () => {
       const result = generateSyntheticLines({ type: 'lines', count: 30, seed: 3 });
       for (let i = 0; i < result.segmentCount; i++) {
-        expect(result.startClipped[i]).toBe(0);
-        expect(result.endClipped[i]).toBe(0);
+        expect(result.startCapSuppression[i]).toBe(0);
+        expect(result.endCapSuppression[i]).toBe(0);
       }
     });
   });
@@ -165,7 +165,7 @@ describe('generateSyntheticLines', () => {
       expect(result.startPositions.length).toBe(0);
       expect(result.endPositions.length).toBe(0);
       expect(result.segmentLengths.length).toBe(0);
-      expect(result.startClipped.length).toBe(0);
+      expect(result.startCapSuppression.length).toBe(0);
     });
 
     it('handles count=1 — produces a single segment with finite endpoints', () => {

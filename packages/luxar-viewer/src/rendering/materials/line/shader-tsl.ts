@@ -274,8 +274,8 @@ export function lineWebGPUFactory(
   // variant; fade is identically 1).
   const vViewZ: TSLNode | null = config.isOrtho ? null : varying(float(0.0));
   // Clipped flags are per-instance — same across all 4 quad verts.
-  const vClippedStart: TSLNode = varying(float(0.0)).setInterpolation('flat');
-  const vClippedEnd: TSLNode = varying(float(0.0)).setInterpolation('flat');
+  const vCapSuppressStart: TSLNode = varying(float(0.0)).setInterpolation('flat');
+  const vCapSuppressEnd: TSLNode = varying(float(0.0)).setInterpolation('flat');
   // Per-endpoint opacity, interpolated along the segment (deliberately
   // NON-flat: the start/end alphas differ, matching the GLSL twin's
   // smooth `out float vAlpha`).
@@ -321,8 +321,8 @@ export function lineWebGPUFactory(
     const aStartSharpness: TSLNode = lineT2.w.toVar();
     const aEndSharpness: TSLNode = lineT3.w.toVar();
     const aSegmentLength: TSLNode = lineT4.x.toVar();
-    const aStartClipped: TSLNode = lineT4.y.toVar();
-    const aEndClipped: TSLNode = lineT4.z.toVar();
+    const aStartCapSuppress: TSLNode = lineT4.y.toVar();
+    const aEndCapSuppress: TSLNode = lineT4.z.toVar();
 
     // t ∈ {0, 1} — position along the segment. Branchless because
     // aQuadCorner.x ∈ {-1, +1} by construction.
@@ -489,8 +489,8 @@ export function lineWebGPUFactory(
     vPixelWidth.assign(rawPixelWidth);
     vWidthFade.assign(vWidthFadeVal);
     if (vViewZ) vViewZ.assign(mvPos.z);
-    vClippedStart.assign(aStartClipped);
-    vClippedEnd.assign(aEndClipped);
+    vCapSuppressStart.assign(aStartCapSuppress);
+    vCapSuppressEnd.assign(aEndCapSuppress);
     // Each texel read sanitized BEFORE the mix: NaN/Inf route to the
     // 1.0 opaque identity (loud), finite values clamp to [0, 1] (alpha
     // is load-bearing in every mode and feeds optical depth under
@@ -547,8 +547,8 @@ export function lineWebGPUFactory(
     // nearestIsStart = step(distFromStart, distFromEnd): 1 when
     // distFromEnd ≥ distFromStart → start is nearest.
     const nearestIsStart: TSLNode = step(distFromStart, distFromEnd);
-    const nearestClipped: TSLNode = mix(vClippedEnd, vClippedStart, nearestIsStart);
-    const capFactor: TSLNode = mix(baseCap, float(1.0), nearestClipped);
+    const nearestSuppress: TSLNode = mix(vCapSuppressEnd, vCapSuppressStart, nearestIsStart);
+    const capFactor: TSLNode = mix(baseCap, float(1.0), nearestSuppress);
 
     const intensity: TSLNode = capFactor
       .mul(perpFalloff)

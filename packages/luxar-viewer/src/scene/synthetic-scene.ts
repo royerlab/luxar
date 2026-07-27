@@ -119,8 +119,8 @@ export function generateSyntheticLines(spec: SyntheticSceneSpec): InstancedLines
   const startSharpness = new Float32Array(count);
   const endSharpness = new Float32Array(count);
   const segmentLengths = new Float32Array(count);
-  const startClipped = new Uint8Array(count);
-  const endClipped = new Uint8Array(count);
+  const startCapSuppression = new Float32Array(count);
+  const endCapSuppression = new Float32Array(count);
 
   // Random-walk anchor for segment continuity — visually more
   // interesting than disconnected random pairs and matches what real
@@ -176,8 +176,8 @@ export function generateSyntheticLines(spec: SyntheticSceneSpec): InstancedLines
     segmentLengths[i] = Math.sqrt(dx * dx + dy * dy + dz * dz);
 
     // Both endpoints unclipped — synthetic data has no slice clipping.
-    startClipped[i] = 0;
-    endClipped[i] = 0;
+    startCapSuppression[i] = 0;
+    endCapSuppression[i] = 0;
   }
 
   return {
@@ -190,8 +190,8 @@ export function generateSyntheticLines(spec: SyntheticSceneSpec): InstancedLines
     startSharpness,
     endSharpness,
     segmentLengths,
-    startClipped,
-    endClipped,
+    startCapSuppression,
+    endCapSuppression,
     segmentCount: count,
   };
 }

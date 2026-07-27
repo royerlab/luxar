@@ -63,8 +63,8 @@ export const LINE_PICK_VERTEX_SHADER = /* glsl */ `
     out float vPixelWidth;
     out float vWidthFade;     // visual-shader parity
     out float vViewZ;         // View-space z (fragment computes the near fade)
-    flat out float vClippedStart;
-    flat out float vClippedEnd;
+    flat out float vCapSuppressStart;
+    flat out float vCapSuppressEnd;
     flat out highp float vNodeId;
     flat out highp float vElementId;
 
@@ -86,15 +86,15 @@ export const LINE_PICK_VERTEX_SHADER = /* glsl */ `
       float aStartSharpness = texelFetch(uLineTex, ivec2(texel0.x + 2, texel0.y), 0).w;
       float aEndSharpness = texelFetch(uLineTex, ivec2(texel0.x + 3, texel0.y), 0).w;
       float aSegmentLength = lineT4.x;
-      float aStartClipped = lineT4.y;
-      float aEndClipped = lineT4.z;
+      float aStartCapSuppress = lineT4.y;
+      float aEndCapSuppress = lineT4.z;
 
       // Branchless: aQuadCorner.x ∈ {-1, +1} by construction.
       float t = aQuadCorner.x * 0.5 + 0.5;
       vT = t;
       vSegmentLength = aSegmentLength;
-      vClippedStart = aStartClipped;
-      vClippedEnd = aEndClipped;
+      vCapSuppressStart = aStartCapSuppress;
+      vCapSuppressEnd = aEndCapSuppress;
 
       // sanitize width/sharpness against negative/NaN/Inf. Sharpness is a
       // [0, 1] knob -> super-Gaussian exponent beta = 2^(6s - 2) (computed
@@ -238,8 +238,8 @@ export const LINE_PICK_FRAGMENT_SHADER = /* glsl */ `
     in float vPixelWidth;
     in float vWidthFade;
     in float vViewZ; // near fade computed here per-fragment
-    flat in float vClippedStart;
-    flat in float vClippedEnd;
+    flat in float vCapSuppressStart;
+    flat in float vCapSuppressEnd;
     flat in highp float vNodeId;
     flat in highp float vElementId;
 
@@ -274,8 +274,8 @@ export const LINE_PICK_FRAGMENT_SHADER = /* glsl */ `
       float baseCap = 0.5 + 0.5 * capRamp;
       // step(distFromStart, distFromEnd) is 1 when start is closer (distFromEnd >= distFromStart).
       float nearestIsStart = step(distFromStart, distFromEnd);
-      float nearestClipped = mix(vClippedEnd, vClippedStart, nearestIsStart);
-      float capFactor = mix(baseCap, 1.0, nearestClipped);
+      float nearestSuppress = mix(vCapSuppressEnd, vCapSuppressStart, nearestIsStart);
+      float capFactor = mix(baseCap, 1.0, nearestSuppress);
 
       // 1e-20 floor = degenerate-smoothstep guard only (scene-relative
       // uNearCull; see the vertex-stage nearCull note).

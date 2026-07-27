@@ -1032,29 +1032,48 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
       };
     },
     (size) => {
-      // mark_clipped_endpoints - mark which endpoints were clipped
+      // compute_cap_suppression - per-endpoint cap suppression. Built as one
+      // long polyline (segment i joins i-1 and i+1) so the joint-detection
+      // path is exercised, not just the clipped-flag fast path.
       const visibility = new Uint8Array(size);
       for (let i = 0; i < size; i++) visibility[i] = Math.random() > 0.3 ? 1 : 0;
       const t1Params = new Float32Array(size);
       const t2Params = new Float32Array(size);
       for (let i = 0; i < size; i++) {
-        t1Params[i] = Math.random() * 0.3;
-        t2Params[i] = 0.7 + Math.random() * 0.3;
+        // Mostly untrimmed so joints survive; a minority clipped.
+        t1Params[i] = Math.random() > 0.8 ? Math.random() * 0.3 : 0;
+        t2Params[i] = Math.random() > 0.8 ? 0.7 + Math.random() * 0.3 : 1;
       }
-      const tsStartClipped = new Uint8Array(size);
-      const tsEndClipped = new Uint8Array(size);
-      const wasmStartClipped = new Uint8Array(size);
-      const wasmEndClipped = new Uint8Array(size);
+      const segs = new Uint32Array(size * 2);
+      for (let i = 0; i < size; i++) {
+        segs[i * 2] = i;
+        segs[i * 2 + 1] = i + 1;
+      }
+      const numVertices = size + 1;
+      const startPos = new Float32Array(size * 3);
+      const endPos = new Float32Array(size * 3);
+      for (let i = 0; i < size; i++) {
+        startPos[i * 3] = i;
+        endPos[i * 3] = i + 1;
+      }
+      const tsStartSup = new Float32Array(size);
+      const tsEndSup = new Float32Array(size);
+      const wasmStartSup = new Float32Array(size);
+      const wasmEndSup = new Float32Array(size);
 
       const tsTime = measureTime(
         () => {
-          tsModule.mark_clipped_endpoints(
+          tsModule.compute_cap_suppression(
+            segs,
             visibility,
             t1Params,
             t2Params,
             size,
-            tsStartClipped,
-            tsEndClipped
+            numVertices,
+            startPos,
+            endPos,
+            tsStartSup,
+            tsEndSup
           );
         },
         CONFIG.iterations,
@@ -1063,13 +1082,17 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
 
       const wasmTime = measureTime(
         () => {
-          wasmModule!.mark_clipped_endpoints(
+          wasmModule!.compute_cap_suppression(
+            segs,
             visibility,
             t1Params,
             t2Params,
             size,
-            wasmStartClipped,
-            wasmEndClipped
+            numVertices,
+            startPos,
+            endPos,
+            wasmStartSup,
+            wasmEndSup
           );
         },
         CONFIG.iterations,
@@ -1077,7 +1100,7 @@ const benchmarks: Record<string, BenchmarkFn[]> = {
       );
 
       return {
-        name: 'mark_clipped_endpoints',
+        name: 'compute_cap_suppression',
         category: 'LINES CLIPPING',
         tsTime,
         wasmTime,

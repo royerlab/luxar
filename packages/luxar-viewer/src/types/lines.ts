@@ -280,11 +280,19 @@ export interface ProcessedLinesData {
   /** 3D segment lengths (M,), used for cap factor calculation */
   segmentLengths: Float32Array;
 
-  /** Whether start endpoint was clipped (M,), 1=clipped, 0=original */
-  startClipped: Uint8Array;
+  /**
+   * How much of the shader's endpoint cap dimming to suppress at the start
+   * endpoint (M,), in [0, 1]. 1 = suppress entirely (slice-clipped endpoint,
+   * or a straight-through interior joint where the neighbouring quad tiles
+   * rather than overlaps); 0 = keep the soft cap (free polyline end, branch
+   * point, or a bend sharp enough that the quads genuinely overlap).
+   * Produced by `compute_cap_suppression` — see
+   * `wasm/rust/src/lines_clipping.rs` for the derivation.
+   */
+  startCapSuppression: Float32Array;
 
-  /** Whether end endpoint was clipped (M,), 1=clipped, 0=original */
-  endClipped: Uint8Array;
+  /** Same for the end endpoint (M,), in [0, 1]. */
+  endCapSuppression: Float32Array;
 
   /**
    * Start-vertex scalar values (M,), interpolated if clipped, optional.

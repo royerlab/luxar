@@ -107,16 +107,16 @@ D: both OUT, opposite sides → clip both (segment crosses slab)
 E: both OUT, same side       → invisible
 ```
 
-| Function                           | Purpose                                                                                                       |
-| ---------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `clip_segment_single`              | Reference single-segment clipper. Returns `[visible, t1, t2]` as a 3-vec for JS interop.                      |
-| `clip_segments_batch`              | Workhorse: clips `num_segments` segments in one WASM call into `output_visibility`, `output_t1`, `output_t2`. |
-| `interpolate_clipped_positions`    | After batch clip, compute 3D start/end positions for visible segments via `display_dims`.                     |
-| `interpolate_scalars_batch`        | Same compaction for per-vertex scalar attributes (widths, sharpness, …).                                      |
-| `interpolate_colors_batch`         | RGB version with the inner loop unrolled across the three channels.                                           |
-| `calculate_segment_lengths`        | Euclidean 3D length per visible segment (for LOD / dash patterns).                                            |
-| `mark_clipped_endpoints`           | Boolean flags `t1 > 0` / `t2 < 1` per visible segment (for end-cap factor adjustment).                        |
-| `lerp`, `lerp_vec3`, `distance_3d` | Scalar math helpers exposed for the TS fallback to share semantics.                                           |
+| Function                           | Purpose                                                                                                                                                                                                    |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `clip_segment_single`              | Reference single-segment clipper. Returns `[visible, t1, t2]` as a 3-vec for JS interop.                                                                                                                   |
+| `clip_segments_batch`              | Workhorse: clips `num_segments` segments in one WASM call into `output_visibility`, `output_t1`, `output_t2`.                                                                                              |
+| `interpolate_clipped_positions`    | After batch clip, compute 3D start/end positions for visible segments via `display_dims`.                                                                                                                  |
+| `interpolate_scalars_batch`        | Same compaction for per-vertex scalar attributes (widths, sharpness, …).                                                                                                                                   |
+| `interpolate_colors_batch`         | RGB version with the inner loop unrolled across the three channels.                                                                                                                                        |
+| `calculate_segment_lengths`        | Euclidean 3D length per visible segment (for LOD / dash patterns).                                                                                                                                         |
+| `compute_cap_suppression`          | Per-endpoint cap suppression in [0, 1] per visible segment: 1 for a slice-clipped endpoint or a straight-through interior joint, 0 for a free end / branch point / sharp bend, cos(turn angle) in between. |
+| `lerp`, `lerp_vec3`, `distance_3d` | Scalar math helpers exposed for the TS fallback to share semantics.                                                                                                                                        |
 
 The batch path replaces the `HashSet<u32>` of display dims with a fixed-size
 `[bool; 16]` lookup. `dv.abs() < 1e-7` short-circuits the
@@ -160,8 +160,8 @@ dims are looked up via a fixed-size `[bool; 16]` array.
 
 ### `depth_sort.rs` — back-to-front splat ordering
 
-| Function              | Purpose                                                                                              |
-| --------------------- | ---------------------------------------------------------------------------------------------------- |
+| Function               | Purpose                                                                                                                                     |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
 | `sort_splats_by_depth` | Camera-space z per splat, min/max-normalized uint16 keys, stable 65536-bucket counting sort (back-to-front permutation for `aSortedIndex`). |
 
 Scale-invariant (per-sort normalization — nm..km units; raw f16 keys were

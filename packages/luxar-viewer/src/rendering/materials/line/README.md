@@ -1,26 +1,26 @@
 # Line Material
 
-> Thick-line material stack — instanced-quad geometry, shifted-truncated super-Gaussian soft falloff, and seamless additive joints — paired across the GLSL `ShaderMaterial` and TSL `NodeMaterial` backends.
+> Thick-line material stack — instanced-quad geometry, shifted-truncated super-Gaussian soft falloff, and continuous polyline joints — paired across the GLSL `ShaderMaterial` and TSL `NodeMaterial` backends.
 
 This folder holds the four-file material stack that renders one of Luxar's
 three first-class geometry types. Each line segment is drawn as an instanced
 screen-space quad expanded perpendicular to its pixel-space direction; the
 fragment stage shades a shifted-truncated super-Gaussian perpendicular
-cross-section that sums to flat full intensity at joints under additive
-blending. Both backends share
+cross-section, with per-endpoint cap suppression keeping interior polyline
+joints continuous. Both backends share
 the same `LineMaterialConfig` shape and the same update / clone / blending
 semantics — `MaterialManager.getLineMaterial` dispatches on
 `RendererCapabilities.apiSurface`, so call sites never see the divergence.
 
 ## Module map
 
-| File               | Role                                                                                                                                                                                                                                   |
-| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `material-glsl.ts` | `LineMaterial extends THREE.ShaderMaterial` — wraps the GLSL3 vertex/fragment pair, owns `uniforms`, manages variant `defines`, applies the canonical blending state. WebGL2 path.                                                     |
-| `material-tsl.ts`  | `LineTSLMaterial extends NodeMaterial` — same constructor + update API, but owns persistent `UniformNode`s and rebuilds its TSL graph (`rebuildGraph`) when graph-specialized defines or projection mode flip. WebGPU path.            |
-| `shader-glsl.ts`   | `LINE_VERTEX_SHADER` + `LINE_FRAGMENT_SHADER` GLSL3 source strings and the `LINE_SOURCE: ShaderSource` registry entry. The `webgpu` field re-enters `lineWebGPUFactory` so the parity harness can drive both backends from one symbol. |
-| `shader-tsl.ts`    | `lineWebGPUFactory(nodes, config, outMaterial?)` — TSL counterpart to the GLSL strings. Reads pre-created `UniformNode`s from a `LineTSLNodes` table and emits the NodeMaterial graph.                                                 |
-| `math.ts`          | Shared CPU-side constants for both backends — `LINE_CHORD_SCALE = √(π/ln 100)`, the through-thickness of the Gaussian-profile ribbon per unit width (the volumetric chord factor; full derivation in its doc comment). Mirrors `point/math.ts` / `gsplat/math.ts`.                        |
+| File               | Role                                                                                                                                                                                                                                                               |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `material-glsl.ts` | `LineMaterial extends THREE.ShaderMaterial` — wraps the GLSL3 vertex/fragment pair, owns `uniforms`, manages variant `defines`, applies the canonical blending state. WebGL2 path.                                                                                 |
+| `material-tsl.ts`  | `LineTSLMaterial extends NodeMaterial` — same constructor + update API, but owns persistent `UniformNode`s and rebuilds its TSL graph (`rebuildGraph`) when graph-specialized defines or projection mode flip. WebGPU path.                                        |
+| `shader-glsl.ts`   | `LINE_VERTEX_SHADER` + `LINE_FRAGMENT_SHADER` GLSL3 source strings and the `LINE_SOURCE: ShaderSource` registry entry. The `webgpu` field re-enters `lineWebGPUFactory` so the parity harness can drive both backends from one symbol.                             |
+| `shader-tsl.ts`    | `lineWebGPUFactory(nodes, config, outMaterial?)` — TSL counterpart to the GLSL strings. Reads pre-created `UniformNode`s from a `LineTSLNodes` table and emits the NodeMaterial graph.                                                                             |
+| `math.ts`          | Shared CPU-side constants for both backends — `LINE_CHORD_SCALE = √(π/ln 100)`, the through-thickness of the Gaussian-profile ribbon per unit width (the volumetric chord factor; full derivation in its doc comment). Mirrors `point/math.ts` / `gsplat/math.ts`. |
 
 ## Rendering model in one paragraph
 
@@ -62,20 +62,50 @@ The `capFactor` joint trick (next section) is **independent** of the
 perpendicular falloff — only `perpFalloff` changed when the kernel was swapped
 to the super-Gaussian.
 
-## The cap-factor joint trick
+## The cap factor and its suppression
 
-Without compensation, two adjacent segments sharing an endpoint would each
-draw a full-intensity quad up to that endpoint, summing to **2.0** under
-additive blending — a visible bright nub at every joint. The fix lives in
-the fragment shader: each segment fades to `0.5` at its true endpoints
-(`baseCap = 0.5 + 0.5 × distToNearest / vWidthAtT`), and joints add to
-`0.5 + 0.5 = 1.0` — the documented full body intensity. The ramp is
-overridden to `1.0` when the nearest endpoint is **clipped** (the slice
-boundary cut the polyline mid-segment; the real endpoint is outside the
-slice so no neighbour will arrive to sum with). The cap is computed
+Each segment fades to `0.5` at its true endpoints
+(`baseCap = 0.5 + 0.5 × distToNearest / vWidthAtT`), giving a soft cap at a
+free polyline end rather than a hard flat cut. The cap is computed
 fragment-side rather than vertex-side because with only 4 vertices per
 quad, a vertex-side `min(t, 1−t) × segLen / width` collapses to `0.5`
 everywhere — there's no vertex at the body midpoint to interpolate from.
+
+**That dimming is only correct where a neighbouring quad overlaps the
+endpoint.** The quad spans exactly `[start, end]` — there is no longitudinal
+extension — so two collinear segments _tile_ rather than overlap. A fragment
+just inside segment A gets `0.5 + 0.5·d/w` from A and nothing at all from B
+(it is outside B's quad), so the two halves never sum back to 1.0 and every
+interior joint became a dark notch of axial length `2 × width` bottoming out
+at 50% — thick polylines rendered as bead chains (issue #780). The overlap
+premise _does_ hold at a sharp bend, where the two rectangles cover a lens on
+the inner side of the turn, and at a branch point, where three or more quads
+stack around the hub.
+
+So the endpoint dimming is gated by a per-endpoint **suppression scalar** in
+`[0, 1]` (texel4.yz), applied as `capFactor = mix(baseCap, 1.0, suppression)`:
+
+| Endpoint                        | Suppression                                             | Why                                                                          |
+| ------------------------------- | ------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| Slice-clipped                   | `1.0`                                                   | the real endpoint is outside the slice; no neighbour will arrive to sum with |
+| Straight-through interior joint | `1.0`                                                   | quads tile, nothing overlaps, nothing to compensate                          |
+| Bend (turn angle θ)             | `clamp(-dot(awayA, awayB), 0, 1)` = `cos θ` for θ < 90° | overlap area grows with θ, so blend towards the dimmed regime                |
+| 90° or sharper                  | `0.0`                                                   | quads genuinely overlap; `0.5 + 0.5` is what makes the joint flat            |
+| Branch point (3+ segments)      | `0.0`                                                   | suppressing would stack the quads into a bright nub                          |
+| Free polyline end               | `0.0`                                                   | keep the soft cap                                                            |
+
+The scalar is computed once per commit, off the main thread, by
+`compute_cap_suppression` (`wasm/rust/src/lines_clipping.rs`, with the
+uncapped TypeScript reference in `wasm/typescript/lines-clipping.ts`). It
+only pairs endpoints that both actually _reach_ the shared vertex, so a
+culled or slice-trimmed neighbour does not anchor a joint. Because the
+suppression is a plain scalar multiplier on the intensity chain, it behaves
+identically in every blending mode.
+
+The remaining known artifact is the **outer-side miter wedge**: at a sharp
+bend the two quads leave a small uncovered wedge on the outside of the turn.
+Closing it needs real join geometry (extending the quads longitudinally by a
+half-width), which is tracked separately.
 
 ## Geometry and storage layout
 
@@ -170,15 +200,15 @@ at build time and emits a single-branch graph, so a mode flip in
 
 ## Shared helpers from `_shared/`
 
-| Symbol                                           | Used for                                                                                                                                                     |
-| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `clampGamma(g)`                                  | `Math.max(0.001, g ?? 1.0)` guard before `1 / gamma` (shared across all six material constructors).                                                          |
-| `CameraAwareMaterial` interface                  | Implemented so `MaterialManager.updateCameraParams(fov, resolution, isOrtho?)` reaches this material.                                                        |
-| `ColormapAwareMaterial` interface                | Implemented so `material-colormap-helpers.ts` sets the LUT texture and scalar range through setters.                                                         |
-| `GLSL_SANITIZE_FUNCTIONS`                        | Prepended to the GLSL vertex shader; gives `sanitizePositive` / `sanitizeNonNegative` / `sanitizeAlpha` to clean width/sharpness/alpha inputs against NaN/Inf/out-of-range. |
-| `sanitizePositive` / `sanitizeNonNegative` / `sanitizeAlpha` (TSL) | TSL counterparts of the GLSL sanitisers — same contract, called inline in the factory.                                                     |
-| `volumetric.ts` constants                        | `ALPHA_CLAMP` (the `1 − 1/512` cap of the `w(a)` map) + the `S(τ)` series thresholds/coefficients — shared with the point/gsplat volumetric branches so all three geometries agree numerically. |
-| `proxyIUniform(node)`                            | Wraps each TSL `UniformNode` in an `IUniform`-shaped getter/setter so `material.uniforms.uX.value = Y` lands on `node.value`. No per-render callback bridge. |
+| Symbol                                                             | Used for                                                                                                                                                                                        |
+| ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `clampGamma(g)`                                                    | `Math.max(0.001, g ?? 1.0)` guard before `1 / gamma` (shared across all six material constructors).                                                                                             |
+| `CameraAwareMaterial` interface                                    | Implemented so `MaterialManager.updateCameraParams(fov, resolution, isOrtho?)` reaches this material.                                                                                           |
+| `ColormapAwareMaterial` interface                                  | Implemented so `material-colormap-helpers.ts` sets the LUT texture and scalar range through setters.                                                                                            |
+| `GLSL_SANITIZE_FUNCTIONS`                                          | Prepended to the GLSL vertex shader; gives `sanitizePositive` / `sanitizeNonNegative` / `sanitizeAlpha` to clean width/sharpness/alpha inputs against NaN/Inf/out-of-range.                     |
+| `sanitizePositive` / `sanitizeNonNegative` / `sanitizeAlpha` (TSL) | TSL counterparts of the GLSL sanitisers — same contract, called inline in the factory.                                                                                                          |
+| `volumetric.ts` constants                                          | `ALPHA_CLAMP` (the `1 − 1/512` cap of the `w(a)` map) + the `S(τ)` series thresholds/coefficients — shared with the point/gsplat volumetric branches so all three geometries agree numerically. |
+| `proxyIUniform(node)`                                              | Wraps each TSL `UniformNode` in an `IUniform`-shaped getter/setter so `material.uniforms.uX.value = Y` lands on `node.value`. No per-render callback bridge.                                    |
 
 ## `isGammaOne` / `isNoGOG` cross-export
 

@@ -39,8 +39,8 @@ function makeSource(count: number, withScalars = false, withAlphas = false): Lin
   const startSharpness = new Float32Array(count);
   const endSharpness = new Float32Array(count);
   const segmentLengths = new Float32Array(count);
-  const startClipped = new Uint8Array(count);
-  const endClipped = new Uint8Array(count);
+  const startCapSuppression = new Float32Array(count);
+  const endCapSuppression = new Float32Array(count);
   const startScalars = withScalars ? new Float32Array(count) : undefined;
   const endScalars = withScalars ? new Float32Array(count) : undefined;
   const startAlphas = withAlphas ? new Float32Array(count) : undefined;
@@ -55,8 +55,8 @@ function makeSource(count: number, withScalars = false, withAlphas = false): Lin
     startSharpness[i] = 0.1 * i;
     endSharpness[i] = 0.05 * i;
     segmentLengths[i] = 1.5 + i;
-    startClipped[i] = i % 2;
-    endClipped[i] = (i + 1) % 2;
+    startCapSuppression[i] = i % 2;
+    endCapSuppression[i] = (i + 1) % 2;
     if (startScalars && endScalars) {
       startScalars[i] = 0.05 * i;
       endScalars[i] = 0.07 * i;
@@ -76,8 +76,8 @@ function makeSource(count: number, withScalars = false, withAlphas = false): Lin
     startSharpness,
     endSharpness,
     segmentLengths,
-    startClipped,
-    endClipped,
+    startCapSuppression,
+    endCapSuppression,
     startScalars,
     endScalars,
     startAlphas,
@@ -144,11 +144,11 @@ describe('attachLineStorage / writeLineTexels — fused writer round-trip', () =
       expect(arr[o + 13]).toBe(src.endColors[p3 + 1]);
       expect(arr[o + 14]).toBe(src.endColors[p3 + 2]);
       expect(arr[o + 15]).toBe(src.endSharpness[i]);
-      // texel 4: segmentLength, startClipped, endClipped, 0 (the Uint8
+      // texel 4: segmentLength, startCapSuppression, endCapSuppression, 0 (the Uint8
       // clipped flags are read element-wise — 0/1 exact in Float32).
       expect(arr[o + 16]).toBe(src.segmentLengths[i]);
-      expect(arr[o + 17]).toBe(src.startClipped[i]);
-      expect(arr[o + 18]).toBe(src.endClipped[i]);
+      expect(arr[o + 17]).toBe(src.startCapSuppression[i]);
+      expect(arr[o + 18]).toBe(src.endCapSuppression[i]);
       expect(arr[o + 19]).toBe(0.0);
       // texel 5: startScalar, endScalar, per-endpoint alphas
       expect(arr[o + 20]).toBe(src.startScalars![i]);

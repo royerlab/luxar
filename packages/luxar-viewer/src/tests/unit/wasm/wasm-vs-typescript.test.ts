@@ -1322,36 +1322,54 @@ describe('WASM vs TypeScript Comparison', () => {
       expect(arraysAlmostEqual(wasmOutput, tsOutput)).toBe(true);
     });
 
-    it.skipIf(!wasmFilesExist)('mark_clipped_endpoints should match', () => {
-      const visibility = new Uint8Array([1, 1, 0, 1]);
-      const t1Params = new Float32Array([0.0, 0.5, 0.0, 0.25]);
-      const t2Params = new Float32Array([1.0, 0.75, 1.0, 1.0]);
+    it.skipIf(!wasmFilesExist)('compute_cap_suppression should match', () => {
+      // A 4-segment chain that exercises every branch of the kernel in one
+      // shot: a straight-through joint, a 90-degree bend, a clipped endpoint,
+      // and a culled neighbour.
+      //   v0 -> v1 -> v2 (straight, +x), v2 -> v3 (turns +y), v3 -> v4 (culled)
+      const segments = new Uint32Array([0, 1, 1, 2, 2, 3, 3, 4]);
+      const visibility = new Uint8Array([1, 1, 1, 0]);
+      const t1Params = new Float32Array([0.0, 0.0, 0.0, 0.0]);
+      const t2Params = new Float32Array([1.0, 1.0, 1.0, 1.0]);
+      const startPositions = new Float32Array([0, 0, 0, 1, 0, 0, 2, 0, 0]);
+      const endPositions = new Float32Array([1, 0, 0, 2, 0, 0, 2, 1, 0]);
 
-      const tsStartClipped = new Uint8Array(3);
-      const tsEndClipped = new Uint8Array(3);
-      const wasmStartClipped = new Uint8Array(3);
-      const wasmEndClipped = new Uint8Array(3);
+      const tsStart = new Float32Array(3);
+      const tsEnd = new Float32Array(3);
+      const wasmStart = new Float32Array(3);
+      const wasmEnd = new Float32Array(3);
 
-      const tsCount = tsModule.mark_clipped_endpoints(
+      const tsCount = tsModule.compute_cap_suppression(
+        segments,
         visibility,
         t1Params,
         t2Params,
         4,
-        tsStartClipped,
-        tsEndClipped
+        5,
+        startPositions,
+        endPositions,
+        tsStart,
+        tsEnd
       );
-      const wasmCount = wasmModule!.mark_clipped_endpoints(
+      const wasmCount = wasmModule!.compute_cap_suppression(
+        segments,
         visibility,
         t1Params,
         t2Params,
         4,
-        wasmStartClipped,
-        wasmEndClipped
+        5,
+        startPositions,
+        endPositions,
+        wasmStart,
+        wasmEnd
       );
 
       expect(wasmCount).toBe(tsCount);
-      expect(arraysEqual(wasmStartClipped, tsStartClipped)).toBe(true);
-      expect(arraysEqual(wasmEndClipped, tsEndClipped)).toBe(true);
+      expect(arraysAlmostEqual(wasmStart, tsStart)).toBe(true);
+      expect(arraysAlmostEqual(wasmEnd, tsEnd)).toBe(true);
+      // Pin the expected shape too, so a matched-but-wrong pair still fails.
+      expect(Array.from(tsStart)).toEqual([0, 1, 0]);
+      expect(Array.from(tsEnd)).toEqual([1, 0, 0]);
     });
   });
 

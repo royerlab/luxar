@@ -6,8 +6,8 @@
  *
  * Shader contracts:
  *   - Cap factor is evaluated in the fragment shader. The vertex shader
- *     passes `vT`, `vSegmentLength`, `vWidthAtT`, `vClippedStart`, and
- *     `vClippedEnd`; the fragment evaluates the documented "0.5 at
+ *     passes `vT`, `vSegmentLength`, `vWidthAtT`, `vCapSuppressStart`, and
+ *     `vCapSuppressEnd`; the fragment evaluates the documented "0.5 at
  *     endpoints, 1.0 in body" profile per fragment.
  *   - Near-plane / behind-camera safety rejects segments where both
  *     endpoints are behind/near the camera (clipPos.w → 0/negative
@@ -101,8 +101,8 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
     out float vPixelWidth;   // Raw line width in pixels (for anti-aliasing)
     out float vWidthFade;    // in [0..1], fades intensity when pixel-width clamped
     out float vViewZ;        // View-space z (fragment computes the near fade)
-    flat out float vClippedStart; // flat: same value across all 4 quad vertices
-    flat out float vClippedEnd;
+    flat out float vCapSuppressStart; // flat: same value across all 4 quad vertices
+    flat out float vCapSuppressEnd;
     out mediump float vAlpha; // per-endpoint opacity, interpolated along t (texel5.zw; 1.0 for RGB data)
 
     void main() {
@@ -126,16 +126,16 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
       vec3 aEndPos = lineT1.xyz;
       float aEndWidth = lineT1.w;
       float aSegmentLength = lineT4.x;
-      float aStartClipped = lineT4.y;
-      float aEndClipped = lineT4.z;
+      float aStartCapSuppress = lineT4.y;
+      float aEndCapSuppress = lineT4.z;
 
       // Position along segment: 0 = start, 1 = end. Branchless because
       // aQuadCorner.x ∈ {-1, +1} by construction.
       float t = aQuadCorner.x * 0.5 + 0.5;
       vT = t;
       vSegmentLength = aSegmentLength;
-      vClippedStart = aStartClipped;
-      vClippedEnd = aEndClipped;
+      vCapSuppressStart = aStartCapSuppress;
+      vCapSuppressEnd = aEndCapSuppress;
 
       // Project endpoints to view space first — the bothBehind near-cull
       // test reads view-space depth, and culling BEFORE the colormap
@@ -406,8 +406,8 @@ export const LINE_FRAGMENT_SHADER = /* glsl */ `
     in float vPixelWidth;   // Raw line width in pixels (before minimum clamping)
     in float vWidthFade;    // max-pixel-width clamp fade
     in float vViewZ; // View-space z (near fade computed here per-fragment)
-    flat in float vClippedStart;
-    flat in float vClippedEnd;
+    flat in float vCapSuppressStart;
+    flat in float vCapSuppressEnd;
     in mediump float vAlpha; // per-endpoint opacity, interpolated along t (1.0 for RGB data)
 
     out vec4 fragColor;
@@ -450,7 +450,12 @@ export const LINE_FRAGMENT_SHADER = /* glsl */ `
       // computation produced 0.5 everywhere. Compute it here so the
       // segment body reaches the documented 1.0.
       // - distance to nearest endpoint along the segment (world units)
-      // - if that endpoint was clipped, use full intensity (1.0)
+      // - the per-endpoint suppression scalar (texel4.yz, [0, 1]) lifts
+      //   the ramp back to 1.0 wherever dimming would be wrong: a
+      //   slice-clipped endpoint, or a straight-through interior joint
+      //   whose neighbouring quad TILES rather than overlaps (nothing
+      //   there to add the missing half back). Computed once per commit
+      //   in compute_cap_suppression (wasm/rust/src/lines_clipping.rs).
       float distFromStart = vT * vSegmentLength;
       float distFromEnd = (1.0 - vT) * vSegmentLength;
       float distToNearest = min(distFromStart, distFromEnd);
@@ -463,13 +468,12 @@ export const LINE_FRAGMENT_SHADER = /* glsl */ `
         : 1.0;
       float baseCap = 0.5 + 0.5 * capRamp;
 
-      // Override if the nearest endpoint was clipped (the "real"
-      // endpoint is outside the slice — full intensity is correct).
+      // Blend towards full intensity by the nearest endpoint's suppression.
       // step(distFromStart, distFromEnd) is 1 when distFromEnd >= distFromStart,
       // i.e. the START is the nearest endpoint.
       float nearestIsStart = step(distFromStart, distFromEnd);
-      float nearestClipped = mix(vClippedEnd, vClippedStart, nearestIsStart);
-      float capFactor = mix(baseCap, 1.0, nearestClipped);
+      float nearestSuppress = mix(vCapSuppressEnd, vCapSuppressStart, nearestIsStart);
+      float capFactor = mix(baseCap, 1.0, nearestSuppress);
 
       // Apply cap factor for correct joint intensity
       // Per-fragment near fade from the interpolated view depth (see
