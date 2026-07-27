@@ -323,7 +323,10 @@ def make_additive_lod_lines(
         indices: Required for ``indexed``.
         widths: ``(N,)`` per-vertex widths; required for ``salience``.
         method / n_lods / counts / seed: see Points equivalent. Same
-          semantics.
+          semantics, with one currency note: a ``"stream:<c>"`` spec sizes
+          ``c`` in VERTICES (so the same spec means the same payload for
+          every geometry) and is converted here to a polyline count via the
+          mean polyline length — cuts stay on whole-polyline boundaries.
 
     Returns:
         List of LOD-level entries. Each entry is a list of per-polyline
@@ -388,14 +391,25 @@ def make_additive_lod_lines(
     if isinstance(counts, str) and counts.startswith("energy:") and energy is None:
         energy = _compute_lines_energy(vertices, polylines, widths, colors, scalars)
 
-    if isinstance(counts, str):
+    if isinstance(counts, str) and counts.startswith("stream:"):
+        # `stream:C` is sized in VERTICES — the payload currency, symmetric with
+        # Points and GSplats — but this ladder slices POLYLINES, so convert via
+        # the mean polyline length. Cuts therefore still land on whole-polyline
+        # boundaries, preserving the segment-topology invariant.
+        from ....utils.lod_breakpoints import parse_stream_chunk, stream_cuts
+
+        mean_len = max(1.0, n / p)
+        c_polys = max(1, int(round(parse_stream_chunk(counts) / mean_len)))
+        breakpoints = stream_cuts(p, c_polys)
+    elif isinstance(counts, str):
         # Energy: fractions → cumulative counts (over polylines).
         from .points import _energy_breakpoints_to_counts  # shared helper
 
         if not counts.startswith("energy:"):
             raise ValueError(
                 f"unrecognized breakpoints string {counts!r}; expected "
-                "'energy:<fractions>'"
+                "'energy:<fractions>' (e.g. 'energy:0.5,0.9,1.0') or "
+                "'stream:<c>' (e.g. 'stream:40000')"
             )
         if energy is None:
             energy = _compute_lines_energy(vertices, polylines, widths, colors, scalars)

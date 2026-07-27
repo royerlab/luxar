@@ -106,6 +106,16 @@ Breakpoint vocabulary for `counts` / `breakpoints`:
 - `"energy:0.5,0.9,0.99,1.0"` → cumulative perceptual-energy fractions; element
   energy is `luminance_i × radius_i³`. Requires `colors` or `scalars` for the
   luminance term.
+- `"stream:40000"` → bandwidth-derived geometric ladder `[c, 2c, 4c, …, N]`, so
+  first paint costs `c` elements and each refinement doubles. Resolved against
+  the actual N, so one spec adapts to every level of a tree. For Lines, `c` is
+  counted in **vertices** (the payload currency, symmetric with Points and
+  GSplats) and converted internally to a polyline count, so cuts still land on
+  whole-polyline boundaries. Cut geometry is shared with the GSplats ladder via
+  `luxar/utils/lod_breakpoints.py`.
+
+Prefer `stream:` over `n_lods` for large leaves: an equal-count split into 4
+levels still ends with an N/4-sized commit, which is not a progressive paint.
 
 `DEFAULT_METHOD` is `random`; `DEFAULT_N_LODS` is `4`.
 
