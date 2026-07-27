@@ -58,6 +58,31 @@ function makeTextOverlay(overrides: Partial<OverlayConfig> = {}): OverlayConfig 
   } as OverlayConfig;
 }
 
+/**
+ * HTML overlay whose `html` payload flows through the private
+ * `sanitizeHtml` and lands in `el.innerHTML` via `createHtmlContent`.
+ *
+ * `interactive: true` on purpose: for non-interactive overlays
+ * `createHtmlContent` stamps `pointer-events: none` onto every descendant,
+ * which buries the sanitized markup under inline styles and makes the
+ * assertions below unreadable. Sanitization is independent of that flag.
+ */
+function makeHtmlOverlay(html: string, overrides: Partial<OverlayConfig> = {}): OverlayConfig {
+  return {
+    name: 'html-overlay',
+    type: 'overlay_html',
+    position: [0.5, 0.5],
+    opacity: 1.0,
+    anchor: 'center',
+    transition: 'none',
+    transition_duration: 0.3,
+    interactive: true,
+    z_index: 0,
+    html,
+    ...overrides,
+  } as OverlayConfig;
+}
+
 describe('FONT_PRESETS', () => {
   it('exposes the three documented presets as non-empty font-family strings', () => {
     // Audit W4 fix: toBeTruthy passed for any non-empty value
@@ -614,5 +639,291 @@ describe('OverlayManager.updateHoverContent', () => {
     manager.updateHoverContent({ label: 'visible', nodeName: '/n', elementIndex: 0 });
     expect(el.style.display).not.toBe('none');
     expect(el.style.opacity).toBe('1');
+  });
+});
+
+describe('OverlayManager HTML sanitization (issue #720)', () => {
+  let manager: OverlayManager;
+
+  beforeEach(() => {
+    document.body.innerHTML = '';
+    manager = new OverlayManager();
+  });
+
+  afterEach(() => {
+    manager.dispose();
+  });
+
+  /**
+   * Push `html` through the public surface (`loadOverlays` with an
+   * `overlay_html` config) and hand back the created overlay element.
+   *
+   * `sanitizeHtml` is private, and this file's stated approach is to
+   * exercise private helpers transitively; `createHtmlContent` writes the
+   * sanitized string straight to `el.innerHTML`, so the rendered DOM *is*
+   * the sanitizer's observable output — no bracket-notation poking needed.
+   */
+  async function renderHtml(html: string): Promise<HTMLDivElement> {
+    await manager.loadOverlays([makeHtmlOverlay(html)], 'http://example.com');
+    return document.querySelector('[data-overlay-name="html-overlay"]') as HTMLDivElement;
+  }
+
+  it('strips on* handlers from an <img> lifted out of a disallowed wrapper', async () => {
+    // Pre-fix: the disallowed <x> hit `continue`, so the <img> was never
+    // attribute-scrubbed; the deferred unwrap pass then hoisted it into the
+    // output verbatim as `<img src="x" onerror="alert(1)">`.
+    const el = await renderHtml('<x><img src=x onerror="alert(1)"></x>');
+
+    expect(el.querySelector('x')).toBeNull(); // wrapper unwrapped
+    const img = el.querySelector('img');
+    expect(img).not.toBeNull();
+    expect(img!.hasAttribute('onerror')).toBe(false);
+    expect(el.innerHTML).not.toContain('onerror');
+    expect(img!.getAttribute('src')).toBe('x'); // benign attribute kept
+  });
+
+  it('strips a javascript: href from an <a> lifted out of a disallowed wrapper', async () => {
+    const el = await renderHtml('<blink><a href="javascript:alert(1)">click</a></blink>');
+
+    expect(el.querySelector('blink')).toBeNull();
+    const a = el.querySelector('a');
+    expect(a).not.toBeNull();
+    expect(a!.hasAttribute('href')).toBe(false);
+    expect(el.innerHTML.toLowerCase()).not.toContain('javascript:');
+    expect(a!.textContent).toBe('click'); // text survives the unwrap
+  });
+
+  it('strips on* handlers from a <p> lifted out of a <form>, preserving its text', async () => {
+    const el = await renderHtml('<form><p onclick="evil()">hi</p></form>');
+
+    expect(el.querySelector('form')).toBeNull();
+    const p = el.querySelector('p');
+    expect(p).not.toBeNull();
+    expect(p!.hasAttribute('onclick')).toBe(false);
+    expect(el.innerHTML).not.toContain('onclick');
+    // Unwrapping must not eat content: the paragraph text is still there.
+    expect(p!.textContent).toBe('hi');
+    expect(el.textContent).toContain('hi');
+  });
+
+  it('strips on* handlers from a top-level allowed element (control)', async () => {
+    // This case already passed before the fix — it pins that the fix did
+    // not regress the plain allowed-tag path.
+    const el = await renderHtml('<p onclick="x">hi</p>');
+
+    const p = el.querySelector('p');
+    expect(p).not.toBeNull();
+    expect(p!.hasAttribute('onclick')).toBe(false);
+    expect(p!.textContent).toBe('hi');
+  });
+
+  it('sanitizes through nested disallowed wrappers at any depth', async () => {
+    // Two levels of unknown wrapper: the inner unwrap must feed an
+    // already-clean subtree to the outer one.
+    const el = await renderHtml('<x><y><img src=x onerror="alert(1)"></y></x>');
+
+    expect(el.querySelector('x')).toBeNull();
+    expect(el.querySelector('y')).toBeNull();
+    const img = el.querySelector('img');
+    expect(img).not.toBeNull();
+    expect(img!.hasAttribute('onerror')).toBe(false);
+    expect(el.innerHTML).not.toContain('onerror');
+  });
+
+  it('sanitizes a disallowed wrapper nested inside an allowed element', async () => {
+    const el = await renderHtml('<div><form><a href="javascript:alert(1)">go</a></form></div>');
+
+    expect(el.querySelector('div')).not.toBeNull(); // allowed tag kept
+    expect(el.querySelector('form')).toBeNull();
+    const a = el.querySelector('a');
+    expect(a).not.toBeNull();
+    expect(a!.hasAttribute('href')).toBe(false);
+    expect(el.innerHTML.toLowerCase()).not.toContain('javascript:');
+    expect(a!.textContent).toBe('go');
+  });
+
+  // ---------------------------------------------------------------- item 3:
+  // sibling batching + ordering of the unwrap pass (the restructured code)
+
+  it('unwraps a disallowed sibling in place, preserving text order', async () => {
+    const el = await renderHtml('<div>a<x>b</x>c</div>');
+    expect(el.innerHTML).toBe('<div>abc</div>');
+    expect(el.querySelector('div')!.textContent).toBe('abc');
+  });
+
+  it('preserves child order when unwrapping a wrapper holding mixed nodes', async () => {
+    const el = await renderHtml('<div>a<x>b<b>B</b>c</x>d</div>');
+    expect(el.innerHTML).toBe('<div>ab<b>B</b>cd</div>');
+    expect(el.querySelector('div')!.textContent).toBe('abBcd');
+  });
+
+  it('sanitizes two sibling wrappers each carrying a dirty <img>, in order', async () => {
+    const el = await renderHtml('<x><img src=1 onerror="a()"></x><y><img src=2 onclick="b()"></y>');
+    expect(el.innerHTML).toBe('<img src="1"><img src="2">');
+    const imgs = Array.from(el.querySelectorAll('img'));
+    expect(imgs.map((i) => i.getAttribute('src'))).toEqual(['1', '2']);
+    expect(imgs.some((i) => i.hasAttribute('onerror') || i.hasAttribute('onclick'))).toBe(false);
+  });
+
+  it("discards a nested <template>'s payload (safe by allowlist, not construction)", async () => {
+    // Recorded for the next reader: a nested <template> keeps its children in
+    // a separate `.content` DocumentFragment that `querySelectorAll('*')`
+    // never descends into, so neither pass sees them. `template` is not in
+    // ALLOWED_TAGS and has no `childNodes` to lift, so the payload is dropped
+    // unrendered — safe, but by the allowlist rather than by construction.
+    // Adding `template` to ALLOWED_TAGS would ship that subtree unsanitized.
+    const el = await renderHtml('<x><template><img src=x onerror="alert(1)"></template></x>');
+    expect(el.innerHTML).toBe('');
+    expect(el.querySelector('img')).toBeNull();
+    expect(el.querySelector('template')).toBeNull();
+    expect(el.innerHTML).not.toContain('onerror');
+  });
+
+  // ---------------------------------------------------------------- item 2:
+  // the javascript: scheme guard must survive trivial obfuscation
+
+  it('strips a javascript: href obfuscated with an interior tab', async () => {
+    // The URL parser removes ASCII tab/LF/CR from ANYWHERE in the value, so
+    // this parses as the javascript: scheme and fires; `trim()` only ever
+    // touched the ends.
+    const payload = '<a href="javascript&Tab;:alert(1)">x</a>';
+
+    // Sanity-check the input is genuinely obfuscated: the HTML parser
+    // decodes `&Tab;` to a literal U+0009 inside the attribute value. Without
+    // this the test could pass vacuously on an entity the parser left alone.
+    const raw = document.createElement('template');
+    raw.innerHTML = payload;
+    expect(raw.content.querySelector('a')!.getAttribute('href')).toContain('\t');
+
+    const el = await renderHtml(payload);
+    expect(el.querySelector('a')!.hasAttribute('href')).toBe(false);
+  });
+
+  it('strips a javascript: href obfuscated with an interior newline', async () => {
+    const el = await renderHtml('<a href="java&NewLine;script:alert(1)">x</a>');
+    expect(el.querySelector('a')!.hasAttribute('href')).toBe(false);
+  });
+
+  it('strips a javascript: href prefixed with a C0 control', async () => {
+    // The parser strips leading C0 controls before resolving the scheme.
+    const el = await renderHtml('<a href="&#1;javascript:alert(1)">x</a>');
+    expect(el.querySelector('a')!.hasAttribute('href')).toBe(false);
+  });
+
+  it('strips an obfuscated javascript: src (not just href)', async () => {
+    const el = await renderHtml('<x><img src="java&#9;script:alert(1)"></x>');
+    const img = el.querySelector('img')!;
+    expect(img.hasAttribute('src')).toBe(false);
+    expect(el.innerHTML.toLowerCase()).not.toContain('script:');
+  });
+
+  it('strips a mixed-case scheme and a mixed-case event-handler name', async () => {
+    // The HTML parser already lower-cases attribute NAMES, so `OnError`
+    // arrives as `onerror`; the scheme VALUE keeps its casing, which is what
+    // the `.toLowerCase()` in the guard is actually load-bearing for.
+    const el = await renderHtml('<x><a HrEf="JaVaScRiPt:alert(1)" OnClick="e()">x</a></x>');
+    const a = el.querySelector('a')!;
+    expect(a.hasAttribute('href')).toBe(false);
+    expect(a.hasAttribute('onclick')).toBe(false);
+    expect(a.textContent).toBe('x');
+  });
+
+  it('keeps a non-javascript href verbatim, whitespace and all', async () => {
+    // No-regression pin (passes pre-fix too): the whitespace/C0 normalization
+    // feeds the scheme COMPARISON only — it must never rewrite the stored
+    // value. It is not a "nothing but javascript: is dropped" guarantee: the
+    // guard is deliberately stricter than the URL parser and also strips
+    // interior spaces, so `href="java script:…"` IS dropped even though the
+    // parser would not treat that as a javascript: URL. Over-blocking is the
+    // safe direction here.
+    const el = await renderHtml('<a href="  https://example.org/a b  ">x</a>');
+    expect(el.querySelector('a')!.getAttribute('href')).toBe('  https://example.org/a b  ');
+  });
+
+  // ------------------------------------------------- unwrap-pass complexity
+
+  it('unwraps deeply nested wrappers with a linear number of node moves', async () => {
+    // The unwrap pass runs outermost-first, so each node moves exactly once.
+    // Reversing it (innermost-first) makes every enclosing wrapper re-lift the
+    // same K payload nodes => K*D moves. This pins the ordering; it is not a
+    // regression guard for released behaviour, since the pre-#720 walk stopped
+    // at the first disallowed tag and never got deep enough to be slow.
+    //
+    // Counting node MOVES rather than wall time keeps this deterministic (no
+    // CI flake): jsdom's fragment parser does not route through
+    // `Node.prototype.insertBefore`, so the spy below counts exactly the
+    // unwrap pass.
+    const D = 200; // nested disallowed wrappers
+    const K = 50; // payload elements inside the innermost wrapper
+
+    const original = Node.prototype.insertBefore;
+    let moves = 0;
+    Node.prototype.insertBefore = function <T extends Node>(
+      this: Node,
+      node: T,
+      ref: Node | null
+    ): T {
+      moves += 1;
+      return original.call(this, node, ref) as T;
+    };
+
+    let movesDeepOnly = 0;
+    let movesWithPayload = 0;
+    let outWithPayload = '';
+    try {
+      // Baseline: same depth, single payload node.
+      moves = 0;
+      await renderHtml('<x>'.repeat(D) + '<b>t</b>' + '</x>'.repeat(D));
+      movesDeepOnly = moves;
+
+      manager.dispose();
+      document.body.innerHTML = '';
+      manager = new OverlayManager();
+
+      moves = 0;
+      const el = await renderHtml('<x>'.repeat(D) + '<b>t</b>'.repeat(K) + '</x>'.repeat(D));
+      movesWithPayload = moves;
+      outWithPayload = el.innerHTML;
+    } finally {
+      Node.prototype.insertBefore = original;
+    }
+
+    // Correctness first: all D wrappers gone, all K payload nodes kept.
+    expect(outWithPayload).toBe('<b>t</b>'.repeat(K));
+
+    // LOWER bound — the spy must actually be observing the unwrap. Lifting a
+    // D-deep chain cannot cost fewer than D moves, and an implementation that
+    // moves nodes another way (`el.replaceWith(...el.childNodes)` is the
+    // obvious future simplification of this very loop) reads 0 here. Without
+    // this bound a 0-move reading satisfies every ceiling below and the
+    // ordering guard silently disappears. Exactly D today.
+    expect(movesDeepOnly).toBeGreaterThanOrEqual(D);
+    expect(movesWithPayload).toBeGreaterThanOrEqual(D);
+
+    // UPPER bounds — linear in depth + payload, not depth * payload. Left
+    // deliberately loose rather than the exact D + K: a tight bound would also
+    // be asserting that nothing else in loadOverlays ever calls insertBefore,
+    // which has nothing to do with what this test is for.
+    expect(movesWithPayload).toBeLessThanOrEqual(3 * (D + K));
+    // Growing the payload 1 -> K must add ~K moves, not (K-1)*D. Any constant
+    // offset from elsewhere cancels in the difference.
+    expect(movesWithPayload - movesDeepOnly).toBeLessThanOrEqual(2 * K);
+    // Hard ceiling far below the quadratic count (D*K = 10000; actual 249).
+    expect(movesWithPayload).toBeLessThan(D * K * 0.1);
+  });
+
+  it('preserves benign nested markup and safe hrefs', async () => {
+    // The fix must not degenerate into "strip everything".
+    const el = await renderHtml('<div><b>bold</b> <a href="https://example.org">link</a></div>');
+
+    const div = el.querySelector('div');
+    expect(div).not.toBeNull();
+    expect(div!.querySelector('b')!.textContent).toBe('bold');
+    const a = div!.querySelector('a');
+    expect(a).not.toBeNull();
+    expect(a!.getAttribute('href')).toBe('https://example.org');
+    expect(a!.textContent).toBe('link');
+    expect(el.textContent).toContain('bold');
+    expect(el.textContent).toContain('link');
   });
 });
