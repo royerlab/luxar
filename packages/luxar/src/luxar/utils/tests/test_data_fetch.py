@@ -8,6 +8,7 @@ staleness guard) and the ``ensure_dataset`` resolution logic (cache → in-repo 
 from __future__ import annotations
 
 import hashlib
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -21,6 +22,7 @@ from luxar.utils.data_fetch import (
     ensure_dataset,
     load_manifest,
 )
+from luxar.utils.download import QUARANTINE_SUFFIX, find_quarantined_files
 
 REPO_ROOT = Path(__file__).resolve().parents[6]
 DATA_DIR = Path(data_fetch._DEMOS_DATA_DIR)
@@ -52,15 +54,15 @@ def test_every_dataset_has_valid_bucket_license_and_files():
         assert d.get("license"), f"{name}: missing license"
         # A dataset carries either a flat file list or a variants map.
         if "variants" in d:
-            assert (
-                isinstance(d["variants"], dict) and d["variants"]
-            ), f"{name}: bad variants"
+            assert isinstance(d["variants"], dict) and d["variants"], (
+                f"{name}: bad variants"
+            )
             defaults = [v for v in d["variants"].values() if v.get("default")]
             assert len(defaults) == 1, f"{name}: needs exactly one default variant"
             for vn, v in d["variants"].items():
-                assert isinstance(
-                    v.get("files"), list
-                ), f"{name}/{vn}: files must be a list"
+                assert isinstance(v.get("files"), list), (
+                    f"{name}/{vn}: files must be a list"
+                )
         else:
             assert isinstance(d.get("files"), list), f"{name}: files must be a list"
 
@@ -69,9 +71,9 @@ def test_zenodo_datasets_reference_an_existing_record():
     m = load_manifest()
     for name, d in m["datasets"].items():
         if d["bucket"] == "zenodo":
-            assert (
-                d["record"] in m["records"]
-            ), f"{name}: unknown record {d['record']!r}"
+            assert d["record"] in m["records"], (
+                f"{name}: unknown record {d['record']!r}"
+            )
 
 
 def test_present_zenodo_files_have_checksums():
@@ -121,9 +123,9 @@ def test_manifest_matches_files_on_disk():
         if sub.is_dir() and sub.name != "tests":
             for f in sub.glob("*"):
                 if f.is_file() and not f.name.startswith("."):
-                    assert (
-                        f.name in listed
-                    ), f"{sub.name}/{f.name} missing from manifest"
+                    assert f.name in listed, (
+                        f"{sub.name}/{f.name} missing from manifest"
+                    )
 
 
 def test_generator_check_reports_manifest_current():
@@ -319,3 +321,163 @@ def test_missing_and_unhosted_raises_clear_error(fake_repo):
         ensure_dataset(
             "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
         )
+
+
+# --------------------------------------------------------------------------- #
+# Cache integrity: the checksum is the authority at every step
+# --------------------------------------------------------------------------- #
+def _corrupt_in_place_preserving_stat(path: Path) -> None:
+    """Overwrite *path* with same-length garbage and restore its (atime, mtime).
+
+    This is exactly the failure a (size, mtime) staleness test cannot see, and
+    the shape of the bug this module was fixed for.
+    """
+    st = path.stat()
+    path.write_bytes(b"X" * st.st_size)
+    os.utime(path, (st.st_atime, st.st_mtime))
+    assert path.stat().st_size == st.st_size
+
+
+def test_same_size_same_mtime_corruption_is_quarantined_and_repaired(fake_repo):
+    """REGRESSION: a checksum-failing cache entry must never be handed back.
+
+    Before the fix, step 1 logged the sha256 mismatch and fell through to step 2,
+    where ``_cache_is_stale`` compared only (size, mtime) — identical for an
+    in-place corruption — so nothing was re-copied and the corrupt path was
+    returned to the caller.
+    """
+    manifest, cache = fake_repo
+    (good,) = ensure_dataset(
+        "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
+    )
+    _corrupt_in_place_preserving_stat(good)
+
+    (repaired,) = ensure_dataset(
+        "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
+    )
+
+    assert repaired == good
+    assert repaired.read_bytes() == b"toy-splat-bytes"
+    quarantined = find_quarantined_files(good)
+    assert quarantined == [good.with_name(good.name + QUARANTINE_SUFFIX)]
+    assert quarantined[0].read_bytes() == b"X" * len(b"toy-splat-bytes")
+
+
+def test_corrupt_cache_without_a_source_raises_and_still_quarantines(
+    fake_repo, monkeypatch
+):
+    """Repair-or-raise: when nothing can fix it, the bad bytes still move aside."""
+    manifest, cache = fake_repo
+    (good,) = ensure_dataset(
+        "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
+    )
+    _corrupt_in_place_preserving_stat(good)
+    monkeypatch.setattr(data_fetch, "_DEMOS_DATA_DIR", cache / "does-not-exist")
+
+    with pytest.raises(FileNotFoundError):
+        ensure_dataset(
+            "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
+        )
+
+    assert not good.exists(), "corrupt bytes left under the canonical name"
+    assert find_quarantined_files(good)
+
+
+def test_inrepo_source_failing_its_own_checksum_is_never_used(fake_repo):
+    """A bad packaged copy is reported, never loaded, and never renamed.
+
+    demos/data is git-tracked, so a .corrupt file there would dirty the working
+    tree and break test_manifest_matches_files_on_disk. With no Zenodo URL yet
+    there is no good copy, so the only correct outcome is a clear error.
+    """
+    manifest, cache = fake_repo
+    payload = data_fetch._DEMOS_DATA_DIR / "gsplats_toy" / "toy_ch0.gsplats.zarr.zip"
+    payload.write_bytes(b"toy-splat-BYTES")  # same length, different content
+
+    with pytest.raises(FileNotFoundError, match="fails its manifest sha256"):
+        ensure_dataset(
+            "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
+        )
+
+    assert payload.read_bytes() == b"toy-splat-BYTES", "in-repo source was modified"
+    assert find_quarantined_files(payload) == []
+    assert not (cache / "gsplats_toy" / "toy_ch0.gsplats.zarr.zip").exists()
+
+
+def test_zenodo_leg_is_never_handed_a_preexisting_file(fake_repo, monkeypatch):
+    """robust_download RESUMES onto whatever sits at the destination (#731).
+
+    So step 3's contract is that `dest` must not exist when it is called.
+    """
+    manifest, cache = fake_repo
+    manifest["records"]["cc-by"]["base_url"] = "https://example.invalid/files"
+    (good,) = ensure_dataset(
+        "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
+    )
+    _corrupt_in_place_preserving_stat(good)
+    monkeypatch.setattr(data_fetch, "_DEMOS_DATA_DIR", cache / "does-not-exist")
+
+    def _fake_download(url, output_path, expected_sha256=None, **kw):
+        assert not Path(output_path).exists(), (
+            "download_with_checksum was handed an existing file — "
+            "robust_download would append to (resume onto) its bytes"
+        )
+        Path(output_path).write_bytes(b"toy-splat-bytes")
+        return Path(output_path)
+
+    monkeypatch.setattr("luxar.utils.download.download_with_checksum", _fake_download)
+
+    (path,) = ensure_dataset(
+        "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
+    )
+    assert path.read_bytes() == b"toy-splat-bytes"
+
+
+def test_lfs_pointer_in_cache_is_quarantined_and_replaced(fake_repo):
+    manifest, cache = fake_repo
+    dest = cache / "gsplats_toy" / "toy_ch0.gsplats.zarr.zip"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes(
+        b"version https://git-lfs.github.com/spec/v1\noid sha256:"
+        + b"0" * 64
+        + b"\nsize 15\n"
+    )
+
+    (path,) = ensure_dataset(
+        "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
+    )
+
+    assert path.read_bytes() == b"toy-splat-bytes"
+    assert find_quarantined_files(dest)
+
+
+def test_entry_without_a_checksum_is_reused_unverified(fake_repo):
+    """sha256=None means 'unverifiable', not 'verified'.
+
+    verify_file_checksum returns True when handed no expected hash, so this path
+    is gated explicitly rather than left to that vacuous behaviour.
+    """
+    manifest, cache = fake_repo
+    manifest["datasets"]["gsplats_toy"]["files"][0]["sha256"] = None
+
+    (path,) = ensure_dataset(
+        "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
+    )
+    path.write_bytes(b"anything-at-all")
+    (again,) = ensure_dataset(
+        "gsplats_toy", manifest=manifest, cache_root=cache, verbose=False
+    )
+
+    assert again.read_bytes() == b"anything-at-all"
+    assert find_quarantined_files(again) == []
+
+
+def test_cache_copy_leaves_no_temporary_files(fake_repo):
+    """The LFS->cache copy is atomic; its temp sibling must not survive."""
+    manifest, cache = fake_repo
+    ensure_dataset("gsplats_toy", manifest=manifest, cache_root=cache, verbose=False)
+
+    leftovers = [
+        p.name for p in (cache / "gsplats_toy").iterdir() if p.name.startswith(".tmp_")
+    ]
+    assert leftovers == []
