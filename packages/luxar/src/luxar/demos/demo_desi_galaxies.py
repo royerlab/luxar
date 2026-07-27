@@ -165,6 +165,20 @@ POINT_RADIUS = 1.2  # Mpc (visualization scale)
 SCENE_INTENSITY = 0.05
 LOD = dict(compression_factor=8, levels=3, device="auto")
 
+# Streaming ladder for every LOD level. The composed default would size the
+# first chunk from a generic bandwidth budget; at 9.75M points this scene is
+# large enough to be worth tuning explicitly. The first level is sized to land
+# in a single zarr chunk so it arrives in one range request, and the geometric
+# ladder above it means the viewer paints something within a chunk or two of
+# opening rather than after the whole level is resident. Without this the finest
+# level is one all-or-nothing commit — which froze the main thread for ~85s.
+STREAM_LOD = dict(counts="stream:2000", method="random", seed=0)
+
+# The shipped scene must carry a real ladder on its finest level. Anyone whose
+# `datasets/demos/` copy predates that gets a stale all-or-nothing scene and no
+# diagnostic, because `main()` short-circuits on an existing output directory.
+SCENE_MIN_SUBLODS = 3
+
 FLAGS = parse_demo_flags()
 NO_SERVE = FLAGS["no_serve"]
 SERVE_ONLY = FLAGS["serve_only"]
@@ -392,6 +406,36 @@ def extract_shipped_scene(zip_path: Path, output_path: Path) -> None:
         aprint(f"Scene ready: {output_path}")
 
 
+def warn_if_scene_lacks_ladder(scene_path: Path) -> None:
+    """Warn when a scene on disk predates the streaming ladder.
+
+    ``main()`` reuses an existing ``datasets/demos/`` scene unconditionally, so a
+    user who built this demo before the finest level was laddered would keep
+    getting the old all-or-nothing scene forever — the multi-minute load looks
+    like the fix simply did not work. Warn loudly, name both remedies, and carry
+    on: the old scene still renders, just slowly.
+    """
+    import zarr
+
+    try:
+        root = zarr.open(str(scene_path), mode="r")
+        finest = root["By tracer type"]["child_3"]
+        n_sublods = int(finest.attrs.get("n_additive_sublods", 1))
+    except Exception as exc:  # pragma: no cover - diagnostics only
+        aprint(f"  ⚠ Could not inspect {scene_path} for a streaming ladder: {exc}")
+        return
+
+    if n_sublods < SCENE_MIN_SUBLODS:
+        aprint(
+            f"  ⚠ This scene's finest level has no streaming ladder "
+            f"(n_additive_sublods={n_sublods}), so it will load all-at-once and "
+            "may freeze the browser for a long time. Rebuild it with:\n"
+            "      luxar demo run desi_galaxies -- --recompute\n"
+            "    or delete the scene and re-run to unpack a current shipped asset:\n"
+            f"      rm -rf {scene_path}"
+        )
+
+
 # =============================================================================
 # Scene
 # =============================================================================
@@ -447,6 +491,7 @@ def create_scene(
                 intensity=SCENE_INTENSITY,
                 layer=True,
                 substitutive_lod=LOD,
+                additive_lod=STREAM_LOD,
             )
 
             # Layer 2: colored by redshift (continuous depth), turbo baked into
@@ -464,6 +509,7 @@ def create_scene(
                 layer=True,
                 visible=False,
                 substitutive_lod=LOD,
+                additive_lod=STREAM_LOD,
             )
 
             scene.add_text(
@@ -513,6 +559,7 @@ def main() -> None:
         # Fast path: unzip the shipped, fully-built scene (instant, no LOD build).
         if SCENE_ZIP_SHIPPED.exists() and not is_lfs_pointer(SCENE_ZIP_SHIPPED):
             extract_shipped_scene(SCENE_ZIP_SHIPPED, output_path)
+            warn_if_scene_lacks_ladder(output_path)
         else:
             aprint(
                 "Precomputed scene not available (Git LFS asset not pulled). "
@@ -523,6 +570,7 @@ def main() -> None:
             create_scene(positions, redshift, tracer_ids, output_path)
     else:
         aprint(f"Using cached scene: {output_path}")
+        warn_if_scene_lacks_ladder(output_path)
 
     if NO_SERVE:
         aprint(f"Dataset generated at {output_path}")
