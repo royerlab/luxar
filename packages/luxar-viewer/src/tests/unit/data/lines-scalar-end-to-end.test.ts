@@ -77,8 +77,8 @@ function meshConfig(data: ProcessedLinesData, withScalars: boolean): InstancedLi
     startSharpness: data.startSharpness,
     endSharpness: data.endSharpness,
     segmentLengths: data.segmentLengths,
-    startClipped: data.startClipped,
-    endClipped: data.endClipped,
+    startCapSuppression: data.startCapSuppression,
+    endCapSuppression: data.endCapSuppression,
     segmentCount: data.segmentCount,
   };
   if (withScalars && data.startScalars && data.endScalars) {
@@ -281,8 +281,8 @@ function processedLines(
     startSharpness: new Float32Array(segmentCount),
     endSharpness: new Float32Array(segmentCount),
     segmentLengths: new Float32Array(segmentCount),
-    startClipped: new Uint8Array(segmentCount),
-    endClipped: new Uint8Array(segmentCount),
+    startCapSuppression: new Float32Array(segmentCount),
+    endCapSuppression: new Float32Array(segmentCount),
     ...(scalars
       ? {
           startScalars: new Float32Array(scalars.start),
@@ -394,8 +394,8 @@ describe('line-geometry mesh creation/update', () => {
     startSharpness: new Float32Array([2.0]),
     endSharpness: new Float32Array([2.0]),
     segmentLengths: new Float32Array([1.0]),
-    startClipped: new Uint8Array([0]),
-    endClipped: new Uint8Array([0]),
+    startCapSuppression: new Float32Array([0]),
+    endCapSuppression: new Float32Array([0]),
     segmentCount: 1,
   });
 
