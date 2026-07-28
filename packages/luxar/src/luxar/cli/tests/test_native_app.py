@@ -25,6 +25,7 @@ from luxar.cli.native_app import (
     bundle_linux_folder,
     bundle_macos_app,
     get_launcher_path,
+    validate_bundle_name,
 )
 
 
@@ -410,3 +411,135 @@ class TestCLINativeFlag:
         assert result.exit_code == 0, _strip_ansi(result.stdout)
         # sample_scene fixture creates demo_scene.zarr → stem "demo_scene"
         assert (output / "demo_scene.app").is_dir()
+
+
+# ─── Bundle name validation (issue #686) ─────────────────────────────────────
+
+
+class TestValidateBundleName:
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            "../../escaped",
+            "foo/bar",
+            "foo\\bar",
+            "/abs/path",
+            "..",
+            ".",
+            "",
+            "   ",
+            "foo\x00bar",
+            "foo\tbar",
+            "foo\nbar",
+        ],
+    )
+    def test_rejects_unsafe_names(self, bad: str) -> None:
+        with pytest.raises(ValueError):
+            validate_bundle_name(bad)
+
+    @pytest.mark.parametrize(
+        "good",
+        ["MyScene", "My Scene 2", "Scéne", "My Scéne 2", "demo_scene", "a.b.c"],
+    )
+    def test_accepts_safe_names(self, good: str) -> None:
+        # Returned unchanged when valid.
+        assert validate_bundle_name(good) == good
+
+
+class TestBundlerTraversalRejected:
+    """Defense-in-depth: bundlers reject traversal names directly and
+    produce NOTHING outside the requested output directory (issue #686)."""
+
+    def test_linux_folder_rejects_traversal(
+        self,
+        sample_scene: Path,
+        fake_viewer_dist: Path,
+        fake_launchers_dir: Path,
+        tmp_path: Path,
+    ) -> None:
+        output = tmp_path / "out"
+        output.mkdir()
+        before = sorted(tmp_path.rglob("*"))
+        with _patch_launchers(fake_launchers_dir):
+            with pytest.raises(ValueError):
+                bundle_linux_folder(
+                    arch="amd64",
+                    viewer_dist=fake_viewer_dist,
+                    zarr_data=sample_scene,
+                    output=output,
+                    app_name="../../escaped",
+                )
+        # No stray files created anywhere under tmp_path.
+        assert sorted(tmp_path.rglob("*")) == before
+        assert not (tmp_path.parent / "escaped-linux-amd64").exists()
+
+    def test_macos_app_rejects_traversal(
+        self,
+        sample_scene: Path,
+        fake_viewer_dist: Path,
+        fake_launchers_dir: Path,
+        tmp_path: Path,
+    ) -> None:
+        output = tmp_path / "out"
+        output.mkdir()
+        before = sorted(tmp_path.rglob("*"))
+        with _patch_launchers(fake_launchers_dir):
+            with pytest.raises(ValueError):
+                bundle_macos_app(
+                    viewer_dist=fake_viewer_dist,
+                    zarr_data=sample_scene,
+                    output=output,
+                    app_name="../../escaped",
+                )
+        assert sorted(tmp_path.rglob("*")) == before
+        assert not (tmp_path.parent / "escaped.app").exists()
+
+
+class TestCLITraversalNameRejected:
+    def test_traversal_name_rejected_before_rmtree(
+        self,
+        runner: CliRunner,
+        sample_scene: Path,
+        fake_viewer_dist: Path,
+        fake_launchers_dir: Path,
+        tmp_path: Path,
+    ) -> None:
+        """A traversal --name must be rejected BEFORE the output directory
+        is wiped: a pre-existing sentinel file survives even with
+        --overwrite."""
+        output = tmp_path / "native_out"
+        output.mkdir()
+        sentinel = output / "important.txt"
+        sentinel.write_text("user's prior export — must not be deleted")
+
+        with (
+            patch("luxar.cli.main.check_viewer_built", return_value=True),
+            patch(
+                "luxar.cli.utils.get_viewer_dist_path", return_value=fake_viewer_dist
+            ),
+            _patch_launchers(fake_launchers_dir),
+        ):
+            result = runner.invoke(
+                app,
+                [
+                    "export",
+                    str(sample_scene),
+                    "-o",
+                    str(output),
+                    "--native",
+                    "macos",
+                    "--name",
+                    "../../escaped",
+                    "--overwrite",
+                ],
+            )
+
+        assert result.exit_code == 1
+        # Nothing escaped the output directory. The pre-fix escape target
+        # for `output = tmp_path / "native_out"` + `../../escaped` resolves
+        # to `tmp_path.parent / "escaped.app"`, so assert THAT location.
+        assert not (tmp_path.parent / "escaped.app").exists()
+        # Validation ran before rmtree — the sentinel survives.
+        assert sentinel.is_file(), (
+            "rmtree fired before bundle-name validation (regression)"
+        )

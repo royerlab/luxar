@@ -305,14 +305,23 @@ def load_and_convert_gaia_data(data_zarr_path: Path, output_path: Path) -> int:
             # detail it can resolve (the census demo uses the same wiring). The
             # `layer=True` flag rides onto the wrapper kind=lod group → one "Stars"
             # layer in the Layers panel.
+            # Volumetric emission–absorption blending (kappa 1.3) instead of
+            # plain additive: dense sight-lines through the disc self-shadow
+            # instead of saturating, which keeps the bulge from blowing out
+            # while the spiral-arm structure stays readable. Volumetric
+            # compositing bounds accumulated radiance (additive sums without
+            # bound), so it needs a hotter intensity than the old additive
+            # 0.031 — 0.075 = a 0–13.4 display range over the 0–32.3 data
+            # range in the Layers panel.
             scene.add_points(
                 "Stars",
                 positions,
                 colors=colors,
                 radii=radii,
-                opacity=0.9,
-                blending_mode="additive",
-                intensity=0.031,
+                opacity=1.0,
+                blending_mode="volumetric",
+                absorption=1.3,
+                intensity=0.075,
                 layer=True,
                 substitutive_lod=dict(compression_factor=8, levels=3, device="auto"),
             )
@@ -337,7 +346,8 @@ def load_and_convert_gaia_data(data_zarr_path: Path, output_path: Path) -> int:
                 colors=sun_color,
                 radii=marker_radius,
                 opacity=1.0,
-                blending_mode="normal",
+                blending_mode="volumetric",
+                absorption=1.3,
                 layer=True,
             )
             aprint(f"  ✓ Sun at ({-r0_kpc * SCALE:.1f}, 0, 0)")
@@ -355,7 +365,8 @@ def load_and_convert_gaia_data(data_zarr_path: Path, output_path: Path) -> int:
                 colors=betelgeuse_color,
                 radii=marker_radius,
                 opacity=1.0,
-                blending_mode="normal",
+                blending_mode="volumetric",
+                absorption=1.3,
                 layer=True,
             )
             aprint("  ✓ Betelgeuse (red supergiant, 168 pc)")
@@ -373,7 +384,8 @@ def load_and_convert_gaia_data(data_zarr_path: Path, output_path: Path) -> int:
                 colors=rigel_color,
                 radii=marker_radius,
                 opacity=1.0,
-                blending_mode="normal",
+                blending_mode="volumetric",
+                absorption=1.3,
                 layer=True,
             )
             aprint("  ✓ Rigel (blue supergiant, 265 pc)")
