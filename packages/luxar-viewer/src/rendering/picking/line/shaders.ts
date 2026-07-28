@@ -106,10 +106,6 @@ export const LINE_PICK_VERTEX_SHADER = /* glsl */ `
       float startS = clamp(sanitizeNonNegative(aStartSharpness, 0.5), 0.0, 1.0);
       float endS = clamp(sanitizeNonNegative(aEndSharpness, 0.5), 0.0, 1.0);
 
-      float width = mix(startW, endW, t);
-      vSharpness = mix(startS, endS, t);
-      vWidthAtT = width;
-
       vec4 mvStart = modelViewMatrix * vec4(aStartPos, 1.0);
       vec4 mvEnd = modelViewMatrix * vec4(aEndPos, 1.0);
       vec4 mvPos = mix(mvStart, mvEnd, t);
@@ -132,6 +128,12 @@ export const LINE_PICK_VERTEX_SHADER = /* glsl */ `
         (uIsOrtho == 0) && (startDepth < nearCull) && (endDepth < nearCull);
       if (bothBehind) {
         gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
+        // Defensive: width/sharpness are computed AFTER the clip
+        // (compute-once from tEff, visual-shader parity), so zero the
+        // fragment-readable varyings here — the rasterizer drops this
+        // segment, but uninitialised out-vars can trip driver validators.
+        vSharpness = 0.5;
+        vWidthAtT = 0.0;
         vPerpNorm = 0.0;
         vPixelWidth = 0.0;
         vWidthFade = 0.0;
@@ -165,9 +167,11 @@ export const LINE_PICK_VERTEX_SHADER = /* glsl */ `
       vT = tEff;
       mvPos = mix(mvStart, mvEnd, t);
       vViewZ = mvPos.z;
-      width = mix(startW, endW, tEff);
-      vWidthAtT = width;
+      // Compute-once from the clipped tEff (visual-shader parity); the
+      // raw-t values are never read before this point.
+      float width = mix(startW, endW, tEff);
       vSharpness = mix(startS, endS, tEff);
+      vWidthAtT = width;
 
       vec4 clipStart = projectionMatrix * mvStart;
       vec4 clipEnd = projectionMatrix * mvEnd;

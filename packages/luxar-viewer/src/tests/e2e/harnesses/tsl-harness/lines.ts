@@ -4,7 +4,7 @@
  * premultiply, volumetric emission–absorption, colormap LUT,
  * behind-camera + ortho-near culling, sorted-index permutation) plus
  * the line-pick counterparts + the multi-row texture-orientation
- * variant. 13 registry entries.
+ * variant. 17 registry entries.
  *
  * @module tests/e2e/harnesses/tsl-harness/lines
  */
@@ -711,6 +711,102 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
       return m;
     },
     buildMesh: (m) => buildLineInstancedMesh(m, [0.15, 0, 1.5], [0.15, 0, 0]),
+    buildCamera: buildBehindCamera,
+  },
+  // REVERSED crossing: identical segment to `line-crossing` but with the
+  // endpoints SWAPPED — start at the origin (view depth 1.0, in front),
+  // end at world z=1.5 (view depth -0.5, BEHIND the camera). This drives
+  // the DISTINCT tB clip branch (end behind, start in front), whereas
+  // `line-crossing` only exercises tA (start behind). The physical
+  // clipped segment — and therefore the rendered footprint — is the same,
+  // so the parity test reuses `line-crossing`'s content assertions. This
+  // entry uses LINE_SOURCE, so it covers only the VISUAL tB branch (both
+  // visual backends); its picking twin `line-pick-crossing-reversed`
+  // covers the picking tB branch — together the four backends. A
+  // sign/ordering slip in the visual tB branch droops the band off the
+  // centerline and fails the test.
+  'line-crossing-reversed': {
+    source: LINE_SOURCE,
+    buildUniforms: () => ({
+      uLineTex: { value: buildLineDataTexture([0.15, 0, 0], [0.15, 0, 1.5]) },
+      uResolution: { value: new THREE.Vector2(64, 64) },
+      uIsOrtho: { value: 0 },
+      uNearCull: { value: 0.01 },
+      uMaxLinePixelWidth: { value: 32.0 },
+      uPerspectiveLineScale: { value: 64.0 },
+      uOrthoLineScale: { value: 1.0 },
+      uOpacity: { value: 1.0 },
+      uInvGamma: { value: 1.0 / 2.2 },
+      uIntensity: { value: 1.0 },
+      uOffset: { value: 0.0 },
+    }),
+    buildTSLMaterial: (uniforms) => {
+      const m = lineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
+        isOrtho: false,
+      }) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: (m) => buildLineInstancedMesh(m, [0.15, 0, 0], [0.15, 0, 1.5]),
+    buildCamera: buildBehindCamera,
+  },
+  // PICKING twin of `line-crossing`: the same camera-plane-crossing
+  // segment through the LINE_PICK path (perspective, nodeId/elementId/
+  // brightness output). This is the ONLY fixture that reaches the
+  // picking-shader near-plane segment clip: `line-pick` is ortho (clip
+  // never built) and `line-pick-behind` is both-endpoints-behind (the
+  // bothBehind cull fires first). Deleting the picking clip on EITHER
+  // backend droops the wrapped-quad wedge off the centerline, which the
+  // parity test's per-backend centroid assertion catches.
+  'line-pick-crossing': {
+    source: LINE_PICK_SOURCE,
+    buildUniforms: () => ({
+      uLineTex: { value: buildLineDataTexture([0.15, 0, 1.5], [0.15, 0, 0]) },
+      uResolution: { value: new THREE.Vector2(64, 64) },
+      uIsOrtho: { value: 0 },
+      uNodeId: { value: 42 },
+      uNearCull: { value: 0.01 },
+      uMaxLinePixelWidth: { value: 32.0 },
+      uPerspectiveLineScale: { value: 64.0 },
+      uOrthoLineScale: { value: 1.0 },
+    }),
+    buildTSLMaterial: (uniforms) =>
+      linePickWebGPUFactory(buildLinePickTSLNodesFromUniforms(uniforms), {
+        isOrtho: false,
+      }) as unknown as THREE.Material,
+    buildMesh: (m) => buildLineInstancedMesh(m, [0.15, 0, 1.5], [0.15, 0, 0]),
+    buildCamera: buildBehindCamera,
+  },
+  // PICKING twin of `line-crossing-reversed`: identical to
+  // `line-pick-crossing` but with the endpoints SWAPPED — start at the
+  // origin (view depth 1.0, in front), end at world z=1.5 (view depth
+  // -0.5, BEHIND the camera). This drives the picking shaders' DISTINCT
+  // tB clip branch (end behind, start in front); `line-pick-crossing`
+  // only exercises tA. The physical clipped segment is the same, so the
+  // parity test reuses `line-pick-crossing`'s per-backend centroid
+  // assertion — a broken picking tB branch on either backend is caught:
+  // dropping the clip leaves the behind endpoint unclipped and droops the
+  // wrapped-quad wedge off the centerline (centroid tooth), while a
+  // sign/ordering slip collapses the band to a few columns (qualifying-
+  // column-count tooth).
+  'line-pick-crossing-reversed': {
+    source: LINE_PICK_SOURCE,
+    buildUniforms: () => ({
+      uLineTex: { value: buildLineDataTexture([0.15, 0, 0], [0.15, 0, 1.5]) },
+      uResolution: { value: new THREE.Vector2(64, 64) },
+      uIsOrtho: { value: 0 },
+      uNodeId: { value: 42 },
+      uNearCull: { value: 0.01 },
+      uMaxLinePixelWidth: { value: 32.0 },
+      uPerspectiveLineScale: { value: 64.0 },
+      uOrthoLineScale: { value: 1.0 },
+    }),
+    buildTSLMaterial: (uniforms) =>
+      linePickWebGPUFactory(buildLinePickTSLNodesFromUniforms(uniforms), {
+        isOrtho: false,
+      }) as unknown as THREE.Material,
+    buildMesh: (m) => buildLineInstancedMesh(m, [0.15, 0, 0], [0.15, 0, 1.5]),
     buildCamera: buildBehindCamera,
   },
   // B9c BUG-A regression: ortho line INSIDE the frustum but within the

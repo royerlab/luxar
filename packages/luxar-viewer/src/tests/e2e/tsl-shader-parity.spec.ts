@@ -148,6 +148,61 @@ function previewPixels(pixels: number[], count = 4): string {
   return lines.join('\n');
 }
 
+/**
+ * CONTENT check shared by the camera-plane-crossing line fixtures
+ * (`line-crossing`, `line-crossing-reversed`, `line-pick-crossing`,
+ * `line-pick-crossing-reversed`).
+ *
+ * The crossing segment is horizontal in world space (both endpoints at
+ * y = 0), so after the vertex-stage near-plane clip its in-front half
+ * must project to a band that is SYMMETRIC about the screen centerline:
+ * every lit column's vertical centroid sits at y ≈ 31.5 (64-px buffer).
+ * Before the clip, the behind-camera endpoint (clip w < 0) wrapped the
+ * quad into an external primitive whose visible half drooped toward the
+ * bottom of the frame with a razor edge through the profile — the
+ * close-zoom "one-sided profile" bug. A lit pixel is any pixel whose
+ * summed RGB clears a small threshold; this works for both the visual
+ * output and the pick output (nodeId=42 saturates the R channel).
+ *
+ * Two teeth:
+ *  1. the worst per-column centroid offset from the centerline must stay
+ *     small — catches the drooping wedge.
+ *  2. a MINIMUM number of qualifying columns (≥3 lit pixels each) — the
+ *     centroid metric returns 0 when NO column qualifies, so a symmetric
+ *     regression that renders only a 1-2px sliver (or nothing) would pass
+ *     vacuously. The in-front half projects a streak from its far
+ *     endpoint (screen x ≈ 40) rightward to the frame edge — ~20 columns,
+ *     each ~6-24 px wide — so ≥8 qualifying columns is a robust floor
+ *     that still fails on a sliver/empty frame.
+ */
+function assertCrossingBandCentered(pixels: number[], label: string): void {
+  let worst = 0;
+  let qualifyingColumns = 0;
+  for (let x = 0; x < 64; x++) {
+    let n = 0;
+    let sy = 0;
+    for (let y = 0; y < 64; y++) {
+      const o = (y * 64 + x) * 4;
+      if (pixels[o] + pixels[o + 1] + pixels[o + 2] > 10) {
+        n++;
+        sy += y;
+      }
+    }
+    if (n >= 3) {
+      qualifyingColumns++;
+      worst = Math.max(worst, Math.abs(sy / n - 31.5));
+    }
+  }
+  expect(
+    qualifyingColumns,
+    `${label}: too few lit columns — the crossing band collapsed to a sliver/empty frame (vacuous centroid pass)`
+  ).toBeGreaterThanOrEqual(8);
+  expect(
+    worst,
+    `${label}: band must stay centered on the projected centerline (drooping wedge = wrapped-quad regression)`
+  ).toBeLessThan(2.0);
+}
+
 test.describe('TSL ↔ GLSL shader parity', () => {
   test('const-rgb diagnostic: solid-colour fragment matches between backends', async ({ page }) => {
     await bootHarness(page);
@@ -1419,38 +1474,85 @@ test.describe('TSL ↔ GLSL shader parity', () => {
       'line-crossing parity'
     ).toBeLessThan(2.0);
 
-    // …and the CONTENT assertion that fails pre-fix: the segment is
-    // horizontal (world y = 0), so the rendered band must be SYMMETRIC
-    // about the screen centerline — every lit column's centroid sits at
-    // y ≈ 31.5. Before the vertex-stage near-plane segment clipping, the
-    // behind-camera endpoint (clip w < 0) wrapped the quad into an
-    // external primitive whose visible half drooped to the bottom of the
-    // frame (per-column centroids drifting to ~44+) with a razor edge
-    // through the profile — the close-zoom "one-sided profile" bug.
-    const maxCentroidError = (px: number[]): number => {
-      let worst = 0;
-      for (let x = 0; x < 64; x++) {
-        let n = 0;
-        let sy = 0;
-        for (let y = 0; y < 64; y++) {
-          const o = (y * 64 + x) * 4;
-          if (px[o] + px[o + 1] + px[o + 2] > 10) {
-            n++;
-            sy += y;
-          }
-        }
-        if (n >= 3) worst = Math.max(worst, Math.abs(sy / n - 31.5));
-      }
-      return worst;
-    };
+    // …and the CONTENT assertion that fails pre-fix: the horizontal
+    // segment's in-front half must render as a centered band on BOTH
+    // backends (a drooping wedge = the wrapped-quad regression). See
+    // `assertCrossingBandCentered`. This fixture exercises the tA clip
+    // branch (start behind the camera).
+    assertCrossingBandCentered(glslPixels, 'line-crossing GLSL');
+    assertCrossingBandCentered(tslResult.pixels, 'line-crossing TSL');
+  });
+
+  test('line-crossing-reversed: end-behind (tB) clip branch keeps the band centered', async ({
+    page,
+  }) => {
+    await bootHarness(page);
+
+    const glslPixels = await runGLSL(page, 'line-crossing-reversed');
+    const tslResult = await runTSL(page, 'line-crossing-reversed');
+
+    // Same physical segment as `line-crossing` with the endpoints
+    // swapped, so it drives the DISTINCT tB clip branch (end behind,
+    // start in front) while the footprint is identical — reuse the same
+    // parity + content assertions. A sign/ordering slip in tB on any
+    // backend droops the band off the centerline.
+    assertBothRendered(glslPixels, tslResult.pixels, 'line-crossing-reversed');
     expect(
-      maxCentroidError(glslPixels),
-      'GLSL: band must stay centered on the projected centerline (drooping wedge = wrapped-quad regression)'
+      meanAbsDiffPerCoveredPixel(glslPixels, tslResult.pixels),
+      'line-crossing-reversed parity'
     ).toBeLessThan(2.0);
+    assertCrossingBandCentered(glslPixels, 'line-crossing-reversed GLSL');
+    assertCrossingBandCentered(tslResult.pixels, 'line-crossing-reversed TSL');
+  });
+
+  test('line-pick-crossing: picking near-plane segment clip keeps the band centered', async ({
+    page,
+  }) => {
+    await bootHarness(page);
+
+    const glslPixels = await runGLSL(page, 'line-pick-crossing');
+    const tslResult = await runTSL(page, 'line-pick-crossing');
+
+    // The ONLY fixture that reaches the PICKING near-plane segment clip
+    // (`line-pick` is ortho, `line-pick-behind` is culled before the
+    // clip). A pure GLSL↔TSL parity check is insufficient — both twins
+    // could droop identically — so the content assertion is applied
+    // per-backend: deleting the picking clip on EITHER backend droops the
+    // wrapped-quad wedge and fails that side. Lit pixels are detected via
+    // the summed RGB (nodeId=42 saturates the R channel of covered
+    // pixels), identical to the visual crossing tests.
+    assertBothRendered(glslPixels, tslResult.pixels, 'line-pick-crossing');
     expect(
-      maxCentroidError(tslResult.pixels),
-      'TSL: band must stay centered on the projected centerline (drooping wedge = wrapped-quad regression)'
+      meanAbsDiffPerCoveredPixel(glslPixels, tslResult.pixels),
+      'line-pick-crossing parity'
     ).toBeLessThan(2.0);
+    assertCrossingBandCentered(glslPixels, 'line-pick-crossing GLSL');
+    assertCrossingBandCentered(tslResult.pixels, 'line-pick-crossing TSL');
+  });
+
+  test('line-pick-crossing-reversed: picking end-behind (tB) clip branch keeps the band centered', async ({
+    page,
+  }) => {
+    await bootHarness(page);
+
+    const glslPixels = await runGLSL(page, 'line-pick-crossing-reversed');
+    const tslResult = await runTSL(page, 'line-pick-crossing-reversed');
+
+    // Picking twin of `line-crossing-reversed`: same physical segment as
+    // `line-pick-crossing` with the endpoints swapped, so it drives the
+    // picking shaders' DISTINCT tB clip branch (end behind, start in
+    // front) while the footprint is identical. Like `line-pick-crossing`
+    // a pure parity check is insufficient — both twins could droop
+    // identically — so the content assertion is applied per-backend:
+    // deleting the picking tB clip on EITHER backend droops the
+    // wrapped-quad wedge off the centerline and fails that side.
+    assertBothRendered(glslPixels, tslResult.pixels, 'line-pick-crossing-reversed');
+    expect(
+      meanAbsDiffPerCoveredPixel(glslPixels, tslResult.pixels),
+      'line-pick-crossing-reversed parity'
+    ).toBeLessThan(2.0);
+    assertCrossingBandCentered(glslPixels, 'line-pick-crossing-reversed GLSL');
+    assertCrossingBandCentered(tslResult.pixels, 'line-pick-crossing-reversed TSL');
   });
 
   test('mega with USE_VIGNETTE matches across backends', async ({ page }) => {
