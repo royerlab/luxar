@@ -165,13 +165,19 @@ POINT_RADIUS = 1.2  # Mpc (visualization scale)
 SCENE_INTENSITY = 0.05
 LOD = dict(compression_factor=8, levels=3, device="auto")
 
-# Streaming ladder for every LOD level. The composed default would size the
-# first chunk from a generic bandwidth budget; at 9.75M points this scene is
-# large enough to be worth tuning explicitly. The first level is sized to land
-# in a single zarr chunk so it arrives in one range request, and the geometric
-# ladder above it means the viewer paints something within a chunk or two of
-# opening rather than after the whole level is resident. Without this the finest
-# level is one all-or-nothing commit — which froze the main thread for ~85s.
+# Streaming ladder for every LOD level. The composed default sizes the first
+# chunk from a generic bandwidth budget; at 9.75M points this scene is large
+# enough to be worth tuning explicitly, so the base is set small enough to land
+# in a single zarr chunk — one range request to first paint.
+#
+# That base applies as-written only to the COARSEST level, which is the eager
+# default level and therefore the one whose first chunk is the actual
+# time-to-first-pixel: it ladders 2000 / 2000 / 4000 / 8000 / 3014. Finer levels
+# have a coarser sibling on screen already, so the sibling-aware rule raises
+# their base to n/(2K) — the finest lands 609498 / 609498 / 1218996 / 2437992 /
+# 4875971. That is deliberate: an upgrade has to beat what is already displayed
+# to be worth swapping, and 609K commits in a few seconds where the old
+# un-laddered 9.75M single commit froze the main thread for ~85s.
 STREAM_LOD = dict(counts="stream:2000", method="random", seed=0)
 
 # The shipped scene must carry a real ladder on its finest level. Anyone whose
