@@ -17,6 +17,15 @@ This module is a **pure post-process**. Fitting (single-pass or
 progressive) returns a single flattened `GSplatData`; an LOD hierarchy
 is built only on demand.
 
+> **API terms versus CLI recipes.** `additive` and `substitutive` are the
+> algorithm/data-model axes used by the Python API and on-disk metadata. The
+> `luxar gsplat lod --recipe` CLI uses intent-first names: `stream` for one
+> additive prefix ladder, `levels` for a substitutive replacement hierarchy,
+> `tiles` for spatial parts with per-part stream ladders, `overview` for a
+> coarse global level over fine tiles, and `adaptive` for per-part replacement
+> levels. The former recipe names (`additive`, `substitutive`, `partitioned`,
+> `multiscale`, `mosaic`) are not accepted by the current CLI.
+
 ### Module layout
 
 | File | Role |
@@ -39,7 +48,7 @@ in CPython).
 > **Upstream step**: use `luxar gsplat cal` to pick a principled splat
 > budget K\* before fitting. The canonical end-to-end pipeline is
 > **`cal` → `fit --seeds K*` → `lod --recipe stream` (or `tiles` / `overview` / `adaptive`)**.
-> See `gsplats/calibration.py` and the "Calibration (Blind-Spot CV)"
+> See `gsplats/calibration/README.md` and the "Calibration (Blind-Spot CV)"
 > section in the parent `gsplats/README.md`.
 
 ## Quick start
@@ -54,12 +63,12 @@ data = GSplatData.load("fit.gsplats.zarr")          # bare leaf
 
 # ── Additive: same N splats, prefix-monotone
 ladder = make_additive_lod(data, n_lods=4)          # GSplatData with 4-sublod additive ladder
-ladder.save("additive_lod.gsplats.zarr")            # v3.1 leaf with additive_<i>/ subgroups
+ladder.save("additive_lod.gsplats.zarr")            # v3.3 leaf with additive_<i>/ subgroups
 
 # ── Substitutive: ceil(N/K^L) splats per level, replacement hierarchy
 pyramid = make_substitutive_lod(data, compression_factor=4, levels=3)
 # pyramid is a GSplatData with 4 substitutive levels (index 0 = finest)
-pyramid.save("substitutive_pyramid.gsplats.zarr")   # v3.1 kind=lod group
+pyramid.save("substitutive_pyramid.gsplats.zarr")   # v3.3 kind=lod group
 for s, lev in enumerate(pyramid.substitutive_levels):
     print(f"level {s}: {lev.n_splats_total} splats, K={lev.compression_factor}")
 
@@ -81,7 +90,7 @@ full = make_lod_pyramid(
     compression_factor=4, levels=3,     # substitutive axis (4 levels)
     n_additive_lods=4,                  # additive axis (4 sublods per level)
 )
-full.save("pyramid.gsplats.zarr")       # v3.1 kind=lod group of additive-ladder leaves
+full.save("pyramid.gsplats.zarr")       # v3.3 kind=lod group of additive-ladder leaves
 ```
 
 ## API
@@ -183,7 +192,7 @@ The reference Luxar dataset benchmarks from `additive_lod` Experiment C:
 - `method="auto"` (the default) IS a size-adaptive fallback: `greedy` at small
   `N`, `self_energy` above the threshold (see "Methods"). Pass an explicit
   method to pin one and keep the choice loud.
-- Output is written as a v3.1 `.gsplats.zarr` node tree (v3.0 still readable): a leaf with
+- Output is written as a v3.3 `.gsplats.zarr` node tree (v3.0 still readable): a leaf with
   `additive_<i>/` subgroups for an additive ladder, or a `kind=lod` group
   of children for a substitutive hierarchy. See
   `docs/specs/GSPLATS_ZARR_FORMAT.md` for the full on-disk grammar.
@@ -214,7 +223,7 @@ make_substitutive_lod(
 
 Returns a single `GSplatData` with `n_substitutive = levels + 1`, one
 additive sub-LOD per substitutive level, and splat counts
-`[N, ⌈N/K⌉, ⌈N/K²⌉, …, ⌈N/K^L⌉]`. The on-disk container is a v3.1
+`[N, ⌈N/K⌉, ⌈N/K²⌉, …, ⌈N/K^L⌉]`. The on-disk container is a v3.3
 `kind=lod` group (`child_<i>/` per level, coarsest→finest on disk)
 — no `splats/substitutive_<s>/` wrapper.
 

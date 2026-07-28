@@ -211,6 +211,10 @@ def robust_download(
     from urllib3.util.retry import Retry
 
     output_path = Path(output_path)
+    # Whether the destination existed BEFORE this call touched anything. A
+    # pre-existing cache must never be destroyed by a transient server error
+    # (and, crucially, a 416 caused purely by resuming at EOF — see below).
+    preexisting = output_path.exists()
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Check if file already exists and is complete
@@ -247,12 +251,122 @@ def robust_download(
     session.mount("http://", adapter)
     session.mount("https://", adapter)
 
-    # Determine if we can resume
+    def _parse_len(headers: Any) -> Optional[int]:
+        """Parse a *positive* Content-Length, else ``None`` (unknown).
+
+        A non-positive value (``Content-Length: 0`` from a chunked/dynamic
+        host) or a malformed/duplicated header (``"100, 100"``) must be treated
+        as *unknown* — never as a real size — so it can't spuriously trigger the
+        ``local > remote`` truncate-and-restart branch.
+        """
+        raw = headers.get("content-length")
+        if raw is None:
+            return None
+        try:
+            n = int(raw)
+        except (TypeError, ValueError):
+            return None
+        return n if n > 0 else None
+
+    def _parse_content_range_total(headers: Any) -> Optional[int]:
+        """Parse the authoritative total from a ``Content-Range`` header.
+
+        RFC 9110 §14.4: a 416 response carries ``Content-Range: bytes */<total>``
+        (and a 206 carries ``bytes <start>-<end>/<total>``). Returns the trailing
+        ``/<total>`` integer, or ``None`` for a missing header, a ``*`` total, or
+        any malformed value — e.g. ``"bytes */12345" -> 12345``,
+        ``"bytes 0-99/12345" -> 12345``, ``"bytes */*" -> None``,
+        ``"bytes */0" -> 0``.
+        """
+        raw = headers.get("content-range")
+        if raw is None:
+            return None
+        total = raw.rsplit("/", 1)[-1].strip()
+        try:
+            n = int(total)
+        except (TypeError, ValueError):
+            return None
+        # Unlike _parse_len (Content-Length:0 → unknown), a Content-Range total
+        # of 0 is a REAL size (the remote was replaced by an empty file); only
+        # the "*" marker means unknown, and that already failed int() above.
+        return n if n >= 0 else None
+
+    def _resolve_remote_size() -> Optional[int]:
+        """Best-effort remote Content-Length (``None`` if unknowable).
+
+        Tries a lightweight HEAD first, then falls back to an unranged
+        streaming GET whose headers we read and then close the body — some
+        servers don't support HEAD or omit Content-Length on it. Uses the
+        same session (retry strategy) and ``extra_headers`` as the download.
+        """
+        probe_headers = dict(extra_headers or {})
+        # Force identity so the server reports the true (decoded) resource size
+        # that matches the on-disk file — a `Content-Encoding: gzip` response
+        # would otherwise report the COMPRESSED length and make a complete
+        # cache look "larger than remote", truncating it.
+        probe_headers.setdefault("Accept-Encoding", "identity")
+        try:
+            head = session.head(
+                url, timeout=timeout, headers=probe_headers, allow_redirects=True
+            )
+            head.raise_for_status()
+            size = _parse_len(head.headers)
+            if size is not None:
+                return size
+        except requests.exceptions.RequestException:
+            pass
+        try:
+            probe = session.get(
+                url, timeout=timeout, headers=probe_headers, stream=True
+            )
+            try:
+                probe.raise_for_status()
+                size = _parse_len(probe.headers)
+                if size is not None:
+                    return size
+            finally:
+                probe.close()
+        except requests.exceptions.RequestException:
+            pass
+        return None
+
+    # Determine if we can resume. Resolve the remote size ONCE, BEFORE issuing
+    # any Range request: a Range starting at (or past) EOF is unsatisfiable and
+    # the server answers HTTP 416, so we must not blindly resume from the local
+    # file's size. The cached value is reused by the 416 handler below.
     resume_byte_pos = 0
+    remote_size: Optional[int] = None
     if output_path.exists():
-        resume_byte_pos = output_path.stat().st_size
-        aprint(f"📂 Partial download found: {resume_byte_pos / (1024**2):.1f} MB")
-        aprint("   Attempting to resume...")
+        local_size = output_path.stat().st_size
+        remote_size = _resolve_remote_size()
+        if remote_size is not None and local_size == remote_size:
+            # Already complete — return it untouched (do NOT re-download).
+            aprint(f"✓ File already downloaded: {output_path}")
+            aprint(f"  Size: {local_size / (1024**3):.2f} GB")
+            if expected_size and local_size != expected_size:
+                aprint(
+                    f"⚠️  Warning: File size ({local_size}) doesn't match "
+                    f"expected ({expected_size})"
+                )
+            return output_path
+        if remote_size is not None and local_size > remote_size:
+            # Local copy is LARGER than the remote asset (e.g. a re-uploaded,
+            # smaller file): a Range at EOF would 416 — restart from scratch.
+            aprint(
+                "⚠️  Local file is larger than the remote source "
+                f"({local_size} > {remote_size} bytes); restarting from scratch"
+            )
+            resume_byte_pos = 0
+        else:
+            # Genuinely partial (0 < local < remote) or unknown remote size:
+            # best-effort resume. A resulting 416 is handled gracefully below.
+            resume_byte_pos = local_size
+            aprint(f"📂 Partial download found: {resume_byte_pos / (1024**2):.1f} MB")
+            aprint("   Attempting to resume...")
+
+    # A 416 while resuming triggers at most one clean full restart (no Range);
+    # a second 416 with no Range is a genuine error and is re-raised.
+    restarted_after_416 = False
 
     attempt = 0
     while attempt <= max_retries:
@@ -383,9 +497,75 @@ def robust_download(
                 raise
 
         except requests.exceptions.HTTPError as e:
+            status = e.response.status_code if e.response is not None else None
+            if status == 416:
+                # Range Not Satisfiable: a 416 to `Range: bytes=<resume>-`
+                # proves `local >= total` (RFC 9110), so a pre-existing file is
+                # AT LEAST complete. NEVER fatal, and NEVER delete the file.
+                if resume_byte_pos > 0 and output_path.exists():
+                    local_size = output_path.stat().st_size
+                    # The 416 response itself carries the authoritative total in
+                    # its `Content-Range: bytes */<total>` header (RFC 9110), which
+                    # disambiguates a genuinely-complete cache from a stale,
+                    # oversized one — even on a chunked/dynamic host that omits
+                    # Content-Length (so the earlier size probe returned None).
+                    # Fall back to the earlier-resolved remote_size when absent.
+                    content_range_total = (
+                        _parse_content_range_total(e.response.headers)
+                        if e.response is not None
+                        else None
+                    )
+                    effective_total = (
+                        content_range_total
+                        if content_range_total is not None
+                        else remote_size
+                    )
+                    if effective_total is not None:
+                        if local_size == effective_total:
+                            # Exact match: the cache is complete — return it
+                            # WITHOUT truncating or re-downloading.
+                            if expected_size and local_size != expected_size:
+                                aprint(
+                                    f"⚠️  Warning: File size ({local_size}) doesn't "
+                                    f"match expected ({expected_size})"
+                                )
+                            aprint(f"✓ File already downloaded: {output_path}")
+                            return output_path
+                        if not restarted_after_416:
+                            # Any size mismatch against the authoritative total
+                            # (a stale/oversized cache, or a contradictory
+                            # smaller-total 416 from a misbehaving server /
+                            # concurrently-truncated cache): restart cleanly.
+                            aprint(
+                                "⚠️  Range not satisfiable (416); local cache size "
+                                f"({local_size}) doesn't match the remote "
+                                f"({effective_total}) — restarting from scratch"
+                            )
+                            resume_byte_pos = 0
+                            restarted_after_416 = True
+                            continue
+                    elif effective_total is None:
+                        # No total anywhere (a truly header-less 416, no
+                        # Content-Range and no resolved remote size): a 416 still
+                        # proves `local >= total`, so the cache is AT LEAST
+                        # complete — return it, mirroring the pre-loop complete
+                        # path's expected_size mismatch warning.
+                        if expected_size and local_size != expected_size:
+                            aprint(
+                                f"⚠️  Warning: File size ({local_size}) doesn't "
+                                f"match expected ({expected_size})"
+                            )
+                        aprint(f"✓ File already downloaded: {output_path}")
+                        return output_path
+                # 416 with no Range, no file, or after we already restarted once
+                # is a genuine error — surface it without touching the file.
+                aprint(f"❌ HTTP error: {e}")
+                raise
             aprint(f"❌ HTTP error: {e}")
-            if output_path.exists():
-                output_path.unlink()  # Clean up on HTTP errors (bad URL, etc.)
+            # Clean up on HTTP errors (bad URL, etc.) — but only remove a file
+            # THIS call created; never destroy a pre-existing cache.
+            if output_path.exists() and not preexisting:
+                output_path.unlink()
             raise
 
         except Exception as e:
@@ -520,6 +700,10 @@ _CENTRAL_DIR_SIGNATURE = b"PK\x01\x02"
 _LOCAL_HEADER_SIGNATURE = b"PK\x03\x04"
 #: EOCD is 22 bytes + up to 64 KiB of trailing comment.
 _EOCD_TAIL_BYTES = 22 + 65536
+#: Absolute ceiling on a single extracted member's uncompressed size (256 GiB),
+#: independent of the archive's own (attacker-controlled) metadata. Mirrors
+#: gsplats/io/_archive.py.
+_MAX_MEMBER_UNCOMPRESSED_BYTES = 256 * 1024**3
 
 
 def _ranged_get(
@@ -696,6 +880,7 @@ def download_zip_member(
     timeout: int = 300,
     chunk_size: int = 1024 * 1024,
     extra_headers: Optional[dict] = None,
+    max_uncompressed_size: Optional[int] = _MAX_MEMBER_UNCOMPRESSED_BYTES,
 ) -> Path:
     """Extract ONE member from a remote zip via HTTP Range requests.
 
@@ -721,6 +906,18 @@ def download_zip_member(
         timeout: Per-request timeout (seconds).
         chunk_size: Streaming chunk size (bytes).
         extra_headers: Extra HTTP headers for every request.
+        max_uncompressed_size: Absolute ceiling (bytes) on the member's
+            uncompressed size, independent of the archive's own
+            (attacker-controlled) metadata. Defaults to 256 GiB
+            (``_MAX_MEMBER_UNCOMPRESSED_BYTES``). A member whose
+            central-directory uncompressed size exceeds it is rejected before
+            any streaming, and the inflate is additionally bounded by it — so a
+            self-consistent decompression bomb (one whose declared size, actual
+            inflated size, and CRC all agree) still cannot write unbounded to
+            disk. Pass a smaller int to tighten it, or ``None`` to disable the
+            ceiling entirely (the output is then bounded only by the declared
+            member size). The INRIA / cluster-fly demo callers pass a tight
+            ``expected_size`` and are unaffected by this default.
 
     Returns:
         Path to the extracted member.
@@ -768,6 +965,20 @@ def download_zip_member(
                 f"Member size mismatch: zip declares {uncomp_size:,} bytes, "
                 f"expected {expected_size:,}"
             )
+        if max_uncompressed_size is not None and uncomp_size > max_uncompressed_size:
+            raise ValueError(
+                f"Member declares {uncomp_size:,} uncompressed bytes, exceeding "
+                f"the {max_uncompressed_size:,}-byte ceiling "
+                f"(max_uncompressed_size); refusing to extract"
+            )
+        # Never inflate beyond the declared member size (capped by the optional
+        # absolute ceiling) — guards against a decompression bomb whose small
+        # DEFLATE stream expands without bound.
+        size_limit = (
+            min(uncomp_size, max_uncompressed_size)
+            if max_uncompressed_size is not None
+            else uncomp_size
+        )
         if output_path.exists() and output_path.stat().st_size == uncomp_size:
             aprint(f"✓ Member already extracted: {output_path}")
             return output_path
@@ -791,13 +1002,38 @@ def download_zip_member(
         extra_len = struct.unpack_from("<H", local_header, 28)[0]
         data_start = local_offset + 30 + name_len + extra_len
 
+        crc = 0
+        written = 0
+        last_report = 0
+
+        def _emit(f: Any, data: bytes) -> None:
+            """Write one decompressed slice, updating CRC/counters, and abort
+            if the running output exceeds the bound (decompression-bomb guard).
+            """
+            nonlocal crc, written, last_report
+            if not data:
+                return
+            f.write(data)
+            crc = zlib.crc32(data, crc)
+            written += len(data)
+            if written > size_limit:
+                raise ValueError(
+                    f"Decompressed output ({written:,} bytes) exceeds the "
+                    f"declared member size ({size_limit:,} bytes) for {member!r} "
+                    f"— possible decompression bomb; aborting extraction"
+                )
+            if written - last_report >= 100 * 1024 * 1024:
+                aprint(f"  {written / 1e6:.0f} / {uncomp_size / 1e6:.0f} MB")
+                last_report = written
+
         attempt = 0
+        tmp_path = output_path.with_suffix(output_path.suffix + ".part")
         while True:
             try:
-                tmp_path = output_path.with_suffix(output_path.suffix + ".part")
                 decompressor = zlib.decompressobj(-15) if method == 8 else None
                 crc = 0
                 written = 0
+                last_report = 0
                 response = _ranged_get(
                     session,
                     url,
@@ -807,23 +1043,35 @@ def download_zip_member(
                     extra_headers=extra_headers,
                     stream=True,
                 )
-                last_report = 0
+                compressed_read = 0
                 with open(tmp_path, "wb") as f:
                     for chunk in response.iter_content(chunk_size=chunk_size):
-                        data = decompressor.decompress(chunk) if decompressor else chunk
-                        f.write(data)
-                        crc = zlib.crc32(data, crc)
-                        written += len(data)
-                        if written - last_report >= 100 * 1024 * 1024:
-                            aprint(
-                                f"  {written / 1e6:.0f} / {uncomp_size / 1e6:.0f} MB"
+                        # Secondary defense: the ranged GET requested exactly
+                        # comp_size bytes, so a well-formed member reads exactly
+                        # that. Abort if a misbehaving/malicious server streams
+                        # more (which would otherwise let iter_content run
+                        # unbounded), before touching the decompressor.
+                        compressed_read += len(chunk)
+                        if compressed_read > comp_size:
+                            raise ValueError(
+                                f"Server returned more compressed bytes "
+                                f"({compressed_read:,}) than member {member!r} "
+                                f"declares ({comp_size:,}); aborting extraction"
                             )
-                            last_report = written
-                    if decompressor:
-                        data = decompressor.flush()
-                        f.write(data)
-                        crc = zlib.crc32(data, crc)
-                        written += len(data)
+                        if decompressor is None:
+                            # STORED: bound the raw copy by the same check.
+                            _emit(f, chunk)
+                            continue
+                        # DEFLATE: drain in <=chunk_size slices, feeding the
+                        # unconsumed tail back, so a single compressed chunk
+                        # cannot inflate unbounded in memory.
+                        buf = chunk
+                        while buf:
+                            data = decompressor.decompress(buf, chunk_size)
+                            _emit(f, data)
+                            buf = decompressor.unconsumed_tail
+                    if decompressor is not None:
+                        _emit(f, decompressor.flush())
                 if written != uncomp_size:
                     raise ValueError(
                         f"Extracted {written:,} bytes; zip declares {uncomp_size:,}"
@@ -848,3 +1096,8 @@ def download_zip_member(
                 wait = 2**attempt
                 aprint(f"⚠️  Network error ({exc}); retrying in {wait}s…")
                 time.sleep(wait)
+            except BaseException:
+                # Size/CRC/decompression failure (or anything non-retryable):
+                # never leave the oversized/partial staging file behind.
+                tmp_path.unlink(missing_ok=True)
+                raise

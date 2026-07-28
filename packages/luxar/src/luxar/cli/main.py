@@ -588,6 +588,7 @@ def _run_native_export(
         bundle_linux_folder,
         bundle_macos_app,
         get_launcher_path,
+        validate_bundle_name,
         zip_macos_app,
     )
     from .utils import get_viewer_dist_path, validate_zarr_store
@@ -618,12 +619,11 @@ def _run_native_export(
     for plat in requested:
         get_launcher_path(plat)  # raises LauncherNotBuiltError on miss
 
-    if output.exists():
-        if not overwrite:
-            raise FileExistsError(f"Output directory already exists: {output}")
-        shutil.rmtree(output)
-    output.mkdir(parents=True, exist_ok=True)
-
+    # Resolve and validate the bundle name BEFORE any destructive
+    # filesystem action. A crafted/derived name containing path separators
+    # or ``..`` could otherwise escape the output directory (issue #686),
+    # and it must fail before the rmtree below ever runs.
+    #
     # Strip the full (possibly compound) zarr suffix for the bundle name —
     # Path.stem only drops the last suffix, so ``foo.luxar.zarr`` would yield
     # ``foo.luxar`` rather than ``foo``.
@@ -633,6 +633,14 @@ def _run_native_export(
             _bundle_stem = _bundle_stem[: -len(_suf)]
             break
     bundle_name = name or _bundle_stem or "LuxarScene"
+    validate_bundle_name(bundle_name)
+
+    if output.exists():
+        if not overwrite:
+            raise FileExistsError(f"Output directory already exists: {output}")
+        shutil.rmtree(output)
+    output.mkdir(parents=True, exist_ok=True)
+
     viewer_dist = get_viewer_dist_path()
 
     with asection(f"Luxar Export (native: {', '.join(requested)})"):

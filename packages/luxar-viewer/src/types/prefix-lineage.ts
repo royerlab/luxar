@@ -44,7 +44,7 @@
  *   check, which has either already run or — for a still-in-flight commit —
  *   safely degrades to a full rewrite).
  * - The commit layer clears the committed data's entry right after the gate
- *   consumes it ({@code setPrefixParent(data, null)}), releasing the parent
+ *   consumes it (`setPrefixParent(data, null)`), releasing the parent
  *   as soon as the append/full-write decision is made. A retry after a
  *   throwing write therefore full-rewrites, which is the safe direction.
  *

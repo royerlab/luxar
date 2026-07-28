@@ -24,6 +24,7 @@ from arbol import aprint
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from starlette.datastructures import MutableHeaders
 from starlette.types import ASGIApp
 
 from .network_simulation import (
@@ -38,6 +39,43 @@ from .utils import (
 from .utils import (
     open_browser as open_browser_func,
 )
+
+
+class _NoCacheMiddleware:
+    """Force browser revalidation of every response (``Cache-Control: no-cache``).
+
+    Starlette's ``StaticFiles`` sends ``ETag``/``Last-Modified`` but no
+    ``Cache-Control``, so browsers fall back to HEURISTIC freshness (a
+    fraction of the file's age) and serve stale bytes WITHOUT revalidating.
+    Dataset directories are mutable — regenerating a demo/scene in place
+    keeps every chunk URL identical — so a heuristically-cached chunk from
+    the previous dataset silently poisons the next session (stale geometry
+    that no viewer-side cache clearing can fix). ``no-cache`` does NOT
+    disable caching: the browser keeps the entry but revalidates with the
+    ETag, so unchanged chunks still come back as cheap 304s.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(
+        self,
+        scope: MutableMapping[str, Any],
+        receive: Any,
+        send: Any,
+    ) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        async def send_with_no_cache(message: MutableMapping[str, Any]) -> None:
+            if message["type"] == "http.response.start":
+                headers = MutableHeaders(scope=message)
+                if "cache-control" not in headers:
+                    headers["cache-control"] = "no-cache"
+            await send(message)
+
+        await self.app(scope, receive, send_with_no_cache)
 
 
 def _add_cors(api: FastAPI, cors_origin: str = _DEFAULT_CORS_ORIGIN) -> None:
@@ -76,6 +114,9 @@ def _add_cors(api: FastAPI, cors_origin: str = _DEFAULT_CORS_ORIGIN) -> None:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    # Every server variant funnels through _add_cors, so this is the one
+    # chokepoint where the no-cache policy reaches data AND viewer mounts.
+    api.add_middleware(_NoCacheMiddleware)
 
 
 # Genuine loopback addresses only. The all-interfaces sentinel (0.0.0.0 / ::)
