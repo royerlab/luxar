@@ -363,6 +363,42 @@ class TestGSplatsNode:
 
             assert gsplats.n_elements == 3
 
+    def test_gsplats_uniform_cholesky_multichunk_write(self, tmp_path) -> None:
+        """Regression for issue #729: writing uniform-Cholesky splats whose
+        count exceeds one spatial-index chunk must not crash.
+
+        The uniform-Cholesky convenience keeps a single shared (1, k) row; the
+        spatial-ordering chunk-bounds pass used to slice it positionally, which
+        yields an empty (0, k) array (and a broadcast error) for every chunk
+        after the first. N=3000 3D splats span multiple chunks.
+        """
+        from luxar.typing_utils import TARGET_CHUNK_BYTES
+
+        n_splats = 3000
+        rng = np.random.default_rng(729)
+        centers = (rng.random((n_splats, 3)) * 100).astype(np.float32)  # 3D
+        amplitudes = np.ones(n_splats, dtype=np.float32)
+        # Single shared 1D cholesky (k=6 for 3D) → broadcast to all splats.
+        cholesky = np.array([1, 0, 1, 0, 0, 1], dtype=np.float32)
+
+        # The bug only triggers when the splats span MORE THAN ONE spatial-index
+        # chunk. Pin that here so the test can't silently degrade to a single
+        # chunk (and stop covering the regression) if TARGET_CHUNK_BYTES grows.
+        # Mirrors the chunk_size formula in io/_compiler/gsplat_assembly.py.
+        n_dims = 3
+        expected_k = n_dims * (n_dims + 1) // 2
+        bytes_per_splat = n_dims * 4 + 4 + expected_k * 4 + 16
+        chunk_size = max(1024, TARGET_CHUNK_BYTES // bytes_per_splat)
+        assert chunk_size < n_splats, (chunk_size, n_splats)
+
+        with LuxarZarrCompiler(
+            tmp_path / "uniform.zarr", enable_spatial_index=True
+        ) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            gsplats = scene.add_gsplats("uniform", centers, amplitudes, cholesky)
+
+            assert gsplats.n_elements == n_splats
+
     def test_add_gsplats_from_data(self, tmp_path) -> None:
         """Test adding gsplats from GSplatData."""
         from luxar.gsplats.gsplat_data import GSplatData
