@@ -6,6 +6,29 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Fixed — the CI Python version matrix tested one version three times (#839)
+
+`python-tests` declared a `['3.10', '3.11', '3.12']` matrix, but every leg ran the
+tests under Python 3.12: `pipx install hatch` put Hatch on the runner's default
+interpreter, and Hatch builds an environment that declares no `python` with whatever
+interpreter Hatch itself runs under. `actions/setup-python` installed the requested
+version and nothing downstream consumed it, so two of the three versions advertised by
+`requires-python` and the PyPI classifiers had never once been executed.
+
+Hatch is now installed onto the matrix interpreter, and a new step asserts the
+environment's version **equals** the matrix leg before the tests run — the pre-existing
+floor check (`>= 3.10`) passed happily while every leg ran 3.12, which is how this
+stayed hidden. `fail-fast: false` means all three verdicts now come back from one run.
+
+The seven interpreter-invariant gates (ruff, mypy, import-linter, bandit, version and
+contract drift, pip-audit) moved to a new single-version `python-checks` job. They judge
+the source, not the runtime — ruff is pinned to `target-version = "py310"` and mypy to
+`python_version = "3.10"` — so running them once is exactly as strong and three times
+cheaper, which pays for the two newly-real interpreters.
+
+Also made `stats/generate_stats.py` import `tomllib` with a `tomli` fallback: it was the
+one place in the tree that genuinely required 3.11+.
+
 #### Fixed — demos authored continuous curves as exploded `segments`, defeating joint continuity (bead-chain gaps)
 
 Nine demo line nodes (across six demos) built genuinely continuous curves (helix particle

@@ -27,9 +27,14 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-# tomllib is stdlib from Python 3.11+. The project pins python_version=3.10
-# in pyproject.toml so mypy can't see it; hatch runs on 3.11+ at runtime.
-import tomllib  # type: ignore[import-not-found]
+# tomllib is stdlib only from Python 3.11+, but the project supports 3.10
+# (`requires-python = ">=3.10"`), so fall back to the `tomli` backport — it is
+# the same API, and `tomli` is a 3.10-only dev dependency. mypy is pinned to
+# python_version=3.10 and therefore cannot see stdlib tomllib.
+try:
+    import tomllib  # type: ignore[import-not-found]
+except ModuleNotFoundError:  # Python 3.10
+    import tomli as tomllib  # type: ignore[no-redef,import-not-found]
 from arbol import aprint, asection
 
 # ---------------------------------------------------------------------------

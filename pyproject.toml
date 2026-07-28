@@ -91,7 +91,10 @@ dev = [
     "types-PyYAML>=6.0.12",
     "pre-commit>=3.3.0",
     "bandit[toml]>=1.7.5",
-    "import-linter>=2.0"
+    "import-linter>=2.0",
+    # `make stats` parses pyproject/Cargo TOML. stdlib tomllib only exists from
+    # 3.11, so the 3.10 floor needs the backport; a no-op on 3.11+.
+    "tomli>=2.0; python_version < '3.11'"
 ]
 io = [
     "tifffile>=2023.1.0",
