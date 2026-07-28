@@ -578,6 +578,118 @@ describe('depth-sort coordinator', () => {
     expect(near.renderOrder).toBe(2);
   });
 
+  it('a node whose bounds contain another node draws FIRST even when its centroid is nearer', async () => {
+    // The embedded-marker case (galaxy demo): a tiny reference-marker node
+    // sits INSIDE a huge cloud node. The cloud's bounds-center view-z is
+    // NEARER than the marker's here, so pure centroid depth would draw the
+    // cloud last — and in an order-dependent mode (volumetric) the cloud's
+    // fragments would multiply the already-drawn marker by transmittance
+    // ≈ 0, erasing it for ~half of all camera orientations. Containment
+    // must override depth: container first, embedded content on top.
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+
+    const cloud = makeGSplatsMesh(2, 'volumetric');
+    cloud.geometry.boundingSphere!.center.set(0, 0, -10);
+    cloud.geometry.boundingSphere!.radius = 100;
+    const marker = makeGSplatsMesh(2, 'volumetric');
+    marker.geometry.boundingSphere!.center.set(0, 0, -30); // inside the cloud
+    marker.geometry.boundingSphere!.radius = 1;
+
+    // Marker committed FIRST so neither insertion order nor centroid depth
+    // (marker -30 is farther than cloud -10) could accidentally pass this.
+    coord.noteDepthSortCommit(marker, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    coord.noteDepthSortCommit(cloud, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    await flush();
+
+    coord.evaluateDepthSortPerFrame();
+
+    expect(cloud.renderOrder).toBe(0);
+    expect(marker.renderOrder).toBe(1);
+  });
+
+  it('nested containment orders container → inner container → innermost', async () => {
+    // A ⊃ B ⊃ C: edges point strictly larger → smaller sphere, so the
+    // topological pass must emit A, B, C even though pure depth would put
+    // C (view-z -32, farthest) before B (-30) before A (-10).
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+
+    const a = makeGSplatsMesh(2, 'volumetric');
+    a.geometry.boundingSphere!.center.set(0, 0, -10);
+    a.geometry.boundingSphere!.radius = 100;
+    const b = makeGSplatsMesh(2, 'volumetric');
+    b.geometry.boundingSphere!.center.set(0, 0, -30);
+    b.geometry.boundingSphere!.radius = 10;
+    const c = makeGSplatsMesh(2, 'volumetric');
+    c.geometry.boundingSphere!.center.set(0, 0, -32);
+    c.geometry.boundingSphere!.radius = 1;
+
+    for (const m of [c, b, a]) {
+      coord.noteDepthSortCommit(m, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    }
+    await flush();
+
+    coord.evaluateDepthSortPerFrame();
+
+    expect(a.renderOrder).toBe(0);
+    expect(b.renderOrder).toBe(1);
+    expect(c.renderOrder).toBe(2);
+  });
+
+  it('containment leaves DISJOINT nodes on plain farthest-first depth order', async () => {
+    // A far node outside the cloud must keep its depth rank (drawn first);
+    // only the embedded marker is hoisted after its container. Expected
+    // order: farAway (-200), cloud (container), marker (embedded).
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+
+    const farAway = makeGSplatsMesh(2, 'volumetric');
+    farAway.geometry.boundingSphere!.center.set(0, 0, -200);
+    farAway.geometry.boundingSphere!.radius = 5;
+    const cloud = makeGSplatsMesh(2, 'volumetric');
+    cloud.geometry.boundingSphere!.center.set(0, 0, -10);
+    cloud.geometry.boundingSphere!.radius = 100;
+    const marker = makeGSplatsMesh(2, 'volumetric');
+    marker.geometry.boundingSphere!.center.set(0, 0, -30);
+    marker.geometry.boundingSphere!.radius = 1;
+
+    for (const m of [marker, cloud, farAway]) {
+      coord.noteDepthSortCommit(m, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    }
+    await flush();
+
+    coord.evaluateDepthSortPerFrame();
+
+    expect(farAway.renderOrder).toBe(0);
+    expect(cloud.renderOrder).toBe(1);
+    expect(marker.renderOrder).toBe(2);
+  });
+
+  it('identical bounding spheres produce no containment edge (no self-lock, stable depth order)', async () => {
+    // Exactly co-located equal-bounds layers (two channels of one dataset)
+    // have no meaningful cross order; the strict-radius guard must not
+    // fabricate edges between them — they keep plain depth/insertion order.
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+
+    const chanA = makeGSplatsMesh(2, 'volumetric');
+    chanA.geometry.boundingSphere!.center.set(0, 0, -20);
+    chanA.geometry.boundingSphere!.radius = 10;
+    const chanB = makeGSplatsMesh(2, 'volumetric');
+    chanB.geometry.boundingSphere!.center.set(0, 0, -20);
+    chanB.geometry.boundingSphere!.radius = 10;
+
+    coord.noteDepthSortCommit(chanA, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    coord.noteDepthSortCommit(chanB, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    await flush();
+
+    coord.evaluateDepthSortPerFrame();
+
+    // Tie → stable sort keeps insertion order; both got exactly one rank.
+    expect([chanA.renderOrder, chanB.renderOrder].sort()).toEqual([0, 1]);
+  });
+
   it('meshes without usable depth (no bounds / non-finite center) rank at view-z 0, no NaN poisoning', async () => {
     // A boundless mesh has no depth reference; a NaN bounding-sphere
     // center (NaN input data propagates into the bbox) must not poison
