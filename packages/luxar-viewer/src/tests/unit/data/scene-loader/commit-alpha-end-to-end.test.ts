@@ -275,8 +275,8 @@ function makeLinesProcessed(segmentCount: number, rgba: boolean): ProcessedLines
     startSharpness: new Float32Array(segmentCount).fill(0.5),
     endSharpness: new Float32Array(segmentCount).fill(0.5),
     segmentLengths: new Float32Array(segmentCount).fill(1),
-    startClipped: new Uint8Array(segmentCount),
-    endClipped: new Uint8Array(segmentCount),
+    startCapSuppression: new Float32Array(segmentCount),
+    endCapSuppression: new Float32Array(segmentCount),
     // RGBA alpha columns: presence of BOTH drives the hasElementAlpha stamp.
     startAlphas: rgba ? new Float32Array(segmentCount).fill(0.5) : undefined,
     endAlphas: rgba ? new Float32Array(segmentCount).fill(0.5) : undefined,

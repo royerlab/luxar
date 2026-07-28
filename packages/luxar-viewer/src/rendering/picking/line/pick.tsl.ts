@@ -42,7 +42,6 @@ import {
   clamp,
   mix,
   length,
-  step,
   exp,
   texture,
   textureSize,
@@ -137,7 +136,7 @@ export function linePickWebGPUFactory(
   const nearCull: TSLNode = max(uNearCull, float(1e-20));
 
   // Varyings declared up front, `.assign()`ed inside the vertex body.
-  // Per-segment-constant values (segment length, clipped flags, node
+  // Per-segment-constant values (segment length, cap suppression, node
   // id, element id) use `flat` interpolation — matches the GLSL3
   // `flat` qualifier on the same fields.
   const vSharpness: TSLNode = varying(float(0.0));
@@ -150,8 +149,8 @@ export function linePickWebGPUFactory(
   // View-space z to the fragment (fade computed per-fragment; see the
   // visual line TSL). Ortho graphs skip it.
   const vViewZ: TSLNode | null = config.isOrtho ? null : varying(float(0.0));
-  const vClippedStart: TSLNode = varying(float(0.0)).setInterpolation('flat');
-  const vClippedEnd: TSLNode = varying(float(0.0)).setInterpolation('flat');
+  const vCapSuppressStart: TSLNode = varying(float(0.0)).setInterpolation('flat');
+  const vCapSuppressEnd: TSLNode = varying(float(0.0)).setInterpolation('flat');
   const vNodeId: TSLNode = varying(uNodeId).setInterpolation('flat');
   // Storage slot, NOT instanceIndex (the draw slot): identical under
   // identity ordering, and stays correct once the sort worker permutes
@@ -181,8 +180,8 @@ export function linePickWebGPUFactory(
     const aStartSharpness: TSLNode = lineT2.w.toVar();
     const aEndSharpness: TSLNode = lineT3.w.toVar();
     const aSegmentLength: TSLNode = lineT4.x.toVar();
-    const aStartClipped: TSLNode = lineT4.y.toVar();
-    const aEndClipped: TSLNode = lineT4.z.toVar();
+    const aStartCapSuppress: TSLNode = lineT4.y.toVar();
+    const aEndCapSuppress: TSLNode = lineT4.z.toVar();
 
     // Branchless: aQuadCorner.x ∈ {-1, +1} by construction.
     const t: TSLNode = aQuadCorner.x.mul(0.5).add(0.5).toVar();
@@ -296,8 +295,8 @@ export function linePickWebGPUFactory(
     vPixelWidth.assign(rawPixelWidth);
     vWidthFade.assign(vWidthFadeVal);
     if (vViewZ) vViewZ.assign(mvPos.z);
-    vClippedStart.assign(aStartClipped);
-    vClippedEnd.assign(aEndClipped);
+    vCapSuppressStart.assign(aStartCapSuppress);
+    vCapSuppressEnd.assign(aEndCapSuppress);
 
     return clipPosOut;
   });
@@ -328,15 +327,23 @@ export function linePickWebGPUFactory(
 
     const distFromStart: TSLNode = vT.mul(vSegmentLength);
     const distFromEnd: TSLNode = float(1.0).sub(vT).mul(vSegmentLength);
-    const distToNearest: TSLNode = min(distFromStart, distFromEnd);
     // Scale-free ratio; 1e-20 = pure div-by-zero guard (visual twin).
-    const capRamp: TSLNode = vWidthAtT
+    const startRamp: TSLNode = vWidthAtT
       .greaterThan(float(1e-20))
-      .select(clamp(distToNearest.div(vWidthAtT), 0.0, 1.0).toVar(), float(1.0));
-    const baseCap: TSLNode = float(0.5).add(capRamp.mul(0.5));
-    const nearestIsStart: TSLNode = step(distFromStart, distFromEnd);
-    const nearestClipped: TSLNode = mix(vClippedEnd, vClippedStart, nearestIsStart);
-    const capFactor: TSLNode = mix(baseCap, float(1.0), nearestClipped);
+      .select(clamp(distFromStart.div(vWidthAtT), 0.0, 1.0).toVar(), float(1.0));
+    const endRamp: TSLNode = vWidthAtT
+      .greaterThan(float(1e-20))
+      .select(clamp(distFromEnd.div(vWidthAtT), 0.0, 1.0).toVar(), float(1.0));
+    // Per-endpoint cap lifted by its own suppression, combined with
+    // min() — removes the intra-segment midpoint jump (visual twin;
+    // a residual sub-width joint-seam step is documented there).
+    const startCap: TSLNode = mix(
+      float(0.5).add(startRamp.mul(0.5)),
+      float(1.0),
+      vCapSuppressStart
+    );
+    const endCap: TSLNode = mix(float(0.5).add(endRamp.mul(0.5)), float(1.0), vCapSuppressEnd);
+    const capFactor: TSLNode = min(startCap, endCap);
 
     return capFactor
       .mul(perpFalloff)

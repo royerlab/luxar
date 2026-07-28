@@ -485,49 +485,274 @@ pub fn calculate_segment_lengths(
         visible_count
     );
 
+    // The squared length is accumulated in f64: in f32 it overflows to
+    // infinity once a component delta exceeds sqrt(f32::MAX) ≈ 1.8e19, while
+    // the TypeScript mirror reads the same f32 inputs and computes in f64,
+    // returning the true value — the two backends must agree (same fix as
+    // the compute_cap_suppression direction loop below). The result is
+    // stored back as f32.
     for i in 0..visible_count {
-        let dx = end_positions[i * 3] - start_positions[i * 3];
-        let dy = end_positions[i * 3 + 1] - start_positions[i * 3 + 1];
-        let dz = end_positions[i * 3 + 2] - start_positions[i * 3 + 2];
-        output[i] = (dx * dx + dy * dy + dz * dz).sqrt();
+        let dx = end_positions[i * 3] as f64 - start_positions[i * 3] as f64;
+        let dy = end_positions[i * 3 + 1] as f64 - start_positions[i * 3 + 1] as f64;
+        let dz = end_positions[i * 3 + 2] as f64 - start_positions[i * 3 + 2] as f64;
+        output[i] = (dx * dx + dy * dy + dz * dz).sqrt() as f32;
     }
 }
 
-/// Mark clipped endpoints (for cap factor adjustment).
+/// Per-endpoint cap suppression in [0, 1] (drives the shader cap factor).
+///
+/// The line fragment shader dims each segment towards `0.5` at its own
+/// endpoints, with each endpoint's ramp lifted by its own suppression
+/// (`capFactor = min(mix(startRamp, 1.0, suppress_start), mix(endRamp, 1.0,
+/// suppress_end))`). That dimming is
+/// only correct where a neighbouring quad *overlaps* the endpoint and adds the
+/// missing half back — the quads span exactly `[start, end]`, so collinear
+/// neighbours tile instead of overlapping and the dimming becomes a dark notch
+/// at every interior joint. This kernel computes, per endpoint, how much of
+/// that dimming to suppress:
+///
+/// - `1.0` — a clipped endpoint (the slice boundary cut the polyline
+///   mid-segment; the real endpoint is outside the slice, so no neighbour will
+///   arrive to sum with) or a straight-through interior joint (quads tile, no
+///   overlap, nothing to compensate).
+/// - `0.0` — a free polyline end (keep the soft cap) or a sharp bend / branch
+///   point, where the quads genuinely do overlap and the `0.5 + 0.5` sum is
+///   what makes the joint come out flat.
+///
+/// Between those, the value is `clamp(-dot(away_a, away_b), 0, 1)` where
+/// `away_*` is the unit direction from the shared vertex back along each
+/// segment. A straight continuation gives opposite `away` vectors (dot -1 ->
+/// suppression 1); a 90-degree-or-sharper turn gives dot >= 0 -> suppression 0,
+/// preserving the pre-existing behaviour exactly. The overlap area between two
+/// quads grows monotonically with the turn angle, so this interpolates between
+/// the two regimes in the right direction. It is a per-endpoint scalar
+/// approximating a spatially varying ideal, deliberately biased conservative
+/// (never brighter than the previous behaviour at sharp angles).
+///
+/// Only **degree-2** vertices are treated as joints: at a branch point (3+
+/// segments meeting) the quads all overlap near the hub and suppressing would
+/// stack them into a bright nub, so those keep the cap.
+///
+/// A joint is recognised only between two endpoints that both actually *reach*
+/// the shared vertex — a visible neighbour trimmed away from the vertex
+/// (`t1 > 0` / `t2 < 1`) does not anchor a joint, and an invisible neighbour
+/// does not either.
+///
+/// Joints are matched by vertex **index**, not by position. A chain whose
+/// segments each carry their own duplicate copy of the shared point (what
+/// `line_type="segments"` emits for abutting segments) is geometrically
+/// continuous but has no shared index, so it keeps the cap at every joint and
+/// still shows the notch. That is deliberate: a shared index means "the same
+/// vertex of the same polyline", whereas position matching would also fuse two
+/// unrelated lines that merely touch. Author connected geometry as
+/// `line_type="polyline"` (or reuse indices) to get continuous joints.
+///
+/// # Cost
+///
+/// Unlike the other lines kernels, this one allocates inside wasm: `code_sum`
+/// + `degree` (5 B per source vertex) and `dirs` (12 B per visible segment).
+/// On the largest bundled lines scene (2.7M segments) `dirs` alone is
+/// ~32.4 MB, and for polyline-shaped data (vertices ≈ segments) the two
+/// vertex tables add another ~13.5 MB — a ~46 MB marginal high-water mark
+/// (before allocator overhead) on the module's linear memory, on top of the
+/// ~138 MB the four pre-existing lines kernels already reach through
+/// wasm-bindgen slice marshalling — and wasm memory is never returned to the
+/// OS, so it stays reserved for the worker's lifetime. Both alternatives are
+/// worse: dropping `dirs` and normalising per endpoint-pair costs ~2x the
+/// runtime of the whole lines projection, and quantising it breaks the
+/// bit-exact agreement with the TypeScript mirror.
 ///
 /// # Arguments
+/// - `segments`: Vertex index pairs [numSegments * 2]
 /// - `visibility`: Visibility mask [numSegments]
-/// - `t1`: Start interpolation parameters [numSegments]
-/// - `t2`: End interpolation parameters [numSegments]
+/// - `t1_params`: Start interpolation parameters [numSegments]
+/// - `t2_params`: End interpolation parameters [numSegments]
 /// - `num_segments`: Total number of segments
-/// - `output_start_clipped`: Output start clipped flags [visibleCount]
-/// - `output_end_clipped`: Output end clipped flags [visibleCount]
+/// - `num_vertices`: Total number of source vertices (bounds the touch tables)
+/// - `start_positions`: Clipped start positions [visibleCount * 3]
+/// - `end_positions`: Clipped end positions [visibleCount * 3]
+/// - `output_start`: Output start suppression [visibleCount]
+/// - `output_end`: Output end suppression [visibleCount]
 ///
 /// # Returns
 /// Number of visible segments written
 #[wasm_bindgen]
-pub fn mark_clipped_endpoints(
+pub fn compute_cap_suppression(
+    segments: &[u32],
     visibility: &[u8],
     t1_params: &[f32],
     t2_params: &[f32],
     num_segments: usize,
-    output_start_clipped: &mut [u8],
-    output_end_clipped: &mut [u8],
+    num_vertices: usize,
+    start_positions: &[f32],
+    end_positions: &[f32],
+    output_start: &mut [f32],
+    output_end: &mut [f32],
 ) -> u32 {
-    let mut out_idx: usize = 0;
+    // Endpoint code: (out_idx << 1) | end_bit, end_bit 0 = start, 1 = end.
+    // `code_sum` accumulates the codes of the endpoints landing exactly on each
+    // vertex and `degree` counts them (saturating at 3, so branch points stay
+    // distinguishable from ordinary joints). At degree 2 the partner is simply
+    // `code_sum - my_code` — one scattered array instead of two, which halves
+    // the cache traffic of this vertex-indexed pass. Both start zeroed: degree
+    // gates every read, so a sentinel fill would be pure cost.
+    let mut code_sum: Vec<i32> = vec![0; num_vertices];
+    let mut degree: Vec<u8> = vec![0; num_vertices];
 
+    let mut out_idx: usize = 0;
     for seg_idx in 0..num_segments {
         if visibility[seg_idx] == 0 {
             continue;
         }
+        let code = (out_idx as i32) << 1;
+        if t1_params[seg_idx] <= 0.0 {
+            register_touch(
+                segments[seg_idx * 2] as usize,
+                code,
+                num_vertices,
+                &mut code_sum,
+                &mut degree,
+            );
+        }
+        if t2_params[seg_idx] >= 1.0 {
+            register_touch(
+                segments[seg_idx * 2 + 1] as usize,
+                code | 1,
+                num_vertices,
+                &mut code_sum,
+                &mut degree,
+            );
+        }
+        out_idx += 1;
+    }
 
-        output_start_clipped[out_idx] = if t1_params[seg_idx] > 0.0 { 1 } else { 0 };
-        output_end_clipped[out_idx] = if t2_params[seg_idx] < 1.0 { 1 } else { 0 };
+    let visible_count = out_idx;
+
+    // One unit direction per visible segment, computed ONCE (sequential, one
+    // sqrt each). The joint test then needs no normalisation at all: the "away"
+    // vector at an endpoint is +dir for a start and -dir for an end, so
+    //   dot(away_mine, away_partner) = s_mine * s_partner * dot(dir_i, dir_p)
+    // with s = +1 / -1. A degenerate (zero-length or non-finite) segment gets a
+    // zero direction, whose dot is 0 → suppression 0 → the cap is kept, which is
+    // exactly the wanted fallback. Normalising per endpoint-pair instead cost
+    // ~4 sqrt and two scattered position reads per segment and dominated the
+    // whole lines projection.
+    // The squared length is accumulated in f64. In f32 it overflows to
+    // infinity once a component delta exceeds sqrt(f32::MAX) ≈ 1.8e19, which
+    // would zero the direction and silently drop the joint on a huge-coordinate
+    // scene — and, worse, disagree with the TypeScript mirror (which reads the
+    // same f32 inputs but computes in f64, so it does NOT overflow). That
+    // divergence is observable: the >16D TS backend would render the joint
+    // suppressed while the WASM path rendered it capped. f64 here is both the
+    // scale-free answer and the one that keeps the two backends identical.
+    let mut dirs: Vec<f32> = vec![0.0; visible_count * 3];
+    for i in 0..visible_count {
+        let o = i * 3;
+        let dx = end_positions[o] as f64 - start_positions[o] as f64;
+        let dy = end_positions[o + 1] as f64 - start_positions[o + 1] as f64;
+        let dz = end_positions[o + 2] as f64 - start_positions[o + 2] as f64;
+        let len = (dx * dx + dy * dy + dz * dz).sqrt();
+        if len.is_finite() && len > 0.0 {
+            dirs[o] = (dx / len) as f32;
+            dirs[o + 1] = (dy / len) as f32;
+            dirs[o + 2] = (dz / len) as f32;
+        }
+    }
+
+    out_idx = 0;
+    for seg_idx in 0..num_segments {
+        if visibility[seg_idx] == 0 {
+            continue;
+        }
+        let code = (out_idx as i32) << 1;
+
+        output_start[out_idx] = if t1_params[seg_idx] > 0.0 {
+            1.0
+        } else {
+            joint_suppression(
+                segments[seg_idx * 2] as usize,
+                code,
+                num_vertices,
+                &code_sum,
+                &degree,
+                &dirs,
+            )
+        };
+        output_end[out_idx] = if t2_params[seg_idx] < 1.0 {
+            1.0
+        } else {
+            joint_suppression(
+                segments[seg_idx * 2 + 1] as usize,
+                code | 1,
+                num_vertices,
+                &code_sum,
+                &degree,
+                &dirs,
+            )
+        };
 
         out_idx += 1;
     }
 
     out_idx as u32
+}
+
+/// Record one endpoint landing exactly on `vertex`, saturating degree at 3.
+fn register_touch(
+    vertex: usize,
+    code: i32,
+    num_vertices: usize,
+    code_sum: &mut [i32],
+    degree: &mut [u8],
+) {
+    if vertex >= num_vertices {
+        return; // out-of-range index; upstream validation rejects these
+    }
+    let d = degree[vertex];
+    if d < 2 {
+        code_sum[vertex] += code;
+        degree[vertex] = d + 1;
+    } else {
+        degree[vertex] = 3; // branch point — the sum is no longer meaningful
+    }
+}
+
+/// Suppression for one unclipped endpoint sitting on `vertex`.
+///
+/// `dirs` holds one precomputed unit segment direction per visible segment.
+fn joint_suppression(
+    vertex: usize,
+    my_code: i32,
+    num_vertices: usize,
+    code_sum: &[i32],
+    degree: &[u8],
+    dirs: &[f32],
+) -> f32 {
+    if vertex >= num_vertices || degree[vertex] != 2 {
+        return 0.0; // free end, branch point, or unregistered — keep the cap
+    }
+    let partner = code_sum[vertex] - my_code;
+    if partner == my_code {
+        return 0.0; // self-segment registered both of its own endpoints here
+    }
+    let mo = ((my_code >> 1) as usize) * 3;
+    let po = ((partner >> 1) as usize) * 3;
+    if mo + 2 >= dirs.len() || po + 2 >= dirs.len() {
+        return 0.0;
+    }
+    // f64 to stay bit-identical to the TypeScript mirror, which reads the same
+    // f32 directions but accumulates in f64 (see the direction loop above).
+    let dot = dirs[mo] as f64 * dirs[po] as f64
+        + dirs[mo + 1] as f64 * dirs[po + 1] as f64
+        + dirs[mo + 2] as f64 * dirs[po + 2] as f64;
+    // away = +dir at a start endpoint, -dir at an end endpoint, so the product
+    // of the two signs is +1 exactly when the endpoint bits agree.
+    let sign = if (my_code & 1) == (partner & 1) {
+        1.0
+    } else {
+        -1.0
+    };
+    (-(sign * dot)).clamp(0.0, 1.0) as f32
 }
 
 #[cfg(test)]
@@ -743,38 +968,215 @@ mod tests {
         assert!((output[2] - 0.0).abs() < 1e-6);
     }
 
+    /// Component deltas past sqrt(f32::MAX) ≈ 1.8e19 must not overflow to
+    /// infinity: the squared length accumulates in f64 (matching the
+    /// TypeScript mirror, which computes in f64 from the same f32 inputs).
     #[test]
-    fn test_mark_clipped_endpoints() {
-        // 4 segments, all visible, various clipping states
+    fn test_calculate_segment_lengths_huge_coordinates_no_f32_overflow() {
+        let starts: Vec<f32> = vec![-1e30, 0.0, 0.0];
+        let ends: Vec<f32> = vec![1e30, 0.0, 0.0];
+        let mut output = vec![0.0f32; 1];
+
+        calculate_segment_lengths(&starts, &ends, 1, &mut output);
+
+        assert!(output[0].is_finite());
+        // Exact expected value: the f64 delta of the two f32 inputs, rounded
+        // back to f32 — bit-identical to the TypeScript mirror.
+        let expected = (1e30f32 as f64 - (-1e30f32) as f64) as f32;
+        assert_eq!(output[0], expected);
+    }
+
+    /// 4 disjoint segments (no shared vertices) → clipped-flag path only.
+    #[test]
+    fn test_compute_cap_suppression_clipped_flags() {
+        let segments: Vec<u32> = (0..8).collect();
         let visibility: Vec<u8> = vec![1, 1, 1, 1];
         let t1_params: Vec<f32> = vec![0.0, 0.3, 0.0, 0.2];
         let t2_params: Vec<f32> = vec![1.0, 1.0, 0.7, 0.8];
+        let mut start_pos = vec![0.0f32; 12];
+        let mut end_pos = vec![0.0f32; 12];
+        for i in 0..4 {
+            start_pos[i * 3] = (i as f32) * 10.0;
+            end_pos[i * 3] = (i as f32) * 10.0 + 1.0;
+        }
 
-        let mut out_start = vec![0u8; 4];
-        let mut out_end = vec![0u8; 4];
+        let mut out_start = vec![0.0f32; 4];
+        let mut out_end = vec![0.0f32; 4];
 
-        let count = mark_clipped_endpoints(
+        let count = compute_cap_suppression(
+            &segments,
             &visibility,
             &t1_params,
             &t2_params,
             4,
+            8,
+            &start_pos,
+            &end_pos,
             &mut out_start,
             &mut out_end,
         );
 
         assert_eq!(count, 4);
-        // t1=0.0, t2=1.0 -> neither clipped
-        assert_eq!(out_start[0], 0);
-        assert_eq!(out_end[0], 0);
+        // t1=0.0, t2=1.0 -> neither clipped, no neighbour -> free ends
+        assert_eq!(out_start[0], 0.0);
+        assert_eq!(out_end[0], 0.0);
         // t1=0.3, t2=1.0 -> start clipped
-        assert_eq!(out_start[1], 1);
-        assert_eq!(out_end[1], 0);
+        assert_eq!(out_start[1], 1.0);
+        assert_eq!(out_end[1], 0.0);
         // t1=0.0, t2=0.7 -> end clipped
-        assert_eq!(out_start[2], 0);
-        assert_eq!(out_end[2], 1);
+        assert_eq!(out_start[2], 0.0);
+        assert_eq!(out_end[2], 1.0);
         // t1=0.2, t2=0.8 -> both clipped
-        assert_eq!(out_start[3], 1);
-        assert_eq!(out_end[3], 1);
+        assert_eq!(out_start[3], 1.0);
+        assert_eq!(out_end[3], 1.0);
+    }
+
+    /// Straight-through joint suppresses; free outer ends keep the cap.
+    #[test]
+    fn test_compute_cap_suppression_straight_joint() {
+        let segments: Vec<u32> = vec![0, 1, 1, 2];
+        let visibility: Vec<u8> = vec![1, 1];
+        let t1_params: Vec<f32> = vec![0.0, 0.0];
+        let t2_params: Vec<f32> = vec![1.0, 1.0];
+        let start_pos: Vec<f32> = vec![0.0, 0.0, 0.0, 1.0, 0.0, 0.0];
+        let end_pos: Vec<f32> = vec![1.0, 0.0, 0.0, 2.0, 0.0, 0.0];
+        let mut out_start = vec![0.0f32; 2];
+        let mut out_end = vec![0.0f32; 2];
+
+        compute_cap_suppression(
+            &segments,
+            &visibility,
+            &t1_params,
+            &t2_params,
+            2,
+            3,
+            &start_pos,
+            &end_pos,
+            &mut out_start,
+            &mut out_end,
+        );
+
+        assert_eq!(out_start[0], 0.0);
+        assert!((out_end[0] - 1.0).abs() < 1e-6);
+        assert!((out_start[1] - 1.0).abs() < 1e-6);
+        assert_eq!(out_end[1], 0.0);
+    }
+
+    /// A 90-degree bend keeps the cap; a branch point keeps the cap.
+    #[test]
+    fn test_compute_cap_suppression_bend_and_branch() {
+        // v0 -> v1 along +x, then v1 -> v2 along +y.
+        let mut out_start = vec![0.0f32; 2];
+        let mut out_end = [0.0f32; 2];
+        compute_cap_suppression(
+            &[0, 1, 1, 2],
+            &[1, 1],
+            &[0.0, 0.0],
+            &[1.0, 1.0],
+            2,
+            3,
+            &[0.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+            &[1.0, 0.0, 0.0, 1.0, 1.0, 0.0],
+            &mut out_start,
+            &mut out_end,
+        );
+        assert_eq!(out_start[1], 0.0);
+
+        // Three segments radiating from vertex 0 — a hub, not a joint.
+        let mut hub = vec![0.0f32; 3];
+        let mut hub_end = [0.0f32; 3];
+        compute_cap_suppression(
+            &[0, 1, 0, 2, 0, 3],
+            &[1, 1, 1],
+            &[0.0, 0.0, 0.0],
+            &[1.0, 1.0, 1.0],
+            3,
+            4,
+            &[0.0; 9],
+            &[1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+            &mut hub,
+            &mut hub_end,
+        );
+        assert_eq!(hub, vec![0.0, 0.0, 0.0]);
+    }
+
+    /// A gentle 45-degree bend interpolates: suppression = cos(45°) ≈ 0.7071
+    /// (mirrors the TypeScript reference test — the value must be genuinely
+    /// fractional, not quantised to 0/1).
+    #[test]
+    fn test_compute_cap_suppression_fractional_bend() {
+        let d = std::f32::consts::FRAC_1_SQRT_2;
+        let mut out_start = vec![0.0f32; 2];
+        let mut out_end = vec![0.0f32; 2];
+        compute_cap_suppression(
+            &[0, 1, 1, 2],
+            &[1, 1],
+            &[0.0, 0.0],
+            &[1.0, 1.0],
+            2,
+            3,
+            &[0.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+            &[1.0, 0.0, 0.0, 1.0 + d, d, 0.0],
+            &mut out_start,
+            &mut out_end,
+        );
+        assert!((out_end[0] - d).abs() < 1e-5);
+        assert!((out_start[1] - d).abs() < 1e-5);
+    }
+
+    /// Both segments END at the shared vertex (v0 -> v1 <- v2): opposing
+    /// stored orientation, but geometrically a straight continuation — the
+    /// endpoint-bit sign flip must still yield full suppression.
+    #[test]
+    fn test_compute_cap_suppression_opposing_orientation() {
+        let mut out_start = vec![0.0f32; 2];
+        let mut out_end = vec![0.0f32; 2];
+        compute_cap_suppression(
+            &[0, 1, 2, 1],
+            &[1, 1],
+            &[0.0, 0.0],
+            &[1.0, 1.0],
+            2,
+            3,
+            &[0.0, 0.0, 0.0, 2.0, 0.0, 0.0],
+            &[1.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+            &mut out_start,
+            &mut out_end,
+        );
+        assert!((out_end[0] - 1.0).abs() < 1e-6);
+        assert!((out_end[1] - 1.0).abs() < 1e-6);
+        assert_eq!(out_start[0], 0.0);
+        assert_eq!(out_start[1], 0.0);
+    }
+
+    /// Non-contiguous visibility: the invisible middle segment must not shift
+    /// the compacted output indexing — the two SURVIVING segments share vertex
+    /// 1 and form a straight joint (guards against a source-order vs
+    /// compacted-index mixup in the direction table).
+    #[test]
+    fn test_compute_cap_suppression_non_contiguous_visibility() {
+        // seg0: v0 -> v1 (visible), seg1: v3 -> v4 (culled, disjoint),
+        // seg2: v1 -> v2 (visible). Positions are compacted: 2 visible only.
+        let mut out_start = vec![0.0f32; 2];
+        let mut out_end = vec![0.0f32; 2];
+        let count = compute_cap_suppression(
+            &[0, 1, 3, 4, 1, 2],
+            &[1, 0, 1],
+            &[0.0, 0.0, 0.0],
+            &[1.0, 1.0, 1.0],
+            3,
+            5,
+            &[0.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+            &[1.0, 0.0, 0.0, 2.0, 0.0, 0.0],
+            &mut out_start,
+            &mut out_end,
+        );
+        assert_eq!(count, 2);
+        // Straight-through joint at v1; free outer ends keep the cap.
+        assert_eq!(out_start[0], 0.0);
+        assert!((out_end[0] - 1.0).abs() < 1e-6);
+        assert!((out_start[1] - 1.0).abs() < 1e-6);
+        assert_eq!(out_end[1], 0.0);
     }
 
     #[test]

@@ -1,6 +1,6 @@
 # luxar.gsplats.io
 
-I/O operations for persisting and loading Gaussian splat data in the `.gsplats.zarr` format (**format v3.2** — a detached scene-node subtree: leaf / kind=lod / kind=partition, nestable freely; v3.2 renames the `kind=lod` selector attrs to `selector: "coverage"` / per-child `coverage_fraction`, v3.1 splits the Cholesky factors into `cholesky_factors_diag` + `cholesky_factors_offdiag`; v3.0 / v3.1 files are still read).
+I/O operations for persisting and loading Gaussian splat data in the `.gsplats.zarr` format (**format v3.3** — a detached scene-node subtree: leaf / kind=lod / kind=partition, nestable freely). v3.3 permits the optional `luxar_delta_v1` filter on quantized code arrays; v3.2 renamed the `kind=lod` selector attrs to `selector: "coverage"` / per-child `coverage_fraction`; v3.1 split the Cholesky factors into `cholesky_factors_diag` + `cholesky_factors_offdiag`. v3.0-v3.2 files remain readable.
 
 ## Purpose
 
@@ -13,7 +13,7 @@ This package provides functions to save and load fitted Gaussian splat results w
 - **Node-tree LOD layout** (leaf / kind=lod / kind=partition, freely nestable);
   the trivial single-splat-set case is a bare leaf
 - **Legacy migration** (v1.0 / v1.1 / pre-v2.0 substitutive directory / v2.0 matrix,
-  plus v3.0/v3.1 stores with pre-v3.2 `pixel_size` lod selector attrs → v3.2)
+  plus v3.0/v3.1 stores with pre-v3.2 `pixel_size` lod selector attrs → v3.3)
 
 ## Main Functions
 
@@ -196,7 +196,7 @@ fitted.gsplats.zarr/
 │                    #   blending_mode (only when explicitly set; unset ⇒
 │                    #   inherited from nearest ancestor, viewer default
 │                    #   "additive"),
-│                    #   format_version: "3.2", format_type: "gsplats_zarr",
+│                    #   format_version: "3.3", format_type: "gsplats_zarr",
 │                    #   timestamp, luxar_gsplats_version, description?
 ├── .zmetadata       # Consolidated metadata
 ├── centers                   # (N, d) float32, spatially ordered
@@ -230,7 +230,7 @@ See `docs/specs/GSPLATS_ZARR_FORMAT.md` for full ASCII trees of all five shapes.
 
 ```json
 {
-  "format_version": "3.2",
+  "format_version": "3.3",
   "format_type": "gsplats_zarr",
   "timestamp": "2026-06-09T10:00:00Z",
   "luxar_gsplats_version": "0.1.0",
@@ -377,7 +377,7 @@ print(f"Ordering: {info['ordering']}")
 print(f"Compression: {info['compression_ratio']}x")
 ```
 
-### Migrate a Legacy Dataset to v3.2
+### Migrate a Legacy Dataset to v3.3
 
 ```python
 from luxar.gsplats.io.migrate import migrate_format, detect_legacy_format
@@ -387,20 +387,20 @@ from luxar.gsplats.io.migrate import migrate_format, detect_legacy_format
 # raises on a current file with nothing to upgrade
 print(detect_legacy_format("legacy.gsplats.zarr"))
 
-# Convert to a new v3.2 file (returns the detected source format)
+# Convert to a new v3.3 file (returns the detected source format)
 migrate_format("legacy.gsplats.zarr", "v3.gsplats.zarr", overwrite=True)
 ```
 
 Migration mappings:
-- **v1.0** (flat `/splats`) → v3.2 bare leaf
-- **v1.1** (`/splats/lod_<i>/`) → v3.2 additive ladder leaf
+- **v1.0** (flat `/splats`) → v3.3 bare leaf
+- **v1.1** (`/splats/lod_<i>/`) → v3.3 additive ladder leaf
 - **Substitutive directory** (`level_<i>.gsplats.zarr` + `manifest.json`) →
-  v3.2 `kind=lod` group
-- **v2.0** (`splats/substitutive_<s>/additive_<a>/`) → v3.2 node tree
+  v3.3 `kind=lod` group
+- **v2.0** (`splats/substitutive_<s>/additive_<a>/`) → v3.3 node tree
   (bare leaf, additive ladder, or `kind=lod` group depending on shape)
 - **v3.0/v3.1 with `selector: "pixel_size"` / per-child `min_pixel_size`** →
   same tree re-written with `selector: "coverage"` + derived per-child
-  `coverage_fraction` (`sqrt(N_i/N_finest)`), stamped v3.2
+  `coverage_fraction` (`sqrt(N_i/N_finest)`), stamped v3.3
 
 Migrated arrays are written with `ordering="none"` so element order is
 preserved (no Morton/Hilbert re-sort), but **encoding follows the current policy**:
@@ -418,20 +418,20 @@ is `luxar gsplat migrate-format`.
 
 - **`save_gsplats.py`**: `save_gsplats()` (bare leaf) and `write_gsplats_tree()`
   (any `GSplatNode`). Delegates to the shared walker
-  `io/_compiler/gsplat_tree.write_gsplat_node`; writes the v3.2 root header.
+  `io/_compiler/gsplat_tree.write_gsplat_node`; writes the v3.3 root header.
 - **`load_gsplats.py`**: Load function with automatic decoding. Reads the
   node tree via `io/_compiler/gsplat_tree.read_gsplat_node`, returning
   a `GSplatData` bridged from the node tree. Raises on any `format_version`
-  not in `SUPPORTED_FORMAT_VERSIONS` (`"3.0"`, `"3.1"`, `"3.2"`); the current
-  writer emits v3.2, and v3.0 / v3.1 files are still read transparently.
+  not in `SUPPORTED_FORMAT_VERSIONS` (`"3.0"`, `"3.1"`, `"3.2"`, `"3.3"`); the
+  current writer emits v3.3, and earlier v3.x files are read transparently.
 - **`inspect_gsplats.py`**: Metadata inspection without loading arrays
   (`inspect_gsplats_zarr`, `format_gsplats_info`).
 - **`migrate.py`**: Legacy-format migration (`migrate_format`,
   `detect_legacy_format`). Converts v1.0 / v1.1 / pre-v2.0 substitutive
   directory / v2.0 matrix files — plus v3.0/v3.1 stores whose `kind=lod`
-  groups still carry the pre-v3.2 `pixel_size` selector attrs — to v3.2.
+  groups still carry the pre-v3.2 `pixel_size` selector attrs — to v3.3.
   Carries embedded legacy reader logic so the live loader only handles the
-  current node-tree format (v3.0 – v3.2).
+  current node-tree format (v3.0-v3.3).
 - **`tests/`**: Comprehensive tests
 
 **Note**: Spatial ordering functions are imported from `luxar.io.ordering` and re-exported for convenience. `migrate.py` is not re-exported from the package `__init__`; it backs the `luxar gsplat migrate-format` CLI command.
@@ -481,7 +481,7 @@ The package includes comprehensive tests covering:
 
 **Migration tests** (`test_migrate_format.py`):
 - Legacy-format detection (v1.0, v1.1, v2.0, substitutive directory)
-- Round-trip migration to v3.2 node-tree layout
+- Round-trip migration to v3.3 node-tree layout
 
 Run tests:
 ```bash
@@ -507,7 +507,7 @@ Compression gains from:
 
 ## Related Documentation
 
-- **Format spec (v3.2)**: `../../../../../../docs/specs/GSPLATS_ZARR_FORMAT.md` (node-tree: leaf / kind=lod / kind=partition)
+- **Format spec (v3.3)**: `../../../../../../docs/specs/GSPLATS_ZARR_FORMAT.md` (node-tree: leaf / kind=lod / kind=partition)
 - **Encoding system**: `../../encoding/README.md` (semantic types, quantization)
 - **Scene embedding**: `../../core/README.md` (GSplats in scene graph)
 - **Parent package**: `../README.md` (Gaussian splatting algorithms)

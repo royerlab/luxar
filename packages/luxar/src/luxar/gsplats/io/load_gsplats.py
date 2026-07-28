@@ -98,10 +98,10 @@ def load_gsplat_node(
         format_version = root.attrs.get("format_version")
         if format_version not in SUPPORTED_FORMAT_VERSIONS:
             raise ValueError(
-                f"Unsupported format_version: {format_version!r}. The on-disk "
-                f"format is now v3.2 (a detached node-tree subtree; v3.0 / v3.1 "
-                f"are also read). Convert legacy v1.x / v2.0 files (and old "
-                f"substitutive directories) with "
+                f"Unsupported format_version: {format_version!r} "
+                f"(expected one of {SUPPORTED_FORMAT_VERSIONS}). The on-disk "
+                f"format is a detached node-tree subtree. Convert legacy "
+                f"v1.x / v2.0 files (and old substitutive directories) with "
                 f"`luxar gsplat migrate-format <input> <output.gsplats.zarr>`."
             )
 

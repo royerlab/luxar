@@ -157,6 +157,17 @@ describe('LinePickingMaterial', () => {
     material.dispose();
   });
 
+  // Cap factor must stay in lockstep with the visual shader: one ramp per
+  // endpoint, each lifted by its own suppression, combined with min()
+  // (issue #796 — mirrors the material-glsl.test.ts assertion).
+  it('GLSL line picking shader uses per-endpoint cap ramps combined with min()', () => {
+    const material = new LinePickingMaterial({ nodeId: 1 });
+    expect(material.fragmentShader).toContain('mix(0.5 + 0.5 * startRamp, 1.0, vCapSuppressStart)');
+    expect(material.fragmentShader).toContain('mix(0.5 + 0.5 * endRamp, 1.0, vCapSuppressEnd)');
+    expect(material.fragmentShader).toContain('min(startCap, endCap)');
+    material.dispose();
+  });
+
   // Mirrors GSplatPickingMaterial's explicit clone (inherited
   // Material.clone() calls the constructor with no config and throws;
   // three-geometry symmetry rule).

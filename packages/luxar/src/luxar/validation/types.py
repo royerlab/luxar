@@ -482,14 +482,10 @@ def validate_blending_mode(mode: Any) -> BlendingMode:
     """Validate blending mode string.
 
     Args:
-        mode: Blending mode to validate. Valid modes are:
-            - "normal": Standard alpha blending (semi-transparent)
-            - "additive": Classic additive blending, ignores depth (renders on top)
-            - "max": Maximum of source and destination (brightest wins)
-            - "opaque": Solid rendering with depth write (closest wins)
-            - "luminous": Same as additive visually, but respects depth occlusion
-            - "volumetric": Emission-absorption — adds light AND absorbs what's
-              behind, scaled by the node's ``absorption`` (kappa) attr
+        mode: Blending mode to validate. Accepted values are ``"normal"``,
+            ``"additive"``, ``"max"``, ``"opaque"``, ``"luminous"``, and
+            ``"volumetric"``. Volumetric mode uses emission-absorption
+            compositing scaled by the node's ``absorption`` (kappa) attribute.
 
     Returns:
         Valid blending mode

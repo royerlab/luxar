@@ -146,5 +146,5 @@ which re-exports `GUI` (default and named) along with `Folder`,
 
 ## See Also
 
-- [`../../rendering-controls/`](../../rendering-controls/) — Primary consumer of this library.
+- [`../rendering-controls/`](../rendering-controls/README.md) — Primary consumer of this library.
 - [`../gui.ts`](../gui.ts) — Public re-export module that this folder backs.

@@ -89,7 +89,7 @@ layout( location = 1 ) in vec2 aQuadCorner;
 
 
 // vars
-vec3 nodeVar4;
+vec3 nodeVar3;
 int nodeVar12;
 int nodeVar13;
 int nodeVar14;
@@ -185,10 +185,10 @@ void main() {
 	nodeVarying3 = 0.0;
 	nodeVarying4 = 0.0;
 	nodeVarying5 = 0.0;
-	nodeVar4 = vec3( 0.0, 0.0, 0.0 );
-	nodeVarying0 = nodeVar4;
-	nodeVarying9 = 0.0;
+	nodeVar3 = vec3( 0.0, 0.0, 0.0 );
+	nodeVarying0 = nodeVar3;
 	nodeVarying8 = 0.0;
+	nodeVarying9 = 0.0;
 	nodeVarying1 = 0.0;
 	nodeVarying6 = 0.0;
 	nodeVarying7 = 0.0;

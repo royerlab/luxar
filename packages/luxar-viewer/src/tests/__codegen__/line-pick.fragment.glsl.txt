@@ -98,13 +98,23 @@ void main() {
 
 	}
 
-	nodeVar0 = ( nodeVarying2 * nodeVarying3 );
-	nodeVar1 = ( ( 1.0 - nodeVarying2 ) * nodeVarying3 );
-	nodeVar2 = clamp( ( min( nodeVar0, nodeVar1 ) / nodeVarying4 ), 0.0, 1.0 );
+	nodeVar0 = clamp( ( ( nodeVarying2 * nodeVarying3 ) / nodeVarying4 ), 0.0, 1.0 );
+	nodeVar1 = clamp( ( ( ( 1.0 - nodeVarying2 ) * nodeVarying3 ) / nodeVarying4 ), 0.0, 1.0 );
 
 	if ( ( nodeVarying4 > 1e-20 ) ) {
 
-		nodeVar3 = nodeVar2;
+		nodeVar2 = nodeVar0;
+
+	} else {
+
+		nodeVar2 = 1.0;
+
+	}
+
+
+	if ( ( nodeVarying4 > 1e-20 ) ) {
+
+		nodeVar3 = nodeVar1;
 
 	} else {
 
@@ -112,7 +122,7 @@ void main() {
 
 	}
 
-	lineBrightness = ( ( ( ( mix( ( 0.5 + ( nodeVar3 * 0.5 ) ), 1.0, mix( nodeVarying8, nodeVarying7, step( nodeVar0, nodeVar1 ) ) ) * ( max( ( exp( ( pow( abs( nodeVarying1 ), pow( 2.0, ( ( nodeVarying0 * 6.0 ) - 2.0 ) ) ) * -4.6051702 ) ) - 0.01 ), 0.0 ) * 1.0101010101010102 ) ) * min( ( nodeVarying5 / 1.5 ), 1.0 ) ) * nodeVarying6 ) * 1.0 );
+	lineBrightness = ( ( ( ( min( mix( ( 0.5 + ( nodeVar2 * 0.5 ) ), 1.0, nodeVarying7 ), mix( ( 0.5 + ( nodeVar3 * 0.5 ) ), 1.0, nodeVarying8 ) ) * ( max( ( exp( ( pow( abs( nodeVarying1 ), pow( 2.0, ( ( nodeVarying0 * 6.0 ) - 2.0 ) ) ) * -4.6051702 ) ) - 0.01 ), 0.0 ) * 1.0101010101010102 ) ) * min( ( nodeVarying5 / 1.5 ), 1.0 ) ) * nodeVarying6 ) * 1.0 );
 
 	if ( ( lineBrightness < 0.0001 ) ) {
 

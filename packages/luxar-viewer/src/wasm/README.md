@@ -82,7 +82,7 @@ non-standard location.
 - `interpolate_clipped_positions()` — Interpolate positions at clip boundaries
 - `interpolate_scalars_batch()` / `interpolate_colors_batch()` — Interpolate attributes
 - `calculate_segment_lengths()` — Compute segment lengths for LOD
-- `mark_clipped_endpoints()` — Mark clipped endpoints for cap factor adjustment
+- `compute_cap_suppression()` — Per-endpoint cap suppression in [0, 1] (clipped endpoints + interior polyline joints) for the shader cap factor
 - `lerp()` / `lerp_vec3()` / `distance_3d()` — Math helpers
 
 ## 16-Dimension Limit
