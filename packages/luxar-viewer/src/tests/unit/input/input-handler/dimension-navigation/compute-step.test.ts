@@ -217,6 +217,64 @@ describe('computeDimensionStep', () => {
     const back = computeDimensionStep(-1, 0, dims, ranges);
     expect(back!.newValue).toBe(0);
   });
+
+  // Discrete dims with a FRACTIONAL declared step (e.g. a 4th spatial axis
+  // sampled every 0.04 units) must step cell-by-cell on the k*step grid,
+  // not collapse to whole units. Historically the step was forced to
+  // max(1, round(step)) and the position rounded to integers, so [/]
+  // could only reach 3 of the 50 planes of such a dim.
+  it('steps a fractional-step discrete dim by exactly one grid cell', () => {
+    const step = 2.0 / 50; // 0.04
+    const dims = makeDims({
+      currentStep: [0, 0, 0, -1.0, 0],
+      metadata: [
+        makeMetadata({ name: 'X', display: true }),
+        makeMetadata({ name: 'Y', display: true }),
+        makeMetadata({ name: 'Z', display: true }),
+        makeMetadata({ name: 'w', discrete: true, step }),
+        makeMetadata({ name: 'Channel' }),
+      ],
+    });
+    const ranges: ReadonlyArray<readonly [number, number]> = [
+      [0, 10],
+      [0, 10],
+      [0, 10],
+      [-1.0, 0.96],
+      [0, 100],
+    ];
+    const result = computeDimensionStep(1, 0, dims, ranges);
+    // Bit-identical to the manager's own snap: round(v/step)*step
+    expect(result!.newValue).toBe(-24 * step);
+    expect(result!.changed).toBe(true);
+  });
+
+  it('traverses every k*step stop of a fractional-step discrete dim', () => {
+    const step = 2.0 / 50;
+    const metadata = [
+      makeMetadata({ name: 'X', display: true }),
+      makeMetadata({ name: 'Y', display: true }),
+      makeMetadata({ name: 'Z', display: true }),
+      makeMetadata({ name: 'w', discrete: true, step }),
+      makeMetadata({ name: 'Channel' }),
+    ];
+    const ranges: ReadonlyArray<readonly [number, number]> = [
+      [0, 10],
+      [0, 10],
+      [0, 10],
+      [-1.0, 0.96],
+      [0, 100],
+    ];
+    let pos = -1.0;
+    for (let k = -25; k < 24; k++) {
+      const dims = makeDims({ currentStep: [0, 0, 0, pos, 0], metadata });
+      const result = computeDimensionStep(1, 0, dims, ranges);
+      expect(result!.changed).toBe(true);
+      expect(result!.newValue).toBe((k + 1) * step);
+      pos = result!.newValue;
+    }
+    // 49 presses from the first stop land exactly on the last stop
+    expect(pos).toBe(24 * step);
+  });
 });
 
 describe('getSelectedDimensionIndex', () => {

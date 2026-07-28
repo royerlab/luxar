@@ -63,13 +63,17 @@ export function computeDimensionStep(
 
   const stepSize = calculateStepSize(targetDim, dims);
   const isCyclic = dimMeta?.cyclic || false;
+  // Discrete positions snap to the dim's declared grid (fractional steps
+  // included), not to integers — matching SceneDimsManager's own snap.
+  const snapStep = dimMeta?.step && dimMeta.step > 0 ? dimMeta.step : 1;
   const newValue = calculateNextPosition(
     currentValue,
     direction,
     stepSize,
     [min, max],
     dimMeta?.discrete,
-    isCyclic
+    isCyclic,
+    snapStep
   );
 
   return {
