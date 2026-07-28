@@ -648,6 +648,10 @@ _CENTRAL_DIR_SIGNATURE = b"PK\x01\x02"
 _LOCAL_HEADER_SIGNATURE = b"PK\x03\x04"
 #: EOCD is 22 bytes + up to 64 KiB of trailing comment.
 _EOCD_TAIL_BYTES = 22 + 65536
+#: Absolute ceiling on a single extracted member's uncompressed size (256 GiB),
+#: independent of the archive's own (attacker-controlled) metadata. Mirrors
+#: gsplats/io/_archive.py.
+_MAX_MEMBER_UNCOMPRESSED_BYTES = 256 * 1024**3
 
 
 def _ranged_get(
@@ -824,6 +828,7 @@ def download_zip_member(
     timeout: int = 300,
     chunk_size: int = 1024 * 1024,
     extra_headers: Optional[dict] = None,
+    max_uncompressed_size: Optional[int] = _MAX_MEMBER_UNCOMPRESSED_BYTES,
 ) -> Path:
     """Extract ONE member from a remote zip via HTTP Range requests.
 
@@ -849,6 +854,18 @@ def download_zip_member(
         timeout: Per-request timeout (seconds).
         chunk_size: Streaming chunk size (bytes).
         extra_headers: Extra HTTP headers for every request.
+        max_uncompressed_size: Absolute ceiling (bytes) on the member's
+            uncompressed size, independent of the archive's own
+            (attacker-controlled) metadata. Defaults to 256 GiB
+            (``_MAX_MEMBER_UNCOMPRESSED_BYTES``). A member whose
+            central-directory uncompressed size exceeds it is rejected before
+            any streaming, and the inflate is additionally bounded by it — so a
+            self-consistent decompression bomb (one whose declared size, actual
+            inflated size, and CRC all agree) still cannot write unbounded to
+            disk. Pass a smaller int to tighten it, or ``None`` to disable the
+            ceiling entirely (the output is then bounded only by the declared
+            member size). The INRIA / cluster-fly demo callers pass a tight
+            ``expected_size`` and are unaffected by this default.
 
     Returns:
         Path to the extracted member.
@@ -896,6 +913,20 @@ def download_zip_member(
                 f"Member size mismatch: zip declares {uncomp_size:,} bytes, "
                 f"expected {expected_size:,}"
             )
+        if max_uncompressed_size is not None and uncomp_size > max_uncompressed_size:
+            raise ValueError(
+                f"Member declares {uncomp_size:,} uncompressed bytes, exceeding "
+                f"the {max_uncompressed_size:,}-byte ceiling "
+                f"(max_uncompressed_size); refusing to extract"
+            )
+        # Never inflate beyond the declared member size (capped by the optional
+        # absolute ceiling) — guards against a decompression bomb whose small
+        # DEFLATE stream expands without bound.
+        size_limit = (
+            min(uncomp_size, max_uncompressed_size)
+            if max_uncompressed_size is not None
+            else uncomp_size
+        )
         if output_path.exists() and output_path.stat().st_size == uncomp_size:
             aprint(f"✓ Member already extracted: {output_path}")
             return output_path
@@ -919,13 +950,38 @@ def download_zip_member(
         extra_len = struct.unpack_from("<H", local_header, 28)[0]
         data_start = local_offset + 30 + name_len + extra_len
 
+        crc = 0
+        written = 0
+        last_report = 0
+
+        def _emit(f: Any, data: bytes) -> None:
+            """Write one decompressed slice, updating CRC/counters, and abort
+            if the running output exceeds the bound (decompression-bomb guard).
+            """
+            nonlocal crc, written, last_report
+            if not data:
+                return
+            f.write(data)
+            crc = zlib.crc32(data, crc)
+            written += len(data)
+            if written > size_limit:
+                raise ValueError(
+                    f"Decompressed output ({written:,} bytes) exceeds the "
+                    f"declared member size ({size_limit:,} bytes) for {member!r} "
+                    f"— possible decompression bomb; aborting extraction"
+                )
+            if written - last_report >= 100 * 1024 * 1024:
+                aprint(f"  {written / 1e6:.0f} / {uncomp_size / 1e6:.0f} MB")
+                last_report = written
+
         attempt = 0
+        tmp_path = output_path.with_suffix(output_path.suffix + ".part")
         while True:
             try:
-                tmp_path = output_path.with_suffix(output_path.suffix + ".part")
                 decompressor = zlib.decompressobj(-15) if method == 8 else None
                 crc = 0
                 written = 0
+                last_report = 0
                 response = _ranged_get(
                     session,
                     url,
@@ -935,23 +991,35 @@ def download_zip_member(
                     extra_headers=extra_headers,
                     stream=True,
                 )
-                last_report = 0
+                compressed_read = 0
                 with open(tmp_path, "wb") as f:
                     for chunk in response.iter_content(chunk_size=chunk_size):
-                        data = decompressor.decompress(chunk) if decompressor else chunk
-                        f.write(data)
-                        crc = zlib.crc32(data, crc)
-                        written += len(data)
-                        if written - last_report >= 100 * 1024 * 1024:
-                            aprint(
-                                f"  {written / 1e6:.0f} / {uncomp_size / 1e6:.0f} MB"
+                        # Secondary defense: the ranged GET requested exactly
+                        # comp_size bytes, so a well-formed member reads exactly
+                        # that. Abort if a misbehaving/malicious server streams
+                        # more (which would otherwise let iter_content run
+                        # unbounded), before touching the decompressor.
+                        compressed_read += len(chunk)
+                        if compressed_read > comp_size:
+                            raise ValueError(
+                                f"Server returned more compressed bytes "
+                                f"({compressed_read:,}) than member {member!r} "
+                                f"declares ({comp_size:,}); aborting extraction"
                             )
-                            last_report = written
-                    if decompressor:
-                        data = decompressor.flush()
-                        f.write(data)
-                        crc = zlib.crc32(data, crc)
-                        written += len(data)
+                        if decompressor is None:
+                            # STORED: bound the raw copy by the same check.
+                            _emit(f, chunk)
+                            continue
+                        # DEFLATE: drain in <=chunk_size slices, feeding the
+                        # unconsumed tail back, so a single compressed chunk
+                        # cannot inflate unbounded in memory.
+                        buf = chunk
+                        while buf:
+                            data = decompressor.decompress(buf, chunk_size)
+                            _emit(f, data)
+                            buf = decompressor.unconsumed_tail
+                    if decompressor is not None:
+                        _emit(f, decompressor.flush())
                 if written != uncomp_size:
                     raise ValueError(
                         f"Extracted {written:,} bytes; zip declares {uncomp_size:,}"
@@ -976,3 +1044,8 @@ def download_zip_member(
                 wait = 2**attempt
                 aprint(f"⚠️  Network error ({exc}); retrying in {wait}s…")
                 time.sleep(wait)
+            except BaseException:
+                # Size/CRC/decompression failure (or anything non-retryable):
+                # never leave the oversized/partial staging file behind.
+                tmp_path.unlink(missing_ok=True)
+                raise
