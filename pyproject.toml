@@ -269,12 +269,18 @@ check-versions = "python scripts/check_version_consistency.py"
 gen-contract = "python scripts/gen_format_contract.py"
 # Assert the committed projections match format-contract/contract.yaml.
 check-contract = "python scripts/gen_format_contract.py --check"
+# Regenerate demos/data_manifest.json from the demos/data tree. Checksums come
+# from the git-LFS pointers / file bytes, so no git-lfs binary is required.
+gen-data-manifest = "python scripts/gen_data_manifest.py"
+# Assert the committed demo-data manifest matches the tree.
+check-data-manifest = "python scripts/gen_data_manifest.py --check"
 check = [
     "format",
     "lint",
     "check-imports",
     "check-versions",
     "check-contract",
+    "check-data-manifest",
     "security",
     "test-cov"
 ]

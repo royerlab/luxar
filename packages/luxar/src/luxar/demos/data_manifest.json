@@ -1,0 +1,437 @@
+{
+  "schema_version": 1,
+  "description": "Single source of truth for Luxar demo dataset disposition (R17). bucket: zenodo=fetch-on-demand redistributable; local-compute=fetch raw + build locally (not redistributable); regenerate=cheap CPU rebuild (not hosted). See scripts/gen_data_manifest.py.",
+  "cache_root": "~/.cache/luxar",
+  "records": {
+    "cc-by": {
+      "title": "Luxar demo datasets (CC-BY / CC0 / public domain)",
+      "license": "cc-by-4.0",
+      "zenodo_concept_doi": null,
+      "zenodo_record": null,
+      "base_url": null
+    },
+    "cc-by-sa": {
+      "title": "Luxar demo datasets (CC-BY-SA)",
+      "license": "cc-by-sa-4.0",
+      "zenodo_concept_doi": null,
+      "zenodo_record": null,
+      "base_url": null
+    },
+    "h2afva": {
+      "title": "h2afva zebrafish histone light-sheet timelapse (Gaussian splats)",
+      "license": "cc-by-4.0",
+      "zenodo_concept_doi": null,
+      "zenodo_record": null,
+      "base_url": null
+    }
+  },
+  "datasets": {
+    "gsplats_kidney": {
+      "bucket": "zenodo",
+      "record": "cc-by",
+      "license": "cc0-1.0",
+      "source": "scikit-image (data.kidney)",
+      "attribution": "scikit-image sample data (CC0).",
+      "dir": "gsplats_kidney",
+      "files": [
+        {
+          "name": "kidney_ch0.gsplats.zarr.zip",
+          "sha256": "6a784b8637881822c45b80c72a464d03a09c1eda78d9c3eab9c99e693ee6b694",
+          "bytes": 678591
+        },
+        {
+          "name": "kidney_ch1.gsplats.zarr.zip",
+          "sha256": "a2b6d5825657cace874d9197aba8cf6fdce110f4cef2085c771936dc2b151404",
+          "bytes": 696418
+        },
+        {
+          "name": "kidney_ch2.gsplats.zarr.zip",
+          "sha256": "02e60df6076a2e51f81eda09fe32e673f7d66db76477e95b5fa4e6019b8f8785",
+          "bytes": 724146
+        }
+      ]
+    },
+    "gsplats_cells3d": {
+      "bucket": "zenodo",
+      "record": "cc-by",
+      "license": "cc0-1.0",
+      "source": "scikit-image (data.cells3d) \u2014 Allen Institute for Cell Science",
+      "attribution": "scikit-image sample data.",
+      "dir": "gsplats_cells3d",
+      "files": [
+        {
+          "name": "cells3d_ch0.gsplats.zarr.zip",
+          "sha256": "19d5a8e3accaff150851faabaa05c3dd3dcc5447a39733955942adfb420ee0af",
+          "bytes": 285791
+        },
+        {
+          "name": "cells3d_ch1.gsplats.zarr.zip",
+          "sha256": "35125c771e911ba069119ce4fd6539d667b3434b4aec93d908c64841cf58906a",
+          "bytes": 288919
+        }
+      ]
+    },
+    "gsplats_cmu1_pathology": {
+      "bucket": "zenodo",
+      "record": "cc-by",
+      "license": "cc0-1.0",
+      "source": "OpenSlide test data (Aperio CMU-1.svs)",
+      "attribution": "OpenSlide CMU-1 (CC0 1.0 public domain).",
+      "dir": "gsplats_cmu1_pathology",
+      "files": [
+        {
+          "name": "cmu1_ch0.gsplats.zarr.zip",
+          "sha256": "cd22645f393174ea1d853ae213f751cc1e270a2f290706d388116676060b03e8",
+          "bytes": 38201205
+        },
+        {
+          "name": "cmu1_ch1.gsplats.zarr.zip",
+          "sha256": "c1d44d51917cd2b98630eabcc22db07484bf59f98e4fce0d77dba2955c4ce03f",
+          "bytes": 39178730
+        },
+        {
+          "name": "cmu1_ch2.gsplats.zarr.zip",
+          "sha256": "61bf0aa74ebf60464cff45e1b8ed5a9126018e61fa51f669e995b61af629d59e",
+          "bytes": 36430084
+        }
+      ]
+    },
+    "gsplats_cryoem_virus": {
+      "bucket": "zenodo",
+      "record": "cc-by",
+      "license": "cc0-1.0",
+      "source": "EMDB EMD-5384",
+      "attribution": "EMDB is public domain / CC0. Map: EMD-5384.",
+      "dir": "gsplats_cryoem_virus",
+      "files": [
+        {
+          "name": "cryoem_virus.gsplats.zarr.zip",
+          "sha256": "57554b5514c73e4e35bb94d9054150a8eca279edd99bfb8f5951651bd6f55eae",
+          "bytes": 11112371
+        }
+      ]
+    },
+    "gsplats_ct_totalsegmentator": {
+      "bucket": "zenodo",
+      "record": "cc-by",
+      "license": "cc-by-4.0",
+      "source": "TotalSegmentator (Wasserthal et al. 2023)",
+      "attribution": "TotalSegmentator (Wasserthal et al. 2023; CC BY 4.0).",
+      "dir": "gsplats_ct_totalsegmentator",
+      "files": [
+        {
+          "name": "ct_atlas.gsplats.zarr.zip",
+          "sha256": "0ec44cb0f599f5660f82c8cfb55c41b514ffce56b8bf1ddf02c05c500824a839",
+          "bytes": 7117626
+        },
+        {
+          "name": "ct_atlas_labels.npz",
+          "sha256": "9ee20f8f5a3ec10ab26aa6029c872eba7ddcfa2e4283add4c26f0df87132d966",
+          "bytes": 33487
+        }
+      ]
+    },
+    "gsplats_milkyway_dust": {
+      "bucket": "zenodo",
+      "record": "cc-by",
+      "license": "cc-by-4.0",
+      "source": "Zenodo 3993082 (3D dust map)",
+      "attribution": "doi:10.5281/zenodo.3993082 (CC BY 4.0).",
+      "dir": "gsplats_milkyway_dust",
+      "files": [
+        {
+          "name": "milkyway_dust.gsplats.zarr.zip",
+          "sha256": "d15e4483414cb9e2e7309df575ea2489443dc152a6519b027cde11943d34694e",
+          "bytes": 7822168
+        }
+      ]
+    },
+    "desi_galaxies": {
+      "bucket": "zenodo",
+      "record": "cc-by",
+      "license": "cc-by-4.0",
+      "source": "DESI DR1 LSS catalogs",
+      "attribution": "DESI DR1 (arXiv:2503.14745; CC BY 4.0).",
+      "dir": "desi_galaxies",
+      "files": [
+        {
+          "name": "desi_dr1_cosmic_web.luxar.zarr.zip",
+          "sha256": "c98c91075c46745b119e146270a82d1b6d503184ea84cd2684784065ff4256ab",
+          "bytes": 71801210
+        }
+      ]
+    },
+    "gsplats_celegans": {
+      "bucket": "zenodo",
+      "record": "cc-by",
+      "license": "cc-by-4.0",
+      "source": "Zenodo 6460303 (mskcc_confocal C. elegans)",
+      "attribution": "Santella, Kovacevic, Bao, Hirsch \u2014 doi:10.5281/zenodo.6460303 (CC BY 4.0).",
+      "dir": "gsplats_celegans",
+      "files": [
+        {
+          "name": "celegans_s1.gsplats.zarr.zip",
+          "sha256": "5b40ed7ff550fb140d4dc882b3b4afb609edfcc77bc7b195b368780b20a36b18",
+          "bytes": 71986071
+        }
+      ]
+    },
+    "gsplats_visible_human_head": {
+      "bucket": "zenodo",
+      "record": "cc-by",
+      "license": "pd-nlm",
+      "source": "NLM Visible Human Project (Male head, PNG)",
+      "attribution": "U.S. NLM Visible Human Project (public domain; acknowledge NLM, no endorsement implied).",
+      "dir": "gsplats_visible_human_head",
+      "files": [
+        {
+          "name": "vh_head.gsplats.zarr.zip",
+          "sha256": "c6ebbab8c2d1bdff0d5fd35f7032c6a375724b5fe5e6d33e8ca4e6af6ab139f6",
+          "bytes": 20572128
+        },
+        {
+          "name": "vh_head_colors.npz",
+          "sha256": "3b09fcac76031be1cb44d77eb5c901c751aa526c02c89a4b1d4439f1027863e9",
+          "bytes": 5189597
+        }
+      ]
+    },
+    "gsplats_multichannel": {
+      "bucket": "zenodo",
+      "record": "cc-by",
+      "license": "cc-by-4.0",
+      "source": "IDR idr0062 (image 6001240; Nessys, Blin et al. 2019)",
+      "attribution": "IDR idr0062 (Blin et al., PLOS Biol 2019; CC BY 4.0).",
+      "dir": "gsplats_multichannel",
+      "files": [
+        {
+          "name": "organoids_ch0.gsplats.zarr.zip",
+          "sha256": "17931ca1b6c189b7f4c412ab368972f607ae2a5f685effff2b2d3f90eaf92f5f",
+          "bytes": 196680
+        },
+        {
+          "name": "organoids_ch1.gsplats.zarr.zip",
+          "sha256": "a3e8a5c5541543425769125de0b43267e3b7bccefc053c4152b866e0b077c708",
+          "bytes": 207469
+        }
+      ]
+    },
+    "gsplats_dapi": {
+      "bucket": "zenodo",
+      "record": "cc-by",
+      "license": "cc-by-4.0",
+      "source": "IDR idr0062 (image 6001240; Nessys, Blin et al. 2019)",
+      "attribution": "IDR idr0062 (Blin et al., PLOS Biol 2019; CC BY 4.0).",
+      "dir": "gsplats_dapi",
+      "files": [
+        {
+          "name": "dapi.gsplats.zarr.zip",
+          "sha256": "cb1471c0c5fdd7d9d9ae404272d8c8f770489ffc12fd2108881e1f90edb552a6",
+          "bytes": 98930
+        }
+      ]
+    },
+    "census_umap_1m": {
+      "bucket": "zenodo",
+      "record": "cc-by",
+      "license": "cc-by-4.0",
+      "source": "CZ CELLxGENE Census (our computed 3D UMAP coords)",
+      "attribution": "Derived UMAP coordinates over CZ CELLxGENE Census (CC BY 4.0).",
+      "dir": "",
+      "files": [
+        {
+          "name": "census_umap_1m.npz",
+          "sha256": "f3f39f44207926bcdb789ff640e67490ac8393f764a86fac15ea2db5060c32f0",
+          "bytes": 13080844
+        }
+      ]
+    },
+    "3d_umap_coords_human": {
+      "bucket": "zenodo",
+      "record": "cc-by",
+      "license": "cc-by-4.0",
+      "source": "Human multiome peak UMAP (our computed coords)",
+      "attribution": "Derived UMAP coordinates (CC BY 4.0 upstream).",
+      "dir": "",
+      "files": [
+        {
+          "name": "3d_umap_coords_human.parquet",
+          "sha256": "87757d1acc8e8d42abad789c4c546d74cf1c48781b720da492f5d8acef213e94",
+          "bytes": 35529475
+        }
+      ]
+    },
+    "3d_umap_coords_mouse": {
+      "bucket": "zenodo",
+      "record": "cc-by",
+      "license": "cc-by-4.0",
+      "source": "Mouse multiome peak UMAP (our computed coords)",
+      "attribution": "Derived UMAP coordinates (CC BY 4.0 upstream).",
+      "dir": "",
+      "files": [
+        {
+          "name": "3d_umap_coords_mouse.parquet",
+          "sha256": "a6dd851b26421dd17983936208972faee60c7c2df17ea0ca568fb6747124ecb5",
+          "bytes": 7266195
+        }
+      ]
+    },
+    "gsplats_opencell_map4": {
+      "bucket": "zenodo",
+      "record": "cc-by-sa",
+      "license": "cc-by-sa-4.0",
+      "source": "OpenCell (CZ Biohub) MAP4",
+      "attribution": "OpenCell / CZ Biohub \u2014 Cho et al., Science 2022, doi:10.1126/science.abi6983 (CC BY-SA 4.0).",
+      "dir": "gsplats_opencell_map4",
+      "files": [
+        {
+          "name": "opencell_map4_ch0.gsplats.zarr.zip",
+          "sha256": "1001734215d49cac6040691e1e237a1bebce3d33e8aa7dae680f3ddf631da5b5",
+          "bytes": 819778
+        },
+        {
+          "name": "opencell_map4_ch1.gsplats.zarr.zip",
+          "sha256": "37e576e5f076bd464d2337130b275c0ae4556b3515f9594fcb18c818a2345eaf",
+          "bytes": 819772
+        }
+      ]
+    },
+    "gsplats_zebrafish": {
+      "bucket": "zenodo",
+      "record": "cc-by-sa",
+      "license": "cc-by-sa-4.0",
+      "source": "Zenodo 1211599 (zebrafish light-sheet)",
+      "attribution": "Pia Aanstad \u2014 doi:10.5281/zenodo.1211599 (CC BY-SA 4.0).",
+      "dir": "gsplats_zebrafish",
+      "files": [
+        {
+          "name": "zebrafish.gsplats.zarr.zip",
+          "sha256": "09c4bd33de5989f64d6845dfc7517227c73bee0e85fb5ab40553312231a8c086",
+          "bytes": 1705409
+        }
+      ]
+    },
+    "gsplats_4d_neuromast_2ch": {
+      "bucket": "zenodo",
+      "record": "cc-by",
+      "license": "cc-by-4.0",
+      "source": "Neuromast 2-channel light-sheet timelapse (iSIM)",
+      "attribution": "Adrian Jacobo (CZ Biohub SF); used with permission (CC BY 4.0).",
+      "pending_upload": true,
+      "dir": "gsplats_4d_neuromast_2ch",
+      "files": []
+    },
+    "h2afva": {
+      "bucket": "zenodo",
+      "record": "h2afva",
+      "license": "cc-by-4.0",
+      "source": "h2afva zebrafish histone light-sheet timelapse (Royer lab)",
+      "attribution": "Royer lab, CZ Biohub SF (CC BY 4.0).",
+      "pending_upload": true,
+      "dir": "h2afva",
+      "variants": {
+        "51tp": {
+          "default": true,
+          "approx_bytes": 2900000000,
+          "note": "51-timepoint refit \u2014 lighter default for the demo.",
+          "files": []
+        },
+        "253tp": {
+          "default": false,
+          "approx_bytes": 16000000000,
+          "note": "Full 253-timepoint timelapse \u2014 opt-in (large download).",
+          "files": []
+        }
+      }
+    },
+    "milky_way_gaia_3m": {
+      "bucket": "local-compute",
+      "redistribute": false,
+      "license": "cc-by-nc-3.0-igo",
+      "source": "ESA Gaia DR3 archive",
+      "reason": "CC BY-NC (non-commercial) \u2014 incompatible with a cleanly-reusable host.",
+      "strategy": "Query the ESA Gaia archive and build the point cloud client-side (no GPU); cache locally. Requires the ESA/Gaia/DPAC acknowledgement.",
+      "dir": "",
+      "files": [
+        {
+          "name": "milky_way_gaia_3m.zarr.zip",
+          "sha256": "e0c73dc0262dfd7a951469620bdf829f497fe9f3f611f308bc660b80439e6b8a",
+          "bytes": 41499579
+        }
+      ]
+    },
+    "gsplats_tng_cosmic_web": {
+      "bucket": "local-compute",
+      "redistribute": false,
+      "license": "none",
+      "source": "IllustrisTNG (tng-project.org)",
+      "reason": "Access-gated (account + API key); no redistribution license.",
+      "strategy": "Fetch particle data after TNG registration + fit locally (GPU).",
+      "dir": "gsplats_tng_cosmic_web",
+      "files": [
+        {
+          "name": "tng_cosmic_web.gsplats.zarr.zip",
+          "sha256": "6dd112ac63c70ad6e9db4dca7c06b85c7295cda805063ec26ad412de12a922f3",
+          "bytes": 16245415
+        }
+      ]
+    },
+    "gsplats_acto3d_heart": {
+      "bucket": "local-compute",
+      "redistribute": false,
+      "license": "none",
+      "source": "Acto3D sample data (github.com/Acto3D/Acto3D)",
+      "reason": "Repo MIT covers software only; sample data unlicensed (all rights reserved).",
+      "strategy": "Fetch raw from the Acto3D source + fit locally (GPU).",
+      "dir": "gsplats_acto3d_heart",
+      "files": [
+        {
+          "name": "acto3d_heart_ch0.gsplats.zarr.zip",
+          "sha256": "00a38bdba2dc1ebcc3049a0b42480fcd7daffde0472411eff9f24d0876899c58",
+          "bytes": 3027695
+        },
+        {
+          "name": "acto3d_heart_ch1.gsplats.zarr.zip",
+          "sha256": "1104f277eff036bf1857ee18f4554d01db56c373b1d224f7f572a6e3552c0199",
+          "bytes": 5224754
+        },
+        {
+          "name": "acto3d_heart_ch2.gsplats.zarr.zip",
+          "sha256": "ea5e48d265622a5e40fd6488fa4e05b0275bba6d84e3987ff9fc16e11bca26fa",
+          "bytes": 5516346
+        }
+      ]
+    },
+    "gsplats_tribolium": {
+      "bucket": "local-compute",
+      "redistribute": false,
+      "license": "conflict",
+      "source": "Cell Tracking Challenge / Zenodo 5270323",
+      "reason": "CTC origin forbids cloning; Zenodo re-host CC-BY is an authority conflict.",
+      "strategy": "Fetch raw from the Cell Tracking Challenge + fit locally (GPU), or seek CTC permission.",
+      "dir": "gsplats_tribolium",
+      "files": [
+        {
+          "name": "tribolium.gsplats.zarr.zip",
+          "sha256": "f722f4eb73d8132593271eff064412512b62c87c559d5a33c5fa822e2c23b711",
+          "bytes": 2641248
+        }
+      ]
+    },
+    "dipc_genome": {
+      "bucket": "regenerate",
+      "redistribute": true,
+      "license": "cc-by-4.0",
+      "source": "GEO GSE117876 (Dip-C GM12878)",
+      "strategy": "Small GEO download + CPU polyline build; auto-download+rebuild fallback already in the demo.",
+      "dir": "dipc_genome",
+      "files": [
+        {
+          "name": "dipc_gm12878.npz",
+          "sha256": "93c41bf18099b1ad7b1a3fa1c1ea68ae342418b66377bcfce3a650af52507b32",
+          "bytes": 3649223
+        }
+      ]
+    }
+  }
+}

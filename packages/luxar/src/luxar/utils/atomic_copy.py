@@ -65,3 +65,44 @@ def atomic_copytree(src: Path, dst: Path) -> None:
         if tmp.exists():
             shutil.rmtree(tmp, ignore_errors=True)
         raise
+
+
+def atomic_copy_file(src: Path, dst: Path) -> Path:
+    """Copy the FILE ``src`` onto ``dst`` atomically (temp sibling + rename).
+
+    ``shutil.copy2`` writes straight into ``dst``, so an interruption (Ctrl-C,
+    full disk, SIGKILL) leaves a truncated file under the final name — which a
+    later run may mistake for a complete cache entry, or must quarantine and
+    re-fetch. Copying to a sibling temp file and renaming makes ``dst`` appear
+    only once it is complete.
+
+    Unlike :func:`atomic_copytree`, an existing ``dst`` IS replaced: every caller
+    is refreshing a cache entry and wants overwrite semantics. Metadata is
+    preserved (``copy2``), so mtime-based staleness checks keep working.
+
+    Args:
+        src: Existing regular file to copy.
+        dst: Destination path; replaced if present. Parents are created.
+
+    Returns:
+        ``dst``.
+
+    Raises:
+        FileNotFoundError: ``src`` is missing or is not a regular file.
+        OSError: Any I/O failure. The temp file is removed before re-raising, so
+            ``dst`` keeps whatever it had before the call.
+    """
+    src, dst = Path(src), Path(dst)
+    if not src.is_file():
+        raise FileNotFoundError(f"Source file does not exist: {src}")
+
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dst.parent / f".tmp_{dst.name}_{uuid.uuid4().hex[:8]}"
+
+    try:
+        shutil.copy2(src, tmp)
+        os.replace(tmp, dst)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+    return dst
