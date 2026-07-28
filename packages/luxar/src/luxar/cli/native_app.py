@@ -25,7 +25,7 @@ import shutil
 import stat
 import subprocess
 import zipfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from xml.sax.saxutils import escape as xml_escape
 
 from arbol import aprint, asection
@@ -48,6 +48,46 @@ PLATFORM_BINARIES: dict[str, str] = {
 }
 
 SUPPORTED_PLATFORMS: tuple[str, ...] = tuple(PLATFORM_BINARIES.keys())
+
+
+def validate_bundle_name(name: str) -> str:
+    """Validate that ``name`` is a safe, opaque app/file name — never a path.
+
+    A native bundle name is interpolated directly into on-disk paths (e.g.
+    ``output / f"{name}.app"``). It must therefore be a single, opaque
+    display/file name component and never smuggle in path structure that
+    could escape the requested output directory (issue #686). This rejects
+    path separators, ``.``/``..`` components, absolute paths, NUL/control
+    characters, and empty/whitespace-only names; ordinary names with spaces
+    and non-ASCII Unicode letters (e.g. ``"My Scéne 2"``) stay valid.
+
+    Args:
+        name: The candidate app/bundle name.
+
+    Returns:
+        ``name`` unchanged when it is valid.
+
+    Raises:
+        ValueError: If ``name`` is not a safe, opaque name component.
+    """
+    if not name or not name.strip():
+        raise ValueError("Bundle name must not be empty or whitespace-only.")
+    if "/" in name or "\\" in name:
+        raise ValueError(f"Bundle name must not contain path separators: {name!r}")
+    if any(ord(ch) < 32 for ch in name):
+        raise ValueError(
+            f"Bundle name must not contain NUL or control characters: {name!r}"
+        )
+    if name in (".", ".."):
+        raise ValueError(f"Bundle name must not be '.' or '..': {name!r}")
+    pure = PurePosixPath(name)
+    if pure.is_absolute() or PureWindowsPath(name).is_absolute():
+        raise ValueError(f"Bundle name must not be an absolute path: {name!r}")
+    if any(part in (".", "..") for part in pure.parts):
+        raise ValueError(
+            f"Bundle name must not contain '.' or '..' path components: {name!r}"
+        )
+    return name
 
 
 class LauncherNotBuiltError(FileNotFoundError):
@@ -89,8 +129,13 @@ def bundle_macos_app(
     The launcher binary is the Go-compiled ``darwin-universal`` artifact;
     viewer + data live under ``Contents/Resources``.
     """
+    validate_bundle_name(app_name)
     launcher = get_launcher_path("macos")
     app_path = output / f"{app_name}.app"
+    if app_path.resolve().parent != output.resolve():
+        raise ValueError(
+            f"Bundle path {app_path} escapes the output directory {output}"
+        )
     contents = app_path / "Contents"
     macos_dir = contents / "MacOS"
     resources = contents / "Resources"
@@ -146,9 +191,12 @@ def bundle_linux_folder(
     Args:
         arch: ``"amd64"`` or ``"arm64"``.
     """
+    validate_bundle_name(app_name)
     platform_name = f"linux-{arch}"
     launcher = get_launcher_path(platform_name)
     folder = output / f"{app_name}-{platform_name}"
+    if folder.resolve().parent != output.resolve():
+        raise ValueError(f"Bundle path {folder} escapes the output directory {output}")
 
     with asection(f"Building Linux folder bundle ({folder.name})"):
         folder.mkdir(parents=True, exist_ok=True)

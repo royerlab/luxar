@@ -5,7 +5,7 @@ axes: substitutive reduction first (outer axis, see
 :mod:`luxar.gsplats.lod.substitutive`), then an additive ladder inside
 each substitutive level (inner axis, see
 :mod:`luxar.gsplats.lod.additive`). Saved to disk, the result is a
-single v3.2 node-tree ``.gsplats.zarr`` carrying the full 2-D pyramid.
+single v3.3 node-tree ``.gsplats.zarr`` carrying the full 2-D pyramid.
 """
 
 from __future__ import annotations

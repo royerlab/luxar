@@ -193,6 +193,19 @@ class TestServeIntegration:
         assert "Access-Control-Allow-Origin" in response.headers
         assert response.headers["Access-Control-Allow-Origin"] == origin
 
+    def test_no_cache_header_on_data_responses(self, test_server):
+        """Every response must carry ``Cache-Control: no-cache``.
+
+        StaticFiles sends ETag/Last-Modified but no Cache-Control, so
+        browsers fall back to heuristic freshness and serve STALE chunks
+        after a dataset is regenerated in place (same URLs, new bytes).
+        ``no-cache`` forces ETag revalidation (unchanged chunks are still
+        cheap 304s) so a regenerated dataset is always picked up.
+        """
+        for path in ("/.zattrs", "/health"):
+            response = requests.get(f"{test_server}{path}")
+            assert response.headers.get("Cache-Control") == "no-cache", path
+
     def test_non_local_cors_origin_rejected_by_default(self, sample_scene):
         """Default CORS policy should only allow loopback browser clients."""
         from luxar.cli.main import create_server_app
