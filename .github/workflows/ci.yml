@@ -77,6 +77,14 @@ jobs:
         # types/format-contract.ts must match format-contract/contract.yaml.
         run: hatch run check-contract
 
+      - name: Demo data manifest drift
+        # demos/data_manifest.json must match the demos/data tree. Safe without
+        # `git lfs pull`: the generator reads each file's sha256 + size from its
+        # LFS *pointer* when the payload is not materialized, so this needs
+        # neither the git-lfs binary nor LFS bandwidth (see the checkout note
+        # above).
+        run: hatch run check-data-manifest
+
       - name: Security (bandit)
         # Gates on unwaived medium/high findings. Low findings (subprocess
         # usage, etc.) and demos are out of scope; see [tool.bandit].

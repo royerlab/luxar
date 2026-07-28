@@ -21,6 +21,7 @@ scripts/
 | `set_version.py` | Update the Python and viewer release versions together |
 | `release.sh` | Run release preflight checks, then create and push the release tag |
 | `gen_format_contract.py` | Generate the Python and TypeScript format-contract projections from `format-contract/contract.yaml` |
+| `gen_data_manifest.py` | Regenerate the demo-data manifest (`demos/data_manifest.json`); `--check` is the CI drift gate |
 | `generate_galaxy_simple.py` | Fetch Gaia DR3 stars → raw zarr table for demos |
 | `gen_census_umap.py` | Build the large CELLxGENE Census scVI/UMAP cache on a CUDA/RAPIDS environment |
 | `generate_builtin_colormaps.py` | Regenerate built-in colormap LUTs (Python + TS) |

@@ -11,11 +11,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from luxar.utils.download import (
     QUARANTINE_SUFFIX,
     _format_bytes,
     find_quarantined_files,
     format_quarantine_notice,
+    quarantine_file,
     robust_download,
     warn_if_quarantined,
 )
@@ -127,3 +130,41 @@ class TestRobustDownloadChokepoint:
         assert str(corrupt) in out
         assert "2.00 KB" in out
         assert "QUARANTINED" in out
+
+
+class TestQuarantineFile:
+    """The producer side of the ``.corrupt`` convention."""
+
+    def test_appends_suffix_and_is_visible_to_the_finders(self, tmp_path: Path) -> None:
+        bad = tmp_path / "dataset.gsplats.zarr.zip"
+        bad.write_bytes(b"garbage")
+
+        out = quarantine_file(bad, reason="sha256 mismatch")
+
+        # Appended, not with_suffix — the multi-dot name must survive intact.
+        assert out == tmp_path / "dataset.gsplats.zarr.zip.corrupt"
+        assert not bad.exists()
+        assert out.read_bytes() == b"garbage"
+        # Producer and consumers must agree on the name.
+        assert find_quarantined_files(bad) == [out]
+        assert find_quarantined_files(tmp_path) == [out]
+
+    def test_second_quarantine_replaces_the_first(self, tmp_path: Path) -> None:
+        """One slot per file: a corrupt-fetch loop must not fill the disk."""
+        bad = tmp_path / "dataset.zip"
+        bad.write_bytes(b"first")
+        quarantine_file(bad)
+        bad.write_bytes(b"second")
+
+        out = quarantine_file(bad)
+
+        assert out.read_bytes() == b"second"
+        assert find_quarantined_files(tmp_path) == [out]
+
+    def test_missing_file_is_a_caller_bug(self, tmp_path: Path) -> None:
+        with pytest.raises(FileNotFoundError):
+            quarantine_file(tmp_path / "nope.zip")
+
+    def test_a_directory_is_refused(self, tmp_path: Path) -> None:
+        with pytest.raises(FileNotFoundError):
+            quarantine_file(tmp_path)

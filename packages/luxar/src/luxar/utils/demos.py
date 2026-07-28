@@ -299,7 +299,12 @@ def cached_download(
     Returns:
         Path to the cached file.
     """
-    from .download import download_with_checksum, robust_download
+    from .download import (
+        download_with_checksum,
+        quarantine_file,
+        robust_download,
+        verify_file_checksum,
+    )
 
     cache_dir = _DEFAULT_CACHE_ROOT / name
     cache_dir.mkdir(parents=True, exist_ok=True)
@@ -307,20 +312,38 @@ def cached_download(
         filename = url.split("?")[0].rstrip("/").rsplit("/", 1)[-1] or "download.bin"
     dest = cache_dir / filename
 
-    # Skip-if-present: a complete cached file (not an LFS pointer) is reused.
-    if dest.exists() and not is_lfs_pointer(dest):
-        if sha256 is not None:
-            from .download import verify_file_checksum
-
+    # Skip-if-present. A file that is genuinely WRONG (an LFS pointer stub, or a
+    # sha256 mismatch) is quarantined here. But a mere size mismatch is NOT a
+    # corruption signal — `expected_size` is only a skip-if-matches hint, and it
+    # can be a stale/wrong client-side guess (e.g. an API-reported byte count for
+    # a `Content-Encoding: gzip` response whose decoded on-disk size exceeds it).
+    # So a file that does not match `expected_size` — whether LONGER or SHORTER —
+    # is left in place for robust_download to reconcile: it restarts from scratch
+    # when the local copy is larger than the true remote size (and cleanly
+    # restarts on a resume that trips HTTP 416), and resumes when it is smaller.
+    # Quarantining an oversized-but-complete file here would re-download it every
+    # launch forever, since the re-fetched bytes are still larger than the stale
+    # guess. `expected_size` must never destroy a complete cached file.
+    if dest.exists():
+        if is_lfs_pointer(dest):
+            # A pointer stub is not data — and it is exactly the ~130 bytes that
+            # robust_download would otherwise happily resume from.
+            quarantine_file(dest, reason="unpulled git-LFS pointer", verbose=verbose)
+        elif sha256 is not None:
             if verify_file_checksum(dest, None, sha256):
                 if verbose:
                     aprint(f"✓ Cached (checksum ok): {dest}")
                 return dest
+            quarantine_file(dest, reason="sha256 mismatch", verbose=verbose)
         elif expected_size is not None:
-            if dest.stat().st_size == expected_size:
+            size = dest.stat().st_size
+            if size == expected_size:
                 if verbose:
                     aprint(f"✓ Cached: {dest}")
                 return dest
+            # size != expected_size (LONGER or SHORTER): leave it in place and let
+            # robust_download reconcile against the TRUE remote size — restart on
+            # local > remote, resume on local < remote. Never quarantine here.
         else:
             if verbose:
                 aprint(f"✓ Cached: {dest}")
@@ -373,10 +396,10 @@ def cache_computed(
                 aprint(f"✓ Loaded cached result: {cache_file.name}")
             return result
         except Exception as exc:  # truncated / incompatible pickle
-            corrupt = cache_file.with_suffix(".pkl.corrupt")
-            cache_file.replace(corrupt)
-            aprint(
-                f"⚠️  Cached result unreadable ({exc}); quarantined to {corrupt.name}"
+            from .download import quarantine_file
+
+            quarantine_file(
+                cache_file, reason=f"unreadable pickle ({exc})", verbose=True
             )
 
     result = compute_fn()
@@ -723,9 +746,7 @@ def launch_viewer(
         aprint("If using hatch: run this demo with 'hatch run python <demo.py>'")
     else:
         aprint(f"\n❌ Error: luxar serve exited with code {code}.")
-        aprint(
-            "Make sure the viewer is built: cd packages/luxar-viewer && pnpm build"
-        )
+        aprint("Make sure the viewer is built: cd packages/luxar-viewer && pnpm build")
     sys.exit(1)
 
 
