@@ -3,7 +3,7 @@
  * (nD segment clipping: clip_segment_single, clip_segments_batch,
  * interpolate_clipped_positions, lerp / lerp_vec3 / distance_3d primitives,
  * interpolate_scalars_batch, interpolate_colors_batch,
- * calculate_segment_lengths, mark_clipped_endpoints).
+ * calculate_segment_lengths, compute_cap_suppression).
  *
  * Extracted from `tests/unit/wasm/typescript-reference.test.ts` per the
  * restructuring plan (wasm.md O1 / Phase D9 — final phase): the 1714-line
@@ -22,7 +22,7 @@ import {
   interpolate_scalars_batch,
   interpolate_colors_batch,
   calculate_segment_lengths,
-  mark_clipped_endpoints,
+  compute_cap_suppression,
 } from '../../../../wasm/typescript';
 
 // ============================================================================
@@ -325,35 +325,244 @@ describe('lines_clipping: calculate_segment_lengths', () => {
     expect(output[0]).toBe(5); // 3-4-5 triangle
     expect(output[1]).toBeCloseTo(Math.sqrt(3), 5);
   });
+
+  it('returns the finite true length on huge coordinates (no f32 squared-length overflow)', () => {
+    // Component delta 2e30 squares to 4e60 — far past f32::MAX (~3.4e38).
+    // The reference reads f32 inputs but accumulates in f64 (the contract
+    // the Rust kernel must match — see the WASM parity twin, #793).
+    const startPos = new Float32Array([-1e30, 0, 0]);
+    const endPos = new Float32Array([1e30, 0, 0]);
+    const output = new Float32Array(1);
+
+    calculate_segment_lengths(startPos, endPos, 1, output);
+
+    expect(Number.isFinite(output[0])).toBe(true);
+    expect(output[0]).toBe(Math.fround(endPos[0] - startPos[0]));
+  });
 });
 
-describe('lines_clipping: mark_clipped_endpoints', () => {
+describe('lines_clipping: compute_cap_suppression', () => {
   it('should mark clipped endpoints correctly', () => {
     const visibility = new Uint8Array([1, 1, 0, 1]);
     const t1Params = new Float32Array([0.0, 0.5, 0.0, 0.25]);
     const t2Params = new Float32Array([1.0, 0.75, 1.0, 1.0]);
+    // Disjoint segments (vertices 0..7) so nothing forms a joint — this test
+    // pins the clipped-flag half of the contract in isolation.
+    const segments = Uint32Array.from({ length: 8 }, (_, i) => i);
+    const startPositions = new Float32Array([0, 0, 0, 10, 0, 0, 20, 0, 0]);
+    const endPositions = new Float32Array([1, 0, 0, 11, 0, 0, 21, 0, 0]);
 
-    const startClipped = new Uint8Array(3);
-    const endClipped = new Uint8Array(3);
+    const startCapSuppression = new Float32Array(3);
+    const endCapSuppression = new Float32Array(3);
 
-    const count = mark_clipped_endpoints(
+    const count = compute_cap_suppression(
+      segments,
       visibility,
       t1Params,
       t2Params,
       4,
-      startClipped,
-      endClipped
+      8,
+      startPositions,
+      endPositions,
+      startCapSuppression,
+      endCapSuppression
     );
 
     expect(count).toBe(3); // 3 visible
-    // seg0: t1=0 (not clipped), t2=1 (not clipped)
-    expect(startClipped[0]).toBe(0);
-    expect(endClipped[0]).toBe(0);
+    // seg0: t1=0 (not clipped), t2=1 (not clipped), no neighbour → free ends
+    expect(startCapSuppression[0]).toBe(0);
+    expect(endCapSuppression[0]).toBe(0);
     // seg1: t1=0.5 (clipped), t2=0.75 (clipped)
-    expect(startClipped[1]).toBe(1);
-    expect(endClipped[1]).toBe(1);
-    // seg3: t1=0.25 (clipped), t2=1.0 (not clipped)
-    expect(startClipped[2]).toBe(1);
-    expect(endClipped[2]).toBe(0);
+    expect(startCapSuppression[1]).toBe(1);
+    expect(endCapSuppression[1]).toBe(1);
+    // seg3: t1=0.25 (clipped), t2=1.0 (not clipped, free end)
+    expect(startCapSuppression[2]).toBe(1);
+    expect(endCapSuppression[2]).toBe(0);
+  });
+
+  it('suppresses the cap at a straight-through interior joint', () => {
+    // Two collinear segments sharing vertex 1: v0 --> v1 --> v2 along +x.
+    const segments = new Uint32Array([0, 1, 1, 2]);
+    const visibility = new Uint8Array([1, 1]);
+    const t1Params = new Float32Array([0, 0]);
+    const t2Params = new Float32Array([1, 1]);
+    const startPositions = new Float32Array([0, 0, 0, 1, 0, 0]);
+    const endPositions = new Float32Array([1, 0, 0, 2, 0, 0]);
+    const outStart = new Float32Array(2);
+    const outEnd = new Float32Array(2);
+
+    compute_cap_suppression(
+      segments,
+      visibility,
+      t1Params,
+      t2Params,
+      2,
+      3,
+      startPositions,
+      endPositions,
+      outStart,
+      outEnd
+    );
+
+    // Free outer ends keep the cap; the shared joint is fully suppressed.
+    expect(outStart[0]).toBe(0);
+    expect(outEnd[0]).toBeCloseTo(1, 6);
+    expect(outStart[1]).toBeCloseTo(1, 6);
+    expect(outEnd[1]).toBe(0);
+  });
+
+  it('keeps the cap at a 90-degree bend and interpolates in between', () => {
+    // v0 --> v1 along +x, then v1 --> v2 along +y (a right-angle turn).
+    const right = new Float32Array(2);
+    compute_cap_suppression(
+      new Uint32Array([0, 1, 1, 2]),
+      new Uint8Array([1, 1]),
+      new Float32Array([0, 0]),
+      new Float32Array([1, 1]),
+      2,
+      3,
+      new Float32Array([0, 0, 0, 1, 0, 0]),
+      new Float32Array([1, 0, 0, 1, 1, 0]),
+      right,
+      new Float32Array(2)
+    );
+    expect(right[1]).toBe(0); // 90 degrees → dot 0 → cap preserved
+
+    // A gentle 45-degree turn lands between the two regimes.
+    const gentle = new Float32Array(2);
+    const d = Math.SQRT1_2;
+    compute_cap_suppression(
+      new Uint32Array([0, 1, 1, 2]),
+      new Uint8Array([1, 1]),
+      new Float32Array([0, 0]),
+      new Float32Array([1, 1]),
+      2,
+      3,
+      new Float32Array([0, 0, 0, 1, 0, 0]),
+      new Float32Array([1, 0, 0, 1 + d, d, 0]),
+      gentle,
+      new Float32Array(2)
+    );
+    expect(gentle[1]).toBeCloseTo(Math.SQRT1_2, 5);
+  });
+
+  it('clamps a 180-degree fold-back joint to 0 (the only case with a negative raw value)', () => {
+    // v0 -> v1 travelling +x, then v1 -> v2 travelling BACK along -x. The two
+    // "away" vectors coincide, so dot(dirA, dirB) = -1 and the endpoint bits
+    // differ (sign = -1), making the raw value -1. Every other geometry keeps
+    // it in [0, 1], so this is the sole case that exercises the LOWER clamp —
+    // without it a fold-back would emit a negative suppression, which the
+    // shader's per-endpoint mix(0.5 + 0.5 * ramp, 1.0, s) would turn into a
+    // cap BELOW 0.5 (a darker-than-intended notch) instead of the full cap
+    // the overlap needs.
+    const foldStart = new Float32Array(2);
+    const foldEnd = new Float32Array(2);
+    compute_cap_suppression(
+      new Uint32Array([0, 1, 1, 2]),
+      new Uint8Array([1, 1]),
+      new Float32Array([0, 0]),
+      new Float32Array([1, 1]),
+      2,
+      3,
+      new Float32Array([0, 0, 0, 1, 0, 0]),
+      new Float32Array([1, 0, 0, 0, 0, 0]),
+      foldStart,
+      foldEnd
+    );
+    expect(foldEnd[0]).toBe(0);
+    expect(foldStart[1]).toBe(0);
+  });
+
+  it('keeps the cap at a branch point (three segments meeting)', () => {
+    // Three segments all starting at vertex 0 — a star hub. Suppressing here
+    // would stack three quads into a bright nub.
+    const outStart = new Float32Array(3);
+    compute_cap_suppression(
+      new Uint32Array([0, 1, 0, 2, 0, 3]),
+      new Uint8Array([1, 1, 1]),
+      new Float32Array([0, 0, 0]),
+      new Float32Array([1, 1, 1]),
+      3,
+      4,
+      new Float32Array([0, 0, 0, 0, 0, 0, 0, 0, 0]),
+      new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]),
+      outStart,
+      new Float32Array(3)
+    );
+    expect(Array.from(outStart)).toEqual([0, 0, 0]);
+  });
+
+  it('does not treat a culled or trimmed neighbour as a joint', () => {
+    // v0-v1-v2 collinear, but the second segment is invisible: v1 is a real
+    // visible free end and must keep its cap.
+    const culled = new Float32Array(2);
+    compute_cap_suppression(
+      new Uint32Array([0, 1, 1, 2]),
+      new Uint8Array([1, 0]),
+      new Float32Array([0, 0]),
+      new Float32Array([1, 1]),
+      2,
+      3,
+      new Float32Array([0, 0, 0, 1, 0, 0]),
+      new Float32Array([1, 0, 0, 2, 0, 0]),
+      new Float32Array(2),
+      culled
+    );
+    expect(culled[0]).toBe(0);
+
+    // Same geometry, but the neighbour is visible and trimmed away from the
+    // shared vertex (t1 > 0) — it no longer reaches v1, so still no joint.
+    const trimmed = new Float32Array(2);
+    compute_cap_suppression(
+      new Uint32Array([0, 1, 1, 2]),
+      new Uint8Array([1, 1]),
+      new Float32Array([0, 0.4]),
+      new Float32Array([1, 1]),
+      2,
+      3,
+      new Float32Array([0, 0, 0, 1.4, 0, 0]),
+      new Float32Array([1, 0, 0, 2, 0, 0]),
+      new Float32Array(2),
+      trimmed
+    );
+    expect(trimmed[0]).toBe(0);
+  });
+
+  it('handles a shared vertex reached from both segments by the same endpoint', () => {
+    // Both segments END at vertex 1 (v0 -> v1 <- v2): the polyline is stored
+    // with opposing orientation. Geometrically this is still a straight
+    // continuation, so the "away" vectors are opposite and it suppresses.
+    const outEnd = new Float32Array(2);
+    compute_cap_suppression(
+      new Uint32Array([0, 1, 2, 1]),
+      new Uint8Array([1, 1]),
+      new Float32Array([0, 0]),
+      new Float32Array([1, 1]),
+      2,
+      3,
+      new Float32Array([0, 0, 0, 2, 0, 0]),
+      new Float32Array([1, 0, 0, 1, 0, 0]),
+      new Float32Array(2),
+      outEnd
+    );
+    expect(outEnd[0]).toBeCloseTo(1, 6);
+    expect(outEnd[1]).toBeCloseTo(1, 6);
+  });
+
+  it('keeps the cap on a degenerate zero-length neighbour', () => {
+    const outEnd = new Float32Array(2);
+    compute_cap_suppression(
+      new Uint32Array([0, 1, 1, 2]),
+      new Uint8Array([1, 1]),
+      new Float32Array([0, 0]),
+      new Float32Array([1, 1]),
+      2,
+      3,
+      new Float32Array([0, 0, 0, 1, 0, 0]),
+      new Float32Array([1, 0, 0, 1, 0, 0]), // second segment has zero length
+      new Float32Array(2),
+      outEnd
+    );
+    expect(outEnd[0]).toBe(0);
   });
 });

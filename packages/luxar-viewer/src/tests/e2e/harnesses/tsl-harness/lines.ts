@@ -59,8 +59,8 @@ function lineTexelSource(
     startSharpness: new Float32Array([0.5]),
     endSharpness: new Float32Array([0.5]),
     segmentLengths: new Float32Array([1.0]),
-    startClipped: new Uint8Array([0]),
-    endClipped: new Uint8Array([0]),
+    startCapSuppression: new Float32Array([0]),
+    endCapSuppression: new Float32Array([0]),
     startScalars: scalars ? new Float32Array([scalars[0]]) : undefined,
     endScalars: scalars ? new Float32Array([scalars[1]]) : undefined,
     startAlphas: alphas ? new Float32Array([alphas[0]]) : undefined,
@@ -120,8 +120,8 @@ function buildLineDataTextureMultiRow(): THREE.DataTexture {
       startSharpness: new Float32Array([0.5, ...real.startSharpness]),
       endSharpness: new Float32Array([0.5, ...real.endSharpness]),
       segmentLengths: new Float32Array([0.4, ...real.segmentLengths]),
-      startClipped: new Uint8Array([0, ...real.startClipped]),
-      endClipped: new Uint8Array([0, ...real.endClipped]),
+      startCapSuppression: new Float32Array([0, ...real.startCapSuppression]),
+      endCapSuppression: new Float32Array([0, ...real.endCapSuppression]),
     },
     2
   );
@@ -264,8 +264,8 @@ const SORTED_PERMUTED_LINES: LineTexelSource = {
   startSharpness: new Float32Array([0.5, 0.5, 0.5, 0.5]),
   endSharpness: new Float32Array([0.5, 0.5, 0.5, 0.5]),
   segmentLengths: new Float32Array([0.5, 0.5, 0.5, 0.5]),
-  startClipped: new Uint8Array([0, 0, 0, 0]),
-  endClipped: new Uint8Array([0, 0, 0, 0]),
+  startCapSuppression: new Float32Array([0, 0, 0, 0]),
+  endCapSuppression: new Float32Array([0, 0, 0, 0]),
 };
 
 /**
@@ -531,7 +531,7 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
   // w(a) into τ — both defines co-compiled, both texel5 reads live off
   // the SAME single fetch. Would catch either branch displacing the
   // other (the untested-combination flag from the phase-4 double-check).
-    // (Deep-campaign note: this combination is UNREACHABLE from the Python
+  // (Deep-campaign note: this combination is UNREACHABLE from the Python
   // scene API — all three adders make colors/colormap mutually exclusive
   // and scalars require a colormap, so real data never has both an RGBA
   // alpha column and LUT scalars. The coverage is deliberately defensive:

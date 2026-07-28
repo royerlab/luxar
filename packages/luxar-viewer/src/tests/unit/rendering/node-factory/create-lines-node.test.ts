@@ -47,8 +47,8 @@ function makeProcessed(withScalars = false): InstancedLinesMeshConfig {
     startSharpness: new Float32Array([2.0]),
     endSharpness: new Float32Array([2.0]),
     segmentLengths: new Float32Array([1.0]),
-    startClipped: new Uint8Array([0]),
-    endClipped: new Uint8Array([0]),
+    startCapSuppression: new Float32Array([0]),
+    endCapSuppression: new Float32Array([0]),
     segmentCount: 1,
   };
   if (withScalars) {

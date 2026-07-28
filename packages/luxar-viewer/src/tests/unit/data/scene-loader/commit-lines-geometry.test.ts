@@ -51,8 +51,8 @@ function makeProcessed(segmentCount = 2): ProcessedLinesData {
     startSharpness: new Float32Array(segmentCount),
     endSharpness: new Float32Array(segmentCount),
     segmentLengths: new Float32Array(segmentCount),
-    startClipped: new Uint8Array(segmentCount),
-    endClipped: new Uint8Array(segmentCount),
+    startCapSuppression: new Float32Array(segmentCount),
+    endCapSuppression: new Float32Array(segmentCount),
     segmentCount,
   };
 }

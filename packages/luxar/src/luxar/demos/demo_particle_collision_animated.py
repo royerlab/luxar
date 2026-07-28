@@ -692,9 +692,10 @@ def generate_animated_detector_scene(
                     "time",
                     unit="ns",
                     display=False,
-                    # Range starts at time_per_frame since frame 0 has no visible tracks
-                    # (particles haven't started moving yet at collision time)
-                    range=(time_per_frame, total_time_ns),
+                    # Frame 0 is the collision instant: the detector is present
+                    # (extend_to_all) but no tracks have grown yet, so the range
+                    # starts at 0 to cover it.
+                    range=(0.0, total_time_ns),
                     step=time_per_frame,
                     discrete=True,
                 ),

@@ -583,22 +583,36 @@ export interface WasmModule {
   ): void;
 
   /**
-   * Mark clipped endpoints (for cap factor adjustment).
+   * Per-endpoint cap suppression in [0, 1] (drives the shader cap factor).
    *
+   * `1.0` suppresses the shader's endpoint dimming (clipped endpoint, or a
+   * straight-through interior joint where the neighbouring quad tiles rather
+   * than overlaps); `0.0` keeps it (free polyline end, branch point, or a
+   * bend sharp enough that the quads genuinely overlap). See
+   * `wasm/rust/src/lines_clipping.rs` for the full derivation.
+   *
+   * @param segments - Vertex index pairs [numSegments * 2]
    * @param visibility - Visibility mask [numSegments]
    * @param t1Params - Start interpolation parameters [numSegments]
    * @param t2Params - End interpolation parameters [numSegments]
    * @param numSegments - Total number of segments
-   * @param outputStartClipped - Output start clipped flags [visibleCount]
-   * @param outputEndClipped - Output end clipped flags [visibleCount]
+   * @param numVertices - Total number of source vertices
+   * @param startPositions - Clipped start positions [visibleCount * 3]
+   * @param endPositions - Clipped end positions [visibleCount * 3]
+   * @param outputStart - Output start suppression [visibleCount]
+   * @param outputEnd - Output end suppression [visibleCount]
    * @returns Number of visible segments written
    */
-  mark_clipped_endpoints(
+  compute_cap_suppression(
+    segments: Uint32Array,
     visibility: Uint8Array,
     t1Params: Float32Array,
     t2Params: Float32Array,
     numSegments: number,
-    outputStartClipped: Uint8Array,
-    outputEndClipped: Uint8Array
+    numVertices: number,
+    startPositions: Float32Array,
+    endPositions: Float32Array,
+    outputStart: Float32Array,
+    outputEnd: Float32Array
   ): number;
 }

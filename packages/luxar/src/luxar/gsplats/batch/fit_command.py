@@ -115,6 +115,11 @@ def build_task_fit_argv(
             str(manifest.tile_size),
             "--overlap",
             str(manifest.tile_overlap),
+            # A tile wholly below the run's background floor legitimately
+            # fits 0 splats; the writer rejects empty stores, so the worker
+            # must write an `.empty` marker and exit 0 (the runner finalizes
+            # it and the merge skips it) instead of failing the task forever.
+            "--allow-empty-tile",
         ]
 
     if manifest.array_key is not None:

@@ -14,9 +14,11 @@
  * perf-bench Playwright specs that call it.
  *
  * Generators are PURE (typed arrays in/out, seeded PRNG, no THREE
- * runtime import) so they unit-test headlessly. The lines generator is
- * kept byte-for-byte as originally shipped (its output is pinned by
- * the `line-perf-bench.spec.ts` 10 M-segment scenario contract); the
+ * runtime import) so they unit-test headlessly. The lines generator's
+ * positions/colors/lengths are kept byte-for-byte as originally shipped
+ * (pinned by the `line-perf-bench.spec.ts` 10 M-segment scenario
+ * contract; the cap-suppression arrays are derived from the same walk
+ * without consuming PRNG draws, so the pinned arrays are untouched); the
  * points/gsplats generators share the seeded-RNG + gaussian-cluster
  * sampling scaffolding below.
  *
@@ -93,13 +95,13 @@ function mulberry32(seed: number): () => number {
  *
  *   source arrays:   count × 17 Float32 (positions×2=6, colors×2=6,
  *                       widths×2=2, sharpness×2=2, length×1=1) × 4 B
- *                    + count × 2 Uint8  (clipped flags) × 1 B
- *                  = count × 70 B
+ *                    + count × 2 Float32 (cap suppression) × 4 B
+ *                  = count × 76 B
  *   line texture:    count × 24 floats × 4 B = count × 96 B
  *                    (6 texels/segment RGBA32F — see line-geometry.ts)
- *   ≈ 2.4× the source-array figure as a working JS heap estimate.
+ *   ≈ 2.3× the source-array figure as a working JS heap estimate.
  *
- * For 10 M segments: ~700 MB of source arrays → ~1.4 GB peak JS
+ * For 10 M segments: ~760 MB of source arrays → ~1.75 GB peak JS
  * heap during construction + packing. The bench machine needs the
  * RAM headroom; on developer laptops, prefer smaller counts (the
  * synthetic scenarios list in `line-perf-bench.spec.ts` is a good
@@ -119,8 +121,8 @@ export function generateSyntheticLines(spec: SyntheticSceneSpec): InstancedLines
   const startSharpness = new Float32Array(count);
   const endSharpness = new Float32Array(count);
   const segmentLengths = new Float32Array(count);
-  const startClipped = new Uint8Array(count);
-  const endClipped = new Uint8Array(count);
+  const startCapSuppression = new Float32Array(count);
+  const endCapSuppression = new Float32Array(count);
 
   // Random-walk anchor for segment continuity — visually more
   // interesting than disconnected random pairs and matches what real
@@ -130,6 +132,13 @@ export function generateSyntheticLines(spec: SyntheticSceneSpec): InstancedLines
   let pz = (rand() * 2 - 1) * bounds;
 
   const stepScale = bounds * 0.01;
+
+  // Previous segment's delta + length, for faithful joint suppression
+  // (see the cap-suppression block at the bottom of the loop).
+  let prevDx = 0;
+  let prevDy = 0;
+  let prevDz = 0;
+  let prevLen = 0;
 
   for (let i = 0; i < count; i++) {
     const i3 = i * 3;
@@ -173,11 +182,30 @@ export function generateSyntheticLines(spec: SyntheticSceneSpec): InstancedLines
     const dx = endPositions[i3] - startPositions[i3];
     const dy = endPositions[i3 + 1] - startPositions[i3 + 1];
     const dz = endPositions[i3 + 2] - startPositions[i3 + 2];
-    segmentLengths[i] = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    const len = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    segmentLengths[i] = len;
 
-    // Both endpoints unclipped — synthetic data has no slice clipping.
-    startClipped[i] = 0;
-    endClipped[i] = 0;
+    // Faithful cap suppression from the walk's own topology (this path
+    // never runs through compute_cap_suppression, so emit here what the
+    // kernel emits for connected geometry): at the joint between two
+    // consecutive chain segments, suppression = clamp(dot(dir_prev,
+    // dir_cur), 0, 1) on BOTH endpoint sides. Chain breaks (the i % 64
+    // reset above) and free ends stay 0 — keep the soft cap. Degenerate
+    // zero-length segments also stay 0 (the kernel's fallback).
+    startCapSuppression[i] = 0;
+    endCapSuppression[i] = 0;
+    if (i % 64 !== 0 && prevLen > 0 && len > 0) {
+      const s = Math.min(
+        Math.max((prevDx * dx + prevDy * dy + prevDz * dz) / (prevLen * len), 0),
+        1
+      );
+      endCapSuppression[i - 1] = s;
+      startCapSuppression[i] = s;
+    }
+    prevDx = dx;
+    prevDy = dy;
+    prevDz = dz;
+    prevLen = len;
   }
 
   return {
@@ -190,8 +218,8 @@ export function generateSyntheticLines(spec: SyntheticSceneSpec): InstancedLines
     startSharpness,
     endSharpness,
     segmentLengths,
-    startClipped,
-    endClipped,
+    startCapSuppression,
+    endCapSuppression,
     segmentCount: count,
   };
 }

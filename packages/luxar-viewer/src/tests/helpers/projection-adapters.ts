@@ -191,8 +191,8 @@ export async function projectLinesViaDispatcher(
     startScalars: hasScalars ? result.startScalars : undefined,
     endScalars: hasScalars ? result.endScalars : undefined,
     segmentLengths: result.segmentLengths,
-    startClipped: result.startClipped,
-    endClipped: result.endClipped,
+    startCapSuppression: result.startCapSuppression,
+    endCapSuppression: result.endCapSuppression,
     segmentCount: result.visibleSegmentCount,
   };
 }

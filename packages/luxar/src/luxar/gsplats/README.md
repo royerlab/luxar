@@ -213,7 +213,7 @@ merged = GSplatData.concatenate(all_tile_results)
 
 **Key properties:**
 - Overlap must satisfy `overlap <= tile_size // 2` to avoid triple tile overlap.
-- Cosine windows guarantee seamless blending without post-merge pruning.
+- The background floor (`floor`, default `"auto"`) is resolved once against the whole volume (never per tile) and subtracted from each raw tile before apodization; on the floor-subtracted data the cosine windows guarantee seamless blending without post-merge pruning. (This applies to uniform/apodized tiling; the content-adaptive planner currently hands each unapodized box the raw floor spec, so its boxes still estimate per box.)
 - `fit_tile` rejects explicit seed arrays (use int count, float ratio, or None).
 - zarr arrays are supported for out-of-core processing -- only one tile is materialized at a time.
 
@@ -963,7 +963,10 @@ Main fitting function with automatic optimizations.
 #### `fit_tiled(volume, tile_size=256, overlap=32, **fit_kwargs)`
 Tiled fitting for large volumes that exceed GPU memory. Splits the volume into
 overlapping tiles with Hann cosine apodization, fits each tile independently,
-and concatenates results. The partition-of-unity property eliminates seam artifacts.
+and concatenates results. The background floor is resolved once against the
+whole volume and subtracted from each raw tile before windowing (floor
+subtraction and apodization do not commute); the partition-of-unity property
+then eliminates seam artifacts.
 
 **Key Parameters:**
 - `tile_size`: Tile size per axis (int or tuple). Must satisfy `overlap <= tile_size // 2`.

@@ -164,8 +164,8 @@ void main() {
 	nodeVarying2 = 0.0;
 	nodeVarying3 = 0.0;
 	nodeVarying4 = 0.0;
-	nodeVarying9 = 0.0;
 	nodeVarying8 = 0.0;
+	nodeVarying9 = 0.0;
 	nodeVarying0 = 0.0;
 	nodeVarying5 = 0.0;
 	nodeVarying6 = 0.0;
