@@ -738,6 +738,13 @@ def add_lines_substitutive_lod_wrapper_impl(
             # so a ladder here is a no-op the builder would only warn about.
             else f"line_type={line_type!r} is a single polyline"
             if line_type in ("polyline", "loop")
+            # Indexed lines carry an explicit edge list the additive multi-LOD
+            # writer discards (see lod/lines.py::_indexed_connected_components) —
+            # it fabricates a per-component chain, inventing phantom edges and
+            # dropping real ones. Refuse the default ladder rather than corrupt
+            # the topology.
+            else f"line_type={line_type!r} edges are not preserved by the ladder"
+            if line_type == "indexed"
             else None
         ),
     )

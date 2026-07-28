@@ -216,10 +216,15 @@ so the two can't drift). `add_lines_substitutive_lod_wrapper_impl`
 Composes with `additive_lod` (laddered per level by default, as for Points);
 mutually exclusive with `partition`. A single-polyline `line_type`
 (`polyline`/`loop`) skips the ladder, since a polyline cannot be split without
-breaking its segment topology. `scalars`+`colormap` are
+breaking its segment topology; `indexed` is NOT laddered in the composed additive
+path at all — neither by default nor with an explicit `additive_lod=dict(...)` —
+because the additive multi-LOD writer discards the explicit edge list and would
+fabricate phantom edges, so its topology cannot be preserved either way. Only
+`segments` gets a composed additive ladder. `scalars`+`colormap` are
 mapped per bead (scalar interpolated along each segment, *then* the LUT — matching
 the line shader's interpolate-then-LUT order; same colormap/gamma caveats as
-Points). All `line_type`s (segments/polyline/loop/indexed) are supported.
+Points). All `line_type`s (segments/polyline/loop/indexed) are supported for the
+substitutive pyramid itself; only `segments` also receives a composed additive ladder.
 Degenerate-width segments are dropped; bead allocation is bounded both
 per-segment (`lift.MAX_BEADS_PER_SEGMENT`) and in aggregate
 (`lift.MAX_TOTAL_BEADS`, spacing widened to fit with a `UserWarning`), so a

@@ -478,6 +478,32 @@ class TestSubstitutiveComposedWithAdditive:
         assert finest.attrs["type"] == "points"
         assert int(finest.attrs.get("n_additive_sublods", 1)) == 1
 
+    def test_default_on_ladders_a_finest_child_above_one_chunk(self, tmp_path) -> None:
+        # The real regression guard for the default composition: N well ABOVE the
+        # default stream chunk (39062), so the finest child MUST carry a
+        # multi-sublod ladder. This FAILS if default composition is removed
+        # (unlike the 3,000-point sibling above, which fits one chunk and passes
+        # even with composition deleted).
+        out = tmp_path / "t.luxar.zarr"
+        rng = np.random.RandomState(4)
+        n = 80_000
+        pos = rng.normal(0, 20, (n, 3)).astype(np.float32)
+        with LuxarZarrCompiler(out) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_points(
+                "cloud",
+                pos,
+                radii=np.full(n, 1.0, dtype=np.float32),
+                substitutive_lod=dict(
+                    compression_factor=4, levels=2, device="cpu", seed=0
+                ),
+            )
+
+        grp = zarr.open(str(out), mode="r")["cloud"]
+        finest = grp[sorted(k for k in grp.keys() if k.startswith("child_"))[-1]]
+        assert finest.attrs["type"] == "points"
+        assert int(finest.attrs.get("n_additive_sublods", 1)) > 1
+
     def test_additive_false_opts_out(self, tmp_path) -> None:
         out = tmp_path / "t.luxar.zarr"
         rng = np.random.RandomState(2)
@@ -517,8 +543,16 @@ class TestSubstitutiveComposedWithAdditive:
         assert node is not None
 
         grp = zarr.open(str(out), mode="r")["cloud"]
-        if "child_0" not in grp:  # took the degenerate flat path
-            assert int(grp.attrs["n_additive_sublods"]) == 3
+        # The caller's ladder (counts=[50, 150] over 300 points -> cuts
+        # [50, 150, 300]) must survive whether the build took the degenerate
+        # flat-Points path (grp is the leaf) or synthesised a one-level LOD group
+        # (grp is the kind=lod group, and the finest child carries the ladder).
+        # Assert the ladder UNCONDITIONALLY on whichever finest leaf is produced.
+        if dict(grp.attrs).get("type") == "points":
+            finest = grp  # degenerate flat path: the leaf itself
+        else:
+            finest = grp[sorted(k for k in grp.keys() if k.startswith("child_"))[-1]]
+        assert int(finest.attrs["n_additive_sublods"]) == 3
 
 
 class TestSubstitutiveLodGuards:

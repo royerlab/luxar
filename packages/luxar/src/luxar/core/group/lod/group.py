@@ -771,9 +771,28 @@ def gsplat_additive_lod_from(
     from ....gsplats.lod.additive import clamp_counts_breakpoints
 
     counts = spec.get("counts")
-    breakpoints = clamp_counts_breakpoints(
-        counts if counts is not None else "equal-count", level_n
-    )
+    if counts is None:
+        counts = "equal-count"
+    elif isinstance(counts, str) and counts.startswith("energy:"):
+        # The element-domain ``energy:<frac,...>`` spec has no counterpart in the
+        # GSplat resolver's string vocabulary (only ``equal-count`` / ``stream:<c>``).
+        # Translate it to the float-list form the resolver already understands as
+        # cumulative energy fractions (``_resolve_breakpoints`` → energy-fractions),
+        # resolved against the coarse child's own self-energy cumulative.
+        fracs = [float(s) for s in counts[len("energy:") :].split(",") if s.strip()]
+        # Mirror the element-domain parser (points.py::_energy_breakpoints_to_counts):
+        # sort, drop f<=0, clamp f>=1 → 1.0, dedup — yielding a strictly-increasing
+        # list in (0, 1]. The GSplat float resolver is strict and would otherwise
+        # raise AFTER the wrapper kind=lod group was written, leaving a childless
+        # partial group; a spec accepted on a plain Points/Lines leaf must never
+        # abort the coarse GSplat child of the composed build.
+        counts = sorted({min(f, 1.0) for f in fracs if f > 0.0})
+        # All fractions non-positive (e.g. "energy:0", "energy:-1,0") degenerate
+        # to a single full level on a plain leaf; match that here rather than
+        # letting the strict resolver raise on an empty list.
+        if not counts:
+            counts = [1.0]
+    breakpoints = clamp_counts_breakpoints(counts, level_n)
     out: Dict[str, Any] = {"method": "self_energy", "breakpoints": breakpoints}
     if spec.get("n_lods") is not None:
         out["n_lods"] = spec["n_lods"]

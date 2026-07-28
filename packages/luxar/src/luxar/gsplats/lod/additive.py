@@ -632,6 +632,31 @@ def _energy_fraction_cuts(
     return cuts
 
 
+def _energy_fraction_cuts_from_cumulative(
+    fracs: list[float], energy_cum: np.ndarray
+) -> list[int]:
+    """Resolve cumulative energy fractions to counts against a precomputed
+    cumulative self-energy curve (O(N), no Gram). For score-ordered ladders
+    the ordering AND the viewer's e(k) quality stamp are both self-energy
+    based, so cuts land where e(k) ≈ the target fraction (self-consistent),
+    and the maximally-overlapping coarse children never trigger the O(N²)
+    sparse-Gram residual-curve build."""
+    N = int(energy_cum.size)
+    total = float(energy_cum[-1]) if N else 0.0
+    if total <= 0.0 or not np.isfinite(total):
+        return sorted({round((i + 1) * N / len(fracs)) for i in range(len(fracs))})
+    U = energy_cum / total  # U[k] = fraction captured after k+1 splats
+    cuts: list[int] = []
+    for f in fracs:
+        idxs = np.where(U >= f)[0]
+        k = (int(idxs[0]) + 1) if idxs.size else N
+        cuts.append(max(k, 1))
+    cuts = sorted(set(cuts))
+    if not cuts or cuts[-1] < N:
+        cuts.append(N)
+    return cuts
+
+
 def make_additive_lod(
     data: GSplatData,
     n_lods: int = 4,
@@ -764,14 +789,33 @@ def make_additive_lod(
                 seed=seed,
             )
 
+        # Cumulative self-energy over the ladder ordering — the e(k) of the
+        # viewer's committed quality Q·e(k). Fractions, so the shared π^{D/2}
+        # constant of the true self-energy cancels and the (cheap, O(N))
+        # ordering score suffices; π^{D/2} is multiplied back only for the
+        # absolute reference_energy weight w (partition aggregation). Computed
+        # ONCE here (before cut resolution) so score-ordered energy-fraction
+        # breakpoints resolve against it in O(N) — never the O(N²) sparse Gram.
+        energy_cum = np.cumsum(_self_energy_score(target_view)[order])
+        energy_total = float(energy_cum[-1]) if energy_cum.size else 0.0
+
         cuts_or_fracs, kind = _resolve_breakpoints(n, n_lods, breakpoints)
 
         if kind == "energy-fractions":
-            if gram_csr is None:  # score method + energy breakpoints
-                gram_csr = _build_sparse_gram(target_view, sigmas=truncation_sigmas)
-            cuts = _energy_fraction_cuts(
-                [float(x) for x in cuts_or_fracs], gram_csr, order
-            )
+            if gram_csr is not None:
+                # greedy/spectral already built the Gram for the ORDERING —
+                # reuse its residual-energy curve (behaviour unchanged).
+                cuts = _energy_fraction_cuts(
+                    [float(x) for x in cuts_or_fracs], gram_csr, order
+                )
+            else:
+                # Score ordering (self_energy/mass/amplitude/random): resolve
+                # against the O(N) self-energy cumulative, never build the Gram —
+                # coarse lifted children are maximally-overlapping merged blobs,
+                # the worst case for the sparse residual-curve build.
+                cuts = _energy_fraction_cuts_from_cumulative(
+                    [float(x) for x in cuts_or_fracs], energy_cum
+                )
         else:
             cuts = [int(x) for x in cuts_or_fracs]
 
@@ -783,14 +827,6 @@ def make_additive_lod(
             if target_view.colors is not None
             else None
         )
-
-        # Cumulative self-energy over the ladder ordering — the e(k) of the
-        # viewer's committed quality Q·e(k). Fractions, so the shared π^{D/2}
-        # constant of the true self-energy cancels and the (cheap, O(N))
-        # ordering score suffices; π^{D/2} is multiplied back only for the
-        # absolute reference_energy weight w (partition aggregation).
-        energy_cum = np.cumsum(_self_energy_score(target_view)[order])
-        energy_total = float(energy_cum[-1]) if energy_cum.size else 0.0
 
         new_sublods = []
         prev = 0

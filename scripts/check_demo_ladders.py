@@ -25,7 +25,7 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional, Tuple
+from typing import Any, Dict, Iterator, List, Tuple
 
 import zarr
 
@@ -34,8 +34,16 @@ import zarr
 DEFAULT_MIN_ELEMENTS = 200_000
 
 #: A ladder whose largest level exceeds this share of the total is not a
-#: progressive paint, whatever its level count says.
-DEFAULT_MAX_SHARE = 0.5
+#: progressive paint, whatever its level count says. Set to 0.6 because that is
+#: the strict supremum of the sliver-folded LAST increment's share in
+#: ``stream_cuts`` — the degeneracy this gate targets: when the final increment
+#: is < chunk/2 it folds into the previous cut, and the folded increment's share
+#: approaches (but never reaches) 0.6 in the tightest case (n just under 2.5·c;
+#: see ``utils/lod_breakpoints.stream_cuts``). This bounds the FOLDED last
+#: increment, NOT every level's share: a user-tuned first chunk with 1.5·c ≤ n <
+#: 2·c can push the FIRST level to ~2/3, but that regime is unreachable at the
+#: demo default chunk (small relative to n), so 0.6 is the right gate here.
+DEFAULT_MAX_SHARE = 0.6
 
 #: Fewer levels than this cannot stream across more than one refinement pass.
 DEFAULT_MIN_SUBLODS = 3
