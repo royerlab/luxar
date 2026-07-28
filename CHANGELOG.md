@@ -6,6 +6,25 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Fixed — nodes embedded inside a larger node blinked out on orbit in order-dependent blending modes
+
+Cross-node draw order sorted whole meshes by the view-depth of their
+bounds centers — a single number that cannot express "this tiny node is
+*inside* that huge node." For a node embedded in another (the galaxy
+demo's Sun/Betelgeuse/Rigel markers inside the 3M-star cloud), the
+container's center sorts nearer for roughly half of all camera
+orientations, making the container draw last; in `volumetric` (or
+`normal`) blending its fragments then multiply the embedded node's
+pixels by the container's whole transmittance — erasing it until the
+camera orbits back past the flip point. A strict bounding-sphere
+container now always draws before its contents (a priority topological
+pass over the depth-sorted groups; provably acyclic), so embedded
+content composites on top and stays visible from every angle.
+Non-contained nodes keep the exact farthest-first order. The Gaia
+galaxy demo now bakes `volumetric` blending (absorption 1.3) on all
+four layers, with intensity retuned for volumetric's bounded
+accumulation — regenerate the demo dataset to pick up the new look.
+
 #### Fixed — demos authored continuous curves as exploded `segments`, defeating joint continuity (bead-chain gaps)
 
 Nine demo line nodes (across six demos) built genuinely continuous curves (helix particle

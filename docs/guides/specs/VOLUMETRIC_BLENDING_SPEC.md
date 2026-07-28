@@ -586,7 +586,12 @@ and rendering agree.
 - **Inter-node overlap**: within a node, exact back-to-front per splat; across
   nodes, the global renderOrder pass orders whole meshes — interleaved
   splats of *different* nodes composite approximately. Same caveat `normal`
-  already carries; invisible at small κ.
+  already carries; invisible at small κ. One case is handled exactly-enough:
+  a node whose bounds strictly contain another node's (a reference marker
+  embedded in a large cloud) always draws FIRST, so the embedded node
+  composites on top instead of being erased by the container's whole
+  transmittance for ~half of all camera orientations (see
+  `depth-sort-coordinator/render-order.ts::orderGroupsWithContainment`).
 - **>16D / WASM**: the sort kernel and the ray-integral math are unaffected by
   dimensionality concerns (both operate on the 3 displayed dims); no new WASM
   kernel is needed — τ/α/S are per-fragment shader math.
