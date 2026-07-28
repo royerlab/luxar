@@ -216,6 +216,29 @@ def robust_download(
             return None
         return n if n > 0 else None
 
+    def _parse_content_range_total(headers: Any) -> Optional[int]:
+        """Parse the authoritative total from a ``Content-Range`` header.
+
+        RFC 9110 §14.4: a 416 response carries ``Content-Range: bytes */<total>``
+        (and a 206 carries ``bytes <start>-<end>/<total>``). Returns the trailing
+        ``/<total>`` integer, or ``None`` for a missing header, a ``*`` total, or
+        any malformed value — e.g. ``"bytes */12345" -> 12345``,
+        ``"bytes 0-99/12345" -> 12345``, ``"bytes */*" -> None``,
+        ``"bytes */0" -> 0``.
+        """
+        raw = headers.get("content-range")
+        if raw is None:
+            return None
+        total = raw.rsplit("/", 1)[-1].strip()
+        try:
+            n = int(total)
+        except (TypeError, ValueError):
+            return None
+        # Unlike _parse_len (Content-Length:0 → unknown), a Content-Range total
+        # of 0 is a REAL size (the remote was replaced by an empty file); only
+        # the "*" marker means unknown, and that already failed int() above.
+        return n if n >= 0 else None
+
     def _resolve_remote_size() -> Optional[int]:
         """Best-effort remote Content-Length (``None`` if unknowable).
 
@@ -429,22 +452,59 @@ def robust_download(
                 # AT LEAST complete. NEVER fatal, and NEVER delete the file.
                 if resume_byte_pos > 0 and output_path.exists():
                     local_size = output_path.stat().st_size
-                    if remote_size is None or local_size == remote_size:
-                        # Unknown remote size, or an exact match: the cache is
-                        # (at least) complete — return it WITHOUT truncating or
-                        # re-downloading.
+                    # The 416 response itself carries the authoritative total in
+                    # its `Content-Range: bytes */<total>` header (RFC 9110), which
+                    # disambiguates a genuinely-complete cache from a stale,
+                    # oversized one — even on a chunked/dynamic host that omits
+                    # Content-Length (so the earlier size probe returned None).
+                    # Fall back to the earlier-resolved remote_size when absent.
+                    content_range_total = (
+                        _parse_content_range_total(e.response.headers)
+                        if e.response is not None
+                        else None
+                    )
+                    effective_total = (
+                        content_range_total
+                        if content_range_total is not None
+                        else remote_size
+                    )
+                    if effective_total is not None:
+                        if local_size == effective_total:
+                            # Exact match: the cache is complete — return it
+                            # WITHOUT truncating or re-downloading.
+                            if expected_size and local_size != expected_size:
+                                aprint(
+                                    f"⚠️  Warning: File size ({local_size}) doesn't "
+                                    f"match expected ({expected_size})"
+                                )
+                            aprint(f"✓ File already downloaded: {output_path}")
+                            return output_path
+                        if not restarted_after_416:
+                            # Any size mismatch against the authoritative total
+                            # (a stale/oversized cache, or a contradictory
+                            # smaller-total 416 from a misbehaving server /
+                            # concurrently-truncated cache): restart cleanly.
+                            aprint(
+                                "⚠️  Range not satisfiable (416); local cache size "
+                                f"({local_size}) doesn't match the remote "
+                                f"({effective_total}) — restarting from scratch"
+                            )
+                            resume_byte_pos = 0
+                            restarted_after_416 = True
+                            continue
+                    elif effective_total is None:
+                        # No total anywhere (a truly header-less 416, no
+                        # Content-Range and no resolved remote size): a 416 still
+                        # proves `local >= total`, so the cache is AT LEAST
+                        # complete — return it, mirroring the pre-loop complete
+                        # path's expected_size mismatch warning.
+                        if expected_size and local_size != expected_size:
+                            aprint(
+                                f"⚠️  Warning: File size ({local_size}) doesn't "
+                                f"match expected ({expected_size})"
+                            )
                         aprint(f"✓ File already downloaded: {output_path}")
                         return output_path
-                    if not restarted_after_416:
-                        # Known remote size AND local is genuinely larger (a
-                        # stale/oversized cache): restart cleanly from scratch.
-                        aprint(
-                            "⚠️  Range not satisfiable (416); local cache is "
-                            "larger than the remote — restarting from scratch"
-                        )
-                        resume_byte_pos = 0
-                        restarted_after_416 = True
-                        continue
                 # 416 with no Range, no file, or after we already restarted once
                 # is a genuine error — surface it without touching the file.
                 aprint(f"❌ HTTP error: {e}")

@@ -138,6 +138,62 @@ class _ChunkedRangeHTTPHandler(_RangeHTTPHandler):
         return _LimitedFile(f, end - start + 1)
 
 
+class _NoContentRangeChunkedHandler(_ChunkedRangeHTTPHandler):
+    """Chunked handler whose 416 carries NO ``Content-Range`` header at all.
+
+    With neither a Content-Length (chunked) nor a Content-Range on the 416,
+    ``robust_download`` has NO size signal whatsoever — exercising the
+    conservative "the file is at least complete, return it" fallback.
+    """
+
+    def send_head(self):  # noqa: ANN201 - stdlib override
+        path = Path(self.translate_path(self.path))
+        range_header = self.headers.get("Range")
+
+        if not path.is_file():
+            return super().send_head()
+
+        size = path.stat().st_size
+
+        if range_header is None:
+            self.server.served.append(200)  # type: ignore[attr-defined]
+            f = open(path, "rb")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Accept-Ranges", "bytes")
+            self.end_headers()
+            if self.command == "HEAD":
+                f.close()
+                return None
+            return _LimitedFile(f, size)
+
+        spec = range_header.replace("bytes=", "").strip()
+        start_s, _, end_s = spec.partition("-")
+        start = int(start_s) if start_s else 0
+        end = int(end_s) if end_s else size - 1
+        end = min(end, size - 1)
+
+        if start >= size or start > end:
+            # 416 with NO Content-Range (and no Content-Length total).
+            self.server.served.append(416)  # type: ignore[attr-defined]
+            self.send_response(416, "Requested Range Not Satisfiable")
+            self.send_header("Accept-Ranges", "bytes")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return None
+
+        self.server.served.append(206)  # type: ignore[attr-defined]
+        f = open(path, "rb")
+        f.seek(start)
+        self.send_response(206)
+        self.send_header("Content-Type", "application/octet-stream")
+        self.send_header("Content-Length", str(end - start + 1))
+        self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+        self.send_header("Accept-Ranges", "bytes")
+        self.end_headers()
+        return _LimitedFile(f, end - start + 1)
+
+
 class _LimitedFile:
     """File-like that stops after ``limit`` bytes (for copyfile)."""
 
@@ -187,6 +243,21 @@ def chunked_range_server(tmp_path: Path):
     Yields ``(base_url, server)`` so a test can inspect ``server.served``.
     """
     server, thread = _serve(tmp_path, _ChunkedRangeHTTPHandler)
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}", server
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+        server.server_close()
+
+
+@pytest.fixture()
+def headerless_416_server(tmp_path: Path):
+    """Serve chunked-style with a 416 that carries NO Content-Range at all.
+
+    Yields ``(base_url, server)`` so a test can inspect ``server.served``.
+    """
+    server, thread = _serve(tmp_path, _NoContentRangeChunkedHandler)
     try:
         yield f"http://127.0.0.1:{server.server_address[1]}", server
     finally:
@@ -339,3 +410,88 @@ class TestRobustDownloadResume416:
         assert out.read_bytes() == cache, "cache must NOT be re-downloaded"
         assert 416 in server.served, "the in-loop 416 path must have been hit"
         assert 206 not in server.served, "no resume body should be fetched"
+
+    def test_zero_byte_remote_truncates_stale_cache(
+        self, range_server: str, tmp_path: Path
+    ) -> None:
+        """A remote replaced by a 0-byte file must truncate a non-empty stale
+        cache, not return it.
+
+        A 0-byte remote reports ``Content-Length: 0`` → ``_parse_len`` → None, so
+        ``remote_size`` is unknown and the Range-at-EOF 416 is answered with
+        ``Content-Range: bytes */0``. ``_parse_content_range_total`` now accepts
+        the literal ``0`` as a real total, so the handler sees ``local != 0``,
+        restarts cleanly, and the file ends empty.
+        """
+        (tmp_path / "data.bin").write_bytes(b"")  # empty remote
+
+        out = tmp_path / "cache" / "data.bin"
+        out.parent.mkdir(parents=True)
+        out.write_bytes(_make_payload(nbytes=50_000))  # non-empty stale cache
+
+        result = robust_download(
+            f"{range_server}/data.bin", out, expected_size=None, verify_size=False
+        )
+
+        assert result == out
+        assert out.exists()
+        assert out.read_bytes() == b"", "stale cache must truncate to empty remote"
+
+    def test_stale_oversized_cache_refetches_via_in_loop_416(
+        self, chunked_range_server, tmp_path: Path
+    ) -> None:
+        """CORE REGRESSION follow-up: a stale, OVERSIZED cache on a chunked host
+        (no Content-Length) must self-heal via the 416 ``Content-Range`` total.
+
+        The chunked server omits Content-Length, so ``remote_size`` resolves as
+        UNKNOWN — pre-fix, the in-loop 416 handler treated "unknown remote size"
+        as "cache is complete" and handed back the stale, oversized file forever.
+        The 416 response's ``Content-Range: bytes */<total>`` now supplies the
+        authoritative (smaller) total, so the handler detects ``local > total``,
+        restarts cleanly, and ends byte-identical to the current remote.
+        """
+        base_url, server = chunked_range_server
+        remote = _make_payload(nbytes=200_000, seed=5)  # current (smaller) remote
+        (tmp_path / "data.bin").write_bytes(remote)
+
+        out = tmp_path / "cache" / "data.bin"
+        out.parent.mkdir(parents=True)
+        # Stale, LARGER local copy (an older, bigger version of the asset).
+        out.write_bytes(_make_payload(nbytes=350_000, seed=99))
+
+        result = robust_download(
+            f"{base_url}/data.bin", out, expected_size=None, verify_size=True
+        )
+
+        assert result == out
+        assert out.read_bytes() == remote, "stale cache must be refetched clean"
+        assert 416 in server.served, "the in-loop 416 path must have been hit"
+
+    def test_headerless_416_returns_at_least_complete_cache(
+        self, headerless_416_server, tmp_path: Path
+    ) -> None:
+        """With NO size signal at all (chunked + a 416 lacking Content-Range),
+        an existing cache is conservatively returned untouched.
+
+        A 416 still proves ``local >= total``, so the file is AT LEAST complete;
+        with neither a Content-Length nor a Content-Range total to disambiguate,
+        the handler keeps the cache rather than destroying it.
+        """
+        base_url, server = headerless_416_server
+        remote = _make_payload(nbytes=250_000, seed=5)
+        (tmp_path / "data.bin").write_bytes(remote)
+
+        out = tmp_path / "cache" / "data.bin"
+        out.parent.mkdir(parents=True)
+        cache = _make_payload(nbytes=250_000, seed=777)
+        assert cache != remote
+        out.write_bytes(cache)
+
+        result = robust_download(
+            f"{base_url}/data.bin", out, expected_size=None, verify_size=False
+        )
+
+        assert result == out
+        assert out.exists(), "complete cache must survive a header-less 416"
+        assert out.read_bytes() == cache, "cache must NOT be re-downloaded"
+        assert 416 in server.served, "the in-loop 416 path must have been hit"
