@@ -426,11 +426,16 @@ def generate_straight_track_with_times(
 
 def generate_detector_geometry(
     rng: np.random.Generator,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Generate enhanced detector outline with full detail.
 
     Since we use extend_to_all=["time"], this geometry is only stored once
     but visible at all time frames. This allows rich detail without memory cost.
+
+    Rings are authored as unique vertices + CLOSED edge loops (returned in
+    ``edges``, consumed via ``line_type="indexed"``) so their joints share
+    vertex indices and render seamlessly; ribs/spokes/beam lines are
+    genuinely independent single edges.
 
     The detector is inspired by ATLAS/CMS with:
     - Beam pipe (central tube where particles collide)
@@ -443,6 +448,26 @@ def generate_detector_geometry(
     widths = []
     colors = []
     sharpness_vals = []
+    edges: list[tuple[int, int]] = []
+
+    def add_ring(radius, z, n_seg, color, width, sharp):
+        """One closed ring: n_seg unique vertices + n_seg loop edges."""
+        base = len(vertices)
+        for a in np.linspace(0, 2 * np.pi, n_seg, endpoint=False):
+            vertices.append([radius * np.cos(a), radius * np.sin(a), z])
+            widths.append(width)
+            colors.append(color)
+            sharpness_vals.append(sharp)
+        edges.extend((base + i, base + (i + 1) % n_seg) for i in range(n_seg))
+
+    def add_segment(p0, p1, color, width, sharp):
+        """One independent straight segment (two vertices, one edge)."""
+        base = len(vertices)
+        vertices.extend([p0, p1])
+        widths.extend([width, width])
+        colors.extend([color, color])
+        sharpness_vals.extend([sharp, sharp])
+        edges.append((base, base + 1))
 
     # Full resolution detector layers with realistic color coding
     # Colors inspired by actual detector component conventions
@@ -473,20 +498,10 @@ def generate_detector_geometry(
     # Multiple z-planes for depth perception
     z_positions = [-DETECTOR_LENGTH * 0.5, 0, DETECTOR_LENGTH * 0.5]
 
-    # Draw circular cross-sections at each z-plane
+    # Draw circular cross-sections at each z-plane (closed indexed rings)
     for radius, color, width, n_seg in layers:
         for z in z_positions:
-            angles = np.linspace(0, 2 * np.pi, n_seg + 1)
-            for i in range(n_seg):
-                x1 = radius * np.cos(angles[i])
-                y1 = radius * np.sin(angles[i])
-                x2 = radius * np.cos(angles[i + 1])
-                y2 = radius * np.sin(angles[i + 1])
-
-                vertices.extend([[x1, y1, z], [x2, y2, z]])
-                widths.extend([width, width])
-                colors.extend([color, color])
-                sharpness_vals.extend([0.5, 0.5])
+            add_ring(radius, z, n_seg, color, width, 0.5)
 
     # Longitudinal ribs connecting the z-planes (structural support visualization)
     n_long = 24  # More longitudinal lines for better structure
@@ -496,13 +511,14 @@ def generate_detector_geometry(
             x = radius * np.cos(angle)
             y = radius * np.sin(angle)
 
-            # Full length longitudinal lines
-            vertices.extend(
-                [[x, y, -DETECTOR_LENGTH * 0.5], [x, y, DETECTOR_LENGTH * 0.5]]
+            # Full length longitudinal lines (independent segments)
+            add_segment(
+                [x, y, -DETECTOR_LENGTH * 0.5],
+                [x, y, DETECTOR_LENGTH * 0.5],
+                color,
+                width * 0.5,
+                0.45,
             )
-            widths.extend([width * 0.5, width * 0.5])
-            colors.extend([color, color])
-            sharpness_vals.extend([0.45, 0.45])
 
     # Endcap disks (circular rings at z-ends showing layer boundaries)
     endcap_z = [DETECTOR_LENGTH * 0.5, -DETECTOR_LENGTH * 0.5]
@@ -523,10 +539,9 @@ def generate_detector_geometry(
                 x_outer = r_outer * np.cos(angle)
                 y_outer = r_outer * np.sin(angle)
 
-                vertices.extend([[x_inner, y_inner, z], [x_outer, y_outer, z]])
-                widths.extend([width, width])
-                colors.extend([color, color])
-                sharpness_vals.extend([0.45, 0.45])
+                add_segment(
+                    [x_inner, y_inner, z], [x_outer, y_outer, z], color, width, 0.45
+                )
 
     # Beam pipe extension (thin central tube)
     beam_color = [0.4, 0.35, 0.2]  # Golden beam pipe
@@ -536,32 +551,26 @@ def generate_detector_geometry(
         x = BEAM_PIPE_RADIUS * np.cos(angle)
         y = BEAM_PIPE_RADIUS * np.sin(angle)
 
-        vertices.extend([[x, y, -DETECTOR_LENGTH * 0.8], [x, y, DETECTOR_LENGTH * 0.8]])
-        widths.extend([0.015, 0.015])
-        colors.extend([beam_color, beam_color])
-        sharpness_vals.extend([0.6, 0.6])
+        add_segment(
+            [x, y, -DETECTOR_LENGTH * 0.8],
+            [x, y, DETECTOR_LENGTH * 0.8],
+            beam_color,
+            0.015,
+            0.6,
+        )
 
     # Interaction point marker rings (where collisions happen)
     ip_radii = [0.3, 0.6, 1.0]
     ip_color = [0.5, 0.45, 0.2]  # Golden IP markers
     for r in ip_radii:
-        angles = np.linspace(0, 2 * np.pi, 33)
-        for i in range(32):
-            x1 = r * np.cos(angles[i])
-            y1 = r * np.sin(angles[i])
-            x2 = r * np.cos(angles[i + 1])
-            y2 = r * np.sin(angles[i + 1])
-
-            vertices.extend([[x1, y1, 0], [x2, y2, 0]])
-            widths.extend([0.008, 0.008])
-            colors.extend([ip_color, ip_color])
-            sharpness_vals.extend([0.65, 0.65])
+        add_ring(r, 0, 32, ip_color, 0.008, 0.65)
 
     return (
         np.array(vertices, dtype=np.float32),
         np.array(widths, dtype=np.float32),
         np.array(colors, dtype=np.float32),
         np.array(sharpness_vals, dtype=np.float32),
+        np.array(edges, dtype=np.uint32),
     )
 
 
@@ -710,8 +719,8 @@ def generate_animated_detector_scene(
         # Using extend_to_all to show detector at every time without duplication
         # =====================================================================
         with asection("Creating detector geometry"):
-            det_verts, det_widths, det_colors, det_sharp = generate_detector_geometry(
-                rng
+            det_verts, det_widths, det_colors, det_sharp, det_edges = (
+                generate_detector_geometry(rng)
             )
 
             n_det_verts = len(det_verts)
@@ -722,17 +731,21 @@ def generate_animated_detector_scene(
             det_positions_4d[:, :3] = det_verts
             det_positions_4d[:, 3] = 0  # Time = 0
 
+            # Indexed authoring: ring joints share vertex indices, so the
+            # viewer renders each ring as a continuous loop instead of a
+            # bead chain of independent chords.
             scene.add_lines(
                 "detector_geometry",
                 vertices=det_positions_4d,
                 widths=det_widths,
                 colors=det_colors,
                 sharpness=det_sharp,
-                line_type="segments",
+                indices=det_edges,
+                line_type="indexed",
                 extend_to_all=["time"],  # Extend to all time values!
                 layer=True,
             )
-            n_det = len(det_verts) // 2
+            n_det = len(det_edges)
             aprint(
                 f"Detector geometry: {n_det:,} segments (extends to all time values)"
             )
@@ -902,30 +915,35 @@ def generate_animated_detector_scene(
                                 + width_polyline[idx + 1] * t
                             )
 
-                        # Convert resampled points to segments
-                        n_segs = n_resample - 1
-                        seg_verts = np.zeros((n_segs * 2, 4), dtype=np.float32)
-                        seg_colors = np.zeros((n_segs * 2, 3), dtype=np.float32)
-                        seg_widths = np.zeros(n_segs * 2, dtype=np.float32)
+                        # Per-VERTEX arrays with the frame time in the 4th
+                        # column; the edge list below connects consecutive
+                        # resampled points so interior joints share their
+                        # vertex index (continuous track, no bead chain).
+                        track_verts_4d = np.zeros((n_resample, 4), dtype=np.float32)
+                        track_verts_4d[:, :3] = resampled_pts
+                        track_verts_4d[:, 3] = time_ns
 
-                        seg_verts[0::2, :3] = resampled_pts[:-1]
-                        seg_verts[1::2, :3] = resampled_pts[1:]
-                        seg_verts[:, 3] = time_ns
-
-                        seg_colors[0::2] = resampled_colors[:-1]
-                        seg_colors[1::2] = resampled_colors[1:]
-
-                        seg_widths[0::2] = resampled_widths[:-1]
-                        seg_widths[1::2] = resampled_widths[1:]
-
-                        frame_positions.append(seg_verts)
-                        frame_colors.append(seg_colors)
-                        frame_widths.append(seg_widths)
+                        frame_positions.append(track_verts_4d)
+                        frame_colors.append(resampled_colors)
+                        frame_widths.append(resampled_widths)
 
                 if frame_positions:
                     all_positions = np.concatenate(frame_positions, axis=0)
                     all_colors = np.concatenate(frame_colors, axis=0)
                     all_widths = np.concatenate(frame_widths, axis=0)
+
+                    # One indexed node: per-(frame, track) edge lists over the
+                    # concatenated unique vertices. Interior joints share
+                    # indices (continuous tracks); separate tracks/frames
+                    # stay disconnected.
+                    track_edges = []
+                    offset = 0
+                    for verts in frame_positions:
+                        n_pts = len(verts)
+                        idx = np.arange(offset, offset + n_pts - 1, dtype=np.uint32)
+                        track_edges.append(np.column_stack([idx, idx + 1]))
+                        offset += n_pts
+                    track_edges_arr = np.concatenate(track_edges, axis=0)
 
                     scene.add_lines(
                         "particle_tracks",
@@ -933,7 +951,8 @@ def generate_animated_detector_scene(
                         widths=all_widths,
                         colors=all_colors,
                         sharpness=0.5,
-                        line_type="segments",
+                        indices=track_edges_arr,
+                        line_type="indexed",
                         # NOTE: NOT using extend_to_all - tracks should only be visible at their birth time
                         layer=True,
                     )
@@ -943,7 +962,7 @@ def generate_animated_detector_scene(
                     aprint(
                         f"  ~{SEGMENTS_PER_TRACK} segments/track x {n_tracks} tracks x {n_frames} frames"
                     )
-                    total_segments += total_verts // 2
+                    total_segments += len(track_edges_arr)
 
         # =====================================================================
         # WRITE ANIMATED CALORIMETER DEPOSITS (efficient: per-frame geometry)

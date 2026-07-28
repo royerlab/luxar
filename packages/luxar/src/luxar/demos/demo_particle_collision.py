@@ -358,9 +358,9 @@ def generate_helix_track(
         n_points: Maximum number of points along track
 
     Returns:
-        vertices: (N*2, 3) array of line segment vertices (start, end pairs)
-        widths: (N*2,) array of line widths (energy visualization)
-        colors: (N*2, 3) array of RGB colors (particle identification)
+        points: (N, 3) array of polyline vertices (one continuous track)
+        widths: (N,) per-vertex line widths (energy visualization)
+        colors: (N, 3) per-vertex RGB colors (particle identification)
     """
     if particle.charge == 0:
         # Neutral particles (photons, neutrons) have no charge
@@ -461,40 +461,31 @@ def generate_helix_track(
 
     points = np.array(points, dtype=np.float32)
 
-    # Create line segments
-    n_segments = len(points) - 1
-    vertices = np.zeros((n_segments * 2, 3), dtype=np.float32)
-    vertices[0::2] = points[:-1]
-    vertices[1::2] = points[1:]
+    # Per-VERTEX arrays — the track is one continuous curve, so it is
+    # authored as unique vertices + an explicit edge list (line_type=
+    # "indexed" at the add_lines call). Exploding into duplicated
+    # start/end pairs (line_type="segments") would hide the shared
+    # joints from the viewer, whose joint-cap suppression matches
+    # endpoints by vertex INDEX — every interior joint would keep its
+    # endpoint cap and the track would render as a bead chain.
 
     # Width tapers along track (energy loss visualization)
-    # Use per-vertex widths for continuity at joints
     base_width = 0.015 + 0.01 * (particle.pt / 50.0)
     n_points = len(points)
-    vertex_widths = base_width * (1.0 - 0.5 * np.linspace(0, 1, n_points))
-
-    # Expand to segment format: widths[2i] = vertex i, widths[2i+1] = vertex i+1
-    # This ensures widths match at shared vertices (joints)
-    widths = np.zeros(n_segments * 2, dtype=np.float32)
-    widths[0::2] = vertex_widths[:-1]  # start of each segment
-    widths[1::2] = vertex_widths[1:]  # end of each segment
+    vertex_widths = (base_width * (1.0 - 0.5 * np.linspace(0, 1, n_points))).astype(
+        np.float32
+    )
 
     # Colors with smooth fade along track
-    # Use per-vertex colors for continuity at joints
     base_color = np.array(particle.color, dtype=np.float32)
     vertex_fades = 1.0 - 0.3 * np.linspace(0, 1, n_points)
     vertex_colors = base_color * vertex_fades[:, np.newaxis]
 
-    # Add slight random variation per-vertex (before expansion for continuity)
+    # Slight random variation per-vertex
     vertex_colors += rng.uniform(-0.05, 0.05, vertex_colors.shape).astype(np.float32)
-    vertex_colors = np.clip(vertex_colors, 0, 1)
+    vertex_colors = np.clip(vertex_colors, 0, 1).astype(np.float32)
 
-    # Expand to segment format
-    colors = np.zeros((n_segments * 2, 3), dtype=np.float32)
-    colors[0::2] = vertex_colors[:-1]  # start of each segment
-    colors[1::2] = vertex_colors[1:]  # end of each segment
-
-    return vertices, widths, colors
+    return points, vertex_widths, vertex_colors
 
 
 def generate_straight_track(
@@ -502,7 +493,12 @@ def generate_straight_track(
     rng: np.random.Generator,
     n_points: int = 50,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Generate a straight track for neutral particles."""
+    """Generate a straight track for neutral particles.
+
+    Returns per-VERTEX arrays (points, widths, colors) — the caller
+    authors the track as one continuous indexed polyline, same as the
+    charged helix tracks, so joints render seamlessly.
+    """
     direction = np.array([particle.px, particle.py, particle.pz])
     direction = direction / (np.linalg.norm(direction) + 1e-10)
 
@@ -521,19 +517,14 @@ def generate_straight_track(
         return np.array([]).reshape(0, 3), np.array([]), np.array([]).reshape(0, 3)
 
     points = np.array(points, dtype=np.float32)
-    n_segments = len(points) - 1
+    n_pts = len(points)
 
-    vertices = np.zeros((n_segments * 2, 3), dtype=np.float32)
-    vertices[0::2] = points[:-1]
-    vertices[1::2] = points[1:]
-
-    # Dashed appearance for neutral particles
-    widths = np.full(n_segments * 2, 0.008, dtype=np.float32)
+    widths = np.full(n_pts, 0.008, dtype=np.float32)
 
     base_color = np.array(particle.color, dtype=np.float32)
-    colors = np.tile(base_color, (n_segments * 2, 1))
+    colors = np.tile(base_color, (n_pts, 1)).astype(np.float32)
 
-    return vertices, widths, colors
+    return points, widths, colors
 
 
 # =============================================================================
@@ -804,15 +795,27 @@ def generate_calorimeter_deposits(
 
 def generate_detector_geometry(
     rng: np.random.Generator,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Generate detector outline as subtle reference lines.
 
-    Creates circular cross-sections of detector layers.
+    Creates circular cross-sections of detector layers. Each ring is
+    authored as unique vertices + a CLOSED loop of edges (returned in
+    the ``edges`` array, consumed via ``line_type="indexed"``) so ring
+    joints share vertex indices and render seamlessly; the longitudinal
+    lines are genuinely independent single edges.
+
+    Returns:
+        vertices: (N, 3) unique vertex positions
+        widths: (N,) per-vertex line widths
+        colors: (N, 3) per-vertex RGB colors
+        sharpness: (N,) per-vertex sharpness
+        edges: (E, 2) uint32 vertex-index pairs
     """
-    vertices = []
-    widths = []
-    colors = []
-    sharpness_vals = []
+    vertices: list[list[float]] = []
+    widths: list[float] = []
+    colors: list[list[float]] = []
+    sharpness_vals: list[float] = []
+    edges: list[tuple[int, int]] = []
 
     # Layer definitions: (radius, color, width, n_segments)
     layers = [
@@ -831,19 +834,18 @@ def generate_detector_geometry(
 
     for radius, color, width, n_seg in layers:
         for z in z_positions:
-            angles = np.linspace(0, 2 * np.pi, n_seg + 1)
-            for i in range(n_seg):
-                x1 = radius * np.cos(angles[i])
-                y1 = radius * np.sin(angles[i])
-                x2 = radius * np.cos(angles[i + 1])
-                y2 = radius * np.sin(angles[i + 1])
+            base = len(vertices)
+            angles = np.linspace(0, 2 * np.pi, n_seg, endpoint=False)
+            for a in angles:
+                vertices.append([radius * np.cos(a), radius * np.sin(a), z])
+                widths.append(width)
+                colors.append(color)
+                sharpness_vals.append(0.5)
+            # Closed ring: every joint (including the closure) shares
+            # its vertex between the two adjacent edges.
+            edges.extend((base + i, base + (i + 1) % n_seg) for i in range(n_seg))
 
-                vertices.extend([[x1, y1, z], [x2, y2, z]])
-                widths.extend([width, width])
-                colors.extend([color, color])
-                sharpness_vals.extend([0.5, 0.5])
-
-    # Add longitudinal lines connecting layers
+    # Add longitudinal lines connecting layers (independent segments)
     n_long = 16
     for i in range(n_long):
         angle = 2 * np.pi * i / n_long
@@ -851,18 +853,21 @@ def generate_detector_geometry(
             x = radius * np.cos(angle)
             y = radius * np.sin(angle)
 
+            base = len(vertices)
             vertices.extend(
                 [[x, y, -DETECTOR_LENGTH * 0.8], [x, y, DETECTOR_LENGTH * 0.8]]
             )
             widths.extend([width * 0.5, width * 0.5])
             colors.extend([color, color])
             sharpness_vals.extend([0.5, 0.5])
+            edges.append((base, base + 1))
 
     return (
         np.array(vertices, dtype=np.float32),
         np.array(widths, dtype=np.float32),
         np.array(colors, dtype=np.float32),
         np.array(sharpness_vals, dtype=np.float32),
+        np.array(edges, dtype=np.uint32),
     )
 
 
@@ -1096,10 +1101,12 @@ def generate_detector_scene(
 
         rng = np.random.default_rng(42)
 
-        # Generate detector geometry
+        # Generate detector geometry. Indexed authoring: rings share their
+        # joint vertices, so the viewer renders them as continuous loops
+        # (segments-style duplicated endpoints would bead every joint).
         with asection("Creating detector geometry"):
-            det_verts, det_widths, det_colors, det_sharp = generate_detector_geometry(
-                rng
+            det_verts, det_widths, det_colors, det_sharp, det_edges = (
+                generate_detector_geometry(rng)
             )
             scene.add_lines(
                 "detector_geometry",
@@ -1107,10 +1114,11 @@ def generate_detector_scene(
                 widths=det_widths,
                 colors=det_colors,
                 sharpness=det_sharp,
-                line_type="segments",
+                indices=det_edges,
+                line_type="indexed",
                 layer=True,
             )
-            n_det = len(det_verts) // 2
+            n_det = len(det_edges)
             aprint(f"Detector geometry: {n_det:,} segments")
             total_segments += n_det
 
@@ -1135,14 +1143,18 @@ def generate_detector_scene(
 
                 aprint(f"  Event {event_idx + 1}: {len(particles)} particles")
 
-                # Generate tracks for each particle
+                # Generate tracks for each particle. Each track is one
+                # continuous polyline (per-vertex arrays); the edge lists
+                # are assembled below with per-track vertex offsets so ALL
+                # tracks batch into ONE indexed node while every interior
+                # joint still shares its vertex index.
                 for particle in particles:
                     particle.origin = particle.origin + event_offset
 
-                    vertices, widths, colors = generate_helix_track(particle, rng)
+                    points, widths, colors = generate_helix_track(particle, rng)
 
-                    if len(vertices) > 0:
-                        all_track_verts.append(vertices)
+                    if len(points) > 0:
+                        all_track_verts.append(points)
                         all_track_widths.append(widths)
                         all_track_colors.append(colors)
 
@@ -1156,12 +1168,24 @@ def generate_detector_scene(
                     all_deposit_radii.append(radii)
                     all_deposit_sharp.append(sharp)
 
-        # Write all tracks
+        # Write all tracks as ONE indexed node: unique vertices + explicit
+        # per-track edge lists. Interior joints share vertex indices, so
+        # the viewer's joint-cap suppression keeps each track continuous;
+        # separate tracks stay disconnected (no edge between them).
         with asection("Writing particle tracks"):
             if all_track_verts:
                 track_vertices = np.concatenate(all_track_verts, axis=0)
                 track_widths = np.concatenate(all_track_widths, axis=0)
                 track_colors = np.concatenate(all_track_colors, axis=0)
+
+                track_edges = []
+                offset = 0
+                for points in all_track_verts:
+                    n_pts = len(points)
+                    idx = np.arange(offset, offset + n_pts - 1, dtype=np.uint32)
+                    track_edges.append(np.column_stack([idx, idx + 1]))
+                    offset += n_pts
+                track_edges_arr = np.concatenate(track_edges, axis=0)
 
                 scene.add_lines(
                     "particle_tracks",
@@ -1169,10 +1193,11 @@ def generate_detector_scene(
                     widths=track_widths,
                     colors=track_colors,
                     sharpness=0.5,
-                    line_type="segments",
+                    indices=track_edges_arr,
+                    line_type="indexed",
                     layer=True,
                 )
-                n_tracks = len(track_vertices) // 2
+                n_tracks = len(track_edges_arr)
                 aprint(f"Particle tracks: {n_tracks:,} segments")
                 total_segments += n_tracks
 
