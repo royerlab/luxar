@@ -6,6 +6,87 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Fixed — demos authored continuous curves as exploded `segments`, defeating joint continuity (bead-chain gaps)
+
+Nine demo line nodes (across six demos) built genuinely continuous curves (helix particle
+tracks, detector rings, chromosome paths, jellyfish tentacles, L-system
+tree skeletons, cell tracks and trails) and then exploded them into
+duplicated start/end vertex pairs with `line_type="segments"`. The
+viewer's joint-cap suppression matches joints by shared vertex INDEX, so
+exploded authoring hides every joint — thick lines rendered as bead
+chains (visible gaps between segments) even after the shader-side joint
+fix. All nine nodes are now authored as `line_type="indexed"`: unique
+per-vertex arrays + explicit per-curve edge lists, which also roughly
+halves their vertex data. Converted: `collision` (particle tracks +
+detector rings; neutral-particle tracks are now solid, dropping the
+accidental bead-dashing), `collision_animated` (same, 4D), `dipc_3d_genome`
+(chromosome paths), `bioluminescent_ocean` (tentacles/oral arms — the
+per-segment 5%/2% end-of-segment tapers became smooth per-vertex tapers),
+`lsystem_forest` (tree skeletons — a branching topology, deduplicated
+exactly during turtle interpretation with branch points shared by 3+
+edges), and `gsplats_4d_celegans_tracking` (cell tracks + fading trails —
+the per-hop discrete fade became a smooth per-vertex fade). The other
+seven `segments` call sites (connectome/interactome/AS-graph edges, velocity
+comets, earthquake spikes, grid lines) are genuinely disconnected and
+stay as-is. Regenerate demo datasets to pick up the fix.
+
+- **Writer authoring lint**: `write_lines` now warns when
+  `line_type="segments"` input looks like exploded continuous polylines
+  (most consecutive segments sharing an endpoint coordinate), pointing at
+  `polyline`/`indexed` authoring — the trap class is now self-diagnosing.
+- **Indexed validation fix**: `(E, 2)` edge arrays with an ODD number of
+  edges were wrongly rejected ("Indices must have even length") — the
+  validator counted rows via `len()`, not elements; it now uses
+  `indices.size`. Odd-edge-count geometry (e.g. most L-system trees)
+  previously could not be written as pairs at all.
+- **`luxar serve` (and the standalone `serve.py` that `luxar export`
+  generates) now send `Cache-Control: no-cache`**: responses carried only
+  ETag/Last-Modified (or just Last-Modified for exports), so browsers used
+  HEURISTIC freshness and silently served stale chunks after a dataset was
+  regenerated — or a folder re-exported — in place (same URLs, new bytes);
+  no viewer-side cache clearing could fix it. `no-cache` forces
+  revalidation; unchanged files still return as cheap 304s.
+
+#### Fixed — thick polylines rendered as bead chains: interior joint caps now suppressed per-endpoint (#780)
+
+The line fragment shader dims every segment towards 0.5 at its own endpoints,
+on the assumption that a neighbouring quad overlaps the endpoint and adds the
+missing half back. But each quad spans exactly `[start, end]` — no
+longitudinal extension — so collinear neighbours **tile** rather than overlap:
+the halves never sum, and every interior joint of a thick polyline was a dark
+notch of axial length `2 × width` bottoming out at 50%. (PR #785; follow-ups
+#793/#795/#796.)
+
+- The boolean "clipped" flag became a continuous per-endpoint **cap
+  suppression scalar** in `[0, 1]` (`compute_cap_suppression` — Rust kernel +
+  its TypeScript mirror, computed once per commit off the main thread, riding
+  texel4.yz): `1.0` at a straight-through interior joint or a slice-clipped
+  end (nothing will arrive to sum with), `0.0` at a ≥ 90° bend, a branch hub,
+  or a free polyline end (there the quads genuinely do overlap — keep the
+  cap), `cos θ` in between. Consumed by all four shader backends (visual +
+  picking, GLSL + TSL). Joints are matched by vertex **index**, not position:
+  `line_type="segments"` chains with per-segment duplicate points keep the
+  cap (and the notch) — author connected geometry as `line_type="polyline"`.
+- **Per-endpoint cap factor `min(startCap, endCap)`** (#796): the initial
+  nearest-endpoint pick was discontinuous at the midpoint of segments shorter
+  than `2 × width` whenever the two suppressions differ — the routine case
+  for a polyline's first/last segment (one free end, one suppressed joint).
+  Each endpoint's ramp is now lifted by its own suppression and the two
+  combine with `min()`. Honest accounting: for sub-width segments this
+  relocates a strictly smaller step to the joint seam (worst case
+  `0.5 × (1 − L/w)`, zero for `L ≥ width`); polyline-wide C⁰ continuity needs
+  join geometry, which is tracked separately.
+- **`calculate_segment_lengths` now accumulates in f64** (#793,
+  pre-existing): the Rust path overflowed the f32 squared-length to Infinity
+  above a component delta of ~1.8e19, while the TypeScript mirror — the
+  production backend above 16 dimensions — returned the true value, so the
+  same scene disagreed across backends.
+- Known limitations, documented in `materials/line/README.md` rather than
+  fixed: the suppression angle is measured in data space once per commit
+  while quad tiling/overlap is a screen-space, per-camera fact (#795 tracks a
+  real screen-space suppression), and the outer-side miter wedge at sharp
+  bends remains.
+
 #### Fixed — `gsplat transform --rotate-*` rotated the wrong center dims on stacked nD data (#722)
 
 The 3x3 rotation was embedded in the **last** three center dims, a convention
@@ -200,7 +281,8 @@ wrappers survived depended on nesting depth; the new behaviour is uniform.
 
 - **Lines migrated to texture-backed element storage**: per-segment data
   now lives in an RGBA32F line texture (6 texels/segment — endpoints +
-  widths, per-endpoint colors + sharpness, segment length + clip flags,
+  widths, per-endpoint colors + sharpness, segment length + the two
+  per-endpoint cap-suppression scalars,
   colormap scalars + reserved per-endpoint alphas for volumetric
   Phase 4), fetched in the vertex stage via `texelFetch` and indexed by
   the sole per-instance `aSortedIndex` attribute — the same storage

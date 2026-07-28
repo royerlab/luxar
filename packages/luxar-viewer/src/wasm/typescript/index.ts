@@ -62,7 +62,7 @@ export {
   interpolate_scalars_batch,
   interpolate_colors_batch,
   calculate_segment_lengths,
-  mark_clipped_endpoints,
+  compute_cap_suppression,
 } from './lines-clipping';
 
 // Re-export as a module class for compatibility with WasmModule interface
@@ -115,7 +115,7 @@ import {
   interpolate_scalars_batch,
   interpolate_colors_batch,
   calculate_segment_lengths,
-  mark_clipped_endpoints,
+  compute_cap_suppression,
 } from './lines-clipping';
 
 /**
@@ -164,5 +164,5 @@ export class TypeScriptFallback implements WasmModule {
   interpolate_scalars_batch = interpolate_scalars_batch;
   interpolate_colors_batch = interpolate_colors_batch;
   calculate_segment_lengths = calculate_segment_lengths;
-  mark_clipped_endpoints = mark_clipped_endpoints;
+  compute_cap_suppression = compute_cap_suppression;
 }

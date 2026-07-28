@@ -1,10 +1,10 @@
-"""Tests for the v3.2 ``.gsplats.zarr`` node-tree format compliance.
+"""Tests for the v3.3 ``.gsplats.zarr`` node-tree format compliance.
 
 A single splat set saved via :func:`save_gsplats` is a **leaf node at the file
 root**: the arrays (``centers`` / ``amplitudes`` / ``cholesky_factors_diag`` /
 ``cholesky_factors_offdiag`` / ``chunk_bounds``) live directly under the root
 group, and the root ``.zattrs`` carry both the self-identifying header
-(``format_version`` = ``"3.2"``) and the leaf's own attrs (``type`` =
+(``format_version`` = ``"3.3"``) and the leaf's own attrs (``type`` =
 ``"gsplats"``, ``n_splats``, ordering metadata, ``center_bounds``,
 ``position_bounds``, render defaults). v3.1 splits the Cholesky factors into a
 diagonal and an off-diagonal array (v3.0 stored a single ``cholesky_factors``);

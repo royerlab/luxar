@@ -130,8 +130,8 @@ export async function projectLinesTo3D(
   /** Per-segment end alpha (empty Float32Array unless colorComponents=4). */
   endAlphas: Float32Array;
   segmentLengths: Float32Array;
-  startClipped: Uint8Array;
-  endClipped: Uint8Array;
+  startCapSuppression: Float32Array;
+  endCapSuppression: Float32Array;
   visibleSegmentCount: number;
   /**
    * Fused-scan cull metadata (AABB over start+end positions + max
@@ -206,7 +206,7 @@ export async function projectLinesTo3D(
     const emptyPositions = new Float32Array(0);
     const emptyColors = new Float32Array(0);
     const emptyScalars = new Float32Array(0);
-    const emptyFlags = new Uint8Array(0);
+    const emptyFlags = new Float32Array(0);
 
     return transfer(
       {
@@ -223,8 +223,8 @@ export async function projectLinesTo3D(
         startAlphas: new Float32Array(0),
         endAlphas: new Float32Array(0),
         segmentLengths: new Float32Array(0),
-        startClipped: emptyFlags,
-        endClipped: new Uint8Array(0),
+        startCapSuppression: emptyFlags,
+        endCapSuppression: new Float32Array(0),
         visibleSegmentCount: 0,
       },
       [emptyPositions.buffer, emptyColors.buffer, emptyScalars.buffer, emptyFlags.buffer]
@@ -376,17 +376,24 @@ export async function projectLinesTo3D(
   const segmentLengths = new Float32Array(visibleCount);
   wasmModule.calculate_segment_lengths(startPositions, endPositions, visibleCount, segmentLengths);
 
-  // Step 8: Mark clipped endpoints using WASM
-  const startClipped = new Uint8Array(visibleCount);
-  const endClipped = new Uint8Array(visibleCount);
+  // Step 8: Per-endpoint cap suppression using WASM. Runs AFTER the
+  // positions are clipped because a joint's suppression depends on the
+  // rendered 3D directions of the two segments meeting there.
+  const startCapSuppression = new Float32Array(visibleCount);
+  const endCapSuppression = new Float32Array(visibleCount);
+  const vertexCount = Math.floor(positions.length / ndim);
 
-  wasmModule.mark_clipped_endpoints(
+  wasmModule.compute_cap_suppression(
+    segments,
     visibility,
     t1Params,
     t2Params,
     segmentCount,
-    startClipped,
-    endClipped
+    vertexCount,
+    startPositions,
+    endPositions,
+    startCapSuppression,
+    endCapSuppression
   );
 
   // Build transferable list
@@ -404,8 +411,8 @@ export async function projectLinesTo3D(
     startAlphas.buffer as ArrayBuffer,
     endAlphas.buffer as ArrayBuffer,
     segmentLengths.buffer as ArrayBuffer,
-    startClipped.buffer as ArrayBuffer,
-    endClipped.buffer as ArrayBuffer,
+    startCapSuppression.buffer as ArrayBuffer,
+    endCapSuppression.buffer as ArrayBuffer,
   ];
 
   return transfer(
@@ -423,8 +430,8 @@ export async function projectLinesTo3D(
       startAlphas,
       endAlphas,
       segmentLengths,
-      startClipped,
-      endClipped,
+      startCapSuppression,
+      endCapSuppression,
       visibleSegmentCount: visibleCount,
       bounds: computeLinesProjectionBounds(
         startPositions,

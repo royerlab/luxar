@@ -22,7 +22,7 @@
  *   | 1     | endPos.xyz, endWidth                                     |
  *   | 2     | startColor.rgb, startSharpness                           |
  *   | 3     | endColor.rgb, endSharpness                               |
- *   | 4     | segmentLength, startClipped, endClipped, 0               |
+ *   | 4     | segmentLength, startCapSuppression, endCapSuppression, 0               |
  *   | 5     | startScalar (0.0), endScalar (0.0), alphas (1.0, 1.0)    |
  *
  * texel5.xy are the colormap scalars and texel5.zw the per-endpoint
@@ -40,10 +40,10 @@
  *
  * All source arrays consumed by the texel writer arrive as the worker
  * projection's Float32 output (`ProcessedLinesData` — endpoint
- * interpolation always emits Float32), except the Uint8 clipped flags,
- * which the writer reads element-wise (0/1 values are exact in Float32,
- * so no widening allocation is needed — the interleaved era paid one
- * `new Float32Array(uint8)` per update for the same bits).
+ * interpolation always emits Float32), the per-endpoint cap suppression
+ * included: it is a continuous [0, 1] scalar, not a flag, so it needs no
+ * widening allocation (the interleaved era paid one
+ * `new Float32Array(uint8)` per update back when it was a 0/1 byte).
  *
  * Mirrors `point-geometry.ts` / `gsplat-geometry.ts` so the geometry
  * types share one storage model; the geometry-agnostic helpers live in
@@ -115,7 +115,7 @@ export function createLineQuadGeometry(): THREE.InstancedBufferGeometry {
 /**
  * The per-segment arrays the texel writer consumes — the worker
  * projection's Float32 endpoint output (see the module header; the
- * Uint8 clipped flags are read element-wise, no widening needed).
+ * cap-suppression scalars arrive Float32 too, no widening needed).
  */
 export interface LineTexelSource {
   /** Segment start positions (count × 3). */
@@ -136,10 +136,14 @@ export interface LineTexelSource {
   endSharpness: Float32Array;
   /** 3D segment lengths (count) — cap-ramp math. */
   segmentLengths: Float32Array;
-  /** Whether the start endpoint was slice-clipped (count, 0/1 values). */
-  startClipped: Uint8Array | Float32Array;
-  /** Whether the end endpoint was slice-clipped (count, 0/1 values). */
-  endClipped: Uint8Array | Float32Array;
+  /**
+   * How much of the shader's endpoint cap dimming to suppress at the start
+   * endpoint (count, [0, 1] — 1 = no dimming). See
+   * `wasm/rust/src/lines_clipping.rs::compute_cap_suppression`.
+   */
+  startCapSuppression: Float32Array;
+  /** Same for the end endpoint (count, [0, 1] — 1 = no dimming). */
+  endCapSuppression: Float32Array;
   /**
    * Colormap scalars per endpoint (count each). Absent ⇒ texel5.xy are
    * written 0.0 (the no-scalar identity — written unconditionally so a
@@ -237,8 +241,8 @@ export function writeLineTexels(
     startSharpness,
     endSharpness,
     segmentLengths,
-    startClipped,
-    endClipped,
+    startCapSuppression,
+    endCapSuppression,
     startScalars,
     endScalars,
     startAlphas,
@@ -257,8 +261,8 @@ export function writeLineTexels(
     startSharpness.length < n ||
     endSharpness.length < n ||
     segmentLengths.length < n ||
-    startClipped.length < n ||
-    endClipped.length < n ||
+    startCapSuppression.length < n ||
+    endCapSuppression.length < n ||
     (startScalars !== undefined && startScalars.length < n) ||
     (endScalars !== undefined && endScalars.length < n) ||
     (startAlphas !== undefined && startAlphas.length < n) ||
@@ -270,8 +274,8 @@ export function writeLineTexels(
         `startColors=${startColors.length}, endColors=${endColors.length}, ` +
         `startWidths=${startWidths.length}, endWidths=${endWidths.length}, ` +
         `startSharpness=${startSharpness.length}, endSharpness=${endSharpness.length}, ` +
-        `segmentLengths=${segmentLengths.length}, startClipped=${startClipped.length}, ` +
-        `endClipped=${endClipped.length}, startScalars=${startScalars?.length ?? 'absent'}, ` +
+        `segmentLengths=${segmentLengths.length}, startCapSuppression=${startCapSuppression.length}, ` +
+        `endCapSuppression=${endCapSuppression.length}, startScalars=${startScalars?.length ?? 'absent'}, ` +
         `endScalars=${endScalars?.length ?? 'absent'}, startAlphas=${startAlphas?.length ?? 'absent'}, ` +
         `endAlphas=${endAlphas?.length ?? 'absent'})`
     );
@@ -301,12 +305,12 @@ export function writeLineTexels(
     arr[o + 13] = endColors[p3 + 1];
     arr[o + 14] = endColors[p3 + 2];
     arr[o + 15] = endSharpness[i];
-    // texel 4: segmentLength, startClipped, endClipped. The .w slot is
+    // texel 4: segmentLength, startCapSuppression, endCapSuppression. The .w slot is
     // zero-filled (cheap, keeps reused pool texels deterministic even
     // though nothing reads it yet).
     arr[o + 16] = segmentLengths[i];
-    arr[o + 17] = startClipped[i];
-    arr[o + 18] = endClipped[i];
+    arr[o + 17] = startCapSuppression[i];
+    arr[o + 18] = endCapSuppression[i];
     arr[o + 19] = 0.0;
     // texel 5: startScalar, endScalar, per-endpoint opacity alphas.
     // ALL FOUR written UNCONDITIONALLY — pool textures are reused, so

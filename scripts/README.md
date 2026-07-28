@@ -10,19 +10,26 @@ Subdirectories:
 ```
 scripts/
 ├── benchmarks/            # Performance benchmark scripts (seeding, WASM, etc.)
-└── calibration_results/   # Output JSON from calibrate_gsplat_demos.py
+├── calibration_results/   # Output JSON from calibrate_gsplat_demos.py
+└── gallery/               # Gallery dataset generation, capture manifest, and scoring tools
 ```
 
 | Script | Purpose |
 |--------|---------|
-| `check_documentation.py` | Validate README/docstring/JSDoc coverage across the repo |
+| `check_documentation.py` | Check top-level package READMEs plus Python docstring and TypeScript JSDoc coverage |
+| `check_version_consistency.py` | Verify the zero-padded Python CalVer and npm-normalized viewer version describe the same release |
+| `set_version.py` | Update the Python and viewer release versions together |
+| `release.sh` | Run release preflight checks, then create and push the release tag |
+| `gen_format_contract.py` | Generate the Python and TypeScript format-contract projections from `format-contract/contract.yaml` |
 | `generate_galaxy_simple.py` | Fetch Gaia DR3 stars → raw zarr table for demos |
+| `gen_census_umap.py` | Build the large CELLxGENE Census scVI/UMAP cache on a CUDA/RAPIDS environment |
 | `generate_builtin_colormaps.py` | Regenerate built-in colormap LUTs (Python + TS) |
 | `build_cuda_slurm.py` | Submit a CUDA extension build job to Slurm |
 | `test_hpc_setup.py` | Smoke-test the HPC/venv-fallback dev environment |
 | `calibrate_gsplat_demos.py` | Run `luxar gsplat cal` on every gsplat demo's volume(s) |
 | `update_demo_max_splats.py` | Apply calibrated K\* to each demo's `MAX_SPLATS` constant |
 | `add_additive_lod_to_demos.py` | Add an additive LOD ladder to each gsplat demo baseline |
+| `reencode_gsplat_demos.py` | Re-encode and rebuild LOD ladders for committed gsplat demo baselines without refitting |
 | `benchmark_progressive_psnr.py` | Benchmark progressive gsplat fitting (PSNR/SSIM) |
 | `refit_gsplat_demos.sh` | Force-refit every gsplat demo (sequential) |
 | `run_demo_recompute.sh` | Sequential demo recompute from scratch |
@@ -32,13 +39,15 @@ scripts/
 
 ### `check_documentation.py`
 
-Validates documentation completeness and quality across the Luxar project. Run this before commits or in CI/CD to ensure documentation standards.
+Checks documentation coverage for the top-level Python and TypeScript packages.
+It is a read-only heuristic checker; it does **not** parse Markdown syntax, walk
+all nested subpackages, or modify files.
 
 **Purpose:**
-- Ensure all Python packages have README.md files
-- Check TypeScript packages for consistent documentation
-- Validate Markdown syntax
-- Maintain documentation standards across the project
+- Require a README for each top-level package under `luxar/` and viewer `src/`
+- Require Quick Start/Getting Started headings and code examples in Python package READMEs
+- Flag low Python docstring and TypeScript JSDoc coverage
+- Surface documentation debt before it is promoted into a CI quality gate
 
 **Usage:**
 
@@ -49,14 +58,17 @@ hatch run python scripts/check_documentation.py
 # With verbose output
 hatch run python scripts/check_documentation.py --verbose
 
-# Auto-fix issues (if supported)
-hatch run python scripts/check_documentation.py --fix
 ```
 
 **What it checks:**
-- Python packages have README.md with key classes and usage examples
-- TypeScript packages have README.md in src/{package}/
-- Documentation is syntactically valid Markdown
+- Top-level Python packages have README.md files with minimum content markers
+- Top-level TypeScript packages have README.md files
+- Public Python definitions have nearby docstrings (heuristic)
+- Exported TypeScript declarations have nearby JSDoc (heuristic)
+
+The current repository has known failures, so `make check-docs` is an audit
+report rather than a green required gate. See GitHub issue #776 before
+tightening or enabling it in CI.
 
 ---
 
@@ -242,8 +254,8 @@ bash scripts/refit_gsplat_demos.sh
 nohup bash scripts/refit_gsplat_demos.sh > /tmp/refit.log 2>&1 &  # background
 ```
 
-> Note: both shell scripts `cd` into a hard-coded `/home/royer/PycharmProjects/luxar`
-> working directory — adjust that path before running on another machine.
+Both shell scripts resolve the repository root from their own location, so they
+can be launched from any working directory.
 
 ### `add_additive_lod_to_demos.py`
 

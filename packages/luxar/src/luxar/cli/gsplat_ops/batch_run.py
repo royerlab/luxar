@@ -88,9 +88,14 @@ def run_batch_run(
     floor: Optional[str] = typer.Option(
         None,
         "--floor",
-        help="Background floor / DC-offset suppression per tile (default: "
-        "auto): auto | pN | <float> | none. Unset lets a `floor:` in "
-        "--config apply, else defaults to auto. See `gsplat fit --help`.",
+        help="Background floor / DC-offset suppression (default: auto): "
+        "auto | pN | <float> | none. With --tiling uniform the spec is "
+        "resolved against each task's whole (timepoint, channel) sub-volume "
+        "— never per tile; the deterministic sampler makes every tile of "
+        "that sub-volume resolve the identical level — and subtracted from "
+        "the raw tile before apodization. With --tiling content each box "
+        "still estimates the floor on its own crop. Unset lets a `floor:` "
+        "in --config apply, else defaults to auto. See `gsplat fit --help`.",
     ),
     seeds: Optional[str] = typer.Option(None, "--seeds", help="Seed count or ratio"),
     iters: Optional[int] = typer.Option(

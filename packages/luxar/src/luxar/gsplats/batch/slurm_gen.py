@@ -136,6 +136,10 @@ def generate_fit_sbatch(
             f"    --tile $K/{manifest.n_tiles}",
             f"    --tile-size {manifest.tile_size}",
             f"    --overlap {manifest.tile_overlap}",
+            # A tile wholly below the run's background floor legitimately fits
+            # 0 splats; the worker then writes an `.empty` marker and exits 0
+            # (finalized below) instead of failing the task forever.
+            "    --allow-empty-tile",
         ]
     if manifest.array_key is not None:
         fit_cmd_parts.append(f"    --array-key {shlex.quote(manifest.array_key)}")
@@ -237,11 +241,16 @@ def generate_fit_sbatch(
             f"t$(printf '%0{t_width}d' $T)_c$(printf '%0{c_width}d' $C)_{slot_label}$(printf '%0{k_width}d' $K)"
             '.gsplats.zarr"',
             "",
-            "    # Clean up leftover .tmp from a previous crashed run",
+            "    # Clean up leftovers from a previous crashed/preempted run.",
+            "    # A stale .tmp.empty marker must go too (the local runner does",
+            "    # the same): with FIT_RC=0 it would make the finalize step",
+            "    # delete a freshly written real .tmp store and mark the task",
+            "    # empty — a silent spatial hole the merge skips without error.",
             '    if [ -d "${OUTPUT}.tmp" ]; then',
             '        echo "Cleaning up incomplete tile: ${OUTPUT}.tmp"',
             '        rm -rf "${OUTPUT}.tmp"',
             "    fi",
+            '    rm -f "${OUTPUT}.tmp.empty"',
             "",
             '    if [ -d "$OUTPUT" ]; then',
             '        echo "Already exists, skipping: $OUTPUT"',
@@ -274,22 +283,22 @@ def generate_fit_sbatch(
             "    local FIT_RC=$?",
         ]
     )
-    if is_content:
-        # A content box that fits 0 splats writes a sibling `${OUTPUT}.tmp.empty`
-        # marker (the writer rejects empty stores) instead of the `.tmp` store.
-        # Treat that as a clean, legitimately-empty result: leave a `${OUTPUT}.empty`
-        # marker the merge skips, and exit 0 (NOT a failed task).
-        lines.extend(
-            [
-                '    if [ "$FIT_RC" -eq 0 ] && [ -f "${OUTPUT}.tmp.empty" ]; then',
-                '        echo "Empty box (0 splats): ${OUTPUT}.empty"',
-                '        rm -f "${OUTPUT}.tmp.empty"',
-                '        rm -rf "${OUTPUT}.tmp"',
-                '        touch "${OUTPUT}.empty"',
-                "        return 0",
-                "    fi",
-            ]
-        )
+    # A task that fits 0 splats (a content box, or a uniform tile wholly below
+    # the run's background floor) writes a sibling `${OUTPUT}.tmp.empty` marker
+    # (the writer rejects empty stores) instead of the `.tmp` store. Treat that
+    # as a clean, legitimately-empty result: leave a `${OUTPUT}.empty` marker
+    # the merge skips, and exit 0 (NOT a failed task).
+    lines.extend(
+        [
+            '    if [ "$FIT_RC" -eq 0 ] && [ -f "${OUTPUT}.tmp.empty" ]; then',
+            f'        echo "Empty {slot_label} (0 splats): ${{OUTPUT}}.empty"',
+            '        rm -f "${OUTPUT}.tmp.empty"',
+            '        rm -rf "${OUTPUT}.tmp"',
+            '        touch "${OUTPUT}.empty"',
+            "        return 0",
+            "    fi",
+        ]
+    )
     lines.extend(
         [
             '    if [ "$FIT_RC" -ne 0 ] || [ ! -d "${OUTPUT}.tmp" ]; then',

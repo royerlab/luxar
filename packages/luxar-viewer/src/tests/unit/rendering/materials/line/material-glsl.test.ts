@@ -111,8 +111,8 @@ describe('LineMaterial', () => {
       expect(material.vertexShader).toContain('vec3 aEndPos = lineT1.xyz');
       expect(material.vertexShader).toContain('float aEndWidth = lineT1.w');
       expect(material.vertexShader).toContain('float aSegmentLength = lineT4.x');
-      expect(material.vertexShader).toContain('float aStartClipped = lineT4.y');
-      expect(material.vertexShader).toContain('float aEndClipped = lineT4.z');
+      expect(material.vertexShader).toContain('float aStartCapSuppress = lineT4.y');
+      expect(material.vertexShader).toContain('float aEndCapSuppress = lineT4.z');
       // The interleaved era's per-instance attribute declarations are gone.
       expect(material.vertexShader).not.toContain('in vec3 aStartPos;');
       expect(material.vertexShader).not.toContain('in vec3 aStartColor;');
@@ -126,7 +126,7 @@ describe('LineMaterial', () => {
       expect(material.vertexShader).toContain('out float vSharpness');
       expect(material.vertexShader).toContain('out float vPerpNorm');
       // Cap math lives in the fragment shader; vertex passes
-      // vT/vSegmentLength/vWidthAtT/vClippedStart/vClippedEnd.
+      // vT/vSegmentLength/vWidthAtT/vCapSuppressStart/vCapSuppressEnd.
       expect(material.vertexShader).toContain('out float vT');
       expect(material.vertexShader).toContain('out float vSegmentLength');
       expect(material.vertexShader).toContain('out float vWidthAtT');
@@ -167,9 +167,11 @@ describe('LineMaterial', () => {
       expect(material.fragmentShader).not.toContain('1.0 - p * p');
       expect(material.fragmentShader).not.toContain('LUXAR_SHARPNESS_TWO');
 
-      // cap factor is computed in fragment from vT/vSegmentLength/etc.
+      // cap factor is computed in fragment from vT/vSegmentLength/etc.,
+      // one ramp per endpoint (#796).
       expect(material.fragmentShader).toContain('capFactor');
-      expect(material.fragmentShader).toContain('distToNearest');
+      expect(material.fragmentShader).toContain('distFromStart');
+      expect(material.fragmentShader).toContain('distFromEnd');
       expect(material.fragmentShader).toContain('vT');
 
       // Check for anti-aliasing and intensity scaling
@@ -264,18 +266,25 @@ describe('LineMaterial', () => {
       const material = new LineMaterial();
 
       // cap factor at endpoints should be 0.5 for seamless joints.
-      // Now computed in the fragment shader from interpolated vT.
+      // Now computed in the fragment shader from interpolated vT, with
+      // one ramp per endpoint (issue #796: a single nearest-endpoint
+      // ramp was discontinuous on short segments).
       expect(material.fragmentShader).toContain('0.5 + 0.5');
-      expect(material.fragmentShader).toContain('distToNearest');
+      expect(material.fragmentShader).toContain('distFromStart');
+      expect(material.fragmentShader).toContain('distFromEnd');
     });
 
     it('should handle clipped endpoints correctly (in fragment)', () => {
       const material = new LineMaterial();
 
-      // clipped endpoints should use full intensity (1.0). Cap-clipping
-      // logic now lives in the fragment shader.
-      expect(material.fragmentShader).toContain('nearestClipped');
-      expect(material.fragmentShader).toContain('mix(baseCap, 1.0, nearestClipped)');
+      // Clipped/suppressed endpoints should lift THEIR OWN ramp to full
+      // intensity (1.0), and the two per-endpoint caps combine with min()
+      // (issue #796). Cap-clipping logic lives in the fragment shader.
+      expect(material.fragmentShader).toContain(
+        'mix(0.5 + 0.5 * startRamp, 1.0, vCapSuppressStart)'
+      );
+      expect(material.fragmentShader).toContain('mix(0.5 + 0.5 * endRamp, 1.0, vCapSuppressEnd)');
+      expect(material.fragmentShader).toContain('min(startCap, endCap)');
     });
 
     it('should use world-space to pixel conversion', () => {
@@ -421,8 +430,8 @@ describe('createInstancedLinesMesh', () => {
       startSharpness: new Float32Array([1.0, 1.0]),
       endSharpness: new Float32Array([1.0, 1.0]),
       segmentLengths: new Float32Array([1.0, 1.414]),
-      startClipped: new Uint8Array([0, 0]),
-      endClipped: new Uint8Array([0, 0]),
+      startCapSuppression: new Float32Array([0, 0]),
+      endCapSuppression: new Float32Array([0, 0]),
       segmentCount: 2,
     };
 
@@ -463,7 +472,7 @@ describe('createInstancedLinesMesh', () => {
     expect(Array.from(data.subarray(o + 8, o + 12))).toEqual([0, 1, 0, 1]);
     // texel 3: endColor.rgb, endSharpness
     expect(Array.from(data.subarray(o + 12, o + 16))).toEqual([0, 1, 0, 1]);
-    // texel 4: segmentLength, startClipped, endClipped
+    // texel 4: segmentLength, startCapSuppression, endCapSuppression
     expect(data[o + 16]).toBeCloseTo(1.414, 5);
     expect(data[o + 17]).toBe(0);
     expect(data[o + 18]).toBe(0);
@@ -483,8 +492,8 @@ describe('createInstancedLinesMesh', () => {
       startSharpness: new Float32Array([1.0]),
       endSharpness: new Float32Array([1.0]),
       segmentLengths: new Float32Array([17.32]),
-      startClipped: new Uint8Array([0]),
-      endClipped: new Uint8Array([0]),
+      startCapSuppression: new Float32Array([0]),
+      endCapSuppression: new Float32Array([0]),
       segmentCount: 1,
     };
 
@@ -513,8 +522,8 @@ describe('createInstancedLinesMesh', () => {
       startSharpness: new Float32Array([1.0]),
       endSharpness: new Float32Array([1.0]),
       segmentLengths: new Float32Array([10]),
-      startClipped: new Uint8Array([0]),
-      endClipped: new Uint8Array([0]),
+      startCapSuppression: new Float32Array([0]),
+      endCapSuppression: new Float32Array([0]),
       segmentCount: 1,
     };
 
