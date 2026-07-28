@@ -463,19 +463,36 @@ def create_scene(
             ]
         )
 
-        lo, hi = np.percentile(positions, [2, 98], axis=0)
-        center = (lo + hi) / 2.0
-        extent = float(np.max(hi - lo))
+        # Orbit about the OBSERVER, i.e. the origin — the Milky Way and our solar
+        # system, and the one point every DESI sightline radiates from. Framing a
+        # 2-98 percentile bounding box instead put the pivot ~1.2 Gpc away down
+        # +z (the caps are asymmetric in z), so orbiting swung the entire local
+        # universe around a point out in the ELG shell.
+        #
+        # Distance comes from the RADIAL extent, not a box diagonal, because the
+        # cloud surrounds the pivot rather than sitting in front of it: the p95
+        # shell exactly fills the frame at r95/tan(fov/2). Opening at 0.75x that
+        # keeps the deliberately close, immersive start — the populated bulk
+        # slightly overfills the view and the sparse high-z tail runs off the
+        # edges, which is the intended "inside the cosmic web" framing.
+        radial = np.linalg.norm(positions.astype(np.float64), axis=1)
+        r95 = float(np.percentile(radial, 95))
+        r_max = float(radial.max())
         fov_deg = 50.0
-        fit_dist = (extent * 0.5) / np.tan(np.radians(fov_deg) / 2.0)
-        cam_dist = fit_dist * 0.7
+        cam_dist = 0.75 * r95 / np.tan(np.radians(fov_deg) / 2.0)
         camera = CameraConfig(
-            position=(float(center[0]), float(center[1]), float(center[2] + cam_dist)),
-            target=(float(center[0]), float(center[1]), float(center[2])),
+            position=(0.0, 0.0, cam_dist),
+            target=(0.0, 0.0, 0.0),
             up=(0.0, 1.0, 0.0),
             fov=fov_deg,
             near=float(max(1.0, cam_dist * 0.005)),
-            far=float(cam_dist * 20.0 + extent * 10.0),
+            # Far must clear the whole cloud from the camera, which sits outside
+            # it: worst case is the antipodal galaxy at cam_dist + r_max.
+            far=float((cam_dist + r_max) * 1.5),
+        )
+        aprint(
+            f"  🎥 Orbiting the observer at the origin; camera at "
+            f"{cam_dist:,.0f} Mpc (r95={r95:,.0f}, r_max={r_max:,.0f})"
         )
 
         colors = tracer_colors(tracer_ids)

@@ -116,3 +116,81 @@ class TestQuantizeRoundtrip:
         assert np.max(np.abs(pos2 - pos)) < 0.15
         # float16 redshift → ~3 significant digits.
         np.testing.assert_allclose(z2, z, atol=2e-3)
+
+
+class TestOrbitCentre:
+    """The camera must orbit the OBSERVER (the origin), not a bounding box.
+
+    Every DESI sightline radiates from Earth, so the origin is both the natural
+    pivot and the one point in this scene with physical meaning — it is where our
+    solar system is. Framing the 2-98 percentile box instead put the pivot ~1.2
+    Gpc down +z (the two caps are asymmetric in z), so dragging swung the whole
+    local universe around a point out in the ELG shell.
+    """
+
+    @staticmethod
+    def _two_caps(n: int = 4000, seed: int = 0) -> np.ndarray:
+        """Positions with the DESI shape: radial, z-asymmetric, centred on us."""
+        rng = np.random.default_rng(seed)
+        d = rng.uniform(200.0, 6000.0, size=n)
+        ra = rng.uniform(0.0, 2.0 * np.pi, size=n)
+        # Two caps, deliberately lopsided in z so a bbox centre is NOT the origin.
+        dec = np.where(
+            rng.random(n) < 0.7, rng.uniform(0.4, 1.2, n), rng.uniform(-0.9, -0.3, n)
+        )
+        return np.column_stack(
+            [
+                d * np.cos(dec) * np.cos(ra),
+                d * np.cos(dec) * np.sin(ra),
+                d * np.sin(dec),
+            ]
+        ).astype(np.float32)
+
+    def test_camera_targets_the_origin(self, tmp_path) -> None:
+        from luxar.io.compiler import LuxarZarrCompiler  # noqa: F401  (import cost)
+
+        positions = self._two_caps()
+        # Guard the premise: a bbox centre really is offset from the observer, so
+        # this test would fail against the old framing.
+        lo, hi = np.percentile(positions, [2, 98], axis=0)
+        assert abs(float(((lo + hi) / 2.0)[2])) > 100.0
+
+        out = tmp_path / "desi.luxar.zarr"
+        _demo.create_scene(
+            positions,
+            np.full(len(positions), 0.5, dtype=np.float32),
+            np.zeros(len(positions), dtype=np.uint8),
+            out,
+        )
+
+        import zarr
+
+        cam = zarr.open(str(out), mode="r").attrs["viewer_config"]["camera"]
+        assert tuple(cam["target"]) == (0.0, 0.0, 0.0)
+        # Camera sits out along +z at the framing distance, looking back at us.
+        assert cam["position"][0] == 0.0 and cam["position"][1] == 0.0
+        assert cam["position"][2] > 0.0
+
+    def test_camera_sits_outside_the_cloud_and_frames_it(self, tmp_path) -> None:
+        positions = self._two_caps()
+        radial = np.linalg.norm(positions.astype(np.float64), axis=1)
+        out = tmp_path / "desi.luxar.zarr"
+        _demo.create_scene(
+            positions,
+            np.full(len(positions), 0.5, dtype=np.float32),
+            np.zeros(len(positions), dtype=np.uint8),
+            out,
+        )
+
+        import zarr
+
+        cam = zarr.open(str(out), mode="r").attrs["viewer_config"]["camera"]
+        dist = float(cam["position"][2])
+        # Outside the populated bulk, so orbiting does not start inside the cloud
+        # (a camera inside the bbox makes the coverage selector degenerate).
+        assert dist > float(np.percentile(radial, 95))
+        # ...but still close enough to be immersive rather than a distant speck.
+        assert dist < 2.0 * float(radial.max())
+        # Far plane must clear the antipodal galaxy.
+        assert float(cam["far"]) > dist + float(radial.max())
+        assert 0.0 < float(cam["near"]) < dist * 0.05
