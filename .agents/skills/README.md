@@ -36,6 +36,7 @@ ln -sfn ../../.agents/skills/<skill-name> .claude/skills/<skill-name>
 
 | Skill | Purpose |
 | --- | --- |
+| `luxar-install` | Install Luxar on a machine — user-install vs dev-setup, per profile: modest laptop, NVIDIA-GPU desktop, Slurm/HPC cluster (no-sudo path, CUDA extension via `SLURM=1`). |
 | `luxar-visualization` | Build a `.luxar.zarr` scene from a dataset (Points/Lines/GSplats, Dimensions, transforms) and view it. |
 | `luxar-gsplat-pipeline` | Calibrate, fit, and build LOD for Gaussian splats (`luxar gsplat` cal -> fit -> lod, tiling), full CLI options + Python API. |
 | `luxar-hpc-batch-fit` | Fit a whole nD timelapse at scale — local multi-GPU (`batch-fit run`) or Slurm/Bruno (`batch-fit submit`); status/validate/merge/cancel + GPU benchmark. |
