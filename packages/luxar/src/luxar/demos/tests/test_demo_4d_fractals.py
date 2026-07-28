@@ -114,6 +114,18 @@ class TestEveryWPlanePopulated:
             positions, _ = generate_4d_fractal(fractal_type, grid_size=3)
             assert len(positions) > 0
 
+    def test_subsample_branch_preserves_every_plane(self, monkeypatch):
+        """At the production grid the dense fractals exceed the budget and
+        take the subsample branch; at the test grid they don't. Shrink the
+        budget so that branch (and the post-subsample plane check) runs."""
+        monkeypatch.setattr(_demo, "TARGET_MAX_POINTS", 5_000)
+        positions, _ = generate_4d_fractal(0, grid_size=GRID)  # XOR is dense
+        assert len(positions) == 5_000
+        axis = axis_world_values(GRID).astype(np.float32)
+        w = positions[:, 0]
+        for plane_w in axis:
+            assert (w == plane_w).any(), f"subsample emptied plane {plane_w}"
+
 
 class TestCheckerboardIsDeterministicStructure:
     """Guards the historical failure: the parity rule degenerated to zero
@@ -140,9 +152,10 @@ class TestCheckerboardIsDeterministicStructure:
 
 
 class TestGeneratorDeterminism:
-    def test_same_seed_same_output(self):
-        p1, v1 = generate_4d_fractal(3, grid_size=GRID)  # Cantor uses the rng
-        p2, v2 = generate_4d_fractal(3, grid_size=GRID)
+    @pytest.mark.parametrize("fractal_type", range(N_FRACTALS))
+    def test_same_seed_same_output(self, fractal_type):
+        p1, v1 = generate_4d_fractal(fractal_type, grid_size=GRID)
+        p2, v2 = generate_4d_fractal(fractal_type, grid_size=GRID)
         assert np.array_equal(p1, p2)
         assert np.array_equal(v1, v2)
 
