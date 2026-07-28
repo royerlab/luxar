@@ -529,7 +529,7 @@ class TestMigrateFormat:
             centers=np.zeros((3, 3), dtype=np.float32),
             amplitudes=np.ones(3, dtype=np.float32),
             cholesky_factors=_identity_chol(3),
-        ).save(current)  # writes the current (v3.2) node-tree
+        ).save(current)  # writes the current (v3.3) node-tree
         out = tmp_path / "out.gsplats.zarr"
         with pytest.raises(ValueError, match="already format v3"):
             migrate_format(current, out)
@@ -770,7 +770,7 @@ def _make_v3_lod_pixel_size(
 
 class TestMigrateV3LegacyLodAttrs:
     """v3.0/v3.1 stores whose kind=lod groups still carry the pre-v3.2
-    'pixel_size' selector attrs are detected and rewritten to v3.2
+    'pixel_size' selector attrs are detected and rewritten to the current v3.3 format
     (selector='coverage' + derived coverage_fraction)."""
 
     def test_detect_v3_1_legacy_lod(self, tmp_path: Path) -> None:

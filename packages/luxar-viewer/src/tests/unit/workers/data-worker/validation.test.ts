@@ -23,7 +23,7 @@ async function loadWorker(): Promise<WorkerModule> {
     interpolate_colors_batch: vi.fn(),
     interpolate_scalars_batch: vi.fn(),
     calculate_segment_lengths: vi.fn(),
-    mark_clipped_endpoints: vi.fn(),
+    compute_cap_suppression: vi.fn(),
     compact_by_mask: vi.fn(),
     calculate_bounds_3d: vi.fn(() => 0),
     count_visible: vi.fn(() => 0),

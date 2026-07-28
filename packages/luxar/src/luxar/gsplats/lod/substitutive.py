@@ -76,7 +76,7 @@ barrier dims under ``coarsen_dims`` grouping.
 
 The returned value is a single :class:`GSplatData` with
 ``n_substitutive = levels + 1`` and ``M_i = 1`` per substitutive level
-(one additive sub-LOD each). Saved to disk, this becomes a single v3.2
+(one additive sub-LOD each). Saved to disk, this becomes a single v3.3
 node-tree ``.gsplats.zarr`` (a ``kind=lod`` group with one child per
 level — see :mod:`luxar.gsplats.tree`).
 """

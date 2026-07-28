@@ -353,8 +353,8 @@ describe('GPUBufferPool', () => {
         startSharpness: new Float32Array(count),
         endSharpness: new Float32Array(count),
         segmentLengths: new Float32Array(count),
-        startClipped: new Uint8Array(count),
-        endClipped: new Uint8Array(count),
+        startCapSuppression: new Float32Array(count),
+        endCapSuppression: new Float32Array(count),
         segmentCount: count,
       });
 
@@ -409,8 +409,8 @@ describe('GPUBufferPool', () => {
         startSharpness: new Float32Array(count),
         endSharpness: new Float32Array(count),
         segmentLengths: new Float32Array(count),
-        startClipped: new Uint8Array(count),
-        endClipped: new Uint8Array(count),
+        startCapSuppression: new Float32Array(count),
+        endCapSuppression: new Float32Array(count),
         segmentCount: count,
       });
       const geom = pool.acquireLinesGeometry('append-lines', 6);

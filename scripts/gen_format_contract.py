@@ -9,7 +9,7 @@ and the canonical attr/array keys. This script mechanically projects it into:
     packages/luxar/src/luxar/typing_utils/_format_contract.py   (constants + Literals)
     packages/luxar-viewer/src/types/format-contract.ts          (const arrays + unions)
 
-Both generated files carry a ``@generated`` / DO-NOT-EDIT header and are the
+Both generated files carry a generated / DO-NOT-EDIT header and are the
 sole authority on their own formatting (the Python file is excluded from ruff,
 the TS file matches prettier's ``printWidth: 100`` so ``pnpm format`` is a
 no-op).

@@ -48,6 +48,7 @@ core/
     ├── options.ts                   # `LuxarAppOptions` interface (re-exported from app.ts)
     ├── init/                        # init() pipeline
     │   ├── pipeline.ts              # Build the subsystem graph, returns components
+    │   ├── build-rail-items.ts      # Build control-rail descriptors from shared UI actions
     │   ├── environment-guards.ts    # Browser + THREE.REVISION peer-dep checks
     │   └── module-overrides.ts      # Wire `wasmPath` / `workerPath` into module singletons
     ├── lifecycle/                   # dispose / focus / unload

@@ -435,34 +435,131 @@ export function calculate_segment_lengths(
 }
 
 /**
- * Mark clipped endpoints (for cap factor adjustment).
+ * Unit direction pointing from an endpoint back along its own segment.
  *
+ * One unit direction per visible segment, start -> end. A degenerate
+ * (zero-length or non-finite) segment gets a zero direction, whose dot product
+ * is 0, which yields suppression 0 — the cap is kept, the wanted fallback.
+ */
+function segmentDirections(
+  visibleCount: number,
+  startPositions: Float32Array,
+  endPositions: Float32Array
+): Float32Array {
+  const dirs = new Float32Array(visibleCount * 3);
+  for (let i = 0; i < visibleCount; i++) {
+    const o = i * 3;
+    const dx = endPositions[o] - startPositions[o];
+    const dy = endPositions[o + 1] - startPositions[o + 1];
+    const dz = endPositions[o + 2] - startPositions[o + 2];
+    const len = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    if (Number.isFinite(len) && len > 0) {
+      dirs[o] = dx / len;
+      dirs[o + 1] = dy / len;
+      dirs[o + 2] = dz / len;
+    }
+  }
+  return dirs;
+}
+
+/**
+ * Per-endpoint cap suppression in [0, 1] (drives the shader cap factor).
+ *
+ * TypeScript reference for the Rust `compute_cap_suppression` kernel — see
+ * `wasm/rust/src/lines_clipping.rs` for the full rationale. In short: the line
+ * fragment shader dims each segment towards `0.5` at its own endpoints, which
+ * is only correct where a neighbouring quad overlaps and adds the missing half
+ * back. Collinear neighbours tile rather than overlap, so this returns `1.0`
+ * (suppress the dimming) for clipped endpoints and straight-through interior
+ * joints, `0.0` (keep it) for free ends, branch points, and sharp bends, and
+ * `clamp(-dot(awayA, awayB), 0, 1)` in between.
+ *
+ * Only degree-2 vertices count as joints, and only endpoints that actually
+ * reach the shared vertex (untrimmed, on a visible segment) participate.
+ *
+ * @param segments - Vertex index pairs [numSegments * 2]
  * @param visibility - Visibility mask [numSegments]
  * @param t1Params - Start interpolation parameters [numSegments]
  * @param t2Params - End interpolation parameters [numSegments]
  * @param numSegments - Total number of segments
- * @param outputStartClipped - Output start clipped flags [visibleCount]
- * @param outputEndClipped - Output end clipped flags [visibleCount]
+ * @param numVertices - Total number of source vertices
+ * @param startPositions - Clipped start positions [visibleCount * 3]
+ * @param endPositions - Clipped end positions [visibleCount * 3]
+ * @param outputStart - Output start suppression [visibleCount]
+ * @param outputEnd - Output end suppression [visibleCount]
  * @returns Number of visible segments written
  */
-export function mark_clipped_endpoints(
+export function compute_cap_suppression(
+  segments: Uint32Array,
   visibility: Uint8Array,
   t1Params: Float32Array,
   t2Params: Float32Array,
   numSegments: number,
-  outputStartClipped: Uint8Array,
-  outputEndClipped: Uint8Array
+  numVertices: number,
+  startPositions: Float32Array,
+  endPositions: Float32Array,
+  outputStart: Float32Array,
+  outputEnd: Float32Array
 ): number {
-  let outIdx = 0;
+  // Endpoint code: (outIdx << 1) | endBit. `codeSum` accumulates the codes of
+  // the endpoints landing exactly on each vertex and `degree` counts them
+  // (saturating at 3, so branch points stay distinguishable from ordinary
+  // joints). At degree 2 the partner is simply `codeSum - myCode` — one
+  // scattered array instead of two, halving this pass's cache traffic. Both are
+  // left zero-initialised: degree gates every read, so a sentinel fill would be
+  // pure cost. Int32 holds the sums with room to spare: a code is at most 2x the visible
+  // segment count, so two of them stay under 2^31 for any scene that fits in
+  // memory.
+  const codeSum = new Int32Array(numVertices);
+  const degree = new Uint8Array(numVertices);
 
-  for (let segIdx = 0; segIdx < numSegments; segIdx++) {
-    if (visibility[segIdx] === 0) {
-      continue;
+  const registerTouch = (vertex: number, code: number): void => {
+    if (vertex >= numVertices) return; // upstream validation rejects these
+    const d = degree[vertex];
+    if (d < 2) {
+      codeSum[vertex] += code;
+      degree[vertex] = d + 1;
+    } else {
+      degree[vertex] = 3; // branch point — the sum is no longer meaningful
     }
+  };
 
-    outputStartClipped[outIdx] = t1Params[segIdx] > 0 ? 1 : 0;
-    outputEndClipped[outIdx] = t2Params[segIdx] < 1 ? 1 : 0;
+  let outIdx = 0;
+  for (let segIdx = 0; segIdx < numSegments; segIdx++) {
+    if (visibility[segIdx] === 0) continue;
+    const code = outIdx << 1;
+    if (t1Params[segIdx] <= 0) registerTouch(segments[segIdx * 2], code);
+    if (t2Params[segIdx] >= 1) registerTouch(segments[segIdx * 2 + 1], code | 1);
+    outIdx++;
+  }
 
+  const visibleCount = outIdx;
+
+  // Normalise ONCE per segment; the joint test is then a single dot product.
+  // The "away" vector at an endpoint is +dir at a start and -dir at an end, so
+  //   dot(awayMine, awayPartner) = sMine * sPartner * dot(dirMine, dirPartner)
+  // and sMine * sPartner is +1 exactly when the two endpoint bits agree.
+  const dirs = segmentDirections(visibleCount, startPositions, endPositions);
+
+  const jointSuppression = (vertex: number, myCode: number): number => {
+    if (vertex >= numVertices || degree[vertex] !== 2) return 0;
+    const partner = codeSum[vertex] - myCode;
+    if (partner === myCode) return 0; // self-segment registered both its ends here
+    const mo = (myCode >> 1) * 3;
+    const po = (partner >> 1) * 3;
+    if (mo + 2 >= dirs.length || po + 2 >= dirs.length) return 0;
+    const dot = dirs[mo] * dirs[po] + dirs[mo + 1] * dirs[po + 1] + dirs[mo + 2] * dirs[po + 2];
+    const sign = (myCode & 1) === (partner & 1) ? 1 : -1;
+    return Math.min(Math.max(-(sign * dot), 0), 1);
+  };
+
+  outIdx = 0;
+  for (let segIdx = 0; segIdx < numSegments; segIdx++) {
+    if (visibility[segIdx] === 0) continue;
+    const code = outIdx << 1;
+    outputStart[outIdx] = t1Params[segIdx] > 0 ? 1 : jointSuppression(segments[segIdx * 2], code);
+    outputEnd[outIdx] =
+      t2Params[segIdx] < 1 ? 1 : jointSuppression(segments[segIdx * 2 + 1], code | 1);
     outIdx++;
   }
 

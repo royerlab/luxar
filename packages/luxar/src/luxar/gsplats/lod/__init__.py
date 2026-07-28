@@ -24,7 +24,7 @@ dataset, and an LOD hierarchy is built only on demand.
 The convenience function :func:`make_lod_pyramid` (in
 :mod:`luxar.gsplats.lod.pyramid`) chains the two: substitutive reduction
 first (outer axis), then an additive ladder inside each substitutive
-level (inner axis). Saved to disk, the result is a single v3.2
+level (inner axis). Saved to disk, the result is a single v3.3
 node-tree ``.gsplats.zarr`` carrying the full 2-D pyramid.
 
 The :mod:`luxar.gsplats.lod.recipes` module composes these builders into

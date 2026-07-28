@@ -50,7 +50,7 @@ make check-all     # Run all quality checks
 ```
 
 `make setup-dev` automatically installs (no sudo needed):
-- Node.js 22+ via nvm (Linux) or Homebrew (macOS)
+- Node.js 20.19+ (the setup installs Node.js 22 LTS by default) via nvm (Linux) or Homebrew (macOS)
 - pnpm for TypeScript package management
 - Hatch for Python environment management
 - All project dependencies

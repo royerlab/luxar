@@ -226,7 +226,11 @@ mod tests {
         for w in in_front.windows(2) {
             // Equal keys may swap sub-bucket z order; allow one-bucket slack.
             let bucket = |z: f32| {
-                let zmin = zs.iter().cloned().filter(|&z| z < 0.0).fold(f32::INFINITY, f32::min);
+                let zmin = zs
+                    .iter()
+                    .cloned()
+                    .filter(|&z| z < 0.0)
+                    .fold(f32::INFINITY, f32::min);
                 let zmax = zs
                     .iter()
                     .cloned()

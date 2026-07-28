@@ -137,8 +137,8 @@ export function createEmptyLinesNode(
     startSharpness: new Float32Array(0),
     endSharpness: new Float32Array(0),
     segmentLengths: new Float32Array(0),
-    startClipped: new Uint8Array(0),
-    endClipped: new Uint8Array(0),
+    startCapSuppression: new Float32Array(0),
+    endCapSuppression: new Float32Array(0),
     segmentCount: 0,
   };
   // When the node carries a scalar field + colormap, declare empty

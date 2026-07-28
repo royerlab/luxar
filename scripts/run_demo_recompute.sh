@@ -3,7 +3,8 @@
 # Usage: nohup bash scripts/run_demo_recompute.sh > /tmp/demo_recompute.log 2>&1 &
 
 set -e
-cd /home/royer/PycharmProjects/luxar
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$REPO_ROOT"
 
 echo "=========================================="
 echo "$(date): Starting demo recompute sequence"

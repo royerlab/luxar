@@ -26,7 +26,7 @@ interface WasmStubs {
   interpolate_colors_batch: ReturnType<typeof vi.fn>;
   interpolate_scalars_batch: ReturnType<typeof vi.fn>;
   calculate_segment_lengths: ReturnType<typeof vi.fn>;
-  mark_clipped_endpoints: ReturnType<typeof vi.fn>;
+  compute_cap_suppression: ReturnType<typeof vi.fn>;
   compact_by_mask: ReturnType<typeof vi.fn>;
   extract_visible_cholesky_3d: ReturnType<typeof vi.fn>;
   compute_gsplats_attenuation: ReturnType<typeof vi.fn>;
@@ -57,7 +57,7 @@ async function loadWorker(): Promise<{ mod: WorkerModule; wasm: WasmStubs }> {
     interpolate_colors_batch: vi.fn(real.interpolate_colors_batch.bind(real)),
     interpolate_scalars_batch: vi.fn(real.interpolate_scalars_batch.bind(real)),
     calculate_segment_lengths: vi.fn(real.calculate_segment_lengths.bind(real)),
-    mark_clipped_endpoints: vi.fn(real.mark_clipped_endpoints.bind(real)),
+    compute_cap_suppression: vi.fn(real.compute_cap_suppression.bind(real)),
     compact_by_mask: vi.fn(real.compact_by_mask.bind(real)),
     extract_visible_cholesky_3d: vi.fn(real.extract_visible_cholesky_3d.bind(real)),
     compute_gsplats_attenuation: vi.fn(real.compute_gsplats_attenuation.bind(real)),
@@ -193,6 +193,109 @@ describe('projectLinesTo3D — happy paths', () => {
     // Arg 7: visibility Uint8Array of size segmentCount (out param).
     expect(callArgs[7]).toBeInstanceOf(Uint8Array);
     expect((callArgs[7] as Uint8Array).length).toBe(segmentCount);
+  });
+
+  it('#780 a straight polyline suppresses the cap at every INTERIOR joint and keeps it at the two free ends', async () => {
+    // End-to-end through the real projection pipeline: a 4-segment straight
+    // polyline along +x. Before the fix every interior joint kept the 0.5
+    // endpoint dip with no overlapping neighbour to add the missing half
+    // back, so thick lines rendered as a chain of beads.
+    const { mod } = await loadWorker();
+    const ndim = 3;
+    const nVerts = 5;
+    const positions = new Float32Array(nVerts * ndim);
+    for (let i = 0; i < nVerts; i++) positions[i * ndim] = i; // (i, 0, 0)
+    const segments = new Uint32Array([0, 1, 1, 2, 2, 3, 3, 4]);
+
+    const result = (await mod.workerAPI.projectLinesTo3D({
+      positions,
+      segments,
+      widths: new Float32Array(nVerts).fill(1),
+      colors: null,
+      sharpness: null,
+      scalars: null,
+      viewState: {
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0],
+        tolerance: [1e6, 1e6, 1e6],
+      },
+      ndim,
+      segmentCount: 4,
+    })) as {
+      visibleSegmentCount: number;
+      startCapSuppression: Float32Array;
+      endCapSuppression: Float32Array;
+    };
+
+    expect(result.visibleSegmentCount).toBe(4);
+    // Free start of the first segment and free end of the last keep the cap;
+    // all six interior endpoints are fully suppressed.
+    expect(Array.from(result.startCapSuppression)).toEqual([0, 1, 1, 1]);
+    expect(Array.from(result.endCapSuppression)).toEqual([1, 1, 1, 0]);
+  });
+
+  it('#780 a right-angle polyline keeps the cap at the corner (quads genuinely overlap there)', async () => {
+    const { mod } = await loadWorker();
+    const ndim = 3;
+    // v0 (0,0,0) -> v1 (1,0,0) -> v2 (1,1,0): one 90-degree turn at v1.
+    const positions = new Float32Array([0, 0, 0, 1, 0, 0, 1, 1, 0]);
+
+    const result = (await mod.workerAPI.projectLinesTo3D({
+      positions,
+      segments: new Uint32Array([0, 1, 1, 2]),
+      widths: new Float32Array(3).fill(1),
+      colors: null,
+      sharpness: null,
+      scalars: null,
+      viewState: {
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0],
+        tolerance: [1e6, 1e6, 1e6],
+      },
+      ndim,
+      segmentCount: 2,
+    })) as { startCapSuppression: Float32Array; endCapSuppression: Float32Array };
+
+    // Corner keeps the full cap — behaviour identical to before the fix.
+    expect(result.endCapSuppression[0]).toBe(0);
+    expect(result.startCapSuppression[1]).toBe(0);
+  });
+
+  it('#780 an nD-clipped endpoint still reports full suppression', async () => {
+    // A 4D polyline where the slice cuts the second segment mid-way: the cut
+    // end is not a real endpoint, so it must stay fully suppressed (the
+    // pre-existing clipped-flag contract, preserved by the new kernel).
+    const { mod } = await loadWorker();
+    const ndim = 4;
+    // dim 3 is the hidden/slicing axis. v0,v1 at w=0; v2 at w=10.
+    const positions = new Float32Array([0, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 10]);
+
+    const result = (await mod.workerAPI.projectLinesTo3D({
+      positions,
+      segments: new Uint32Array([0, 1, 1, 2]),
+      widths: new Float32Array(3).fill(1),
+      colors: null,
+      sharpness: null,
+      scalars: null,
+      viewState: {
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 0],
+        tolerance: [1e6, 1e6, 1e6, 0.5],
+      },
+      ndim,
+      segmentCount: 2,
+    })) as {
+      visibleSegmentCount: number;
+      startCapSuppression: Float32Array;
+      endCapSuppression: Float32Array;
+    };
+
+    expect(result.visibleSegmentCount).toBe(2);
+    // Segment 1 is cut by the slice → its end is clipped → suppression 1.
+    expect(result.endCapSuppression[1]).toBe(1);
+    // v1 is still a genuine straight-through joint reached by both segments.
+    expect(result.endCapSuppression[0]).toBeCloseTo(1, 6);
+    expect(result.startCapSuppression[1]).toBeCloseTo(1, 6);
   });
 
   it('scalars=null returns empty startScalars/endScalars and does not call interpolate_scalars_batch for scalars', async () => {
