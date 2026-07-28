@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import heapq
 import math
-from typing import Any, Literal, Sequence, Union
+from typing import Any, Literal
 
 import numpy as np
 from scipy import sparse
