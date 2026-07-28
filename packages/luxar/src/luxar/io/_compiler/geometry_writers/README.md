@@ -40,27 +40,27 @@ The pipelines are stateless: they read only the narrow config in the `Ctx` datac
    - Apply `ordering_data["sort_order"]` to `positions` and all non-broadcasted arrays (skip arrays with `shape[0] == 1`)
 
 4. **Write arrays**:
-   - `write_positions(positions, group, "positions", ctx.dataset_ctx, ordering_data)`
-   - `write_colors(colors, group, "colors", n_points, ctx.dataset_ctx, ordering_data)` — if `colors is not None`
-   - `write_radii(radii, group, "radii", n_points, ctx.dataset_ctx, ordering_data)` — if `radii is not None`
-   - `write_bounded_scalar(sharpness, group, "sharpness", n_points, bounds=(0, SHARPNESS_MAX), ctx.dataset_ctx, ordering_data)` — if `sharpness is not None`
-   - `write_scalars(scalars, group, "scalars", n_points, ctx.dataset_ctx, ordering_data)` — if `scalars is not None`
+   - `write_positions(group, positions, ordering_data, ctx.dataset_ctx)`
+   - `write_colors(group, colors, ordering_data, n_points, ctx.dataset_ctx)` — if `colors is not None`
+   - `write_radii(group, radii, ordering_data, n_points, ctx.dataset_ctx)` — if `radii is not None` (returns `max_radius`, which is also stamped as the `max_radius` group attr here)
+   - `write_bounded_scalar(group, sharpness, "sharpnesses", (0.0, SHARPNESS_MAX), ordering_data, n_points, ctx.dataset_ctx, "sharpness")` — if `sharpness is not None` (the written dataset name is `"sharpnesses"`)
+   - `write_scalars(group, scalars, ordering_data, n_points, ctx.dataset_ctx)` — if `scalars is not None`
 
-5. **Write labels** (CSR serialization):
-   - `write_labels_csr(labels, group, ordering_data)` — if `labels is not None`
-   - `write_image_labels_csr(image_labels, group, ordering_data)` — if `image_labels is not None`
+5. **Apply rendering defaults** + stamp attrs:
+   - `apply_default_render_attrs(attrs)` — fill `opacity=1.0`, `absorption=1.0`, `gamma=1.0`, `intensity=1.0`, `offset=0.0` (only if absent); `blending_mode` is deliberately never stamped (no identity value)
+   - `group.attrs.update(attrs)` then stamp `type="points"`, `n_points`, `has_colors` / `has_radii` / `has_sharpness` / `has_scalars` (no dim-count attr is stamped; user-supplied + default rendering attrs land via the `update(attrs)` call; `max_radius` was already stamped in step 4 when radii are present)
 
-6. **Spatial ordering metadata**:
-   - `write_points_ordering_to_zarr(group, ordering_data)` — if `ordering_data is not None`
+6. **Compute bounds**:
+   - `compute_position_bounds(positions)` → `position_bounds`, stamped as the `position_bounds` group attr and forwarded to `ctx.update_scene_bounds(...)`
 
-7. **Compute bounds**:
-   - `compute_position_bounds(positions)` → `position_bounds`
+7. **Spatial ordering metadata**:
+   - `write_points_ordering_to_zarr(group, ordering_data, ctx.compressor)` — if `ordering_data is not None` (sets `has_spatial_index`)
 
-8. **Apply rendering defaults** + stamp attrs:
-   - `apply_default_render_attrs(attrs, POINTS_RESERVED_ATTRS)` — fill `opacity=1.0`, `point_size_mode="absolute"`, `point_size_method="radius"`, `pixel_size=1.0`, `gamma=1.0`, `intensity=1.0`, `offset=0.0`, `tone_mapping=None`, `colormap=None` (only if absent); `blending_mode` is deliberately never stamped (no identity value)
-   - Stamp `type="points"`, `position_bounds`, `transform` / `nd_transform`, `n_points`, `n_dims`, `colormap`, `tone_mapping`, and all rendering attrs
+8. **Write labels** (CSR serialization; `sort_order` derived from `ordering_data`):
+   - `write_labels_csr(group, labels, n_points, ctx.compressor, sort_order)` — if `labels is not None`
+   - `write_image_labels_csr(group, image_labels, n_points, ctx.compressor, sort_order)` — if `image_labels is not None`
 
-9. **Return metadata**: `{"type": "points", "n_points": n_points, "position_bounds": position_bounds}`
+9. **Return metadata**: `{"n_points", "ndim", "path", "has_colors", "has_radii", "has_sharpness", "position_bounds"}` plus (conditionally) `max_radius`, `has_scalars`, `has_spatial_index`, `has_labels`, `has_image_labels` (no `"type"` key)
 
 ### Lines Pipeline (`write_lines`)
 
@@ -75,41 +75,42 @@ The pipelines are stateless: they read only the narrow config in the `Ctx` datac
    - `validate_broadcast_color(colors, "colors")` — if colors is a tuple/list
    - `validate_sharpness_for_writing(sharpness, n_vertices)` — arrays AND broadcast scalars
    - `validate_scalars_preflight(scalars, n_vertices)` — length check
-   - `validate_labels_for_writing(labels, n_segments)` — if `labels is not None` (labels are per-segment, not per-vertex)
+   - `validate_labels_for_writing(labels, n_vertices)` — if `labels is not None` (labels are per-vertex)
    - `prepare_transform_attrs(attrs, ctx.store)`
 
 2. **Setup**: `ctx.store.require_group(path)`
 
 3. **Convert to indexed representation**:
-   - `convert_to_indexed(vertices, line_type, indices)` → `(vertices_indexed, segments_indexed, n_segments, indices_out)`
+   - `convert_to_indexed(n_vertices, line_type, indices)` → a single `(S, 2)` uint32 `segments` array (the first arg is the vertex COUNT, not the vertices array); `n_segments = segments.shape[0]`
 
 4. **Spatial ordering** (dual-indexed: order both vertices AND segments):
-   - `build_lines_ordering(vertices, segments, widths, n_segments, n_dims, ctx.ordering_ctx, ctx.store)` → `ordering_data` or `None`
-   - Apply `ordering_data["vertex_order"]` to `vertices_indexed` and non-broadcasted vertex-count arrays
-   - Apply `ordering_data["segment_order"]` to `segments_indexed` and non-broadcasted segment-count arrays (colors, sharpness, scalars, labels)
+   - `build_lines_ordering(vertices, segments, widths, n_vertices, n_dims, n_segments, ctx.ordering_ctx, ctx.store)` → `ordering_data` or `None`
+   - Replace `vertices` / `segments` with `ordering_data["sorted_vertices"]` / `ordering_data["sorted_segments"]`
+   - Permute all non-broadcasted per-vertex arrays (widths, colors, sharpness, scalars) by `ordering_data["vertex_sort_indices"]`; labels are likewise reordered per-vertex via `vertex_sort_indices` at write time. Only `segments` itself is segment-count.
 
 5. **Write arrays**:
-   - `vertices`: `SemanticType.COORDINATE`, chunks via `calculate_intelligent_chunks`, `deduplicate=False` (raw reader)
-   - `segments`: `SemanticType.INDEX`, chunks `(ordering_chunk_size,)` if ordering present else intelligent, `deduplicate=False` (raw reader)
+   - `vertices`: `SemanticType.COORDINATE`, 2-D chunks via `calculate_intelligent_chunks`, `deduplicate=False`, `allow_lut=False` (raw reader)
+   - `segments`: `SemanticType.INDEX`, 2-D chunks `(segment_chunk_size, 2)` (from the segment ordering's `chunk_size` if ordering present, else the constant `2048`), `deduplicate=False` (raw reader)
    - `widths`: via `write_positive_scalar` (rejects negative; same default-precision policy as Points radii)
-   - `colors`, `sharpness`, `scalars`: same as Points, but per-segment instead of per-vertex
-   - `indices`: if `indices_out is not None` (from "indexed" line_type), `SemanticType.INDEX`, `deduplicate=False`
+   - `colors`, `sharpness`, `scalars`: per-vertex, same as Points
 
-6. **Write labels** (CSR serialization):
-   - `write_labels_csr(labels, group, ordering_data)` — if `labels is not None`
-   - `write_image_labels_csr(image_labels, group, ordering_data)` — if `image_labels is not None`
+   (No `indices` dataset is written — only `vertices` / `segments` / `widths` and the optional per-vertex arrays.)
 
-7. **Spatial ordering metadata**:
-   - `write_lines_ordering_to_zarr(group, ordering_data)` — if `ordering_data is not None`
+6. **Spatial ordering metadata**:
+   - `write_lines_ordering_to_zarr(group, ordering_data, ctx.compressor)` — if `ordering_data is not None` (sets `has_spatial_index`)
+
+7. **Apply rendering defaults** + stamp attrs:
+   - `apply_default_render_attrs(attrs)` — same rendering defaults as Points
+   - `group.attrs.update(attrs)` then stamp `type="lines"`, `n_vertices`, `n_segments`, `ndim`, `original_line_type`, `has_colors` / `has_sharpness` / `has_scalars`, `max_width`, ordering attrs (`ordering` / `vertex_ordering` / `segment_ordering`, or `ordering="none"`) (user + default rendering attrs land via the `update(attrs)` call)
 
 8. **Compute bounds**:
-   - `compute_position_bounds(vertices_indexed)` → `position_bounds`
+   - `compute_position_bounds(vertices)` → `position_bounds`, stamped as the `position_bounds` group attr and forwarded to `ctx.update_scene_bounds(...)`
 
-9. **Apply rendering defaults** + stamp attrs:
-   - `apply_default_render_attrs(attrs, LINES_RESERVED_ATTRS)` — same rendering defaults as Points
-   - Stamp `type="lines"`, `line_type`, `position_bounds`, `transform` / `nd_transform`, `n_segments`, `n_dims`, `colormap`, `tone_mapping`, and all rendering attrs
+9. **Write labels** (CSR serialization; `sort_order` = `ordering_data["vertex_sort_indices"]` when ordered, per-vertex):
+   - `write_labels_csr(group, labels, n_vertices, ctx.compressor, sort_order)` — if `labels is not None`
+   - `write_image_labels_csr(group, image_labels, n_vertices, ctx.compressor, sort_order)` — if `image_labels is not None`
 
-10. **Return metadata**: `{"type": "lines", "n_segments": n_segments, "position_bounds": position_bounds}`
+10. **Return metadata**: `{"n_vertices", "n_segments", "ndim", "original_line_type", "has_colors", "has_sharpness", "max_width"}` plus ordering keys and `position_bounds` (and conditionally `has_spatial_index`, `has_scalars`, `has_labels`, `has_image_labels`) — no `"type"` key
 
 ### GSplats Pipeline (`write_gsplats`)
 
@@ -123,40 +124,38 @@ The pipelines are stateless: they read only the narrow config in the `Ctx` datac
 
 3. **Spatial ordering**:
    - `barrier_dims = scene_barrier_dims(ctx.store, n_dims)` — from scene `Dimensions` metadata (discrete non-display dims), or `None` if no scene dims
-   - `apply_gsplat_spatial_ordering(centers, amplitudes, cholesky_factors, colors, n_splats, n_dims, barrier_dims, ctx.ordering_ctx, ctx.store)` → `ordering_data` or `None`
+   - `apply_gsplat_spatial_ordering(centers, amplitudes, cholesky_factors, colors, n_splats, n_dims, cholesky_is_uniform, ctx.ordering_ctx, truncation_radius, barrier_dims=scene_barrier_dims(ctx.store, n_dims))` → 5-tuple `(centers, amplitudes, cholesky_factors, colors, ordering_data)` (the `truncation_radius` from `attrs` is passed as the `coverage_sigma` arg; `ordering_data` is `None` if ordering was not applied)
 
 4. **Write arrays**:
-   - `write_gsplat_arrays(centers, amplitudes, cholesky_factors, colors, cholesky_is_uniform, n_splats, n_dims, group, ctx.dataset_ctx, ordering_data)` → `array_metadata`
+   - `write_gsplat_arrays(group, centers, amplitudes, cholesky_factors, colors, n_splats, n_dims, cholesky_is_uniform, ordering_data, ctx.dataset_ctx)` → `metadata`
 
-5. **Write labels** (CSR serialization):
-   - `write_labels_csr(labels, group, ordering_data)` — if `labels is not None`
-   - `write_image_labels_csr(image_labels, group, ordering_data)` — if `image_labels is not None`
+5. **Write labels** (CSR serialization; `sort_order` derived from `ordering_data`):
+   - `write_labels_csr(group, labels, n_splats, ctx.compressor, sort_order)` — if `labels is not None`
+   - `write_image_labels_csr(group, image_labels, n_splats, ctx.compressor, sort_order)` — if `image_labels is not None`
 
 6. **Apply rendering defaults** + stamp attrs:
-   - `apply_gsplat_group_attrs(group, attrs, n_splats, n_dims, array_metadata, ctx.store, ctx.lut_tone_mapping_warned)` → `lut_tone_mapping_warned_out`
-   - This resolves the colormap LUT, prepares/validates `transform` + `nd_transform`, fills rendering defaults (`opacity`, `absorption`, `gamma`, `intensity`, `offset`, `truncation_radius` — `blending_mode` is deliberately never stamped), then stamps authoritative `type="gsplats"` attrs and `position_bounds`
+   - `ctx.apply_gsplat_group_attrs(group, metadata, attrs)` — a bound orchestrator method returning `None`; it delegates to `apply_gsplat_group_attrs(...)` and stores the warn-once colormap-LUT flag on the orchestrator instance (it is NOT threaded through the ctx)
+   - This resolves the colormap LUT, prepares/validates `transform` + `nd_transform`, fills rendering defaults (`opacity`, `absorption`, `gamma`, `intensity`, `offset`, `truncation_radius` — `blending_mode` is deliberately never stamped), stamps authoritative `type="gsplats"` attrs, and adds `position_bounds` into `metadata`
 
-7. **Return metadata**: `{"type": "gsplats", "n_splats": n_splats, "position_bounds": array_metadata["position_bounds"], "lut_tone_mapping_warned": lut_tone_mapping_warned_out}`
+7. **Return metadata**: the `metadata` dict from `write_gsplat_arrays` — `{"n_splats", "ndim", "has_colors", "amplitude_range", "center_bounds"}` plus ordering keys, `position_bounds` (added by `apply_gsplat_group_attrs`), and conditionally `amplitude_data_range` (when `amplitudes` is a non-empty array), `has_labels` / `has_image_labels` (no `"type"` or `"lut_tone_mapping_warned"` key)
 
 ### GSplat Subtree Pipeline (`write_gsplat_leaf_subtree`)
 
-Embeds a pre-fitted `.gsplats.zarr` file (output of `luxar.gsplats.fit_gaussian_splats` or `luxar gsplat lod`) as a detached gsplat-node subtree. The heavy lifting is in `gsplat_tree.py`; this is a thin orchestrator-facing wrapper.
+Writes an in-memory `GSplatLeaf` (a single splat set or an additive ladder) into the scene. The heavy lifting is in `gsplat_tree.py`; this is a thin orchestrator-facing wrapper that seams onto `write_gsplat_leaf` — the single authoring path also used by the standalone `.gsplats.zarr` writer, so a scene additive ladder is byte-identical to a standalone one.
 
 1. **Fail-fast pre-write gate**:
-   - `validate_render_attrs(attrs, GSPLATS_RESERVED_ATTRS)`
-   - `validate_node_path(path)`
-   - `prepare_transform_attrs(attrs, ctx.store)` — runs BEFORE the subtree copy so a bad transform must not leave a partial tree
+   - `validate_render_attrs(attrs, GSPLATS_RESERVED_ATTRS)` — the only validator run here (the compiler entry already validated the path segments; `validate_node_path` and `prepare_transform_attrs` are NOT called in this path)
+   - `path = path.lstrip("/")`
 
 2. **Setup**: `ctx.store.require_group(path)`
 
-3. **Copy subtree**:
-   - `write_gsplat_node(source_group=gsplats_zarr_root, dest_group=group, ctx=ctx.ordering_ctx, colormap_lut_tone_mapping_warned=ctx.lut_tone_mapping_warned, store=ctx.store)` → `(tree_metadata, lut_tone_mapping_warned_out)`
-   - This recursively copies the tree structure, applies rendering attrs at the root, and resolves the colormap LUT
+3. **Write leaf**:
+   - `write_gsplat_leaf(group, leaf, dataset_ctx=ctx.dataset_ctx, ordering_ctx=ctx.ordering_ctx, store=ctx.store, attrs=attrs, scene_tone_mapping=ctx.scene_tone_mapping, barrier_dims=scene_barrier_dims(ctx.store, leaf.ndim))` → a single `metadata` dict
+   - This writes the leaf's arrays (single set → one leaf; ladder → `additive_<i>/` subgroups), applies rendering attrs from `attrs`, and resolves the colormap LUT
 
-4. **Stamp attrs**:
-   - Write `transform` / `nd_transform`, `colormap`, `tone_mapping`, and all rendering attrs to the root group
+4. **Update scene bounds**: `ctx.update_scene_bounds(metadata["position_bounds"])`
 
-5. **Return metadata**: `{"type": "gsplats", "n_splats": tree_metadata["n_splats"], "position_bounds": tree_metadata["position_bounds"], "lut_tone_mapping_warned": lut_tone_mapping_warned_out}`
+5. **Return metadata**: the `metadata` dict returned straight from `write_gsplat_leaf` (no `"lut_tone_mapping_warned"` key; includes `n_splats` and `position_bounds`, plus `n_additive_sublods` only when the leaf is an additive ladder — a single splat set returns straight from `_write_single_splat_set` without that key)
 
 ## Context Types
 
@@ -164,18 +163,24 @@ Embeds a pre-fitted `.gsplats.zarr` file (output of `luxar.gsplats.fit_gaussian_
 - `store: zarr.Group` — open zarr store
 - `dataset_ctx: DatasetCtx` — encoder, encoding_mode, compressor
 - `ordering_ctx: OrderingCtx` — enable_spatial_index, ordering_method
+- `compressor: CompressorLike` — scene default compressor (used by the ordering + label writers)
+- `update_scene_bounds: Callable[[Dict[str, List[float]]], None]` — scene-bounds accumulator hook
+- `write_colormap_lut: Callable[[zarr.Group, Dict[str, Any]], None]` — custom-colormap LUT writer hook
 
 **`GSplatsWriteCtx`** (GSplats):
 - `store: zarr.Group`
 - `dataset_ctx: DatasetCtx`
 - `ordering_ctx: OrderingCtx`
-- `lut_tone_mapping_warned: bool` — threaded by value (at-most-once colormap LUT + ACES tone-mapping warning)
+- `compressor: CompressorLike`
+- `scene_tone_mapping: Optional[str]` — scene tone-mapping value threaded into `write_gsplat_leaf`
+- `update_scene_bounds: Callable[[Dict[str, List[float]]], None]`
+- `apply_gsplat_group_attrs: Callable[[zarr.Group, Dict[str, Any], Dict[str, Any]], None]` — group-attrs hook that owns the warn-once colormap-LUT flag
 
 Both are frozen dataclasses built by the orchestrator and passed in by value.
 
 ## Key Invariants
 
-1. **Fail-fast pre-write gate**: All validators that do NOT need the zarr store run BEFORE `require_group(path)`, so an invalid input cannot leave a partial node on disk. Validators that need the store (image_labels, custom colormap LUT resolution inside `apply_gsplat_group_attrs`, transform/nd_transform normalization) still run post-write and can leak a partial node on failure (F7 residual — transactional/temp-dir writes are a separate project).
+1. **Fail-fast pre-write gate**: The input validators run BEFORE `require_group(path)`, so an invalid input cannot leave a partial node on disk — this deliberately includes `prepare_transform_attrs` for Points and Lines (it reads `store.attrs["scene_dimensions"]` but is still run in the gate so a bad transform can't leak a partial node). The store-dependent steps that remain post-write, and so can leak a partial node on failure, are `image_labels` writing, custom colormap-LUT resolution, and — for GSplats only — `transform` / `nd_transform` normalization (deferred inside `apply_gsplat_group_attrs`) (F7 residual — transactional/temp-dir writes are a separate project).
 
 2. **Broadcast detection**: Scalars and tuples/lists are passed through to the encoder without expansion. Arrays with `shape[0] == 1` are treated as broadcasted and are NOT reordered by spatial ordering (the encoding layer handles the broadcast).
 
@@ -185,16 +190,15 @@ Both are frozen dataclasses built by the orchestrator and passed in by value.
 
 5. **Lines dual indexing**: Lines are stored as a dual-indexed representation — `vertices` (D-space positions) and `segments` (2×D-space vertex-pair indices). The `line_type` parameter controls how the input `vertices` are interpreted (`"segments"`, `"polyline"`, `"loop"`, `"indexed"`); `convert_to_indexed` normalizes all types to the canonical indexed form. Both `vertices` and `segments` are written with `deduplicate=False` so the viewer's raw chunked-zarr reader never sees an `array_ref`.
 
-6. **Rendering defaults**: All three geometries stamp the same rendering defaults (`opacity`, `point_size_mode`, `pixel_size`, `gamma`, `intensity`, `offset`, `tone_mapping`, `colormap`) via `apply_default_render_attrs`. `blending_mode` is deliberately never stamped (it has no identity value). GSplats add `absorption` and `truncation_radius` defaults.
+6. **Rendering defaults**: Points and Lines stamp the same rendering defaults (`opacity`, `absorption`, `gamma`, `intensity`, `offset`) via `apply_default_render_attrs`. GSplats stamp the same set plus `truncation_radius` via `apply_gsplat_group_attrs` (NOT `apply_default_render_attrs`). `blending_mode` is deliberately never stamped (it has no identity value).
 
 ## Testing
 
 The geometry writers are NOT unit-tested in isolation (they have no standalone API). The shared test suites in `io/tests/` exercise them through `LuxarZarrCompiler`:
 
-- **test_compiler.py** — End-to-end scene creation with all three geometry types
-- **test_ordering_points.py** / `test_ordering_lines.py` / `test_ordering_gsplats.py` — Spatial ordering integration
-- **test_write_points.py** / `test_write_lines.py` / `test_write_gsplats.py` — Attribute encoding, broadcasting, edge cases
-- **gsplats/tests/test_io_roundtrip.py** — GSplat subtree embedding
+- **test_compiler_integration.py** / **test_compiler_improvements.py** / **test_compiler_colormap.py** / **test_compiler_nd_bounds.py** — End-to-end scene creation, colormap/LUT handling, and nD bounds
+- **test_ordering_points.py** / **test_ordering_lines.py** / **test_ordering_gsplats.py** — Spatial ordering integration
+- **gsplats/io/tests/test_save_load.py** and **gsplats/tests/test_gsplat_data_io.py** — GSplat leaf/ladder save-load round trips
 
 ## See Also
 

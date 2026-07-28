@@ -156,8 +156,8 @@ LuxarZarrCompiler.write_points(...)
 
 ## See Also
 
-- `../_ordering/compound.py` — Compound ordering core (uses these encoders)
-- `../_ordering/grid.py` — Grid normalization (prepares input for these encoders)
+- `../compound.py` — Compound ordering core (uses these encoders)
+- `../grid.py` — Grid normalization (prepares input for these encoders)
 - `../README.md` — Ordering package overview
 - `../../tests/test_ordering_properties.py` — Property-based tests
 - External dependencies: `numba` (optional, recommended), `hilbertcurve` (optional, fallback)

@@ -74,7 +74,7 @@ The mixins are NOT unit-tested in isolation (they have no standalone API). The s
 - **test_edge_cases.py** — Error paths, boundary conditions, unusual inputs
 - **test_dynamic_range.py** — Dynamic-range-based dtype selection
 
-The Cholesky certificate is exercised by gsplat end-to-end tests (`gsplats/tests/test_io_roundtrip.py`). The delta filter is verified by hand-computed byte vectors in both the Python codec (`encoding/tests/test_delta_codec.py`) and the TypeScript twin (`luxar-viewer/src/data/codecs/tests/luxar-delta.test.ts`) — kept in 1:1 sync.
+The Cholesky certificate is exercised by gsplat end-to-end tests (`gsplats/io/tests/test_save_load.py`, e.g. `test_roundtrip_dims_and_modes`). The delta filter is verified by hand-computed byte vectors in both the Python codec (`encoding/tests/test_delta_codec.py`) and the TypeScript twin (`luxar-viewer/src/tests/unit/data/codecs/luxar-delta.test.ts`) — kept in 1:1 sync.
 
 ## See Also
 

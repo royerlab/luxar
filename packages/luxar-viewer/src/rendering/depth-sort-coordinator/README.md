@@ -361,11 +361,11 @@ Every release path (empty/commutative commit, mode-switch-away, node disposal) m
 
 ### Frame-State Lifetime
 
-The per-frame render-order containers (`partitionRankCache`, `orderSlots`, `scratch`) are cleared/reset every frame and never outlive a frame. `clearRenderOrderFrameState()` runs FIRST in `evaluateDepthSortPerFrame` — before any early-return — so a disposed/dataset-switched frame can't leave them holding stale THREE object references.
+The per-frame render-order containers (`partitionRankCache`, `orderSlots`) are cleared/reset every frame and never outlive a frame. `clearRenderOrderFrameState()` resets exactly these two — it runs FIRST in `evaluateDepthSortPerFrame`, before any early-return, so a disposed/dataset-switched frame can't leave them holding stale THREE object references. `scratch` is NOT reset each frame: it is module-scoped and persistent, holding only copied matrix/vector values (no scene references), which is why it is safe to keep across frames.
 
 ### Allocation-Free Hot Path
 
-The per-frame scheduler and render-order assignment allocate no objects during steady-state operation:
+The per-frame scheduler and render-order assignment do no per-element allocation; a small O(#meshes + #wrappers) per-frame allocation (a fresh `orderSlots` array + one slot object per mesh, and a fresh `order` array + rank Map per wrapper) is intentional so disposed meshes are never pinned across frames:
 - `scratch` — lazily allocated on first use, reused every frame
 - `orderSlots` — fresh array per frame, but the array itself is cheap; the slots are plain objects
 - Per-node pose comparison — reuses `scratch.axis`, `scratch.mv`

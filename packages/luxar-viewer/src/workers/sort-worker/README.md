@@ -206,9 +206,9 @@ The worker uses the same `wasm/` module as the data workers:
 
 ### Commit Paths (geometry commits)
 
-- **GSplats**: `rendering/commit-gsplats-geometry.ts` → `noteDepthSortCommit(mesh, processed.centers3D, count)`
-- **Points**: `rendering/commit-points-geometry.ts` → `noteDepthSortCommit(mesh, () => freshCopy(data.positions), count)`
-- **Lines**: `rendering/commit-lines-geometry.ts` → `noteDepthSortCommit(mesh, () => computeSegmentMidpoints(data), count)`
+- **GSplats**: `data/scene-loader/commit/commit-gsplats-geometry.ts` → `noteDepthSortCommit(mesh, processed.centers3D, count)`
+- **Points**: `data/scene-loader/commit/commit-points-geometry.ts` → `noteDepthSortCommit(mesh, () => freshCopy(data.positions), count)`
+- **Lines**: `data/scene-loader/commit/commit-lines-geometry.ts` → `noteDepthSortCommit(mesh, () => computeSegmentMidpoints(data), count)`
 
 ### Per-Frame Scheduler (depth-sort-coordinator.ts)
 
