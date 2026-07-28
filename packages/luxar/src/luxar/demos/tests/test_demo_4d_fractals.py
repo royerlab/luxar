@@ -102,6 +102,18 @@ class TestEveryWPlanePopulated:
         positions, _ = generate_4d_fractal(fractal_type, grid_size=GRID)
         assert len(positions) <= _demo.TARGET_MAX_POINTS
 
+    @pytest.mark.parametrize("grid_size", [0, 1, 2])
+    def test_too_small_grid_rejected(self, grid_size):
+        """Below grid 3 some rules cannot populate every w-plane; the
+        generator must fail with a clear ValueError up front."""
+        with pytest.raises(ValueError, match="grid_size must be >= 3"):
+            generate_4d_fractal(0, grid_size=grid_size)
+
+    def test_minimum_grid_works_for_all_fractals(self):
+        for fractal_type in range(N_FRACTALS):
+            positions, _ = generate_4d_fractal(fractal_type, grid_size=3)
+            assert len(positions) > 0
+
 
 class TestCheckerboardIsDeterministicStructure:
     """Guards the historical failure: the parity rule degenerated to zero
