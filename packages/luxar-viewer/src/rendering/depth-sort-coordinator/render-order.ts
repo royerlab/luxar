@@ -134,8 +134,129 @@ interface OrderSlot {
   partRank: number;
   /** View-space z of the bounding-sphere center (more negative = farther). */
   viewZ: number;
+  /** View-space bounding-sphere center (finite iff `radius >= 0`). */
+  viewX: number;
+  viewY: number;
+  /** View-space bounding-sphere radius, or -1 without usable bounds. */
+  radius: number;
 }
 let orderSlots: OrderSlot[] = [];
+
+/** A per-frame order group: one partition wrapper or one single-leaf mesh. */
+interface OrderGroup {
+  slots: OrderSlot[];
+  sumZ: number;
+}
+
+/**
+ * Relative slack on the containment test: a sphere counts as containing
+ * another when `dist + rInner <= rOuter * (1 + EPS)`, so a node whose
+ * bounds graze the container's surface (footprint expansion, float
+ * round-trip through the model-view) still registers as embedded.
+ */
+const CONTAINMENT_EPS = 1e-3;
+
+/** Strict bounding-sphere containment of group `inner` inside group `outer`. */
+function groupContains(
+  outer: { x: number; y: number; z: number; r: number },
+  inner: { x: number; y: number; z: number; r: number }
+): boolean {
+  // `r > 0` on both sides excludes bounds-less members (radius -1 sentinel
+  // never aggregates above 0); strictly-greater radius makes every
+  // containment edge point large → small, so the relation cannot cycle.
+  if (outer.r <= 0 || inner.r <= 0 || outer.r <= inner.r) return false;
+  const dx = outer.x - inner.x;
+  const dy = outer.y - inner.y;
+  const dz = outer.z - inner.z;
+  const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+  return dist + inner.r <= outer.r * (1 + CONTAINMENT_EPS);
+}
+
+/**
+ * Order groups farthest-first EXCEPT that a group whose bounding sphere
+ * strictly contains another group's must draw before it (rationale in
+ * {@link assignGlobalRenderOrder}). `byDepth` arrives sorted by mean
+ * view-z; a priority topological pass (Kahn's algorithm, farthest ready
+ * group emitted first) preserves that order wherever containment allows.
+ * Group counts are tens, so the O(G²) edge scan is negligible next to
+ * the per-frame BSP traversals this module already does.
+ */
+function orderGroupsWithContainment(byDepth: OrderGroup[]): OrderGroup[] {
+  const n = byDepth.length;
+  if (n < 2) return byDepth;
+
+  // Enclosing sphere per group: centroid of member centers, radius the
+  // max center-distance + member radius (exact for the dominant
+  // single-leaf group-of-one case; a cheap upper bound for partitions).
+  const spheres = byDepth.map((group) => {
+    let x = 0;
+    let y = 0;
+    let z = 0;
+    let count = 0;
+    for (const slot of group.slots) {
+      if (slot.radius < 0) continue;
+      x += slot.viewX;
+      y += slot.viewY;
+      z += slot.viewZ;
+      count++;
+    }
+    if (count === 0) return { x: 0, y: 0, z: 0, r: -1 };
+    x /= count;
+    y /= count;
+    z /= count;
+    let r = 0;
+    for (const slot of group.slots) {
+      if (slot.radius < 0) continue;
+      const dx = slot.viewX - x;
+      const dy = slot.viewY - y;
+      const dz = slot.viewZ - z;
+      r = Math.max(r, Math.sqrt(dx * dx + dy * dy + dz * dz) + slot.radius);
+    }
+    return { x, y, z, r };
+  });
+
+  // indegree[i] = number of groups that must draw before group i.
+  const indegree = new Array<number>(n).fill(0);
+  const containsEdges: number[][] = new Array(n);
+  let anyEdge = false;
+  for (let a = 0; a < n; a++) {
+    const edges: number[] = [];
+    for (let b = 0; b < n; b++) {
+      if (a !== b && groupContains(spheres[a], spheres[b])) {
+        edges.push(b);
+        indegree[b]++;
+        anyEdge = true;
+      }
+    }
+    containsEdges[a] = edges;
+  }
+  if (!anyEdge) return byDepth;
+
+  // Kahn's algorithm; among ready groups always emit the farthest first
+  // (byDepth index order = depth order, so a linear min-scan suffices).
+  const emitted = new Array<boolean>(n).fill(false);
+  const ordered: OrderGroup[] = [];
+  for (let step = 0; step < n; step++) {
+    let pick = -1;
+    for (let i = 0; i < n; i++) {
+      if (!emitted[i] && indegree[i] === 0) {
+        pick = i;
+        break;
+      }
+    }
+    // A cycle is impossible (edges point strictly large → small radius);
+    // guard anyway so a future invariant break degrades to depth order
+    // instead of dropping meshes from the rank pass.
+    if (pick === -1) {
+      for (let i = 0; i < n; i++) if (!emitted[i]) ordered.push(byDepth[i]);
+      break;
+    }
+    emitted[pick] = true;
+    ordered.push(byDepth[pick]);
+    for (const b of containsEdges[pick]) indegree[b]--;
+  }
+  return ordered;
+}
 
 /**
  * Reset the per-frame containers. Called FIRST in
@@ -182,6 +303,16 @@ export function collectRenderOrderSlot(
   if (bs) {
     scratch.center.copy(bs.center).applyMatrix4(mv);
   }
+  // The camera transform is rigid, so the model-view scale IS the mesh's
+  // world scale — a view-space radius stays comparable across meshes.
+  const usable =
+    bs !== null &&
+    bs !== undefined &&
+    Number.isFinite(scratch.center.x) &&
+    Number.isFinite(scratch.center.y) &&
+    Number.isFinite(scratch.center.z) &&
+    Number.isFinite(bs.radius) &&
+    bs.radius >= 0;
   orderSlots.push({
     mesh,
     // Meshes sharing a partition wrapper form one order group; a
@@ -193,7 +324,10 @@ export function collectRenderOrderSlot(
     // non-finite center (NaN input data propagates into the bbox) —
     // there is no depth reference; 0 keeps the mesh comparable
     // instead of poisoning the group-sort comparators with NaN.
-    viewZ: bs && Number.isFinite(scratch.center.z) ? scratch.center.z : 0,
+    viewZ: usable ? scratch.center.z : 0,
+    viewX: usable ? scratch.center.x : 0,
+    viewY: usable ? scratch.center.y : 0,
+    radius: usable ? bs.radius * mv.getMaxScaleOnAxis() : -1,
   });
 }
 
@@ -208,12 +342,25 @@ export function collectRenderOrderSlot(
  *    for arbitrarily interleaved groups, but wrappers/leaves are normally
  *    spatially disjoint datasets, and co-located overlapping layers have
  *    no meaningful cross order anyway.
- * 3. Within a group, BSP painter ranks order the parts where a stored
+ * 3. CONTAINMENT overrides depth: when one group's bounding sphere
+ *    strictly contains another's (a small reference-marker node embedded
+ *    inside a huge cloud), NO single per-mesh order integer is correct —
+ *    the container's centroid sorts nearer than the embedded node for
+ *    ~half of all camera orientations, and an order-dependent mode
+ *    (volumetric/normal) drawn container-last multiplies the embedded
+ *    node's pixels by the container's whole transmittance ≈ erases it.
+ *    The container is forced to draw FIRST so embedded content composites
+ *    on top: under-attenuating a marker is the lesser error vs. blinking
+ *    it out entirely on camera orbit. Containment edges always point from
+ *    a strictly larger to a strictly smaller sphere, so the relation is
+ *    acyclic and the remaining freedom is still resolved farthest-first
+ *    (a priority topological order).
+ * 4. Within a group, BSP painter ranks order the parts where a stored
  *    tree exists (EXACT Fuchs–Kedem–Naylor order, any camera pose,
  *    including inside the volume — the #565 guarantee, preserved as the
  *    single-wrapper special case); otherwise members fall back to their
  *    own view-z (legacy partitions without a stored tree).
- * 4. Sequential global integers 0..M-1 are written to mesh.renderOrder.
+ * 5. Sequential global integers 0..M-1 are written to mesh.renderOrder.
  *
  * Transparent objects OUTSIDE the coordinator's sorted set (commutative
  * modes) keep renderOrder 0 and tie with the globally-farthest sorted
@@ -238,10 +385,12 @@ export function assignGlobalRenderOrder(): void {
     }
   }
 
-  // Farthest group first (ascending mean view-z: more negative = farther).
-  const ordered = [...groups.values()].sort(
+  // Farthest group first (ascending mean view-z: more negative = farther),
+  // then hoist strict bounding-sphere containers before their contents.
+  const byDepth = [...groups.values()].sort(
     (a, b) => a.sumZ / a.slots.length - b.sumZ / b.slots.length
   );
+  const ordered = orderGroupsWithContainment(byDepth);
 
   let nextRank = 0;
   for (const group of ordered) {

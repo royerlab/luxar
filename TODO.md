@@ -167,12 +167,26 @@ to ship after). Sequencing is at the bottom.
     `luxar.demos.data_fetch` helper that pulls a named dataset from a Zenodo
     record (verifying a checksum) into the cache on first run.
   - **Plan (incremental, largest-first, keeps LFS as fallback until proven):**
-    (1) shared fetch helper + a committed `demos/data/manifest.json` pinning each
+    (1) ✅ **DONE** — shared fetch helper + a committed manifest pinning each
     dataset's Zenodo record/URL + checksum + expected version; (2) create the
     "Luxar demo datasets" Zenodo deposition, upload current files; (3) repoint
     demos at the helper one at a time; (4) `git rm` the migrated files and drop
     their `.gitattributes` LFS globs. Future large datasets land as **new Zenodo
     versions**, with the manifest pinning what each Luxar release expects.
+  - **Step 1 landed.** `packages/luxar/src/luxar/demos/data_manifest.json`
+    (note: *not* under `demos/data/`, which packaging excludes wholesale) +
+    `luxar.utils.data_fetch` (`ensure_dataset`, `load_dataset_gsplats`) +
+    `scripts/gen_data_manifest.py`, gated by `hatch run check-data-manifest`.
+    All 23 datasets are classified and licensed; every record ID is still null,
+    so the fetch path is dormant and demos run off the in-repo LFS copy. No demo
+    is migrated yet.
+  - **⚠ Step 4 has a licensing trigger, not just a size one.** `gsplats_tribolium`
+    and `gsplats_acto3d_heart` are `local-compute` ("cannot redistribute even the
+    derived product") yet their fitted files are committed in LFS **today**. They
+    must be `git rm`-ed before the repo goes public, independently of the Zenodo
+    upload — and those two demos must *not* be migrated to the fetch helper (it
+    returns `None` for a `local-compute` dataset, which would silently start a
+    from-scratch GPU fit instead of loading the file that is right there).
   - **License audit — DONE (web-verified 2026-07-15).** A gsplat fit / point
     catalog is a *derived* product (lossy transform, not the raw voxels/pixels),
     which is broadly redistributable — but "derived" does **not** launder three
@@ -619,6 +633,13 @@ to ship after). Sequencing is at the bottom.
     - **nD LOD metric for non-displayed dimensions, split-seam handling, split-granularity tuning** — MISSING (`extend_to_all` governs visibility only, not LOD; granularity is `max_elements`-count-driven).
 
 26 - **Lines compiler auto-partition heuristic** (three-geometry symmetry gap, staged): `add_points` auto-partitions large clouds at the compiler level; `add_lines` does not (documented at the seam in `core/group/adders/lines.py` — the `partition=False` sentinel is already normalized for the day it's wired). Wire the same heuristic for Lines (and evaluate GSplats parity) or decide it's permanently Points-only and update the adder docs.
+
+28 - **Probed-and-parked perf backlog** (measure-first campaign 2026-07-25/26 — verdicts + calibrated revisit triggers; raw archives `~/luxar-perf-campaign/`, method + numbers in the campaign memory. Campaign shipped L1 #693 + L8 #696; rejected-by-measurement archives #690/#694/#695; do NOT rebuild any of these without re-running the probe):
+    - **OPFS segment packing — DROPPED for the probed regime.** OPFS-warm reload steps cost exactly network-cold-localhost steps (44 ms = 44 ms; 100% L2-served, decode dominates); writes are off the critical path since #574. No revisit trigger at current file-count profiles and decode costs (probe was localhost, OPFS-warm, decode-dominated) — the verdict flips only on a storage backend/browser where per-file metadata latency is a material fraction of a step, or a much higher file count per timepoint.
+    - **Decoded-f32 chunk cache — DROPPED.** Warm scrub steps already skip decode via the S-cache (23 ms); the cold-arm L0-hit share (~35%) bounds the savable dequant at ≲15 ms/step. A higher hit share saves more, but the cold−warm gap caps the whole skipped pipeline (fetch + decompress + dequant) at ≈44 − 23 ≈ 21 ms/step (44 = the cold-arm step above — same scrub loop, first pass vs revisit), so even a perfect-hit decoded-f32 cache only brings a miss step to warm-step parity (~23 ms), never below it. **Trigger: L0 (chunk) re-read hit rate ≳ 50% CONCURRENT with S-cache miss rate ≳ 50%** — order-of-magnitude re-probe gates derived from the numbers above, not measurements; no workload meeting them is known (chunks are time-local).
+    - **Post-projection cache for gsplats/lines (fold `uTruncate` into the S-cache key) — DROPPED at current scales.** Warm step ≈ 23 ms, mostly re-projection (10–19 ms; gsplat S-cache is pre-projection); saving ~15 ms/step is imperceptible. **Trigger: timepoints ≥ ~2 M splats** (cost is linear in N/tp — h2afva-class ~2.5 M/tp ⇒ ~50–60 ms/step, then this is a small, mechanical win).
+    - **Manual-scrub prefetch (t±1 during keyboard/slider nav) — CONDITIONAL, remote-only.** Local ceiling 21 ms/step (imperceptible). At `luxar serve --profile 4g`: 208 → 105 ms/step (~50%) IF dwell allows the prefetch and it wins the throttled link from background ladder deepening (shared bandwidth — a reallocation policy, not a free win). **Trigger: remote-dataset scrub UX becomes a goal** (hosted demos / shared exports over real networks).
+    - Instrument notes for whoever re-probes: the timelapse bench's perTp includes a 250–350 ms settle floor (not step latency); CDP `emulateNetworkConditions` does NOT throttle data-worker fetches — use `luxar serve --profile`; under throttle measure time-to-FIRST-commit (background deepening pollutes quiet-based metrics).
 
 ---
 

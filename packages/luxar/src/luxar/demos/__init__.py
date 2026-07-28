@@ -10,6 +10,14 @@ To run a demo:
 See demos/README.md for more information on creating new demos.
 """
 
+from ..utils.data_fetch import (
+    DatasetNotFound,
+    LocalComputeDataset,
+    dataset_spec,
+    ensure_dataset,
+    load_dataset_gsplats,
+    load_manifest,
+)
 from ..utils.demos import (
     cache_computed,
     cached_download,
@@ -36,16 +44,22 @@ from ._dependencies import (
 
 __all__ = [
     "INSTALL_SPECS",
+    "DatasetNotFound",
     "DependencySpec",
+    "LocalComputeDataset",
     "MissingDependencyError",
     "cache_computed",
     "cached_download",
     "create_lorenz_attractor",
     "create_random_spheres",
     "create_time_series_demo",
+    "dataset_spec",
     "detect_device",
+    "ensure_dataset",
     "hsv_to_rgb",
     "launch_viewer",
+    "load_dataset_gsplats",
+    "load_manifest",
     "load_precomputed_bundle",
     "load_precomputed_gsplats",
     "parse_demo_flags",
