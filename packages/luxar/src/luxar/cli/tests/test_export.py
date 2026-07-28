@@ -383,6 +383,12 @@ class TestServeScript:
             resp = urlopen(f"http://127.0.0.1:{port}/data/.zattrs", timeout=5)
             cors = resp.headers.get("Access-Control-Allow-Origin")
             assert cors is None, f"Expected no CORS header, got {cors!r}"
+
+            # Verify Cache-Control: no-cache is emitted. Without it, browsers
+            # use heuristic freshness (SimpleHTTPRequestHandler sends only
+            # Last-Modified) and serve STALE files after the folder is
+            # re-exported in place.
+            assert resp.headers.get("Cache-Control") == "no-cache"
         finally:
             proc.terminate()
             proc.wait(timeout=5)

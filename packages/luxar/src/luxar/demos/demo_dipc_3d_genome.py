@@ -397,52 +397,70 @@ def _position_gradient(base: np.ndarray, n: int) -> np.ndarray:
     return (base[None, :] * t).astype(np.float32)
 
 
-def _haplotype_segments(
+def _haplotype_geometry(
     polys: list[dict],
     hap_slot: int,
-) -> tuple[np.ndarray, np.ndarray, list[str]]:
-    """Pack one haplotype's chromosome polylines into a ``segments`` mesh.
+) -> tuple[np.ndarray, np.ndarray, list[str], np.ndarray]:
+    """Pack one haplotype's chromosome polylines into indexed line geometry.
 
-    Each chromosome's consecutive beads become independent 2-vertex segments
-    (interleaved start/end). Every vertex is 4D: the first three columns are the
-    bead's ``x, y, z`` and the fourth is ``hap_slot`` — the categorical
-    ``haplotype`` coordinate. Both endpoints of a segment share the same slot,
-    so a segment is wholly in- or out-of-slice when the viewer scrubs the
+    Each bead is authored ONCE (unique per-vertex arrays) and connectivity is an
+    explicit ``(E, 2)`` edge list — one edge per consecutive bead pair within a
+    chromosome arm, no edge across arms. Sharing the joint vertex INDEX between
+    the two edges that meet at a bead is what lets the viewer recognise the
+    joint and suppress its end caps, so a thick chromosome reads as one
+    continuous tube; duplicating the joint into two independent segment
+    endpoints (the old ``segments`` authoring) hides the joint from that test
+    and beads the curve.
+
+    Every vertex is 4D: the first three columns are the bead's ``x, y, z`` and
+    the fourth is ``hap_slot`` — the categorical ``haplotype`` coordinate. It is
+    constant along an arm, so both endpoints of every edge share the same slot
+    and an edge is wholly in- or out-of-slice when the viewer scrubs the
     non-displayed haplotype dimension. Returns ``(vertices(M,4), colors(M,3),
-    labels[M])``.
+    labels[M], edges(E,2))`` with edge indices local to the returned vertices.
     """
     vparts: list[np.ndarray] = []
     cparts: list[np.ndarray] = []
     labels: list[str] = []
+    eparts: list[np.ndarray] = []
+    offset = 0
     for p in polys:
         v = p["vertices"]
         n = len(v)
         if n < 2:
             continue
-        seg = np.empty((2 * (n - 1), 4), dtype=np.float32)
-        seg[0::2, :3] = v[:-1]
-        seg[1::2, :3] = v[1:]
-        seg[:, 3] = hap_slot  # categorical haplotype coordinate
-        col = _position_gradient(p["color"], n)
-        cseg = np.empty((2 * (n - 1), 3), dtype=np.float32)
-        cseg[0::2] = col[:-1]
-        cseg[1::2] = col[1:]
+        vert = np.empty((n, 4), dtype=np.float32)
+        vert[:, :3] = v
+        vert[:, 3] = hap_slot  # categorical haplotype coordinate
+        # This arm's chain: (0,1), (1,2), ... offset into the growing block.
+        start = np.arange(offset, offset + n - 1, dtype=np.uint32)
+        eparts.append(np.column_stack([start, start + 1]))
+        offset += n
         pos_mb = p["positions"] / 1_000_000.0
-        lab = [
+        vparts.append(vert)
+        cparts.append(_position_gradient(p["color"], n))
+        labels.extend(
             f"chr{p['chrom']}:{mb:.1f} Mb ({HAPLOTYPE_NAMES[p['haplotype']]})"
             for mb in pos_mb
-        ]
-        seglab: list[str] = [""] * (2 * (n - 1))
-        seglab[0::2] = lab[:-1]
-        seglab[1::2] = lab[1:]
-        vparts.append(seg)
-        cparts.append(cseg)
-        labels.extend(seglab)
-    return np.concatenate(vparts), np.concatenate(cparts), labels
+        )
+    if not vparts:
+        # Every arm degenerate (<2 beads) — np.concatenate([]) would raise.
+        return (
+            np.empty((0, 4), dtype=np.float32),
+            np.empty((0, 3), dtype=np.float32),
+            [],
+            np.empty((0, 2), dtype=np.uint32),
+        )
+    return (
+        np.concatenate(vparts),
+        np.concatenate(cparts),
+        labels,
+        np.concatenate(eparts),
+    )
 
 
 def build_scene(output_path: Path, polylines: list[dict]) -> int:
-    """Write the Dip-C genome scene. Returns total segment-vertex count.
+    """Write the Dip-C genome scene. Returns the total bead (vertex) count.
 
     The maternal and paternal genomes share ONE Lines node, distinguished by a
     non-displayed categorical ``haplotype`` dimension (each vertex carries its
@@ -473,19 +491,33 @@ def build_scene(output_path: Path, polylines: list[dict]) -> int:
             vparts: list[np.ndarray] = []
             cparts: list[np.ndarray] = []
             labels: list[str] = []
+            eparts: list[np.ndarray] = []
+            vertex_offset = 0
             for hap in range(len(HAPLOTYPE_NAMES)):
                 polys = [p for p in polylines if p["haplotype"] == hap]
                 if not polys:
                     continue
-                verts, colors, labs = _haplotype_segments(polys, hap)
+                verts, colors, labs, edges = _haplotype_geometry(polys, hap)
                 vparts.append(verts)
                 cparts.append(colors)
                 labels.extend(labs)
+                # Shift this haplotype's edge indices into the concatenated
+                # vertex block so both genome copies batch into ONE node.
+                eparts.append((edges + vertex_offset).astype(np.uint32))
+                vertex_offset += len(verts)
 
-            if vparts:
+            # Require actual edges, not just vertex parts: a haplotype whose
+            # arms were all degenerate contributes empty arrays, and the
+            # indexed writer rejects an empty edge list.
+            if vparts and any(len(e) for e in eparts):
                 all_verts = np.concatenate(vparts)
                 all_colors = np.concatenate(cparts)
+                all_edges = np.concatenate(eparts)
                 # One Lines node sliced by the non-displayed `haplotype` dim.
+                # Indexed authoring: unique per-bead vertices + an explicit
+                # edge list, so interior joints share their vertex index and
+                # the viewer draws continuous chromosome tubes (see
+                # `_haplotype_geometry`).
                 # extend_to_all=[] is explicit: the genome copies live at their
                 # own haplotype coordinate and must be culled off-slice, NOT
                 # broadcast to every slice.
@@ -495,7 +527,8 @@ def build_scene(output_path: Path, polylines: list[dict]) -> int:
                     widths=0.006,
                     colors=all_colors,
                     labels=labels,
-                    line_type="segments",
+                    indices=all_edges,
+                    line_type="indexed",
                     sharpness=0.5,
                     opacity=0.95,
                     intensity=0.6,
