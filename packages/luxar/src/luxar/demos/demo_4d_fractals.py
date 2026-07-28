@@ -5,19 +5,25 @@ This demo demonstrates:
 - Simple 4D geometric fractals (XOR, Menger, Sierpinski, etc.)
 - Categorical dimension (select different fractal patterns)
 - 4th spatial dimension (W) navigation showing fractal slices
-- Large dataset (~100M+ points) with spatial indexing
-- Only ~1M points visible per configuration
+- Millions of points with spatial indexing, ~1M visible per configuration
 - Complete workflow: generate → serve → view → cleanup
 
 Mathematical Background:
-    Geometric fractals use simple rules applied to 4D grids:
+    Geometric fractals use simple rules applied to 4D grids. All rules are
+    evaluated on integer grid indices (or ternary cell coordinates derived
+    from them), and every rule is chosen so that EVERY w-slice of the 4D
+    set is non-empty — the w slider always shows structure:
 
-    - XOR Fractal: (x⊕y⊕z⊕w) creates self-similar patterns from bitwise XOR
-    - Menger Sponge 4D: Recursive cube subdivision with holes
-    - Sierpinski 4D: Points where (x+y+z+w) satisfies modular arithmetic
-    - Cantor Dust 4D: Product of 1D Cantor sets in each dimension
-    - Checkerboard: (x+y+z+w) mod 2 creates hypercheckerboard
-    - Diamond: |x|+|y|+|z|+|w| creates symmetric patterns
+    - XOR Fractal: high values of (x⊕y⊕z⊕w) form self-similar shells
+    - Menger Sponge 4D: recursive hypercube, holes where ≥2 ternary
+      digits are in the middle third
+    - Sierpinski 4D: no THREE coordinates share a common binary bit
+      (the triple-AND condition) — w morphs a carved cube into a sparse
+      Sierpinski-simplex-like dust
+    - Cantor Dust 4D: 3D Cantor dust in (x,y,z) whose recursion depth
+      grows with w — scrubbing w plays the Cantor construction
+    - Hypercheckerboard: odd parity of 4D cell coordinates
+    - Diamond Fractal: thin concentric L1-distance (taxicab) shells
 
 Performance:
     - INSTANT generation - simple conditions, no iteration
@@ -29,7 +35,7 @@ Usage:
 
 Controls:
     - Press '1' to select FRACTAL TYPE, then [/] to switch fractals
-    - Press '5' to select W dimension, then [/] to navigate 4D slices
+    - Press '2' to select W dimension, then [/] to navigate 4D slices
     - Ctrl+C to stop
 """
 
@@ -60,167 +66,258 @@ from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.demos import launch_viewer
 from luxar.utils.paths import get_demos_output_dir
 
+# Per-fractal point budget. Rules that keep more than this are uniformly
+# subsampled (seeded), which preserves the per-w-plane density profile.
+TARGET_MAX_POINTS = 1_500_000
 
-def xor_fractal_4d(
-    W: np.ndarray, X: np.ndarray, Y: np.ndarray, Z: np.ndarray
-) -> np.ndarray:
-    """XOR fractal: (w⊕x⊕y⊕z) creates beautiful self-similar patterns.
+
+def axis_world_values(grid_size: int) -> np.ndarray:
+    """World coordinate of each grid index, on the viewer's snap grid.
+
+    The viewer snaps discrete-dimension navigation to exact multiples of
+    ``step`` (anchored at 0, not at the range minimum) and only fetches
+    chunks within 0.25×step of the snapped position. Placing every data
+    plane at ``k × step`` with ``step = 2/grid_size`` guarantees each
+    slider stop lands exactly on a data plane.
 
     Args:
-        W, X, Y, Z: Integer coordinate grids
+        grid_size: Number of samples per axis
 
     Returns:
-        XOR values (for coloring)
+        Float64 array of world coordinates in [-1, 1), exact step multiples
     """
-    # Convert to integers and compute bitwise XOR
-    wi: np.ndarray = W.astype(np.int32)
-    xi: np.ndarray = X.astype(np.int32)
-    yi: np.ndarray = Y.astype(np.int32)
-    zi: np.ndarray = Z.astype(np.int32)
+    step = 2.0 / grid_size
+    k = np.arange(grid_size) - grid_size // 2
+    return k * step
 
-    result = wi ^ xi ^ yi ^ zi
-    return result  # type: ignore[no-any-return]
+
+def xor_fractal_4d(
+    IW: np.ndarray, IX: np.ndarray, IY: np.ndarray, IZ: np.ndarray, grid_size: int
+) -> tuple[np.ndarray, np.ndarray]:
+    """XOR fractal: high values of (w⊕x⊕y⊕z) form self-similar shells.
+
+    For any fixed w, ``w ⊕ (x⊕y⊕z)`` still spans (almost) the full value
+    range, so the kept top-quartile is present in every w-slice.
+
+    Args:
+        IW, IX, IY, IZ: Integer grid-index arrays
+        grid_size: Grid resolution
+
+    Returns:
+        Tuple of (keep mask, color values)
+    """
+    values = IW ^ IX ^ IY ^ IZ
+    threshold = np.percentile(values, 75)
+    keep = values >= threshold
+    return keep, values
 
 
 def menger_sponge_4d(
-    W: np.ndarray, X: np.ndarray, Y: np.ndarray, Z: np.ndarray, level: int = 3
-) -> np.ndarray:
+    IW: np.ndarray,
+    IX: np.ndarray,
+    IY: np.ndarray,
+    IZ: np.ndarray,
+    grid_size: int,
+    level: int = 3,
+) -> tuple[np.ndarray, np.ndarray]:
     """4D Menger sponge - recursive hypercube with holes.
 
+    Grid indices are mapped to ternary cell coordinates in [0, 3^level);
+    a point is a hole if, at any recursion level, two or more of its four
+    ternary digits are in the middle third. Every w-slice is solid
+    somewhere: whatever digits w has, (x, y, z) cells with no middle
+    digits always survive.
+
     Args:
-        W, X, Y, Z: Coordinate grids (scaled to [0, 3^level])
+        IW, IX, IY, IZ: Integer grid-index arrays
+        grid_size: Grid resolution
         level: Recursion depth
 
     Returns:
-        Boolean mask (True = solid, False = hole)
+        Tuple of (keep mask, color values = shallowest near-hole level)
     """
-    # Scale to [0, 3^level]
     scale = 3**level
-    wi = ((W + 1) * scale / 2).astype(np.int32) % scale
-    xi = ((X + 1) * scale / 2).astype(np.int32) % scale
-    yi = ((Y + 1) * scale / 2).astype(np.int32) % scale
-    zi = ((Z + 1) * scale / 2).astype(np.int32) % scale
+    tw = (IW * scale) // grid_size
+    tx = (IX * scale) // grid_size
+    ty = (IY * scale) // grid_size
+    tz = (IZ * scale) // grid_size
 
-    # Check if in hole at any level
-    solid = np.ones(W.shape, dtype=bool)
+    solid = np.ones(IW.shape, dtype=bool)
+    # Color: the coarsest level at which the point sits next to a hole
+    # (exactly one middle digit) — paints the recursive surface structure.
+    depth = np.zeros(IW.shape, dtype=np.int8)
 
     for lev in range(level):
-        div = 3**lev
-        # Count how many coords are in middle third
-        wm = (wi // div) % 3 == 1
-        xm = (xi // div) % 3 == 1
-        ym = (yi // div) % 3 == 1
-        zm = (zi // div) % 3 == 1
+        div = 3 ** (level - 1 - lev)  # coarsest subdivision first
+        wm = (tw // div) % 3 == 1
+        xm = (tx // div) % 3 == 1
+        ym = (ty // div) % 3 == 1
+        zm = (tz // div) % 3 == 1
 
-        # Hole if 2 or more coords in middle third
-        middle_count = wm.astype(int) + xm.astype(int) + ym.astype(int) + zm.astype(int)
+        middle_count = wm.astype(np.int8) + xm.astype(np.int8) + ym.astype(np.int8) + zm
         solid &= middle_count < 2
+        depth = np.where((depth == 0) & (middle_count == 1), lev + 1, depth)
 
-    return solid.astype(np.int16)  # type: ignore[no-any-return]
+    return solid, depth
 
 
 def sierpinski_4d(
-    W: np.ndarray, X: np.ndarray, Y: np.ndarray, Z: np.ndarray
-) -> np.ndarray:
-    """4D Sierpinski - points where (w&x&y&z)==0 in binary.
+    IW: np.ndarray, IX: np.ndarray, IY: np.ndarray, IZ: np.ndarray, grid_size: int
+) -> tuple[np.ndarray, np.ndarray]:
+    """4D Sierpinski: no three coordinates share a common binary bit.
+
+    The triple-AND condition (the 4D analogue of the Sierpinski
+    tetrahedron's pairwise condition, one rung denser so a 50^4 grid
+    stays visibly populated). At w=0 it reduces to the 3D condition
+    (x&y&z)==0 (a carved cube); as w gains bits the slice thins towards
+    a sparse simplex dust — but never empties, since (x, y, z) with
+    pairwise-disjoint bits satisfy the condition for ANY w.
 
     Args:
-        W, X, Y, Z: Integer coordinate grids
+        IW, IX, IY, IZ: Integer grid-index arrays
+        grid_size: Grid resolution
 
     Returns:
-        Sierpinski values
+        Tuple of (keep mask, color values = popcount of OR, a depth proxy)
     """
-    wi: np.ndarray = W.astype(np.int32)
-    xi: np.ndarray = X.astype(np.int32)
-    yi: np.ndarray = Y.astype(np.int32)
-    zi: np.ndarray = Z.astype(np.int32)
+    triple = (IW & IX & IY) | (IW & IX & IZ) | (IW & IY & IZ) | (IX & IY & IZ)
+    keep = triple == 0
 
-    # Sierpinski condition: bitwise AND of all coordinates
-    result = (wi & xi & yi & zi) == 0
-    return result.astype(np.int16)  # type: ignore[no-any-return]
+    combined = IW | IX | IY | IZ
+    n_bits = max(1, int(np.ceil(np.log2(grid_size))))
+    values = np.zeros(IW.shape, dtype=np.int8)
+    for b in range(n_bits):
+        values += ((combined >> b) & 1).astype(np.int8)
+
+    return keep, values
 
 
 def cantor_dust_4d(
-    W: np.ndarray, X: np.ndarray, Y: np.ndarray, Z: np.ndarray, level: int = 4
-) -> np.ndarray:
-    """4D Cantor dust - product of Cantor sets.
+    IW: np.ndarray,
+    IX: np.ndarray,
+    IY: np.ndarray,
+    IZ: np.ndarray,
+    grid_size: int,
+    max_level: int = 4,
+    rng: np.random.Generator | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Cantor dust whose recursion depth grows along w.
+
+    A TRUE 4D Cantor dust (product of four Cantor sets) is empty on ~80%
+    of w-slices — the middle thirds removed along w — which makes the w
+    slider mostly blank. Instead this shows the 3D Cantor dust in
+    (x, y, z) at a recursion depth that increases with w, from depth 1
+    (coarse 2/3-blocks) to ``max_level`` (fine dust). Fractional depths
+    fade the about-to-be-removed blocks by random subsampling, so every
+    single w step visibly advances the construction.
 
     Args:
-        W, X, Y, Z: Coordinate grids
-        level: Recursion depth
+        IW, IX, IY, IZ: Integer grid-index arrays
+        grid_size: Grid resolution
+        max_level: Deepest recursion level (reached at w max)
+        rng: Seeded generator for the fractional-depth fade
 
     Returns:
-        Boolean mask
+        Tuple of (keep mask, color values = per-point survival depth)
     """
-    # Scale to [0, 3^level]
-    scale = 3**level
-    wi = ((W + 1) * scale / 2).astype(np.int32)
-    xi = ((X + 1) * scale / 2).astype(np.int32)
-    yi = ((Y + 1) * scale / 2).astype(np.int32)
-    zi = ((Z + 1) * scale / 2).astype(np.int32)
+    if rng is None:
+        rng = np.random.default_rng(0)
+    scale = 3**max_level
 
-    # Check if in Cantor set for each dimension
-    def in_cantor(coord, lev):  # type: ignore[no-untyped-def]
-        in_set = np.ones(coord.shape, dtype=bool)
-        for level_idx in range(lev):
-            div = 3**level_idx
-            in_set &= ((coord // div) % 3) != 1  # Not in middle third
-        return in_set
+    def survival(idx: np.ndarray) -> np.ndarray:
+        """Deepest level whose ternary digit avoids the middle third."""
+        c = (idx * scale) // grid_size
+        surv = np.full(idx.shape, max_level, dtype=np.int8)
+        # Finest level first so coarser failures override (a point removed
+        # at level 1 has survival 0 no matter its finer digits).
+        for lev in range(max_level, 0, -1):
+            digit = (c // 3 ** (max_level - lev)) % 3
+            surv = np.where(digit == 1, lev - 1, surv).astype(np.int8)
+        return surv
 
-    # Point is in 4D Cantor dust if in Cantor set in all 4 dimensions
-    result = (
-        in_cantor(wi, level)
-        & in_cantor(xi, level)
-        & in_cantor(yi, level)
-        & in_cantor(zi, level)
-    )
-    return result.astype(np.int16)  # type: ignore[no-any-return]
+    sp = np.minimum(np.minimum(survival(IX), survival(IY)), survival(IZ))
+
+    # Depth shown at each w-plane: 1 → max_level across the w range.
+    t = 1.0 + (max_level - 1.0) * IW / max(1, grid_size - 1)
+    t_floor = np.floor(t)
+    frac = t - t_floor
+
+    keep = sp >= np.ceil(t)
+    fading = (sp == t_floor) & (frac > 0)
+    if fading.any():
+        u = rng.random(IW.shape, dtype=np.float32)
+        keep |= fading & (u >= frac)
+
+    return keep, sp
 
 
 def checkerboard_4d(
-    W: np.ndarray, X: np.ndarray, Y: np.ndarray, Z: np.ndarray, scale: int = 2
-) -> np.ndarray:
-    """4D hypercheckerboard pattern.
+    IW: np.ndarray,
+    IX: np.ndarray,
+    IY: np.ndarray,
+    IZ: np.ndarray,
+    grid_size: int,
+    cells: int = 5,
+) -> tuple[np.ndarray, np.ndarray]:
+    """4D hypercheckerboard: odd-parity cells of a cells^4 grid.
+
+    Exactly half the cells of every w-slice are lit, and the lit pattern
+    inverts each time w crosses a cell boundary.
 
     Args:
-        W, X, Y, Z: Coordinate grids
-        scale: Checker size
+        IW, IX, IY, IZ: Integer grid-index arrays
+        grid_size: Grid resolution
+        cells: Checker cells per axis
 
     Returns:
-        Pattern values
+        Tuple of (keep mask, color values = 4D cell diagonal index)
     """
-    wi: np.ndarray = (W * scale).astype(np.int32)
-    xi: np.ndarray = (X * scale).astype(np.int32)
-    yi: np.ndarray = (Y * scale).astype(np.int32)
-    zi: np.ndarray = (Z * scale).astype(np.int32)
+    cw = (IW * cells) // grid_size
+    cx = (IX * cells) // grid_size
+    cy = (IY * cells) // grid_size
+    cz = (IZ * cells) // grid_size
 
-    result = (wi + xi + yi + zi) % 2
-    return result  # type: ignore[no-any-return]
+    diag = cw + cx + cy + cz
+    keep = diag % 2 == 1
+    return keep, diag
 
 
 def diamond_fractal_4d(
-    W: np.ndarray, X: np.ndarray, Y: np.ndarray, Z: np.ndarray
-) -> np.ndarray:
-    """4D diamond/taxicab fractal based on L1 distance.
+    IW: np.ndarray,
+    IX: np.ndarray,
+    IY: np.ndarray,
+    IZ: np.ndarray,
+    grid_size: int,
+    shells_per_unit: float = 2.5,
+    duty: float = 0.35,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Concentric L1-distance (taxicab) shells in world coordinates.
+
+    Keeps thin shells where the fractional part of ``dist × shells_per_unit``
+    is below ``duty``. Any w-slice spans ≥3 units of L1 distance, so it
+    always cuts through many shells; growing |w| sweeps the shells inward.
 
     Args:
-        W, X, Y, Z: Coordinate grids
+        IW, IX, IY, IZ: Integer grid-index arrays
+        grid_size: Grid resolution
+        shells_per_unit: Shell spatial frequency
+        duty: Kept fraction of each shell period (shell thickness)
 
     Returns:
-        Distance-based pattern values
+        Tuple of (keep mask, color values = shell index)
     """
-    # L1 distance from origin
-    dist = np.abs(W) + np.abs(X) + np.abs(Y) + np.abs(Z)
+    axis = np.abs(axis_world_values(grid_size)).astype(np.float32)
+    dist = axis[IW] + axis[IX] + axis[IY] + axis[IZ]
 
-    # Create fractal pattern from distance
-    result = (dist * 5).astype(np.int32) % 7
-
-    return result  # type: ignore[no-any-return]
+    phase = dist * shells_per_unit
+    keep = (phase % 1.0) < duty
+    values = phase.astype(np.int16)
+    return keep, values
 
 
 def generate_4d_fractal(
     fractal_type: int,
-    grid_size: int = 100,
+    grid_size: int = 50,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Generate one 4D geometric fractal on a grid (FAST - no iteration!).
 
@@ -230,30 +327,35 @@ def generate_4d_fractal(
 
     Returns:
         Tuple of (positions, values) for points in the fractal
+
+    Raises:
+        RuntimeError: If any w-plane of the fractal is empty (every slider
+            stop must show structure — this is the demo's core contract).
     """
     aprint(f"  Grid: {grid_size}^4 = {grid_size**4:,} points")
 
-    # Create integer grid for geometric fractals
     aprint("  Creating 4D integer grid...")
     coords_int = np.arange(grid_size, dtype=np.int32)
-
-    # Create meshgrid efficiently
-    W, X, Y, Z = np.meshgrid(
+    IW, IX, IY, IZ = np.meshgrid(
         coords_int, coords_int, coords_int, coords_int, indexing="ij"
     )
 
-    # Fractal type computation (INSTANT - just simple conditions!)
+    rng = np.random.default_rng(42 + fractal_type)
+
     fractal_funcs = {
         0: ("XOR Fractal", xor_fractal_4d),
         1: (
             "Menger Sponge 4D",
-            lambda w, x, y, z: menger_sponge_4d(w, x, y, z, level=3),
+            lambda w, x, y, z, n: menger_sponge_4d(w, x, y, z, n, level=3),
         ),
         2: ("Sierpinski 4D", sierpinski_4d),
-        3: ("Cantor Dust 4D", lambda w, x, y, z: cantor_dust_4d(w, x, y, z, level=4)),
+        3: (
+            "Cantor Dust 4D",
+            lambda w, x, y, z, n: cantor_dust_4d(w, x, y, z, n, max_level=4, rng=rng),
+        ),
         4: (
             "Hypercheckerboard",
-            lambda w, x, y, z: checkerboard_4d(w, x, y, z, scale=4),
+            lambda w, x, y, z, n: checkerboard_4d(w, x, y, z, n, cells=5),
         ),
         5: ("Diamond Fractal", diamond_fractal_4d),
     }
@@ -261,94 +363,50 @@ def generate_4d_fractal(
     fractal_name, fractal_func = fractal_funcs[fractal_type]
     aprint(f"  Computing {fractal_name}...")
 
-    # Compute fractal values (VERY FAST - no iteration!)
-    values = fractal_func(W, X, Y, Z)
+    keep_mask, values = fractal_func(IW, IX, IY, IZ, grid_size)
 
-    # VALUE-BASED thresholding per fractal type
-    # Calculate target density to stay under 2M points
-    target_max = 2_000_000
-    target_density = target_max / grid_size**4  # ~2%
+    # Uniform seeded subsample above the budget: preserves the per-w-plane
+    # density profile (unlike value/coordinate thresholds, which can empty
+    # entire regions of the w axis).
+    n_kept = int(np.sum(keep_mask))
+    if n_kept > TARGET_MAX_POINTS:
+        flat_idx = np.flatnonzero(keep_mask)
+        selected = rng.choice(flat_idx, size=TARGET_MAX_POINTS, replace=False)
+        keep_mask = np.zeros(keep_mask.shape, dtype=bool)
+        keep_mask.ravel()[selected] = True
+        aprint(f"    Subsampled {n_kept:,} → {TARGET_MAX_POINTS:,} points")
 
-    if fractal_type == 0:  # XOR - threshold on XOR value
-        # Keep points with high XOR values (most interesting patterns)
-        # Aim for top 2% of grid
-        threshold_percentile = max(50, (1 - target_density) * 100)
-        threshold = np.percentile(values, threshold_percentile)
-        keep_mask = values >= threshold
-        aprint(
-            f"    XOR threshold: {threshold:.0f} (top {100 - threshold_percentile:.1f}%)"
+    # Contract check: every w-plane (= every slider stop) must be non-empty.
+    per_plane = np.bincount(IW[keep_mask].ravel(), minlength=grid_size)
+    if (per_plane == 0).any():
+        empty_planes = np.flatnonzero(per_plane == 0).tolist()
+        raise RuntimeError(
+            f"{fractal_name}: empty w-planes {empty_planes} — every slider "
+            f"stop must show structure"
         )
-
-    elif fractal_type == 1:  # Menger - keep solid, already sparse
-        keep_mask = values > 0
-
-    elif fractal_type == 2:  # Sierpinski - threshold on point count if needed
-        initial_mask = values > 0
-        n_initial: int = int(np.sum(initial_mask))
-        if n_initial > target_max:
-            # For Sierpinski, use distance from origin to threshold
-            dist = np.sqrt(W**2 + X**2 + Y**2 + Z**2)
-            # Keep points with intermediate distances (most interesting)
-            dist_valid = dist[initial_mask]
-            threshold_percentile = (1 - target_max / n_initial) * 100
-            threshold = np.percentile(dist_valid, threshold_percentile)
-            keep_mask = initial_mask & (dist >= threshold)
-            aprint(f"    Sierpinski distance threshold: {threshold:.2f}")
-        else:
-            keep_mask = initial_mask
-
-    elif fractal_type == 3:  # Cantor - already very sparse
-        keep_mask = values > 0
-
-    elif fractal_type == 4:  # Checkerboard - threshold on parity
-        # Only keep "1" values, and if still too many, subsample by position
-        initial_mask = values > 0
-        n_initial = np.sum(initial_mask)
-        if n_initial > target_max:
-            # Keep points where (W+X+Y+Z) > threshold
-            sum_coords = (W + X + Y + Z)[initial_mask]
-            threshold_percentile = (1 - target_max / n_initial) * 100
-            threshold = np.percentile(sum_coords, threshold_percentile)
-            keep_mask = initial_mask & ((W + X + Y + Z) >= threshold)
-            aprint(f"    Checkerboard coordinate sum threshold: {threshold:.0f}")
-        else:
-            keep_mask = initial_mask
-
-    else:  # Diamond - threshold on distance value
-        # Keep points with high L1 distance (outer shells)
-        threshold_percentile = max(50, (1 - target_density) * 100)
-        threshold = np.percentile(values, threshold_percentile)
-        keep_mask = values >= threshold
-        aprint(
-            f"    Diamond distance threshold: {threshold:.0f} (top {100 - threshold_percentile:.1f}%)"
-        )
-
-    n_points_final: int = int(np.sum(keep_mask))
     aprint(
-        f"    ✓ Kept: {n_points_final:,} points ({n_points_final / grid_size**4 * 100:.2f}% density)"
+        f"    Per-w-plane points: min={per_plane.min():,} "
+        f"median={int(np.median(per_plane)):,} max={per_plane.max():,}"
     )
 
-    # Safety check
-    if np.sum(keep_mask) == 0:
-        aprint("    ⚠️  No points - using fallback")
-        # Keep random 1M points
-        n_fallback = min(1_000_000, grid_size**4)
-        indices = np.random.choice(grid_size**4, n_fallback, replace=False)
-        keep_mask_flat = np.zeros(grid_size**4, dtype=bool)
-        keep_mask_flat[indices] = True
-        keep_mask = keep_mask_flat.reshape(keep_mask.shape)
+    n_points_final = int(np.sum(keep_mask))
+    aprint(
+        f"    ✓ Kept: {n_points_final:,} points "
+        f"({n_points_final / grid_size**4 * 100:.2f}% density)"
+    )
 
-    # Convert to world coordinates [-1, 1]
-    w_coords = (W[keep_mask].astype(np.float32) / grid_size - 0.5) * 2
-    x_coords = (X[keep_mask].astype(np.float32) / grid_size - 0.5) * 2
-    y_coords = (Y[keep_mask].astype(np.float32) / grid_size - 0.5) * 2
-    z_coords = (Z[keep_mask].astype(np.float32) / grid_size - 0.5) * 2
+    # Convert to world coordinates — the SAME mapping the w Dimension
+    # declares, so slider stops land exactly on data planes.
+    axis = axis_world_values(grid_size).astype(np.float32)
+    w_coords = axis[IW[keep_mask]]
+    x_coords = axis[IX[keep_mask]]
+    y_coords = axis[IY[keep_mask]]
+    z_coords = axis[IZ[keep_mask]]
 
     positions = np.column_stack([w_coords, x_coords, y_coords, z_coords])
     pattern_values = values[keep_mask]
 
     aprint(f"  ✓ {fractal_name}: {len(positions):,} points")
-    aprint(f"    Density: {len(positions) / grid_size**4 * 100:.2f}% of grid")
 
     return positions, pattern_values
 
@@ -387,13 +445,13 @@ def pattern_values_to_colors(values: np.ndarray) -> np.ndarray:
 
 def generate_4d_fractal_dataset(
     output_path: Path,
-    grid_size: int = 100,
+    grid_size: int = 50,
 ) -> int:
     """Generate complete 4D fractal dataset with multiple types.
 
     Args:
         output_path: Where to write zarr
-        grid_size: Grid resolution (default 100 → 1M points per 3D slice)
+        grid_size: Grid resolution (default 50 → up to 1.5M points per fractal)
 
     Returns:
         Total points generated
@@ -450,10 +508,15 @@ def generate_4d_fractal_dataset(
 
         aprint(f"✓ Total points: {len(positions_5d):,}")
         aprint(f"  Per fractal: {len(positions_5d) // 6:,} avg")
-        aprint(f"  Per 3D slice: ~{grid_size**3:,} points")
 
     # Write to Zarr
     with asection("Writing to Zarr"):
+        # The w Dimension must mirror the data exactly: planes sit at
+        # k × step (step = 2/grid_size), the viewer's discrete-dim snap
+        # grid, and the range ends on the first/last data plane.
+        axis = axis_world_values(grid_size)
+        w_step = 2.0 / grid_size
+
         dims = Dimensions(
             [
                 Dimension(
@@ -473,15 +536,15 @@ def generate_4d_fractal_dataset(
                 Dimension(
                     "w",
                     unit="",
-                    range=(-2.5, 2.5),
-                    step=5.0 / grid_size,
+                    range=(float(axis[0]), float(axis[-1])),
+                    step=w_step,
                     display=False,
-                    discrete=False,
+                    discrete=True,
                     description="4th spatial dimension (navigate to see slices!)",
                 ),
-                Dimension("x", unit="", range=(-2.5, 2.5), display=True),
-                Dimension("y", unit="", range=(-2.5, 2.5), display=True),
-                Dimension("z", unit="", range=(-2.5, 2.5), display=True),
+                Dimension("x", unit="", range=(-1.0, 1.0), display=True),
+                Dimension("y", unit="", range=(-1.0, 1.0), display=True),
+                Dimension("z", unit="", range=(-1.0, 1.0), display=True),
             ]
         )
 
@@ -536,7 +599,7 @@ def generate_4d_fractal_dataset(
 
             # Info
             scene.add_text(
-                "6 fractal types \u2022 4D space",
+                "6 fractal types • 4D space",
                 position=(0.98, 0.97),
                 font_size=0.015,
                 anchor="bottom-right",
@@ -552,9 +615,10 @@ def generate_4d_fractal_dataset(
 def main() -> None:
     """Main demo entry point."""
     # Parse arguments
-    # NOTE: grid_size=100 creates 57M+ points and 31K+ chunks, which overwhelms
-    # browser HTTP connection limits. grid_size=50 gives ~6M points (~3K chunks).
-    grid_size = 50  # 50^4 = 6.25M per fractal max, ~1M after filtering
+    # NOTE: grid_size=100 creates far more points and chunks, which can
+    # overwhelm browser HTTP connection limits. grid_size=50 keeps each
+    # fractal at or under the 1.5M point budget.
+    grid_size = 50
 
     if len(sys.argv) > 1:
         for arg in sys.argv[1:]:
@@ -565,17 +629,17 @@ def main() -> None:
     aprint("4D FRACTAL EXPLORER DEMO")
     aprint("=" * 70)
     aprint("")
-    aprint("Explore 6 different 4D fractals in quaternion space!")
+    aprint("Explore 6 different 4D geometric fractals!")
     aprint(f"Grid: {grid_size}^4 = {grid_size**4:,} samples per fractal")
-    aprint(f"Visible per slice: ~{grid_size**3:,} points (up to ~1M per fractal)")
+    aprint(f"Candidate points per 3D slice: ~{grid_size**3:,}")
     aprint("")
     aprint("Fractal types:")
-    aprint("  0: XOR Fractal - Bitwise XOR creates self-similar patterns")
+    aprint("  0: XOR Fractal - Bitwise XOR creates self-similar shells")
     aprint("  1: 4D Menger Sponge - Recursive hypercube with holes")
-    aprint("  2: 4D Sierpinski - Bitwise AND condition")
-    aprint("  3: 4D Cantor Dust - Product of Cantor sets")
-    aprint("  4: 4D Hypercheckerboard - Alternating pattern")
-    aprint("  5: 4D Diamond Fractal - L1 distance patterns")
+    aprint("  2: 4D Sierpinski - No 3 coordinates share a binary bit")
+    aprint("  3: 4D Cantor Dust - Recursion depth grows along w")
+    aprint("  4: 4D Hypercheckerboard - Alternating parity cells")
+    aprint("  5: 4D Diamond Fractal - Concentric taxicab shells")
     aprint("")
     aprint("⏱️  Generation time: ~10-30 seconds for all 6 fractals")
     aprint("   (No iteration - instant geometric computation!)")
@@ -605,13 +669,13 @@ def main() -> None:
         aprint("     Press ']' to cycle through 6 different fractals")
         aprint("     Each has unique 4D structure!")
         aprint("")
-        aprint("  2. Press '5' → Select W dimension")
+        aprint("  2. Press '2' → Select W dimension")
         aprint("     Press '['/']' to navigate through 4D slices")
-        aprint("     See how the fractal changes in the 4th dimension!")
+        aprint("     Every stop shows structure - watch it evolve!")
         aprint("")
         aprint("What you're seeing:")
         aprint("  • 3D slices through 4D fractals")
-        aprint("  • Colors show iteration depth (complexity)")
+        aprint("  • Colors show local structure (depth, shell, parity)")
         aprint("  • Navigate W to see how structure evolves")
         aprint("  • Switch fractal type to compare geometries")
         aprint("")
