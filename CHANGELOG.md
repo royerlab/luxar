@@ -20,11 +20,13 @@ environment's version **equals** the matrix leg before the tests run — the pre
 floor check (`>= 3.10`) passed happily while every leg ran 3.12, which is how this
 stayed hidden. `fail-fast: false` means all three verdicts now come back from one run.
 
-The seven interpreter-invariant gates (ruff, mypy, import-linter, bandit, version and
-contract drift, pip-audit) moved to a new single-version `python-checks` job. They judge
-the source, not the runtime — ruff is pinned to `target-version = "py310"` and mypy to
-`python_version = "3.10"` — so running them once is exactly as strong and three times
-cheaper, which pays for the two newly-real interpreters.
+The interpreter-invariant gates (ruff, mypy, import-linter, bandit, version and contract
+drift) now run once, on the 3.12 leg only, guarded by `if: matrix.python-version ==
+'3.12'`. They judge the source, not the runtime — ruff is pinned to `target-version =
+"py310"` and mypy to `python_version = "3.10"` — so a single run is enough, and keeping
+them inside `python-tests` keeps them under the required `python-tests (3.12)` context: a
+lint, type, security, or contract failure still blocks the merge. pip-audit runs on every
+leg (advisory, `continue-on-error`) so each interpreter's dependency resolution is audited.
 
 Also made `stats/generate_stats.py` import `tomllib` with a `tomli` fallback: it was the
 one place in the tree that genuinely required 3.11+.
