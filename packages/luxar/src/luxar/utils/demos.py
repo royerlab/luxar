@@ -312,10 +312,18 @@ def cached_download(
         filename = url.split("?")[0].rstrip("/").rsplit("/", 1)[-1] or "download.bin"
     dest = cache_dir / filename
 
-    # Skip-if-present. Anything not returned from here must be dealt with before
-    # falling through: robust_download RESUMES onto whatever bytes are already at
-    # `dest` (Range request + append mode), so a complete-but-wrong file left in
-    # place gets the fresh download glued onto its tail, or trips an HTTP 416.
+    # Skip-if-present. A file that is genuinely WRONG (an LFS pointer stub, or a
+    # sha256 mismatch) is quarantined here. But a mere size mismatch is NOT a
+    # corruption signal — `expected_size` is only a skip-if-matches hint, and it
+    # can be a stale/wrong client-side guess (e.g. an API-reported byte count for
+    # a `Content-Encoding: gzip` response whose decoded on-disk size exceeds it).
+    # So a file that does not match `expected_size` — whether LONGER or SHORTER —
+    # is left in place for robust_download to reconcile: it restarts from scratch
+    # when the local copy is larger than the true remote size (and cleanly
+    # restarts on a resume that trips HTTP 416), and resumes when it is smaller.
+    # Quarantining an oversized-but-complete file here would re-download it every
+    # launch forever, since the re-fetched bytes are still larger than the stale
+    # guess. `expected_size` must never destroy a complete cached file.
     if dest.exists():
         if is_lfs_pointer(dest):
             # A pointer stub is not data — and it is exactly the ~130 bytes that
@@ -333,16 +341,9 @@ def cached_download(
                 if verbose:
                     aprint(f"✓ Cached: {dest}")
                 return dest
-            if size > expected_size:
-                # Longer than the remote object, so not a resumable partial: a
-                # Range request starting past EOF is answered with 416.
-                quarantine_file(
-                    dest,
-                    reason=f"{size} bytes, expected {expected_size}",
-                    verbose=verbose,
-                )
-            # size < expected_size is a genuine truncated download — LEAVE IT,
-            # resuming from it is the whole point of the retry path.
+            # size != expected_size (LONGER or SHORTER): leave it in place and let
+            # robust_download reconcile against the TRUE remote size — restart on
+            # local > remote, resume on local < remote. Never quarantine here.
         else:
             if verbose:
                 aprint(f"✓ Cached: {dest}")
