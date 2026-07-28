@@ -311,7 +311,7 @@ class TestCLINativeFlag:
     ) -> None:
         output = tmp_path / "native_out"
         with (
-            patch("luxar.cli.utils.check_viewer_built", return_value=True),
+            patch("luxar.cli.main.check_viewer_built", return_value=True),
             patch(
                 "luxar.cli.utils.get_viewer_dist_path", return_value=fake_viewer_dist
             ),
@@ -355,7 +355,7 @@ class TestCLINativeFlag:
         empty_launchers.mkdir()
 
         with (
-            patch("luxar.cli.utils.check_viewer_built", return_value=True),
+            patch("luxar.cli.main.check_viewer_built", return_value=True),
             patch(
                 "luxar.cli.utils.get_viewer_dist_path", return_value=fake_viewer_dist
             ),
@@ -431,6 +431,8 @@ class TestValidateBundleName:
             "foo\x00bar",
             "foo\tbar",
             "foo\nbar",
+            "foo\x7fbar",  # DEL
+            "foo\x85bar",  # C1 control (NEL)
         ],
     )
     def test_rejects_unsafe_names(self, bad: str) -> None:
@@ -493,6 +495,59 @@ class TestBundlerTraversalRejected:
                 )
         assert sorted(tmp_path.rglob("*")) == before
         assert not (tmp_path.parent / "escaped.app").exists()
+        # The bundler also writes a sibling README next to the .app; a
+        # README-only escape must be caught too.
+        assert not (tmp_path.parent / "escaped-README.txt").exists()
+
+
+class TestBundlerSymlinkEscapeRejected:
+    """A valid bundle name whose target path is a symlink pointing outside
+    the output directory must still be rejected by the post-resolve
+    containment check — the guard `validate_bundle_name` alone cannot see.
+    """
+
+    def test_macos_app_rejects_symlink_escape(
+        self,
+        sample_scene: Path,
+        fake_viewer_dist: Path,
+        fake_launchers_dir: Path,
+        tmp_path: Path,
+    ) -> None:
+        output = tmp_path / "out"
+        output.mkdir()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (output / "MyScene.app").symlink_to(outside, target_is_directory=True)
+        with _patch_launchers(fake_launchers_dir):
+            with pytest.raises(ValueError, match="escapes the output directory"):
+                bundle_macos_app(
+                    viewer_dist=fake_viewer_dist,
+                    zarr_data=sample_scene,
+                    output=output,
+                    app_name="MyScene",
+                )
+
+    def test_linux_folder_rejects_symlink_escape(
+        self,
+        sample_scene: Path,
+        fake_viewer_dist: Path,
+        fake_launchers_dir: Path,
+        tmp_path: Path,
+    ) -> None:
+        output = tmp_path / "out"
+        output.mkdir()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (output / "MyScene-linux-amd64").symlink_to(outside, target_is_directory=True)
+        with _patch_launchers(fake_launchers_dir):
+            with pytest.raises(ValueError, match="escapes the output directory"):
+                bundle_linux_folder(
+                    arch="amd64",
+                    viewer_dist=fake_viewer_dist,
+                    zarr_data=sample_scene,
+                    output=output,
+                    app_name="MyScene",
+                )
 
 
 class TestCLITraversalNameRejected:

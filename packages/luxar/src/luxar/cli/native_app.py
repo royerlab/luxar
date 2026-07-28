@@ -74,7 +74,7 @@ def validate_bundle_name(name: str) -> str:
         raise ValueError("Bundle name must not be empty or whitespace-only.")
     if "/" in name or "\\" in name:
         raise ValueError(f"Bundle name must not contain path separators: {name!r}")
-    if any(ord(ch) < 32 for ch in name):
+    if any(ord(ch) < 32 or 0x7F <= ord(ch) <= 0x9F for ch in name):
         raise ValueError(
             f"Bundle name must not contain NUL or control characters: {name!r}"
         )
@@ -320,8 +320,8 @@ quarantining channel (web download, email, AirDrop, Slack, etc.).
 
 Strip the quarantine attribute via Terminal:
 
-    xattr -cr {app_name}.app
-    open {app_name}.app
+    xattr -cr '{app_name}.app'
+    open '{app_name}.app'
 
 This is a one-time fix per copy of the app — once stripped, double-
 click works normally. The app itself is a vanilla local HTTP server +
