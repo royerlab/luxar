@@ -24,13 +24,13 @@ repository. There are two install stories, then per-machine additions:
 
 | Machine | Fitting device | CUDA extension | Notes |
 | --- | --- | --- | --- |
-| Modest laptop (any OS) | CPU, or `mps` on Apple Silicon | skip | Viewing is WebGL (browser GPU) — smooth on any laptop; only *fitting* is slow |
-| Desktop with NVIDIA GPU | `cuda` | optional but recommended | Orders-of-magnitude faster fitting + CUDA NLM denoise |
+| Modest laptop (macOS / Linux / WSL) | CPU, or `mps` on Apple Silicon | skip | Viewing is WebGL (browser GPU) — smooth on any laptop; only *fitting* is slow |
+| Desktop with NVIDIA GPU | `cuda` | optional but recommended | Orders-of-magnitude faster fitting (CUDA NLM denoise is a separate `make build-nlm-cuda`) |
 | Slurm/HPC cluster | `cuda` on compute nodes | build via `SLURM=1` | No sudo, no GPU on login node — everything has a no-sudo fallback |
 
 ## Common base (all profiles)
 
-Prerequisites: **Python 3.10+**, git, curl. Then:
+Prerequisites: **Python 3.10+**, git, curl, `make`. Then:
 
 ```bash
 git clone https://github.com/royerlab/luxar
@@ -66,6 +66,7 @@ make build-viewer   # builds viewer dist (auto-installs Rust/wasm-pack if needed
 make setup-dev      # full bootstrap: Node, pnpm, hatch, pre-commit hooks
 make check-deps     # audit what's installed / missing
 git lfs install && git lfs pull    # demo data files (.npz/.zip) are Git-LFS
+                                   # (install git-lfs first: brew/apt install git-lfs)
 hatch run test      # Python tests
 ```
 
@@ -79,6 +80,10 @@ python -c "import luxar; print(luxar.__version__)"
 luxar demo                          # lists the bundled demos
 luxar demo run lorenz               # end-to-end smoke: generate + serve + view
 ```
+
+On the Hatch-based profiles (dev setup / GPU / HPC) prefix these with
+`hatch run` (e.g. `hatch run luxar demo`); the plain user-install venv runs
+them directly.
 
 ## Profile: modest laptop
 
@@ -96,23 +101,34 @@ Everything above; skip CUDA entirely. Key points:
 
 ## Profile: desktop with NVIDIA GPU
 
-Base install with `[gsplats]` (pip's default torch wheels include CUDA on
-Linux; on Windows/conda setups verify with the check below), then:
+On this profile Hatch owns the environment, so do NOT use the `.venv` from
+Common base — skip creating it, or `deactivate` it now before proceeding.
+The CUDA make targets all run through Hatch's managed env (`hatch run ...`),
+so drive the whole GPU path through Hatch — verify and build against the *same*
+environment. The default Hatch env already includes `[gsplats]` (torch/scipy)
+via `features=["dev"]`, so the first `hatch run` provisions it — no manual
+install needed.
 
 ```bash
-python -c "import torch; print(torch.cuda.is_available())"   # must be True
+make setup-dev          # installs Hatch (the CUDA targets build inside it)
+hatch run python -c "import torch; print(torch.cuda.is_available())"   # must be True
 make check-cuda-deps    # nvcc, PyTorch-CUDA match, headers
 make setup-cuda         # install CUDA deps + build extension (may need sudo)
 make build-cuda         # or just build, if toolkit already present
 make test-cuda          # verify the extension
 ```
 
-The CUDA extension accelerates splatting internals and NLM denoising; plain
-`device='cuda'` fitting works without it (PyTorch ops only).
+The CUDA extension accelerates splatting internals; plain `device='cuda'`
+fitting works without it (PyTorch ops only). CUDA NLM denoise is a *separate*
+extension — build it with `make build-nlm-cuda` (→ `nlm_cuda_backend.so`);
+without it, NLM denoise silently falls back to the PyTorch path.
 
 **ABI gotcha:** the built `.so` is compiled against a specific torch ABI —
 after ANY torch upgrade, rebuild with `make build-cuda` or imports fail with
-symbol errors. It is also compiled for your local GPU architecture.
+symbol errors. It is also compiled for your local GPU architecture. Run GPU
+fitting through the SAME env: `hatch run luxar gsplat fit ... --device cuda` —
+not from a separate `.venv`, whose independently-resolved torch importing the
+Hatch-built `.so` is the very ABI mismatch above.
 
 Multiple GPUs? Whole-timelapse fitting across them is
 `luxar gsplat batch-fit run ... --gpus auto` — see **`luxar-hpc-batch-fit`**.
@@ -131,17 +147,22 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
 export PATH="$HOME/.local/bin:$PATH"
 
 # 3. Verify the environment end to end
-python scripts/test_hpc_setup.py
+python3 scripts/test_hpc_setup.py
 
 # 4. Build the CUDA extension ON A GPU NODE via Slurm
 make build-cuda SLURM=1                                    # auto-detect modules
 make build-cuda SLURM=1 SLURM_PARTITION=gpu                # pin partition
 make build-cuda SLURM=1 CUDA_MODULE=cuda/12.8.0_570.86.10  # pin CUDA module
 
-# 5. Monitor, then verify
+# 5. Monitor, then verify — INSIDE a GPU allocation, not on the login node
 tail -f build-cuda-logs/build_<JOB_ID>.out
-make test-cuda
+srun -p gpu --gres=gpu:1 --pty make test-cuda    # real check needs a GPU
 ```
+
+`make test-cuda` on the **login node** verifies nothing: every CUDA test skips
+without a GPU, so with no GPU it skips them all and still exits 0. Run it
+inside an interactive `srun`/`salloc` on a GPU node to actually exercise the
+extension.
 
 `build-cuda SLURM=1` detects the PyTorch CUDA version, finds matching
 `cuda/` + GCC>=9 modules, captures your venv path, generates a self-contained
@@ -161,9 +182,10 @@ see the **`luxar-hpc-batch-fit`** skill.
   `make build-cuda` (ABI mismatch, see above).
 - **hatch/pnpm "command not found" on HPC** → `~/.local/bin` missing from
   PATH (step 2 above).
-- **Ubuntu/Debian setup-dev fails early** → needs
-  `sudo apt-get install -y pipx && pipx ensurepath` first (the one sudo step,
-  and only on apt systems).
+- **Ubuntu/Debian setup-dev fails early** → on PEP-668 apt systems,
+  `sudo apt-get install -y pipx && pipx ensurepath` first smooths the Hatch
+  install. Not strictly required: `install-hatch` falls back to
+  `pip install --user hatch` / a user venv when pipx is absent.
 - **Broken bootstrap, want a clean slate** → `make clean-setup` then
   `make setup-dev`.
 
