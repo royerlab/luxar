@@ -159,6 +159,10 @@ def robust_download(
     from urllib3.util.retry import Retry
 
     output_path = Path(output_path)
+    # Whether the destination existed BEFORE this call touched anything. A
+    # pre-existing cache must never be destroyed by a transient server error
+    # (and, crucially, a 416 caused purely by resuming at EOF — see below).
+    preexisting = output_path.exists()
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Check if file already exists and is complete
@@ -195,12 +199,99 @@ def robust_download(
     session.mount("http://", adapter)
     session.mount("https://", adapter)
 
-    # Determine if we can resume
+    def _parse_len(headers: Any) -> Optional[int]:
+        """Parse a *positive* Content-Length, else ``None`` (unknown).
+
+        A non-positive value (``Content-Length: 0`` from a chunked/dynamic
+        host) or a malformed/duplicated header (``"100, 100"``) must be treated
+        as *unknown* — never as a real size — so it can't spuriously trigger the
+        ``local > remote`` truncate-and-restart branch.
+        """
+        raw = headers.get("content-length")
+        if raw is None:
+            return None
+        try:
+            n = int(raw)
+        except (TypeError, ValueError):
+            return None
+        return n if n > 0 else None
+
+    def _resolve_remote_size() -> Optional[int]:
+        """Best-effort remote Content-Length (``None`` if unknowable).
+
+        Tries a lightweight HEAD first, then falls back to an unranged
+        streaming GET whose headers we read and then close the body — some
+        servers don't support HEAD or omit Content-Length on it. Uses the
+        same session (retry strategy) and ``extra_headers`` as the download.
+        """
+        probe_headers = dict(extra_headers or {})
+        # Force identity so the server reports the true (decoded) resource size
+        # that matches the on-disk file — a `Content-Encoding: gzip` response
+        # would otherwise report the COMPRESSED length and make a complete
+        # cache look "larger than remote", truncating it.
+        probe_headers.setdefault("Accept-Encoding", "identity")
+        try:
+            head = session.head(
+                url, timeout=timeout, headers=probe_headers, allow_redirects=True
+            )
+            head.raise_for_status()
+            size = _parse_len(head.headers)
+            if size is not None:
+                return size
+        except requests.exceptions.RequestException:
+            pass
+        try:
+            probe = session.get(
+                url, timeout=timeout, headers=probe_headers, stream=True
+            )
+            try:
+                probe.raise_for_status()
+                size = _parse_len(probe.headers)
+                if size is not None:
+                    return size
+            finally:
+                probe.close()
+        except requests.exceptions.RequestException:
+            pass
+        return None
+
+    # Determine if we can resume. Resolve the remote size ONCE, BEFORE issuing
+    # any Range request: a Range starting at (or past) EOF is unsatisfiable and
+    # the server answers HTTP 416, so we must not blindly resume from the local
+    # file's size. The cached value is reused by the 416 handler below.
     resume_byte_pos = 0
+    remote_size: Optional[int] = None
     if output_path.exists():
-        resume_byte_pos = output_path.stat().st_size
-        aprint(f"📂 Partial download found: {resume_byte_pos / (1024**2):.1f} MB")
-        aprint("   Attempting to resume...")
+        local_size = output_path.stat().st_size
+        remote_size = _resolve_remote_size()
+        if remote_size is not None and local_size == remote_size:
+            # Already complete — return it untouched (do NOT re-download).
+            aprint(f"✓ File already downloaded: {output_path}")
+            aprint(f"  Size: {local_size / (1024**3):.2f} GB")
+            if expected_size and local_size != expected_size:
+                aprint(
+                    f"⚠️  Warning: File size ({local_size}) doesn't match "
+                    f"expected ({expected_size})"
+                )
+            return output_path
+        if remote_size is not None and local_size > remote_size:
+            # Local copy is LARGER than the remote asset (e.g. a re-uploaded,
+            # smaller file): a Range at EOF would 416 — restart from scratch.
+            aprint(
+                "⚠️  Local file is larger than the remote source "
+                f"({local_size} > {remote_size} bytes); restarting from scratch"
+            )
+            resume_byte_pos = 0
+        else:
+            # Genuinely partial (0 < local < remote) or unknown remote size:
+            # best-effort resume. A resulting 416 is handled gracefully below.
+            resume_byte_pos = local_size
+            aprint(f"📂 Partial download found: {resume_byte_pos / (1024**2):.1f} MB")
+            aprint("   Attempting to resume...")
+
+    # A 416 while resuming triggers at most one clean full restart (no Range);
+    # a second 416 with no Range is a genuine error and is re-raised.
+    restarted_after_416 = False
 
     attempt = 0
     while attempt <= max_retries:
@@ -331,9 +422,38 @@ def robust_download(
                 raise
 
         except requests.exceptions.HTTPError as e:
+            status = e.response.status_code if e.response is not None else None
+            if status == 416:
+                # Range Not Satisfiable: a 416 to `Range: bytes=<resume>-`
+                # proves `local >= total` (RFC 9110), so a pre-existing file is
+                # AT LEAST complete. NEVER fatal, and NEVER delete the file.
+                if resume_byte_pos > 0 and output_path.exists():
+                    local_size = output_path.stat().st_size
+                    if remote_size is None or local_size == remote_size:
+                        # Unknown remote size, or an exact match: the cache is
+                        # (at least) complete — return it WITHOUT truncating or
+                        # re-downloading.
+                        aprint(f"✓ File already downloaded: {output_path}")
+                        return output_path
+                    if not restarted_after_416:
+                        # Known remote size AND local is genuinely larger (a
+                        # stale/oversized cache): restart cleanly from scratch.
+                        aprint(
+                            "⚠️  Range not satisfiable (416); local cache is "
+                            "larger than the remote — restarting from scratch"
+                        )
+                        resume_byte_pos = 0
+                        restarted_after_416 = True
+                        continue
+                # 416 with no Range, no file, or after we already restarted once
+                # is a genuine error — surface it without touching the file.
+                aprint(f"❌ HTTP error: {e}")
+                raise
             aprint(f"❌ HTTP error: {e}")
-            if output_path.exists():
-                output_path.unlink()  # Clean up on HTTP errors (bad URL, etc.)
+            # Clean up on HTTP errors (bad URL, etc.) — but only remove a file
+            # THIS call created; never destroy a pre-existing cache.
+            if output_path.exists() and not preexisting:
+                output_path.unlink()
             raise
 
         except Exception as e:
