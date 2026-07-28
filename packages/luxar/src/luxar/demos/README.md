@@ -186,7 +186,7 @@ Interactive exploration of 6 different 4D geometric fractals with categorical di
 
 **Run**: `luxar demo run fractals_4d [-- --grid=64]`
 
-**Demonstrates**: 4D spatial navigation (XYZ + W dimension), categorical dimension (select between 6 fractal types), large dataset (~100M+ points, ~1M visible), XOR Fractal, Menger Sponge 4D, Sierpinski 4D, Cantor Dust 4D, Checkerboard and Diamond patterns.
+**Demonstrates**: 4D spatial navigation (XYZ + W dimension, every W slider stop shows structure), categorical dimension (select between 6 fractal types), large dataset (~7M points, up to ~1.5M per fractal), XOR Fractal, Menger Sponge 4D, Sierpinski 4D, Cantor Dust 4D, Checkerboard and Diamond patterns.
 
 ---
 
