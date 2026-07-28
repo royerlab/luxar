@@ -690,6 +690,41 @@ describe('depth-sort coordinator', () => {
     expect([chanA.renderOrder, chanB.renderOrder].sort()).toEqual([0, 1]);
   });
 
+  it('a partition wrapper whose AGGREGATE bounds contain a leaf draws all its parts first', async () => {
+    // Multi-mesh groups aggregate an enclosing sphere from their members
+    // (centroid + max member reach). Two wide parts flank the origin; a
+    // marker leaf sits inside the union. The wrapper's MEAN view-z (-10)
+    // is nearer than the marker (-30), so pure depth would draw the
+    // marker first and the wrapper's parts would erase it — the aggregate
+    // containment edge must hoist the whole wrapper, while the BSP ranks
+    // still order the parts within it.
+    const bspTree = { axis: 0, split: 0, left: { part: 0 }, right: { part: 1 } };
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+
+    const parts = [0, 1].map(() => makeGSplatsMesh(2, 'volumetric'));
+    parts[0].geometry.boundingSphere!.center.set(-50, 0, -10);
+    parts[0].geometry.boundingSphere!.radius = 100;
+    parts[1].geometry.boundingSphere!.center.set(50, 0, -10);
+    parts[1].geometry.boundingSphere!.radius = 100;
+    makePartitionWrapper(bspTree, parts);
+    const marker = makeGSplatsMesh(2, 'volumetric');
+    marker.geometry.boundingSphere!.center.set(0, 0, -30);
+    marker.geometry.boundingSphere!.radius = 1;
+
+    coord.noteDepthSortCommit(marker, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    for (const m of parts) coord.noteDepthSortCommit(m, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    await flush();
+
+    coord.evaluateDepthSortPerFrame();
+
+    // Camera at the origin sits on the split's high side → left subtree
+    // (part 0) is the far side and draws first; marker draws last.
+    expect(parts[0].renderOrder).toBe(0);
+    expect(parts[1].renderOrder).toBe(1);
+    expect(marker.renderOrder).toBe(2);
+  });
+
   it('meshes without usable depth (no bounds / non-finite center) rank at view-z 0, no NaN poisoning', async () => {
     // A boundless mesh has no depth reference; a NaN bounding-sphere
     // center (NaN input data propagates into the bbox) must not poison
