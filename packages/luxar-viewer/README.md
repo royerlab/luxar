@@ -67,6 +67,11 @@ app.dispose(); // removes all listeners, GPU resources, UI
 | `webgpuForceWebGL` | `boolean`             | `false`         | Diagnostic: with `renderer: 'webgpu'`, route through Three.js's internal WebGL2 backend while keeping the WebGPU/TSL API surface.                                                                            |
 | `perfTimestamp`    | `boolean`             | `false`         | Opt in to WebGPU `timestamp-query` GPU profiling. Tiny runtime cost; ignored under WebGL.                                                                                                                    |
 | `openCacheStats`   | `boolean`             | `false`         | Open the data-loading monitor (Cache tab, expanded) once the scene is wired up — useful for profiling cache behaviour.                                                                                       |
+| `pinnedDPR`        | `number`              | —               | Pin DPR to `[0.25, native]` and disable adaptive DPR; intended for deterministic tests, captures, and bug reproduction.                                                                                     |
+| `lodFade`          | `boolean`             | `true`          | Cross-fade adjacent replacement LOD levels instead of swapping abruptly.                                                                                                                                   |
+| `lodEnergyComp`    | `boolean`             | `true`          | Compensate incomplete stream ladders by their committed energy fraction to reduce brightness popping.                                                                                                      |
+| `lodFinest`        | `boolean`             | `false`         | Force the finest replacement LOD regardless of projected coverage; useful for high-quality still or video capture.                                                                                         |
+| `depthSort`        | `boolean`             | `true`          | Enable worker-based back-to-front sorting for order-dependent geometry; disable for deterministic comparisons.                                                                                             |
 | `factories`        | `AppFactories`        | —               | Construction overrides for the heavy components built by `init()` (scene manager, recording panel, …). For tests and advanced embedders; omit for the production path.                                       |
 
 ### Programmatic API
@@ -126,7 +131,7 @@ A runnable example with a non-trivial host page lives in
 
 ### Prerequisites
 
-- Node.js 22+ and pnpm (preferred package manager)
+- Node.js 20.19+ (Node.js 22 LTS recommended) and pnpm
 - Modern web browser with WebGL 2.0 support
 - Zarr dataset (see [Data Format](#data-format) section)
 
@@ -654,17 +659,26 @@ monitor.element; // the widget element (mounted by the control rail)
 
 ### URL Parameters
 
-- `?src=<path>` — Path to Zarr dataset
+- `?src=<path>` — Path to a Zarr dataset (trailing slashes are normalized away)
+- `?theme=<id>` — Select `dark`, `light`, `frosted-glass`, or `liquid-glass`
 - `?debug` — Expose `window.__luxarDebug` for Playwright / dev console
 - `?no-cache` — Disable all cache tiers (S-cache + L0 + L1 + L2) for this session
+- `?no-slice-cache` — Disable only S-cache; L0/L1/L2 remain active
 - `?cache-debug` — Verbose cache logging
-- `?clear-cache` — Clear all caches before loading
+- `?clear-cache` — Clear stored cache tiers before loading; the per-load S-cache starts empty
+- `?cache-stats` — Open the data-loading monitor on its Cache tab after initialization
 - `?no-prefetch` — Disable adjacent-chunk prefetching (caches still active)
 - `?prefetch-debug` — Verbose prefetch logging
+- `?no-lod-fade` — Disable replacement-LOD cross-fading (enabled by default)
+- `?no-lod-energy` — Disable stream-ladder energy compensation (enabled by default)
+- `?lod-finest` — Force the finest replacement LOD regardless of projected coverage
+- `?depthSort=0` — Disable worker depth sorting (`false` and `off` are also accepted)
 - `?renderer=webgpu` — Use `WebGPURenderer` (TSL `NodeMaterial`) instead of the default `WebGLRenderer`
-- `?renderer=webgpu&webgpu-force-webgl` — TSL/WebGPU API surface but Three.js routes through its internal WebGL2 backend (diagnostic)
-- `?dpr=<value>` — Pin a fixed device pixel ratio for the session (clamped to [0.25, native]) and lock adaptive resolution off; used by E2E/visual-regression runs and bug repros where deterministic buffer sizes matter
-- `?cacheBudgetMB=<N>` — Override the total in-memory cache pool (L0 + L1 + S-cache) in megabytes; used where `performance.memory` is unavailable (WKWebView, Safari) so heap-aware sizing has a real budget to split. This is the native launcher's contract — it injects the parameter automatically (see `LUXAR_CACHE_BUDGET_MB` above)
+- `?renderer=webgpu&webgpu-force-webgl` — Keep the WebGPU/TSL API surface while Three.js routes through its internal WebGL2 backend (diagnostic)
+- `?perf-timestamp` — Enable WebGPU timestamp-query profiling for performance tests
+- `?dpr=<value>` — Pin a fixed device pixel ratio for the session (clamped to `[0.25, native]`) and lock adaptive resolution off
+- `?gpuBudgetMB=<N>` — Override the shared GPU-geometry/LOD retention budget; `0` means unbounded
+- `?cacheBudgetMB=<N>` — Override the total in-memory cache pool (L0 + L1 + S-cache) in megabytes; used where `performance.memory` is unavailable (WKWebView, Safari)
 
 ### Programmatic Usage
 

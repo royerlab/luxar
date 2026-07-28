@@ -79,7 +79,7 @@ hide UI panels (recording, for instance) and put them back afterwards.
 
 - [`../../README.md`](../../README.md) — `core` package overview;
   this folder appears in its architecture tree as `core/app/viewer-config/`.
-- [`../../../../config/zarr-bridge/README.md`](../../../../config/zarr-bridge/README.md)
+- [`../../../config/zarr-bridge/README.md`](../../../config/zarr-bridge/README.md)
   — sibling bridge that converts the rendering-settings half of
   `viewer_config` between snake_case (zarr) and camelCase
   (`RenderingSettings`).

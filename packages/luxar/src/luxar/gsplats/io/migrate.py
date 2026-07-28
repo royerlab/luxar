@@ -12,7 +12,7 @@ Five input shapes are auto-detected:
   per-child ``min_pixel_size`` attrs (renamed in v3.2 to ``selector='coverage'``
   / ``coverage_fraction``). Re-written through the current node-tree
   reader/writer, which derives fresh ``coverage_fraction`` thresholds from the
-  per-level splat counts and stamps format v3.2.
+  per-level splat counts and stamps the current format (v3.3).
 
 Each legacy decoder is *frozen* here (the v1.x and v2.0 decode loops were removed
 from the live ``load_gsplats`` path at the v3.0 cutover) and the result is
