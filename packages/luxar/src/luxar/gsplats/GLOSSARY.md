@@ -551,12 +551,12 @@ When referencing modules in documentation:
 ### Package Paths
 When referencing other packages:
 
-**Format**: `[Package Name](./relative/path/README.md)`
+**Format**: `[Package Name](relative/path/README.md)`
 
 **Examples**:
-- [Main README](../README.md)
-- [fitting/README.md](../fitting/README.md)
-- [optim/README.md](../optim/README.md)
+- [Main README](README.md)
+- [fitting/README.md](fitting/README.md)
+- [optim/README.md](optim/README.md)
 
 **Convention**: Always use relative paths from the current document.
 

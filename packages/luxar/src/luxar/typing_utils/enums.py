@@ -12,29 +12,28 @@ class BlendingMode(str, Enum):
 
     These control how overlapping elements combine their colors:
 
-    - NORMAL: Standard alpha blending (semi-transparent)
-    - ADDITIVE: Classic additive blending, ignores depth (renders on top of everything)
-    - MAX: Maximum of source and destination (brightest wins)
-    - OPAQUE: Solid rendering with depth write (closest object wins)
-    - LUMINOUS: Same as additive visually, but respects depth occlusion
-    - VOLUMETRIC: Emission-absorption compositing (Max 1995): adds emitted
-      light AND exponentially attenuates what is behind, scaled by the
-      node's ``absorption`` (kappa) attr; kappa=0 renders exactly like
-      ADDITIVE. All three geometry types render the real math (gsplats
-      phase 1, points phase 3, lines phase 4).
-      See docs/guides/specs/VOLUMETRIC_BLENDING_SPEC.md.
+    * ``NORMAL``: standard alpha blending (semi-transparent).
+    * ``ADDITIVE``: classic additive blending; ignores depth.
+    * ``MAX``: maximum of source and destination (brightest wins).
+    * ``OPAQUE``: solid rendering with depth writes (closest wins).
+    * ``LUMINOUS``: additive appearance while respecting depth occlusion.
+    * ``VOLUMETRIC``: emission-absorption compositing (Max 1995). It adds
+      emitted light and exponentially attenuates what is behind, scaled by
+      the node's ``absorption`` (kappa) attribute. Kappa 0 renders exactly
+      like ``ADDITIVE``. See
+      ``docs/guides/specs/VOLUMETRIC_BLENDING_SPEC.md``.
 
     Depth behavior:
-    - ADDITIVE: depthTest=false, depthWrite=false (ignores depth entirely)
-    - LUMINOUS: depthTest=true, depthWrite=false (respects occlusion, doesn't occlude others)
-    - OPAQUE: depthTest=true, depthWrite=true (solid rendering)
-    - NORMAL: depthTest=true, depthWrite=true when opacity >= 0.99
-      (points/lines only — GSplats in NORMAL mode never depth-write: their
-      coverage-alpha fragments would punch occlusion halos; see the viewer's
-      ``blending-state.ts::getGSplatNormalBlendingState``)
-    - MAX: depthTest=true, depthWrite=false
-    - VOLUMETRIC: depthTest=true, depthWrite=false ALWAYS (no opacity
-      threshold); requires back-to-front depth sorting in the viewer
+
+    * ``ADDITIVE``: ``depthTest=false``, ``depthWrite=false``.
+    * ``LUMINOUS``: ``depthTest=true``, ``depthWrite=false``.
+    * ``OPAQUE``: ``depthTest=true``, ``depthWrite=true``.
+    * ``NORMAL``: ``depthTest=true`` and ``depthWrite=true`` when opacity is
+      at least 0.99 for points and lines. GSplats never depth-write in normal
+      mode because coverage-alpha fragments would create occlusion halos.
+    * ``MAX``: ``depthTest=true``, ``depthWrite=false``.
+    * ``VOLUMETRIC``: ``depthTest=true``, ``depthWrite=false``; requires
+      back-to-front depth sorting in the viewer.
 
     Validation of raw strings lives in
     :func:`luxar.validation.types.validate_blending_mode`, which derives its

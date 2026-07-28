@@ -51,8 +51,10 @@ make test-wasm    # Run Rust unit tests
 make benchmark-wasm  # Run WASM vs TypeScript performance benchmarks
 
 # Data & Examples
-make run-examples # Generate example datasets
-make demo         # Generate the Lorenz demo dataset (use 'luxar demo run lorenz' to also serve)
+make run-examples              # Generate example datasets
+make demo                      # Generate the Lorenz demo dataset (use 'luxar demo run lorenz' to also serve)
+make generate-gallery-datasets # Generate demo datasets used by the gallery harness
+make generate-gallery          # Capture gallery stills + orbit videos to docs/images/gallery/
 
 # Native launchers (luxar export --native)
 # Run `make build-launchers` BEFORE `luxar export --native` — the bundlers
@@ -378,7 +380,7 @@ luxar gsplat cal volume.tiff cal.json --floor none               # legacy (no fl
 
 # Canonical end-to-end pipeline: cal → fit (at K*) → lod (--recipe flat|stream|tiles|overview|adaptive|levels)
 # `lod` operates on a pre-fitted .gsplats.zarr (output of `fit`); use `cal` upstream
-# to pick K* in a principled way. .gsplats.zarr is format v3.2 (a node tree —
+# to pick K* in a principled way. .gsplats.zarr is format v3.3 (a node tree —
 # a detached scene gsplat-node subtree the viewer loads directly) — see
 # docs/specs/GSPLATS_ZARR_FORMAT.md.
 
@@ -527,7 +529,7 @@ luxar gsplat export imported.gsplats.zarr back.ply --opacity amplitude
 luxar gsplat export timelapse.gsplats.zarr t42.ply --timepoint 42
 
 # Migrate legacy .gsplats.zarr layouts (v1.0 / v1.1 / pre-v2.0 substitutive dir / v2.0 matrix /
-# v3.0-v3.1 with pre-v3.2 pixel_size lod selector attrs) → v3.2
+# v3.0-v3.1 with pre-v3.2 pixel_size lod selector attrs) → v3.3
 luxar gsplat migrate-format legacy.gsplats.zarr v3.gsplats.zarr               # single file
 luxar gsplat migrate-format old_pyr/ v3.gsplats.zarr                          # substitutive directory
 
