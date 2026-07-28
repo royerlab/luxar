@@ -146,7 +146,7 @@ Calibration applies `--floor` (default `"auto"`) **once** to the volume before m
 
 **Implementation**: `driver.calibrate` calls `_resolve_floor` once, subtracts it (clipping at 0), then passes `floor="none"` to every per-K fit.
 
-**Edge case**: A floor ≥ `volume.max()` would clip the whole volume to zero (non-finite held-out PSNR); the driver refuses it (only an explicit too-high float/percentile can trigger; `"auto"` is capped at the median).
+**Edge case**: A floor ≥ `volume.max()` would clip the whole volume to zero (non-finite held-out PSNR); the driver emits a warning, ignores the floor (sets it to `None`), and proceeds un-floored (only an explicit too-high float/percentile can trigger; `"auto"` is capped at the median).
 
 ### Held-Out PSNR Metric Regimes
 
@@ -171,9 +171,9 @@ Calibration applies `--floor` (default `"auto"`) **once** to the volume before m
 
 **Backward compatibility**: Older `cal.json` files (pre-`k_knee`) hydrate with `k_knee` defaulting to `k_star`.
 
-### Multi-Substitutive Input Rejection
+### Input Requirements
 
-`calibrate` is a single-pass sweep driver: it expects a flat `np.ndarray` input volume. Multi-substitutive `GSplatData` (e.g., output of `luxar gsplat lod --recipe levels`) is not accepted — calibration operates upstream of LOD construction, not on an already-fitted dataset.
+`calibrate` is a single-pass sweep driver over a raw volume: it expects a NumPy array and only guards that `V.ndim >= 2` (raising `ValueError` otherwise) and that `k_grid` is non-empty. It operates upstream of LOD construction — you pass a volume, not an already-fitted `GSplatData`.
 
 ## Tests
 
@@ -185,7 +185,7 @@ All tests colocated in `packages/luxar/src/luxar/gsplats/tests/test_calibration.
 - `estimate_floor`: Mode histogram vs percentile, zero-padding exclusion
 - `build_k_grid`: Exponential/polynomial spacing, endpoint pinning, deduplication, strict monotonicity
 - `find_k_star`: Peak/plateau/signal-limited regime detection, flank thresholds, tail-rise gate, `k_knee` vs `k_star`, backward-compatible hydration
-- Feature content: `count_features` (peaks/edges/intensity), `feature_threshold` shared scale, `select_calibration_region` (max/percentile/window-median ranking)
+- Feature content: `count_features` (peaks/edges/intensity), `feature_threshold` shared scale, `select_calibration_region` (`densest` / `median` / `whole` strategies)
 - `CalibrationResult`: JSON round-trip (non-finite floats → `null`), additive field defaults
 - Full sweep integration: Calls `fit_gaussian_splats` → `render_to_volume_tensor` → held-out/train/full metrics → noise floor → `find_k_star` → `CalibrationResult` with all metadata
 

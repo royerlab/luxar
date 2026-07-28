@@ -17,11 +17,11 @@ Provide the **shared spatial-ordering infrastructure** that drives all three geo
 |--------|---------------|------------------|
 | **curves/morton.py** | Morton (Z-order) encoding | `morton_encode_nd(coords, bits_per_dim=16)`, `morton_encode_128bit(coords, bits_per_dim)` |
 | **curves/hilbert.py** | Hilbert curve encoding | `hilbert_encode_nd(coords, bits_per_dim=16)` |
-| **grid.py** | Grid normalization | `normalize_coords_to_grid(coords, min_vals, max_vals, grid_size)` |
+| **grid.py** | Grid normalization | `normalize_coords_to_grid(coords, min_coords, max_coords, resolution)` |
 | **compound.py** | Compound ordering core | `_compound_sort(coords, slice_dims, ordering_dims, method="hilbert")`, `detect_barrier_dims(centers, max_cardinality=1024)` |
 | **bounds.py** | Shared chunk-bounds constants | `_BARRIER_BOUND_EPS` |
-| **points.py** | Points-specific glue | `sort_points_compound(positions, dimensions, method="hilbert")`, `compute_chunk_bounds_points(sorted_positions, radii, chunk_size)` |
-| **lines.py** | Lines-specific glue | `sort_segments_compound(vertices, segments, dimensions, widths, method="hilbert")`, `compute_chunk_bounds_segments(sorted_vertices, sorted_segments, widths, chunk_size)` |
+| **points.py** | Points-specific glue | `sort_points_compound(positions, dimensions, method="hilbert")`, `compute_chunk_bounds_points(sorted_positions, radii, chunk_size, slice_dims=None)` |
+| **lines.py** | Lines-specific glue | `order_lines_spatial(vertices, segments, dimensions, method="hilbert")`, `sort_segments_compound(segment_coords_2d, dimensions, method="hilbert")`, `compute_vertex_chunk_bounds(vertices, chunk_size, slice_dims=None)`, `compute_segment_chunk_bounds(vertices, segments, widths, chunk_size, slice_dims=None)` |
 | **gsplats.py** | GSplats-specific glue | `sort_splats_spatial(centers, method="hilbert", resolution=None, slice_dims=None)`, `compute_chunk_bounds_gsplats(centers, cholesky_factors, chunk_size, coverage_sigma=3.0, slice_dims=None)` |
 
 ## Call Flow
@@ -31,7 +31,7 @@ Provide the **shared spatial-ordering infrastructure** that drives all three geo
 **Morton (Z-order)** — bit interleaving:
 
 1. `morton_encode_nd(coords, bits_per_dim)`:
-   - Tries Numba JIT-compiled kernel (`_get_morton_numba_kernel`) for fast parallel encoding
+   - Tries Numba JIT-compiled kernel (`_get_morton_numba_kernel`) for fast single-threaded encoding (`@numba.njit(cache=True)`, no `parallel`/`prange`)
    - Falls back to vectorized NumPy if Numba is unavailable
    - Returns uint64 codes, shape `(N,)`
 
@@ -52,11 +52,11 @@ Both encoders are **permutation-equivariant**: reordering the input rows reorder
 
 ### Grid Normalization (`grid.py`)
 
-`normalize_coords_to_grid(coords, min_vals, max_vals, grid_size)`:
-- Maps float coordinates `[min_vals, max_vals]` to integer grid `[0, grid_size - 1]`
-- Per-axis linear rescaling: `grid_coord = round((coord - min) / (max - min) * (grid_size - 1))`
-- Handles degenerate axes (min == max) by mapping everything to grid center
-- Returns `(N, d)` integer array, clipped to `[0, grid_size - 1]`
+`normalize_coords_to_grid(coords, min_coords, max_coords, resolution)`:
+- Maps float coordinates `[min_coords, max_coords]` to integer grid `[0, resolution - 1]`
+- Per-axis linear rescaling with truncation: `grid_coord = ((coord - min) / (max - min) * (resolution - 1)).astype(uint32)` (integer cast truncates toward zero, not round)
+- Handles degenerate axes (min == max) by mapping everything to grid coordinate `0` (the range is forced to `1.0`, so the normalized value is `0`)
+- Returns `(N, d)` integer array, clipped to `[0, resolution - 1]`
 
 ### Compound Ordering (`compound.py`)
 
@@ -95,28 +95,32 @@ Both encoders are **permutation-equivariant**: reordering the input rows reorder
 
 **Points** (`points.py`):
 - `sort_points_compound(positions, dimensions, method="hilbert")` → `(sort_indices, metadata)`
-  - Splits `dimensions` into `slice_dims` (discrete non-display) and `ordering_dims` (display)
+  - Splits `dimensions` into `slice_dims` (`d.discrete and not d.display`) and `ordering_dims` (`not d.discrete or d.display` — i.e. spatial dims AND any displayed dim, so continuous non-display dims count as ordering dims too)
   - Delegates to `_compound_sort`
-- `compute_chunk_bounds_points(sorted_positions, radii, chunk_size)` → `(n_chunks, d)` bounds array
-  - Per-chunk axis-aligned box `[min - r_max, max + r_max]` for display dims
-  - Tight `[min - eps, max + eps]` for discrete dims (no radius expansion on categorical axes)
+- `compute_chunk_bounds_points(sorted_positions, radii, chunk_size, slice_dims=None)` → `(num_chunks, d, 2)` bounds array
+  - Radius expansion is applied to all NON-`slice_dims` axes (displayed dims AND continuous non-display dims). For a broadcast scalar radius the box is `[min - r, max + r]`; for per-point radii the code takes the per-point envelope `(p - r).min()` / `(p + r).max()` (not a single chunk-wide `r_max`)
+  - Tight `[min - eps, max + eps]` for discrete (`slice_dims`) axes (no radius expansion on categorical axes)
   - `radii` can be a per-point array OR a broadcast scalar
 
 **Lines** (`lines.py`):
-- `sort_segments_compound(vertices, segments, dimensions, widths, method="hilbert")` → `(vertex_order, segment_order, metadata)`
-  - Dual-indexed: reorders both vertices AND segments
-  - Computes segment midpoints from vertices for spatial ordering
+- `order_lines_spatial(vertices, segments, dimensions, method="hilbert")` → `(sorted_vertices, sorted_segments, vertex_sort_indices, segment_sort_indices, metadata)` (5-tuple)
+  - Dual-indexed: reorders both vertices (in D-space, via `sort_points_compound`) AND segments (in 2×D-space, via `sort_segments_compound`)
   - Returns two sort orders (one for vertices, one for segments)
-- `compute_chunk_bounds_segments(sorted_vertices, sorted_segments, widths, chunk_size)` → `(n_chunks, d)` bounds array
-  - Per-chunk box extends by `max_width / 2` along each segment (both endpoints)
+- `sort_segments_compound(segment_coords_2d, dimensions, method="hilbert")` → `(sort_indices, metadata)`
+  - Takes pre-built `(S, 2·D)` segment coordinates (both endpoints concatenated), NOT midpoints — this captures position, orientation, and length
+  - Returns a single sort order over the segments
+- `compute_vertex_chunk_bounds(sorted_vertices, chunk_size, slice_dims=None)` → `(num_chunks, D, 2)` bounds array
+  - Exact spatial bounds (no size expansion for vertices); tight epsilon-padded bounds for discrete dims
+- `compute_segment_chunk_bounds(sorted_vertices, sorted_segments, widths, chunk_size, slice_dims=None)` → `(num_chunks, D, 2)` bounds array
+  - Per-chunk box extends each spatial axis by the full per-segment max endpoint width (`p ± max_w`, no `/2`)
   - Tight epsilon-padded bounds for discrete dims
 
 **GSplats** (`gsplats.py`):
 - `sort_splats_spatial(centers, method="hilbert", resolution=None, slice_dims=None)` → `(sort_indices, metadata)`
-  - `slice_dims` is explicit (from scene `Dimension.discrete` or a stacked-time axis), or falls back to `detect_barrier_dims`
+  - `slice_dims` is explicit (from scene `Dimension.discrete` or a stacked-time axis); this function does NOT auto-detect — the caller (`_compiler/gsplat_assembly.py`) falls back to `detect_barrier_dims` when no explicit dims are supplied
   - Splits center columns into `slice_dims` (barrier) and `ordering_dims` (complement)
   - Delegates to `_compound_sort`
-- `compute_chunk_bounds_gsplats(centers, cholesky_factors, chunk_size, coverage_sigma=3.0, slice_dims=None)` → `(n_chunks, d)` bounds array
+- `compute_chunk_bounds_gsplats(centers, cholesky_factors, chunk_size, coverage_sigma=3.0, slice_dims=None)` → `(num_chunks, d, 2)` bounds array
   - Per-chunk box extends by the requested Gaussian coverage on spatial axes
   - Tight epsilon-padded bounds for barrier dims
 
@@ -138,10 +142,9 @@ Both encoders are **permutation-equivariant**: reordering the input rows reorder
 
 The ordering primitives are exercised by multiple test suites:
 
-- **test_ordering_properties.py** — Hypothesis property tests (permutation equivariance, Numba/NumPy parity)
-- **test_ordering_points.py** / **test_ordering_lines.py** / **test_ordering_gsplats.py** — Integration tests for each geometry
-- **test_ordering_compound.py** — Compound ordering correctness (barrier dims, chunk-straddling invariant)
-- **gsplats/tests/test_ordering_gsplats.py** — GSplat-specific ordering tests (barrier detection, chunk bounds)
+- **io/tests/test_ordering_properties.py** — Hypothesis property tests (permutation equivariance, Numba/NumPy parity)
+- **io/tests/test_ordering_points.py** / **io/tests/test_ordering_lines.py** / **io/tests/test_ordering_gsplats.py** — Integration tests for each geometry (barrier dims, chunk-straddling invariant)
+- **gsplats/io/tests/test_ordering.py** — GSplat-specific ordering tests (barrier detection, chunk bounds)
 
 ## See Also
 

@@ -31,10 +31,10 @@ make benchmark-wasm
 | Category              | Operations                                                                                                                                                      | Notes                                                                                                                                                                     |
 | --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **EFFECTIVE RADII**   | `calculate_effective_radii` — nD → 3D hypersphere projection for points visibility.                                                                             | Core hot path for 4D+ datasets.                                                                                                                                           |
-| **DEPTH SORT**        | `sort_splats_by_depth` — back-to-front ordering for correct alpha blending.                                                                                     | Budget: ≥ 100 M splats/s (enforced by `perf-budget.test.ts`). Reports absolute throughput.                                                                                |
-| **DECODE**            | Six tasks: `decodeQuantized`, `decodeLogScalar`, `decodeGeoLogScalar`, `decodeLUT`, `decodePerChannel`, `decodeBroadcasted`.                                   | Decodes compressed Python `luxar.encoding` arrays → Float32.                                                                                                              |
+| **DEPTH SORT**        | `sort_splats_by_depth` — back-to-front ordering for correct alpha blending.                                                                                     | Budget: ≥ 50 M splats/s (enforced by `perf-budget.test.ts` in the opt-in perf suite, not the default unit tests). Reports absolute throughput.                             |
+| **DECODE**            | Nine tasks: `decode_quantized_u8`, `decode_quantized_u16`, `decode_log_scalar_u8`, `decode_log_scalar_u16`, `decode_lut_scalar_u8`, `decode_lut_scalar_u16`, `decode_lut_row_u8`, `decode_lut_row_u16`, `decode_broadcasted`. | Decodes compressed Python `luxar.encoding` arrays → Float32.                                                                                                              |
 | **PROJECTION**        | `extract_3d_positions`, `calculate_bounds_3d`, `compact_by_mask`, `count_visible`, `radii_to_visibility_mask`.                                                 | nD → 3D projection helpers.                                                                                                                                                |
-| **LINES CLIPPING**    | `clip_segments_batch`, `interpolate_clipped_positions`, `interpolate_scalars_batch`, `interpolate_colors_batch`, `calculate_segment_lengths`, plus utilities.  | Batch nD → 3D clipping + attribute interpolation. Per-call utilities (`clip_segment_single`, `lerp`, `lerp_vec3`, `distance_3d`) marked `utility: true` (not hot paths). |
+| **LINES CLIPPING**    | `clip_segments_batch`, `interpolate_clipped_positions`, `interpolate_scalars_batch`, `interpolate_colors_batch`, `calculate_segment_lengths`, `mark_clipped_endpoints`, plus utilities.  | Batch nD → 3D clipping + attribute interpolation. Per-call utilities (`clip_segment_single`, `lerp`, `lerp_vec3`, `distance_3d`) marked `utility: true` (not hot paths). |
 | **GSPLATS PROCESSING**| `compute_gsplats_attenuation`, `extract_visible_cholesky_3d`, `compact_attenuated_amplitudes`, plus utilities.                                                 | nD → 3D gsplat visibility + Cholesky submatrix extraction. Per-call utilities (`mahalanobis_distance`, `extract_cholesky_submatrix`) marked `utility: true`.             |
 
 ### Output
@@ -65,13 +65,13 @@ sort_splats_by_depth (312 M splats/s WASM)  15.67ms  3.20ms  4.9x
 ======================================================================
 
   Batch Functions (used in production):
-   Functions:        18
+   Functions:        25
    Average speedup:  3.7x
    Fastest speedup:  5.2x (decode_quantized_u16)
    Slowest speedup:  2.1x (compact_by_mask)
 
   * Utility Functions (API completeness, not used in hot paths):
-   Functions:        5
+   Functions:        6
    Average speedup:  0.8x (expected <1x due to WASM call overhead)
 
   Note: Utility functions (*) exist for API completeness and testing.
@@ -102,7 +102,7 @@ const CONFIG = {
 
 ### Performance Budget
 
-The depth-sort benchmark enforces a **≥ 100 M splats/s** budget (via `perf-budget.test.ts` in the unit test suite). The benchmark reports absolute throughput so regressions are visible in logs even when the budget still passes.
+The depth-sort benchmark enforces a **≥ 50 M splats/s** budget (via `perf-budget.test.ts`). That test is excluded from the default unit suite (see `vitest.config.ts`) and runs only under the opt-in perf suite (`pnpm test:perf`). The benchmark reports absolute throughput so regressions are visible in logs even when the budget still passes.
 
 ## When to Benchmark
 
@@ -127,4 +127,4 @@ Run benchmarks when:
 - [`../../wasm/`](../../wasm/README.md) — WASM module implementation and build system.
 - [`../../wasm/typescript/`](../../wasm/typescript/) — TypeScript reference implementations (uncapped nD support; >16D fallback backend).
 - [`../../workers/data-worker/`](../../workers/data-worker/) — Web Worker pipeline that calls these kernels for dataset decoding + projection.
-- `vitest.config.ts` — `perf-budget.test.ts` enforces the depth-sort ≥ 100 M splats/s gate.
+- `vitest.config.ts` — excludes `perf-budget.test.ts` from the default suite; it enforces the depth-sort ≥ 50 M splats/s gate only under the opt-in perf suite (`pnpm test:perf`).

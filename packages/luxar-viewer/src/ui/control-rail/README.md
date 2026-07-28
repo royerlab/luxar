@@ -69,7 +69,7 @@ The flyout + panel-popover lifecycle coordinator. Owns:
 
 **`ControlRailItem`** — one button in the rail. Can be:
 
-1. **Momentary action** (`momentary: true`) — e.g. screenshot; never shows active state
+1. **Momentary action** (`momentary: true`) — e.g. Home (fit scene); never shows active state
 2. **Panel toggle** (`activate()` opens/closes a panel) — active when `isActive()` returns true or `openSelector` element is visible; e.g. Help (H), Dimensions (N), Rendering (R), Layers (L)
 3. **Flyout** (`flyout: ControlRailToggle[]`) — e.g. View button; opens a horizontal row of icon toggles; parent button is active when the flyout is open OR any non-`excludeFromParentActive` toggle is on
 4. **Popover** (`popover: ControlRailPopover`) — e.g. Navigation, Settings, Performance; opens a vertical panel with arbitrary controls built by `popover.build(host)`:
@@ -93,7 +93,7 @@ The flyout + panel-popover lifecycle coordinator. Owns:
 - `aria-hidden="true"` (decorative)
 - No fill, no transform (simplicity)
 
-Icons are keyed by rail item id (help, home, dims, render, layers, perf, data, monitor, recording, screenshot, logs, view, settings, plus navigation modes: navOrbit, navFly, navOrtho, and view-flyout actions: scalebar, legend, overlays, cinematic, fullscreen, fit, origin).
+Icons are keyed by id (help, home, dims, render, layers, perf, data, monitor, recording, logs, view, settings, plus navigation modes: navOrbit, navFly, navOrtho; view-flyout actions: scalebar, legend, overlays, cinematic, fullscreen; and Home-popover actions: fit, origin). The map also carries a `screenshot` icon that no current rail item uses.
 
 ## Lifecycle & Invariants
 
@@ -198,7 +198,7 @@ const controlRail = new ControlRail(railItems, perfReadout);
 
 ### Item Builder (core/app/init/build-rail-items.ts)
 
-`buildRailItems(deps: RailItemsDeps): ControlRailItem[]` constructs the item array by reading `deps.inputHandler.getUiActions()` (the command surface the keyboard shortcuts dispatch into). Each button's `activate()` calls the same action method the key binding invokes.
+`buildRailItems(deps: RailItemsDeps): ControlRailItem[]` constructs the item array from `deps.ui` (the pre-resolved `InputHandler.getUiActions()` command surface the keyboard shortcuts dispatch into). Each button's `activate()` calls the same action method the key binding invokes.
 
 ### External State Changes
 

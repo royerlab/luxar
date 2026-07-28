@@ -192,7 +192,7 @@ The reference Luxar dataset benchmarks from `additive_lod` Experiment C:
 - `method="auto"` (the default) IS a size-adaptive fallback: `greedy` at small
   `N`, `self_energy` above the threshold (see "Methods"). Pass an explicit
   method to pin one and keep the choice loud.
-- Output is written as a v3.1 `.gsplats.zarr` node tree (v3.0 still readable): a leaf with
+- Output is written as a v3.3 `.gsplats.zarr` node tree (v3.0 still readable): a leaf with
   `additive_<i>/` subgroups for an additive ladder, or a `kind=lod` group
   of children for a substitutive hierarchy. See
   `docs/specs/GSPLATS_ZARR_FORMAT.md` for the full on-disk grammar.
@@ -223,7 +223,7 @@ make_substitutive_lod(
 
 Returns a single `GSplatData` with `n_substitutive = levels + 1`, one
 additive sub-LOD per substitutive level, and splat counts
-`[N, ⌈N/K⌉, ⌈N/K²⌉, …, ⌈N/K^L⌉]`. The on-disk container is a v3.1
+`[N, ⌈N/K⌉, ⌈N/K²⌉, …, ⌈N/K^L⌉]`. The on-disk container is a v3.3
 `kind=lod` group (`child_<i>/` per level, coarsest→finest on disk)
 — no `splats/substitutive_<s>/` wrapper.
 

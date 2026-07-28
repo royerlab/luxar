@@ -46,9 +46,14 @@ The codec is registered at module scope by `../zarr.ts` (the sole zarrita import
 
 ```typescript
 import { LuxarDeltaCodec } from './codecs/luxar-delta';
-import { codecRegistry } from 'zarrita';
 
-codecRegistry.set('luxar_delta_v1', LuxarDeltaCodec.fromConfig);
+// codecRegistry is zarr.ts's own re-export of zarrita.registry (not an
+// import from 'zarrita'):
+//   export const codecRegistry = zarrita.registry;
+// The registry key is the zarrita codec name `numcodecs.luxar_delta_v1`
+// (a v2 `.zarray` filter `{id: "luxar_delta_v1"}` maps to it), and the
+// value is a lazy thunk resolving to the codec class:
+codecRegistry.set('numcodecs.luxar_delta_v1', () => Promise.resolve(LuxarDeltaCodec));
 ```
 
 Every context that opens zarr arrays (main thread, data workers) imports `../zarr.ts`, so the codec is provisioned globally.

@@ -129,13 +129,14 @@ The pipelines are stateless: they read only the narrow config in the `Ctx` datac
 4. **Write arrays**:
    - `write_gsplat_arrays(group, centers, amplitudes, cholesky_factors, colors, n_splats, n_dims, cholesky_is_uniform, ordering_data, ctx.dataset_ctx)` → `metadata`
 
-5. **Write labels** (CSR serialization; `sort_order` derived from `ordering_data`):
-   - `write_labels_csr(group, labels, n_splats, ctx.compressor, sort_order)` — if `labels is not None`
-   - `write_image_labels_csr(group, image_labels, n_splats, ctx.compressor, sort_order)` — if `image_labels is not None`
-
-6. **Apply rendering defaults** + stamp attrs:
+5. **Apply rendering defaults** + stamp attrs (stamped BEFORE labels are written):
    - `ctx.apply_gsplat_group_attrs(group, metadata, attrs)` — a bound orchestrator method returning `None`; it delegates to `apply_gsplat_group_attrs(...)` and stores the warn-once colormap-LUT flag on the orchestrator instance (it is NOT threaded through the ctx)
    - This resolves the colormap LUT, prepares/validates `transform` + `nd_transform`, fills rendering defaults (`opacity`, `absorption`, `gamma`, `intensity`, `offset`, `truncation_radius` — `blending_mode` is deliberately never stamped), stamps authoritative `type="gsplats"` attrs, and adds `position_bounds` into `metadata`
+   - Then `ctx.update_scene_bounds(metadata["position_bounds"])` folds the leaf's bounds into the scene extent
+
+6. **Write labels** (CSR serialization; `sort_order` derived from `ordering_data`):
+   - `write_labels_csr(group, labels, n_splats, ctx.compressor, sort_order)` — if `labels is not None`
+   - `write_image_labels_csr(group, image_labels, n_splats, ctx.compressor, sort_order)` — if `image_labels is not None`
 
 7. **Return metadata**: the `metadata` dict from `write_gsplat_arrays` — `{"n_splats", "ndim", "has_colors", "amplitude_range", "center_bounds"}` plus ordering keys, `position_bounds` (added by `apply_gsplat_group_attrs`), and conditionally `amplitude_data_range` (when `amplitudes` is a non-empty array), `has_labels` / `has_image_labels` (no `"type"` or `"lut_tone_mapping_warned"` key)
 

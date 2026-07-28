@@ -21,7 +21,7 @@ ThemeManager (singleton)
 | Frosted Glass | `frosted-glass` | Backdrop blur and glass morphism           |
 | Liquid Glass  | `liquid-glass`  | Geometry-aware refraction with SVG filters |
 
-**Default**: `dark` (unless a saved user preference or `?theme=<id>` overrides it)
+**Default**: `frosted-glass` (unless a saved user preference or `?theme=<id>` overrides it)
 
 ## Usage
 

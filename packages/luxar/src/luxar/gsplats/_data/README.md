@@ -13,7 +13,7 @@ Internal implementation package for `luxar.gsplats.gsplat_data.GSplatData` — s
 - **`base.py`** — `_GSplatDataOps`: Shared mixin base declaring instance attributes (`colors`, `stats`, `_node`) plus STUBS for cross-mixin method calls (`filter`, `_map_substitutive`, etc.). Inherits from `_SplatArrayMixin` so mixins can call `self.volumes()` / `self.scale()`. The real implementations live on `GSplatData` or sibling mixins; stubs here let mypy resolve cross-mixin `self.` calls.
 
 - **`metrics.py`** — `_SplatArrayMixin`: Shared computed properties for splat array containers. Inherited by BOTH `AdditiveSubLOD` and `GSplatData` (via `_GSplatDataOps`). Reads only `centers` / `amplitudes` / `cholesky_factors` plus `ndim` / `n_splats` / `truncation_radius`. Self-contained (no `GSplatData`-specific dependencies).
-  - **Exports**: `n_splats`, `ndim`, `__len__`, `volumes()`, `masses()`, `marginal_sigmas()`, `scale(axes=None)`, `eccentricities(axes=None)`, `pairwise_distances(n_neighbors=...)`, `isolation()`, internal helpers `_cholesky_diag_elements()`, `_nondegenerate_axes(eps=...)`, `_resolve_axes(axes)`
+  - **Exports**: `n_splats`, `ndim`, `__len__`, `volumes()`, `masses()`, `marginal_sigmas()`, `scale(axes=None)`, `eccentricities(axes=None)`, `principal_radii(anisotropy=True)`, `nearest_neighbor_distances(spatial_axes=None, group_axes=None, k=1)`, `neighbor_counts(radius, spatial_axes=None, group_axes=None)`, internal helpers `_cholesky_diag_elements()`, `_nondegenerate_axes(eps=...)`, `_resolve_axes(axes)`, `_grouped_spatial(...)`, `_cell_size_hint(...)`
   - **Axis auto-detection**: `scale` / `eccentricities` default to `axes=None` → auto-detected non-degenerate (spatial) axes, so they are meaningful on nD timelapses (a zero-variance time axis is dropped; falls back to all axes if that would leave nothing).
 
 - **`render.py`** — `RenderMixin`: `GSplatData.render_to_volume(shape, device=None, truncate=None, ...)` — GPU-accelerated volume rendering adapter. Delegates to `luxar.gsplats.rendering.volume_rendering.render_to_volume`.
@@ -91,7 +91,7 @@ CLI accepts `"pNN"` / `"NN%"` string notation; Python `filter_by` uses explicit 
 - **`isolation_max`**: Remove spatially-isolated splats (nearest-neighbour distance; higher = more isolated = noise).
 - **`min_neighbors` + `neighbor_radius`**: Remove splats with fewer than `min_neighbors` within `neighbor_radius`.
 
-Both rely on `_SplatArrayMixin.pairwise_distances` (computes NN distances on spatial axes only).
+`isolation_max` relies on `_SplatArrayMixin.nearest_neighbor_distances` (k-th nearest-neighbour distance on spatial axes only); `min_neighbors` relies on `_SplatArrayMixin.neighbor_counts` (count within `neighbor_radius`).
 
 ### Compressor Sentinel (`io_adapter.py`)
 
@@ -105,11 +105,15 @@ A plain `None` default would conflate the two and make uncompressed output impos
 
 Tests live in the parent package's test suite (`packages/luxar/src/luxar/gsplats/tests/`):
 
-- **`test_gsplat_data.py`**: `GSplatData` constructor, transforms, concatenation, view slicing, multi-substitutive/additive structure, `filter` / `filter_by` / `cull` integration
-- **`test_culling.py`**: All culling methods (cumulative, amplitude_percentile, combined, redundancy, error_budget), joint compounding check, multi-substitutive preservation
-- **Coverage**: Metrics (`volumes`, `masses`, `marginal_sigmas`, `scale`, `eccentricities`, `isolation`), rendering adapter, save/load round-trip, threshold resolution (percentile/normalized/absolute), spatial axis auto-detection
+- **`test_gsplat_data.py`**: The core data API — properties (`n_splats`, `ndim`, `__len__`, `repr`, `stats`), construction/validation, and the transforms (`translate`, `center_at_centroid`, `scale_intensity`, affine/normalize/clamp intensity, `transform` incl. covariance correctness).
+- **`test_gsplat_data_aggregations.py`**: Computed metrics (`volumes`, `principal_radii`, `masses`, `marginal_sigmas`, `eccentricities`), filtering (`filter`, `filter_by`, `slice_by`), and reshape ops (`concatenate`, `embed_dimension`, `combine_as_new_dimension`).
+- **`test_gsip_filters.py`**: Spatial-aware metrics (`scale`/`eccentricity` auto-ignoring a zero-variance time axis), `nearest_neighbor_distances` / `neighbor_counts`, the `isolation_max` filter, percentile thresholds, and the soft (amplitude-reweighting) high/low-pass.
+- **`test_gsplat_data_io.py`**: Cull heuristics (`cumulative`, `amplitude_percentile`, `combined`, `auto`), the save whitelist (which `fitting_info` keys the `save()` whitelist includes vs excludes — asserted directly against the whitelist logic, no actual zarr save/load), and multi-dataset channel-color merge.
+- **`test_culling.py`**: Contribution-based culling internals — per-splat deletion error, `cull_by_contribution` (`redundancy` / `error_budget`, quality preserved), nD support, the joint-compounding binary search, and `GSplatData.cull` integration.
+- **`test_spatial_partition.py`**: `GSplatData.to_spatial_partition` — spatial BSP into a `kind=partition` tree (max-elements/split-rule, splat preservation, `bsp_tree` provenance, on-disk round-trip, scene grafting).
+- **`test_spatial_axes.py`**: The shared spatial-axis auto-detection helpers (`spatial_axes_from_max_sigma`, `spatial_only_shift`).
 
-Run via: `hatch run pytest packages/luxar/src/luxar/gsplats/tests/test_gsplat_data.py packages/luxar/src/luxar/gsplats/tests/test_culling.py -v`
+Run via: `hatch run pytest packages/luxar/src/luxar/gsplats/tests/test_gsplat_data.py packages/luxar/src/luxar/gsplats/tests/test_gsplat_data_aggregations.py packages/luxar/src/luxar/gsplats/tests/test_gsip_filters.py packages/luxar/src/luxar/gsplats/tests/test_gsplat_data_io.py packages/luxar/src/luxar/gsplats/tests/test_culling.py packages/luxar/src/luxar/gsplats/tests/test_spatial_partition.py packages/luxar/src/luxar/gsplats/tests/test_spatial_axes.py -v`
 
 ## See Also
 

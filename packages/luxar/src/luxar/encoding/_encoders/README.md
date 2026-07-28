@@ -28,8 +28,8 @@ Break the monolithic `ArrayEncoder` into focused, testable mixins, each owning o
 
 **Priority order** (as defined in `ArrayEncoder.encode`):
 
-1. **Empty array**: passthrough (shape `(0,)` or `(0, d)`, no encoding)
-2. **Scalar input**: `_scalar_to_array` → `_encode_broadcasted_scalar` (shape `(1,)` or `(1, d)` with `n_elements` metadata)
+1. **Scalar input**: `_scalar_to_array` → `_encode_broadcasted_scalar` (shape `(1,)` or `(1, d)` with `n_elements` metadata). Checked first: a non-`ndarray` input is converted and returns before the empty-array check.
+2. **Empty array**: passthrough (shape `(0,)` or `(0, d)`, no encoding). Runs after the scalar branch but before the uniformity check (`_is_uniform` indexes `data[0]` and would raise on empty input).
 3. **Uniform array**: `_is_uniform` → `_encode_broadcasted` (stores first row/element only)
 4. **Deduplicate**: `_registry.check` → `_encode_array_ref` (if `deduplicate=True` and a byte-identical array was already written)
 5. **LUT encoding**: `_lut_plan` → `_encode_lut` (if ≤65,536 unique values pass benefit rules; two index tiers: uint8 ≤256, uint16 257..65,536 row-mode colors only)

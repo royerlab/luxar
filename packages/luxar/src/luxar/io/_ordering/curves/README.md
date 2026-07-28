@@ -1,6 +1,6 @@
 # luxar.io._ordering.curves
 
-**Space-filling curve encoders** for the spatial-ordering layer. The modules here implement Morton (Z-order) and Hilbert curve encoding, mapping nD integer grid coordinates to scalar codes whose sort order is spatially local. Both use Numba JIT-compiled kernels for fast parallel encoding, with pure-NumPy fallbacks kept in 1:1 sync.
+**Space-filling curve encoders** for the spatial-ordering layer. The modules here implement Morton (Z-order) and Hilbert curve encoding, mapping nD integer grid coordinates to scalar codes whose sort order is spatially local. Both use Numba JIT-compiled kernels for fast encoding. Morton has a pure-NumPy fallback kept in 1:1 sync; Hilbert instead falls back to the external `hilbertcurve` library (pure Python) and raises `ImportError` if neither Numba nor `hilbertcurve` is available.
 
 ## Purpose
 
@@ -31,7 +31,7 @@ Provide **space-filling curve primitives** that enable spatial locality in chunk
 3. **Numba path** (if available):
    - Allocate `out = np.empty(N, dtype=np.uint64)`
    - Cast `coords` to contiguous int64 array
-   - Call `_morton_numba_kernel(coords, bits_per_dim, out)` — parallel bit interleaving
+   - Call `_morton_numba_kernel(coords, bits_per_dim, out)` — single-threaded bit interleaving
    - Return `out`
 4. **NumPy fallback** (if Numba is unavailable):
    - Vectorized bit interleaving over all points:
@@ -96,13 +96,13 @@ On first use:
 
 1. **Permutation equivariance**: `encode(coords[perm]) == encode(coords)[perm]` for any permutation `perm` — a pure function of the coordinates, so a spatial sort is independent of input row order. Verified by hypothesis property tests (`io/tests/test_ordering_properties.py`).
 
-2. **Numba vs NumPy parity**: The JIT kernels and fallbacks produce byte-identical codes. The Numba kernel is the fast path; the NumPy fallback is the reference implementation. Verified by deterministic tests that force the fallback and compare (`test_morton_numba_numpy_parity`, `test_hilbert_numba_numpy_parity` in `io/tests/test_ordering_properties.py`).
+2. **Numba vs fallback parity**: The JIT kernels and their fallbacks produce byte-identical codes. The Numba kernel is the fast path; the reference fallback is pure NumPy for Morton and the `hilbertcurve` library for Hilbert. Verified by deterministic tests that force the fallback and compare (`test_morton_numba_numpy_parity`, `test_hilbert_numba_numpy_parity` in `io/tests/test_ordering_properties.py`).
 
 3. **Lazy compilation**: Kernels are compiled on first use, not at import time. This avoids blocking at module load and isolates Numba import errors to the first call.
 
 4. **Bit budget**: The `bits_per_dim` parameter controls the grid resolution. Default is 16 bits/dim (grid size `2^16 = 65536`). The total code width is `bits_per_dim * n_dims` (capped at 64 bits for `*_encode_nd`, 128 bits for `morton_encode_128bit`).
 
-5. **Contiguous input**: The Numba kernels require contiguous int64 input. `morton_encode_nd` converts via `coords.astype(np.int64)` before calling the kernel; multi-dimensional non-C-contiguous input is normalized automatically.
+5. **Contiguous input**: The Numba kernels require int64 input. `morton_encode_nd` converts via `np.ascontiguousarray(coords, dtype=np.int64)` (also guaranteeing C-contiguity); `hilbert_encode_nd` converts via `coords.astype(np.int64)` before calling the kernel.
 
 6. **Hilbert convention**: The MSB of dimension 0 comes first in the bit interleave (matches the `hilbertcurve` library convention). This is the opposite order of Morton (which interleaves LSB-first).
 
@@ -116,9 +116,7 @@ The curve encoders are exercised by multiple test suites:
   - `test_morton_numba_numpy_parity` — Morton Numba vs NumPy byte-identical codes
   - `test_hilbert_numba_numpy_parity` — Hilbert Numba vs NumPy byte-identical codes
 
-- **test_ordering_points.py** / **test_ordering_lines.py** / **test_ordering_gsplats.py** — Integration tests for each geometry type, verifying that sorted data has better spatial locality than unsorted
-
-- **test_ordering_compound.py** — Compound ordering correctness (barrier dims, chunk-straddling invariant)
+- **test_ordering_points.py** / **test_ordering_lines.py** / **test_ordering_gsplats.py** — Integration tests for each geometry type, verifying that sorted data has better spatial locality than unsorted (including barrier dims and the chunk-straddling invariant)
 
 ## Usage (Internal Only)
 
@@ -137,7 +135,7 @@ LuxarZarrCompiler.write_points(...)
   → spatial_ordering/points.py::build_points_ordering(...)
   → _ordering/points.py::sort_points_compound(positions, dimensions, method="hilbert")
   → _ordering/compound.py::_compound_sort(coords, slice_dims, ordering_dims, method="hilbert")
-  → _ordering/curves/hilbert.py::hilbert_encode_nd(grid_coords, bits_per_dim=16)
+  → _ordering/curves/hilbert.py::hilbert_encode_nd(grid_coords, bits_per_dim=21)  # bits = min(21, 64 // n_ordering_dims); 21 for the 3-spatial-dim case, 16 only at 4 ordering dims
   → _hilbert_numba_kernel(coords, bits_per_dim, out)  # or numpy fallback
 ```
 
@@ -146,7 +144,7 @@ LuxarZarrCompiler.write_points(...)
 **Numba JIT kernels** (when available):
 - **Compilation overhead**: ~100-500 ms on first use (lazy, one-time)
 - **Encoding speed**: ~1-10 million points/sec (depends on dimensionality and CPU)
-- **Parallelization**: Numba auto-vectorizes and parallelizes over points
+- **Threading**: Both kernels are `@numba.njit(cache=True)` — single-threaded (no `parallel=True` / `prange`); the speedup comes from JIT-compiled native code, not multithreading
 
 **NumPy fallback**:
 - **Morton**: Vectorized over all points, reasonably fast (~500k-2M points/sec)

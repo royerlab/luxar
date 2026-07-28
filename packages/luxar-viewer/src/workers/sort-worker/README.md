@@ -257,7 +257,7 @@ Every task except `initialize()` calls `requireWasm(ctx)`, which throws when `ct
 
 ### Kernel Complexity
 
-`O(N + B)` where N = element count, B = bucket count (256 depth buckets). Radix-like: one count pass, one prefix-sum, one write pass. Milliseconds for millions of elements on any live worker.
+`O(N + B)` where N = element count, B = bucket count (`DEPTH_SORT_BUCKETS = 1 << 16 = 65536` depth buckets, the full uint16 key range — see `wasm/typescript/depth-sort.ts`). Radix-like: one count pass, one prefix-sum, one write pass. Milliseconds for millions of elements on any live worker.
 
 ### Transfer Overhead
 

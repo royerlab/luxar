@@ -2,7 +2,7 @@
 
 **Public Surface**: Events, value types, and headless screenshot utilities for embedding Luxar programmatically in other applications.
 
-Unlike the rest of `app/` (private orchestrator support), this subpackage is re-exported from the package barrel (`src/index.ts`) — embedders import `LuxarEmbedderEventMap`, `EmbedderDimensions`, `ScreenshotOptions`, etc. from `'luxar-viewer'` directly.
+Unlike the rest of `app/` (private orchestrator support), this subpackage is re-exported from the package barrel (`src/index.ts`) — embedders import `LuxarEmbedderEventMap`, `EmbedderDimensions`, `ScreenshotOptions`, etc. from `'@royerlab/luxar-viewer'` directly.
 
 ## Modules
 
