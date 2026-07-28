@@ -792,6 +792,7 @@ finds them too.
 
 | Skill | What it teaches |
 |-------|-----------------|
+| [`luxar-install`](.agents/skills/luxar-install/SKILL.md) | Install Luxar on a machine — user-install vs full dev setup, per profile: modest laptop (CPU/MPS), NVIDIA-GPU desktop (CUDA extension), and Slurm/HPC cluster (no-sudo bootstrap, `build-cuda SLURM=1`). |
 | [`luxar-visualization`](.agents/skills/luxar-visualization/SKILL.md) | Build a `.luxar.zarr` scene from a dataset — Points/Lines/GSplats, Dimensions, transforms, hierarchy, serve/export — grounded in the demos and examples. |
 | [`luxar-gsplat-pipeline`](.agents/skills/luxar-gsplat-pipeline/SKILL.md) | Fit Gaussian splats to an nD image: the `cal → fit → lod` pipeline, the full CLI option surface, tiling, the Python fitting API, and adding a gsplat node to a scene. |
 | [`luxar-hpc-batch-fit`](.agents/skills/luxar-hpc-batch-fit/SKILL.md) | Fit a whole nD timelapse at scale — local multi-GPU (`batch-fit run`) or Slurm/Bruno (`batch-fit submit`), plus status/validate/merge/cancel and the GPU benchmark profile. |
