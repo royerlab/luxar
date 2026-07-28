@@ -52,7 +52,7 @@ from luxar.gsplats import GSplatData
 data = GSplatData.load("fitted.gsplats.zarr")
 volume = data.render_to_volume(shape=(128, 128, 128))
 culled = data.cull(method="cumulative", retention=0.95)
-filtered = data.filter_by(amplitude_min=0.1, scale_max="p90")
+filtered = data.filter_by(amplitude_min=0.1, scale_max=90.0, scale_percentile=True)
 data.save("output.gsplats.zarr", ordering="hilbert")
 
 # ❌ Wrong: never import mixins directly
@@ -74,12 +74,12 @@ Mixins call each other's methods (e.g., `CullingMixin.cull` → `FilteringMixin.
 
 `scale(axes=None)` and `eccentricities(axes=None)` default to the auto-detected **non-degenerate axes** (max marginal sigma > `SPATIAL_SIGMA_EPS` ≈ 1e-6). On a timelapse with a zero-variance time axis (built with `sigma=0` along the categorical/time dim), the time axis is dropped → scale / eccentricity become spatial-by-default. Falls back to all axes if that would leave nothing (e.g., all-degenerate / empty data).
 
-**Practical impact**: `scale_max="p90"` on a 4D timelapse filters by **spatial** size (the geometric mean of XYZ sigmas), ignoring the degenerate T axis — the expected behavior for "remove large diffuse background."
+**Practical impact**: `scale_max=90.0, scale_percentile=True` on a 4D timelapse filters by **spatial** size (the geometric mean of XYZ sigmas), ignoring the degenerate T axis — the expected behavior for "remove large diffuse background."
 
 ### Threshold Resolution (`_resolve_threshold`)
 
 `filter_by` thresholds accept three modes:
-- **Percentile** (`*_percentile=True`): `val` in `[0, 100]` → `np.percentile(dataset_values, val)`. Robust on heavy-tailed attributes (preferred over normalized). Example: `scale_max="p90"` or `scale_max=90.0, scale_percentile=True`.
+- **Percentile** (`*_percentile=True`): `val` in `[0, 100]` → `np.percentile(dataset_values, val)`. Robust on heavy-tailed attributes (preferred over normalized). Example: `scale_max=90.0, scale_percentile=True` (the CLI equivalent is `--scale-max p90`).
 - **Normalized** (`*_normalized=True`): `val` in `[0, 1]` → linear map onto `[min, max]` of `dataset_values`.
 - **Absolute** (default): `val` is already in world units.
 
