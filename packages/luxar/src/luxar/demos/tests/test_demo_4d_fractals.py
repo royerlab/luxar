@@ -45,13 +45,23 @@ N_FRACTALS = 6
 
 class TestAxisWorldValues:
     def test_values_are_exact_step_multiples(self):
-        """The viewer snaps to k×step anchored at 0 — data must sit there."""
+        """The viewer snaps to k×step anchored at 0 — data must sit there.
+
+        The load-bearing invariant is the snap round-trip the viewer
+        computes (``Math.round(v/step)*step``): it must reproduce every
+        axis value BIT-EXACTLY, so a snapped slider stop equals the data
+        plane it targets.
+        """
         for grid in (24, 50, 51):
             axis = axis_world_values(grid)
             step = 2.0 / grid
             k = axis / step
-            assert np.allclose(k, np.round(k), atol=0), (
-                f"grid={grid}: axis values not exact step multiples"
+            assert np.abs(k - np.round(k)).max() < 1e-12, (
+                f"grid={grid}: axis values not step multiples"
+            )
+            snapped = np.round(k) * step
+            assert np.array_equal(snapped, axis), (
+                f"grid={grid}: snap round-trip not bit-exact"
             )
 
     def test_includes_zero_and_is_monotonic(self):
@@ -123,3 +133,39 @@ class TestGeneratorDeterminism:
         p2, v2 = generate_4d_fractal(3, grid_size=GRID)
         assert np.array_equal(p1, p2)
         assert np.array_equal(v1, v2)
+
+
+class TestWrittenDatasetContract:
+    """The zarr the demo actually ships must satisfy the slider contract
+    after the encode→decode round-trip (quantized position storage)."""
+
+    def test_dimension_metadata_and_decoded_planes(self, tmp_path):
+        from luxar.io.reader import LuxarScene
+
+        grid = 8
+        out = tmp_path / "fractals_4d_test.luxar.zarr"
+        _demo.generate_4d_fractal_dataset(out, grid_size=grid)
+
+        scene = LuxarScene.load(out)
+        dims = scene._root.attrs["scene_dimensions"]["dimensions"]
+        wdim = dims[1]
+        step = 2.0 / grid
+        axis = axis_world_values(grid)
+        assert wdim["name"] == "w"
+        assert wdim["discrete"] is True
+        assert wdim["step"] == step
+        assert wdim["range"] == [float(axis[0]), float(axis[-1])]
+
+        pos = scene.get_points("Fractals4D")["positions"]
+        w = pos[:, 1]
+        fractal_ids = pos[:, 0]
+        # Every slider stop (k*step within range) must have decoded points
+        # within the viewer's 0.25*step fetch reach, for EVERY fractal.
+        ks = np.arange(round(axis[0] / step), round(axis[-1] / step) + 1)
+        for fid in range(6):
+            wf = w[fractal_ids == fid]
+            for k in ks:
+                stop = k * step
+                assert (np.abs(wf - stop) <= 0.25 * step).any(), (
+                    f"fractal {fid}: no decoded points at stop {stop}"
+                )

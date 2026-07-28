@@ -5,7 +5,8 @@ This demo demonstrates:
 - Simple 4D geometric fractals (XOR, Menger, Sierpinski, etc.)
 - Categorical dimension (select different fractal patterns)
 - 4th spatial dimension (W) navigation showing fractal slices
-- Millions of points with spatial indexing, ~1M visible per configuration
+- Millions of points with spatial indexing; each (fractal, w) slice
+  shows its own subset, and every w slider stop shows structure
 - Complete workflow: generate → serve → view → cleanup
 
 Mathematical Background:
@@ -28,7 +29,7 @@ Mathematical Background:
 Performance:
     - INSTANT generation - simple conditions, no iteration
     - Fully vectorized numpy operations
-    - All 6 fractals in ~5-15 seconds total
+    - All 6 fractals generated and written in ~10-30 seconds
 
 Usage:
     python demo_4d_fractals.py [--grid=N]
@@ -607,7 +608,10 @@ def generate_4d_fractal_dataset(
             )
 
         aprint(f"✓ Written to {output_path}")
-        aprint(f"✓ Dataset size: ~{len(positions_5d) * 40 / 1024 / 1024:.0f} MB")
+        disk_bytes = sum(
+            f.stat().st_size for f in output_path.rglob("*") if f.is_file()
+        )
+        aprint(f"✓ Dataset size: {disk_bytes / 1024 / 1024:.0f} MB on disk")
 
     return len(positions_5d)
 
@@ -615,9 +619,9 @@ def generate_4d_fractal_dataset(
 def main() -> None:
     """Main demo entry point."""
     # Parse arguments
-    # NOTE: grid_size=100 creates far more points and chunks, which can
-    # overwhelm browser HTTP connection limits. grid_size=50 keeps each
-    # fractal at or under the 1.5M point budget.
+    # NOTE: output size is capped by the 1.5M-per-fractal budget regardless
+    # of grid, but generation RAM scales as grid^4 (grid=100 allocates
+    # several 100M-element arrays). grid=50 keeps generation light.
     grid_size = 50
 
     if len(sys.argv) > 1:
