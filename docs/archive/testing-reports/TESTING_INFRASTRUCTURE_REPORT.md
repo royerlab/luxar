@@ -388,8 +388,8 @@ make check                  # Lint + Type + Test
 - [Python Testing Analysis](./PYTHON_TESTING_ANALYSIS.md)
 - [TypeScript Testing Analysis](./TYPESCRIPT_TESTING_ANALYSIS.md)
 - [Rust/WASM Testing Analysis](./RUST_WASM_TESTING_ANALYSIS.md)
-- [E2E Testing Guide](../../packages/luxar-viewer/docs/PLAYWRIGHT_GUIDE.md)
-- [CLAUDE.md Testing Section](../../CLAUDE.md#testing)
+- [E2E Testing Guide](../../guides/developer/PLAYWRIGHT_GUIDE.md)
+- [CLAUDE.md Testing Section](../../../CLAUDE.md#testing)
 
 ---
 

@@ -247,6 +247,23 @@ Group nodes organize the scene hierarchy and can contain child nodes.
 }
 ```
 
+#### Volumetric blending and `absorption`
+
+Set `blending_mode` to `"volumetric"` for emission–absorption compositing:
+each element emits light while attenuating elements behind it. The viewer
+supports this mode for Points, Lines, and GSplats and depth-sorts the
+order-dependent geometry back-to-front.
+
+`absorption` is the node-level coefficient κ. It is non-negative, defaults to
+`1.0`, and composes multiplicatively through the scene hierarchy. It is inert
+in the other blending modes. At κ = 0, volumetric rendering reaches the
+additive limit; increasing κ produces stronger self-occlusion. When colors
+carry an RGBA alpha channel, the alpha is converted to optical-depth weight in
+volumetric mode instead of being treated only as a linear contribution scale.
+
+For the rendering equations, blend-state contract, and per-geometry details,
+see the [Volumetric Blending specification](../specs/VOLUMETRIC_BLENDING_SPEC.md).
+
 ### 2. Group Kinds — Specialized `group` Nodes
 
 A `Group` may carry an optional `kind` attribute that turns it into a
@@ -278,7 +295,7 @@ group's `display_type`.
 
 **Standalone `.gsplats.zarr` root**: a `kind=lod` group is also a valid
 root of a standalone `.gsplats.zarr` file — the file root IS the node
-(current standalone format version: **v3.2**, see
+(current standalone format version: **v3.3**, see
 `docs/specs/GSPLATS_ZARR_FORMAT.md`). The viewer opens such a file directly
 (`?src=<file>.gsplats.zarr`) and frames on its `position_bounds`. On-disk,
 children are `child_<i>/` in **coarsest→finest** order; the writer always
@@ -450,9 +467,10 @@ subgroups in this convention.
   (Since format v3.1 the in-memory packed `cholesky_factors` is stored on disk split
   into `_diag` + `_offdiag` so each can be encoded independently; `_offdiag` is absent
   for 1D splats. Legacy v3.0 files store a single packed `cholesky_factors`, read via a
-  presence-detect fallback. The current gsplats format is **v3.2**, which only
-  renames the `kind=lod` selector attrs to the coverage semantics described
-  above — `selector: "coverage"` + per-child `coverage_fraction`; see
+  presence-detect fallback. Format **v3.2** renamed the `kind=lod` selector
+  attrs to the coverage semantics described above — `selector: "coverage"` +
+  per-child `coverage_fraction`. The current format is **v3.3**, which also
+  permits the optional `luxar_delta_v1` filter on quantized code arrays; see
   `docs/specs/GSPLATS_ZARR_FORMAT.md`, the authoritative gsplats format spec.)
 - **Lines** — per-polyline. Each subgroup contains WHOLE polylines
   (vertices + their segments). Segment indices are local to the
