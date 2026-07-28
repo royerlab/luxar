@@ -132,6 +132,30 @@ def _make_payloads(seed: int = 3) -> dict[str, bytes]:
     }
 
 
+def _forge_central_uncompressed_size(
+    archive: Path, member: str, forged_size: int
+) -> None:
+    """Overwrite the *central-directory* uncompressed-size field (offset 24,
+    little-endian uint32) of ``member`` with ``forged_size`` — simulating a
+    corrupt/malicious archive that under-declares a member that inflates large.
+    """
+    data = bytearray(archive.read_bytes())
+    name = member.encode()
+    sig = b"\x50\x4b\x01\x02"  # central-directory file header
+    idx = 0
+    while True:
+        idx = data.find(sig, idx)
+        if idx < 0:
+            raise AssertionError(f"central-dir record for {member!r} not found")
+        name_len = int.from_bytes(data[idx + 28 : idx + 30], "little")
+        rec_name = bytes(data[idx + 46 : idx + 46 + name_len])
+        if rec_name == name:
+            data[idx + 24 : idx + 28] = int(forged_size).to_bytes(4, "little")
+            break
+        idx += 4
+    archive.write_bytes(bytes(data))
+
+
 def _build_zip(
     path: Path,
     payloads: dict[str, bytes],
@@ -231,6 +255,78 @@ class TestDownloadZipMember:
         out = tmp_path / "via_redirect.ply"
         # /dl/archive.zip 302-redirects to /archive.zip on every hop.
         download_zip_member(f"{redirect_range_server}/dl/archive.zip", member, out)
+        assert out.read_bytes() == payloads[member]
+
+    def test_rejects_decompression_bomb(
+        self, range_server: str, tmp_path: Path
+    ) -> None:
+        """A member whose forged central-dir uncompressed size (1024) is far
+        smaller than what its DEFLATE stream actually inflates to must be
+        rejected mid-stream as a decompression bomb, with no ``.part`` staging
+        file (or output) left behind.
+        """
+        member = "bomb.bin"
+        # Highly compressible: tiny DEFLATE stream, ~5 MB inflated.
+        payload = b"A" * 5_000_000
+        archive = tmp_path / "bomb.zip"
+        _build_zip(archive, {member: payload})
+        _forge_central_uncompressed_size(archive, member, 1024)
+
+        out = tmp_path / "bomb.out"
+        with pytest.raises(ValueError, match="decompression bomb|exceeds"):
+            download_zip_member(f"{range_server}/bomb.zip", member, out)
+        assert not out.exists()
+        assert list(tmp_path.glob("*.part")) == []
+
+    def test_max_uncompressed_size_ceiling(
+        self, range_server: str, tmp_path: Path
+    ) -> None:
+        """``max_uncompressed_size`` rejects a member declaring more than the
+        ceiling before any streaming; a generous ceiling still extracts fine.
+        """
+        payloads = _make_payloads()
+        _build_zip(tmp_path / "archive.zip", payloads)
+        member = "models/train/point_cloud.ply"  # 300_000 bytes
+        out = tmp_path / "train.ply"
+
+        with pytest.raises(ValueError, match="ceiling|exceeding"):
+            download_zip_member(
+                f"{range_server}/archive.zip",
+                member,
+                out,
+                max_uncompressed_size=1024,
+            )
+        assert not out.exists()
+        assert list(tmp_path.glob("*.part")) == []
+
+        # A generous ceiling leaves normal extraction unaffected.
+        download_zip_member(
+            f"{range_server}/archive.zip",
+            member,
+            out,
+            max_uncompressed_size=10_000_000,
+        )
+        assert out.read_bytes() == payloads[member]
+
+    def test_max_uncompressed_size_none_disables_ceiling(
+        self, range_server: str, tmp_path: Path
+    ) -> None:
+        """Passing ``max_uncompressed_size=None`` disables the absolute ceiling:
+        a normal member still extracts byte-exact (proving ``None`` is a valid
+        disable value that does not trip the ``min``/early-rejection logic). The
+        legitimate stream also exercises the compressed-bytes counter without a
+        false trigger (cumulative read == comp_size).
+        """
+        payloads = _make_payloads()
+        _build_zip(tmp_path / "archive.zip", payloads)
+        member = "models/train/point_cloud.ply"
+        out = tmp_path / "train.ply"
+        download_zip_member(
+            f"{range_server}/archive.zip",
+            member,
+            out,
+            max_uncompressed_size=None,
+        )
         assert out.read_bytes() == payloads[member]
 
     def test_matches_zipfile_extraction(
