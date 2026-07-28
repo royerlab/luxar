@@ -227,6 +227,15 @@ class QuietHandler(http.server.SimpleHTTPRequestHandler):
     letting any web page read the locally-served scene if it discovered the port.
     """
 
+    def end_headers(self):
+        # SimpleHTTPRequestHandler sends Last-Modified but no Cache-Control,
+        # so browsers fall back to HEURISTIC freshness and can serve STALE
+        # files after this folder is re-exported in place (same URLs, new
+        # bytes). no-cache forces revalidation; unchanged files still come
+        # back as cheap 304s via If-Modified-Since.
+        self.send_header("Cache-Control", "no-cache")
+        super().end_headers()
+
     def log_message(self, format, *args):
         """Suppress request logging for cleaner output."""
         pass

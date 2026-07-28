@@ -101,10 +101,13 @@ def write_lines(
     if line_type == "indexed":
         if indices is None:
             raise ValueError("Indexed line type requires indices array")
-        if len(indices) < 2:
+        # Accept BOTH accepted layouts — flat (2E,) and pairs (E, 2) —
+        # by counting ELEMENTS, not rows: len() on an (E, 2) array counts
+        # edges, which wrongly rejected any odd edge count.
+        if indices.size < 2:
             raise ValueError("Indexed requires at least 2 indices")
-        if len(indices) % 2 != 0:
-            raise ValueError("Indices must have even length (pairs)")
+        if indices.size % 2 != 0:
+            raise ValueError("Indices must have an even element count (pairs)")
         # Bounds check BOTH ends before convert_to_indexed casts to uint32:
         # a negative index would silently wrap to ~4 billion and blow up
         # with a raw IndexError deep inside the spatial ordering.
@@ -112,6 +115,32 @@ def write_lines(
             raise ValueError(f"Index {np.min(indices)} < 0 (indices must be >= 0)")
         if np.max(indices) >= n_vertices:
             raise ValueError(f"Index {np.max(indices)} >= n_vertices {n_vertices}")
+
+    # 0d-bis. Authoring lint: "segments" input that is actually a chain of
+    # EXPLODED CONTINUOUS polylines (consecutive segments share an endpoint
+    # coordinate, duplicated instead of index-shared). The viewer's joint
+    # continuity (endpoint-cap suppression) matches joints by shared vertex
+    # INDEX, so exploded authoring renders every interior joint as a dark
+    # bead — the classic thick-polyline bead-chain artifact. Warn (never
+    # reject: duplicated coordinates can also be a legitimate coincidence).
+    if line_type == "segments" and n_vertices >= 16:
+        verts_arr = np.asarray(vertices)
+        seg_ends = verts_arr[1:-1:2]  # end of segment i      (i < last)
+        next_starts = verts_arr[2::2]  # start of segment i+1
+        shared = np.all(seg_ends == next_starts, axis=1)
+        if shared.size > 0:
+            shared_frac = float(np.mean(shared))
+            if shared_frac > 0.5:
+                aprint(
+                    f"  ⚠ {shared_frac:.0%} of consecutive segments share an "
+                    "endpoint coordinate — this looks like continuous "
+                    "polylines exploded into independent segments. Authored "
+                    "this way, interior joints do not share vertex indices, "
+                    "so thick lines render as bead chains. Author connected "
+                    "geometry as line_type='polyline' (single chain) or "
+                    "line_type='indexed' with per-chain edge lists (many "
+                    "chains in one node)."
+                )
 
     # 0e. Shared validator (the Lines sibling of validate_radii_for_writing)
     validate_widths_for_writing(widths, n_vertices)

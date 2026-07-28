@@ -1124,9 +1124,13 @@ def add_cell_tracks(
 ) -> None:
     """Add cell tracking lines to the scene.
 
-    All tracks are batched into a single "segments" line node.  Each consecutive
-    pair of positions in a track becomes one line segment.  Vertices are 4D:
-    [x, y, z, time] in physical µm coordinates.
+    All tracks are batched into a single "indexed" line node: each tracked
+    position is authored ONCE (unique per-vertex arrays) and connectivity is an
+    explicit (E, 2) edge list chaining consecutive positions within a track (no
+    edge across tracks).  Sharing the joint vertex INDEX between the two edges
+    meeting at a position is what lets the viewer suppress the joint end caps,
+    so a trajectory reads as one continuous line instead of a chain of beads.
+    Vertices are 4D: [x, y, z, time] in physical µm coordinates.
 
     Track positions from CSV/nuclei files are in voxel coordinates and are
     converted to physical µm using VOXEL_SIZE_ZYX before centering.
@@ -1144,51 +1148,49 @@ def add_cell_tracks(
     vz, vy, vx = VOXEL_SIZE_ZYX
 
     with asection(f"Adding {len(tracks)} cell track lines"):
-        # Build segment vertices: pairs of consecutive points per track
+        # Build unique per-position vertices + per-track edge chains
         all_verts = []
         all_colors = []
+        all_edges = []
 
         # shared_centroid is in µm, order [Z, Y, X] (from GSplat fitting).
         # Scene dims are [x, y, z, time], so remap:
         cx, cy, cz = shared_centroid[2], shared_centroid[1], shared_centroid[0]
 
         total_segments = 0
+        vertex_offset = 0
         for tid, positions in tracks.items():
+            n_pos = len(positions)
+            if n_pos < 2:
+                # A single position has no edge; skip it entirely so no
+                # unreferenced vertex is written.
+                continue
             color = track_colors[tid]
             color_arr = np.array(color, dtype=np.float32)
 
-            for i in range(len(positions) - 1):
-                t0, z0, y0, x0 = positions[i]
-                t1, z1, y1, x1 = positions[i + 1]
-
+            for t, z, y, x in positions:
                 # Convert voxel coords to physical µm (same as GSplats:
                 # physical = voxel_index * voxel_size, no half-voxel offset)
                 # then subtract the shared centroid.
                 # 4D vertex: [x_um, y_um, z_um, time] — matching scene dims
-                v0 = np.array(
-                    [
-                        x0 * vx - cx,
-                        y0 * vy - cy,
-                        z0 * vz - cz,
-                        float(t0),
-                    ],
-                    dtype=np.float32,
+                all_verts.append(
+                    np.array(
+                        [
+                            x * vx - cx,
+                            y * vy - cy,
+                            z * vz - cz,
+                            float(t),
+                        ],
+                        dtype=np.float32,
+                    )
                 )
-                v1 = np.array(
-                    [
-                        x1 * vx - cx,
-                        y1 * vy - cy,
-                        z1 * vz - cz,
-                        float(t1),
-                    ],
-                    dtype=np.float32,
-                )
+                all_colors.append(color_arr)
 
-                all_verts.append(v0)
-                all_verts.append(v1)
-                all_colors.append(color_arr)
-                all_colors.append(color_arr)
-                total_segments += 1
+            # This track's chain: (0,1), (1,2), ... offset into the batch.
+            start = np.arange(vertex_offset, vertex_offset + n_pos - 1, dtype=np.uint32)
+            all_edges.append(np.column_stack([start, start + 1]))
+            vertex_offset += n_pos
+            total_segments += n_pos - 1
 
         if total_segments == 0:
             aprint("  No valid track segments to add")
@@ -1196,6 +1198,7 @@ def add_cell_tracks(
 
         vertices = np.array(all_verts, dtype=np.float32)
         colors = np.array(all_colors, dtype=np.float32)
+        edges = np.concatenate(all_edges).astype(np.uint32)
 
         aprint(f"  {total_segments:,} segments from {len(tracks)} tracks")
         aprint(f"  Vertices shape: {vertices.shape}")
@@ -1205,7 +1208,8 @@ def add_cell_tracks(
             vertices=vertices,
             widths=0.3,
             colors=colors,
-            line_type="segments",
+            indices=edges,
+            line_type="indexed",
             extend_to_all=["time"],
             layer=True,
         )
@@ -1221,11 +1225,23 @@ def add_fading_trail_tracks(
 ) -> None:
     """Add per-timepoint fading-trail tracks + current-position points.
 
-    At each current time ``T``, emits line segments covering the last
-    ``TRAIL_HISTORY`` hops ending at ``T`` — i.e. segments
+    At each current time ``T``, emits a backward chain covering the last
+    ``TRAIL_HISTORY`` hops ending at ``T`` — i.e. edges
     ``(T - k - 1) -> (T - k)`` for ``k = 0 .. TRAIL_HISTORY - 1``.
-    Each segment's RGB is scaled by ``TRAIL_FADE[k]`` (newest = brightest),
-    so older hops fade toward black.
+
+    The chain is authored as ``line_type="indexed"``: consecutive hops share
+    ONE vertex (their coordinates were already bit-identical), which is what
+    lets the viewer suppress the joint end caps so a thin trail reads as a
+    continuous comet tail rather than a chain of beads.  A hop that fails the
+    missing-timepoint or displacement test simply contributes no edge, which
+    splits the chain in two — exactly the old behaviour.  Vertices are only
+    emitted for hops that survive, so the node carries no unreferenced
+    vertices.
+
+    Vertex RGB is scaled by ``TRAIL_FADE[age]`` where ``age`` is that
+    vertex's own distance back in time (newest = brightest), so the fade is
+    now a smooth gradient ALONG each trail instead of the old constant fade
+    per segment — same envelope, no per-segment brightness steps.
 
     Every current cell position at ``T`` is also emitted as a bright point
     so the live state is clearly visible above the trail.
@@ -1296,6 +1312,7 @@ def add_fading_trail_tracks(
 
     trail_verts: list[np.ndarray] = []
     trail_colors: list[np.ndarray] = []
+    trail_edges: list[tuple[int, int]] = []
     point_positions: list[np.ndarray] = []
     point_colors: list[np.ndarray] = []
     n_rejected = 0
@@ -1318,16 +1335,26 @@ def add_fading_trail_tracks(
                     )
                     point_colors.append(base)
 
-                # Fading trail segments ending at current_t.
+                # Fading trail edges ending at current_t.
                 # Use SMOOTHED positions so trails read as clean motion paths,
                 # and stride by TRAIL_SEGMENT_STRIDE to avoid emitting nearly
                 # collinear segments within the smoothing window.
-                # ANCHOR: the tip of the newest segment (seg_idx=0) uses the
+                # ANCHOR: the tip of the newest hop (seg_idx=0) uses the
                 # RAW position at current_t so the trail visibly connects to
                 # the cell marker (which is also drawn at the raw position).
                 # Only past positions (t < current_t) are smoothed.
+                #
+                # Indexed authoring: hop seg_idx joins chain vertex seg_idx
+                # (its newer end) to chain vertex seg_idx + 1 (its older end).
+                # Consecutive hops used to duplicate a bit-identical vertex
+                # (hop k's old end == hop k+1's new end); here they SHARE one
+                # index, which is what lets the viewer suppress the joint caps.
+                # `chain_index` allocates a vertex the first time an accepted
+                # hop needs it, so rejected hops leave no unreferenced vertex —
+                # a rejected hop just omits its edge, splitting the chain.
                 stride = TRAIL_SEGMENT_STRIDE
                 n_segments = TRAIL_HISTORY // stride
+                chain_index: dict[int, int] = {}
                 for seg_idx in range(n_segments):
                     t_new = current_t - seg_idx * stride
                     t_old = current_t - (seg_idx + 1) * stride
@@ -1343,24 +1370,28 @@ def add_fading_trail_tracks(
                     ):
                         n_rejected += 1
                         continue
-                    faded = base * float(TRAIL_FADE[seg_idx * stride])
 
-                    trail_verts.append(
-                        np.array(
-                            [p_old[0], p_old[1], p_old[2], float(current_t)],
-                            dtype=np.float32,
+                    for chain_k, p in ((seg_idx, p_new), (seg_idx + 1, p_old)):
+                        if chain_k in chain_index:
+                            continue
+                        # Per-VERTEX fade by that vertex's own age, so the
+                        # trail dims smoothly along its length (the old
+                        # per-segment constant produced visible steps). The
+                        # oldest chain vertex is TRAIL_HISTORY frames back, so
+                        # clamp to the last TRAIL_FADE entry.
+                        age = min(chain_k * stride, TRAIL_HISTORY - 1)
+                        chain_index[chain_k] = len(trail_verts)
+                        trail_verts.append(
+                            np.array(
+                                [p[0], p[1], p[2], float(current_t)],
+                                dtype=np.float32,
+                            )
                         )
-                    )
-                    trail_verts.append(
-                        np.array(
-                            [p_new[0], p_new[1], p_new[2], float(current_t)],
-                            dtype=np.float32,
-                        )
-                    )
-                    trail_colors.append(faded)
-                    trail_colors.append(faded)
+                        trail_colors.append(base * float(TRAIL_FADE[age]))
 
-        n_segs = len(trail_verts) // 2
+                    trail_edges.append((chain_index[seg_idx], chain_index[seg_idx + 1]))
+
+        n_segs = len(trail_edges)
         n_pts = len(point_positions)
         aprint(f"  Fading trails: {n_segs:,} segments")
         aprint(f"  Current positions: {n_pts:,} points")
@@ -1377,7 +1408,8 @@ def add_fading_trail_tracks(
             vertices=np.asarray(trail_verts, dtype=np.float32),
             widths=TRAIL_LINE_WIDTH,
             colors=np.asarray(trail_colors, dtype=np.float32),
-            line_type="segments",
+            indices=np.asarray(trail_edges, dtype=np.uint32).reshape(-1, 2),
+            line_type="indexed",
             extend_to_all=[],
             layer=True,
             opacity=TRAIL_OPACITY,

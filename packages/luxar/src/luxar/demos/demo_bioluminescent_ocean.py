@@ -297,16 +297,24 @@ def generate_tentacles(
     jelly: JellyfishParams,
     frame: int,
     n_frames: int,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Generate flowing tentacles as line segments.
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Generate flowing tentacles as indexed polylines.
 
     Tentacles wave gracefully with a combination of:
     - Overall drift from jellyfish movement
     - Sinusoidal waves propagating down the tentacle
     - Random perturbations for organic feel
 
+    Each tentacle is authored as unique per-vertex arrays plus an explicit
+    ``(E, 2)`` edge chain. Sharing the joint vertex INDEX between the two edges
+    meeting at a sample point is what lets the viewer suppress the joint end
+    caps, so a thick tentacle reads as one smooth curve (duplicating joints into
+    independent segment endpoints hides them from that test and beads the
+    curve). The edge indices are local to the returned vertices; the caller
+    offsets them when batching every tentacle of every frame into one node.
+
     Returns:
-        vertices, widths, colors, sharpness
+        vertices, widths, colors, sharpness, edges
     """
     t = frame / n_frames
 
@@ -320,6 +328,8 @@ def generate_tentacles(
     all_widths = []
     all_colors = []
     all_sharpness = []
+    all_edges = []
+    vertex_offset = 0
 
     for tent_idx in range(N_TENTACLES):
         # Attachment point on bell edge
@@ -370,28 +380,37 @@ def generate_tentacles(
             pos = jelly.position + np.array([x, y, z]) + effective_drift
             points.append(pos)
 
-        # Convert to line segments
+        # Emit as an indexed chain: one vertex per sample point, one edge per
+        # consecutive pair. The per-vertex taper/fade below evaluates the same
+        # functions the old per-segment code did, just at each vertex instead of
+        # once per segment — the small `width * 0.95` / `color * 0.98`
+        # end-of-segment steps the duplicated authoring used are subsumed by the
+        # now-continuous ramps (the shader interpolates between vertices).
         points = np.array(points, dtype=np.float32)
-        for i in range(len(points) - 1):
-            all_vertices.extend([points[i], points[i + 1]])
+        n_pts = len(points)
+        all_vertices.append(points)
 
-            # Width tapers along tentacle
-            seg_frac = i / (len(points) - 1)
-            width = 0.02 * jelly.size * (1 - 0.8 * seg_frac)
-            all_widths.extend([width, width * 0.95])
+        vert_frac = np.arange(n_pts, dtype=np.float32) / (n_pts - 1)
 
-            # Color fades along tentacle
-            fade = 1.0 - 0.5 * seg_frac
-            color = jelly.palette["tentacle"] * fade
-            all_colors.extend([color, color * 0.98])
+        # Width tapers along tentacle
+        all_widths.append(0.02 * jelly.size * (1 - 0.8 * vert_frac))
 
-            all_sharpness.extend([0.5, 0.5])
+        # Color fades along tentacle
+        fade = 1.0 - 0.5 * vert_frac
+        all_colors.append(jelly.palette["tentacle"][None, :] * fade[:, None])
+
+        all_sharpness.append(np.full(n_pts, 0.5, dtype=np.float32))
+
+        start = np.arange(vertex_offset, vertex_offset + n_pts - 1, dtype=np.uint32)
+        all_edges.append(np.column_stack([start, start + 1]))
+        vertex_offset += n_pts
 
     return (
-        np.array(all_vertices, dtype=np.float32),
-        np.array(all_widths, dtype=np.float32),
-        np.array(all_colors, dtype=np.float32),
-        np.array(all_sharpness, dtype=np.float32),
+        np.concatenate(all_vertices).astype(np.float32),
+        np.concatenate(all_widths).astype(np.float32),
+        np.concatenate(all_colors).astype(np.float32),
+        np.concatenate(all_sharpness).astype(np.float32),
+        np.concatenate(all_edges).astype(np.uint32),
     )
 
 
@@ -399,13 +418,18 @@ def generate_oral_arms(
     jelly: JellyfishParams,
     frame: int,
     n_frames: int,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Generate oral arms (frilly appendages around mouth).
 
     These are shorter, thicker, and more frilly than tentacles.
 
+    Authored exactly like ``generate_tentacles``: unique per-vertex arrays plus
+    an explicit ``(E, 2)`` edge chain per arm (shared joint indices keep the
+    thicker arms from beading), with edge indices local to the returned
+    vertices.
+
     Returns:
-        vertices, widths, colors, sharpness
+        vertices, widths, colors, sharpness, edges
     """
     t = frame / n_frames
 
@@ -413,6 +437,8 @@ def generate_oral_arms(
     all_widths = []
     all_colors = []
     all_sharpness = []
+    all_edges = []
+    vertex_offset = 0
 
     oral_arm_length = jelly.size * 1.2
     oral_arm_segments = 25
@@ -445,26 +471,33 @@ def generate_oral_arms(
 
             points.append(pos)
 
+        # Indexed chain (see generate_tentacles): the per-segment
+        # `width * 0.95` / `color * 0.98` end factors become a single smooth
+        # per-vertex ramp of the same taper/fade functions.
         points = np.array(points, dtype=np.float32)
-        for i in range(len(points) - 1):
-            all_vertices.extend([points[i], points[i + 1]])
+        n_pts = len(points)
+        all_vertices.append(points)
 
-            seg_frac = i / (len(points) - 1)
-            width = 0.04 * jelly.size * (1 - 0.6 * seg_frac)
-            all_widths.extend([width, width * 0.95])
+        vert_frac = np.arange(n_pts, dtype=np.float32) / (n_pts - 1)
+        all_widths.append(0.04 * jelly.size * (1 - 0.6 * vert_frac))
 
-            # Oral arms are slightly more colorful
-            color = jelly.palette["bell"] * 0.8 + jelly.palette["glow"] * 0.2
-            fade = 1.0 - 0.3 * seg_frac
-            all_colors.extend([color * fade, color * fade * 0.98])
+        # Oral arms are slightly more colorful
+        color = jelly.palette["bell"] * 0.8 + jelly.palette["glow"] * 0.2
+        fade = 1.0 - 0.3 * vert_frac
+        all_colors.append(color[None, :] * fade[:, None])
 
-            all_sharpness.extend([1.0, 1.0])
+        all_sharpness.append(np.full(n_pts, 1.0, dtype=np.float32))
+
+        start = np.arange(vertex_offset, vertex_offset + n_pts - 1, dtype=np.uint32)
+        all_edges.append(np.column_stack([start, start + 1]))
+        vertex_offset += n_pts
 
     return (
-        np.array(all_vertices, dtype=np.float32),
-        np.array(all_widths, dtype=np.float32),
-        np.array(all_colors, dtype=np.float32),
-        np.array(all_sharpness, dtype=np.float32),
+        np.concatenate(all_vertices).astype(np.float32),
+        np.concatenate(all_widths).astype(np.float32),
+        np.concatenate(all_colors).astype(np.float32),
+        np.concatenate(all_sharpness).astype(np.float32),
+        np.concatenate(all_edges).astype(np.uint32),
     )
 
 
@@ -700,6 +733,12 @@ def generate_ocean_scene(
             all_tent_widths = []
             all_tent_colors = []
             all_tent_sharp = []
+            # Edge lists for the indexed tentacle/oral-arm node, shifted into
+            # the concatenated vertex block as they are collected (the frame
+            # lists below are concatenated in append order, so a single running
+            # offset over each builder's output is enough).
+            all_tent_edges: list[np.ndarray] = []
+            tent_vertex_offset = 0
 
             for frame in range(n_frames):
                 if frame % 50 == 0:
@@ -729,18 +768,23 @@ def generate_ocean_scene(
                     frame_bell_sharp.append(shrp)
 
                     # Tentacle lines
-                    verts, widths, colors, shrp = generate_tentacles(
+                    verts, widths, colors, shrp, edges = generate_tentacles(
                         jelly, frame, n_frames
                     )
-                    # Add time dimension to vertices
+                    # Add time dimension to vertices. It is constant within a
+                    # frame's curves, so every edge is wholly in- or
+                    # out-of-slice as the time slider moves.
                     verts_4d = np.column_stack([verts, np.full(len(verts), frame)])
                     frame_tent_verts.append(verts_4d)
                     frame_tent_widths.append(widths)
                     frame_tent_colors.append(colors)
                     frame_tent_sharp.append(shrp)
+                    edges = (edges + tent_vertex_offset).astype(np.uint32)
+                    all_tent_edges.append(edges)
+                    tent_vertex_offset += len(verts)
 
                     # Oral arms
-                    verts, widths, colors, shrp = generate_oral_arms(
+                    verts, widths, colors, shrp, edges = generate_oral_arms(
                         jelly, frame, n_frames
                     )
                     verts_4d = np.column_stack([verts, np.full(len(verts), frame)])
@@ -748,6 +792,9 @@ def generate_ocean_scene(
                     frame_tent_widths.append(widths)
                     frame_tent_colors.append(colors)
                     frame_tent_sharp.append(shrp)
+                    edges = (edges + tent_vertex_offset).astype(np.uint32)
+                    all_tent_edges.append(edges)
+                    tent_vertex_offset += len(verts)
 
                 # Plankton
                 pos, col, rad, shrp = generate_plankton(
@@ -805,18 +852,23 @@ def generate_ocean_scene(
             all_widths = np.concatenate(all_tent_widths, axis=0)
             all_colors = np.concatenate(all_tent_colors, axis=0)
             all_shrp = np.concatenate(all_tent_sharp, axis=0)
+            all_edges = np.concatenate(all_tent_edges, axis=0)
 
+            # Indexed authoring: every curve keeps unique vertices and an
+            # explicit edge chain, so interior joints share a vertex index and
+            # the viewer suppresses their end caps (no bead chains).
             scene.add_lines(
                 "tentacles",
                 vertices=all_verts.astype(np.float32),
                 widths=all_widths.astype(np.float32),
                 colors=all_colors.astype(np.float32),
                 sharpness=all_shrp.astype(np.float32),
-                line_type="segments",
+                indices=all_edges,
+                line_type="indexed",
                 intensity=0.5,
                 layer=True,
             )
-            total_segments = len(all_verts) // 2
+            total_segments = len(all_edges)
             aprint(f"Total line segments: {total_segments:,}")
 
         # --- Overlays ---
