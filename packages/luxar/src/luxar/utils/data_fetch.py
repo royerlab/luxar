@@ -13,9 +13,11 @@ kept there would be missing for exactly the installed users this module serves.
 Resolution order for a ``zenodo`` dataset (per file). The manifest sha256 is the
 authority at every step — a copy that fails it is quarantined, never returned:
     1. Local cache ``~/.cache/luxar/<dataset>/<file>``, if it verifies.
-    2. In-repo git-LFS copy ``demos/data/<dataset>/<file>``, copied atomically
-       into the cache and then verified. This is the fallback that keeps demos
-       working *during* the migration, until a dataset's Zenodo URL is populated.
+    2. In-repo git-LFS copy ``demos/data/<dir>/<file>``, where ``<dir>`` is the
+       manifest ``dir`` field (EMPTY for top-level datasets — the file then lives
+       directly under ``demos/data/``). Copied atomically into the cache and then
+       verified. This is the fallback that keeps demos working *during* the
+       migration, until a dataset's Zenodo URL is populated.
     3. Download from the dataset's Zenodo record (checksum-verified), if the
        record has a resolvable URL.
     4. Otherwise a clear error (data neither cached, in-repo, nor hosted yet).
@@ -206,8 +208,14 @@ def ensure_dataset(
     # of the same dataset never collide.
     cache_dir = (root / name / variant_name) if variant_name else (root / name)
     cache_dir.mkdir(parents=True, exist_ok=True)
-    lfs_subdir = f"{name}/{variant_name}" if variant_name else name
-    lfs_dir = _DEMOS_DATA_DIR / lfs_subdir
+    # The in-repo LFS layout comes from the manifest ``dir`` (the effective
+    # subdir under demos/data): "" means the file lives at the top level of
+    # demos/data, otherwise it is a ``<dir>/`` subdir. Older/synthetic
+    # manifests that omit ``dir`` fall back to the dataset name (backward
+    # compatible). The cache still namespaces by name/variant above regardless.
+    subdir = spec.get("dir", name)
+    parts = [p for p in (subdir, variant_name) if p]
+    lfs_dir = _DEMOS_DATA_DIR.joinpath(*parts)
     record = m["records"].get(spec.get("record", ""), {})
 
     resolved: list[Path] = []

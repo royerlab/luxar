@@ -21,6 +21,8 @@ The manifest records, per dataset:
   * ``record``  — (zenodo only) which Zenodo record groups this dataset.
   * ``files``   — basenames + sha256 (git-LFS oid) + byte size, so a fetched copy
                   is checksum-verified.
+  * ``dir``     — the in-repo subdir relative to ``demos/data/`` (empty string =
+                  top level; the in-repo LFS fallback in data_fetch honours it).
 
 Curated metadata (license/source/citation) lives here; checksums come from the data
 tree itself, so the manifest stays reproducible on any checkout — see
@@ -378,8 +380,10 @@ def _files_for(name: str, spec: dict, prev: dict, *, prune: bool) -> list[dict]:
 def _variants_for(name: str, spec: dict, prev: dict, *, prune: bool) -> dict:
     """Build the ``variants`` map, each carrying its own file list.
 
-    Variant files live under ``demos/data/<name>/<variant>/`` (empty until the
-    dataset is uploaded). Exactly one variant should be marked ``default``.
+    Variant files live under ``demos/data/<dir>/<variant>/`` — ``<dir>`` is the
+    dataset's ``dir`` (default: its name; ``""`` puts variants at the top level).
+    Empty until the dataset is uploaded. Exactly one variant should be marked
+    ``default``.
     """
     out = {}
     for vname, vmeta in spec["variants"].items():
@@ -388,7 +392,9 @@ def _variants_for(name: str, spec: dict, prev: dict, *, prune: bool) -> dict:
         if spec.get("pending_upload"):
             v["files"] = [] if prune else committed
         else:
-            found = _files_in(DATA_DIR / name / vname, "*", prune=prune)
+            subdir = spec.get("dir", name)
+            base = DATA_DIR.joinpath(*[p for p in (subdir, vname) if p])
+            found = _files_in(base, "*", prune=prune)
             v["files"] = committed if found is None else found
         out[vname] = v
     return out
@@ -399,6 +405,10 @@ def build(prev: Optional[dict] = None, *, prune: bool = False) -> dict:
     datasets = {}
     for name, spec in DATASETS.items():
         d = {k: v for k, v in spec.items() if k not in ("dir", "variants")}
+        # Emit the effective in-repo subdir explicitly so the packaged manifest
+        # carries layout info: "" for top-level datasets, the dataset name
+        # otherwise. The in-repo LFS fallback in data_fetch honours this.
+        d["dir"] = spec.get("dir", name)
         if "variants" in spec:
             d["variants"] = _variants_for(name, spec, prev, prune=prune)
         else:

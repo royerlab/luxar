@@ -385,6 +385,57 @@ def test_ensure_dataset_copies_from_inrepo_lfs(fake_repo):
     assert paths[0].parent == cache / "gsplats_toy"
 
 
+def test_ensure_dataset_resolves_toplevel_dir(tmp_path, monkeypatch):
+    """Regression for #821: a ``dir: ""`` dataset lives at the top level of
+    demos/data (no ``<name>/`` subdir) and must still resolve from in-repo LFS.
+
+    Pre-fix, ensure_dataset reconstructed the in-repo path as
+    ``_DEMOS_DATA_DIR / name``, so it looked in a non-existent ``<name>/``
+    subdir, missed the top-level file, found no Zenodo URL, and raised
+    FileNotFoundError for a file sitting right there with a correct checksum.
+    """
+    lfs_root = tmp_path / "demos_data"
+    lfs_root.mkdir(parents=True)
+    # File written DIRECTLY into the lfs root — no <name>/ subdir.
+    payload = lfs_root / "census_umap_1m.npz"
+    payload.write_bytes(b"toplevel-census-bytes")
+
+    manifest = {
+        "schema_version": 1,
+        "cache_root": "~/.cache/luxar",
+        "records": {
+            "cc-by": {"license": "cc-by-4.0", "zenodo_record": None, "base_url": None}
+        },
+        "datasets": {
+            "census_umap_1m": {
+                "bucket": "zenodo",
+                "record": "cc-by",
+                "license": "cc-by-4.0",
+                "dir": "",  # top level of demos/data
+                "files": [
+                    {
+                        "name": "census_umap_1m.npz",
+                        "sha256": _sha256(payload),
+                        "bytes": payload.stat().st_size,
+                    }
+                ],
+            },
+        },
+    }
+    monkeypatch.setattr(data_fetch, "_DEMOS_DATA_DIR", lfs_root)
+    cache = tmp_path / "cache"
+
+    paths = ensure_dataset(
+        "census_umap_1m", manifest=manifest, cache_root=cache, verbose=False
+    )
+
+    assert len(paths) == 1
+    assert paths[0].exists()
+    assert paths[0].read_bytes() == b"toplevel-census-bytes"
+    # Cache still namespaces by dataset name (top-level layout is in-repo only).
+    assert paths[0].parent == cache / "census_umap_1m"
+
+
 def test_ensure_dataset_cache_hit_is_reused(fake_repo, monkeypatch):
     manifest, cache = fake_repo
     ensure_dataset("gsplats_toy", manifest=manifest, cache_root=cache, verbose=False)
