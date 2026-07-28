@@ -14,6 +14,7 @@
 import { test, expect } from './fixtures';
 import { waitForLuxarReady, waitForPointsLoaded, assertNoConsoleErrors } from './helpers';
 import { spawn, execSync, type ChildProcess } from 'child_process';
+import * as net from 'net';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -21,7 +22,28 @@ import { fileURLToPath } from 'url';
 // global is undefined at module load. Reconstruct it from `import.meta.url`.
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-const SERVE_PORT = 8005;
+/**
+ * Ask the OS for a free ephemeral port. A fixed port (previously 8005)
+ * collides with any `luxar serve` / `luxar gsplat view` a developer has
+ * running, and the tests then silently talk to the WRONG server.
+ */
+function getFreePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const srv = net.createServer();
+    srv.once('error', reject);
+    srv.listen(0, '127.0.0.1', () => {
+      const address = srv.address();
+      if (address === null || typeof address === 'string') {
+        srv.close(() => reject(new Error('Could not determine free port')));
+        return;
+      }
+      const port = address.port;
+      srv.close(() => resolve(port));
+    });
+  });
+}
+
+let servePort = 0;
 const PROJECT_ROOT = path.resolve(__dirname, '../../../../..');
 const DATASET_PATH = path.join(
   PROJECT_ROOT,
@@ -47,10 +69,11 @@ test.describe('Luxar Serve Integration', () => {
       return;
     }
 
-    // Start luxar serve
+    // Start luxar serve on a free ephemeral port
+    servePort = await getFreePort();
     serverProcess = spawn(
       'hatch',
-      ['run', 'luxar', 'serve', DATASET_PATH, '--port', String(SERVE_PORT)],
+      ['run', 'luxar', 'serve', DATASET_PATH, '--port', String(servePort)],
       { cwd: PROJECT_ROOT, stdio: 'pipe' }
     );
 
@@ -98,7 +121,7 @@ test.describe('Luxar Serve Integration', () => {
       return;
     }
 
-    await page.goto(`/?src=http://localhost:${SERVE_PORT}&debug`);
+    await page.goto(`/?src=http://localhost:${servePort}&debug`);
     await waitForLuxarReady(page, 30000);
     await waitForPointsLoaded(page, 1, 30000);
 
@@ -124,7 +147,7 @@ test.describe('Luxar Serve Integration', () => {
     }
 
     // Verify the server responds to .zattrs requests
-    const response = await page.request.get(`http://localhost:${SERVE_PORT}/.zattrs`);
+    const response = await page.request.get(`http://localhost:${servePort}/.zattrs`);
     expect(response.ok()).toBe(true);
 
     // Response should be valid JSON
