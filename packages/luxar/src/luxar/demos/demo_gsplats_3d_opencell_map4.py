@@ -390,7 +390,8 @@ Controls:
                         colormap=ch_colormap,
                         dim_order=["z", "y", "x"],
                         opacity=1.0,
-                        blending_mode="additive",
+                        absorption=1.0,
+                        blending_mode="volumetric",
                         layer=True,
                     )
                     aprint(f"  Added {n_splats:,} splats with layer=True")

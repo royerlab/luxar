@@ -462,7 +462,8 @@ Controls:
                         cholesky_factors=gsplats.cholesky_factors,
                         dim_order=["z", "y", "x"],
                         opacity=1.0,
-                        blending_mode="additive",
+                        absorption=1.0,
+                        blending_mode="volumetric",
                         layer=True,
                         colormap=colormap,
                     )

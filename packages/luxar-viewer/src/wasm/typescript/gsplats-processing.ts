@@ -105,6 +105,62 @@ export function computeMarginalCholesky(
 }
 
 /**
+ * Marginal 3D Cholesky for the display dims, padded to the packed-3D layout
+ * when fewer than 3 dims are displayed (1D/2D scenes).
+ *
+ * Mirrors `gsplats_processing.rs::compute_display_cholesky_3d` 1:1. For
+ * `n = min(displayDims.length, 3)` the packed n-D marginal occupies the first
+ * n·(n+1)/2 slots of the packed-3D layout verbatim. The renderer always consumes
+ * a 3×3 covariance (Σ = L·Lᵀ), so the rows for display axes the data doesn't
+ * have must still be filled: off-diagonals are 0 (the phantom axis is
+ * uncorrelated with the real ones, so the in-plane profile is untouched) and the
+ * diagonal is the GEOMETRIC MEAN of the real diagonals — the phantom axis gets
+ * the splat's own in-plane scale, making a 2D splat a round blob rather than a
+ * disk.
+ *
+ * The diagonal deliberately is NOT a small epsilon. In sum/additive projection
+ * the shader scales amplitude by the Gaussian's extent along the view ray,
+ * `sigmaRay = 1/√(rᵀΣ⁻¹r)` (`shader-glsl.ts`); a face-on ε-thin splat gets
+ * `sigmaRay ≈ √ε`, i.e. amplitude × 1e-5, and the whole scene renders black.
+ *
+ * Writes 6 elements at `outputOffset`.
+ */
+function computeDisplayCholesky3D(
+  fullPackedL: Float32Array,
+  fullPackedOffset: number,
+  displayDims: Uint32Array,
+  output: Float32Array,
+  outputOffset: number
+): void {
+  // `computeMarginalCholesky` reads only keepDims[0..n), so pass displayDims
+  // whole — a `.subarray(0, n)` view would allocate once PER SPLAT here.
+  const n = Math.min(displayDims.length, 3);
+  computeMarginalCholesky(fullPackedL, fullPackedOffset, displayDims, n, output, outputOffset);
+  if (n === 3) return;
+
+  // Geometric mean of the real diagonals L[i,i], i < n. Falls back to the
+  // degenerate-covariance regularizer when the marginal has no extent at all.
+  let logSum = 0;
+  let counted = 0;
+  for (let i = 0; i < n; i++) {
+    const diag = output[outputOffset + packedIndex(i, i)];
+    if (diag > CHOLESKY_EPSILON) {
+      logSum += Math.log(diag);
+      counted++;
+    }
+  }
+  const phantom = counted > 0 ? Math.exp(logSum / counted) : Math.sqrt(CHOLESKY_EPSILON);
+
+  let idx = outputOffset + (n * (n + 1)) / 2;
+  for (let row = n; row < 3; row++) {
+    for (let col = 0; col < row; col++) {
+      output[idx++] = 0;
+    }
+    output[idx++] = phantom;
+  }
+}
+
+/**
  * Compute Mahalanobis distance for a single point using packed Cholesky factor.
  *
  * Given L (lower-triangular Cholesky of covariance),
@@ -296,7 +352,8 @@ function mahalanobisDistanceInternal(
  *
  * @param cholesky - Packed Cholesky factors [splatCount * packedSize]
  * @param visibility - Visibility mask [splatCount]
- * @param displayDims - Display dimension indices (sorted) [3]
+ * @param displayDims - Display dimension indices (sorted) [1..=3]; missing rows
+ *   are padded for 1D/2D data (see `computeDisplayCholesky3D`)
  * @param ndim - Total dimensionality
  * @param splatCount - Number of splats
  * @param output - Output 3D Cholesky factors [visibleCount * 6]
@@ -322,7 +379,7 @@ export function extract_visible_cholesky_3d(
     const dstOffset = outSplat * 6;
 
     // Compute marginal Cholesky for display dimensions (3D)
-    computeMarginalCholesky(cholesky, srcOffset, displayDims, 3, output, dstOffset);
+    computeDisplayCholesky3D(cholesky, srcOffset, displayDims, output, dstOffset);
 
     outSplat++;
   }
@@ -464,7 +521,7 @@ export function project_gsplats_nd_to_3d(
       outCenters3d[cOff + j] = 0.0;
     }
 
-    computeMarginalCholesky(cholesky, choleskyOffset, displayDims, 3, outCholesky3d, out * 6);
+    computeDisplayCholesky3D(cholesky, choleskyOffset, displayDims, outCholesky3d, out * 6);
 
     outAmplitudes[out] = attenuatedAmplitude;
 

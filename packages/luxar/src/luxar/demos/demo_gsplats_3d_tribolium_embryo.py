@@ -421,7 +421,8 @@ Navigation:
                     cholesky_factors=gsplats_data.cholesky_factors,
                     colors=colors,
                     opacity=1.0,
-                    blending_mode="additive",
+                    absorption=1.0,
+                    blending_mode="volumetric",
                     layer=True,
                 )
                 aprint(f"Added {n_splats:,} splats")

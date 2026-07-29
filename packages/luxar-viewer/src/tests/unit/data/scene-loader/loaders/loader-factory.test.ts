@@ -404,4 +404,26 @@ describe('progressive loader energy tables (quality stamps)', () => {
     );
     expect(progressiveCtorArgs[0][3]).toEqual([0.4, null, null]);
   });
+
+  it('synthesizes sub-LOD paths under a NESTED lod-group child (composed points ladder)', async () => {
+    // The composed shape: a points node that is BOTH a level of a substitutive
+    // lod group AND itself additively laddered, so its path is nested
+    // (`/cloud/child_3`), not top-level. Every other case here uses `/p`, which
+    // cannot catch a leading-slash / `path.slice(1)` slip — `//additive_0` or
+    // `cloud/child_3/additive_0` would both look fine at depth 1.
+    await createProgressivePointsLoader(
+      makeNode('/cloud/child_3'),
+      2,
+      {} as SceneNode['attrs'],
+      makeDeps()
+    );
+
+    expect(pointsCtorArgs).toHaveLength(2);
+    expect((pointsCtorArgs[0][1] as SceneNode).path).toBe('/cloud/child_3/additive_0');
+    expect((pointsCtorArgs[1][1] as SceneNode).path).toBe('/cloud/child_3/additive_1');
+    // The zarr locations resolve WITHOUT the leading slash (store-relative).
+    expect((pointsCtorArgs[0][0] as { path: string }).path).toBe('cloud/child_3/additive_0');
+    // The progressive wrapper still gets the node's own (slash-prefixed) path.
+    expect(pointsProgressiveCtorArgs[0][2]).toBe('/cloud/child_3');
+  });
 });

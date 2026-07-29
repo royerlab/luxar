@@ -1742,7 +1742,8 @@ Navigation:
                 dim_order=["z", "y", "x", "time"],
                 extend_to_all=[],
                 opacity=1.0,
-                blending_mode="additive",
+                absorption=1.0,
+                blending_mode="volumetric",
                 colormap="bop_blue",
                 layer=True,
             )
