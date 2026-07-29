@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from luxar.demos import demo_network_performance as demo
@@ -12,10 +14,14 @@ def test_documented_space_separated_args_drive_generation_and_profile(
 ) -> None:
     seen: dict[str, object] = {}
 
-    def _generate(output_path, n_points=1_000_000, seed=42):
+    def _generate(output_path: Path, n_points: int = 1_000_000, seed: int = 42) -> None:
         seen["n_points"] = n_points
 
-    def _launch(output_path, *, serve_args=None):
+    def _launch(
+        output_path: str | Path,
+        open_browser: bool = True,
+        serve_args: list[str] | None = None,
+    ) -> None:
         seen["serve_args"] = serve_args
 
     monkeypatch.setattr(demo, "generate_performance_test_dataset", _generate)

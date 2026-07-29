@@ -345,7 +345,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> None:
-    """Main demo entry point."""
+    """Run the demo.
+
+    Args:
+        argv: Arguments to parse, or ``None`` to use ``sys.argv[1:]``.
+    """
     args = parse_args(sys.argv[1:] if argv is None else argv)
     n_points = args.points
     network_profile = args.profile
