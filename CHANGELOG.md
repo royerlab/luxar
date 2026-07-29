@@ -89,6 +89,20 @@ comments in `lod-fade.ts` / `lod-group-registry.ts`. New fixture
 `test_lod_group_volumetric.luxar.zarr` covers the volumetric cross-fade
 contract end-to-end.
 
+#### Changed — Default viewer background is now pitch black (`0x000000`)
+
+The scene background default was `0x111111` (dark gray, matched to the dark
+theme's UI chrome) since the first commit. That color is rendered into the HDR
+buffer, so the post-processing exposure chain treats it as scene light: at high
+exposure an "empty" background lifted to gray and eventually white, and it sat
+only ~1.8× under the default bloom threshold. The default is now pure black —
+zero radiance, exposure- and bloom-invariant, and cleaner premultiplied-alpha
+edges for transparent screenshots. Scenes can still author a tinted background
+via `viewer_config.background_color` (the handful of demos that do are
+unchanged). The dark theme's `#111111` UI panels are a separate token and keep
+their color. Committed gallery/README media still show the old background until
+regenerated (tracked as a follow-up).
+
 #### Added — Points and Lines LOD levels now stream progressively (#811, #808)
 
 `additive_lod` and `substitutive_lod` used to be mutually exclusive for Points
