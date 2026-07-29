@@ -1540,6 +1540,29 @@ class TestFilterCommand:
         assert result.exit_code != 0
         assert not out.exists()
 
+    def test_filter_duplicate_spatial_dims_errors(
+        self, runner: CliRunner, sample_gsplats_for_filter: Path, tmp_path: Path
+    ) -> None:
+        # A duplicate axis in --spatial-dims used to be silently accepted and
+        # double-counted in the spatial-metric geometric mean (issue #765);
+        # it must now be rejected instead of producing plausible-but-wrong output.
+        out = tmp_path / "x.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "filter",
+                str(sample_gsplats_for_filter),
+                str(out),
+                "--scale-max",
+                "p90",
+                "--spatial-dims",
+                "0,0,1",
+            ],
+        )
+        assert result.exit_code != 0
+        assert not out.exists()
+
 
 # ═══════════════════════════════════════════════════════════════════════
 # Partition command tests
