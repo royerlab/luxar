@@ -168,6 +168,46 @@ describe('ViewStateManager', () => {
       expect(result.warnings.some((w) => w.includes('invalid range'))).toBe(true);
     });
 
+    it('should NOT warn about zero-width range for a single-category dimension', () => {
+      // Regression (#755): a single category auto-ranges to [0, 0], which is legal.
+      const dimensions: any[] = [
+        {
+          name: 'channel',
+          unit: '',
+          scale: 1.0,
+          categories: ['DAPI'],
+          range: [0, 0],
+          discrete: true,
+        },
+      ];
+
+      const result = ViewStateManager.validateDimensions(dimensions);
+
+      expect(result.warnings.some((w) => w.includes('range') || w.includes('Min should'))).toBe(
+        false
+      );
+    });
+
+    it('should still warn about zero-width range for a non-categorical dimension', () => {
+      const dimensions: any[] = [
+        { name: 'x', unit: 'um', scale: 1.0, range: [5, 5], display: true }, // Min == Max!
+      ];
+
+      const result = ViewStateManager.validateDimensions(dimensions);
+
+      expect(result.warnings.some((w) => w.includes('invalid range'))).toBe(true);
+    });
+
+    it('should warn about an inverted categorical range', () => {
+      const dimensions: any[] = [
+        { name: 'c', unit: '', scale: 1.0, categories: ['a', 'b'], range: [2, 0] }, // Inverted!
+      ];
+
+      const result = ViewStateManager.validateDimensions(dimensions);
+
+      expect(result.warnings.some((w) => w.includes('inverted range'))).toBe(true);
+    });
+
     it('should warn about negative or zero step', () => {
       const dimensions: DimensionMetadata[] = [
         { name: 'x', unit: 'um', scale: 1.0, step: 0, display: true }, // Zero step!
