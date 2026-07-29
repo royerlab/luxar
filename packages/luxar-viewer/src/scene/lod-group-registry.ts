@@ -849,10 +849,12 @@ export class LODGroupRegistry {
     // volumetric siblings the mesh draw order may come from the render-order
     // containment rule (near-identical bounds); acceptable because combined
     // TRANSMITTANCE is order-independent (transmittances multiply), so occlusion
-    // of content behind the pair is exact at every weight — emission is
-    // order-dependent only to second order (the levels' per-fragment alphas,
-    // already scaled by w/(1−w), times their local color difference), bounded by
-    // the same inter-level difference the hard swap showed in full. Off /
+    // of content behind the pair is exact at every weight. In the optically thin
+    // regime, emission's ordering residual is second order (the product of the
+    // levels' w/(1−w)-scaled per-fragment alphas and their local color
+    // difference). Individually thick fragments can saturate both alphas, making
+    // that residual first order in the local color difference, but it remains
+    // bounded by the full inter-level difference the hard swap showed. Off /
     // non-blendable /
     // off-screen / locked / a held-stale display ⇒ no blend (byte-identical hard
     // swap). The finer partner must be resident to fade against; if it is not,

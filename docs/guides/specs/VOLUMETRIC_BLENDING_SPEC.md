@@ -605,13 +605,16 @@ and rendering agree.
   combined **transmittance is exactly order-independent** (transmittances
   multiply), so occlusion of anything behind the pair is correct at every fade
   weight; **emission is order-dependent**, but only where the two levels' local
-  radiance differs — equal-color fragments commute exactly under over-compositing
-  — so the residual is second order (the product of the levels' per-fragment
-  alphas, each already scaled by `w`/`1−w`, times the local color difference) and
-  is bounded by the very inter-level difference the hard swap used to present in
-  full as a one-frame pop. Do not restate this as "absorption is conserved
-  exactly"; the accurate summary is *absorption-exact in the order sense,
-  emission approximate to second order*. `?no-lod-fade` is the escape hatch.
+  radiance differs — equal-color fragments commute exactly under over-compositing.
+  In the optically thin regime, where each alpha is linear in its `w`/`1−w`-
+  scaled optical depth, the ordering residual is second order: the product of the
+  two per-fragment alphas and the local color difference. For individually thick
+  fragments both alphas can saturate, making the residual first order in the
+  local color difference instead. In either regime it is bounded by the full
+  inter-level difference the hard swap used to present as a one-frame pop. Do not
+  restate this as "absorption is conserved exactly"; the accurate summary is
+  *transmittance is order-exact; emission ordering error is thin-regime second
+  order and otherwise bounded*. `?no-lod-fade` is the escape hatch.
 - **Tone mapping / HDR**: pure additive accumulates without bound and can blow
   out under ACES; volumetric bounds accumulated radiance near c/κ, improving
   tone-mapped appearance on dense scenes. Emission remains unclamped HDR — a

@@ -64,9 +64,11 @@ describe('isBlendableSubtree — BLENDABLE_MODES matrix', () => {
     expect(isBlendableSubtree(bare)).toBe(false);
   });
 
-  it('group subtree: uniformly blendable across DIFFERENT blendable modes ⇒ blendable', () => {
+  it('group subtree: mixed blendable families are tolerated for compatibility', () => {
     const group = new THREE.Group();
     group.add(leafMesh('additive'), leafMesh('volumetric'), leafMesh('luminous'));
+    // Continuous and endpoint-exact, but intentionally not described as sharing
+    // one summed-energy or optical-depth conservation model mid-fade.
     expect(isBlendableSubtree(group)).toBe(true);
   });
 
