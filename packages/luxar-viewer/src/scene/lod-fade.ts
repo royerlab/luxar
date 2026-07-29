@@ -49,14 +49,35 @@ function isFadeable(mat: THREE.Material): mat is FadeableMaterial {
  *   linearly in opacity ⇒ both mechanisms are brightness-exact.
  * - `volumetric`: order-dependent emission–absorption, but opacity linearly
  *   scales the optical depth `τ = κ·opacity·intensity`
- *   (VOLUMETRIC_BLENDING_SPEC.md §3.1). The cross-fade (weights `w`, `1−w`)
- *   therefore conserves per-ray absorption EXACTLY
- *   (`1 − e^(−wτ)·e^(−(1−w)τ) = 1 − e^(−τ)`) and emission to first order in
- *   τ; the `1/e(k)` boost restores the full per-ray τ of a partially-streamed
- *   ladder. Caveat (spec §6): on individually optically-thick splats
+ *   (VOLUMETRIC_BLENDING_SPEC.md §3.1), which is what makes an opacity fade
+ *   well-behaved here — see the two caveats below for what it does and does
+ *   NOT guarantee. Both are the documented, accepted tradeoffs of §6.
+ *
+ *   *Cross-fade.* Because τ adds across fragments and is linear in opacity, a
+ *   `w`/`1−w` pair composites to `1 − exp(−(w·τ_fine + (1−w)·τ_coarse))`: the
+ *   endpoints are exact, and in between the absorption moves monotonically
+ *   between the two levels' own absorptions — a log-space (transmittance-
+ *   multiplicative) interpolation, i.e. exactly the ghost-free dissolve an
+ *   anti-popping fade wants, and strictly better than the hard swap it
+ *   replaces. It collapses to a *constant* `1 − e^(−τ)` only where the two
+ *   levels present the same per-ray τ; the build invariant is total mass per
+ *   barrier group, NOT per-ray mass, and a coarse level is by construction a
+ *   different spatial distribution, so do not build on "absorption is
+ *   invariant mid-fade" — it holds only in that mass-matched idealization.
+ *
+ *   *Streaming `1/e(k)`.* `e(k)` is a GLOBAL energy fraction and a committed
+ *   ladder prefix is a SUBSET of splats, so the boost restores τ in
+ *   AGGREGATE, not per ray: rays through the committed core are over-boosted
+ *   and rays through only-missing splats get nothing. That is the same
+ *   structural approximation the additive/luminous path has shipped since the
+ *   compensation landed — volumetric is not held to a lower bar. The
+ *   volumetric-specific twist: on individually optically-thick splats
  *   (`κ·splat-mass ≳ 1`) the per-splat self-screening `S(τ)` saturates
- *   emission, so a large boost deepens occlusion more than it brightens — a
- *   bounded, transient artifact accepted under the shared `ENERGY_FLOOR` cap.
+ *   emission, so a boosted splat deepens occlusion rather than brightening.
+ *   Bounded by the shared `ENERGY_FLOOR` cap (≤ 10×), transient (decays as
+ *   `e → 1`), and `?no-lod-energy` is the escape hatch; a volumetric-specific
+ *   floor is the obvious knob if a thick-splat scene ever shows transient
+ *   dark blobs while streaming.
  *
  * `max` (a max, not a sum), `normal` (nonlinear alpha-over with opacity-gated
  * depthWrite), and `opaque` are excluded from both mechanisms.

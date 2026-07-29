@@ -372,41 +372,88 @@ test.describe('lod_group node — volumetric blendable', () => {
     );
   });
 
-  test('visible set is {active} or adjacent cross-fade partners, in the volumetric blend state', async ({
+  test('camera driven into a boundary band cross-fades two adjacent volumetric levels, in the volumetric blend state', async ({
     page,
   }) => {
-    // Same adjacency contract as the additive fixture: the visible set is
-    // {active} or {active, active+1} — volumetric groups are blendable, so
-    // in the band the registry shows two adjacent levels with blended
-    // opacity rather than hard-swapping (the pre-change behavior).
-    await page.waitForFunction(
-      () => {
-        const debug = (
-          window as Window & typeof globalThis & { __luxarDebug?: { scene?: unknown } }
-        ).__luxarDebug;
-        if (!debug?.scene) return false;
-        const vis: Record<string, boolean> = {};
-        (
-          debug.scene as {
-            traverse: (cb: (o: { name?: string; visible?: boolean }) => void) => void;
+    // This test must FAIL against the pre-change hard swap, so it is not
+    // enough to accept "one or two visible": a single visible child is
+    // exactly what the old behavior produced. Sweep the camera distance to
+    // cross the fixture's coverage boundaries and require an actual blend —
+    // two ADJACENT levels, both with weights strictly inside (0, 1),
+    // complementary to 1 (the registry's coverage-band contract).
+    const blend = await page.evaluate(async () => {
+      type Mat = { uniforms?: { uOpacity?: { value: number } } };
+      type Obj = { name?: string; visible?: boolean; material?: Mat };
+      const debug = (
+        window as Window &
+          typeof globalThis & {
+            __luxarDebug?: {
+              scene?: { traverse: (cb: (o: Obj) => void) => void };
+              camera?: {
+                position: {
+                  x: number;
+                  y: number;
+                  z: number;
+                  set: (x: number, y: number, z: number) => void;
+                };
+              };
+              controls?: { target?: { x: number; y: number; z: number }; update?: () => void };
+              renderOnce?: () => void;
+            };
           }
-        ).traverse((o) => {
+      ).__luxarDebug;
+      if (!debug?.scene || !debug.camera) return null;
+      const cam = debug.camera;
+      const tgt = debug.controls?.target ?? { x: 0, y: 0, z: 0 };
+      const d0 = {
+        x: cam.position.x - tgt.x,
+        y: cam.position.y - tgt.y,
+        z: cam.position.z - tgt.z,
+      };
+      const sample = (): { idx: number; opacity: number }[] => {
+        const out: { idx: number; opacity: number }[] = [];
+        // The ambient __luxarDebug declaration types traverse's callback as
+        // THREE.Object3D, so narrow to the mesh shape this test reads.
+        debug.scene!.traverse((node) => {
+          const o = node as unknown as Obj;
           const m = o.name?.match(/\/multires\/child_(\d+)$/);
-          if (m) vis[m[1]] = !!o.visible;
+          if (m && o.visible && o.material?.uniforms?.uOpacity) {
+            out.push({ idx: Number(m[1]), opacity: o.material.uniforms.uOpacity.value });
+          }
         });
-        const idxs = Object.entries(vis)
-          .filter(([, v]) => v)
-          .map(([k]) => Number(k))
-          .sort((a, b) => a - b);
-        return (
-          Object.keys(vis).length >= 3 &&
-          idxs.length >= 1 &&
-          idxs.length <= 2 &&
-          (idxs.length === 1 || idxs[1] === idxs[0] + 1)
-        );
-      },
-      { timeout: 10000 }
-    );
+        return out.sort((a, b) => a.idx - b.idx);
+      };
+      // Geometric sweep across ~2 decades of distance: the coverage metric is
+      // inversely proportional to distance, so this crosses every boundary of
+      // the fixture's 0.0 / 0.5 / 1.0 ladder.
+      for (let i = 0; i <= 60; i++) {
+        const k = 0.15 * Math.pow(10 ** (1 / 30), i); // 0.15 → ~15
+        cam.position.set(tgt.x + d0.x * k, tgt.y + d0.y * k, tgt.z + d0.z * k);
+        debug.controls?.update?.();
+        debug.renderOnce?.();
+        await new Promise((r) => requestAnimationFrame(() => r(null)));
+        const vis = sample();
+        if (
+          vis.length === 2 &&
+          vis[1].idx === vis[0].idx + 1 &&
+          vis.every((v) => v.opacity > 0.02 && v.opacity < 0.98)
+        ) {
+          return { distanceScale: k, levels: vis, sum: vis[0].opacity + vis[1].opacity };
+        }
+      }
+      return { distanceScale: null, levels: sample(), sum: null };
+    });
+
+    expect(blend).not.toBeNull();
+    // A genuine cross-fade was found: adjacent pair, both partially faded.
+    expect(blend!.levels).toHaveLength(2);
+    expect(blend!.levels[1].idx).toBe(blend!.levels[0].idx + 1);
+    for (const lvl of blend!.levels) {
+      expect(lvl.opacity).toBeGreaterThan(0.02);
+      expect(lvl.opacity).toBeLessThan(0.98);
+    }
+    // Complementary weights — the coverage-band invariant (w + (1−w) = 1).
+    expect(blend!.sum).toBeCloseTo(1, 5);
 
     // Every VISIBLE child renders in the pinned volumetric blend state
     // (One/OneMinusSrcAlpha premultiplied emission–absorption, depthWrite

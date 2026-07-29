@@ -160,10 +160,13 @@ function fragmentOp(
 }
 
 describe('LOD fade invariants — opacity as a linear knob on τ (BLENDABLE_MODES)', () => {
-  it('cross-fade conserves per-ray absorption EXACTLY: two co-located levels at w/(1−w) ≡ one at full opacity', () => {
-    // 1 − e^(−wτ)·e^(−(1−w)τ) = 1 − e^(−τ) — exact for every w because τ is
-    // additive across fragments and linear in opacity. This is what makes the
-    // opacity cross-fade ghost-free for volumetric (spec §6).
+  it('cross-fade is absorption-invariant ONLY in the mass-matched-per-ray idealization', () => {
+    // 1 − e^(−wτ)·e^(−(1−w)τ) = 1 − e^(−τ) for every w, because τ is additive
+    // across fragments and linear in opacity. NOTE the premise: both levels
+    // present the SAME per-ray τ. That is an idealization — the build
+    // invariant is total mass per barrier group, not per-ray mass — so this
+    // case is the reference point, not the general contract (see the next
+    // test for what actually happens when τ_fine ≠ τ_coarse).
     for (const kappa of [0.1, 1, 3, 10]) {
       for (const mass of [0.01, 0.5, 2, 8]) {
         for (const w of [0.1, 0.25, 0.5, 0.75, 0.9]) {
@@ -173,6 +176,48 @@ describe('LOD fade invariants — opacity as a linear knob on τ (BLENDABLE_MODE
           const aPair = 1 - (1 - fineW.a) * (1 - coarseW.a);
           expect(aPair).toBeCloseTo(whole.a, 12);
         }
+      }
+    }
+  });
+
+  it('cross-fade with DISTINCT per-ray τ: exact endpoints, monotone, always bracketed (the real dissolve contract)', () => {
+    // The general case a real LOD pair presents: the coarse level is a
+    // different spatial distribution, so along a given ray τ_coarse ≠ τ_fine.
+    // The composited absorption is 1 − exp(−(w·τ_fine + (1−w)·τ_coarse)) — NOT
+    // invariant through the fade. What IS guaranteed (and is exactly what an
+    // anti-popping dissolve needs): the endpoints reproduce each level
+    // exactly, and in between the absorption moves monotonically and stays
+    // bracketed between the two levels' own absorptions — no overshoot, no
+    // ghost darker or lighter than either level.
+    for (const [mFine, mCoarse] of [
+      [2, 0.5],
+      [0.5, 2],
+      [1, 1.4],
+      [8, 0.1],
+    ]) {
+      const kappa = 1.5;
+      const aFine = fragmentOp(0.8, mFine, kappa, 1).a;
+      const aCoarse = fragmentOp(0.8, mCoarse, kappa, 1).a;
+      const lo = Math.min(aFine, aCoarse);
+      const hi = Math.max(aFine, aCoarse);
+      const pairAlpha = (w: number): number => {
+        const f = fragmentOp(0.8, mFine, kappa, w);
+        const c = fragmentOp(0.8, mCoarse, kappa, 1 - w);
+        return 1 - (1 - f.a) * (1 - c.a);
+      };
+      // Endpoints are exact (w = 1 ⇒ the fine level alone, w = 0 ⇒ coarse).
+      expect(pairAlpha(1)).toBeCloseTo(aFine, 12);
+      expect(pairAlpha(0)).toBeCloseTo(aCoarse, 12);
+      // Monotone in w and bracketed by the two endpoint absorptions.
+      let prev = pairAlpha(0);
+      const ascending = aFine > aCoarse;
+      for (let i = 1; i <= 20; i++) {
+        const a = pairAlpha(i / 20);
+        expect(a).toBeGreaterThanOrEqual(lo - 1e-12);
+        expect(a).toBeLessThanOrEqual(hi + 1e-12);
+        if (ascending) expect(a).toBeGreaterThanOrEqual(prev - 1e-12);
+        else expect(a).toBeLessThanOrEqual(prev + 1e-12);
+        prev = a;
       }
     }
   });
@@ -192,10 +237,11 @@ describe('LOD fade invariants — opacity as a linear knob on τ (BLENDABLE_MODE
     }
   });
 
-  it('energy compensation restores per-ray α exactly: boost 1/e on the committed fraction e of the mass', () => {
-    // A streaming ladder has committed e of the leaf's mass along a ray;
-    // scaling opacity by 1/e restores τ = κ·(1/e)·(e·m) = κ·m, hence the
-    // full ladder's absorption, at every e.
+  it('energy compensation restores α exactly under PROPORTIONAL thinning (the idealized prefix)', () => {
+    // If a committed prefix were the whole leaf uniformly thinned to e of its
+    // mass on every ray, the 1/e boost would restore τ = κ·(1/e)·(e·m) = κ·m
+    // exactly. Real ladders don't work that way (next test) — this pins the
+    // idealization the mechanism is derived from.
     for (const e of [0.1, 0.25, 0.5, 0.9]) {
       const kappa = 2.0;
       const mass = 1.5;
@@ -203,6 +249,41 @@ describe('LOD fade invariants — opacity as a linear knob on τ (BLENDABLE_MODE
       const partial = fragmentOp(0.8, mass * e, kappa, 1 / e);
       expect(partial.a).toBeCloseTo(full.a, 12);
     }
+  });
+
+  it('energy compensation on a GENUINE subset prefix restores τ only in aggregate, not per ray', () => {
+    // What actually streams: an energy-ordered SUBSET of splats. Model two
+    // rays, one splat each, equal mass m; the prefix commits ray A's splat
+    // only, so e(k) = 0.5 as a GLOBAL energy fraction. The 1/e = 2× boost
+    // then doubles τ on ray A and does nothing for ray B (nothing there to
+    // scale). Consequences, all on the record here:
+    //   - ray A is OVER-occluded vs the full ladder (α_A > α_full)
+    //   - ray B stays fully transparent (α_B = 0)
+    //   - the SUM of per-ray τ is what gets restored (aggregate, not per ray)
+    // This is the same structural approximation the additive/luminous path
+    // has shipped since the compensation landed; it is not volumetric-specific.
+    const kappa = 1.5;
+    const m = 1.0;
+    const e = 0.5;
+    const boost = 1 / e;
+
+    const tauFull = kappa * m; // either ray, full ladder
+    const alphaFull = 1 - Math.exp(-tauFull);
+
+    const rayA = fragmentOp(0.8, m, kappa, boost); // committed, boosted
+    const rayB = fragmentOp(0.8, 0, kappa, boost); // missing splat ⇒ no mass
+
+    expect(rayA.a).toBeGreaterThan(alphaFull); // over-occluded, not exact
+    expect(rayB.a).toBe(0); // boost cannot conjure absorption
+
+    // Aggregate τ over the two rays IS restored: boosted committed τ (2·κ·m)
+    // equals the full ladder's total (κ·m + κ·m).
+    const tauAggregateBoosted = kappa * boost * m + 0;
+    expect(tauAggregateBoosted).toBeCloseTo(2 * tauFull, 12);
+
+    // And the per-ray error vanishes as the ladder completes (e → 1).
+    const nearComplete = fragmentOp(0.8, m, kappa, 1 / 0.99);
+    expect(Math.abs(nearComplete.a - alphaFull)).toBeLessThan(0.01);
   });
 
   it('boost emission is ~linear on thin splats but saturates on individually thick ones (the accepted ENERGY_FLOOR-cap caveat)', () => {

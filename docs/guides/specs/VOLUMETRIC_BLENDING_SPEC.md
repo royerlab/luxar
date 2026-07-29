@@ -568,25 +568,39 @@ and rendering agree.
   is now in `BLENDABLE_MODES` = {additive, luminous, volumetric}
   (`scene/lod-fade.ts`), so a streaming volumetric leaf gets the additive-ladder
   energy compensation 1/e(k) (PR #541). Since opacity linearly scales τ (§3.1),
-  the boost restores the full per-ray optical depth of a partially-committed
-  ladder — exact in α along the ray, correct in emission wherever individual
-  splats are optically thin (`κ·splat-mass ≪ 1`, the usual case for the
-  intensity-dimmed demos). Caveat: on individually optically-thick splats the
-  per-splat self-screening `S(Bτᵢ)` saturates emission, so a large boost deepens
-  occlusion more than it brightens; this is bounded by the shared
-  `ENERGY_FLOOR = 0.1` cap (≤ 10×) and transient (decays as e(k) → 1) — a
-  deliberate single-set/shared-cap policy rather than a split predicate. Chunks
-  arrive in energy order, not depth order: fine, the sort worker re-sorts on
-  every commit (Phase-2 sorting contract), and I3 bounds the transient error.
+  the boost restores the partially-committed ladder's optical depth **in
+  aggregate**. Be precise about what that does *not* mean: `e(k)` is a GLOBAL
+  energy fraction and a committed prefix is a SUBSET of splats, so the boost is
+  per-ray exact only under proportional thinning (an idealization) — in reality
+  rays through the committed core are over-boosted and rays through only-missing
+  splats get nothing. That is the *same* structural approximation the
+  additive/luminous path has shipped since the compensation landed, so
+  volumetric is not held to a lower bar. The volumetric-specific twist: on
+  individually optically-thick splats the per-splat self-screening `S(Bτᵢ)`
+  saturates emission, so a large boost deepens occlusion more than it brightens;
+  bounded by the shared `ENERGY_FLOOR = 0.1` cap (≤ 10×), transient (decays as
+  e(k) → 1), with `?no-lod-energy` as the escape hatch and a volumetric-specific
+  floor the obvious knob should a thick-splat scene ever show transient dark
+  blobs while streaming. A deliberate single-set/shared-cap policy rather than a
+  split predicate. Chunks arrive in energy order, not depth order: fine, the sort
+  worker re-sorts on every commit (Phase-2 sorting contract), and I3 bounds the
+  transient error.
 - **LOD cross-fade** (`scene/lod-fade.ts`): **enabled** for volumetric in the
   same change. An opacity fade is ghost-free (opacity scales τ — §3.1), unlike
-  `normal` where depthWrite complicates fading; with weights `w`/`1−w` on two
-  mass-matched levels, per-ray absorption is conserved *exactly*
-  (`1 − e^(−wτ)·e^(−(1−w)τ) = 1 − e^(−τ)`) and emission to first order in τ.
-  Mid-fade the two co-located sibling meshes are whole-mesh ordered by the
-  renderOrder pass; with near-identical bounds the containment rule usually
-  decides (larger bounding sphere draws first) — benign, since τ is additive
-  across the pair.
+  `normal` where depthWrite complicates fading. With weights `w`/`1−w` the pair
+  composites to `1 − exp(−(w·τ_fine + (1−w)·τ_coarse))`: endpoints exact, and in
+  between the absorption moves monotonically between the two levels' own
+  absorptions (a log-space, transmittance-multiplicative interpolation — always
+  bracketed, never a ghost outside either level). It degenerates to a *constant*
+  `1 − e^(−τ)` only where both levels present the same per-ray τ; the build
+  invariant is total mass **per barrier group, not per ray**, and a coarse level
+  is by construction a different spatial distribution, so absorption is NOT
+  invariant mid-fade in general — do not build on that. The guaranteed
+  monotone-bracketed dissolve is what anti-popping needs, and is strictly better
+  than the hard swap it replaces. Mid-fade the two co-located sibling meshes are
+  whole-mesh ordered by the renderOrder pass; with near-identical bounds the
+  containment rule usually decides (larger bounding sphere draws first) —
+  benign, since τ is additive across the pair.
 - **Tone mapping / HDR**: pure additive accumulates without bound and can blow
   out under ACES; volumetric bounds accumulated radiance near c/κ, improving
   tone-mapped appearance on dense scenes. Emission remains unclamped HDR — a
