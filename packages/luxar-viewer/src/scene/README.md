@@ -341,8 +341,26 @@ levels, and bounds resident VRAM with an LRU eviction pass.
    suppress threshold-edge flicker (`pickChildWithHysteresis`).
 6. Swap visibility atomically when the desired child differs; lazy
    targets that are not yet committed kick `ensureLoaded()` and swap
-   on a later frame once `ready` flips true.
-7. **Never-downgrade display gate**: a lazy level flips `ready` after
+   on a later frame once `ready` flips true — unless the
+   **hidden-layer load gate** vetoes it (below).
+7. **Hidden-layer load gate**: no deferred load (initial, settled
+   reload, or cross-fade partner pre-load) is _started_ while the
+   group is not effectively visible — its own `visible` flag or any
+   ancestor's is `false` (`isEffectivelyVisible` in
+   `utils/object-visibility.ts`). A layer authored `visible=false`, or
+   toggled off in the layers panel, hides the LAYER object while the
+   levels underneath keep their own flags, so without the gate the
+   selector kept fetching, decoding and committing multi-million-element
+   levels that cannot be drawn — competing with the visible layer for
+   the shared fetch gate, the worker pool and VRAM (measured: roughly
+   double the scene load time). The gate only stops _starting_ work:
+   nothing already resident is unloaded, and the eager `default_level`
+   still loads at scene-load time so the layer paints instantly when
+   shown. It is re-evaluated every frame, so the panel's eye toggle
+   (`applyVisibility` → `requestRender`) resumes loading on the next
+   frame. An explicit user retry
+   (`retryLazyChildByLeafPath`) deliberately bypasses it.
+8. **Never-downgrade display gate**: a lazy level flips `ready` after
    its _first_ additive chunk commits, so an ungated swap to a
    fresh-but-still-streaming aspiration would pop displayed quality
    down to chunk-1 (on zoom in, zoom out, or after a scrub settles)
@@ -393,7 +411,11 @@ by `enforceResidentByteBudget`, which (only when the GPU pool's live
 resident byte total exceeds the shared budget) demotes evictable
 levels — off-screen first, then furthest-from-camera, then
 coldest-`lastVisibleTick`. The visible level of each group and eager
-fallback levels (no `release` thunk) are never evicted.
+fallback levels (no `release` thunk) are never evicted. "Visible" here
+is **effective** visibility (`isEffectivelyVisible`): under a hidden
+ancestor — a layer toggled off — nothing of that group is on screen, so
+all of its ready levels are ordinary cold candidates, including the
+one the selector nominally displays.
 
 **Wiring:** the SceneLoader instantiates one registry per scene and
 hooks `evaluatePerFrame()` into `AnimationController` alongside the
@@ -1001,7 +1023,9 @@ _For implementation details, see the source files in this directory._
   counterpart of `lod-blend.ts`'s pure math.
 - `lod-eviction.ts` — `enforceResidentByteBudget`: the VRAM-pressure
   policy — while the GPU pool reports over-budget, demote hidden LOD
-  levels off-screen-first / furthest-first / coldest-first.
+  levels off-screen-first / furthest-first / coldest-first. "Hidden" is
+  ancestor-aware (`utils/object-visibility.ts`), so a level under a
+  toggled-off layer is reclaimable.
 - `lod-display-gate.ts` — The never-downgrade display gate for the
   registry: `shouldHoldPreviousDisplay` holds the previously-displayed
   level while a streaming upgrade is strictly worse than what is shown,
