@@ -101,6 +101,19 @@ def write_lines(
     if line_type == "indexed":
         if indices is None:
             raise ValueError("Indexed line type requires indices array")
+        # Normalize to ndarray first: a Python-list `indices` is a legitimate
+        # adder input (passed through un-arrayed), and `.size` / the reshape
+        # in convert_to_indexed both AttributeError on a bare list.
+        indices = np.asarray(indices)
+        # Accept ONLY the two documented layouts — flat (2E,) or pairs
+        # (E, 2). An even-size but wrong-width array (e.g. (E, 3)) would
+        # otherwise pass the element-count checks below and then silently
+        # reshape into bogus edges inside convert_to_indexed.
+        if indices.ndim > 2 or (indices.ndim == 2 and indices.shape[1] != 2):
+            raise ValueError(
+                "Indices must be a flat (2E,) array or an (E, 2) array of "
+                f"pairs, got shape {indices.shape}"
+            )
         # Accept BOTH accepted layouts — flat (2E,) and pairs (E, 2) —
         # by counting ELEMENTS, not rows: len() on an (E, 2) array counts
         # edges, which wrongly rejected any odd edge count.
@@ -132,7 +145,7 @@ def write_lines(
             shared_frac = float(np.mean(shared))
             if shared_frac > 0.5:
                 aprint(
-                    f"  ⚠ {shared_frac:.0%} of consecutive segments share an "
+                    f"  ⚠️ {shared_frac:.0%} of consecutive segments share an "
                     "endpoint coordinate — this looks like continuous "
                     "polylines exploded into independent segments. Authored "
                     "this way, interior joints do not share vertex indices, "
