@@ -318,7 +318,8 @@ def demo_deps(
     extra: Optional[str] = typer.Option(
         None,
         "--extra",
-        "-e",
+        # Long form only, deliberately: `-e` already means --encoding on the
+        # gsplat commands, and means "editable" to the pip this command drives.
         help="Only consider one extra (demos / io / gsplats). Default: all.",
     ),
     install: bool = typer.Option(
@@ -337,9 +338,19 @@ def demo_deps(
     """
     from ..demos import extras_for, survey
 
+    if dry_run and not install:
+        # Silently ignoring a flag the user typed is worse than saying so.
+        aprint("ℹ️  --dry-run only applies with --install; reporting only.")
+
+    # Extra names are lowercase by PEP 685, so accept any casing the user types.
+    extra = extra.strip().lower() if extra else extra
     rows = survey(extra)
     if not rows:
-        aprint(f"❌ No known dependencies for extra {extra!r}.")
+        known = extras_for(survey()) or ["(none)"]
+        aprint(
+            f"❌ No known dependencies for extra {extra!r}. "
+            f"Valid extras: {', '.join(known)}."
+        )
         raise typer.Exit(1)
 
     missing = [r for r in rows if not r.installed]
@@ -350,8 +361,11 @@ def demo_deps(
 
     plural = "dependency" if len(rows) == 1 else "dependencies"
     aprint(f"📦 [Luxar] {len(rows)} optional demo {plural}\n")
-    aprint(f"  {'MODULE':<{mw}}  {'REQUIREMENT':<{sw}}  {'EXTRA':<8} STATUS")
-    aprint("  " + "─" * (mw + sw + 20))
+    header = f"  {'MODULE':<{mw}}  {'REQUIREMENT':<{sw}}  {'EXTRA':<8} STATUS"
+    aprint(header)
+    # Rule the exact width of the header rather than a hand-counted constant
+    # (the old `mw + sw + 20` overshot by one and left a dangling glyph).
+    aprint("  " + "─" * (len(header) - 2))
     for r in rows:
         aprint(
             f"  {r.module:<{mw}}  {r.spec.spec:<{sw}}  "
@@ -401,11 +415,22 @@ def demo_deps(
     # pip wrote into site-packages after our finders cached its contents, so a
     # re-survey without this reports everything still missing.
     importlib.invalidate_caches()
-    still = [r for r in survey(extra) if not r.installed]
+    left = [r for r in survey(extra) if not r.installed]
+    # Judge the install ONLY on what it was asked to provide. An orphan spec
+    # (no extra) was never in the pip command, so listing it as "still missing
+    # after install" blames the install for something it never attempted.
+    still = [r for r in left if r.spec.extra in extras]
     if still:
         aprint(f"⚠️  Still missing after install: {', '.join(r.module for r in still)}")
         raise typer.Exit(1)
-    aprint("✅ All optional demo dependencies are installed.")
+    aprint(f"✅ Installed: {', '.join(f'luxar[{e}]' for e in extras)}.")
+    # Don't claim completeness while an orphan is still absent — the install
+    # genuinely could not cover it.
+    if left:
+        aprint(
+            "ℹ️  Still to install by hand: "
+            + ", ".join(f"'{r.spec.spec}'" for r in left)
+        )
 
 
 # ─────────────────────────────── cache list ──────────────────────────────────

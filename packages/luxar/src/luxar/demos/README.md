@@ -1071,10 +1071,10 @@ a preflight reappears.
 
 Version constraints live in one table, `INSTALL_SPECS` in
 [`_dependencies.py`](_dependencies.py) — never advertise a bare `pip install
-<pkg>`. `anndata` is the cautionary case: unconstrained it resolves to 0.13+,
-which requires `zarr>=3.1` and would silently upgrade Luxar past its
-`zarr>=2.16,<3.0` pin, breaking every store on disk.
-`tests/test_demos_dependencies.py` fails if a spec drifts from `pyproject.toml`.
+<pkg>`. See [Optional dependencies](#optional-dependencies) above for the table's
+two consumers, what the tests enforce, and the `anndata` cautionary case; adding
+a new optional dependency means pinning it in `pyproject.toml` **and** tabling it
+there, or the build fails.
 
 Soft checks that *degrade a feature* rather than refuse to run are fine and are
 not flagged — e.g. disabling image thumbnails when `Pillow` is absent.

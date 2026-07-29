@@ -145,28 +145,49 @@ class TestSpecsMatchPyproject:
         specifiers = pytest.importorskip("packaging.specifiers")
         version_mod = pytest.importorskip("packaging.version")
 
-        want = packaging.Requirement(INSTALL_SPECS[module].spec)
-        text = pyproject.read_text(encoding="utf-8")
-        pins = set()
-        for raw in re.findall(r'"([A-Za-z0-9_.\-]+(?:\[[^\]]*\])?[<>=!~][^"]*)"', text):
-            try:
-                req = packaging.Requirement(raw)
-            except Exception:  # noqa: BLE001 - not a requirement string
-                continue
-            if req.name.lower() == want.name.lower():
-                pins.add(str(req.specifier))
+        spec = INSTALL_SPECS[module]
+        want = packaging.Requirement(spec.spec)
+
+        # Parse the TOML rather than regexing it, so each pin stays attached to
+        # the EXTRA that declares it. A name-only match is too weak: scipy is
+        # pinned twice (demos >=1.15.0, gsplats >=1.9.0), and a spec that had
+        # silently relaxed to the gsplats floor would match "some pin" and pass.
+        try:
+            import tomllib
+        except ModuleNotFoundError:  # py3.10
+            tomllib = pytest.importorskip("tomli")
+        data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+        optional = data["project"].get("optional-dependencies", {})
+
+        by_extra: dict[str, str] = {}
+        for extra_name, reqs in optional.items():
+            for raw in reqs:
+                try:
+                    req = packaging.Requirement(raw)
+                except Exception:  # noqa: BLE001 - not a requirement string
+                    continue
+                if req.name.lower() == want.name.lower():
+                    by_extra[extra_name] = str(req.specifier)
 
         if want.name.lower() in NOT_IN_ANY_EXTRA:
-            assert not pins, (
+            assert not by_extra, (
                 f"{want.name} is documented as outside every extra but appears "
-                f"in pyproject.toml as {pins} — update NOT_IN_ANY_EXTRA or the spec"
+                f"in pyproject.toml as {by_extra} — update NOT_IN_ANY_EXTRA or "
+                "the spec"
             )
             return
 
-        assert pins, (
+        assert by_extra, (
             f"{want.name} is advertised by INSTALL_SPECS but is not pinned "
-            "anywhere in pyproject.toml"
+            "in any pyproject.toml extra"
         )
+        # The spec must be provided by the extra it CLAIMS to be provided by.
+        assert spec.extra in by_extra, (
+            f"INSTALL_SPECS[{module!r}] claims extra {spec.extra!r}, but "
+            f"{want.name} is only pinned in {sorted(by_extra)}"
+        )
+        # Compare against THAT extra's pin only — not any pin sharing the name.
+        pins = {by_extra[spec.extra]}
 
         # Behavioural equivalence beats string equality: `>=2.2` and `>=2.2.0`
         # are the same requirement under PEP 440.
@@ -190,6 +211,13 @@ class TestSpecsMatchPyproject:
                 "1.4.0",
                 "1.5.0",
                 "1.6.0",
+                # 1.9/1.14 separate the two scipy floors: the demos extra pins
+                # >=1.15.0 and gsplats pins >=1.9.0. Without a sample in
+                # [1.9, 1.15) the two are indistinguishable here, and because
+                # the check accepts ANY matching pin it would greenlight an
+                # INSTALL_SPECS entry that had silently relaxed to >=1.9.0.
+                "1.9.0",
+                "1.14.0",
                 "1.15.0",
                 "2.2",
                 "2.2.0",
@@ -288,3 +316,106 @@ class TestEveryGatedModuleIsInTheTable:
             "require_module() called with modules missing from INSTALL_SPECS: "
             + "; ".join(f"{m} ({', '.join(sorted(f))})" for m, f in unknown.items())
         )
+
+
+#: Third-party modules a demo may import WITHOUT an INSTALL_SPECS entry, and why.
+#: Adding a new unlisted third-party import breaks the build until it is either
+#: pinned + tabled or justified here, so an unpinned dependency cannot ship by
+#: accident (see the blind spot noted on TestNoUnpinnedThirdPartyImports).
+UNLISTED_IMPORTS_OK = {
+    # Soft optional: the demo prints a warning and returns, so it runs fine
+    # without napari. Pinned only in the heavyweight `tracksdata` extra
+    # (napari + PyQt6); tabling it would make `deps --install` pull all of that
+    # to satisfy a dependency no demo actually requires.
+    "napari": "soft optional — demo warns and continues; tracksdata extra only",
+    # A hard dependency of `requests`, which is a CORE dependency, so it is
+    # always importable. Nothing to advertise.
+    "urllib3": "transitive of requests (a core dependency) — always present",
+}
+
+
+class TestNoUnpinnedThirdPartyImports:
+    """Every third-party module a demo IMPORTS must be pinned AND tabled.
+
+    `require_module` coverage is not enough on its own: a plain `import foo`
+    never touches the gate, so an unpinned direct import can ship silently —
+    which is how `scikit-learn` and `matplotlib` were reaching demos only as
+    accidental transitives.
+
+    KNOWN BLIND SPOT: this is an import-graph check, so it cannot see an
+    *indirect* runtime need. `pooch` is the worked example — no demo imports it;
+    it is what scikit-image's `cells3d()`/`kidney()` fetchers require at call
+    time. Nothing static can catch that class; only running the demo on a cold
+    cache does. Do not read a green run here as "every demo is runnable".
+    """
+
+    @staticmethod
+    def _core_import_names() -> set[str]:
+        """Import names that the CORE dependencies make always-available."""
+        # A few core dists import under a different name than they ship as.
+        return {
+            "numpy",
+            "zarr",
+            "typer",
+            "fastapi",
+            "uvicorn",
+            "arbol",
+            "colors",  # ansicolors
+            "requests",
+            "aiohttp",
+            "fsspec",
+            "xxhash",
+            "hilbertcurve",
+            "yaml",  # pyyaml
+            "click",  # via typer
+            "pydantic",  # via fastapi
+            "starlette",  # via fastapi
+        }
+
+    def test_every_third_party_demo_import_is_pinned_and_tabled(self) -> None:
+        import ast
+
+        demos_dir = Path(__file__).resolve().parents[1]
+        allowed = (
+            set(sys.stdlib_module_names)
+            | {"luxar"}
+            | self._core_import_names()
+            | set(INSTALL_SPECS)
+            | set(UNLISTED_IMPORTS_OK)
+        )
+
+        offenders: dict[str, set[str]] = {}
+        files = sorted(demos_dir.glob("demo_*.py"))
+        assert files, "no demo files found — the glob or layout changed"
+        for path in files:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                names: list[str] = []
+                if isinstance(node, ast.Import):
+                    names = [a.name for a in node.names]
+                elif isinstance(node, ast.ImportFrom):
+                    # level > 0 is a relative (first-party) import.
+                    if node.level == 0 and node.module:
+                        names = [node.module]
+                for name in names:
+                    root = name.split(".")[0]
+                    if root not in allowed:
+                        offenders.setdefault(root, set()).add(path.name)
+
+        assert not offenders, (
+            "demo modules import third-party packages that are neither in "
+            "INSTALL_SPECS nor justified in UNLISTED_IMPORTS_OK: "
+            + "; ".join(
+                f"{mod} ({', '.join(sorted(f))})"
+                for mod, f in sorted(offenders.items())
+            )
+        )
+
+    def test_the_allowlist_itself_stays_justified(self) -> None:
+        """An allowlist entry must carry a reason and must not shadow the table."""
+        for module, reason in UNLISTED_IMPORTS_OK.items():
+            assert reason.strip(), f"{module} needs a stated reason"
+            assert module not in INSTALL_SPECS, (
+                f"{module} is now in INSTALL_SPECS — drop it from "
+                "UNLISTED_IMPORTS_OK so the table stays the single source"
+            )

@@ -427,6 +427,11 @@ install-demo-deps:  ## Install every optional dependency the bundled demos need
 # so a CUDA build put in place by `make setup-cuda` (or a custom --index-url
 # wheel) survives this target; only a torch-less env gets the PyPI default.
 	@echo "📦 Installing optional demo dependencies (demos + gsplats + io extras)..."
+# Same guard as install-dev: the wheel config force-includes the viewer's dist/,
+# so an editable install on a tree that has never built the viewer (a fresh
+# clone, a git worktree) dies with hatchling's obscure "Forced include not
+# found" instead of installing anything.
+	@mkdir -p packages/luxar-viewer/dist
 	$(HATCH) run pip install -e ".[demos,gsplats,io]"
 	@echo ""
 	@$(HATCH) run luxar demo deps || true

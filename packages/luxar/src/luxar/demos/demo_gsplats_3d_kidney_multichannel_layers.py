@@ -237,12 +237,16 @@ def load_kidney():
 
         try:
             raw = kidney()
-        except Exception as e:
+        except Exception as exc:
+            # The sample data is FETCHED, not bundled in the scikit-image wheel,
+            # and skimage's fetcher is pooch. A missing pooch is the usual cause
+            # here, so re-gate it to get the constrained hint; if pooch IS
+            # present the failure is something else (network), so say that.
+            require_module("pooch")
             raise RuntimeError(
-                f"Failed to load kidney dataset: {e}\n"
-                "This dataset is downloaded on first use and requires 'pooch'.\n"
-                "Install with: pip install pooch"
-            ) from e
+                f"Failed to fetch the kidney sample data: {exc}\n"
+                "It is downloaded on first use — check network access."
+            ) from exc
         aprint(f"Raw data shape: {raw.shape}, dtype: {raw.dtype}")
         aprint(
             f"  Axes: (Z={raw.shape[0]}, Y={raw.shape[1]}, X={raw.shape[2]}, C={raw.shape[3]})"

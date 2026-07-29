@@ -456,6 +456,13 @@ class TestDeps:
         row = next(ln for ln in plain if "ab>=1" in ln)
         # The EXTRA column must start at the same offset in both lines.
         assert header.index("EXTRA") == row.index("demos"), f"{header!r} vs {row!r}"
+        # ...and the rule must be exactly as wide as the header it underlines
+        # (a hand-counted constant overshot by one glyph).
+        sep = next(ln for ln in plain if "─" * 10 in ln)
+        gutter = header.index("MODULE") - 2  # arbol prefix + the 2-space indent
+        assert len(sep.rstrip()) - gutter == len(header.rstrip()) - gutter, (
+            f"rule {len(sep.rstrip())} != header {len(header.rstrip())}"
+        )
 
     def test_deps_dry_run_install_runs_no_pip(self, runner) -> None:
         from luxar.demos._dependencies import DependencyStatus
@@ -500,4 +507,49 @@ class TestDeps:
             result = runner.invoke(app, ["demo", "deps"])
         assert result.exit_code == 1
         assert "Not in any extra" in result.stdout
+        assert "gdown" in result.stdout
+
+    def test_deps_unknown_extra_lists_the_valid_ones(self, runner) -> None:
+        """A bare "no such extra" leaves the user guessing what to type."""
+        result = runner.invoke(app, ["demo", "deps", "--extra", "nope"])
+        assert result.exit_code == 1
+        assert "Valid extras:" in result.stdout
+        assert "demos" in result.stdout
+
+    def test_deps_extra_is_case_and_space_insensitive(self, runner) -> None:
+        """Extra names are lowercase per PEP 685; accept what the user types."""
+        loud = runner.invoke(app, ["demo", "deps", "--extra", "  IO  "])
+        quiet = runner.invoke(app, ["demo", "deps", "--extra", "io"])
+        assert loud.exit_code == quiet.exit_code
+        assert "imageio" in loud.stdout
+
+    def test_deps_dry_run_without_install_says_it_is_inert(self, runner) -> None:
+        result = runner.invoke(app, ["demo", "deps", "--dry-run"])
+        assert "--dry-run only applies with --install" in result.stdout
+
+    def test_deps_does_not_blame_the_install_for_an_orphan_spec(self, runner) -> None:
+        """gdown is in no extra, so --install never attempts it.
+
+        Reporting it as "still missing after install" made a successful install
+        look like a failure, and exited 1 on work that fully succeeded.
+        """
+        from luxar.demos._dependencies import DependencyStatus
+
+        orphan = DependencyStatus("gdown", DependencySpec("gdown", ""), False)
+        before = [orphan, DependencyStatus("m", DependencySpec("m>=1", "demos"), False)]
+        after = [orphan, DependencyStatus("m", DependencySpec("m>=1", "demos"), True)]
+        calls = {"n": 0}
+
+        def fake_survey(extra=None):
+            calls["n"] += 1
+            return before if calls["n"] == 1 else after
+
+        with patch("luxar.demos.survey", side_effect=fake_survey):
+            with patch("luxar.cli.demo_commands.run_child_process", return_value=0):
+                result = runner.invoke(app, ["demo", "deps", "--install"])
+
+        assert result.exit_code == 0, "the extra installed fine; must not exit 1"
+        assert "Still missing after install" not in result.stdout
+        # ...but it must not claim completeness either.
+        assert "Still to install by hand" in result.stdout
         assert "gdown" in result.stdout
