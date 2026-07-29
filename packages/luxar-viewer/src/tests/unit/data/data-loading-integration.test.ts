@@ -55,6 +55,9 @@ vi.mock('../../../data/scene-loader-manager', () => {
     loadScene: vi.fn(async (_url: string) => buildScene()),
     updateView: vi.fn().mockResolvedValue(undefined),
     dispose: vi.fn(),
+    // `zarr-loader.loadScene` gates its success log on this — a clean fake load
+    // has no failures.
+    hasFailures: vi.fn(() => false),
   };
 
   let isDisposed = false;

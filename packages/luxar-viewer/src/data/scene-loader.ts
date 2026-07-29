@@ -94,6 +94,7 @@ import { getGpuByteBudget } from '../rendering/gpu-byte-budget';
 import { NodeFactory } from '../rendering/node-factory';
 import { UpdateProfiler, type UpdateSession } from '../profiling/update-profiler';
 import { LoaderRegistry } from './scene-loader/loaders/loader-registry';
+import { warnFailedLoaders } from './scene-loader/loaders/failure-report';
 
 // ============================================================================
 // Staged commit types for atomic geometry updates
@@ -900,19 +901,8 @@ export class SceneLoader {
         // Update monitor with total visible segments across all lines nodes
         this.updateVisibleCountsInMonitor();
 
-        // Warn user if any loaders failed
-        if (this.failedLoaders.size > 0) {
-          const failedPaths = Array.from(this.failedLoaders.keys()).join(', ');
-          log.warning(
-            Modules.SCENE_LOADER,
-            `⚠️ ${this.failedLoaders.size} loader(s) failed: ${failedPaths}`
-          );
-          log.warning(
-            Modules.SCENE_LOADER,
-            `Some data could not be loaded. Failed loaders: ${failedPaths}. ` +
-              'Check console output for details. Data may be incomplete.'
-          );
-        }
+        // Warn user if any loaders failed (shared with the end-of-load report).
+        warnFailedLoaders(Array.from(this.failedLoaders.keys()));
       }
     } finally {
       // End profiling update cycle (always, even if errors)
