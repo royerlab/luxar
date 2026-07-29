@@ -91,7 +91,15 @@ def add_gsplats_impl(
 
         # Partition branch — decompose into N children if the user opted in
         # AND the BSP produces more than one part.
-        if partition is not None and ctr_arr.shape[1] >= 3:
+        # A dataset with <2 spatial dims can't be split; drop the request
+        # with a warning rather than in silence.
+        if partition is not None:
+            from ..partition import warn_if_partition_needs_more_dims
+
+            if not warn_if_partition_needs_more_dims(ndim, name):
+                partition = None
+
+        if partition is not None:
             from ..partition import (
                 DEFAULT_MAX_ELEMENTS,
                 median_bsp_partition,

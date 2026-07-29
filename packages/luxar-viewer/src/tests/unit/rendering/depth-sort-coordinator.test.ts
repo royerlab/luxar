@@ -58,7 +58,7 @@ function makeMockApi(): MockApi {
 /** When true the mocked worker CONSTRUCTOR throws (CSP-blocked script). */
 let workerConstructThrows = false;
 
-async function loadCoordinator() {
+async function loadCoordinator(opts: { displayedDims?: number[] } = {}) {
   vi.resetModules();
   terminatedWorkers.length = 0;
   transferCalls = [];
@@ -90,6 +90,17 @@ async function loadCoordinator() {
       terminate = vi.fn(() => terminatedWorkers.push(this));
     },
   }));
+
+  // Live display dims feed the BSP axis → x/y/z mapping. This MUST be a
+  // doMock inside the resetModules window: spying on the already-imported
+  // singleton is invisible to the coordinator's fresh re-import, which would
+  // silently fall back to the identity map and make such a test vacuous.
+  if (opts.displayedDims !== undefined) {
+    const displayed = opts.displayedDims;
+    vi.doMock('../../../scene/scene-dims-manager', () => ({
+      sceneDimsManager: { getDims: () => ({ displayed }) },
+    }));
+  }
 
   return await import('../../../rendering/depth-sort-coordinator');
 }
@@ -518,6 +529,81 @@ describe('depth-sort coordinator', () => {
     // renderOrder == painter's rank; THREE draws transparent objects by
     // renderOrder ASCENDING, so rank 0 (x<-50, farthest) draws first.
     expect(parts.map((m) => m.renderOrder)).toEqual([0, 1, 2, 3]);
+  });
+
+  it('maps BSP split axes through displayDims, not straight to x/y/z', async () => {
+    // A serialized `axis` is a CENTER-COLUMN index; `eyeLocal` is in display
+    // space (x/y/z = displayDims[0..2]). Reading axis 1 as "y" is only right
+    // when displayDims == [0,1,2]. Here the scene displays [3, 1, 0], so center
+    // column 0 is the THIRD display axis (z) — the split must consult
+    // eyeLocal.z, not eyeLocal.x.
+    const bspTree = { axis: 0, split: 0, left: { part: 0 }, right: { part: 1 } };
+
+    const orderFor = async (displayedDims: number[]): Promise<number[]> => {
+      const coord = await loadCoordinator({ displayedDims });
+      // Camera on -z only. Under the correct mapping (column 0 → z) the eye is
+      // on the small-coord side, so the BSP flips the parts → [1, 0]. Under the
+      // old naive reading (column 0 → x) it would read eyeLocal.x == 0 and land
+      // on the other branch → [0, 1].
+      coord.configureDepthSort({ getCamera: () => cameraAt(0, 0, -1000), requestRender: vi.fn() });
+      const parts = [0, 1].map(() => makeGSplatsMesh(2, 'normal'));
+      makePartitionWrapper(bspTree, parts);
+      for (const m of parts) {
+        coord.noteDepthSortCommit(m, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+      }
+      await flush();
+      coord.evaluateDepthSortPerFrame();
+      return parts.map((m) => m.renderOrder);
+    };
+
+    // Column 0 displayed as z → split read on z (eye at -1000) → parts flipped.
+    expect(await orderFor([3, 1, 0])).toEqual([1, 0]);
+    // Same tree, same camera, but column 0 displayed as x → eye.x == 0 → the
+    // other branch. Different answer from the SAME tree is the whole point:
+    // the mapping is consulted, not assumed.
+    expect(await orderFor([0, 1, 2])).toEqual([0, 1]);
+  });
+
+  it('falls back to the centroid heuristic when a split axis is not displayed', async () => {
+    // displayDims == [1, 2] (a 2D view of 3D+ data) leaves center column 0 off
+    // screen, so its split plane carries no on-screen depth information: the
+    // coordinator must decline the BSP ranks rather than order along an axis
+    // the viewer isn't showing.
+    //
+    // Each assertion picks the camera that makes ITS property observable — a
+    // single pose can't do both, and a pose where the outcomes coincide would
+    // make the assertion vacuous.
+    const bspTree = { axis: 0, split: 0, left: { part: 0 }, right: { part: 1 } };
+
+    const run = async (
+      displayedDims: number[],
+      tree: unknown,
+      cam: [number, number, number]
+    ): Promise<number[]> => {
+      const coord = await loadCoordinator({ displayedDims });
+      coord.configureDepthSort({ getCamera: () => cameraAt(...cam), requestRender: vi.fn() });
+      const parts = [0, 1].map(() => makeGSplatsMesh(2, 'normal'));
+      makePartitionWrapper(tree, parts);
+      for (const m of parts) {
+        coord.noteDepthSortCommit(m, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+      }
+      await flush();
+      coord.evaluateDepthSortPerFrame();
+      return parts.map((m) => m.renderOrder);
+    };
+
+    // Declining an unusable tree == having no tree at all. Camera on -z: were an
+    // unmapped axis (component -1) to fall through to eyeLocal.z instead of
+    // being declined, the traversal would flip the parts here — so this pose is
+    // what makes the decline observable rather than coincidental.
+    const onZ: [number, number, number] = [0, 0, -1000];
+    expect(await run([1, 2], bspTree, onZ)).toEqual(await run([1, 2], undefined, onZ));
+
+    // ...and with that same axis ON screen the tree really does change the
+    // answer, so the equivalence above is a genuine fallback. Camera on -x,
+    // where the BSP's column-0 split and the centroid heuristic disagree.
+    const onX: [number, number, number] = [-1000, 0, 0];
+    expect(await run([0, 1, 2], bspTree, onX)).not.toEqual(await run([0, 1, 2], undefined, onX));
   });
 
   it('orders BSP-partition parts correctly with the camera INSIDE the volume (centroid fails here)', async () => {

@@ -939,9 +939,13 @@ layout, no matter how many dimensions are displayed. So a 2D scene
 - The dimension hazard is **two-sided**: >16D panics (above), and <3 *display* dims
   used to panic too (a hardcoded sub-ndim of 3 read `display_dims[2]` out of bounds).
   When touching these kernels, test `displayDims.length` of 1 and 2, not just 3.
-- 2D gsplats are a first-class authoring path (see the `demo_gsplats_2d_*` demos),
-  but spatial BSP partitioning is 3D-only — `luxar gsplat partition` and
-  `lod --recipe tiles|overview|adaptive` reject 2D input.
+- 2D gsplats are a first-class authoring path end to end (see the
+  `demo_gsplats_2d_*` demos), spatial tiling included: BSP splitting needs only
+  **2** spatial axes, so `luxar gsplat partition`, `lod --recipe
+  tiles|overview|adaptive`, and `add_gsplats(partition=…)` all work on planar
+  data. Only 1D input is rejected. Note the serialized BSP `axis` is a
+  center-column index, which the viewer must map through `displayDims` to reach
+  its own x/y/z (`render-order.ts`) — the two coincide only for `[0, 1, 2]`.
 
 ### ViewState.dimensions for extend_to_all
 The `dimensions` field in ViewState is **required** for `extend_to_all` to work:

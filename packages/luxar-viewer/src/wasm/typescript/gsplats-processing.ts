@@ -17,6 +17,14 @@ const MAX_PACKED_CHOLESKY_SIZE = (MAX_SUPPORTED_DIMS * (MAX_SUPPORTED_DIMS + 1))
 /** Epsilon for degenerate diagonal detection during Cholesky factorization. */
 const CHOLESKY_EPSILON = 1e-10;
 
+/**
+ * RELATIVE floor for degenerate-variance detection, applied against the largest
+ * diagonal of the covariance being factorized. Keeps the degeneracy test a
+ * condition-number bound rather than a scene-scale one. MUST stay identical to
+ * `CHOLESKY_RELATIVE_EPSILON` in `wasm/rust/src/common.rs`.
+ */
+const CHOLESKY_RELATIVE_EPSILON = 1e-12;
+
 // Module-level workspace buffers — safe because JS is single-threaded.
 // Avoids per-call allocation in hot loops.
 const _sigmaWorkspace = new Float32Array(MAX_SUPPORTED_DIMS * MAX_SUPPORTED_DIMS);
@@ -82,6 +90,29 @@ export function computeMarginalCholesky(
   const lSub = _lSubWorkspace;
   lSub.fill(0, 0, subPackedSize);
 
+  // SCALE-RELATIVE degeneracy floor, mirroring
+  // `gsplats_processing.rs::compute_marginal_cholesky` 1:1. A variance is in
+  // world-units², so an ABSOLUTE floor conflates "this axis has no extent" with
+  // "this scene uses small units": at a fixed 1e-10 a splat with σ = 1e-7
+  // (nm-unit data) has variance 1e-14, trips the floor, and is inflated to
+  // σ = 1e-5 — 100× larger than authored. Anchoring to the largest diagonal
+  // turns the test into a pure condition-number check that behaves identically
+  // at every scene scale; CHOLESKY_EPSILON stays the absolute backstop for an
+  // all-zero Σ_S.
+  let maxDiag = 0;
+  for (let i = 0; i < subNdim; i++) {
+    const d = sigma[i * MAX_SUPPORTED_DIMS + i];
+    if (d > maxDiag) maxDiag = d;
+  }
+  // The absolute constant is a fallback for a SCALELESS (all-zero) Σ_S only —
+  // as a general lower bound it would re-impose the scene-scale threshold this
+  // replaces, since maxDiag * 1e-12 is below 1e-10 for any σ < ~1e-1.
+  // MIN_VALUE keeps the floor non-zero if the relative product underflows.
+  const degenerateFloor =
+    maxDiag > 0
+      ? Math.max(maxDiag * CHOLESKY_RELATIVE_EPSILON, Number.MIN_VALUE)
+      : CHOLESKY_EPSILON;
+
   for (let i = 0; i < subNdim; i++) {
     for (let j = 0; j <= i; j++) {
       let sum = sigma[i * MAX_SUPPORTED_DIMS + j];
@@ -90,10 +121,10 @@ export function computeMarginalCholesky(
       }
       if (i === j) {
         lSub[packedIndex(i, i)] =
-          sum > CHOLESKY_EPSILON ? Math.sqrt(sum) : Math.sqrt(CHOLESKY_EPSILON);
+          sum > degenerateFloor ? Math.sqrt(sum) : Math.sqrt(degenerateFloor);
       } else {
         const diag = lSub[packedIndex(j, j)];
-        lSub[packedIndex(i, j)] = diag > CHOLESKY_EPSILON ? sum / diag : 0;
+        lSub[packedIndex(i, j)] = diag > 0 ? sum / diag : 0;
       }
     }
   }
@@ -140,11 +171,16 @@ function computeDisplayCholesky3D(
 
   // Geometric mean of the real diagonals L[i,i], i < n. Falls back to the
   // degenerate-covariance regularizer when the marginal has no extent at all.
+  //
+  // The test is `> 0`, not `> CHOLESKY_EPSILON`: the Crout step above already
+  // floors every diagonal to a strictly positive, SCALE-RELATIVE value, so an
+  // absolute threshold here would drop legitimately tiny diagonals (σ < 1e-10)
+  // from the mean — reintroducing the scene-scale dependence in miniature.
   let logSum = 0;
   let counted = 0;
   for (let i = 0; i < n; i++) {
     const diag = output[outputOffset + packedIndex(i, i)];
-    if (diag > CHOLESKY_EPSILON) {
+    if (diag > 0) {
       logSum += Math.log(diag);
       counted++;
     }

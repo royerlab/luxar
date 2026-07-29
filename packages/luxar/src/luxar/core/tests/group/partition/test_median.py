@@ -106,7 +106,7 @@ class TestMedianBspPartition:
         with pytest.raises(ValueError):
             median_bsp_partition(np.zeros((10,), dtype=np.float32), max_elements=5)
         with pytest.raises(ValueError):
-            median_bsp_partition(np.zeros((10, 2), dtype=np.float32), max_elements=5)
+            median_bsp_partition(np.zeros((10, 1), dtype=np.float32), max_elements=5)
         with pytest.raises(ValueError):
             median_bsp_partition(np.zeros((10, 3), dtype=np.float32), max_elements=0)
 

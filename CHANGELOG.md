@@ -6,6 +6,58 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Added — spatial partitioning (BSP tiling) now works on 2D data
+
+`luxar gsplat partition`, `lod --recipe tiles|overview|adaptive`, and
+`GSplatData.to_spatial_partition()` all crashed on planar input with
+"needs at least 3 spatial dimensions", and `scene.add_gsplats(partition=…)` /
+`add_points` / `add_lines` **silently** dropped the request and wrote one
+un-partitioned leaf instead — including when a compiler-level
+`auto_partition_max_elements` asked for it. The victim was exactly the data that
+most needs tiling: whole-slide 2D imagery like the 46K×32K `cmu1` pathology demo.
+
+The limit turned out to be entry-point-only. The recursive splitters already pick
+`argmax(extents)` over whatever columns they are handed, so median/midpoint were
+always dimension-generic; only the guards (`shape[1] < 3`), the `positions[:, :3]`
+slice, and two spots in SAH — its `range(3)` axis loop and its 3D
+surface-area cost proxy — assumed three axes. SAH now uses the box **perimeter**
+in 2D, which is the correct boundary measure there (a random ray's hit
+probability scales with surface area in 3D, perimeter in 2D). Only 1D is still
+rejected, and the three adders now warn via a shared
+`warn_if_partition_needs_more_dims` helper — sibling of the existing
+`warn_if_oversized_single_part` — rather than dropping the request in silence.
+
+#### Fixed — BSP part ordering read split axes as x/y/z regardless of displayDims
+
+A serialized BSP `axis` is a center-column index, but the depth-sort
+coordinator's `eyeLocal` is in display space, where x/y/z are `displayDims[0..2]`.
+The two coincide only for `displayDims == [0, 1, 2]`, so a 4D scene displaying
+`[1, 2, 3]` ordered its partition parts along the wrong axis — silently, since the
+result is still a valid permutation. The axis is now mapped through the **live**
+display dims (not a load-time snapshot, which nD navigation would invalidate),
+and a split on a currently-undisplayed column makes the coordinator decline the
+tree and fall back to the documented centroid heuristic rather than order along
+an axis the viewer isn't showing.
+
+#### Fixed — marginal Cholesky inflated splats in small-unit scenes
+
+The degenerate-variance floor in `compute_marginal_cholesky` was an absolute
+constant (1e-10), but a variance carries world-units², so the threshold silently
+answered "does this axis have extent?" by scene scale: a splat with σ = 1e-7
+(nm-unit data) has variance 1e-14, tripped the floor, and was regularized up to
+σ = 1e-5 — 100× larger than authored, and 10⁴× at σ = 1e-9. A 3D scene displaying
+`[0, 1, 2]` escaped through the standard-3D fast path, which copies the factor
+verbatim, but a 2D scene — or any nD scene with hidden dims — always goes through
+the marginal.
+
+The floor is now anchored to the largest diagonal of Σ_S
+(`CHOLESKY_RELATIVE_EPSILON = 1e-12`), making it a pure condition-number check
+that behaves identically at every scene scale, with the absolute constant kept as
+a backstop for a genuinely scaleless (all-zero) covariance. Same
+scale-free-conditioning reasoning as the shader's trace-normalized covariance
+inverse. Rank-deficient axes are still regularized, now as a fixed *fraction* of
+the real axis.
+
 #### Fixed — every 2D gsplats scene failed to load with a WASM `unreachable` trap
 
 Loading a gsplats scene with fewer than 3 displayed dimensions failed with
