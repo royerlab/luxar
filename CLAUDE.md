@@ -922,6 +922,27 @@ is `panic = "abort"`) for `ndim > 16`, so those kernels must never be called abo
 - Implication: the TS reference is not only a WASM-missing fallback, it is the
   production >16D backend — keep it in 1:1 sync with the Rust kernels (parity tests).
 
+### GSplats with Fewer Than 3 Display Dimensions (2D/1D scenes)
+The renderer's per-splat Cholesky buffer is **always** the 6-element packed-3D
+layout, no matter how many dimensions are displayed. So a 2D scene
+(`displayDims.length === 2`) produces only a 2×2 marginal and the third row must be
+**synthesized** — see `compute_display_cholesky_3d` (Rust) / `computeDisplayCholesky3D`
+(TS) in `wasm/*/gsplats_processing`.
+- **Never pad the phantom diagonal with an epsilon.** In sum projection (additive,
+  luminous, volumetric) the shader scales amplitude by the Gaussian's extent along
+  the view ray, `sigmaRay = 1/√(rᵀΣ⁻¹r)`; an ε-thin splat viewed face-on is scaled
+  by ~1e-5 and discarded, so the whole scene renders **black**. The diagonal is the
+  geometric mean of the real Cholesky pivots (= `(det Σ_S)^(1/2n)`, rotation-invariant),
+  giving the phantom axis the splat's own in-plane scale. `luxar.gsplats.lift`
+  depends on this: its `opacity / (rayIntegralFactor · σ)` calibration holds for a 2D
+  lift only because `√(σ·σ) == σ`.
+- The dimension hazard is **two-sided**: >16D panics (above), and <3 *display* dims
+  used to panic too (a hardcoded sub-ndim of 3 read `display_dims[2]` out of bounds).
+  When touching these kernels, test `displayDims.length` of 1 and 2, not just 3.
+- 2D gsplats are a first-class authoring path (see the `demo_gsplats_2d_*` demos),
+  but spatial BSP partitioning is 3D-only — `luxar gsplat partition` and
+  `lod --recipe tiles|overview|adaptive` reject 2D input.
+
 ### ViewState.dimensions for extend_to_all
 The `dimensions` field in ViewState is **required** for `extend_to_all` to work:
 ```typescript
