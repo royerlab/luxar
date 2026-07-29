@@ -275,6 +275,32 @@ describe('computeDimensionStep', () => {
     // 49 presses from the first stop land exactly on the last stop
     expect(pos).toBe(24 * step);
   });
+
+  it('reports changed for a discrete dim with a grid finer than 1e-6', () => {
+    const step = 1e-7; // finer than the old absolute 1e-6 threshold
+    const dims = makeDims({
+      currentStep: [0, 0, 0, 0, 0],
+      metadata: [
+        makeMetadata({ name: 'X', display: true }),
+        makeMetadata({ name: 'Y', display: true }),
+        makeMetadata({ name: 'Z', display: true }),
+        makeMetadata({ name: 'w', discrete: true, step }),
+        makeMetadata({ name: 'Channel' }),
+      ],
+    });
+    const ranges: ReadonlyArray<readonly [number, number]> = [
+      [0, 10],
+      [0, 10],
+      [0, 10],
+      [0, 1e-4],
+      [0, 100],
+    ];
+    const result = computeDimensionStep(1, 0, dims, ranges);
+    // One grid cell (1e-7) is below the old absolute 1e-6 changed-threshold;
+    // the step-relative epsilon (step * 1e-9) still registers the move.
+    expect(result!.newValue).toBe(step);
+    expect(result!.changed).toBe(true);
+  });
 });
 
 describe('getSelectedDimensionIndex', () => {
