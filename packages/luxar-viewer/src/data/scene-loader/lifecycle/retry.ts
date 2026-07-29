@@ -182,14 +182,12 @@ export async function retryFailedLoaderUnlocked(path: string, ctx: RetryCtx): Pr
       return false;
     }
   } catch (error) {
-    // Update error tracking with new attempt
-    const errorInfo = registry.failedLoaders.get(path);
-    const retryCount = errorInfo ? errorInfo.retryCount + 1 : 1;
-    registry.failedLoaders.set(path, {
-      error: error as Error,
-      timestamp: Date.now(),
-      retryCount,
-    });
+    // Update error tracking with the new attempt. Routed through
+    // `recordFailure` (rather than an inline `.set`) so the classified `kind` is
+    // refreshed and the counter has one owner — this call site used to baseline
+    // `retryCount` at 1 while the update sweep baselined it at 0.
+    registry.recordFailure(path, error as Error);
+    const retryCount = registry.failedLoaders.get(path)?.retryCount ?? 0;
     log.error(
       Modules.SCENE_LOADER,
       `Retry failed for ${path} (attempt ${retryCount}): ${(error as Error).message}`

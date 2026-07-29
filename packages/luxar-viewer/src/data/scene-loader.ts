@@ -698,7 +698,7 @@ export class SceneLoader {
     return runLoaderUpdatesHelper(loaders, loaderType, updateFn, {
       profiler: this.profiler,
       viewStateQueue: this.viewStateQueue,
-      failedLoaders: this.failedLoaders,
+      registry: this.registry,
     });
   }
 
@@ -1435,6 +1435,17 @@ export class SceneLoader {
   }
 
   /**
+   * Whether any failure is worth an AUTOMATIC retry — a transient cause still
+   * under the attempt cap (see `LoaderRegistry.autoRetryablePaths`). The
+   * connectivity-triggered retry gates on this so it neither re-fetches a
+   * deterministically-broken path forever nor announces "Connection restored,
+   * retrying" for a scene it cannot help.
+   */
+  hasAutoRetryableFailures(): boolean {
+    return this.registry.hasAutoRetryableFailures();
+  }
+
+  /**
    * Clear failed loader tracking
    * Useful for retry operations or after user acknowledges errors
    */
@@ -1530,12 +1541,23 @@ export class SceneLoader {
    * console.log(`Recovered: ${result.succeeded.length}, Still failing: ${result.failed.length}`);
    * ```
    */
-  async retryAllFailedLoaders(): Promise<{
+  async retryAllFailedLoaders(
+    opts: {
+      /**
+       * Retry only paths that pass the automatic-retry filter (transient cause,
+       * under the attempt cap). Set by the connectivity-triggered retry. A
+       * manual Retry omits it and forces every failed path.
+       */
+      onlyAutoRetryable?: boolean;
+    } = {}
+  ): Promise<{
     succeeded: string[];
     failed: string[];
     deferred?: boolean;
   }> {
-    const failedPaths = Array.from(this.failedLoaders.keys());
+    const failedPaths = opts.onlyAutoRetryable
+      ? this.registry.autoRetryablePaths()
+      : Array.from(this.failedLoaders.keys());
 
     if (failedPaths.length === 0) {
       log.info(Modules.SCENE_LOADER, 'No failed loaders to retry');

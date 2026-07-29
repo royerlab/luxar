@@ -7,7 +7,10 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
-import { LoaderRegistry } from '../../../../../data/scene-loader/loaders/loader-registry';
+import {
+  LoaderRegistry,
+  MAX_AUTO_RETRY_ATTEMPTS,
+} from '../../../../../data/scene-loader/loaders/loader-registry';
 import type { DataLoader } from '../../../../../data/data-loader-types';
 import type { LinesDataLoader } from '../../../../../types/lines';
 import type { GSplatsDataLoader } from '../../../../../types/gsplats';
@@ -92,6 +95,56 @@ describe('LoaderRegistry — failure tracking', () => {
     expect(info!.retryCount).toBe(0);
     expect(typeof info!.timestamp).toBe('number');
     expect(r.hasFailures()).toBe(true);
+  });
+
+  it('persists the classified error kind alongside the failure', () => {
+    // The kind used to be computed for logging and thrown away, so retry policy
+    // could not tell a transient failure from a deterministic one.
+    const r = new LoaderRegistry();
+    r.recordFailure('/net', new Error('fetch failed: http 503'));
+    r.recordFailure('/bad', new Error('invalid chunk header'));
+
+    expect(r.failedLoaders.get('/net')!.kind).toBe('Network');
+    expect(r.failedLoaders.get('/bad')!.kind).toBe('Decode');
+  });
+
+  it('honors an explicitly supplied kind over the heuristic', () => {
+    const r = new LoaderRegistry();
+    r.recordFailure('/p', new Error('fetch failed'), 'Validation');
+
+    expect(r.failedLoaders.get('/p')!.kind).toBe('Validation');
+  });
+
+  describe('automatic-retry eligibility', () => {
+    it('offers transient failures and withholds deterministic ones', () => {
+      const r = new LoaderRegistry();
+      r.recordFailure('/net', new Error('fetch failed'));
+      r.recordFailure('/bad', new Error('invalid chunk'));
+
+      expect(r.autoRetryablePaths()).toEqual(['/net']);
+      expect(r.hasAutoRetryableFailures()).toBe(true);
+    });
+
+    it('withholds a transient failure once it exceeds the attempt cap', () => {
+      // A permanently-404 chunk classifies as Network, so the kind filter alone
+      // cannot bound it — without the cap it is re-fetched on every reconnect.
+      const r = new LoaderRegistry();
+      for (let i = 0; i <= MAX_AUTO_RETRY_ATTEMPTS; i++) {
+        r.recordFailure('/net', new Error('http 404 not found'));
+      }
+
+      expect(r.failedLoaders.get('/net')!.retryCount).toBe(MAX_AUTO_RETRY_ATTEMPTS);
+      expect(r.autoRetryablePaths()).toEqual([]);
+      expect(r.hasAutoRetryableFailures()).toBe(false);
+      // Still reported as a failure: a MANUAL retry deliberately ignores both
+      // the kind filter and the cap.
+      expect(r.hasFailures()).toBe(true);
+      expect(r.getFailedLoaders().has('/net')).toBe(true);
+    });
+
+    it('reports no auto-retryable failures when there are none at all', () => {
+      expect(new LoaderRegistry().hasAutoRetryableFailures()).toBe(false);
+    });
   });
 
   it('increments retryCount on repeated failures for the same path', () => {
