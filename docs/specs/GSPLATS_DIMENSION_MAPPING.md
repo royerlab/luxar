@@ -262,9 +262,16 @@ When rendering with `displayDims = [d0, d1, d2]` and a `slicePosition`:
 
 1. **Map display dimensions to splat indices** — For each display dimension, find the corresponding splat dimension index (or `null` if the display dimension is extended/not in splat)
 
-2. **Extract 3D centers** — For spanned display dimensions, read from splat centers. For extended display dimensions, place at current slice position.
+2. **Extract 3D centers** — For spanned display dimensions, read from splat centers. For extended display dimensions, place at current slice position. Components with no display dimension behind them (a 2D or 1D view) are zero-filled.
 
-3. **Extract 3D Cholesky submatrix** — Extract the 3x3 sub-covariance corresponding to displayed splat dimensions.
+3. **Extract 3D Cholesky submatrix** — Compute the marginal Cholesky of the sub-covariance over the displayed splat dimensions. Note the renderer's output buffer is **always** the 6-element packed-3D layout `[L00, L10, L11, L20, L21, L22]`, regardless of how many dimensions are displayed, so with `n = min(displayDims.length, 3) < 3` the marginal is only n×n and the remaining rows are **synthesized**, not extracted:
+
+   - Off-diagonals are `0` — the phantom axis is uncorrelated with the real ones, leaving the in-plane profile exactly as authored.
+   - The diagonal is the **geometric mean of the real Cholesky pivots**, which equals `(det Σ_S)^(1/2n)` and is therefore rotation-invariant. A 2D splat thus renders as a round blob at its own in-plane scale.
+
+   The phantom diagonal is deliberately **not** a small epsilon. In sum projection (additive, luminous, volumetric) the shader scales amplitude by the Gaussian's extent along the view ray, `sigmaRay = 1/√(rᵀΣ⁻¹r)`, so an ε-thin splat viewed face-on is scaled by ~1e-5 and discarded — the scene renders black. `luxar.gsplats.lift` depends on this directly: it calibrates amplitude as `opacity / (rayIntegralFactor · σ)`, which holds for a 2D lift only because `√(σ·σ) == σ`.
+
+   See `wasm/rust/src/gsplats_processing.rs::compute_display_cholesky_3d` and its TypeScript twin.
 
 4. **Compute attenuation in hidden dimensions** — For spanned dimensions that are neither displayed nor extended, compute Gaussian falloff based on Mahalanobis distance between the splat center and slice position in that dimension. Extended dimensions never attenuate.
 

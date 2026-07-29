@@ -17,6 +17,7 @@ import {
   compute_gsplats_attenuation,
   extract_visible_cholesky_3d,
   compact_attenuated_amplitudes,
+  project_gsplats_nd_to_3d,
 } from '../../../../wasm/typescript';
 
 // ============================================================================
@@ -385,5 +386,170 @@ describe('gsplats_processing: computeMarginalCholesky', () => {
     expect(attenuation[0]).toBeGreaterThan(0.9);
     expect(attenuation[0]).toBeLessThan(1.0);
     expect(visibility[0]).toBe(1);
+  });
+});
+
+/**
+ * Fewer than 3 display dims (2D / 1D scenes).
+ *
+ * These live in the TS-only suite ON PURPOSE. The cross-language parity tests in
+ * `wasm-vs-typescript.test.ts` are `skipIf(!wasmFilesExist)`, so on any machine or
+ * CI leg without built WASM artifacts they vanish — and the TS reference is not
+ * merely a fallback, it is the production backend for ndim > 16. Without these,
+ * a TS-side regression in the display-marginal padding would ship silently.
+ *
+ * Contract (mirrors `gsplats_processing.rs::compute_display_cholesky_3d`): the n-D
+ * marginal occupies the first n·(n+1)/2 packed slots; the remaining rows get zero
+ * off-diagonals and a phantom diagonal equal to the geometric mean of the real
+ * Cholesky pivots. The phantom is deliberately NOT an epsilon — an ε-thin splat is
+ * invisible in sum/additive blending because the shader scales amplitude by the
+ * Gaussian's extent along the view ray.
+ */
+describe('gsplats_processing: fewer than 3 display dims (TS reference)', () => {
+  const SQRT_EPS = Math.sqrt(1e-10);
+
+  it('extract_visible_cholesky_3d pads a 2D marginal with a scale-matched phantom axis', () => {
+    const cholesky = new Float32Array([2.0, 0.5, 1.5]); // packed 2D [L00, L10, L11]
+    const output = new Float32Array(6);
+
+    const count = extract_visible_cholesky_3d(
+      cholesky,
+      new Uint8Array([1]),
+      new Uint32Array([0, 1]),
+      2,
+      1,
+      output
+    );
+
+    expect(count).toBe(1);
+    // Keeping ALL dims reproduces the input factor.
+    expect(output[0]).toBeCloseTo(2.0, 5);
+    expect(output[1]).toBeCloseTo(0.5, 5);
+    expect(output[2]).toBeCloseTo(1.5, 5);
+    // Phantom row: uncorrelated, scale-matched.
+    expect(output[3]).toBe(0);
+    expect(output[4]).toBe(0);
+    expect(output[5]).toBeCloseTo(Math.sqrt(2.0 * 1.5), 5);
+    // The regression this guards: an epsilon here renders the scene black.
+    expect(output[5]).toBeGreaterThan(SQRT_EPS * 1000);
+  });
+
+  it('project_gsplats_nd_to_3d handles a 2D scene (no OOB read, z-padded centers)', () => {
+    const one = [2.0, 0.5, 1.5];
+    const splatCount = 2;
+    const centers = new Float32Array(splatCount * 3);
+    const chol = new Float32Array(splatCount * 6);
+    const amps = new Float32Array(splatCount);
+    const cols = new Float32Array(splatCount * 3);
+
+    const count = project_gsplats_nd_to_3d(
+      new Float32Array([0, 0, 5, -3]),
+      new Float32Array([...one, ...one]),
+      new Float32Array([1.0, 0.8]),
+      new Float32Array([0.1, 0.2, 0.3, 0.4, 0.5, 0.6]),
+      new Uint8Array([1, 1]),
+      new Float32Array([0, 0]),
+      new Uint32Array([]), // no hidden dims
+      new Uint32Array([0, 1]), // 2D scene: two display dims
+      2,
+      splatCount,
+      3,
+      1e-6,
+      3.0,
+      centers,
+      chol,
+      amps,
+      cols
+    );
+
+    expect(count).toBe(2);
+    // Centers zero-padded in the missing z component.
+    expect(Array.from(centers.subarray(0, 6))).toEqual([0, 0, 0, 5, -3, 0]);
+    for (let s = 0; s < 2; s++) {
+      const c = s * 6;
+      expect(chol[c + 3]).toBe(0);
+      expect(chol[c + 4]).toBe(0);
+      expect(chol[c + 5]).toBeCloseTo(Math.sqrt(2.0 * 1.5), 5);
+    }
+  });
+
+  it('pads BOTH missing rows for a single display dim', () => {
+    const output = new Float32Array(6);
+    extract_visible_cholesky_3d(
+      new Float32Array([2.0, 0.5, 1.5]),
+      new Uint8Array([1]),
+      new Uint32Array([0]),
+      2,
+      1,
+      output
+    );
+
+    // Marginal over dim 0 alone is [sqrt(L00^2)] = [2]; phantom = 2 on both rows.
+    expect(Array.from(output)).toEqual([2, 0, 2, 0, 0, 2]);
+  });
+
+  it('keeps the phantom axis proportional to the splat (not a constant)', () => {
+    const phantomFor = (scale: number): number => {
+      const output = new Float32Array(6);
+      extract_visible_cholesky_3d(
+        new Float32Array([2.0 * scale, 0.5 * scale, 1.5 * scale]),
+        new Uint8Array([1]),
+        new Uint32Array([0, 1]),
+        2,
+        1,
+        output
+      );
+      return output[5];
+    };
+
+    expect(phantomFor(2) / phantomFor(1)).toBeCloseTo(2.0, 4);
+  });
+
+  it('yields a finite positive phantom for a fully degenerate marginal', () => {
+    const output = new Float32Array(6);
+    extract_visible_cholesky_3d(
+      new Float32Array([0, 0, 0]),
+      new Uint8Array([1]),
+      new Uint32Array([0, 1]),
+      2,
+      1,
+      output
+    );
+
+    // Crout floors the diagonals at sqrt(eps) before the mean is taken, so the
+    // covariance stays non-singular instead of collapsing to zero.
+    expect(Number.isFinite(output[5])).toBe(true);
+    expect(output[5]).toBeGreaterThan(0);
+    expect(output[5]).toBeCloseTo(SQRT_EPS, 10);
+  });
+
+  it('is rotation-invariant: an in-plane rotation does not change the phantom axis', () => {
+    const [sx, sy] = [3.0, 0.75];
+    const phantoms = [0, 17, 45, 73, 90].map((deg) => {
+      const t = (deg * Math.PI) / 180;
+      const [s, c] = [Math.sin(t), Math.cos(t)];
+      const a = c * c * sx * sx + s * s * sy * sy;
+      const b = c * s * (sx * sx - sy * sy);
+      const d = s * s * sx * sx + c * c * sy * sy;
+      const l00 = Math.sqrt(a);
+      const l10 = b / l00;
+      const l11 = Math.sqrt(d - l10 * l10);
+
+      const output = new Float32Array(6);
+      extract_visible_cholesky_3d(
+        new Float32Array([l00, l10, l11]),
+        new Uint8Array([1]),
+        new Uint32Array([0, 1]),
+        2,
+        1,
+        output
+      );
+      return output[5];
+    });
+
+    // Taken over the Cholesky pivots the mean is (det Sigma)^(1/4) = sqrt(sx*sy).
+    for (const p of phantoms) {
+      expect(p).toBeCloseTo(Math.sqrt(sx * sy), 4);
+    }
   });
 });

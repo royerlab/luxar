@@ -36,6 +36,47 @@ Supporting changes:
 - `scripts/check_demo_ladders.py` — a structural gate that fails a leaf whose
   largest level is more than half the data, which is exactly the degeneracy a
   level count alone cannot see.
+
+#### Fixed — every 2D gsplats scene failed to load with a WASM `unreachable` trap
+
+Loading a gsplats scene with fewer than 3 displayed dimensions failed with
+`RuntimeError: unreachable` thrown from `project_gsplats_nd_to_3d`, leaving the
+node unrendered (`Total gsplats loaded: 0`). Every 2D gsplats node in a scene
+failed the same way, each after paying its full multi-million-splat fetch.
+
+Root cause: the display-dims marginal Cholesky was computed with a hardcoded
+sub-dimension count of 3 in both the fused `project_gsplats_nd_to_3d` and
+`extract_visible_cholesky_3d`. A 2D scene supplies `display_dims.len() == 2`, so
+Rust indexed `display_dims[2]` out of bounds — a panic, and the crate is
+`panic = "abort"`, hence the wasm trap. The TypeScript reference had the same
+bug but read `undefined` at that index and produced NaN-driven garbage instead of
+trapping, so the production >16D backend was silently wrong rather than loud.
+A regression: the pre-May-2026 main-thread path sized the loop from the data
+(`subNdim = keepDims.length`), and the hardcoded 3 only became reachable when the
+WASM kernel replaced it.
+
+The marginal is now computed over however many display dims exist, and the
+renderer's fixed 6-element packed-3D output is padded: zero off-diagonals (the
+phantom axis is uncorrelated, leaving the in-plane profile untouched) plus a
+phantom diagonal equal to the **geometric mean of the real Cholesky pivots** —
+which is `(det Σ_S)^(1/2n)` and therefore rotation-invariant, so a 2D splat renders
+as a round blob at its own in-plane scale. The phantom is deliberately **not** an
+epsilon: in sum projection (additive, luminous, volumetric) the shader scales
+amplitude by the Gaussian's extent along the view ray, `sigmaRay = 1/√(rᵀΣ⁻¹r)`, so
+an ε-thin splat is scaled by ~1e-5 and discarded — the scene renders black. This
+was settled by A/B-ing an ε-padded **3D twin** scene, which reaches the renderer
+via the standard-3D fast path and so bypasses the marginal code entirely.
+`luxar.gsplats.lift` depends on the scale-matched choice too: its
+`opacity / (rayIntegralFactor · σ)` calibration holds for a 2D lift only because
+`√(σ·σ) == σ`.
+
+Pinned by 8 new Rust tests (2D/1D padding, linear scaling with splat size,
+rotation invariance, the isotropic-2D-lift contract, degenerate/NaN and
+empty-display-dims fallbacks), 2 cross-language parity tests, and 6
+**unconditional** TypeScript-only tests — the parity suite is
+`skipIf(!wasmFilesExist)`, so without those a TS-side regression in the >16D
+backend would ship silently.
+
 #### Fixed — the CI Python version matrix tested one version three times (#839)
 
 `python-tests` declared a `['3.10', '3.11', '3.12']` matrix, but every leg ran the
