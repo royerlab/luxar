@@ -318,12 +318,14 @@ def cached_download(
     # can be a stale/wrong client-side guess (e.g. an API-reported byte count for
     # a `Content-Encoding: gzip` response whose decoded on-disk size exceeds it).
     # So a file that does not match `expected_size` — whether LONGER or SHORTER —
-    # is left in place for robust_download to reconcile: it restarts from scratch
-    # when the local copy is larger than the true remote size (and cleanly
-    # restarts on a resume that trips HTTP 416), and resumes when it is smaller.
-    # Quarantining an oversized-but-complete file here would re-download it every
-    # launch forever, since the re-fetched bytes are still larger than the stale
-    # guess. `expected_size` must never destroy a complete cached file.
+    # is left in place for robust_download to reconcile against the TRUE remote
+    # size. A stale file at the destination is never resumed from (in-progress
+    # bytes stage in a sibling `.part` file): robust_download re-fetches into the
+    # `.part` and atomically replaces the destination only once the download is
+    # complete and size-verified. Quarantining an oversized-but-complete file here
+    # would re-download it every launch forever, since the re-fetched bytes are
+    # still larger than the stale guess. `expected_size` must never destroy a
+    # complete cached file.
     if dest.exists():
         if is_lfs_pointer(dest):
             # A pointer stub is not data — and it is exactly the ~130 bytes that
@@ -342,8 +344,10 @@ def cached_download(
                     aprint(f"✓ Cached: {dest}")
                 return dest
             # size != expected_size (LONGER or SHORTER): leave it in place and let
-            # robust_download reconcile against the TRUE remote size — restart on
-            # local > remote, resume on local < remote. Never quarantine here.
+            # robust_download reconcile against the TRUE remote size — it
+            # re-fetches into a sibling `.part` and atomically replaces the
+            # destination on success (a stale destination is never resumed from).
+            # Never quarantine here.
         else:
             if verbose:
                 aprint(f"✓ Cached: {dest}")

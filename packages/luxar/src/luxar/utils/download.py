@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import os
 import time
 from pathlib import Path
 from typing import Any, BinaryIO, Optional, Union
@@ -122,9 +123,10 @@ def quarantine_file(
 
     Quarantining rather than deleting keeps the bytes for inspection or salvage
     and, critically, gets them out from under the canonical name so that
-    :func:`robust_download` cannot RESUME onto them — it opens the destination in
-    append mode whenever a file is already there, so a complete-but-wrong file
-    left in place would be appended to rather than replaced.
+    :func:`robust_download` cannot mistake them for a valid cache — a file at the
+    canonical ``output_path`` is treated as COMPLETE (in-progress bytes stage in a
+    sibling ``.part`` file), so a complete-but-wrong file left in place would be
+    trusted and returned rather than re-fetched.
 
     The suffix is APPENDED (``foo.zip`` -> ``foo.zip.corrupt``) so the original
     name and extension survive intact; that is also the form ``luxar demo clear``
@@ -212,10 +214,15 @@ def robust_download(
     from urllib3.util.retry import Retry
 
     output_path = Path(output_path)
-    # Whether the destination existed BEFORE this call touched anything. A
-    # pre-existing cache must never be destroyed by a transient server error
-    # (and, crucially, a 416 caused purely by resuming at EOF — see below).
-    preexisting = output_path.exists()
+    # In-progress bytes are staged in a sibling `.part` file; a file existing at
+    # `output_path` therefore means it is COMPLETE. Only a fully-downloaded,
+    # size-verified `.part` is atomically renamed (os.replace) onto `output_path`.
+    # This is the invariant that lets a size-less cache check trust output_path:
+    # an interrupted download (Ctrl-C, OOM, exhausted retries) leaves its
+    # truncated bytes in the `.part` file, never at the canonical name (#732).
+    # `.with_name(...+".part")` APPENDS the suffix (foo.zip → foo.zip.part), so
+    # the original name/extension survive; `.with_suffix` would replace them.
+    part_path = output_path.with_name(output_path.name + ".part")
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Check if file already exists and is complete
@@ -224,6 +231,8 @@ def robust_download(
         if current_size == expected_size:
             aprint(f"✓ File already downloaded: {output_path}")
             aprint(f"  Size: {current_size / (1024**3):.2f} GB")
+            # Drop any stale staging file orphaned by an aborted prior run.
+            part_path.unlink(missing_ok=True)
             return output_path
 
     # A quarantined `.corrupt` sibling means an earlier copy was rejected as
@@ -331,15 +340,26 @@ def robust_download(
             pass
         return None
 
-    # Determine if we can resume. Resolve the remote size ONCE, BEFORE issuing
-    # any Range request: a Range starting at (or past) EOF is unsatisfiable and
-    # the server answers HTTP 416, so we must not blindly resume from the local
-    # file's size. The cached value is reused by the 416 handler below.
+    # Fast cache-hit + resume determination. A COMPLETE file at output_path is
+    # returned untouched (never re-downloaded); any in-progress bytes to resume
+    # live in part_path, NOT output_path. Resolve the remote size ONCE, BEFORE
+    # issuing any Range request: a Range starting at (or past) EOF is
+    # unsatisfiable and the server answers HTTP 416, so we must not blindly
+    # resume from the staged file's size. The cached value is reused by the 416
+    # handler below.
     resume_byte_pos = 0
     remote_size: Optional[int] = None
+    # Whether we have already spent a remote-size probe this call (so the
+    # `.part` block below doesn't probe a second time on a size-less host).
+    remote_size_resolved = False
+    # Track a pre-existing output_path we MIGRATE into the staging path (below)
+    # so a transient failure can restore it untouched (offline-safe).
+    migrated_from_output = False
+    migrated_size = 0
     if output_path.exists():
         local_size = output_path.stat().st_size
         remote_size = _resolve_remote_size()
+        remote_size_resolved = True
         if remote_size is not None and local_size == remote_size:
             # Already complete — return it untouched (do NOT re-download).
             aprint(f"✓ File already downloaded: {output_path}")
@@ -349,19 +369,64 @@ def robust_download(
                     f"⚠️  Warning: File size ({local_size}) doesn't match "
                     f"expected ({expected_size})"
                 )
+            # Drop any stale staging file orphaned by an aborted prior run.
+            part_path.unlink(missing_ok=True)
             return output_path
-        if remote_size is not None and local_size > remote_size:
-            # Local copy is LARGER than the remote asset (e.g. a re-uploaded,
+
+    # A pre-existing output_path whose completeness CANNOT be confirmed by size —
+    # i.e. ONLY when the remote size is UNKNOWN (a size-less/chunked host, so
+    # `_resolve_remote_size()` returned None) — is MIGRATED into the staging path,
+    # so the resume/416 probe below can still CONFIRM its completeness via a Range
+    # at EOF (a 416 → the 416-complete branch promotes it straight back onto
+    # output_path, ZERO re-download) instead of blindly re-fetching the whole
+    # file. We do NOT migrate on a KNOWN size mismatch (remote_size is not None
+    # and local_size != remote_size): migrating there would feed a stale, wrong
+    # file to the resume path and splice `stale[:local] + remote[local:]` into a
+    # corrupt file that passes size verification. Instead we leave output_path in
+    # place, fetch fresh into `.part`, and promote on success (a terminal failure
+    # preserves the stale file — never destroyed on a transient error). If a
+    # `.part` already exists we prefer those staged bytes and let a stale
+    # non-complete output_path be overwritten by the eventual promotion.
+    if output_path.exists() and remote_size is None and not part_path.exists():
+        migrated_size = output_path.stat().st_size
+        os.replace(output_path, part_path)
+        migrated_from_output = True
+
+    def _restore_migrated_cache() -> None:
+        """Restore a migrated pre-existing cache on a terminal failure.
+
+        If the staging file was NEVER grown (offline, or an error before any
+        body byte was written) it is byte-identical to the pre-existing cache,
+        so move it back onto output_path — a transient failure must never
+        destroy a usable cache, and it stays usable offline. A staging file that
+        WAS grown is a genuine in-progress partial and is left in place
+        (resumable next run).
+        """
+        if (
+            migrated_from_output
+            and part_path.exists()
+            and not output_path.exists()
+            and part_path.stat().st_size == migrated_size
+        ):
+            os.replace(part_path, output_path)
+
+    if part_path.exists():
+        part_size = part_path.stat().st_size
+        if remote_size is None and not remote_size_resolved:
+            remote_size = _resolve_remote_size()
+            remote_size_resolved = True
+        if remote_size is not None and part_size > remote_size:
+            # Staged partial is LARGER than the remote asset (e.g. a re-uploaded,
             # smaller file): a Range at EOF would 416 — restart from scratch.
             aprint(
-                "⚠️  Local file is larger than the remote source "
-                f"({local_size} > {remote_size} bytes); restarting from scratch"
+                "⚠️  Staged partial is larger than the remote source "
+                f"({part_size} > {remote_size} bytes); restarting from scratch"
             )
             resume_byte_pos = 0
         else:
-            # Genuinely partial (0 < local < remote) or unknown remote size:
+            # Genuinely partial (0 < part < remote) or unknown remote size:
             # best-effort resume. A resulting 416 is handled gracefully below.
-            resume_byte_pos = local_size
+            resume_byte_pos = part_size
             aprint(f"📂 Partial download found: {resume_byte_pos / (1024**2):.1f} MB")
             aprint("   Attempting to resume...")
 
@@ -369,210 +434,284 @@ def robust_download(
     # a second 416 with no Range is a genuine error and is re-raised.
     restarted_after_416 = False
 
+    promoted = False  # True once the staging file is promoted onto output_path
     attempt = 0
-    while attempt <= max_retries:
-        try:
-            # Set up headers for resume
-            headers = dict(extra_headers or {})
-            if resume_byte_pos > 0:
-                headers["Range"] = f"bytes={resume_byte_pos}-"
+    try:
+        while attempt <= max_retries:
+            try:
+                # Set up headers for resume
+                headers = dict(extra_headers or {})
+                if resume_byte_pos > 0:
+                    headers["Range"] = f"bytes={resume_byte_pos}-"
 
-            with asection(f"Download Attempt {attempt + 1}/{max_retries + 1}"):
-                # Make request
-                response = session.get(
-                    url, headers=headers, stream=True, timeout=timeout
-                )
-                response.raise_for_status()
+                with asection(f"Download Attempt {attempt + 1}/{max_retries + 1}"):
+                    # Make request
+                    response = session.get(
+                        url, headers=headers, stream=True, timeout=timeout
+                    )
+                    response.raise_for_status()
 
-                # Check if resume was accepted
-                if resume_byte_pos > 0 and response.status_code == 206:
-                    aprint(f"✓ Resuming from {resume_byte_pos / (1024**2):.1f} MB")
-                    mode = "ab"  # Append mode
-                elif resume_byte_pos > 0:
-                    aprint("⚠️  Server doesn't support resume, restarting download")
-                    resume_byte_pos = 0
-                    mode = "wb"
-                else:
-                    mode = "wb"
+                    # Check if resume was accepted
+                    if resume_byte_pos > 0 and response.status_code == 206:
+                        if migrated_from_output:
+                            # A MIGRATED file is, by our invariant, COMPLETE — a
+                            # 206 to a Range at its EOF PROVES the remote has
+                            # more/different bytes, so the migrated cache is STALE
+                            # (not a genuine partial). Appending would splice
+                            # `stale[:N] + remote[N:]`; instead discard the stale
+                            # bytes and re-fetch from scratch. Reset resume_byte_pos
+                            # and `continue` to re-issue the request WITHOUT a Range
+                            # header (this 206 response only carries the tail
+                            # `remote[N:]`; writing it as-is would leave that tail
+                            # AS the whole file). The unranged retry gets a 200 full
+                            # body and, since resume_byte_pos is now 0, cannot
+                            # re-enter this branch — so it restarts exactly once.
+                            # Clearing the migrated flag stops _restore_migrated_cache()
+                            # resurrecting the (proven-stale) copy on a later failure:
+                            # re-fetching a PROVEN-stale cache may legitimately
+                            # discard it; it self-heals next run.
+                            aprint(
+                                "⚠️  Cached copy is stale (remote has changed); "
+                                "re-downloading from scratch"
+                            )
+                            resume_byte_pos = 0
+                            migrated_from_output = False
+                            response.close()
+                            continue
+                        aprint(f"✓ Resuming from {resume_byte_pos / (1024**2):.1f} MB")
+                        mode = "ab"  # Append mode
+                    elif resume_byte_pos > 0:
+                        aprint("⚠️  Server doesn't support resume, restarting download")
+                        resume_byte_pos = 0
+                        mode = "wb"
+                        # Overwriting the migrated bytes → no longer a trustworthy
+                        # pre-existing cache to auto-restore.
+                        migrated_from_output = False
+                    else:
+                        mode = "wb"
 
-                # Get total size
-                if "content-length" in response.headers:
-                    content_length = int(response.headers["content-length"])
-                    total_size = content_length + resume_byte_pos
-                elif "content-range" in response.headers:
-                    # For resumed downloads: "bytes start-end/total"
-                    content_range = response.headers["content-range"]
-                    total_size = int(content_range.split("/")[-1])
-                else:
-                    total_size = 0
+                    # Get total size
+                    if "content-length" in response.headers:
+                        content_length = int(response.headers["content-length"])
+                        total_size = content_length + resume_byte_pos
+                    elif "content-range" in response.headers:
+                        # For resumed downloads: "bytes start-end/total"
+                        content_range = response.headers["content-range"]
+                        total_size = int(content_range.split("/")[-1])
+                    else:
+                        total_size = 0
 
-                if total_size > 0:
-                    aprint(f"📦 Total size: {total_size / (1024**3):.2f} GB")
-                else:
-                    aprint("📦 Size: Unknown (no Content-Length header)")
+                    if total_size > 0:
+                        aprint(f"📦 Total size: {total_size / (1024**3):.2f} GB")
+                    else:
+                        aprint("📦 Size: Unknown (no Content-Length header)")
 
-                # Download with progress
-                downloaded = resume_byte_pos
-                last_progress_mb = downloaded / (1024 * 1024)
-                start_time = time.time()
+                    # Download with progress
+                    downloaded = resume_byte_pos
+                    last_progress_mb = downloaded / (1024 * 1024)
+                    start_time = time.time()
 
-                with open(output_path, mode) as f:
-                    for chunk in response.iter_content(chunk_size=chunk_size):
-                        if chunk:
-                            f.write(chunk)
-                            downloaded += len(chunk)
+                    with open(part_path, mode) as f:
+                        for chunk in response.iter_content(chunk_size=chunk_size):
+                            if chunk:
+                                f.write(chunk)
+                                downloaded += len(chunk)
 
-                            # Progress update every 100MB
-                            progress_mb = downloaded / (1024 * 1024)
-                            if progress_mb - last_progress_mb >= 100:
-                                if total_size > 0:
-                                    percent = downloaded / total_size * 100
-                                    elapsed = time.time() - start_time
-                                    rate_mbps = (
-                                        (downloaded - resume_byte_pos)
-                                        / (1024 * 1024)
-                                        / elapsed
-                                        if elapsed > 0
-                                        else 0
-                                    )
-                                    remaining_bytes = total_size - downloaded
-                                    eta_seconds = (
-                                        remaining_bytes / (rate_mbps * 1024 * 1024)
-                                        if rate_mbps > 0
-                                        else 0
-                                    )
+                                # Progress update every 100MB
+                                progress_mb = downloaded / (1024 * 1024)
+                                if progress_mb - last_progress_mb >= 100:
+                                    if total_size > 0:
+                                        percent = downloaded / total_size * 100
+                                        elapsed = time.time() - start_time
+                                        rate_mbps = (
+                                            (downloaded - resume_byte_pos)
+                                            / (1024 * 1024)
+                                            / elapsed
+                                            if elapsed > 0
+                                            else 0
+                                        )
+                                        remaining_bytes = total_size - downloaded
+                                        eta_seconds = (
+                                            remaining_bytes / (rate_mbps * 1024 * 1024)
+                                            if rate_mbps > 0
+                                            else 0
+                                        )
 
-                                    aprint(
-                                        f"  {downloaded / (1024**3):.2f} GB / {total_size / (1024**3):.2f} GB "
-                                        f"({percent:.1f}%) - {rate_mbps:.1f} MB/s - ETA: {eta_seconds / 60:.0f}min"
-                                    )
-                                else:
-                                    aprint(
-                                        f"  Downloaded: {downloaded / (1024**3):.2f} GB"
-                                    )
+                                        aprint(
+                                            f"  {downloaded / (1024**3):.2f} GB / {total_size / (1024**3):.2f} GB "
+                                            f"({percent:.1f}%) - {rate_mbps:.1f} MB/s - ETA: {eta_seconds / 60:.0f}min"
+                                        )
+                                    else:
+                                        aprint(
+                                            f"  Downloaded: {downloaded / (1024**3):.2f} GB"
+                                        )
 
-                                last_progress_mb = progress_mb
+                                    last_progress_mb = progress_mb
 
-                # Verify download completed
-                final_size = output_path.stat().st_size
-                aprint("✓ Download complete!")
-                aprint(f"  Final size: {final_size / (1024**3):.2f} GB")
+                    # Verify download completed (measured on the STAGING file, which
+                    # holds the bytes just written — output_path is untouched until
+                    # the atomic promotion below).
+                    final_size = part_path.stat().st_size
+                    aprint("✓ Download complete!")
+                    aprint(f"  Final size: {final_size / (1024**3):.2f} GB")
 
-                # Verify size if expected
-                if verify_size and total_size > 0:
-                    if final_size != total_size:
-                        raise ValueError(
-                            f"Downloaded file size mismatch: expected {total_size} bytes, "
-                            f"got {final_size} bytes"
+                    # Verify size if expected
+                    if verify_size and total_size > 0:
+                        if final_size != total_size:
+                            raise ValueError(
+                                f"Downloaded file size mismatch: expected {total_size} bytes, "
+                                f"got {final_size} bytes"
+                            )
+                        aprint(f"✓ Size verified: {final_size} bytes")
+
+                    if expected_size and final_size != expected_size:
+                        aprint(
+                            f"⚠️  Warning: File size ({final_size}) doesn't match expected ({expected_size})"
                         )
-                    aprint(f"✓ Size verified: {final_size} bytes")
 
-                if expected_size and final_size != expected_size:
+                    # Atomically promote the fully-downloaded, size-verified staging
+                    # file onto the canonical path (same directory → atomic rename,
+                    # overwriting any stale file already there). Only now does
+                    # output_path exist, and it is COMPLETE by construction.
+                    promoted = True
+                    os.replace(part_path, output_path)
+                    return output_path
+
+            except (
+                requests.exceptions.ConnectionError,
+                requests.exceptions.Timeout,
+                requests.exceptions.ChunkedEncodingError,
+            ) as e:
+                attempt += 1
+                if attempt <= max_retries:
+                    # #721: this attempt may have written more bytes to the staging
+                    # file before dropping. Refresh the resume offset from its ACTUAL
+                    # size so the retry's `Range: bytes=<offset>-` matches what is on
+                    # disk — otherwise the append-mode retry re-requests (and appends)
+                    # a byte range already written, silently duplicating it. Only when
+                    # resuming (resume_byte_pos > 0); a fresh "wb" download that drops
+                    # keeps resume_byte_pos == 0 and correctly restarts from scratch.
+                    if resume_byte_pos > 0 and part_path.exists():
+                        resume_byte_pos = part_path.stat().st_size
+                    wait_time = 2**attempt  # Exponential backoff
+                    aprint(f"❌ Download error: {type(e).__name__}: {e}")
                     aprint(
-                        f"⚠️  Warning: File size ({final_size}) doesn't match expected ({expected_size})"
+                        f"   Retrying in {wait_time} seconds... (attempt {attempt}/{max_retries})"
                     )
+                    time.sleep(wait_time)
+                    # Keep the staging (.part) file for the resume attempt.
+                else:
+                    aprint(f"❌ Download failed after {max_retries + 1} attempts")
+                    # Restore a migrated pre-existing cache that was never grown
+                    # (offline / dropped before any body byte) BEFORE reporting a
+                    # resumable partial — a genuine, grown partial stays in `.part`.
+                    _restore_migrated_cache()
+                    if part_path.exists():
+                        aprint(f"   Partial download saved at: {part_path}")
+                        aprint(
+                            f"   You can retry to resume from {part_path.stat().st_size / (1024**2):.1f} MB"
+                        )
+                    raise
 
-                return output_path
-
-        except (
-            requests.exceptions.ConnectionError,
-            requests.exceptions.Timeout,
-            requests.exceptions.ChunkedEncodingError,
-        ) as e:
-            attempt += 1
-            if attempt <= max_retries:
-                wait_time = 2**attempt  # Exponential backoff
-                aprint(f"❌ Download error: {type(e).__name__}: {e}")
-                aprint(
-                    f"   Retrying in {wait_time} seconds... (attempt {attempt}/{max_retries})"
-                )
-                time.sleep(wait_time)
-                # Keep partial file for resume attempt
-            else:
-                aprint(f"❌ Download failed after {max_retries + 1} attempts")
-                if output_path.exists():
-                    aprint(f"   Partial download saved at: {output_path}")
-                    aprint(
-                        f"   You can retry to resume from {output_path.stat().st_size / (1024**2):.1f} MB"
-                    )
-                raise
-
-        except requests.exceptions.HTTPError as e:
-            status = e.response.status_code if e.response is not None else None
-            if status == 416:
-                # Range Not Satisfiable: a 416 to `Range: bytes=<resume>-`
-                # proves `local >= total` (RFC 9110), so a pre-existing file is
-                # AT LEAST complete. NEVER fatal, and NEVER delete the file.
-                if resume_byte_pos > 0 and output_path.exists():
-                    local_size = output_path.stat().st_size
-                    # The 416 response itself carries the authoritative total in
-                    # its `Content-Range: bytes */<total>` header (RFC 9110), which
-                    # disambiguates a genuinely-complete cache from a stale,
-                    # oversized one — even on a chunked/dynamic host that omits
-                    # Content-Length (so the earlier size probe returned None).
-                    # Fall back to the earlier-resolved remote_size when absent.
-                    content_range_total = (
-                        _parse_content_range_total(e.response.headers)
-                        if e.response is not None
-                        else None
-                    )
-                    effective_total = (
-                        content_range_total
-                        if content_range_total is not None
-                        else remote_size
-                    )
-                    if effective_total is not None:
-                        if local_size == effective_total:
-                            # Exact match: the cache is complete — return it
-                            # WITHOUT truncating or re-downloading.
+            except requests.exceptions.HTTPError as e:
+                status = e.response.status_code if e.response is not None else None
+                if status == 416:
+                    # Range Not Satisfiable: a 416 to `Range: bytes=<resume>-`
+                    # proves `part >= total` (RFC 9110), so the STAGED file is AT
+                    # LEAST complete. NEVER fatal, and NEVER delete the staged bytes.
+                    if resume_byte_pos > 0 and part_path.exists():
+                        local_size = part_path.stat().st_size
+                        # The 416 response itself carries the authoritative total in
+                        # its `Content-Range: bytes */<total>` header (RFC 9110), which
+                        # disambiguates a genuinely-complete staged file from a stale,
+                        # oversized one — even on a chunked/dynamic host that omits
+                        # Content-Length (so the earlier size probe returned None).
+                        # Fall back to the earlier-resolved remote_size when absent.
+                        content_range_total = (
+                            _parse_content_range_total(e.response.headers)
+                            if e.response is not None
+                            else None
+                        )
+                        effective_total = (
+                            content_range_total
+                            if content_range_total is not None
+                            else remote_size
+                        )
+                        if effective_total is not None:
+                            if local_size == effective_total:
+                                # Exact match: the staged file is complete — promote
+                                # it WITHOUT truncating or re-downloading.
+                                if expected_size and local_size != expected_size:
+                                    aprint(
+                                        f"⚠️  Warning: File size ({local_size}) doesn't "
+                                        f"match expected ({expected_size})"
+                                    )
+                                aprint(f"✓ Download complete: {output_path}")
+                                promoted = True
+                                os.replace(part_path, output_path)
+                                return output_path
+                            if not restarted_after_416:
+                                # Any size mismatch against the authoritative total
+                                # (a stale/oversized staged file, or a contradictory
+                                # smaller-total 416 from a misbehaving server /
+                                # concurrently-truncated file): restart cleanly. The
+                                # next iteration's "wb" open of part_path truncates it.
+                                aprint(
+                                    "⚠️  Range not satisfiable (416); staged partial "
+                                    f"size ({local_size}) doesn't match the remote "
+                                    f"({effective_total}) — restarting from scratch"
+                                )
+                                resume_byte_pos = 0
+                                restarted_after_416 = True
+                                # Discarding the migrated bytes → no longer a
+                                # trustworthy pre-existing cache to auto-restore.
+                                migrated_from_output = False
+                                continue
+                        else:
+                            # No total anywhere (a truly header-less 416, no
+                            # Content-Range and no resolved remote size): a 416 still
+                            # proves `part >= total`, so the staged file is AT LEAST
+                            # complete — promote it, mirroring the pre-loop complete
+                            # path's expected_size mismatch warning.
                             if expected_size and local_size != expected_size:
                                 aprint(
                                     f"⚠️  Warning: File size ({local_size}) doesn't "
                                     f"match expected ({expected_size})"
                                 )
-                            aprint(f"✓ File already downloaded: {output_path}")
+                            aprint(f"✓ Download complete: {output_path}")
+                            promoted = True
+                            os.replace(part_path, output_path)
                             return output_path
-                        if not restarted_after_416:
-                            # Any size mismatch against the authoritative total
-                            # (a stale/oversized cache, or a contradictory
-                            # smaller-total 416 from a misbehaving server /
-                            # concurrently-truncated cache): restart cleanly.
-                            aprint(
-                                "⚠️  Range not satisfiable (416); local cache size "
-                                f"({local_size}) doesn't match the remote "
-                                f"({effective_total}) — restarting from scratch"
-                            )
-                            resume_byte_pos = 0
-                            restarted_after_416 = True
-                            continue
-                    else:
-                        # No total anywhere (a truly header-less 416, no
-                        # Content-Range and no resolved remote size): a 416 still
-                        # proves `local >= total`, so the cache is AT LEAST
-                        # complete — return it, mirroring the pre-loop complete
-                        # path's expected_size mismatch warning.
-                        if expected_size and local_size != expected_size:
-                            aprint(
-                                f"⚠️  Warning: File size ({local_size}) doesn't "
-                                f"match expected ({expected_size})"
-                            )
-                        aprint(f"✓ File already downloaded: {output_path}")
-                        return output_path
-                # 416 with no Range, no file, or after we already restarted once
-                # is a genuine error — surface it without touching the file.
+                    # 416 with no Range, no staged file, or after we already restarted
+                    # once is a genuine error — surface it without touching the file
+                    # (but restore a migrated, never-grown pre-existing cache first).
+                    aprint(f"❌ HTTP error: {e}")
+                    _restore_migrated_cache()
+                    raise
                 aprint(f"❌ HTTP error: {e}")
+                # Restore a migrated pre-existing cache that was never grown (an HTTP
+                # error is raised at raise_for_status, before any body byte is
+                # written, so a migrated staging file is still byte-identical). Under
+                # `.part` staging we NEVER create output_path on an error path, so
+                # there is no THIS-call file to clean up here.
+                _restore_migrated_cache()
                 raise
-            aprint(f"❌ HTTP error: {e}")
-            # Clean up on HTTP errors (bad URL, etc.) — but only remove a file
-            # THIS call created; never destroy a pre-existing cache.
-            if output_path.exists() and not preexisting:
-                output_path.unlink()
-            raise
 
-        except Exception as e:
-            aprint(f"❌ Unexpected error: {type(e).__name__}: {e}")
-            # Keep partial file - might be resumable
-            raise
+            except Exception as e:
+                aprint(f"❌ Unexpected error: {type(e).__name__}: {e}")
+                # Keep the staging (.part) file - a grown partial might be resumable.
+                # Restore a migrated pre-existing cache that was never grown (the
+                # helper no-ops when the staging file grew, e.g. a size-mismatch
+                # ValueError or a mid-write OSError, leaving the partial in .part).
+                _restore_migrated_cache()
+                raise
+
+    finally:
+        # BaseException (Ctrl-C during the retry backoff sleep) backstop: no
+        # `except` clause catches a KeyboardInterrupt, so restore the untouched
+        # migrated cache here too (no-op once promoted / already restored).
+        if not promoted:
+            _restore_migrated_cache()
 
     # Should never reach here
     raise RuntimeError("Download failed after all retry attempts")
