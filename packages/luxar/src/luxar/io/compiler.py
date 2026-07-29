@@ -588,6 +588,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 scalars=lvl.get("scalars"),
                 labels=lvl.get("labels"),
                 grid_shape=grid_shape,
+                **({"lod_stats": lvl["lod_stats"]} if lvl.get("lod_stats") else {}),
                 **({"extend_to_all": extend_to_all} if extend_to_all else {}),
                 _skip_scene_bounds=True,
             )
@@ -684,6 +685,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 image_labels=None,
                 indices=flat_indices,
                 line_type="indexed" if flat_indices is not None else "polyline",
+                **({"lod_stats": lvl["lod_stats"]} if lvl.get("lod_stats") else {}),
                 **({"extend_to_all": extend_to_all} if extend_to_all else {}),
                 _skip_scene_bounds=True,
             )

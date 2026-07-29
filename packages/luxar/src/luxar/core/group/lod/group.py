@@ -41,7 +41,9 @@ This module hosts:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
+
+from arbol import aprint
 
 if TYPE_CHECKING:
     from ...node import Node
@@ -501,3 +503,297 @@ def resolve_substitutive_axis(spec: Any, geometry: str) -> Optional[Dict[str, An
         "coarsen_dims": coarsen_dims,
         "max_aspect": max_aspect,
     }
+
+
+# ────────────────────────────────────────────────────────────────────────
+# Additive-ladder quality stamps (Points + Lines)
+# ────────────────────────────────────────────────────────────────────────
+#
+# The viewer's never-downgrade display gate can release a coarse→fine LOD swap
+# as soon as the committed prefix carries enough of the level's energy, instead
+# of waiting for the raw element count to pass the coarser sibling. That needs
+# two numbers on disk, and it needs BOTH or it silently falls back to the count
+# rule (``lod-display-gate.ts`` foldProgress poisons the whole subtree aggregate
+# to null if either is missing on any visible leaf):
+#
+#   * ``lod_stats.energy_fraction_cum`` on each ``additive_<i>/`` subgroup — the
+#     cumulative fraction of the leaf's energy carried by that prefix.
+#   * ``level_stats.reference_energy`` on the leaf itself — the leaf's total
+#     energy, used as a relative weight when several leaves fold together.
+#
+# GSplats have stamped these since the Q·e work (``gsplats/lod/additive.py``);
+# these helpers give Points and Lines the same stamps in their own energy
+# currency. Key names and the clamping/guard behaviour mirror the gsplat side
+# exactly so the viewer needs no per-geometry branch.
+
+
+def breakpoints_kind_of(counts: Any) -> str:
+    """Name the breakpoint vocabulary that produced a ladder, for the stamps.
+
+    Mirrors the ``kind`` string the gsplat ladder records, so a reader can tell
+    a bandwidth-derived geometric ladder from an equal-count or energy split
+    without re-deriving it.
+    """
+    if isinstance(counts, str):
+        if counts.startswith("stream:"):
+            return "stream"
+        if counts.startswith("energy:"):
+            return "energy-fractions"
+        return counts
+    if counts is None:
+        return "equal-count"
+    return "explicit-counts"
+
+
+def additive_level_stats(
+    level_energies: List[float],
+    level_counts: List[int],
+    *,
+    method: str,
+    breakpoints_kind: str,
+    energy_kind: str,
+) -> tuple[List[Dict[str, Any]], Optional[float], Dict[str, Any]]:
+    """Build the per-sub-LOD and per-leaf stamps for an additive ladder.
+
+    Args:
+        level_energies: Per-level (not cumulative) energy sums, level order.
+        level_counts: Per-level element counts, same order and length.
+        method: The ordering method that produced the ladder.
+        breakpoints_kind: From :func:`breakpoints_kind_of`.
+        energy_kind: Provenance of the energy quantity, e.g.
+            ``"points-luminance-volume"``. The viewer ignores it; it documents
+            that this currency is not comparable with the gsplat one.
+
+    Returns:
+        ``(per_level_lod_stats, reference_energy, parent_level_stats)``.
+        ``reference_energy`` is ``None`` — and no ``energy_fraction_cum`` is
+        stamped — when the total energy is not positive and finite (all-black
+        colors, zero radii). That is deliberate: an absent stamp makes the
+        viewer fall back to its count rule, whereas a fabricated 0.0 would make
+        it release swaps on data that carries no energy at all.
+    """
+    if len(level_energies) != len(level_counts):
+        raise ValueError(
+            f"level_energies has {len(level_energies)} entries but level_counts "
+            f"has {len(level_counts)}; internal error"
+        )
+
+    total = float(sum(level_energies))
+    usable = total > 0.0 and total == total and total != float("inf")
+
+    per_level: List[Dict[str, Any]] = []
+    cum_energy = 0.0
+    cum_n = 0
+    for i, (energy, count) in enumerate(zip(level_energies, level_counts)):
+        cum_energy += float(energy)
+        cum_n += int(count)
+        stats: Dict[str, Any] = {
+            "lod_method": method,
+            "lod_level": i,
+            "lod_breakpoints_kind": breakpoints_kind,
+            "lod_n_elements": int(count),
+            "lod_cumulative_n": cum_n,
+        }
+        if usable:
+            frac = cum_energy / total
+            if frac == frac:  # not NaN
+                stats["energy_fraction_cum"] = min(1.0, max(0.0, frac))
+        per_level.append(stats)
+
+    parent: Dict[str, Any] = {
+        "energy_kind": energy_kind,
+        "lod_method": method,
+        "lod_n_lods": len(level_counts),
+        "lod_breakpoints_kind": breakpoints_kind,
+    }
+    if usable:
+        parent["reference_energy"] = total
+
+    return per_level, (total if usable else None), parent
+
+
+# ────────────────────────────────────────────────────────────────────────
+# Composed axes: an additive ladder INSIDE a substitutive level
+# ────────────────────────────────────────────────────────────────────────
+#
+# The two coarsening axes answer different questions and compose cleanly:
+# ``substitutive_lod`` chooses WHICH level renders at the current zoom, and
+# ``additive_lod`` describes HOW each of those levels streams in. GSplats have
+# always composed them (``gsplats/lod/pyramid.py`` ladders every substitutive
+# level); Points and Lines used to reject the combination, which left the finest
+# level of a substitutive ladder as the one node in the system that could not
+# paint progressively — it committed all-or-nothing, however large it was.
+#
+# The helpers below are the shared plumbing for that composition. They take the
+# geometry's own resolver as a callable, so there is no geometry branching here
+# and the Points and Lines call sites cannot drift apart.
+
+#: Approximate on-disk bytes per Points element / Lines vertex (AUTO-encoded
+#: positions + colors + radius/width). The element-geometry counterpart of the
+#: ~45 B/splat figure the gsplat streaming ladder is sized against.
+DEFAULT_LADDER_BYTES_PER_ELEMENT: float = 16.0
+
+#: Download-time budget for a composed ladder's first chunk. 200 ms is short
+#: enough to read as "immediate" and long enough to carry a useful first paint.
+DEFAULT_LADDER_TARGET_MS: float = 200.0
+
+
+def default_composed_additive_lod() -> Dict[str, Any]:
+    """The ladder a substitutive Points/Lines level gets when none is requested.
+
+    A bandwidth-derived ``stream:`` ladder, NOT an equal-count one: an
+    equal-count split into 4 still ends with an N/4-sized commit, which on a
+    multi-million-element level is seconds of frozen main thread — exactly the
+    pathology the composition exists to remove. ``stream:`` makes first paint
+    cost one small chunk and doubles from there.
+
+    ``method="random"`` because a random prefix of a cloud looks like the whole
+    cloud at lower density at every k, which is the best possible partial paint.
+    An energy ordering would front-load ``energy_fraction_cum`` (so the viewer's
+    committed-energy gate releases sooner), but on the common constant-radius
+    cloud it degenerates to pure luminance order — for a scalar-coloured UMAP
+    that means the whole high-scalar region paints first, a spatially biased and
+    visibly wrong first frame. Callers who want the earlier release opt in with
+    ``additive_lod=dict(method="salience", salience_kind="energy", ...)``.
+    """
+    from ....utils.lod_breakpoints import DEFAULT_BANDWIDTH_MBPS, streaming_chunk_splats
+
+    chunk = streaming_chunk_splats(
+        DEFAULT_LADDER_TARGET_MS,
+        DEFAULT_BANDWIDTH_MBPS,
+        DEFAULT_LADDER_BYTES_PER_ELEMENT,
+    )
+    return {"method": "random", "counts": f"stream:{chunk}", "seed": 0}
+
+
+def compose_additive_under_substitutive(
+    additive_lod: Any,
+    *,
+    resolve: Callable[[Any], Optional[Dict[str, Any]]],
+    name: str,
+    suppress_reason: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """Resolve the additive spec to use for the levels of a substitutive ladder.
+
+    Vocabulary (``None`` behaves differently here than on a plain leaf, which is
+    the whole point — a substitutive level is by construction both the largest
+    node in the scene and the last one loaded, so it should stream by default):
+
+    =================  =============================  ==========================
+    ``additive_lod=``  plain leaf (unchanged)         under ``substitutive_lod``
+    =================  =============================  ==========================
+    ``None``           no ladder                      **default stream ladder**
+    ``False``          no ladder                      no ladder (the opt-out)
+    ``True`` / ``{}``  the resolver's defaults        the resolver's defaults
+    ``dict(...)``      the caller's ladder            the caller's ladder
+    =================  =============================  ==========================
+
+    Args:
+        additive_lod: The user's kwarg value, verbatim.
+        resolve: The geometry's ``resolve_additive_axis_*`` function. The result
+            is normalized through it, so the returned dict is idempotent under
+            re-resolution — which is what makes it safe to hand straight to the
+            PUBLIC ``add_points`` / ``add_lines`` for the finest child.
+        name: Node name, for messages.
+        suppress_reason: When set, no ladder is built and the reason is printed.
+            Used for the two cases where laddering would lose data or be a
+            no-op rather than a win.
+
+    Returns:
+        A normalized spec dict, or ``None`` for "write flat levels".
+    """
+    if additive_lod is False:
+        return None
+    if suppress_reason is not None:
+        aprint(
+            f"  ℹ️  '{name}': streaming ladder skipped ({suppress_reason}); "
+            "levels will load all-at-once."
+        )
+        return None
+    spec = additive_lod if additive_lod is not None else default_composed_additive_lod()
+    return resolve(spec)
+
+
+def level_additive_lod(
+    spec: Optional[Dict[str, Any]],
+    *,
+    level_n: int,
+    compression_factor: int,
+    is_coarsest: bool,
+) -> Optional[Dict[str, Any]]:
+    """Specialize a composed ladder spec for one level of the group.
+
+    Applies the sibling-aware rule from ``gsplats/lod/pyramid.py``: every level
+    that HAS a coarser sibling raises its first chunk to ``ceil(n / (2·K))``, so
+    an upgrade's committed prefix passes that sibling within a chunk or two
+    instead of only at the end of the ladder. The coarsest level is left alone —
+    it is the eager default level, and its small first chunk is the
+    fast-first-paint path.
+
+    Levels smaller than their first chunk collapse to a single level upstream and
+    the caller falls through to a flat leaf, so tiny coarse levels need no
+    special-casing here.
+    """
+    if spec is None or level_n <= 0:
+        return None
+    out = dict(spec)
+    if not is_coarsest:
+        from ....utils.lod_breakpoints import sibling_aware_stream_breakpoints
+
+        counts = out.get("counts")
+        if isinstance(counts, str):
+            out["counts"] = sibling_aware_stream_breakpoints(
+                counts, level_n, compression_factor
+            )
+    return out
+
+
+def gsplat_additive_lod_from(
+    spec: Optional[Dict[str, Any]], level_n: int
+) -> Optional[Dict[str, Any]]:
+    """Translate an element-geometry ladder spec into the GSplats vocabulary.
+
+    The only place the two additive vocabularies meet. Two deliberate choices:
+
+    * ``method`` is NOT carried over. The Points/Lines methods name orderings in
+      the element domain (``spatial-uniform`` over point positions); the coarse
+      children of a substitutive ladder are merged Gaussian beads, where the
+      bead-domain orderings apply.
+    * ``self_energy``, not ``auto``. ``auto`` routes levels of <= 5000 splats to
+      the submodular ``greedy``, whose sparse-Gram build is a pure-Python
+      per-pair loop scaling with OVERLAP DENSITY — and coarse levels of a lifted
+      cloud are maximally overlapping merged blobs, the worst case for it.
+      ``self_energy`` is O(N log N), never builds a Gram, and is still
+      energy-front-loaded.
+    """
+    if spec is None or level_n <= 0:
+        return None
+    from ....gsplats.lod.additive import clamp_counts_breakpoints
+
+    counts = spec.get("counts")
+    if counts is None:
+        counts = "equal-count"
+    elif isinstance(counts, str) and counts.startswith("energy:"):
+        # The element-domain ``energy:<frac,...>`` spec has no counterpart in the
+        # GSplat resolver's string vocabulary (only ``equal-count`` / ``stream:<c>``).
+        # Translate it to the float-list form the resolver already understands as
+        # cumulative energy fractions (``_resolve_breakpoints`` → energy-fractions),
+        # resolved against the coarse child's own self-energy cumulative.
+        fracs = [float(s) for s in counts[len("energy:") :].split(",") if s.strip()]
+        # Mirror the element-domain parser (points.py::_energy_breakpoints_to_counts):
+        # sort, drop f<=0, clamp f>=1 → 1.0, dedup — yielding a strictly-increasing
+        # list in (0, 1]. The GSplat float resolver is strict and would otherwise
+        # raise AFTER the wrapper kind=lod group was written, leaving a childless
+        # partial group; a spec accepted on a plain Points/Lines leaf must never
+        # abort the coarse GSplat child of the composed build.
+        counts = sorted({min(f, 1.0) for f in fracs if f > 0.0})
+        # All fractions non-positive (e.g. "energy:0", "energy:-1,0") degenerate
+        # to a single full level on a plain leaf; match that here rather than
+        # letting the strict resolver raise on an empty list.
+        if not counts:
+            counts = [1.0]
+    breakpoints = clamp_counts_breakpoints(counts, level_n)
+    out: Dict[str, Any] = {"method": "self_energy", "breakpoints": breakpoints}
+    if spec.get("n_lods") is not None:
+        out["n_lods"] = spec["n_lods"]
+    return out
