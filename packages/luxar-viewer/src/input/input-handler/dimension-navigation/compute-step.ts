@@ -6,7 +6,10 @@
  *   - `computeDimensionStep` — given the current dim state, ranges, the
  *     selected-dimension index, and a navigation direction, returns
  *     `{targetDim, newValue, changed}` where `changed` is `true` only
- *     when `Math.abs(newValue - currentValue) > 1e-6`. The caller is
+ *     when `newValue` differs from the current value by more than a
+ *     step-relative epsilon (`snapStep * 1e-9`, the same relative
+ *     tolerance `SceneDimsManager` uses), so a dim whose grid is finer
+ *     than a micro-unit is still navigable. The caller is
  *     responsible for actually mutating sceneDimsManager — keeping the
  *     math pure makes the wrap-around / clamping / discrete-rounding
  *     branches unit-testable in isolation.
@@ -29,7 +32,7 @@ export interface DimensionStepResult {
   targetDim: number;
   /** The new value to assign at `targetDim`. */
   newValue: number;
-  /** `true` iff the new value differs from the current value by > 1e-6. */
+  /** `true` iff the new value differs from the current value by more than a step-relative epsilon (snapStep * 1e-9). */
   changed: boolean;
 }
 
@@ -38,7 +41,9 @@ export interface DimensionStepResult {
  * state. Returns `null` when navigation cannot proceed (no dims, no
  * ranges, no navigable dimensions).
  *
- * The 1e-6 `changed` threshold matches the inline original — pure
+ * The `changed` threshold is a step-relative epsilon (`snapStep * 1e-9`,
+ * matching `SceneDimsManager`) so a sub-micro-unit grid is still
+ * navigable; the intent is unchanged from the inline original — pure
  * arithmetic identity isn't required, only "movement big enough that
  * the spatial-index loader will requery."
  */
@@ -63,19 +68,24 @@ export function computeDimensionStep(
 
   const stepSize = calculateStepSize(targetDim, dims);
   const isCyclic = dimMeta?.cyclic || false;
+  // Discrete positions snap to the dim's declared grid (fractional steps
+  // included), not to integers — matching SceneDimsManager's own snap.
+  const snapStep = dimMeta?.step && dimMeta.step > 0 ? dimMeta.step : 1;
   const newValue = calculateNextPosition(
     currentValue,
     direction,
     stepSize,
     [min, max],
     dimMeta?.discrete,
-    isCyclic
+    isCyclic,
+    snapStep
   );
+  const eps = snapStep * 1e-9;
 
   return {
     targetDim,
     newValue,
-    changed: Math.abs(newValue - currentValue) > 1e-6,
+    changed: Math.abs(newValue - currentValue) > eps,
   };
 }
 
