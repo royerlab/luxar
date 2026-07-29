@@ -72,7 +72,16 @@ class Dimension:
         if self.range is not None:
             if len(self.range) != 2:
                 raise ValueError("Range must be a tuple of (min, max)")
-            if self.range[0] >= self.range[1]:
+            # Categorical dimensions may have a zero-width range (0, 0): a single
+            # category is valid (MIN_CATEGORIES = 1), and its auto-range collapses
+            # to (0, 0). Continuous dimensions still require strictly min < max.
+            # An inverted range (min > max) is rejected in both cases.
+            if self.categories is not None:
+                if self.range[0] > self.range[1]:
+                    raise ValueError(
+                        f"Invalid range {self.range}: min must not be greater than max"
+                    )
+            elif self.range[0] >= self.range[1]:
                 raise ValueError(
                     f"Invalid range {self.range}: min must be less than max"
                 )
