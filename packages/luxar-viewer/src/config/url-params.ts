@@ -99,13 +99,15 @@ export interface UrlParams {
   /**
    * Whether the substitutive-LOD cross-fade is enabled: blend adjacent LOD
    * levels' opacity as the camera zooms across their boundary instead of a hard
-   * visibility swap, for additive/luminous layers (anti-popping). **On by
+   * visibility swap, for blendable (additive/luminous/volumetric) layers
+   * (anti-popping). **On by
    * default**; pass `?no-lod-fade` to disable it (e.g. to compare against the
    * hard swap or isolate a rendering issue).
    */
   lodFade: boolean;
   /**
-   * Whether streaming brightness compensation is enabled: as an additive/luminous
+   * Whether streaming brightness compensation is enabled: as a blendable
+   * (additive/luminous/volumetric)
    * LOD leaf's additive ladder streams in, scale its opacity by `1/e(k)` so the
    * partial prefix renders at full-level brightness instead of brightening up as
    * chunks arrive (anti-popping on the time axis, orthogonal to `lodFade`'s

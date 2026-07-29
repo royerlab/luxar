@@ -6,6 +6,37 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Changed — volumetric joins the LOD anti-popping blendable set
+
+`volumetric` is now in `BLENDABLE_MODES` (`packages/luxar-viewer/src/scene/lod-fade.ts`),
+the predicate gating both LOD anti-popping mechanisms — the coverage-band
+cross-fade between substitutive levels and the streaming `1/e(k)` brightness
+compensation. Volumetric LOD scenes previously kept the hard visibility swap at
+every level boundary and re-acquired the streaming brightening pop, a
+documented phase-1 deferral of the volumetric mode
+(`VOLUMETRIC_BLENDING_SPEC.md` §6); since the bioimaging demo sweep switched
+the LOD showcase demos (tribolium ×2, embryo line) to volumetric, both
+artifacts were user-visible there. The enabling physics: opacity linearly
+scales optical depth (`τ = κ·opacity·intensity`), so a `w`/`1−w` cross-fade
+composites to `1 − exp(−(w·τ_fine + (1−w)·τ_coarse))` — exact at the endpoints
+and a monotone, always-bracketed log-space interpolation in between, which is
+precisely the ghost-free dissolve anti-popping wants (it collapses to constant
+absorption only where the two levels are per-ray mass-matched, which the
+total-mass build invariant does not guarantee — so the code and spec explicitly
+warn against assuming mid-fade invariance). The `1/e(k)` boost restores a
+partial ladder's τ in **aggregate**, not per ray, since `e(k)` is a global
+energy fraction over a subset of splats — the same structural approximation the
+additive/luminous path has shipped since the compensation landed. On
+individually optically-thick splats (`κ·splat-mass ≳ 1`) the boost saturates
+emission instead of brightening — bounded by the shared 10× `ENERGY_FLOOR` cap
+and transient, accepted as a single-set/shared-cap policy (spec §6 updated).
+Also fixed en route: a layers-panel opacity edit during an in-flight LOD fade
+was clobbered by the fade's next frame (the panel now rebases the fade's
+snapshot, all modes), and stale per-node-material / single-visible-child
+comments in `lod-fade.ts` / `lod-group-registry.ts`. New fixture
+`test_lod_group_volumetric.luxar.zarr` covers the volumetric cross-fade
+contract end-to-end.
+
 #### Added — Points and Lines LOD levels now stream progressively (#811, #808)
 
 `additive_lod` and `substitutive_lod` used to be mutually exclusive for Points
