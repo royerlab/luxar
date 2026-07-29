@@ -69,7 +69,8 @@ WORKFLOW:
    - Each channel is a toggleable layer in the viewer
 
 4. **Visualize** in the Luxar viewer
-   - Volumetric blending shows channel overlap with front-to-back occlusion
+   - Additive blending sums the superimposed channels, so overlap reads as a
+     colour mix (volumetric compositing would make one channel occlude the other)
    - Toggle layers to inspect individual channels
 
 USAGE:
@@ -480,8 +481,12 @@ Controls:
                     name=f"ch{i}_{ch_name.lower().replace(' ', '_')}",
                     result=centered,
                     opacity=1.0,
-                    absorption=1.0,
-                    blending_mode="volumetric",
+                    # Additive, not volumetric: the two channels are
+                    # SUPERIMPOSED over the same volume, and volumetric
+                    # compositing makes whichever layer draws first occlude the
+                    # other, so channel overlap reads as one channel hiding the
+                    # rest instead of the two colors mixing.
+                    blending_mode="additive",
                     layer=True,
                     colormap=colormap,
                 )

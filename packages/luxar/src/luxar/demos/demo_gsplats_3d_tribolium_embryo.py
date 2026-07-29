@@ -374,7 +374,10 @@ def create_luxar_scene(
                 dimensions=dims,
                 # Neutral tone-mapping (not the viewer's default ACES, which lifts
                 # highlights and shifts hue) — matches the known-good gsplat demos.
-                viewer_config=ViewerConfig(tone_mapping="Neutral"),
+                # Peak projection (see the blending mode below) keeps only the
+                # brightest splat along each ray instead of summing, so the
+                # embryo needs ~2 stops of exposure to sit at a normal level.
+                viewer_config=ViewerConfig(tone_mapping="Neutral", exposure=1.97),
             )
 
             scene.attrs["title"] = "GSplats: Tribolium castaneum Embryo (Light-Sheet)"
@@ -421,8 +424,12 @@ Navigation:
                     cholesky_factors=gsplats_data.cholesky_factors,
                     colors=colors,
                     opacity=1.0,
-                    absorption=1.0,
-                    blending_mode="volumetric",
+                    # `normal` (peak projection) rather than an accumulating
+                    # mode: this light-sheet volume carries a heavy diffuse
+                    # background, and summing it along every ray buries the
+                    # embryo in haze. Keeping the brightest splat per ray
+                    # leaves the background where it belongs.
+                    blending_mode="normal",
                     layer=True,
                 )
                 aprint(f"Added {n_splats:,} splats")

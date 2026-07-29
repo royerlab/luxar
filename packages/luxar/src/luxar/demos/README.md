@@ -579,7 +579,7 @@ Gaussian splatting compression of real 3D confocal microscopy data (DAPI-stained
 
 **Requires**: Internet access (downloads OME-ZARR from IDR). Supports Metal (MPS) acceleration on Apple Silicon.
 
-**Demonstrates**: 3D Gaussian splat fitting to real microscopy volumes, 20-50x compression vs raw voxels, oriented ellipsoids capturing elongated nuclear shapes, IDR/OME-ZARR data loading.
+**Demonstrates**: 3D Gaussian splat fitting to real microscopy volumes, 20-50x compression vs raw voxels, oriented ellipsoids capturing elongated nuclear shapes, IDR/OME-ZARR data loading, `plasma` colormap + Neutral tone-mapping for faithful LUT hues.
 
 ---
 
@@ -590,7 +590,7 @@ Multi-channel 3D microscopy data as Gaussian splats, with full compute pipeline 
 
 **Requires**: Git LFS data (default) or internet access + GPU (with `--recompute`).
 
-**Demonstrates**: Multi-channel Gaussian splatting with distinct colors per channel, full pipeline (fetch from IDR, fit per channel, merge), precomputed gsplats via Git LFS for fast demo.
+**Demonstrates**: Multi-channel Gaussian splatting with distinct colors per channel, additive blending so the two superimposed channels mix instead of occluding each other, full pipeline (fetch from IDR, fit per channel, merge), precomputed gsplats via Git LFS for fast demo.
 
 ---
 
@@ -656,7 +656,7 @@ Large isotropic 3D light-sheet volume of a developing beetle (*Tribolium castane
 
 **Requires**: Internet access (downloads ~2.6 GB from Zenodo), GPU recommended. 965 x 1871 x 991 voxels.
 
-**Demonstrates**: Large-volume Gaussian splatting, isotropic light-sheet microscopy, Zenodo/Cell Tracking Challenge data, Zeiss LightSheet Z.1 data.
+**Demonstrates**: Large-volume Gaussian splatting, isotropic light-sheet microscopy, Zenodo/Cell Tracking Challenge data, Zeiss LightSheet Z.1 data, `normal` (peak-projection) blending to keep this volume's heavy diffuse background out of the way instead of accumulating it along every ray.
 
 ---
 
@@ -667,7 +667,7 @@ Gaussian-splats a real 3D reconstruction of the Milky Way's interstellar dust ar
 
 **Requires**: Nothing extra by default — ships a precomputed **full-resolution** fit via Git LFS (~8 MB: the native 740×740×540 cube fit to ~675k splats, PSNR ~35 dB). With `--recompute` (or if the LFS asset isn't pulled) it auto-downloads the 2.4 GB reconstruction (`mean_std.h5`) to `~/.cache/luxar/gsplats_milkyway_dust/` (resumable) and refits. The `--recompute` default reproduces the shipped full-res fit and needs a large-VRAM GPU (~40 GB+); on a smaller card pass `--target-size 256 --max-splats 200000` for a lighter downscaled refit.
 
-**Demonstrates**: Real *volumetric astronomy* → Gaussian splats (the same `cal → fit → convert` pipeline used for microscopy, on a dust-density cube), 20–50× compression, `inferno` colormap + Neutral tone-mapping + additive HDR rendering, self-contained download → fit → cache-processed bootstrap. Data: [Leike, Glatzle & Enßlin 2020](https://doi.org/10.1051/0004-6361/202038169), A&A 639, A138 (Zenodo record 3993082, CC BY 4.0).
+**Demonstrates**: Real *volumetric astronomy* → Gaussian splats (the same `cal → fit → convert` pipeline used for microscopy, on a dust-density cube), 20–50× compression, `inferno` colormap + ACES tone-mapping + light volumetric HDR rendering (absorption κ=0.3, so near dust softly occludes far dust), self-contained download → fit → cache-processed bootstrap. Data: [Leike, Glatzle & Enßlin 2020](https://doi.org/10.1051/0004-6361/202038169), A&A 639, A138 (Zenodo record 3993082, CC BY 4.0).
 
 ---
 
