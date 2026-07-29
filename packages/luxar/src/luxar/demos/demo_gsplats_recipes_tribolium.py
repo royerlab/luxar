@@ -510,7 +510,8 @@ Tracking Challenge / Zenodo 5270323. Cite: Yin et al. 2022; Maska et al. 2023.
                     recipe,
                     str(recipe_paths[recipe]),
                     opacity=1.0,
-                    blending_mode="additive",
+                    absorption=1.0,
+                    blending_mode="volumetric",
                     layer=True,
                 )
 

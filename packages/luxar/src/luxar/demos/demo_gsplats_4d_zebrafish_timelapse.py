@@ -531,7 +531,8 @@ Navigation:
                         fill_sigma={"time": 0},
                         extend_to_all=[],
                         opacity=1.0,
-                        blending_mode="additive",
+                        absorption=1.0,
+                        blending_mode="volumetric",
                         layer=True,
                     )
                     aprint(f"  Added {n_splats:,} splats at time={t}")

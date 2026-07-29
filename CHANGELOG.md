@@ -131,6 +131,25 @@ leg (advisory, `continue-on-error`) so each interpreter's dependency resolution 
 Also made `stats/generate_stats.py` import `tomllib` with a `tomli` fallback: it was the
 one place in the tree that genuinely required 3.11+.
 
+#### Changed — the bioimaging gsplat demos now bake `volumetric` blending
+
+All 20 microscopy / bioimaging gsplat demos previously composited with
+unbounded `additive` blending, so the front of a dense specimen never occluded
+the back and a bright channel washed out the others rather than sitting in
+front of them. On the 3-channel mouse embryo heart the SYTOX nuclear stain
+covered the vasculature and cardiac-tissue channels almost entirely.
+
+Eighteen 3D/4D demos now bake `blending_mode="volumetric"`
+(emission-absorption, Max 1995) with absorption kappa 1.0. The two strictly 2D
+slide reconstructions remain additive because every splat shares one depth
+plane, so depth-ordered volumetric compositing would reduce to storage order.
+Two converted demos carry tuned values: the acto3d heart drops to
+`opacity=0.48` so its three channels read through one another, and the cryo-EM
+capsid uses kappa 5.0 so the near side of the shell occludes the far side and
+it reads as a hollow icosahedron. Regenerate the demo datasets to pick up the
+new look. The astronomy gsplat demos and the classical-interop demos are
+unchanged.
+
 #### Fixed — camera-plane-crossing line segments rendered as razor-edged bands (one-sided cross-profile at close zoom)
 
 Zooming very close to a thick line painted huge screen-filling bands with a
