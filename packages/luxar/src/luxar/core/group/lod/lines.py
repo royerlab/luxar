@@ -90,8 +90,27 @@ def identify_polylines(
     if line_type == "indexed":
         if indices is None:
             raise ValueError("line_type='indexed' requires an indices array")
+        indices = np.asarray(indices)
+        # Reject non-integer indices before the intp cast below silently
+        # TRUNCATES a float (1.7 -> 1) into an edge the user never authored.
+        # The plain single-leaf path guards this in write_lines, but the
+        # partition / additive-LOD branches consume the raw indices through
+        # this function first, so the guard has to live at this shared
+        # chokepoint too (#886). The substitutive path has an equivalent gate
+        # in gsplats.lift._segment_pairs.
+        if not np.issubdtype(indices.dtype, np.integer):
+            raise ValueError(
+                f"Indices must be an integer array, got dtype {indices.dtype}"
+            )
+        if indices.size > 0:
+            min_index = int(np.min(indices))
+            max_index = int(np.max(indices))
+            if min_index < 0:
+                raise ValueError(f"Index {min_index} < 0 (indices must be >= 0)")
+            if max_index >= n_vertices:
+                raise ValueError(f"Index {max_index} >= n_vertices {n_vertices}")
         return _indexed_connected_components(
-            n_vertices, np.asarray(indices, dtype=np.intp).reshape(-1, 2)
+            n_vertices, indices.astype(np.intp, copy=False).reshape(-1, 2)
         )
 
     raise ValueError(
