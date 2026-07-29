@@ -592,8 +592,8 @@ def build_scene(
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(
                 dimensions=dims,
-                # ACES, set explicitly: its filmic highlight rolloff is the
-                # house default and the reason bright structure stops clipping.
+                # ACES, set explicitly — it is the house default, and its filmic
+                # highlight rolloff is what keeps bright structure from clipping.
                 # NOTE: this demo previously pinned Neutral because the luminous
                 # connection glow was blowing out — if that returns, the fix is
                 # to pull `exposure` down rather than to go back to Neutral.

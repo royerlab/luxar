@@ -58,6 +58,27 @@ scale-free-conditioning reasoning as the shader's trace-normalized covariance
 inverse. Rank-deficient axes are still regularized, now as a fixed *fraction* of
 the real axis.
 
+#### Changed — ACES is now the recommended tone mapping, and choosing it explicitly no longer warns
+
+`ACES` is the right tone mapping for almost every scene — its filmic highlight
+rolloff is what keeps bright, dense structure from clipping flat — and it is
+already the viewer's default. The tree was built around the opposite
+assumption: seventeen demos pinned `Neutral`, and the compiler warned authors
+away from ACES.
+
+The LUT tone-mapping warning in `io/_compiler/colormap.py` now fires **only
+when the author set no `tone_mapping` at all**. Its predicate was
+`!= "Neutral"`, so an explicit `"ACES"` tripped it too — nagging about a
+deliberate decision, while the message itself speaks of "the viewer's
+*default*", which is only what you get by saying nothing. Any explicit value,
+`"ACES"` included, now silences it. Sixteen demos move from `Neutral` to an
+explicit `ACES`; `demo_gsplats_3d_tribolium_embryo` keeps `Neutral`, whose
+pairing with `exposure=1.97` was tuned deliberately. `CLAUDE.md`, the HDR
+guide, the `gsplat convert` CLI help and the `ViewerConfig.tone_mapping`
+docstring all now recommend ACES, keeping `Neutral` for the narrower case where
+a colormap LUT carries an exact scientific colour encoding. Regenerate the demo
+datasets to pick up the new look.
+
 #### Changed — five gsplat demos bake their preferred viewer appearance
 
 The blanket `volumetric` + kappa 1.0 default from the bioimaging demo sweep was
@@ -82,8 +103,7 @@ Two appearance tweaks round it out: the Milky Way dust cube moves from
 occludes far dust) under ACES at `exposure=-0.17`, with a `[0, 0.095]` display
 window that holds its faint diffuse filaments just below clipping; and the
 organoid DAPI nuclei demo gains a `plasma` colormap (it previously rendered
-uncolormapped) plus Neutral tone-mapping to keep the LUT hues faithful.
-Regenerate the demo datasets to pick up the new look.
+uncolormapped). Regenerate the demo datasets to pick up the new look.
 
 #### Changed — volumetric joins the LOD anti-popping blendable set
 
