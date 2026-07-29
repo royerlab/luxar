@@ -24,7 +24,10 @@
  * perpendicular cross-section `max(exp(-K·p^beta) - C, 0)/(1-C)`
  * (beta = 2^(6s - 2), beta=2 is a truncated Gaussian) × edgeAA × widthScale
  * × widthFade × capFactor (capFactor ramps to full intensity inside the body
- * but is 1.0 at clipped endpoints). `blendingMode: 'volumetric'` selects
+ * and dips toward 0.5 at an endpoint to form a soft cap; that dip is scaled by
+ * the endpoint's continuous cap-suppression scalar — the full soft cap at a
+ * free end or sharp bend, lifted to full intensity (cap suppressed) at a
+ * straight-through interior joint). `blendingMode: 'volumetric'` selects
  * the emission–absorption output branch at graph build time (transverse
  * chord integral through the width profile — materials/line/math.ts).
  *
