@@ -70,6 +70,7 @@ import {
   assignGlobalRenderOrder,
   clearRenderOrderFrameState,
   collectRenderOrderSlot,
+  setRenderOrderDisplayDimsAccessor,
 } from './depth-sort-coordinator/render-order';
 import { config } from '../config';
 import type { UpdateProfiler } from '../profiling/update-profiler';
@@ -183,12 +184,22 @@ export function configureDepthSort(options: {
    * dispatch→applied round-trip latency.
    */
   getProfiler?: () => UpdateProfiler | null;
+  /**
+   * Live displayed-dimension indices. A partition's serialized BSP `axis` is a
+   * CENTER-COLUMN index, while the painter's-order traversal works in display
+   * space (x/y/z = displayDims[0..2]); the two coincide only for `[0, 1, 2]`.
+   * Injected rather than read from `sceneDimsManager` directly because
+   * `rendering/` must not depend on `scene/` (`layer-rendering-no-upward`) —
+   * the same inversion as `getCamera` above.
+   */
+  getDisplayDims?: () => readonly number[] | null;
 }): void {
   getCamera = options.getCamera;
   requestRender = options.requestRender;
   requestReprocess = options.requestReprocess ?? null;
   isLoadInProgress = options.isLoadInProgress ?? null;
   getProfiler = options.getProfiler ?? null;
+  setRenderOrderDisplayDimsAccessor(options.getDisplayDims ?? null);
 }
 
 /**

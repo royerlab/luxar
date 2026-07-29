@@ -58,7 +58,7 @@ function makeMockApi(): MockApi {
 /** When true the mocked worker CONSTRUCTOR throws (CSP-blocked script). */
 let workerConstructThrows = false;
 
-async function loadCoordinator(opts: { displayedDims?: number[] } = {}) {
+async function loadCoordinator() {
   vi.resetModules();
   terminatedWorkers.length = 0;
   transferCalls = [];
@@ -90,17 +90,6 @@ async function loadCoordinator(opts: { displayedDims?: number[] } = {}) {
       terminate = vi.fn(() => terminatedWorkers.push(this));
     },
   }));
-
-  // Live display dims feed the BSP axis → x/y/z mapping. This MUST be a
-  // doMock inside the resetModules window: spying on the already-imported
-  // singleton is invisible to the coordinator's fresh re-import, which would
-  // silently fall back to the identity map and make such a test vacuous.
-  if (opts.displayedDims !== undefined) {
-    const displayed = opts.displayedDims;
-    vi.doMock('../../../scene/scene-dims-manager', () => ({
-      sceneDimsManager: { getDims: () => ({ displayed }) },
-    }));
-  }
 
   return await import('../../../rendering/depth-sort-coordinator');
 }
@@ -540,12 +529,16 @@ describe('depth-sort coordinator', () => {
     const bspTree = { axis: 0, split: 0, left: { part: 0 }, right: { part: 1 } };
 
     const orderFor = async (displayedDims: number[]): Promise<number[]> => {
-      const coord = await loadCoordinator({ displayedDims });
+      const coord = await loadCoordinator();
       // Camera on -z only. Under the correct mapping (column 0 → z) the eye is
       // on the small-coord side, so the BSP flips the parts → [1, 0]. Under the
       // old naive reading (column 0 → x) it would read eyeLocal.x == 0 and land
       // on the other branch → [0, 1].
-      coord.configureDepthSort({ getCamera: () => cameraAt(0, 0, -1000), requestRender: vi.fn() });
+      coord.configureDepthSort({
+        getCamera: () => cameraAt(0, 0, -1000),
+        requestRender: vi.fn(),
+        getDisplayDims: () => displayedDims,
+      });
       const parts = [0, 1].map(() => makeGSplatsMesh(2, 'normal'));
       makePartitionWrapper(bspTree, parts);
       for (const m of parts) {
@@ -580,8 +573,12 @@ describe('depth-sort coordinator', () => {
       tree: unknown,
       cam: [number, number, number]
     ): Promise<number[]> => {
-      const coord = await loadCoordinator({ displayedDims });
-      coord.configureDepthSort({ getCamera: () => cameraAt(...cam), requestRender: vi.fn() });
+      const coord = await loadCoordinator();
+      coord.configureDepthSort({
+        getCamera: () => cameraAt(...cam),
+        requestRender: vi.fn(),
+        getDisplayDims: () => displayedDims,
+      });
       const parts = [0, 1].map(() => makeGSplatsMesh(2, 'normal'));
       makePartitionWrapper(tree, parts);
       for (const m of parts) {

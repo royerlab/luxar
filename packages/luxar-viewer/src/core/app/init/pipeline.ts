@@ -288,6 +288,11 @@ export async function runInitPipeline(
     isLoadInProgress: () => getSceneLoader('default')?.isUpdateInProgress() ?? false,
     // Sort round-trips show up as the monitor's 'Depth Sort' line.
     getProfiler: () => SceneLoaderManager.getInstance().getProfiler(),
+    // A partition's BSP `axis` is a center-column index; the painter's-order
+    // traversal needs to know which column is displayed as x/y/z. Same
+    // accessor the LOD registry gets above, and read live so nD navigation
+    // is tracked (the stored tree stays valid, the mapping does not).
+    getDisplayDims: () => sceneDimsManager.getDims()?.displayed ?? null,
   });
   // Camera-motion re-sort scheduler (Phase 3, spec §6) + global cross-node
   // renderOrder assignment. Same per-frame slot pattern as

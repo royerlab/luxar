@@ -22,7 +22,6 @@
 
 import * as THREE from 'three';
 import type { BspTreeNode } from '../../types/partition-group';
-import { sceneDimsManager } from '../../scene/scene-dims-manager';
 
 // Per-frame scratch (no allocation on the hot path — the
 // 'lod-group-selector' invariant). Allocated lazily on first use rather
@@ -121,10 +120,12 @@ function traverseBspBackToFront(
  *   information, so the caller must fall back to the centroid heuristic).
  */
 function bspAxisToComponent(tree: BspTreeNode): readonly number[] | null {
-  const displayed = sceneDimsManager.getDims()?.displayed;
+  const displayed = getDisplayDims?.();
   // No dims yet (or a 3-displayed identity map): the naive axis === component
-  // reading is exactly right, and this is the overwhelmingly common case.
-  if (!displayed) return IDENTITY_AXIS_MAP;
+  // reading is exactly right, and this is the overwhelmingly common case. Note
+  // the app-layer accessor returns an EMPTY array before dims init, which must
+  // read as "unknown" rather than as a zero-length mapping.
+  if (!displayed || displayed.length === 0) return IDENTITY_AXIS_MAP;
   if (displayed.length === 3 && displayed[0] === 0 && displayed[1] === 1 && displayed[2] === 2) {
     return IDENTITY_AXIS_MAP;
   }
@@ -135,6 +136,21 @@ function bspAxisToComponent(tree: BspTreeNode): readonly number[] | null {
     map[axis] = displayed.indexOf(axis);
   }
   return bspTreeAxesAreMapped(tree, map) ? map : null;
+}
+
+/**
+ * Live display-dims accessor, injected by `configureDepthSort` from the app
+ * layer. NOT a direct `sceneDimsManager` import: `rendering/` must not depend
+ * on `scene/` (`layer-rendering-no-upward`), and the same dependency inversion
+ * already carries `getCamera` here and `getDisplayDims` into the LOD registry.
+ */
+let getDisplayDims: (() => readonly number[] | null) | null = null;
+
+/** Wire the display-dims accessor (see {@link bspAxisToComponent}). */
+export function setRenderOrderDisplayDimsAccessor(
+  accessor: (() => readonly number[] | null) | null
+): void {
+  getDisplayDims = accessor;
 }
 
 /** Identity center-column → component map for the common `[0, 1, 2]` case. */
