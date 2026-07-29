@@ -63,7 +63,9 @@ def compute_chunk_bounds_gsplats(
 
     Args:
         centers: Splat centers (already sorted), shape (N, d)
-        cholesky_factors: Packed Cholesky factors (already sorted), shape (N, k)
+        cholesky_factors: Packed Cholesky factors (already sorted), shape
+            (N, k), or a single shared row (1, k) reused for every chunk when
+            all splats have a uniform (identical) Cholesky factorization
         chunk_size: Number of splats per chunk
         coverage_sigma: Coverage radius in standard deviations (default 3.0)
         slice_dims: Barrier/categorical dimension indices (no σ expansion).
@@ -78,6 +80,13 @@ def compute_chunk_bounds_gsplats(
     num_chunks = (n_splats + chunk_size - 1) // chunk_size
     discrete_dims = set(int(d) for d in slice_dims) if slice_dims else set()
 
+    # Uniform-Cholesky convenience: a single packed row (shape (1, k)) is shared
+    # by all splats and never expanded to (N, k). It must be used for every
+    # chunk — positional slicing would yield an empty (0, k) array for any chunk
+    # after the first and break broadcasting. The (1, k) row broadcasts cleanly
+    # against the (chunk_len,) extents accumulator.
+    uniform_cholesky = cholesky_factors.shape[0] == 1 and n_splats > 1
+
     chunk_bounds = np.zeros((num_chunks, ndim, 2), dtype=np.float32)
 
     for chunk_idx in range(num_chunks):
@@ -85,7 +94,11 @@ def compute_chunk_bounds_gsplats(
         end_idx = min(start_idx + chunk_size, n_splats)
 
         chunk_centers = centers[start_idx:end_idx]
-        chunk_cholesky = cholesky_factors[start_idx:end_idx]
+        chunk_cholesky = (
+            cholesky_factors
+            if uniform_cholesky
+            else cholesky_factors[start_idx:end_idx]
+        )
 
         # Compute ellipsoidal extent (per spec: extent[d] = sqrt(covariance[d,d]) * 3σ)
         extents = np.zeros((end_idx - start_idx, ndim), dtype=np.float32)

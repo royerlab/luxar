@@ -146,7 +146,7 @@ describe('LineMaterial.applyBlendingMode (GLSL)', () => {
     // interpolated assignment), matching the point twin's pin.
     const mat = new LineMaterial();
     expect(mat.vertexShader).toContain(
-      'vAlpha = mix(sanitizeAlpha(lineT5.z), sanitizeAlpha(lineT5.w), t);'
+      'vAlpha = mix(sanitizeAlpha(lineT5.z), sanitizeAlpha(lineT5.w), tEff);'
     );
   });
 

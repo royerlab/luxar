@@ -6,6 +6,29 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Fixed — camera-plane-crossing line segments rendered as razor-edged bands (one-sided cross-profile at close zoom)
+
+Zooming very close to a thick line painted huge screen-filling bands with a
+razor-sharp bright edge on one side and the smooth Gaussian falloff on the
+other. Root cause: a segment with exactly ONE endpoint behind (or within
+`uNearCull` of) the camera plane kept its full quad; the behind endpoint's
+`clip.w ≤ 0` made the hardware rasterize the quad as an external (wrapped)
+primitive whose near-clip boundary sliced mid-profile — a bright razor edge
+running along the line's side.
+
+The vertex stage (all four backends: visual + picking, GLSL + TSL) now
+**clips the segment to the nearCull plane** before any screen-space math:
+the offending endpoint is moved along the segment onto the plane (view-space
+depth is linear, so the intersection is exact) and `t` is remapped so
+per-endpoint attributes (width, color, sharpness, alpha, colormap scalars)
+and the fragment cap math keep the original parameterization. Every vertex
+then has `viewZ ≥ nearCull`: quads stay true trapezoids, the `wGuard` clamp
+no longer disagrees with the rasterized geometry, and the cut end lands
+exactly where the per-fragment near fade reaches zero — the approach to the
+camera fades out smoothly instead of tearing. New `line-crossing` parity
+harness entry pins the behavior with a content assertion (per-column
+centroid on the projected centerline) that fails pre-fix on both backends.
+
 #### Fixed — nodes embedded inside a larger node blinked out on orbit in order-dependent blending modes
 
 Cross-node draw order sorted whole meshes by the view-depth of their
