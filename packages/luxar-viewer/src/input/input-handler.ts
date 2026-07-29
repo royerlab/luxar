@@ -580,7 +580,6 @@ export class InputHandler {
       contextManager: this.contextManager,
       sceneManager: this.sceneManager,
       debugConsole: this.debugConsole,
-      cleanups: this.eventListeners,
       panels,
       commands,
     });

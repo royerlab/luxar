@@ -1139,6 +1139,17 @@ class TestWriterFuzzRegressions:
                 scene.add_lines("lns", self.POS, 0.5, indices=bad, line_type="indexed")
             compiler.finalize()
 
+    def test_float_indices_rejected(self) -> None:
+        """A float index array used to pass the layout/parity/bounds checks
+        and then get silently truncated by convert_to_indexed's
+        `.astype(np.uint32)` (1.7 -> 1), producing unauthored edges."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _zarr_path, compiler, scene = self._scene(tmpdir)
+            bad = np.array([0.5, 1.7, 1.0, 2.0])  # float dtype
+            with pytest.raises(ValueError, match="integer"):
+                scene.add_lines("lns", self.POS, 0.5, indices=bad, line_type="indexed")
+            compiler.finalize()
+
     # ---- F4: non-str labels fail fast, BEFORE any zarr write ------------
 
     def test_non_str_labels_rejected_without_partial_node(self) -> None:
