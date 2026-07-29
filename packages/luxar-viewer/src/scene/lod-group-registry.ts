@@ -339,7 +339,8 @@ export interface LODGroupRegistryDeps {
   requestRender?: () => void;
   /**
    * Whether the LOD cross-fade is enabled (ON by default; `?no-lod-fade`
-   * disables). When true and an additive/luminous group is zooming across a LOD
+   * disables). When true and a blendable (additive/luminous/volumetric — see
+   * `BLENDABLE_MODES` in `scene/lod-fade.ts`) group is zooming across a LOD
    * boundary, the registry
    * blends the two straddling levels' opacity — the finer at
    * `smoothstep(coverage metric across a ±band around the boundary)`, the
@@ -351,7 +352,8 @@ export interface LODGroupRegistryDeps {
    */
   getCrossFadeEnabled?: () => boolean;
   /**
-   * Whether streaming brightness compensation is enabled: as an additive/luminous
+   * Whether streaming brightness compensation is enabled: as a blendable
+   * (additive/luminous/volumetric)
    * leaf's ladder streams in, scale its opacity by `1/e(k)` so the partial prefix
    * renders at the full-level energy (no brightening pop). Distinct axis from the
    * cross-fade (time, not distance) and independently gated; either flag on
@@ -838,8 +840,12 @@ export class LODGroupRegistry {
     // across a ±band around the boundary — so the substitutive switch dissolves
     // instead of popping. Purely a function of DISTANCE (the coverage metric),
     // independent of additive streaming; brightness is preserved by the levels'
-    // build-time mass conservation (both integrate to the same DC). Additive/
-    // luminous only (order-independent compositing). Off / non-blendable /
+    // build-time mass conservation (both integrate to the same DC). Blendable
+    // modes only (BLENDABLE_MODES = additive/luminous/volumetric — energy sums
+    // linearly, or opacity linearly scales optical depth τ so per-ray absorption
+    // is conserved exactly). For two mid-fade volumetric siblings the mesh draw
+    // order may come from the render-order containment rule (near-identical
+    // bounds); benign, since τ is additive across the pair. Off / non-blendable /
     // off-screen / locked / a held-stale display ⇒ no blend (byte-identical hard
     // swap). The finer partner must be resident to fade against; if it is not,
     // kick its load so the NEXT crossing blends (the first hard-swaps meanwhile).
@@ -908,9 +914,11 @@ export class LODGroupRegistry {
     }
 
     // ── Apply visibility (single owner) ──
-    // At most one child visible (``displayIdx``, and only if it is READY — never
-    // force-show a not-ready placeholder). ``changed`` flips when the SHOWN
-    // level changes so ``evaluatePerFrame`` refreshes the monitor's visible
+    // At most the display child plus its cross-fade partner is visible
+    // (``displayIdx`` / ``blendPartnerIdx``, each only if READY — never
+    // force-show a not-ready placeholder; outside a cross-fade band it's the
+    // classic single visible level). ``changed`` flips when a SHOWN level
+    // changes so ``evaluatePerFrame`` refreshes the monitor's visible
     // tally, which counts the displayed level, not the aspiration.
     let changed = false;
     // Opacity is managed only while at least one anti-popping feature is on: the

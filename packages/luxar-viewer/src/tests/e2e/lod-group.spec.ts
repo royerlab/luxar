@@ -19,6 +19,7 @@
  */
 
 import { test, expect } from './fixtures';
+import { EXPECTED_BLEND_STATE } from './blending-expected-state';
 import {
   waitForLuxarReady,
   waitForNextRender,
@@ -334,5 +335,143 @@ test.describe('lod_group node', () => {
     // it tracks the active level rather than staying high or summing levels.
     await lodSelect.selectOption('0');
     await expect(visibleSplats).toHaveText('8', { timeout: 5000 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Volumetric blendable lod_group — the same 3-level shape with
+// blending_mode="volumetric" + absorption authored on the group node.
+// Volumetric is in BLENDABLE_MODES (scene/lod-fade.ts): the coverage
+// cross-fade and streaming energy compensation apply to it exactly as to
+// additive/luminous (opacity linearly scales optical depth τ, so the fade
+// conserves per-ray absorption exactly — VOLUMETRIC_BLENDING_SPEC.md §6).
+// ---------------------------------------------------------------------------
+
+const VOLUMETRIC_FIXTURE =
+  'http://localhost:9000/packages/luxar-viewer/tests/fixtures/test_lod_group_volumetric.luxar.zarr';
+
+test.describe('lod_group node — volumetric blendable', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto(`/?src=${VOLUMETRIC_FIXTURE}&debug`);
+    await waitForLuxarReady(page);
+    await page.waitForFunction(
+      () => {
+        const debug = (
+          window as Window & typeof globalThis & { __luxarDebug?: { scene?: unknown } }
+        ).__luxarDebug;
+        if (!debug?.scene) return false;
+        let lodChildren = 0;
+        (debug.scene as { traverse: (cb: (o: { name?: string }) => void) => void }).traverse(
+          (o) => {
+            if (o.name && o.name.startsWith('/multires/child_')) lodChildren++;
+          }
+        );
+        return lodChildren >= 3;
+      },
+      { timeout: 15000 }
+    );
+  });
+
+  test('visible set is {active} or adjacent cross-fade partners, in the volumetric blend state', async ({
+    page,
+  }) => {
+    // Same adjacency contract as the additive fixture: the visible set is
+    // {active} or {active, active+1} — volumetric groups are blendable, so
+    // in the band the registry shows two adjacent levels with blended
+    // opacity rather than hard-swapping (the pre-change behavior).
+    await page.waitForFunction(
+      () => {
+        const debug = (
+          window as Window & typeof globalThis & { __luxarDebug?: { scene?: unknown } }
+        ).__luxarDebug;
+        if (!debug?.scene) return false;
+        const vis: Record<string, boolean> = {};
+        (
+          debug.scene as {
+            traverse: (cb: (o: { name?: string; visible?: boolean }) => void) => void;
+          }
+        ).traverse((o) => {
+          const m = o.name?.match(/\/multires\/child_(\d+)$/);
+          if (m) vis[m[1]] = !!o.visible;
+        });
+        const idxs = Object.entries(vis)
+          .filter(([, v]) => v)
+          .map(([k]) => Number(k))
+          .sort((a, b) => a - b);
+        return (
+          Object.keys(vis).length >= 3 &&
+          idxs.length >= 1 &&
+          idxs.length <= 2 &&
+          (idxs.length === 1 || idxs[1] === idxs[0] + 1)
+        );
+      },
+      { timeout: 10000 }
+    );
+
+    // Every VISIBLE child renders in the pinned volumetric blend state
+    // (One/OneMinusSrcAlpha premultiplied emission–absorption, depthWrite
+    // unconditionally false) with its authored κ — the fade drives opacity
+    // only, never the mode.
+    const states = await page.evaluate(() => {
+      const debug = (window as Window & typeof globalThis & { __luxarDebug?: { scene?: unknown } })
+        .__luxarDebug;
+      const out: {
+        idx: number;
+        blending: number;
+        blendEquation: number;
+        blendSrc: number;
+        blendDst: number;
+        depthTest: boolean;
+        depthWrite: boolean;
+        transparent: boolean;
+        mode: string | undefined;
+      }[] = [];
+      (
+        debug!.scene as {
+          traverse: (
+            cb: (o: { name?: string; visible?: boolean; material?: unknown }) => void
+          ) => void;
+        }
+      ).traverse((o) => {
+        const m = o.name?.match(/\/multires\/child_(\d+)$/);
+        if (!m || !o.visible || !o.material) return;
+        const mat = o.material as {
+          blending: number;
+          blendEquation: number;
+          blendSrc: number;
+          blendDst: number;
+          depthTest: boolean;
+          depthWrite: boolean;
+          transparent: boolean;
+          userData?: { blendingMode?: string };
+        };
+        out.push({
+          idx: Number(m[1]),
+          blending: mat.blending,
+          blendEquation: mat.blendEquation,
+          blendSrc: mat.blendSrc,
+          blendDst: mat.blendDst,
+          depthTest: mat.depthTest,
+          depthWrite: mat.depthWrite,
+          transparent: mat.transparent,
+          mode: mat.userData?.blendingMode,
+        });
+      });
+      return out;
+    });
+    expect(states.length).toBeGreaterThanOrEqual(1);
+    const expected = EXPECTED_BLEND_STATE.volumetric;
+    for (const s of states) {
+      expect(s.mode).toBe('volumetric');
+      expect(s.blending).toBe(expected.blending);
+      expect(s.blendEquation).toBe(expected.blendEquation);
+      expect(s.blendSrc).toBe(expected.blendSrc);
+      expect(s.blendDst).toBe(expected.blendDst);
+      expect(s.depthTest).toBe(expected.depthTest);
+      expect(s.depthWrite).toBe(expected.depthWrite);
+      expect(s.transparent).toBe(expected.transparent);
+    }
+    await assertNoConsoleErrors(page);
+    expect(await getWebGLErrors(page)).toEqual([]);
   });
 });

@@ -140,3 +140,82 @@ describe('I2 — split-splat multiplicativity', () => {
     expect(result).toBeCloseTo(background * Math.exp(-3.0), 9);
   });
 });
+
+/**
+ * One volumetric fragment with the node opacity threaded through, exactly as
+ * the shader composes it (shader-glsl.ts LUXAR_VOLUMETRIC branch):
+ * τ = κ·opacity·mass, emission = color·mass·opacity·S(τ). This is the model
+ * behind BLENDABLE_MODES including 'volumetric' (scene/lod-fade.ts): both LOD
+ * anti-popping mechanisms drive exactly this opacity multiplier.
+ */
+function fragmentOp(
+  color: number,
+  mass: number,
+  kappa: number,
+  opacity: number
+): { rgb: number; a: number } {
+  const tau = kappa * opacity * mass;
+  const alpha = 1 - Math.exp(-tau);
+  return { rgb: color * mass * opacity * screenShader(tau), a: alpha };
+}
+
+describe('LOD fade invariants — opacity as a linear knob on τ (BLENDABLE_MODES)', () => {
+  it('cross-fade conserves per-ray absorption EXACTLY: two co-located levels at w/(1−w) ≡ one at full opacity', () => {
+    // 1 − e^(−wτ)·e^(−(1−w)τ) = 1 − e^(−τ) — exact for every w because τ is
+    // additive across fragments and linear in opacity. This is what makes the
+    // opacity cross-fade ghost-free for volumetric (spec §6).
+    for (const kappa of [0.1, 1, 3, 10]) {
+      for (const mass of [0.01, 0.5, 2, 8]) {
+        for (const w of [0.1, 0.25, 0.5, 0.75, 0.9]) {
+          const whole = fragmentOp(0.8, mass, kappa, 1);
+          const fineW = fragmentOp(0.8, mass, kappa, w);
+          const coarseW = fragmentOp(0.8, mass, kappa, 1 - w);
+          const aPair = 1 - (1 - fineW.a) * (1 - coarseW.a);
+          expect(aPair).toBeCloseTo(whole.a, 12);
+        }
+      }
+    }
+  });
+
+  it('cross-fade conserves emission to first order in τ (exact in the additive κ→0 limit)', () => {
+    // Optically thin regime (τ ≪ 1): the composited pair's emission matches
+    // the single full-opacity level to O(τ²).
+    for (const w of [0.25, 0.5, 0.75]) {
+      const kappa = 1.0;
+      const mass = 0.05; // τ = 0.05
+      const whole = over(fragmentOp(0.8, mass, kappa, 1), 0);
+      const pair = over(
+        fragmentOp(0.8, mass, kappa, w),
+        over(fragmentOp(0.8, mass, kappa, 1 - w), 0)
+      );
+      expect(Math.abs(pair - whole) / whole).toBeLessThan(0.01);
+    }
+  });
+
+  it('energy compensation restores per-ray α exactly: boost 1/e on the committed fraction e of the mass', () => {
+    // A streaming ladder has committed e of the leaf's mass along a ray;
+    // scaling opacity by 1/e restores τ = κ·(1/e)·(e·m) = κ·m, hence the
+    // full ladder's absorption, at every e.
+    for (const e of [0.1, 0.25, 0.5, 0.9]) {
+      const kappa = 2.0;
+      const mass = 1.5;
+      const full = fragmentOp(0.8, mass, kappa, 1);
+      const partial = fragmentOp(0.8, mass * e, kappa, 1 / e);
+      expect(partial.a).toBeCloseTo(full.a, 12);
+    }
+  });
+
+  it('boost emission is ~linear on thin splats but saturates on individually thick ones (the accepted ENERGY_FLOOR-cap caveat)', () => {
+    const B = 10; // the 1/ENERGY_FLOOR cap
+    // Thin (τ = 1e-3): S ≈ 1, boosted emission ≈ B× — compensation works.
+    const thin1 = fragmentOp(0.8, 1e-3, 1, 1).rgb;
+    const thinB = fragmentOp(0.8, 1e-3, 1, B).rgb;
+    expect(thinB / thin1).toBeGreaterThan(0.99 * B);
+    // Thick (τ = 2): S decays as 1/τ, so emission gains far less than B —
+    // the boost deepens occlusion more than it brightens (spec §6 caveat).
+    const thick1 = fragmentOp(0.8, 2, 1, 1).rgb;
+    const thickB = fragmentOp(0.8, 2, 1, B).rgb;
+    expect(thickB / thick1).toBeLessThan(B / 5);
+    expect(thickB).toBeGreaterThanOrEqual(thick1); // still monotone, never darkens the splat itself
+  });
+});

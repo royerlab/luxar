@@ -1851,7 +1851,7 @@ describe('LODGroupRegistry — never-downgrade display gate', () => {
 
 // ────────────────────────────────────────────────────────────────────────
 // Coverage-band cross-fade (on by default; ?no-lod-fade disables) — two adjacent
-// additive/luminous levels
+// blendable (additive/luminous/volumetric) levels
 // render with complementary opacity as the DISTANCE (coverage metric) crosses
 // their boundary. Distance-driven, independent of streaming. Off / non-blendable
 // / off-screen ⇒ the byte-identical hard swap. A unit-cube tile under the
@@ -1984,10 +1984,37 @@ describe('LODGroupRegistry — coverage-band cross-fade', () => {
     expect(liveOpacity(coarse)).toBe(1);
   });
 
+  it('volumetric mode ⇒ blends 50/50 at the boundary (opacity scales τ, so the fade is exact in absorption)', () => {
+    const reg = makeReg(true);
+    const coarse = fadeChild(0, { mode: 'volumetric' });
+    const fine = fadeChild(0.5, { mode: 'volumetric' });
+    reg.register(makeEntry([coarse, fine], 0, '/g'));
+    reg.evaluatePerFrame();
+    expect(coarse.object.visible).toBe(true);
+    expect(fine.object.visible).toBe(true);
+    expect(liveOpacity(fine)).toBeCloseTo(0.5, 6);
+    expect(liveOpacity(coarse)).toBeCloseTo(0.5, 6);
+  });
+
+  it('mixed volumetric + non-blendable subtree ⇒ hard swap (uniformity requirement)', () => {
+    const reg = makeReg(true);
+    const coarse = fadeChild(0, { mode: 'volumetric' });
+    const fine = fadeChild(0.5, { mode: 'max' });
+    reg.register(makeEntry([coarse, fine], 0, '/g'));
+    reg.evaluatePerFrame();
+    expect(fine.object.visible).toBe(true);
+    expect(coarse.object.visible).toBe(false); // hard swap to finest
+    expect(liveOpacity(fine)).toBe(1);
+    expect(liveOpacity(coarse)).toBe(1);
+  });
+
   it('brightness invariance: the two levels’ opacities always sum to 1 across the band', () => {
     // The physics guarantee (additive shader = energy·opacity, mass-conserved
     // levels ⇒ equal integrated E): blendedDC = E·(1−w) + E·w = E for all w. The
     // JS-side invariant underwriting it is exactly-complementary opacities.
+    // (For volumetric the conserved physical quantity is per-ray optical depth
+    // τ, not summed energy — τ is linear in opacity, so the same complementary
+    // weights conserve absorption exactly: 1−e^(−wτ)·e^(−(1−w)τ) = 1−e^(−τ).)
     for (const boundary of [0.4, 0.45, 0.5, 0.55, 0.6]) {
       const reg = makeReg(true);
       const coarse = fadeChild(0);
@@ -2095,8 +2122,9 @@ describe('LODGroupRegistry — coverage-band cross-fade', () => {
   });
 });
 
-// Streaming energy compensation (ON by default; ?no-lod-energy disables) — as an additive/
-// luminous leaf's additive ladder streams in, its committed prefix carries only
+// Streaming energy compensation (ON by default; ?no-lod-energy disables) — as a
+// blendable (additive/luminous/volumetric) leaf's additive ladder streams in,
+// its committed prefix carries only
 // e(k) of the leaf's full energy, so it renders at e·E and brightens toward E as
 // chunks arrive (a pop). Scaling the leaf's opacity by 1/e(k) holds the rendered
 // energy at E throughout. Time-axis and PER-LEAF, orthogonal to the distance-
@@ -2215,6 +2243,14 @@ describe('LODGroupRegistry — streaming energy compensation', () => {
     reg.register(makeEntry([fadeChild(0, { mode: 'max' }), fine], 0, '/g'));
     reg.evaluatePerFrame();
     expect(liveOpacity(fine)).toBe(1); // max doesn't sum energy → no 1/e
+  });
+
+  it('compensates a volumetric streaming leaf by 1/e (opacity linearly scales τ)', () => {
+    const reg = makeReg(false, true);
+    const fine = fadeChild(0.5, { mode: 'volumetric', energy: 0.5 });
+    reg.register(makeEntry([fadeChild(0, { mode: 'volumetric' }), fine], 0, '/g'));
+    reg.evaluatePerFrame();
+    expect(liveOpacity(fine)).toBeCloseTo(2, 6); // τ restored to the full ladder's
   });
 
   it('composes with the cross-fade so rendered energy stays E (opacity·e sums to 1)', () => {

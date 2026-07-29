@@ -83,6 +83,7 @@ FIXTURE_NAMES: list[str] = [
     "test_lines_blending_modes.luxar.zarr",
     "test_lines_categorical.luxar.zarr",
     "test_lod_group.luxar.zarr",
+    "test_lod_group_volumetric.luxar.zarr",
     "test_log_scalar.luxar.zarr",
     "test_lut.luxar.zarr",
     "test_lut_u16.luxar.zarr",
@@ -2818,6 +2819,64 @@ def generate_lod_group_test() -> None:
         aprint("  3 levels: 8 / 32 / 128 splats, coverage_fraction 0.0 / 0.5 / 1.0")
 
 
+def generate_lod_group_volumetric_test() -> None:
+    """Volumetric twin of ``generate_lod_group_test`` (same 3-level shape).
+
+    The lod_group node authors ``blending_mode="volumetric"`` and
+    ``absorption=1.0`` (nearest-setter-wins composition covers the three
+    children), so the E2E spec can exercise the LOD coverage cross-fade on a
+    blendable VOLUMETRIC group: two adjacent levels simultaneously visible
+    mid-band, emission–absorption blend state on the displayed material.
+    """
+    with asection("Generating LODGroup Volumetric Test"):
+        output = FIXTURES_DIR / "test_lod_group_volumetric.luxar.zarr"
+
+        def _make_level_splats(n: int, rng: np.random.RandomState) -> dict:
+            centers = rng.rand(n, 3).astype(np.float32) * 5.0
+            amplitudes = np.full(n, 1.0, dtype=np.float32)
+            cholesky = np.tile(
+                np.array([0.3, 0, 0.3, 0, 0, 0.3], dtype=np.float32), (n, 1)
+            )
+            return dict(
+                centers=centers, amplitudes=amplitudes, cholesky_factors=cholesky
+            )
+
+        dims = Dimensions(
+            [
+                Dimension("x", unit="units", display=True),
+                Dimension("y", unit="units", display=True),
+                Dimension("z", unit="units", display=True),
+            ]
+        )
+
+        rng = np.random.RandomState(42)
+        with LuxarZarrCompiler(
+            output,
+            encoding_mode=EncodingMode.PRECISION,
+            compressor=None,
+            float16_allowed=False,
+        ) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+            lod = scene.add_lod_group(
+                "multires",
+                layer=True,
+                blending_mode="volumetric",
+                absorption=1.0,
+            )
+            lod.add_gsplats(
+                "child_0", **_make_level_splats(8, rng), coverage_fraction=0.0
+            )
+            lod.add_gsplats(
+                "child_1", **_make_level_splats(32, rng), coverage_fraction=0.5
+            )
+            lod.add_gsplats(
+                "child_2", **_make_level_splats(128, rng), coverage_fraction=1.0
+            )
+
+        aprint(f"  Created {output}")
+        aprint("  3 volumetric levels: 8 / 32 / 128 splats, kappa 1.0")
+
+
 def generate_overview_test() -> None:
     """Standalone ``overview``-recipe fixture — a lod_group with a GROUP child.
 
@@ -3027,6 +3086,9 @@ def main() -> None:
         aprint("")
 
         generate_lod_group_test()
+        aprint("")
+
+        generate_lod_group_volumetric_test()
         aprint("")
 
         generate_overview_test()

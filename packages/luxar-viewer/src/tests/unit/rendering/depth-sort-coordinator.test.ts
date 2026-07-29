@@ -690,6 +690,34 @@ describe('depth-sort coordinator', () => {
     expect([chanA.renderOrder, chanB.renderOrder].sort()).toEqual([0, 1]);
   });
 
+  it('two co-located volumetric LOD siblings (near-identical bounds, mid cross-fade) each get a rank', async () => {
+    // The LOD coverage cross-fade shows two sibling levels of one lod_group
+    // simultaneously (scene/lod-group-registry.ts). Same content ⇒ nearly
+    // identical spheres, differing slightly in radius (different splat
+    // subsets). Both must be sorted and ranked; with the coarser slightly
+    // larger, the containment rule fires and draws it first — benign, since
+    // τ is additive across the mass-matched pair (spec §6).
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+
+    const coarse = makeGSplatsMesh(2, 'volumetric');
+    coarse.geometry.boundingSphere!.center.set(0, 0, -20);
+    coarse.geometry.boundingSphere!.radius = 10.5;
+    const fine = makeGSplatsMesh(2, 'volumetric');
+    fine.geometry.boundingSphere!.center.set(0, 0, -20);
+    fine.geometry.boundingSphere!.radius = 10;
+
+    coord.noteDepthSortCommit(fine, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    coord.noteDepthSortCommit(coarse, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    await flush();
+
+    coord.evaluateDepthSortPerFrame();
+
+    // Containment edge (coarse ⊃ fine): container draws first.
+    expect(coarse.renderOrder).toBe(0);
+    expect(fine.renderOrder).toBe(1);
+  });
+
   it('a partition wrapper whose AGGREGATE bounds contain a leaf draws all its parts first', async () => {
     // Multi-mesh groups aggregate an enclosing sphere from their members
     // (centroid + max member reach). Two wide parts flank the origin; a
