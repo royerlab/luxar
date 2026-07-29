@@ -22,7 +22,7 @@
  *   | 1     | endPos.xyz, endWidth                                     |
  *   | 2     | startColor.rgb, startSharpness                           |
  *   | 3     | endColor.rgb, endSharpness                               |
- *   | 4     | segmentLength, startCapSuppression, endCapSuppression, 0               |
+ *   | 4     | segmentLength, startCapSuppression, endCapSuppression, 0 |
  *   | 5     | startScalar (0.0), endScalar (0.0), alphas (1.0, 1.0)    |
  *
  * texel5.xy are the colormap scalars and texel5.zw the per-endpoint

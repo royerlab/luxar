@@ -841,9 +841,11 @@ scene-node attribute `blending_mode` that controls 3D geometry blending.
 
 Note: the viewer sanitizes `html` against a tag allowlist at render time, so
 hand-authored values are still constrained. A tag outside the allowlist is
-unwrapped — it disappears while its children are kept — and `on*` event-handler
-attributes plus `javascript:` URLs in `href`/`src` are stripped. Author overlay
-markup with basic formatting, links, lists, tables, and images.
+unwrapped — it disappears while its children are kept (the one exception is
+`<template>`, whose payload lives in an inert `.content` fragment the sanitizer
+never walks, so its subtree is dropped rather than kept) — and `on*`
+event-handler attributes plus `javascript:` URLs in `href`/`src` are stripped.
+Author overlay markup with basic formatting, links, lists, tables, and images.
 
 ### Common Attributes
 
