@@ -89,6 +89,42 @@ comments in `lod-fade.ts` / `lod-group-registry.ts`. New fixture
 `test_lod_group_volumetric.luxar.zarr` covers the volumetric cross-fade
 contract end-to-end.
 
+#### Fixed — a rejected projection kernel was re-run on the UI thread, and load failures were reported as success
+
+Four defects in the loader's failure handling, all pre-existing, all surfaced while
+reviewing the 2D-gsplat WASM trap.
+
+The worst turned a data error into a UI freeze: the gsplats and lines processors
+fell back to the in-process dispatcher on ANY worker rejection except a
+dataset-switch abort. That dispatcher runs the *same* kernel through the same
+`pickBackend`, so a WASM trap coming back from the worker trapped again on the main
+thread, blocking the frame. Only worker INFRASTRUCTURE failure now falls back, via a
+name-based `isWorkerInfrastructureError` allow-list (`instanceof` cannot work —
+Comlink reconstructs errors and loses the prototype, preserving only `name`).
+Unknown errors fail closed and propagate. Points is deliberately not included: its
+projection is main-thread-only, so it has no worker path.
+
+`loadScene` also logged "Scene loaded successfully" unconditionally. Because
+`loadLeafNode` swallows every `LoaderError` so surviving siblings still render,
+`loadScene` structurally cannot throw — so a scene whose every node failed produced
+a green log over an empty viewport. A new end-of-load report grades the outcome:
+clean keeps the historical message, partial logs one aggregate warning, and total
+logs an error plus a long toast. The per-node failure toast is gone; with N failures
+it showed one toast naming the last path, and never fired at all for network
+failures.
+
+All three handlers cleared a path's failure record immediately after the fetch,
+though the record's scope is the whole load-and-stage step — so any post-fetch
+failure re-recorded with a zero counter, pinning the log at "(attempt 1)" however
+many times it failed, and `hasFailures()` briefly reported clean. And retries had no
+notion of a permanent failure: the classified error kind was computed for logging
+then discarded, and the retry counter was written in three places and never
+compared, so a WASM trap was re-fetched on every reconnect forever. The kind is now
+persisted and automatic retries are gated on a transient cause under an attempt cap
+— while a manual Retry still forces every path, since the user pressing it is new
+information.
+
+
 #### Added — Points and Lines LOD levels now stream progressively (#811, #808)
 
 `additive_lod` and `substitutive_lod` used to be mutually exclusive for Points

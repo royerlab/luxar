@@ -86,6 +86,14 @@ export class WorkerUnavailableError extends Error {
  * Name-based rather than `instanceof`, matching `data/loaders/abort-error.ts`:
  * these errors cross a Comlink boundary, which reconstructs them in the calling
  * realm and breaks prototype identity.
+ *
+ * Known ambiguity in the timeout case, kept deliberately: a timeout can mean
+ * either "the worker is wedged" (where the main thread is the only recovery) or
+ * "this projection is genuinely slower than `workerProjectionTimeoutMs`" (where
+ * re-running it on the main thread blocks the frame for at least as long again).
+ * Treating it as infrastructure preserves the pre-existing behavior and the
+ * wedged-worker recovery; at a 60s default a projection that trips it is
+ * pathological either way. Revisit here, not at the call sites, if that changes.
  */
 export function isWorkerInfrastructureError(error: unknown): boolean {
   if (typeof error !== 'object' || error === null) return false;
