@@ -842,10 +842,17 @@ export class LODGroupRegistry {
     // independent of additive streaming; brightness is preserved by the levels'
     // build-time mass conservation (both integrate to the same DC). Blendable
     // modes only (BLENDABLE_MODES = additive/luminous/volumetric — energy sums
-    // linearly, or opacity linearly scales optical depth τ so per-ray absorption
-    // is conserved exactly). For two mid-fade volumetric siblings the mesh draw
-    // order may come from the render-order containment rule (near-identical
-    // bounds); benign, since τ is additive across the pair. Off / non-blendable /
+    // linearly, or opacity linearly scales optical depth τ so the pair
+    // interpolates monotonically between the two levels' absorptions; see that
+    // set's doc for what volumetric does NOT guarantee). For two mid-fade
+    // volumetric siblings the mesh draw order may come from the render-order
+    // containment rule (near-identical bounds); acceptable because combined
+    // TRANSMITTANCE is order-independent (transmittances multiply), so occlusion
+    // of content behind the pair is exact at every weight — emission is
+    // order-dependent only to second order (the levels' per-fragment alphas,
+    // already scaled by w/(1−w), times their local color difference), bounded by
+    // the same inter-level difference the hard swap showed in full. Off /
+    // non-blendable /
     // off-screen / locked / a held-stale display ⇒ no blend (byte-identical hard
     // swap). The finer partner must be resident to fade against; if it is not,
     // kick its load so the NEXT crossing blends (the first hard-swaps meanwhile).

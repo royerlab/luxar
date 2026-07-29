@@ -695,8 +695,12 @@ describe('depth-sort coordinator', () => {
     // simultaneously (scene/lod-group-registry.ts). Same content ⇒ nearly
     // identical spheres, differing slightly in radius (different splat
     // subsets). Both must be sorted and ranked; with the coarser slightly
-    // larger, the containment rule fires and draws it first — benign, since
-    // τ is additive across the mass-matched pair (spec §6).
+    // larger, the containment rule fires and draws it first. Which order wins
+    // is acceptable because combined transmittance is order-INDEPENDENT
+    // (transmittances multiply), so occlusion behind the pair is exact at every
+    // fade weight; emission is order-dependent only to second order in the
+    // levels' local color difference (spec §6). What matters here is that the
+    // order is DETERMINISTIC — no frame-to-frame flicker mid-fade.
     const coord = await loadCoordinator();
     coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
 

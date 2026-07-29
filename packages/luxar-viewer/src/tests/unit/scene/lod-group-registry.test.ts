@@ -1984,7 +1984,7 @@ describe('LODGroupRegistry — coverage-band cross-fade', () => {
     expect(liveOpacity(coarse)).toBe(1);
   });
 
-  it('volumetric mode ⇒ blends 50/50 at the boundary (opacity scales τ, so the fade is exact in absorption)', () => {
+  it('volumetric mode ⇒ blends 50/50 at the boundary (opacity scales τ, so the fade is well-behaved)', () => {
     const reg = makeReg(true);
     const coarse = fadeChild(0, { mode: 'volumetric' });
     const fine = fadeChild(0.5, { mode: 'volumetric' });
@@ -2012,9 +2012,12 @@ describe('LODGroupRegistry — coverage-band cross-fade', () => {
     // The physics guarantee (additive shader = energy·opacity, mass-conserved
     // levels ⇒ equal integrated E): blendedDC = E·(1−w) + E·w = E for all w. The
     // JS-side invariant underwriting it is exactly-complementary opacities.
-    // (For volumetric the conserved physical quantity is per-ray optical depth
-    // τ, not summed energy — τ is linear in opacity, so the same complementary
-    // weights conserve absorption exactly: 1−e^(−wτ)·e^(−(1−w)τ) = 1−e^(−τ).)
+    // (For volumetric the relevant quantity is per-ray optical depth τ, not
+    // summed energy. τ is linear in opacity, so the same complementary weights
+    // give 1−exp(−(w·τ_fine + (1−w)·τ_coarse)) — a monotone interpolation
+    // between the two levels' absorptions, EXACT only where both present the
+    // same per-ray τ. See the volumetric-math suite for the general case; the
+    // JS-side complementary-weight invariant is what this test pins.)
     for (const boundary of [0.4, 0.45, 0.5, 0.55, 0.6]) {
       const reg = makeReg(true);
       const coarse = fadeChild(0);

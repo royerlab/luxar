@@ -598,9 +598,20 @@ and rendering agree.
   invariant mid-fade in general — do not build on that. The guaranteed
   monotone-bracketed dissolve is what anti-popping needs, and is strictly better
   than the hard swap it replaces. Mid-fade the two co-located sibling meshes are
-  whole-mesh ordered by the renderOrder pass; with near-identical bounds the
-  containment rule usually decides (larger bounding sphere draws first) —
-  benign, since τ is additive across the pair.
+  whole-mesh ordered by the renderOrder pass (splats of the two levels never
+  interleave in the draw order); with near-identical bounds the containment rule
+  usually decides, deterministically, which draws first (larger bounding sphere).
+  That is acceptable rather than merely "benign", and the two channels differ:
+  combined **transmittance is exactly order-independent** (transmittances
+  multiply), so occlusion of anything behind the pair is correct at every fade
+  weight; **emission is order-dependent**, but only where the two levels' local
+  radiance differs — equal-color fragments commute exactly under over-compositing
+  — so the residual is second order (the product of the levels' per-fragment
+  alphas, each already scaled by `w`/`1−w`, times the local color difference) and
+  is bounded by the very inter-level difference the hard swap used to present in
+  full as a one-frame pop. Do not restate this as "absorption is conserved
+  exactly"; the accurate summary is *absorption-exact in the order sense,
+  emission approximate to second order*. `?no-lod-fade` is the escape hatch.
 - **Tone mapping / HDR**: pure additive accumulates without bound and can blow
   out under ACES; volumetric bounds accumulated radiance near c/κ, improving
   tone-mapped appearance on dense scenes. Emission remains unclamped HDR — a

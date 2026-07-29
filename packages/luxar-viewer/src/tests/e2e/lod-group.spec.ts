@@ -342,9 +342,11 @@ test.describe('lod_group node', () => {
 // Volumetric blendable lod_group — the same 3-level shape with
 // blending_mode="volumetric" + absorption authored on the group node.
 // Volumetric is in BLENDABLE_MODES (scene/lod-fade.ts): the coverage
-// cross-fade and streaming energy compensation apply to it exactly as to
-// additive/luminous (opacity linearly scales optical depth τ, so the fade
-// conserves per-ray absorption exactly — VOLUMETRIC_BLENDING_SPEC.md §6).
+// cross-fade and streaming energy compensation apply to it as they do to
+// additive/luminous, because opacity linearly scales optical depth τ — the
+// fade interpolates monotonically between the two levels' absorptions
+// (exact at the endpoints; NOT invariant mid-fade in general — see
+// VOLUMETRIC_BLENDING_SPEC.md §6 and the volumetric-math unit suite).
 // ---------------------------------------------------------------------------
 
 const VOLUMETRIC_FIXTURE =
