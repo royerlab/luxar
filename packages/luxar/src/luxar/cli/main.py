@@ -417,6 +417,12 @@ def viewer(
             if not data.exists():
                 aprint(f"❌ Data path does not exist: {data}")
                 raise typer.Exit(1)
+            if not data.is_dir():
+                aprint(
+                    f"❌ Error: --data must be a directory (a .zarr store), "
+                    f"got a file: {data}"
+                )
+                raise typer.Exit(1)
             _validate_serve_path(data, allow_sensitive_path=allow_sensitive_path)
 
             # Find available port for data server

@@ -13,7 +13,7 @@
  *   - `applyBlendingMode` selects the projection model: PEAK
  *     (2D-projected) for surface modes (max/normal/opaque —
  *     `usesPeakProjection`), SUM (ray-integral) for emissive
- *     (additive/luminous). In TSL
+ *     (additive/luminous/volumetric). In TSL
  *     the graph JS-branches on the mode at build time; the
  *     `uProjectionMode` uniform is decorative (clone/telemetry
  *     parity). The GLSL twin drives the same split via the uniform.
@@ -488,7 +488,7 @@ export class GSplatTSLMaterial
    *
    * Also sets `uProjectionMode` — peak (1) for surface modes
    * (max/normal/opaque, `usesPeakProjection`), sum (0) for emissive
-   * (additive/luminous). In TSL the uniform is decorative (the graph
+   * (additive/luminous/volumetric). In TSL the uniform is decorative (the graph
    * JS-branches on the mode); the crossing is what triggers
    * `rebuildGraph()` below.
    */

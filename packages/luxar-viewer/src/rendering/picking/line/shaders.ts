@@ -108,11 +108,6 @@ export const LINE_PICK_VERTEX_SHADER = /* glsl */ `
 
       vec4 mvStart = modelViewMatrix * vec4(aStartPos, 1.0);
       vec4 mvEnd = modelViewMatrix * vec4(aEndPos, 1.0);
-      vec4 mvPos = mix(mvStart, mvEnd, t);
-      // View-space z to the fragment — the fade is computed per-fragment
-      // there (interpolating the fade itself is wrong on long segments;
-      // see the visual line shader).
-      vViewZ = mvPos.z;
 
       // Visual-shader parity: near-plane safety (degenerate quad if both endpoints behind).
       // PERSPECTIVE ONLY — see the visual line shader: under ortho NDC
@@ -165,7 +160,10 @@ export const LINE_PICK_VERTEX_SHADER = /* glsl */ `
       }
       float tEff = mix(tA, tB, t);
       vT = tEff;
-      mvPos = mix(mvStart, mvEnd, t);
+      // View-space z to the fragment — the fade is computed per-fragment
+      // there (interpolating the fade itself is wrong on long segments;
+      // see the visual line shader).
+      vec4 mvPos = mix(mvStart, mvEnd, t);
       vViewZ = mvPos.z;
       // Compute-once from the clipped tEff (visual-shader parity); the
       // raw-t values are never read before this point.

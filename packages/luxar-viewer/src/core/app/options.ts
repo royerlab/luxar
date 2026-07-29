@@ -136,10 +136,10 @@ export interface LuxarAppOptions {
   lodFade?: boolean;
 
   /**
-   * Streaming brightness compensation (scale a streaming additive LOD
-   * leaf's opacity by 1/e(k) so partial ladders render at full-level
-   * brightness). Default: true. Mirrors `UrlParams.lodEnergyComp`
-   * (`?no-lod-energy` disables).
+   * Streaming brightness compensation (scale a streaming blendable
+   * additive/luminous/volumetric LOD leaf's opacity by 1/e(k) so partial
+   * ladders render at full-level brightness). Default: true. Mirrors
+   * `UrlParams.lodEnergyComp` (`?no-lod-energy` disables).
    */
   lodEnergyComp?: boolean;
 
