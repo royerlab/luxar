@@ -85,7 +85,12 @@ pub fn mahalanobis_distance(diff: &[f32], packed_l: &[f32], ndim: usize) -> f32 
 /// # Arguments
 /// * `full_packed_l` - Full packed Cholesky factor (may contain multiple splats)
 /// * `full_packed_offset` - Offset into full_packed_l for this splat's data
-/// * `keep_dims` - Indices of dimensions to keep (must be sorted ascending) [sub_ndim]
+/// * `keep_dims` - Indices of dimensions to keep [>= sub_ndim entries; only the
+///   first `sub_ndim` are read]. Order is free: `Σ_S[i,j]` is the truncated dot
+///   product of rows `keep_dims[i]`/`keep_dims[j]` of lower-triangular L, i.e.
+///   exactly `Σ_full[s_i, s_j]`, for ANY ordering — so a permuted display order
+///   (X=dim2, Y=dim0, …) yields the correctly permuted marginal. Hidden-dim
+///   callers pass ascending indices, display-dim callers do not.
 /// * `sub_ndim` - Number of dimensions to keep
 /// * `output` - Output packed marginal Cholesky factor [subPackedSize]
 ///
@@ -169,14 +174,31 @@ fn compute_marginal_cholesky(
 /// gets the splat's own in-plane scale, making a 2D splat a round blob rather
 /// than a disk.
 ///
-/// The diagonal deliberately is NOT a small epsilon. In sum/additive projection
-/// the shader scales amplitude by the Gaussian's extent along the view ray,
-/// `sigmaRay = 1/√(rᵀΣ⁻¹r)` (`shader-glsl.ts`); a face-on ε-thin splat gets
-/// `sigmaRay ≈ √ε`, i.e. amplitude × 1e-5, and the whole scene renders black.
-/// A scale-matched phantom axis keeps `sigmaRay` proportional to the splat's own
-/// size — the same brightness relationship a genuinely isotropic 3D splat has —
-/// and keeps every scale-relative shader guard (coverage fade, extent clamp,
-/// determinant conditioning) well-conditioned.
+/// The diagonal deliberately is NOT a small epsilon. In sum projection (additive,
+/// luminous, volumetric) the shader scales amplitude by the Gaussian's extent
+/// along the view ray, `sigmaRay = 1/√(rᵀΣ⁻¹r)` (`shader-glsl.ts`, and the same
+/// math in the TSL twin); a face-on ε-thin splat gets `sigmaRay ≈ √ε`, i.e.
+/// amplitude × 1e-5, which the fragment shader then discards outright — the whole
+/// scene renders black. In volumetric the boosted amplitude also drives optical
+/// depth, so absorption would vanish too. A scale-matched phantom axis keeps
+/// `sigmaRay` proportional to the splat's own size — the same brightness
+/// relationship a genuinely isotropic 3D splat has. `luxar.gsplats.lift` relies on
+/// exactly this: it calibrates amplitude as `opacity / (rayIntegralFactor · σ)`,
+/// which only holds for a 2D lift because `√(σ·σ) == σ`.
+///
+/// Two properties of the geometric mean worth knowing:
+/// - Taken over the Cholesky PIVOTS it equals `(det Σ_S)^(1/2n)`, so it is
+///   ROTATION-INVARIANT — a rotated 2D splat gets the same phantom axis. (The
+///   geometric mean of the per-axis marginal sigmas would not be.)
+/// - It is bounded by the largest real diagonal, so it cannot inflate
+///   `maxLateralVar` / `maxRowNorm` — the coverage fade, extent clamp, and cull
+///   bounds all stay exactly as tight as the real in-plane extent.
+///
+/// Known consequence: under PERSPECTIVE the projection Jacobian's third column
+/// mixes the phantom variance into Σ_2D for off-axis splats, so a 2D splat far
+/// from the optical axis gains a slight footprint shear that an ε axis would not
+/// produce. That is the correct behavior for a splat with real z extent, and it
+/// is identically zero under orthographic projection (`J[2] = 0`).
 ///
 /// `output` must hold 6 elements.
 #[inline]
@@ -186,14 +208,11 @@ fn compute_display_cholesky_3d(
     display_dims: &[u32],
     output: &mut [f32],
 ) {
+    // `compute_marginal_cholesky` reads only keep_dims[0..n), so pass
+    // display_dims whole (mirrors the TS twin, where a sub-slice view would
+    // allocate once per splat).
     let n = display_dims.len().min(3);
-    compute_marginal_cholesky(
-        full_packed_l,
-        full_packed_offset,
-        &display_dims[..n],
-        n,
-        output,
-    );
+    compute_marginal_cholesky(full_packed_l, full_packed_offset, display_dims, n, output);
     if n == 3 {
         return;
     }
@@ -409,7 +428,8 @@ fn mahalanobis_distance_internal(diff: &[f32], packed_l: &[f32], ndim: usize) ->
 /// * `cholesky` - Packed Cholesky factors [splatCount * packedSize]
 /// * `visibility` - Visibility mask [splatCount]
 /// * `display_dims` - Display dimension indices (sorted) [1..=3]; missing
-///   rows are ε-padded for 1D/2D data (see `compute_display_cholesky_3d`)
+///   rows are scale-matched-padded for 1D/2D data (see
+///   `compute_display_cholesky_3d`)
 /// * `ndim` - Total dimensionality (max 16)
 /// * `splat_count` - Number of splats
 /// * `output` - Output 3D Cholesky factors [visibleCount * 6]
@@ -642,7 +662,7 @@ pub fn project_gsplats_nd_to_3d(
         }
 
         // Marginal Cholesky for display dims (mirrors extract_visible_cholesky_3d),
-        // ε-padded when fewer than 3 dims are displayed (1D/2D scenes).
+        // scale-matched-padded when fewer than 3 dims are displayed (1D/2D scenes).
         let chol_off = out * 6;
         compute_display_cholesky_3d(
             cholesky,
@@ -1281,23 +1301,178 @@ mod tests {
         assert!((out[5] - 2.0).abs() < 1e-5, "L22 = phantom = L00");
     }
 
-    /// An all-degenerate marginal has no scale to match, so the phantom axis
-    /// falls back to the regularizer rather than producing NaN/0.
+    /// A fully degenerate marginal must still yield a finite, positive phantom
+    /// axis rather than NaN or 0 (which would make the 3D covariance singular).
+    ///
+    /// Note this goes through the GEOMETRIC-MEAN path, not the `counted == 0`
+    /// fallback: the Crout step already floors every marginal diagonal at √ε,
+    /// which is above the ε threshold, so the mean of (√ε, √ε) lands on √ε.
+    /// NaN input behaves the same way — Crout's `sum > CHOLESKY_EPSILON` is
+    /// false for NaN, so the diagonal is regularized before it reaches here.
     #[test]
-    fn test_2d_degenerate_marginal_falls_back_to_epsilon() {
-        let mut out = [0.0f32; 6];
-        compute_display_cholesky_3d(&[0.0, 0.0, 0.0], 0, &[0, 1], &mut out);
-
-        // The Crout regularizer already floors both diagonals at √ε, so the
-        // geometric mean lands on √ε too (within ln/exp round-off).
+    fn test_2d_degenerate_marginal_yields_finite_positive_phantom() {
         let eps = CHOLESKY_EPSILON.sqrt();
-        assert!(out[5].is_finite(), "phantom must be finite");
-        assert!(
-            (out[5] / eps - 1.0).abs() < 1e-5,
-            "phantom falls back to √ε, got {} (expected {})",
-            out[5],
-            eps
-        );
+        for (name, packed) in [
+            ("all zeros", [0.0f32, 0.0, 0.0]),
+            ("NaN diagonal", [f32::NAN, 0.0, f32::NAN]),
+        ] {
+            let mut out = [0.0f32; 6];
+            compute_display_cholesky_3d(&packed, 0, &[0, 1], &mut out);
+
+            assert!(out[5].is_finite(), "{name}: phantom must be finite");
+            assert!(out[5] > 0.0, "{name}: phantom must be positive");
+            assert!(
+                (out[5] / eps - 1.0).abs() < 1e-5,
+                "{name}: phantom lands on √ε, got {} (expected {})",
+                out[5],
+                eps
+            );
+        }
+    }
+
+    /// An ISOTROPIC 2D splat must lift to an exactly isotropic 3D covariance:
+    /// `L = diag(σ, σ)` ⇒ phantom == σ, so Σ = σ²·I₃.
+    ///
+    /// This is a load-bearing contract, not a nicety. `luxar.gsplats.lift`
+    /// (`lift_points_to_gsplats`, supported for d ∈ {2, 3, 4}) writes exactly this
+    /// isotropic factor and calibrates amplitude as `opacity / (uRIF · σ)`, a match
+    /// that holds only when the viewer's `sigmaRay` comes out to σ. An ε phantom
+    /// made `sigmaRay ≈ 1e-5`, so 2D lifted point clouds rendered ~1e5× too dim.
+    #[test]
+    fn test_isotropic_2d_lift_yields_isotropic_3d() {
+        for sigma in [0.05f32, 1.0, 7.5, 1200.0] {
+            // Packed 2D isotropic factor, exactly as lift.py emits it.
+            let mut out = [0.0f32; 6];
+            compute_display_cholesky_3d(&[sigma, 0.0, sigma], 0, &[0, 1], &mut out);
+
+            let expected = [sigma, 0.0, sigma, 0.0, 0.0, sigma];
+            for (i, (&got, &want)) in out.iter().zip(expected.iter()).enumerate() {
+                assert!(
+                    (got - want).abs() <= 1e-5 * want.max(1.0),
+                    "sigma={sigma}: slot {i} = {got}, expected {want} (isotropic)"
+                );
+            }
+        }
+    }
+
+    /// Two display dims on a HIGHER-dimensional dataset — the general case, which
+    /// every other 2D test here misses by using `ndim == 2`. Exercises hidden-dim
+    /// attenuation and phantom padding in the same pass, including a permuted
+    /// display order and a high-index dim mapped to X.
+    #[test]
+    fn test_nd_dataset_with_two_displayed_dims() {
+        let ndim = 4usize;
+        let n = 3usize;
+        let one = [2.0f32, 1.0, 3.0, 0.0, 0.0, 2.0, 0.5, 0.5, 0.0, 4.0]; // correlated 4D
+        let cholesky = [one, one, one].concat();
+        let positions = vec![
+            0.0, 0.0, 0.0, 0.0, //
+            1.0, 1.0, 1.0, 0.3, //
+            2.0, 2.0, 2.0, 50.0, // far in the hidden dim -> attenuated away
+        ];
+
+        for display in [vec![0u32, 1], vec![3, 1], vec![2, 0]] {
+            let mut out_c = vec![0.0f32; n * 3];
+            let mut out_l = vec![0.0f32; n * 6];
+            let mut out_a = vec![0.0f32; n];
+            let mut out_col = vec![0.0f32; n * 3];
+
+            let count = project_gsplats_nd_to_3d(
+                &positions,
+                &cholesky,
+                &[1.0, 0.8, 0.5],
+                &vec![1.0f32; n * 3],
+                &vec![1u8; n],
+                &vec![0.0f32; ndim],
+                &[2, 3],
+                &display,
+                ndim,
+                n,
+                3,
+                1e-6,
+                3.0,
+                &mut out_c,
+                &mut out_l,
+                &mut out_a,
+                &mut out_col,
+            ) as usize;
+
+            assert!(count > 0, "display={display:?}: everything culled");
+            for s in 0..count {
+                let l = &out_l[s * 6..s * 6 + 6];
+                assert!(
+                    l.iter().all(|v| v.is_finite()),
+                    "display={display:?} splat {s}: non-finite Cholesky {l:?}"
+                );
+                // Phantom row: zero off-diagonals, positive diagonal (SPD).
+                assert_eq!(l[3], 0.0, "display={display:?} splat {s}: L20");
+                assert_eq!(l[4], 0.0, "display={display:?} splat {s}: L21");
+                assert!(
+                    l[5] > 0.0,
+                    "display={display:?} splat {s}: L22 not positive"
+                );
+                // Centers: the unmapped third component is zero-filled.
+                assert_eq!(out_c[s * 3 + 2], 0.0, "display={display:?} splat {s}: z");
+            }
+        }
+    }
+
+    /// The phantom axis is taken over the Cholesky PIVOTS, which makes it
+    /// `(det Σ_S)^(1/2n)` and therefore ROTATION-INVARIANT: rotating a 2D splat
+    /// in-plane must not change its phantom extent. (A geometric mean of the
+    /// per-axis marginal sigmas would drift under rotation.)
+    #[test]
+    fn test_phantom_axis_is_rotation_invariant() {
+        // Σ = R(θ) diag(sx², sy²) R(θ)ᵀ, factored to packed lower-triangular L.
+        let (sx, sy) = (3.0f32, 0.75f32);
+        let mut phantoms = Vec::new();
+        for deg in [0.0f32, 17.0, 45.0, 73.0, 90.0] {
+            let (s, c) = deg.to_radians().sin_cos();
+            let (a, b, d) = (
+                c * c * sx * sx + s * s * sy * sy,
+                c * s * (sx * sx - sy * sy),
+                s * s * sx * sx + c * c * sy * sy,
+            );
+            // Cholesky of the 2x2 [[a, b], [b, d]].
+            let l00 = a.sqrt();
+            let l10 = b / l00;
+            let l11 = (d - l10 * l10).sqrt();
+
+            let mut out = [0.0f32; 6];
+            compute_display_cholesky_3d(&[l00, l10, l11], 0, &[0, 1], &mut out);
+            phantoms.push(out[5]);
+        }
+
+        // det Σ = (sx·sy)², so the invariant value is √(sx·sy).
+        let expected = (sx * sy).sqrt();
+        for (i, &p) in phantoms.iter().enumerate() {
+            assert!(
+                (p / expected - 1.0).abs() < 1e-4,
+                "rotation {i}: phantom {p} drifted from the invariant {expected}"
+            );
+        }
+    }
+
+    /// The `counted == 0` fallback is reachable only when there are NO real
+    /// diagonals to average — i.e. an empty display-dims list. Nonsensical as a
+    /// view, but it must not emit a singular (zero-diagonal) covariance.
+    #[test]
+    fn test_empty_display_dims_yields_regularized_identity() {
+        let mut out = [0.0f32; 6];
+        compute_display_cholesky_3d(&[2.0, 0.5, 1.5], 0, &[], &mut out);
+
+        let eps = CHOLESKY_EPSILON.sqrt();
+        for &d in &[0usize, 2, 5] {
+            assert!(
+                (out[d] / eps - 1.0).abs() < 1e-5,
+                "diagonal slot {} must be √ε, got {}",
+                d,
+                out[d]
+            );
+        }
+        for &o in &[1usize, 3, 4] {
+            assert_eq!(out[o], 0.0, "off-diagonal slot {} must be 0", o);
+        }
     }
 
     /// Same regression for the pre-fused kernel, kept for API completeness.

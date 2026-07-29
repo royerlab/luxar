@@ -1670,5 +1670,105 @@ describe('WASM vs TypeScript Comparison', () => {
       expect(arraysAlmostEqual(wasmT1, tsT1)).toBe(true);
       expect(arraysAlmostEqual(wasmT2, tsT2)).toBe(true);
     });
+
+    // The hand-written 2D cases above pin one matrix each. This sweeps many
+    // correlated 2D covariances at once, so a Rust/TS divergence in the phantom
+    // axis (ln/exp vs f32 rounding, or an index slip) can't hide behind a single
+    // lucky value. The phantom is a transcendental (exp of a mean of logs), the
+    // one place in this kernel where the backends could plausibly drift.
+    it.skipIf(!wasmFilesExist)('project_gsplats_nd_to_3d 2D with random data', () => {
+      const splatCount = 2000;
+      const ndim = 2;
+
+      const positions = new Float32Array(splatCount * ndim);
+      const cholesky = new Float32Array(splatCount * 3); // packed 2D
+      const amplitudes = new Float32Array(splatCount);
+      const colors = new Float32Array(splatCount * 3);
+
+      // Deterministic pseudo-random via sine waves (this file's convention).
+      for (let i = 0; i < splatCount; i++) {
+        positions[i * 2] = Math.sin(i * 0.37) * 100;
+        positions[i * 2 + 1] = Math.cos(i * 0.71) * 100;
+        // Valid Cholesky: strictly positive diagonals, spanning 4 decades of
+        // scale so the geometric mean is exercised across magnitudes.
+        const s = Math.pow(10, Math.sin(i * 0.11) * 2);
+        cholesky[i * 3] = (0.5 + Math.abs(Math.sin(i * 0.23))) * s;
+        cholesky[i * 3 + 1] = Math.sin(i * 0.53) * 0.4 * s;
+        cholesky[i * 3 + 2] = (0.5 + Math.abs(Math.cos(i * 0.31))) * s;
+        amplitudes[i] = 0.5 + Math.abs(Math.sin(i * 0.17));
+        colors[i * 3] = Math.abs(Math.sin(i * 0.13));
+        colors[i * 3 + 1] = Math.abs(Math.cos(i * 0.19));
+        colors[i * 3 + 2] = Math.abs(Math.sin(i * 0.29));
+      }
+
+      const args = {
+        positions,
+        cholesky,
+        amplitudes,
+        colors,
+        discreteVisibility: new Uint8Array(splatCount).fill(1),
+        slicePosition: new Float32Array(ndim),
+        continuousHiddenDims: new Uint32Array([]),
+        displayDims: new Uint32Array([0, 1]),
+        ndim,
+        splatCount,
+      };
+
+      // `runFused` is scoped to the gsplats describe block above; call directly.
+      const run = (mod: WasmModule) => {
+        const centers = new Float32Array(splatCount * 3);
+        const chol = new Float32Array(splatCount * 6);
+        const amps = new Float32Array(splatCount);
+        const cols = new Float32Array(splatCount * 3);
+        const count = mod.project_gsplats_nd_to_3d(
+          args.positions,
+          args.cholesky,
+          args.amplitudes,
+          args.colors,
+          args.discreteVisibility,
+          args.slicePosition,
+          args.continuousHiddenDims,
+          args.displayDims,
+          args.ndim,
+          args.splatCount,
+          3,
+          1e-6,
+          3.0,
+          centers,
+          chol,
+          amps,
+          cols
+        );
+        return { count, centers, chol };
+      };
+      const ts = run(tsModule);
+      const w = run(wasmModule!);
+
+      expect(w.count).toBe(ts.count);
+      expect(w.count).toBe(splatCount);
+
+      // Relative comparison: absolute epsilon is meaningless across 4 decades.
+      for (let i = 0; i < w.count * 6; i++) {
+        const a = w.chol[i];
+        const b = ts.chol[i];
+        expect(Number.isFinite(a)).toBe(true);
+        const scale = Math.max(Math.abs(a), Math.abs(b), 1e-30);
+        expect(Math.abs(a - b) / scale).toBeLessThan(1e-4);
+      }
+      // Every phantom diagonal must be positive (SPD) and scale-matched, never ~0.
+      for (let s = 0; s < w.count; s++) {
+        const l = s * 6;
+        expect(w.chol[l + 3]).toBe(0);
+        expect(w.chol[l + 4]).toBe(0);
+        expect(w.chol[l + 5]).toBeGreaterThan(0);
+        // Relative, not absolute: these diagonals span 4 decades, and the
+        // phantom is an exp(mean(ln)) round-trip worth a few f32 ULP.
+        const wantPhantom = Math.sqrt(w.chol[l] * w.chol[l + 2]);
+        expect(Math.abs(w.chol[l + 5] - wantPhantom) / wantPhantom).toBeLessThan(1e-5);
+      }
+      expect(
+        arraysAlmostEqual(w.centers.subarray(0, w.count * 3), ts.centers.subarray(0, ts.count * 3))
+      ).toBe(true);
+    });
   });
 });

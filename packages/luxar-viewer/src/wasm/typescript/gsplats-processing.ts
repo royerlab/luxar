@@ -132,15 +132,10 @@ function computeDisplayCholesky3D(
   output: Float32Array,
   outputOffset: number
 ): void {
+  // `computeMarginalCholesky` reads only keepDims[0..n), so pass displayDims
+  // whole — a `.subarray(0, n)` view would allocate once PER SPLAT here.
   const n = Math.min(displayDims.length, 3);
-  computeMarginalCholesky(
-    fullPackedL,
-    fullPackedOffset,
-    displayDims.subarray(0, n),
-    n,
-    output,
-    outputOffset
-  );
+  computeMarginalCholesky(fullPackedL, fullPackedOffset, displayDims, n, output, outputOffset);
   if (n === 3) return;
 
   // Geometric mean of the real diagonals L[i,i], i < n. Falls back to the
@@ -357,7 +352,8 @@ function mahalanobisDistanceInternal(
  *
  * @param cholesky - Packed Cholesky factors [splatCount * packedSize]
  * @param visibility - Visibility mask [splatCount]
- * @param displayDims - Display dimension indices (sorted) [3]
+ * @param displayDims - Display dimension indices (sorted) [1..=3]; missing rows
+ *   are padded for 1D/2D data (see `computeDisplayCholesky3D`)
  * @param ndim - Total dimensionality
  * @param splatCount - Number of splats
  * @param output - Output 3D Cholesky factors [visibleCount * 6]
