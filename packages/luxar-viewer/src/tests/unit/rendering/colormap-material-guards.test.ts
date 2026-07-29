@@ -171,7 +171,7 @@ describe('Material colormap guards', () => {
       // are gone). Since volumetric phase 4 the texel5 FETCH itself is
       // unconditional — texel5.zw carries the per-endpoint alphas, read
       // in every mode — so the colormap guard moved to the scalar USE:
-      // the mix(lineT5.x, lineT5.y, t) LUT feed must stay inside the
+      // the mix(lineT5.x, lineT5.y, tEff) LUT feed must stay inside the
       // #ifdef USE_COLORMAP branch.
       expect(shader).not.toContain('in float aStartScalar');
       expect(shader).not.toContain('in float aEndScalar');

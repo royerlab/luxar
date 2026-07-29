@@ -167,10 +167,11 @@ notch of axial length `2 × width` bottoming out at 50%. (PR #785; follow-ups
   suppression scalar** in `[0, 1]` (`compute_cap_suppression` — Rust kernel +
   its TypeScript mirror, computed once per commit off the main thread, riding
   texel4.yz): `1.0` at a straight-through interior joint or a slice-clipped
-  end (nothing will arrive to sum with), `0.0` at a ≥ 90° bend, a branch hub,
-  or a free polyline end (there the quads genuinely do overlap — keep the
-  cap), `cos θ` in between. Consumed by all four shader backends (visual +
-  picking, GLSL + TSL). Joints are matched by vertex **index**, not position:
+  end (nothing will arrive to sum with), `0.0` at a ≥ 90° bend or a branch
+  hub (there the quads genuinely do overlap — keep the cap) or a free
+  polyline end (no neighbour at all — keep the soft cap), `cos θ` in
+  between. Consumed by all four shader backends (visual + picking, GLSL +
+  TSL). Joints are matched by vertex **index**, not position:
   `line_type="segments"` chains with per-segment duplicate points keep the
   cap (and the notch) — author connected geometry as `line_type="polyline"`.
 - **Per-endpoint cap factor `min(startCap, endCap)`** (#796): the initial

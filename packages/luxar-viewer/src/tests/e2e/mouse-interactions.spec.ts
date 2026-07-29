@@ -56,17 +56,12 @@ test.describe('Mouse Interactions', () => {
     expect(newFov).not.toBeCloseTo(initialFov, 0);
   });
 
-  test.skip('should change FOV but not zoom distance with Ctrl+scroll', async ({ page }) => {
-    // PERMANENT SKIP: Both event paths produce a zoom alongside the FOV change:
-    //   1. Synthetic WheelEvent dispatch with {ctrlKey:true} on the canvas
-    //      changes FOV but does not reliably gate the orbit-controls zoom
-    //      handler — `setEnableZoom(false)` is keyed on a real keydown
-    //      counter (see input-handler.ts:736), not the wheel event's ctrlKey.
-    //   2. Real `keyboard.down('Control')` + `mouse.wheel()` produces both
-    //      effects too, suggesting a race between the keydown handler
-    //      flipping the OrbitControls zoom flag and the wheel arriving.
-    // The behavior works correctly in real browsers driven by humans.
-    // Re-enable only if the input system stops gating zoom on a counter.
+  test('should change FOV but not zoom distance with Ctrl+scroll', async ({ page }) => {
+    // Re-enabled: the orbit wheel handler now ignores ctrl/meta wheel
+    // events directly (stateless routing — no keydown-tracked
+    // setEnableZoom gate), so a synthetic {ctrlKey:true} wheel reliably
+    // changes FOV without dollying. This is the regression test for
+    // that exclusivity.
     // Read initial state
     const initial = await page.evaluate(() => {
       const debug = (window as any).__luxarDebug;
