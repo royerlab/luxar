@@ -40,13 +40,49 @@ function isFadeable(mat: THREE.Material): mat is FadeableMaterial {
 }
 
 /**
- * Blend modes whose additive/order-independent compositing sums energy linearly
- * in opacity — so both LOD anti-popping mechanisms are brightness-exact there:
- * the coverage cross-fade (mass-conserved levels) and the streaming energy
- * compensation (`1/e(k)`). `max` (a max, not a sum) and `normal` (nonlinear
- * alpha-over) are excluded from both.
+ * Blend modes where opacity is a well-behaved linear knob on the composited
+ * result, so both LOD anti-popping mechanisms — the coverage cross-fade
+ * (mass-conserved levels) and the streaming energy compensation (`1/e(k)`) —
+ * are physically sound:
+ *
+ * - `additive` / `luminous`: order-independent compositing sums energy
+ *   linearly in opacity ⇒ both mechanisms are brightness-exact.
+ * - `volumetric`: order-dependent emission–absorption, but opacity linearly
+ *   scales the optical depth `τ = κ·opacity·intensity`
+ *   (VOLUMETRIC_BLENDING_SPEC.md §3.1), which is what makes an opacity fade
+ *   well-behaved here — see the two caveats below for what it does and does
+ *   NOT guarantee. Both are the documented, accepted tradeoffs of §6.
+ *
+ *   *Cross-fade.* Because τ adds across fragments and is linear in opacity, a
+ *   `w`/`1−w` pair composites to `1 − exp(−(w·τ_fine + (1−w)·τ_coarse))`: the
+ *   endpoints are exact, and in between the absorption moves monotonically
+ *   between the two levels' own absorptions — a log-space (transmittance-
+ *   multiplicative) interpolation, i.e. exactly the ghost-free dissolve an
+ *   anti-popping fade wants, and strictly better than the hard swap it
+ *   replaces. It collapses to a *constant* `1 − e^(−τ)` only where the two
+ *   levels present the same per-ray τ; the build invariant is total mass per
+ *   barrier group, NOT per-ray mass, and a coarse level is by construction a
+ *   different spatial distribution, so do not build on "absorption is
+ *   invariant mid-fade" — it holds only in that mass-matched idealization.
+ *
+ *   *Streaming `1/e(k)`.* `e(k)` is a GLOBAL energy fraction and a committed
+ *   ladder prefix is a SUBSET of splats, so the boost restores τ in
+ *   AGGREGATE, not per ray: rays through the committed core are over-boosted
+ *   and rays through only-missing splats get nothing. That is the same
+ *   structural approximation the additive/luminous path has shipped since the
+ *   compensation landed — volumetric is not held to a lower bar. The
+ *   volumetric-specific twist: on individually optically-thick splats
+ *   (`κ·splat-mass ≳ 1`) the per-splat self-screening `S(τ)` saturates
+ *   emission, so a boosted splat deepens occlusion rather than brightening.
+ *   Bounded by the shared `ENERGY_FLOOR` cap (≤ 10×), transient (decays as
+ *   `e → 1`), and `?no-lod-energy` is the escape hatch; a volumetric-specific
+ *   floor is the obvious knob if a thick-splat scene ever shows transient
+ *   dark blobs while streaming.
+ *
+ * `max` (a max, not a sum), `normal` (nonlinear alpha-over with opacity-gated
+ * depthWrite), and `opaque` are excluded from both mechanisms.
  */
-const BLENDABLE_MODES: ReadonlySet<string> = new Set(['additive', 'luminous']);
+const BLENDABLE_MODES: ReadonlySet<string> = new Set(['additive', 'luminous', 'volumetric']);
 
 /** Below this the finer level's blend weight is treated as 0/1 (single level). */
 export const FADE_EPSILON = 0.01;
@@ -61,11 +97,12 @@ export const ENERGY_FLOOR = 0.1;
 
 /**
  * Whether every fadeable leaf material under ``root`` uses a blend mode that
- * cross-fades correctly ({@link BLENDABLE_MODES} — additive / luminous,
- * order-independent + mass-conserved ⇒ brightness-exact). A group subtree
- * (overview partition branch) must be uniformly blendable. No fadeable
- * material at all ⇒ not blendable (nothing to fade — e.g. a not-yet-loaded
- * placeholder, or a `max`/`normal` layer which keeps the hard swap).
+ * cross-fades correctly ({@link BLENDABLE_MODES} — additive / luminous /
+ * volumetric, where opacity is a linear knob on summed energy or on optical
+ * depth). A group subtree (overview partition branch) must be uniformly
+ * blendable. No fadeable material at all ⇒ not blendable (nothing to fade —
+ * e.g. a not-yet-loaded placeholder, or a `max`/`normal`/`opaque` layer which
+ * keeps the hard swap).
  */
 export function isBlendableSubtree(root: THREE.Object3D): boolean {
   let sawFadeable = false;
@@ -98,11 +135,13 @@ export function isBlendableSubtree(root: THREE.Object3D): boolean {
  * When the product is ≈ 1 the leaf needs no adjustment: restore the authored
  * opacity if we had faded it (idempotent no-op otherwise) and, crucially, never
  * clone a material we don't have to — so a steady-state / disabled /
- * non-blendable / complete child stays byte-identical. Otherwise clone-on-
- * first-use (materials are cached by props, so an in-place write would fade
- * every layer sharing the instance; mirrors the layers panel's
- * ``_layerMaterialCloned`` marker so the two never double-clone), snapshot the
- * authored opacity as the fade base, and write `base × product`.
+ * non-blendable / complete child stays byte-identical. Otherwise snapshot the
+ * authored opacity as the fade base and write `base × product`. Leaf materials
+ * are per-node since the material-manager rework (all three node factories
+ * stamp ``_layerMaterialCloned: true`` at creation), so in practice the write
+ * mutates the node's own material in place; the clone-on-first-use branch
+ * below is a dormant safety net for any material that ever arrives unstamped
+ * (it mirrors the layers panel's marker so the two never double-clone).
  *
  * ``root`` is a leaf mesh or a group subtree (overview/partition branch) →
  * each fadeable leaf is visited individually, so `energyFactor` is genuinely
@@ -121,8 +160,9 @@ export function applyLodFade(
   // Normal mode's depthWrite is opacity-gated (>= 0.99, see
   // normalModeDepthWrite): after writing a fade opacity, re-derive the
   // mode state so the gate tracks the live value. Unreachable today
-  // (BLENDABLE_MODES = additive/luminous, whose depth state is
-  // opacity-independent) but preserves the invariant if that set grows.
+  // (BLENDABLE_MODES = additive/luminous/volumetric, whose depth state is
+  // opacity-independent — volumetric's depthWrite is unconditionally false)
+  // but preserves the invariant if that set grows.
   const refreshNormalDepthWrite = (m: FadeableMaterial): void => {
     if ((m.userData?.blendingMode as string | undefined) === 'normal') {
       m.applyBlendingMode?.('normal');
@@ -137,7 +177,9 @@ export function applyLodFade(
       committedEnergyFraction?: number;
     };
     // The blend mode lives on the MATERIAL's userData; energy compensation
-    // only makes physical sense where compositing sums energy linearly.
+    // only makes physical sense where opacity linearly scales the composited
+    // quantity (summed energy for additive/luminous, optical depth τ for
+    // volumetric — see BLENDABLE_MODES).
     let energyFactor = 1;
     if (energyComp && BLENDABLE_MODES.has((current.userData?.blendingMode as string) ?? '')) {
       energyFactor = energyCompensation(ud.committedEnergyFraction, ENERGY_FLOOR);
