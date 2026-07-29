@@ -148,6 +148,7 @@ from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
+from luxar.demos import require_module
 from luxar.encoding import EncodingMode
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.utils.demos import (
@@ -232,13 +233,7 @@ def load_kidney():
         list[np.ndarray]: One 3D volume per channel, shape (Z, Y, X), float32 [0, 1].
     """
     with asection("Loading kidney dataset"):
-        try:
-            from skimage.data import kidney
-        except ImportError:
-            raise ImportError(
-                "scikit-image is required for this demo.\n"
-                "Install with: pip install scikit-image pooch"
-            )
+        kidney = require_module("skimage.data").kidney
 
         try:
             raw = kidney()

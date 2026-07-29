@@ -84,6 +84,7 @@ from arbol import Arbol, aprint, asection
 
 from luxar import Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
+from luxar.demos import require_module
 from luxar.encoding import EncodingMode
 from luxar.utils.demos import (
     launch_viewer,
@@ -145,13 +146,7 @@ def load_cells3d():
         list[np.ndarray]: One 3D volume per channel, shape (Z, Y, X), float32 [0, 1].
     """
     with asection("Loading cells3d dataset"):
-        try:
-            from skimage.data import cells3d
-        except ImportError:
-            raise ImportError(
-                "scikit-image is required for this demo.\n"
-                "Install with: pip install scikit-image"
-            )
+        cells3d = require_module("skimage.data").cells3d
 
         # cells3d() returns (60, 2, 256, 256) — (Z, Channel, Y, X), uint16
         raw = cells3d()

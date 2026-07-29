@@ -113,6 +113,7 @@ from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import UIConfig, ViewerConfig
+from luxar.demos import require_module
 from luxar.encoding import EncodingMode
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.utils.demos import (
@@ -199,12 +200,7 @@ def load_cmu1_image() -> list[np.ndarray]:
     Returns:
         List of 3 channel images (2D float32, normalised to [0, 1]).
     """
-    try:
-        import tifffile
-    except ImportError:
-        raise ImportError(
-            "tifffile is required for this demo.\nInstall with: pip install tifffile"
-        )
+    tifffile = require_module("tifffile")
 
     from scipy.ndimage import zoom
 

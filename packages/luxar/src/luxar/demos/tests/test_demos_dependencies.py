@@ -22,7 +22,12 @@ from pathlib import Path
 import pytest
 
 from luxar.demos import INSTALL_SPECS, MissingDependencyError, require_module
-from luxar.demos._dependencies import DependencySpec
+from luxar.demos._dependencies import (
+    DependencySpec,
+    extras_for,
+    is_installed,
+    survey,
+)
 
 # Requirement names that intentionally live outside every Luxar extra.
 NOT_IN_ANY_EXTRA = {"gdown"}
@@ -165,6 +170,9 @@ class TestSpecsMatchPyproject:
 
         # Behavioural equivalence beats string equality: `>=2.2` and `>=2.2.0`
         # are the same requirement under PEP 440.
+        # One sample must land in EVERY gap between the floors we pin, or two
+        # different pins map every sample identically and the equivalence check
+        # passes vacuously. Keep a value just below and just above each floor.
         samples = [
             version_mod.Version(v)
             for v in (
@@ -176,16 +184,26 @@ class TestSpecsMatchPyproject:
                 "0.11.4",
                 "0.12.19",
                 "0.13",
+                "0.19.0",
+                "0.22",
                 "1.0",
+                "1.4.0",
                 "1.5.0",
+                "1.6.0",
                 "1.15.0",
                 "2.2",
                 "2.2.0",
+                "2.3.0",
                 "2.31.0",
                 "3.0",
                 "3.0.0",
+                "3.5.0",
+                "5.0.0",
+                "6.0.0",
                 "9.0.0",
                 "10.0",
+                "12.0.0",
+                "2023.1.0",
             )
         ]
         mine = {str(v): v in want.specifier for v in samples}
@@ -195,4 +213,78 @@ class TestSpecsMatchPyproject:
         ), (
             f"INSTALL_SPECS[{module!r}] = {want} accepts different versions than "
             f"pyproject's {sorted(pins)} — one of them has drifted"
+        )
+
+
+class TestSurvey:
+    """``survey`` backs ``luxar demo deps``, so it must be cheap and total."""
+
+    def test_survey_covers_the_whole_table(self) -> None:
+        assert {r.module for r in survey()} == set(INSTALL_SPECS)
+
+    def test_survey_is_sorted_case_insensitively(self) -> None:
+        """The CLI prints rows in survey order, so it must be stable."""
+        modules = [r.module for r in survey()]
+        assert modules == sorted(modules, key=str.lower)
+
+    def test_survey_filters_by_extra(self) -> None:
+        rows = survey("demos")
+        assert rows, "the demos extra must contribute specs"
+        assert all(r.spec.extra == "demos" for r in rows)
+        # gdown belongs to no extra, so an extra-filtered survey must exclude it.
+        assert "gdown" not in {r.module for r in rows}
+
+    def test_survey_does_not_import_the_modules(self) -> None:
+        """A survey that imported torch/esm would cost seconds and CUDA context."""
+        before = set(sys.modules)
+        survey()
+        new = set(sys.modules) - before
+        assert not (new & set(INSTALL_SPECS)), f"survey imported {new}"
+
+    def test_installed_flag_tracks_importability(self) -> None:
+        rows = {r.module: r for r in survey()}
+        # scipy is a hard dependency of the test env, numpy-adjacent and always
+        # present; a bogus entry must report the opposite.
+        assert rows["scipy"].installed is True
+
+    def test_is_installed_is_false_for_a_missing_module(self) -> None:
+        assert is_installed("no_such_package_xyz") is False
+
+    def test_is_installed_does_not_raise_on_a_missing_parent(self) -> None:
+        """find_spec raises ModuleNotFoundError for a submodule of a missing pkg."""
+        assert is_installed("no_such_package_xyz.submodule") is False
+
+
+class TestExtrasFor:
+    def test_it_dedupes_and_sorts(self) -> None:
+        rows = survey()
+        extras = extras_for(rows)
+        assert extras == sorted(set(extras))
+        assert "demos" in extras
+
+    def test_it_drops_specs_outside_every_extra(self) -> None:
+        """gdown has extra == "" and cannot be installed via luxar[...]."""
+        gdown = [r for r in survey() if r.module == "gdown"]
+        assert gdown, "gdown should still be in the table"
+        assert extras_for(gdown) == []
+
+
+class TestEveryGatedModuleIsInTheTable:
+    """A ``require_module("x")`` whose x is absent from the table would advertise
+    a BARE ``pip install x`` — exactly the unbounded hint rule 2 forbids — and
+    ``luxar demo deps`` would never report it as missing."""
+
+    def test_all_require_module_arguments_are_known(self) -> None:
+        demos_dir = Path(__file__).resolve().parents[1]
+        pattern = re.compile(r'require_module\(\s*"([^"]+)"')
+        unknown: dict[str, set[str]] = {}
+        for path in sorted(demos_dir.glob("demo_*.py")):
+            for module in pattern.findall(path.read_text(encoding="utf-8")):
+                # Submodules inherit their package's spec (see require_module).
+                root = module.split(".")[0]
+                if root not in INSTALL_SPECS:
+                    unknown.setdefault(root, set()).add(path.name)
+        assert not unknown, (
+            "require_module() called with modules missing from INSTALL_SPECS: "
+            + "; ".join(f"{m} ({', '.join(sorted(f))})" for m, f in unknown.items())
         )

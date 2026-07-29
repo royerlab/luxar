@@ -10,6 +10,7 @@ import pytest
 from typer.testing import CliRunner
 
 from luxar.cli import app
+from luxar.demos._dependencies import DependencySpec
 from luxar.demos.registry import iter_demos
 
 
@@ -382,3 +383,121 @@ class TestRunRealSubprocess:
             import shutil
 
             shutil.rmtree(out, ignore_errors=True)
+
+
+class TestDeps:
+    """``luxar demo deps`` reports (and installs) the optional demo packages."""
+
+    def test_deps_lists_every_known_dependency(self, runner) -> None:
+        from luxar.demos import INSTALL_SPECS
+
+        result = runner.invoke(app, ["demo", "deps"])
+        # Exit code is 1 when anything is missing, 0 when all present — both are
+        # valid here (it depends on the test machine), so only the table matters.
+        assert result.exit_code in (0, 1)
+        for module in INSTALL_SPECS:
+            assert module in result.stdout, f"{module} missing from the table"
+
+    def test_deps_shows_the_constrained_requirement_not_a_bare_name(
+        self, runner
+    ) -> None:
+        """The whole point of INSTALL_SPECS: never advertise an unbounded pin."""
+        result = runner.invoke(app, ["demo", "deps"])
+        assert "anndata>=0.10,<0.13" in result.stdout
+
+    def test_deps_rejects_an_unknown_extra(self, runner) -> None:
+        result = runner.invoke(app, ["demo", "deps", "--extra", "nope"])
+        assert result.exit_code == 1
+        assert "No known dependencies" in result.stdout
+
+    def test_deps_filters_to_one_extra(self, runner) -> None:
+        result = runner.invoke(app, ["demo", "deps", "--extra", "io"])
+        assert result.exit_code in (0, 1)
+        assert "imageio" in result.stdout
+        # A demos-only package must not appear in an io-filtered report.
+        assert "anndata" not in result.stdout
+
+    def test_deps_exits_nonzero_when_something_is_missing(self, runner) -> None:
+        """A CI gate can rely on the exit code, so it must track missing-ness."""
+        from luxar.demos._dependencies import DependencyStatus
+
+        fake = [
+            DependencyStatus(
+                "phony_xyz", DependencySpec("phony-xyz>=1", "demos"), False
+            )
+        ]
+        with patch("luxar.demos.survey", return_value=fake):
+            result = runner.invoke(app, ["demo", "deps"])
+        assert result.exit_code == 1
+        assert "1 missing: phony_xyz" in result.stdout
+
+    def test_deps_exits_zero_when_all_present(self, runner) -> None:
+        from luxar.demos._dependencies import DependencyStatus
+
+        fake = [
+            DependencyStatus("phony_xyz", DependencySpec("phony-xyz>=1", "demos"), True)
+        ]
+        with patch("luxar.demos.survey", return_value=fake):
+            result = runner.invoke(app, ["demo", "deps"])
+        assert result.exit_code == 0
+        assert "all 1 optional dependency installed." in result.stdout
+
+    def test_deps_columns_are_never_narrower_than_their_headers(self, runner) -> None:
+        """A one-row report (module shorter than "MODULE") must not go ragged."""
+        import re
+
+        from luxar.demos._dependencies import DependencyStatus
+
+        fake = [DependencyStatus("ab", DependencySpec("ab>=1", "demos"), True)]
+        with patch("luxar.demos.survey", return_value=fake):
+            result = runner.invoke(app, ["demo", "deps"])
+        plain = [re.sub(r"\x1b\[[0-9;]*m", "", ln) for ln in result.stdout.splitlines()]
+        header = next(ln for ln in plain if "MODULE" in ln)
+        row = next(ln for ln in plain if "ab>=1" in ln)
+        # The EXTRA column must start at the same offset in both lines.
+        assert header.index("EXTRA") == row.index("demos"), f"{header!r} vs {row!r}"
+
+    def test_deps_dry_run_install_runs_no_pip(self, runner) -> None:
+        from luxar.demos._dependencies import DependencyStatus
+
+        fake = [
+            DependencyStatus(
+                "phony_xyz", DependencySpec("phony-xyz>=1", "demos"), False
+            )
+        ]
+        with patch("luxar.demos.survey", return_value=fake):
+            with patch("luxar.cli.demo_commands.run_child_process") as proc:
+                result = runner.invoke(app, ["demo", "deps", "--install", "--dry-run"])
+        assert result.exit_code == 0
+        proc.assert_not_called()
+        assert "pip install" in result.stdout
+
+    def test_deps_install_invokes_pip_with_the_missing_extras(self, runner) -> None:
+        from luxar.demos._dependencies import DependencyStatus
+
+        fake = [
+            DependencyStatus(
+                "phony_xyz", DependencySpec("phony-xyz>=1", "gsplats"), False
+            )
+        ]
+        with patch("luxar.demos.survey", return_value=fake):
+            with patch(
+                "luxar.cli.demo_commands.run_child_process", return_value=0
+            ) as proc:
+                runner.invoke(app, ["demo", "deps", "--install"])
+        proc.assert_called_once()
+        cmd = proc.call_args[0][0]
+        assert cmd[:4] == [sys.executable, "-m", "pip", "install"]
+        # The extra named by the missing spec must be the one installed.
+        assert any("[gsplats]" in part for part in cmd), cmd
+
+    def test_deps_names_specs_that_belong_to_no_extra(self, runner) -> None:
+        """gdown is installable only by name, so --install can't cover it."""
+        from luxar.demos._dependencies import DependencyStatus
+
+        fake = [DependencyStatus("gdown", DependencySpec("gdown", ""), False)]
+        with patch("luxar.demos.survey", return_value=fake):
+            result = runner.invoke(app, ["demo", "deps"])
+        assert result.exit_code == 1
+        assert "Not in any extra" in result.stdout
+        assert "gdown" in result.stdout

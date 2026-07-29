@@ -22,7 +22,50 @@ luxar demo run lorenz       # run by key or index; forwards -- args
 luxar demo run lorenz -- --no-serve --points=10000
 luxar demo run-all          # generate demo datasets (--no-serve; skips GPU/large-download by default)
 luxar demo cache list       # inventory demo caches under ~/.cache/luxar/
+luxar demo deps             # which optional dependencies are missing?
+luxar demo deps --install   # install the extras that provide them
 ```
+
+## Optional dependencies
+
+The core install deliberately excludes the heavyweight packages some demos need
+(`torch`, `umap-learn`, `esm`, `cellxgene-census`, `nibabel`, …), so a fresh
+checkout can list every demo but not run every demo.
+
+`_dependencies.py` is the single source of truth. `INSTALL_SPECS` maps each
+**import** name (`skimage`, not `scikit-image`) to the constrained requirement,
+the Luxar extra that provides it, and — where the bound or the skippability is
+load-bearing — why. Two consumers read it, which is what keeps them honest:
+
+| Consumer | Role |
+|---|---|
+| `require_module("x")` | The runtime gate. Raises `MissingDependencyError` naming the *constrained* spec and its extra. |
+| `luxar demo deps` | The installer/report. Surveys the table with `find_spec` (no imports), exits 1 if anything is missing. |
+
+Two rules govern the gate, both learned from real bugs:
+
+1. **Gate at the point of use, never at the entry point.** A demo whose
+   expensive artifact is already cached must run *without* the dependency that
+   produced it. `tests/test_no_entrypoint_dependency_preflight.py` fails the
+   build if an entry-point preflight reappears.
+2. **Advertise the constrained requirement.** A bare `pip install anndata`
+   resolves to 0.13+, which needs `zarr>=3.1` and would silently upgrade Luxar
+   past its `zarr<3.0` pin, breaking every store on disk.
+
+`tests/test_demos_dependencies.py` enforces both: every spec must accept exactly
+the versions its `pyproject.toml` pin accepts, and every module passed to
+`require_module` must exist in the table.
+
+Installing everything:
+
+```bash
+make install-demo-deps      # hatch env: the demos + gsplats + io extras
+luxar demo deps --install   # same thing from the CLI, any environment
+```
+
+Some demos need something a package manager can't supply — a Kaggle credential,
+a manual download, a `git lfs pull`, or a GPU. Those show up in the `NEEDS`
+column of `luxar demo` and in `luxar demo info <key>`, not here.
 
 ## The DEMO_META registry
 
