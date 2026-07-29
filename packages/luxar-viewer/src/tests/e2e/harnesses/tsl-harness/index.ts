@@ -3,8 +3,8 @@
  * harness. The page entry (`../tsl-harness.ts`, loaded by
  * `tsl-harness.html`) imports everything it needs from here.
  *
- * The 57 registry entries live in four shader-family modules —
- * `post-processing.ts` (8), `points.ts` (18), `lines.ts` (13),
+ * The 61 registry entries live in four shader-family modules —
+ * `post-processing.ts` (8), `points.ts` (18), `lines.ts` (17),
  * `gsplats.ts` (18) — and are merged here into the single
  * `SHADER_REGISTRY` the Playwright parity/codegen specs drive by name.
  *

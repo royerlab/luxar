@@ -193,21 +193,66 @@ export function linePickWebGPUFactory(
     // the visual shaders.
     const startS: TSLNode = clamp(sanitizeNonNegative(aStartSharpness, float(0.5)), 0.0, 1.0);
     const endS: TSLNode = clamp(sanitizeNonNegative(aEndSharpness, float(0.5)), 0.0, 1.0);
-    const width: TSLNode = mix(startW, endW, t).toVar();
-    const vSharpnessVal: TSLNode = mix(startS, endS, t);
 
     const mvStart: TSLNode = modelViewMatrix.mul(vec4(aStartPos, 1.0)).toVar();
     const mvEnd: TSLNode = modelViewMatrix.mul(vec4(aEndPos, 1.0)).toVar();
+    const startDepth: TSLNode = mvStart.z.negate().toVar();
+    const endDepth: TSLNode = mvEnd.z.negate().toVar();
+
+    // Near-plane SEGMENT clipping — visual-shader parity (see the
+    // visual factory / shader-glsl.ts for the full rationale: a
+    // behind-camera endpoint has clip w <= 0, which flips the
+    // clip-space expansion and rasterizes the quad as a twisted bowtie
+    // whose near-clip boundary cuts through the pick footprint). Keeps
+    // every vertex at viewZ >= nearCull and remaps t (tEff) so the cap
+    // math and per-endpoint attributes keep the original
+    // parameterization. select() evaluates both branches, so
+    // denominators are floored to keep the untaken lane finite.
+    let tA: TSLNode = float(0.0);
+    let tB: TSLNode = float(1.0);
+    if (!config.isOrtho) {
+      const startNear: TSLNode = startDepth
+        .lessThan(nearCull)
+        .and(endDepth.greaterThanEqual(nearCull));
+      const endNear: TSLNode = endDepth
+        .lessThan(nearCull)
+        .and(startDepth.greaterThanEqual(nearCull));
+      tA = startNear
+        .select(
+          nearCull
+            .sub(startDepth)
+            .div(max(endDepth.sub(startDepth), float(1e-20)))
+            .toVar(),
+          float(0.0)
+        )
+        .toVar();
+      tB = endNear
+        .select(
+          startDepth
+            .sub(nearCull)
+            .div(max(startDepth.sub(endDepth), float(1e-20)))
+            .toVar(),
+          float(1.0)
+        )
+        .toVar();
+      const mvStartClipped: TSLNode = mix(mvStart, mvEnd, tA).toVar();
+      const mvEndClipped: TSLNode = mix(mvStart, mvEnd, tB).toVar();
+      mvStart.assign(mvStartClipped);
+      mvEnd.assign(mvEndClipped);
+    }
+    const tEff: TSLNode = mix(tA, tB, t).toVar();
+
+    const width: TSLNode = mix(startW, endW, tEff).toVar();
+    const vSharpnessVal: TSLNode = mix(startS, endS, tEff);
     const mvPos: TSLNode = mix(mvStart, mvEnd, t).toVar();
 
     // PERSPECTIVE ONLY (compile-time graph variant; see the visual line
     // TSL): ortho graphs carry no cull/fade code — NDC clipping is the
-    // sole cull authority there.
+    // sole cull authority there. Reads the ORIGINAL depths (computed
+    // before segment clipping above).
     // 1e-20 floor = uNearCull == 0 guard only; uNearCull is
     // scene-bounds-scaled (see the visual line shader — an absolute 1e-4
     // floor culled every segment of a tiny-unit scene).
-    const startDepth: TSLNode = mvStart.z.negate().toVar();
-    const endDepth: TSLNode = mvEnd.z.negate().toVar();
     const bothBehind: TSLNode | null = config.isOrtho
       ? null
       : startDepth.lessThan(nearCull).and(endDepth.lessThan(nearCull));
@@ -289,7 +334,7 @@ export function linePickWebGPUFactory(
     // Assign varyings (declared outside the Fn; see above).
     vSharpness.assign(vSharpnessVal);
     vPerpNorm.assign(aQuadCorner.y);
-    vT.assign(t);
+    vT.assign(tEff);
     vSegmentLength.assign(aSegmentLength);
     vWidthAtT.assign(width);
     vPixelWidth.assign(rawPixelWidth);
