@@ -58,6 +58,33 @@ scale-free-conditioning reasoning as the shader's trace-normalized covariance
 inverse. Rank-deficient axes are still regularized, now as a fixed *fraction* of
 the real axis.
 
+#### Changed — five gsplat demos bake their preferred viewer appearance
+
+The blanket `volumetric` + kappa 1.0 default from the bioimaging demo sweep was
+wrong for scenes whose layers are *superimposed over the same specimen*: there,
+emission-absorption makes whichever layer draws first occlude the other, so
+channel overlap reads as one channel hiding the rest instead of the colours
+mixing. The multi-channel organoid now composites `additive` (a pure sum, no
+attenuation) and the 4D neuromast timelapse drops to absorption 0.05 — the
+absorption slider's smallest non-zero step, which keeps volumetric's bounded
+accumulation without the occlusion. At kappa 1.0 the neuromast rendered as a
+dim blue haze with its hair-cell cluster and membrane filaments lost.
+
+The Tribolium embryo switches to `normal`. That light-sheet volume carries a
+heavy diffuse background, and integrating it along every ray saturates into a
+solid slab with the embryo buried inside; `normal` composites the projected
+2D-Gaussian peak with alpha-over instead, so the background stops accumulating
+and the surface nuclei stay crisp. Because nothing sums any more the scene
+needs `exposure=1.97` to sit at a normal level.
+
+Two appearance tweaks round it out: the Milky Way dust cube moves from
+`additive` to a light `volumetric` (absorption 0.3, so near dust softly
+occludes far dust) under ACES at `exposure=-0.17`, with a `[0, 0.095]` display
+window that holds its faint diffuse filaments just below clipping; and the
+organoid DAPI nuclei demo gains a `plasma` colormap (it previously rendered
+uncolormapped) plus Neutral tone-mapping to keep the LUT hues faithful.
+Regenerate the demo datasets to pick up the new look.
+
 #### Changed — volumetric joins the LOD anti-popping blendable set
 
 `volumetric` is now in `BLENDABLE_MODES` (`packages/luxar-viewer/src/scene/lod-fade.ts`),

@@ -374,8 +374,8 @@ def create_luxar_scene(
                 dimensions=dims,
                 # Neutral tone-mapping (not the viewer's default ACES, which lifts
                 # highlights and shifts hue) — matches the known-good gsplat demos.
-                # Peak projection (see the blending mode below) keeps only the
-                # brightest splat along each ray instead of summing, so the
+                # The blending mode below projects each splat's peak instead of
+                # integrating along the view ray, so nothing accumulates and the
                 # embryo needs ~2 stops of exposure to sit at a normal level.
                 viewer_config=ViewerConfig(tone_mapping="Neutral", exposure=1.97),
             )
@@ -424,11 +424,12 @@ Navigation:
                     cholesky_factors=gsplats_data.cholesky_factors,
                     colors=colors,
                     opacity=1.0,
-                    # `normal` (peak projection) rather than an accumulating
-                    # mode: this light-sheet volume carries a heavy diffuse
-                    # background, and summing it along every ray buries the
-                    # embryo in haze. Keeping the brightest splat per ray
-                    # leaves the background where it belongs.
+                    # `normal` rather than an accumulating mode: this light-sheet
+                    # volume carries a heavy diffuse background, and integrating
+                    # it along every ray buries the embryo in haze. `normal`
+                    # composites the projected 2D-Gaussian peak (surface
+                    # density) with alpha-over instead, so the background stops
+                    # summing and the surface nuclei stay crisp.
                     blending_mode="normal",
                     layer=True,
                 )

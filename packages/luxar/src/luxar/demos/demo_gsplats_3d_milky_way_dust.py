@@ -310,6 +310,11 @@ def create_luxar_scene(gsplats_data: GSplatData, output_path: Path) -> Path:
         with LuxarZarrCompiler(
             output_path, encoding_mode=EncodingMode.PRECISION
         ) as compiler:
+            # ACES on purpose, not by omission: its highlight rolloff is what
+            # keeps the dense cloud cores from clipping flat. That trades away
+            # exact `inferno` hue fidelity, so the compiler's LUT/tone-mapping
+            # warning is EXPECTED here (it fires for any non-Neutral scene) —
+            # this is dust, not a scientific colour encoding.
             scene = compiler.create_scene(
                 dimensions=dims,
                 viewer_config=ViewerConfig(tone_mapping="ACES", exposure=-0.17),
