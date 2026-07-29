@@ -155,44 +155,30 @@ describe('ControlsManager', () => {
       expect(controls.dampingFactor).toBe(0.25);
     });
 
-    it('should enable/disable zoom', () => {
-      controlsManager.setEnableZoom(false);
+    it('Ctrl/Meta+wheel is left to the FOV handler — no zoomDelta accumulates', () => {
+      // Zoom-vs-FOV exclusivity is stateless: the orbit wheel handler
+      // reads the event's own modifier flags (no keydown-tracked gate
+      // that can stick shut when a modifier keyup is lost to a focus
+      // change). Dispatch modifier-carrying wheel events at the canvas
+      // and verify the camera distance (proxy for zoomDelta accumulation
+      // through update()) does NOT change.
       const controls = controlsManager.getControls() as LuxarOrbitControls;
-      expect(controls.enableZoom).toBe(false);
-
-      controlsManager.setEnableZoom(true);
-      expect(controls.enableZoom).toBe(true);
-    });
-
-    it('[controls.md G32] setEnableZoom(false) on orbit blocks wheel events from accumulating zoomDelta', () => {
-      // controls.md G32[P5]: the prior test only checks the `enableZoom`
-      // field. This test exercises the actual wiring: dispatch a wheel
-      // event to the canvas while zoom is disabled and verify the camera
-      // distance (proxy for zoomDelta accumulation through update()) does
-      // NOT change.
-      const controls = controlsManager.getControls() as LuxarOrbitControls;
-      controlsManager.setEnableZoom(false);
-
-      // Distance is camera-to-target — proxy for accumulated zoomDelta.
       const beforeDist = camera.position.distanceTo(controls.target);
 
-      // Dispatch a wheel event at the canvas.
+      for (const mods of [{ ctrlKey: true }, { metaKey: true }]) {
+        domElement.dispatchEvent(
+          new WheelEvent('wheel', { deltaY: -100, cancelable: true, bubbles: true, ...mods })
+        );
+      }
+      controls.update();
+      expect(camera.position.distanceTo(controls.target)).toBeCloseTo(beforeDist, 5);
+
+      // Sanity: a plain wheel event DOES change distance.
       domElement.dispatchEvent(
         new WheelEvent('wheel', { deltaY: -100, cancelable: true, bubbles: true })
       );
       controls.update();
-
-      const afterBlockedDist = camera.position.distanceTo(controls.target);
-      expect(afterBlockedDist).toBeCloseTo(beforeDist, 5);
-
-      // Sanity: re-enabling and dispatching another event DOES change distance.
-      controlsManager.setEnableZoom(true);
-      domElement.dispatchEvent(
-        new WheelEvent('wheel', { deltaY: -100, cancelable: true, bubbles: true })
-      );
-      controls.update();
-      const afterEnabledDist = camera.position.distanceTo(controls.target);
-      expect(afterEnabledDist).not.toBeCloseTo(beforeDist, 5);
+      expect(camera.position.distanceTo(controls.target)).not.toBeCloseTo(beforeDist, 5);
     });
 
     describe('natural drag (LEFT ↔ RIGHT swap)', () => {

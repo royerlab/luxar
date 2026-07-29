@@ -238,6 +238,28 @@ describe('handleWheel — direction (sign of deltaY) + addZoomDelta', () => {
     handleWheel(ctx, evt);
     expect(spy).not.toHaveBeenCalled();
   });
+
+  it.each([{ ctrlKey: true }, { metaKey: true }])(
+    'ignores wheel with %o — FOV owns modifier wheels (stateless routing)',
+    (mods) => {
+      // Regression for the stuck-wheel bug class: exclusivity between
+      // Ctrl/⌘+wheel FOV and plain-wheel zoom is decided per event from
+      // the event's own live modifier flags, not from a keydown-tracked
+      // enableZoom gate (which stuck shut when a modifier keyup was lost
+      // to a focus change — wheel zoom died after window switching).
+      // Also covers trackpad pinch, which browsers synthesize as
+      // ctrlKey wheel events with no Control keydown (issue #741).
+      const { ctx, state } = makeBaseCtx();
+      const evt = new WheelEvent('wheel', { deltaY: -100, cancelable: true, ...mods });
+      const spy = vi.spyOn(evt, 'preventDefault');
+      handleWheel(ctx, evt);
+      expect(state.zoomDelta).toBe(0);
+      expect(ctx.dispatch).not.toHaveBeenCalled();
+      // No preventDefault either — the window-level FOV handler owns
+      // (and preventDefaults) modifier wheels.
+      expect(spy).not.toHaveBeenCalled();
+    }
+  );
 });
 
 describe('handlePointerDown — non-touch path', () => {

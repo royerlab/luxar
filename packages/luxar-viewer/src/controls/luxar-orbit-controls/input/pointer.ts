@@ -221,6 +221,15 @@ export function handlePointerUp(ctx: OrbitInputCtx, event: PointerEvent): void {
 
 export function handleWheel(ctx: OrbitInputCtx, event: WheelEvent): void {
   if (!ctx.enabled || !ctx.enableZoom) return;
+
+  // Ctrl/Meta+scroll belongs to the window-level FOV handler (which also
+  // covers trackpad pinch — browsers synthesize those as ctrlKey wheel
+  // events with no keydown). Deciding here, from the event's own live
+  // modifier flags, keeps zoom-vs-FOV routing stateless: no keydown/keyup
+  // bookkeeping that can stick when a modifier keyup is lost to a focus
+  // change. Mirrors luxar-fly-controls/input/wheel.ts.
+  if (event.ctrlKey || event.metaKey) return;
+
   event.preventDefault();
 
   const scale = computeZoomScale(event.deltaY, ctx.zoomSpeed);
