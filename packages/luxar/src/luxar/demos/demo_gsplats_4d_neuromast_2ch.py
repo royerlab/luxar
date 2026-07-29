@@ -211,7 +211,8 @@ def create_luxar_scene(channel_paths: list[Path], output_path: Path) -> Path:
                         name=ch["name"],
                         path=str(path),
                         opacity=ch.get("opacity", 1.0),
-                        blending_mode="additive",
+                        absorption=1.0,
+                        blending_mode="volumetric",
                         layer=True,
                         colormap=ch["colormap"],
                     )
