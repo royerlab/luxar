@@ -40,7 +40,8 @@ export const DEFAULT_NAV_CONFIG: NavigationConfig = {
  * @param dims - Complete dimension configuration including metadata
  * @param modifiers - Keyboard modifier state for fine/coarse control
  * @param config - Navigation configuration (step multipliers, etc.)
- * @returns Step size for navigation, guaranteed positive and >= 1 for discrete dims
+ * @returns Step size for navigation, guaranteed positive and at least one
+ *          grid cell (`meta.step`, default 1) for discrete dims
  */
 export function calculateStepSize(
   dimIndex: number,
@@ -72,9 +73,14 @@ export function calculateStepSize(
   // Apply global multiplier
   stepSize *= config.stepSizeMultiplier;
 
-  // For discrete dimensions, ensure step is at least 1
+  // For discrete dimensions, quantize to the dim's declared grid and
+  // never step below one grid cell. Classic frame-index dims (step 1 or
+  // unset) keep the historical `max(1, round(stepSize))`; dims with a
+  // fractional declared step (e.g. a 4th spatial axis sampled every
+  // 0.04 units) step cell-by-cell instead of collapsing to whole units.
   if (meta?.discrete) {
-    stepSize = Math.max(1, Math.round(stepSize));
+    const gridStep = meta.step && meta.step > 0 ? meta.step : 1;
+    stepSize = Math.max(gridStep, Math.round(stepSize / gridStep) * gridStep);
   }
 
   return stepSize;
@@ -93,8 +99,13 @@ export function calculateStepSize(
  * @param direction - Navigation direction: 1 for forward (]), -1 for backward ([)
  * @param stepSize - Step size to apply (from calculateStepSize)
  * @param range - Valid [min, max] bounds for this dimension
- * @param discrete - If true, rounds to nearest integer (for frame indices)
+ * @param discrete - If true, rounds to the declared grid (`snapStep`)
  * @param wrapAround - If true, wraps at boundaries; if false, clamps to range
+ * @param snapStep - Grid the position snaps to for discrete dims (the dim's
+ *                   declared step; default 1 = classic integer frame indices).
+ *                   Uses `round(pos/snapStep)*snapStep`, the same expression
+ *                   as `SceneDimsManager.setDimensionValue`, so the result is
+ *                   bit-identical to the manager's own snap.
  * @returns New position after navigation, guaranteed to be within range
  */
 export function calculateNextPosition(
@@ -103,13 +114,15 @@ export function calculateNextPosition(
   stepSize: number,
   range: [number, number],
   discrete: boolean = false,
-  wrapAround: boolean = false
+  wrapAround: boolean = false,
+  snapStep: number = 1
 ): number {
   let newPos = currentPos + direction * stepSize;
 
-  // Handle discrete dimensions
+  // Handle discrete dimensions: snap to the declared grid
   if (discrete) {
-    newPos = Math.round(newPos);
+    const grid = snapStep > 0 ? snapStep : 1;
+    newPos = Math.round(newPos / grid) * grid;
   }
 
   // Handle boundaries
