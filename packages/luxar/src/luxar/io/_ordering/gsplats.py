@@ -63,7 +63,9 @@ def compute_chunk_bounds_gsplats(
 
     Args:
         centers: Splat centers (already sorted), shape (N, d)
-        cholesky_factors: Packed Cholesky factors (already sorted), shape (N, k)
+        cholesky_factors: Packed Cholesky factors (already sorted), shape
+            (N, k), or a single shared row (1, k) reused for every chunk when
+            all splats have a uniform (identical) Cholesky factorization
         chunk_size: Number of splats per chunk
         coverage_sigma: Coverage radius in standard deviations (default 3.0)
         slice_dims: Barrier/categorical dimension indices (no σ expansion).
