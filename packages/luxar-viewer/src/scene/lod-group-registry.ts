@@ -46,6 +46,7 @@ import * as THREE from 'three';
 
 import type { BoundingBox } from './scene-manager/clipping/bounds-math';
 import { log, Modules } from '../utils/log';
+import { isEffectivelyVisible } from '../utils/object-visibility';
 import type { LODGroupSelectorMode } from '../types/lod-group';
 import {
   isFresh,
@@ -717,7 +718,7 @@ export class LODGroupRegistry {
       if (isReady(target)) {
         entry.activeChildIndex = desired;
       } else {
-        this.maybeKickLoad(target);
+        this.maybeKickLoad(entry, target);
       }
     }
     // Self-heal a NOT-ready aspiration (eager default failed to attach, or a
@@ -728,7 +729,7 @@ export class LODGroupRegistry {
     // registered child loader re-queries on a view change), not by the registry
     // — we just wait for that commit to re-stamp it fresh.
     const aspiration = entry.children[entry.activeChildIndex];
-    if (aspiration && !isReady(aspiration)) this.maybeKickLoad(aspiration);
+    if (aspiration && !isReady(aspiration)) this.maybeKickLoad(entry, aspiration);
 
     // ── Slice-aware DISPLAY resolution ──
     // Show the aspiration when its committed geometry is fresh for the current
@@ -886,7 +887,7 @@ export class LODGroupRegistry {
         } else if (partner && !isReady(partner) && aspBlendable) {
           // Approaching a not-yet-resident finer level: load it so the next
           // crossing can blend (this crossing hard-swaps while it loads).
-          this.maybeKickLoad(partner);
+          this.maybeKickLoad(entry, partner);
         }
       }
     }
@@ -904,7 +905,7 @@ export class LODGroupRegistry {
     const needsReloadOrRefine =
       aspirationReady && (!aspirationFresh || (aspiration!.hasMoreLODs?.() ?? false));
     if (settled && needsReloadOrRefine && aspiration!.ensureLoaded) {
-      this.maybeKickReload(aspiration!);
+      this.maybeKickReload(entry, aspiration!);
     }
 
     // ── Apply visibility (single owner) ──
@@ -1161,9 +1162,9 @@ export class LODGroupRegistry {
    * released" behaviour left permanently stuck (a failed child is never an
    * eviction candidate).
    */
-  private maybeKickLoad(child: LODGroupChild): void {
+  private maybeKickLoad(entry: LODGroupEntry, child: LODGroupChild): void {
     if (isReady(child)) return; // not-ready-only: a ready level needs no initial load
-    this.kickDeferredLoad(child);
+    this.kickDeferredLoadIfVisible(entry, child);
   }
 
   /**
@@ -1180,7 +1181,42 @@ export class LODGroupRegistry {
    * blanks the screen, and the shared ``loading``/cooldown guards make
    * re-calling it every settled frame safe.
    */
-  private maybeKickReload(child: LODGroupChild): void {
+  private maybeKickReload(entry: LODGroupEntry, child: LODGroupChild): void {
+    this.kickDeferredLoadIfVisible(entry, child);
+  }
+
+  /**
+   * **Effective-visibility gate** — the single place the per-frame paths
+   * (``maybeKickLoad`` / ``maybeKickReload``) decide whether a deferred load is
+   * worth STARTING at all.
+   *
+   * A layer authored ``visible=false`` (or toggled off in the layers panel)
+   * hides the LAYER object; the lod_group and its levels underneath keep their
+   * own ``visible`` flags, so the selector happily kept aspiring to — and
+   * lazily loading — fine levels that cannot be drawn. Those loads compete for
+   * the shared fetch gate, the worker pool, and VRAM with the layer the user is
+   * actually looking at (measured: a hidden 9.75M-point level finished FIRST,
+   * roughly doubling scene load time). So: no group visible ⇒ no new loads.
+   *
+   * Scope is deliberately narrow — this only stops STARTING work:
+   *   - it never hides or unloads anything already resident (a hidden layer
+   *     draws nothing anyway, and retention keeps a re-show free);
+   *   - the eager ``default_level`` is loaded by ``loadLodGroupNode``, not from
+   *     here, so a hidden layer still has its cheap coarse level ready to
+   *     display the instant the panel toggles it on;
+   *   - the walk is ancestor-aware via ``entry.groupObject`` (the hidden flag
+   *     usually sits on an ANCESTOR layer/group, not on the lod_group itself);
+   *   - the gate is re-evaluated every frame, so toggling the layer back on
+   *     (``LayerApplyEngine.applyVisibility`` → ``requestRender`` →
+   *     ``AnimationController`` → ``evaluatePerFrame``) resumes loading on the
+   *     very next frame with no extra wiring.
+   *
+   * ``retryLazyChildByLeafPath`` (an explicit user retry of a FAILED level)
+   * deliberately bypasses this and calls ``kickDeferredLoad`` directly: an
+   * explicit request is honoured whatever the layer's visibility.
+   */
+  private kickDeferredLoadIfVisible(entry: LODGroupEntry, child: LODGroupChild): void {
+    if (!isEffectivelyVisible(entry.groupObject)) return;
     this.kickDeferredLoad(child);
   }
 

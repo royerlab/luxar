@@ -399,3 +399,57 @@ class TestAddLinesAdditiveLod:
         store = zarr.open(str(output), mode="r")
         grp = store["ln"]
         assert "n_additive_sublods" not in grp.attrs
+
+
+class TestLinesStreamBreakpoints:
+    """``stream:<c>`` on Lines — sized in vertices, cut on polylines."""
+
+    @staticmethod
+    def _segments(n_seg: int, seed: int = 0) -> np.ndarray:
+        rng = np.random.RandomState(seed)
+        return rng.rand(n_seg * 2, 3).astype(np.float32)
+
+    def test_chunk_is_converted_from_vertices_to_polylines(self) -> None:
+        # 500 two-vertex polylines: mean length 2, so stream:200 vertices
+        # becomes 100 polylines in the first level.
+        verts = self._segments(500)
+
+        levels = make_additive_lod_lines(verts, line_type="segments", counts="stream:200")
+
+        assert len(levels[0]) == 100
+
+    def test_every_level_holds_whole_polylines(self) -> None:
+        verts = self._segments(500, seed=1)
+
+        levels = make_additive_lod_lines(verts, line_type="segments", counts="stream:200")
+
+        for level in levels:
+            for member in level:
+                # `segments` polylines are exactly the two endpoints of one
+                # segment; a split polyline would break segment topology.
+                assert member.size == 2
+
+    def test_levels_partition_the_polylines_exactly(self) -> None:
+        verts = self._segments(400, seed=2)
+
+        levels = make_additive_lod_lines(verts, line_type="segments", counts="stream:100")
+
+        joined = np.concatenate([m for level in levels for m in level])
+        assert joined.size == 800
+        assert np.array_equal(np.unique(joined), np.arange(800))
+
+    def test_smaller_than_one_chunk_collapses_to_a_single_level(self) -> None:
+        verts = self._segments(20, seed=3)
+
+        levels = make_additive_lod_lines(
+            verts, line_type="segments", counts="stream:40000"
+        )
+
+        assert len(levels) == 1
+        assert len(levels[0]) == 20
+
+    def test_unrecognized_string_names_both_vocabularies(self) -> None:
+        verts = self._segments(20, seed=4)
+
+        with pytest.raises(ValueError, match="energy:.*stream:|stream:.*energy:"):
+            make_additive_lod_lines(verts, line_type="segments", counts="bogus:1")
