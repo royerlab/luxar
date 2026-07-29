@@ -46,6 +46,7 @@ utils/
 ├── clamp.ts                 # Generic numeric clamp (optional bounds)
 ├── console-interceptor.ts   # Ring-buffer console capture (Proxy singleton, opt-in patch)
 ├── escape-html.ts           # HTML entity escaping for safe rendering
+├── format-error.ts          # Unknown thrown value → message / name: message / stack
 ├── log.ts                   # log object, Modules registry, LogEmoji, createModuleLogger
 ├── object-visibility.ts     # isEffectivelyVisible (ancestor-aware scene-graph visibility)
 ├── platform.ts              # isMacPlatform()
@@ -110,6 +111,21 @@ Converts linear sRGB float RGBA pixels (from WebGL `readPixels`) to BT.2020 PQ Y
 **Core Function**:
 
 - `rgbaFloatToI420P10(rgba, width, height)` — Linear sRGB RGBA float to BT.2020 PQ YCbCr I420P10 `Uint16Array`
+
+### format-error.ts - Error Formatting
+
+Turning an unknown thrown value into something readable. `catch (error)` yields
+`unknown`, and both obvious approaches fail in the same place: `String(error)`
+loses a `DOMException`'s name, and `JSON.stringify(error)` yields `"{}"` because
+`name` / `message` / `stack` are non-enumerable. The debug console's Error branch
+uses these so a `log.*(…, error)` call keeps its message.
+
+- `getErrorMessage(error)` — the message; never throws (guards the
+  null-prototype `String()` TypeError, since this runs inside `catch` blocks)
+- `formatErrorForDisplay(error)` — one-line `name: message`, name alone when the
+  message is empty
+- `getErrorStack(error)` — the stack, including duck-typed carriers, else
+  `undefined`
 
 ### escape-html.ts - HTML Escaping
 

@@ -131,3 +131,55 @@ describe('ConsoleInterceptor opt-in patching (embedability)', () => {
     expect(consoleInterceptor.getBufferedMessages().length).toBe(0);
   });
 });
+
+describe('ConsoleInterceptor stack capture', () => {
+  beforeEach(() => {
+    consoleInterceptor.patch();
+    consoleInterceptor.clearBuffer();
+  });
+
+  afterEach(() => {
+    consoleInterceptor.dispose();
+  });
+
+  const lastMessage = () => {
+    const msgs = consoleInterceptor.getBufferedMessages();
+    return msgs[msgs.length - 1];
+  };
+
+  it('captures the stack of an Error passed AFTER the message string', () => {
+    // Every `log.*` call formats its message into args[0] as a STRING and passes
+    // the error behind it, so looking only at args[0] could never find one.
+    const err = new Error('boom');
+    console.error('[❌] [Cache] failed', err);
+
+    expect(lastMessage().stack).toBe(err.stack);
+  });
+
+  it('captures a stack on the warn path too', () => {
+    // ~30 `log.warning(…, error)` sites pass a real Error; without this they had
+    // neither a message (pre-fix formatters) nor any trace to fall back on.
+    const err = new Error('cache write failed');
+    console.warn('[⚠️] [Cache] OPFSStore failed', err);
+
+    expect(lastMessage().stack).toBe(err.stack);
+  });
+
+  it('does NOT fabricate a stack when no Error was passed', () => {
+    // This used to synthesize `new Error().stack` whenever the message merely
+    // contained the word "error", producing a plausible-looking trace rooted
+    // inside the interceptor — worse than no stack, because a bug-report reader
+    // would follow it.
+    console.error('an error happened, but no Error object was passed');
+
+    expect(lastMessage().stack).toBeUndefined();
+  });
+
+  it('prefers the first Error when several args carry stacks', () => {
+    const first = new Error('first');
+    const second = new Error('second');
+    console.error('msg', first, second);
+
+    expect(lastMessage().stack).toBe(first.stack);
+  });
+});
