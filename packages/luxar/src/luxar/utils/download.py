@@ -705,6 +705,15 @@ _EOCD_TAIL_BYTES = 22 + 65536
 #: independent of the archive's own (attacker-controlled) metadata. Mirrors
 #: gsplats/io/_archive.py.
 _MAX_MEMBER_UNCOMPRESSED_BYTES = 256 * 1024**3
+#: Ceiling on the central directory we buffer via ``response.content`` (64 MiB).
+#: A real central directory is small — one ~46-byte record plus the member
+#: name/extra/comment (≈76 bytes for a typical name) per member — so the archives
+#: we fetch run from tens of KB to at most a few MB. 64 MiB is a deliberately
+#: generous ceiling that still blocks the whole-archive forgery: a forged EOCD
+#: (e.g. cd_offset=0, cd_size=archive_size) would otherwise make us buffer the
+#: entire archive into memory — a DoS on the metadata path, distinct from the
+#: DEFLATE decompression-bomb guard on the member stream.
+_MAX_CENTRAL_DIR_BYTES = 64 * 1024**2
 
 
 def _ranged_get(
@@ -784,6 +793,13 @@ def _parse_remote_zip_directory(
         if not has_locator:
             raise ValueError("Zip64 archive without a Zip64 EOCD locator")
         eocd64_offset = struct.unpack_from("<Q", tail, locator_local + 8)[0]
+        # `<Q` is unsigned, so eocd64_offset >= 0 always — only the upper bound
+        # can be violated.
+        if eocd64_offset + 56 > archive_size:
+            raise ValueError(
+                f"Zip64 EOCD offset {eocd64_offset} lies outside the archive "
+                f"(size {archive_size}) — refusing to fetch"
+            )
         eocd64 = _ranged_get(
             session,
             url,
@@ -796,6 +812,31 @@ def _parse_remote_zip_directory(
             raise ValueError("Bad Zip64 end-of-central-directory signature")
         cd_size = struct.unpack_from("<Q", eocd64, 40)[0]
         cd_offset = struct.unpack_from("<Q", eocd64, 48)[0]
+
+    # Validate the EOCD-derived (attacker-controlled) central-directory bounds
+    # before the ranged GET buffers the response into memory. Covers both the
+    # classic and Zip64 paths, since both resolve into cd_size/cd_offset here.
+    # A forged EOCD (e.g. cd_offset=0, cd_size=archive_size) would otherwise
+    # make us buffer the whole archive — a memory-exhaustion DoS.
+    # cd_size/cd_offset come from unsigned struct fields (<I/<Q), so neither can
+    # be negative — only the empty-zip and upper-bound cases are reachable.
+    if cd_size == 0:
+        raise ValueError("Remote zip has an empty central directory (no members)")
+    if cd_size > _MAX_CENTRAL_DIR_BYTES:
+        raise ValueError(
+            f"Central-directory size {cd_size} is out of range "
+            f"(1..{_MAX_CENTRAL_DIR_BYTES} bytes) — refusing to fetch"
+        )
+    if cd_offset >= archive_size:
+        raise ValueError(
+            f"Central-directory offset {cd_offset} lies outside the archive "
+            f"(size {archive_size}) — refusing to fetch"
+        )
+    if cd_offset + cd_size > archive_size:
+        raise ValueError(
+            f"Central directory (offset {cd_offset}, size {cd_size}) overruns "
+            f"the archive (size {archive_size}) — refusing to fetch"
+        )
 
     central_dir = _ranged_get(
         session,
