@@ -199,6 +199,28 @@ def _forge_central_uncompressed_size(
     archive.write_bytes(bytes(data))
 
 
+def _forge_central_method(archive: Path, member: str, forged_method: int) -> None:
+    """Overwrite the *central-directory* compression-method field (offset 10,
+    little-endian uint16) of ``member`` — simulating a corrupt archive that
+    declares a bogus method for a zero-compressed-bytes entry.
+    """
+    data = bytearray(archive.read_bytes())
+    name = member.encode()
+    sig = b"\x50\x4b\x01\x02"  # central-directory file header
+    idx = 0
+    while True:
+        idx = data.find(sig, idx)
+        if idx < 0:
+            raise AssertionError(f"central-dir record for {member!r} not found")
+        name_len = int.from_bytes(data[idx + 28 : idx + 30], "little")
+        rec_name = bytes(data[idx + 46 : idx + 46 + name_len])
+        if rec_name == name:
+            data[idx + 10 : idx + 12] = int(forged_method).to_bytes(2, "little")
+            break
+        idx += 4
+    archive.write_bytes(bytes(data))
+
+
 def _build_zip(
     path: Path,
     payloads: dict[str, bytes],
@@ -464,6 +486,22 @@ class TestDownloadZipMember:
         download_zip_member(f"{range_server}/archive.zip", "empty.bin", out)
         assert out.exists()
         assert out.read_bytes() == b""
+        assert list(tmp_path.glob("*.part")) == []
+
+    def test_zero_compressed_deflate_member_rejected(
+        self, range_server: str, tmp_path: Path
+    ) -> None:
+        """A ``comp_size == 0`` member whose central-dir method is DEFLATE (not
+        STORED) is malformed — the shortest empty DEFLATE stream is two bytes —
+        so it is rejected rather than silently extracted as empty.
+        """
+        archive = tmp_path / "archive.zip"
+        _build_zip(archive, {"empty.bin": b"", "readme.txt": b"hello"}, stored=True)
+        _forge_central_method(archive, "empty.bin", 8)  # STORED → DEFLATE
+        out = tmp_path / "empty.out"
+        with pytest.raises(ValueError, match="zero compressed bytes"):
+            download_zip_member(f"{range_server}/archive.zip", "empty.bin", out)
+        assert not out.exists()
         assert list(tmp_path.glob("*.part")) == []
 
     def test_matches_zipfile_extraction(
