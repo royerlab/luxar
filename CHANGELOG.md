@@ -36,7 +36,6 @@ Supporting changes:
 - `scripts/check_demo_ladders.py` — a structural gate that fails a leaf whose
   largest level is more than half the data, which is exactly the degeneracy a
   level count alone cannot see.
-
 #### Fixed — every 2D gsplats scene failed to load with a WASM `unreachable` trap
 
 Loading a gsplats scene with fewer than 3 displayed dimensions failed with
@@ -76,7 +75,6 @@ empty-display-dims fallbacks), 2 cross-language parity tests, and 6
 **unconditional** TypeScript-only tests — the parity suite is
 `skipIf(!wasmFilesExist)`, so without those a TS-side regression in the >16D
 backend would ship silently.
-
 #### Fixed — the CI Python version matrix tested one version three times (#839)
 
 `python-tests` declared a `['3.10', '3.11', '3.12']` matrix, but every leg ran the
