@@ -369,7 +369,12 @@ def build_scene(etopo_path: Path, shp_path: Path, output_path: Path) -> Path:
                 blending_mode="normal",
                 opacity=EARTH_OPACITY,
                 layer=True,
-                additive_lod=dict(method="spatial-uniform", n_lods=5),
+                # `spatial-uniform` with n_lods=5 looked like a ladder but was
+                # not one: its stratified-grid sampler emitted 8 / 56 / 272 /
+                # 1174 / 7,998,490 points, so 99.98% of the globe still landed in
+                # a single final commit. A `stream:` ladder is geometric by
+                # construction, so every level is a bounded fraction of the whole.
+                additive_lod=dict(counts="stream:20000", method="random", seed=0),
             )
             # Connected polylines (indexed) so the material renders seamless
             # joints. No additive-LOD here: LOD-ing connected lines requires an
