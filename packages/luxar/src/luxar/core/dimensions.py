@@ -69,23 +69,6 @@ class Dimension:
             if self.step is None:
                 self.step = CATEGORICAL_STEP
 
-        if self.range is not None:
-            if len(self.range) != 2:
-                raise ValueError("Range must be a tuple of (min, max)")
-            # Categorical dimensions may have a zero-width range (0, 0): a single
-            # category is valid (MIN_CATEGORIES = 1), and its auto-range collapses
-            # to (0, 0). Continuous dimensions still require strictly min < max.
-            # An inverted range (min > max) is rejected in both cases.
-            if self.categories is not None:
-                if self.range[0] > self.range[1]:
-                    raise ValueError(
-                        f"Invalid range {self.range}: min must not be greater than max"
-                    )
-            elif self.range[0] >= self.range[1]:
-                raise ValueError(
-                    f"Invalid range {self.range}: min must be less than max"
-                )
-
         # Auto-determine spatial flag if not specified
         if self.spatial is None:
             if self.display:
@@ -106,6 +89,29 @@ class Dimension:
                     f"Dimension '{self.name}' is non-spatial and non-displayed, "
                     f"so it must be discrete. Setting discrete=True automatically.",
                     UserWarning,
+                )
+
+        # Validate the range. This runs AFTER the spatial/discrete auto-correction
+        # above so the check sees the FINALIZED `self.discrete` flag (a non-spatial,
+        # non-displayed dim is auto-corrected to discrete), matching the serialized
+        # value the viewer validator checks.
+        if self.range is not None:
+            if len(self.range) != 2:
+                raise ValueError("Range must be a tuple of (min, max)")
+            # Discrete dimensions may have a zero-width range (0, 0): a single
+            # index (or a single category, MIN_CATEGORIES = 1) is valid, and its
+            # auto-range collapses to (0, 0). Categorical dims are forced discrete
+            # above, so the `self.discrete` guard covers both. Continuous (non-
+            # discrete) dimensions still require strictly min < max. An inverted
+            # range (min > max) is rejected in both cases.
+            if self.discrete:
+                if self.range[0] > self.range[1]:
+                    raise ValueError(
+                        f"Invalid range {self.range}: min must not be greater than max"
+                    )
+            elif self.range[0] >= self.range[1]:
+                raise ValueError(
+                    f"Invalid range {self.range}: min must be less than max"
                 )
 
         # Validation: discrete dimensions cannot be forced spatial (unless displayed)
