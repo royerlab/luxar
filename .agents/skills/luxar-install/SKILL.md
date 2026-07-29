@@ -136,7 +136,9 @@ Multiple GPUs? Whole-timelapse fitting across them is
 ## Profile: Slurm/HPC cluster (no sudo, no GPU on login node)
 
 The Makefile auto-detects HPC and falls back to venv-based installs of hatch
-and `pnpm --prefix ~/.local` — no sudo anywhere.
+and `pnpm --prefix ~/.local` — no sudo anywhere. As on the GPU profile, Hatch
+owns the Python env here, so skip the Common-base `.venv` (or `deactivate` it
+now) — the build/verify steps below all route through `hatch run`.
 
 ```bash
 # 1. Bootstrap on the LOGIN node (python3.11/3.12 usually available)
@@ -165,7 +167,7 @@ inside an interactive `srun`/`salloc` on a GPU node to actually exercise the
 extension.
 
 `build-cuda SLURM=1` detects the PyTorch CUDA version, finds matching
-`cuda/` + GCC>=9 modules, captures your venv path, generates a self-contained
+`cuda/` + GCC>=9 modules, captures the Hatch env path, generates a self-contained
 sbatch script, and submits it — the job log merges compiler output for
 debugging. Full details: `docs/guides/developer/BUILD_SYSTEM_SPEC.md`.
 
