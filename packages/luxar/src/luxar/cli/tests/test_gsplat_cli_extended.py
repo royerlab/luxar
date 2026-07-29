@@ -4006,7 +4006,7 @@ class TestLODCommand:
 
     @staticmethod
     def _make_2d_gsplats(path: Path) -> Path:
-        """A 2D (ndim=2) fitted .gsplats.zarr — BSP partitioning needs >=3 dims."""
+        """A 2D (ndim=2) fitted .gsplats.zarr — BSP partitioning needs >=2 dims."""
         import numpy as np
 
         from luxar.gsplats.gsplat_data import GSplatData
@@ -4023,12 +4023,80 @@ class TestLODCommand:
         return path
 
     @pytest.mark.parametrize("recipe", ["tiles", "overview", "adaptive"])
-    def test_2d_input_partition_recipes_clean_error(
+    def test_2d_input_partition_recipes_accepted(
         self, runner: CliRunner, tmp_path: Path, recipe: str
     ) -> None:
-        """2D input to a partition-based recipe errors cleanly, not via traceback."""
+        """2D input to a partition-based recipe is accepted (BSP needs >=2 dims)
+        and writes a real partition-bearing tree."""
+        from luxar.gsplats.io.load_gsplats import load_gsplat_node
+        from luxar.gsplats.tree import (
+            GSplatLodGroup,
+            GSplatPartition,
+            total_splats,
+        )
+
         src = self._make_2d_gsplats(tmp_path / "in2d.gsplats.zarr")
         out = tmp_path / "out2d.gsplats.zarr"
+        args = [
+            "gsplat",
+            "lod",
+            str(src),
+            str(out),
+            "--recipe",
+            recipe,
+            "--max-elements",
+            "12",
+        ]
+        if recipe in ("overview", "adaptive"):
+            args += ["-K", "2", "--device", "cpu"]
+        if recipe == "adaptive":
+            args += ["--levels", "1"]
+
+        result = runner.invoke(app, args)
+        assert result.exit_code == 0, f"{recipe} on 2D failed:\n{result.stdout}"
+
+        node, _ = load_gsplat_node(out)
+        if recipe == "tiles":
+            # a partition at the root tiling all 30 splats
+            assert isinstance(node, GSplatPartition)
+            assert node.n_children >= 2
+            assert total_splats(node) == 30
+        elif recipe == "overview":
+            # unbalanced lod(coarse leaf + partition fine)
+            assert isinstance(node, GSplatLodGroup)
+            _, fine = node.children  # coarsest→finest in memory
+            assert isinstance(fine, GSplatPartition)
+            assert total_splats(fine) == 30
+        else:  # adaptive
+            # a partition whose every part is its own substitutive lod group
+            assert isinstance(node, GSplatPartition)
+            assert node.n_children >= 2
+            assert all(isinstance(p, GSplatLodGroup) for p in node.children)
+            finest_total = sum(
+                total_splats(p.children[-1]) for p in node.children
+            )
+            assert finest_total == 30
+
+    @pytest.mark.parametrize("recipe", ["tiles", "overview", "adaptive"])
+    def test_1d_input_partition_recipes_clean_error(
+        self, runner: CliRunner, tmp_path: Path, recipe: str
+    ) -> None:
+        """1D input to a partition-based recipe is rejected cleanly (BSP needs
+        >=2 dims) with a typer BadParameter, not a raw traceback."""
+        import numpy as np
+
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        n = 30
+        rng = np.random.default_rng(0)
+        src = tmp_path / "in1d.gsplats.zarr"
+        GSplatData(
+            centers=rng.uniform(0, 50, (n, 1)).astype(np.float32),
+            amplitudes=rng.uniform(0.1, 1.0, n).astype(np.float32),
+            cholesky_factors=np.ones((n, 1), dtype=np.float32),
+        ).save(src)
+        out = tmp_path / "out1d.gsplats.zarr"
+
         result = runner.invoke(
             app,
             [
@@ -4044,10 +4112,10 @@ class TestLODCommand:
         )
         assert result.exit_code != 0
         assert not out.exists()
-        # Clean BadParameter, NOT a raw stack trace (the pre-fix behavior).
         io = self._io(result)
         assert "Traceback" not in io
         assert "spatial dimensions" in io
+        assert "Use --recipe stream or levels" in io
 
     def test_2d_input_matrix_recipe_still_works(
         self, runner: CliRunner, tmp_path: Path
