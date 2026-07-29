@@ -589,12 +589,24 @@ class TestMacosReadmeQuoting:
                 ln.strip() for ln in readme.splitlines() if ln.strip().startswith(verb)
             )
             tokens = shlex.split(line)
-            assert tokens[-1] == "O'Brien.app", (cmd, tokens)
+            assert tokens[-1] == "./O'Brien.app", (cmd, tokens)
 
     def test_plain_name_is_unquoted(self) -> None:
         readme = _macos_readme("MyScene")
-        assert "xattr -cr MyScene.app" in readme
-        assert "open MyScene.app" in readme
+        assert "xattr -cr ./MyScene.app" in readme
+        assert "open ./MyScene.app" in readme
+
+    def test_dash_leading_name_is_not_parsed_as_an_option(self) -> None:
+        # A dash-leading name is accepted by validate_bundle_name; the `./`
+        # prefix must keep xattr/open from parsing the path as a flag.
+        readme = _macos_readme("-R")
+        for verb in ("xattr -cr", "open"):
+            line = next(
+                ln.strip() for ln in readme.splitlines() if ln.strip().startswith(verb)
+            )
+            tokens = shlex.split(line)
+            assert tokens[-1] == "./-R.app", (verb, tokens)
+            assert not tokens[-1].startswith("-"), (verb, tokens)
 
 
 class TestCLITraversalNameRejected:
