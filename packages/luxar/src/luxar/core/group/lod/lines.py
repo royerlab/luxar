@@ -90,8 +90,19 @@ def identify_polylines(
     if line_type == "indexed":
         if indices is None:
             raise ValueError("line_type='indexed' requires an indices array")
+        indices = np.asarray(indices)
+        # Reject non-integer indices before the intp cast below silently
+        # TRUNCATES a float (1.7 -> 1) into an edge the user never authored.
+        # The plain single-leaf path guards this in write_lines, but the
+        # partition / additive-LOD / substitutive-LOD branches consume the
+        # raw indices through this function first, so the guard has to live
+        # at this shared chokepoint too (#886).
+        if not np.issubdtype(indices.dtype, np.integer):
+            raise ValueError(
+                f"Indices must be an integer array, got dtype {indices.dtype}"
+            )
         return _indexed_connected_components(
-            n_vertices, np.asarray(indices, dtype=np.intp).reshape(-1, 2)
+            n_vertices, indices.astype(np.intp, copy=False).reshape(-1, 2)
         )
 
     raise ValueError(
