@@ -116,14 +116,24 @@ describe('InputHandler Utilities', () => {
       expect(result).toBe(10); // 1 * 10
     });
 
-    it('should return at least 1 for discrete dimensions', () => {
+    it('should floor at one grid cell for discrete dimensions', () => {
       const dims = createDims(
         4,
         [0, 1, 2],
         [{ name: 'x' }, { name: 'y' }, { name: 'z' }, { name: 'frame', step: 0.1, discrete: true }]
       );
       const result = calculateStepSize(3, dims, { shift: true });
-      expect(result).toBe(1); // Minimum 1 for discrete
+      expect(result).toBe(0.1); // One grid cell (meta.step) is the floor for discrete dims
+    });
+
+    it('floors a classic step-1 discrete dim at one whole cell under fine control', () => {
+      const dims = createDims(
+        4,
+        [0, 1, 2],
+        [{ name: 'x' }, { name: 'y' }, { name: 'z' }, { name: 'frame', step: 1, discrete: true }]
+      );
+      const result = calculateStepSize(3, dims, { shift: true });
+      expect(result).toBe(1); // step-1 discrete: max(1, round(0.1)) = 1, unchanged from historical behavior
     });
 
     it('should default to 1.0 when no metadata', () => {
