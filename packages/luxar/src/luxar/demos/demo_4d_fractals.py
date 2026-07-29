@@ -330,9 +330,14 @@ def generate_4d_fractal(
         Tuple of (positions, values) for points in the fractal
 
     Raises:
+        ValueError: If grid_size < 3 (below that, some fractal rules have
+            no odd-parity cells and cannot populate every w-plane).
         RuntimeError: If any w-plane of the fractal is empty (every slider
             stop must show structure — this is the demo's core contract).
     """
+    if grid_size < 3:
+        raise ValueError(f"grid_size must be >= 3, got {grid_size}")
+
     aprint(f"  Grid: {grid_size}^4 = {grid_size**4:,} points")
 
     aprint("  Creating 4D integer grid...")
