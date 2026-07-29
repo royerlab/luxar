@@ -158,6 +158,8 @@ Standard wheel builds remain strict. `hatch build -t wheel` requires
 `packages/luxar-viewer/dist/index.html` and fails with an actionable
 `make build-viewer` message when it is absent. This prevents publishing a wheel
 without its bundled viewer while keeping clean-worktree development usable.
+The source distribution remains provenance-only: it includes the build hook but
+not the viewer artifact, so end users should install the published wheel.
 
 ### Native Launcher Setup Details
 

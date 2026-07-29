@@ -39,3 +39,9 @@ class LuxarBuildHook(BuildHookInterface):
                     "packages/luxar-viewer/dist/index.html. Run "
                     "`make build-viewer` before building a wheel."
                 )
+            return
+
+        raise ValueError(
+            f"Unsupported Luxar wheel build version {version!r}; expected "
+            "'editable' or 'standard'"
+        )

@@ -61,9 +61,6 @@ jobs:
         # tests — all three legs silently ran 3.12. See #839.
         run: pipx install --python "${{ steps.setup-python.outputs.python-path }}" hatch
 
-      - name: Create viewer dist placeholder
-        run: mkdir -p packages/luxar-viewer/dist
-
       - name: Assert hatch uses the matrix interpreter
         # The guard that #839 was missing. It must compare for EQUALITY: the
         # pre-existing floor check (`>= 3.10`, scripts/test_hpc_setup.py) passed
