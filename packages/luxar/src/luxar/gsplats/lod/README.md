@@ -33,6 +33,7 @@ is built only on demand.
 | `additive.py` | additive axis: ordering + ladder (`make_additive_lod`, `compute_additive_order`) |
 | `substitutive.py` | substitutive axis orchestrator (`make_substitutive_lod`, `_reduce_one_level`, `_pack_level`) |
 | `pyramid.py` | `make_lod_pyramid` — chains substitutive (outer) × additive (inner) |
+| `recipes.py` | Public intent-first topology recipes (`flat`, `stream`, `levels`, `tiles`, `overview`, `adaptive`) and `RecipeParams` |
 | `volume_refit.py` | `refine="volume"`: warm-start re-fit of a coarse level against the source volume (thin orchestration over `fit_gaussian_splats`) |
 | `quality.py` | measured approximation quality: `mixture_quality` (constant-cost sampled mixture-L² → Q ∈ [0,1]) and `total_self_energy` (the reference weight w) — the Q of the viewer's recursive Q·e quality algebra |
 | `annotate.py` | `annotate_quality_store` — retrofit the Q·e stamps (`energy_fraction_cum` / `reference_energy` / `quality`) onto an existing `.gsplats.zarr` IN PLACE, no refit (CLI: `luxar gsplat annotate-quality`) |
@@ -214,7 +215,7 @@ make_substitutive_lod(
     coverage_inflation: float = 3.0,    # anti-grid inter-spread widening (1.0 = off)
     conserve_mass: bool = True,         # per-level (per-barrier-group) DC conservation
     refine: str = "none",               # "l2" = post-merge L2 refit per level
-    refine_iters: int = 120,            # Adam steps per refined level
+    refine_iters: int | None = None,     # resolves to 120 (l2) / 300 (volume)
     device: str = "auto",               # auto | cpu | cuda | mps
     seed: int | None = None,
     verbose: bool = False,              # per-level Arbol logging

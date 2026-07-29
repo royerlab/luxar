@@ -6,21 +6,21 @@ Unlike the rest of `app/` (private orchestrator support), this subpackage is re-
 
 ## Modules
 
-| File              | Status       | Description                                                                                                                                                                                |
-| ----------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `events.ts`       | **Public**   | Value and event type catalog: `LuxarEmbedderEventMap`, `EmbedderDimensions`, `ScreenshotOptions`, `SelectionPayload`. Re-exported from `src/index.ts`.                                     |
-| `screenshot.ts`   | **Internal** | `captureScreenshot(sceneManager, overlayManager, opts)` — headless frame → Blob encoding. Composes the Recording panel's pure screenshot helpers without state-machine dependencies.       |
+| File            | Status       | Description                                                                                                                                                                          |
+| --------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `events.ts`     | **Public**   | Value and event type catalog: `LuxarEmbedderEventMap`, `EmbedderDimensions`, `ScreenshotOptions`, `SelectionPayload`. Re-exported from `src/index.ts`.                               |
+| `screenshot.ts` | **Internal** | `captureScreenshot(sceneManager, overlayManager, opts)` — headless frame → Blob encoding. Composes the Recording panel's pure screenshot helpers without state-machine dependencies. |
 
 ## Events
 
 `LuxarApp.on(event, listener)` subscribes to these app-scoped events (emitted on a per-app `EventEmitter`, not the cross-layer singleton):
 
-| Event                 | Payload                                  | Description                                                                                                                                                                      |
-| --------------------- | ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `'dataset-loaded'`    | `{ src: string }`                        | Fires when a dataset finishes loading (initial `init()`, browser selection, or `switchDataset()`).                                                                               |
-| `'dataset-error'`     | `{ src: string; error: Error }`          | Fires when a dataset fails to load.                                                                                                                                              |
-| `'dimensions-changed'`| `EmbedderDimensions`                     | Fires on any slice-position change (slider, keyboard, or `setDimensionValue()`). Includes current step, displayed dims, metadata, and navigable ranges (all **cloned** copies). |
-| `'selection'`         | `SelectionPayload \| null`               | Fires when the hover-pick changes (`nodeName` + `elementIndex` under the cursor, or `null` when cleared). Subscribe **before** `init()` to provision picking for all datasets. |
+| Event                  | Payload                         | Description                                                                                                                                                                     |
+| ---------------------- | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `'dataset-loaded'`     | `{ src: string }`               | Fires when a dataset finishes loading (initial `init()`, browser selection, or `switchDataset()`).                                                                              |
+| `'dataset-error'`      | `{ src: string; error: Error }` | Fires when a dataset fails to load.                                                                                                                                             |
+| `'dimensions-changed'` | `EmbedderDimensions`            | Fires on any slice-position change (slider, keyboard, or `setDimensionValue()`). Includes current step, displayed dims, metadata, and navigable ranges (all **cloned** copies). |
+| `'selection'`          | `SelectionPayload \| null`      | Fires when the hover-pick changes (`nodeName` + `elementIndex` under the cursor, or `null` when cleared). Subscribe **before** `init()` to provision picking for all datasets.  |
 
 ## Usage
 
@@ -46,11 +46,11 @@ app.setDimensionValue(3, 10); // Set dimension 3 (e.g., time) to step 10
 await app.awaitDimensionUpdate(); // Wait for the requested slice to load
 
 // Capture a screenshot
-const blob = await app.screenshot({ format: 'png', quality: 0.92 });
+const blob = await app.screenshot({ format: 'webp', quality: 0.92 });
 const url = URL.createObjectURL(blob);
 const link = document.createElement('a');
 link.href = url;
-link.download = 'screenshot.png';
+link.download = 'screenshot.webp';
 link.click();
 
 // Clean up

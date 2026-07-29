@@ -161,7 +161,7 @@ Calibration applies `--floor` (default `"auto"`) **once** to the volume before m
 
 `find_k_star` (manuscript §4.2) uses a hybrid 3-regime detector:
 
-1. **Peak**: argmax is strictly interior AND both flanks are ≥ 0.1 dB below the peak → return the argmax.
+1. **Peak**: argmax is strictly interior AND each flank's mean is ≥ 0.1 dB below the peak → return the argmax.
 2. **Signal-limited**: argmax at the last K, curve rose ≥ 0.3 dB across sweep, AND still climbing at the top (mean rise over trailing run ≥ 0.1 dB/step AND final step ≥ 0.05 dB) → return the last K (budget anchor). Tail checks stop a flat-topped plateau from being misread as signal-limited.
 3. **Plateau**: otherwise → return the smallest K within 0.3 dB of the maximum (onset of diminishing returns).
 
@@ -180,12 +180,12 @@ Calibration applies `--floor` (default `"auto"`) **once** to the volume before m
 All tests colocated in `packages/luxar/src/luxar/gsplats/tests/test_calibration.py`:
 
 - `cv_mask`: Determinism, fraction Binomial CI, shape/dtype, invalid bounds
-- `donut_median_fill`: Constant volume unchanged, unmasked voxels untouched, gradient volume local average, 2D/3D/4D shape correctness, boundary reflection, empty mask early return
+- `donut_median_fill`: Constant volume unchanged, unmasked voxels untouched, interior gradient local average, 2D/3D/4D behavior, empty-mask copy, and invalid shape/radius checks
 - Noise floor estimators: Laplacian/Haar/background MAD on constant/noisy volumes
 - `estimate_floor`: Mode histogram vs percentile, zero-padding exclusion
-- `build_k_grid`: Exponential/polynomial spacing, endpoint pinning, deduplication, strict monotonicity
+- `build_k_grid`: Exponential/polynomial spacing, endpoint pinning, explicit-grid precedence/validation, and invalid progression/range checks
 - `find_k_star`: Peak/plateau/signal-limited regime detection, flank thresholds, tail-rise gate, `k_knee` vs `k_star`, backward-compatible hydration
-- Feature content: `count_features` (peaks/edges/intensity), `feature_threshold` shared scale, `select_calibration_region` (`densest` / `median` / `whole` strategies)
+- Feature content: `count_features` (peaks/edges/intensity), `feature_threshold` shared scale, and `select_calibration_region` (`densest` / `whole` plus unknown-strategy rejection)
 - `CalibrationResult`: JSON round-trip (non-finite floats → `null`), additive field defaults
 - Full sweep integration: Calls `fit_gaussian_splats` → `render_to_volume_tensor` → held-out/train/full metrics → noise floor → `find_k_star` → `CalibrationResult` with all metadata
 
