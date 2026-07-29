@@ -78,6 +78,7 @@ function makeBaseCtx(overrides: Partial<OrbitInputCtx> = {}): {
     enableRotate: true,
     enablePan: true,
     enableZoom: true,
+    isOrthographic: false,
     mouseButtons: {
       LEFT: THREE.MOUSE.PAN,
       MIDDLE: THREE.MOUSE.DOLLY,
@@ -238,6 +239,43 @@ describe('handleWheel — direction (sign of deltaY) + addZoomDelta', () => {
     handleWheel(ctx, evt);
     expect(spy).not.toHaveBeenCalled();
   });
+
+  it.each([{ ctrlKey: true }, { metaKey: true }])(
+    'ignores wheel with %o — FOV owns modifier wheels (stateless routing)',
+    (mods) => {
+      // Regression for the stuck-wheel bug class: exclusivity between
+      // Ctrl/⌘+wheel FOV and plain-wheel zoom is decided per event from
+      // the event's own live modifier flags, not from a keydown-tracked
+      // enableZoom gate (which stuck shut when a modifier keyup was lost
+      // to a focus change — wheel zoom died after window switching).
+      // Also covers trackpad pinch, which browsers synthesize as
+      // ctrlKey wheel events with no Control keydown (issue #741).
+      const { ctx, state } = makeBaseCtx();
+      const evt = new WheelEvent('wheel', { deltaY: -100, cancelable: true, ...mods });
+      const spy = vi.spyOn(evt, 'preventDefault');
+      handleWheel(ctx, evt);
+      expect(state.zoomDelta).toBe(0);
+      expect(ctx.dispatch).not.toHaveBeenCalled();
+      // No preventDefault either — the window-level FOV handler owns
+      // (and preventDefaults) modifier wheels.
+      expect(spy).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each([{ ctrlKey: true }, { metaKey: true }])(
+    'ortho camera: wheel with %o still zooms (no FOV exists to cede to)',
+    (mods) => {
+      // adjustFOV no-ops for orthographic cameras, so a modifier wheel
+      // ceded to the FOV handler would be a dead input in ortho mode —
+      // and trackpad pinch (synthesized ctrlKey wheel) must keep zooming
+      // there. Zoom retains ownership when ctx.isOrthographic.
+      const { ctx, state } = makeBaseCtx({ isOrthographic: true });
+      const evt = new WheelEvent('wheel', { deltaY: -100, cancelable: true, ...mods });
+      handleWheel(ctx, evt);
+      expect(state.zoomDelta).toBeLessThan(0);
+      expect(ctx.dispatch).toHaveBeenCalledWith('change');
+    }
+  );
 });
 
 describe('handlePointerDown — non-touch path', () => {

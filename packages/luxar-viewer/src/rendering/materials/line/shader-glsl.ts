@@ -161,10 +161,10 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
       // view space has -z pointing into the scene, so a positive
       // viewDepth means the point is in front of the camera. Reject
       // segments where BOTH endpoints fail the near-cull (degenerate
-      // the quad to clip). When only ONE endpoint is behind, we keep
-      // the full quad: the shader will produce extreme NDC for that
-      // endpoint, but the pixel-width clamp and vWidthFade keep the
-      // visible footprint bounded. Under ORTHO there is no 1/z
+      // the quad to clip). When only ONE endpoint is behind, the
+      // segment is clipped onto the nearCull plane below (before any
+      // screen-space math) so the quad stays a true trapezoid instead
+      // of a razor-edged bowtie. Under ORTHO there is no 1/z
       // singularity and NDC near/far clipping is the sole cull
       // authority — the previous ungated cull WRONGLY hid in-frustum
       // lines in the near slab (< uNearCull from the camera plane)
