@@ -574,7 +574,7 @@ def midpoint_bsp_polylines(
 
     # Per-polyline centroid (first 3 spatial dims) and vertex count.
     spatial = vertices[:, : min(3, vertices.shape[1])]
-    centroids = np.zeros((n_polylines, 3), dtype=np.float64)
+    centroids = np.zeros((n_polylines, spatial.shape[1]), dtype=np.float64)
     sizes = np.zeros(n_polylines, dtype=np.intp)
     for p, members in enumerate(polyline_indices):
         if members.size == 0:
@@ -655,7 +655,7 @@ def median_bsp_polylines(
         return []
 
     spatial = vertices[:, : min(3, vertices.shape[1])]
-    centroids = np.zeros((n_polylines, 3), dtype=np.float64)
+    centroids = np.zeros((n_polylines, spatial.shape[1]), dtype=np.float64)
     sizes = np.zeros(n_polylines, dtype=np.intp)
     for p, members in enumerate(polyline_indices):
         if members.size == 0:

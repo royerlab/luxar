@@ -19,7 +19,7 @@ import zarr
 from luxar.core.dimensions import Dimensions
 from luxar.core.group import Group
 from luxar.core.group.lod.lines import identify_polylines
-from luxar.core.group.partition import midpoint_bsp_polylines
+from luxar.core.group.partition import median_bsp_polylines, midpoint_bsp_polylines
 from luxar.io.compiler import LuxarZarrCompiler
 
 # ────────────────────────────────────────────────────────────────────────
@@ -93,6 +93,43 @@ class TestMidpointBspPolylines:
         parts = midpoint_bsp_polylines(verts, [], max_elements=10)
         assert parts == []
 
+    @staticmethod
+    def _make_polylines_2d(n_polylines: int, vertices_per: int, seed: int = 0):
+        """Build (vertices, polyline_indices) with 2D vertices of shape (N, 2)."""
+        rng = np.random.RandomState(seed)
+        verts = []
+        plys = []
+        cursor = 0
+        for _ in range(n_polylines):
+            center = rng.uniform(-10, 10, 2)
+            offsets = rng.uniform(-0.1, 0.1, (vertices_per, 2))
+            poly = (center + offsets).astype(np.float32)
+            verts.append(poly)
+            plys.append(np.arange(cursor, cursor + vertices_per, dtype=np.intp))
+            cursor += vertices_per
+        vertices = np.concatenate(verts, axis=0)
+        return vertices, plys
+
+    @pytest.mark.parametrize("bsp", [midpoint_bsp_polylines, median_bsp_polylines])
+    def test_2d_vertices_do_not_crash_and_partition(self, bsp) -> None:
+        """Regression: 2D vertices used to broadcast (2,) into a (3,) centroid slot.
+
+        Both midpoint and median BSP must accept shape-(N, 2) vertices, actually
+        split (>= 2 parts), keep the per-part vertex cap, and keep every polyline
+        atomic (concatenation is a permutation of range(n_polylines)).
+        """
+        # 40 polylines x 4 verts = 160 verts >> cap of 40 → BSP must recurse.
+        v, ps = self._make_polylines_2d(40, vertices_per=4, seed=7)
+        assert v.shape[1] == 2
+        parts = bsp(v, ps, max_elements=40)
+        assert len(parts) >= 2, "2D input must actually split"
+        flat = [p for part in parts for p in part]
+        assert sorted(flat) == list(range(40)), "polylines lost/duplicated across parts"
+        # Every polyline is 4 verts << cap, so no part may exceed the cap.
+        for part in parts:
+            vertex_count = sum(int(ps[p].size) for p in part)
+            assert vertex_count <= 40, f"part of {vertex_count} verts exceeds cap 40"
+
 
 # ────────────────────────────────────────────────────────────────────────
 # add_lines(partition=...) — end-to-end
@@ -112,6 +149,29 @@ class TestAddLinesPartition:
         v, w = self._segments_data(200, seed=0)  # 400 vertices total
         with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            node = scene.add_lines(
+                "lines",
+                vertices=v,
+                widths=w,
+                line_type="segments",
+                partition=dict(max_elements=120),
+            )
+            assert isinstance(node, Group)
+            assert node.attrs.get("kind") == "partition"
+            assert node.attrs.get("display_type") == "lines"
+
+    def test_2d_segments_create_partition_wrapper(self, tmp_path) -> None:
+        """Regression: add_lines with 2D vertices must partition without crashing.
+
+        Uses a 2D scene (Dimensions.default_2d) and shape-(2n, 2) segment
+        vertices, mirroring the 2D setup used elsewhere in the suite.
+        """
+        rng = np.random.RandomState(0)
+        n_segments = 200
+        v = rng.uniform(-10, 10, (2 * n_segments, 2)).astype(np.float32)
+        w = np.full(2 * n_segments, 0.05, dtype=np.float32)
+        with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_2d())
             node = scene.add_lines(
                 "lines",
                 vertices=v,
