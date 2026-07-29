@@ -10,6 +10,7 @@ unchanged from the inlined versions.
 
 from __future__ import annotations
 
+import difflib
 from typing import Any, Dict, FrozenSet
 
 import zarr
@@ -64,6 +65,87 @@ GSPLATS_RESERVED_ATTRS: FrozenSet[str] = frozenset(
         "center_bounds",
         "position_bounds",
     }
+)
+
+# The render/appearance attrs whose VALUES are validated below, and the ONLY
+# keys advertised in the "Unknown node attribute" hint. A user typo like
+# ``blending="max"`` (for ``blending_mode``) used to be persisted silently and
+# ignored by the viewer (issue #787); these are the legitimate render keys a
+# caller may set on any node. Keep in sync with the per-key validators in
+# :func:`validate_render_attrs`.
+KNOWN_RENDER_ATTRS: FrozenSet[str] = frozenset(
+    {
+        "absorption",
+        "blending_mode",
+        "colormap",
+        "gamma",
+        "intensity",
+        "layer",
+        "offset",
+        "opacity",
+        "visible",
+    }
+)
+
+# Non-appearance keys that legitimately reach :func:`validate_render_attrs` and
+# must NOT be flagged as unknown. These are user-settable node attrs that are
+# processed elsewhere (transforms, LOD selection, gsplat truncation, nD
+# visibility broadcast) PLUS structural keys the scene machinery injects into
+# the SAME attrs dict before it reaches this gate — node/group type
+# discriminators, sibling ordering, specialized-group descriptors, persisted
+# bounds, and the geometry writers' internal forwarding flags. Unlike
+# ``KNOWN_RENDER_ATTRS`` these are accepted silently (not advertised in the
+# error hint). Reserved writer-stamped keys are handled separately via
+# ``*_RESERVED_ATTRS`` and are NOT listed here.
+_ALLOWED_NODE_ATTRS: FrozenSet[str] = frozenset(
+    {
+        # Processed by prepare_transform_attrs / apply_gsplat_group_attrs.
+        "transform",
+        "nd_transform",
+        # Spatial ordering, gsplat Gaussian cutoff, LOD selection, nD broadcast.
+        "ordering",
+        "truncation_radius",
+        "coverage_fraction",
+        "extend_to_all",
+        # Viewer-consumed LOD quality stamps injected by additive ladders.
+        "level_stats",
+        "lod_stats",
+        # Structural keys injected by node construction / specialized-group
+        # builders (add_lod_group / add_partition_group) / LOD wrappers.
+        "type",
+        "child_index",
+        "kind",
+        "selector",
+        "default_level",
+        "display_type",
+        "max_elements",
+        "position_bounds",
+        # BSP tree stamped on a kind=partition group by the gsplat graft path
+        # (add_partition_group); the viewer reads it for back-to-front part
+        # ordering.
+        "bsp_tree",
+        # Geometry-writer internal forwarding flags.
+        "grid_shape",
+        "_skip_scene_bounds",
+    }
+)
+
+# Candidate names used for the "Did you mean 'X'?" hint: the render attrs plus
+# the user-facing (non-structural, non-private) allowed keys. Structural /
+# private keys are intentionally excluded so a typo isn't matched to ``type`` or
+# ``child_index``.
+_SUGGESTION_ATTRS: tuple[str, ...] = tuple(
+    sorted(
+        KNOWN_RENDER_ATTRS
+        | {
+            "transform",
+            "nd_transform",
+            "ordering",
+            "truncation_radius",
+            "coverage_fraction",
+            "extend_to_all",
+        }
+    )
 )
 
 
@@ -249,6 +331,7 @@ def apply_default_render_attrs(attrs: Dict[str, Any]) -> None:
 def validate_render_attrs(
     attrs: Dict[str, Any],
     reserved_attrs: FrozenSet[str] = frozenset(),
+    reject_unknown: bool = True,
 ) -> None:
     """Validate render attrs that would corrupt a node if written unchecked.
 
@@ -259,6 +342,13 @@ def validate_render_attrs(
     visible / colormap. The values are validated only (not converted) — the
     writer stores the caller's attrs unchanged.
 
+    When ``reject_unknown`` is set, any attr key that is neither a known render
+    attr (``KNOWN_RENDER_ATTRS``), an accepted non-render/structural key
+    (``_ALLOWED_NODE_ATTRS``), nor a passed reserved key is rejected up front
+    with a "Did you mean ...?" hint. This turns a silently-ignored typo — e.g.
+    ``blending="max"`` instead of ``blending_mode="max"`` (issue #787) — into a
+    loud fail-fast BEFORE any zarr is written.
+
     Args:
         attrs: The node attrs dict to validate.
         reserved_attrs: Writer-stamped keys the caller must not supply (see
@@ -266,6 +356,10 @@ def validate_render_attrs(
             ``GSPLATS_RESERVED_ATTRS``). A collision fails the write up front
             instead of being silently overwritten by the writer's stamps (or
             exploding post-write in the Node constructor).
+        reject_unknown: When True (the default), reject unknown attr keys.
+            The generic ``write_group`` disables this for the scene root and the
+            ``overlays/`` namespace, which carry their own internal attr schemas
+            (scene dimensions / viewer config / overlay styling).
     """
     if reserved_attrs:
         collisions = sorted(reserved_attrs & attrs.keys())
@@ -274,6 +368,20 @@ def validate_render_attrs(
                 f"Attribute(s) {collisions} are reserved: the writer stamps "
                 f"them authoritatively (type, element counts, presence flags, "
                 f"bounds, ...). Remove them from the node attrs."
+            )
+
+    if reject_unknown:
+        allowed = KNOWN_RENDER_ATTRS | _ALLOWED_NODE_ATTRS | reserved_attrs
+        for key in sorted(attrs.keys()):
+            if key in allowed:
+                continue
+            suggestions = difflib.get_close_matches(key, _SUGGESTION_ATTRS, n=1)
+            hint = f" Did you mean {suggestions[0]!r}?" if suggestions else ""
+            known = ", ".join(sorted(KNOWN_RENDER_ATTRS))
+            raise ValueError(
+                f"Unknown node attribute {key!r}.{hint} The viewer would "
+                f"silently ignore it. Known render attributes: {known}. Remove "
+                f"it or use a supported attribute."
             )
 
     if "blending_mode" in attrs:

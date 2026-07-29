@@ -1218,3 +1218,158 @@ class TestWriterFuzzRegressions:
             with pytest.raises(ValueError, match="[Ss]harpness"):
                 scene.add_lines("lns", self.POS, 0.5, sharpness=5.0)
             compiler.finalize()
+
+
+class TestUnknownRenderAttrRejected:
+    """Issue #787: a misspelled render attr (e.g. ``blending="max"`` instead of
+    ``blending_mode="max"``) used to be written into the zarr and silently
+    ignored by the viewer. It must now fail fast, BEFORE any zarr is written,
+    with a "Did you mean ...?" hint. Legitimate render attrs still write and a
+    made-up key is rejected too."""
+
+    @staticmethod
+    def _scene(tmpdir: str):
+        zarr_path = Path(tmpdir) / "test.luxar.zarr"
+        compiler = LuxarZarrCompiler(zarr_path)
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        return zarr_path, compiler, scene
+
+    POS = np.random.RandomState(0).rand(50, 3).astype(np.float32) * 10
+
+    def test_real_render_attrs_still_write_and_apply(self) -> None:
+        """blending_mode / opacity / layer / visible are accepted and persisted."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path, compiler, scene = self._scene(tmpdir)
+            scene.add_points(
+                "pts",
+                self.POS,
+                blending_mode="max",
+                opacity=0.5,
+                layer=True,
+                visible=True,
+            )
+            compiler.finalize()
+            root = zarr.open_group(str(zarr_path), mode="r")
+            assert root["pts"].attrs["blending_mode"] == "max"
+            assert root["pts"].attrs["opacity"] == 0.5
+
+    def test_lod_quality_attrs_are_allowed(self) -> None:
+        """Internal Points/Lines LOD quality stamps pass the strict attr gate."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path, compiler, scene = self._scene(tmpdir)
+            scene.add_points(
+                "pts",
+                self.POS,
+                additive_lod=dict(n_lods=3, method="random", seed=0),
+            )
+            line_pos = np.random.RandomState(1).rand(100, 3).astype(np.float32)
+            scene.add_lines(
+                "lns",
+                line_pos,
+                0.5,
+                line_type="segments",
+                additive_lod=dict(n_lods=3, method="random", seed=0),
+            )
+            compiler.finalize()
+
+            root = zarr.open_group(str(zarr_path), mode="r")
+            for name in ("pts", "lns"):
+                group = root[name]
+                assert "level_stats" in group.attrs
+                assert "lod_stats" in group["additive_0"].attrs
+
+    def test_near_miss_typo_rejected_with_hint_before_write(self) -> None:
+        """``blending=`` (typo of ``blending_mode=``) fails fast with a hint and
+        leaves no node on disk."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path, compiler, scene = self._scene(tmpdir)
+            with pytest.raises(ValueError, match="Did you mean 'blending_mode'"):
+                scene.add_points("pts", self.POS, blending="max")
+            compiler.finalize()
+            root = zarr.open_group(str(zarr_path), mode="r")
+            assert "pts" not in root  # nothing leaked
+
+    def test_totally_made_up_attr_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path, compiler, scene = self._scene(tmpdir)
+            with pytest.raises(ValueError, match="Unknown node attribute") as excinfo:
+                scene.add_points("pts", self.POS, totally_made_up_attr=42)
+            # No close match => no bogus "Did you mean ...?" suggestion.
+            assert "Did you mean" not in str(excinfo.value)
+            compiler.finalize()
+            root = zarr.open_group(str(zarr_path), mode="r")
+            assert "pts" not in root
+
+    def test_unknown_attr_rejected_on_lines_and_gsplats(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path, compiler, scene = self._scene(tmpdir)
+            with pytest.raises(ValueError, match="Unknown node attribute"):
+                scene.add_lines("lns", self.POS, 0.5, blending="max")
+            n_splats = 20
+            centers = np.random.randn(n_splats, 3).astype(np.float32)
+            amplitudes = np.random.rand(n_splats).astype(np.float32)
+            cholesky = np.random.randn(n_splats, 6).astype(np.float32)
+            with pytest.raises(ValueError, match="Did you mean 'colormap'"):
+                scene.add_gsplats(
+                    "splats",
+                    centers=centers,
+                    amplitudes=amplitudes,
+                    cholesky_factors=cholesky,
+                    colormapp="gray",  # typo of colormap
+                )
+            compiler.finalize()
+            root = zarr.open_group(str(zarr_path), mode="r")
+            # Neither the lines nor the gsplats node leaked to disk (each
+            # writer fails BEFORE creating its group — gsplats especially,
+            # which is a different writer path from points/lines).
+            assert "lns" not in root
+            assert "splats" not in root
+
+    def test_typo_of_structural_key_rejected_without_structural_suggestion(
+        self,
+    ) -> None:
+        """A typo near an internal structural key (e.g. ``typ=`` / ``kinds=``) is
+        still rejected, and the hint never advertises a structural key
+        (``type`` / ``kind`` / ``child_index``) — only render attrs."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _zarr_path, _compiler, scene = self._scene(tmpdir)
+            with pytest.raises(ValueError, match="Unknown node attribute") as excinfo:
+                scene.add_group("grp", kinds="lod")
+            msg = str(excinfo.value)
+            assert "Did you mean 'type'" not in msg
+            assert "Did you mean 'kind'" not in msg
+            assert "Did you mean 'child_index'" not in msg
+
+    def test_add_group_rejects_unknown_attr(self) -> None:
+        """add_group routes through the same guard (write_group)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _zarr_path, _compiler, scene = self._scene(tmpdir)
+            with pytest.raises(ValueError, match="Did you mean 'blending_mode'"):
+                scene.add_group("grp", blending="max")
+
+    def test_add_group_accepts_real_render_attrs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path, compiler, scene = self._scene(tmpdir)
+            scene.add_group("grp", blending_mode="additive", opacity=0.8)
+            compiler.finalize()
+            root = zarr.open_group(str(zarr_path), mode="r")
+            assert root["grp"].attrs["blending_mode"] == "additive"
+
+    def test_scene_root_and_overlay_writes_are_exempt(self) -> None:
+        """The unknown-key guard is scoped to real geometry/group nodes: the
+        scene root (scene_dimensions / viewer_config) and the ``overlays/``
+        namespace carry their own internal attr schemas and must still round-
+        trip. Proves the exemption didn't break scene creation."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path = Path(tmpdir) / "test.luxar.zarr"
+            with LuxarZarrCompiler(zarr_path) as compiler:
+                # create_scene writes scene_dimensions (+ viewer_config) to "/".
+                scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+                scene.add_points("pts", self.POS)
+                # An overlay writes a whole non-render attr schema to
+                # overlays/<name> via the same write_group entry point.
+                scene.add_text("hello", position=(0.5, 0.5))
+            root = zarr.open_group(str(zarr_path), mode="r")
+            assert "scene_dimensions" in root.attrs
+            assert "pts" in root
+            assert "overlays" in root
