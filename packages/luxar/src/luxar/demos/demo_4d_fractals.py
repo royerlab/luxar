@@ -102,7 +102,8 @@ def xor_fractal_4d(
 
     Args:
         IW, IX, IY, IZ: Integer grid-index arrays
-        grid_size: Grid resolution
+        grid_size: Unused here (the XOR rule is scale-free); kept only so
+            every fractal shares the dispatch signature in generate_4d_fractal
 
     Returns:
         Tuple of (keep mask, color values)
@@ -155,7 +156,12 @@ def menger_sponge_4d(
         ym = (ty // div) % 3 == 1
         zm = (tz // div) % 3 == 1
 
-        middle_count = wm.astype(np.int8) + xm.astype(np.int8) + ym.astype(np.int8) + zm
+        middle_count = (
+            wm.astype(np.int8)
+            + xm.astype(np.int8)
+            + ym.astype(np.int8)
+            + zm.astype(np.int8)
+        )
         solid &= middle_count < 2
         depth = np.where((depth == 0) & (middle_count == 1), lev + 1, depth)
 
@@ -684,7 +690,7 @@ def main() -> None:
         aprint("")
         aprint("What you're seeing:")
         aprint("  • 3D slices through 4D fractals")
-        aprint("  • Colors show local structure (depth, shell, parity)")
+        aprint("  • Colors show local structure (depth, shell, cell index)")
         aprint("  • Navigate W to see how structure evolves")
         aprint("  • Switch fractal type to compare geometries")
         aprint("")
