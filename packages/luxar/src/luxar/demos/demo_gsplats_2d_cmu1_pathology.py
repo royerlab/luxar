@@ -513,8 +513,14 @@ Controls:
                         cholesky_factors=gsplats.cholesky_factors,
                         dim_order=["x", "y"],
                         opacity=1.0,
-                        absorption=1.0,
-                        blending_mode="volumetric",
+                        # Stays additive while the other bioimaging gsplat
+                        # demos are volumetric: this fit is strictly 2D, so
+                        # every splat shares one view-depth plane, the depth
+                        # sorter takes its identity-ordering branch, and
+                        # volumetric would composite in storage order with no
+                        # depth meaning. For a 2D fit the additive sum IS the
+                        # reconstruction.
+                        blending_mode="additive",
                         layer=True,
                         colormap=colormap,
                     )
