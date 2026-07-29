@@ -77,8 +77,8 @@ print(format_gsplats_info(info))
 `inspect_gsplats_zarr()` walks the node tree to surface the primary
 leaf's fields (`n_splats`, `ndim`, `ordering`, `chunk_size`,
 `amplitude_range`, `center_bounds`), plus tree-shape metadata
-(`n_additive_sublods`, `kind`, `n_children`) so multi-LOD and partitioned
-datasets are visible at a glance.
+(`n_additive_sublods_default`, `kind`, and `n_substitutive` or `n_parts`) so
+multi-LOD and partitioned datasets are visible at a glance.
 
 ### Convenience Methods
 
@@ -108,7 +108,7 @@ Spatial ordering arranges splats along space-filling curves to improve compressi
 **Hilbert Curve** (recommended):
 - Better locality preservation
 - ~10% better compression than Morton
-- Requires `hilbertcurve` package
+- Uses a Numba-compiled kernel; falls back to the `hilbertcurve` package if Numba is unavailable
 
 **No ordering**:
 - Preserves original order
@@ -124,7 +124,7 @@ from luxar.gsplats.io import sort_splats_spatial
 indices, metadata = sort_splats_spatial(
     centers,
     method="hilbert",  # or "morton"
-    resolution=None,   # Auto-computed if None
+    resolution=None,   # Ignored (kept for signature stability)
 )
 
 # Reorder arrays
@@ -158,7 +158,7 @@ This package uses `luxar.encoding` for semantic type-aware array encoding:
 | `amplitudes` | POSITIVE_SCALAR | canonical positive-scalar encoding (may quantize to uint8) |
 | `cholesky_factors_diag` | CHOLESKY_DIAG | per-channel log: `log_perchannel_u8` (AUTO — certified, escalates to `u16`; MEMORY) / `float32` (PRECISION) |
 | `cholesky_factors_offdiag` | CHOLESKY_OFFDIAG | per-channel signed-log: `signed_log_perchannel_u8` (escalates with the diagonal — one shared tier) / `float32`; absent if d==1 |
-| `colors` | COLOR | `rgb_uint8` (SDR) or `geolog_perchannel_u16` (HDR, auto-detected) |
+| `colors` | COLOR | `rgb_uint8` (SDR) or per-channel geolog (HDR, auto-detected): `geolog_perchannel_u16` (AUTO) / `_u8` (MEMORY) / `float32` (PRECISION) |
 
 **COORDINATE centers are uint16 per-axis fixed-point** under AUTO/MEMORY
 (`linear_perchannel_u16`, decoded back to float32 on read; a per-axis extent
@@ -383,7 +383,7 @@ print(f"Compression: {info['compression_ratio']}x")
 from luxar.gsplats.io.migrate import migrate_format, detect_legacy_format
 
 # Detect the legacy shape: "v1.0", "v1.1", "substitutive_dir", "v2.0", or
-# "v3.x-lod-pixel-size" (a v3.0/v3.1 store with pre-v3.2 lod selector attrs);
+# "v3.0-lod-pixel-size"/"v3.1-lod-pixel-size" (a v3.0/v3.1 store with pre-v3.2 lod selector attrs);
 # raises on a current file with nothing to upgrade
 print(detect_legacy_format("legacy.gsplats.zarr"))
 
@@ -439,8 +439,8 @@ is `luxar gsplat migrate-format`.
 ### Dependencies
 
 - **`luxar.encoding`**: Semantic type-based array encoding (see `../../encoding/README.md`)
-- **`luxar.typing_utils`**: Constants (TARGET_CHUNK_BYTES)
-- **`hilbertcurve`**: Required for Hilbert ordering (optional for Morton)
+- **`luxar.typing_utils`**: Format-contract version constants (`GSPLATS_FORMAT_VERSION`, `SUPPORTED_GSPLATS_VERSIONS`)
+- **`hilbertcurve`**: Fallback for Hilbert ordering when Numba is unavailable (Morton needs neither)
 
 ### Relationship to luxar.io
 
@@ -500,7 +500,7 @@ Typical compression ratios (compared to uncompressed float32):
 
 Compression gains from:
 1. **Spatial ordering** (~2x from blosc shuffle on ordered data)
-2. **Quantization** (2-4x from float32→float16/uint8)
+2. **Quantization** (2-4x from float32→uint16/uint8)
 3. **Broadcasting** (massive savings when values are uniform)
 4. **LUT encoding** (up to 75% savings for <256 unique values)
 5. **Array deduplication** (via xxhash64 in `luxar.encoding`)
