@@ -14,9 +14,10 @@
  *   - per-vertex scalars (colormap mode) ride the worker payload too —
  *     forwarded as a transferable typed-array and interpolated via
  *     `interpolate_scalars_batch` on the worker side,
- *   - the non-worker path and worker failures run the shared dispatcher
- *     in-process (`workers/data-worker/projection/in-process`), which
- *     handles the scalar path identically to the worker,
+ *   - the non-worker path and worker-INFRASTRUCTURE failures run the shared
+ *     dispatcher in-process (`workers/data-worker/projection/in-process`); a
+ *     failure that came back FROM the worker propagates instead, since the
+ *     fallback shares the kernel and would only reproduce it on the UI thread,
  *   - first-update info logs are gated by `updateVersion <= 1`,
  *   - commits use the GPU buffer pool when enabled, otherwise
  *     `updateInstancedLinesMesh`.
@@ -32,6 +33,9 @@ import { EXTEND_TO_ALL_TOLERANCE } from '../view-state/extend-tolerance';
 import { config as appConfig } from '../../../config';
 import { log, Modules } from '../../../utils/log';
 import { getWorkerPool } from '../../../workers/worker-pool';
+// From the leaf module, not the `worker-pool` barrel: the barrel eagerly imports
+// `./data-worker?worker`, and this predicate must stay free of that dependency.
+import { isWorkerInfrastructureError } from '../../../workers/worker-pool/errors';
 import { projectLinesInProcess } from '../../../workers/data-worker/projection/in-process';
 import type { UpdateSession } from '../../../profiling/update-profiler';
 
@@ -192,9 +196,18 @@ export async function projectLinesTo3DUsingWorker(
     if (error instanceof Error && error.name === 'WorkerAbortError') {
       throw error;
     }
+    // Only worker INFRASTRUCTURE failure justifies the in-process retry. The
+    // fallback runs the SAME kernel through the same `pickBackend`, so a
+    // rejection that came back FROM the worker (a WASM trap, a validation throw)
+    // fails identically here — except on the UI thread, where it blocks the
+    // frame. Propagate instead: the caller's `runLoaderUpdates` catch records the
+    // failure and the node stays retryable. Fails closed on an unknown error.
+    if (!isWorkerInfrastructureError(error)) {
+      throw error;
+    }
     log.warning(
       Modules.SCENE_LOADER,
-      'Worker lines projection failed, falling back to in-process dispatcher:',
+      'Worker unavailable or timed out, falling back to in-process lines projection:',
       error
     );
     return toProcessedLines(

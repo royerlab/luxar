@@ -254,10 +254,17 @@ describe('projectGSplatsTo3DUsingWorker', () => {
     expect(Array.from(result.centers3D)).toEqual([1, 2, 3]);
   });
 
-  it('falls back to the in-process dispatcher on worker failure', async () => {
+  // Worker INFRASTRUCTURE failure — the pool never got the work to a worker, or
+  // the worker hung. Re-running on the main thread is meaningful here.
+  it.each([
+    ['WorkerTimeoutError', 'Worker call exceeded timeout'],
+    ['WorkerUnavailableError', '[WorkerPool] No workers available after initialization'],
+  ])('falls back to the in-process dispatcher on %s', async (name, message) => {
+    const infraError = new Error(message);
+    infraError.name = name;
     mockGetWorkerPool.mockReturnValue({
       runWithTimeout: vi.fn(async () => {
-        throw new Error('boom');
+        throw infraError;
       }),
     });
     mockProcessGSplats.mockReturnValue(makeDispatcherResult(7));
@@ -265,5 +272,55 @@ describe('projectGSplatsTo3DUsingWorker', () => {
     const result = await projectGSplatsTo3DUsingWorker(makeData(), makeViewState(), 3.0, 1);
     expect(result.splatCount).toBe(7);
     expect(mockProcessGSplats).toHaveBeenCalledTimes(1);
+  });
+
+  // The regression this guards: `projectGSplatsInProcess` runs the SAME kernel
+  // through the same `pickBackend`, so re-running a rejected input reproduces the
+  // fault on the UI thread — a WASM trap there blocks the frame. A rejection that
+  // came back FROM the worker must propagate untouched.
+  it('re-throws a kernel fault instead of re-running it on the main thread', async () => {
+    // Shape of a WASM trap crossing the Comlink boundary.
+    const trap = new Error('unreachable');
+    trap.name = 'RuntimeError';
+    mockGetWorkerPool.mockReturnValue({
+      runWithTimeout: vi.fn(async () => {
+        throw trap;
+      }),
+    });
+
+    await expect(projectGSplatsTo3DUsingWorker(makeData(), makeViewState(), 3.0, 1)).rejects.toBe(
+      trap
+    );
+    expect(mockProcessGSplats).not.toHaveBeenCalled();
+  });
+
+  // Fail closed: an unrecognized error is NOT assumed to be infrastructure.
+  it('re-throws an unrecognized error rather than assuming infrastructure failure', async () => {
+    mockGetWorkerPool.mockReturnValue({
+      runWithTimeout: vi.fn(async () => {
+        throw new Error('boom');
+      }),
+    });
+
+    await expect(
+      projectGSplatsTo3DUsingWorker(makeData(), makeViewState(), 3.0, 1)
+    ).rejects.toThrow('boom');
+    expect(mockProcessGSplats).not.toHaveBeenCalled();
+  });
+
+  // A dataset-switch abort must still short-circuit before the infra check.
+  it('re-throws a dataset-switch abort without falling back', async () => {
+    const abort = new Error('aborted by caller signal');
+    abort.name = 'WorkerAbortError';
+    mockGetWorkerPool.mockReturnValue({
+      runWithTimeout: vi.fn(async () => {
+        throw abort;
+      }),
+    });
+
+    await expect(projectGSplatsTo3DUsingWorker(makeData(), makeViewState(), 3.0, 1)).rejects.toBe(
+      abort
+    );
+    expect(mockProcessGSplats).not.toHaveBeenCalled();
   });
 });

@@ -53,3 +53,42 @@ export class WorkerAbortError extends Error {
     this.name = 'WorkerAbortError';
   }
 }
+
+/**
+ * Thrown when the pool has no usable worker to dispatch to — either
+ * initialization produced none at all, or every worker was disposed. Unlike
+ * {@link WorkerTimeoutError} this says nothing about the task; the work was
+ * never handed to a worker in the first place.
+ */
+export class WorkerUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'WorkerUnavailableError';
+  }
+}
+
+/**
+ * True only for failures of the worker INFRASTRUCTURE — the pool could not
+ * spawn a worker, had none left, or a worker hung past its timeout.
+ *
+ * This is the only class of failure for which re-running the same work on the
+ * main thread is meaningful. A rejection that came back *from* a worker means
+ * the kernel itself rejected the data, and the in-process dispatchers run the
+ * SAME kernel via the same `pickBackend` — so retrying there would fail
+ * identically, except on the UI thread, where a WASM trap blocks the frame
+ * instead of a background one.
+ *
+ * Deliberately an allow-list, not a deny-list: the pool's own error types are a
+ * closed, greppable set, whereas "every way a kernel can fail" is not. An
+ * unrecognized error therefore does NOT qualify — callers fail closed and
+ * propagate it.
+ *
+ * Name-based rather than `instanceof`, matching `data/loaders/abort-error.ts`:
+ * these errors cross a Comlink boundary, which reconstructs them in the calling
+ * realm and breaks prototype identity.
+ */
+export function isWorkerInfrastructureError(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false;
+  const name = (error as { name?: unknown }).name;
+  return name === 'WorkerTimeoutError' || name === 'WorkerUnavailableError';
+}
