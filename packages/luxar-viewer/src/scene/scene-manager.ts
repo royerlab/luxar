@@ -961,9 +961,12 @@ export class SceneManager extends THREE.EventDispatcher<{
     );
   }
 
-  /** Update perspective camera FOV with bounds checking. No-op for orthographic. */
-  updateFOV(deltaY: number): void {
-    adjustFOV(this.makeCameraMaterialsCtx(), deltaY);
+  /**
+   * Update perspective camera FOV with bounds checking. Returns true
+   * when applied; false (no-op) for orthographic cameras.
+   */
+  updateFOV(deltaY: number): boolean {
+    return adjustFOV(this.makeCameraMaterialsCtx(), deltaY);
   }
 
   /** Update camera clipping planes with validation. */

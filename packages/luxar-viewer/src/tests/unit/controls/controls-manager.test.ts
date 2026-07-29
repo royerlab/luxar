@@ -155,44 +155,50 @@ describe('ControlsManager', () => {
       expect(controls.dampingFactor).toBe(0.25);
     });
 
-    it('should enable/disable zoom', () => {
-      controlsManager.setEnableZoom(false);
+    it('Ctrl/Meta+wheel is left to the FOV handler — no zoomDelta accumulates', () => {
+      // Zoom-vs-FOV exclusivity is stateless: the orbit wheel handler
+      // reads the event's own modifier flags (no keydown-tracked gate
+      // that can stick shut when a modifier keyup is lost to a focus
+      // change). Dispatch modifier-carrying wheel events at the canvas
+      // and verify the camera distance (proxy for zoomDelta accumulation
+      // through update()) does NOT change.
       const controls = controlsManager.getControls() as LuxarOrbitControls;
-      expect(controls.enableZoom).toBe(false);
-
-      controlsManager.setEnableZoom(true);
-      expect(controls.enableZoom).toBe(true);
-    });
-
-    it('[controls.md G32] setEnableZoom(false) on orbit blocks wheel events from accumulating zoomDelta', () => {
-      // controls.md G32[P5]: the prior test only checks the `enableZoom`
-      // field. This test exercises the actual wiring: dispatch a wheel
-      // event to the canvas while zoom is disabled and verify the camera
-      // distance (proxy for zoomDelta accumulation through update()) does
-      // NOT change.
-      const controls = controlsManager.getControls() as LuxarOrbitControls;
-      controlsManager.setEnableZoom(false);
-
-      // Distance is camera-to-target — proxy for accumulated zoomDelta.
       const beforeDist = camera.position.distanceTo(controls.target);
 
-      // Dispatch a wheel event at the canvas.
+      for (const mods of [{ ctrlKey: true }, { metaKey: true }]) {
+        domElement.dispatchEvent(
+          new WheelEvent('wheel', { deltaY: -100, cancelable: true, bubbles: true, ...mods })
+        );
+      }
+      controls.update();
+      expect(camera.position.distanceTo(controls.target)).toBeCloseTo(beforeDist, 5);
+
+      // Sanity: a plain wheel event DOES change distance.
       domElement.dispatchEvent(
         new WheelEvent('wheel', { deltaY: -100, cancelable: true, bubbles: true })
       );
       controls.update();
+      expect(camera.position.distanceTo(controls.target)).not.toBeCloseTo(beforeDist, 5);
+    });
 
-      const afterBlockedDist = camera.position.distanceTo(controls.target);
-      expect(afterBlockedDist).toBeCloseTo(beforeDist, 5);
+    it('ortho mode: Ctrl+wheel still zooms (real camera→ctx wiring, not just the ctx flag)', () => {
+      // adjustFOV no-ops for orthographic cameras, so zoom keeps modifier
+      // wheels in ortho. This goes through setCamera + setControlType so
+      // makeInputCtx's isOrthographic derivation from the live camera is
+      // exercised — a hardcoded flag would pass the pointer unit tests
+      // but fail here.
+      const orthoCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 100);
+      orthoCam.position.set(0, 0, 5);
+      controlsManager.setCamera(orthoCam);
+      controlsManager.setControlType('ortho');
+      const controls = controlsManager.getControls() as LuxarOrbitControls;
 
-      // Sanity: re-enabling and dispatching another event DOES change distance.
-      controlsManager.setEnableZoom(true);
+      const zoomBefore = orthoCam.zoom;
       domElement.dispatchEvent(
-        new WheelEvent('wheel', { deltaY: -100, cancelable: true, bubbles: true })
+        new WheelEvent('wheel', { deltaY: -100, cancelable: true, bubbles: true, ctrlKey: true })
       );
       controls.update();
-      const afterEnabledDist = camera.position.distanceTo(controls.target);
-      expect(afterEnabledDist).not.toBeCloseTo(beforeDist, 5);
+      expect(orthoCam.zoom).not.toBe(zoomBefore);
     });
 
     describe('natural drag (LEFT ↔ RIGHT swap)', () => {

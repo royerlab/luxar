@@ -230,6 +230,15 @@ export class ViewStateManager {
         warnings.push(
           `Dimension '${dim.name}' has invalid range format: ${JSON.stringify(dim.range)}`
         );
+      } else if (dim.categories && dim.categories.length > 0) {
+        // Categorical dims may have a zero-width range [0, 0]: a single category
+        // is legal, and its auto-range collapses to [0, 0] (mirrors Python
+        // dimensions.py). Only warn if the range is inverted.
+        if (dim.range[0] > dim.range[1]) {
+          warnings.push(
+            `Dimension '${dim.name}' has an inverted range [${dim.range[0]}, ${dim.range[1]}]. Min should not be greater than max.`
+          );
+        }
       } else if (dim.range[0] >= dim.range[1]) {
         warnings.push(
           `Dimension '${dim.name}' has invalid range [${dim.range[0]}, ${dim.range[1]}]. Min should be < max.`

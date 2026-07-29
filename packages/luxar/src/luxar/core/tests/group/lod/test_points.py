@@ -313,3 +313,69 @@ class TestAddPointsAdditiveLod:
         store = zarr.open(str(output), mode="r")
         grp = store["pts"]
         assert grp.attrs.get("layer") is True
+
+
+class TestStreamBreakpoints:
+    """``stream:<c>`` — the geometric ladder shared with the GSplats path.
+
+    This is the shape that makes a large leaf paint progressively; an
+    equal-count split still ends in an N/n_lods-sized commit.
+    """
+
+    def test_geometric_level_sizes(self) -> None:
+        rng = np.random.RandomState(0)
+        positions = rng.rand(10_000, 3).astype(np.float32)
+
+        levels = make_additive_lod_points(positions, counts="stream:1000")
+
+        # Cumulative cuts [1000, 2000, 4000, 8000, 10000] -> increments below.
+        assert [lvl.size for lvl in levels] == [1000, 1000, 2000, 4000, 2000]
+
+    def test_levels_are_a_permutation_of_every_index(self) -> None:
+        rng = np.random.RandomState(1)
+        positions = rng.rand(5_000, 3).astype(np.float32)
+
+        levels = make_additive_lod_points(positions, counts="stream:400")
+
+        joined = np.concatenate(levels)
+        assert joined.size == 5_000
+        assert np.array_equal(np.unique(joined), np.arange(5_000))
+
+    def test_first_level_is_the_chunk_size(self) -> None:
+        rng = np.random.RandomState(2)
+        positions = rng.rand(1_000, 3).astype(np.float32)
+
+        levels = make_additive_lod_points(positions, counts="stream:64")
+
+        assert levels[0].size == 64
+
+    def test_smaller_than_one_chunk_collapses_to_a_single_level(self) -> None:
+        # This is what lets a coarse level of a composed ladder stay a flat
+        # leaf without any special-casing at the call site.
+        rng = np.random.RandomState(3)
+        positions = rng.rand(500, 3).astype(np.float32)
+
+        levels = make_additive_lod_points(positions, counts="stream:40000")
+
+        assert len(levels) == 1
+        assert levels[0].size == 500
+
+    def test_unrecognized_string_names_both_vocabularies(self) -> None:
+        positions = np.random.RandomState(4).rand(100, 3).astype(np.float32)
+
+        with pytest.raises(ValueError, match="energy:.*stream:|stream:.*energy:"):
+            make_additive_lod_points(positions, counts="bogus:1,2")
+
+    def test_end_to_end_writes_a_geometric_ladder(self, tmp_path) -> None:
+        output = tmp_path / "t.luxar.zarr"
+        positions = np.random.RandomState(6).rand(4_000, 3).astype(np.float32)
+
+        with LuxarZarrCompiler(output) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_points("pts", positions, additive_lod=dict(counts="stream:500"))
+
+        grp = zarr.open(str(output), mode="r")["pts"]
+        n_sub = int(grp.attrs["n_additive_sublods"])
+        sizes = [int(grp[f"additive_{i}"].attrs["n_points"]) for i in range(n_sub)]
+        assert sizes == [500, 500, 1000, 2000]
+        assert sum(sizes) == 4_000

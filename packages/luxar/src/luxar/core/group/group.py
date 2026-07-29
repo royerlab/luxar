@@ -168,7 +168,10 @@ class Group(Node):
                 ``device``, ``seed``, ``coverage_fractions``, ``coarsen_dims``,
                 ``max_aspect`` (anisotropy cap on the coarse levels, default
                 3.0; ``None`` disables).
-                Mutually exclusive with ``additive_lod`` and ``partition``.
+                Composes with ``additive_lod``, which then describes how
+                each level streams in (every level gets a streaming ladder by
+                default; pass ``additive_lod=False`` to opt out). Mutually
+                exclusive with ``partition``.
                 ``scalars``+``colormap``
                 points are supported by baking scalars→RGB for the coarse gsplat
                 levels (the finest Points child stays scalar-driven; a live
@@ -282,7 +285,10 @@ class Group(Node):
                 substitutive pipeline, assembled as a ``kind="lod"`` Group whose
                 finest child is the original Lines node. Same dict vocabulary as
                 Points; ``scalars``+``colormap`` are baked for the coarse levels.
-                Mutually exclusive with ``additive_lod`` and ``partition``. See
+                Composes with ``additive_lod`` (which then describes how each
+                level streams in; every level is laddered by default, pass
+                ``additive_lod=False`` to opt out). Mutually exclusive with
+                ``partition``. See
                 :func:`luxar.core.group.lod.lines.resolve_substitutive_axis_lines`.
             **attrs: Additional node attributes. Common ones:
 

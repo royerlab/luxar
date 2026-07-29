@@ -18,11 +18,10 @@ export interface PickNodeEntry {
 }
 
 /**
- * True when the node AND all its ancestors are visible. `node.visible`
- * alone misses a hidden ancestor: the LOD-group registry toggles
- * `visible` on the LEVEL object, which can be a GROUP (partition tiles)
- * — the member meshes' own flags stay true. Mirrors the depth-sort
- * coordinator's private helper of the same name (`depth-sort-coordinator.ts`).
+ * Ancestor-aware visibility, re-exported from `utils/object-visibility` (the
+ * single implementation of the parent-chain walk, shared with the depth-sort
+ * scheduler and the LOD registry/eviction pass) at the import path pick
+ * consumers already use.
  *
  * Load-bearing for the pick pass: a hidden/demoted LOD level must never
  * reach the pick buffer. Rendering it would (a) produce phantom picks —
@@ -30,14 +29,11 @@ export interface PickNodeEntry {
  * demoted level's pool-released geometry: `renderPickBuffer` force-syncs
  * `pick.geometry = main.geometry`, so a byte-evicted DISPOSED geometry
  * (or another node's adopted pool data) would be re-uploaded under the
- * old pickId.
+ * old pickId. `node.visible` alone misses a hidden ancestor: the LOD-group
+ * registry toggles `visible` on the LEVEL object, which can be a GROUP
+ * (partition tiles) — the member meshes' own flags stay true.
  */
-export function isEffectivelyVisible(node: THREE.Object3D): boolean {
-  for (let o: THREE.Object3D | null = node; o; o = o.parent) {
-    if (!o.visible) return false;
-  }
-  return true;
-}
+export { isEffectivelyVisible } from '../../../utils/object-visibility';
 
 /** Dispose any materials on the pick mesh (either a Material or Material[]). */
 export function disposePickMaterial(mesh: THREE.Mesh): void {

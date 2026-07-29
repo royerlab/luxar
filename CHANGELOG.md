@@ -6,6 +6,75 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Added — Points and Lines LOD levels now stream progressively (#811, #808)
+
+`additive_lod` and `substitutive_lod` used to be mutually exclusive for Points
+and Lines, which left the finest level of a substitutive ladder as the one node
+in the LOD system that could not paint progressively: it committed
+all-at-once however large it was. On the 9.75M-point DESI demo that single
+commit froze the main thread for ~85 s. GSplats have always composed the two
+axes, so this closes a three-geometry asymmetry as much as it fixes a stall.
+
+The axes now compose — substitutive chooses *which* level renders at the current
+zoom, additive describes *how* each level streams in — and every level is
+laddered by default (`additive_lod=False` opts out), with the sibling-aware
+first chunk on all but the coarsest. A level smaller than one stream chunk stays
+a flat leaf automatically.
+
+Supporting changes:
+
+- `stream:<c>` breakpoints on Points and Lines, sharing the GSplats cut geometry
+  via the new `luxar/utils/lod_breakpoints.py`. This matters: an equal-count
+  split into 4 levels still ends with an N/4-sized commit, and the one existing
+  Points ladder in the repo (`global_rivers_earth/terrain`) put 99.98% of its
+  8M points in the final level — it streamed in name only.
+- Energy quality stamps (`lod_stats.energy_fraction_cum` per sub-LOD,
+  `level_stats.reference_energy` per leaf) so the never-downgrade gate can
+  release a swap on committed energy rather than raw element count.
+- Hidden (`visible=false`) layers no longer fetch, decode and commit their LOD
+  levels, and no longer escape eviction.
+- `scripts/check_demo_ladders.py` — a structural gate that fails a leaf whose
+  largest level is more than half the data, which is exactly the degeneracy a
+  level count alone cannot see.
+#### Fixed — every 2D gsplats scene failed to load with a WASM `unreachable` trap
+
+Loading a gsplats scene with fewer than 3 displayed dimensions failed with
+`RuntimeError: unreachable` thrown from `project_gsplats_nd_to_3d`, leaving the
+node unrendered (`Total gsplats loaded: 0`). Every 2D gsplats node in a scene
+failed the same way, each after paying its full multi-million-splat fetch.
+
+Root cause: the display-dims marginal Cholesky was computed with a hardcoded
+sub-dimension count of 3 in both the fused `project_gsplats_nd_to_3d` and
+`extract_visible_cholesky_3d`. A 2D scene supplies `display_dims.len() == 2`, so
+Rust indexed `display_dims[2]` out of bounds — a panic, and the crate is
+`panic = "abort"`, hence the wasm trap. The TypeScript reference had the same
+bug but read `undefined` at that index and produced NaN-driven garbage instead of
+trapping, so the production >16D backend was silently wrong rather than loud.
+A regression: the pre-May-2026 main-thread path sized the loop from the data
+(`subNdim = keepDims.length`), and the hardcoded 3 only became reachable when the
+WASM kernel replaced it.
+
+The marginal is now computed over however many display dims exist, and the
+renderer's fixed 6-element packed-3D output is padded: zero off-diagonals (the
+phantom axis is uncorrelated, leaving the in-plane profile untouched) plus a
+phantom diagonal equal to the **geometric mean of the real Cholesky pivots** —
+which is `(det Σ_S)^(1/2n)` and therefore rotation-invariant, so a 2D splat renders
+as a round blob at its own in-plane scale. The phantom is deliberately **not** an
+epsilon: in sum projection (additive, luminous, volumetric) the shader scales
+amplitude by the Gaussian's extent along the view ray, `sigmaRay = 1/√(rᵀΣ⁻¹r)`, so
+an ε-thin splat is scaled by ~1e-5 and discarded — the scene renders black. This
+was settled by A/B-ing an ε-padded **3D twin** scene, which reaches the renderer
+via the standard-3D fast path and so bypasses the marginal code entirely.
+`luxar.gsplats.lift` depends on the scale-matched choice too: its
+`opacity / (rayIntegralFactor · σ)` calibration holds for a 2D lift only because
+`√(σ·σ) == σ`.
+
+Pinned by 8 new Rust tests (2D/1D padding, linear scaling with splat size,
+rotation invariance, the isotropic-2D-lift contract, degenerate/NaN and
+empty-display-dims fallbacks), 2 cross-language parity tests, and 6
+**unconditional** TypeScript-only tests — the parity suite is
+`skipIf(!wasmFilesExist)`, so without those a TS-side regression in the >16D
+backend would ship silently.
 #### Fixed — the CI Python version matrix tested one version three times (#839)
 
 `python-tests` declared a `['3.10', '3.11', '3.12']` matrix, but every leg ran the
@@ -147,10 +216,11 @@ notch of axial length `2 × width` bottoming out at 50%. (PR #785; follow-ups
   suppression scalar** in `[0, 1]` (`compute_cap_suppression` — Rust kernel +
   its TypeScript mirror, computed once per commit off the main thread, riding
   texel4.yz): `1.0` at a straight-through interior joint or a slice-clipped
-  end (nothing will arrive to sum with), `0.0` at a ≥ 90° bend, a branch hub,
-  or a free polyline end (there the quads genuinely do overlap — keep the
-  cap), `cos θ` in between. Consumed by all four shader backends (visual +
-  picking, GLSL + TSL). Joints are matched by vertex **index**, not position:
+  end (nothing will arrive to sum with), `0.0` at a ≥ 90° bend or a branch
+  hub (there the quads genuinely do overlap — keep the cap) or a free
+  polyline end (no neighbour at all — keep the soft cap), `cos θ` in
+  between. Consumed by all four shader backends (visual + picking, GLSL +
+  TSL). Joints are matched by vertex **index**, not position:
   `line_type="segments"` chains with per-segment duplicate points keep the
   cap (and the notch) — author connected geometry as `line_type="polyline"`.
 - **Per-endpoint cap factor `min(startCap, endCap)`** (#796): the initial

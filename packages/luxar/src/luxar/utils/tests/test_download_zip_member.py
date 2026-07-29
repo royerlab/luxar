@@ -90,6 +90,38 @@ class _RedirectRangeHTTPHandler(_RangeHTTPHandler):
         return super().send_head()
 
 
+class _OverSendRangeHTTPHandler(_RangeHTTPHandler):
+    """Range handler that honours the requested START but streams to EOF,
+    ignoring the requested END — a misbehaving/malicious server that returns
+    MORE body than the client asked for. Drives the compressed-bytes over-run
+    guard in ``download_zip_member`` (the tail/local-header reads are unaffected
+    because the extractor only inspects their leading bytes).
+    """
+
+    def send_head(self):  # noqa: ANN201 - stdlib override
+        path = Path(self.translate_path(self.path))
+        range_header = self.headers.get("Range")
+        if range_header is None or not path.is_file():
+            return super().send_head()
+        size = path.stat().st_size
+        spec = range_header.replace("bytes=", "").strip()
+        start_s, _, _end_s = spec.partition("-")
+        start = int(start_s) if start_s else 0
+        if start >= size:
+            self.send_error(416, "Requested Range Not Satisfiable")
+            return None
+        end = size - 1  # ignore the requested end → over-send to EOF
+        f = open(path, "rb")
+        f.seek(start)
+        self.send_response(206)
+        self.send_header("Content-Type", "application/octet-stream")
+        self.send_header("Content-Length", str(end - start + 1))
+        self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+        self.send_header("Accept-Ranges", "bytes")
+        self.end_headers()
+        return _LimitedFile(f, end - start + 1)
+
+
 def _serve(directory: Path, handler_cls):  # noqa: ANN001, ANN202
     handler = lambda *a, **kw: handler_cls(*a, directory=str(directory), **kw)  # noqa: E731
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
@@ -113,6 +145,17 @@ def range_server(tmp_path: Path):
 def redirect_range_server(tmp_path: Path):
     """Serve tmp_path with Range support + a 302-redirecting ``/dl/`` prefix."""
     server, thread = _serve(tmp_path, _RedirectRangeHTTPHandler)
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}"
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+
+
+@pytest.fixture()
+def oversend_range_server(tmp_path: Path):
+    """Serve tmp_path with a Range handler that over-sends past the requested end."""
+    server, thread = _serve(tmp_path, _OverSendRangeHTTPHandler)
     try:
         yield f"http://127.0.0.1:{server.server_address[1]}"
     finally:
@@ -328,6 +371,100 @@ class TestDownloadZipMember:
             max_uncompressed_size=None,
         )
         assert out.read_bytes() == payloads[member]
+
+    def test_promotion_failure_keeps_verified_bytes(
+        self, range_server: str, tmp_path: Path
+    ) -> None:
+        """A member that is fully written and CRC-verified but cannot be renamed
+        into place (here: the destination already exists as a directory) must
+        keep its verified staging bytes — the promotion happens OUTSIDE the
+        mid-stream cleanup guard, so a failed rename never deletes good data.
+        """
+        payloads = _make_payloads()
+        _build_zip(tmp_path / "archive.zip", payloads)
+        member = "readme.txt"
+        out = tmp_path / "dest"
+        out.mkdir()  # os.replace() of a file onto an existing directory fails
+
+        with pytest.raises(OSError):
+            download_zip_member(f"{range_server}/archive.zip", member, out)
+
+        part = out.with_suffix(out.suffix + ".part")
+        assert part.exists()
+        assert part.read_bytes() == payloads[member]
+
+    def test_compressed_over_run_aborts(
+        self, oversend_range_server: str, tmp_path: Path
+    ) -> None:
+        """A server that ignores the Range end and streams more body bytes than
+        the member declares (``comp_size``) must be aborted by the
+        compressed-bytes guard, with no output or ``.part`` left behind.
+        """
+        payloads = _make_payloads()
+        _build_zip(tmp_path / "archive.zip", payloads)
+        # A small member whose body is followed by more archive bytes, so the
+        # over-send streams well past its declared compressed size.
+        member = "readme.txt"
+        out = tmp_path / "readme.out"
+        with pytest.raises(ValueError, match="more compressed bytes|aborting"):
+            download_zip_member(f"{oversend_range_server}/archive.zip", member, out)
+        assert not out.exists()
+        assert list(tmp_path.glob("*.part")) == []
+
+    def test_stored_output_over_run_aborts(
+        self, range_server: str, tmp_path: Path
+    ) -> None:
+        """The STORED (uncompressed) path also honours the output-size bound: a
+        STORED member whose central-dir uncompressed size is forged smaller than
+        its real bytes trips the ``size_limit`` guard on the raw copy, leaving no
+        output or ``.part`` behind.
+        """
+        member = "big.bin"
+        payload = b"Z" * 200_000
+        archive = tmp_path / "stored.zip"
+        _build_zip(archive, {member: payload}, stored=True)
+        _forge_central_uncompressed_size(archive, member, 1024)
+
+        out = tmp_path / "big.out"
+        with pytest.raises(ValueError, match="exceeds the declared member size"):
+            download_zip_member(f"{range_server}/stored.zip", member, out)
+        assert not out.exists()
+        assert list(tmp_path.glob("*.part")) == []
+
+    def test_crc_mismatch_cleans_up(self, range_server: str, tmp_path: Path) -> None:
+        """Flipping one payload byte of a STORED member keeps every declared size
+        consistent (only the CRC changes), so the CRC check is the sole guard —
+        it must raise and leave no ``.part`` behind.
+        """
+        member = "readme.txt"
+        payload = b"hello world" * 100
+        archive = tmp_path / "crc.zip"
+        _build_zip(archive, {member: payload}, stored=True)
+        # Corrupt one byte of the STORED member body in place; central-dir sizes
+        # and CRC are untouched, so only the recomputed CRC can catch it.
+        data = bytearray(archive.read_bytes())
+        pos = data.find(payload)
+        assert pos >= 0, "STORED member body not found in archive"
+        data[pos] ^= 0xFF
+        archive.write_bytes(bytes(data))
+
+        out = tmp_path / "readme.out"
+        with pytest.raises(ValueError, match="CRC32 mismatch"):
+            download_zip_member(f"{range_server}/crc.zip", member, out)
+        assert not out.exists()
+        assert list(tmp_path.glob("*.part")) == []
+
+    def test_empty_stored_member(self, range_server: str, tmp_path: Path) -> None:
+        """A zero-length STORED member (``comp_size == 0``) extracts to an empty
+        file via the short-circuit, without an inverted-range body GET.
+        """
+        payloads = {"empty.bin": b"", "readme.txt": b"hello"}
+        _build_zip(tmp_path / "archive.zip", payloads, stored=True)
+        out = tmp_path / "empty.out"
+        download_zip_member(f"{range_server}/archive.zip", "empty.bin", out)
+        assert out.exists()
+        assert out.read_bytes() == b""
+        assert list(tmp_path.glob("*.part")) == []
 
     def test_matches_zipfile_extraction(
         self, range_server: str, tmp_path: Path
