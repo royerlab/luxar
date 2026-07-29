@@ -19,9 +19,14 @@
  *    time, its rendered energy climbs from `e(k)·E` toward `E` (additive/luminous
  *    compositing sums energy; the ladder commits highest-energy splats first),
  *    which reads as a brightening pop. Scaling opacity by `1/e(k)` — opacity is a
- *    linear multiplier on summed energy in additive/luminous — holds the total at
- *    `E` throughout, the temporal twin of mechanism 1's build-time mass
- *    conservation (same conservation law, time axis instead of scale axis).
+ *    linear multiplier on summed energy in additive/luminous, and on optical
+ *    depth `τ` in volumetric — holds the total at `E` throughout, the temporal
+ *    twin of mechanism 1's build-time mass conservation (same conservation law,
+ *    time axis instead of scale axis).
+ *
+ * Both mechanisms apply to the modes in `BLENDABLE_MODES`
+ * (`scene/lod-fade.ts`) — additive / luminous / volumetric; see that set's doc
+ * for the per-mode exactness argument and the volumetric caveat.
  *
  * @module scene/lod-blend
  */
@@ -115,15 +120,16 @@ export function coverageBlendPlan(
 }
 
 /**
- * Brightness-compensation factor for a streaming additive/luminous LOD leaf
- * (mechanism 2 in the module doc).
+ * Brightness-compensation factor for a streaming blendable LOD leaf
+ * (mechanism 2 in the module doc; additive / luminous / volumetric).
  *
  * As a leaf's additive ladder streams in, its committed prefix carries only `e`
  * (∈ (0, 1]) of the leaf's full self-energy `E`, so it renders at `e·E` and
  * brightens toward `E` as chunks arrive — a pop. Because opacity linearly scales
- * summed energy in additive/luminous compositing, multiplying opacity by `1/e`
- * renders the partial prefix at the full `E` at every step: brightness stays
- * constant and converges to the authored value (factor → 1) as `e → 1`.
+ * summed energy in additive/luminous compositing (and per-ray optical depth τ
+ * in volumetric), multiplying opacity by `1/e` renders the partial prefix at
+ * the full `E` at every step: brightness stays constant and converges to the
+ * authored value (factor → 1) as `e → 1`.
  *
  * `floor` caps the boost at `1/floor` so a tiny early prefix can't over-brighten
  * its (energy-descending, hence core-heavy) splats into tone-map clipping.

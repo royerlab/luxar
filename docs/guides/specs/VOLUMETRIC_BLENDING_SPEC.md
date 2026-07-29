@@ -564,20 +564,54 @@ and rendering agree.
 
 - **LOD / streaming**: substitutive levels pin total mass per barrier group by
   default, and τ ∝ mass along the ray ⇒ absorption strength survives LOD
-  switches without popping. **Correction (phase 1)**: the additive-ladder
-  energy compensation 1/e(k) (PR #541) is gated by `BLENDABLE_MODES` =
-  {additive, luminous} (`scene/lod-fade.ts:49,142`), so a volumetric leaf
-  streaming a partial ladder gets NO compensation — the brightening pop the
-  mechanism removes returns for volumetric. Since opacity scales τ (§3.1),
-  applying it would be first-order correct, but `BLENDABLE_MODES` also gates
-  the cross-fade (deferred below), so enabling one without the other means
-  splitting that predicate — a **documented follow-up**, not phase 1. Chunks
-  arrive in energy order, not depth order: fine, the sort worker re-sorts on
-  every commit (Phase-2 sorting contract), and I3 bounds the transient error.
-- **LOD cross-fade** (`scene/lod-fade.ts`, `BLENDABLE_MODES` =
-  additive/luminous today): volumetric is a *candidate* for inclusion since an
-  opacity fade is ghost-free (opacity scales τ — §3.1), unlike `normal` where
-  depthWrite complicates fading. Open follow-up, not phase 1.
+  switches without popping. **Enabled (post-phase-4 follow-up)**: volumetric
+  is now in `BLENDABLE_MODES` = {additive, luminous, volumetric}
+  (`scene/lod-fade.ts`), so a streaming volumetric leaf gets the additive-ladder
+  energy compensation 1/e(k) (PR #541). Since opacity linearly scales τ (§3.1),
+  the boost restores the partially-committed ladder's optical depth **in
+  aggregate**. Be precise about what that does *not* mean: `e(k)` is a GLOBAL
+  energy fraction and a committed prefix is a SUBSET of splats, so the boost is
+  per-ray exact only under proportional thinning (an idealization) — in reality
+  rays through the committed core are over-boosted and rays through only-missing
+  splats get nothing. That is the *same* structural approximation the
+  additive/luminous path has shipped since the compensation landed, so
+  volumetric is not held to a lower bar. The volumetric-specific twist: on
+  individually optically-thick splats the per-splat self-screening `S(Bτᵢ)`
+  saturates emission, so a large boost deepens occlusion more than it brightens;
+  bounded by the shared `ENERGY_FLOOR = 0.1` cap (≤ 10×), transient (decays as
+  e(k) → 1), with `?no-lod-energy` as the escape hatch and a volumetric-specific
+  floor the obvious knob should a thick-splat scene ever show transient dark
+  blobs while streaming. A deliberate single-set/shared-cap policy rather than a
+  split predicate. Chunks arrive in energy order, not depth order: fine, the sort
+  worker re-sorts on every commit (Phase-2 sorting contract), and I3 bounds the
+  transient error.
+- **LOD cross-fade** (`scene/lod-fade.ts`): **enabled** for volumetric in the
+  same change. An opacity fade is ghost-free (opacity scales τ — §3.1), unlike
+  `normal` where depthWrite complicates fading. With weights `w`/`1−w` the pair
+  composites to `1 − exp(−(w·τ_fine + (1−w)·τ_coarse))`: endpoints exact, and in
+  between the absorption moves monotonically between the two levels' own
+  absorptions (a log-space, transmittance-multiplicative interpolation — always
+  bracketed, never a ghost outside either level). It degenerates to a *constant*
+  `1 − e^(−τ)` only where both levels present the same per-ray τ; the build
+  invariant is total mass **per barrier group, not per ray**, and a coarse level
+  is by construction a different spatial distribution, so absorption is NOT
+  invariant mid-fade in general — do not build on that. The guaranteed
+  monotone-bracketed dissolve is what anti-popping needs, and is strictly better
+  than the hard swap it replaces. Mid-fade the two co-located sibling meshes are
+  whole-mesh ordered by the renderOrder pass (splats of the two levels never
+  interleave in the draw order); with near-identical bounds the containment rule
+  usually decides, deterministically, which draws first (larger bounding sphere).
+  That is acceptable rather than merely "benign", and the two channels differ:
+  combined **transmittance is exactly order-independent** (transmittances
+  multiply), so occlusion of anything behind the pair is correct at every fade
+  weight; **emission is order-dependent**, but only where the two levels' local
+  radiance differs — equal-color fragments commute exactly under over-compositing
+  — so the residual is second order (the product of the levels' per-fragment
+  alphas, each already scaled by `w`/`1−w`, times the local color difference) and
+  is bounded by the very inter-level difference the hard swap used to present in
+  full as a one-frame pop. Do not restate this as "absorption is conserved
+  exactly"; the accurate summary is *absorption-exact in the order sense,
+  emission approximate to second order*. `?no-lod-fade` is the escape hatch.
 - **Tone mapping / HDR**: pure additive accumulates without bound and can blow
   out under ACES; volumetric bounds accumulated radiance near c/κ, improving
   tone-mapped appearance on dense scenes. Emission remains unclamped HDR — a
