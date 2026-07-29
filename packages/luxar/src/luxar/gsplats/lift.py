@@ -233,7 +233,12 @@ def _segment_pairs(
     if line_type == "indexed":
         if indices is None:
             raise ValueError("line_type='indexed' requires an indices edge list")
-        return np.asarray(indices, dtype=np.intp).reshape(-1, 2)
+        indices_arr = np.asarray(indices)
+        if not np.issubdtype(indices_arr.dtype, np.integer):
+            raise ValueError(
+                f"Indices must be an integer array, got dtype {indices_arr.dtype}"
+            )
+        return indices_arr.astype(np.intp, copy=False).reshape(-1, 2)
     raise ValueError(
         f"line_type must be 'segments'/'polyline'/'loop'/'indexed'; got {line_type!r}"
     )

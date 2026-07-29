@@ -143,6 +143,34 @@ class TestAddLinesSubstitutiveLod:
         grp, _ = _build(tmp_path)
         assert "position_bounds" in grp.attrs
 
+    def test_float_indices_rejected_before_partial_lod_write(self, tmp_path) -> None:
+        out = tmp_path / "t.luxar.zarr"
+        vertices = np.array(
+            [[0, 0, 0], [1, 0, 0], [10, 0, 0], [11, 0, 0]],
+            dtype=np.float32,
+        )
+        indices = np.array([0.9, 1.9, 2.9, 3.9], dtype=np.float64)
+        with LuxarZarrCompiler(out) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            with pytest.raises(ValueError, match="integer array"):
+                scene.add_lines(
+                    "curves",
+                    vertices,
+                    1.0,
+                    line_type="indexed",
+                    indices=indices,
+                    substitutive_lod=dict(
+                        compression_factor=2,
+                        levels=1,
+                        device="cpu",
+                        seed=0,
+                    ),
+                    additive_lod=False,
+                )
+
+        store = zarr.open(str(out), mode="r")
+        assert "curves" not in store
+
 
 class TestSubstitutiveLinesComposedWithAdditive:
     """``additive_lod`` composes with ``substitutive_lod`` on Lines too.
@@ -517,9 +545,9 @@ class TestSubstitutiveLinesConservationAndSymmetry:
             hdr = [w for w in caught if "HDR" in str(w.message)]
         grp = zarr.open(str(out), mode="r")["c"]
         assert np.asarray(grp["child_0"]["colors"]).dtype == np.uint8
-        assert not hdr, (
-            f"unexpected HDR colour warning(s): {[str(w.message) for w in hdr]}"
-        )
+        assert (
+            not hdr
+        ), f"unexpected HDR colour warning(s): {[str(w.message) for w in hdr]}"
 
     def test_image_labels_forwarded_to_finest_lines_child(self, tmp_path) -> None:
         # image_labels must NOT be dropped on the substitutive path; they ride to

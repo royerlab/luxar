@@ -252,6 +252,17 @@ def test_lines_indexed_uses_edge_list():
         lift_lines_to_gsplats(verts, 1.0, line_type="indexed", indices=None)
 
 
+def test_lines_indexed_rejects_float_indices():
+    verts = np.array([[0, 0, 0], [10, 0, 0], [0, 10, 0]], np.float32)
+    with pytest.raises(ValueError, match="integer array"):
+        lift_lines_to_gsplats(
+            verts,
+            1.0,
+            line_type="indexed",
+            indices=np.array([[0.9, 1.9]], np.float64),
+        )
+
+
 def test_lines_colors_interpolated_and_normalized():
     verts = np.array([[0, 0, 0], [10, 0, 0]], np.float32)
     colors = np.array([[255, 0, 0], [0, 0, 255]], np.uint8)  # red -> blue

@@ -94,9 +94,10 @@ def identify_polylines(
         # Reject non-integer indices before the intp cast below silently
         # TRUNCATES a float (1.7 -> 1) into an edge the user never authored.
         # The plain single-leaf path guards this in write_lines, but the
-        # partition / additive-LOD / substitutive-LOD branches consume the
-        # raw indices through this function first, so the guard has to live
-        # at this shared chokepoint too (#886).
+        # partition / additive-LOD branches consume the raw indices through
+        # this function first, so the guard has to live at this shared
+        # chokepoint too (#886). The substitutive path has an equivalent gate
+        # in gsplats.lift._segment_pairs.
         if not np.issubdtype(indices.dtype, np.integer):
             raise ValueError(
                 f"Indices must be an integer array, got dtype {indices.dtype}"
