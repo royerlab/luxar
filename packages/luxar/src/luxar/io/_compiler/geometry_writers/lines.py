@@ -121,6 +121,13 @@ def write_lines(
             raise ValueError("Indexed requires at least 2 indices")
         if indices.size % 2 != 0:
             raise ValueError("Indices must have an even element count (pairs)")
+        # Reject non-integer indices: convert_to_indexed casts with
+        # `.astype(np.uint32)`, which silently TRUNCATES a float (1.7 -> 1),
+        # so a float array would produce edges the user never authored.
+        if not np.issubdtype(indices.dtype, np.integer):
+            raise ValueError(
+                f"Indices must be an integer array, got dtype {indices.dtype}"
+            )
         # Bounds check BOTH ends before convert_to_indexed casts to uint32:
         # a negative index would silently wrap to ~4 billion and blow up
         # with a raw IndexError deep inside the spatial ordering.

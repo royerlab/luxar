@@ -165,6 +165,26 @@ POINT_RADIUS = 1.2  # Mpc (visualization scale)
 SCENE_INTENSITY = 0.05
 LOD = dict(compression_factor=8, levels=3, device="auto")
 
+# Streaming ladder for every LOD level. The composed default sizes the first
+# chunk from a generic bandwidth budget; at 9.75M points this scene is large
+# enough to be worth tuning explicitly, so the base is set small enough to land
+# in a single zarr chunk — one range request to first paint.
+#
+# That base applies as-written only to the COARSEST level, which is the eager
+# default level and therefore the one whose first chunk is the actual
+# time-to-first-pixel: it ladders 2000 / 2000 / 4000 / 8000 / 3014. Finer levels
+# have a coarser sibling on screen already, so the sibling-aware rule raises
+# their base to n/(2K) — the finest lands 609498 / 609498 / 1218996 / 2437992 /
+# 4875971. That is deliberate: an upgrade has to beat what is already displayed
+# to be worth swapping, and 609K commits in a few seconds where the old
+# un-laddered 9.75M single commit froze the main thread for ~85s.
+STREAM_LOD = dict(counts="stream:2000", method="random", seed=0)
+
+# The shipped scene must carry a real ladder on its finest level. Anyone whose
+# `datasets/demos/` copy predates that gets a stale all-or-nothing scene and no
+# diagnostic, because `main()` short-circuits on an existing output directory.
+SCENE_MIN_SUBLODS = 3
+
 FLAGS = parse_demo_flags()
 NO_SERVE = FLAGS["no_serve"]
 SERVE_ONLY = FLAGS["serve_only"]
@@ -392,6 +412,36 @@ def extract_shipped_scene(zip_path: Path, output_path: Path) -> None:
         aprint(f"Scene ready: {output_path}")
 
 
+def warn_if_scene_lacks_ladder(scene_path: Path) -> None:
+    """Warn when a scene on disk predates the streaming ladder.
+
+    ``main()`` reuses an existing ``datasets/demos/`` scene unconditionally, so a
+    user who built this demo before the finest level was laddered would keep
+    getting the old all-or-nothing scene forever — the multi-minute load looks
+    like the fix simply did not work. Warn loudly, name both remedies, and carry
+    on: the old scene still renders, just slowly.
+    """
+    import zarr
+
+    try:
+        root = zarr.open(str(scene_path), mode="r")
+        finest = root["By tracer type"]["child_3"]
+        n_sublods = int(finest.attrs.get("n_additive_sublods", 1))
+    except Exception as exc:  # pragma: no cover - diagnostics only
+        aprint(f"  ⚠ Could not inspect {scene_path} for a streaming ladder: {exc}")
+        return
+
+    if n_sublods < SCENE_MIN_SUBLODS:
+        aprint(
+            f"  ⚠ This scene's finest level has no streaming ladder "
+            f"(n_additive_sublods={n_sublods}), so it will load all-at-once and "
+            "may freeze the browser for a long time. Rebuild it with:\n"
+            "      luxar demo run desi_galaxies -- --recompute\n"
+            "    or delete the scene and re-run to unpack a current shipped asset:\n"
+            f"      rm -rf {scene_path}"
+        )
+
+
 # =============================================================================
 # Scene
 # =============================================================================
@@ -413,19 +463,36 @@ def create_scene(
             ]
         )
 
-        lo, hi = np.percentile(positions, [2, 98], axis=0)
-        center = (lo + hi) / 2.0
-        extent = float(np.max(hi - lo))
+        # Orbit about the OBSERVER, i.e. the origin — the Milky Way and our solar
+        # system, and the one point every DESI sightline radiates from. Framing a
+        # 2-98 percentile bounding box instead put the pivot ~1.2 Gpc away down
+        # +z (the caps are asymmetric in z), so orbiting swung the entire local
+        # universe around a point out in the ELG shell.
+        #
+        # Distance comes from the RADIAL extent, not a box diagonal, because the
+        # cloud surrounds the pivot rather than sitting in front of it: the p95
+        # shell exactly fills the frame at r95/tan(fov/2). Opening at 0.75x that
+        # keeps the deliberately close, immersive start — the populated bulk
+        # slightly overfills the view and the sparse high-z tail runs off the
+        # edges, which is the intended "inside the cosmic web" framing.
+        radial = np.linalg.norm(positions.astype(np.float64), axis=1)
+        r95 = float(np.percentile(radial, 95))
+        r_max = float(radial.max())
         fov_deg = 50.0
-        fit_dist = (extent * 0.5) / np.tan(np.radians(fov_deg) / 2.0)
-        cam_dist = fit_dist * 0.7
+        cam_dist = 0.75 * r95 / np.tan(np.radians(fov_deg) / 2.0)
         camera = CameraConfig(
-            position=(float(center[0]), float(center[1]), float(center[2] + cam_dist)),
-            target=(float(center[0]), float(center[1]), float(center[2])),
+            position=(0.0, 0.0, cam_dist),
+            target=(0.0, 0.0, 0.0),
             up=(0.0, 1.0, 0.0),
             fov=fov_deg,
             near=float(max(1.0, cam_dist * 0.005)),
-            far=float(cam_dist * 20.0 + extent * 10.0),
+            # Far must clear the whole cloud from the camera, which sits outside
+            # it: worst case is the antipodal galaxy at cam_dist + r_max.
+            far=float((cam_dist + r_max) * 1.5),
+        )
+        aprint(
+            f"  🎥 Orbiting the observer at the origin; camera at "
+            f"{cam_dist:,.0f} Mpc (r95={r95:,.0f}, r_max={r_max:,.0f})"
         )
 
         colors = tracer_colors(tracer_ids)
@@ -447,6 +514,7 @@ def create_scene(
                 intensity=SCENE_INTENSITY,
                 layer=True,
                 substitutive_lod=LOD,
+                additive_lod=STREAM_LOD,
             )
 
             # Layer 2: colored by redshift (continuous depth), turbo baked into
@@ -464,6 +532,7 @@ def create_scene(
                 layer=True,
                 visible=False,
                 substitutive_lod=LOD,
+                additive_lod=STREAM_LOD,
             )
 
             scene.add_text(
@@ -513,6 +582,7 @@ def main() -> None:
         # Fast path: unzip the shipped, fully-built scene (instant, no LOD build).
         if SCENE_ZIP_SHIPPED.exists() and not is_lfs_pointer(SCENE_ZIP_SHIPPED):
             extract_shipped_scene(SCENE_ZIP_SHIPPED, output_path)
+            warn_if_scene_lacks_ladder(output_path)
         else:
             aprint(
                 "Precomputed scene not available (Git LFS asset not pulled). "
@@ -523,6 +593,7 @@ def main() -> None:
             create_scene(positions, redshift, tracer_ids, output_path)
     else:
         aprint(f"Using cached scene: {output_path}")
+        warn_if_scene_lacks_ladder(output_path)
 
     if NO_SERVE:
         aprint(f"Dataset generated at {output_path}")

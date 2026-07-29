@@ -37,6 +37,36 @@ comments in `lod-fade.ts` / `lod-group-registry.ts`. New fixture
 `test_lod_group_volumetric.luxar.zarr` covers the volumetric cross-fade
 contract end-to-end.
 
+#### Added — Points and Lines LOD levels now stream progressively (#811, #808)
+
+`additive_lod` and `substitutive_lod` used to be mutually exclusive for Points
+and Lines, which left the finest level of a substitutive ladder as the one node
+in the LOD system that could not paint progressively: it committed
+all-at-once however large it was. On the 9.75M-point DESI demo that single
+commit froze the main thread for ~85 s. GSplats have always composed the two
+axes, so this closes a three-geometry asymmetry as much as it fixes a stall.
+
+The axes now compose — substitutive chooses *which* level renders at the current
+zoom, additive describes *how* each level streams in — and every level is
+laddered by default (`additive_lod=False` opts out), with the sibling-aware
+first chunk on all but the coarsest. A level smaller than one stream chunk stays
+a flat leaf automatically.
+
+Supporting changes:
+
+- `stream:<c>` breakpoints on Points and Lines, sharing the GSplats cut geometry
+  via the new `luxar/utils/lod_breakpoints.py`. This matters: an equal-count
+  split into 4 levels still ends with an N/4-sized commit, and the one existing
+  Points ladder in the repo (`global_rivers_earth/terrain`) put 99.98% of its
+  8M points in the final level — it streamed in name only.
+- Energy quality stamps (`lod_stats.energy_fraction_cum` per sub-LOD,
+  `level_stats.reference_energy` per leaf) so the never-downgrade gate can
+  release a swap on committed energy rather than raw element count.
+- Hidden (`visible=false`) layers no longer fetch, decode and commit their LOD
+  levels, and no longer escape eviction.
+- `scripts/check_demo_ladders.py` — a structural gate that fails a leaf whose
+  largest level is more than half the data, which is exactly the degeneracy a
+  level count alone cannot see.
 #### Fixed — every 2D gsplats scene failed to load with a WASM `unreachable` trap
 
 Loading a gsplats scene with fewer than 3 displayed dimensions failed with

@@ -852,7 +852,12 @@ describe('OverlayManager HTML sanitization (issue #720)', () => {
     // Counting node MOVES rather than wall time keeps this deterministic (no
     // CI flake): jsdom's fragment parser does not route through
     // `Node.prototype.insertBefore`, so the spy below counts exactly the
-    // unwrap pass.
+    // unwrap pass. Note it measures insertBefore CALLS as a proxy for node
+    // moves, so a future rewrite that lifts children through a different
+    // primitive (e.g. batching into a DocumentFragment) would under-count
+    // here; the `outWithPayload` correctness assertion below is the real guard
+    // and holds regardless, so re-verify these complexity bounds if that loop
+    // changes.
     const D = 200; // nested disallowed wrappers
     const K = 50; // payload elements inside the innermost wrapper
 
