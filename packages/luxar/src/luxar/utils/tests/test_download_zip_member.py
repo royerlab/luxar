@@ -129,6 +129,24 @@ class _OverSendRangeHTTPHandler(_RangeHTTPHandler):
         return _LimitedFile(f, end - start + 1)
 
 
+class _MemberOverSendRangeHTTPHandler(_OverSendRangeHTTPHandler):
+    """Over-send only short ranges used for the compressed member body test.
+
+    Metadata reads are at least 30 bytes (local header), while that test extracts
+    the tiny DEFLATE-compressed ``readme.txt`` member. Keeping metadata responses
+    compliant ensures the test reaches the member-stream overrun guard.
+    """
+
+    def send_head(self):  # noqa: ANN201 - stdlib override
+        range_header = self.headers.get("Range")
+        if range_header is not None:
+            spec = range_header.replace("bytes=", "").strip()
+            start_s, _, end_s = spec.partition("-")
+            if start_s and end_s and int(end_s) - int(start_s) + 1 >= 30:
+                return _RangeHTTPHandler.send_head(self)
+        return super().send_head()
+
+
 class _RecordingRangeHTTPHandler(_RangeHTTPHandler):
     """Range handler that RECORDS every requested GET byte-range on the server
     (``server.requested_ranges``), so a test can prove WHICH ranged GETs were
@@ -180,7 +198,18 @@ def redirect_range_server(tmp_path: Path):
 
 @pytest.fixture()
 def oversend_range_server(tmp_path: Path):
-    """Serve tmp_path with a Range handler that over-sends past the requested end."""
+    """Over-send the tiny member-body range while serving metadata correctly."""
+    server, thread = _serve(tmp_path, _MemberOverSendRangeHTTPHandler)
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}"
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+
+
+@pytest.fixture()
+def metadata_oversend_range_server(tmp_path: Path):
+    """Serve every Range request from its requested start through EOF."""
     server, thread = _serve(tmp_path, _OverSendRangeHTTPHandler)
     try:
         yield f"http://127.0.0.1:{server.server_address[1]}"
@@ -671,6 +700,31 @@ class TestCentralDirectoryBounds:
                 "central-directory buffering GET fired despite the oversized "
                 "cd_size guard"
             )
+
+    def test_central_dir_response_oversend_rejected(
+        self, metadata_oversend_range_server: str, tmp_path: Path
+    ) -> None:
+        """A 206 server may ignore the requested end and stream to EOF.
+
+        The declared central directory is only 100 bytes, but the handler sends
+        the rest of the archive. The parser must stop after the first extra byte
+        instead of buffering the complete response via ``response.content``.
+        """
+        archive = tmp_path / "forged.zip"
+        _forge_eocd_archive(
+            archive,
+            cd_size=100,
+            cd_offset=0,
+            filler=2 * _EOCD_TAIL_BYTES,
+        )
+        with requests.Session() as session:
+            with pytest.raises(ValueError, match="more bytes .* than requested"):
+                _parse_remote_zip_directory(
+                    session,
+                    f"{metadata_oversend_range_server}/forged.zip",
+                    timeout=30,
+                    extra_headers=None,
+                )
 
     def test_zip64_eocd64_offset_past_archive_rejected(
         self, range_server: str, tmp_path: Path

@@ -739,6 +739,59 @@ def _ranged_get(
     return response
 
 
+def _ranged_get_bytes(
+    session: Any,
+    url: str,
+    start: int,
+    end: int,
+    *,
+    timeout: int,
+    extra_headers: Optional[dict] = None,
+) -> bytes:
+    """Read exactly one closed byte range without trusting the response size.
+
+    ``requests`` buffers an entire response before exposing ``.content``. A
+    broken or malicious HTTP 206 server can therefore ignore the requested end
+    and stream to EOF, defeating any bound placed on the requested range. Read
+    incrementally instead and abort after the first byte beyond the expected
+    range, while also rejecting a truncated response.
+    """
+    expected = end - start + 1
+    if expected <= 0:
+        raise ValueError(f"Invalid byte range {start}-{end}")
+
+    data = bytearray()
+    chunk_size = min(64 * 1024, expected + 1)
+    with contextlib.closing(
+        _ranged_get(
+            session,
+            url,
+            start,
+            end,
+            timeout=timeout,
+            extra_headers=extra_headers,
+            stream=True,
+        )
+    ) as response:
+        for chunk in response.iter_content(chunk_size=chunk_size):
+            if not chunk:
+                continue
+            received = len(data) + len(chunk)
+            if received > expected:
+                raise ValueError(
+                    f"Server returned more bytes ({received:,}) than requested "
+                    f"({expected:,}) for Range {start}-{end}"
+                )
+            data.extend(chunk)
+
+    if len(data) != expected:
+        raise ValueError(
+            f"Server returned {len(data):,} bytes for Range {start}-{end}; "
+            f"expected {expected:,}"
+        )
+    return bytes(data)
+
+
 def _parse_remote_zip_directory(
     session: Any, url: str, *, timeout: int, extra_headers: Optional[dict]
 ) -> tuple[bytes, int]:
@@ -764,14 +817,14 @@ def _parse_remote_zip_directory(
     archive_size = int(head.headers["content-length"])
 
     tail_start = max(0, archive_size - _EOCD_TAIL_BYTES)
-    tail = _ranged_get(
+    tail = _ranged_get_bytes(
         session,
         url,
         tail_start,
         archive_size - 1,
         timeout=timeout,
         extra_headers=extra_headers,
-    ).content
+    )
 
     eocd_local = tail.rfind(_EOCD_SIGNATURE)
     if eocd_local < 0:
@@ -800,14 +853,14 @@ def _parse_remote_zip_directory(
                 f"Zip64 EOCD offset {eocd64_offset} lies outside the archive "
                 f"(size {archive_size}) — refusing to fetch"
             )
-        eocd64 = _ranged_get(
+        eocd64 = _ranged_get_bytes(
             session,
             url,
             eocd64_offset,
             eocd64_offset + 55,
             timeout=timeout,
             extra_headers=extra_headers,
-        ).content
+        )
         if eocd64[:4] != _EOCD64_SIGNATURE:
             raise ValueError("Bad Zip64 end-of-central-directory signature")
         cd_size = struct.unpack_from("<Q", eocd64, 40)[0]
@@ -838,14 +891,14 @@ def _parse_remote_zip_directory(
             f"the archive (size {archive_size}) — refusing to fetch"
         )
 
-    central_dir = _ranged_get(
+    central_dir = _ranged_get_bytes(
         session,
         url,
         cd_offset,
         cd_offset + cd_size - 1,
         timeout=timeout,
         extra_headers=extra_headers,
-    ).content
+    )
     return central_dir, archive_size
 
 
@@ -1045,14 +1098,14 @@ def download_zip_member(
         # lengths than the central directory — read it to find the data start.
         import struct
 
-        local_header = _ranged_get(
+        local_header = _ranged_get_bytes(
             session,
             url,
             local_offset,
             local_offset + 29,
             timeout=timeout,
             extra_headers=extra_headers,
-        ).content
+        )
         if local_header[:4] != _LOCAL_HEADER_SIGNATURE:
             raise ValueError("Bad local file header signature in remote zip")
         method = struct.unpack_from("<H", local_header, 8)[0]
