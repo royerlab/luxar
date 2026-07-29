@@ -122,12 +122,10 @@ def main():
                     f"  ✓ Streamed batch {i + 1}/{n_batches} ({batch_size:,} points)"
                 )
 
-            # Store metadata for streaming points
+            # Tag the manually-streamed group as a points node.
             compiler.write_group(
                 "DataSet2/streaming_points",
                 type="points",
-                num_points=total_points,
-                streaming=True,
             )
 
         add_explainer(

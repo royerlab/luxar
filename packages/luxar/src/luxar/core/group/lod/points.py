@@ -162,7 +162,7 @@ def _perceptual_luminance(colors: NDArray) -> NDArray[np.float64]:
     return 0.2126 * c[:, 0] + 0.7152 * c[:, 1] + 0.0722 * c[:, 2]
 
 
-def _compute_points_energy(
+def compute_points_energy(
     n: int,
     radii: Optional[NDArray],
     colors: Optional[NDArray],
@@ -253,6 +253,10 @@ def _parse_breakpoints_spec(
     - ``List[int]`` → cumulative counts (legacy ``counts=`` shape).
     - ``"energy:0.5,0.9,0.99,1.0"`` → cumulative energy fractions. Needs
       both ``energy`` and ``perm`` to be supplied by the caller.
+    - ``"stream:40000"`` → bandwidth-derived geometric ladder
+      ``[c, 2c, 4c, …, total]``, resolved against THIS ``total`` so one spec
+      adapts to every level/part. Identical cut geometry to the GSplats ladder
+      (shared :mod:`luxar.utils.lod_breakpoints` helper).
 
     Returns the breakpoint list (cumulative counts, strictly increasing,
     ``<= total``), or ``None`` for the no-op default.
@@ -260,10 +264,15 @@ def _parse_breakpoints_spec(
     if spec is None:
         return None
     if isinstance(spec, str):
+        if spec.startswith("stream:"):
+            from ....utils.lod_breakpoints import parse_stream_chunk, stream_cuts
+
+            return stream_cuts(total, parse_stream_chunk(spec))
         if not spec.startswith("energy:"):
             raise ValueError(
                 f"unrecognized breakpoints string {spec!r}; expected "
-                "'energy:<fractions>' (e.g. 'energy:0.5,0.9,1.0')"
+                "'energy:<fractions>' (e.g. 'energy:0.5,0.9,1.0') or "
+                "'stream:<c>' (e.g. 'stream:40000')"
             )
         if energy is None or perm is None:
             raise ValueError(
@@ -310,6 +319,13 @@ def make_additive_lod_points(
               ``luminance_i × radius_i**3``; fractions partition the
               total energy of the ordering. Requires ``colors`` or
               ``scalars`` for the luminance term; ``radii`` for volume.
+            * ``"stream:40000"`` → bandwidth-derived geometric ladder
+              ``[c, 2c, 4c, …, N]``: first paint costs ``c`` elements,
+              then each refinement doubles. Resolved against the actual
+              N, so one spec adapts to every level of a tree. This is
+              the shape that makes a large leaf paint progressively —
+              prefer it over ``n_lods`` on anything big, since an
+              equal-count split still ends in an N/n_lods-sized commit.
         seed: For ``random``; ignored otherwise.
         colors: Optional ``(N, 3)`` or ``(N, 4)`` per-point colors —
             used for the luminance term of ``salience_kind='energy'``
@@ -336,7 +352,7 @@ def make_additive_lod_points(
     # breakpoint resolution below.
     energy: Optional[NDArray[np.float64]] = None
     if method == "salience" and salience_kind == "energy":
-        energy = _compute_points_energy(n, radii, colors, scalars)
+        energy = compute_points_energy(n, radii, colors, scalars)
         perm = np.argsort(-energy, kind="stable").astype(np.intp)
         natural_counts: List[int] = []
     else:
@@ -361,7 +377,7 @@ def make_additive_lod_points(
     if isinstance(counts, str) and counts.startswith("energy:") and energy is None:
         # Compute energy on demand for energy: breakpoints under any
         # ordering method.
-        energy = _compute_points_energy(n, radii, colors, scalars)
+        energy = compute_points_energy(n, radii, colors, scalars)
 
     breakpoints = _parse_breakpoints_spec(counts, n, energy=energy, perm=perm)
     if breakpoints is None:

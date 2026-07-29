@@ -239,10 +239,11 @@ export async function runInitPipeline(
       requestRender: () => animationController.startAnimation(),
       // LOD cross-fade (ON by default; ?no-lod-fade disables): the registry
       // blends adjacent LOD levels' opacity across a zoom transition instead of
-      // a hard swap (additive/luminous only). Read once at wiring time.
+      // a hard swap (blendable modes only: additive/luminous/volumetric).
+      // Read once at wiring time.
       getCrossFadeEnabled: () => lodCrossFadeEnabled,
       // Streaming brightness compensation (ON by default; ?no-lod-energy disables):
-      // scale a streaming additive/luminous leaf's opacity by 1/e(k) so its
+      // scale a streaming additive/luminous/volumetric leaf's opacity by 1/e(k) so its
       // partial ladder prefix renders at full-level brightness (no brightening
       // pop as chunks arrive). Read once at wiring time.
       getEnergyCompEnabled: () => lodEnergyCompEnabled,

@@ -76,6 +76,14 @@ import { config } from '../config';
 import type { UpdateProfiler } from '../profiling/update-profiler';
 import { withTimeout } from '../workers/worker-pool/timeout/with-timeout';
 import { log, Modules } from '../utils/log';
+// Ancestor-aware visibility (the single parent-chain walk, shared with the pick
+// pass and the LOD registry/eviction pass). `mesh.visible` alone misses a hidden
+// ancestor: an LOD level can be a GROUP (partition tiles) and the registry
+// toggles `child.object.visible` on the group — the member meshes' own flags
+// stay true; a hidden LAYER is likewise an ancestor flag. Sorting a hidden mesh
+// is wasted worker time; when it re-shows, the next frame's pose comparison
+// catches any past-threshold camera motion immediately.
+import { isEffectivelyVisible } from '../utils/object-visibility';
 
 /**
  * Optional override for the sort-worker module URL (embedders whose
@@ -616,21 +624,6 @@ interface EvaluateScratch {
   camPos: THREE.Vector3;
 }
 let scratch: EvaluateScratch | null = null;
-
-/**
- * True when the mesh AND all its ancestors are visible. `mesh.visible`
- * alone misses a hidden ancestor: an LOD level can be a GROUP (partition
- * tiles), and the registry toggles `child.object.visible` on the group —
- * the member meshes' own flags stay true. Sorting a hidden mesh is wasted
- * worker time; when it re-shows, the next frame's pose comparison catches
- * any past-threshold camera motion immediately.
- */
-function isEffectivelyVisible(mesh: THREE.Object3D): boolean {
-  for (let o: THREE.Object3D | null = mesh; o; o = o.parent) {
-    if (!o.visible) return false;
-  }
-  return true;
-}
 
 /**
  * Advance every in-flight chunked ordering application by one slice

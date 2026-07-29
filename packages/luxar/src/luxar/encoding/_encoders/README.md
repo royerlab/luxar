@@ -1,6 +1,6 @@
 # luxar.encoding._encoders
 
-**Internal mixin package** for the encoding layer. The mixins here implement the domain-specific encoding logic that `ArrayEncoder` (in `../encoder.py`) inherits. Application code uses `ArrayEncoder` directly; these mixins are never imported or instantiated on their own.
+**Internal mixin package** for the encoding layer. The mixins here implement the domain-specific encoding logic that `ArrayEncoder` (in `../encoder.py`) inherits. Application code uses `ArrayEncoder` directly; these mixins are never imported or instantiated on their own. (The one exception is `delta_codec.LuxarDelta` — a numcodecs codec, not a mixin — which is re-exported publicly from `luxar.encoding`.)
 
 ## Purpose
 

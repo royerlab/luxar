@@ -5,7 +5,9 @@
  * policy function: given the registry's entries and the GPU buffer pool's
  * live accounting (`getResidentBytes` — the single truth; the registry keeps
  * no per-level byte estimate), demote cold hidden levels while the pool is
- * over the shared budget ceiling. Ranking prioritises what is furthest from
+ * over the shared budget ceiling. "Hidden" is EFFECTIVE (ancestor-aware)
+ * visibility — a level under a hidden layer is cold no matter what its own
+ * ``visible`` flag says. Ranking prioritises what is furthest from
  * the visible: off-screen groups first, then descending camera distance, then
  * coldest last-visible tick. Runs once per frame after all entries are
  * evaluated; eviction is rare (only under genuine VRAM pressure), preserving
@@ -21,6 +23,7 @@ import * as THREE from 'three';
 
 import type { BoundingBox } from './scene-manager/clipping/bounds-math';
 import { isReady } from './lod-freshness';
+import { isEffectivelyVisible, type VisibilityNode } from '../utils/object-visibility';
 
 /** Minimal structural shape of a registry child this module reads/releases. */
 export interface EvictableChild {
@@ -33,16 +36,24 @@ export interface EvictableChild {
   /** LRU key; ``undefined`` ⇒ never shown ⇒ not an eviction candidate. */
   lastVisibleTick?: number;
   /**
-   * The child's THREE node (structural — only ``visible`` is read).
-   * ``visible === true`` ⇒ the level renders THIS frame: the displayed level
-   * or the cross-fade blend partner mid-dissolve. Never an eviction
-   * candidate — releasing an on-screen level blanks (or half-blanks) the
-   * group mid-frame. The ``displayedChildIndex`` guard alone misses the
-   * blend partner, which is on screen but not the entry's displayed index.
-   * The registry's visibility pass runs earlier in the same synchronous
-   * per-frame call, so the flag is current here.
+   * The child's THREE node (structural — only ``visible`` and the ``parent``
+   * chain are read). ``visible === true`` **and no hidden ancestor** ⇒ the
+   * level renders THIS frame: the displayed level or the cross-fade blend
+   * partner mid-dissolve. Never an eviction candidate — releasing an on-screen
+   * level blanks (or half-blanks) the group mid-frame. The
+   * ``displayedChildIndex`` guard alone misses the blend partner, which is on
+   * screen but not the entry's displayed index. The registry's visibility pass
+   * runs earlier in the same synchronous per-frame call, so the flag is current
+   * here.
+   *
+   * The ancestor walk matters because ``visible`` is a LOCAL flag: a layer
+   * authored ``visible=false`` (or toggled off in the layers panel) hides the
+   * LAYER object while the level underneath keeps ``visible === true``. Without
+   * the walk such a level looked permanently on-screen and was exempt from
+   * eviction forever — hidden data that could not be drawn AND could not be
+   * reclaimed.
    */
-  object?: { visible?: boolean };
+  object?: VisibilityNode;
 }
 
 /** Minimal structural shape of a registry entry the eviction pass reads. */
@@ -84,8 +95,11 @@ const CAMERA_POS_SCRATCH = new THREE.Vector3();
  * synchronously triggers the pool's byte-eviction pass, which disposes
  * pooled buffers (largest-first) until total resident is back under
  * budget — so the loop typically demotes one level then exits. The
- * visible level of each group and eager fallback levels (no ``release``)
- * are never demoted. Eviction is rare (only under genuine VRAM pressure),
+ * EFFECTIVELY-visible level of each group (visible flag set *and* no hidden
+ * ancestor) and eager fallback levels (no ``release``) are never demoted; a
+ * level whose layer is hidden is an ordinary cold candidate, including the
+ * group's nominal ``displayedChildIndex`` — nothing of that group is on screen
+ * to protect. Eviction is rare (only under genuine VRAM pressure),
  * preserving the no-churn retention property — the per-entry world-box /
  * frustum / distance math here only runs on that rare over-budget frame.
  *
@@ -131,6 +145,14 @@ export function enforceResidentByteBudget<E extends EvictableEntry>(opts: {
     for (let i = 0; i < children.length; i++) {
       const child = children[i];
       if (!isReady(child)) continue;
+      // Is anything in this group drawable at all? A hidden ANCESTOR (a layer
+      // authored ``visible=false`` or toggled off in the layers panel) means no
+      // — whatever the levels' own flags or the entry's displayed index say —
+      // so every ready level of that group is an ordinary cold candidate. The
+      // walk starts at the PARENT, not the child: the registry sets the
+      // displayed level's own ``visible = true``, so including it would make
+      // the two guards below circular.
+      const ancestorsVisible = isEffectivelyVisible(child.object?.parent);
       // Never evict a level that is ON SCREEN this frame (``object.visible``):
       // during a coverage-band cross-fade TWO levels render — the displayed
       // primary and its blend partner — and only the primary is
@@ -138,13 +160,16 @@ export function enforceResidentByteBudget<E extends EvictableEntry>(opts: {
       // the dissolve mid-fade (and leave a visible-but-not-ready level behind).
       // "Eviction must never release the level currently displayed" covers
       // everything actually rendering, not just the entry's displayed index.
-      if (child.object?.visible === true) continue;
+      if (ancestorsVisible && child.object?.visible === true) continue;
+      // The displayed level is likewise exempt only while the group can render
+      // it; under a hidden ancestor there is nothing on screen to protect.
+      if (ancestorsVisible && i === displayed) continue;
       // Skip a child mid-(re)load: ``release()`` resets ``loading=false`` and
       // ``ready=false``, so evicting one whose deferred reload is in flight
       // would let the registry kick a SECOND concurrent ``ensureLoaded`` for
       // the same loader. The not-ready guard above misses it because a stale
       // RELOAD keeps ``ready=true`` while ``loading=true``.
-      if (i !== displayed && !child.loading && child.release && child.lastVisibleTick != null) {
+      if (!child.loading && child.release && child.lastVisibleTick != null) {
         evictable.push({ child, offscreen, distance });
       }
     }

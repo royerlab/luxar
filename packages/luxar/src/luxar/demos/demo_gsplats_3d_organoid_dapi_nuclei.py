@@ -388,7 +388,8 @@ Controls:
                 name="dapi_nuclei_gsplats",
                 result=gsplats_data,
                 opacity=1.0,
-                blending_mode="additive",
+                absorption=1.0,
+                blending_mode="volumetric",
                 layer=True,
             )
 

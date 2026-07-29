@@ -104,7 +104,7 @@ MAX_SPLATS_PER_PASS = 300_000
 ITERS_PER_PASS = 4_000
 PSNR_PATIENCE = 0.1
 
-# Additive display brightness (dialed down for a dense shell — see VH demo).
+# Display brightness (dialed down for a dense shell — see VH demo).
 SCENE_INTENSITY = 0.03
 
 FLAGS = parse_demo_flags()
@@ -275,9 +275,17 @@ def create_luxar_scene(gsplats_data: GSplatData, output_path: Path) -> Path:
             scene.add_gsplats_from_data(
                 name="virus_capsid",
                 result=gsplats_data,
-                colormap="viridis",
+                # inferno, not viridis: viridis's first stop is (68, 1, 84)
+                # dark purple, so empty and low-density space renders as a
+                # visible haze on the black background. inferno starts at
+                # (0, 0, 4), so zero density reads as true black.
+                colormap="inferno",
                 opacity=1.0,
-                blending_mode="additive",
+                # Strong absorption (kappa 5) so the near side of the shell
+                # occludes the far side — the capsid reads as a hollow
+                # icosahedron instead of a translucent ball of density.
+                absorption=5.0,
+                blending_mode="volumetric",
                 intensity=1.0,
                 layer=True,
             )

@@ -6,10 +6,11 @@ including automatic retry on failure, partial download resume, and integrity ver
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import time
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any, BinaryIO, Optional, Union
 
 from arbol import aprint, asection
 
@@ -720,12 +721,19 @@ def _ranged_get(
     headers = dict(extra_headers or {})
     headers["Range"] = f"bytes={start}-{end}"
     response = session.get(url, headers=headers, timeout=timeout, stream=stream)
-    response.raise_for_status()
-    if response.status_code != 206:
-        raise ValueError(
-            f"Server ignored the Range request (HTTP {response.status_code}) — "
-            "remote-zip extraction needs Accept-Ranges: bytes"
-        )
+    # On any error path close the (possibly ``stream=True``) response
+    # deterministically rather than leaking the connection to the GC — the
+    # success path hands ownership to the caller, which closes it in turn.
+    try:
+        response.raise_for_status()
+        if response.status_code != 206:
+            raise ValueError(
+                f"Server ignored the Range request (HTTP {response.status_code}) — "
+                "remote-zip extraction needs Accept-Ranges: bytes"
+            )
+    except BaseException:
+        response.close()
+        raise
     return response
 
 
@@ -809,11 +817,12 @@ def _parse_remote_zip_directory(
 
 def _find_member_in_central_dir(
     central_dir: bytes, member: str
-) -> tuple[int, int, int, int]:
+) -> tuple[int, int, int, int, int]:
     """Locate ``member`` in central-directory bytes.
 
-    Returns ``(local_header_offset, compressed_size, uncompressed_size, crc32)``,
-    resolving Zip64 extra fields where the classic 32-bit fields saturate.
+    Returns ``(local_header_offset, compressed_size, uncompressed_size, crc32,
+    method)`` (``method`` is 0=STORED or 8=DEFLATE), resolving Zip64 extra
+    fields where the classic 32-bit fields saturate.
     """
     import struct
 
@@ -861,7 +870,7 @@ def _find_member_in_central_dir(
                     f"Member {member!r} uses unsupported compression method "
                     f"{method} (only STORED and DEFLATE are supported)"
                 )
-            return local_offset, comp_size, uncomp_size, crc32
+            return local_offset, comp_size, uncomp_size, crc32, method
 
         names.append(name)
         offset += 46 + name_len + extra_len + comment_len
@@ -914,8 +923,9 @@ def download_zip_member(
             any streaming; the inflate itself is then bounded by that
             (already-within-ceiling) declared size — so a self-consistent
             decompression bomb (one whose declared size, actual inflated size,
-            and CRC all agree) still cannot write unbounded to disk. Pass a smaller int to tighten it, or ``None`` to disable the
-            ceiling entirely (the output is then bounded only by the declared
+            and CRC all agree) still cannot write unbounded to disk. Pass a
+            smaller int to tighten it, or ``None`` to disable the ceiling
+            entirely (the output is then bounded only by the declared
             member size). The INRIA / cluster-fly demo callers pass a tight
             ``expected_size`` and are unaffected by this default.
 
@@ -953,7 +963,7 @@ def download_zip_member(
         central_dir, archive_size = _parse_remote_zip_directory(
             session, url, timeout=timeout, extra_headers=extra_headers
         )
-        local_offset, comp_size, uncomp_size, crc_expected = (
+        local_offset, comp_size, uncomp_size, crc_expected, cd_method = (
             _find_member_in_central_dir(central_dir, member)
         )
         aprint(
@@ -981,6 +991,28 @@ def download_zip_member(
             aprint(f"✓ Member already extracted: {output_path}")
             return output_path
 
+        if comp_size == 0:
+            # Empty STORED member: the body range GET below would be an inverted
+            # ``bytes=data_start-(data_start-1)`` that servers answer 416/200, so
+            # never fetch a body. A legitimate empty member is STORED (method 0)
+            # with zero uncompressed bytes and CRC 0 — the shortest empty DEFLATE
+            # stream is two bytes, so a DEFLATE member (or any nonzero size/CRC)
+            # with zero compressed bytes is a malformed header. Reject it — as
+            # stdlib ``zipfile`` would — instead of silently extracting empty.
+            # A valid empty member writes through the same ``.part``-then-
+            # ``replace`` promotion the streaming path uses.
+            if cd_method != 0 or uncomp_size != 0 or crc_expected != 0:
+                raise ValueError(
+                    f"Member {member!r} has zero compressed bytes but is not a "
+                    f"valid empty STORED entry (method {cd_method}, "
+                    f"{uncomp_size:,} uncompressed bytes, CRC {crc_expected:#010x})"
+                )
+            tmp_path = output_path.with_suffix(output_path.suffix + ".part")
+            tmp_path.write_bytes(b"")
+            tmp_path.replace(output_path)
+            aprint(f"✓ Extracted empty member: {output_path}")
+            return output_path
+
         # The local header repeats name/extra with potentially DIFFERENT
         # lengths than the central directory — read it to find the data start.
         import struct
@@ -1004,7 +1036,7 @@ def download_zip_member(
         written = 0
         last_report = 0
 
-        def _emit(f: Any, data: bytes) -> None:
+        def _emit(f: BinaryIO, data: bytes) -> None:
             """Write one decompressed slice, updating CRC/counters, and abort
             if the running output exceeds the bound (decompression-bomb guard).
             """
@@ -1034,17 +1066,21 @@ def download_zip_member(
                 crc = 0
                 written = 0
                 last_report = 0
-                response = _ranged_get(
-                    session,
-                    url,
-                    data_start,
-                    data_start + comp_size - 1,
-                    timeout=timeout,
-                    extra_headers=extra_headers,
-                    stream=True,
-                )
                 compressed_read = 0
-                with open(tmp_path, "wb") as f:
+                with (
+                    contextlib.closing(
+                        _ranged_get(
+                            session,
+                            url,
+                            data_start,
+                            data_start + comp_size - 1,
+                            timeout=timeout,
+                            extra_headers=extra_headers,
+                            stream=True,
+                        )
+                    ) as response,
+                    open(tmp_path, "wb") as f,
+                ):
                     for chunk in response.iter_content(chunk_size=chunk_size):
                         # Secondary defense: the ranged GET requested exactly
                         # comp_size bytes, so a well-formed member reads exactly

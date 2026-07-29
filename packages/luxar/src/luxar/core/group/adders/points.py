@@ -62,12 +62,10 @@ def add_points_impl(
     substitutive_lod: Any = None,
     **attrs: Any,
 ) -> Union[Points, "Group"]:
-    if additive_lod is not None and substitutive_lod is not None:
-        raise ValueError(
-            "additive_lod and substitutive_lod are mutually exclusive coarsening "
-            "strategies for Points (append vs replace on the same LOD axis); "
-            "pass only one."
-        )
+    # additive_lod and substitutive_lod COMPOSE: substitutive chooses WHICH level
+    # renders at the current zoom, additive describes HOW each level streams in.
+    # Passing substitutive_lod alone ladders every level by default; pass
+    # additive_lod=False to opt out. See lod/group.py's "Composed axes" section.
     if substitutive_lod is not None and partition is not None:
         raise ValueError(
             "partition= and substitutive_lod= cannot be combined yet "
@@ -143,6 +141,7 @@ def add_points_impl(
                     extend_to_all=extend_to_all,
                     grid_shape=grid_shape,
                     spec=substitutive_spec,
+                    additive_lod=additive_lod,
                     **attrs,
                 )
 
@@ -291,6 +290,10 @@ def add_points_impl(
                         extend_to_all=extend_to_all,
                         grid_shape=grid_shape,
                         method=additive_spec["method"],
+                        counts=additive_spec["counts"],
+                        radii_for_energy=radii_arr,
+                        colors_for_energy=colors_for_energy,
+                        scalars_for_energy=scalars_for_energy,
                         **attrs,
                     )
                 # 1 level (degenerate) → fall through to single-leaf.
@@ -444,6 +447,10 @@ def add_points_multi_lod_wrapper_impl(
     extend_to_all: Optional[Union[List[str], str]],
     grid_shape: Optional[Tuple[int, ...]],
     method: str,
+    counts: Any = None,
+    radii_for_energy: Optional[np.ndarray] = None,
+    colors_for_energy: Optional[np.ndarray] = None,
+    scalars_for_energy: Optional[np.ndarray] = None,
     **attrs: Any,
 ) -> Points:
     """Write a Points node with multi-additive-LOD subgroups.
@@ -456,15 +463,38 @@ def add_points_multi_lod_wrapper_impl(
     The returned :class:`Points` node is the parent (the user's
     logical "one node"). The viewer's progressive loader walks the
     subgroups; the user never sees the decomposition.
+
+    ``counts`` and the three ``*_for_energy`` arrays are only used to stamp the
+    ladder's quality metadata (``lod_stats.energy_fraction_cum`` per level plus
+    ``level_stats.reference_energy`` on the parent), which lets the viewer
+    release a LOD swap on committed energy instead of raw element count.
     """
     scene = group._find_scene()
     writer = group._require_scene_writer(scene)
     parent_node = parent or group
     path = f"{parent_node.path}/{name}" if parent_node.path else name
 
+    # Ladder quality stamps. The energy is a pure per-element function of the
+    # same inputs the ordering used, so summing it per level reproduces the
+    # ladder's cumulative curve exactly — no need to thread it out of the
+    # builder (whose List[level] return shape many tests depend on).
+    from ..lod.group import additive_level_stats, breakpoints_kind_of
+    from ..lod.points import compute_points_energy
+
+    energy = compute_points_energy(
+        n_points, radii_for_energy, colors_for_energy, scalars_for_energy
+    )
+    per_level_stats, _reference_energy, parent_level_stats = additive_level_stats(
+        [float(energy[idx].sum()) for idx in levels],
+        [int(idx.size) for idx in levels],
+        method=method,
+        breakpoints_kind=breakpoints_kind_of(counts),
+        energy_kind="points-luminance-volume",
+    )
+
     # Build per-level slice tuples for the writer.
     level_slices: List[Dict[str, Any]] = []
-    for level_indices in levels:
+    for level_i, level_indices in enumerate(levels):
         level_slices.append(
             {
                 "positions": pos_arr[level_indices].astype(np.float32),
@@ -473,8 +503,10 @@ def add_points_multi_lod_wrapper_impl(
                 "sharpness": slice_optional_array(sharpness, level_indices, n_points),
                 "scalars": slice_optional_array(scalars, level_indices, n_points),
                 "labels": slice_optional_array(labels, level_indices, n_points),
+                "lod_stats": per_level_stats[level_i],
             }
         )
+    attrs.setdefault("level_stats", parent_level_stats)
 
     aprint(
         f"  📐 Additive-LOD '{name}': {len(levels)} levels "
@@ -519,6 +551,7 @@ def add_points_substitutive_lod_wrapper_impl(
     extend_to_all: Optional[Union[List[str], str]],
     grid_shape: Optional[Tuple[int, ...]],
     spec: Dict[str, Any],
+    additive_lod: Any = None,
     **attrs: Any,
 ) -> Union["Group", Points]:
     """Write a Points node whose coarse LOD levels are synthesised gsplats.
@@ -539,6 +572,25 @@ def add_points_substitutive_lod_wrapper_impl(
     child and the gsplat children (the lift uses ``opacity=1``).
     """
     from ....gsplats.lift import coarse_substitutive_levels, lift_points_to_gsplats
+    from ..lod.group import (
+        compose_additive_under_substitutive,
+        gsplat_additive_lod_from,
+        level_additive_lod,
+    )
+    from ..lod.points import resolve_additive_axis_points
+
+    # Resolve the streaming ladder ONCE for the whole group; each level is
+    # specialized from it below. Default ON — a substitutive level is by
+    # construction the largest node in the scene and the last one loaded.
+    composed_additive = compose_additive_under_substitutive(
+        additive_lod,
+        resolve=resolve_additive_axis_points,
+        name=name,
+        # The multi-LOD writer has no image_labels channel, so laddering would
+        # silently drop them. Refuse the ladder, not the labels.
+        suppress_reason="image_labels is set" if image_labels is not None else None,
+    )
+    compression_factor = int(spec["compression_factor"])
     from ..lod.group import coverage_fractions
 
     # Scalar+colormap points have no per-splat scalar channel on gsplats, so bake
@@ -622,6 +674,10 @@ def add_points_substitutive_lod_wrapper_impl(
             extend_to_all=extend_to_all,
             grid_shape=grid_shape,
             partition=False,
+            # Forward the ladder: a cloud too small to coarsen is not
+            # necessarily too small to stream, and dropping it here was how the
+            # ladder silently vanished on the degenerate path.
+            additive_lod=composed_additive,
             **attrs,
         )
 
@@ -669,6 +725,15 @@ def add_points_substitutive_lod_wrapper_impl(
     # Coarse gsplat children (coarsest first). pos_arr is already
     # dim_order-transformed, so children use dim_order=None/fill=None.
     for idx, lvl_data in enumerate(coarse_first):
+        # Every level gets its own ladder (mirrors gsplats/lod/pyramid.py), with
+        # the sibling-aware first chunk on all but the coarsest. Levels smaller
+        # than one chunk resolve to a single level and stay flat leaves.
+        lvl_spec = level_additive_lod(
+            composed_additive,
+            level_n=int(lvl_data.n_splats),
+            compression_factor=compression_factor,
+            is_coarsest=(idx == 0),
+        )
         lod_group_node.add_gsplats_from_data(
             name=f"child_{idx}",
             result=lvl_data,
@@ -676,7 +741,7 @@ def add_points_substitutive_lod_wrapper_impl(
             dim_order=None,
             fill=None,
             lod_group=None,
-            additive_lod=None,
+            additive_lod=gsplat_additive_lod_from(lvl_spec, int(lvl_data.n_splats)),
             coverage_fraction=coverage_vals[idx],
             **gsplat_child_attrs,
         )
@@ -697,7 +762,12 @@ def add_points_substitutive_lod_wrapper_impl(
         dim_order=None,
         fill=None,
         partition=False,
-        additive_lod=None,
+        additive_lod=level_additive_lod(
+            composed_additive,
+            level_n=n_points,
+            compression_factor=compression_factor,
+            is_coarsest=False,
+        ),
         substitutive_lod=None,
         coverage_fraction=coverage_vals[-1],
         **child_attrs,

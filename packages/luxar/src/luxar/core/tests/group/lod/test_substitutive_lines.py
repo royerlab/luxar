@@ -7,6 +7,8 @@ a ``kind=lod`` Group whose finest child is the original Lines node.
 
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 import pytest
 import zarr
@@ -141,23 +143,184 @@ class TestAddLinesSubstitutiveLod:
         grp, _ = _build(tmp_path)
         assert "position_bounds" in grp.attrs
 
-
-class TestSubstitutiveLinesGuards:
-    def test_mutually_exclusive_with_additive(self, tmp_path) -> None:
+    def test_float_indices_rejected_before_partial_lod_write(self, tmp_path) -> None:
         out = tmp_path / "t.luxar.zarr"
-        verts = _segments(50)
+        vertices = np.array(
+            [[0, 0, 0], [1, 0, 0], [10, 0, 0], [11, 0, 0]],
+            dtype=np.float32,
+        )
+        indices = np.array([0.9, 1.9, 2.9, 3.9], dtype=np.float64)
         with LuxarZarrCompiler(out) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-            with pytest.raises(ValueError, match="mutually exclusive"):
+            with pytest.raises(ValueError, match="integer array"):
+                scene.add_lines(
+                    "curves",
+                    vertices,
+                    1.0,
+                    line_type="indexed",
+                    indices=indices,
+                    substitutive_lod=dict(
+                        compression_factor=2,
+                        levels=1,
+                        device="cpu",
+                        seed=0,
+                    ),
+                    additive_lod=False,
+                )
+
+        store = zarr.open(str(out), mode="r")
+        assert "curves" not in store
+
+    @pytest.mark.parametrize(
+        ("indices", "message"),
+        [
+            (np.array([-1, 0, 2, 3]), r"Index -1 < 0"),
+            (np.array([0, 4]), r"Index 4 >= n_vertices 4"),
+        ],
+    )
+    def test_out_of_bounds_indices_rejected_before_partial_lod_write(
+        self, tmp_path, indices, message
+    ) -> None:
+        out = tmp_path / "t.luxar.zarr"
+        vertices = np.array(
+            [[0, 0, 0], [1, 0, 0], [10, 0, 0], [11, 0, 0]],
+            dtype=np.float32,
+        )
+        with LuxarZarrCompiler(out) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            with pytest.raises(ValueError, match=message):
+                scene.add_lines(
+                    "curves",
+                    vertices,
+                    1.0,
+                    line_type="indexed",
+                    indices=indices,
+                    substitutive_lod=dict(
+                        compression_factor=2,
+                        levels=1,
+                        device="cpu",
+                        seed=0,
+                    ),
+                    additive_lod=False,
+                )
+
+        store = zarr.open(str(out), mode="r")
+        assert "curves" not in store
+
+
+class TestSubstitutiveLinesComposedWithAdditive:
+    """``additive_lod`` composes with ``substitutive_lod`` on Lines too.
+
+    The Points twin carries the bulk of the assertions; these cover what is
+    specific to Lines — whole-polyline levels, and the single-polyline line
+    types where a ladder is a no-op rather than a win.
+    """
+
+    N_SEG = 1500
+
+    @pytest.fixture(scope="class")
+    def composed(self, tmp_path_factory) -> tuple:
+        out = tmp_path_factory.mktemp("composed_lines") / "t.luxar.zarr"
+        verts = _segments(self.N_SEG, seed=0)
+        with LuxarZarrCompiler(out) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_lines(
+                "c",
+                verts,
+                0.8,
+                line_type="segments",
+                substitutive_lod=dict(
+                    compression_factor=4, levels=2, device="cpu", seed=0
+                ),
+                additive_lod=dict(counts="stream:300", method="random", seed=0),
+            )
+        return zarr.open(str(out), mode="r")["c"], self.N_SEG * 2
+
+    @staticmethod
+    def _children(grp) -> list:
+        return sorted(k for k in grp.keys() if k.startswith("child_"))
+
+    def test_finest_lines_child_carries_a_ladder(self, composed) -> None:
+        grp, n_vertices = composed
+        finest = grp[self._children(grp)[-1]]
+
+        assert finest.attrs["type"] == "lines"
+        n_sub = int(finest.attrs["n_additive_sublods"])
+        assert n_sub > 1
+        assert (
+            sum(int(finest[f"additive_{i}"].attrs["n_vertices"]) for i in range(n_sub))
+            == n_vertices
+        )
+
+    def test_every_level_holds_whole_polylines(self, composed) -> None:
+        # The invariant that makes a partial load renderable: a level must never
+        # contain half a polyline, or its segment indices dangle.
+        grp, _ = composed
+        finest = grp[self._children(grp)[-1]]
+
+        for i in range(int(finest.attrs["n_additive_sublods"])):
+            sub = finest[f"additive_{i}"]
+            n_v = int(sub.attrs["n_vertices"])
+            assert n_v % 2 == 0, "segments polylines are vertex pairs"
+            if "indices" in sub:
+                idx = np.asarray(sub["indices"][:])
+                assert idx.size == 0 or int(idx.max()) < n_v
+
+    def test_lod_group_invariants_survive_composition(self, composed) -> None:
+        grp, _ = composed
+        children = self._children(grp)
+
+        assert grp.attrs["kind"] == "lod"
+        assert grp.attrs["display_type"] == "lines"
+        assert grp.attrs["selector"] == "coverage"
+        cf = [float(grp[c].attrs["coverage_fraction"]) for c in children]
+        assert cf[0] == 0.0
+        assert cf[-1] == 1.0
+        assert all(a < b for a, b in zip(cf, cf[1:])), cf
+
+    def test_every_level_is_energy_stamped(self, composed) -> None:
+        grp, _ = composed
+        finest = grp[self._children(grp)[-1]]
+        n_sub = int(finest.attrs["n_additive_sublods"])
+
+        fracs = [
+            finest[f"additive_{i}"].attrs["lod_stats"]["energy_fraction_cum"]
+            for i in range(n_sub)
+        ]
+        assert all(a <= b for a, b in zip(fracs, fracs[1:])), fracs
+        assert fracs[-1] == pytest.approx(1.0)
+        assert dict(finest.attrs["level_stats"])["reference_energy"] > 0
+
+    @pytest.mark.parametrize("line_type", ["polyline", "loop"])
+    def test_single_polyline_types_skip_the_ladder_cleanly(
+        self, tmp_path, line_type
+    ) -> None:
+        # One polyline cannot be split without breaking segment topology, so the
+        # ladder is suppressed BEFORE the builder runs — no UserWarning, no
+        # error, and the substitutive group is still built normally.
+        out = tmp_path / "t.luxar.zarr"
+        verts = np.random.RandomState(0).normal(0, 20, (2000, 3)).astype(np.float32)
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", UserWarning)
+            with LuxarZarrCompiler(out) as compiler:
+                scene = compiler.create_scene(dimensions=Dimensions.default_3d())
                 scene.add_lines(
                     "c",
                     verts,
-                    1.0,
-                    line_type="segments",
-                    additive_lod=True,
-                    substitutive_lod=True,
+                    0.8,
+                    line_type=line_type,
+                    substitutive_lod=dict(
+                        compression_factor=4, levels=2, device="cpu", seed=0
+                    ),
                 )
 
+        grp = zarr.open(str(out), mode="r")["c"]
+        finest = grp[sorted(k for k in grp.keys() if k.startswith("child_"))[-1]]
+        assert finest.attrs["type"] == "lines"
+        assert int(finest.attrs.get("n_additive_sublods", 1)) == 1
+
+
+class TestSubstitutiveLinesGuards:
     def test_mutually_exclusive_with_partition(self, tmp_path) -> None:
         out = tmp_path / "t.luxar.zarr"
         verts = _segments(50)

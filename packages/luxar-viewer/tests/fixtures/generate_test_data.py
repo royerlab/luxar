@@ -84,6 +84,8 @@ FIXTURE_NAMES: list[str] = [
     "test_lines_blending_modes.luxar.zarr",
     "test_lines_categorical.luxar.zarr",
     "test_lod_group.luxar.zarr",
+    "test_lod_group_additive_finest.luxar.zarr",
+    "test_lod_group_volumetric.luxar.zarr",
     "test_log_scalar.luxar.zarr",
     "test_lut.luxar.zarr",
     "test_lut_u16.luxar.zarr",
@@ -1480,9 +1482,9 @@ def generate_uint16_quantization_test() -> None:
         # Using linspace ensures exact 1000:1 ratio for reliable uint16 triggering
         radii = np.linspace(0.001, 1.0, num_points).astype(np.float32)
         dynamic_range = radii.max() / radii.min()
-        assert (
-            dynamic_range > 256
-        ), f"Need >256:1 range for uint16, got {dynamic_range:.1f}:1"
+        assert dynamic_range > 256, (
+            f"Need >256:1 range for uint16, got {dynamic_range:.1f}:1"
+        )
 
         # Simple colors (use uint8 encoding as comparison)
         colors = np.random.rand(num_points, 3).astype(np.float32)
@@ -2662,8 +2664,6 @@ def generate_gsplats_rgba_occlusion_test() -> None:
         aprint(f"  Created {output}")
 
 
-
-
 def generate_gsplats_rgba_hdr_test() -> None:
     """RGBA colors with HDR RGB (values > 1) — the geolog per-channel path.
 
@@ -2886,6 +2886,142 @@ def generate_lod_group_test() -> None:
         aprint("  3 levels: 8 / 32 / 128 splats, coverage_fraction 0.0 / 0.5 / 1.0")
 
 
+def generate_lod_group_volumetric_test() -> None:
+    """Volumetric twin of ``generate_lod_group_test`` (same 3-level shape).
+
+    The lod_group node authors ``blending_mode="volumetric"`` and
+    ``absorption=1.0`` (nearest-setter-wins composition covers the three
+    children), so the E2E spec can exercise the LOD coverage cross-fade on a
+    blendable VOLUMETRIC group: two adjacent levels simultaneously visible
+    mid-band, emission-absorption blend state on the displayed material.
+    """
+    with asection("Generating LODGroup Volumetric Test"):
+        output = FIXTURES_DIR / "test_lod_group_volumetric.luxar.zarr"
+
+        def _make_level_splats(n: int, rng: np.random.RandomState) -> dict:
+            centers = rng.rand(n, 3).astype(np.float32) * 5.0
+            amplitudes = np.full(n, 1.0, dtype=np.float32)
+            cholesky = np.tile(
+                np.array([0.3, 0, 0.3, 0, 0, 0.3], dtype=np.float32), (n, 1)
+            )
+            return dict(
+                centers=centers, amplitudes=amplitudes, cholesky_factors=cholesky
+            )
+
+        dims = Dimensions(
+            [
+                Dimension("x", unit="units", display=True),
+                Dimension("y", unit="units", display=True),
+                Dimension("z", unit="units", display=True),
+            ]
+        )
+
+        rng = np.random.RandomState(42)
+        with LuxarZarrCompiler(
+            output,
+            encoding_mode=EncodingMode.PRECISION,
+            compressor=None,
+            float16_allowed=False,
+        ) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+            lod = scene.add_lod_group(
+                "multires",
+                layer=True,
+                blending_mode="volumetric",
+                absorption=1.0,
+            )
+            lod.add_gsplats(
+                "child_0", **_make_level_splats(8, rng), coverage_fraction=0.0
+            )
+            lod.add_gsplats(
+                "child_1", **_make_level_splats(32, rng), coverage_fraction=0.5
+            )
+            lod.add_gsplats(
+                "child_2", **_make_level_splats(128, rng), coverage_fraction=1.0
+            )
+
+        aprint(f"  Created {output}")
+        aprint("  3 volumetric levels: 8 / 32 / 128 splats, kappa 1.0")
+
+
+def generate_lod_group_additive_finest_test() -> None:
+    """``lod_group`` whose FINEST level is itself a progressive Points node.
+
+    The composition under test: a node that is BOTH a level of a substitutive
+    LOD group AND additively laddered (``stream:``-style progressive). On disk::
+
+        composed/                kind=lod, selector=coverage, default_level=0
+          child_0/               gsplats, coverage_fraction=0.0    (coarse)
+          child_1/               gsplats, coverage_fraction=0.5    (coarse)
+          child_2/               points,  coverage_fraction=1.0,
+                                 n_additive_sublods=3
+            additive_0/ additive_1/ additive_2/
+
+    Hand-composed through the PUBLIC API (``add_lod_group`` + two
+    ``add_gsplats`` + one ``add_points(..., additive_lod=...)``) rather than
+    via ``substitutive_lod=``: the latter synthesises the coarse levels through
+    the torch-backed gsplat reduction pipeline, which would pull torch into the
+    TypeScript fixture path and make the fixture bytes depend on the local
+    torch/BLAS build.
+
+    Three additive levels (not two) on purpose: two levels complete the ladder
+    on a single streaming pass (``shouldStopAfterLevel`` in
+    ``src/data/loaders/progressive/streaming-policy.ts`` only breaks AFTER a
+    level past the first-paint floor, so level 0 + level 1 already exhaust a
+    2-level ladder), which makes any "streams progressively" assertion vacuous.
+    With three, a first pass lands 2 of 3 and a second pass has real work left.
+    """
+    with asection("Generating LODGroup-with-Additive-Finest Test"):
+        output = FIXTURES_DIR / "test_lod_group_additive_finest.luxar.zarr"
+
+        def _make_level_splats(n: int, rng: np.random.RandomState) -> dict:
+            centers = rng.rand(n, 3).astype(np.float32) * 5.0
+            amplitudes = np.full(n, 1.0, dtype=np.float32)
+            cholesky = np.tile(
+                np.array([0.3, 0, 0.3, 0, 0, 0.3], dtype=np.float32), (n, 1)
+            )
+            return dict(
+                centers=centers, amplitudes=amplitudes, cholesky_factors=cholesky
+            )
+
+        dims = Dimensions(
+            [
+                Dimension("x", unit="units", display=True),
+                Dimension("y", unit="units", display=True),
+                Dimension("z", unit="units", display=True),
+            ]
+        )
+
+        rng = np.random.RandomState(42)
+        positions = (rng.rand(2000, 3) * 5.0).astype(np.float32)
+        with LuxarZarrCompiler(
+            output,
+            encoding_mode=EncodingMode.PRECISION,
+            compressor=None,
+            float16_allowed=False,
+        ) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+            lod = scene.add_lod_group("composed", layer=True)
+            lod.add_gsplats(
+                "child_0", **_make_level_splats(8, rng), coverage_fraction=0.0
+            )
+            lod.add_gsplats(
+                "child_1", **_make_level_splats(32, rng), coverage_fraction=0.5
+            )
+            # Cumulative counts [50, 250] over 2000 points → per-level
+            # 50 / 200 / 1750 (three additive_<i> subgroups).
+            lod.add_points(
+                "child_2",
+                positions=positions,
+                coverage_fraction=1.0,
+                additive_lod=dict(counts=[50, 250], method="random", seed=0),
+            )
+
+        aprint(f"  Created {output}")
+        aprint("  3 levels: 8 / 32 gsplats + 2000-point additive-laddered Points")
+        aprint("  finest child_2: 3 additive sub-LODs (50 / 200 / 1750 points)")
+
+
 def generate_overview_test() -> None:
     """Standalone ``overview``-recipe fixture — a lod_group with a GROUP child.
 
@@ -3096,6 +3232,12 @@ def main() -> None:
         aprint("")
 
         generate_lod_group_test()
+        aprint("")
+
+        generate_lod_group_additive_finest_test()
+        aprint("")
+
+        generate_lod_group_volumetric_test()
         aprint("")
 
         generate_overview_test()

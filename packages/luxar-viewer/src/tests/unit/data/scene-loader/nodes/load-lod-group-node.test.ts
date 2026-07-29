@@ -801,6 +801,45 @@ describe('loadLodGroupNode — lazy points level loading', () => {
     expect(deferred.failed).toBe(false);
     expect(deferred.failedTick).toBeUndefined();
   });
+
+  it('surfaces the progressive points loader hasMoreLODs on the lazy level (composed ladder advances)', async () => {
+    // The composed shape: the finest lod level is a points node that is ALSO
+    // additively laddered (`n_additive_sublods: 4`) — a substitutive level that
+    // is itself progressive. A lazy lod child is deliberately never registered
+    // into the per-slice update sweep, so the registry's `hasMoreLODs` probe is
+    // the ONLY thing that re-fires `ensureLoaded` to walk the remaining
+    // sub-LODs. Without this wiring the ladder stalls at 2 of 4 levels forever.
+    const loaderStub = { hasMoreLODs: true };
+    loadPointsNodeCheapMock.mockImplementation(async (child: SceneNode, parent: THREE.Object3D) => {
+      const mesh = new THREE.Mesh();
+      mesh.name = child.path;
+      parent.add(mesh);
+      return { placeholder: mesh, loader: loaderStub as never };
+    });
+    attachStubChildren();
+    const reg = makeReg();
+    const ctx = makeCtx(reg);
+
+    const finest = makePointsChildNode('/lod/child_2', 1.0);
+    finest.attrs.n_additive_sublods = 4;
+    const node = makeLodGroupNode(
+      [makeChildNode('/lod/child_0', 0), makeChildNode('/lod/child_1', 0.5), finest],
+      { default_level: 0, display_type: 'points' }
+    );
+    await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
+
+    // Still deferred: an additive ladder does not make the level eager.
+    expect(loadPointsNodeCheapMock).toHaveBeenCalledTimes(1);
+    expect(loadPointsNodeExpensiveMock).not.toHaveBeenCalled();
+
+    const pts = reg.get('/lod')!.children[2];
+    expect(typeof pts.hasMoreLODs).toBe('function');
+    // Live probe (not a snapshot taken at attach time): it must track the
+    // loader as the ladder streams.
+    expect(pts.hasMoreLODs!()).toBe(true);
+    loaderStub.hasMoreLODs = false;
+    expect(pts.hasMoreLODs!()).toBe(false);
+  });
 });
 
 // ────────────────────────────────────────────────────────────────────────
@@ -894,6 +933,39 @@ describe('loadLodGroupNode — lazy lines level loading', () => {
     await vi.waitFor(() => expect(ln.loading).toBe(false));
     expect(ctx.registry.registerLinesLoader).not.toHaveBeenCalled();
     expect(ln.ready).toBe(false);
+  });
+
+  it('surfaces the progressive lines loader hasMoreLODs on the lazy level (composed ladder advances)', async () => {
+    // Symmetry mirror of the points peer above — a lines finest level that is
+    // also additively laddered advances only via the registry's live
+    // `hasMoreLODs` probe (lazy levels never join the per-slice sweep).
+    const loaderStub = { hasMoreLODs: true };
+    loadLinesNodeCheapMock.mockImplementation(async (child: SceneNode, parent: THREE.Object3D) => {
+      const mesh = new THREE.Mesh();
+      mesh.name = child.path;
+      parent.add(mesh);
+      return { placeholder: mesh, loader: loaderStub as never };
+    });
+    attachStubChildren();
+    const reg = makeReg();
+    const ctx = makeCtx(reg);
+
+    const finest = makeLinesChildNode('/lod/child_2', 1.0);
+    finest.attrs.n_additive_sublods = 4;
+    const node = makeLodGroupNode(
+      [makeChildNode('/lod/child_0', 0), makeChildNode('/lod/child_1', 0.5), finest],
+      { default_level: 0, display_type: 'lines' }
+    );
+    await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
+
+    expect(loadLinesNodeCheapMock).toHaveBeenCalledTimes(1);
+    expect(loadLinesNodeExpensiveMock).not.toHaveBeenCalled();
+
+    const ln2 = reg.get('/lod')!.children[2];
+    expect(typeof ln2.hasMoreLODs).toBe('function');
+    expect(ln2.hasMoreLODs!()).toBe(true);
+    loaderStub.hasMoreLODs = false;
+    expect(ln2.hasMoreLODs!()).toBe(false);
   });
 });
 

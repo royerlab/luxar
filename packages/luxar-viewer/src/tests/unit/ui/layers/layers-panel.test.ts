@@ -985,6 +985,54 @@ describe('LayersPanel — blend select drives the leaf material', () => {
     ).applyEngine.applyOpacity(grpLayer);
     expect(updateAbsorption).toHaveBeenCalledWith(0.5);
   });
+
+  it('a panel opacity edit during an in-flight LOD fade rebases the fade snapshot instead of the live uniform', () => {
+    // Regression (fail-first vs the pre-fix applyComposed): the LOD fade
+    // owns the live opacity uniform while a cross-fade / energy comp is in
+    // flight — it re-renders `_lodFadeBase × product` every frame
+    // (scene/lod-fade.ts) — so a direct updateOpacity here was clobbered on
+    // the next fade frame and the panel edit lost until the fade ended.
+    const updateOpacity = vi.fn();
+    const stubMat: Record<string, unknown> = {
+      userData: { blendingMode: 'volumetric' },
+      uniforms: { uOpacity: { value: 1.0 } },
+      defines: {},
+      updateIntensity: vi.fn(),
+      updateOffset: vi.fn(),
+      updateGamma: vi.fn(),
+      updateOpacity,
+      updateAbsorption: vi.fn(),
+      applyBlendingMode: vi.fn(),
+    };
+    stubMat.clone = vi.fn(() => stubMat);
+
+    const mesh = new THREE.Mesh(new THREE.BufferGeometry(), stubMat as unknown as THREE.Material);
+    mesh.name = '/cloud';
+    // Mid-fade state as the registry leaves it: authored-opacity snapshot
+    // taken, per-node material already owned.
+    mesh.userData._lodFadeBase = 1.0;
+    mesh.userData._layerMaterialCloned = true;
+    const rootGroup = new THREE.Group();
+    rootGroup.add(mesh);
+
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(rootGroup, makeLayeredSceneGraph('gsplats'));
+    panel.show();
+    panel.layerState.select('/cloud', 'single');
+
+    updateOpacity.mockClear();
+    panel.layerState.applyToSelected((l) => {
+      l.opacity = 0.6;
+    });
+    const layer = panel.layerState.getLayer('/cloud')!;
+    (
+      panel as unknown as { applyEngine: { applyOpacity(l: unknown): void } }
+    ).applyEngine.applyOpacity(layer);
+    // The fade snapshot got the new composed value; the live uniform was
+    // left to the fade's next frame.
+    expect(mesh.userData._lodFadeBase).toBeCloseTo(0.6, 6);
+    expect(updateOpacity).not.toHaveBeenCalled();
+  });
 });
 
 // ---------------------------------------------------------------------------

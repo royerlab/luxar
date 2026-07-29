@@ -492,7 +492,8 @@ Navigation:
                         fill_sigma={own_dim: 0},
                         extend_to_all=other_dims,
                         opacity=1.0,
-                        blending_mode="additive",
+                        absorption=1.0,
+                        blending_mode="volumetric",
                         layer=True,
                     )
                     aprint(

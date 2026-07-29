@@ -424,6 +424,54 @@ class TestCategoricalDimensions:
         with pytest.raises(ValueError, match="min must be less than max"):
             Dimension("x", range=(5.0, 5.0))
 
+    def test_single_timepoint_zero_width_range(self) -> None:
+        """Regression (#878): a single-timepoint timeseries must not raise.
+
+        default_timeseries builds range=(0, n-1), which collapses to (0, 0)
+        for n == 1; a single discrete index is legitimate.
+        """
+        dims = Dimensions.default_timeseries(n_timepoints=1)
+        t_dim = dims.dimensions[0]
+        assert t_dim.name == "t"
+        assert t_dim.range == (0, 0)
+        assert t_dim.discrete is True
+
+    def test_single_channel_zero_width_range(self) -> None:
+        """Regression (#878): a single-channel stack must not raise."""
+        dims = Dimensions.default_multichannel(n_channels=1)
+        c_dim = dims.dimensions[0]
+        assert c_dim.name == "c"
+        assert c_dim.range == (0, 0)
+        assert c_dim.discrete is True
+
+    def test_single_index_discrete_zero_width_range(self) -> None:
+        """A directly-constructed discrete dim with a zero-width range is allowed."""
+        dim = Dimension("t", range=(0, 0), discrete=True, display=False)
+        assert dim.range == (0, 0)
+        assert dim.discrete is True
+
+    def test_degenerate_continuous_range_still_rejected_non_categorical(self) -> None:
+        """The discrete relaxation must not leak to continuous dimensions."""
+        with pytest.raises(ValueError, match="min must be less than max"):
+            Dimension("x", range=(5.0, 5.0), discrete=False)
+
+    def test_inverted_discrete_range_rejected(self) -> None:
+        """An explicitly inverted discrete range must still raise."""
+        with pytest.raises(ValueError, match="min must not be greater than max"):
+            Dimension("t", range=(2, 0), discrete=True, display=False)
+
+    def test_auto_corrected_discrete_zero_width_range(self) -> None:
+        """Regression (#878): a non-displayed dim that RELIES on the auto-correct
+        to become discrete must accept a zero-width (0, 0) range.
+
+        Range validation runs after the non-spatial/non-displayed auto-correction
+        that sets discrete=True, so an explicit discrete=True is not required.
+        """
+        with pytest.warns(UserWarning, match="must be discrete"):
+            dim = Dimension("t", range=(0, 0), display=False)
+        assert dim.range == (0, 0)
+        assert dim.discrete is True
+
     @pytest.mark.parametrize(
         "categories,error_pattern,test_id",
         [
