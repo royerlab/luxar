@@ -6,10 +6,11 @@ including automatic retry on failure, partial download resume, and integrity ver
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import time
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any, BinaryIO, Optional, Union
 
 from arbol import aprint, asection
 
@@ -914,8 +915,9 @@ def download_zip_member(
             any streaming; the inflate itself is then bounded by that
             (already-within-ceiling) declared size — so a self-consistent
             decompression bomb (one whose declared size, actual inflated size,
-            and CRC all agree) still cannot write unbounded to disk. Pass a smaller int to tighten it, or ``None`` to disable the
-            ceiling entirely (the output is then bounded only by the declared
+            and CRC all agree) still cannot write unbounded to disk. Pass a
+            smaller int to tighten it, or ``None`` to disable the ceiling
+            entirely (the output is then bounded only by the declared
             member size). The INRIA / cluster-fly demo callers pass a tight
             ``expected_size`` and are unaffected by this default.
 
@@ -981,6 +983,23 @@ def download_zip_member(
             aprint(f"✓ Member already extracted: {output_path}")
             return output_path
 
+        if comp_size == 0:
+            # Empty STORED member: the body range GET below would be an inverted
+            # ``bytes=data_start-(data_start-1)`` that servers answer 416/200, so
+            # never fetch a body. An empty member declares zero uncompressed
+            # bytes and CRC 0; write the empty output through the same
+            # ``.part``-then-``replace`` promotion the streaming path uses.
+            if uncomp_size != 0 or crc_expected != 0:
+                raise ValueError(
+                    f"Member {member!r} has zero compressed bytes but declares "
+                    f"{uncomp_size:,} uncompressed bytes / CRC {crc_expected:#010x}"
+                )
+            tmp_path = output_path.with_suffix(output_path.suffix + ".part")
+            tmp_path.write_bytes(b"")
+            tmp_path.replace(output_path)
+            aprint(f"✓ Extracted empty member: {output_path}")
+            return output_path
+
         # The local header repeats name/extra with potentially DIFFERENT
         # lengths than the central directory — read it to find the data start.
         import struct
@@ -1004,7 +1023,7 @@ def download_zip_member(
         written = 0
         last_report = 0
 
-        def _emit(f: Any, data: bytes) -> None:
+        def _emit(f: BinaryIO, data: bytes) -> None:
             """Write one decompressed slice, updating CRC/counters, and abort
             if the running output exceeds the bound (decompression-bomb guard).
             """
@@ -1034,17 +1053,21 @@ def download_zip_member(
                 crc = 0
                 written = 0
                 last_report = 0
-                response = _ranged_get(
-                    session,
-                    url,
-                    data_start,
-                    data_start + comp_size - 1,
-                    timeout=timeout,
-                    extra_headers=extra_headers,
-                    stream=True,
-                )
                 compressed_read = 0
-                with open(tmp_path, "wb") as f:
+                with (
+                    contextlib.closing(
+                        _ranged_get(
+                            session,
+                            url,
+                            data_start,
+                            data_start + comp_size - 1,
+                            timeout=timeout,
+                            extra_headers=extra_headers,
+                            stream=True,
+                        )
+                    ) as response,
+                    open(tmp_path, "wb") as f,
+                ):
                     for chunk in response.iter_content(chunk_size=chunk_size):
                         # Secondary defense: the ranged GET requested exactly
                         # comp_size bytes, so a well-formed member reads exactly
