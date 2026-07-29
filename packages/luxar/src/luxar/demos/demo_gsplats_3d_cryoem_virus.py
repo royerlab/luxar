@@ -104,7 +104,7 @@ MAX_SPLATS_PER_PASS = 300_000
 ITERS_PER_PASS = 4_000
 PSNR_PATIENCE = 0.1
 
-# Additive display brightness (dialed down for a dense shell — see VH demo).
+# Display brightness (dialed down for a dense shell — see VH demo).
 SCENE_INTENSITY = 0.03
 
 FLAGS = parse_demo_flags()

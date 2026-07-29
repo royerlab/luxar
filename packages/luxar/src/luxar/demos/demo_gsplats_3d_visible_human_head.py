@@ -18,7 +18,7 @@ Visible Human cryosections are genuine RGB photographs. We keep that color:
      centers, covariances, amplitudes).
   2. Sample the original RGB volume at each splat center → a real per-splat
      color.
-  3. Render additively with those per-splat colors → photographic-color anatomy.
+  3. Render volumetrically with those per-splat colors → photographic-color anatomy.
 
 The blue frozen-block background and the ruler strip are masked out before
 fitting (tissue is warm-toned, R > B; the gel background is blue), so splats
@@ -116,8 +116,8 @@ MAX_SPLATS_PER_PASS = 600_000
 ITERS_PER_PASS = 4_000
 PSNR_PATIENCE = 0.1
 
-# Display brightness (additive): a dense head over-accumulates, so scale the
-# fitted amplitudes far down to keep the core from blowing out to white.
+# Display brightness: volumetric compositing bounds the sum, but this dense
+# head still reads hot, so scale amplitudes down to keep the core from clipping.
 SCENE_INTENSITY = 0.008
 
 # Physical voxel spacing of the NLM VHM color cryosections: 1.0 mm axial (slice

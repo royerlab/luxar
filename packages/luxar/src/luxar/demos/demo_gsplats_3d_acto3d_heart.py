@@ -578,11 +578,11 @@ Controls:
                     centered = centered.scale_intensity(0.1)
                     n_splats = len(centered.amplitudes)
 
-                    # Volumetric compositing: each channel absorbs the ones
-                    # behind it, so the nuclear stain no longer washes the
-                    # vasculature and cardiac tissue out the way an unbounded
-                    # additive sum did. Partial opacity keeps all three
-                    # channels readable through one another.
+                    # Volumetric compositing at whole-node granularity lets a
+                    # channel attenuate channels drawn behind it, so the nuclear
+                    # stain no longer washes out the vasculature and cardiac
+                    # tissue as an unbounded additive sum did. Partial opacity
+                    # keeps all three channels readable through one another.
                     scene.add_gsplats_from_data(
                         name=f"gsplats_{ch_name.lower().replace(' ', '_').replace('(', '').replace(')', '')}",
                         result=centered,
