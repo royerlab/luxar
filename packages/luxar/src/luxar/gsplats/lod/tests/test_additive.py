@@ -458,6 +458,30 @@ def test_make_additive_lod_builds_gram_once(monkeypatch) -> None:
     assert calls["n"] == 1
 
 
+def test_make_additive_lod_score_energy_fractions_builds_no_gram(monkeypatch) -> None:
+    """Score-ordered (self_energy) + energy breakpoints must resolve cuts against
+    the O(N) self-energy cumulative — never the O(N²) sparse Gram. Coarse lifted
+    children are maximally-overlapping blobs, the worst case for the Gram, so
+    ``gsplat_additive_lod_from`` pins ``method='self_energy'`` and this path must
+    not build a Gram at all."""
+    import luxar.gsplats.lod.additive as additive_mod
+
+    calls = {"n": 0}
+    real = additive_mod._build_sparse_gram
+
+    def _counting(*args, **kwargs):
+        calls["n"] += 1
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(additive_mod, "_build_sparse_gram", _counting)
+    data = _make_random_gsplat(n=40, ndim=2, seed=9)
+    ladder = make_additive_lod(data, breakpoints=[0.5, 0.9, 1.0], method="self_energy")
+    assert calls["n"] == 0
+    assert ladder.stats["lod_breakpoints_kind"] == "energy-fractions"
+    assert ladder.stats["lod_cutpoints"][-1] == data.n_splats
+    assert ladder.n_additive_sublods >= 1
+
+
 def test_make_additive_lod_energy_fractions() -> None:
     data = _make_random_gsplat(n=40, ndim=2, seed=9)
     fracs = [0.5, 0.9, 1.0]

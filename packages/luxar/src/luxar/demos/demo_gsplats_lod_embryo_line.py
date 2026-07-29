@@ -306,7 +306,8 @@ Navigation:
                         colored,
                         lod_group=True,
                         opacity=1.0,
-                        blending_mode="additive",
+                        absorption=1.0,
+                        blending_mode="volumetric",
                     )
 
             # ── Overlays ────────────────────────────────────────────────────
