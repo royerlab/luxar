@@ -4,10 +4,6 @@ Keyboard binding table split per context.
 
 - `register-all.ts` — public entry point + the three `KeyBindings*` types
   (deps, commands, panel getters). Imported by the orchestrator.
-- `fov-hold-gate.ts` — Ctrl/Meta hold counter that disables wheel zoom
-  while either modifier is held (so Ctrl+wheel only adjusts FOV).
-  Includes the `blur` + `visibilitychange` listeners that reset the
-  counter when the page loses focus.
 - `navigation-bindings.ts` — every NAVIGATION-context application binding
   (orbit-mode UI shortcuts: H, P, R, V, I, F, C, B, T, G, N,
   M (cycle data loading monitor), O, [, ],
@@ -21,7 +17,13 @@ Keyboard binding table split per context.
   End / Shift+↑ / Shift+↓ (registered on NAVIGATION context after the
   animation manager is constructed; not wired by `registerAllKeyBindings`).
 
-The split is structural — `registerAllKeyBindings` wires the FOV
-hold gate, the navigation bindings, and the fly bindings at startup;
+The split is structural — `registerAllKeyBindings` wires the
+navigation bindings and the fly bindings at startup;
 `AnimationShortcuts.register()` is called separately from the
 `InputHandler` once the animation manager exists.
+
+Ctrl/⌘+wheel FOV-vs-zoom exclusivity is not a key binding: each wheel
+handler reads the wheel event's own live modifier flags
+(`luxar-orbit-controls/input/pointer.ts`,
+`luxar-fly-controls/input/wheel.ts`), so there is no held-modifier
+state to track here.

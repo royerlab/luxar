@@ -50,8 +50,7 @@ input-handler/
   be unit-tested without instantiating a full manager.
 - **`key-bindings/`** — keyboard binding table split per context:
   `register-all.ts` (entry point + `KeyBindings{Deps,Commands,PanelGetters}`
-  types), `fov-hold-gate.ts` (Ctrl/Meta hold counter that disables wheel
-  zoom), `navigation-bindings.ts` (orbit-mode UI shortcuts),
+  types), `navigation-bindings.ts` (orbit-mode UI shortcuts),
   `fly-bindings.ts` (WASD + arrows + Shift speed-boost on
   `FLY_CONTROLS`), and `animation-shortcuts.ts` (K / Home / End /
   Shift+↑ / Shift+↓ on `NAVIGATION`).

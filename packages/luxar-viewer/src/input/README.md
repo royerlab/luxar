@@ -30,7 +30,6 @@ input/
     │   └── routing-rules.ts                  # isKeyAllowedInContext + sortContextsByPriority
     ├── key-bindings/                         # The whole key→command table
     │   ├── register-all.ts                   # Entry point + KeyBindings{Deps,Commands,PanelGetters}
-    │   ├── fov-hold-gate.ts                  # Ctrl/Meta hold counter + blur/visibilitychange reset
     │   ├── navigation-bindings.ts            # Orbit-mode UI shortcuts (H/P/R/V/F/C/L/M/[/]/digits/…)
     │   ├── fly-bindings.ts                   # WASD + arrows + Shift speed boost (FLY_CONTROLS)
     │   └── animation-shortcuts.ts            # K/Home/End/Shift+↑/Shift+↓ (NAVIGATION)
