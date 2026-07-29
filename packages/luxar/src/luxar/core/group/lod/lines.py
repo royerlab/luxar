@@ -102,6 +102,13 @@ def identify_polylines(
             raise ValueError(
                 f"Indices must be an integer array, got dtype {indices.dtype}"
             )
+        if indices.size > 0:
+            min_index = int(np.min(indices))
+            max_index = int(np.max(indices))
+            if min_index < 0:
+                raise ValueError(f"Index {min_index} < 0 (indices must be >= 0)")
+            if max_index >= n_vertices:
+                raise ValueError(f"Index {max_index} >= n_vertices {n_vertices}")
         return _indexed_connected_components(
             n_vertices, indices.astype(np.intp, copy=False).reshape(-1, 2)
         )

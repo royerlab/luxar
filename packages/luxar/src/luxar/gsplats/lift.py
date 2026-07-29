@@ -238,6 +238,13 @@ def _segment_pairs(
             raise ValueError(
                 f"Indices must be an integer array, got dtype {indices_arr.dtype}"
             )
+        if indices_arr.size > 0:
+            min_index = int(np.min(indices_arr))
+            max_index = int(np.max(indices_arr))
+            if min_index < 0:
+                raise ValueError(f"Index {min_index} < 0 (indices must be >= 0)")
+            if max_index >= n_vertices:
+                raise ValueError(f"Index {max_index} >= n_vertices {n_vertices}")
         return indices_arr.astype(np.intp, copy=False).reshape(-1, 2)
     raise ValueError(
         f"line_type must be 'segments'/'polyline'/'loop'/'indexed'; got {line_type!r}"

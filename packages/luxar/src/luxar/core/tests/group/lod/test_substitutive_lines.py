@@ -171,6 +171,42 @@ class TestAddLinesSubstitutiveLod:
         store = zarr.open(str(out), mode="r")
         assert "curves" not in store
 
+    @pytest.mark.parametrize(
+        ("indices", "message"),
+        [
+            (np.array([-1, 0, 2, 3]), r"Index -1 < 0"),
+            (np.array([0, 4]), r"Index 4 >= n_vertices 4"),
+        ],
+    )
+    def test_out_of_bounds_indices_rejected_before_partial_lod_write(
+        self, tmp_path, indices, message
+    ) -> None:
+        out = tmp_path / "t.luxar.zarr"
+        vertices = np.array(
+            [[0, 0, 0], [1, 0, 0], [10, 0, 0], [11, 0, 0]],
+            dtype=np.float32,
+        )
+        with LuxarZarrCompiler(out) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            with pytest.raises(ValueError, match=message):
+                scene.add_lines(
+                    "curves",
+                    vertices,
+                    1.0,
+                    line_type="indexed",
+                    indices=indices,
+                    substitutive_lod=dict(
+                        compression_factor=2,
+                        levels=1,
+                        device="cpu",
+                        seed=0,
+                    ),
+                    additive_lod=False,
+                )
+
+        store = zarr.open(str(out), mode="r")
+        assert "curves" not in store
+
 
 class TestSubstitutiveLinesComposedWithAdditive:
     """``additive_lod`` composes with ``substitutive_lod`` on Lines too.
