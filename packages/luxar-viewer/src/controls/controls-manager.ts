@@ -421,12 +421,6 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
     }
   }
 
-  public setEnableZoom(enabled: boolean): void {
-    if (this.currentControls instanceof LuxarOrbitControls) {
-      this.currentControls.enableZoom = enabled;
-    }
-  }
-
   /**
    * Set the orbit target without triggering an update.
    * Use this when you also need to reinitialize() afterward (e.g., after auto-frame).

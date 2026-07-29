@@ -23,7 +23,9 @@ function makeSceneManager(): {
   const canvas = document.createElement('canvas');
   document.body.appendChild(canvas);
   const updateSize = vi.fn();
-  const updateFOV = vi.fn();
+  // Returns true like the real perspective-camera path; ortho tests
+  // override with mockReturnValue(false).
+  const updateFOV = vi.fn(() => true);
   const sceneManager = {
     updateSize,
     updateFOV,
@@ -186,6 +188,25 @@ describe('WindowEventHandler', () => {
       window.dispatchEvent(new WheelEvent('wheel', { deltaY: 1, ctrlKey: true }));
       expect(settings.fovPreset).toBe('Custom');
       expect(syncCurrentState).toHaveBeenCalledTimes(1);
+    });
+
+    it('Ctrl+wheel with an ortho camera (updateFOV no-op): preset stays untouched', () => {
+      // updateFOV returns false for orthographic cameras — stamping
+      // "Custom" for a no-op would desync the rendering-controls panel
+      // from the actual (unchanged) FOV.
+      const { sceneManager, updateFOV } = makeSceneManager();
+      updateFOV.mockReturnValue(false);
+      const { animationController } = makeAnimationController();
+      const settings = { fovPreset: '60° Standard' };
+      const syncCurrentState = vi.fn();
+      const handler = new WindowEventHandler(sceneManager, animationController);
+      handler.setRenderingControls({ settings, syncCurrentState } as unknown as RenderingControls);
+      handler.attach([]);
+
+      window.dispatchEvent(new WheelEvent('wheel', { deltaY: 1, ctrlKey: true }));
+      expect(updateFOV).toHaveBeenCalledTimes(1);
+      expect(settings.fovPreset).toBe('60° Standard');
+      expect(syncCurrentState).not.toHaveBeenCalled();
     });
 
     it('[input.md G15] Ctrl+wheel without setRenderingControls: updateFOV fires but the if-guard prevents preset/sync', () => {

@@ -157,17 +157,25 @@ export class WindowEventHandler {
    *     during continuous wheel input).
    *   - On Ctrl+wheel / Cmd+wheel, intercept the event for FOV
    *     control and `preventDefault` so the page doesn't also try to
-   *     zoom. After updating FOV, switch the rendering-controls
+   *     zoom. When the FOV actually changed (perspective camera —
+   *     updateFOV no-ops on ortho), switch the rendering-controls
    *     preset to "Custom" so the panel value matches the slider.
    */
   private onWheel(event: WheelEvent): void {
     this.animationController.startAnimation();
 
     if (event.ctrlKey || event.metaKey) {
+      // preventDefault unconditionally — even when FOV doesn't apply
+      // (ortho camera), browser page zoom must stay suppressed over
+      // the viewer.
       event.preventDefault();
-      this.sceneManager.updateFOV(event.deltaY);
+      const fovChanged = this.sceneManager.updateFOV(event.deltaY);
 
-      if (this.renderingControls) {
+      // Only flip the preset when the FOV actually changed — updateFOV
+      // is a no-op for orthographic cameras (there the orbit controls
+      // keep zoom ownership of modifier wheels), and stamping "Custom"
+      // for a no-op would desync the panel from reality.
+      if (fovChanged && this.renderingControls) {
         this.renderingControls.settings.fovPreset = 'Custom';
         this.renderingControls.syncCurrentState();
       }
