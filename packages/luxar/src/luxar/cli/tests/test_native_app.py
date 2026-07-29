@@ -10,6 +10,7 @@ viewer/zarr inputs.
 from __future__ import annotations
 
 import plistlib
+import shlex
 import stat
 from pathlib import Path
 from unittest.mock import patch
@@ -22,6 +23,7 @@ from luxar.cli import app
 from luxar.cli.native_app import (
     SUPPORTED_PLATFORMS,
     LauncherNotBuiltError,
+    _macos_readme,
     bundle_linux_folder,
     bundle_macos_app,
     get_launcher_path,
@@ -391,7 +393,7 @@ class TestCLINativeFlag:
         zarr filename without the `.zarr` extension)."""
         output = tmp_path / "native_out"
         with (
-            patch("luxar.cli.utils.check_viewer_built", return_value=True),
+            patch("luxar.cli.main.check_viewer_built", return_value=True),
             patch(
                 "luxar.cli.utils.get_viewer_dist_path", return_value=fake_viewer_dist
             ),
@@ -548,6 +550,51 @@ class TestBundlerSymlinkEscapeRejected:
                     output=output,
                     app_name="MyScene",
                 )
+
+    def test_macos_app_rejects_readme_symlink_escape(
+        self,
+        sample_scene: Path,
+        fake_viewer_dist: Path,
+        fake_launchers_dir: Path,
+        tmp_path: Path,
+    ) -> None:
+        """A pre-planted symlink at the sibling README path must not
+        redirect the README write outside the output directory."""
+        output = tmp_path / "out"
+        output.mkdir()
+        outside_file = tmp_path / "outside.txt"
+        (output / "MyScene-README.txt").symlink_to(outside_file)
+        with _patch_launchers(fake_launchers_dir):
+            with pytest.raises(ValueError, match="escapes the output directory"):
+                bundle_macos_app(
+                    viewer_dist=fake_viewer_dist,
+                    zarr_data=sample_scene,
+                    output=output,
+                    app_name="MyScene",
+                )
+        assert not outside_file.exists()
+
+
+class TestMacosReadmeQuoting:
+    """The macOS README's copy-paste Terminal commands must stay valid shell
+    for any name `validate_bundle_name` accepts, including apostrophes."""
+
+    def test_apostrophe_name_produces_valid_shell(self) -> None:
+        readme = _macos_readme("O'Brien")
+        # Each command line must shlex.split back to exactly two tokens, the
+        # second being the bundle path — unbalanced quoting would raise or
+        # split wrong.
+        for cmd, verb in (("xattr", "xattr -cr"), ("open", "open")):
+            line = next(
+                ln.strip() for ln in readme.splitlines() if ln.strip().startswith(verb)
+            )
+            tokens = shlex.split(line)
+            assert tokens[-1] == "O'Brien.app", (cmd, tokens)
+
+    def test_plain_name_is_unquoted(self) -> None:
+        readme = _macos_readme("MyScene")
+        assert "xattr -cr MyScene.app" in readme
+        assert "open MyScene.app" in readme
 
 
 class TestCLITraversalNameRejected:
