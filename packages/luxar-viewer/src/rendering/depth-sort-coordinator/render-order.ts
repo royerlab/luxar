@@ -271,6 +271,9 @@ function orderGroupsWithContainment(byDepth: OrderGroup[]): OrderGroup[] {
   // Enclosing sphere per group: centroid of member centers, radius the
   // max center-distance + member radius (exact for the dominant
   // single-leaf group-of-one case; a cheap upper bound for partitions).
+  // That partition bound can contain a genuinely disjoint small neighbour;
+  // the false-positive is accepted as the documented lesser-error tradeoff
+  // (draw the possible container first rather than erase embedded content).
   const spheres = byDepth.map((group) => {
     let x = 0;
     let y = 0;
@@ -396,6 +399,7 @@ export function collectRenderOrderSlot(
     Number.isFinite(scratch.center.z) &&
     Number.isFinite(bs.radius) &&
     bs.radius >= 0;
+  const scaledRadius = usable ? bs.radius * mv.getMaxScaleOnAxis() : -1;
   orderSlots.push({
     mesh,
     // Meshes sharing a partition wrapper form one order group; a
@@ -410,7 +414,7 @@ export function collectRenderOrderSlot(
     viewZ: usable ? scratch.center.z : 0,
     viewX: usable ? scratch.center.x : 0,
     viewY: usable ? scratch.center.y : 0,
-    radius: usable ? bs.radius * mv.getMaxScaleOnAxis() : -1,
+    radius: Number.isFinite(scaledRadius) ? scaledRadius : -1,
   });
 }
 
