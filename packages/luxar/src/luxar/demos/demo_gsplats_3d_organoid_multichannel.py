@@ -69,7 +69,7 @@ WORKFLOW:
    - Each channel is a toggleable layer in the viewer
 
 4. **Visualize** in the Luxar viewer
-   - Additive blending shows channel overlap
+   - Volumetric blending shows channel overlap with front-to-back occlusion
    - Toggle layers to inspect individual channels
 
 USAGE:
@@ -480,7 +480,8 @@ Controls:
                     name=f"ch{i}_{ch_name.lower().replace(' ', '_')}",
                     result=centered,
                     opacity=1.0,
-                    blending_mode="additive",
+                    absorption=1.0,
+                    blending_mode="volumetric",
                     layer=True,
                     colormap=colormap,
                 )

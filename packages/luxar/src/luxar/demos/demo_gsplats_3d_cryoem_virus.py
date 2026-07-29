@@ -277,7 +277,11 @@ def create_luxar_scene(gsplats_data: GSplatData, output_path: Path) -> Path:
                 result=gsplats_data,
                 colormap="viridis",
                 opacity=1.0,
-                blending_mode="additive",
+                # Strong absorption (kappa 5) so the near side of the shell
+                # occludes the far side — the capsid reads as a hollow
+                # icosahedron instead of a translucent ball of density.
+                absorption=5.0,
+                blending_mode="volumetric",
                 intensity=1.0,
                 layer=True,
             )

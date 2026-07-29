@@ -400,9 +400,9 @@ def create_luxar_scene(fit: GSplatData, colors: np.ndarray, output_path: Path) -
     """Build the true-color Visible Human head scene."""
     with asection("Creating Luxar Scene"):
         # Aspect is already correct (the volume was resampled to cubic voxels),
-        # so just center and dim. Additive blending (the gsplat norm): a dense
-        # head over-accumulates, so amplitudes are scaled WAY down to avoid a
-        # blown-out white core — reduce brightness, not blend mode.
+        # so just center and dim. Volumetric compositing bounds the accumulated
+        # radiance, but a dense head still reads hot, so amplitudes stay scaled
+        # WAY down — reduce brightness, not blend mode.
         centered = fit.center_at_centroid().scale_intensity(SCENE_INTENSITY)
         dims = Dimensions(
             [
@@ -426,7 +426,8 @@ def create_luxar_scene(fit: GSplatData, colors: np.ndarray, output_path: Path) -
                 cholesky_factors=centered.cholesky_factors,
                 colors=colors.astype(np.float32),
                 opacity=1.0,
-                blending_mode="additive",
+                absorption=1.0,
+                blending_mode="volumetric",
                 layer=True,
             )
             scene.add_text(

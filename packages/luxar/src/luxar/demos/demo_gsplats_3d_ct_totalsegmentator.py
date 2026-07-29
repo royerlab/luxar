@@ -701,7 +701,8 @@ def create_luxar_scene(fit: GSplatData, labels: np.ndarray, output_path: Path) -
                     colors=colors[mask].astype(np.float32),
                     labels=[name_lut[int(lid)] for lid in lids],
                     opacity=float(opacity),
-                    blending_mode="additive",
+                    absorption=1.0,
+                    blending_mode="volumetric",
                     layer=True,
                 )
                 aprint(
