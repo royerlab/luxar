@@ -412,7 +412,7 @@ def global_amplitude_max(node: GSplatNode) -> float:
 
 
 def nondegenerate_axes(
-    node: GSplatNode, eps: float = SPATIAL_SIGMA_EPS
+    node: GSplatNode, eps: float = SPATIAL_SIGMA_EPS, fallback: bool = True
 ) -> np.ndarray:
     """Axes with real covariance extent over the default-rendered splat set.
 
@@ -421,8 +421,10 @@ def nondegenerate_axes(
     zero-variance categorical axis (a stacked-time / channel axis) is excluded.
     Used by ``transform --center`` to re-origin only the spatial axes. Reduces
     to a per-axis max-sigma vector (via each leaf's ``marginal_sigmas``) and
-    applies the shared spatial-axis rule. Falls back to all axes when none
-    qualify (or the tree is empty).
+    applies the shared spatial-axis rule. With ``fallback=True`` (the default)
+    falls back to all axes when none qualify (or the tree is empty);
+    ``fallback=False`` returns an empty selection instead, so a caller can tell
+    an all-degenerate store from a genuinely all-spatial one.
     """
     max_sigma: Optional[np.ndarray] = None
     ndim = 0
@@ -435,7 +437,7 @@ def nondegenerate_axes(
             max_sigma = sig if max_sigma is None else np.maximum(max_sigma, sig)
     if max_sigma is None:
         return np.arange(ndim)
-    return spatial_axes_from_max_sigma(max_sigma, eps)
+    return spatial_axes_from_max_sigma(max_sigma, eps, fallback=fallback)
 
 
 # ────────────────────────────────────────────────────────────────────────
