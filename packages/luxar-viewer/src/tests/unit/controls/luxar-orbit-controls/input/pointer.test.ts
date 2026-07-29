@@ -78,6 +78,7 @@ function makeBaseCtx(overrides: Partial<OrbitInputCtx> = {}): {
     enableRotate: true,
     enablePan: true,
     enableZoom: true,
+    isOrthographic: false,
     mouseButtons: {
       LEFT: THREE.MOUSE.PAN,
       MIDDLE: THREE.MOUSE.DOLLY,
@@ -258,6 +259,21 @@ describe('handleWheel — direction (sign of deltaY) + addZoomDelta', () => {
       // No preventDefault either — the window-level FOV handler owns
       // (and preventDefaults) modifier wheels.
       expect(spy).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each([{ ctrlKey: true }, { metaKey: true }])(
+    'ortho camera: wheel with %o still zooms (no FOV exists to cede to)',
+    (mods) => {
+      // adjustFOV no-ops for orthographic cameras, so a modifier wheel
+      // ceded to the FOV handler would be a dead input in ortho mode —
+      // and trackpad pinch (synthesized ctrlKey wheel) must keep zooming
+      // there. Zoom retains ownership when ctx.isOrthographic.
+      const { ctx, state } = makeBaseCtx({ isOrthographic: true });
+      const evt = new WheelEvent('wheel', { deltaY: -100, cancelable: true, ...mods });
+      handleWheel(ctx, evt);
+      expect(state.zoomDelta).toBeLessThan(0);
+      expect(ctx.dispatch).toHaveBeenCalledWith('change');
     }
   );
 });

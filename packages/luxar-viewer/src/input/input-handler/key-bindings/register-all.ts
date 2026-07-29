@@ -74,10 +74,11 @@ export interface KeyBindingsDeps {
   /** Debug console (always present from InputHandler ctor). */
   debugConsole: DebugConsole;
   /**
-   * Cleanup array shared with the InputHandler. Bindings that register
-   * window/document listeners append their unregistration thunks here
-   * so the InputHandler's `dispose()` cleans them up alongside its own
-   * keydown / keyup window listeners.
+   * Cleanup array shared with the InputHandler, run on its `dispose()`.
+   * Currently no binding module registers window/document listeners
+   * (the former FOV hold gate did), so nothing is appended today — the
+   * hook stays so a future binding that needs global listeners has a
+   * teardown path.
    */
   cleanups: (() => void)[];
   panels: KeyBindingsPanelGetters;

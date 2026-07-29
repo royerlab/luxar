@@ -17,7 +17,13 @@ Keyboard binding table split per context.
   End / Shift+↑ / Shift+↓ (registered on NAVIGATION context after the
   animation manager is constructed; not wired by `registerAllKeyBindings`).
 
-The split is structural — `registerAllKeyBindings` wires the FOV
-hold gate, the navigation bindings, and the fly bindings at startup;
+The split is structural — `registerAllKeyBindings` wires the
+navigation bindings and the fly bindings at startup;
 `AnimationShortcuts.register()` is called separately from the
 `InputHandler` once the animation manager exists.
+
+Ctrl/⌘+wheel FOV-vs-zoom exclusivity is not a key binding: each wheel
+handler reads the wheel event's own live modifier flags
+(`luxar-orbit-controls/input/pointer.ts`,
+`luxar-fly-controls/input/wheel.ts`), so there is no held-modifier
+state to track here.

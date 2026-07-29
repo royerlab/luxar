@@ -26,6 +26,14 @@ export interface OrbitInputCtx {
   enableRotate: boolean;
   enablePan: boolean;
   enableZoom: boolean;
+  /**
+   * True when the active camera is orthographic (ortho mode reuses this
+   * controls class). Modifier-carrying wheel events are ceded to the
+   * window-level FOV handler only for perspective cameras — adjustFOV
+   * no-ops on ortho, so zoom keeps ownership there (trackpad pinch must
+   * still zoom in ortho mode).
+   */
+  isOrthographic: boolean;
   mouseButtons: {
     LEFT: THREE.MOUSE | null;
     MIDDLE: THREE.MOUSE | null;
@@ -227,8 +235,10 @@ export function handleWheel(ctx: OrbitInputCtx, event: WheelEvent): void {
   // events with no keydown). Deciding here, from the event's own live
   // modifier flags, keeps zoom-vs-FOV routing stateless: no keydown/keyup
   // bookkeeping that can stick when a modifier keyup is lost to a focus
-  // change. Mirrors luxar-fly-controls/input/wheel.ts.
-  if (event.ctrlKey || event.metaKey) return;
+  // change. Mirrors luxar-fly-controls/input/wheel.ts. Orthographic
+  // cameras have no FOV (adjustFOV no-ops), so zoom keeps modifier
+  // wheels in ortho mode — a pinch there must still zoom.
+  if ((event.ctrlKey || event.metaKey) && !ctx.isOrthographic) return;
 
   event.preventDefault();
 

@@ -181,6 +181,26 @@ describe('ControlsManager', () => {
       expect(camera.position.distanceTo(controls.target)).not.toBeCloseTo(beforeDist, 5);
     });
 
+    it('ortho mode: Ctrl+wheel still zooms (real camera→ctx wiring, not just the ctx flag)', () => {
+      // adjustFOV no-ops for orthographic cameras, so zoom keeps modifier
+      // wheels in ortho. This goes through setCamera + setControlType so
+      // makeInputCtx's isOrthographic derivation from the live camera is
+      // exercised — a hardcoded flag would pass the pointer unit tests
+      // but fail here.
+      const orthoCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 100);
+      orthoCam.position.set(0, 0, 5);
+      controlsManager.setCamera(orthoCam);
+      controlsManager.setControlType('ortho');
+      const controls = controlsManager.getControls() as LuxarOrbitControls;
+
+      const zoomBefore = orthoCam.zoom;
+      domElement.dispatchEvent(
+        new WheelEvent('wheel', { deltaY: -100, cancelable: true, bubbles: true, ctrlKey: true })
+      );
+      controls.update();
+      expect(orthoCam.zoom).not.toBe(zoomBefore);
+    });
+
     describe('natural drag (LEFT ↔ RIGHT swap)', () => {
       it('swaps mouseButtons live when toggled on for an active orbit controls', () => {
         const controls = controlsManager.getControls() as LuxarOrbitControls;
