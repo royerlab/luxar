@@ -544,7 +544,7 @@ def robust_download(
                             resume_byte_pos = 0
                             restarted_after_416 = True
                             continue
-                    elif effective_total is None:
+                    else:
                         # No total anywhere (a truly header-less 416, no
                         # Content-Range and no resolved remote size): a 416 still
                         # proves `local >= total`, so the cache is AT LEAST
@@ -911,10 +911,10 @@ def download_zip_member(
             (attacker-controlled) metadata. Defaults to 256 GiB
             (``_MAX_MEMBER_UNCOMPRESSED_BYTES``). A member whose
             central-directory uncompressed size exceeds it is rejected before
-            any streaming, and the inflate is additionally bounded by it — so a
-            self-consistent decompression bomb (one whose declared size, actual
-            inflated size, and CRC all agree) still cannot write unbounded to
-            disk. Pass a smaller int to tighten it, or ``None`` to disable the
+            any streaming; the inflate itself is then bounded by that
+            (already-within-ceiling) declared size — so a self-consistent
+            decompression bomb (one whose declared size, actual inflated size,
+            and CRC all agree) still cannot write unbounded to disk. Pass a smaller int to tighten it, or ``None`` to disable the
             ceiling entirely (the output is then bounded only by the declared
             member size). The INRIA / cluster-fly demo callers pass a tight
             ``expected_size`` and are unaffected by this default.
@@ -971,14 +971,12 @@ def download_zip_member(
                 f"the {max_uncompressed_size:,}-byte ceiling "
                 f"(max_uncompressed_size); refusing to extract"
             )
-        # Never inflate beyond the declared member size (capped by the optional
-        # absolute ceiling) — guards against a decompression bomb whose small
-        # DEFLATE stream expands without bound.
-        size_limit = (
-            min(uncomp_size, max_uncompressed_size)
-            if max_uncompressed_size is not None
-            else uncomp_size
-        )
+        # Never inflate beyond the declared member size — guards against a
+        # decompression bomb whose small DEFLATE stream expands without bound.
+        # A member declaring more than the absolute ceiling was already rejected
+        # above (before any streaming), so uncomp_size is here always the
+        # tighter of the two bounds.
+        size_limit = uncomp_size
         if output_path.exists() and output_path.stat().st_size == uncomp_size:
             aprint(f"✓ Member already extracted: {output_path}")
             return output_path
@@ -1013,15 +1011,17 @@ def download_zip_member(
             nonlocal crc, written, last_report
             if not data:
                 return
+            if written + len(data) > size_limit:
+                # Check BEFORE writing so over-limit bytes never touch disk.
+                raise ValueError(
+                    f"Decompressed output ({written + len(data):,} bytes) "
+                    f"exceeds the declared member size ({size_limit:,} bytes) "
+                    f"for {member!r} — possible decompression bomb; aborting "
+                    f"extraction"
+                )
             f.write(data)
             crc = zlib.crc32(data, crc)
             written += len(data)
-            if written > size_limit:
-                raise ValueError(
-                    f"Decompressed output ({written:,} bytes) exceeds the "
-                    f"declared member size ({size_limit:,} bytes) for {member!r} "
-                    f"— possible decompression bomb; aborting extraction"
-                )
             if written - last_report >= 100 * 1024 * 1024:
                 aprint(f"  {written / 1e6:.0f} / {uncomp_size / 1e6:.0f} MB")
                 last_report = written
@@ -1081,9 +1081,7 @@ def download_zip_member(
                         f"CRC32 mismatch: got {crc:#010x}, "
                         f"zip declares {crc_expected:#010x}"
                     )
-                tmp_path.replace(output_path)
-                aprint(f"✓ Extracted + CRC-verified: {output_path}")
-                return output_path
+                break
             except (
                 requests.ConnectionError,
                 requests.Timeout,
@@ -1101,3 +1099,12 @@ def download_zip_member(
                 # never leave the oversized/partial staging file behind.
                 tmp_path.unlink(missing_ok=True)
                 raise
+
+        # Promote OUTSIDE the retry/cleanup guard above: the member is now fully
+        # written and CRC-verified, so a failure to rename it into place (e.g.
+        # the destination already exists as a directory, or a read-only parent)
+        # must NOT trip the `except BaseException` cleanup and delete the
+        # verified bytes.
+        tmp_path.replace(output_path)
+        aprint(f"✓ Extracted + CRC-verified: {output_path}")
+        return output_path
