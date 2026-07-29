@@ -131,7 +131,7 @@ MAX_SPLATS_PER_PASS = 400_000
 ITERS_PER_PASS = 4_000
 PSNR_PATIENCE = 0.1
 
-SCENE_INTENSITY = 0.012  # additive brightness (dense body — dial down; see VH demo)
+SCENE_INTENSITY = 0.012  # Display brightness (dense body — dial down; see VH demo)
 
 # TotalSegmentator v2 `total` task — 117 structures (label index → name).
 CLASS_MAP = {
@@ -257,10 +257,10 @@ CLASS_MAP = {
 # Tissue-group base colors (RGB in [0, 1]) — no canonical LUT exists upstream.
 # Muscle is ~26% of splats (paraspinal/gluteus/iliopsoas) and bone ~38%, so both
 # are kept as receding, low-saturation "context" tones (dim flesh, warm ivory)
-# while the organs/vessels stay vivid, letting them read through the additive
+# while the organs/vessels stay vivid, preserving contrast under the volumetric
 # blend instead of drowning in a bright pink+ivory mush.
 GROUP_COLORS = {
-    "bone": (0.90, 0.90, 0.88),  # near-neutral white (additive-safe: no yellow cast)
+    "bone": (0.90, 0.90, 0.88),  # near-neutral white (no yellow cast)
     "muscle": (0.85, 0.45, 0.42),  # salmon flesh — visible but not garish
     "vessel": (0.95, 0.18, 0.18),  # arteries/veins — vivid red
     "heart": (0.90, 0.12, 0.30),  # crimson
@@ -701,7 +701,8 @@ def create_luxar_scene(fit: GSplatData, labels: np.ndarray, output_path: Path) -
                     colors=colors[mask].astype(np.float32),
                     labels=[name_lut[int(lid)] for lid in lids],
                     opacity=float(opacity),
-                    blending_mode="additive",
+                    absorption=1.0,
+                    blending_mode="volumetric",
                     layer=True,
                 )
                 aprint(
