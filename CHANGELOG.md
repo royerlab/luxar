@@ -36,6 +36,53 @@ Supporting changes:
 - `scripts/check_demo_ladders.py` — a structural gate that fails a leaf whose
   largest level is more than half the data, which is exactly the degeneracy a
   level count alone cannot see.
+#### Fixed — the CI Python version matrix tested one version three times (#839)
+
+`python-tests` declared a `['3.10', '3.11', '3.12']` matrix, but every leg ran the
+tests under Python 3.12: `pipx install hatch` put Hatch on the runner's default
+interpreter, and Hatch builds an environment that declares no `python` with whatever
+interpreter Hatch itself runs under. `actions/setup-python` installed the requested
+version and nothing downstream consumed it, so two of the three versions advertised by
+`requires-python` and the PyPI classifiers had never once been executed.
+
+Hatch is now installed onto the matrix interpreter, and a new step asserts the
+environment's version **equals** the matrix leg before the tests run — the pre-existing
+floor check (`>= 3.10`) passed happily while every leg ran 3.12, which is how this
+stayed hidden. `fail-fast: false` means all three verdicts now come back from one run.
+
+The interpreter-invariant gates (ruff, mypy, import-linter, bandit, version and contract
+drift) now run once, on the 3.12 leg only, guarded by `if: matrix.python-version ==
+'3.12'`. They judge the source, not the runtime — ruff is pinned to `target-version =
+"py310"` and mypy to `python_version = "3.10"` — so a single run is enough, and keeping
+them inside `python-tests` keeps them under the required `python-tests (3.12)` context: a
+lint, type, security, or contract failure still blocks the merge. pip-audit runs on every
+leg (advisory, `continue-on-error`) so each interpreter's dependency resolution is audited.
+
+Also made `stats/generate_stats.py` import `tomllib` with a `tomli` fallback: it was the
+one place in the tree that genuinely required 3.11+.
+
+#### Fixed — camera-plane-crossing line segments rendered as razor-edged bands (one-sided cross-profile at close zoom)
+
+Zooming very close to a thick line painted huge screen-filling bands with a
+razor-sharp bright edge on one side and the smooth Gaussian falloff on the
+other. Root cause: a segment with exactly ONE endpoint behind (or within
+`uNearCull` of) the camera plane kept its full quad; the behind endpoint's
+`clip.w ≤ 0` made the hardware rasterize the quad as an external (wrapped)
+primitive whose near-clip boundary sliced mid-profile — a bright razor edge
+running along the line's side.
+
+The vertex stage (all four backends: visual + picking, GLSL + TSL) now
+**clips the segment to the nearCull plane** before any screen-space math:
+the offending endpoint is moved along the segment onto the plane (view-space
+depth is linear, so the intersection is exact) and `t` is remapped so
+per-endpoint attributes (width, color, sharpness, alpha, colormap scalars)
+and the fragment cap math keep the original parameterization. Every vertex
+then has `viewZ ≥ nearCull`: quads stay true trapezoids, the `wGuard` clamp
+no longer disagrees with the rasterized geometry, and the cut end lands
+exactly where the per-fragment near fade reaches zero — the approach to the
+camera fades out smoothly instead of tearing. New `line-crossing` parity
+harness entry pins the behavior with a content assertion (per-column
+centroid on the projected centerline) that fails pre-fix on both backends.
 
 #### Fixed — nodes embedded inside a larger node blinked out on orbit in order-dependent blending modes
 
@@ -111,10 +158,11 @@ notch of axial length `2 × width` bottoming out at 50%. (PR #785; follow-ups
   suppression scalar** in `[0, 1]` (`compute_cap_suppression` — Rust kernel +
   its TypeScript mirror, computed once per commit off the main thread, riding
   texel4.yz): `1.0` at a straight-through interior joint or a slice-clipped
-  end (nothing will arrive to sum with), `0.0` at a ≥ 90° bend, a branch hub,
-  or a free polyline end (there the quads genuinely do overlap — keep the
-  cap), `cos θ` in between. Consumed by all four shader backends (visual +
-  picking, GLSL + TSL). Joints are matched by vertex **index**, not position:
+  end (nothing will arrive to sum with), `0.0` at a ≥ 90° bend or a branch
+  hub (there the quads genuinely do overlap — keep the cap) or a free
+  polyline end (no neighbour at all — keep the soft cap), `cos θ` in
+  between. Consumed by all four shader backends (visual + picking, GLSL +
+  TSL). Joints are matched by vertex **index**, not position:
   `line_type="segments"` chains with per-segment duplicate points keep the
   cap (and the notch) — author connected geometry as `line_type="polyline"`.
 - **Per-endpoint cap factor `min(startCap, endCap)`** (#796): the initial

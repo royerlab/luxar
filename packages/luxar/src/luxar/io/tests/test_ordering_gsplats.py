@@ -67,6 +67,46 @@ class TestComputeChunkBoundsGSplats:
         # width = 2 * sigma * coverage_sigma = 2 * [2,3,4] * 3 = [12, 18, 24]
         np.testing.assert_allclose(widths, [12.0, 18.0, 24.0], rtol=1e-5)
 
+    def test_uniform_cholesky_spans_multiple_chunks(self) -> None:
+        # Regression for issue #729: the uniform-Cholesky convenience keeps a
+        # single packed row (shape (1, k)) shared by all splats. When the splat
+        # count exceeds one chunk, positional slicing yields an empty (0, k)
+        # array for chunk 1+ and used to crash with a broadcast error. The
+        # shared row must be applied to every chunk instead.
+        # N does NOT divide evenly by chunk_size, so the partial final chunk
+        # (201 splats) is exercised alongside the full ones.
+        n_splats = 3001
+        chunk_size = 700  # → 5 chunks (4×700 + 1×201)
+        coverage_sigma = 3.0
+        rng = np.random.default_rng(729)
+        centers = rng.random((n_splats, 3)).astype(np.float32)
+        # Single shared diagonal Cholesky. Packed lower-triangular row order:
+        # covariance[d,d] = sum(L[d*(d+1)//2 + i]^2, i=0..d), so the per-axis
+        # sigmas here are exactly [1, 2, 3].
+        chol = np.array([[1, 0, 2, 0, 0, 3]], dtype=np.float32)
+        sigmas = np.array([1.0, 2.0, 3.0], dtype=np.float32)
+        bounds = compute_chunk_bounds_gsplats(
+            centers, chol, chunk_size=chunk_size, coverage_sigma=coverage_sigma
+        )
+        num_chunks = (n_splats + chunk_size - 1) // chunk_size
+        assert bounds.shape == (num_chunks, 3, 2)
+        # The uniform per-axis extent is a constant coverage_sigma·sigma_d, so
+        # each chunk's width must be EXACTLY the raw center span plus one extent
+        # on each side. Pins the diagonal-covariance math, not just "expanded".
+        for chunk_idx in range(num_chunks):
+            start = chunk_idx * chunk_size
+            end = min(start + chunk_size, n_splats)
+            for d in range(3):
+                width = bounds[chunk_idx, d, 1] - bounds[chunk_idx, d, 0]
+                raw_span = centers[start:end, d].max() - centers[start:end, d].min()
+                expected = raw_span + 2.0 * coverage_sigma * sigmas[d]
+                assert np.isclose(width, expected, rtol=1e-5, atol=1e-4), (
+                    chunk_idx,
+                    d,
+                    width,
+                    expected,
+                )
+
     def test_barrier_axis_is_not_sigma_expanded(self) -> None:
         # Two splats at time=0 and time=1 (axis 0), each with a LARGE axis-0
         # Cholesky value. Without a barrier the time axis would balloon by

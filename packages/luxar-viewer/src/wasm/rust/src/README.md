@@ -60,8 +60,11 @@ All WASM-exported kernels are zero-copy: callers pre-allocate `&mut [T]`
 output buffers sized to the worst case (`num_items × stride`) and the kernel
 returns the **count of populated elements** (`u32`) plus optional per-element
 masks. The TypeScript side then slices the buffer down to the returned count.
-`debug_assert!` is used on every output length to catch sizing bugs in dev
-builds without paying for the check in release.
+`debug_assert!` is used on the output lengths of some kernels
+(`clip_segments_batch`, `calculate_segment_lengths`) to catch sizing bugs in
+dev builds without paying for the check in release; others
+(`compute_cap_suppression`, the `interpolate_*` kernels) have none, so an
+undersized output buffer there aborts with no message.
 
 ### Hot-loop optimisation patterns
 

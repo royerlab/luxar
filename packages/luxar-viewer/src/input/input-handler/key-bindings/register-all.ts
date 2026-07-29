@@ -1,8 +1,8 @@
 /**
  * Keyboard binding registration concern extracted from
  * `input/input-handler.ts`. The entry point + types live here; the
- * per-context binding bodies live as siblings (`fov-hold-gate.ts`,
- * `navigation-bindings.ts`, `fly-bindings.ts`).
+ * per-context binding bodies live as siblings
+ * (`navigation-bindings.ts`, `fly-bindings.ts`).
  *
  * The function takes everything it needs as a deps object.
  * Optional panels (scale bar, colormap legend, overlay manager,
@@ -22,7 +22,6 @@ import type { OverlayManager } from '../../../ui/overlay-manager';
 import type { RecordingPanel } from '../../../ui/recording-panel';
 import type { LayersPanel } from '../../../ui/layers';
 import type { DebugConsole } from '../../../ui/debug-console';
-import { registerFovHoldGate } from './fov-hold-gate';
 import { registerNavigationBindings } from './navigation-bindings';
 import { registerFlyControlBindings } from './fly-bindings';
 
@@ -70,17 +69,10 @@ export interface KeyBindingsPanelGetters {
 export interface KeyBindingsDeps {
   /** The input context manager — owns the actual binding registration. */
   contextManager: InputContextManager;
-  /** SceneManager — needed for FOV-control zoom-toggling and fly controls. */
+  /** SceneManager — needed for the fly-controls key forwarding. */
   sceneManager: SceneManager;
   /** Debug console (always present from InputHandler ctor). */
   debugConsole: DebugConsole;
-  /**
-   * Cleanup array shared with the InputHandler. The FOV-control
-   * `blur` / `visibilitychange` listeners are appended here so the
-   * InputHandler's `dispose()` cleans them up alongside its own
-   * keydown / keyup window listeners.
-   */
-  cleanups: (() => void)[];
   panels: KeyBindingsPanelGetters;
   commands: KeyBindingsCommands;
 }
@@ -91,17 +83,18 @@ export interface KeyBindingsDeps {
  * Two sub-flows live here, in order:
  *
  *   1. NAVIGATION bindings (default, orbit-mode UI shortcuts).
- *      Includes the FOV-control gate that tracks Ctrl/Meta hold
- *      state via a small counter so multi-modifier presses don't
- *      glitch the zoom-enabled flag.
  *
  *   2. FLY_CONTROLS bindings (active in fly mode). WASD movement
  *      keys with all 4 modifier combinations the fly controls
  *      respect (none / Shift / Alt / Shift+Alt), arrow look keys
  *      with optional Shift, and the Shift speed-boost binding.
+ *
+ * Ctrl/⌘+wheel FOV-vs-zoom exclusivity is NOT a key binding: each
+ * wheel handler reads the event's own live modifier flags (see
+ * luxar-orbit-controls/input/pointer.ts and luxar-fly-controls/input/
+ * wheel.ts), so there is no held-key state to track or reconcile.
  */
 export function registerAllKeyBindings(deps: KeyBindingsDeps): void {
-  registerFovHoldGate(deps);
   registerNavigationBindings(deps);
   registerFlyControlBindings(deps);
 }

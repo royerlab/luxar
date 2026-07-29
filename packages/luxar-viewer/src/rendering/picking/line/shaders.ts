@@ -106,10 +106,6 @@ export const LINE_PICK_VERTEX_SHADER = /* glsl */ `
       float startS = clamp(sanitizeNonNegative(aStartSharpness, 0.5), 0.0, 1.0);
       float endS = clamp(sanitizeNonNegative(aEndSharpness, 0.5), 0.0, 1.0);
 
-      float width = mix(startW, endW, t);
-      vSharpness = mix(startS, endS, t);
-      vWidthAtT = width;
-
       vec4 mvStart = modelViewMatrix * vec4(aStartPos, 1.0);
       vec4 mvEnd = modelViewMatrix * vec4(aEndPos, 1.0);
       vec4 mvPos = mix(mvStart, mvEnd, t);
@@ -132,6 +128,12 @@ export const LINE_PICK_VERTEX_SHADER = /* glsl */ `
         (uIsOrtho == 0) && (startDepth < nearCull) && (endDepth < nearCull);
       if (bothBehind) {
         gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
+        // Defensive: width/sharpness are computed AFTER the clip
+        // (compute-once from tEff, visual-shader parity), so zero the
+        // fragment-readable varyings here — the rasterizer drops this
+        // segment, but uninitialised out-vars can trip driver validators.
+        vSharpness = 0.5;
+        vWidthAtT = 0.0;
         vPerpNorm = 0.0;
         vPixelWidth = 0.0;
         vWidthFade = 0.0;
@@ -140,6 +142,36 @@ export const LINE_PICK_VERTEX_SHADER = /* glsl */ `
         vElementId = float(aSortedIndex);
         return;
       }
+
+      // Near-plane SEGMENT clipping — visual-shader parity (see
+      // shader-glsl.ts for the full rationale: a behind-camera endpoint
+      // has clip w <= 0, which flips the clip-space expansion and
+      // rasterizes the quad as a twisted bowtie whose near-clip boundary
+      // cuts through the pick footprint). Keeps every vertex at
+      // viewZ >= nearCull and remaps t (tEff) so the cap math and the
+      // per-endpoint attributes keep the original parameterization.
+      float tA = 0.0;
+      float tB = 1.0;
+      if (uIsOrtho == 0) {
+        if (startDepth < nearCull && endDepth >= nearCull) {
+          tA = (nearCull - startDepth) / (endDepth - startDepth);
+        } else if (endDepth < nearCull && startDepth >= nearCull) {
+          tB = (startDepth - nearCull) / (startDepth - endDepth);
+        }
+        vec4 mvStartClipped = mix(mvStart, mvEnd, tA);
+        vec4 mvEndClipped = mix(mvStart, mvEnd, tB);
+        mvStart = mvStartClipped;
+        mvEnd = mvEndClipped;
+      }
+      float tEff = mix(tA, tB, t);
+      vT = tEff;
+      mvPos = mix(mvStart, mvEnd, t);
+      vViewZ = mvPos.z;
+      // Compute-once from the clipped tEff (visual-shader parity); the
+      // raw-t values are never read before this point.
+      float width = mix(startW, endW, tEff);
+      vSharpness = mix(startS, endS, tEff);
+      vWidthAtT = width;
 
       vec4 clipStart = projectionMatrix * mvStart;
       vec4 clipEnd = projectionMatrix * mvEnd;

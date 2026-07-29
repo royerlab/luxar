@@ -79,14 +79,24 @@ test.describe('Luxar Serve Integration', () => {
 
     // Wait for server to be ready (listen for uvicorn startup message)
     await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      let output = '';
       const timeout = setTimeout(() => {
-        // Server may have started without logging — try a health check
-        resolve();
+        // Fallback: give up waiting for the uvicorn log line and proceed.
+        // A legitimately slow-but-alive server must still be allowed to run;
+        // the tests' own readiness waits (waitForLuxarReady) will surface a
+        // truly-dead server. Do NOT reject here.
+        if (!settled) {
+          settled = true;
+          resolve();
+        }
       }, 15000);
 
       const onData = (data: Buffer) => {
         const text = data.toString();
+        output += text;
         if (text.includes('Uvicorn running') || text.includes('Application startup complete')) {
+          settled = true;
           clearTimeout(timeout);
           resolve();
         }
@@ -95,8 +105,26 @@ test.describe('Luxar Serve Integration', () => {
       serverProcess!.stdout?.on('data', onData);
       serverProcess!.stderr?.on('data', onData);
       serverProcess!.on('error', (err) => {
-        clearTimeout(timeout);
-        reject(err);
+        if (!settled) {
+          settled = true;
+          clearTimeout(timeout);
+          reject(err);
+        }
+      });
+      serverProcess!.on('exit', (code, signal) => {
+        // The process exited before it became ready — fail fast with a
+        // debuggable message instead of stalling for the full timeout.
+        // (Once settled, this fires for the afterAll SIGTERM and is ignored.)
+        if (!settled) {
+          settled = true;
+          clearTimeout(timeout);
+          reject(
+            new Error(
+              `luxar serve exited before becoming ready (code=${code}, signal=${signal}).\n` +
+                `Output:\n${output.trim()}`
+            )
+          );
+        }
       });
     });
 
@@ -121,7 +149,7 @@ test.describe('Luxar Serve Integration', () => {
       return;
     }
 
-    await page.goto(`/?src=http://localhost:${servePort}&debug`);
+    await page.goto(`/?src=http://127.0.0.1:${servePort}&debug`);
     await waitForLuxarReady(page, 30000);
     await waitForPointsLoaded(page, 1, 30000);
 
@@ -147,7 +175,7 @@ test.describe('Luxar Serve Integration', () => {
     }
 
     // Verify the server responds to .zattrs requests
-    const response = await page.request.get(`http://localhost:${servePort}/.zattrs`);
+    const response = await page.request.get(`http://127.0.0.1:${servePort}/.zattrs`);
     expect(response.ok()).toBe(true);
 
     // Response should be valid JSON

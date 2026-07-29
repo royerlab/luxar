@@ -397,6 +397,33 @@ class TestCategoricalDimensions:
         assert dim.is_categorical is False
         assert dim.categories is None
 
+    @pytest.mark.parametrize("display", [True, False])
+    def test_single_category_zero_width_range(self, display: bool) -> None:
+        """Regression (#755): a single category must not raise.
+
+        The auto-range for one category collapses to (0, 0); categorical
+        dimensions are allowed a zero-width range (MIN_CATEGORIES == 1).
+        """
+        dim = Dimension("channel", categories=["DAPI"], display=display)
+        assert dim.range == (0, 0)
+        assert dim.discrete is True
+        assert dim.is_categorical is True
+
+    def test_two_category_range_unchanged(self) -> None:
+        """Guard against regression: two categories still yield range (0, 1)."""
+        dim = Dimension("channel", categories=["DAPI", "GFP"], display=False)
+        assert dim.range == (0, 1)
+
+    def test_inverted_categorical_range_rejected(self) -> None:
+        """An explicitly inverted categorical range must still raise."""
+        with pytest.raises(ValueError, match="min must not be greater than max"):
+            Dimension("x", categories=["a", "b"], range=(2, 0), display=False)
+
+    def test_degenerate_continuous_range_rejected(self) -> None:
+        """A zero-width continuous range must still raise (no categories)."""
+        with pytest.raises(ValueError, match="min must be less than max"):
+            Dimension("x", range=(5.0, 5.0))
+
     @pytest.mark.parametrize(
         "categories,error_pattern,test_id",
         [

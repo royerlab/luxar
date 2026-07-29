@@ -14,6 +14,14 @@
  *     endpoints are behind/near the camera (clipPos.w → 0/negative
  *     produces invalid NDC and a full-screen quad). When `uNearCull` is
  *     set, segments closer than that view-space depth are degenerated.
+ *   - Near-plane SEGMENT clipping: when exactly one endpoint is closer
+ *     than `uNearCull` (or behind the camera), it is moved along the
+ *     segment onto the nearCull plane before any screen-space math and
+ *     `t` is remapped (`tEff`) so attributes / cap math keep the
+ *     original parameterization. Without it a behind-camera endpoint
+ *     (clip w <= 0) flips the clip-space expansion and rasterizes the
+ *     quad as a twisted bowtie whose near-clip boundary cuts a bright
+ *     razor edge through the profile at close zoom.
  *   - Max pixel width clamp. `pixelWidth` is clamped to
  *     `uMaxLinePixelWidth` (default `resY * 0.5`); when the clamp
  *     engages, intensity fades proportionally so a single very-near
@@ -153,10 +161,10 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
       // view space has -z pointing into the scene, so a positive
       // viewDepth means the point is in front of the camera. Reject
       // segments where BOTH endpoints fail the near-cull (degenerate
-      // the quad to clip). When only ONE endpoint is behind, we keep
-      // the full quad: the shader will produce extreme NDC for that
-      // endpoint, but the pixel-width clamp and vWidthFade keep the
-      // visible footprint bounded. Under ORTHO there is no 1/z
+      // the quad to clip). When only ONE endpoint is behind, the
+      // segment is clipped onto the nearCull plane below (before any
+      // screen-space math) so the quad stays a true trapezoid instead
+      // of a razor-edged bowtie. Under ORTHO there is no 1/z
       // singularity and NDC near/far clipping is the sole cull
       // authority — the previous ungated cull WRONGLY hid in-frustum
       // lines in the near slab (< uNearCull from the camera plane)
@@ -188,6 +196,38 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
         vAlpha = 1.0;
         return;
       }
+
+      // Near-plane SEGMENT clipping (perspective only). When exactly one
+      // endpoint sits closer than nearCull (or behind the camera), move it
+      // along the segment onto the nearCull plane BEFORE any screen-space
+      // math. Without this, a behind-camera endpoint has clipPos.w <= 0:
+      // its NDC is mirrored across the origin AND the clip-space expansion
+      // (ndcOffset * clipPos.w below) flips sign, so the quad rasterizes
+      // as a twisted bowtie whose hardware near-clip boundary slices
+      // through the MIDDLE of the Gaussian cross-profile — a bright razor
+      // edge running along the line's side at close zoom. Clipping keeps
+      // every vertex at viewZ >= nearCull, so quads stay true trapezoids,
+      // and the cut lands exactly where the per-fragment near fade reaches
+      // zero — no visible seam. View-space depth is linear along the
+      // segment, so the plane intersection is exact. t is remapped onto
+      // the clipped sub-range so ALL per-endpoint attributes (width,
+      // color, sharpness, alpha, scalars) and the cap math (vT against
+      // the ORIGINAL vSegmentLength) keep their original parameterization.
+      float tA = 0.0;
+      float tB = 1.0;
+      if (uIsOrtho == 0) {
+        if (startDepth < nearCull && endDepth >= nearCull) {
+          tA = (nearCull - startDepth) / (endDepth - startDepth);
+        } else if (endDepth < nearCull && startDepth >= nearCull) {
+          tB = (startDepth - nearCull) / (startDepth - endDepth);
+        }
+        vec4 mvStartClipped = mix(mvStart, mvEnd, tA);
+        vec4 mvEndClipped = mix(mvStart, mvEnd, tB);
+        mvStart = mvStartClipped;
+        mvEnd = mvEndClipped;
+      }
+      float tEff = mix(tA, tB, t);
+      vT = tEff;
 
       vec4 mvPos = mix(mvStart, mvEnd, t);
       // View-space z travels to the FRAGMENT, which computes the near
@@ -225,7 +265,7 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
       // hand-crafted zarr. NaN/Inf → the 1.0 opaque identity (loud);
       // finite values clamp to [0, 1]. The point/gsplat twins do the
       // same.
-      vAlpha = mix(sanitizeAlpha(lineT5.z), sanitizeAlpha(lineT5.w), t);
+      vAlpha = mix(sanitizeAlpha(lineT5.z), sanitizeAlpha(lineT5.w), tEff);
 
       // Interpolate attributes along segment.
       // Colormap mode: display range (uScalarMin/uScalarScale) and gamma
@@ -235,14 +275,14 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
       // gain/offset controls work on colormapped nodes too. The gamma
       // fast path (LUXAR_GAMMA_ONE) skips the pow() when gamma == 1.0.
       #ifdef USE_COLORMAP
-      float s = mix(lineT5.x, lineT5.y, t);
+      float s = mix(lineT5.x, lineT5.y, tEff);
       float st = clamp((s - uScalarMin) * uScalarScale, 0.0, 1.0);
       #ifndef LUXAR_GAMMA_ONE
       st = pow(st, uInvGamma);          // gamma on the value, pre-LUT
       #endif
       vColor = texture(uColormapTex, vec2(st, 0.5)).rgb;
       #else
-      vColor = mix(lineT2.rgb, lineT3.rgb, t);
+      vColor = mix(lineT2.rgb, lineT3.rgb, tEff);
       #endif
 
       // sanitise width/sharpness against negative/NaN/Inf so a
@@ -259,10 +299,10 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
       float startS = clamp(sanitizeNonNegative(aStartSharpness, 0.5), 0.0, 1.0);
       float endS = clamp(sanitizeNonNegative(aEndSharpness, 0.5), 0.0, 1.0);
 
-      float width = mix(startW, endW, t);
+      float width = mix(startW, endW, tEff);
       // Pass the interpolated [0, 1] sharpness KNOB to the fragment; beta is
       // computed there from the interpolated value.
-      vSharpness = mix(startS, endS, t);
+      vSharpness = mix(startS, endS, tEff);
       vWidthAtT = width;
 
       vec4 clipStart = projectionMatrix * mvStart;

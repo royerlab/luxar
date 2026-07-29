@@ -12,7 +12,7 @@ import { InputContext } from '../context-manager';
 import type { KeyBindingsDeps } from './register-all';
 
 export function registerFlyControlBindings(deps: KeyBindingsDeps): void {
-  const { contextManager, sceneManager, cleanups } = deps;
+  const { contextManager, sceneManager } = deps;
   const getFlyControls = () => sceneManager.controls.getFlyControls();
 
   const flyMovementKeys = ['w', 'a', 's', 'd', 'q', 'e'];
@@ -55,44 +55,16 @@ export function registerFlyControlBindings(deps: KeyBindingsDeps): void {
     });
   }
 
-  // Shift speed boost (also disables wheel-zoom so Shift+Wheel rotates view).
-  // Must forward to the fly controls so its internal `speedBoost` flag is
-  // set — the WASD bindings above include Shift+key combos that already
-  // accelerate movement, but `setSpeedBoost` is what actually doubles the
-  // velocity multiplier in physics.ts.
+  // Shift speed boost. Must forward to the fly controls so its internal
+  // `speedBoost` flag is set — the WASD bindings above include Shift+key
+  // combos that already accelerate movement, but `setSpeedBoost` is what
+  // actually doubles the velocity multiplier in physics.ts. (Shift+wheel
+  // roll needs no gating here: the fly wheel handler branches on the
+  // event's own shiftKey flag.)
   contextManager.registerBinding(InputContext.FLY_CONTROLS, {
     key: 'Shift',
-    handler: (event) => {
-      sceneManager.controls.setEnableZoom(false);
-      getFlyControls()?.handleKeyDown(event);
-    },
-    keyupHandler: (event) => {
-      sceneManager.controls.setEnableZoom(true);
-      getFlyControls()?.handleKeyUp(event);
-    },
-    description: 'Speed boost + zoom control',
+    handler: (event) => getFlyControls()?.handleKeyDown(event),
+    keyupHandler: (event) => getFlyControls()?.handleKeyUp(event),
+    description: 'Speed boost',
   });
-
-  // Safety net for the Shift zoom-gate above: a Shift keyup can be lost to a
-  // focus change or swallowed by the typing-context keyup filter, which would
-  // leave wheel zoom disabled until the next mode switch (same stuck-state
-  // class as the Ctrl/⌘ FOV gate — see fov-hold-gate.ts). Reconcile against
-  // the live modifier flag at window capture phase so the gate always reopens.
-  const reconcileShift = (e: KeyboardEvent): void => {
-    // Cheap and idempotent — setEnableZoom(true) is a plain field write.
-    if (!e.shiftKey && contextManager.getContext?.() === InputContext.FLY_CONTROLS) {
-      sceneManager.controls.setEnableZoom(true);
-    }
-  };
-  const restoreZoomOnBlur = (): void => {
-    if (contextManager.getContext?.() === InputContext.FLY_CONTROLS) {
-      sceneManager.controls.setEnableZoom(true);
-    }
-  };
-  window.addEventListener('keyup', reconcileShift, true);
-  window.addEventListener('blur', restoreZoomOnBlur);
-  cleanups.push(
-    () => window.removeEventListener('keyup', reconcileShift, true),
-    () => window.removeEventListener('blur', restoreZoomOnBlur)
-  );
 }

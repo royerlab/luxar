@@ -24,7 +24,10 @@
  * perpendicular cross-section `max(exp(-K·p^beta) - C, 0)/(1-C)`
  * (beta = 2^(6s - 2), beta=2 is a truncated Gaussian) × edgeAA × widthScale
  * × widthFade × capFactor (capFactor ramps to full intensity inside the body
- * but is 1.0 at clipped endpoints). `blendingMode: 'volumetric'` selects
+ * and dips toward 0.5 at an endpoint to form a soft cap; that dip is scaled by
+ * the endpoint's continuous cap-suppression scalar — the full soft cap at a
+ * free end or sharp bend, lifted to full intensity (cap suppressed) at a
+ * straight-through interior joint). `blendingMode: 'volumetric'` selects
  * the emission–absorption output branch at graph build time (transverse
  * chord integral through the width profile — materials/line/math.ts).
  *
@@ -328,6 +331,63 @@ export function lineWebGPUFactory(
     // aQuadCorner.x ∈ {-1, +1} by construction.
     const t: TSLNode = aQuadCorner.x.mul(0.5).add(0.5).toVar();
 
+    // Project endpoints to view space FIRST — the near-plane segment
+    // clipping below rewrites them, and every attribute interpolation
+    // after this block reads the remapped parameter tEff.
+    const mvStart: TSLNode = modelViewMatrix.mul(vec4(aStartPos, 1.0)).toVar();
+    const mvEnd: TSLNode = modelViewMatrix.mul(vec4(aEndPos, 1.0)).toVar();
+    const startDepth: TSLNode = mvStart.z.negate().toVar();
+    const endDepth: TSLNode = mvEnd.z.negate().toVar();
+
+    // Near-plane SEGMENT clipping (perspective only; compile-time graph
+    // variant). When exactly one endpoint sits closer than nearCull (or
+    // behind the camera), move it along the segment onto the nearCull
+    // plane BEFORE any screen-space math. Without this a behind-camera
+    // endpoint has clip w <= 0: its NDC is mirrored AND the clip-space
+    // expansion (ndcOffset * clipPos.w) flips sign, so the quad
+    // rasterizes as a twisted bowtie whose near-clip boundary slices
+    // through the middle of the Gaussian cross-profile — a bright razor
+    // edge along the line's side at close zoom. Clipping keeps every
+    // vertex at viewZ >= nearCull (true trapezoids), and the cut lands
+    // exactly where the per-fragment near fade reaches zero — no seam.
+    // t is remapped onto the clipped sub-range (tEff) so per-endpoint
+    // attributes and the cap math keep the ORIGINAL parameterization.
+    // GLSL twin: shader-glsl.ts. select() evaluates both branches, so
+    // denominators are floored to keep the untaken lane finite.
+    let tA: TSLNode = float(0.0);
+    let tB: TSLNode = float(1.0);
+    if (!config.isOrtho) {
+      const startNear: TSLNode = startDepth
+        .lessThan(nearCull)
+        .and(endDepth.greaterThanEqual(nearCull));
+      const endNear: TSLNode = endDepth
+        .lessThan(nearCull)
+        .and(startDepth.greaterThanEqual(nearCull));
+      tA = startNear
+        .select(
+          nearCull
+            .sub(startDepth)
+            .div(max(endDepth.sub(startDepth), float(1e-20)))
+            .toVar(),
+          float(0.0)
+        )
+        .toVar();
+      tB = endNear
+        .select(
+          startDepth
+            .sub(nearCull)
+            .div(max(startDepth.sub(endDepth), float(1e-20)))
+            .toVar(),
+          float(1.0)
+        )
+        .toVar();
+      const mvStartClipped: TSLNode = mix(mvStart, mvEnd, tA).toVar();
+      const mvEndClipped: TSLNode = mix(mvStart, mvEnd, tB).toVar();
+      mvStart.assign(mvStartClipped);
+      mvEnd.assign(mvEndClipped);
+    }
+    const tEff: TSLNode = mix(tA, tB, t).toVar();
+
     // Per-endpoint colour or LUT lookup. Branch on `config.useColormap`
     // (JS-level graph variant, matching the GLSL `#ifdef USE_COLORMAP`
     // split — colors from texels 2/3 XOR scalars from texel5).
@@ -338,12 +398,12 @@ export function lineWebGPUFactory(
       // color; intensity/offset apply POST-LUT in the fragment stage
       // (matching the gsplat shader). gammaOne skips the pow() when
       // gamma == 1.0.
-      const s: TSLNode = mix(lineT5.x, lineT5.y, t);
+      const s: TSLNode = mix(lineT5.x, lineT5.y, tEff);
       const st0: TSLNode = clamp(s.sub(uScalarMin!).mul(uScalarScale!), 0.0, 1.0);
       const st: TSLNode = config.gammaOne ? st0 : st0.pow(uInvGamma);
       perPointColor = uColormapTex!.sample(vec2(st, 0.5)).rgb;
     } else {
-      perPointColor = mix(vec3(lineT2), vec3(lineT3), t);
+      perPointColor = mix(vec3(lineT2), vec3(lineT3), tEff);
     }
 
     // Sanitised widths / sharpness, interpolated. Sharpness is authored in
@@ -355,27 +415,23 @@ export function lineWebGPUFactory(
     const endW: TSLNode = sanitizeNonNegative(aEndWidth, float(0.0));
     const startS: TSLNode = clamp(sanitizeNonNegative(aStartSharpness, float(0.5)), 0.0, 1.0);
     const endS: TSLNode = clamp(sanitizeNonNegative(aEndSharpness, float(0.5)), 0.0, 1.0);
-    const width: TSLNode = mix(startW, endW, t).toVar();
+    const width: TSLNode = mix(startW, endW, tEff).toVar();
     // Interpolated [0, 1] sharpness KNOB; beta computed in the fragment.
-    const vSharpnessVal: TSLNode = mix(startS, endS, t);
+    const vSharpnessVal: TSLNode = mix(startS, endS, tEff);
 
-    // Project endpoints to view + clip space.
-    const mvStart: TSLNode = modelViewMatrix.mul(vec4(aStartPos, 1.0)).toVar();
-    const mvEnd: TSLNode = modelViewMatrix.mul(vec4(aEndPos, 1.0)).toVar();
+    // Interpolated view position — from the (possibly clipped) endpoints.
     const mvPos: TSLNode = mix(mvStart, mvEnd, t).toVar();
 
     // Near-plane / behind-camera safety — PERSPECTIVE ONLY (compile-time
     // graph variant: ortho graphs carry no cull/fade code at all; under
     // ortho NDC clipping is the sole authority and the previous ungated
-    // cull wrongly hid in-frustum lines in the near slab). View-space
-    // depth = -z.
+    // cull wrongly hid in-frustum lines in the near slab). Reads the
+    // ORIGINAL depths (computed before segment clipping above).
     // uNearCull is scene-bounds-scaled; the 1e-20 floor only guards
     // uNearCull == 0 (degenerate smoothstep / division). An absolute
     // 1e-4 floor overrode the scene-relative value on tiny-unit scenes —
     // every segment sat inside the "both behind" margin and was culled.
     // GLSL twin: shader-glsl.ts.
-    const startDepth: TSLNode = mvStart.z.negate().toVar();
-    const endDepth: TSLNode = mvEnd.z.negate().toVar();
     const bothBehind: TSLNode | null = config.isOrtho
       ? null
       : startDepth.lessThan(nearCull).and(endDepth.lessThan(nearCull));
@@ -483,7 +539,7 @@ export function lineWebGPUFactory(
     vColor.assign(perPointColor);
     vSharpness.assign(vSharpnessVal);
     vPerpNorm.assign(aQuadCorner.y);
-    vT.assign(t);
+    vT.assign(tEff);
     vSegmentLength.assign(aSegmentLength);
     vWidthAtT.assign(width);
     vPixelWidth.assign(rawPixelWidth);
@@ -498,7 +554,7 @@ export function lineWebGPUFactory(
     // NaN source vertex already poisons BOTH texel alphas upstream in
     // the worker's lerp kernel, so the whole segment renders
     // loud-opaque. Mirrors the GLSL twin.
-    vAlpha.assign(mix(sanitizeAlpha(lineT5.z), sanitizeAlpha(lineT5.w), t));
+    vAlpha.assign(mix(sanitizeAlpha(lineT5.z), sanitizeAlpha(lineT5.w), tEff));
 
     return clipPosOut;
   });
