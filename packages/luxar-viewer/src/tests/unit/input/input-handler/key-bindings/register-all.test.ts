@@ -141,20 +141,17 @@ function setup() {
   const { manager, bindings } = makeContextManager();
   const { sceneManager, flyHandleKeyDown, flyHandleKeyUp } = makeSceneManager();
   const { console: debugConsole, toggle: debugToggle } = makeDebugConsole();
-  const cleanups: (() => void)[] = [];
   const commands = makeCommands();
   const panelsBundle = makePanels();
   registerAllKeyBindings({
     contextManager: manager,
     sceneManager,
     debugConsole,
-    cleanups,
     panels: panelsBundle.panels,
     commands,
   });
   return {
     bindings,
-    cleanups,
     commands,
     flyHandleKeyDown,
     flyHandleKeyUp,
