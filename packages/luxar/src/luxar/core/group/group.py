@@ -393,7 +393,9 @@ class Group(Node):
                   ``colormap``: standard rendering attributes.
                 - ``absorption`` (float >= 0): absorption coefficient kappa,
                   read by the ``"volumetric"`` blending mode; kappa=0 renders
-                  like additive. Defaults to 1.0.
+                  like additive. Defaults to 1.0. Like ``layer``, on a
+                  ``partition=`` wrapper this lands on the wrapper node, not
+                  on each leaf part.
 
         Returns:
             The created ``GSplats`` node, or a kind=partition ``Group``
@@ -474,7 +476,10 @@ class Group(Node):
                 levels. Same value vocabulary as ``lod_group``; ``dict(...)``
                 routes to :func:`make_additive_lod`.
             **attrs: Additional node attributes (same vocabulary as
-                :meth:`add_gsplats`, including ``absorption``).
+                :meth:`add_gsplats`, including ``absorption``). On a nested
+                ``lod_group=`` tree, compositing attributes (e.g.
+                ``absorption``) land on the wrapper node while the rest (e.g.
+                ``colormap``) are copied onto each leaf.
 
         Example:
             >>> result = fit_gaussian_splats(volume_3d)
@@ -535,7 +540,9 @@ class Group(Node):
             fill_sigma: Standard deviations for unmapped dims in Cholesky embedding
             **attrs: Additional node attributes (same vocabulary as
                 :meth:`add_gsplats`, including ``absorption``). On a nested
-                tree these land on the wrapper node, not on each leaf.
+                tree, compositing attributes (e.g. ``absorption``) land on the
+                wrapper node while the rest (e.g. ``colormap``) are copied onto
+                each leaf.
         """
         from .gsplats_pipeline.from_io import add_gsplats_from_file_impl
 
