@@ -107,6 +107,9 @@ _ALLOWED_NODE_ATTRS: FrozenSet[str] = frozenset(
         "truncation_radius",
         "coverage_fraction",
         "extend_to_all",
+        # Viewer-consumed LOD quality stamps injected by additive ladders.
+        "level_stats",
+        "lod_stats",
         # Structural keys injected by node construction / specialized-group
         # builders (add_lod_group / add_partition_group) / LOD wrappers.
         "type",

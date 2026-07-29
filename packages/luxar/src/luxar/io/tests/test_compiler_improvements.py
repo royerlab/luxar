@@ -1253,6 +1253,31 @@ class TestUnknownRenderAttrRejected:
             assert root["pts"].attrs["blending_mode"] == "max"
             assert root["pts"].attrs["opacity"] == 0.5
 
+    def test_lod_quality_attrs_are_allowed(self) -> None:
+        """Internal Points/Lines LOD quality stamps pass the strict attr gate."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path, compiler, scene = self._scene(tmpdir)
+            scene.add_points(
+                "pts",
+                self.POS,
+                additive_lod=dict(n_lods=3, method="random", seed=0),
+            )
+            line_pos = np.random.RandomState(1).rand(100, 3).astype(np.float32)
+            scene.add_lines(
+                "lns",
+                line_pos,
+                0.5,
+                line_type="segments",
+                additive_lod=dict(n_lods=3, method="random", seed=0),
+            )
+            compiler.finalize()
+
+            root = zarr.open_group(str(zarr_path), mode="r")
+            for name in ("pts", "lns"):
+                group = root[name]
+                assert "level_stats" in group.attrs
+                assert "lod_stats" in group["additive_0"].attrs
+
     def test_near_miss_typo_rejected_with_hint_before_write(self) -> None:
         """``blending=`` (typo of ``blending_mode=``) fails fast with a hint and
         leaves no node on disk."""
