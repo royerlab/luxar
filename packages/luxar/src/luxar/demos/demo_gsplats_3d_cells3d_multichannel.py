@@ -113,7 +113,8 @@ CHANNELS = [
 ]
 
 # Per-channel brightness multiplier applied before writing (raise for a
-# brighter render; additive blending across channels can saturate above ~0.6).
+# brighter render; volumetric compositing bounds accumulated radiance, so it
+# tolerates a hotter value than the ~0.6 the former additive sum saturated at).
 LAYER_INTENSITY = 0.4
 
 # Cache directory
@@ -333,7 +334,8 @@ Controls:
                         cholesky_factors=gsplats.cholesky_factors,
                         dim_order=["z", "y", "x"],
                         opacity=1.0,
-                        blending_mode="additive",
+                        absorption=1.0,
+                        blending_mode="volumetric",
                         layer=True,
                         colormap=colormap,
                     )
