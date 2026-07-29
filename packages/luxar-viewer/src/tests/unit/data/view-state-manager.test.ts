@@ -188,9 +188,40 @@ describe('ViewStateManager', () => {
       );
     });
 
+    it('should NOT warn about zero-width range for a single-index discrete dimension', () => {
+      // Regression (#878): a single timepoint/channel auto-ranges to [0, 0], legal.
+      const dimensions: any[] = [
+        {
+          name: 't',
+          unit: 's',
+          scale: 1.0,
+          range: [0, 0],
+          discrete: true,
+          display: false,
+        },
+      ];
+
+      const result = ViewStateManager.validateDimensions(dimensions);
+
+      expect(result.warnings.some((w) => w.includes('range') || w.includes('Min should'))).toBe(
+        false
+      );
+    });
+
     it('should still warn about zero-width range for a non-categorical dimension', () => {
       const dimensions: any[] = [
         { name: 'x', unit: 'um', scale: 1.0, range: [5, 5], display: true }, // Min == Max!
+      ];
+
+      const result = ViewStateManager.validateDimensions(dimensions);
+
+      expect(result.warnings.some((w) => w.includes('invalid range'))).toBe(true);
+    });
+
+    it('should still warn about zero-width range for a continuous dimension', () => {
+      // The #878 discrete relaxation must not leak to continuous (non-discrete) dims.
+      const dimensions: any[] = [
+        { name: 'x', unit: 'um', scale: 1.0, range: [0, 0], discrete: false, display: true },
       ];
 
       const result = ViewStateManager.validateDimensions(dimensions);

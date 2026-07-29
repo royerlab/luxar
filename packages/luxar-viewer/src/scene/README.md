@@ -1019,8 +1019,8 @@ _For implementation details, see the source files in this directory._
 - `lod-fade.ts` — Material-level appliers for the two LOD anti-popping
   mechanisms: `applyLodFade` (write coverage-weight × `1/e(k)` opacity
   per fadeable leaf, clone-on-first-fade) and `isBlendableSubtree`
-  (uniformly additive/luminous check). The material-touching
-  counterpart of `lod-blend.ts`'s pure math.
+  (uniformly additive/luminous/volumetric check — `BLENDABLE_MODES`).
+  The material-touching counterpart of `lod-blend.ts`'s pure math.
 - `lod-eviction.ts` — `enforceResidentByteBudget`: the VRAM-pressure
   policy — while the GPU pool reports over-budget, demote hidden LOD
   levels off-screen-first / furthest-first / coldest-first. "Hidden" is

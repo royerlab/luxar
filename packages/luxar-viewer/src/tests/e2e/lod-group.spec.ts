@@ -19,6 +19,7 @@
  */
 
 import { test, expect } from './fixtures';
+import { EXPECTED_BLEND_STATE } from './blending-expected-state';
 import {
   waitForLuxarReady,
   waitForNextRender,
@@ -334,5 +335,192 @@ test.describe('lod_group node', () => {
     // it tracks the active level rather than staying high or summing levels.
     await lodSelect.selectOption('0');
     await expect(visibleSplats).toHaveText('8', { timeout: 5000 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Volumetric blendable lod_group — the same 3-level shape with
+// blending_mode="volumetric" + absorption authored on the group node.
+// Volumetric is in BLENDABLE_MODES (scene/lod-fade.ts): the coverage
+// cross-fade and streaming energy compensation apply to it as they do to
+// additive/luminous, because opacity linearly scales optical depth τ — the
+// fade interpolates monotonically between the two levels' absorptions
+// (exact at the endpoints; NOT invariant mid-fade in general — see
+// VOLUMETRIC_BLENDING_SPEC.md §6 and the volumetric-math unit suite).
+// ---------------------------------------------------------------------------
+
+const VOLUMETRIC_FIXTURE =
+  'http://localhost:9000/packages/luxar-viewer/tests/fixtures/test_lod_group_volumetric.luxar.zarr';
+
+test.describe('lod_group node — volumetric blendable', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto(`/?src=${VOLUMETRIC_FIXTURE}&debug`);
+    await waitForLuxarReady(page);
+    await page.waitForFunction(
+      () => {
+        const debug = (
+          window as Window & typeof globalThis & { __luxarDebug?: { scene?: unknown } }
+        ).__luxarDebug;
+        if (!debug?.scene) return false;
+        let lodChildren = 0;
+        (debug.scene as { traverse: (cb: (o: { name?: string }) => void) => void }).traverse(
+          (o) => {
+            if (o.name && o.name.startsWith('/multires/child_')) lodChildren++;
+          }
+        );
+        return lodChildren >= 3;
+      },
+      { timeout: 15000 }
+    );
+  });
+
+  test('camera driven into a boundary band cross-fades two adjacent volumetric levels, in the volumetric blend state', async ({
+    page,
+  }) => {
+    // This test must FAIL against the pre-change hard swap, so it is not
+    // enough to accept "one or two visible": a single visible child is
+    // exactly what the old behavior produced. Sweep the camera distance to
+    // cross the fixture's coverage boundaries and require an actual blend —
+    // two ADJACENT levels, both with weights strictly inside (0, 1),
+    // complementary to 1 (the registry's coverage-band contract).
+    const blend = await page.evaluate(async () => {
+      type Mat = { uniforms?: { uOpacity?: { value: number } } };
+      type Obj = { name?: string; visible?: boolean; material?: Mat };
+      const debug = (
+        window as Window &
+          typeof globalThis & {
+            __luxarDebug?: {
+              scene?: { traverse: (cb: (o: Obj) => void) => void };
+              camera?: {
+                position: {
+                  x: number;
+                  y: number;
+                  z: number;
+                  set: (x: number, y: number, z: number) => void;
+                };
+              };
+              controls?: { target?: { x: number; y: number; z: number }; update?: () => void };
+              renderOnce?: () => void;
+            };
+          }
+      ).__luxarDebug;
+      if (!debug?.scene || !debug.camera) return null;
+      const cam = debug.camera;
+      const tgt = debug.controls?.target ?? { x: 0, y: 0, z: 0 };
+      const d0 = {
+        x: cam.position.x - tgt.x,
+        y: cam.position.y - tgt.y,
+        z: cam.position.z - tgt.z,
+      };
+      const sample = (): { idx: number; opacity: number }[] => {
+        const out: { idx: number; opacity: number }[] = [];
+        // The ambient __luxarDebug declaration types traverse's callback as
+        // THREE.Object3D, so narrow to the mesh shape this test reads.
+        debug.scene!.traverse((node) => {
+          const o = node as unknown as Obj;
+          const m = o.name?.match(/\/multires\/child_(\d+)$/);
+          if (m && o.visible && o.material?.uniforms?.uOpacity) {
+            out.push({ idx: Number(m[1]), opacity: o.material.uniforms.uOpacity.value });
+          }
+        });
+        return out.sort((a, b) => a.idx - b.idx);
+      };
+      // Geometric sweep across ~2 decades of distance: the coverage metric is
+      // inversely proportional to distance, so this crosses every boundary of
+      // the fixture's 0.0 / 0.5 / 1.0 ladder.
+      for (let i = 0; i <= 60; i++) {
+        const k = 0.15 * Math.pow(10 ** (1 / 30), i); // 0.15 → ~15
+        cam.position.set(tgt.x + d0.x * k, tgt.y + d0.y * k, tgt.z + d0.z * k);
+        debug.controls?.update?.();
+        debug.renderOnce?.();
+        await new Promise((r) => requestAnimationFrame(() => r(null)));
+        const vis = sample();
+        if (
+          vis.length === 2 &&
+          vis[1].idx === vis[0].idx + 1 &&
+          vis.every((v) => v.opacity > 0.02 && v.opacity < 0.98)
+        ) {
+          return { distanceScale: k, levels: vis, sum: vis[0].opacity + vis[1].opacity };
+        }
+      }
+      return { distanceScale: null, levels: sample(), sum: null };
+    });
+
+    expect(blend).not.toBeNull();
+    // A genuine cross-fade was found: adjacent pair, both partially faded.
+    expect(blend!.levels).toHaveLength(2);
+    expect(blend!.levels[1].idx).toBe(blend!.levels[0].idx + 1);
+    for (const lvl of blend!.levels) {
+      expect(lvl.opacity).toBeGreaterThan(0.02);
+      expect(lvl.opacity).toBeLessThan(0.98);
+    }
+    // Complementary weights — the coverage-band invariant (w + (1−w) = 1).
+    expect(blend!.sum).toBeCloseTo(1, 5);
+
+    // Every VISIBLE child renders in the pinned volumetric blend state
+    // (One/OneMinusSrcAlpha premultiplied emission–absorption, depthWrite
+    // unconditionally false) with its authored κ — the fade drives opacity
+    // only, never the mode.
+    const states = await page.evaluate(() => {
+      const debug = (window as Window & typeof globalThis & { __luxarDebug?: { scene?: unknown } })
+        .__luxarDebug;
+      const out: {
+        idx: number;
+        blending: number;
+        blendEquation: number;
+        blendSrc: number;
+        blendDst: number;
+        depthTest: boolean;
+        depthWrite: boolean;
+        transparent: boolean;
+        mode: string | undefined;
+      }[] = [];
+      (
+        debug!.scene as {
+          traverse: (
+            cb: (o: { name?: string; visible?: boolean; material?: unknown }) => void
+          ) => void;
+        }
+      ).traverse((o) => {
+        const m = o.name?.match(/\/multires\/child_(\d+)$/);
+        if (!m || !o.visible || !o.material) return;
+        const mat = o.material as {
+          blending: number;
+          blendEquation: number;
+          blendSrc: number;
+          blendDst: number;
+          depthTest: boolean;
+          depthWrite: boolean;
+          transparent: boolean;
+          userData?: { blendingMode?: string };
+        };
+        out.push({
+          idx: Number(m[1]),
+          blending: mat.blending,
+          blendEquation: mat.blendEquation,
+          blendSrc: mat.blendSrc,
+          blendDst: mat.blendDst,
+          depthTest: mat.depthTest,
+          depthWrite: mat.depthWrite,
+          transparent: mat.transparent,
+          mode: mat.userData?.blendingMode,
+        });
+      });
+      return out;
+    });
+    expect(states.length).toBeGreaterThanOrEqual(1);
+    const expected = EXPECTED_BLEND_STATE.volumetric;
+    for (const s of states) {
+      expect(s.mode).toBe('volumetric');
+      expect(s.blending).toBe(expected.blending);
+      expect(s.blendEquation).toBe(expected.blendEquation);
+      expect(s.blendSrc).toBe(expected.blendSrc);
+      expect(s.blendDst).toBe(expected.blendDst);
+      expect(s.depthTest).toBe(expected.depthTest);
+      expect(s.depthWrite).toBe(expected.depthWrite);
+      expect(s.transparent).toBe(expected.transparent);
+    }
+    await assertNoConsoleErrors(page);
+    expect(await getWebGLErrors(page)).toEqual([]);
   });
 });

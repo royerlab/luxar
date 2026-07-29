@@ -273,6 +273,25 @@ class TestIdentifyPolylinesForPartition:
         for p in polys:
             assert p.size == 2
 
+    def test_indexed_rejects_float_indices(self):
+        # A float indices array must be rejected here, not silently truncated
+        # by the intp cast (the plain single-leaf writer already guards this;
+        # #886 — the partition/LOD branches consume indices through this
+        # helper before the writer runs).
+        with pytest.raises(ValueError, match="integer array"):
+            identify_polylines(4, "indexed", np.array([0.0, 1.0, 2.0, 3.0]))
+
+    @pytest.mark.parametrize(
+        ("indices", "message"),
+        [
+            (np.array([-1, 0, 2, 3]), r"Index -1 < 0"),
+            (np.array([0, 4]), r"Index 4 >= n_vertices 4"),
+        ],
+    )
+    def test_indexed_rejects_out_of_bounds_indices(self, indices, message):
+        with pytest.raises(ValueError, match=message):
+            identify_polylines(4, "indexed", indices)
+
 
 # ────────────────────────────────────────────────────────────────────────
 # indexed line_type topology preservation across partition (H2)
@@ -337,6 +356,48 @@ class TestIndexedPartitionTopology:
 
         collect(store["graph"])
         return leaves
+
+    def test_indexed_partition_rejects_float_indices(self, tmp_path):
+        # add_lines(indices=<float>, partition=...) consumes the raw indices
+        # through identify_polylines before the writer's dtype guard runs, so
+        # a float array must be rejected rather than silently truncated (#886).
+        widths = np.full(self._VERTS.shape[0], 0.05, dtype=np.float32)
+        with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            with pytest.raises(ValueError, match="integer array"):
+                scene.add_lines(
+                    "graph",
+                    vertices=self._VERTS,
+                    widths=widths,
+                    indices=self._EDGES.reshape(-1).astype(np.float64),
+                    line_type="indexed",
+                    partition=dict(max_elements=4),
+                )
+
+    @pytest.mark.parametrize(
+        ("bad_index", "message"),
+        [(-1, r"Index -1 < 0"), (11, r"Index 11 >= n_vertices 11")],
+    )
+    def test_indexed_partition_rejects_out_of_bounds_indices(
+        self, tmp_path, bad_index, message
+    ):
+        widths = np.full(self._VERTS.shape[0], 0.05, dtype=np.float32)
+        indices = self._EDGES.reshape(-1).copy()
+        indices[0] = bad_index
+        with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            with pytest.raises(ValueError, match=message):
+                scene.add_lines(
+                    "graph",
+                    vertices=self._VERTS,
+                    widths=widths,
+                    indices=indices,
+                    line_type="indexed",
+                    partition=dict(max_elements=4),
+                )
+
+        store = zarr.open(str(tmp_path / "t.luxar.zarr"), mode="r")
+        assert "graph" not in store
 
     def test_indexed_partition_preserves_all_edges(self, tmp_path):
         widths = np.full(self._VERTS.shape[0], 0.05, dtype=np.float32)

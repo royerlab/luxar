@@ -9,14 +9,21 @@ extraction — no network access.
 from __future__ import annotations
 
 import http.server
+import struct
 import threading
 import zipfile
 from pathlib import Path
 
 import numpy as np
 import pytest
+import requests
 
-from luxar.utils.download import download_zip_member
+from luxar.utils.download import (
+    _EOCD_TAIL_BYTES,
+    _MAX_CENTRAL_DIR_BYTES,
+    _parse_remote_zip_directory,
+    download_zip_member,
+)
 
 
 class _RangeHTTPHandler(http.server.SimpleHTTPRequestHandler):
@@ -122,6 +129,43 @@ class _OverSendRangeHTTPHandler(_RangeHTTPHandler):
         return _LimitedFile(f, end - start + 1)
 
 
+class _MemberOverSendRangeHTTPHandler(_OverSendRangeHTTPHandler):
+    """Over-send only short ranges used for the compressed member body test.
+
+    Metadata reads are at least 30 bytes (local header), while that test extracts
+    the tiny DEFLATE-compressed ``readme.txt`` member. Keeping metadata responses
+    compliant ensures the test reaches the member-stream overrun guard.
+    """
+
+    def send_head(self):  # noqa: ANN201 - stdlib override
+        range_header = self.headers.get("Range")
+        if range_header is not None:
+            spec = range_header.replace("bytes=", "").strip()
+            start_s, _, end_s = spec.partition("-")
+            if start_s and end_s and int(end_s) - int(start_s) + 1 >= 30:
+                return _RangeHTTPHandler.send_head(self)
+        return super().send_head()
+
+
+class _RecordingRangeHTTPHandler(_RangeHTTPHandler):
+    """Range handler that RECORDS every requested GET byte-range on the server
+    (``server.requested_ranges``), so a test can prove WHICH ranged GETs were
+    issued — and, crucially, which were NOT. Used to pin that the
+    central-directory bounds guard fires BEFORE the buffering central-directory
+    GET (whose range would dwarf the small EOCD-tail reads).
+    """
+
+    def send_head(self):  # noqa: ANN201 - stdlib override
+        range_header = self.headers.get("Range")
+        if range_header is not None and self.command == "GET":
+            spec = range_header.replace("bytes=", "").strip()
+            start_s, _, end_s = spec.partition("-")
+            start = int(start_s) if start_s else None
+            end = int(end_s) if end_s else None
+            self.server.requested_ranges.append((start, end))
+        return super().send_head()
+
+
 def _serve(directory: Path, handler_cls):  # noqa: ANN001, ANN202
     handler = lambda *a, **kw: handler_cls(*a, directory=str(directory), **kw)  # noqa: E731
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
@@ -154,10 +198,37 @@ def redirect_range_server(tmp_path: Path):
 
 @pytest.fixture()
 def oversend_range_server(tmp_path: Path):
-    """Serve tmp_path with a Range handler that over-sends past the requested end."""
+    """Over-send the tiny member-body range while serving metadata correctly."""
+    server, thread = _serve(tmp_path, _MemberOverSendRangeHTTPHandler)
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}"
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+
+
+@pytest.fixture()
+def metadata_oversend_range_server(tmp_path: Path):
+    """Serve every Range request from its requested start through EOF."""
     server, thread = _serve(tmp_path, _OverSendRangeHTTPHandler)
     try:
         yield f"http://127.0.0.1:{server.server_address[1]}"
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+
+
+@pytest.fixture()
+def recording_range_server(tmp_path: Path):
+    """Range server that records every requested GET byte-range.
+
+    Yields ``(base_url, requested_ranges)`` where ``requested_ranges`` is a live
+    list of ``(start, end)`` tuples appended to as requests arrive.
+    """
+    server, thread = _serve(tmp_path, _RecordingRangeHTTPHandler)
+    server.requested_ranges = []  # populated by the handler per request
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}", server.requested_ranges
     finally:
         server.shutdown()
         thread.join(timeout=5)
@@ -194,6 +265,28 @@ def _forge_central_uncompressed_size(
         rec_name = bytes(data[idx + 46 : idx + 46 + name_len])
         if rec_name == name:
             data[idx + 24 : idx + 28] = int(forged_size).to_bytes(4, "little")
+            break
+        idx += 4
+    archive.write_bytes(bytes(data))
+
+
+def _forge_central_method(archive: Path, member: str, forged_method: int) -> None:
+    """Overwrite the *central-directory* compression-method field (offset 10,
+    little-endian uint16) of ``member`` — simulating a corrupt archive that
+    declares a bogus method for a zero-compressed-bytes entry.
+    """
+    data = bytearray(archive.read_bytes())
+    name = member.encode()
+    sig = b"\x50\x4b\x01\x02"  # central-directory file header
+    idx = 0
+    while True:
+        idx = data.find(sig, idx)
+        if idx < 0:
+            raise AssertionError(f"central-dir record for {member!r} not found")
+        name_len = int.from_bytes(data[idx + 28 : idx + 30], "little")
+        rec_name = bytes(data[idx + 46 : idx + 46 + name_len])
+        if rec_name == name:
+            data[idx + 10 : idx + 12] = int(forged_method).to_bytes(2, "little")
             break
         idx += 4
     archive.write_bytes(bytes(data))
@@ -466,6 +559,22 @@ class TestDownloadZipMember:
         assert out.read_bytes() == b""
         assert list(tmp_path.glob("*.part")) == []
 
+    def test_zero_compressed_deflate_member_rejected(
+        self, range_server: str, tmp_path: Path
+    ) -> None:
+        """A ``comp_size == 0`` member whose central-dir method is DEFLATE (not
+        STORED) is malformed — the shortest empty DEFLATE stream is two bytes —
+        so it is rejected rather than silently extracted as empty.
+        """
+        archive = tmp_path / "archive.zip"
+        _build_zip(archive, {"empty.bin": b"", "readme.txt": b"hello"}, stored=True)
+        _forge_central_method(archive, "empty.bin", 8)  # STORED → DEFLATE
+        out = tmp_path / "empty.out"
+        with pytest.raises(ValueError, match="zero compressed bytes"):
+            download_zip_member(f"{range_server}/archive.zip", "empty.bin", out)
+        assert not out.exists()
+        assert list(tmp_path.glob("*.part")) == []
+
     def test_matches_zipfile_extraction(
         self, range_server: str, tmp_path: Path
     ) -> None:
@@ -478,3 +587,203 @@ class TestDownloadZipMember:
         with zipfile.ZipFile(archive) as zf:
             reference = zf.read(member)
         assert out.read_bytes() == reference
+
+
+def _forge_eocd_archive(
+    path: Path,
+    *,
+    cd_size: int,
+    cd_offset: int,
+    filler: int = 256,
+    zip64_eocd64_offset: int | None = None,
+) -> None:
+    """Write a file whose trailing 22 bytes are a hand-forged classic EOCD
+    declaring ``cd_size``/``cd_offset``, preceded by ``filler`` zero bytes.
+
+    The zero filler contains no EOCD or Zip64-locator signature, so the parser
+    takes the classic path and reads exactly these forged fields.
+
+    When ``zip64_eocd64_offset`` is given, the classic cd_size/cd_offset fields
+    are forced to the ``0xFFFFFFFF`` Zip64 sentinel and a 20-byte Zip64 EOCD
+    locator (``PK\\x06\\x07``) carrying that offset is written IMMEDIATELY before
+    the EOCD, so the parser takes the Zip64 branch and reads ``eocd64_offset``
+    from ``locator + 8``. Layout: ``[filler][locator 20B][EOCD 22B]`` — so
+    ``tail.rfind(EOCD_SIG)`` lands on the EOCD and ``eocd_local - 20`` lands
+    exactly on the locator signature.
+    """
+    if zip64_eocd64_offset is not None:
+        cd_size = 0xFFFFFFFF
+        cd_offset = 0xFFFFFFFF
+    body = b"\x00" * filler
+    if zip64_eocd64_offset is not None:
+        # sig(4) + disk-with-eocd64(4) + eocd64_offset(8) + total-disks(4) = 20B
+        body += struct.pack(
+            "<4sIQI",
+            b"PK\x06\x07",  # Zip64 EOCD locator signature
+            0,
+            zip64_eocd64_offset,
+            1,
+        )
+    eocd = struct.pack(
+        "<4sHHHHIIH",
+        b"PK\x05\x06",  # EOCD signature
+        0,  # disk number
+        0,  # disk with central dir
+        0,  # entries this disk
+        0,  # total entries
+        cd_size & 0xFFFFFFFF,
+        cd_offset & 0xFFFFFFFF,
+        0,  # comment length
+    )
+    path.write_bytes(body + eocd)
+
+
+class TestCentralDirectoryBounds:
+    """A forged EOCD must be rejected with ``ValueError`` before the final
+    ranged GET buffers the (potentially archive-sized) central directory into
+    memory — a memory-exhaustion DoS on the metadata path. Driving
+    ``_parse_remote_zip_directory`` directly against the real Range server and
+    asserting ``ValueError`` (not an HTTP 416 / oversized buffer) proves the
+    guard fires before the final GET.
+    """
+
+    def test_cd_size_exceeding_cap_rejected(
+        self, range_server: str, tmp_path: Path
+    ) -> None:
+        # cd_offset=0, cd_size=whole-archive-and-then-some: the classic forged
+        # EOCD that (without the cap) makes us buffer the entire response.
+        archive = tmp_path / "forged.zip"
+        _forge_eocd_archive(archive, cd_size=_MAX_CENTRAL_DIR_BYTES + 1, cd_offset=0)
+        with requests.Session() as session:
+            with pytest.raises(ValueError, match="Central-directory size"):
+                _parse_remote_zip_directory(
+                    session,
+                    f"{range_server}/forged.zip",
+                    timeout=30,
+                    extra_headers=None,
+                )
+
+    def test_cd_offset_past_archive_rejected(
+        self, range_server: str, tmp_path: Path
+    ) -> None:
+        archive = tmp_path / "forged.zip"
+        _forge_eocd_archive(archive, cd_size=100, cd_offset=10_000)
+        with requests.Session() as session:
+            with pytest.raises(ValueError, match="lies outside the archive"):
+                _parse_remote_zip_directory(
+                    session,
+                    f"{range_server}/forged.zip",
+                    timeout=30,
+                    extra_headers=None,
+                )
+
+    def test_cd_offset_plus_size_overruns_archive_rejected(
+        self, range_server: str, tmp_path: Path
+    ) -> None:
+        # Offset inside the archive and size under the cap, but their sum runs
+        # past the archive end — the central directory cannot fit.
+        archive = tmp_path / "forged.zip"
+        _forge_eocd_archive(archive, cd_size=1000, cd_offset=100)
+        with requests.Session() as session:
+            with pytest.raises(ValueError, match="overruns"):
+                _parse_remote_zip_directory(
+                    session,
+                    f"{range_server}/forged.zip",
+                    timeout=30,
+                    extra_headers=None,
+                )
+
+    def test_empty_central_directory_rejected(
+        self, range_server: str, tmp_path: Path
+    ) -> None:
+        # cd_size=0 is a genuinely empty (zero-member) archive: it gets its own
+        # clear message rather than the "out of range / forgery" one.
+        archive = tmp_path / "forged.zip"
+        _forge_eocd_archive(archive, cd_size=0, cd_offset=0)
+        with requests.Session() as session:
+            with pytest.raises(ValueError, match="empty central directory"):
+                _parse_remote_zip_directory(
+                    session,
+                    f"{range_server}/forged.zip",
+                    timeout=30,
+                    extra_headers=None,
+                )
+
+    def test_guard_fires_before_central_dir_get(
+        self, recording_range_server: tuple[str, list], tmp_path: Path
+    ) -> None:
+        """Ordering proof: with an oversized ``cd_size`` the guard must raise
+        BEFORE the buffering central-directory GET is ever issued. The recording
+        server logs every ranged GET; after the ``ValueError`` we assert that no
+        GET larger than the small EOCD-tail read happened — the central-directory
+        range (``cd_offset``..``cd_offset+cd_size-1``, dwarfing the tail) is
+        absent, so a check placed AFTER the big GET could not pass this.
+        """
+        base_url, requested = recording_range_server
+        archive = tmp_path / "forged.zip"
+        _forge_eocd_archive(archive, cd_size=_MAX_CENTRAL_DIR_BYTES + 1, cd_offset=0)
+        with requests.Session() as session:
+            with pytest.raises(ValueError, match="Central-directory size"):
+                _parse_remote_zip_directory(
+                    session,
+                    f"{base_url}/forged.zip",
+                    timeout=30,
+                    extra_headers=None,
+                )
+        assert requested, "expected at least the EOCD-tail ranged GET"
+        for start, end in requested:
+            span = None if end is None else end - start + 1
+            assert span is not None and span <= _EOCD_TAIL_BYTES, (
+                f"a ranged GET of {span} bytes was issued (start={start}); the "
+                "central-directory buffering GET fired despite the oversized "
+                "cd_size guard"
+            )
+
+    def test_central_dir_response_oversend_rejected(
+        self, metadata_oversend_range_server: str, tmp_path: Path
+    ) -> None:
+        """A 206 server may ignore the requested end and stream to EOF.
+
+        The declared central directory is only 100 bytes, but the handler sends
+        the rest of the archive. The parser must stop after the first extra byte
+        instead of buffering the complete response via ``response.content``.
+        """
+        archive = tmp_path / "forged.zip"
+        _forge_eocd_archive(
+            archive,
+            cd_size=100,
+            cd_offset=0,
+            filler=2 * _EOCD_TAIL_BYTES,
+        )
+        with requests.Session() as session:
+            with pytest.raises(ValueError, match="more bytes .* than requested"):
+                _parse_remote_zip_directory(
+                    session,
+                    f"{metadata_oversend_range_server}/forged.zip",
+                    timeout=30,
+                    extra_headers=None,
+                )
+
+    def test_zip64_eocd64_offset_past_archive_rejected(
+        self, range_server: str, tmp_path: Path
+    ) -> None:
+        """The Zip64 branch's ``eocd64_offset`` bounds check: a classic EOCD
+        carrying the ``0xFFFFFFFF`` sentinels plus a Zip64 EOCD locator whose
+        ``eocd64_offset`` points PAST the archive must be rejected — before any
+        EOCD64 fetch — with the Zip64-offset message.
+        """
+        archive = tmp_path / "forged_zip64.zip"
+        # Offset far beyond the ~298-byte archive → out-of-bounds EOCD64.
+        _forge_eocd_archive(
+            archive, cd_size=0, cd_offset=0, zip64_eocd64_offset=1_000_000
+        )
+        with requests.Session() as session:
+            with pytest.raises(
+                ValueError, match="Zip64 EOCD offset .* lies outside the archive"
+            ):
+                _parse_remote_zip_directory(
+                    session,
+                    f"{range_server}/forged_zip64.zip",
+                    timeout=30,
+                    extra_headers=None,
+                )
