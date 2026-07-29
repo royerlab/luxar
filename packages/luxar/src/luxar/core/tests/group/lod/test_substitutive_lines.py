@@ -581,9 +581,9 @@ class TestSubstitutiveLinesConservationAndSymmetry:
             hdr = [w for w in caught if "HDR" in str(w.message)]
         grp = zarr.open(str(out), mode="r")["c"]
         assert np.asarray(grp["child_0"]["colors"]).dtype == np.uint8
-        assert (
-            not hdr
-        ), f"unexpected HDR colour warning(s): {[str(w.message) for w in hdr]}"
+        assert not hdr, (
+            f"unexpected HDR colour warning(s): {[str(w.message) for w in hdr]}"
+        )
 
     def test_image_labels_forwarded_to_finest_lines_child(self, tmp_path) -> None:
         # image_labels must NOT be dropped on the substitutive path; they ride to

@@ -149,9 +149,9 @@ class TestAddLinesPartition:
             return counts
 
         counts = collect(grp)
-        assert (
-            sum(counts) == v.shape[0]
-        ), f"total vertices changed: {sum(counts)} vs {v.shape[0]}"
+        assert sum(counts) == v.shape[0], (
+            f"total vertices changed: {sum(counts)} vs {v.shape[0]}"
+        )
         assert len(counts) >= 2
 
     def test_partition_under_cap_falls_through(self, tmp_path):
