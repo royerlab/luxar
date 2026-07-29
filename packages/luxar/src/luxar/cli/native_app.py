@@ -312,8 +312,10 @@ Folder layout
 def _macos_readme(app_name: str) -> str:
     # Shell-quote the bundle path for the copy-paste Terminal commands so a
     # name containing an apostrophe (e.g. "O'Brien") doesn't produce
-    # unbalanced quoting. Display lines keep the bare `<name>.app`.
-    quoted = shlex.quote(f"{app_name}.app")
+    # unbalanced quoting. The leading `./` keeps a dash-leading name (e.g.
+    # "-R", accepted by validate_bundle_name) from being parsed as an option
+    # by xattr/open. Display lines keep the bare `<name>.app`.
+    quoted = shlex.quote(f"./{app_name}.app")
     return f"""{app_name}.app — Luxar standalone scene
 {"=" * (len(app_name) + 31)}
 
