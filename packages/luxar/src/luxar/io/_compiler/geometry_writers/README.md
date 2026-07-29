@@ -45,13 +45,14 @@ The pipelines are stateless: they read only the narrow config in the `Ctx` datac
    - `write_radii(group, radii, ordering_data, n_points, ctx.dataset_ctx)` — if `radii is not None` (returns `max_radius`, which is also stamped as the `max_radius` group attr here)
    - `write_bounded_scalar(group, sharpness, "sharpnesses", (0.0, SHARPNESS_MAX), ordering_data, n_points, ctx.dataset_ctx, "sharpness")` — if `sharpness is not None` (the written dataset name is `"sharpnesses"`)
    - `write_scalars(group, scalars, ordering_data, n_points, ctx.dataset_ctx)` — if `scalars is not None`
+   - `ctx.write_colormap_lut(group, attrs)` — writes the `colormap_lut` dataset when `colormap` needs one (a custom array, or a matplotlib/colorcet name, which is then rewritten to `"custom"`); built-in named colormaps write no LUT
 
 5. **Apply rendering defaults** + stamp attrs:
    - `apply_default_render_attrs(attrs)` — fill `opacity=1.0`, `absorption=1.0`, `gamma=1.0`, `intensity=1.0`, `offset=0.0` (only if absent); `blending_mode` is deliberately never stamped (no identity value)
    - `group.attrs.update(attrs)` then stamp `type="points"`, `n_points`, `has_colors` / `has_radii` / `has_sharpness` / `has_scalars` (no dim-count attr is stamped; user-supplied + default rendering attrs land via the `update(attrs)` call; `max_radius` was already stamped in step 4 when radii are present)
 
 6. **Compute bounds**:
-   - `compute_position_bounds(positions)` → `position_bounds`, stamped as the `position_bounds` group attr and forwarded to `ctx.update_scene_bounds(...)`
+   - `compute_position_bounds(positions)` → `position_bounds`, stamped as the `position_bounds` group attr and forwarded to `ctx.update_scene_bounds(...)` unless the caller set `_skip_scene_bounds` (the multi-LOD parent writer aggregates the global bounds once instead)
 
 7. **Spatial ordering metadata**:
    - `write_points_ordering_to_zarr(group, ordering_data, ctx.compressor)` — if `ordering_data is not None` (sets `has_spatial_index`)
@@ -93,6 +94,7 @@ The pipelines are stateless: they read only the narrow config in the `Ctx` datac
    - `segments`: `SemanticType.INDEX`, 2-D chunks `(segment_chunk_size, 2)` (from the segment ordering's `chunk_size` if ordering present, else the constant `2048`), `deduplicate=False` (raw reader)
    - `widths`: via `write_positive_scalar` (rejects negative; same default-precision policy as Points radii)
    - `colors`, `sharpness`, `scalars`: per-vertex, same as Points
+   - `ctx.write_colormap_lut(group, attrs)`: writes the `colormap_lut` dataset when `colormap` needs one (a custom array, or a matplotlib/colorcet name, which is then rewritten to `"custom"`); built-in named colormaps write no LUT
 
    (No `indices` dataset is written — only `vertices` / `segments` / `widths` and the optional per-vertex arrays.)
 
@@ -104,7 +106,7 @@ The pipelines are stateless: they read only the narrow config in the `Ctx` datac
    - `group.attrs.update(attrs)` then stamp `type="lines"`, `n_vertices`, `n_segments`, `ndim`, `original_line_type`, `has_colors` / `has_sharpness` / `has_scalars`, `max_width`, ordering attrs (`ordering` / `vertex_ordering` / `segment_ordering`, or `ordering="none"`) (user + default rendering attrs land via the `update(attrs)` call)
 
 8. **Compute bounds**:
-   - `compute_position_bounds(vertices)` → `position_bounds`, stamped as the `position_bounds` group attr and forwarded to `ctx.update_scene_bounds(...)`
+   - `compute_position_bounds(vertices)` → `position_bounds`, stamped as the `position_bounds` group attr and forwarded to `ctx.update_scene_bounds(...)` unless the caller set `_skip_scene_bounds` (the multi-LOD parent writer aggregates the global bounds once instead)
 
 9. **Write labels** (CSR serialization; `sort_order` = `ordering_data["vertex_sort_indices"]` when ordered, per-vertex):
    - `write_labels_csr(group, labels, n_vertices, ctx.compressor, sort_order)` — if `labels is not None`
