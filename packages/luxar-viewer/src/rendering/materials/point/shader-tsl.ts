@@ -60,6 +60,7 @@ import {
   sanitizeNonNegative,
   perspectiveNearFadeTSL,
   type TSLNode,
+  sortedIndexNode,
 } from '../_shared/tsl-helpers';
 import {
   ALPHA_CLAMP,
@@ -153,6 +154,8 @@ export interface PointTSLNodes {
   readonly maxPointSize: TSLNode;
   readonly radiusScale: TSLNode;
   readonly uIsOrtho: TSLNode;
+  /** Active ordering buffer: 0 = aSortedIndex, 1 = aSortedIndexB. */
+  readonly uSortedIndexSlot: TSLNode;
   readonly uNearCull: TSLNode;
   readonly uResolution: TSLNode;
   readonly uOpacity: TSLNode;
@@ -206,7 +209,7 @@ export function pointWebGPUFactory(
   // The only per-instance attribute: point data itself lives in the
   // point texture; `aSortedIndex` maps the draw slot to a storage slot
   // (identity in Phase 1, permuted by the sort worker in Phase 2+).
-  const aSortedIndex: TSLNode = attribute<'uint'>('aSortedIndex', 'uint');
+  const aSortedIndex: TSLNode = sortedIndexNode(nodes.uSortedIndexSlot);
 
   // Bind directly to the persistent `UniformNode`s owned by the
   // wrapper class (or by `buildPointTSLNodesFromUniforms` for the
@@ -561,6 +564,7 @@ export function buildPointTSLNodesFromUniforms(
     maxPointSize: uniform((uniforms.maxPointSize?.value as number) ?? 1.0),
     radiusScale: uniform((uniforms.radiusScale?.value as number) ?? 1.0),
     uIsOrtho: uniform((uniforms.uIsOrtho?.value as number) ?? 0),
+    uSortedIndexSlot: uniform((uniforms.uSortedIndexSlot?.value as number) ?? 0),
     uNearCull: uniform((uniforms.uNearCull?.value as number) ?? 0.1),
     uResolution: uniform(
       (uniforms.uResolution?.value as THREE.Vector2 | undefined) ?? new THREE.Vector2(1, 1)

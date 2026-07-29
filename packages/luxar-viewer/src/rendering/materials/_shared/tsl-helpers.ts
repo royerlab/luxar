@@ -21,7 +21,7 @@
  */
 
 import type { IUniform } from 'three';
-import { float, int, smoothstep } from 'three/tsl';
+import { attribute, float, int, smoothstep } from 'three/tsl';
 
 /**
  * Loosely-typed TSL node alias. TSL's typed overloads return many
@@ -31,6 +31,47 @@ import { float, int, smoothstep } from 'three/tsl';
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type TSLNode = any;
+
+/**
+ * Double-buffered draw-slot → storage-slot index — the TSL twin of
+ * `GLSL_SORTED_INDEX` (depth-sorting spec §2.1 tier 3).
+ *
+ * A permutation must swap ATOMICALLY: a half-applied ordering is not a
+ * reordering but a corrupt permutation (elements drawn twice / not at
+ * all). Each new ordering therefore streams into the INACTIVE attribute
+ * across frames, and `uSortedIndexSlot` flips only once that buffer holds
+ * the whole permutation.
+ *
+ * BOTH attributes are referenced unconditionally, which is required, not
+ * merely tidy: the WebGPU backend only uploads graph-referenced
+ * attributes, so an unreferenced back buffer would never receive its
+ * chunked uploads — and `RenderObject` dereferences a referenced
+ * attribute before its undefined guard, so every geometry must carry
+ * both (`attachElementStorage` aliases them until a node first sorts).
+ *
+ * `uSortedIndexSlot` must stay a RUNTIME uniform: a compile-time flag
+ * would rebuild the graph on every swap. (The lines material treats
+ * `uIsOrtho` as compile-time — deliberately NOT the pattern here.)
+ *
+ * BRANCHLESS on purpose. `.select()` emits an if/else STATEMENT, and the
+ * pick factories consume this index at `varying(float(...))` — evaluated
+ * OUTSIDE their `Fn()` body, where a statement cannot legally land. That
+ * produced a shader which built and code-generated fine but rendered
+ * zero pixels (the same vacuous-black failure mode the gsplat harness
+ * comment in `tests/e2e/harnesses/tsl-harness/gsplats.ts` warns about).
+ * A pure arithmetic mix is position-independent, so the one helper is
+ * safe both inside and outside an `Fn()`. The multiplier is a uniform,
+ * so there is no per-vertex divergence to save by branching anyway.
+ *
+ * Returns an INT node (not uint): the downstream `int(...)` wraps and
+ * `float(...)` casts accept it unchanged.
+ */
+export function sortedIndexNode(uSortedIndexSlot: TSLNode): TSLNode {
+  const slot: TSLNode = int(uSortedIndexSlot);
+  const a: TSLNode = int(attribute<'uint'>('aSortedIndex', 'uint'));
+  const b: TSLNode = int(attribute<'uint'>('aSortedIndexB', 'uint'));
+  return a.mul(int(1).sub(slot)).add(b.mul(slot));
+}
 
 /** Sanitise a positive scalar. Mirrors GLSL `sanitizePositive`. */
 export function sanitizePositive(value: TSLNode, fallback: TSLNode): TSLNode {

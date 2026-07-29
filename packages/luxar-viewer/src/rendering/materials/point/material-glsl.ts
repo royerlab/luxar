@@ -140,6 +140,11 @@ export class PointMaterial
 
         // Projection mode
         uIsOrtho: { value: 0 }, // 0 = perspective, 1 = orthographic
+        // Active ordering buffer: 0 = aSortedIndex, 1 = aSortedIndexB.
+        // Flipped by the depth-sort coordinator once the inactive buffer
+        // holds a whole permutation (runtime uniform: never a define — a
+        // flip must not recompile the program).
+        uSortedIndexSlot: { value: 0 },
         uNearCull: { value: 0.1 }, // near-fade start (world units; scene-bounds scaled)
 
         // Physical framebuffer size in pixels (used by the

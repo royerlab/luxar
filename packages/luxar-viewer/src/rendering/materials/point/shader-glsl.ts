@@ -16,7 +16,11 @@
  *   - aSortedIndex (uint) — draw-slot → storage-slot mapping
  *     (identity in Phase 1; the sort worker permutes it in Phase 2+)
  */
-import { GLSL_SANITIZE_FUNCTIONS, GLSL_NEAR_FADE_FUNCTIONS } from '../_shared/glsl-lib';
+import {
+  GLSL_SANITIZE_FUNCTIONS,
+  GLSL_NEAR_FADE_FUNCTIONS,
+  GLSL_SORTED_INDEX,
+} from '../_shared/glsl-lib';
 import type { ShaderSource } from '../_shared/shader-source';
 import {
   ALPHA_CLAMP,
@@ -37,11 +41,11 @@ export const POINT_VERTEX_SHADER = /* glsl */ `
     // Per-vertex (4 corners): -1..1 normalised quad coordinates.
     in vec2 aQuadCorner;
 
-    // Draw-slot → storage-slot mapping. Identity in Phase 1; the sort
-    // worker permutes it (Phase 2+) so draw order tracks view depth
-    // without rewriting point data. Uint32Array attribute → bound via
-    // vertexAttribIPointer, matching this uint declaration.
-    in uint aSortedIndex;
+    // Draw-slot → storage-slot mapping, double-buffered so a new ordering
+    // swaps atomically (declaration + luxarSortedIndex() in glsl-lib).
+    // Uint32Array attributes → bound via vertexAttribIPointer, matching
+    // the uint declarations.
+    ${GLSL_SORTED_INDEX}
 
     // Point data texture: RGBA32F, 3 texels/point (see
     // rendering/element-texture-layout.ts for the texel layout).
@@ -78,7 +82,7 @@ export const POINT_VERTEX_SHADER = /* glsl */ `
       // and only x advances. texel2 carries the colormap scalar (.x,
       // read under USE_COLORMAP) and the per-point alpha (.y, written
       // unconditionally by the texel writer — 1.0 for RGB data).
-      int pointBase = int(aSortedIndex) * 3;
+      int pointBase = int(luxarSortedIndex()) * 3;
       int pointTexW = textureSize(uPointTex, 0).x;
       ivec2 texel0 = ivec2(pointBase % pointTexW, pointBase / pointTexW);
       vec4 pointT0 = texelFetch(uPointTex, texel0, 0);

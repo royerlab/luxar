@@ -67,6 +67,7 @@ import {
   sanitizeAlpha,
   sanitizeNonNegative,
   type TSLNode,
+  sortedIndexNode,
 } from '../_shared/tsl-helpers';
 import {
   ALPHA_CLAMP,
@@ -147,6 +148,8 @@ export interface LineTSLNodes {
   readonly uLineTex: TSLNode;
   readonly uResolution: TSLNode;
   readonly uIsOrtho: TSLNode;
+  /** Active ordering buffer: 0 = aSortedIndex, 1 = aSortedIndexB. */
+  readonly uSortedIndexSlot: TSLNode;
   readonly uNearCull: TSLNode;
   readonly uMaxLinePixelWidth: TSLNode;
   readonly uPerspectiveLineScale: TSLNode;
@@ -195,7 +198,7 @@ export function lineWebGPUFactory(
   // The only per-instance attribute: segment data itself lives in the
   // line texture; `aSortedIndex` maps the draw slot to a storage slot
   // (identity after a fresh commit, permuted by the sort worker).
-  const aSortedIndex: TSLNode = attribute<'uint'>('aSortedIndex', 'uint');
+  const aSortedIndex: TSLNode = sortedIndexNode(nodes.uSortedIndexSlot);
 
   // Bind directly to the persistent `UniformNode`s owned by the
   // wrapper class (or by `buildLineTSLNodesFromUniforms` for the
@@ -740,6 +743,7 @@ export function buildLineTSLNodesFromUniforms(
       (uniforms.uResolution?.value as THREE.Vector2 | undefined) ?? new THREE.Vector2(1, 1)
     ),
     uIsOrtho: uniform((uniforms.uIsOrtho?.value as number) ?? 0),
+    uSortedIndexSlot: uniform((uniforms.uSortedIndexSlot?.value as number) ?? 0),
     uNearCull: uniform((uniforms.uNearCull?.value as number) ?? 1e-4),
     uMaxLinePixelWidth: uniform((uniforms.uMaxLinePixelWidth?.value as number) ?? 1.0),
     uPerspectiveLineScale: uniform((uniforms.uPerspectiveLineScale?.value as number) ?? 1.0),

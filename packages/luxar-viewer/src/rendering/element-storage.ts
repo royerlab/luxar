@@ -423,6 +423,15 @@ export function attachElementStorage(
   const sortedIndex = new THREE.InstancedBufferAttribute(new Uint32Array(capacity), 1);
   sortedIndex.setUsage(THREE.DynamicDrawUsage);
   geometry.setAttribute('aSortedIndex', sortedIndex);
+  // Ordering slot B starts ALIASED to slot A (same attribute object, so
+  // zero extra bytes). Every shader references both names, so the
+  // attribute must exist on every geometry — WebGPU's RenderObject
+  // dereferences a graph-referenced attribute before its undefined
+  // guard, so a missing one throws rather than degrading. Aliasing
+  // satisfies that from this single chokepoint while a node that never
+  // sorts (any commutative blending mode) pays nothing;
+  // `ensureSortedIndexBackBuffer` splits the alias on first ordering.
+  geometry.setAttribute('aSortedIndexB', sortedIndex);
 
   const width = getElementTextureWidth(layout);
   const height = elementTextureHeightForCapacity(capacity, layout);

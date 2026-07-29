@@ -105,7 +105,7 @@ describe('LineMaterial', () => {
       expect(material.vertexShader).toContain('in vec2 aQuadCorner');
       expect(material.vertexShader).toContain('in uint aSortedIndex');
       expect(material.vertexShader).toContain('uniform highp sampler2D uLineTex');
-      expect(material.vertexShader).toContain('int lineBase = int(aSortedIndex) * 6');
+      expect(material.vertexShader).toContain('int lineBase = int(luxarSortedIndex()) * 6');
       expect(material.vertexShader).toContain('vec3 aStartPos = lineT0.xyz');
       expect(material.vertexShader).toContain('float aStartWidth = lineT0.w');
       expect(material.vertexShader).toContain('vec3 aEndPos = lineT1.xyz');

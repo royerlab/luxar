@@ -66,6 +66,7 @@ interface PointMaterialTSLNodeTable {
   maxPointSize: TSLNode;
   radiusScale: TSLNode;
   uIsOrtho: TSLNode;
+  uSortedIndexSlot: TSLNode;
   uNearCull: TSLNode;
   uResolution: TSLNode;
   uOpacity: TSLNode;
@@ -141,6 +142,7 @@ export class PointTSLMaterial
       maxPointSize: uniform(defaultResolutionY * 0.5),
       radiusScale: uniform(materialConfig.radiusScale ?? 1.0),
       uIsOrtho: uniform(0),
+      uSortedIndexSlot: uniform(0),
       uNearCull: uniform(0.1),
       uResolution: uniform(new THREE.Vector2(1920, defaultResolutionY)),
     };
@@ -165,6 +167,7 @@ export class PointTSLMaterial
       maxPointSize: proxyIUniform(this.tslNodes.maxPointSize),
       radiusScale: proxyIUniform(this.tslNodes.radiusScale),
       uIsOrtho: proxyIUniform(this.tslNodes.uIsOrtho),
+      uSortedIndexSlot: proxyIUniform(this.tslNodes.uSortedIndexSlot),
       uNearCull: proxyIUniform(this.tslNodes.uNearCull),
       uResolution: proxyIUniform(this.tslNodes.uResolution),
     };

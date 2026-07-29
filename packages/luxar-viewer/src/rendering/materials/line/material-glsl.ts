@@ -141,6 +141,11 @@ export class LineMaterial
         uLineTex: { value: getPlaceholderElementTexture() },
         uResolution: { value: new THREE.Vector2(1, 1) },
         uIsOrtho: { value: 0 }, // 0 = perspective, 1 = orthographic
+        // Active ordering buffer: 0 = aSortedIndex, 1 = aSortedIndexB.
+        // Flipped by the depth-sort coordinator once the inactive buffer
+        // holds a whole permutation (runtime uniform: never a define — a
+        // flip must not recompile the program).
+        uSortedIndexSlot: { value: 0 },
         uOpacity: { value: materialConfig.opacity ?? 1.0 },
         uInvGamma: { value: 1.0 / gammaValue }, // Pre-computed inverse for performance
         uIntensity: { value: materialConfig.intensity ?? 1.0 },
