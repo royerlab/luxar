@@ -18,22 +18,24 @@ SPATIAL_SIGMA_EPS = 1e-6
 
 
 def spatial_axes_from_max_sigma(
-    max_sigma: np.ndarray, eps: float = SPATIAL_SIGMA_EPS
+    max_sigma: np.ndarray, eps: float = SPATIAL_SIGMA_EPS, fallback: bool = True
 ) -> np.ndarray:
     """Indices of axes whose max marginal sigma exceeds ``eps``.
 
-    Falls back to ALL axes when none qualify (empty or all-degenerate input), so
-    callers never receive an empty selection (which would, e.g., disable
-    centering entirely).
+    With ``fallback=True`` (the default) falls back to ALL axes when none qualify
+    (empty or all-degenerate input), so callers never receive an empty selection
+    (which would, e.g., disable centering entirely). Pass ``fallback=False`` when
+    the caller needs to distinguish "every axis is spatial" from "no axis is" —
+    the fallback makes both return every index — and prefers an empty selection.
     """
     max_sigma = np.asarray(max_sigma)
     keep = np.flatnonzero(max_sigma > eps)
-    return keep if keep.size > 0 else np.arange(max_sigma.shape[0])
+    if keep.size > 0 or not fallback:
+        return keep
+    return np.arange(max_sigma.shape[0])
 
 
-def spatial_only_shift(
-    centroid: np.ndarray, spatial_axes: np.ndarray
-) -> np.ndarray:
+def spatial_only_shift(centroid: np.ndarray, spatial_axes: np.ndarray) -> np.ndarray:
     """Translation vector that moves only ``spatial_axes`` by ``centroid`` and
     leaves every other (categorical) axis at zero — the shared basis for
     spatial-only re-centering.

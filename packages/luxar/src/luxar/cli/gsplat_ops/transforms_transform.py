@@ -161,7 +161,11 @@ def run_transform_dataset(
                         # more sharply (but keep it a warning: a legitimate
                         # stacked dataset may have a continuous stacked axis).
                         unrotated = [i for i in range(d) if i not in rot_axes]
-                        n_extent = len(nondegenerate_axes(node))
+                        # fallback=False so all-degenerate data (no axis above
+                        # eps) reports 0 real-extent axes and takes the milder
+                        # branch, instead of the all-axes fallback masquerading
+                        # as "every axis carries extent — a direct nD fit".
+                        n_extent = len(nondegenerate_axes(node, fallback=False))
                         if n_extent > 3:
                             aprint(
                                 f"⚠️ {d}D data has {n_extent} axes with real "
