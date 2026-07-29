@@ -705,6 +705,15 @@ _EOCD_TAIL_BYTES = 22 + 65536
 #: independent of the archive's own (attacker-controlled) metadata. Mirrors
 #: gsplats/io/_archive.py.
 _MAX_MEMBER_UNCOMPRESSED_BYTES = 256 * 1024**3
+#: Ceiling on the central directory we buffer via ``response.content`` (64 MiB).
+#: A real central directory is small — one ~46-byte record plus the member
+#: name/extra/comment (≈76 bytes for a typical name) per member — so the archives
+#: we fetch run from tens of KB to at most a few MB. 64 MiB is a deliberately
+#: generous ceiling that still blocks the whole-archive forgery: a forged EOCD
+#: (e.g. cd_offset=0, cd_size=archive_size) would otherwise make us buffer the
+#: entire archive into memory — a DoS on the metadata path, distinct from the
+#: DEFLATE decompression-bomb guard on the member stream.
+_MAX_CENTRAL_DIR_BYTES = 64 * 1024**2
 
 
 def _ranged_get(
@@ -737,6 +746,59 @@ def _ranged_get(
     return response
 
 
+def _ranged_get_bytes(
+    session: Any,
+    url: str,
+    start: int,
+    end: int,
+    *,
+    timeout: int,
+    extra_headers: Optional[dict] = None,
+) -> bytes:
+    """Read exactly one closed byte range without trusting the response size.
+
+    ``requests`` buffers an entire response before exposing ``.content``. A
+    broken or malicious HTTP 206 server can therefore ignore the requested end
+    and stream to EOF, defeating any bound placed on the requested range. Read
+    incrementally instead and abort after the first byte beyond the expected
+    range, while also rejecting a truncated response.
+    """
+    expected = end - start + 1
+    if expected <= 0:
+        raise ValueError(f"Invalid byte range {start}-{end}")
+
+    data = bytearray()
+    chunk_size = min(64 * 1024, expected + 1)
+    with contextlib.closing(
+        _ranged_get(
+            session,
+            url,
+            start,
+            end,
+            timeout=timeout,
+            extra_headers=extra_headers,
+            stream=True,
+        )
+    ) as response:
+        for chunk in response.iter_content(chunk_size=chunk_size):
+            if not chunk:
+                continue
+            received = len(data) + len(chunk)
+            if received > expected:
+                raise ValueError(
+                    f"Server returned more bytes ({received:,}) than requested "
+                    f"({expected:,}) for Range {start}-{end}"
+                )
+            data.extend(chunk)
+
+    if len(data) != expected:
+        raise ValueError(
+            f"Server returned {len(data):,} bytes for Range {start}-{end}; "
+            f"expected {expected:,}"
+        )
+    return bytes(data)
+
+
 def _parse_remote_zip_directory(
     session: Any, url: str, *, timeout: int, extra_headers: Optional[dict]
 ) -> tuple[bytes, int]:
@@ -762,14 +824,14 @@ def _parse_remote_zip_directory(
     archive_size = int(head.headers["content-length"])
 
     tail_start = max(0, archive_size - _EOCD_TAIL_BYTES)
-    tail = _ranged_get(
+    tail = _ranged_get_bytes(
         session,
         url,
         tail_start,
         archive_size - 1,
         timeout=timeout,
         extra_headers=extra_headers,
-    ).content
+    )
 
     eocd_local = tail.rfind(_EOCD_SIGNATURE)
     if eocd_local < 0:
@@ -791,27 +853,59 @@ def _parse_remote_zip_directory(
         if not has_locator:
             raise ValueError("Zip64 archive without a Zip64 EOCD locator")
         eocd64_offset = struct.unpack_from("<Q", tail, locator_local + 8)[0]
-        eocd64 = _ranged_get(
+        # `<Q` is unsigned, so eocd64_offset >= 0 always — only the upper bound
+        # can be violated.
+        if eocd64_offset + 56 > archive_size:
+            raise ValueError(
+                f"Zip64 EOCD offset {eocd64_offset} lies outside the archive "
+                f"(size {archive_size}) — refusing to fetch"
+            )
+        eocd64 = _ranged_get_bytes(
             session,
             url,
             eocd64_offset,
             eocd64_offset + 55,
             timeout=timeout,
             extra_headers=extra_headers,
-        ).content
+        )
         if eocd64[:4] != _EOCD64_SIGNATURE:
             raise ValueError("Bad Zip64 end-of-central-directory signature")
         cd_size = struct.unpack_from("<Q", eocd64, 40)[0]
         cd_offset = struct.unpack_from("<Q", eocd64, 48)[0]
 
-    central_dir = _ranged_get(
+    # Validate the EOCD-derived (attacker-controlled) central-directory bounds
+    # before the ranged GET buffers the response into memory. Covers both the
+    # classic and Zip64 paths, since both resolve into cd_size/cd_offset here.
+    # A forged EOCD (e.g. cd_offset=0, cd_size=archive_size) would otherwise
+    # make us buffer the whole archive — a memory-exhaustion DoS.
+    # cd_size/cd_offset come from unsigned struct fields (<I/<Q), so neither can
+    # be negative — only the empty-zip and upper-bound cases are reachable.
+    if cd_size == 0:
+        raise ValueError("Remote zip has an empty central directory (no members)")
+    if cd_size > _MAX_CENTRAL_DIR_BYTES:
+        raise ValueError(
+            f"Central-directory size {cd_size} is out of range "
+            f"(1..{_MAX_CENTRAL_DIR_BYTES} bytes) — refusing to fetch"
+        )
+    if cd_offset >= archive_size:
+        raise ValueError(
+            f"Central-directory offset {cd_offset} lies outside the archive "
+            f"(size {archive_size}) — refusing to fetch"
+        )
+    if cd_offset + cd_size > archive_size:
+        raise ValueError(
+            f"Central directory (offset {cd_offset}, size {cd_size}) overruns "
+            f"the archive (size {archive_size}) — refusing to fetch"
+        )
+
+    central_dir = _ranged_get_bytes(
         session,
         url,
         cd_offset,
         cd_offset + cd_size - 1,
         timeout=timeout,
         extra_headers=extra_headers,
-    ).content
+    )
     return central_dir, archive_size
 
 
@@ -1017,14 +1111,14 @@ def download_zip_member(
         # lengths than the central directory — read it to find the data start.
         import struct
 
-        local_header = _ranged_get(
+        local_header = _ranged_get_bytes(
             session,
             url,
             local_offset,
             local_offset + 29,
             timeout=timeout,
             extra_headers=extra_headers,
-        ).content
+        )
         if local_header[:4] != _LOCAL_HEADER_SIGNATURE:
             raise ValueError("Bad local file header signature in remote zip")
         method = struct.unpack_from("<H", local_header, 8)[0]
