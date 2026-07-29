@@ -30,8 +30,9 @@
  * FOUR are written UNCONDITIONALLY — pool textures are reused, so
  * leaving them unspecified would let a previous tenant's values leak
  * through. 0.0 is the no-scalar identity and 1.0 (opaque) the
- * per-element-opacity identity. texel4.w stays unspecified (stale on
- * reused pool textures; never read).
+ * per-element-opacity identity. texel4.w is zero-filled for the same
+ * reason (deterministic on reused pool texels, so no previous tenant's
+ * value leaks through) even though nothing reads it yet.
  *
  * Texture lifetime = geometry lifetime: `attachLineStorage` registers a
  * `dispose` listener on the geometry, so every dispose site (pool
