@@ -275,7 +275,11 @@ def create_luxar_scene(gsplats_data: GSplatData, output_path: Path) -> Path:
             scene.add_gsplats_from_data(
                 name="virus_capsid",
                 result=gsplats_data,
-                colormap="viridis",
+                # inferno, not viridis: viridis's first stop is (68, 1, 84)
+                # dark purple, so empty and low-density space renders as a
+                # visible haze on the black background. inferno starts at
+                # (0, 0, 4), so zero density reads as true black.
+                colormap="inferno",
                 opacity=1.0,
                 # Strong absorption (kappa 5) so the near side of the shell
                 # occludes the far side — the capsid reads as a hollow
