@@ -157,6 +157,75 @@ fn compute_marginal_cholesky(
     output[..sub_packed_size].copy_from_slice(&l_sub[..sub_packed_size]);
 }
 
+/// Marginal 3D Cholesky for the display dims, padded to the packed-3D layout
+/// when fewer than 3 dims are displayed (1D/2D scenes).
+///
+/// For `n = min(display_dims.len(), 3)` the packed n-D marginal occupies the
+/// first n·(n+1)/2 slots of the packed-3D layout verbatim. The renderer always
+/// consumes a 3×3 covariance (Σ = L·Lᵀ), so the rows for display axes the data
+/// doesn't have must still be filled: off-diagonals are 0 (the phantom axis is
+/// uncorrelated with the real ones, so the in-plane profile is untouched) and
+/// the diagonal is the GEOMETRIC MEAN of the real diagonals — the phantom axis
+/// gets the splat's own in-plane scale, making a 2D splat a round blob rather
+/// than a disk.
+///
+/// The diagonal deliberately is NOT a small epsilon. In sum/additive projection
+/// the shader scales amplitude by the Gaussian's extent along the view ray,
+/// `sigmaRay = 1/√(rᵀΣ⁻¹r)` (`shader-glsl.ts`); a face-on ε-thin splat gets
+/// `sigmaRay ≈ √ε`, i.e. amplitude × 1e-5, and the whole scene renders black.
+/// A scale-matched phantom axis keeps `sigmaRay` proportional to the splat's own
+/// size — the same brightness relationship a genuinely isotropic 3D splat has —
+/// and keeps every scale-relative shader guard (coverage fade, extent clamp,
+/// determinant conditioning) well-conditioned.
+///
+/// `output` must hold 6 elements.
+#[inline]
+fn compute_display_cholesky_3d(
+    full_packed_l: &[f32],
+    full_packed_offset: usize,
+    display_dims: &[u32],
+    output: &mut [f32],
+) {
+    let n = display_dims.len().min(3);
+    compute_marginal_cholesky(
+        full_packed_l,
+        full_packed_offset,
+        &display_dims[..n],
+        n,
+        output,
+    );
+    if n == 3 {
+        return;
+    }
+
+    // Geometric mean of the real diagonals L[i,i], i < n. Falls back to the
+    // degenerate-covariance regularizer when the marginal has no extent at all.
+    let mut log_sum = 0.0f32;
+    let mut counted = 0u32;
+    for i in 0..n {
+        let diag = output[packed_index(i, i)];
+        if diag > CHOLESKY_EPSILON {
+            log_sum += diag.ln();
+            counted += 1;
+        }
+    }
+    let phantom = if counted > 0 {
+        (log_sum / counted as f32).exp()
+    } else {
+        CHOLESKY_EPSILON.sqrt()
+    };
+
+    let mut idx = n * (n + 1) / 2;
+    for row in n..3 {
+        for _ in 0..row {
+            output[idx] = 0.0;
+            idx += 1;
+        }
+        output[idx] = phantom;
+        idx += 1;
+    }
+}
+
 /// Extract raw elements from a packed Cholesky factor for specified dimensions.
 ///
 /// **WARNING**: This extracts raw L elements, NOT the Cholesky factor of the
@@ -339,7 +408,8 @@ fn mahalanobis_distance_internal(diff: &[f32], packed_l: &[f32], ndim: usize) ->
 /// # Arguments
 /// * `cholesky` - Packed Cholesky factors [splatCount * packedSize]
 /// * `visibility` - Visibility mask [splatCount]
-/// * `display_dims` - Display dimension indices (sorted) [3]
+/// * `display_dims` - Display dimension indices (sorted) [1..=3]; missing
+///   rows are ε-padded for 1D/2D data (see `compute_display_cholesky_3d`)
 /// * `ndim` - Total dimensionality (max 16)
 /// * `splat_count` - Number of splats
 /// * `output` - Output 3D Cholesky factors [visibleCount * 6]
@@ -380,7 +450,7 @@ pub fn extract_visible_cholesky_3d(
 
         // Compute correct marginal Cholesky for display dimensions
         let mut temp_cholesky = [0.0f32; 6]; // 3D packed = 6 elements
-        compute_marginal_cholesky(cholesky, src_offset, display_dims, 3, &mut temp_cholesky);
+        compute_display_cholesky_3d(cholesky, src_offset, display_dims, &mut temp_cholesky);
         output[dst_offset..dst_offset + 6].copy_from_slice(&temp_cholesky[..6]);
 
         out_splat += 1;
@@ -571,13 +641,13 @@ pub fn project_gsplats_nd_to_3d(
             out_centers3d[c_off + j] = 0.0;
         }
 
-        // Marginal Cholesky for display dims (mirrors extract_visible_cholesky_3d).
+        // Marginal Cholesky for display dims (mirrors extract_visible_cholesky_3d),
+        // ε-padded when fewer than 3 dims are displayed (1D/2D scenes).
         let chol_off = out * 6;
-        compute_marginal_cholesky(
+        compute_display_cholesky_3d(
             cholesky,
             cholesky_offset,
             display_dims,
-            3,
             &mut out_cholesky3d[chol_off..chol_off + 6],
         );
 
@@ -1107,5 +1177,145 @@ mod tests {
             f_colors[3], 0.9,
             "alpha of first visible splat not preserved"
         );
+    }
+
+    /// Regression: a 2D scene gives `display_dims.len() == 2`; the display
+    /// marginal used to be computed with a hardcoded sub_ndim of 3, reading
+    /// `display_dims[2]` out of bounds and panicking (wasm: `unreachable`).
+    /// A 2D splat must project with its 2D marginal in the first three packed
+    /// slots and a scale-matched phantom z row `[0, 0, √(L00·L11)]` — NOT an
+    /// ε diagonal, which the sum-mode ray integral renders invisible.
+    #[test]
+    fn test_fused_2d_display_dims() {
+        let ndim = 2usize;
+        let n = 2usize;
+        let one = [2.0f32, 0.5, 1.5]; // packed 2D Cholesky [L00, L10, L11]
+        let cholesky = [one, one].concat();
+        let positions = vec![0.0f32, 0.0, 5.0, -3.0];
+        let amplitudes = vec![1.0f32, 0.8];
+        let colors = vec![1.0f32; n * 3];
+        let vis = vec![1u8; n];
+        let slice_pos = vec![0.0f32; ndim];
+        let hidden: Vec<u32> = vec![];
+        let display = vec![0u32, 1];
+        let mut out_c = vec![0.0f32; n * 3];
+        let mut out_l = vec![0.0f32; n * 6];
+        let mut out_a = vec![0.0f32; n];
+        let mut out_col = vec![0.0f32; n * 3];
+
+        let count = project_gsplats_nd_to_3d(
+            &positions,
+            &cholesky,
+            &amplitudes,
+            &colors,
+            &vis,
+            &slice_pos,
+            &hidden,
+            &display,
+            ndim,
+            n,
+            3,
+            1e-6,
+            3.0,
+            &mut out_c,
+            &mut out_l,
+            &mut out_a,
+            &mut out_col,
+        );
+
+        assert_eq!(count, 2);
+        // Centers: [x, y, 0] (z zero-filled).
+        assert_eq!(&out_c[..3], &[0.0, 0.0, 0.0]);
+        assert_eq!(&out_c[3..6], &[5.0, -3.0, 0.0]);
+        // Cholesky: keeping ALL dims makes the marginal reproduce the input
+        // factor. The 2D marginal here is [2.0, 0.5, √(1.5²+0.5²−0.5²)] — the
+        // Crout factorization of Σ_S, so L11 = 1.5 exactly. The phantom z
+        // diagonal is the geometric mean √(2.0·1.5).
+        let expected_phantom = (2.0f32 * 1.5).sqrt();
+        for s in 0..n {
+            let l = &out_l[s * 6..s * 6 + 6];
+            assert!((l[0] - 2.0).abs() < 1e-5, "L00");
+            assert!((l[1] - 0.5).abs() < 1e-5, "L10");
+            assert!((l[2] - 1.5).abs() < 1e-5, "L11");
+            assert_eq!(l[3], 0.0, "L20");
+            assert_eq!(l[4], 0.0, "L21");
+            assert!(
+                (l[5] - expected_phantom).abs() < 1e-5,
+                "L22 must be the geometric mean of the real diagonals, got {}",
+                l[5]
+            );
+        }
+    }
+
+    /// The phantom axis must scale WITH the splat: doubling the in-plane
+    /// factor doubles the phantom diagonal. This is what keeps the sum-mode
+    /// ray integral (∝ extent along the ray) proportional to splat size
+    /// instead of collapsing to ~0 as an ε diagonal did.
+    #[test]
+    fn test_2d_phantom_axis_scales_with_splat() {
+        let mut small = [0.0f32; 6];
+        let mut large = [0.0f32; 6];
+        compute_display_cholesky_3d(&[2.0, 0.5, 1.5], 0, &[0, 1], &mut small);
+        compute_display_cholesky_3d(&[4.0, 1.0, 3.0], 0, &[0, 1], &mut large);
+
+        assert!(small[5] > 0.1, "phantom diagonal must not be ~0");
+        assert!(
+            (large[5] / small[5] - 2.0).abs() < 1e-4,
+            "phantom diagonal must scale linearly with the splat: {} vs {}",
+            large[5],
+            small[5]
+        );
+    }
+
+    /// A 1D display (single display dim) pads BOTH missing rows.
+    #[test]
+    fn test_1d_display_dims_pads_two_rows() {
+        let mut out = [0.0f32; 6];
+        compute_display_cholesky_3d(&[2.0, 0.5, 1.5], 0, &[0], &mut out);
+
+        assert!((out[0] - 2.0).abs() < 1e-5, "L00");
+        assert_eq!(out[1], 0.0, "L10");
+        assert!((out[2] - 2.0).abs() < 1e-5, "L11 = phantom = L00");
+        assert_eq!(out[3], 0.0, "L20");
+        assert_eq!(out[4], 0.0, "L21");
+        assert!((out[5] - 2.0).abs() < 1e-5, "L22 = phantom = L00");
+    }
+
+    /// An all-degenerate marginal has no scale to match, so the phantom axis
+    /// falls back to the regularizer rather than producing NaN/0.
+    #[test]
+    fn test_2d_degenerate_marginal_falls_back_to_epsilon() {
+        let mut out = [0.0f32; 6];
+        compute_display_cholesky_3d(&[0.0, 0.0, 0.0], 0, &[0, 1], &mut out);
+
+        // The Crout regularizer already floors both diagonals at √ε, so the
+        // geometric mean lands on √ε too (within ln/exp round-off).
+        let eps = CHOLESKY_EPSILON.sqrt();
+        assert!(out[5].is_finite(), "phantom must be finite");
+        assert!(
+            (out[5] / eps - 1.0).abs() < 1e-5,
+            "phantom falls back to √ε, got {} (expected {})",
+            out[5],
+            eps
+        );
+    }
+
+    /// Same regression for the pre-fused kernel, kept for API completeness.
+    #[test]
+    fn test_extract_visible_cholesky_2d_display_dims() {
+        let cholesky = [2.0f32, 0.5, 1.5];
+        let vis = [1u8];
+        let display = [0u32, 1];
+        let mut out = [0.0f32; 6];
+
+        let count = extract_visible_cholesky_3d(&cholesky, &vis, &display, 2, 1, &mut out);
+
+        assert_eq!(count, 1);
+        assert!((out[0] - 2.0).abs() < 1e-5);
+        assert!((out[1] - 0.5).abs() < 1e-5);
+        assert!((out[2] - 1.5).abs() < 1e-5);
+        assert_eq!(out[3], 0.0);
+        assert_eq!(out[4], 0.0);
+        assert!((out[5] - (2.0f32 * 1.5).sqrt()).abs() < 1e-5);
     }
 }

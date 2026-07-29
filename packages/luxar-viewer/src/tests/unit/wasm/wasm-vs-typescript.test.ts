@@ -1072,6 +1072,91 @@ describe('WASM vs TypeScript Comparison', () => {
         ).toBe(true);
       }
     );
+
+    it.skipIf(!wasmFilesExist)(
+      'project_gsplats_nd_to_3d matches TS (2D data — regression: display marginal read displayDims[2] OOB)',
+      () => {
+        // A 2D scene has displayDims.length === 2. The display-dims marginal
+        // used to be computed with a hardcoded sub-ndim of 3: Rust read
+        // display_dims[2] out of bounds and panicked (wasm `unreachable`,
+        // killing every 2D gsplats load); TS read undefined and produced
+        // NaN-driven garbage. Both must now emit the 2D marginal in the first
+        // three packed slots and a scale-matched phantom z row.
+        const ndim = 2;
+        const splatCount = 2;
+        const one = [2.0, 0.5, 1.5]; // correlated 2D packed [L00, L10, L11]
+        const args = {
+          positions: new Float32Array([0, 0, 5, -3]),
+          cholesky: new Float32Array([...one, ...one]),
+          amplitudes: new Float32Array([1.0, 0.8]),
+          colors: new Float32Array([0.1, 0.2, 0.3, 0.4, 0.5, 0.6]),
+          discreteVisibility: new Uint8Array([1, 1]),
+          slicePosition: new Float32Array([0, 0]),
+          continuousHiddenDims: new Uint32Array([]),
+          displayDims: new Uint32Array([0, 1]), // 2D scene: only two display dims
+          ndim,
+          splatCount,
+        };
+        const ts = runFused(tsModule, args);
+        const w = runFused(wasmModule!, args);
+        const eps = 1e-5 * Math.sqrt(ndim);
+        expect(w.count).toBe(2);
+        expect(ts.count).toBe(2);
+        // Centers zero-padded in z.
+        expect(Array.from(w.centers.subarray(0, 6))).toEqual([0, 0, 0, 5, -3, 0]);
+        // Keeping ALL dims makes the marginal reproduce the input factor; the
+        // phantom z diagonal is the geometric mean of the real diagonals, NOT
+        // an epsilon (an ε-thin splat is invisible in sum mode — the shader
+        // scales amplitude by the Gaussian extent along the view ray).
+        const expectedPhantom = Math.sqrt(2.0 * 1.5);
+        for (let s = 0; s < 2; s++) {
+          const c = s * 6;
+          expect(w.chol[c]).toBeCloseTo(2.0, 5);
+          expect(w.chol[c + 1]).toBeCloseTo(0.5, 5);
+          expect(w.chol[c + 2]).toBeCloseTo(1.5, 5);
+          expect(w.chol[c + 3]).toBe(0); // L20
+          expect(w.chol[c + 4]).toBe(0); // L21
+          expect(w.chol[c + 5]).toBeCloseTo(expectedPhantom, 5); // L22 = √(L00·L11)
+        }
+        expect(arraysAlmostEqual(w.centers.subarray(0, 6), ts.centers.subarray(0, 6), eps)).toBe(
+          true
+        );
+        expect(arraysAlmostEqual(w.chol.subarray(0, 12), ts.chol.subarray(0, 12), eps)).toBe(true);
+        expect(arraysAlmostEqual(w.amps.subarray(0, 2), ts.amps.subarray(0, 2), eps)).toBe(true);
+        expect(arraysEqual(w.cols.subarray(0, 6), ts.cols.subarray(0, 6))).toBe(true);
+      }
+    );
+
+    it.skipIf(!wasmFilesExist)('extract_visible_cholesky_3d matches TS (2D data)', () => {
+      const cholesky = new Float32Array([2.0, 0.5, 1.5]);
+      const visibility = new Uint8Array([1]);
+      const displayDims = new Uint32Array([0, 1]);
+      const tsOutput = new Float32Array(6);
+      const wasmOutput = new Float32Array(6);
+
+      const tsCount = tsModule.extract_visible_cholesky_3d(
+        cholesky,
+        visibility,
+        displayDims,
+        2,
+        1,
+        tsOutput
+      );
+      const wasmCount = wasmModule!.extract_visible_cholesky_3d(
+        cholesky,
+        visibility,
+        displayDims,
+        2,
+        1,
+        wasmOutput
+      );
+
+      expect(wasmCount).toBe(tsCount);
+      expect(wasmOutput[3]).toBe(0);
+      expect(wasmOutput[4]).toBe(0);
+      expect(wasmOutput[5]).toBeCloseTo(Math.sqrt(2.0 * 1.5), 5);
+      expect(arraysAlmostEqual(wasmOutput, tsOutput)).toBe(true);
+    });
   });
 
   // ============================================================================
