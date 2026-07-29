@@ -329,6 +329,27 @@ class TestDownloadZipMember:
         )
         assert out.read_bytes() == payloads[member]
 
+    def test_promotion_failure_keeps_verified_bytes(
+        self, range_server: str, tmp_path: Path
+    ) -> None:
+        """A member that is fully written and CRC-verified but cannot be renamed
+        into place (here: the destination already exists as a directory) must
+        keep its verified staging bytes — the promotion happens OUTSIDE the
+        mid-stream cleanup guard, so a failed rename never deletes good data.
+        """
+        payloads = _make_payloads()
+        _build_zip(tmp_path / "archive.zip", payloads)
+        member = "readme.txt"
+        out = tmp_path / "dest"
+        out.mkdir()  # os.replace() of a file onto an existing directory fails
+
+        with pytest.raises(OSError):
+            download_zip_member(f"{range_server}/archive.zip", member, out)
+
+        part = out.with_suffix(out.suffix + ".part")
+        assert part.exists()
+        assert part.read_bytes() == payloads[member]
+
     def test_matches_zipfile_extraction(
         self, range_server: str, tmp_path: Path
     ) -> None:

@@ -27,6 +27,10 @@ jobs:
     # runner. 60 min leaves generous headroom for the not-slow pass.
     timeout-minutes: 60
     strategy:
+      # Report every interpreter's verdict in one run: fail-fast would cancel the
+      # siblings on the first red leg, losing precisely the per-version information
+      # you need when the legs genuinely differ.
+      fail-fast: false
       matrix:
         python-version: ['3.10', '3.11', '3.12']
     steps:
@@ -42,16 +46,41 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        id: setup-python
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
           cache-dependency-path: pyproject.toml
 
       - name: Install Hatch
-        run: pipx install hatch
+        # Install Hatch ON the matrix interpreter. Hatch builds an environment
+        # that declares no `python` with whatever interpreter Hatch ITSELF runs
+        # under ("Prefer the Python version Hatch is currently using",
+        # hatch/env/virtual.py), so a plain `pipx install hatch` pins every env
+        # to the runner's default Python and the matrix value never reaches the
+        # tests — all three legs silently ran 3.12. See #839.
+        run: pipx install --python "${{ steps.setup-python.outputs.python-path }}" hatch
 
       - name: Create viewer dist placeholder
         run: mkdir -p packages/luxar-viewer/dist
+
+      - name: Assert hatch uses the matrix interpreter
+        # The guard that #839 was missing. It must compare for EQUALITY: the
+        # pre-existing floor check (`>= 3.10`, scripts/test_hpc_setup.py) passed
+        # happily while every leg ran 3.12, which is how the matrix stayed
+        # decorative for so long.
+        #
+        # NB: no braces in the -c snippet. `hatch run` expands `{...}` as its own
+        # template context, so an f-string like f"{sys.version_info.major}" dies
+        # with "Unknown context field `sys`" instead of printing a version.
+        run: |
+          want="${{ matrix.python-version }}"
+          got=$(hatch run python -c "import sys; print(sys.version_info.major, sys.version_info.minor, sep='.')")
+          echo "matrix=$want hatch-env=$got"
+          if [ "$want" != "$got" ]; then
+            echo "::error::hatch env runs $got but this leg is $want — the matrix is not real (see #839)"
+            exit 1
+          fi
 
       - name: Audit Python dependencies
         run: |
@@ -59,25 +88,34 @@ jobs:
           hatch run python -m pip_audit --desc --skip-editable
         continue-on-error: true
 
+      # The gates below judge the SOURCE, not the runtime (ruff target-version
+      # py310, mypy python_version 3.10), so they run once — on the 3.12 leg —
+      # while staying under the required `python-tests (3.12)` context.
       - name: Lint (ruff)
+        if: matrix.python-version == '3.12'
         run: hatch run python -m ruff check packages/luxar/src/luxar/
 
       - name: Type check (mypy)
+        if: matrix.python-version == '3.12'
         run: hatch run mypy packages/luxar/src/luxar/
 
       - name: Layer check (import-linter)
+        if: matrix.python-version == '3.12'
         # Domain layers (gsplats/io/core/encoding) must not import luxar.cli.
         run: hatch run lint-imports
 
       - name: Version consistency (Python == viewer)
+        if: matrix.python-version == '3.12'
         run: hatch run python scripts/check_version_consistency.py
 
       - name: Format contract drift (Python <-> TypeScript)
+        if: matrix.python-version == '3.12'
         # The generated typing_utils/_format_contract.py + viewer
         # types/format-contract.ts must match format-contract/contract.yaml.
         run: hatch run check-contract
 
       - name: Demo data manifest drift
+        if: matrix.python-version == '3.12'
         # demos/data_manifest.json must match the demos/data tree. Safe without
         # `git lfs pull`: the generator reads each file's sha256 + size from its
         # LFS *pointer* when the payload is not materialized, so this needs
@@ -86,6 +124,7 @@ jobs:
         run: hatch run check-data-manifest
 
       - name: Security (bandit)
+        if: matrix.python-version == '3.12'
         # Gates on unwaived medium/high findings. Low findings (subprocess
         # usage, etc.) and demos are out of scope; see [tool.bandit].
         run: hatch run security

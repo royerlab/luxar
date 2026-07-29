@@ -115,14 +115,35 @@ describe('nD Navigation Utilities', () => {
       expect(step).toBe(10); // 1 * 10 (coarseStepMultiplier)
     });
 
-    it('should ensure minimum step of 1 for discrete dimensions', () => {
+    it('should floor at one grid cell for discrete dimensions', () => {
       const dims = new DimensionsBuilder()
         .withNDimensions(2)
         .withDimension(0, 'frame', '', [0, 10], { step: 0.1, discrete: true })
         .build();
 
       const step = calculateStepSize(0, dims, { shift: true });
-      expect(step).toBe(1); // Minimum 1 for discrete
+      expect(step).toBe(0.1); // One grid cell (meta.step) is the floor for discrete dims
+    });
+
+    it('floors a classic step-1 discrete dim at one whole cell under fine control', () => {
+      const dims = new DimensionsBuilder()
+        .withNDimensions(2)
+        .withDimension(0, 'frame', '', [0, 10], { step: 1, discrete: true })
+        .build();
+
+      const step = calculateStepSize(0, dims, { shift: true });
+      expect(step).toBe(1); // step-1 discrete: max(1, round(0.1)) = 1, unchanged from historical behavior
+    });
+
+    it('steps a fractional-step discrete dim by ten grid cells under coarse control', () => {
+      const step = 2.0 / 50; // 0.04
+      const dims = new DimensionsBuilder()
+        .withNDimensions(2)
+        .withDimension(0, 'w', '', [0, 2], { step, discrete: true })
+        .build();
+
+      const result = calculateStepSize(0, dims, { ctrl: true });
+      expect(result).toBe(10 * step); // 0.04 ×10 coarse = 0.4, quantized to 10 cells on the 0.04 grid
     });
 
     it('should use custom navigation config', () => {
