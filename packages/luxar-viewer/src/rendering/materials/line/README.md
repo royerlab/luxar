@@ -29,7 +29,15 @@ unit quad with corners `aQuadCorner ∈ {(±1, ±1)}`: `x` selects the
 interpolation parameter `t` along the segment (`0` at start, `1` at end),
 `y` selects the perpendicular offset (`−1` bottom edge, `+1` top edge). The
 vertex stage projects both endpoints to view space, runs near-plane safety
-(degenerate-quad when both endpoints fail `uNearCull`; pathological-quad
+(degenerate-quad when both endpoints fail `uNearCull`; **segment clipping**
+when exactly ONE endpoint is closer than `uNearCull` or behind the camera —
+that endpoint is moved along the segment onto the nearCull plane before any
+screen-space math and `t` is remapped (`tEff`) so per-endpoint attributes
+and the cap math keep the original parameterization; without it the
+behind-camera endpoint's `clip.w ≤ 0` wraps the quad into an external
+primitive whose visible half cuts a bright razor edge through the
+cross-profile at close zoom, and the cut lands exactly where the
+per-fragment near fade reaches zero so no seam is visible; pathological-quad
 discard when both are near AND the raw pixel width blows past
 `uMaxLinePixelWidth × 2`), converts world-space width to pixel width using
 either `uPerspectiveLineScale = resY / tan(fov/2)` or

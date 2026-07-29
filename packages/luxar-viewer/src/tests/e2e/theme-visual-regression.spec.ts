@@ -83,6 +83,9 @@ for (const theme of THEMES) {
     await expect(errorDialog).toHaveScreenshot(`error-dialog-${theme}.png`, {
       maxDiffPixelRatio: 0.1,
       threshold: 0.3,
+      // The example URL embeds window.location.origin, so the pixels vary
+      // with the dev-server port (5173 vs worktree/CI ports). Mask it.
+      mask: [page.locator('.luxar-error-dialog__guidance-code')],
     });
   });
 }

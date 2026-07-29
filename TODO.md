@@ -167,12 +167,26 @@ to ship after). Sequencing is at the bottom.
     `luxar.demos.data_fetch` helper that pulls a named dataset from a Zenodo
     record (verifying a checksum) into the cache on first run.
   - **Plan (incremental, largest-first, keeps LFS as fallback until proven):**
-    (1) shared fetch helper + a committed `demos/data/manifest.json` pinning each
+    (1) ✅ **DONE** — shared fetch helper + a committed manifest pinning each
     dataset's Zenodo record/URL + checksum + expected version; (2) create the
     "Luxar demo datasets" Zenodo deposition, upload current files; (3) repoint
     demos at the helper one at a time; (4) `git rm` the migrated files and drop
     their `.gitattributes` LFS globs. Future large datasets land as **new Zenodo
     versions**, with the manifest pinning what each Luxar release expects.
+  - **Step 1 landed.** `packages/luxar/src/luxar/demos/data_manifest.json`
+    (note: *not* under `demos/data/`, which packaging excludes wholesale) +
+    `luxar.utils.data_fetch` (`ensure_dataset`, `load_dataset_gsplats`) +
+    `scripts/gen_data_manifest.py`, gated by `hatch run check-data-manifest`.
+    All 23 datasets are classified and licensed; every record ID is still null,
+    so the fetch path is dormant and demos run off the in-repo LFS copy. No demo
+    is migrated yet.
+  - **⚠ Step 4 has a licensing trigger, not just a size one.** `gsplats_tribolium`
+    and `gsplats_acto3d_heart` are `local-compute` ("cannot redistribute even the
+    derived product") yet their fitted files are committed in LFS **today**. They
+    must be `git rm`-ed before the repo goes public, independently of the Zenodo
+    upload — and those two demos must *not* be migrated to the fetch helper (it
+    returns `None` for a `local-compute` dataset, which would silently start a
+    from-scratch GPU fit instead of loading the file that is right there).
   - **License audit — DONE (web-verified 2026-07-15).** A gsplat fit / point
     catalog is a *derived* product (lossy transform, not the raw voxels/pixels),
     which is broadly redistributable — but "derived" does **not** launder three

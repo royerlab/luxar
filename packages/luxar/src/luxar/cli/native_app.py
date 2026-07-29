@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import os
 import platform
+import shlex
 import shutil
 import stat
 import subprocess
@@ -74,7 +75,7 @@ def validate_bundle_name(name: str) -> str:
         raise ValueError("Bundle name must not be empty or whitespace-only.")
     if "/" in name or "\\" in name:
         raise ValueError(f"Bundle name must not contain path separators: {name!r}")
-    if any(ord(ch) < 32 for ch in name):
+    if any(ord(ch) < 32 or 0x7F <= ord(ch) <= 0x9F for ch in name):
         raise ValueError(
             f"Bundle name must not contain NUL or control characters: {name!r}"
         )
@@ -172,6 +173,10 @@ def bundle_macos_app(
         # Finder shows it as a sibling). Helps users hit the xattr -cr
         # workaround when Gatekeeper blocks an unsigned download.
         readme_path = output / f"{app_name}-README.txt"
+        if readme_path.resolve().parent != output.resolve():
+            raise ValueError(
+                f"Bundle path {readme_path} escapes the output directory {output}"
+            )
         readme_path.write_text(_macos_readme(app_name))
         aprint(f"Wrote {readme_path}")
 
@@ -305,6 +310,10 @@ Folder layout
 
 
 def _macos_readme(app_name: str) -> str:
+    # Shell-quote the bundle path for the copy-paste Terminal commands so a
+    # name containing an apostrophe (e.g. "O'Brien") doesn't produce
+    # unbalanced quoting. Display lines keep the bare `<name>.app`.
+    quoted = shlex.quote(f"{app_name}.app")
     return f"""{app_name}.app — Luxar standalone scene
 {"=" * (len(app_name) + 31)}
 
@@ -320,8 +329,8 @@ quarantining channel (web download, email, AirDrop, Slack, etc.).
 
 Strip the quarantine attribute via Terminal:
 
-    xattr -cr {app_name}.app
-    open {app_name}.app
+    xattr -cr {quoted}
+    open {quoted}
 
 This is a one-time fix per copy of the app — once stripped, double-
 click works normally. The app itself is a vanilla local HTTP server +
