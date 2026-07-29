@@ -5,8 +5,7 @@
  *
  *   1. **Structure** — `registerAllKeyBindings` registers the right
  *      number of bindings on the right contexts (NAVIGATION vs
- *      FLY_CONTROLS), and the FOV-control gate adds the expected
- *      blur / visibilitychange cleanup thunks.
+ *      FLY_CONTROLS).
  *
  *   2. **Dispatch** — picking a representative subset of bindings
  *      (the 1-9 dimension-select, the modifier-guarded R / V / I /
@@ -110,23 +109,20 @@ function makePanels(): {
 
 function makeSceneManager(): {
   sceneManager: SceneManager;
-  setEnableZoom: ReturnType<typeof vi.fn>;
   flyHandleKeyDown: ReturnType<typeof vi.fn>;
   flyHandleKeyUp: ReturnType<typeof vi.fn>;
 } {
-  const setEnableZoom = vi.fn();
   const flyHandleKeyDown = vi.fn();
   const flyHandleKeyUp = vi.fn();
   const sceneManager = {
     controls: {
-      setEnableZoom,
       getFlyControls: () => ({
         handleKeyDown: flyHandleKeyDown,
         handleKeyUp: flyHandleKeyUp,
       }),
     },
   } as unknown as SceneManager;
-  return { sceneManager, setEnableZoom, flyHandleKeyDown, flyHandleKeyUp };
+  return { sceneManager, flyHandleKeyDown, flyHandleKeyUp };
 }
 
 function makeDebugConsole(initiallyVisible = false): {
@@ -143,24 +139,20 @@ function makeDebugConsole(initiallyVisible = false): {
 
 function setup() {
   const { manager, bindings } = makeContextManager();
-  const { sceneManager, setEnableZoom, flyHandleKeyDown, flyHandleKeyUp } = makeSceneManager();
+  const { sceneManager, flyHandleKeyDown, flyHandleKeyUp } = makeSceneManager();
   const { console: debugConsole, toggle: debugToggle } = makeDebugConsole();
-  const cleanups: (() => void)[] = [];
   const commands = makeCommands();
   const panelsBundle = makePanels();
   registerAllKeyBindings({
     contextManager: manager,
     sceneManager,
     debugConsole,
-    cleanups,
     panels: panelsBundle.panels,
     commands,
   });
   return {
     bindings,
-    cleanups,
     commands,
-    setEnableZoom,
     flyHandleKeyDown,
     flyHandleKeyUp,
     debugToggle,
@@ -189,50 +181,29 @@ function findBinding(
 }
 
 // AUDIT NOTE (input.md G1): the sibling files (fly-bindings.ts,
-// navigation-bindings.ts, fov-hold-gate.ts) lack dedicated `.test.ts`
-// files. Their behavior is covered here transitively via
-// `registerAllKeyBindings`, which is the only documented entry point
-// (the per-file exports are not consumed outside this orchestrator).
-// The "Structure" + "FOV gate dispatch" + "NAVIGATION command
-// dispatch" + "FLY_CONTROLS dispatch" blocks below exercise:
-//   - fly-bindings.ts: WASD+modifier permutations, arrow keys, Shift gate.
+// navigation-bindings.ts) lack dedicated `.test.ts` files. Their
+// behavior is covered here transitively via `registerAllKeyBindings`,
+// which is the only documented entry point (the per-file exports are
+// not consumed outside this orchestrator).
+// The "Structure" + "NAVIGATION command dispatch" + "FLY_CONTROLS
+// dispatch" blocks below exercise:
+//   - fly-bindings.ts: WASD+modifier permutations, arrow keys, Shift boost.
 //   - navigation-bindings.ts: [, ], 1-9, h/n/o/p/r/v/i/c/f/m/g/t/b/l/Space/Esc/Ctrl+Shift+S.
-//   - fov-hold-gate.ts: Control/Meta hold counter, blur reset.
 // Splitting them into per-file test files would buy zero coverage at
-// the cost of triplicating the `setup()` boilerplate. Documented
+// the cost of duplicating the `setup()` boilerplate. Documented
 // here for the audit trail; the audit recommendation is satisfied
 // functionally.
+//
+// Ctrl/⌘+wheel FOV-vs-zoom exclusivity is no longer a key binding:
+// each wheel handler reads the event's own live modifier flags, so
+// there is no Control/Meta hold state to register or reconcile here
+// (covered in controls-manager.test.ts and the orbit pointer tests).
 
 describe('registerAllKeyBindings — structure', () => {
-  it('registers two FOV-control bindings (Control + Meta) on NAVIGATION', () => {
-    // input.md W5 fix: a structure-only check (handler is a function,
-    // count is 2) kills no mutants. Strengthen by exercising the
-    // actual side effect — each registered handler should toggle the
-    // sceneManager's setEnableZoom(false) gate on keydown. Re-enabling is
-    // NOT a per-binding keyupHandler anymore: the gate reconciles against
-    // live modifier flags on window-capture keyup (a context-routed keyup
-    // can be swallowed while typing, which used to stick the gate shut).
-    const { bindings, setEnableZoom } = setup();
-    const fov = bindings.filter(
-      (b) => b.context === InputContext.NAVIGATION && (b.key === 'Control' || b.key === 'Meta')
-    );
-    expect(fov).toHaveLength(2);
-    const fovKeys = new Set(fov.map((b) => b.key));
-    expect(fovKeys).toEqual(new Set(['Control', 'Meta']));
-    fov.forEach((b) => {
-      expect(b.handler).toBeTypeOf('function');
-      setEnableZoom.mockClear();
-      b.handler(new KeyboardEvent('keydown'));
-      expect(setEnableZoom).toHaveBeenLastCalledWith(false);
-      // A window keyup reporting both modifiers up re-enables zoom.
-      window.dispatchEvent(new KeyboardEvent('keyup', { ctrlKey: false, metaKey: false }));
-      expect(setEnableZoom).toHaveBeenLastCalledWith(true);
-    });
-  });
-
-  it('registers blur + visibilitychange cleanup thunks for the FOV gate', () => {
-    const { cleanups } = setup();
-    expect(cleanups.length).toBeGreaterThanOrEqual(2);
+  it('registers no Control/Meta hold bindings (wheel routing is stateless)', () => {
+    const { bindings } = setup();
+    const modifierHolds = bindings.filter((b) => b.key === 'Control' || b.key === 'Meta');
+    expect(modifierHolds).toHaveLength(0);
   });
 
   it('registers 9 dimension-select bindings (keys 1..9) on NAVIGATION', () => {
@@ -261,69 +232,6 @@ describe('registerAllKeyBindings — structure', () => {
         ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(b.key)
     );
     expect(arrows).toHaveLength(8);
-  });
-});
-
-describe('registerAllKeyBindings — FOV gate dispatch', () => {
-  it('Control keydown disables zoom; a modifiers-up window keyup re-enables it', () => {
-    const { bindings, setEnableZoom } = setup();
-    const ctrl = findBinding(bindings, InputContext.NAVIGATION, 'Control');
-    ctrl.handler(new KeyboardEvent('keydown'));
-    expect(setEnableZoom).toHaveBeenLastCalledWith(false);
-    window.dispatchEvent(new KeyboardEvent('keyup', { ctrlKey: false, metaKey: false }));
-    expect(setEnableZoom).toHaveBeenLastCalledWith(true);
-  });
-
-  it('held Control + Meta: releasing ONE keeps zoom disabled until the other releases too', () => {
-    const { bindings, setEnableZoom } = setup();
-    const ctrl = findBinding(bindings, InputContext.NAVIGATION, 'Control');
-    const meta = findBinding(bindings, InputContext.NAVIGATION, 'Meta');
-
-    ctrl.handler(new KeyboardEvent('keydown'));
-    meta.handler(new KeyboardEvent('keydown'));
-    setEnableZoom.mockClear();
-
-    // Release Ctrl while Meta is still held: the keyup event reports
-    // metaKey=true, so zoom must NOT re-enable.
-    window.dispatchEvent(new KeyboardEvent('keyup', { key: 'Control', metaKey: true }));
-    expect(setEnableZoom).not.toHaveBeenCalled();
-
-    // Release Meta too (both flags now up): zoom re-enables.
-    window.dispatchEvent(new KeyboardEvent('keyup', { key: 'Meta' }));
-    expect(setEnableZoom).toHaveBeenLastCalledWith(true);
-  });
-
-  it('recovers even when the modifier keyup itself was swallowed (regression: stuck zoom)', () => {
-    // The old keydown/keyup counter stuck the gate shut when a keyup was
-    // eaten (typing-context filter, macOS ⌘ suppression) — wheel zoom died
-    // until blur. Now ANY later window event whose modifier flags are up
-    // (here: a pointer move) reconciles the gate open.
-    const { bindings, setEnableZoom } = setup();
-    const ctrl = findBinding(bindings, InputContext.NAVIGATION, 'Control');
-    ctrl.handler(new KeyboardEvent('keydown'));
-    ctrl.handler(new KeyboardEvent('keydown', { repeat: true })); // key-repeat, no keyup seen
-    setEnableZoom.mockClear();
-
-    window.dispatchEvent(new PointerEvent('pointermove', { ctrlKey: false, metaKey: false }));
-    expect(setEnableZoom).toHaveBeenLastCalledWith(true);
-  });
-
-  it('blur cleanup resets the counter and re-enables zoom', () => {
-    const { bindings, cleanups, setEnableZoom } = setup();
-    const ctrl = findBinding(bindings, InputContext.NAVIGATION, 'Control');
-    ctrl.handler(new KeyboardEvent('keydown'));
-    setEnableZoom.mockClear();
-
-    // Simulate a window blur — the listener registered by the gate
-    // should reset the counter and re-enable zoom.
-    window.dispatchEvent(new Event('blur'));
-    expect(setEnableZoom).toHaveBeenLastCalledWith(true);
-
-    // Cleanup thunks remove the listener; subsequent blur is a no-op.
-    cleanups.forEach((c) => c());
-    setEnableZoom.mockClear();
-    window.dispatchEvent(new Event('blur'));
-    expect(setEnableZoom).not.toHaveBeenCalled();
   });
 });
 
@@ -443,13 +351,15 @@ describe('registerAllKeyBindings — FLY_CONTROLS dispatch', () => {
     expect(flyHandleKeyUp).toHaveBeenCalledWith(upEvt);
   });
 
-  it('Shift speed boost: keydown disables zoom, keyup re-enables it', () => {
-    const { bindings, setEnableZoom } = setup();
+  it('Shift speed boost: keydown / keyup forward to the fly-controls handlers', () => {
+    const { bindings, flyHandleKeyDown, flyHandleKeyUp } = setup();
     const shift = findBinding(bindings, InputContext.FLY_CONTROLS, 'Shift');
-    shift.handler(new KeyboardEvent('keydown'));
-    expect(setEnableZoom).toHaveBeenLastCalledWith(false);
-    shift.keyupHandler!(new KeyboardEvent('keyup'));
-    expect(setEnableZoom).toHaveBeenLastCalledWith(true);
+    const down = new KeyboardEvent('keydown', { key: 'Shift' });
+    shift.handler(down);
+    expect(flyHandleKeyDown).toHaveBeenCalledWith(down);
+    const up = new KeyboardEvent('keyup', { key: 'Shift' });
+    shift.keyupHandler!(up);
+    expect(flyHandleKeyUp).toHaveBeenCalledWith(up);
   });
 });
 

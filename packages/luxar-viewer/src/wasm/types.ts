@@ -344,7 +344,8 @@ export interface WasmModule {
    *
    * @param cholesky - Packed Cholesky factors [splatCount * packedSize]
    * @param visibility - Visibility mask [splatCount]
-   * @param displayDims - Display dimension indices (sorted) [3]
+   * @param displayDims - Display dimension indices (sorted) [1..=3]; missing
+   *   rows are scale-matched-padded for 1D/2D data
    * @param ndim - Total dimensionality
    * @param splatCount - Number of splats
    * @param output - Output 3D Cholesky factors [visibleCount * 6]
