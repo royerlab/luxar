@@ -90,10 +90,13 @@ export function updateMaterialsForCurrentCamera(ctx: CameraMaterialsCtx): void {
  * clamped to `[fovMin, fovMax]`. Updates the projection matrix and
  * pushes the new projection into materials.
  *
- * No-op for orthographic cameras.
+ * Returns true when the FOV was applied, false for orthographic
+ * cameras (no-op) — callers use this to skip FOV-coupled UI updates
+ * (e.g. flipping the rendering-controls preset to "Custom") when
+ * nothing actually changed.
  */
-export function adjustFOV(ctx: CameraMaterialsCtx, deltaY: number): void {
-  if (!isPerspectiveCamera(ctx.camera)) return;
+export function adjustFOV(ctx: CameraMaterialsCtx, deltaY: number): boolean {
+  if (!isPerspectiveCamera(ctx.camera)) return false;
   const fovChange = deltaY * config.camera.fovSensitivity;
   ctx.camera.fov = validateFOV(
     ctx.camera.fov + fovChange,
@@ -102,4 +105,5 @@ export function adjustFOV(ctx: CameraMaterialsCtx, deltaY: number): void {
   );
   ctx.camera.updateProjectionMatrix();
   updateMaterialsForCurrentCamera(ctx);
+  return true;
 }

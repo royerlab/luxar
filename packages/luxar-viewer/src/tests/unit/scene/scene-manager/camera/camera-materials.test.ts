@@ -144,7 +144,9 @@ describe('adjustFOV', () => {
     const ctx = makeCtx({ camera });
 
     const fovBefore = camera.fov;
-    adjustFOV(ctx, 10); // positive deltaY → increase fov
+    // Returns true so callers (window wheel handler) know the FOV was
+    // applied and can sync FOV-coupled UI (the "Custom" preset stamp).
+    expect(adjustFOV(ctx, 10)).toBe(true); // positive deltaY → increase fov
     expect(camera.fov).not.toBe(fovBefore);
     expect(updateSpy).toHaveBeenCalledTimes(1);
     expect(materialManager.updateCameraParams).toHaveBeenCalledTimes(1);
@@ -167,12 +169,14 @@ describe('adjustFOV', () => {
     expect(camera.fov).toBeGreaterThanOrEqual(config.camera.fovMin);
   });
 
-  it('is a no-op on orthographic cameras', () => {
+  it('is a no-op on orthographic cameras (returns false)', () => {
     const camera = new THREE.OrthographicCamera(-10, 10, 5, -5, 0.1, 1000);
     const updateSpy = vi.spyOn(camera, 'updateProjectionMatrix');
     const ctx = makeCtx({ camera });
 
-    adjustFOV(ctx, 100);
+    // false tells callers nothing changed — the window wheel handler
+    // uses this to skip the "Custom" preset stamp in ortho mode.
+    expect(adjustFOV(ctx, 100)).toBe(false);
 
     expect(updateSpy).not.toHaveBeenCalled();
     expect(materialManager.updateCameraParams).not.toHaveBeenCalled();

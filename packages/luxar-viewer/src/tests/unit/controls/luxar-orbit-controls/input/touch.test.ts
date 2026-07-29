@@ -62,6 +62,7 @@ function makeCtx(
     enableRotate: true,
     enablePan: true,
     enableZoom: true,
+    isOrthographic: false,
     mouseButtons: {
       LEFT: THREE.MOUSE.PAN,
       MIDDLE: THREE.MOUSE.DOLLY,
