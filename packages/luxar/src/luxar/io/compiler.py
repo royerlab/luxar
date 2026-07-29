@@ -303,8 +303,17 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         self._check_not_finalized("write_group")
         # Fail fast on invalid render attrs BEFORE creating the group (same
         # contract as the geometry writers; the Node path validates earlier,
-        # this covers the raw compiler API).
-        _validate_render_attrs(attrs)
+        # this covers the raw compiler API). The scene root ("/") and the
+        # ``overlays/`` namespace carry their own internal attr schemas (scene
+        # dimensions / viewer config / overlay styling), so the unknown-key
+        # guard is scoped to real geometry/group nodes. A non-str path is
+        # treated as not-internal so the clean ValidationError from
+        # ``_validate_node_path`` below (not an AttributeError here) surfaces.
+        is_internal_namespace = False
+        if isinstance(path, str):
+            first_segment = path.lstrip("/").split("/", 1)[0]
+            is_internal_namespace = path in ("/", "") or first_segment == "overlays"
+        _validate_render_attrs(attrs, reject_unknown=not is_internal_namespace)
         # Handle root path
         if path == "/" or path == "":
             group = self.store
@@ -579,6 +588,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 scalars=lvl.get("scalars"),
                 labels=lvl.get("labels"),
                 grid_shape=grid_shape,
+                **({"lod_stats": lvl["lod_stats"]} if lvl.get("lod_stats") else {}),
                 **({"extend_to_all": extend_to_all} if extend_to_all else {}),
                 _skip_scene_bounds=True,
             )
@@ -675,6 +685,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 image_labels=None,
                 indices=flat_indices,
                 line_type="indexed" if flat_indices is not None else "polyline",
+                **({"lod_stats": lvl["lod_stats"]} if lvl.get("lod_stats") else {}),
                 **({"extend_to_all": extend_to_all} if extend_to_all else {}),
                 _skip_scene_bounds=True,
             )

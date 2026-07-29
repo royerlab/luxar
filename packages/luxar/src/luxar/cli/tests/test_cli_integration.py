@@ -611,3 +611,60 @@ class TestDataServerMountRoot:
         assert _resolve_mount_root(store) == store
         assert _resolve_mount_root(plain) == plain
         assert _resolve_mount_root(lone_file) == tmp_path
+
+    def test_viewer_rejects_file_data_path(self, tmp_path):
+        """`viewer --data <file>` is rejected before any server starts.
+
+        A lone file store cannot be served over plain HTTP anyway, and serving
+        it would mount its parent directory (every sibling file) at ``/``. The
+        guard fires before ``uvicorn.run`` so the invocation returns immediately.
+        """
+        from typer.testing import CliRunner
+
+        from luxar.cli import app
+        from luxar.cli import main as cli_main
+
+        lone_file = tmp_path / "scene.zarr.zip"
+        lone_file.write_bytes(b"PK\x03\x04")
+        (tmp_path / "secret_sibling.txt").write_text("SECRET")
+
+        # ensure_viewer_built() runs before the guard; force True so a non-zero
+        # exit can only come from the directory guard we are testing. Also stub
+        # the blocking server plumbing so that if the guard ever regresses the
+        # test fails cleanly on the message assertion instead of falling through
+        # to uvicorn.run() and hanging the suite (while serving the tmp dir).
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.setattr(cli_main, "ensure_viewer_built", lambda: True)
+        monkeypatch.setattr(cli_main, "_start_data_server_thread", lambda *a, **k: None)
+        monkeypatch.setattr(cli_main, "_serve_viewer", lambda *a, **k: None)
+        try:
+            result = CliRunner().invoke(
+                app,
+                ["viewer", "--data", str(lone_file), "--no-open"],
+            )
+        finally:
+            monkeypatch.undo()
+
+        assert result.exit_code != 0, result.stdout
+        assert "must be a directory" in result.stdout
+
+    def test_viewer_accepts_directory_data_path(self, sample_scene, monkeypatch):
+        """`viewer --data <.zarr dir>` passes the guard (no rejection)."""
+        from typer.testing import CliRunner
+
+        from luxar.cli import app
+        from luxar.cli import main as cli_main
+
+        # Stub out the blocking server plumbing so the command returns cleanly
+        # once it is past the directory guard.
+        monkeypatch.setattr(cli_main, "ensure_viewer_built", lambda: True)
+        monkeypatch.setattr(cli_main, "_start_data_server_thread", lambda *a, **k: None)
+        monkeypatch.setattr(cli_main, "_serve_viewer", lambda *a, **k: None)
+
+        result = CliRunner().invoke(
+            app,
+            ["viewer", "--data", str(sample_scene), "--no-open"],
+        )
+
+        assert result.exit_code == 0, result.stdout
+        assert "must be a directory" not in result.stdout

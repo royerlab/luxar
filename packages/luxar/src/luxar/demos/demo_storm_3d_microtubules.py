@@ -723,7 +723,8 @@ def create_storm_scene(
                     name="microtubules",
                     result=gsplat_data,
                     opacity=0.8,
-                    blending_mode="additive",
+                    absorption=1.0,
+                    blending_mode="volumetric",
                 )
 
                 aprint(f"✓ Added {n_splats * 2:,} splats (2 views × {n_splats:,})")

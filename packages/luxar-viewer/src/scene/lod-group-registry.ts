@@ -46,6 +46,7 @@ import * as THREE from 'three';
 
 import type { BoundingBox } from './scene-manager/clipping/bounds-math';
 import { log, Modules } from '../utils/log';
+import { isEffectivelyVisible } from '../utils/object-visibility';
 import type { LODGroupSelectorMode } from '../types/lod-group';
 import {
   isFresh,
@@ -339,7 +340,8 @@ export interface LODGroupRegistryDeps {
   requestRender?: () => void;
   /**
    * Whether the LOD cross-fade is enabled (ON by default; `?no-lod-fade`
-   * disables). When true and an additive/luminous group is zooming across a LOD
+   * disables). When true and a blendable (additive/luminous/volumetric — see
+   * `BLENDABLE_MODES` in `scene/lod-fade.ts`) group is zooming across a LOD
    * boundary, the registry
    * blends the two straddling levels' opacity — the finer at
    * `smoothstep(coverage metric across a ±band around the boundary)`, the
@@ -351,7 +353,8 @@ export interface LODGroupRegistryDeps {
    */
   getCrossFadeEnabled?: () => boolean;
   /**
-   * Whether streaming brightness compensation is enabled: as an additive/luminous
+   * Whether streaming brightness compensation is enabled: as a blendable
+   * (additive/luminous/volumetric)
    * leaf's ladder streams in, scale its opacity by `1/e(k)` so the partial prefix
    * renders at the full-level energy (no brightening pop). Distinct axis from the
    * cross-fade (time, not distance) and independently gated; either flag on
@@ -717,7 +720,7 @@ export class LODGroupRegistry {
       if (isReady(target)) {
         entry.activeChildIndex = desired;
       } else {
-        this.maybeKickLoad(target);
+        this.maybeKickLoad(entry, target);
       }
     }
     // Self-heal a NOT-ready aspiration (eager default failed to attach, or a
@@ -728,7 +731,7 @@ export class LODGroupRegistry {
     // registered child loader re-queries on a view change), not by the registry
     // — we just wait for that commit to re-stamp it fresh.
     const aspiration = entry.children[entry.activeChildIndex];
-    if (aspiration && !isReady(aspiration)) this.maybeKickLoad(aspiration);
+    if (aspiration && !isReady(aspiration)) this.maybeKickLoad(entry, aspiration);
 
     // ── Slice-aware DISPLAY resolution ──
     // Show the aspiration when its committed geometry is fresh for the current
@@ -838,8 +841,19 @@ export class LODGroupRegistry {
     // across a ±band around the boundary — so the substitutive switch dissolves
     // instead of popping. Purely a function of DISTANCE (the coverage metric),
     // independent of additive streaming; brightness is preserved by the levels'
-    // build-time mass conservation (both integrate to the same DC). Additive/
-    // luminous only (order-independent compositing). Off / non-blendable /
+    // build-time mass conservation (both integrate to the same DC). Blendable
+    // modes only (BLENDABLE_MODES = additive/luminous/volumetric — energy sums
+    // linearly, or opacity linearly scales optical depth τ so the pair
+    // interpolates monotonically between the two levels' absorptions; see that
+    // set's doc for what volumetric does NOT guarantee). For two mid-fade
+    // volumetric siblings the mesh draw order may come from the render-order
+    // containment rule (near-identical bounds); acceptable because combined
+    // TRANSMITTANCE is order-independent (transmittances multiply), so occlusion
+    // of content behind the pair is exact at every weight — emission is
+    // order-dependent only to second order (the levels' per-fragment alphas,
+    // already scaled by w/(1−w), times their local color difference), bounded by
+    // the same inter-level difference the hard swap showed in full. Off /
+    // non-blendable /
     // off-screen / locked / a held-stale display ⇒ no blend (byte-identical hard
     // swap). The finer partner must be resident to fade against; if it is not,
     // kick its load so the NEXT crossing blends (the first hard-swaps meanwhile).
@@ -886,7 +900,7 @@ export class LODGroupRegistry {
         } else if (partner && !isReady(partner) && aspBlendable) {
           // Approaching a not-yet-resident finer level: load it so the next
           // crossing can blend (this crossing hard-swaps while it loads).
-          this.maybeKickLoad(partner);
+          this.maybeKickLoad(entry, partner);
         }
       }
     }
@@ -904,13 +918,15 @@ export class LODGroupRegistry {
     const needsReloadOrRefine =
       aspirationReady && (!aspirationFresh || (aspiration!.hasMoreLODs?.() ?? false));
     if (settled && needsReloadOrRefine && aspiration!.ensureLoaded) {
-      this.maybeKickReload(aspiration!);
+      this.maybeKickReload(entry, aspiration!);
     }
 
     // ── Apply visibility (single owner) ──
-    // At most one child visible (``displayIdx``, and only if it is READY — never
-    // force-show a not-ready placeholder). ``changed`` flips when the SHOWN
-    // level changes so ``evaluatePerFrame`` refreshes the monitor's visible
+    // At most the display child plus its cross-fade partner is visible
+    // (``displayIdx`` / ``blendPartnerIdx``, each only if READY — never
+    // force-show a not-ready placeholder; outside a cross-fade band it's the
+    // classic single visible level). ``changed`` flips when a SHOWN level
+    // changes so ``evaluatePerFrame`` refreshes the monitor's visible
     // tally, which counts the displayed level, not the aspiration.
     let changed = false;
     // Opacity is managed only while at least one anti-popping feature is on: the
@@ -1161,9 +1177,9 @@ export class LODGroupRegistry {
    * released" behaviour left permanently stuck (a failed child is never an
    * eviction candidate).
    */
-  private maybeKickLoad(child: LODGroupChild): void {
+  private maybeKickLoad(entry: LODGroupEntry, child: LODGroupChild): void {
     if (isReady(child)) return; // not-ready-only: a ready level needs no initial load
-    this.kickDeferredLoad(child);
+    this.kickDeferredLoadIfVisible(entry, child);
   }
 
   /**
@@ -1180,7 +1196,42 @@ export class LODGroupRegistry {
    * blanks the screen, and the shared ``loading``/cooldown guards make
    * re-calling it every settled frame safe.
    */
-  private maybeKickReload(child: LODGroupChild): void {
+  private maybeKickReload(entry: LODGroupEntry, child: LODGroupChild): void {
+    this.kickDeferredLoadIfVisible(entry, child);
+  }
+
+  /**
+   * **Effective-visibility gate** — the single place the per-frame paths
+   * (``maybeKickLoad`` / ``maybeKickReload``) decide whether a deferred load is
+   * worth STARTING at all.
+   *
+   * A layer authored ``visible=false`` (or toggled off in the layers panel)
+   * hides the LAYER object; the lod_group and its levels underneath keep their
+   * own ``visible`` flags, so the selector happily kept aspiring to — and
+   * lazily loading — fine levels that cannot be drawn. Those loads compete for
+   * the shared fetch gate, the worker pool, and VRAM with the layer the user is
+   * actually looking at (measured: a hidden 9.75M-point level finished FIRST,
+   * roughly doubling scene load time). So: no group visible ⇒ no new loads.
+   *
+   * Scope is deliberately narrow — this only stops STARTING work:
+   *   - it never hides or unloads anything already resident (a hidden layer
+   *     draws nothing anyway, and retention keeps a re-show free);
+   *   - the eager ``default_level`` is loaded by ``loadLodGroupNode``, not from
+   *     here, so a hidden layer still has its cheap coarse level ready to
+   *     display the instant the panel toggles it on;
+   *   - the walk is ancestor-aware via ``entry.groupObject`` (the hidden flag
+   *     usually sits on an ANCESTOR layer/group, not on the lod_group itself);
+   *   - the gate is re-evaluated every frame, so toggling the layer back on
+   *     (``LayerApplyEngine.applyVisibility`` → ``requestRender`` →
+   *     ``AnimationController`` → ``evaluatePerFrame``) resumes loading on the
+   *     very next frame with no extra wiring.
+   *
+   * ``retryLazyChildByLeafPath`` (an explicit user retry of a FAILED level)
+   * deliberately bypasses this and calls ``kickDeferredLoad`` directly: an
+   * explicit request is honoured whatever the layer's visibility.
+   */
+  private kickDeferredLoadIfVisible(entry: LODGroupEntry, child: LODGroupChild): void {
+    if (!isEffectivelyVisible(entry.groupObject)) return;
     this.kickDeferredLoad(child);
   }
 

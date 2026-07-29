@@ -251,6 +251,83 @@ describe('buildSceneGraph — gsplats internal-subtree skip', () => {
     expect(root.children?.[0].children?.[0].path).toBe('/grp/splats');
     expect(root.children?.[0].children?.[0].children).toEqual([]);
   });
+
+  it('keeps a lod group at 3 children when its finest level is an additive-laddered POINTS leaf', async () => {
+    // The composed shape (fixture `test_lod_group_additive_finest.luxar.zarr`):
+    // a kind=lod group whose finest child is BOTH a substitutive level AND
+    // itself progressive (an additive `stream:` ladder).
+    //
+    //   /composed              kind=lod, display_type=points, default_level=0
+    //     child_0             gsplats, coverage_fraction=0.0   (coarse)
+    //     child_1             gsplats, coverage_fraction=0.5   (coarse)
+    //     child_2             points,  coverage_fraction=1.0,
+    //                         n_additive_sublods=3
+    //       additive_0/1/2    points  (internal to the progressive loader)
+    //
+    // The internal-subtree marking must fire for the POINTS leaf too — if
+    // `additive_<i>` surfaced as scene-graph nodes, the lod group would report
+    // 6 children, the coverage ladder would gain three bogus entries at
+    // coverage_fraction=0, and the selector would pick a phantom level. This
+    // is what makes the whole composition legal (build-scene-graph.ts pushes
+    // `${path}/` onto `internalSubtreePrefixes` for points/lines/gsplats alike).
+    enumerateStoreMock.mockResolvedValue([
+      { path: '/composed', kind: 'group' },
+      { path: '/composed/child_0', kind: 'group' },
+      { path: '/composed/child_1', kind: 'group' },
+      { path: '/composed/child_2', kind: 'group' },
+      { path: '/composed/child_2/additive_0', kind: 'group' },
+      { path: '/composed/child_2/additive_1', kind: 'group' },
+      { path: '/composed/child_2/additive_2', kind: 'group' },
+    ]);
+    attrsByPath['/composed'] = {
+      type: 'group',
+      kind: 'lod',
+      selector: 'coverage',
+      display_type: 'points',
+      default_level: 0,
+    };
+    attrsByPath['/composed/child_0'] = {
+      type: 'gsplats',
+      coverage_fraction: 0.0,
+      child_index: 0,
+    };
+    attrsByPath['/composed/child_1'] = {
+      type: 'gsplats',
+      coverage_fraction: 0.5,
+      child_index: 1,
+    };
+    attrsByPath['/composed/child_2'] = {
+      type: 'points',
+      coverage_fraction: 1.0,
+      n_additive_sublods: 3,
+      child_index: 2,
+    };
+    attrsByPath['/composed/child_2/additive_0'] = { type: 'points', n_points: 50 };
+    attrsByPath['/composed/child_2/additive_1'] = { type: 'points', n_points: 200 };
+    attrsByPath['/composed/child_2/additive_2'] = { type: 'points', n_points: 1750 };
+
+    const root = await buildSceneGraph(makeStubLoc('') as never, makeRootAttrs(), {} as never);
+
+    const composed = root.children?.[0];
+    expect(composed?.path).toBe('/composed');
+    expect(composed?.children).toHaveLength(3);
+    expect(composed?.children?.map((c) => c.path)).toEqual([
+      '/composed/child_0',
+      '/composed/child_1',
+      '/composed/child_2',
+    ]);
+    const finest = composed?.children?.[2];
+    expect(finest?.type).toBe('points');
+    expect(finest?.children).toEqual([]);
+    // The ladder subgroups are never even opened — the progressive points
+    // loader walks them itself.
+    expect(openCalls).toEqual([
+      'composed',
+      'composed/child_0',
+      'composed/child_1',
+      'composed/child_2',
+    ]);
+  });
 });
 
 describe('buildSceneGraph — bare node root (standalone .gsplats.zarr)', () => {

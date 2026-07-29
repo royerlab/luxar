@@ -175,7 +175,17 @@ export class LayerApplyEngine {
       if (!mat) continue;
       const eff = this.composeEffective(leaf.path);
       if (!eff) continue;
-      mat.updateOpacity(eff.opacity);
+      // An in-flight LOD fade owns the live opacity uniform: it re-renders
+      // `_lodFadeBase × fadeProduct` every frame (scene/lod-fade.ts), so a
+      // direct uniform write here would be clobbered on the next fade frame
+      // and the panel edit lost until the fade ends. Rebase the fade's
+      // snapshot instead — the registry composes `newBase × product` on the
+      // very next frame and restores `newBase` when the fade completes.
+      if (obj.userData._lodFadeBase != null) {
+        obj.userData._lodFadeBase = eff.opacity;
+      } else {
+        mat.updateOpacity(eff.opacity);
+      }
       // All three geometry-material families implement it (gsplats
       // phase 1, points phase 3, lines phase 4); optional-chained for
       // non-Luxar materials.

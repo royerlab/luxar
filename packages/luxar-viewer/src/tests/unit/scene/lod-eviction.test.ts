@@ -18,6 +18,7 @@ import {
   type EvictableChild,
   type EvictableEntry,
 } from '../../../scene/lod-eviction';
+import type { VisibilityNode } from '../../../utils/object-visibility';
 
 /** A ready, previously-shown child with a release spy and a visibility flag. */
 function child(visible: boolean, lastVisibleTick = 1): EvictableChild & { release: () => void } {
@@ -118,6 +119,88 @@ describe('enforceResidentByteBudget — on-screen protection', () => {
     });
     run(entry, () => resident);
     expect(bare.release).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('enforceResidentByteBudget — hidden-layer (effective visibility)', () => {
+  /**
+   * A ready, previously-shown child sitting under `layer` — the scene-graph
+   * shape a layer authored `visible=false` (or toggled off in the layers panel)
+   * produces: the LAYER carries the hidden flag while the level's own `visible`
+   * stays whatever the registry last set it to.
+   */
+  function childUnder(
+    layer: VisibilityNode,
+    visible: boolean,
+    lastVisibleTick: number
+  ): EvictableChild & { release: () => void } {
+    const c = child(visible, lastVisibleTick);
+    c.object = { visible, parent: layer };
+    return c;
+  }
+
+  /** Sum of un-released 100-byte levels, so releases actually free bytes. */
+  function residentModel(children: readonly (EvictableChild & { release: () => void })[]) {
+    return () =>
+      children.reduce((sum, c) => {
+        const fired = (c.release as ReturnType<typeof vi.fn>).mock.calls.length > 0;
+        return sum + (fired ? 0 : 100);
+      }, 0);
+  }
+
+  it('evicts every ready level of a hidden layer, including the displayed one', () => {
+    // Nothing of a hidden layer is on screen, so its levels are ordinary cold
+    // candidates: neither the `object.visible === true` protection (the flag is
+    // stale — the ancestor is what hides it) nor the displayed-index exemption
+    // applies. Pre-fix only the flag-hidden level 0 could be reclaimed, leaving
+    // the bulk (a hidden layer's finest level) resident forever.
+    const layer: VisibilityNode = { visible: false };
+    const cold = childUnder(layer, false, 1);
+    const partner = childUnder(layer, true, 2);
+    const displayed = childUnder(layer, true, 3);
+    const children = [cold, partner, displayed];
+    const entry: EvictableEntry = {
+      children,
+      activeChildIndex: 2,
+      displayedChildIndex: 2,
+    };
+    run(entry, residentModel(children), 50); // budget forces everything out
+    expect(cold.release).toHaveBeenCalledTimes(1);
+    expect(partner.release).toHaveBeenCalledTimes(1);
+    expect(displayed.release).toHaveBeenCalledTimes(1);
+  });
+
+  it('walks the WHOLE ancestor chain (a hidden grandparent hides the level)', () => {
+    const hiddenRoot: VisibilityNode = { visible: false };
+    const group: VisibilityNode = { visible: true, parent: hiddenRoot };
+    const displayed = childUnder(group, true, 1);
+    const entry: EvictableEntry = {
+      children: [displayed],
+      activeChildIndex: 0,
+      displayedChildIndex: 0,
+    };
+    run(entry, residentModel([displayed]), 50);
+    expect(displayed.release).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves a VISIBLE layer untouched: on-screen and displayed levels protected', () => {
+    // Regression guard — with every ancestor visible the candidate filter is
+    // byte-identical to before: only the flag-hidden cold level is reclaimed,
+    // and the pass stops over budget rather than blanking the screen.
+    const layer: VisibilityNode = { visible: true };
+    const cold = childUnder(layer, false, 1);
+    const partner = childUnder(layer, true, 2);
+    const displayed = childUnder(layer, true, 3);
+    const children = [cold, partner, displayed];
+    const entry: EvictableEntry = {
+      children,
+      activeChildIndex: 2,
+      displayedChildIndex: 2,
+    };
+    run(entry, residentModel(children), 50);
+    expect(cold.release).toHaveBeenCalledTimes(1);
+    expect(partner.release).not.toHaveBeenCalled();
+    expect(displayed.release).not.toHaveBeenCalled();
   });
 });
 

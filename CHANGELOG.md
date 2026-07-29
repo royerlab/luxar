@@ -6,6 +6,67 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Changed — volumetric joins the LOD anti-popping blendable set
+
+`volumetric` is now in `BLENDABLE_MODES` (`packages/luxar-viewer/src/scene/lod-fade.ts`),
+the predicate gating both LOD anti-popping mechanisms — the coverage-band
+cross-fade between substitutive levels and the streaming `1/e(k)` brightness
+compensation. Volumetric LOD scenes previously kept the hard visibility swap at
+every level boundary and re-acquired the streaming brightening pop, a
+documented phase-1 deferral of the volumetric mode
+(`VOLUMETRIC_BLENDING_SPEC.md` §6); since the bioimaging demo sweep switched
+the LOD showcase demos (tribolium ×2, embryo line) to volumetric, both
+artifacts were user-visible there. The enabling physics: opacity linearly
+scales optical depth (`τ = κ·opacity·intensity`), so a `w`/`1−w` cross-fade
+composites to `1 − exp(−(w·τ_fine + (1−w)·τ_coarse))` — exact at the endpoints
+and a monotone, always-bracketed log-space interpolation in between, which is
+precisely the ghost-free dissolve anti-popping wants (it collapses to constant
+absorption only where the two levels are per-ray mass-matched, which the
+total-mass build invariant does not guarantee — so the code and spec explicitly
+warn against assuming mid-fade invariance). The `1/e(k)` boost restores a
+partial ladder's τ in **aggregate**, not per ray, since `e(k)` is a global
+energy fraction over a subset of splats — the same structural approximation the
+additive/luminous path has shipped since the compensation landed. On
+individually optically-thick splats (`κ·splat-mass ≳ 1`) the boost saturates
+emission instead of brightening — bounded by the shared 10× `ENERGY_FLOOR` cap
+and transient, accepted as a single-set/shared-cap policy (spec §6 updated).
+Also fixed en route: a layers-panel opacity edit during an in-flight LOD fade
+was clobbered by the fade's next frame (the panel now rebases the fade's
+snapshot, all modes), and stale per-node-material / single-visible-child
+comments in `lod-fade.ts` / `lod-group-registry.ts`. New fixture
+`test_lod_group_volumetric.luxar.zarr` covers the volumetric cross-fade
+contract end-to-end.
+
+#### Added — Points and Lines LOD levels now stream progressively (#811, #808)
+
+`additive_lod` and `substitutive_lod` used to be mutually exclusive for Points
+and Lines, which left the finest level of a substitutive ladder as the one node
+in the LOD system that could not paint progressively: it committed
+all-at-once however large it was. On the 9.75M-point DESI demo that single
+commit froze the main thread for ~85 s. GSplats have always composed the two
+axes, so this closes a three-geometry asymmetry as much as it fixes a stall.
+
+The axes now compose — substitutive chooses *which* level renders at the current
+zoom, additive describes *how* each level streams in — and every level is
+laddered by default (`additive_lod=False` opts out), with the sibling-aware
+first chunk on all but the coarsest. A level smaller than one stream chunk stays
+a flat leaf automatically.
+
+Supporting changes:
+
+- `stream:<c>` breakpoints on Points and Lines, sharing the GSplats cut geometry
+  via the new `luxar/utils/lod_breakpoints.py`. This matters: an equal-count
+  split into 4 levels still ends with an N/4-sized commit, and the one existing
+  Points ladder in the repo (`global_rivers_earth/terrain`) put 99.98% of its
+  8M points in the final level — it streamed in name only.
+- Energy quality stamps (`lod_stats.energy_fraction_cum` per sub-LOD,
+  `level_stats.reference_energy` per leaf) so the never-downgrade gate can
+  release a swap on committed energy rather than raw element count.
+- Hidden (`visible=false`) layers no longer fetch, decode and commit their LOD
+  levels, and no longer escape eviction.
+- `scripts/check_demo_ladders.py` — a structural gate that fails a leaf whose
+  largest level is more than half the data, which is exactly the degeneracy a
+  level count alone cannot see.
 #### Fixed — every 2D gsplats scene failed to load with a WASM `unreachable` trap
 
 Loading a gsplats scene with fewer than 3 displayed dimensions failed with
@@ -69,6 +130,25 @@ leg (advisory, `continue-on-error`) so each interpreter's dependency resolution 
 
 Also made `stats/generate_stats.py` import `tomllib` with a `tomli` fallback: it was the
 one place in the tree that genuinely required 3.11+.
+
+#### Changed — the bioimaging gsplat demos now bake `volumetric` blending
+
+All 20 microscopy / bioimaging gsplat demos previously composited with
+unbounded `additive` blending, so the front of a dense specimen never occluded
+the back and a bright channel washed out the others rather than sitting in
+front of them. On the 3-channel mouse embryo heart the SYTOX nuclear stain
+covered the vasculature and cardiac-tissue channels almost entirely.
+
+Eighteen 3D/4D demos now bake `blending_mode="volumetric"`
+(emission-absorption, Max 1995) with absorption kappa 1.0. The two strictly 2D
+slide reconstructions remain additive because every splat shares one depth
+plane, so depth-ordered volumetric compositing would reduce to storage order.
+Two converted demos carry tuned values: the acto3d heart drops to
+`opacity=0.48` so its three channels read through one another, and the cryo-EM
+capsid uses kappa 5.0 so the near side of the shell occludes the far side and
+it reads as a hollow icosahedron. Regenerate the demo datasets to pick up the
+new look. The astronomy gsplat demos and the classical-interop demos are
+unchanged.
 
 #### Fixed — camera-plane-crossing line segments rendered as razor-edged bands (one-sided cross-profile at close zoom)
 

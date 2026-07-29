@@ -168,7 +168,10 @@ class Group(Node):
                 ``device``, ``seed``, ``coverage_fractions``, ``coarsen_dims``,
                 ``max_aspect`` (anisotropy cap on the coarse levels, default
                 3.0; ``None`` disables).
-                Mutually exclusive with ``additive_lod`` and ``partition``.
+                Composes with ``additive_lod``, which then describes how
+                each level streams in (every level gets a streaming ladder by
+                default; pass ``additive_lod=False`` to opt out). Mutually
+                exclusive with ``partition``.
                 ``scalars``+``colormap``
                 points are supported by baking scalars→RGB for the coarse gsplat
                 levels (the finest Points child stays scalar-driven; a live
@@ -197,6 +200,9 @@ class Group(Node):
                   layer hidden.
                 - ``opacity``, ``intensity``, ``gamma``, ``blending_mode``,
                   ``colormap``: standard rendering attributes.
+                - ``absorption`` (float >= 0): absorption coefficient kappa,
+                  read by the ``"volumetric"`` blending mode; kappa=0 renders
+                  like additive. Defaults to 1.0.
 
         Returns:
             The created ``Points`` node, or a kind=partition ``Group``
@@ -279,7 +285,10 @@ class Group(Node):
                 substitutive pipeline, assembled as a ``kind="lod"`` Group whose
                 finest child is the original Lines node. Same dict vocabulary as
                 Points; ``scalars``+``colormap`` are baked for the coarse levels.
-                Mutually exclusive with ``additive_lod`` and ``partition``. See
+                Composes with ``additive_lod`` (which then describes how each
+                level streams in; every level is laddered by default, pass
+                ``additive_lod=False`` to opt out). Mutually exclusive with
+                ``partition``. See
                 :func:`luxar.core.group.lod.lines.resolve_substitutive_axis_lines`.
             **attrs: Additional node attributes. Common ones:
 
@@ -289,6 +298,9 @@ class Group(Node):
                   (default ``True``).
                 - ``opacity``, ``intensity``, ``gamma``, ``blending_mode``,
                   ``colormap``: standard rendering attributes.
+                - ``absorption`` (float >= 0): absorption coefficient kappa,
+                  read by the ``"volumetric"`` blending mode; kappa=0 renders
+                  like additive. Defaults to 1.0.
 
         Returns:
             The created Lines node
@@ -379,6 +391,9 @@ class Group(Node):
                   (default ``True``).
                 - ``opacity``, ``intensity``, ``gamma``, ``blending_mode``,
                   ``colormap``: standard rendering attributes.
+                - ``absorption`` (float >= 0): absorption coefficient kappa,
+                  read by the ``"volumetric"`` blending mode; kappa=0 renders
+                  like additive. Defaults to 1.0.
 
         Returns:
             The created ``GSplats`` node, or a kind=partition ``Group``
@@ -458,7 +473,8 @@ class Group(Node):
             additive_lod: Additive-axis control, uniform across substitutive
                 levels. Same value vocabulary as ``lod_group``; ``dict(...)``
                 routes to :func:`make_additive_lod`.
-            **attrs: Additional node attributes.
+            **attrs: Additional node attributes (same vocabulary as
+                :meth:`add_gsplats`, including ``absorption``).
 
         Example:
             >>> result = fit_gaussian_splats(volume_3d)
@@ -517,7 +533,9 @@ class Group(Node):
             dim_order: Map data columns to scene dimensions by name
             fill: Fixed coordinate values for unmapped dimensions
             fill_sigma: Standard deviations for unmapped dims in Cholesky embedding
-            **attrs: Additional node attributes
+            **attrs: Additional node attributes (same vocabulary as
+                :meth:`add_gsplats`, including ``absorption``). On a nested
+                tree these land on the wrapper node, not on each leaf.
         """
         from .gsplats_pipeline.from_io import add_gsplats_from_file_impl
 

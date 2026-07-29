@@ -821,6 +821,125 @@ describe('LODGroupRegistry — lazy children', () => {
 });
 
 // ────────────────────────────────────────────────────────────────────────
+// Hidden-layer load gate (effective, ancestor-aware visibility).
+//
+// A scene can author a layer `visible=false` (the layers panel applies the
+// flag after load, and the eye toggle flips it live). That hides the LAYER
+// object; the lod_group and its levels underneath keep their own `visible`
+// flags, so the selector used to keep aspiring to — and lazily loading — fine
+// levels that cannot be drawn, competing for the shared fetch gate, the worker
+// pool and VRAM with the layer the user is looking at. The gate must stop
+// STARTING those loads while any ancestor is hidden, and resume on the very
+// next frame once it is shown.
+// ────────────────────────────────────────────────────────────────────────
+
+describe('LODGroupRegistry — hidden-layer load gate', () => {
+  /**
+   * Put `entry.groupObject` under a layer group (what the scene graph looks
+   * like: the hidden flag sits on an ANCESTOR, not on the lod_group itself)
+   * and return the layer so a test can toggle it.
+   */
+  function withLayerParent(entry: LODGroupEntry, layerVisible: boolean): THREE.Group {
+    const layer = new THREE.Group();
+    layer.visible = layerVisible;
+    layer.add(entry.groupObject);
+    return layer;
+  }
+
+  it('does not fire ensureLoaded for a level under a hidden ancestor layer', () => {
+    const reg = makeRegistry();
+    const ensureLoaded = vi.fn();
+    const children = [makeChild(0), makeLazyChild(0.5, ensureLoaded)];
+    const entry = makeEntry(children, 0, '/g');
+    withLayerParent(entry, false); // layer authored visible=false
+    reg.register(entry);
+    reg.setSelectorMode('/g', { lockLevel: 1 }); // desired = the lazy fine level
+
+    reg.evaluatePerFrame();
+    reg.evaluatePerFrame();
+    expect(ensureLoaded).not.toHaveBeenCalled();
+    // The gate must not strand `loading` either — that flag is what would
+    // block the load forever once the layer is shown again.
+    expect(children[1].loading).not.toBe(true);
+  });
+
+  it('fires ensureLoaded on the next frame once the ancestor is made visible', () => {
+    const reg = makeRegistry();
+    const ensureLoaded = vi.fn();
+    const children = [makeChild(0), makeLazyChild(0.5, ensureLoaded)];
+    const entry = makeEntry(children, 0, '/g');
+    const layer = withLayerParent(entry, false);
+    reg.register(entry);
+    reg.setSelectorMode('/g', { lockLevel: 1 });
+    reg.evaluatePerFrame();
+    expect(ensureLoaded).not.toHaveBeenCalled();
+
+    // What the layers panel's eye toggle does (LayerApplyEngine.applyVisibility),
+    // followed by its requestRender → next per-frame evaluation.
+    layer.visible = true;
+    reg.evaluatePerFrame();
+    expect(ensureLoaded).toHaveBeenCalledTimes(1);
+  });
+
+  it('gates a directly-hidden lod_group node too (not only an ancestor)', () => {
+    const reg = makeRegistry();
+    const ensureLoaded = vi.fn();
+    const children = [makeChild(0), makeLazyChild(0.5, ensureLoaded)];
+    const entry = makeEntry(children, 0, '/g');
+    entry.groupObject.visible = false; // the lod_group itself is the hidden node
+    reg.register(entry);
+    reg.setSelectorMode('/g', { lockLevel: 1 });
+    reg.evaluatePerFrame();
+    expect(ensureLoaded).not.toHaveBeenCalled();
+  });
+
+  it('loads normally under a VISIBLE layer (regression guard)', () => {
+    const reg = makeRegistry();
+    const ensureLoaded = vi.fn();
+    const children = [makeChild(0), makeLazyChild(0.5, ensureLoaded)];
+    const entry = makeEntry(children, 0, '/g');
+    withLayerParent(entry, true); // ordinary visible layer
+    reg.register(entry);
+    reg.setSelectorMode('/g', { lockLevel: 1 });
+    reg.evaluatePerFrame();
+    expect(ensureLoaded).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not reload a stale fine level under a hidden layer (settled scrub)', () => {
+    // The reload path (maybeKickReload) shares the gate: a hidden layer must
+    // not re-fetch its fine level for every settled slice change either.
+    const ensureLoaded = vi.fn();
+    const stale = makeGsplatChild(0.5, 1); // committed for version 1
+    stale.ready = true;
+    stale.ensureLoaded = ensureLoaded;
+    const children = [makeGsplatChild(0, 2), stale];
+    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2); // version fixed at 2
+    const entry = makeEntry(children, 1, '/g'); // aspiration = the stale fine level
+    withLayerParent(entry, false);
+    reg.register(entry);
+
+    for (let i = 0; i < 14; i++) reg.evaluatePerFrame(); // well past the settle window
+    expect(ensureLoaded).not.toHaveBeenCalled();
+  });
+
+  it('still honours an explicit retry of a failed level under a hidden layer', () => {
+    // retryLazyChildByLeafPath is a user-driven action (the error toast's retry)
+    // and deliberately bypasses the visibility gate.
+    const reg = makeRegistry();
+    const ensureLoaded = vi.fn();
+    const child = makeLazyChild(0.5, ensureLoaded);
+    child.object.name = '/g/level1';
+    child.failed = true;
+    const entry = makeEntry([makeChild(0), child], 0, '/g');
+    withLayerParent(entry, false);
+    reg.register(entry);
+
+    expect(reg.retryLazyChildByLeafPath('/g/level1')).toBe(true);
+    expect(ensureLoaded).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────
 // Frustum-aware selection (off-screen gate) + frustum/distance-aware eviction
 //
 // These need a *real* PerspectiveCamera (the identity mock above can't tell
@@ -1851,7 +1970,7 @@ describe('LODGroupRegistry — never-downgrade display gate', () => {
 
 // ────────────────────────────────────────────────────────────────────────
 // Coverage-band cross-fade (on by default; ?no-lod-fade disables) — two adjacent
-// additive/luminous levels
+// blendable (additive/luminous/volumetric) levels
 // render with complementary opacity as the DISTANCE (coverage metric) crosses
 // their boundary. Distance-driven, independent of streaming. Off / non-blendable
 // / off-screen ⇒ the byte-identical hard swap. A unit-cube tile under the
@@ -1984,10 +2103,40 @@ describe('LODGroupRegistry — coverage-band cross-fade', () => {
     expect(liveOpacity(coarse)).toBe(1);
   });
 
+  it('volumetric mode ⇒ blends 50/50 at the boundary (opacity scales τ, so the fade is well-behaved)', () => {
+    const reg = makeReg(true);
+    const coarse = fadeChild(0, { mode: 'volumetric' });
+    const fine = fadeChild(0.5, { mode: 'volumetric' });
+    reg.register(makeEntry([coarse, fine], 0, '/g'));
+    reg.evaluatePerFrame();
+    expect(coarse.object.visible).toBe(true);
+    expect(fine.object.visible).toBe(true);
+    expect(liveOpacity(fine)).toBeCloseTo(0.5, 6);
+    expect(liveOpacity(coarse)).toBeCloseTo(0.5, 6);
+  });
+
+  it('mixed volumetric + non-blendable subtree ⇒ hard swap (uniformity requirement)', () => {
+    const reg = makeReg(true);
+    const coarse = fadeChild(0, { mode: 'volumetric' });
+    const fine = fadeChild(0.5, { mode: 'max' });
+    reg.register(makeEntry([coarse, fine], 0, '/g'));
+    reg.evaluatePerFrame();
+    expect(fine.object.visible).toBe(true);
+    expect(coarse.object.visible).toBe(false); // hard swap to finest
+    expect(liveOpacity(fine)).toBe(1);
+    expect(liveOpacity(coarse)).toBe(1);
+  });
+
   it('brightness invariance: the two levels’ opacities always sum to 1 across the band', () => {
     // The physics guarantee (additive shader = energy·opacity, mass-conserved
     // levels ⇒ equal integrated E): blendedDC = E·(1−w) + E·w = E for all w. The
     // JS-side invariant underwriting it is exactly-complementary opacities.
+    // (For volumetric the relevant quantity is per-ray optical depth τ, not
+    // summed energy. τ is linear in opacity, so the same complementary weights
+    // give 1−exp(−(w·τ_fine + (1−w)·τ_coarse)) — a monotone interpolation
+    // between the two levels' absorptions, EXACT only where both present the
+    // same per-ray τ. See the volumetric-math suite for the general case; the
+    // JS-side complementary-weight invariant is what this test pins.)
     for (const boundary of [0.4, 0.45, 0.5, 0.55, 0.6]) {
       const reg = makeReg(true);
       const coarse = fadeChild(0);
@@ -2095,8 +2244,9 @@ describe('LODGroupRegistry — coverage-band cross-fade', () => {
   });
 });
 
-// Streaming energy compensation (ON by default; ?no-lod-energy disables) — as an additive/
-// luminous leaf's additive ladder streams in, its committed prefix carries only
+// Streaming energy compensation (ON by default; ?no-lod-energy disables) — as a
+// blendable (additive/luminous/volumetric) leaf's additive ladder streams in,
+// its committed prefix carries only
 // e(k) of the leaf's full energy, so it renders at e·E and brightens toward E as
 // chunks arrive (a pop). Scaling the leaf's opacity by 1/e(k) holds the rendered
 // energy at E throughout. Time-axis and PER-LEAF, orthogonal to the distance-
@@ -2215,6 +2365,14 @@ describe('LODGroupRegistry — streaming energy compensation', () => {
     reg.register(makeEntry([fadeChild(0, { mode: 'max' }), fine], 0, '/g'));
     reg.evaluatePerFrame();
     expect(liveOpacity(fine)).toBe(1); // max doesn't sum energy → no 1/e
+  });
+
+  it('compensates a volumetric streaming leaf by 1/e (opacity linearly scales τ)', () => {
+    const reg = makeReg(false, true);
+    const fine = fadeChild(0.5, { mode: 'volumetric', energy: 0.5 });
+    reg.register(makeEntry([fadeChild(0, { mode: 'volumetric' }), fine], 0, '/g'));
+    reg.evaluatePerFrame();
+    expect(liveOpacity(fine)).toBeCloseTo(2, 6); // τ restored to the full ladder's
   });
 
   it('composes with the cross-fade so rendered energy stays E (opacity·e sums to 1)', () => {
