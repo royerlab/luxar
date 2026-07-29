@@ -1116,6 +1116,29 @@ class TestWriterFuzzRegressions:
                 scene.add_lines("lns", self.POS, 0.5, indices=idx, line_type="indexed")
             compiler.finalize()
 
+    def test_list_indices_accepted(self) -> None:
+        """A Python-list `indices` (a legitimate adder input) used to
+        AttributeError on `.size`; it must be arrayed and accepted."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path, compiler, scene = self._scene(tmpdir)
+            scene.add_lines(
+                "lns", self.POS, 0.5, indices=[0, 1, 1, 2], line_type="indexed"
+            )
+            compiler.finalize()
+            root = zarr.open_group(str(zarr_path), mode="r")
+            assert root["lns"].attrs["n_segments"] == 2
+
+    def test_wrong_width_indices_rejected(self) -> None:
+        """An even-size but wrong-width (E, 3) index array used to pass the
+        element-count checks and reshape into bogus edges; it must be
+        rejected up front."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _zarr_path, compiler, scene = self._scene(tmpdir)
+            bad = np.array([[0, 1, 2], [3, 4, 5]], dtype=np.int64)  # (E, 3)
+            with pytest.raises(ValueError, match="shape"):
+                scene.add_lines("lns", self.POS, 0.5, indices=bad, line_type="indexed")
+            compiler.finalize()
+
     # ---- F4: non-str labels fail fast, BEFORE any zarr write ------------
 
     def test_non_str_labels_rejected_without_partial_node(self) -> None:
