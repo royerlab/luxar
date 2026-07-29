@@ -351,11 +351,11 @@ def create_luxar_scene(gsplats_data, output_path: Path | None = None):
         with LuxarZarrCompiler(
             output_path, encoding_mode=EncodingMode.PRECISION
         ) as compiler:
-            # Neutral tone-mapping keeps the plasma LUT hues faithful (the
-            # viewer's default ACES shifts scientific colormap colors).
+            # ACES, set explicitly (the house default). It shifts the plasma
+            # LUT's hues slightly, accepted for its highlight rolloff.
             scene = compiler.create_scene(
                 dimensions=Dimensions.default_3d(),
-                viewer_config=ViewerConfig(tone_mapping="Neutral"),
+                viewer_config=ViewerConfig(tone_mapping="ACES"),
             )
 
             # Add scene metadata

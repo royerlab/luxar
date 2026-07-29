@@ -436,11 +436,13 @@ def create_luxar_scene(
                 ]
             )
             # 2D data: start in orthographic mode with scale bar visible.
-            # Neutral tone-mapping keeps the H&E R/G/B colors faithful — the
-            # viewer's default ACES shifts hues away from true histology color.
+            # ACES, set explicitly (the house default; its filmic rolloff suits
+            # the bright slide background). ACES does shift hues, so if faithful
+            # H&E stain colour ever matters more than the filmic look here,
+            # Neutral is the documented alternative.
             viewer_config = ViewerConfig(
                 control_type="ortho",
-                tone_mapping="Neutral",
+                tone_mapping="ACES",
                 ui=UIConfig(show_scale_bar=True),
             )
             scene = compiler.create_scene(dimensions=dims, viewer_config=viewer_config)

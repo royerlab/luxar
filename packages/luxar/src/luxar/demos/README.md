@@ -579,7 +579,7 @@ Gaussian splatting compression of real 3D confocal microscopy data (DAPI-stained
 
 **Requires**: Internet access (downloads OME-ZARR from IDR). Supports Metal (MPS) acceleration on Apple Silicon.
 
-**Demonstrates**: 3D Gaussian splat fitting to real microscopy volumes, 20-50x compression vs raw voxels, oriented ellipsoids capturing elongated nuclear shapes, IDR/OME-ZARR data loading, `plasma` colormap + Neutral tone-mapping for faithful LUT hues.
+**Demonstrates**: 3D Gaussian splat fitting to real microscopy volumes, 20-50x compression vs raw voxels, oriented ellipsoids capturing elongated nuclear shapes, IDR/OME-ZARR data loading, `plasma` colormap + ACES tone-mapping.
 
 ---
 
@@ -601,7 +601,7 @@ Two-channel scikit-image `cells3d` fluorescence volume (membranes + nuclei) fitt
 
 **Requires**: Git LFS data (default) or `scikit-image` + GPU (with `--recompute`).
 
-**Demonstrates**: Per-channel `layer=True` gsplats nodes with built-in BOP LUTs applied at display time (interactive colormap switching in the Layers panel, press L), shared amplitude-weighted centroid alignment, volumetric blending, Neutral tone-mapping for faithful hues. The lightweight, no-download sibling of `organoid_multichannel` and `kidney_multichannel_layers`.
+**Demonstrates**: Per-channel `layer=True` gsplats nodes with built-in BOP LUTs applied at display time (interactive colormap switching in the Layers panel, press L), shared amplitude-weighted centroid alignment, volumetric blending, ACES tone-mapping. The lightweight, no-download sibling of `organoid_multichannel` and `kidney_multichannel_layers`.
 
 ---
 
@@ -678,7 +678,7 @@ The human head Gaussian-splatted in **true photographic color** from the NLM Vis
 
 **Requires**: Nothing extra by default — ships a precomputed fit + per-splat colors via Git LFS. With `--recompute` (or if the LFS assets aren't pulled) it auto-downloads the 377 color head slices (~1.1 GB) to `~/.cache/luxar/gsplats_visible_human_head/`, builds the masked RGB volume, fits luminance (GPU), and samples per-splat colors.
 
-**Demonstrates**: True-color volumetric anatomy → Gaussian splats via a **single luminance fit + per-splat color sampling** (one fit, real photographic color — vs. the scalar-intensity-plus-colormap microscopy demos), warm-vs-blue tissue masking to drop the frozen-gel background, Neutral tone-mapping, self-contained download → mask → fit → cache-processed bootstrap. Data: [NLM Visible Human Project](https://www.nlm.nih.gov/research/visible/visible_human.html) (Male color cryosections, head subset; public domain).
+**Demonstrates**: True-color volumetric anatomy → Gaussian splats via a **single luminance fit + per-splat color sampling** (one fit, real photographic color — vs. the scalar-intensity-plus-colormap microscopy demos), warm-vs-blue tissue masking to drop the frozen-gel background, ACES tone-mapping, self-contained download → mask → fit → cache-processed bootstrap. Data: [NLM Visible Human Project](https://www.nlm.nih.gov/research/visible/visible_human.html) (Male color cryosections, head subset; public domain).
 
 ---
 
@@ -689,7 +689,7 @@ Gaussian-splats a real cryo-electron-microscopy density map from the EMDB: the i
 
 **Requires**: Nothing extra by default — ships a precomputed fit via Git LFS (~12 MB: the 700³ EMDB map downsampled to 512³, fit to ~1.0M splats, PSNR ~28 dB). With `--recompute` (or if the LFS asset isn't pulled) it auto-downloads the 1.3 GB EMDB map (`emd_5384.map.gz`) to `~/.cache/luxar/gsplats_cryoem_virus/` (resumable), reads it with `mrcfile`, downsamples to 512³, and fits Gaussian splats on the GPU. Adds `mrcfile` to the `demos` extra.
 
-**Demonstrates**: Real *structural-biology* electron density → Gaussian splats (the same `cal → fit → convert` pipeline used for microscopy, on an EMDB MRC/CCP4 map), solvent clipping + percentile normalization, `inferno` colormap (starts at black, so empty space stays black) + Neutral tone-mapping + volumetric HDR rendering (absorption κ=5, so the near shell occludes the far one), self-contained download → read → fit → cache-processed bootstrap. Data: [EMDB EMD-5384](https://www.ebi.ac.uk/emdb/EMD-5384) (Zhang et al. 2011, PNAS 108(36):14837; public domain / CC0).
+**Demonstrates**: Real *structural-biology* electron density → Gaussian splats (the same `cal → fit → convert` pipeline used for microscopy, on an EMDB MRC/CCP4 map), solvent clipping + percentile normalization, `inferno` colormap (starts at black, so empty space stays black) + ACES tone-mapping + volumetric HDR rendering (absorption κ=5, so the near shell occludes the far one), self-contained download → read → fit → cache-processed bootstrap. Data: [EMDB EMD-5384](https://www.ebi.ac.uk/emdb/EMD-5384) (Zhang et al. 2011, PNAS 108(36):14837; public domain / CC0).
 
 ---
 
@@ -700,7 +700,7 @@ Gaussian-splats a real clinical CT scan — a neck-to-pelvis study (the fullest 
 
 **Requires**: Nothing extra by default — ships a precomputed fit + per-splat organ labels via Git LFS (~8 MB: a neck-to-pelvis subject at 1.5 mm, fit to ~0.66M splats, PSNR ~43 dB; colors, layers and hover tooltips are all derived from the labels at scene build). With `--recompute` (or if the LFS assets aren't pulled) it auto-downloads the 3.2 GB TotalSegmentator subset to `~/.cache/luxar/gsplats_ct_totalsegmentator/` (resumable), extracts one subject, combines its 117 organ masks with `nibabel`, windows + fits on the GPU, and samples the per-splat organ label. Adds `nibabel` to the `demos` extra.
 
-**Demonstrates**: Real *clinical CT* (neck-to-pelvis) + multi-organ segmentation → colored Gaussian splats, combining per-structure NIfTI masks into one label volume, Hounsfield windowing, per-splat organ-label sampling driving a tissue-grouped color palette + **per-splat hover tooltips** (specific structure names) + a split into **toggle-able tissue layers** (Skeleton/Organs/Vessels & heart/Nervous system/Muscles), cubic-voxel resampling, Neutral tone-mapping + volumetric HDR rendering, self-contained download → combine → fit → cache-processed bootstrap. Data: [TotalSegmentator](https://zenodo.org/records/10047263) (Wasserthal et al. 2023, Radiology: AI; CC BY 4.0).
+**Demonstrates**: Real *clinical CT* (neck-to-pelvis) + multi-organ segmentation → colored Gaussian splats, combining per-structure NIfTI masks into one label volume, Hounsfield windowing, per-splat organ-label sampling driving a tissue-grouped color palette + **per-splat hover tooltips** (specific structure names) + a split into **toggle-able tissue layers** (Skeleton/Organs/Vessels & heart/Nervous system/Muscles), cubic-voxel resampling, ACES tone-mapping + volumetric HDR rendering, self-contained download → combine → fit → cache-processed bootstrap. Data: [TotalSegmentator](https://zenodo.org/records/10047263) (Wasserthal et al. 2023, Radiology: AI; CC BY 4.0).
 
 ---
 

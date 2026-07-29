@@ -649,7 +649,7 @@ def build_static_scene(output_path: Path, cat: dict) -> int:
         )
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(
-                dimensions=dims, viewer_config=ViewerConfig(tone_mapping="Neutral")
+                dimensions=dims, viewer_config=ViewerConfig(tone_mapping="ACES")
             )
 
             scene.add_points(
@@ -715,7 +715,7 @@ def build_animated_scene(output_path: Path, cat: dict) -> int:
         )
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(
-                dimensions=dims, viewer_config=ViewerConfig(tone_mapping="Neutral")
+                dimensions=dims, viewer_config=ViewerConfig(tone_mapping="ACES")
             )
 
             all_pos = np.empty((n_ast * ANIMATE_FRAMES, 4), dtype=np.float32)

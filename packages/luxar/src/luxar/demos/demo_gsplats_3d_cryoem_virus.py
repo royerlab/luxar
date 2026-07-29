@@ -267,7 +267,7 @@ def create_luxar_scene(gsplats_data: GSplatData, output_path: Path) -> Path:
         ) as compiler:
             scene = compiler.create_scene(
                 dimensions=dims,
-                viewer_config=ViewerConfig(tone_mapping="Neutral"),
+                viewer_config=ViewerConfig(tone_mapping="ACES"),
             )
             scene.attrs["title"] = (
                 "GSplats: Cryo-EM Giant Virus Capsid (PBCV-1, EMD-5384)"

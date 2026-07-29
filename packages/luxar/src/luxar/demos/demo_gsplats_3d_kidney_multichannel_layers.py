@@ -390,11 +390,12 @@ def create_luxar_scene(gsplats_list, output_path=None):
         with LuxarZarrCompiler(
             output_path, encoding_mode=EncodingMode.PRECISION
         ) as compiler:
-            # Neutral tone-mapping keeps the per-channel colormap hues faithful
-            # (the viewer's default ACES shifts scientific LUT colors).
+            # ACES, set explicitly, for the per-channel colormaps
+            # (ACES is the house default; it shifts LUT hues slightly, which is
+            # the accepted trade for its highlight rolloff).
             scene = compiler.create_scene(
                 dimensions=dims,
-                viewer_config=ViewerConfig(tone_mapping="Neutral"),
+                viewer_config=ViewerConfig(tone_mapping="ACES"),
             )
 
             scene.attrs["title"] = "GSplats: 3D Kidney Multi-Channel (Layers panel)"

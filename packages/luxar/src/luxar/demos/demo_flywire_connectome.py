@@ -592,9 +592,12 @@ def build_scene(
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(
                 dimensions=dims,
-                # Neutral tone-mapping (not the viewer default ACES, which lifts
-                # highlights) — the luminous connection glow was blowing out.
-                viewer_config=ViewerConfig(tone_mapping="Neutral"),
+                # ACES, set explicitly: its filmic highlight rolloff is the
+                # house default and the reason bright structure stops clipping.
+                # NOTE: this demo previously pinned Neutral because the luminous
+                # connection glow was blowing out — if that returns, the fix is
+                # to pull `exposure` down rather than to go back to Neutral.
+                viewer_config=ViewerConfig(tone_mapping="ACES"),
             )
 
             # One toggleable Points layer per super_class — optic, central,

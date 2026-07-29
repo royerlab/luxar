@@ -271,11 +271,12 @@ def create_luxar_scene(gsplats_list, output_path=None):
         with LuxarZarrCompiler(
             output_path, encoding_mode=EncodingMode.PRECISION
         ) as compiler:
-            # Neutral tone-mapping keeps the per-channel BOP LUT hues faithful
-            # (the viewer's default ACES shifts scientific LUT colors).
+            # ACES, set explicitly, for the per-channel BOP LUTs
+            # (ACES is the house default; it shifts LUT hues slightly, which is
+            # the accepted trade for its highlight rolloff).
             scene = compiler.create_scene(
                 dimensions=Dimensions.default_3d(),
-                viewer_config=ViewerConfig(tone_mapping="Neutral"),
+                viewer_config=ViewerConfig(tone_mapping="ACES"),
             )
 
             scene.attrs["title"] = "GSplats: 3D Cells Multi-Channel (BOP layers)"

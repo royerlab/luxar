@@ -195,7 +195,7 @@ def create_luxar_scene(channel_paths: list[Path], output_path: Path) -> Path:
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(
                 dimensions=dims,
-                viewer_config=ViewerConfig(tone_mapping="Neutral"),
+                viewer_config=ViewerConfig(tone_mapping="ACES"),
             )
             scene.attrs["title"] = "GSplats: 4D Two-Channel Neuromast Timelapse"
             scene.attrs["description"] = (

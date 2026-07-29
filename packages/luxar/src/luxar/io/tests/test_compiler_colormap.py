@@ -176,6 +176,35 @@ class TestColormapToneMappingWarning:
                     scene.add_points("pts", positions, colormap="viridis")
             assert not [w for w in record if "ACES" in str(w.message)]
 
+    @pytest.mark.parametrize(
+        "tone_mapping", ["ACES", "AgX", "Reinhard", "Linear", "None"]
+    )
+    def test_no_warning_when_tone_mapping_chosen_explicitly(
+        self, tone_mapping: str
+    ) -> None:
+        """ANY explicit tone-mapping silences the warning, including 'ACES'.
+
+        The warning exists to catch authors who never considered the choice, and
+        its text speaks of "the viewer's default" — which only applies when
+        nothing was set. Second-guessing a deliberate selection (ACES is the
+        recommended default for most scenes) is just noise on every build.
+        """
+        import warnings as _warnings
+
+        from luxar.core.viewer_config import ViewerConfig
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "test.luxar.zarr"
+            dims = Dimensions([Dimension("x"), Dimension("y"), Dimension("z")])
+            vc = ViewerConfig(tone_mapping=tone_mapping)
+            with _warnings.catch_warnings(record=True) as record:
+                _warnings.simplefilter("always")
+                with LuxarZarrCompiler(path) as c:
+                    scene = c.create_scene(dimensions=dims, viewer_config=vc)
+                    positions = np.random.rand(50, 3).astype(np.float32)
+                    scene.add_points("pts", positions, colormap="viridis")
+            assert not [w for w in record if "ACES" in str(w.message)]
+
 
 class TestColormapGSplatsCompiler:
     """Test colormap support when writing gsplats."""

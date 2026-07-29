@@ -285,14 +285,15 @@ def load_and_convert_gaia_data(data_zarr_path: Path, output_path: Path) -> int:
             # Bake a dark-sky appearance: a moderate exposure keeps the
             # background black (a high exposure floods the faint-star haze into a
             # grey wash), a raised bloom threshold blooms only the brightest
-            # stars, and Neutral tone-mapping preserves true stellar colours
-            # (ACES would shift blue/red star hues).
+            # stars, and ACES (set explicitly, the house default) supplies the
+            # filmic rolloff. It does shift blue/red star hues a little; Neutral
+            # is the alternative if true stellar colour ever matters more.
             scene = compiler.create_scene(
                 dimensions=dims,
                 viewer_config=ViewerConfig(
                     camera=camera,
                     exposure=0.5,
-                    tone_mapping="Neutral",
+                    tone_mapping="ACES",
                     bloom_enabled=True,
                     bloom_strength=0.15,
                     bloom_threshold=0.85,
