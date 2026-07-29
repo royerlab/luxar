@@ -31,12 +31,23 @@ class TestSpatialAxesFromMaxSigma:
         )
         assert list(out) == [1]
 
+    def test_no_fallback_returns_empty_when_none_qualify(self):
+        # fallback=False keeps the selection empty so a caller can tell an
+        # all-degenerate store apart from a genuinely all-spatial one (the
+        # fallback makes both return every axis).
+        out = spatial_axes_from_max_sigma(np.zeros(4), fallback=False)
+        assert out.size == 0
+
+    def test_no_fallback_keeps_qualifying_axes(self):
+        # fallback=False only changes the all-degenerate case; a real selection
+        # is returned unchanged.
+        out = spatial_axes_from_max_sigma(np.array([2.0, 0.0, 4.0]), fallback=False)
+        assert list(out) == [0, 2]
+
 
 class TestSpatialOnlyShift:
     def test_zeros_categorical_axis(self):
-        shift = spatial_only_shift(
-            np.array([5.0, 6.0, 7.0, 42.0]), np.array([0, 1, 2])
-        )
+        shift = spatial_only_shift(np.array([5.0, 6.0, 7.0, 42.0]), np.array([0, 1, 2]))
         assert np.allclose(shift, [5.0, 6.0, 7.0, 0.0])
 
     def test_all_axes(self):
