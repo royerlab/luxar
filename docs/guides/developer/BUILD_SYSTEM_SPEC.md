@@ -388,6 +388,28 @@ hatch run test      # Run tests in environment
 hatch env prune     # Clean unused environments
 ```
 
+**Which Python does `hatch run` use?** The `default` environment declares no
+`python`, so Hatch builds it with whatever interpreter **Hatch itself** runs
+under — not necessarily one the project claims to support. Check before trusting
+a local pass:
+
+```bash
+hatch run python -V     # the interpreter your tests actually used
+```
+
+To test the versions the project supports (`requires-python = ">=3.10"`), use the
+per-version `test` matrix environments instead of the default env:
+
+```bash
+hatch python install 3.10 3.11   # once, if those interpreters are missing
+hatch run test.py3.10:cov        # one version
+hatch run test:cov               # all three, sequentially
+```
+
+CI runs each version as its own parallel job and asserts the interpreter matches
+the matrix leg, so a mismatch fails loudly rather than silently testing one
+version three times (see issue #839).
+
 ### pnpm for TypeScript
 
 pnpm is used for TypeScript package management:
