@@ -100,7 +100,7 @@ On first use:
 
 3. **Lazy compilation**: Kernels are compiled on first use, not at import time. This avoids blocking at module load and isolates Numba import errors to the first call.
 
-4. **Bit budget**: The `bits_per_dim` parameter controls the grid resolution. Default is 16 bits/dim (grid size `2^16 = 65536`). The total code width is `bits_per_dim * n_dims` (capped at 64 bits for `*_encode_nd`, 128 bits for `morton_encode_128bit`).
+4. **Bit budget**: The `bits_per_dim` parameter controls the grid resolution. Default is 16 bits/dim (grid size `2^16 = 65536`). The total code width is `bits_per_dim * n_dims`. Keeping that within 64 bits for `*_encode_nd` (and 128 bits for `morton_encode_128bit`) is a **caller-side** invariant — the callers (e.g. `compound.py`, `lines.py`) choose `bits_per_dim` so the code fits its container; the encoders enforce no cap themselves, so an over-budget input overflows the uint64 output (the JIT kernels wrap silently; the `hilbertcurve` fallback raises `OverflowError`).
 
 5. **Contiguous input**: The Numba kernels require int64 input. `morton_encode_nd` converts via `np.ascontiguousarray(coords, dtype=np.int64)` (also guaranteeing C-contiguity); `hilbert_encode_nd` converts via `coords.astype(np.int64)` before calling the kernel.
 
