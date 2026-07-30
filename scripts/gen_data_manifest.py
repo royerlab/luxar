@@ -422,7 +422,6 @@ def build(prev: Optional[dict] = None, *, prune: bool = False) -> dict:
             "local-compute=fetch raw + build locally (not redistributable); "
             "regenerate=cheap CPU rebuild (not hosted). See scripts/gen_data_manifest.py."
         ),
-        "cache_root": "~/.cache/luxar",
         "records": RECORDS,
         "datasets": datasets,
     }
