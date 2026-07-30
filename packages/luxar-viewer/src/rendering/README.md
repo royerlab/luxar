@@ -139,11 +139,11 @@ postProcessing.updateBloomSettings(
 ### Step 3: Choose Tone Mapping
 
 ```typescript
-// AgX: Neutral, film-like (recommended)
-postProcessing.setToneMapping(THREE.AgXToneMapping);
+// ACES Filmic: cinematic, the recommended default
+postProcessing.setToneMapping(THREE.ACESFilmicToneMapping);
 
 // Or try others:
-// THREE.ACESFilmicToneMapping - Cinematic with warm tones
+// THREE.AgXToneMapping       - Neutral, film-like
 // THREE.ReinhardToneMapping  - Classic, simple
 // THREE.LinearToneMapping    - No tone mapping
 ```
