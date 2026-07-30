@@ -72,6 +72,40 @@ scale-free-conditioning reasoning as the shader's trace-normalized covariance
 inverse. Rank-deficient axes are still regularized, now as a fixed *fraction* of
 the real axis.
 
+#### Fixed — errors logged as trailing arguments rendered as `{}` in the in-app console
+
+A bug report contained the line `OPFSStore metadata save failed {}` — the cause
+entirely absent. `log.*` is a pass-through to `console.*`, so an error passed as a
+trailing argument reaches the in-app debug console as an object, and both of that
+console's renderers `JSON.stringify` it. An `Error`'s `name`, `message` and `stack`
+are non-enumerable, so the result is `{}` — and the existing `String(arg)` fallback
+never fires, because stringify *succeeds* at producing that empty object. Browser
+devtools renders it correctly, which is why this went unnoticed; the in-app console
+is what a user copies into an issue.
+
+Fixed with an `Error` branch in both renderers, which covers all ~45 trailing-error
+log sites with no call-site changes. The branch must precede the object branch: an
+`Error` subclass that assigns own enumerable fields stringifies to a non-empty but
+still message-less object.
+
+Stack capture was worse than missing. It only ever inspected the first argument,
+which is always the formatted message *string*, so it never found the error behind
+it — and when it failed it FABRICATED `new Error().stack` whenever the message
+merely contained the word "error", producing a plausible trace rooted inside the
+interceptor. It now scans arguments for a real error, the fabricator is gone,
+warnings get stacks too, and the clipboard export includes the stack it was
+silently dropping.
+
+Also: the OPFS write path retried errors it was never meant to. Its own comment says
+"one retry on stale bucket handle", but the catch only continued for that case and
+then fell through with no `break`, so any out-of-space, quota or timeout error
+immediately re-ran the whole write chain — with no backoff and no space reclaimed —
+costing a duplicate warning per chunk and up to twice the operation timeout in
+caller stall on a hung handle.
+
+New `utils/format-error.ts` promotes an idiom that was inlined roughly 31 times.
+
+
 #### Changed — volumetric joins the LOD anti-popping blendable set
 
 `volumetric` is now in `BLENDABLE_MODES` (`packages/luxar-viewer/src/scene/lod-fade.ts`),

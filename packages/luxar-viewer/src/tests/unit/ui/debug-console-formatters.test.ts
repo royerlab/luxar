@@ -33,6 +33,42 @@ describe('formatArgs', () => {
     expect(out).toContain('{\n  "a": 1,\n  "b": "x"\n}');
   });
 
+  it('renders an Error as name: message, not {}', () => {
+    // The headline regression: Error's name/message/stack are non-enumerable, so
+    // JSON.stringify produced '{}' and every `log.*(…, error)` site lost its
+    // message. The stringify `catch` never fired, because it SUCCEEDED at
+    // producing that empty object.
+    expect(formatArgs([new Error('boom')])).toBe('Error: boom');
+  });
+
+  it('reproduces the reported cache line with its cause intact', () => {
+    // Verbatim shape of the user's bug report, which read
+    // `OPFSStore metadata save failed {}`.
+    const out = formatArgs([
+      '[⚠️] [Cache] OPFSStore metadata save failed',
+      new Error('A requested file or directory could not be found'),
+    ]);
+    expect(out).toContain('could not be found');
+    expect(out).not.toContain('{}');
+  });
+
+  it('keeps the name of an Error subclass', () => {
+    // A subclass assigning own enumerable fields (as LoaderError does with
+    // name/cause) stringifies to a non-empty but message-LESS object, so it would
+    // regress differently from a plain Error if the branch order were wrong.
+    class Sub extends Error {
+      constructor(message: string) {
+        super(message);
+        this.name = 'Sub';
+      }
+    }
+    expect(formatArgs([new Sub('boom')])).toBe('Sub: boom');
+  });
+
+  it('renders an Error with no message as just the name', () => {
+    expect(formatArgs([new Error()])).toBe('Error');
+  });
+
   it('falls back to String() when JSON.stringify throws (circular ref)', () => {
     const obj: { self?: object } = {};
     obj.self = obj;
