@@ -50,15 +50,15 @@ need `window.__luxarDebug`:
 ```text
 ✅ http://localhost:5173/?src=http://127.0.0.1:8000/datasets/test.luxar.zarr&debug
 ❌ http://localhost:5173/?data=http://127.0.0.1:8000/datasets/test.luxar.zarr&debug
-❌ http://localhost:5173/?src=http://127.0.0.1:8000/datasets/test.luxar.zarr/&debug
+⚠️ http://localhost:5173/?src=http://127.0.0.1:8000/datasets/test.luxar.zarr/&debug (accepted, non-canonical)
 ```
 
 Best practices:
 
 - Use `?src=<dataset>&debug`, not `?data=`.
-- Do **not** put a trailing slash on the data-source URL. Zarr paths are formed
-  by appending metadata and chunk paths; a trailing slash can produce malformed
-  requests on stricter servers and can split cache keys for the same dataset.
+- Prefer the no-trailing-slash spelling for data-source URLs. Both forms are
+  accepted and normalized, but one canonical form keeps test URLs and logs
+  consistent.
 - Prefer explicit loopback hosts and ports in E2E tests (`127.0.0.1:<port>`) so
   tests do not depend on external DNS or network access.
 

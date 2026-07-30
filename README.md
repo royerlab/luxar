@@ -861,7 +861,7 @@ See `docs/guides/developer/BUILD_SYSTEM_SPEC.md` for HPC/Slurm build instruction
 
 **White screen in viewer**
 - Check browser console for errors
-- Verify Zarr dataset URL has no trailing slash
+- Prefer the canonical Zarr dataset URL spelling without a trailing slash
 - Ensure CORS headers if serving cross-domain
 
 **ImportError: No module named 'luxar'**

@@ -247,8 +247,9 @@ hatch run python scripts/update_demo_max_splats.py
 
 Sequentially force-refit the gsplat demos (`hatch run python <demo>
 --no-napari --no-serve --recompute`) after updating their splat counts.
-`refit_gsplat_demos.sh` logs each demo under `/tmp/luxar-refit/` and prints an
-OK/FAILED summary; `run_demo_recompute.sh` is a simpler variant.
+`refit_gsplat_demos.sh` logs each demo under a private per-run temporary
+directory, prints that directory at startup, and finishes with an OK/FAILED
+summary; `run_demo_recompute.sh` is a simpler variant.
 
 ```bash
 bash scripts/refit_gsplat_demos.sh
