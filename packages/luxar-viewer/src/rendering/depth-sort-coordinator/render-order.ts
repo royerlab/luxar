@@ -217,10 +217,14 @@ interface OrderSlot {
   partRank: number;
   /** View-space z of the bounding-sphere center (more negative = farther). */
   viewZ: number;
-  /** View-space bounding-sphere center (finite iff `radius >= 0`). */
+  /** View-space bounding-sphere center (zeroed without usable bounds). */
   viewX: number;
   viewY: number;
-  /** View-space bounding-sphere radius, or -1 without usable bounds. */
+  /**
+   * View-space bounding-sphere radius; -1 without usable bounds, or when
+   * the world scale overflows the finite local radius to non-finite (the
+   * center then still carries a valid depth reference).
+   */
   radius: number;
 }
 let orderSlots: OrderSlot[] = [];
