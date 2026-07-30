@@ -77,3 +77,40 @@ def parse_csv_floats(value: str, expected: int, name: str) -> list[float]:
         return [float(p) for p in parts]
     except ValueError as e:
         raise typer.BadParameter(f"--{name} values must be numbers: {e}") from e
+
+
+def parse_axis_list(
+    value: str, ndim: int, name: str, *, require: int | None = None
+) -> list[int]:
+    """Parse a comma-separated axis-index list, validating tokens, bounds, and duplicates.
+
+    Surrounding whitespace and empty trailing tokens are stripped; an empty
+    selection is rejected. Each token must be an integer in ``0..ndim-1``;
+    duplicates are rejected. When ``require`` is given, the count must match
+    exactly (checked first, so the arity message wins for a wrong-count list).
+    """
+    tokens = [x.strip() for x in value.split(",") if x.strip()]
+    try:
+        axes = [int(x) for x in tokens]
+    except ValueError as e:
+        raise typer.BadParameter(
+            f"--{name}: axis indices must be integers, got '{value}'"
+        ) from e
+    if not axes:
+        raise typer.BadParameter(
+            f"--{name}: expected at least one axis index, got '{value}'"
+        )
+    if require is not None and len(axes) != require:
+        raise typer.BadParameter(
+            f"--{name} expects {require} axis {'index' if require == 1 else 'indices'}, "
+            f"got {len(axes)}: '{value}'"
+        )
+    for axis in axes:
+        if axis < 0 or axis >= ndim:
+            raise typer.BadParameter(
+                f"--{name}: axis {axis} is out of range for {ndim}D data "
+                f"(valid range 0..{ndim - 1})"
+            )
+    if len(set(axes)) != len(axes):
+        raise typer.BadParameter(f"--{name}: duplicate axis indices in '{value}'")
+    return axes

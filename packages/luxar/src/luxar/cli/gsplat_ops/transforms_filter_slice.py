@@ -10,7 +10,12 @@ from arbol import aprint, asection
 
 from ..utils import format_memory_size
 from .encoding import _resolve_encoding_mode
-from .transforms_parsing import parse_bbox, parse_slices, parse_threshold
+from .transforms_parsing import (
+    parse_axis_list,
+    parse_bbox,
+    parse_slices,
+    parse_threshold,
+)
 
 
 def run_filter_dataset(
@@ -83,9 +88,11 @@ def run_filter_dataset(
             smax, smax_p = parse_threshold(sigma_max, "sigma-max")
             imax, imax_p = parse_threshold(isolation_max, "isolation-max")
 
-            axes = None
-            if spatial_dims is not None:
-                axes = [int(x.strip()) for x in spatial_dims.split(",") if x.strip()]
+            axes = (
+                parse_axis_list(spatial_dims, ndim, "spatial-dims")
+                if spatial_dims is not None
+                else None
+            )
 
             # A single percentile flag per attribute is shared by its min & max
             # (mirrors the existing *_normalized convention). Mixing modes on one
