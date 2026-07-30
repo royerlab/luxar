@@ -49,14 +49,14 @@ dependencies = [
     "typer>=0.12,<1.0",
     "fastapi>=0.111,<1.0",
     "uvicorn[standard]>=0.27,<1.0",
-    "arbol>=0.3.5",
+    "arbol>=2025.2.27.2",
     "ansicolors>=1.1.8",
     "requests>=2.31.0",
     "aiohttp>=3.9.0",
     "fsspec>=2023.1.0",
     "xxhash>=3.0.0",
     "hilbertcurve>=2.0.5",
-    "pyyaml>=6.0"
+    "pyyaml>=6.0.1"
 ]
 
 [project.urls]
@@ -127,6 +127,17 @@ demos = [
     "mrcfile>=1.4.0",
     "nibabel>=5.0.0",
     "pyshp>=2.3.0",
+    # scikit-image ships only a handful of sample images in its wheel; cells3d
+    # and kidney are FETCHED, and skimage's fetcher is pooch. Without this pin
+    # the cells3d/kidney demos fail on a cold cache even though `luxar[demos]`
+    # installed scikit-image — pooch was reaching them only as an accidental
+    # transitive of some other package's extra.
+    "pooch>=1.6.0",
+    # KMeans fallback in demo_protein_embeddings_cafa5. Arrives transitively via
+    # umap-learn today; pinned because a demo imports it directly.
+    "scikit-learn>=1.0",
+    # `--show-roundtrip` diagnostic plots in the gsplat demos.
+    "matplotlib>=3.5.0",
 ]
 docs = [
     "sphinx>=7.0.0",
@@ -184,7 +195,7 @@ exclude = [
     # are only meaningful in the source tree.
     "**/.gitignore",
     "**/.gitkeep",
-    # Demo data (~237 MB of Git-LFS catalogs/zarrs/parquets) must NOT ship in
+    # Demo data (~450 MB of Git-LFS catalogs/zarrs/parquets) must NOT ship in
     # the wheel: it blows past PyPI's 100 MB per-file limit, and in CI (no
     # `git lfs pull`) it would otherwise ship as broken ~130-byte pointer files.
     # Demo *scripts* stay; the data is fetched/regenerated separately.

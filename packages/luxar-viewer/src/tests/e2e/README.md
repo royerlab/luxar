@@ -35,7 +35,7 @@ directly — see [Shared Fixture](#shared-fixture-fixturests) below.
 e2e/
 ├── fixtures.ts          # Re-extended `test` fixture; auto console-error guard
 ├── helpers.ts           # ~40 Playwright helper utilities (wait/get/assert)
-├── global-setup.ts      # Pre-flight: checks `datasets/examples/`, makes dirs
+├── global-setup.ts      # Pre-flight: verifies servers + datasets, makes dirs
 ├── harnesses/
 │   └── tsl-harness.ts   # TSL ↔ GLSL parity harness (loaded by tsl-harness.html)
 ├── *.spec.ts            # Playwright specs (one per feature area)
@@ -187,29 +187,35 @@ Helpers follow a few conventions worth matching:
 
 ## Global Setup (`global-setup.ts`)
 
-Runs once before any spec (wired in `playwright.config.ts`). Three
+Runs once before any spec (wired in `playwright.config.ts`). Four
 preflight checks:
 
-1. **Examples directory** — `datasets/examples/` (five levels up
-   from this file) is verified to exist. If missing, a warning is
-   logged with instructions to run `make run-examples`; the run is
-   **not** aborted because some specs (basic-rendering,
-   viewer-initialization, test-fixtures, geometry-types) don't need
-   the examples.
-2. **Required datasets** — checks for the seven required `*.zarr`
-   directories (`simple_nd_example.luxar.zarr`,
-   `build_example_manual.luxar.zarr`,
-   `build_example_structured.luxar.zarr`,
-   `dimension_navigation_example.luxar.zarr`,
-   `dimension_sliders_5d_example.luxar.zarr`,
-   `dense_grid_5d_example.luxar.zarr`,
-   `layers_test_example.luxar.zarr`) and logs which are missing.
-3. **Output directories** — creates `test-results/` and
-   `test-results/debug/` (the latter for `pnpm agent:debug`
-   screenshots) if they don't exist.
+1. **Checkout identity** — both the Vite server and the repository
+   dataset server must return the deterministic marker for the current
+   checkout. Playwright's readiness URLs use the same marker, so a
+   server on ports 5173 or 9000 from a sibling clone/worktree is not
+   silently reused. An unrelated catch-all server that returns 200 is
+   rejected by checking the marker body here.
+2. **Examples directory** — `datasets/examples/` in the identified
+   checkout is verified to exist. If missing, a warning is logged with
+   instructions to run `make run-examples`; the run is **not** aborted
+   because some specs (basic-rendering, viewer-initialization,
+   test-fixtures, geometry-types) don't need the examples.
+3. **Required datasets** — checks for the eight required `*.zarr`
+   directories and then issues an HTTP `HEAD` request for each one
+   found locally. A fixture that exists on disk but is not reachable
+   from the server is therefore a preflight error rather than a later
+   viewer timeout.
+4. **Output directories** — creates `test-results/` and
+   `test-results/debug/` if they don't exist.
 
-The file uses ESM (`import.meta.url`) to reconstruct `__dirname`
-because the package is `"type": "module"`.
+Identity markers live in the gitignored
+`packages/luxar-viewer/.luxar-e2e-identities/` directory. Their names
+are hashes of the checkout's canonical project-root path; the marker
+contains only that hash. Servers from the same checkout remain
+reusable locally, while a foreign occupied port causes a prompt,
+explicit startup failure. The file uses ESM (`import.meta.url`) to
+reconstruct `__dirname` because the package is `"type": "module"`.
 
 ## TSL ↔ GLSL Parity Harness (`harnesses/tsl-harness.ts`)
 

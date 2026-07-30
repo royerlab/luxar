@@ -103,7 +103,7 @@ Appearance is baked in here:
 - `--layer`/`--no-layer` (default `layer`) — list the gsplats node in the viewer Layers panel.
 
 ## migrate-format IN OUT
-Upgrade legacy layouts → v3.2. Five input shapes are auto-detected: v1.0 (flat),
+Upgrade legacy layouts → v3.3. Five input shapes are auto-detected: v1.0 (flat),
 v1.1 (multi-LOD additive), v2.0 (substitutive×additive matrix), a substitutive
 directory (manifest.json + level_<i> files), and a v3.0/v3.1 store still carrying
 the pre-v3.2 `pixel_size` lod selector attrs (rewritten to `coverage` +

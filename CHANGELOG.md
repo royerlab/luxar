@@ -6,6 +6,20 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Fixed — warnings now display through arbol instead of raw stderr lines
+
+Python's default warning display wrote `path/to/file.py:299: UserWarning: ...`
+straight to stderr, landing out of place in the middle of arbol's hierarchical
+console output (e.g. the Cholesky covariance-certificate escalation warning
+during gsplat scene compiles). Warning *display* is now routed through
+`aprint` as `⚠️ UserWarning: ... [file.py:299]` tree lines: process-wide in
+every `luxar` CLI run, and scoped around the arbol-tree-producing Python API
+entry points (`LuxarZarrCompiler` write methods, `fit_gaussian_splats`,
+`generate_seeds`, `save_gsplats`). Display-only by design — warning semantics
+(filters, `-W error`, `catch_warnings`, `pytest.warns`) are unchanged, and the
+override steps aside whenever a recorder or custom `showwarning` hook owns
+warning display. New module: `luxar.utils.arbol_warnings`.
+
 #### Added — spatial partitioning (BSP tiling) now works on 2D data
 
 `luxar gsplat partition`, `lod --recipe tiles|overview|adaptive`, and
@@ -58,6 +72,40 @@ scale-free-conditioning reasoning as the shader's trace-normalized covariance
 inverse. Rank-deficient axes are still regularized, now as a fixed *fraction* of
 the real axis.
 
+#### Fixed — errors logged as trailing arguments rendered as `{}` in the in-app console
+
+A bug report contained the line `OPFSStore metadata save failed {}` — the cause
+entirely absent. `log.*` is a pass-through to `console.*`, so an error passed as a
+trailing argument reaches the in-app debug console as an object, and both of that
+console's renderers `JSON.stringify` it. An `Error`'s `name`, `message` and `stack`
+are non-enumerable, so the result is `{}` — and the existing `String(arg)` fallback
+never fires, because stringify *succeeds* at producing that empty object. Browser
+devtools renders it correctly, which is why this went unnoticed; the in-app console
+is what a user copies into an issue.
+
+Fixed with an `Error` branch in both renderers, which covers all ~45 trailing-error
+log sites with no call-site changes. The branch must precede the object branch: an
+`Error` subclass that assigns own enumerable fields stringifies to a non-empty but
+still message-less object.
+
+Stack capture was worse than missing. It only ever inspected the first argument,
+which is always the formatted message *string*, so it never found the error behind
+it — and when it failed it FABRICATED `new Error().stack` whenever the message
+merely contained the word "error", producing a plausible trace rooted inside the
+interceptor. It now scans arguments for a real error, the fabricator is gone,
+warnings get stacks too, and the clipboard export includes the stack it was
+silently dropping.
+
+Also: the OPFS write path retried errors it was never meant to. Its own comment says
+"one retry on stale bucket handle", but the catch only continued for that case and
+then fell through with no `break`, so any out-of-space, quota or timeout error
+immediately re-ran the whole write chain — with no backoff and no space reclaimed —
+costing a duplicate warning per chunk and up to twice the operation timeout in
+caller stall on a hung handle.
+
+New `utils/format-error.ts` promotes an idiom that was inlined roughly 31 times.
+
+
 #### Changed — volumetric joins the LOD anti-popping blendable set
 
 `volumetric` is now in `BLENDABLE_MODES` (`packages/luxar-viewer/src/scene/lod-fade.ts`),
@@ -88,6 +136,20 @@ snapshot, all modes), and stale per-node-material / single-visible-child
 comments in `lod-fade.ts` / `lod-group-registry.ts`. New fixture
 `test_lod_group_volumetric.luxar.zarr` covers the volumetric cross-fade
 contract end-to-end.
+
+#### Changed — Default viewer background is now pitch black (`0x000000`)
+
+The scene background default was `0x111111` (dark gray, matched to the dark
+theme's UI chrome) since the first commit. That color is rendered into the HDR
+buffer, so the post-processing exposure chain treats it as scene light: at high
+exposure an "empty" background lifted to gray and eventually white, and it sat
+only ~1.8× under the default bloom threshold. The default is now pure black —
+zero radiance, exposure- and bloom-invariant, and cleaner premultiplied-alpha
+edges for transparent screenshots. Scenes can still author a tinted background
+via `viewer_config.background_color` (the handful of demos that do are
+unchanged). The dark theme's `#111111` UI panels are a separate token and keep
+their color. Committed gallery/README media still show the old background until
+regenerated (tracked as a follow-up).
 
 #### Added — Points and Lines LOD levels now stream progressively (#811, #808)
 

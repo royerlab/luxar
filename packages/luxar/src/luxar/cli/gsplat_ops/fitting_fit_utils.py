@@ -26,8 +26,9 @@ class FitPipelineCtx:
     each consume overlapping subsets, so the command builds this ctx once
     (right after the tiling strategy is resolved) instead of every helper
     taking a dozen positional arguments. Field values are the command's
-    parameters verbatim; ``denoise_effective_h`` is the one field written
-    later (by the denoise-calibration step).
+    parameters verbatim; ``denoise_effective_h`` and ``denoise_norm_range``
+    are written later (by the denoise-calibration step,
+    :func:`resolve_denoise_h`).
     """
 
     input_path: Path
@@ -87,6 +88,7 @@ class FitPipelineCtx:
     denoise_search_distance: int
     denoise_backend: str
     denoise_effective_h: Optional[float] = None
+    denoise_norm_range: "Optional[tuple[float, float]]" = None
 
 
 def warn_ignored_density_flags(ctx: FitPipelineCtx) -> None:
@@ -218,6 +220,9 @@ def resolve_denoise_h(ctx: FitPipelineCtx, volume: "Any") -> Optional[float]:
         return None
     if ctx.denoise_h is not None:
         effective_h = ctx.denoise_h
+        # Record the WHOLE-volume range so per-tile normalization matches the
+        # scale h was chosen for (a fixed h is not scale-invariant).
+        ctx.denoise_norm_range = (float(volume.min()), float(volume.max()))
         aprint(f"Denoise: using manual h={effective_h:.4f}")
         return effective_h
     import torch
@@ -229,7 +234,10 @@ def resolve_denoise_h(ctx: FitPipelineCtx, volume: "Any") -> Optional[float]:
     from luxar.gsplats.utils.device import resolve_torch_device
 
     with asection("Calibrating NLM h"):
-        norm_vol, _, _ = normalize_volume(volume)
+        # Capture the global range h is calibrated against so every tile
+        # normalizes against EXACTLY that range (scale-consistent smoothing).
+        norm_vol, _gmin, _gmax = normalize_volume(volume)
+        ctx.denoise_norm_range = (_gmin, _gmax)
         t_vol = torch.from_numpy(norm_vol)
         # Auto-select CUDA > MPS > CPU when --device is omitted.
         dev = resolve_torch_device(ctx.device) if ctx.device else resolve_torch_device()
@@ -323,6 +331,7 @@ def assemble_fit_config(ctx: FitPipelineCtx, is_tiled: bool) -> "tuple[dict, Any
             "backend": ctx.denoise_backend,
             "device": ctx.device,
             "use_2d": ctx.denoise_2d,
+            "norm_range": ctx.denoise_norm_range,
         }
         aprint(f"Denoise: per-tile on-the-fly (h={ctx.denoise_effective_h:.4f})")
 

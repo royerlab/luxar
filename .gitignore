@@ -118,6 +118,8 @@ pip-delete-this-directory.txt
 pip-log.txt
 # Playwright E2E test artifacts (all in test-results/ now)
 /.playwright-mcp/
+# Per-checkout identity markers used to reject servers from sibling worktrees.
+/packages/luxar-viewer/.luxar-e2e-identities/
 playwright-report/
 *.png-snapshots/
 pnpm-debug.log*

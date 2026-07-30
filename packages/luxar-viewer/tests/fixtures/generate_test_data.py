@@ -2113,6 +2113,11 @@ def generate_gsplats_2d_test() -> None:
     Deliberately authored with ANISOTROPIC, correlated 2D factors: an isotropic
     fixture would pass even if the marginal were computed wrongly, since every
     candidate phantom value coincides when the two pivots are equal.
+
+    No unit test consumes this fixture yet — it stages a future decoder /
+    marginal-Cholesky test that loads a real 2D gsplats scene and asserts the
+    synthesized phantom row (2D display-dims path), rather than exercising the
+    kernel in isolation as the WASM parity tests do.
     """
     with asection("Generating GSplats 2D Test"):
         output = FIXTURES_DIR / "test_gsplats_2d.luxar.zarr"

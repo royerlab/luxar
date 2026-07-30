@@ -95,6 +95,7 @@ import numpy as np
 from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.demos import require_module
 from luxar.encoding import EncodingMode
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.utils.demos import (
@@ -160,12 +161,7 @@ def load_opencell_data(tiff_path: Path) -> list[np.ndarray]:
     Returns:
         List of 2 channel volumes, each float32 normalised to [0, 1].
     """
-    try:
-        import tifffile
-    except ImportError:
-        raise ImportError(
-            "tifffile is required for this demo.\nInstall with: pip install tifffile"
-        )
+    tifffile = require_module("tifffile")
 
     with asection("Loading OpenCell TIFF"):
         aprint(f"Reading {tiff_path.name}...")

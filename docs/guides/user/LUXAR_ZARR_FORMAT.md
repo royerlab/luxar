@@ -215,6 +215,15 @@ The root `.zattrs` file contains scene-wide configuration:
 }
 ```
 
+### `incomplete` (optional root attr)
+
+`incomplete` (boolean) is written to the root `.zattrs` only when the writer
+aborted before `finalize()` completed — an exception or Ctrl-C propagated out of
+the `LuxarZarrCompiler` context, or `finalize()` itself failed midway. A
+successful `finalize()`
+never leaves this marker. `LuxarScene.load` refuses to load a store carrying
+`incomplete: true`, since it may be missing nodes or consolidated metadata.
+
 ## Node Types
 
 ### 1. Group Nodes
