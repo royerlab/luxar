@@ -53,6 +53,7 @@ from luxar.typing_utils._format_contract import (
     GSPLATS_FORMAT_VERSION,
     SUPPORTED_GSPLATS_VERSIONS,
 )
+from luxar.utils.arbol_warnings import arbol_warnings
 from luxar.utils.paths import normalize_zarr_path
 
 
@@ -625,6 +626,7 @@ def write_partition_streaming(
     return n_written
 
 
+@arbol_warnings()
 def save_gsplats(
     path: str | Path,
     centers: np.ndarray,

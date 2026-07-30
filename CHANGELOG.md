@@ -6,6 +6,20 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Fixed — warnings now display through arbol instead of raw stderr lines
+
+Python's default warning display wrote `path/to/file.py:299: UserWarning: ...`
+straight to stderr, landing out of place in the middle of arbol's hierarchical
+console output (e.g. the Cholesky covariance-certificate escalation warning
+during gsplat scene compiles). Warning *display* is now routed through
+`aprint` as `⚠️ UserWarning: ... [file.py:299]` tree lines: process-wide in
+every `luxar` CLI run, and scoped around the arbol-tree-producing Python API
+entry points (`LuxarZarrCompiler` write methods, `fit_gaussian_splats`,
+`generate_seeds`, `save_gsplats`). Display-only by design — warning semantics
+(filters, `-W error`, `catch_warnings`, `pytest.warns`) are unchanged, and the
+override steps aside whenever a recorder or custom `showwarning` hook owns
+warning display. New module: `luxar.utils.arbol_warnings`.
+
 #### Added — spatial partitioning (BSP tiling) now works on 2D data
 
 `luxar gsplat partition`, `lod --recipe tiles|overview|adaptive`, and

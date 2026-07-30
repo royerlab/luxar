@@ -42,6 +42,7 @@ from ..io.reader import DEFAULT_COMP
 from ..io.writer import ZarrWriterProtocol
 from ..typing_utils.aliases import ChunkSpec, MaxShape, NodePath, PointsMetadata
 from ..typing_utils.config import DEFAULT_VERSION
+from ..utils.arbol_warnings import arbol_warnings
 from ._compiler.bounds import (
     compute_position_bounds,
     expand_bounds_with_transforms,
@@ -249,6 +250,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         if self._tmpdir is not None:
             self._tmpdir.cleanup()
 
+    @arbol_warnings()
     def create_scene(
         self,
         dimensions: Dimensions,
@@ -363,6 +365,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             group.attrs.clear()
             group.attrs.update(attrs)
 
+    @arbol_warnings()
     def write_points(  # type: ignore[override]
         self,
         path: NodePath,
@@ -421,6 +424,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         self._metadata_cache[metadata["path"]] = metadata
         return metadata
 
+    @arbol_warnings()
     def write_lines(  # type: ignore[override]
         self,
         path: NodePath,
@@ -518,6 +522,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
 
     # ── Multi-additive-LOD write helpers for Points and Lines ──
 
+    @arbol_warnings()
     def write_points_multi_lod(
         self,
         path: NodePath,
@@ -630,6 +635,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         )
         return metadata
 
+    @arbol_warnings()
     def write_lines_multi_lod(
         self,
         path: NodePath,
@@ -738,6 +744,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
 
     # ── GSplats public write methods ───────────────────────────
 
+    @arbol_warnings()
     def write_gsplats(  # type: ignore[override]
         self,
         path: NodePath,
@@ -786,6 +793,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         self._metadata_cache[path.lstrip("/")] = metadata
         return metadata
 
+    @arbol_warnings()
     def write_gsplat_leaf_subtree(
         self,
         path: NodePath,
@@ -959,6 +967,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
     def _compute_content_hashes(self, store: zarr.Group) -> str:
         return compute_content_hashes(store)
 
+    @arbol_warnings()
     def finalize(self) -> None:
         """Finalize the Zarr store with metadata consolidation."""
         if self._is_finalized:
