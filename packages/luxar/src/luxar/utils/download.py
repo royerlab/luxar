@@ -1108,8 +1108,10 @@ def download_zip_member(
             # never fetch a body. A legitimate empty member is STORED (method 0)
             # with zero uncompressed bytes and CRC 0 — the shortest empty DEFLATE
             # stream is two bytes, so a DEFLATE member (or any nonzero size/CRC)
-            # with zero compressed bytes is a malformed header. Reject it — as
-            # stdlib ``zipfile`` would — instead of silently extracting empty.
+            # with zero compressed bytes is a malformed header. Reject it —
+            # deliberately stricter than stdlib ``zipfile``, which accepts such a
+            # forged empty DEFLATE entry (a zero-byte raw stream flushes to empty
+            # and CRC 0 matches) — instead of silently extracting empty.
             # A valid empty member writes through the same ``.part``-then-
             # ``replace`` promotion the streaming path uses.
             if cd_method != 0 or uncomp_size != 0 or crc_expected != 0:
