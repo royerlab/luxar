@@ -1,7 +1,16 @@
 import { defineConfig } from 'vite';
 import { resolve } from 'path';
+import { fileURLToPath } from 'url';
+import { checkoutIdentityPlugin, ensureCheckoutIdentity } from './tools/e2e-server-identity';
 
-export default defineConfig({
+const viewerRoot = fileURLToPath(new URL('.', import.meta.url));
+const projectRoot = resolve(viewerRoot, '../..');
+
+export default defineConfig(({ command }) => ({
+  plugins:
+    command === 'serve'
+      ? [checkoutIdentityPlugin(ensureCheckoutIdentity(projectRoot, viewerRoot))]
+      : [],
   base: './',
   build: {
     outDir: 'dist',
@@ -35,7 +44,7 @@ export default defineConfig({
       },
     },
   },
-  resolve: { alias: { '@': resolve(__dirname, 'src') } },
+  resolve: { alias: { '@': resolve(viewerRoot, 'src') } },
   worker: {
     format: 'es', // Use ES modules for workers
   },
@@ -43,6 +52,7 @@ export default defineConfig({
     exclude: ['comlink'], // Comlink works better without bundling
   },
   server: {
+    host: '127.0.0.1',
     port: 5173,
     open: true,
     // Proxy configuration - forward requests to Python backend
@@ -59,4 +69,4 @@ export default defineConfig({
       },
     },
   },
-});
+}));
