@@ -25,8 +25,9 @@ LuxarZarrCompiler / gsplat_assembly
         ▼
   write_positions   → semantic_type = COORDINATE
   write_colors      → semantic_type = COLOR
-  write_positive_scalar → POSITIVE_SCALAR   (radii / widths / amplitudes / scalars)
+  write_positive_scalar → POSITIVE_SCALAR   (radii / widths / amplitudes)
   write_bounded_scalar  → BOUNDED_SCALAR    (sharpnesses)
+  write_scalars         → BOUNDED_SCALAR    (colormap scalars; signed-safe)
         │
         ▼
   ArrayEncoder.encode(...)  →  zarr array + "encoding" attrs
@@ -90,9 +91,11 @@ colormap-scalars writer:
 
 - **`write_scalars(group, scalars, spatial_index_data, n_elements, ctx)`**
   Writes the `scalars` array used for colormap lookup (encoded as
-  `POSITIVE_SCALAR`). Requires the group to already contain a position array
-  (`positions`, `vertices`, or `centers`) and raises `RuntimeError` otherwise.
-  Records `group.attrs["scalar_data_range"]` (min/max) for layer controls.
+  `BOUNDED_SCALAR` over the data's `[min, max]`, so legitimately **signed**
+  scalars — z-scores, velocities, divergence — are accepted). Requires the
+  group to already contain a position array (`positions`, `vertices`, or
+  `centers`) and raises `RuntimeError` otherwise. Records
+  `group.attrs["scalar_data_range"]` (min/max) for layer controls.
 
 ## Invariants
 

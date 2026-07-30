@@ -356,11 +356,20 @@ def generate_fit_sbatch(
         lines.extend(
             [
                 "# --- Sequential mode: run tasks one by one ---",
+                "FAILED=0",
                 "for OFFSET in $(seq 0 $((TASKS_PER_JOB - 1))); do",
                 "    TASK_ID=$((BASE_TASK + OFFSET))",
                 '    if [ "$TASK_ID" -ge "$TOTAL_TASKS" ]; then break; fi',
-                "    run_task $TASK_ID",
+                "    if ! run_task $TASK_ID; then FAILED=$((FAILED + 1)); fi",
                 "done",
+                'if [ "$FAILED" -gt 0 ]; then',
+                '    if [ "$FAILED" -eq 1 ]; then',
+                '        echo "WARNING: 1 sequential task failed"',
+                "    else",
+                '        echo "WARNING: $FAILED sequential tasks failed"',
+                "    fi",
+                "    exit 1",
+                "fi",
                 "",
             ]
         )

@@ -15,6 +15,14 @@
 
 import { defineConfig, devices } from '@playwright/test';
 import * as path from 'path';
+import { fileURLToPath } from 'url';
+import { ensureCheckoutIdentity } from './tools/e2e-server-identity';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const projectRoot = path.resolve(__dirname, '../..');
+const viewerBaseURL = 'http://127.0.0.1:5173';
+const checkoutIdentity = ensureCheckoutIdentity(projectRoot, __dirname);
+const viewerIdentityURL = new URL(checkoutIdentity.viewerPath, viewerBaseURL).toString();
 
 export default defineConfig({
   // Test directory - only screenshot tests
@@ -35,7 +43,7 @@ export default defineConfig({
   // Shared settings
   use: {
     // Base URL for viewer
-    baseURL: 'http://localhost:5173',
+    baseURL: viewerBaseURL,
 
     // No trace/video for screenshot generation
     trace: 'off',
@@ -77,8 +85,8 @@ export default defineConfig({
   webServer: [
     {
       // TypeScript viewer dev server
-      command: 'pnpm dev',
-      url: 'http://localhost:5173',
+      command: 'pnpm dev --host 127.0.0.1 --strictPort',
+      url: viewerIdentityURL,
       reuseExistingServer: true,
       timeout: 120000,
       stdout: 'pipe',
@@ -87,9 +95,13 @@ export default defineConfig({
     {
       // Luxar serve for demo datasets with proper CORS headers
       command: 'hatch run luxar serve . -p 9876',
-      url: 'http://localhost:9876',
-      cwd: path.resolve(__dirname, '../..'),
-      reuseExistingServer: true,
+      // `luxar serve` does not guarantee an HTTP success response at `/`, so
+      // use a TCP readiness probe rather than polling the root URL.
+      port: 9876,
+      cwd: projectRoot,
+      // `luxar serve` has no checkout identity endpoint, so never adopt an
+      // existing process whose serving root cannot be verified.
+      reuseExistingServer: false,
       timeout: 60000,
       stdout: 'ignore',
       stderr: 'pipe',

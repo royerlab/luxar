@@ -38,14 +38,19 @@ from ..utils.demos import (
 from ._dependencies import (
     INSTALL_SPECS,
     DependencySpec,
+    DependencyStatus,
     MissingDependencyError,
+    extras_for,
+    is_installed,
     require_module,
+    survey,
 )
 
 __all__ = [
     "INSTALL_SPECS",
     "DatasetNotFound",
     "DependencySpec",
+    "DependencyStatus",
     "LocalComputeDataset",
     "MissingDependencyError",
     "cache_computed",
@@ -56,7 +61,9 @@ __all__ = [
     "dataset_spec",
     "detect_device",
     "ensure_dataset",
+    "extras_for",
     "hsv_to_rgb",
+    "is_installed",
     "launch_viewer",
     "load_dataset_gsplats",
     "load_manifest",
@@ -67,5 +74,6 @@ __all__ = [
     "require_local_data",
     "require_module",
     "stack_colorings",
+    "survey",
     "warn_if_no_cuda_gpu",
 ]

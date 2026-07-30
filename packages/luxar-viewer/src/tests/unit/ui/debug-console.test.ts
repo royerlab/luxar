@@ -4,6 +4,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { formatArgs } from '../../../ui/debug-console/formatters';
 import { DebugConsole } from '../../../ui/debug-console';
 
 // Mock console interceptor
@@ -231,6 +232,36 @@ describe('DebugConsole - Critical Fixes', () => {
   // null-prototype / cyclic objects is a robustness concern (JSON.stringify
   // fallback path), not an accessibility one.
   describe('Argument Formatting Robustness', () => {
+    it('renders an Error as name: message in the DOM, not {}', () => {
+      const debugConsole = new DebugConsole();
+      const console_any = debugConsole as unknown as {
+        formatArgAsDOMElement: (arg: unknown) => HTMLElement;
+      };
+
+      const el = console_any.formatArgAsDOMElement(new Error('boom'));
+
+      expect(el.textContent).toBe('Error: boom');
+      expect(el.textContent).not.toContain('{}');
+    });
+
+    it('agrees with formatArgs for Errors (the two formatters must not drift)', () => {
+      // There are two independent renderers — the DOM span here and `formatArgs`
+      // in debug-console/formatters.ts, which feeds the filter haystack and the
+      // CLIPBOARD (the bug-report path). If they disagree for Errors, the visible
+      // row and the copied text say different things.
+      //
+      // Scoped to Errors on purpose: they legitimately differ for plain strings,
+      // which the DOM renderer quotes.
+      const debugConsole = new DebugConsole();
+      const console_any = debugConsole as unknown as {
+        formatArgAsDOMElement: (arg: unknown) => HTMLElement;
+      };
+
+      for (const err of [new Error('boom'), new Error(), new TypeError('bad type')]) {
+        expect(console_any.formatArgAsDOMElement(err).textContent).toBe(formatArgs([err]));
+      }
+    });
+
     it('formats null-prototype objects without throwing', () => {
       const debugConsole = new DebugConsole();
       const console_any = debugConsole as unknown as {

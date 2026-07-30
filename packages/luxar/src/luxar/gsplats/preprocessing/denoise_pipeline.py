@@ -16,20 +16,36 @@ from arbol import aprint, asection
 # ── Normalization ────────────────────────────────────────────────
 
 
-def normalize_volume(volume: np.ndarray) -> tuple[np.ndarray, float, float]:
+def normalize_volume(
+    volume: np.ndarray,
+    value_range: "tuple[float, float] | None" = None,
+) -> tuple[np.ndarray, float, float]:
     """Normalize float32 volume to [0, 1] range.
+
+    Parameters
+    ----------
+    volume : np.ndarray
+        Float32 input volume.
+    value_range : tuple[float, float], optional
+        Fixed ``(vmin, vmax)`` to normalize against instead of the volume's
+        own min/max. Used by tiled callers so a fixed NLM ``h`` means the same
+        smoothing strength in every tile (each tile is normalized against the
+        WHOLE-volume range, not its own extent).
 
     Returns
     -------
     normalized : np.ndarray
         Volume scaled to [0, 1].
     vmin : float
-        Original minimum (for denormalization).
+        Minimum actually used (for denormalization).
     vmax : float
-        Original maximum (for denormalization).
+        Maximum actually used (for denormalization).
     """
-    vmin = float(volume.min())
-    vmax = float(volume.max())
+    if value_range is not None:
+        vmin, vmax = float(value_range[0]), float(value_range[1])
+    else:
+        vmin = float(volume.min())
+        vmax = float(volume.max())
     if vmax > vmin:
         return (volume - vmin) / (vmax - vmin), vmin, vmax
     # Constant volume — return zeros
@@ -77,6 +93,7 @@ def denoise_volume_array(
     device: Optional[str] = None,
     use_2d: bool = False,
     chunk_size: Optional[int] = None,
+    norm_range: "tuple[float, float] | None" = None,
 ) -> np.ndarray:
     """Denoise a single 3D volume (or 2D image) with NLM.
 
@@ -94,6 +111,10 @@ def denoise_volume_array(
         Process 3D volumes in overlapping chunks of this many Z-slices.
         Auto-computed to keep memory under ~16 GB if not specified.
         Only used with the ``pytorch`` backend for 3D volumes.
+    norm_range : tuple[float, float], optional
+        Fixed whole-volume ``(vmin, vmax)`` to normalize against instead of
+        this array's own min/max. Tiled callers pass the global range so a
+        fixed ``h`` yields scale-consistent smoothing across all tiles.
     """
     import time as _time
 
@@ -102,7 +123,7 @@ def denoise_volume_array(
     from .nlm_core import denoise_nlm
 
     volume = volume.astype(np.float32)
-    norm_vol, vmin, vmax = normalize_volume(volume)
+    norm_vol, vmin, vmax = normalize_volume(volume, value_range=norm_range)
 
     # Auto-detect device: prefer CUDA, then MPS, then CPU.
     from luxar.gsplats.utils.device import resolve_torch_device
