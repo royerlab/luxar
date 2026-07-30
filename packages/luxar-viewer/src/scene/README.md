@@ -848,7 +848,7 @@ window.addEventListener('resize', () => {
 
 ```typescript
 const sceneConfig = {
-  backgroundColor: 0x111111, // Dark gray background
+  backgroundColor: 0x000000, // Pitch black — zero radiance under the HDR exposure chain
   ambientLight: {
     color: 0xffffff,
     intensity: 1.0,

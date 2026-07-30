@@ -916,6 +916,10 @@ export function disposeDepthSort(): void {
   // an embedder that disposes and re-inits in one page must not have the
   // old scene pinned by them.
   clearRenderOrderFrameState();
+  // The display-dims accessor lives in the render-order submodule, not the
+  // locals below; drop it too so a dispose/re-init doesn't keep the old app's
+  // closure alive (re-init overwrites it via configureDepthSort regardless).
+  setRenderOrderDisplayDimsAccessor(null);
   worker?.terminate();
   worker = null;
   api = null;
