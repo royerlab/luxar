@@ -23,6 +23,19 @@ from luxar.gsplats.io import (
 from luxar.typing_utils._format_contract import GSPLATS_FORMAT_VERSION
 
 
+def _positive_diag(chol: np.ndarray, d: int = 3) -> np.ndarray:
+    """Force the packed-Cholesky diagonal strictly positive, in place.
+
+    A real Cholesky factor has ``L[i, i] > 0``; unconstrained random vectors
+    give ~50% negative diagonals that the writer's positive-diagonal gate
+    legitimately rejects. Off-diagonals are left untouched (kept signed) so the
+    fixture still exercises negative off-diagonals through the round-trip.
+    """
+    diag_idx = np.cumsum(np.arange(1, d + 1)) - 1
+    chol[..., diag_idx] = np.abs(chol[..., diag_idx]) + 0.1
+    return chol
+
+
 def create_test_splats_3d(n_splats: int = 100) -> dict:
     """Create test 3D Gaussian splats."""
     rng = np.random.default_rng(0)
@@ -369,7 +382,7 @@ class TestCholeskySplitRoundTrip:
         rng = np.random.default_rng(7)
         n, d = 50, 3
         k = d * (d + 1) // 2
-        uniform = rng.standard_normal(k).astype(np.float32)
+        uniform = _positive_diag(rng.standard_normal(k).astype(np.float32), d)
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "u.gsplats.zarr"
             save_gsplats(
@@ -681,7 +694,8 @@ class TestInspectGsplats:
         def _level(n: int, seed: int) -> SubstitutiveLevel:
             rng = np.random.RandomState(seed)
             chol = np.zeros((n, 6), dtype=np.float32)
-            chol[:, [0, 3, 5]] = 1.0
+            # Packed lower-tri diagonal slots for d=3 are [0, 2, 5].
+            chol[:, [0, 2, 5]] = 1.0
             return SubstitutiveLevel(
                 additive_sublods=[
                     AdditiveSubLOD(
@@ -783,7 +797,9 @@ class TestCompression:
             AdditiveSubLOD(
                 centers=rng.standard_normal((n, 3)).astype(np.float32),
                 amplitudes=rng.random(n).astype(np.float32),
-                cholesky_factors=rng.standard_normal((n, 6)).astype(np.float32),
+                cholesky_factors=_positive_diag(
+                    rng.standard_normal((n, 6)).astype(np.float32)
+                ),
             )
             for n in (50, 80)
         ]
@@ -840,7 +856,9 @@ class TestTruncationRadiusRoundtrip:
             AdditiveSubLOD(
                 centers=rng.standard_normal((n, 3)).astype(np.float32),
                 amplitudes=rng.random(n).astype(np.float32),
-                cholesky_factors=rng.standard_normal((n, 6)).astype(np.float32),
+                cholesky_factors=_positive_diag(
+                    rng.standard_normal((n, 6)).astype(np.float32)
+                ),
                 truncation_radius=2.5,
             )
             for n in (30, 50)
@@ -862,7 +880,9 @@ class TestTruncationRadiusRoundtrip:
             AdditiveSubLOD(
                 centers=rng.standard_normal((n, 3)).astype(np.float32),
                 amplitudes=rng.random(n).astype(np.float32),
-                cholesky_factors=rng.standard_normal((n, 6)).astype(np.float32),
+                cholesky_factors=_positive_diag(
+                    rng.standard_normal((n, 6)).astype(np.float32)
+                ),
                 truncation_radius=tr,
             )
             for n, tr in ((30, 2.5), (50, 4.0))
@@ -884,7 +904,9 @@ class TestTruncationRadiusRoundtrip:
             return AdditiveSubLOD(
                 centers=rng.standard_normal((n, 3)).astype(np.float32),
                 amplitudes=rng.random(n).astype(np.float32),
-                cholesky_factors=rng.standard_normal((n, 6)).astype(np.float32),
+                cholesky_factors=_positive_diag(
+                    rng.standard_normal((n, 6)).astype(np.float32)
+                ),
             )
 
         levels = [

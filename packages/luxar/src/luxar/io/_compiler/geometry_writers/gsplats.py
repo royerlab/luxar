@@ -78,7 +78,7 @@ def write_gsplats(
     # would resolve require_group("") to the scene ROOT and clobber it.
     path = validate_node_path(path)
 
-    # 0c. Validate splat arrays (shapes, lengths, finiteness).
+    # 0c. Validate splat arrays (shapes, lengths, finiteness — colors too).
     (
         centers,
         amplitudes,
@@ -192,12 +192,21 @@ def write_gsplat_leaf_subtree(
 
     Returns the aggregate metadata; the caller records it in the metadata cache.
     """
-    from ..gsplat_tree import write_gsplat_leaf
+    from ..gsplat_tree import preflight_validate_leaf, write_gsplat_leaf
 
     # Fail fast on invalid render attrs (+ reserved writer-stamp collisions)
     # BEFORE creating the group, so a bad value cannot leave a partial node
     # on disk. (The compiler entry already validated the path segments.)
     validate_render_attrs(attrs, reserved_attrs=GSPLATS_RESERVED_ATTRS)
+
+    # Preflight EVERY sub-LOD's arrays/colors + cross-level consistency BEFORE
+    # creating the parent group, so an invalid later additive level cannot leave
+    # a half-written node (parent group + a committed additive_0/) on disk. This
+    # closes the input-validation half-writes (arrays, colors, and cross-level
+    # consistency all checked pre-write); it is NOT fully transactional, though
+    # (transform/nd_transform + custom-colormap-LUT resolution still run
+    # post-write — the same F7 residual noted in write_gsplats).
+    preflight_validate_leaf(leaf)
 
     path = path.lstrip("/")
     group = ctx.store.require_group(path)
@@ -210,6 +219,8 @@ def write_gsplat_leaf_subtree(
         store=ctx.store,
         attrs=attrs,
         scene_tone_mapping=ctx.scene_tone_mapping,
+        # Preflighted just above (pre-group) — don't value-scan the leaf twice.
+        preflighted=True,
         # Scene-embedded GSplatData (flat leaf / additive ladder) uses the same
         # authoritative scene-dimension barrier as the array path, so a
         # non-integer categorical axis is grouped correctly (not left to the

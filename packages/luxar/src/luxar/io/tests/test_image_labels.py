@@ -411,8 +411,9 @@ class TestImageLabelOnLinesAndGSplats:
             dtype=np.float32,
         )
         amplitudes = np.array([1.0, 0.5], dtype=np.float32)
-        # 3D Cholesky factors: k = 3*(3+1)/2 = 6
-        cholesky = np.eye(3, dtype=np.float32)[np.triu_indices(3)]
+        # 3D Cholesky factors: k = 3*(3+1)/2 = 6 (packed lower-triangular
+        # identity: diagonal slots [0, 2, 5] = 1).
+        cholesky = np.array([1, 0, 1, 0, 0, 1], dtype=np.float32)
         cholesky = np.tile(cholesky, (2, 1))
         blobs = [_make_fake_jpeg(30), _make_fake_webp(40)]
 
