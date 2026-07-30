@@ -112,9 +112,10 @@ CHANNELS = [
     {"index": 1, "name": "Nuclei", "colormap": "bop_blue"},
 ]
 
-# Per-channel brightness multiplier applied before writing (raise for a
-# brighter render; volumetric compositing bounds accumulated radiance, so it
-# tolerates a hotter value than the ~0.6 the former additive sum saturated at).
+# Per-channel brightness multiplier applied before writing. Kept conservative
+# here; volumetric compositing bounds accumulated radiance (unlike the former
+# additive sum, which saturated around ~0.6), so a hotter value stays
+# well-behaved if a brighter render is wanted.
 LAYER_INTENSITY = 0.4
 
 # Cache directory
