@@ -23,6 +23,7 @@ from luxar.gsplats.fitting.validation import DEFAULT_SIGMA_MIN_DIAG
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.utils import resolve_torch_device
 from luxar.gsplats.utils.trils import tril_size
+from luxar.utils.arbol_warnings import arbol_warnings
 
 
 class GaussianSplatFitter:
@@ -247,6 +248,7 @@ class GaussianSplatFitter:
         return finalize_results(optimization_results, config, preprocessed_data)
 
 
+@arbol_warnings()
 def fit_gaussian_splats(
     V: np.ndarray,
     seeds: Optional[np.ndarray | int | float | GSplatData] = None,

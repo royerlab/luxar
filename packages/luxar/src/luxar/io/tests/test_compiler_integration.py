@@ -401,6 +401,8 @@ class TestCompilerIntegration:
 
     def test_error_handling_in_context(self, tmp_path) -> None:
         """Test error handling with context manager."""
+        from luxar import LuxarScene
+
         output_path = tmp_path / "test.luxar.zarr"
 
         with pytest.raises(ValueError):
@@ -411,9 +413,13 @@ class TestCompilerIntegration:
                 invalid_positions = np.random.randn(100)  # 1D instead of 2D
                 compiler.write_points("bad_points", invalid_positions)
 
-        # Even with error, context manager should clean up
-        # Store should still be finalized (though incomplete)
-        assert output_path.exists()
+        # After an exception in the with block the store is NOT finalized: it
+        # carries the `incomplete` marker and LuxarScene.load refuses it.
+        reopened = zarr.open_group(str(output_path), mode="r")
+        assert reopened.attrs.get("incomplete") is True
+
+        with pytest.raises(ValueError, match="incomplete"):
+            LuxarScene.load(output_path)
 
 
 # ─── Layer flag on Node via add_points ──────────────────

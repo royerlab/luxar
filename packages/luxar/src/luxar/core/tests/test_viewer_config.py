@@ -478,7 +478,7 @@ class TestViewerConfig:
     def test_to_file_and_from_file(self, tmp_path: Path) -> None:
         vc = ViewerConfig(
             camera=CameraConfig(position=(0, 5, 20), fov=47),
-            background_color="#111111",
+            background_color="#000000",
             bloom_strength=0.5,
         )
         path = tmp_path / "viewer_state.json"
@@ -488,7 +488,7 @@ class TestViewerConfig:
         assert vc2.camera is not None
         assert vc2.camera.position == (0, 5, 20)
         assert vc2.camera.fov == 47
-        assert vc2.background_color == "#111111"
+        assert vc2.background_color == "#000000"
         assert vc2.bloom_strength == 0.5
 
     def test_snapshot_round_trip(self) -> None:
@@ -505,7 +505,7 @@ class TestViewerConfig:
                     "near": 0.1,
                     "far": 1000,
                 },
-                "background_color": "#111111",
+                "background_color": "#000000",
                 "bloom_enabled": True,
                 "bloom_strength": 0.5,
                 "bloom_radius": 1.0,

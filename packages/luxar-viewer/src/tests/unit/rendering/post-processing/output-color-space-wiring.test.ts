@@ -10,12 +10,15 @@
  * `needsFrameBufferTarget` getter) that applies linearToSRGB a
  * SECOND time, double-encoding every pixel.
  *
- * Visible symptom: with all layers removed, the configured dark-gray
- * background (default `0x111111`) is rendered as a much-brighter
- * mid-gray under WebGPU dispatch (sRGB-of-sRGB ≈ 0x4A4A4A) while
- * WebGL stays correct (its chunk-injection path no-ops on our GLSL3
- * `out vec4 fragColor` declaration, so even with the wrong setting
- * no doubling happens on that backend).
+ * Visible symptom: any non-black content (or an authored tinted
+ * background) is rendered much brighter under WebGPU dispatch —
+ * e.g. a `0x111111` background comes out as sRGB-of-sRGB ≈ 0x4A4A4A —
+ * while WebGL stays correct (its chunk-injection path no-ops on our
+ * GLSL3 `out vec4 fragColor` declaration, so even with the wrong
+ * setting no doubling happens on that backend). Note: the default
+ * background is now pure black (`0x000000`), for which the double
+ * encode is a fixed point (sRGB(sRGB(0)) == 0), so an EMPTY scene no
+ * longer shows the symptom — these wiring assertions are the guard.
  *
  * The fix lives in `post-processing-manager.ts`'s constructor; these
  * tests pin the wiring so a future "let's set this to sRGB to match
