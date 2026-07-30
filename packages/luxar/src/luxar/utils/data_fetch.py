@@ -273,7 +273,7 @@ def _ensure_one(
         if not dest.is_file():
             raise IsADirectoryError(
                 f"Cache entry {dest} exists but is not a regular file; remove it "
-                "(or run 'luxar demo clear') and retry."
+                "(or run 'luxar demo cache clear') and retry."
             )
         if sha is None and not is_lfs_pointer(dest):
             # Unverifiable: a pending-upload entry, or a manifest predating the
