@@ -423,6 +423,12 @@ def robust_download(
                 f"({part_size} > {remote_size} bytes); restarting from scratch"
             )
             resume_byte_pos = 0
+            # Discard the proven-stale staged bytes NOW rather than via the
+            # loop's "wb" open: if the fetch fails before that open, the
+            # condemned bytes would survive in `.part` and a LATER run could
+            # resume onto them (e.g. after the remote grows past their length)
+            # and splice a corrupt file that passes size verification.
+            part_path.unlink(missing_ok=True)
         else:
             # Genuinely partial (0 < part < remote) or unknown remote size:
             # best-effort resume. A resulting 416 is handled gracefully below.
@@ -477,6 +483,13 @@ def robust_download(
                             resume_byte_pos = 0
                             migrated_from_output = False
                             response.close()
+                            # Discard the proven-stale staged bytes NOW, not via
+                            # the next iteration's "wb" open: if the unranged
+                            # re-fetch fails before that open, a full stale copy
+                            # would survive in `.part` and a LATER run would
+                            # resume it (206) and splice `stale[:N] + remote[N:]`
+                            # into a corrupt file that passes size verification.
+                            part_path.unlink(missing_ok=True)
                             continue
                         aprint(f"✓ Resuming from {resume_byte_pos / (1024**2):.1f} MB")
                         mode = "ab"  # Append mode
@@ -654,8 +667,7 @@ def robust_download(
                                 # Any size mismatch against the authoritative total
                                 # (a stale/oversized staged file, or a contradictory
                                 # smaller-total 416 from a misbehaving server /
-                                # concurrently-truncated file): restart cleanly. The
-                                # next iteration's "wb" open of part_path truncates it.
+                                # concurrently-truncated file): restart cleanly.
                                 aprint(
                                     "⚠️  Range not satisfiable (416); staged partial "
                                     f"size ({local_size}) doesn't match the remote "
@@ -666,6 +678,14 @@ def robust_download(
                                 # Discarding the migrated bytes → no longer a
                                 # trustworthy pre-existing cache to auto-restore.
                                 migrated_from_output = False
+                                # Discard the proven-stale staged bytes NOW rather
+                                # than via the next iteration's "wb" open: if the
+                                # re-fetch fails before that open, the condemned
+                                # bytes would survive in `.part` and a LATER run
+                                # could resume onto them (e.g. after the remote
+                                # grows past their length) and splice a corrupt
+                                # file that passes size verification.
+                                part_path.unlink(missing_ok=True)
                                 continue
                         else:
                             # No total anywhere (a truly header-less 416, no

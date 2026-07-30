@@ -806,3 +806,67 @@ class TestRobustDownloadResume416:
         assert out.read_bytes() == remote, "stale dest must refetch clean, not splice"
         assert not part.exists(), "staging .part must be renamed onto out"
         assert 206 in server.served, "the satisfiable Range must have yielded a 206"
+
+    def test_stale_206_restart_failure_leaves_no_poisoned_part(
+        self, chunked_range_server, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A 206-proven-stale cache whose from-scratch re-fetch FAILS must not
+        leave the full stale copy in ``.part`` for a later run to splice.
+
+        Run 1: the stale complete dest (150 KB, shorter than the 300 KB remote)
+        is migrated on the size-less host, the Range-at-EOF gets a 206 proving
+        it stale, and the unranged from-scratch re-fetch then dies (network
+        drop) with retries exhausted. Pre-fix the condemned bytes survived in
+        ``.part`` — the ``"wb"`` truncation that was supposed to discard them
+        was never reached — and run 2 then resumed at 150 KB, got a 206 tail,
+        and spliced ``stale[:150k] + remote[150k:]`` into a corrupt file that
+        passes size verification and is promoted as trusted. Post-fix the stale
+        bytes are unlinked the moment the 206 proves them stale, so run 1
+        leaves no ``.part`` and run 2 fetches the full remote clean.
+        """
+        base_url, _server = chunked_range_server
+        remote = _make_payload(nbytes=300_000, seed=7)
+        (tmp_path / "data.bin").write_bytes(remote)
+
+        out = tmp_path / "cache" / "data.bin"
+        out.parent.mkdir(parents=True)
+        stale = _make_payload(nbytes=150_000, seed=555)
+        out.write_bytes(stale)  # stale complete cache, shorter than the remote
+        part = out.with_name(out.name + ".part")
+
+        real_get = requests.sessions.Session.get
+        state = {"ranged_seen": False, "offline": True}
+
+        def flaky_get(self, url, **kwargs):  # noqa: ANN001, ANN202
+            # Let the size probe and the ranged (stale-proving 206) GET through,
+            # then fail the unranged from-scratch re-fetch while "offline".
+            headers = dict(kwargs.get("headers") or {})
+            if "Range" in headers:
+                state["ranged_seen"] = True
+            elif state["ranged_seen"] and state["offline"]:
+                raise requests.exceptions.ConnectionError("simulated network drop")
+            return real_get(self, url, **kwargs)
+
+        monkeypatch.setattr(requests.sessions.Session, "get", flaky_get)
+
+        with pytest.raises(requests.exceptions.ConnectionError):
+            robust_download(
+                f"{base_url}/data.bin",
+                out,
+                expected_size=None,
+                verify_size=True,
+                max_retries=0,
+            )
+
+        assert not part.exists(), "proven-stale bytes must not survive in .part"
+        assert not out.exists(), "the proven-stale cache is legitimately discarded"
+
+        # Run 2: network back — must fetch the FULL remote, never splice.
+        state["offline"] = False
+        result = robust_download(
+            f"{base_url}/data.bin", out, expected_size=None, verify_size=True
+        )
+
+        assert result == out
+        assert out.read_bytes() == remote, "re-fetch must be clean, never spliced"
+        assert not part.exists(), "staging .part must be renamed onto out"
