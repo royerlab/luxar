@@ -17,7 +17,7 @@ import numpy as np
 import pytest
 import zarr
 
-from luxar import Dimensions, LuxarZarrCompiler
+from luxar import Dimension, Dimensions, LuxarZarrCompiler
 
 # ── Points metadata uses the "ndim" key ─────────────────────────────
 
@@ -210,6 +210,59 @@ class TestSceneDimensionsProperty:
             assert scene.dimensions is dims
             assert scene.dimensions.ndim == 3
             assert scene.dimensions.names == ["x", "y", "z"]
+
+    def test_dimensions_setter_persists_to_zarr(self, tmp_path: Path) -> None:
+        """Persist same-ndim metadata changes, the original silent failure."""
+        store_path = tmp_path / "test.luxar.zarr"
+        new_dims = Dimensions(
+            [
+                Dimension("row", unit="mm", range=(-5.0, 5.0), display=True),
+                Dimension("column", unit="mm", range=(0.0, 10.0), display=True),
+                Dimension(
+                    "time",
+                    unit="s",
+                    range=(0.0, 20.0),
+                    step=1.0,
+                    display=False,
+                    discrete=True,
+                ),
+            ]
+        )
+
+        with LuxarZarrCompiler(store_path) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.dimensions = new_dims
+
+            assert scene.dimensions is new_dims
+            assert scene.attrs["scene_dimensions"] == new_dims.to_dict()
+
+        store = zarr.open_group(str(store_path), mode="r")
+        assert store.attrs["scene_dimensions"] == new_dims.to_dict()
+
+    def test_dimensions_setter_after_finalize_warns_without_rewriting(
+        self, tmp_path: Path
+    ) -> None:
+        """After finalize, update the live scene but leave sealed metadata intact."""
+        store_path = tmp_path / "test.luxar.zarr"
+        original_dims = Dimensions.default_3d()
+        new_dims = Dimensions(
+            [
+                Dimension("row", unit="mm", display=True),
+                Dimension("column", unit="mm", display=True),
+                Dimension("depth", unit="mm", display=True),
+            ]
+        )
+
+        with LuxarZarrCompiler(store_path) as compiler:
+            scene = compiler.create_scene(dimensions=original_dims)
+
+        with pytest.warns(UserWarning, match="scene_dimensions"):
+            scene.dimensions = new_dims
+
+        assert scene.dimensions is new_dims
+        assert scene.attrs["scene_dimensions"] == new_dims.to_dict()
+        store = zarr.open_group(str(store_path), mode="r")
+        assert store.attrs["scene_dimensions"] == original_dims.to_dict()
 
     def test_dimensions_getter_enforces_initialization_invariant(
         self, tmp_path: Path

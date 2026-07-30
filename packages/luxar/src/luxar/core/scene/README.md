@@ -66,13 +66,16 @@ export while the heavier logic lives in dedicated, individually testable units.
 `Scene(writer, dimensions, viewer_config=None)` — both `writer` and
 `dimensions` are required (a `ValueError` is raised if either is `None`).
 Construction writes `scene_dimensions` (and optionally `viewer_config`) into the
-root zarr group immediately.
+root zarr group immediately. Reassigning `scene.dimensions` inside the active
+compiler context updates both the live scene and the stored root metadata; as with
+other node property setters, assignment after writer finalization updates only the
+live object and emits a warning.
 
 ### Properties
 
 | Property | Description |
 |----------|-------------|
-| `dimensions` | Get/set the scene `Dimensions`. Setter rejects `None`. |
+| `dimensions` | Get/set the scene `Dimensions`. Setter rejects `None` and persists changes to the root zarr attributes while the writer is active. |
 | `viewer_config` | Get/set `ViewerConfig` hints; lazily read back from zarr attrs. |
 | `overlays` | List of `Overlay` objects added to the scene. |
 | `get_store_path()` | Path to the backing Zarr store (requires a writer). |

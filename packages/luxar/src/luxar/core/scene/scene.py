@@ -223,7 +223,7 @@ class Scene(Group):
 
     @dimensions.setter
     def dimensions(self, dims: Dimensions) -> None:
-        """Set scene-level dimensions.
+        """Set and persist scene-level dimensions.
 
         Args:
             dims: Dimensions object (REQUIRED - cannot be None)
@@ -236,7 +236,7 @@ class Scene(Group):
                 "dimensions cannot be None. Scene dimensions are required and "
                 "define the coordinate system for all data in the scene."
             )
-        self.attrs["scene_dimensions"] = dims.to_dict()
+        self._persist_attr("scene_dimensions", dims.to_dict())
         self._dimensions = dims
 
     @property
