@@ -326,6 +326,37 @@ class TestBoundedScalarSignedData:
             assert group["narrow"].attrs["encoding"]["name"] == "bounded_scalar_uint8"
             assert group["medium"].attrs["encoding"]["name"] == "bounded_scalar_uint16"
 
+    def test_signed_integer_minimum_is_abs_safe(self):
+        """int64 min must not wrap under np.abs and corrupt bit selection.
+
+        ``np.abs(int64 min)`` overflows and stays negative, so the magnitude
+        range would exclude the array's largest value: bits would be sized
+        from the small positives only (uint16) while the real span is ~9.2e18
+        — a catastrophic quantization error. Magnitudes are computed in
+        float64 for signed integers, so the wide range selects float32.
+        """
+        from luxar.encoding.decoder import ArrayDecoder
+
+        int_min = np.iinfo(np.int64).min
+        # > 256 unique values so the LUT fast path does not intercept.
+        data = np.concatenate(
+            [
+                np.array([int_min], dtype=np.int64),
+                np.arange(1, 1001, dtype=np.int64),
+            ]
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(tmpdir, mode="w")
+            encoder = ArrayEncoder()
+            encoder.encode(data, group, "test", SemanticType.BOUNDED_SCALAR)
+
+            enc = group["test"].attrs["encoding"]["name"]
+            assert enc == "float32", f"expected float32 for ~9.2e18 span, got {enc}"
+            decoded = ArrayDecoder().decode(group["test"])
+            # |int64 min| = 2**63 and 1..1000 are all exact in float32.
+            np.testing.assert_array_equal(decoded, data.astype(np.float32))
+
     def test_wide_range_float16_no_overflow_to_inf(self):
         """Defect B: wide-range values > 65504 must not overflow float16 → inf.
 

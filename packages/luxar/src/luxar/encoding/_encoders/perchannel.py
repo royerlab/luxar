@@ -250,9 +250,16 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
                 # positive values only (its documented "non-negative" contract),
                 # so signed data (newly reachable via colormap scalars) would
                 # otherwise ignore its negative span — an all-negative array
-                # would collapse to uint8. For non-negative data np.abs is a
+                # would collapse to uint8. Signed integers are upcast first:
+                # np.abs wraps at the type minimum (|int64 min| stays
+                # negative), which would corrupt both the bit selection and
+                # the float16 guard below. For non-negative data np.abs is a
                 # no-op, so existing callers stay byte-identical.
-                bits = self._compute_quantization_bits(np.abs(data))
+                if np.issubdtype(data.dtype, np.signedinteger):
+                    magnitudes = np.abs(data.astype(np.float64))
+                else:
+                    magnitudes = np.abs(data)
+                bits = self._compute_quantization_bits(magnitudes)
 
                 if bits == 8:
                     # Dynamic range <= 256, uint8 is sufficient
@@ -285,7 +292,7 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
                     # float16 tops out at 65504; fall back to float32 when any
                     # value would overflow to inf (newly reachable for
                     # signed/wide colormap scalars).
-                    if self._float16_allowed and float(np.max(np.abs(data))) <= 65504.0:
+                    if self._float16_allowed and float(np.max(magnitudes)) <= 65504.0:
                         encoded_data = data.astype(np.float16)
                         encoder_name = "float16"
                     else:

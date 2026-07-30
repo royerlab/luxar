@@ -294,13 +294,21 @@ def validate_scalars_preflight(
     # value beyond the float32 range overflows to inf on cast — the encoder
     # would reject it AFTER positions are written, leaving a partial node.
     # Validate float32-representability here so the pre-write gate is
-    # sufficient. (No-op for arrays already float32 or narrower.)
-    if not np.all(np.isfinite(np.asarray(scalars, dtype=np.float32))):
-        raise ValidationError(
-            f"{context}: One or more scalar values are not representable as "
-            f"float32 (overflow to inf on cast).",
-            "Rescale scalars into the float32 range (|value| <= 3.4e38)",
-        )
+    # sufficient. Only float dtypes wider than float32 can overflow (int64
+    # tops out at ~9.2e18 << 3.4e38), and the float32 cast is monotone, so
+    # casting just the extrema is exact — no full-array copy in preflight.
+    if (
+        scalars.size > 0
+        and np.issubdtype(scalars.dtype, np.floating)
+        and scalars.dtype.itemsize > 4
+    ):
+        extrema = np.array([scalars.min(), scalars.max()], dtype=scalars.dtype)
+        if not np.all(np.isfinite(extrema.astype(np.float32))):
+            raise ValidationError(
+                f"{context}: One or more scalar values are not representable "
+                f"as float32 (overflow to inf on cast).",
+                "Rescale scalars into the float32 range (|value| <= 3.4e38)",
+            )
 
 
 def prepare_transform_attrs(attrs: Dict[str, Any], store: zarr.Group) -> None:
