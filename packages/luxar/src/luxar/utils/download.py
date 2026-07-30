@@ -174,10 +174,13 @@ def robust_download(
 
     Features:
     - Automatic retry on network errors (exponential backoff)
-    - Resume partial downloads (HTTP Range requests)
+    - Resume partial downloads (HTTP Range requests); a 416 from resuming at
+      or past EOF is non-fatal — a 416 proves the cache is at least complete
     - Progress tracking with ETA
     - File size verification
-    - Cleanup of corrupted partial downloads
+    - On failure only a file THIS call created is removed; a pre-existing
+      cache is never deleted. Probing an existing destination for resume
+      costs extra request(s) up front (a HEAD, or an unranged GET fallback)
 
     Args:
         url: URL to download from
@@ -377,11 +380,17 @@ def robust_download(
             if resume_byte_pos > 0:
                 headers["Range"] = f"bytes={resume_byte_pos}-"
 
-            with asection(f"Download Attempt {attempt + 1}/{max_retries + 1}"):
-                # Make request
-                response = session.get(
-                    url, headers=headers, stream=True, timeout=timeout
-                )
+            with (
+                asection(f"Download Attempt {attempt + 1}/{max_retries + 1}"),
+                # Close the streamed response deterministically on every exit —
+                # success, a 416 that restarts via `continue`, or any re-raise —
+                # instead of leaking the connection to the GC. `raise_for_status`
+                # keeps `e.response` (the same object) usable afterwards; only the
+                # socket is released.
+                contextlib.closing(
+                    session.get(url, headers=headers, stream=True, timeout=timeout)
+                ) as response,
+            ):
                 response.raise_for_status()
 
                 # Check if resume was accepted
@@ -395,16 +404,21 @@ def robust_download(
                 else:
                     mode = "wb"
 
-                # Get total size
-                if "content-length" in response.headers:
-                    content_length = int(response.headers["content-length"])
+                # Get total size. Route both headers through the same hardened
+                # helpers used for the size probe, so a malformed/duplicated
+                # `Content-Length: "100, 100"` or a `Content-Range: .../*` falls
+                # back to "unknown" rather than raising into the generic handler
+                # and aborting non-retryably.
+                content_length = _parse_len(response.headers)
+                if content_length is not None:
                     total_size = content_length + resume_byte_pos
-                elif "content-range" in response.headers:
-                    # For resumed downloads: "bytes start-end/total"
-                    content_range = response.headers["content-range"]
-                    total_size = int(content_range.split("/")[-1])
                 else:
-                    total_size = 0
+                    # For resumed downloads the Content-Range carries the full
+                    # total ("bytes start-end/total").
+                    content_range_total = _parse_content_range_total(response.headers)
+                    total_size = (
+                        content_range_total if content_range_total is not None else 0
+                    )
 
                 if total_size > 0:
                     aprint(f"📦 Total size: {total_size / (1024**3):.2f} GB")

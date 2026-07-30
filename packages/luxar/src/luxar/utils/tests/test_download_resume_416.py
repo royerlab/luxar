@@ -194,6 +194,63 @@ class _NoContentRangeChunkedHandler(_ChunkedRangeHTTPHandler):
         return _LimitedFile(f, end - start + 1)
 
 
+class _StarTotalChunkedHandler(_RangeHTTPHandler):
+    """Chunked-style handler whose 206 omits ``Content-Length`` and reports an
+    UNKNOWN total via ``Content-Range: bytes <start>-<end>/*``.
+
+    This is the header shape that used to abort ``robust_download``
+    non-retryably: with no ``Content-Length`` the in-loop size parse fell back
+    to ``int(content_range.split("/")[-1])`` == ``int("*")`` → ``ValueError``.
+    The hardened parse must treat the ``*`` total as *unknown* (size
+    verification off) and still complete the resume.
+    """
+
+    def send_head(self):  # noqa: ANN201 - stdlib override
+        path = Path(self.translate_path(self.path))
+        range_header = self.headers.get("Range")
+
+        if not path.is_file():
+            return super().send_head()
+
+        size = path.stat().st_size
+
+        if range_header is None:
+            # Chunked style: no Content-Length on HEAD / unranged GET.
+            f = open(path, "rb")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Accept-Ranges", "bytes")
+            self.end_headers()
+            if self.command == "HEAD":
+                f.close()
+                return None
+            return _LimitedFile(f, size)
+
+        spec = range_header.replace("bytes=", "").strip()
+        start_s, _, end_s = spec.partition("-")
+        start = int(start_s) if start_s else 0
+        end = int(end_s) if end_s else size - 1
+        end = min(end, size - 1)
+
+        if start >= size or start > end:
+            self.send_response(416, "Requested Range Not Satisfiable")
+            self.send_header("Content-Range", f"bytes */{size}")
+            self.send_header("Accept-Ranges", "bytes")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return None
+
+        f = open(path, "rb")
+        f.seek(start)
+        self.send_response(206)
+        self.send_header("Content-Type", "application/octet-stream")
+        # No Content-Length, and an UNKNOWN ("*") total in the Content-Range.
+        self.send_header("Content-Range", f"bytes {start}-{end}/*")
+        self.send_header("Accept-Ranges", "bytes")
+        self.end_headers()
+        return _LimitedFile(f, end - start + 1)
+
+
 class _LimitedFile:
     """File-like that stops after ``limit`` bytes (for copyfile)."""
 
@@ -260,6 +317,21 @@ def headerless_416_server(tmp_path: Path):
     server, thread = _serve(tmp_path, _NoContentRangeChunkedHandler)
     try:
         yield f"http://127.0.0.1:{server.server_address[1]}", server
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+        server.server_close()
+
+
+@pytest.fixture()
+def star_total_server(tmp_path: Path):
+    """Serve chunked-style with a 206 carrying an unknown ("*") Content-Range total.
+
+    Yields the base URL.
+    """
+    server, thread = _serve(tmp_path, _StarTotalChunkedHandler)
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}"
     finally:
         server.shutdown()
         thread.join(timeout=5)
@@ -495,3 +567,38 @@ class TestRobustDownloadResume416:
         assert out.exists(), "complete cache must survive a header-less 416"
         assert out.read_bytes() == cache, "cache must NOT be re-downloaded"
         assert 416 in server.served, "the in-loop 416 path must have been hit"
+
+    def test_resume_with_star_total_content_range_completes(
+        self, star_total_server: str, tmp_path: Path
+    ) -> None:
+        """A 206 resume whose Content-Range total is ``*`` (unknown) must still
+        complete instead of aborting on ``int("*")``.
+
+        Pre-fix, with no Content-Length the in-loop parse did
+        ``int(content_range.split("/")[-1])`` → ``int("*")`` → ValueError, which
+        the generic handler re-raised non-retryably. The hardened parse treats
+        the ``*`` total as unknown (``total_size = 0``, size verification off)
+        and finishes the resume: bytes ``[0, N)`` are the kept local prefix and
+        the tail is fetched from the remote.
+        """
+        n = 100_000
+        payload = _make_payload(nbytes=400_000, seed=3)
+        (tmp_path / "data.bin").write_bytes(payload)
+
+        # A distinguishable local prefix so a kept-not-refetched resume is proven.
+        local_prefix = _make_payload(nbytes=n, seed=555)
+        assert local_prefix != payload[:n]
+
+        out = tmp_path / "cache" / "data.bin"
+        out.parent.mkdir(parents=True)
+        out.write_bytes(local_prefix)
+
+        result = robust_download(
+            f"{star_total_server}/data.bin",
+            out,
+            expected_size=None,
+            verify_size=True,
+        )
+
+        assert result == out
+        assert out.read_bytes() == local_prefix + payload[n:]
