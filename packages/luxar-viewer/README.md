@@ -466,7 +466,7 @@ export const config: AppConfig = {
     fovMax: 170,
   },
   scene: {
-    backgroundColor: 0x111111, // Dark gray background
+    backgroundColor: 0x000000, // Pitch black — zero radiance under the HDR exposure chain
   },
   animation: {
     idleTimeoutMs: 2000, // Auto-pause after 2 seconds

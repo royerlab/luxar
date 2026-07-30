@@ -4,11 +4,21 @@
 
 import { describe, it, expect } from 'vitest';
 import { validateScene } from '../../../../../config/sections/scene/validate';
+import { sceneConfig } from '../../../../../config/sections/scene/data';
 import { cloneConfig, invokeValidator } from '../../_fixtures';
 
 describe('validateScene', () => {
   it('passes on default config', () => {
     expect(invokeValidator(validateScene).valid).toBe(true);
+  });
+
+  it('defaults to a pitch-black background (zero HDR radiance)', () => {
+    // A non-zero clear color is scene light: the post-processing exposure
+    // chain (color *= exp2(uExposure)) lifts it toward white at high
+    // exposure, and it erodes the bloom threshold margin. The visual
+    // baselines cannot pin this (a 0x111111 regression sits inside the
+    // pixelmatch tolerance), so this assertion is the guard.
+    expect(sceneConfig.backgroundColor).toBe(0x000000);
   });
 
   it('should error when backgroundColor is negative', () => {
