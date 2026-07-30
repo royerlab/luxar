@@ -10,7 +10,7 @@
  * Per-segment data comes from the RGBA32F line texture (`uLineTex`,
  * 6 texels/segment — layout in `rendering/line-geometry.ts` /
  * `rendering/element-texture-layout.ts`), fetched in the vertex stage
- * via `textureLoad` and indexed by the only per-instance attribute:
+ * via `textureLoad` and indexed by the ordering attributes:
  *   - aSortedIndex (uint) — draw-slot → storage-slot mapping
  *     (identity after a fresh commit; permuted by the sort worker)
  *
@@ -195,7 +195,7 @@ export function lineWebGPUFactory(
 ): NodeMaterial {
   // Per-vertex.
   const aQuadCorner: TSLNode = attribute<'vec2'>('aQuadCorner', 'vec2');
-  // The only per-instance attribute: segment data itself lives in the
+  // The ordering attributes (double-buffered): segment data lives in the
   // line texture; `aSortedIndex` maps the draw slot to a storage slot
   // (identity after a fresh commit, permuted by the sort worker).
   const aSortedIndex: TSLNode = sortedIndexNode(nodes.uSortedIndexSlot);

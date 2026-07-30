@@ -97,7 +97,7 @@ describe('LineMaterial', () => {
     it('should have correct vertex shader with screen-space expansion', () => {
       const material = new LineMaterial();
 
-      // Texture-backed storage: the only per-instance attribute is
+      // Texture-backed storage: the only per-instance attributes are
       // aSortedIndex (aQuadCorner is per quad vertex); per-segment values
       // are texelFetch'd from the line texture (6 texels/segment) into
       // locals with the historical names so the downstream math is
@@ -446,7 +446,7 @@ describe('createInstancedLinesMesh', () => {
     expect(geometry.instanceCount).toBe(2);
 
     // Texture-backed storage: aSortedIndex (identity after a fresh build)
-    // is the only per-instance attribute; the interleaved-era attributes
+    // pair is the only per-instance data; the interleaved-era attributes
     // are gone.
     const sortedIndex = geometry.getAttribute('aSortedIndex');
     expect(sortedIndex).toBeDefined();

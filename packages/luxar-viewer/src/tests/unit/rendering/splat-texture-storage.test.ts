@@ -635,6 +635,54 @@ describe('pool adapter — growth, dispose, byte accounting', () => {
     expect(geom.boundingBox).not.toBeNull();
   });
 
+  it('a full identity write returns the geometry to slot 0 (pool reuse across tenants)', () => {
+    // The slot lives on the GEOMETRY (so it survives release/re-acquire with
+    // the buffers it describes) while the selector uniform lives on the
+    // MATERIAL. The pool re-pairs them freely: a geometry left on slot 1 by a
+    // sorted tenant can be handed to a node whose fresh material defaults to
+    // slot 0 — and an order-INDEPENDENT tenant is never tracked by the
+    // coordinator, so nothing would ever push the slot to its uniform. It
+    // would then draw buffer A: the PREVIOUS tenant's permutation, over a
+    // different element count.
+    //
+    // A full identity write is exactly the "fresh start" signal, so it must
+    // re-home the geometry on slot 0. Then a default uniform is always right
+    // and no sync is required for untracked nodes.
+    const geom = pool.acquireGSplatsGeometry('tenantA', 4);
+    const src = makeSource(4);
+    pool.updateGSplatsGeometry(
+      geom,
+      {
+        centers3D: src.centers,
+        amplitudes: src.amplitudes,
+        choleskyFactors: src.choleskyFactors,
+        colors: src.colors,
+      },
+      4
+    );
+    writeSortedIndexOrdering(geom, new Uint32Array([3, 2, 1, 0]), 4);
+    while (pumpSortedIndexOrderingApply(geom).more) {
+      /* drain: flips to slot 1 */
+    }
+    expect(activeSortedIndexSlot(geom)).toBe(1);
+
+    // A fresh full commit (the !preserveOrdering path every new tenant takes).
+    pool.updateGSplatsGeometry(
+      geom,
+      {
+        centers3D: src.centers,
+        amplitudes: src.amplitudes,
+        choleskyFactors: src.choleskyFactors,
+        colors: src.colors,
+      },
+      4
+    );
+    expect(activeSortedIndexSlot(geom)).toBe(0);
+    // ...and slot 0 — what a default-uniform material reads — holds identity.
+    const front = geom.getAttribute('aSortedIndex').array as Uint32Array;
+    expect(Array.from(front.subarray(0, 4))).toEqual([0, 1, 2, 3]);
+  });
+
   it('preserveOrdering keeps the sort permutation while still rewriting texels', () => {
     const geom = pool.acquireGSplatsGeometry('node', 4);
     const src = makeSource(4);
@@ -662,8 +710,12 @@ describe('pool adapter — growth, dispose, byte accounting', () => {
     expect(geom.instanceCount).toBe(4);
 
     // Without the flag the identity reset is restored (default behavior).
+    // Re-resolve the active attribute: a full identity write also re-homes
+    // the geometry on slot 0, so the pre-reset reference is stale by design.
     pool.updateGSplatsGeometry(geom, packed(src.amplitudes), 4);
-    expect(Array.from(ordering.subarray(0, 4))).toEqual([0, 1, 2, 3]);
+    expect(activeSortedIndexSlot(geom)).toBe(0);
+    const reset = getActiveSortedIndexAttribute(geom)!.array as Uint32Array;
+    expect(Array.from(reset.subarray(0, 4))).toEqual([0, 1, 2, 3]);
   });
 
   it('fromInstance append: writes only the suffix texels, extends aSortedIndex, keeps the prefix permutation', () => {
@@ -1136,6 +1188,27 @@ describe('double-buffered ordering apply (atomic swap)', () => {
     expect(n).toBe(CHUNK);
     expect(pumpSortedIndexOrderingApply(geometry)).toEqual({ more: false, flipped: true });
     expect(Array.from(activeArr(geometry).subarray(0, CHUNK))).toEqual([3, 2, 1, 0]);
+  });
+
+  it('an EMPTY ordering stages nothing — it must not flip away from a good order', () => {
+    // A zero-length ordering would "complete" on its first pump and FLIP,
+    // swapping the newest ordering out for the older buffer behind it.
+    const { geometry } = makeGeometry(16);
+    writeSortedIndexIdentity(geometry, 8);
+    const good = reversed(8);
+    writeSortedIndexOrdering(geometry, good, 8);
+    while (pumpSortedIndexOrderingApply(geometry).more) {
+      /* drain */
+    }
+    const slot = activeSortedIndexSlot(geometry);
+    const shown = Array.from(activeArr(geometry).subarray(0, 8));
+    expect(shown).toEqual(Array.from(good));
+
+    expect(writeSortedIndexOrdering(geometry, new Uint32Array(0), 0)).toBe(0);
+    expect(hasPendingSortedIndexOrderingApply(geometry)).toBe(false);
+    expect(pumpSortedIndexOrderingApply(geometry)).toEqual({ more: false, flipped: false });
+    expect(activeSortedIndexSlot(geometry)).toBe(slot);
+    expect(Array.from(activeArr(geometry).subarray(0, 8))).toEqual(shown);
   });
 
   it('writeSortedIndexIdentity cancels an in-flight apply AND its held ordering (commit supersedes)', () => {

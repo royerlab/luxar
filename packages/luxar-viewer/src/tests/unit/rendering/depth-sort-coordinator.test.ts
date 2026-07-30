@@ -2284,6 +2284,40 @@ describe('depth-sort coordinator — chunked ordering apply (perf lever L8)', ()
     expect(pickUniform.value).toBe(1);
   });
 
+  it('re-asserts the slot every frame, not only on the frame it flips', async () => {
+    // The slot lives on the geometry, the selector uniform on the material,
+    // and they get re-paired behind the coordinator's back: the pool hands a
+    // geometry to another node, a TSL graph rebuild replaces the uniform
+    // leaves, a pick material is created after the flip. So the sync must be
+    // unconditional per frame — syncing only on `flipped` would leave a
+    // desynced pair rendering the WRONG buffer indefinitely, because a
+    // settled node never flips again.
+    const { coord, storage } = await loadWithTinyChunks();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+
+    const mesh = makeGSplatsMesh(12, 'normal');
+    const uniform = { value: 0 };
+    (mesh.material as THREE.Material & { uniforms: unknown }).uniforms = {
+      uSortedIndexSlot: uniform,
+    };
+    coord.noteDepthSortCommit(mesh, new Float32Array(36), 12);
+    await flush();
+    sortResolvers[0]({
+      generation: mockApi.sort.mock.calls[0][0].generation as number,
+      ordering: reversed(12),
+    });
+    await flush();
+    for (let i = 0; i < 4; i++) coord.evaluateDepthSortPerFrame();
+    const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
+    expect(storage.hasPendingSortedIndexOrderingApply(geometry)).toBe(false);
+    expect(uniform.value).toBe(1);
+
+    // Something re-pairs the pair behind our back (fresh/rebuilt material).
+    uniform.value = 0;
+    coord.evaluateDepthSortPerFrame();
+    expect(uniform.value).toBe(1);
+  });
+
   it('camera motion past the threshold dispatches WHILE a stream runs (no apply-gate)', async () => {
     // The inverse of the old apply-gate test. A stream writes into the
     // inactive buffer, so what renders stays a whole permutation the

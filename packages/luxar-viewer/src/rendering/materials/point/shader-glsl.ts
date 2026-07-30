@@ -12,7 +12,7 @@
  * Per-point data comes from the RGBA32F point texture (`uPointTex`,
  * 3 texels/point — layout in `rendering/point-geometry.ts` /
  * `rendering/element-texture-layout.ts`), fetched in the vertex stage
- * via `texelFetch` and indexed by the only per-instance attribute:
+ * via `texelFetch` and indexed by the ordering attributes:
  *   - aSortedIndex (uint) — draw-slot → storage-slot mapping
  *     (identity in Phase 1; the sort worker permutes it in Phase 2+)
  */

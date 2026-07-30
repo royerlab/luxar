@@ -111,7 +111,7 @@ export function linePickWebGPUFactory(
   outMaterial?: NodeMaterial
 ): NodeMaterial {
   const aQuadCorner: TSLNode = attribute<'vec2'>('aQuadCorner', 'vec2');
-  // The only per-instance attribute (visual-factory parity): segment
+  // The ordering attributes (visual-factory parity): segment
   // data lives in the line texture; `aSortedIndex` maps the draw slot
   // to a storage slot.
   const aSortedIndex: TSLNode = sortedIndexNode(nodes.uSortedIndexSlot);

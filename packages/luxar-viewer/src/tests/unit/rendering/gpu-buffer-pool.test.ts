@@ -136,8 +136,11 @@ describe('GPUBufferPool', () => {
       expect(geom.instanceCount).toBe(4);
 
       // Without the flag the identity reset is restored (default behavior).
+      // Re-resolve the active attribute: a full identity write also re-homes
+      // the geometry on slot 0, so the pre-reset reference is stale by design.
       pool.updatePointsGeometry(geom, createMockLoadedPointsData(4), 4);
-      expect(Array.from(ordering.subarray(0, 4))).toEqual([0, 1, 2, 3]);
+      const reset = getActiveSortedIndexAttribute(geom)!.array as Uint32Array;
+      expect(Array.from(reset.subarray(0, 4))).toEqual([0, 1, 2, 3]);
     });
 
     it('append (fromInstance) keeps the PREFIX permutation and gives only the suffix identity', () => {
@@ -445,7 +448,7 @@ describe('GPUBufferPool', () => {
       expect(geom).toBeInstanceOf(THREE.InstancedBufferGeometry);
 
       // Texture-backed storage: splat data lives in the pooled RGBA32F
-      // texture; aSortedIndex is the only per-instance attribute.
+      // texture; the aSortedIndex pair is the only per-instance data.
       const texture = getSplatTexture(geom);
       expect(texture).not.toBeNull();
       // Capacity = ceil(300 * 1.5) = 450 splats -> >= 450*16 floats.

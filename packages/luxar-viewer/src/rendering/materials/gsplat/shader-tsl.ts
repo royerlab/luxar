@@ -10,7 +10,7 @@
  * Per-splat data comes from the RGBA32F splat texture (`uSplatTex`,
  * 4 texels/splat — layout in `rendering/element-texture-layout.ts`),
  * fetched in the vertex stage via `textureLoad` and indexed by the
- * only per-instance attribute:
+ * ordering attributes (double-buffered pair):
  *   - aSortedIndex (uint) — draw-slot → storage-slot mapping
  *     (identity in Phase 1; the sort worker permutes it in Phase 2+)
  *

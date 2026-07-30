@@ -4,11 +4,14 @@
  * Per-element data lives in an RGBA32F **element texture** (gsplats:
  * 4 texels/splat; points: 3 texels/point; lines: 6 texels/segment —
  * layout authority in `./element-texture-layout`) sampled by the vertex
- * shader via `texelFetch`; the only per-instance attribute is
- * `aSortedIndex` (Uint32), which maps the draw slot to a storage slot
- * so draw order can be permuted without rewriting element data
- * (depth-sorting plan, `docs/guides/specs/GSPLAT_DEPTH_SORTING_SPEC.md`
- * §4/§8).
+ * shader via `texelFetch`. The only per-instance data is the ordering
+ * pair `aSortedIndex` / `aSortedIndexB` (Uint32), which maps the draw
+ * slot to a storage slot so draw order can be permuted without
+ * rewriting element data (depth-sorting plan,
+ * `docs/guides/specs/GSPLAT_DEPTH_SORTING_SPEC.md` §4/§8). The pair is
+ * DOUBLE-BUFFERED — a new ordering streams into the inactive buffer and
+ * the `uSortedIndexSlot` uniform flips on completion (spec §2.1 tier 3),
+ * so no frame ever samples a half-applied permutation.
  *
  * Texture lifetime = geometry lifetime: `attachElementStorage`
  * registers a `dispose` listener on the geometry, so every dispose
@@ -477,7 +480,6 @@ export function hasPendingSortedIndexOrderingApply(
   return chunkedApplies.has(geometry);
 }
 
-
 /**
  * Apply the next slice for `geometry` (one call per rendered frame — the
  * depth-sort coordinator's per-frame scheduler is the driver), and flip
@@ -610,6 +612,22 @@ export function elementTexelCapacity(texture: THREE.DataTexture, floatsPerElemen
  * commits while a mesh is not drawn and the WebGPU backends replay
  * them verbatim (no flush-time merge), so every write collapses the
  * pending set to one `[0, max-end)` range.
+ *
+ * Also re-homes the geometry on SLOT 0, which is what makes the split
+ * ownership of the swap safe. The slot lives on the geometry (so it
+ * survives the pool's release/re-acquire with the buffers it describes)
+ * while the selector uniform lives on the material, and the pool re-pairs
+ * the two freely: a geometry a sorted tenant left on slot 1, handed to a
+ * node whose fresh material defaults to slot 0, would draw the PREVIOUS
+ * tenant's permutation over a different element count — and an
+ * order-independent tenant is never tracked by the coordinator, so
+ * nothing would push the slot to its uniform. A full identity write is
+ * precisely the fresh-start signal, so normalising here means a default
+ * uniform is always correct and untracked nodes need no sync at all.
+ *
+ * The append writer ({@link writeSortedIndexIdentityRange}) deliberately
+ * does NOT do this: it preserves the prefix permutation in whichever
+ * buffer is live.
  */
 export function writeSortedIndexIdentity(
   geometry: THREE.InstancedBufferGeometry,
@@ -619,8 +637,9 @@ export function writeSortedIndexIdentity(
   // its remaining slices belong to the OLD element population and
   // would scribble a stale permutation over the identity just written.
   cancelSortedIndexOrderingApply(geometry);
-  // Identity targets the ACTIVE buffer: it is a complete permutation by
-  // construction, so writing it live is safe and needs no flip.
+  // Normalise to slot 0 BEFORE picking the target, so identity always
+  // lands in the buffer a default-valued selector uniform reads.
+  setSortedIndexSlot(geometry, 0);
   const attr = getActiveSortedIndexAttribute(geometry);
   if (!attr) return;
   const arr = attr.array as Uint32Array;
@@ -693,6 +712,12 @@ export function writeSortedIndexOrdering(
   const active = getActiveSortedIndexAttribute(geometry);
   if (!active) return 0;
   const n = Math.min(count, ordering.length, (active.array as Uint32Array).length);
+  // An EMPTY ordering stages nothing. Otherwise it would "complete" on its
+  // first pump and FLIP — swapping the newest ordering out for the older
+  // buffer sitting behind it. (The commit path already returns early on an
+  // empty frame, so this guards the writer's own contract rather than a
+  // live caller.)
+  if (n === 0) return 0;
 
   // Split the attach-time alias before anything targets the back buffer;
   // until now a never-sorted node has been paying nothing for it.

@@ -206,7 +206,7 @@ export function pointWebGPUFactory(
 ): NodeMaterial {
   // Per-vertex (4 corners, ±1).
   const aQuadCorner: TSLNode = attribute<'vec2'>('aQuadCorner', 'vec2');
-  // The only per-instance attribute: point data itself lives in the
+  // The ordering attributes (double-buffered): point data lives in the
   // point texture; `aSortedIndex` maps the draw slot to a storage slot
   // (identity in Phase 1, permuted by the sort worker in Phase 2+).
   const aSortedIndex: TSLNode = sortedIndexNode(nodes.uSortedIndexSlot);
