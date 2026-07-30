@@ -314,6 +314,12 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         is_internal_namespace = False
         if isinstance(path, str):
             normalized_path = path.lstrip("/")
+            if normalized_path == "overlays":
+                raise ValueError(
+                    "Top-level node path 'overlays' is reserved for screen-space "
+                    "overlay metadata. Write internal overlays below 'overlays/<name>' "
+                    "or choose a different user node name."
+                )
             is_internal_namespace = path in ("/", "") or normalized_path.startswith(
                 "overlays/"
             )

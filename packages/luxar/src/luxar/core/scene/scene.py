@@ -115,6 +115,15 @@ class Scene(Group):
 
     # ---------------------------------------------------------- hierarchy
 
+    def _ensure_no_duplicate_child(self, name: str) -> None:
+        """Validate a top-level user node name before any data is written."""
+        if name == "overlays":
+            raise ValueError(
+                "Top-level node name 'overlays' is reserved for screen-space "
+                "overlay metadata. Choose a different user node name."
+            )
+        super()._ensure_no_duplicate_child(name)
+
     def add_group(self, name: str, **attrs: Any) -> Group:
         """Create and add a child group node to the scene.
 

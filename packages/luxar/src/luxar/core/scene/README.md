@@ -94,6 +94,10 @@ delegates; the implementations live in [`overlays/`](overlays/README.md).
 All three accept `visible_range` (dimension-based visibility filter),
 `transition` / `transition_duration`, `interactive`, and `blend_mode`.
 
+The top-level scene-node name `overlays` is reserved for this internal storage
+namespace. Use another name for user-created groups or geometry nodes; nested
+nodes named `overlays` remain valid because they do not collide with the root.
+
 A default hover tooltip overlay is auto-injected at compiler finalization when
 nodes carry labels but no hover overlay was defined (`_auto_inject_hover_overlay`,
 driven by `_notify_labels_added` / `_notify_image_labels_added`).
