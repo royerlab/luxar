@@ -10,9 +10,9 @@
  * Dismissible by clicking outside, pressing Escape, or via the close
  * button. Traps focus inside the panel while it is open.
  *
- * Module-level handles for the global click listener and focus-trap
- * release live here so hideHelpOverlay() can tear them down even when
- * it's called from outside (e.g. by ui-cleanup).
+ * Module-level handles for the delayed click-listener registration, the
+ * listener itself, and the focus-trap release live here so hideHelpOverlay()
+ * can tear them down even when it's called from outside (e.g. by ui-cleanup).
  */
 
 import { config } from '../config';
@@ -23,6 +23,7 @@ import { RAIL_ICONS } from './control-rail/icons';
 const UI_CONFIG = config.ui;
 
 let activeHelpClickHandler: ((event: MouseEvent) => void) | null = null;
+let activeHelpClickTimer: ReturnType<typeof setTimeout> | null = null;
 let activeHelpFocusTrapRelease: (() => void) | null = null;
 
 /** One shortcut row: chip text(s) + what they do. */
@@ -242,29 +243,14 @@ export function showHelpOverlay() {
 
   helpDiv.appendChild(scrollWrapper);
 
-  // Track whether we're in the process of closing to prevent race conditions
-  let isClosing = false;
-
-  // Function to close help overlay
+  // Function to close this specific help overlay. The identity check prevents
+  // a stale handler from an older overlay from tearing down a newer one.
   const closeHelp = () => {
-    // Guard against multiple simultaneous close calls
-    if (isClosing) return;
-    isClosing = true;
-
-    // Release focus trap before removing element
-    if (activeHelpFocusTrapRelease) {
-      activeHelpFocusTrapRelease();
-      activeHelpFocusTrapRelease = null;
-    }
-
-    const help = document.getElementById('luxar-help-overlay');
-    if (help) {
-      // Remove global click listener first
+    if (document.getElementById('luxar-help-overlay') !== helpDiv) {
       document.removeEventListener('click', handleDocumentClick);
-      activeHelpClickHandler = null;
-      // Then remove the panel
-      help.remove();
+      return;
     }
+    hideHelpOverlay();
   };
 
   // Global click handler to close help when clicking outside
@@ -285,27 +271,39 @@ export function showHelpOverlay() {
   // Trap focus within the help overlay
   activeHelpFocusTrapRelease = trapFocus(helpDiv);
 
-  // Add global click listener after a short delay to prevent immediate closure
-  setTimeout(() => {
-    // Only add if the help div still exists and hasn't been closed
-    if (!isClosing && document.getElementById('luxar-help-overlay')) {
+  // Add global click listener after a short delay to prevent immediate closure.
+  // Capture the timer identity so an obsolete callback cannot clear or attach
+  // over the state of a subsequently opened overlay.
+  const clickTimer = setTimeout(() => {
+    if (activeHelpClickTimer === clickTimer) {
+      activeHelpClickTimer = null;
+    }
+    if (
+      activeHelpClickHandler === handleDocumentClick &&
+      document.getElementById('luxar-help-overlay') === helpDiv
+    ) {
       document.addEventListener('click', handleDocumentClick);
     }
   }, UI_CONFIG.timings.helpClickDelayMs);
+  activeHelpClickTimer = clickTimer;
 }
 
 export function hideHelpOverlay() {
-  const helpDiv = document.getElementById('luxar-help-overlay');
-  if (helpDiv) {
-    // Release focus trap before removing element
-    if (activeHelpFocusTrapRelease) {
-      activeHelpFocusTrapRelease();
-      activeHelpFocusTrapRelease = null;
-    }
-    if (activeHelpClickHandler) {
-      document.removeEventListener('click', activeHelpClickHandler);
-      activeHelpClickHandler = null;
-    }
-    helpDiv.remove();
+  if (activeHelpClickTimer !== null) {
+    clearTimeout(activeHelpClickTimer);
+    activeHelpClickTimer = null;
   }
+
+  // Release focus trap before removing element
+  if (activeHelpFocusTrapRelease) {
+    activeHelpFocusTrapRelease();
+    activeHelpFocusTrapRelease = null;
+  }
+
+  if (activeHelpClickHandler) {
+    document.removeEventListener('click', activeHelpClickHandler);
+    activeHelpClickHandler = null;
+  }
+
+  document.getElementById('luxar-help-overlay')?.remove();
 }

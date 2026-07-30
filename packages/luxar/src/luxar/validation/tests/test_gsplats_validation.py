@@ -266,6 +266,137 @@ def test_cholesky_packed_size_mismatch_rejected(tmp_path) -> None:
             )
 
 
+def test_cholesky_nan_rejected(tmp_path) -> None:
+    """A NaN anywhere in the Cholesky factors must fail before any write.
+
+    A single NaN used to pass the shape-only gate and die deep in the encoder
+    AFTER centers were already on disk (a half-written node) — the exact
+    failure the amplitudes/radii/widths finiteness checks already prevent.
+    """
+    # Use the canonical suffix so the store path is NOT rewritten
+    # (LuxarZarrCompiler normalizes ``foo.zarr`` → ``foo.luxar.zarr``); this
+    # makes the no-partial-node assertion below meaningful.
+    store = tmp_path / "chol_nan.luxar.zarr"
+    with LuxarZarrCompiler(store, enable_spatial_index=False) as compiler:
+        compiler.create_scene(dimensions=Dimensions.default_3d())
+        centers = _gsplat_centers(10)
+        bad_chol = _packed_chol(10)
+        bad_chol[3, 1] = np.nan  # off-diagonal NaN
+        # Match the validator's own context-prefixed message so this proves the
+        # early gate fired — not the deep encoder error (which also says
+        # "Contains 1 NaN or Inf" but without the "cholesky_factors:" prefix).
+        with pytest.raises(
+            (ValueError, ValidationError), match="cholesky_factors: Contains"
+        ):
+            compiler.write_gsplats(
+                "test",
+                centers,
+                amplitudes=1.0,
+                cholesky_factors=bad_chol,
+            )
+    # Rejected BEFORE any write: neither the node group nor its centers array
+    # may exist on disk (the transactional fail-fast property of the fix).
+    assert not (store / "test").exists()
+    assert not (store / "test" / "centers").exists()
+
+
+def test_cholesky_zero_diagonal_rejected(tmp_path) -> None:
+    """A zero on the Cholesky diagonal is a singular covariance — rejected."""
+    store = tmp_path / "chol_zero_diag.luxar.zarr"
+    with LuxarZarrCompiler(store, enable_spatial_index=False) as compiler:
+        compiler.create_scene(dimensions=Dimensions.default_3d())
+        centers = _gsplat_centers(10)
+        bad_chol = _packed_chol(10)
+        bad_chol[4, 2] = 0.0  # diagonal slot for d=3 is column 2
+        with pytest.raises(
+            (ValueError, ValidationError),
+            match="Cholesky diagonal must be positive",
+        ):
+            compiler.write_gsplats(
+                "test",
+                centers,
+                amplitudes=1.0,
+                cholesky_factors=bad_chol,
+            )
+    # Rejected before write — no partial node on disk.
+    assert not (store / "test").exists()
+    assert not (store / "test" / "centers").exists()
+
+
+def test_cholesky_negative_diagonal_rejected(tmp_path) -> None:
+    """A negative Cholesky diagonal (silently clamped by the uint8 encoder)."""
+    store = tmp_path / "chol_neg_diag.luxar.zarr"
+    with LuxarZarrCompiler(store, enable_spatial_index=False) as compiler:
+        compiler.create_scene(dimensions=Dimensions.default_3d())
+        centers = _gsplat_centers(10)
+        bad_chol = _packed_chol(10)
+        bad_chol[7, 5] = -2.0  # diagonal slot for d=3 includes column 5
+        with pytest.raises(
+            (ValueError, ValidationError),
+            match="Cholesky diagonal must be positive",
+        ):
+            compiler.write_gsplats(
+                "test",
+                centers,
+                amplitudes=1.0,
+                cholesky_factors=bad_chol,
+            )
+    assert not (store / "test").exists()
+
+
+def test_uniform_cholesky_bad_diagonal_rejected(tmp_path) -> None:
+    """A 1D uniform/broadcast Cholesky with a non-positive diagonal is rejected.
+
+    Exercises the shape-normalization path (``(k,)`` → ``(1, k)``) before the
+    diagonal check runs.
+    """
+    store = tmp_path / "uniform_bad_diag.luxar.zarr"
+    with LuxarZarrCompiler(store, enable_spatial_index=False) as compiler:
+        compiler.create_scene(dimensions=Dimensions.default_3d())
+        centers = _gsplat_centers(50)
+        uniform_chol = _packed_chol(1).reshape(-1)  # 1D, k=6
+        uniform_chol[0] = 0.0  # first diagonal slot
+        with pytest.raises(
+            (ValueError, ValidationError),
+            match="Cholesky diagonal must be positive",
+        ):
+            compiler.write_gsplats(
+                "test",
+                centers,
+                amplitudes=1.0,
+                cholesky_factors=uniform_chol,
+            )
+
+
+def test_cholesky_negative_offdiagonal_accepted(tmp_path) -> None:
+    """Negative OFF-diagonals are valid — the gate constrains only the diagonal.
+
+    A real lower-triangular Cholesky factor has strictly positive DIAGONAL
+    entries but arbitrarily-signed off-diagonals. This locks in that the
+    validator rejects non-positive diagonals ONLY and never touches the
+    off-diagonal (signed) slots.
+    """
+    store = tmp_path / "neg_offdiag.luxar.zarr"
+    with LuxarZarrCompiler(
+        store, encoding_mode=EncodingMode.PRECISION, enable_spatial_index=False
+    ) as compiler:
+        compiler.create_scene(dimensions=Dimensions.default_3d())
+        centers = _gsplat_centers(4)
+        # Packed lower-tri (d=3): diagonal slots [0, 2, 5] positive; the
+        # off-diagonal slots [1, 3, 4] carry negative values.
+        row = np.array([1.0, -0.5, 1.0, 0.3, -0.7, 1.0], dtype=np.float32)
+        cholesky = np.tile(row, (4, 1))
+        compiler.write_gsplats(
+            "test",
+            centers,
+            amplitudes=1.0,
+            cholesky_factors=cholesky,
+        )
+    # Wrote successfully: the node and its centers array are present.
+    assert (store / "test").exists()
+    assert (store / "test" / "centers").exists()
+
+
 def test_uniform_cholesky_accepted(tmp_path) -> None:
     """1D Cholesky (broadcast / uniform across all splats) is allowed."""
     store = tmp_path / "uniform_chol.zarr"
@@ -281,6 +412,223 @@ def test_uniform_cholesky_accepted(tmp_path) -> None:
             amplitudes=1.0,
             cholesky_factors=uniform_chol,
         )
+
+
+def test_multi_additive_bad_later_level_leaves_no_partial_node(tmp_path) -> None:
+    """A bad LATER additive level must leave NO partial node on disk.
+
+    Reproduces the reviewer's scenario through the PUBLIC scene API: a
+    two-level additive-ladder ``GSplatData`` whose level 0 is valid and whose
+    level 1 has a zero on the Cholesky diagonal. The writer's per-level pass
+    validates only the level it is about to write, so without an all-or-nothing
+    pre-flight gate the invalid level 1 would be caught only AFTER the parent
+    node group and a complete ``additive_0/`` were committed — a half-written
+    node. This locks in the pre-flight gate: no group is created when any
+    sub-LOD is invalid.
+    """
+    from luxar.gsplats.gsplat_data import AdditiveSubLOD, GSplatData
+
+    n = 10
+    good = AdditiveSubLOD(
+        centers=_gsplat_centers(n),
+        amplitudes=np.ones(n, dtype=np.float32),
+        cholesky_factors=_packed_chol(n),
+    )
+    bad_chol = _packed_chol(n)
+    bad_chol[2, 2] = 0.0  # diagonal slot for d=3 is column 2 — singular covariance
+    bad = AdditiveSubLOD(
+        centers=_gsplat_centers(n),
+        amplitudes=np.ones(n, dtype=np.float32),
+        cholesky_factors=bad_chol,
+    )
+    data = GSplatData(additive_sublods=[good, bad])
+
+    store = tmp_path / "bad.luxar.zarr"
+    with LuxarZarrCompiler(store, enable_spatial_index=False) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        with pytest.raises(
+            (ValueError, ValidationError),
+            match="Cholesky diagonal must be positive",
+        ):
+            scene.add_gsplats_from_data("bad", data)
+    # Transactional: the invalid LATER level was caught before any group was
+    # created, so neither the parent node nor a committed additive_0/ exists.
+    assert not (store / "bad").exists()
+    assert not (store / "bad" / "additive_0").exists()
+
+
+def test_multi_additive_bad_later_level_colors_leaves_no_partial_node(
+    tmp_path,
+) -> None:
+    """A bad LATER additive level's COLORS must leave NO partial node on disk.
+
+    Locks the COLORS half of the all-or-nothing gate (the sibling of
+    ``test_multi_additive_bad_later_level_leaves_no_partial_node``, which covers
+    the arrays half). Colors used to be validated only deep inside
+    ``write_gsplat_arrays``, AFTER that level's centers/amplitudes/Cholesky were
+    already on disk — a valid level 0 followed by a level 1 with bad colors
+    would commit the parent node and a complete ``additive_0/`` before failing
+    (a half-written node). Colors are now part of ``validate_gsplat_inputs``,
+    so the pre-flight gate catches them before any group is created; this
+    asserts that gate fires up front.
+
+    A 5-channel colors array can't reach the writer (``GSplatData`` rejects it at
+    construction when it concatenates the ladder's colors), so the invalid case
+    here is NaN colors on level 1, which survives construction and reaches the
+    writer.
+    """
+    from luxar.gsplats.gsplat_data import AdditiveSubLOD, GSplatData
+
+    n = 10
+    good = AdditiveSubLOD(
+        centers=_gsplat_centers(n),
+        amplitudes=np.ones(n, np.float32),
+        cholesky_factors=_packed_chol(n),
+        colors=np.ones((n, 3), np.float32),
+    )
+    bad = AdditiveSubLOD(
+        centers=_gsplat_centers(n),
+        amplitudes=np.ones(n, np.float32),
+        cholesky_factors=_packed_chol(n),
+        colors=np.full((n, 3), np.nan, np.float32),  # invalid: non-finite colors
+    )
+    data = GSplatData(additive_sublods=[good, bad])
+
+    store = tmp_path / "bad.luxar.zarr"
+    with LuxarZarrCompiler(store, enable_spatial_index=False) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        with pytest.raises(
+            (ValueError, ValidationError),
+            match="colors: Contains",
+        ):
+            scene.add_gsplats_from_data("bad", data)
+    # Transactional: the bad later-level colors were caught before any group was
+    # created, so neither the parent node nor a committed additive_0/ exists.
+    assert not (store / "bad").exists()
+    assert not (store / "bad" / "additive_0").exists()
+
+
+def test_flat_write_bad_colors_leaves_no_partial_node(tmp_path) -> None:
+    """Invalid colors on the FLAT path fail before any group is created.
+
+    Colors used to be validated only inside ``write_gsplat_arrays``, AFTER
+    centers/amplitudes/Cholesky were on disk — the last input whose failure
+    could leave a partial node. ``validate_gsplat_inputs`` now covers colors,
+    so the flat ``write_gsplats`` pre-group gate catches them too.
+    """
+    store = tmp_path / "bad_colors_flat.luxar.zarr"
+    with LuxarZarrCompiler(store, enable_spatial_index=False) as compiler:
+        compiler.create_scene(dimensions=Dimensions.default_3d())
+        centers = _gsplat_centers(10)
+        bad_colors = np.ones((10, 3), dtype=np.float32)
+        bad_colors[4, 1] = np.nan
+        with pytest.raises((ValueError, ValidationError), match="colors: Contains"):
+            compiler.write_gsplats(
+                "test",
+                centers,
+                amplitudes=1.0,
+                cholesky_factors=_packed_chol(10),
+                colors=bad_colors,
+            )
+    assert not (store / "test").exists()
+
+
+def test_flat_write_bad_broadcast_color_leaves_no_partial_node(tmp_path) -> None:
+    """A NaN in a BROADCAST (tuple) color fails before any group is created.
+
+    Broadcast list/tuple colors bypass ``validate_colors_for_writing`` (an
+    ndarray-only check); they get the shared ``validate_broadcast_color`` gate
+    instead (the same one Points/Lines run). Without it, a non-finite tuple
+    component was discovered only in ``write_colors`` — after centers,
+    amplitudes, and Cholesky factors were already on disk.
+    """
+    store = tmp_path / "bad_bcast_color.luxar.zarr"
+    with LuxarZarrCompiler(store, enable_spatial_index=False) as compiler:
+        compiler.create_scene(dimensions=Dimensions.default_3d())
+        with pytest.raises(
+            (ValueError, ValidationError), match="Uniform color component"
+        ):
+            compiler.write_gsplats(
+                "test",
+                _gsplat_centers(10),
+                amplitudes=1.0,
+                cholesky_factors=_packed_chol(10),
+                colors=(np.nan, 0.0, 0.0),
+            )
+    assert not (store / "test").exists()
+
+
+def test_flat_write_wrong_length_broadcast_color_rejected(tmp_path) -> None:
+    """A 2-component broadcast color is rejected pre-write (RGB(A) only)."""
+    store = tmp_path / "short_bcast_color.luxar.zarr"
+    with LuxarZarrCompiler(store, enable_spatial_index=False) as compiler:
+        compiler.create_scene(dimensions=Dimensions.default_3d())
+        with pytest.raises(
+            (ValueError, ValidationError),
+            match="Uniform color must have 3 .RGB. or 4 .RGBA.",
+        ):
+            compiler.write_gsplats(
+                "test",
+                _gsplat_centers(10),
+                amplitudes=1.0,
+                cholesky_factors=_packed_chol(10),
+                colors=[0.5, 0.5],
+            )
+    assert not (store / "test").exists()
+
+
+def test_flat_write_valid_broadcast_color_accepted(tmp_path) -> None:
+    """A valid uniform RGB tuple still writes (the gate is not over-strict)."""
+    store = tmp_path / "good_bcast_color.luxar.zarr"
+    with LuxarZarrCompiler(store, enable_spatial_index=False) as compiler:
+        compiler.create_scene(dimensions=Dimensions.default_3d())
+        compiler.write_gsplats(
+            "test",
+            _gsplat_centers(10),
+            amplitudes=1.0,
+            cholesky_factors=_packed_chol(10),
+            colors=(1.0, 0.5, 0.0),
+        )
+    assert (store / "test" / "centers").exists()
+
+
+def test_leaf_value_scanned_exactly_once(tmp_path, monkeypatch) -> None:
+    """The additive-ladder write value-scans each sub-LOD exactly once.
+
+    The pre-flight gate is the single O(N) value scan; the per-level writes
+    re-run only shape normalization (``check_values=False``). Counting calls
+    to the Cholesky validator pins that a two-level ladder is scanned twice
+    (once per sub-LOD in preflight) — not four or six times (double preflight
+    plus per-level re-validation).
+    """
+    from luxar.gsplats.gsplat_data import AdditiveSubLOD, GSplatData
+    from luxar.validation import base as validation_base
+
+    calls = {"n": 0}
+    real = validation_base.validate_cholesky_for_writing
+
+    def counting(*args, **kwargs):
+        calls["n"] += 1
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(validation_base, "validate_cholesky_for_writing", counting)
+
+    n = 10
+    data = GSplatData(
+        additive_sublods=[
+            AdditiveSubLOD(
+                centers=_gsplat_centers(n),
+                amplitudes=np.ones(n, dtype=np.float32),
+                cholesky_factors=_packed_chol(n),
+            )
+            for _ in range(2)
+        ]
+    )
+    store = tmp_path / "once.luxar.zarr"
+    with LuxarZarrCompiler(store, enable_spatial_index=False) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        scene.add_gsplats_from_data("ladder", data)
+    assert calls["n"] == 2
 
 
 # =============================================================================
