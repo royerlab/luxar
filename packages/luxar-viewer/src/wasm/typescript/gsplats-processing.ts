@@ -51,7 +51,8 @@ function packedIndex(row: number, col: number): number {
  *
  * @param fullPackedL - Full packed Cholesky factor array
  * @param fullPackedOffset - Offset into fullPackedL for this splat
- * @param keepDims - Dimension indices to keep (sorted ascending)
+ * @param keepDims - Ordered dimension indices to keep; their order defines the
+ *   output-axis order
  * @param subNdim - Number of dimensions to keep
  * @param output - Output packed marginal Cholesky [subNdim*(subNdim+1)/2]
  * @param outputOffset - Start offset in output array
