@@ -228,12 +228,20 @@ class QuietHandler(http.server.SimpleHTTPRequestHandler):
     """
 
     def end_headers(self):
-        # SimpleHTTPRequestHandler sends Last-Modified but no Cache-Control,
-        # so browsers fall back to HEURISTIC freshness and can serve STALE
-        # files after this folder is re-exported in place (same URLs, new
-        # bytes). no-cache forces revalidation; unchanged files still come
-        # back as cheap 304s via If-Modified-Since.
-        self.send_header("Cache-Control", "no-cache")
+        # SimpleHTTPRequestHandler sends Last-Modified but no Cache-Control, so
+        # browsers fall back to HEURISTIC freshness and can serve STALE files
+        # after this folder is re-exported in place (same URLs, new bytes).
+        # no-cache forces revalidation on mutable scene data AND the unhashed
+        # viewer shell (index.html, wasm); unchanged files still return as cheap
+        # 304s. Content-hashed viewer chunks under /viewer/assets/ embed a build
+        # hash in their URL and are immutable, so they stay cacheable.
+        #
+        # self.path is unset when a malformed request line trips send_error()
+        # before parse_request() assigns it, so read it defensively — a bad
+        # request must still get a clean 400, not an AttributeError traceback.
+        path = getattr(self, "path", "").split("?", 1)[0]
+        if not path.startswith("/viewer/assets/"):
+            self.send_header("Cache-Control", "no-cache")
         super().end_headers()
 
     def log_message(self, format, *args):

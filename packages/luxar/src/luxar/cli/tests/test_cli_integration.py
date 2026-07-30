@@ -227,25 +227,29 @@ class TestServeIntegration:
         response = TestClient(_NoCacheMiddleware(cacheable_app)).get("/")
         assert response.headers["Cache-Control"] == "public, max-age=60"
 
-    def test_viewer_assets_are_not_forced_to_revalidate(self, tmp_path):
-        """Content-hashed viewer assets remain outside the data cache policy."""
-        from fastapi import FastAPI
-        from fastapi.staticfiles import StaticFiles
-
-        from luxar.cli.serving import _add_cors
+    def test_viewer_shell_revalidates_but_assets_do_not(self, tmp_path):
+        """Unhashed shell revalidates; content-hashed assets stay cacheable."""
+        from luxar.cli.serving import _build_viewer_app
 
         viewer = tmp_path / "viewer"
         assets = viewer / "assets"
         assets.mkdir(parents=True)
         (assets / "app.01234567.js").write_text("export {};")
+        (viewer / "index.html").write_text("<html><body>shell</body></html>")
 
-        app = FastAPI()
-        _add_cors(app)
-        app.mount("/", StaticFiles(directory=viewer, html=True))
+        client = TestClient(_build_viewer_app(viewer))
 
-        response = TestClient(app).get("/assets/app.01234567.js")
-        assert response.status_code == 200
-        assert response.headers.get("Cache-Control") != "no-cache"
+        # Content-hashed asset: immutable URL, must NOT be forced to revalidate.
+        asset = client.get("/assets/app.01234567.js")
+        assert asset.status_code == 200
+        assert asset.headers.get("Cache-Control") != "no-cache"
+
+        # Unhashed shell (both "/" and "/index.html"): replaced in place on
+        # rebuild, so it MUST revalidate exactly like mutable dataset chunks.
+        for shell_path in ("/", "/index.html"):
+            response = client.get(shell_path)
+            assert response.status_code == 200
+            assert response.headers.get("Cache-Control") == "no-cache"
 
     def test_non_local_cors_origin_rejected_by_default(self, sample_scene):
         """Default CORS policy should only allow loopback browser clients."""

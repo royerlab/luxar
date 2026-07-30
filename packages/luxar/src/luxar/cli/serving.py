@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import threading
 from pathlib import Path
-from typing import Any, MutableMapping, Optional, cast
+from typing import Any, Callable, MutableMapping, Optional, cast
 
 import uvicorn
 from arbol import aprint
@@ -55,8 +55,14 @@ class _NoCacheMiddleware:
     ETag, so unchanged chunks still come back as cheap 304s.
     """
 
-    def __init__(self, app: ASGIApp) -> None:
+    def __init__(
+        self,
+        app: ASGIApp,
+        *,
+        should_revalidate: Optional[Callable[[str], bool]] = None,
+    ) -> None:
         self.app = app
+        self.should_revalidate = should_revalidate
 
     async def __call__(
         self,
@@ -65,6 +71,12 @@ class _NoCacheMiddleware:
         send: Any,
     ) -> None:
         if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        if self.should_revalidate is not None and not self.should_revalidate(
+            scope.get("path", "")
+        ):
             await self.app(scope, receive, send)
             return
 
@@ -77,6 +89,29 @@ class _NoCacheMiddleware:
             await send(message)
 
         await self.app(scope, receive, send_with_no_cache)
+
+
+def _is_immutable_viewer_asset(path: str) -> bool:
+    """True for Vite's content-hashed viewer chunks (the ``assets/`` subtree).
+
+    Their filenames embed a build hash, so the URL changes on every rebuild and
+    the bytes at a given URL never change — safe to cache indefinitely. The
+    unhashed ``index.html`` shell and the fixed-name ``wasm/`` payloads are
+    replaced in place on rebuild, so they must revalidate exactly like mutable
+    dataset chunks.
+    """
+    return "/assets/" in path
+
+
+class _ViewerStaticFiles(StaticFiles):
+    """Revalidate the unhashed viewer shell; leave content-hashed assets cacheable."""
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        """Serve the viewer mount, revalidating everything but the assets subtree."""
+        await _NoCacheMiddleware(
+            super().__call__,
+            should_revalidate=lambda p: not _is_immutable_viewer_asset(p),
+        )(scope, receive, send)
 
 
 def _add_cors(api: FastAPI, cors_origin: str = _DEFAULT_CORS_ORIGIN) -> None:
@@ -322,6 +357,20 @@ def create_server_app(
     return api
 
 
+def _build_viewer_app(
+    viewer_dist: Path, *, cors_origin: str = _DEFAULT_CORS_ORIGIN
+) -> FastAPI:
+    """Build the viewer-server FastAPI app for ``viewer_dist``.
+
+    Split out so tests can exercise the mount (and its cache policy) with a
+    ``TestClient`` instead of a live uvicorn server.
+    """
+    api = FastAPI(title="Luxar Viewer", docs_url=None, redoc_url=None)
+    _add_cors(api, cors_origin)
+    api.mount("/", _ViewerStaticFiles(directory=str(viewer_dist), html=True))
+    return api
+
+
 def _serve_viewer(
     host: str,
     port: int,
@@ -343,11 +392,7 @@ def _serve_viewer(
     """
     viewer_dist = get_viewer_dist_path()
 
-    api = FastAPI(title="Luxar Viewer", docs_url=None, redoc_url=None)
-    _add_cors(api, cors_origin)
-
-    # Mount viewer static files
-    api.mount("/", StaticFiles(directory=str(viewer_dist), html=True))
+    api = _build_viewer_app(viewer_dist, cors_origin=cors_origin)
 
     # Construct viewer URL - ensure data_url has no trailing slash
     if data_url:

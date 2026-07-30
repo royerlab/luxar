@@ -140,6 +140,21 @@ func TestStartServerServesSameOriginNoCORS(t *testing.T) {
 	if got := assetResp.Header.Get("Cache-Control"); got == "no-cache" {
 		t.Fatal("content-hashed viewer asset must not be forced to revalidate")
 	}
+
+	// The unhashed viewer shell IS replaced in place on rebuild, so it must
+	// revalidate just like mutable data (unlike the content-hashed assets).
+	shellURL := viewerURL[:queryStart] + "index.html"
+	shellResp, err := http.Get(shellURL)
+	if err != nil {
+		t.Fatalf("GET viewer shell: %v", err)
+	}
+	defer shellResp.Body.Close()
+	if shellResp.StatusCode != http.StatusOK {
+		t.Fatalf("GET viewer shell status = %d, want 200", shellResp.StatusCode)
+	}
+	if got := shellResp.Header.Get("Cache-Control"); got != "no-cache" {
+		t.Fatalf("viewer shell Cache-Control = %q, want no-cache", got)
+	}
 }
 
 // dataURLFrom derives the /data/.zattrs URL from the viewer URL, which is of the
