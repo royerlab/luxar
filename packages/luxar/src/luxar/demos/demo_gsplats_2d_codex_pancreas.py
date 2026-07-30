@@ -554,11 +554,14 @@ Controls:
                         opacity=1.0,
                         # Stays additive while the other bioimaging gsplat
                         # demos are volumetric: this fit is strictly 2D, so
-                        # every splat shares one view-depth plane, the depth
-                        # sorter takes its identity-ordering branch, and
-                        # volumetric would composite in storage order with no
-                        # depth meaning. For a 2D fit the additive sum IS the
-                        # reconstruction.
+                        # there is no depth structure for volumetric to
+                        # resolve. Viewed face-on (the default under this
+                        # demo's control_type="ortho") every splat shares one
+                        # view-depth plane and the depth sorter takes its
+                        # identity-ordering branch, so volumetric would just
+                        # composite in storage order. Additive blending is
+                        # order-independent, so for a 2D fit the additive sum
+                        # IS the reconstruction regardless of the camera.
                         blending_mode="additive",
                         layer=True,
                         colormap=colormap,
