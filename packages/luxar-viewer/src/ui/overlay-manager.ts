@@ -605,6 +605,19 @@ export class OverlayManager {
     // loader already caps `html` once per scene load, but this path also runs on
     // every hover-content change (`updateHoverContent`), so we re-check here.
     // See MAX_OVERLAY_HTML_CHARS.
+    //
+    // The type check backs up the compile-time signature: config values
+    // originate as untrusted zarr .zattrs JSON, and a non-string (e.g. an
+    // array wrapping a huge payload) would pass the .length cap yet be
+    // coerced to its full string form by the innerHTML assignment below.
+    if (typeof (html as unknown) !== 'string') {
+      log.warning(
+        Modules.UI,
+        `[Overlay] Refusing to sanitize non-string html (${typeof (html as unknown)}) — ` +
+          'returning empty'
+      );
+      return '';
+    }
     if (html.length > MAX_OVERLAY_HTML_CHARS) {
       log.warning(
         Modules.UI,

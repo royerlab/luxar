@@ -143,6 +143,26 @@ export async function loadOverlayConfigs(
           html: attrs.html as string | undefined,
         };
 
+        // `.zattrs` is untrusted JSON and the assignments above are only type
+        // CASTS, so at runtime `html`/`text` can be any JSON value. A non-string
+        // must be dropped, not just size-checked: an array like ["<huge...>"]
+        // has .length 1 (passing the caps below) yet `innerHTML = value` coerces
+        // it to the full payload string — bypassing the cap entirely.
+        if (config.html !== undefined && typeof config.html !== 'string') {
+          log.warning(
+            Modules.SCENE_LOADER,
+            `Overlay "${childName}" html is not a string (${typeof config.html}) — dropping it`
+          );
+          config.html = undefined;
+        }
+        if (config.text !== undefined && typeof config.text !== 'string') {
+          log.warning(
+            Modules.SCENE_LOADER,
+            `Overlay "${childName}" text is not a string (${typeof config.text}) — dropping it`
+          );
+          config.text = undefined;
+        }
+
         // Reject an oversized `html` value before it can reach the DOM parser.
         // Parse cost is superlinear in nesting depth and this runs on the main
         // thread; the only effective bound is on the raw input size. See
@@ -156,12 +176,16 @@ export async function loadOverlayConfigs(
           config.html = undefined;
         }
 
-        // Apply the same cap to `text`: for an overlay_html overlay `text` is
-        // consumed as the hover template (`config.html ?? config.text`) and
+        // Apply the same cap to `text` — but only for overlay_html: there `text`
+        // is consumed as the hover template (`config.html ?? config.text`) and
         // reaches the DOM via innerHTML through sanitizeHtml, so it carries the
-        // identical parse-cost threat; even for a plain text overlay a multi-MB
-        // value is unreasonable and 64 KiB is far above any legitimate overlay.
-        if (config.text !== undefined && config.text.length > MAX_OVERLAY_HTML_CHARS) {
+        // identical parse-cost threat. Other overlay types render `text` via
+        // textContent (linear, never parsed), so their content is left alone.
+        if (
+          config.type === 'overlay_html' &&
+          config.text !== undefined &&
+          config.text.length > MAX_OVERLAY_HTML_CHARS
+        ) {
           log.warning(
             Modules.SCENE_LOADER,
             `Overlay "${childName}" text is ${config.text.length} chars, exceeding the ` +

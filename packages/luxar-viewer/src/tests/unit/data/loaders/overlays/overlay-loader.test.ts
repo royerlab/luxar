@@ -259,6 +259,56 @@ describe('loadOverlayConfigs', () => {
     expect(msg).toContain(String(MAX_OVERLAY_HTML_CHARS));
   });
 
+  it('drops a non-string html value that would smuggle an oversized payload (issue #768)', async () => {
+    // An array wrapping a huge string has .length 1, so a size check alone
+    // passes it — but `innerHTML = value` coerces it to the full payload.
+    // The loader must reject non-string html outright.
+    const smuggled = ['<b>'.repeat(MAX_OVERLAY_HTML_CHARS)];
+    const store = makeStoreWithContents(['overlays/sneaky/.zattrs']);
+    wireOpen({
+      'overlays/sneaky': { type: 'overlay_html', z_index: 0, html: smuggled },
+    });
+
+    const result = await loadOverlayConfigs(store, makeRootLocation());
+
+    expect(result.map((c) => c.name)).toEqual(['sneaky']);
+    expect(result[0].html).toBeUndefined();
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(warnSpy.mock.calls[0][0]).toBe(Modules.SCENE_LOADER);
+    expect(String(warnSpy.mock.calls[0][1])).toContain('sneaky');
+    expect(String(warnSpy.mock.calls[0][1])).toContain('not a string');
+  });
+
+  it('drops a non-string text value (issue #768)', async () => {
+    const smuggled = ['x'.repeat(MAX_OVERLAY_HTML_CHARS * 2)];
+    const store = makeStoreWithContents(['overlays/sneaky/.zattrs']);
+    wireOpen({
+      'overlays/sneaky': { type: 'overlay_html', z_index: 0, text: smuggled },
+    });
+
+    const result = await loadOverlayConfigs(store, makeRootLocation());
+
+    expect(result.map((c) => c.name)).toEqual(['sneaky']);
+    expect(result[0].text).toBeUndefined();
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(String(warnSpy.mock.calls[0][1])).toContain('not a string');
+  });
+
+  it('preserves oversized text on a plain overlay_text overlay (issue #768)', async () => {
+    // A plain text overlay renders via textContent — linear cost, never
+    // parsed as HTML — so its content must NOT be dropped by the cap.
+    const big = 'x'.repeat(MAX_OVERLAY_HTML_CHARS + 1);
+    const store = makeStoreWithContents(['overlays/prose/.zattrs']);
+    wireOpen({
+      'overlays/prose': { type: 'overlay_text', z_index: 0, text: big },
+    });
+
+    const result = await loadOverlayConfigs(store, makeRootLocation());
+
+    expect(result[0].text).toBe(big);
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
   it('preserves an html value at the cap length (issue #768)', async () => {
     const atCap = 'a'.repeat(MAX_OVERLAY_HTML_CHARS);
     const store = makeStoreWithContents(['overlays/ok/.zattrs']);

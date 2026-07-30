@@ -998,6 +998,22 @@ describe('OverlayManager HTML size cap (issue #768)', () => {
     expect(warnSpy.mock.calls[0][0]).toBe(Modules.UI);
   });
 
+  it('rejects a non-string html value that would coerce past the cap (defense in depth)', async () => {
+    // Configs originate as untrusted .zattrs JSON: an array wrapping a huge
+    // payload has .length 1 (defeating a size-only check) but is coerced to
+    // the full string by the innerHTML assignment. The loader drops these,
+    // and sanitizeHtml must refuse them too.
+    const smuggled = ['<b>'.repeat(MAX_OVERLAY_HTML_CHARS)] as unknown as string;
+
+    const el = await renderHtml(smuggled);
+
+    expect(el.innerHTML).toBe('');
+    expect(el.querySelector('b')).toBeNull();
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(warnSpy.mock.calls[0][0]).toBe(Modules.UI);
+    expect(String(warnSpy.mock.calls[0][1])).toContain('non-string');
+  });
+
   it('preserves normal markup and does not warn (existing behavior intact)', async () => {
     const el = await renderHtml('<div><b>bold</b> <a href="https://example.org">link</a></div>');
 
