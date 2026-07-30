@@ -238,6 +238,151 @@ class TestBoundedScalarDynamicRange:
             assert enc["name"] == "bounded_scalar_uint16"
 
 
+class TestBoundedScalarSignedData:
+    """Regression tests for signed BOUNDED_SCALAR data (issue #730 fix).
+
+    Colormap scalars became BOUNDED_SCALAR and are legitimately signed, so
+    the bit-selection and float fallback in ``_encode_bounded_scalar`` must be
+    sign-aware. Bit depth is chosen from MAGNITUDES so negating data does not
+    silently degrade precision, and the wide-range float path never overflows
+    float16 to inf.
+    """
+
+    def test_bit_depth_is_negation_invariant(self):
+        """An all-negative array and its positive mirror pick the SAME dtype.
+
+        A wide magnitude range (~65000:1) must select uint16 for both. Before
+        the fix, the all-negative array had an empty ``data > 0`` mask and
+        collapsed to uint8 — a 256x precision loss under negation.
+        """
+        pos = np.linspace(1.0, 65000.0, 5000).astype(np.float32)
+        neg = -pos  # same magnitudes, opposite sign
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(tmpdir, mode="w")
+            encoder = ArrayEncoder()
+            encoder.encode(pos, group, "pos", SemanticType.BOUNDED_SCALAR)
+            encoder.encode(neg, group, "neg", SemanticType.BOUNDED_SCALAR)
+
+            pos_enc = group["pos"].attrs["encoding"]["name"]
+            neg_enc = group["neg"].attrs["encoding"]["name"]
+            assert pos_enc == "bounded_scalar_uint16", pos_enc
+            assert neg_enc == pos_enc, f"{neg_enc} != {pos_enc}"
+
+    def test_all_negative_wide_range_precision(self):
+        """An all-negative wide array decodes with uint16 (~0.5), not uint8 error.
+
+        Directly exercises Defect A: before the fix it stored as uint8 with a
+        max absolute error ~128; after the fix uint16 gives ~0.5.
+        """
+        from luxar.encoding.decoder import ArrayDecoder
+
+        data = np.linspace(-65536.0, -1.0, 300000).astype(np.float32)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(tmpdir, mode="w")
+            encoder = ArrayEncoder()
+            encoder.encode(data, group, "test", SemanticType.BOUNDED_SCALAR)
+
+            assert group["test"].attrs["encoding"]["name"] == "bounded_scalar_uint16"
+            decoded = ArrayDecoder().decode(group["test"])
+            max_err = float(np.max(np.abs(decoded - data)))
+            # uint16 over a span of 65535 → step ≈ 65535/65535 = 1.0, err ≤ 0.5.
+            assert max_err < 1.0, f"max abs error {max_err} — degraded to uint8?"
+
+    def test_mixed_sign_span_selects_uint16(self):
+        """Mixed-sign data whose MAGNITUDE range needs uint16 gets uint16.
+
+        A tiny positive lobe (range ~8:1) beside a wide negative lobe. Before
+        the fix, bits were sized from the positive lobe only → uint8.
+        """
+        neg_lobe = np.linspace(-65000.0, -1000.0, 5000).astype(np.float32)
+        pos_lobe = np.array([10.0, 20.0, 40.0, 80.0], dtype=np.float32)
+        data = np.concatenate([neg_lobe, pos_lobe])
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(tmpdir, mode="w")
+            encoder = ArrayEncoder()
+            encoder.encode(data, group, "test", SemanticType.BOUNDED_SCALAR)
+
+            enc = group["test"].attrs["encoding"]["name"]
+            assert enc == "bounded_scalar_uint16", enc
+
+    def test_non_negative_encoding_unchanged(self):
+        """np.abs is a no-op for non-negative data: encodings stay identical.
+
+        Guards the claim that sharpness/opacity and existing non-negative
+        colormap scalars are byte-identical after the fix.
+        """
+        narrow = np.linspace(10.0, 50.0, 1000).astype(np.float32)  # range ~5:1
+        medium = np.linspace(0.01, 100.0, 1000).astype(np.float32)  # range ~1e4:1
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(tmpdir, mode="w")
+            encoder = ArrayEncoder()
+            encoder.encode(narrow, group, "narrow", SemanticType.BOUNDED_SCALAR)
+            encoder.encode(medium, group, "medium", SemanticType.BOUNDED_SCALAR)
+
+            assert group["narrow"].attrs["encoding"]["name"] == "bounded_scalar_uint8"
+            assert group["medium"].attrs["encoding"]["name"] == "bounded_scalar_uint16"
+
+    def test_signed_integer_minimum_is_abs_safe(self):
+        """int64 min must not wrap under np.abs and corrupt bit selection.
+
+        ``np.abs(int64 min)`` overflows and stays negative, so the magnitude
+        range would exclude the array's largest value: bits would be sized
+        from the small positives only (uint16) while the real span is ~9.2e18
+        — a catastrophic quantization error. Magnitudes are computed in
+        float64 for signed integers, so the wide range selects float32.
+        """
+        from luxar.encoding.decoder import ArrayDecoder
+
+        int_min = np.iinfo(np.int64).min
+        # > 256 unique values so the LUT fast path does not intercept.
+        data = np.concatenate(
+            [
+                np.array([int_min], dtype=np.int64),
+                np.arange(1, 1001, dtype=np.int64),
+            ]
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(tmpdir, mode="w")
+            encoder = ArrayEncoder()
+            encoder.encode(data, group, "test", SemanticType.BOUNDED_SCALAR)
+
+            enc = group["test"].attrs["encoding"]["name"]
+            assert enc == "float32", f"expected float32 for ~9.2e18 span, got {enc}"
+            decoded = ArrayDecoder().decode(group["test"])
+            # |int64 min| = 2**63 and 1..1000 are all exact in float32.
+            np.testing.assert_array_equal(decoded, data.astype(np.float32))
+
+    def test_wide_range_float16_no_overflow_to_inf(self):
+        """Defect B: wide-range values > 65504 must not overflow float16 → inf.
+
+        With ``float16_allowed=True`` the wide-range float branch would cast to
+        float16 (max 65504) and write inf. The guard falls back to float32.
+        """
+        from luxar.encoding.decoder import ArrayDecoder
+
+        # Magnitude dynamic range > 65536 forces the float branch; max 1e6
+        # exceeds float16's 65504 ceiling. Strictly increasing → no LUT.
+        data = np.linspace(1.0, 1_000_000.0, 1000).astype(np.float32)
+
+        # Document that an unguarded float16 cast WOULD produce inf.
+        assert np.any(~np.isfinite(data.astype(np.float16)))
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(tmpdir, mode="w")
+            encoder = ArrayEncoder(float16_allowed=True)
+            encoder.encode(data, group, "test", SemanticType.BOUNDED_SCALAR)
+
+            enc = group["test"].attrs["encoding"]["name"]
+            assert enc == "float32", f"expected float32 fallback, got {enc}"
+            decoded = ArrayDecoder().decode(group["test"])
+            assert np.all(np.isfinite(decoded)), "float16 overflow leaked inf to disk"
+
+
 class TestQuantizationErrorBounds:
     """Test that quantization error stays within acceptable bounds.
 

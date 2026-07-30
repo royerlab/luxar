@@ -263,6 +263,16 @@ def validate_scalars_preflight(
                 f"{context}: Scalar value must be finite. Got {scalars}",
                 "Provide a finite scalar value",
             )
+        # Scalars are stored as float32; a finite value beyond the float32
+        # range (|v| > ~3.4e38) overflows to inf on cast, which the encoder
+        # rejects AFTER positions are written. Reject here so the fail-fast
+        # gate stays sufficient (no partial node).
+        if not np.isfinite(np.float32(scalars)):
+            raise ValidationError(
+                f"{context}: Scalar value {scalars} is not representable as "
+                f"float32 (overflows to inf on cast).",
+                "Rescale scalars into the float32 range (|value| <= 3.4e38)",
+            )
         return
 
     if not isinstance(scalars, np.ndarray):
@@ -279,6 +289,26 @@ def validate_scalars_preflight(
         )
 
     _validate_numeric_finite_values(scalars, context)
+
+    # Scalars are stored as float32 (see write_scalars). A finite float64
+    # value beyond the float32 range overflows to inf on cast — the encoder
+    # would reject it AFTER positions are written, leaving a partial node.
+    # Validate float32-representability here so the pre-write gate is
+    # sufficient. Only float dtypes wider than float32 can overflow (int64
+    # tops out at ~9.2e18 << 3.4e38), and the float32 cast is monotone, so
+    # casting just the extrema is exact — no full-array copy in preflight.
+    if (
+        scalars.size > 0
+        and np.issubdtype(scalars.dtype, np.floating)
+        and scalars.dtype.itemsize > 4
+    ):
+        extrema = np.array([scalars.min(), scalars.max()], dtype=scalars.dtype)
+        if not np.all(np.isfinite(extrema.astype(np.float32))):
+            raise ValidationError(
+                f"{context}: One or more scalar values are not representable "
+                f"as float32 (overflow to inf on cast).",
+                "Rescale scalars into the float32 range (|value| <= 3.4e38)",
+            )
 
 
 def prepare_transform_attrs(attrs: Dict[str, Any], store: zarr.Group) -> None:
