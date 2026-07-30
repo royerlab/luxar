@@ -463,9 +463,9 @@ fn mahalanobis_distance_internal(diff: &[f32], packed_l: &[f32], ndim: usize) ->
 /// # Arguments
 /// * `cholesky` - Packed Cholesky factors [splatCount * packedSize]
 /// * `visibility` - Visibility mask [splatCount]
-/// * `display_dims` - Display dimension indices (sorted) [1..=3]; missing
-///   rows are scale-matched-padded for 1D/2D data (see
-///   `compute_display_cholesky_3d`)
+/// * `display_dims` - Ordered display-axis dimension indices [1..=3]; their
+///   order maps directly to output X/Y/Z, and missing rows are
+///   scale-matched-padded for 1D/2D data (see `compute_display_cholesky_3d`)
 /// * `ndim` - Total dimensionality (max 16)
 /// * `splat_count` - Number of splats
 /// * `output` - Output 3D Cholesky factors [visibleCount * 6]
@@ -1455,7 +1455,19 @@ mod tests {
             2.0, 2.0, 2.0, 50.0, // far in the hidden dim -> attenuated away
         ];
 
-        for display in [vec![0u32, 1], vec![3, 1], vec![2, 0]] {
+        let cases = [
+            (vec![0u32, 1], vec![[0.0f32, 0.0, 0.0], [1.0, 1.0, 0.0]]),
+            (
+                vec![3u32, 1],
+                vec![[0.0f32, 0.0, 0.0], [0.3, 1.0, 0.0], [50.0, 2.0, 0.0]],
+            ),
+            (vec![2u32, 0], vec![[0.0f32, 0.0, 0.0], [1.0, 1.0, 0.0]]),
+        ];
+
+        for (display, expected_centers) in cases {
+            let hidden = (0..ndim as u32)
+                .filter(|dim| !display.contains(dim))
+                .collect::<Vec<_>>();
             let mut out_c = vec![0.0f32; n * 3];
             let mut out_l = vec![0.0f32; n * 6];
             let mut out_a = vec![0.0f32; n];
@@ -1468,7 +1480,7 @@ mod tests {
                 &vec![1.0f32; n * 3],
                 &vec![1u8; n],
                 &vec![0.0f32; ndim],
-                &[2, 3],
+                &hidden,
                 &display,
                 ndim,
                 n,
@@ -1481,8 +1493,12 @@ mod tests {
                 &mut out_col,
             ) as usize;
 
-            assert!(count > 0, "display={display:?}: everything culled");
-            for s in 0..count {
+            assert_eq!(
+                count,
+                expected_centers.len(),
+                "display={display:?}, hidden={hidden:?}: unexpected visible count"
+            );
+            for (s, expected_center) in expected_centers.iter().enumerate() {
                 let l = &out_l[s * 6..s * 6 + 6];
                 assert!(
                     l.iter().all(|v| v.is_finite()),
@@ -1495,8 +1511,14 @@ mod tests {
                     l[5] > 0.0,
                     "display={display:?} splat {s}: L22 not positive"
                 );
-                // Centers: the unmapped third component is zero-filled.
-                assert_eq!(out_c[s * 3 + 2], 0.0, "display={display:?} splat {s}: z");
+                for axis in 0..3 {
+                    assert!(
+                        (out_c[s * 3 + axis] - expected_center[axis]).abs() < 1e-5,
+                        "display={display:?} splat {s} axis {axis}: got {}, expected {}",
+                        out_c[s * 3 + axis],
+                        expected_center[axis]
+                    );
+                }
             }
         }
     }

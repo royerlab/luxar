@@ -598,7 +598,7 @@ class TestDataServerMountRoot:
         assert client.get(f"/{sample_scene.name}/.zgroup").status_code == 404
 
     def test_resolve_mount_root(self, tmp_path):
-        """Directories mount themselves; single files mount their parent."""
+        """Directories mount themselves; files never fall back to their parent."""
         from luxar.cli.serving import _resolve_mount_root
 
         store = tmp_path / "scene.luxar.zarr"
@@ -608,9 +608,22 @@ class TestDataServerMountRoot:
         lone_file = tmp_path / "volume.npy"
         lone_file.write_bytes(b"x")
 
-        assert _resolve_mount_root(store) == store
-        assert _resolve_mount_root(plain) == plain
-        assert _resolve_mount_root(lone_file) == tmp_path
+        assert _resolve_mount_root(store) == store.resolve()
+        assert _resolve_mount_root(plain) == plain.resolve()
+        with pytest.raises(ValueError, match="must be a directory"):
+            _resolve_mount_root(lone_file)
+
+    def test_build_data_app_rechecks_directory_at_mount_time(self, tmp_path):
+        """A directory replaced by a file before server startup is rejected."""
+        from luxar.cli.serving import _build_data_app
+
+        data_path = tmp_path / "scene.luxar.zarr"
+        data_path.mkdir()
+        data_path.rmdir()
+        data_path.write_bytes(b"not a directory anymore")
+
+        with pytest.raises(ValueError, match="must be a directory"):
+            _build_data_app(data_path)
 
     def test_viewer_rejects_file_data_path(self, tmp_path):
         """`viewer --data <file>` is rejected before any server starts.
