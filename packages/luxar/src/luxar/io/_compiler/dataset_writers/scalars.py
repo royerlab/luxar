@@ -267,12 +267,17 @@ def write_scalars(
                 dtype=scalars.dtype,
             )
 
+    # Colormap scalars are legitimately signed (z-scores, velocities,
+    # divergence). Encode as BOUNDED_SCALAR (no sign constraint) quantized
+    # to the explicit [min, max] just computed, so the stored
+    # ``scalar_data_range`` and the quantization range stay identical.
     ctx.encoder.encode(
         data=scalars,
         zarr_group=group,
         name="scalars",
-        semantic_type=SemanticType.POSITIVE_SCALAR,
+        semantic_type=SemanticType.BOUNDED_SCALAR,
         mode=ctx.encoding_mode,
+        bounds=(scalar_min, scalar_max),
         n_elements=n_elems,
         chunks=chunks,
         compressor=ctx.compressor,
