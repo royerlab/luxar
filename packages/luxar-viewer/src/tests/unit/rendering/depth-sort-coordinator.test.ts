@@ -749,6 +749,165 @@ describe('depth-sort coordinator', () => {
     expect(marker.renderOrder).toBe(2);
   });
 
+  it('partially overlapping spheres do not form a containment edge', async () => {
+    // The spheres overlap (distance 8 < radii sum 16) but neither contains
+    // the other (8 + 6 > 10). Plain depth order must therefore survive.
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+
+    const outer = makeGSplatsMesh(2, 'volumetric');
+    outer.geometry.boundingSphere!.center.set(0, 0, -10);
+    outer.geometry.boundingSphere!.radius = 10;
+    const overlap = makeGSplatsMesh(2, 'volumetric');
+    overlap.geometry.boundingSphere!.center.set(0, 0, -18);
+    overlap.geometry.boundingSphere!.radius = 6;
+
+    coord.noteDepthSortCommit(outer, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    coord.noteDepthSortCommit(overlap, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    await flush();
+
+    coord.evaluateDepthSortPerFrame();
+
+    expect(overlap.renderOrder).toBe(0);
+    expect(outer.renderOrder).toBe(1);
+  });
+
+  it('applies containment only inside the documented grazing epsilon band', async () => {
+    // Outer radius 10 gives 0.01 slack. `justOutside` misses the boundary
+    // by 0.001; `justInside` lands 0.001 inside it.
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+
+    const outer = makeGSplatsMesh(2, 'volumetric');
+    outer.geometry.boundingSphere!.center.set(0, 0, -10);
+    outer.geometry.boundingSphere!.radius = 10;
+    const justInside = makeGSplatsMesh(2, 'volumetric');
+    justInside.geometry.boundingSphere!.center.set(0, 0, -19.009);
+    justInside.geometry.boundingSphere!.radius = 1;
+    const justOutside = makeGSplatsMesh(2, 'volumetric');
+    justOutside.geometry.boundingSphere!.center.set(0, 0, -19.011);
+    justOutside.geometry.boundingSphere!.radius = 1;
+
+    for (const mesh of [outer, justInside, justOutside]) {
+      coord.noteDepthSortCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    }
+    await flush();
+
+    coord.evaluateDepthSortPerFrame();
+
+    // The outside sphere remains the farthest ready group. The container
+    // then draws before only the epsilon-contained sphere.
+    expect(justOutside.renderOrder).toBe(0);
+    expect(outer.renderOrder).toBe(1);
+    expect(justInside.renderOrder).toBe(2);
+  });
+
+  it('scales containment radii under a non-identity mesh transform', async () => {
+    // Local radius 10 becomes world/view radius 20. That transformed radius
+    // contains the marker at z=-25; the unscaled radius would not.
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+
+    const transformedOuter = makeGSplatsMesh(2, 'volumetric');
+    transformedOuter.position.set(0, 0, -10);
+    transformedOuter.scale.setScalar(2);
+    transformedOuter.geometry.boundingSphere!.center.set(0, 0, 0);
+    transformedOuter.geometry.boundingSphere!.radius = 10;
+    const marker = makeGSplatsMesh(2, 'volumetric');
+    marker.geometry.boundingSphere!.center.set(0, 0, -25);
+    marker.geometry.boundingSphere!.radius = 1;
+
+    coord.noteDepthSortCommit(marker, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    coord.noteDepthSortCommit(transformedOuter, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    await flush();
+
+    coord.evaluateDepthSortPerFrame();
+
+    expect(transformedOuter.renderOrder).toBe(0);
+    expect(marker.renderOrder).toBe(1);
+  });
+
+  it('excludes a zero-radius inner group from containment edges', async () => {
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+
+    const outer = makeGSplatsMesh(2, 'volumetric');
+    outer.geometry.boundingSphere!.center.set(0, 0, -10);
+    outer.geometry.boundingSphere!.radius = 100;
+    const zeroRadius = makeGSplatsMesh(2, 'volumetric');
+    zeroRadius.geometry.boundingSphere!.center.set(0, 0, -30);
+    zeroRadius.geometry.boundingSphere!.radius = 0;
+
+    coord.noteDepthSortCommit(outer, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    coord.noteDepthSortCommit(zeroRadius, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    await flush();
+
+    coord.evaluateDepthSortPerFrame();
+
+    expect(zeroRadius.renderOrder).toBe(0);
+    expect(outer.renderOrder).toBe(1);
+  });
+
+  it('treats a non-finite transformed radius as unusable', async () => {
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+
+    const outer = makeGSplatsMesh(2, 'volumetric');
+    outer.geometry.boundingSphere!.center.set(0, 0, -10);
+    outer.geometry.boundingSphere!.radius = 100;
+    const marker = makeGSplatsMesh(2, 'volumetric');
+    marker.geometry.boundingSphere!.center.set(0, 0, -30);
+    marker.geometry.boundingSphere!.radius = 1;
+
+    coord.noteDepthSortCommit(outer, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    coord.noteDepthSortCommit(marker, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    await flush();
+
+    const scaleSpy = vi
+      .spyOn(THREE.Matrix4.prototype, 'getMaxScaleOnAxis')
+      .mockReturnValueOnce(Infinity)
+      .mockReturnValueOnce(1);
+    coord.evaluateDepthSortPerFrame();
+    scaleSpy.mockRestore();
+
+    // Infinity must become the radius=-1 sentinel instead of a container
+    // that captures every finite group.
+    expect(marker.renderOrder).toBe(0);
+    expect(outer.renderOrder).toBe(1);
+  });
+
+  it('keeps the farthest-ready tie-break across independent containers', async () => {
+    // Both containers start with indegree zero. Each contains only its own
+    // child, so Kahn's ready-set choice must preserve farthest-first order.
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+
+    const farContainer = makeGSplatsMesh(2, 'volumetric');
+    farContainer.geometry.boundingSphere!.center.set(0, 0, -50);
+    farContainer.geometry.boundingSphere!.radius = 10;
+    const farChild = makeGSplatsMesh(2, 'volumetric');
+    farChild.geometry.boundingSphere!.center.set(0, 0, -58);
+    farChild.geometry.boundingSphere!.radius = 1;
+    const nearContainer = makeGSplatsMesh(2, 'volumetric');
+    nearContainer.geometry.boundingSphere!.center.set(0, 0, -10);
+    nearContainer.geometry.boundingSphere!.radius = 10;
+    const nearChild = makeGSplatsMesh(2, 'volumetric');
+    nearChild.geometry.boundingSphere!.center.set(0, 0, -18);
+    nearChild.geometry.boundingSphere!.radius = 1;
+
+    for (const mesh of [nearChild, nearContainer, farChild, farContainer]) {
+      coord.noteDepthSortCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    }
+    await flush();
+
+    coord.evaluateDepthSortPerFrame();
+
+    expect(farContainer.renderOrder).toBe(0);
+    expect(farChild.renderOrder).toBe(1);
+    expect(nearContainer.renderOrder).toBe(2);
+    expect(nearChild.renderOrder).toBe(3);
+  });
+
   it('identical bounding spheres produce no containment edge (no self-lock, stable depth order)', async () => {
     // Exactly co-located equal-bounds layers (two channels of one dataset)
     // have no meaningful cross order; the strict-radius guard must not
@@ -770,7 +929,8 @@ describe('depth-sort coordinator', () => {
     coord.evaluateDepthSortPerFrame();
 
     // Tie → stable sort keeps insertion order; both got exactly one rank.
-    expect([chanA.renderOrder, chanB.renderOrder].sort()).toEqual([0, 1]);
+    expect(chanA.renderOrder).toBe(0);
+    expect(chanB.renderOrder).toBe(1);
   });
 
   it('two co-located volumetric LOD siblings (near-identical bounds, mid cross-fade) each get a rank', async () => {
@@ -869,7 +1029,8 @@ describe('depth-sort coordinator', () => {
     // meshes tie at view-z 0 and take the remaining ranks in insertion
     // order — every mesh got exactly one integer rank (no NaN fallout).
     expect(farMesh.renderOrder).toBe(0);
-    expect([boundless.renderOrder, nanCenter.renderOrder].sort()).toEqual([1, 2]);
+    expect(boundless.renderOrder).toBe(1);
+    expect(nanCenter.renderOrder).toBe(2);
   });
 
   it('two BSP wrappers land on ONE global scale: the far wrapper draws entirely first', async () => {

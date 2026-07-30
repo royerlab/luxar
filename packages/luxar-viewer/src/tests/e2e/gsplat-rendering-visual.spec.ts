@@ -36,9 +36,10 @@ test.describe('GSplats visual correctness', () => {
     await waitForLuxarReady(page);
     await waitForRenderStable(page);
 
-    // Require actual visible output, not just the 1/255 clear color.
-    // Whole-canvas stats are more robust than sparse grid sampling for
-    // small splat clusters.
+    // Require actual visible output. The pitch-black clear color
+    // (default 0x000000) contributes exactly zero, so any non-black
+    // pixel is real splat signal. Whole-canvas stats are more robust
+    // than sparse grid sampling for small splat clusters.
     const stats = await getElementPixelStats(page, 'canvas', 10);
     expect(
       stats.nonBlackPixels,

@@ -140,4 +140,8 @@ export { LabelLoader } from './picking/label-loader';
 export { ImageLabelLoader } from './picking/image-label-loader';
 
 // Overlays
-export { loadOverlayConfigs, type OverlayConfig } from './overlays/overlay-loader';
+export {
+  loadOverlayConfigs,
+  MAX_OVERLAY_HTML_CHARS,
+  type OverlayConfig,
+} from './overlays/overlay-loader';

@@ -889,9 +889,10 @@ def _resolve_floor(V: np.ndarray, floor: "str | float | None") -> "float | None"
 
 # Sampling budget for resolve_volume_floor: the floor level is estimated from
 # at most this many voxels (~128 MB as float32), drawn as a bounded number of
-# evenly spaced contiguous slabs along the volume's LONGEST axis — cheap I/O
-# on chunked zarr stores, unlike a stride which touches essentially every
-# chunk.
+# evenly spaced contiguous slabs along the volume's LONGEST axis. If one full
+# cross-section is already too large, the slab is deterministically cropped
+# along the remaining axes. These contiguous reads are cheap on chunked zarr
+# stores, unlike a stride which touches essentially every chunk.
 FLOOR_SAMPLE_BUDGET_VOXELS = 32_000_000
 # Maximum number of evenly spaced contiguous sample blocks along the sampled axis.
 _FLOOR_SAMPLE_BLOCKS = 32
@@ -903,11 +904,16 @@ def _sample_volume_for_floor(volume: Any, budget: int) -> "np.ndarray | None":
     Samples evenly spaced contiguous slab blocks along the **longest** axis
     (ties -> lowest index), so a small leading axis — e.g. an unsqueezed
     ``(1, Z, Y, X)`` store — cannot defeat the budget the way hard-coded
-    axis-0 slabs would. When the budget allows only one block, it is placed
-    at the middle of the axis (the first slab is systematically biased).
-    The sample is a pure function of ``volume.shape`` and ``budget``.
-    Returns ``None`` for an empty volume.
+    axis-0 slabs would. If one complete slab exceeds the budget, its remaining
+    axes are recursively center-cropped, longest first, until one slab fits.
+    When the budget allows only one block, it is placed at the middle of the
+    sampled axis (the first slab is systematically biased). The sample is a
+    pure function of ``volume.shape`` and ``budget``. Returns ``None`` for an
+    empty volume.
     """
+    if budget < 1:
+        raise ValueError("floor sample budget must be at least 1 voxel")
+
     shape = tuple(int(s) for s in volume.shape)
     total = 1
     for s in shape:
@@ -918,10 +924,24 @@ def _sample_volume_for_floor(volume: Any, budget: int) -> "np.ndarray | None":
         return np.asarray(volume[...], dtype=np.float32).ravel()
 
     axis = shape.index(max(shape))  # longest axis; ties -> lowest index
-    slab_voxels = max(1, total // shape[axis])  # voxels per slab along `axis`
-    n_slabs = max(1, budget // slab_voxels)  # total slabs within budget
-    if n_slabs >= shape[axis]:
-        return np.asarray(volume[...], dtype=np.float32).ravel()
+
+    # Start with one full cross-section perpendicular to `axis`. If that alone
+    # exceeds the budget, center-crop the longest remaining dimensions until
+    # the cross-section fits. Recursive cropping is needed for high-dimensional
+    # shapes where reducing only the second-longest axis to one is insufficient.
+    sample_shape = list(shape)
+    sample_shape[axis] = 1
+    slab_voxels = total // shape[axis]
+    while slab_voxels > budget:
+        crop_axis = max(
+            (i for i, length in enumerate(sample_shape) if i != axis and length > 1),
+            key=lambda i: (sample_shape[i], -i),
+        )
+        other_voxels = slab_voxels // sample_shape[crop_axis]
+        sample_shape[crop_axis] = max(1, budget // other_voxels)
+        slab_voxels = other_voxels * sample_shape[crop_axis]
+
+    n_slabs = min(shape[axis], max(1, budget // slab_voxels))
     n_blocks = min(_FLOOR_SAMPLE_BLOCKS, n_slabs)
     block_len = n_slabs // n_blocks
     span = shape[axis] - block_len
@@ -934,15 +954,20 @@ def _sample_volume_for_floor(volume: Any, budget: int) -> "np.ndarray | None":
         starts = sorted(
             {int(round(span * i / (n_blocks - 1))) for i in range(n_blocks)}
         )
-    prefix = (slice(None),) * axis
-    return np.concatenate(
-        [
-            np.asarray(
-                volume[prefix + (slice(s, s + block_len),)], dtype=np.float32
-            ).ravel()
-            for s in starts
-        ]
-    )
+
+    base_slices = [slice(None)] * len(shape)
+    for i, (full_len, sample_len) in enumerate(zip(shape, sample_shape, strict=True)):
+        if i == axis or sample_len == full_len:
+            continue
+        start = (full_len - sample_len) // 2
+        base_slices[i] = slice(start, start + sample_len)
+
+    samples = []
+    for start in starts:
+        region = base_slices.copy()
+        region[axis] = slice(start, start + block_len)
+        samples.append(np.asarray(volume[tuple(region)], dtype=np.float32).ravel())
+    return np.concatenate(samples)
 
 
 def resolve_volume_floor(
@@ -988,9 +1013,9 @@ def resolve_volume_floor(
     -----
     - **Memory bound**: at most :data:`FLOOR_SAMPLE_BUDGET_VOXELS` voxels are
       sampled, as evenly spaced contiguous slab blocks along the volume's
-      longest axis. Residual caveat: if even a single slab along the longest
-      axis exceeds the budget, that one slab is still read. A volume within
-      the budget is read whole.
+      longest axis. If one full cross-section exceeds the budget, it is
+      deterministically center-cropped along the remaining axes until it fits.
+      A volume within the budget is read whole.
     - **Determinism**: the sample is a pure function of ``volume.shape`` and
       the fixed budget, so two independent processes given the same volume
       and spec always resolve the same level.
