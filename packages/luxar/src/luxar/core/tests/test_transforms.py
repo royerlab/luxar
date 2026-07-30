@@ -597,9 +597,11 @@ class TestNodeTransformIntegration:
             g2 = g1.add_group("Level2", transform=t2)
             g3 = g2.add_group("Level3", transform=t3)
 
-            # world_transform = compose(root_first, ..., leaf_last)
-            expected_g2 = compose(t1, t2)
-            expected_g3 = compose(t1, t2, t3)
+            # world_transform is root-outermost: leaf applied first (innermost),
+            # root last (outermost) → world = root @ ... @ leaf. Since compose
+            # applies its first arg first, that means compose(leaf, ..., root).
+            expected_g2 = compose(t2, t1)
+            expected_g3 = compose(t3, t2, t1)
             assert np.allclose(g2.world_transform, expected_g2, atol=1e-6)
             assert np.allclose(g3.world_transform, expected_g3, atol=1e-6)
 
@@ -618,8 +620,9 @@ class TestNodeTransformIntegration:
             g_gp = scene.add_group("Grandparent3", transform=t1)
             g_intermediate = g_gp.add_group("IntermediateNoXform")
             g_leaf = g_intermediate.add_group("Leaf", transform=t3)
-            # compose(t1, identity, t3) == compose(t1, t3)
-            assert np.allclose(g_leaf.world_transform, compose(t1, t3), atol=1e-6)
+            # root-outermost: leaf (t3) applied first, root (t1) last →
+            # compose(t3, identity, t1) == compose(t3, t1)
+            assert np.allclose(g_leaf.world_transform, compose(t3, t1), atol=1e-6)
             # Intermediate's own world_transform should equal t1 (its
             # parent's) — the skipped level inherits without modification.
             assert np.allclose(g_intermediate.world_transform, t1, atol=1e-6)
@@ -639,9 +642,10 @@ class TestNodeTransformIntegration:
             world = g2.world_transform
             result = world @ point
 
-            # Manual: translate first, then rotate
-            p1 = t1 @ point  # (11, 0, 0, 1)
-            expected = t2 @ p1  # (0, 11, 0, 1)
+            # Manual (root-outermost): apply the leaf (child rotate) first,
+            # then the root (parent translate).
+            p1 = t2 @ point  # rotate_z(90): (1,0,0) → (0, 1, 0, 1)
+            expected = t1 @ p1  # translate(10,0,0): → (10, 1, 0, 1)
             assert np.allclose(result[:3], expected[:3], atol=1e-5)
 
     def test_transform_removal_persists_to_zarr(self, tmp_path) -> None:

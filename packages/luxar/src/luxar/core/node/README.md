@@ -71,7 +71,7 @@ persistence.
 | Property | Description |
 |----------|-------------|
 | `transform` | This node's local 4x4 matrix. Getter reads back via `read_transform_from_zarr`; setter runs `prepare_transform_for_zarr` and persists immediately. Set to `None` to delete. |
-| `world_transform` | Composes local transforms up the parent chain (root applied first, this node last). Returns identity if none are set. |
+| `world_transform` | Composes local transforms up the parent chain root-outermost (this node's transform applied first/innermost, root last/outermost — `world = root @ ... @ leaf`). Returns identity if none are set. |
 
 Matrices are stored in THREE.js-compatible (column-major) form — see the
 matrix-storage gotcha in the project `CLAUDE.md`.

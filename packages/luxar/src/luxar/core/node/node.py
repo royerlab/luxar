@@ -425,7 +425,9 @@ class Node:
         """Get the world transformation matrix by composing all parent transforms.
 
         Walks up the parent chain, collecting local transforms, and composes
-        them in order (root first, this node last).
+        them root-outermost: this node's own transform is applied first
+        (innermost) and the root transform last (outermost), i.e.
+        ``world = root @ ... @ leaf``.
 
         Returns:
             4x4 world transformation matrix. Identity if no transforms are set.
@@ -440,8 +442,9 @@ class Node:
             node = node.parent
         if not transforms:
             return identity()
-        # Reverse so root transform is first (applied first)
-        return compose(*reversed(transforms))
+        # transforms is leaf→root; compose applies its first arg first, so this
+        # applies the leaf (this node) first (innermost) and yields root @ ... @ leaf
+        return compose(*transforms)
 
     # --------------------------------------------------------- nd_transform
     @property
