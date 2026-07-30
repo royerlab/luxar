@@ -245,8 +245,14 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
                     "original_dtype": original_dtype,
                 }
             else:
-                # Choose quantization based on dynamic range
-                bits = self._compute_quantization_bits(data)
+                # Choose quantization based on dynamic range. Measure on
+                # MAGNITUDES: _compute_quantization_bits sizes the range from
+                # positive values only (its documented "non-negative" contract),
+                # so signed data (newly reachable via colormap scalars) would
+                # otherwise ignore its negative span — an all-negative array
+                # would collapse to uint8. For non-negative data np.abs is a
+                # no-op, so existing callers stay byte-identical.
+                bits = self._compute_quantization_bits(np.abs(data))
 
                 if bits == 8:
                     # Dynamic range <= 256, uint8 is sufficient
@@ -275,8 +281,11 @@ class PerChannelEncoderMixin(BaseEncoderMixin):
                         "original_dtype": original_dtype,
                     }
                 else:
-                    # Dynamic range > 65536, use float
-                    if self._float16_allowed:
+                    # Dynamic range too wide for integer quantization → float.
+                    # float16 tops out at 65504; fall back to float32 when any
+                    # value would overflow to inf (newly reachable for
+                    # signed/wide colormap scalars).
+                    if self._float16_allowed and float(np.max(np.abs(data))) <= 65504.0:
                         encoded_data = data.astype(np.float16)
                         encoder_name = "float16"
                     else:
