@@ -190,6 +190,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         # Emit the ACES-vs-LUT tone-mapping warning at most once per compile,
         # the first time a colormap LUT is written (see _write_colormap_lut_if_needed).
         self._lut_tone_mapping_warned: bool = False
+        # Partition wrappers write one Lines leaf per part. Keep the heuristic
+        # authoring warning once per logical node rather than once per leaf.
+        self._line_authoring_warnings: set[str] = set()
 
         # Create array encoder with specified encoding mode and float16 control
         self._encoder = ArrayEncoder(float16_allowed=float16_allowed)
@@ -457,8 +460,11 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             colors: Colors - array (N, 3), RGB tuple/list, or None
             sharpness: Sharpness - array (N,), scalar float, or None
             scalars: Scalars for colormap lookup - array (N,), scalar float, or None
-            indices: Optional vertex indices for indexed line type
-            line_type: Type of line connectivity
+            indices: Vertex-index pairs for indexed lines, as flat ``(2E,)``
+                elements or an ``(E, 2)`` pair array. Joint continuity requires
+                connected edges to reference the same vertex row.
+            line_type: Type of line connectivity. Use ``polyline`` for one chain
+                or ``indexed`` for multiple chains / graph topology.
             labels: Optional list of strings, one per vertex. Stored as CSR-encoded
                 label_offsets + label_bytes arrays for hover tooltips.
             image_labels: Optional per-element images for hover thumbnails.
@@ -913,12 +919,18 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             compressor=self.compressor,
         )
 
+    def _claim_line_authoring_warning(self, path: str) -> bool:
+        """Return True once for each logical Lines node path."""
+        if path in self._line_authoring_warnings:
+            return False
+        self._line_authoring_warnings.add(path)
+        return True
+
     def _make_geometry_ctx(self) -> GeometryWriteCtx:
         """Build the narrow context for the extracted geometry write pipelines.
 
-        Bundles the dataset/ordering configs + compressor with two bound-method
-        hooks for the orchestrator state a write mutates: the scene-bounds
-        accumulator and the warn-once colormap-LUT flag.
+        Bundles the dataset/ordering configs + compressor with bound-method hooks
+        for scene bounds, colormap warnings, and line-authoring warnings.
         """
         return GeometryWriteCtx(
             store=self.store,
@@ -927,6 +939,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             compressor=self.compressor,
             update_scene_bounds=self._update_scene_bounds,
             write_colormap_lut=self._write_colormap_lut_if_needed,
+            claim_line_authoring_warning=self._claim_line_authoring_warning,
         )
 
     def _make_gsplats_ctx(self) -> GSplatsWriteCtx:
