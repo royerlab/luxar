@@ -46,7 +46,7 @@ requires-python = ">=3.10"
 dependencies = [
     "numpy>=2.0,<3.0",
     "zarr>=2.16,<3.0",
-    "typer>=0.12,<1.0",
+    "typer>=0.19,<1.0",
     "fastapi>=0.111,<1.0",
     "uvicorn[standard]>=0.27,<1.0",
     "arbol>=0.3.5",
