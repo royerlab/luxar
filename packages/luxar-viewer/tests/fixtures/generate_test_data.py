@@ -67,6 +67,7 @@ FIXTURE_NAMES: list[str] = [
     "test_encoding_contract_matrix.luxar.zarr",
     "test_encoding_edge_cases.luxar.zarr",
     "test_gsplats.luxar.zarr",
+    "test_gsplats_2d.luxar.zarr",
     "test_gsplats_normal_overlap.luxar.zarr",
     "test_gsplats_normal_overlap_reversed.luxar.zarr",
     "test_gsplats_volumetric.luxar.zarr",
@@ -2098,6 +2099,73 @@ def generate_gsplats_test() -> None:
         aprint(f"  Centers: {centers.shape}, Cholesky: {cholesky.shape}")
 
 
+def generate_gsplats_2d_test() -> None:
+    """GSplats in a 2-DIMENSIONAL scene (only two displayed dims).
+
+    The configuration that used to crash the WASM projection kernel: with
+    ``displayDims.length == 2`` the display-marginal Cholesky read
+    ``display_dims[2]`` out of bounds and the ``panic = "abort"`` crate trapped,
+    so every 2D gsplats node failed to load. The renderer's Cholesky buffer is
+    always the 6-element packed-3D layout, so the third row is synthesized: zero
+    off-diagonals plus a phantom diagonal equal to the geometric mean of the real
+    pivots (NOT an epsilon — an epsilon-thin splat is invisible in sum blending).
+
+    Deliberately authored with ANISOTROPIC, correlated 2D factors: an isotropic
+    fixture would pass even if the marginal were computed wrongly, since every
+    candidate phantom value coincides when the two pivots are equal.
+    """
+    with asection("Generating GSplats 2D Test"):
+        output = FIXTURES_DIR / "test_gsplats_2d.luxar.zarr"
+
+        num_splats = 16
+        # 4x4 grid in the XY plane; 2 columns only, no z.
+        centers = np.zeros((num_splats, 2), dtype=np.float32)
+        centers[:, 0] = np.arange(num_splats, dtype=np.float32) % 4
+        centers[:, 1] = np.arange(num_splats, dtype=np.float32) // 4
+
+        amplitudes = np.linspace(0.6, 1.6, num_splats).astype(np.float32)
+
+        # Packed 2D Cholesky: 3 elements per splat, [L00, L10, L11]. Covariance
+        # factors (sigma-like), NOT precision factors — same convention as
+        # generate_gsplats_test.
+        cholesky = np.zeros((num_splats, 3), dtype=np.float32)
+        for i in range(num_splats):
+            cholesky[i, 0] = 0.30 + 0.02 * i  # L00
+            cholesky[i, 1] = 0.10 - 0.01 * (i % 5)  # L10 (correlation)
+            cholesky[i, 2] = 0.45 - 0.01 * i  # L11 (anisotropic vs L00)
+
+        colors = np.zeros((num_splats, 3), dtype=np.float32)
+        colors[:, 0] = np.linspace(1, 0, num_splats).astype(np.float32)
+        colors[:, 1] = np.linspace(0, 1, num_splats).astype(np.float32)
+        colors[:, 2] = 0.4
+
+        dims = Dimensions(
+            [
+                Dimension("x", unit="units", display=True),
+                Dimension("y", unit="units", display=True),
+            ]
+        )
+
+        with LuxarZarrCompiler(
+            output,
+            encoding_mode=EncodingMode.PRECISION,
+            compressor=None,
+            float16_allowed=False,
+        ) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+
+            scene.add_gsplats(
+                "test_splats_2d",
+                centers,
+                amplitudes=amplitudes,
+                cholesky_factors=cholesky,
+                colors=colors,
+            )
+
+        aprint(f"  Created {output}")
+        aprint(f"  Centers: {centers.shape}, Cholesky: {cholesky.shape} (2D packed)")
+
+
 def generate_points_normal_overlap_test() -> None:
     """Two large overlapping points at staggered depth, 'normal' blending.
 
@@ -3149,6 +3217,7 @@ def main() -> None:
         aprint("")
 
         generate_gsplats_test()
+        generate_gsplats_2d_test()
         generate_gsplats_normal_overlap_test()
         generate_gsplats_normal_overlap_reversed_test()
         generate_gsplats_volumetric_test()
@@ -3201,6 +3270,7 @@ def main() -> None:
         aprint(f"  {FIXTURES_DIR}/test_nd_transforms.luxar.zarr")
         aprint(f"  {FIXTURES_DIR}/test_lines.luxar.zarr")
         aprint(f"  {FIXTURES_DIR}/test_gsplats.luxar.zarr")
+        aprint(f"  {FIXTURES_DIR}/test_gsplats_2d.luxar.zarr")
         aprint(f"  {FIXTURES_DIR}/test_labelled_points.luxar.zarr")
         aprint("")
         aprint("Run TypeScript tests with:")

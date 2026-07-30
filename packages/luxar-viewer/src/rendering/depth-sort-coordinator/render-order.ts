@@ -73,28 +73,102 @@ function bspPartOf(mesh: THREE.Object3D): { wrapper: THREE.Object3D; partIndex: 
  * the near side (Fuchs–Kedem–Naylor painter's algorithm) — correct for any
  * camera pose, including inside the volume. `left` holds `coord < split`
  * (the near side when `eyeLocal[axis] < split`).
+ *
+ * `axisToComponent` maps a node's `axis` — a CENTER-COLUMN index of the stored
+ * data — to the local x/y/z component that column is displayed as. The two
+ * coincide only when `displayDims == [0, 1, 2]`; see {@link bspAxisToComponent}.
  */
-function traverseBspBackToFront(node: BspTreeNode, eyeLocal: THREE.Vector3, out: number[]): void {
+function traverseBspBackToFront(
+  node: BspTreeNode,
+  eyeLocal: THREE.Vector3,
+  axisToComponent: readonly number[],
+  out: number[]
+): void {
   if (node.part !== undefined) {
     out.push(node.part);
     return;
   }
-  const eye = node.axis === 0 ? eyeLocal.x : node.axis === 1 ? eyeLocal.y : eyeLocal.z;
+  const component = axisToComponent[node.axis];
+  const eye = component === 0 ? eyeLocal.x : component === 1 ? eyeLocal.y : eyeLocal.z;
   if (eye < node.split) {
     // Eye on the small-coord (left) side → left is near, right is far.
-    traverseBspBackToFront(node.right, eyeLocal, out);
-    traverseBspBackToFront(node.left, eyeLocal, out);
+    traverseBspBackToFront(node.right, eyeLocal, axisToComponent, out);
+    traverseBspBackToFront(node.left, eyeLocal, axisToComponent, out);
   } else {
-    traverseBspBackToFront(node.left, eyeLocal, out);
-    traverseBspBackToFront(node.right, eyeLocal, out);
+    traverseBspBackToFront(node.left, eyeLocal, axisToComponent, out);
+    traverseBspBackToFront(node.right, eyeLocal, axisToComponent, out);
   }
+}
+
+/**
+ * Map each BSP split axis (a CENTER-COLUMN index of the stored data) to the
+ * local x/y/z component that column is currently displayed as.
+ *
+ * The producer splits on the first up-to-three center columns, so a serialized
+ * `axis` is 0/1/2 in STORED-COLUMN space (`partition.py::spatial_bsp_tree`).
+ * `eyeLocal`, however, is in the wrapper's local 3D space, where x/y/z are
+ * `displayDims[0..2]`. The two coincide only for `displayDims == [0, 1, 2]`;
+ * a 4D scene displaying `[1, 2, 3]` would otherwise order along the wrong axis
+ * — silently, since the result is still a valid permutation of the parts.
+ *
+ * Read from the LIVE dims rather than a value stamped at load: display dims can
+ * change at runtime (nD navigation) while the stored tree stays valid, so a
+ * load-time snapshot would go stale.
+ *
+ * @returns A center-column → component lookup, or `null` when any split axis is
+ *   not currently displayed (its plane then carries no on-screen depth
+ *   information, so the caller must fall back to the centroid heuristic).
+ */
+function bspAxisToComponent(tree: BspTreeNode): readonly number[] | null {
+  const displayed = getDisplayDims?.();
+  // No dims yet (or a 3-displayed identity map): the naive axis === component
+  // reading is exactly right, and this is the overwhelmingly common case. Note
+  // the app-layer accessor returns an EMPTY array before dims init, which must
+  // read as "unknown" rather than as a zero-length mapping.
+  if (!displayed || displayed.length === 0) return IDENTITY_AXIS_MAP;
+  if (displayed.length === 3 && displayed[0] === 0 && displayed[1] === 1 && displayed[2] === 2) {
+    return IDENTITY_AXIS_MAP;
+  }
+
+  // A split axis is usable only if that stored column is on screen.
+  const map: number[] = [];
+  for (let axis = 0; axis < 3; axis++) {
+    map[axis] = displayed.indexOf(axis);
+  }
+  return bspTreeAxesAreMapped(tree, map) ? map : null;
+}
+
+/**
+ * Live display-dims accessor, injected by `configureDepthSort` from the app
+ * layer. NOT a direct `sceneDimsManager` import: `rendering/` must not depend
+ * on `scene/` (`layer-rendering-no-upward`), and the same dependency inversion
+ * already carries `getCamera` here and `getDisplayDims` into the LOD registry.
+ */
+let getDisplayDims: (() => readonly number[] | null) | null = null;
+
+/** Wire the display-dims accessor (see {@link bspAxisToComponent}). */
+export function setRenderOrderDisplayDimsAccessor(
+  accessor: (() => readonly number[] | null) | null
+): void {
+  getDisplayDims = accessor;
+}
+
+/** Identity center-column → component map for the common `[0, 1, 2]` case. */
+const IDENTITY_AXIS_MAP: readonly number[] = [0, 1, 2];
+
+/** True when every split axis used by `tree` maps to a displayed component. */
+function bspTreeAxesAreMapped(node: BspTreeNode, map: readonly number[]): boolean {
+  if (node.part !== undefined) return true;
+  if ((map[node.axis] ?? -1) < 0) return false;
+  return bspTreeAxesAreMapped(node.left, map) && bspTreeAxesAreMapped(node.right, map);
 }
 
 /**
  * Back-to-front part RANK map for a partition wrapper (memoized per frame in
  * {@link partitionRankCache}). Transforms the camera into the wrapper's local
  * space once, traverses its `bspTree`, and numbers the resulting order
- * (0 = farthest). Returns `null` for a wrapper without a stored tree.
+ * (0 = farthest). Returns `null` for a wrapper without a usable tree — no
+ * stored tree, or split axes that aren't currently displayed.
  */
 function wrapperPartRanks(
   wrapper: THREE.Object3D,
@@ -112,8 +186,17 @@ function wrapperPartRanks(
   wrapper.updateWorldMatrix(true, false);
   s.wrapperInv.copy(wrapper.matrixWorld).invert();
   s.eyeLocal.copy(camPos).applyMatrix4(s.wrapperInv);
+  const axisToComponent = bspAxisToComponent(tree);
+  if (axisToComponent === null) {
+    // A split axis isn't on screen under the current display dims, so its
+    // plane carries no depth information — fall back to the centroid
+    // heuristic rather than ordering along the wrong axis.
+    partitionRankCache.set(wrapper, null);
+    return null;
+  }
+
   const order: number[] = [];
-  traverseBspBackToFront(tree, s.eyeLocal, order);
+  traverseBspBackToFront(tree, s.eyeLocal, axisToComponent, order);
   const ranks = new Map<number, number>();
   for (let rank = 0; rank < order.length; rank++) ranks.set(order[rank], rank);
   partitionRankCache.set(wrapper, ranks);
