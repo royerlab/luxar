@@ -4,11 +4,13 @@ import tempfile
 from pathlib import Path
 
 import numpy as np
+import pytest
 import zarr
 
 from luxar.compiler import LuxarZarrCompiler
 from luxar.dimensions import Dimensions
 from luxar.encoding import ArrayDecoder
+from luxar.io.reader import LuxarScene
 
 
 class TestProgressiveWriting:
@@ -198,3 +200,167 @@ class TestProgressiveWriting:
                 assert dataset.shape == (150, 3)
                 np.testing.assert_array_almost_equal(dataset[:100], batch1)
                 np.testing.assert_array_almost_equal(dataset[100:150], batch2)
+
+
+class TestExitOnException:
+    """__exit__ must not finalize a partial store when an exception propagates."""
+
+    def test_exception_leaves_store_incomplete(self) -> None:
+        """A raise inside the with block: no finalize, incomplete marker set."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = Path(tmpdir) / "test.luxar.zarr"
+
+            with pytest.raises(RuntimeError, match="boom"):
+                with LuxarZarrCompiler(
+                    output_path, enable_spatial_index=False
+                ) as compiler:
+                    compiler.create_scene(dimensions=Dimensions.default_3d())
+                    positions = np.random.randn(100, 3).astype(np.float32)
+                    compiler.write_points("pts", positions)
+                    raise RuntimeError("boom")
+
+            # Store was NOT finalized.
+            assert compiler._is_finalized is False
+
+            # Root carries the incomplete marker.
+            store = zarr.open_group(output_path, mode="r")
+            assert store.attrs.get("incomplete") is True
+
+            # The reader refuses to load the incomplete store.
+            with pytest.raises(ValueError, match="incomplete"):
+                LuxarScene.load(output_path)
+
+    def test_finalize_failure_marks_incomplete(self, monkeypatch) -> None:
+        """A finalize() that fails midway (even on a clean exit) must mark the
+        store incomplete so LuxarScene.load rejects the half-finalized store."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = Path(tmpdir) / "test.luxar.zarr"
+
+            with pytest.raises(ValueError, match="Could not finalize"):
+                with LuxarZarrCompiler(
+                    output_path, enable_spatial_index=False
+                ) as compiler:
+                    compiler.create_scene(dimensions=Dimensions.default_3d())
+                    positions = np.random.randn(100, 3).astype(np.float32)
+                    compiler.write_points("pts", positions)
+                    # Break a finalize sub-step so finalize() fails on the
+                    # clean exit (Scene.to_zarr()-style direct finalize path).
+                    monkeypatch.setattr(
+                        compiler,
+                        "_compute_content_hashes",
+                        lambda store: (_ for _ in ()).throw(
+                            RuntimeError("disk full")
+                        ),
+                    )
+
+            # finalize() failed → the store is not finalized.
+            assert compiler._is_finalized is False
+
+            # The half-finalized store carries the incomplete marker.
+            store = zarr.open_group(output_path, mode="r")
+            assert store.attrs.get("incomplete") is True
+
+            # The reader refuses to load the half-finalized store.
+            with pytest.raises(ValueError, match="incomplete"):
+                LuxarScene.load(output_path)
+
+    def test_finalize_clears_stale_incomplete_marker(self) -> None:
+        """finalize() on a store bearing a stale incomplete marker (from a
+        prior aborted attempt) clears it and yields a loadable store."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = Path(tmpdir) / "test.luxar.zarr"
+
+            compiler = LuxarZarrCompiler(output_path, enable_spatial_index=False)
+            compiler.create_scene(dimensions=Dimensions.default_3d())
+            positions = np.random.randn(100, 3).astype(np.float32)
+            compiler.write_points("pts", positions)
+
+            # Simulate a prior aborted attempt having stamped the marker.
+            compiler.store.attrs["incomplete"] = True
+            assert compiler._is_finalized is False
+
+            # A real finalize supersedes the stale marker.
+            compiler.finalize()
+            assert compiler._is_finalized is True
+
+            store = zarr.open_group(output_path, mode="r")
+            assert not store.attrs.get("incomplete")
+
+            # The recovered store loads without error.
+            scene = LuxarScene.load(output_path)
+            assert scene is not None
+
+    def test_clean_exit_finalizes_and_loads(self) -> None:
+        """A normal with block finalizes, has no incomplete marker, loads."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = Path(tmpdir) / "test.luxar.zarr"
+
+            with LuxarZarrCompiler(
+                output_path, enable_spatial_index=False
+            ) as compiler:
+                compiler.create_scene(dimensions=Dimensions.default_3d())
+                positions = np.random.randn(100, 3).astype(np.float32)
+                compiler.write_points("pts", positions)
+
+            assert compiler._is_finalized is True
+
+            store = zarr.open_group(output_path, mode="r")
+            assert not store.attrs.get("incomplete")
+
+            # Loads without error.
+            scene = LuxarScene.load(output_path)
+            assert scene is not None
+
+    def test_exception_after_finalize_still_loads(self) -> None:
+        """An unrelated raise AFTER an explicit finalize must not mark the
+        already-complete store incomplete."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = Path(tmpdir) / "test.luxar.zarr"
+
+            with pytest.raises(RuntimeError, match="boom"):
+                with LuxarZarrCompiler(
+                    output_path, enable_spatial_index=False
+                ) as compiler:
+                    compiler.create_scene(dimensions=Dimensions.default_3d())
+                    positions = np.random.randn(100, 3).astype(np.float32)
+                    compiler.write_points("pts", positions)
+                    # Finalize explicitly inside the block (the Scene.to_zarr
+                    # pattern), then raise something unrelated.
+                    compiler.finalize()
+                    raise RuntimeError("boom")
+
+            # The store was already finalized; the exception must not undo it.
+            assert compiler._is_finalized is True
+
+            store = zarr.open_group(output_path, mode="r")
+            assert not store.attrs.get("incomplete")
+
+            # The complete store still loads.
+            scene = LuxarScene.load(output_path)
+            assert scene is not None
+
+    def test_keyboardinterrupt_marks_incomplete(self) -> None:
+        """A KeyboardInterrupt (BaseException) inside the block leaves the
+        store unfinalized and marked incomplete."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = Path(tmpdir) / "test.luxar.zarr"
+
+            with pytest.raises(KeyboardInterrupt):
+                with LuxarZarrCompiler(
+                    output_path, enable_spatial_index=False
+                ) as compiler:
+                    compiler.create_scene(dimensions=Dimensions.default_3d())
+                    positions = np.random.randn(100, 3).astype(np.float32)
+                    compiler.write_points("pts", positions)
+                    raise KeyboardInterrupt
+
+            # Store was NOT finalized.
+            assert compiler._is_finalized is False
+
+            # Root carries the incomplete marker.
+            store = zarr.open_group(output_path, mode="r")
+            assert store.attrs.get("incomplete") is True
+
+            # The reader refuses to load the incomplete store.
+            with pytest.raises(ValueError, match="incomplete"):
+                LuxarScene.load(output_path)
