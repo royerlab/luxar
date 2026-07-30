@@ -303,16 +303,20 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         self._check_not_finalized("write_group")
         # Fail fast on invalid render attrs BEFORE creating the group (same
         # contract as the geometry writers; the Node path validates earlier,
-        # this covers the raw compiler API). The scene root ("/") and the
-        # ``overlays/`` namespace carry their own internal attr schemas (scene
-        # dimensions / viewer config / overlay styling), so the unknown-key
-        # guard is scoped to real geometry/group nodes. A non-str path is
+        # this covers the raw compiler API). The scene root ("/") and actual
+        # ``overlays/<name>`` entries carry their own internal attr schemas
+        # (scene dimensions / viewer config / overlay styling), so the
+        # unknown-key guard is scoped to real geometry/group nodes. A bare
+        # top-level group named ``overlays`` is still a user node at this point
+        # and must not bypass typo detection. A non-str path is
         # treated as not-internal so the clean ValidationError from
         # ``_validate_node_path`` below (not an AttributeError here) surfaces.
         is_internal_namespace = False
         if isinstance(path, str):
-            first_segment = path.lstrip("/").split("/", 1)[0]
-            is_internal_namespace = path in ("/", "") or first_segment == "overlays"
+            normalized_path = path.lstrip("/")
+            is_internal_namespace = path in ("/", "") or normalized_path.startswith(
+                "overlays/"
+            )
         _validate_render_attrs(attrs, reject_unknown=not is_internal_namespace)
         # Handle root path
         if path == "/" or path == "":
