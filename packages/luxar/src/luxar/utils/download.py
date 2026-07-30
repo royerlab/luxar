@@ -182,8 +182,11 @@ def robust_download(
       so a remote that changed is re-fetched clean, never spliced
     - Progress tracking with ETA
     - File size verification
-    - Cleanup of partial downloads THIS call created (a pre-existing cache is
-      never deleted on error)
+    - Atomic staging: bytes land in a sibling ``<dest>.part`` and are renamed
+      onto the destination only once complete and size-verified, so an
+      interrupted download leaves a resumable ``.part`` rather than a truncated
+      file under the canonical name (and a pre-existing cache is never deleted
+      on error)
     - A 416 (Range Not Satisfiable) while resuming at/after EOF is non-fatal:
       the cache is proven at-least-complete, and is returned untouched unless
       the 416's authoritative total contradicts its size (one clean restart)
@@ -633,6 +636,15 @@ def robust_download(
                         # (Re)starting the staging file from scratch: record THIS
                         # response's validator so a later resume of these bytes
                         # can be checked against the remote representation.
+                        # Discard the condemned bytes FIRST: the `"wb"` open below
+                        # is what truncates them, so if anything between here and
+                        # there fails (Ctrl-C, or the open itself hitting ENOSPC /
+                        # EMFILE) the old bytes would survive in `.part` paired
+                        # with a validator that vouches for the NEW
+                        # representation — and the next run would resume them,
+                        # get a 206, and splice `old_prefix + new_tail` into a
+                        # corrupt file that passes size verification.
+                        part_path.unlink(missing_ok=True)
                         _record_part_validator(response.headers)
 
                     # Get total size. Route both headers through the same hardened

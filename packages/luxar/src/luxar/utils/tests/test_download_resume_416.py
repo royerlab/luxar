@@ -1128,6 +1128,71 @@ class TestRobustDownloadResume416:
         assert not part.exists()
         assert not validator.exists(), "the validator sidecar must not outlive .part"
 
+    def test_failed_restart_never_leaves_stale_part_under_new_validator(
+        self, etag_range_server, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A restart that dies before the staging file is truncated must not leave
+        the OLD bytes behind under the NEW representation's validator.
+
+        Run 1 resumes a partial of the OLD asset against a CHANGED remote: the
+        ``If-Range`` mismatch correctly yields a 200 full body, so the download
+        restarts from scratch — and records the new representation's validator.
+        The staging file is then opened ``"wb"``, and it is that open which
+        discards the old bytes. If it fails (disk full, EMFILE — simulated here)
+        after the validator was published, the old bytes survive paired with a
+        validator that vouches for the NEW asset: run 2 sends it, the server
+        happily answers 206, and ``old[:N] + new[N:]`` is spliced into a corrupt
+        file whose length passes size verification.
+
+        The condemned bytes are therefore discarded BEFORE the validator is
+        replaced, so an interruption in that window leaves nothing resumable.
+        """
+        base_url, server = etag_range_server
+        old_remote = _make_payload(nbytes=300_000, seed=11)
+        (tmp_path / "data.bin").write_bytes(old_remote)
+
+        n = 120_000
+        out = tmp_path / "cache" / "data.bin"
+        out.parent.mkdir(parents=True)
+        part = out.with_name(out.name + ".part")
+        validator = out.with_name(out.name + ".part.validator")
+        part.write_bytes(old_remote[:n])  # a genuine partial of the OLD asset
+        validator.write_text(_etag_of(tmp_path / "data.bin"))
+
+        # The asset is re-uploaded LARGER, so a bare Range at the partial's
+        # length stays satisfiable — the splice is only prevented by the
+        # validator, which must not end up describing these old bytes.
+        new_remote = _make_payload(nbytes=400_000, seed=22)
+        (tmp_path / "data.bin").write_bytes(new_remote)
+
+        real_open = open
+
+        def failing_open(file, mode="r", *args, **kwargs):  # noqa: ANN001, ANN202
+            if Path(file) == part and "w" in mode:
+                raise OSError(28, "No space left on device")
+            return real_open(file, mode, *args, **kwargs)
+
+        monkeypatch.setattr("builtins.open", failing_open)
+        with pytest.raises(OSError):
+            robust_download(
+                f"{base_url}/data.bin", out, expected_size=None, max_retries=0
+            )
+        monkeypatch.undo()
+
+        assert not part.exists(), (
+            "condemned staged bytes must not survive a failed restart"
+        )
+
+        # Run 2: whatever survived must not be spliced onto the new asset.
+        server.served.clear()
+        result = robust_download(f"{base_url}/data.bin", out, expected_size=None)
+
+        assert result == out
+        assert out.read_bytes() == new_remote, "old bytes must never be spliced in"
+        assert 206 not in server.served, "nothing resumable should have been left"
+        assert not part.exists()
+        assert not validator.exists()
+
     def test_misaligned_206_restarts_clean(
         self, misaligned_resume_server: str, tmp_path: Path
     ) -> None:
