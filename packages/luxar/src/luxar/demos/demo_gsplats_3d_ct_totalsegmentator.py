@@ -78,6 +78,7 @@ from arbol import Arbol, aprint, asection
 
 from luxar import CameraConfig, Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
+from luxar.demos import require_module
 from luxar.encoding import EncodingMode
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.utils.demos import (
@@ -500,7 +501,7 @@ def extract_subject(zip_path: Path, subject_id: str) -> Path:
 
 def build_label_volume(subject_dir: Path, shape: tuple[int, ...]) -> np.ndarray:
     """Combine per-structure binary masks → one int label volume via CLASS_MAP."""
-    import nibabel as nib
+    nib = require_module("nibabel")
 
     name_to_id = {name: lid for lid, name in CLASS_MAP.items()}
     labels = np.zeros(shape, dtype=np.int32)
@@ -523,13 +524,7 @@ def load_ct_and_labels() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     fit_volume is the windowed CT masked to segmented anatomy; label_volume is
     the co-registered organ labels (nearest-neighbour resampled to the same grid).
     """
-    try:
-        import nibabel as nib
-    except ImportError as exc:  # pragma: no cover - env-dependent
-        raise ImportError(
-            "nibabel is required for this demo. Install with: pip install nibabel "
-            "(or `pip install luxar[demos]`)."
-        ) from exc
+    nib = require_module("nibabel")
     from scipy.ndimage import zoom
 
     zip_path = download_subset()
