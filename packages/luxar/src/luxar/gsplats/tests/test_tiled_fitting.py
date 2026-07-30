@@ -297,6 +297,55 @@ class TestFitTile:
                 verbose=False,
             )
 
+    @pytest.mark.skipif(not HAS_TORCH, reason="fitting requires torch")
+    def test_denoise_receives_global_norm_range(self, monkeypatch) -> None:
+        """Per-tile denoise must be handed the WHOLE-volume range (issue #754).
+
+        Guards the dict-key ↔ kwarg-name contract:
+        ``_denoise_params['norm_range']`` must reach
+        ``denoise_volume_array(norm_range=...)`` unchanged — a rename on either
+        side would otherwise pass silently. The spy wraps the real function
+        (capture then delegate) so the fit still runs.
+        """
+        import luxar.gsplats.preprocessing.denoise_pipeline as _dp
+        from luxar.gsplats.fit_tiled_gsplats import fit_tile
+
+        volume = np.zeros((16, 32, 32), dtype=np.float32)
+        volume[4:12, 8:24, 8:24] = 1.0
+        # A deliberate whole-volume range distinct from any tile's own min/max.
+        global_range = (0.0, 5.0)
+
+        real_denoise = _dp.denoise_volume_array
+        captured: dict = {}
+
+        def _spy(tile, *args, **kwargs):
+            captured["norm_range"] = kwargs.get("norm_range", "MISSING")
+            return real_denoise(tile, *args, **kwargs)
+
+        monkeypatch.setattr(_dp, "denoise_volume_array", _spy)
+
+        specs = compute_tile_specs(volume.shape, tile_size=64, overlap=8)
+        assert len(specs) == 1
+
+        fit_tile(
+            volume,
+            specs[0],
+            seeds=10,
+            n_iters=20,
+            verbose=False,
+            _denoise_h=0.05,
+            _denoise_params={
+                "patch_size": 3,
+                "search_distance": 5,
+                "backend": "skimage",
+                "device": None,
+                "use_2d": False,
+                "norm_range": global_range,
+            },
+        )
+
+        assert captured.get("norm_range") == global_range
+
 
 @pytest.mark.skipif(not HAS_TORCH, reason="torch not available")
 class TestFitTiled:
