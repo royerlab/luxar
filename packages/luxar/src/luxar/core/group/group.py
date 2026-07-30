@@ -477,9 +477,9 @@ class Group(Node):
                 routes to :func:`make_additive_lod`.
             **attrs: Additional node attributes (same vocabulary as
                 :meth:`add_gsplats`, including ``absorption``). On a nested
-                ``lod_group=`` tree, compositing attributes (e.g.
-                ``absorption``) land on the wrapper node while the rest (e.g.
-                ``colormap``) are copied onto each leaf.
+                ``kind=lod`` tree, compositing attributes (e.g. ``absorption``)
+                land on the wrapper node while the rest (e.g. ``colormap``)
+                are copied onto each leaf.
 
         Example:
             >>> result = fit_gaussian_splats(volume_3d)
@@ -542,7 +542,8 @@ class Group(Node):
                 :meth:`add_gsplats`, including ``absorption``). On a nested
                 tree, compositing attributes (e.g. ``absorption``) land on the
                 wrapper node while the rest (e.g. ``colormap``) are copied onto
-                each leaf.
+                each leaf; ``blending_mode`` is stamped on both, so the parts
+                keep their mode if later flattened or re-exported.
         """
         from .gsplats_pipeline.from_io import add_gsplats_from_file_impl
 
