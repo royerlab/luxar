@@ -15,7 +15,8 @@
 use wasm_bindgen::prelude::*;
 
 use crate::common::{
-    packed_index, validate_ndim, CHOLESKY_EPSILON, MAX_PACKED_CHOLESKY_SIZE, MAX_SUPPORTED_DIMS,
+    packed_index, validate_ndim, CHOLESKY_EPSILON, CHOLESKY_RELATIVE_EPSILON,
+    MAX_PACKED_CHOLESKY_SIZE, MAX_SUPPORTED_DIMS,
 };
 
 /// Compute Mahalanobis distance for a single point using packed Cholesky factor.
@@ -131,6 +132,39 @@ fn compute_marginal_cholesky(
     // Step 2: Cholesky factorization of Σ_S (Cholesky-Crout algorithm)
     let mut l_sub = [0.0f32; MAX_PACKED_CHOLESKY_SIZE];
 
+    // SCALE-RELATIVE degeneracy floor. The regularizer below has to distinguish
+    // "this axis has no extent" from "this axis is small", and a variance is in
+    // world-units², so an ABSOLUTE floor silently answers that question by scene
+    // scale: with a fixed 1e-10, a splat with σ = 1e-7 (nm-unit data) has
+    // variance 1e-14, trips the floor, and gets inflated to σ = 1e-5 — 100×
+    // larger than authored (10⁴× at σ = 1e-9). A 3D scene displaying [0,1,2]
+    // escapes via the standard-3D fast path, which copies the factor verbatim,
+    // but a 2D scene — or any nD scene with hidden dims — always lands here.
+    //
+    // Anchoring the floor to the largest diagonal makes the test a pure
+    // CONDITION-NUMBER check, identical in behavior at every scene scale. Same
+    // reasoning as the shader's trace-normalized covariance inverse
+    // (`shader-glsl.ts`): 1e-12 relative sits below f32's ~1e-7 relative
+    // precision squared, so it only ever catches genuinely rank-deficient axes.
+    // `CHOLESKY_EPSILON` remains the absolute backstop for an all-zero Σ_S.
+    let mut max_diag = 0.0f32;
+    for i in 0..sub_ndim {
+        let d = sigma[i * MAX_SUPPORTED_DIMS + i];
+        if d > max_diag {
+            max_diag = d;
+        }
+    }
+    // The absolute constant is a fallback for a SCALELESS (all-zero) Σ_S only —
+    // using it as a general lower bound would re-impose the very scene-scale
+    // threshold this replaces, since max_diag * 1e-12 is below 1e-10 for any
+    // σ < ~1e-1. MIN_POSITIVE keeps the floor non-zero (hence the covariance
+    // non-singular) if the relative product underflows.
+    let degenerate_floor = if max_diag > 0.0 {
+        (max_diag * CHOLESKY_RELATIVE_EPSILON).max(f32::MIN_POSITIVE)
+    } else {
+        CHOLESKY_EPSILON
+    };
+
     for i in 0..sub_ndim {
         for j in 0..=i {
             let mut sum = sigma[i * MAX_SUPPORTED_DIMS + j];
@@ -140,19 +174,15 @@ fn compute_marginal_cholesky(
             if i == j {
                 // Diagonal: L[i,i] = sqrt(Σ[i,i] - Σ_{k<i} L[i,k]²)
                 // Guard against numerical issues (negative due to floating point)
-                l_sub[packed_index(i, i)] = if sum > CHOLESKY_EPSILON {
+                l_sub[packed_index(i, i)] = if sum > degenerate_floor {
                     sum.sqrt()
                 } else {
-                    CHOLESKY_EPSILON.sqrt() // Regularize degenerate covariance
+                    degenerate_floor.sqrt() // Regularize degenerate covariance
                 };
             } else {
                 // Off-diagonal: L[i,j] = (Σ[i,j] - Σ_{k<j} L[i,k]·L[j,k]) / L[j,j]
                 let diag = l_sub[packed_index(j, j)];
-                l_sub[packed_index(i, j)] = if diag > CHOLESKY_EPSILON {
-                    sum / diag
-                } else {
-                    0.0
-                };
+                l_sub[packed_index(i, j)] = if diag > 0.0 { sum / diag } else { 0.0 };
             }
         }
     }
@@ -219,11 +249,17 @@ fn compute_display_cholesky_3d(
 
     // Geometric mean of the real diagonals L[i,i], i < n. Falls back to the
     // degenerate-covariance regularizer when the marginal has no extent at all.
+    //
+    // The test is `> 0`, not `> CHOLESKY_EPSILON`: the Crout step above already
+    // floors every diagonal to a strictly positive, SCALE-RELATIVE value, so an
+    // absolute threshold here would drop legitimately tiny diagonals (σ < 1e-10)
+    // from the mean — reintroducing the scene-scale dependence in miniature. In
+    // practice this leaves `counted == 0` reachable only for n == 0 or NaN input.
     let mut log_sum = 0.0f32;
     let mut counted = 0u32;
     for i in 0..n {
         let diag = output[packed_index(i, i)];
-        if diag > CHOLESKY_EPSILON {
+        if diag > 0.0 {
             log_sum += diag.ln();
             counted += 1;
         }
@@ -1326,6 +1362,54 @@ mod tests {
                 "{name}: phantom lands on √ε, got {} (expected {})",
                 out[5],
                 eps
+            );
+        }
+    }
+
+    /// The marginal must preserve a splat's TRUE scale at any scene scale.
+    ///
+    /// Regression: the degeneracy floor used to be an absolute variance
+    /// (1e-10), but a variance is world-units², so a splat with σ = 1e-7
+    /// (nm-unit data) had variance 1e-14, tripped the floor, and was inflated to
+    /// σ = 1e-5 — 100× too large (10⁴× at σ = 1e-9). A 3D scene displaying
+    /// [0,1,2] escapes via the standard-3D fast path, but a 2D scene, or any nD
+    /// scene with hidden dims, always goes through the marginal.
+    #[test]
+    fn test_marginal_preserves_scale_across_scene_scales() {
+        for sigma in [1e-9f32, 1e-7, 1e-5, 1e-2, 1.0, 1e3, 1e6] {
+            let mut out = [0.0f32; 6];
+            compute_display_cholesky_3d(&[sigma, 0.0, sigma], 0, &[0, 1], &mut out);
+
+            for (slot, label) in [(0usize, "L00"), (2, "L11"), (5, "phantom")] {
+                let ratio = out[slot] / sigma;
+                assert!(
+                    (ratio - 1.0).abs() < 1e-3,
+                    "sigma={sigma:e}: {label} = {} is {ratio:e}x the authored scale",
+                    out[slot]
+                );
+            }
+        }
+    }
+
+    /// A genuinely rank-deficient axis is still regularized — but RELATIVE to
+    /// the splat's own scale, so the covariance stays non-singular without the
+    /// regularizer's magnitude depending on the scene's units.
+    #[test]
+    fn test_rank_deficient_axis_regularized_relative_to_scale() {
+        for scale in [1e-6f32, 1.0, 1e6] {
+            let mut out = [0.0f32; 6];
+            // Second axis has zero extent.
+            compute_display_cholesky_3d(&[4.0 * scale, 0.0, 0.0], 0, &[0, 1], &mut out);
+
+            assert!(
+                out[2] > 0.0,
+                "scale={scale:e}: degenerate axis must stay > 0"
+            );
+            let relative = out[2] / out[0];
+            assert!(
+                relative > 0.0 && relative < 1e-4,
+                "scale={scale:e}: regularized axis should be a tiny FRACTION of the \
+                 real one, got {relative:e}"
             );
         }
     }

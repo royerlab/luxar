@@ -153,7 +153,15 @@ def add_lines_impl(
         # atomic; the BSP runs over per-polyline centroids and assigns
         # each polyline atomically to a part. Mirrors add_points but
         # at the polyline granularity.
-        if partition is not None and vert_arr.shape[1] >= 3:
+        # A dataset with <2 spatial dims can't be split; drop the request
+        # with a warning rather than in silence.
+        if partition is not None:
+            from ..partition import warn_if_partition_needs_more_dims
+
+            if not warn_if_partition_needs_more_dims(vert_arr.shape[1], name):
+                partition = None
+
+        if partition is not None:
             from ..lod.lines import identify_polylines
             from ..partition import (
                 DEFAULT_MAX_ELEMENTS,

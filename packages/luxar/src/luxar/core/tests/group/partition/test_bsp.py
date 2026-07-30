@@ -108,9 +108,25 @@ class TestMidpointBspPartition:
         with pytest.raises(ValueError, match="must be 2-D"):
             midpoint_bsp_partition(np.zeros((10,), dtype=np.float32), max_elements=5)
 
-    def test_rejects_fewer_than_3_spatial_dims(self) -> None:
-        with pytest.raises(ValueError, match="at least 3 spatial dimensions"):
-            midpoint_bsp_partition(np.zeros((10, 2), dtype=np.float32), max_elements=5)
+    def test_rejects_fewer_than_2_spatial_dims(self) -> None:
+        with pytest.raises(ValueError, match="at least 2 spatial dimensions"):
+            midpoint_bsp_partition(np.zeros((10, 1), dtype=np.float32), max_elements=5)
+
+    def test_accepts_2d_positions(self) -> None:
+        """Planar data splits on 2 axes — whole-slide 2D imagery needs tiling too.
+
+        The splitters pick `argmax(extents)` over whatever columns they get, so
+        2D was always mechanically supported; only the entry-point guard said no.
+        """
+        rng = np.random.RandomState(11)
+        pos = rng.rand(500, 2).astype(np.float32)
+
+        parts = midpoint_bsp_partition(pos, max_elements=100)
+
+        assert len(parts) > 1, "2D input must actually split"
+        assert sum(len(p) for p in parts) == 500, "every element assigned exactly once"
+        assert np.array_equal(np.sort(np.concatenate(parts)), np.arange(500))
+        assert all(len(p) <= 100 for p in parts), "cap respected"
 
     def test_rejects_zero_max_elements(self) -> None:
         with pytest.raises(ValueError, match="max_elements must be >= 1"):
