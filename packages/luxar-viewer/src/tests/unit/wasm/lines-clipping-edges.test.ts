@@ -2,8 +2,9 @@
  * Edge-case tests for the WASM TypeScript-fallback lines-clipping helpers.
  *
  * Closes wasm.md gap cluster G9–G14:
- *   - [wasm.md G9][P5]  clip_segments_batch: out-of-range vertex index,
- *                       self-segment (v0 === v1), NaN in positions.
+ *   - [wasm.md G9][P5]  clip_segments_batch: out-of-range vertex index and
+ *                       NaN in positions (both #806: non-finite on a hidden
+ *                       dim → segment invisible), self-segment (v0 === v1).
  *   - [wasm.md G10][P5] interpolate_clipped_positions: displayDims.length=0
  *                       (zero-fill all-3 columns of the output).
  *   - [wasm.md G11][P5] interpolate_scalars_batch / interpolate_colors_batch:
@@ -31,17 +32,14 @@ import {
 } from '../../../wasm/typescript/lines-clipping';
 
 describe('clip_segments_batch — out-of-range / self-segment / NaN [wasm.md G9]', () => {
-  it('[G9] out-of-range vertex index: positions[OOB] reads undefined → NaN comparisons all-false → segment visible only if no hidden dim has a hard miss', () => {
+  it('[G9/#806] out-of-range vertex index: positions[OOB] reads undefined → non-finite on a hidden dim → segment invisible', () => {
     // 3 vertices, but segment indexes vertex 99 (way OOB). With ndim=4 and
     // displayDims=[0,1,2], dim 3 is the only hidden dim. positions[99*4+3]
-    // is undefined → v1Val=NaN → p1In = (NaN >= NaN-tol && NaN <= NaN+tol)
-    // is false. p2In = same. Then "both out, same side" guard uses `<` / `>`
-    // with NaN → all false → no early `visible=false` exit. dv = NaN-finite =
-    // NaN; `Math.abs(NaN) < 1e-10` is false → not skipped. tMin/tMax = NaN.
-    // dv > 0 is false → else-branch: t1 = max(0, NaN) = NaN, t2 = min(1, NaN) = NaN.
-    // t1 >= t2 → NaN >= NaN is false → no early exit. Segment ends as visible=true
-    // with t1=NaN, t2=NaN. Pin this documented OOB behaviour so a future
-    // hardening (throw / clamp) surfaces as intentional.
+    // is undefined → v2Val is non-finite. Under the #806 contract a non-finite
+    // coordinate on a slicing (non-displayed) dimension cannot be localized
+    // against the slice, so the guard marks the segment invisible up front
+    // (visible=0) BEFORE any NaN can propagate into the t-params. This pins
+    // that behaviour: no crash, no NaN leaking into the output, segment culled.
     const positions = new Float32Array(12); // 3 verts × 4 dim
     const segments = new Uint32Array([0, 99]);
     const slicePos = new Float32Array([0, 0, 0, 0]);
@@ -50,24 +48,23 @@ describe('clip_segments_batch — out-of-range / self-segment / NaN [wasm.md G9]
     const outVis = new Uint8Array(1);
     const outT1 = new Float32Array(1);
     const outT2 = new Float32Array(1);
-    expect(() =>
-      clip_segments_batch(
-        positions,
-        segments,
-        slicePos,
-        tolerance,
-        displayDims,
-        4,
-        1,
-        outVis,
-        outT1,
-        outT2
-      )
-    ).not.toThrow();
-    // Contract: NaN t-params escape into the output (no crash, no zero-fill).
-    // The visibility byte is whatever the algorithm produced — we DON'T assert
-    // a specific value, only that the call completed safely.
-    expect(outVis[0] === 0 || outVis[0] === 1).toBe(true);
+    const n = clip_segments_batch(
+      positions,
+      segments,
+      slicePos,
+      tolerance,
+      displayDims,
+      4,
+      1,
+      outVis,
+      outT1,
+      outT2
+    );
+    // #806 contract: invisible, and NO NaN t-params leak into the output.
+    expect(n).toBe(0);
+    expect(outVis[0]).toBe(0);
+    expect(Number.isNaN(outT1[0])).toBe(false);
+    expect(Number.isNaN(outT2[0])).toBe(false);
   });
 
   it('[G9] self-segment (v0 === v1): dv=0 in every dim → skipped → fully visible with t1=0,t2=1', () => {
@@ -100,11 +97,12 @@ describe('clip_segments_batch — out-of-range / self-segment / NaN [wasm.md G9]
     expect(outT2[0]).toBe(1);
   });
 
-  it('[G9] NaN in positions: segment marked visible with NaN t-params (no crash)', () => {
-    // Pin contract: NaN in a HIDDEN dim of vertex 0 propagates into dv/tMin/tMax
-    // but no `< 1e-10` short-circuit fires; final t1>=t2 check yields NaN>=NaN=false.
-    // No early exit, segment escapes the loop as visible with NaN parameters.
-    // A defensive future hardening can flip this; the test pins today's behaviour.
+  it('[G9/#806] NaN in a hidden dim: segment marked invisible, no NaN t-params leaked', () => {
+    // #806 contract: a NaN on a HIDDEN (non-displayed) dim of vertex 0 cannot
+    // be localized against the slice, so the guard marks the segment invisible
+    // (visible=0) up front — it does NOT escape the loop as visible with NaN
+    // t-params (the pre-#806 behaviour, which silently vanished the segment
+    // downstream when the NaN reached the interpolation stage).
     const positions = new Float32Array([0, 0, 0, Number.NaN, 0, 0, 0, 0]);
     const segments = new Uint32Array([0, 1]);
     const slicePos = new Float32Array([0, 0, 0, 0]);
@@ -113,20 +111,22 @@ describe('clip_segments_batch — out-of-range / self-segment / NaN [wasm.md G9]
     const outVis = new Uint8Array(1);
     const outT1 = new Float32Array(1);
     const outT2 = new Float32Array(1);
-    expect(() =>
-      clip_segments_batch(
-        positions,
-        segments,
-        slicePos,
-        tolerance,
-        displayDims,
-        4,
-        1,
-        outVis,
-        outT1,
-        outT2
-      )
-    ).not.toThrow();
+    const n = clip_segments_batch(
+      positions,
+      segments,
+      slicePos,
+      tolerance,
+      displayDims,
+      4,
+      1,
+      outVis,
+      outT1,
+      outT2
+    );
+    expect(n).toBe(0);
+    expect(outVis[0]).toBe(0);
+    expect(Number.isNaN(outT1[0])).toBe(false);
+    expect(Number.isNaN(outT2[0])).toBe(false);
   });
 
   it('[G9] numSegments === 0: empty loop, return 0, output untouched', () => {
