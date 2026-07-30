@@ -1,5 +1,6 @@
 import type { CacheValidationMode } from '../types';
 import { log, Modules } from '../../utils/log';
+import { getErrorMessage } from '../../utils/format-error';
 import { config } from '../../config';
 import { OPFSBucketCache, getBucket, keyToFileName } from './opfs-store/buckets';
 import { OPFSMetadataManager, type MetadataSnapshot } from './opfs-store/metadata';
@@ -407,14 +408,19 @@ export class OPFSStore {
       return;
     }
 
-    // Write to OPFS (with one retry on stale bucket handle). The
-    // entire navigate→createWritable→write→close chain is wrapped in
+    // Write to OPFS. ONLY a stale bucket handle retries — nothing else may.
+    // There is no backoff and no space is reclaimed between attempts (the quota
+    // eviction loop above already ran and is not re-entered), so retrying an
+    // ENOSPC / quota / timeout error buys nothing and costs a second
+    // `opfsOperationTimeoutMs` of caller stall plus a duplicate warning line.
+    //
+    // The entire navigate→createWritable→write→close chain is wrapped in
     // withTimeout so a hung handle cannot stall the cache.
+    //
+    // A single broken write counts exactly 1 in `writeFailures`; that invariant
+    // is now STRUCTURAL (the non-stale path returns) rather than flag-guarded, so
+    // don't reintroduce an "already counted" flag.
     const timeoutMs = config.cache.opfsOperationTimeoutMs;
-    // HIGH-2 fix: a single broken write must count as 1 in writeFailures,
-    // not once per retry attempt. Track whether we've already counted a
-    // failure for this call so the second attempt doesn't double-count.
-    let writeFailedThisCall = false;
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         await withTimeout(
@@ -474,18 +480,16 @@ export class OPFSStore {
         this.scheduleMetadataSave();
         return; // Success — exit retry loop
       } catch (error) {
-        const errorMsg = error instanceof Error ? error.message : String(error);
+        const errorMsg = getErrorMessage(error);
         if (attempt === 0 && errorMsg.includes('could not be found')) {
           // Stale bucket handle from a concurrent clear() — invalidate and retry
           const bucket = getBucket(key);
           this.buckets.invalidate(bucket);
           continue;
         }
-        if (!writeFailedThisCall) {
-          this.writeFailures++;
-          writeFailedThisCall = true;
-        }
+        this.writeFailures++;
         log.warning(Modules.CACHE, `OPFSStore failed to write ${key}: ${errorMsg}`);
+        return;
       }
     }
   }
@@ -779,7 +783,11 @@ export class OPFSStore {
       delayMs: OPFSStore.METADATA_SAVE_DELAY,
       onError: (error) => {
         this.writeFailures++;
-        log.warning(Modules.CACHE, 'OPFSStore metadata save failed', error);
+        log.warning(
+          Modules.CACHE,
+          `OPFSStore metadata save failed: ${getErrorMessage(error)}`,
+          error
+        );
       },
     });
   }

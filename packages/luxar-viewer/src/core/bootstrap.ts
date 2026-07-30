@@ -31,6 +31,7 @@ import { setNotifierBackend } from '../utils/cross-layer/notifier';
 import { ThemeManager } from '../themes/theme-manager';
 import { consoleInterceptor } from '../utils/console-interceptor';
 import { log, Modules, LogEmoji } from '../utils/log';
+import { getErrorMessage } from '../utils/format-error';
 import { codecRegistry } from '../data/zarr';
 
 /**
@@ -278,7 +279,7 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
   try {
     await app.init(appOptions);
   } catch (error) {
-    log.error(Modules.LUXAR, 'Failed to start Luxar application:', error);
+    log.error(Modules.LUXAR, `Failed to start Luxar application: ${getErrorMessage(error)}`, error);
     showError('Failed to start the application. Please check the console for details.');
     throw error;
   }

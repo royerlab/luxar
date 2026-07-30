@@ -182,7 +182,16 @@ def robust_download(
       so a remote that changed is re-fetched clean, never spliced
     - Progress tracking with ETA
     - File size verification
-    - Cleanup of corrupted partial downloads
+    - Cleanup of partial downloads THIS call created (a pre-existing cache is
+      never deleted on error)
+    - A 416 (Range Not Satisfiable) while resuming at/after EOF is non-fatal:
+      the cache is proven at-least-complete, and is returned untouched unless
+      the 416's authoritative total contradicts its size (one clean restart)
+
+    When the destination already exists — and a matching ``expected_size``
+    hasn't already short-circuited the call — one or more size-probe requests
+    (a HEAD, and possibly an unranged GET) are issued up front to decide
+    whether to resume, restart, or return the cache as-is.
 
     Args:
         url: URL to download from
@@ -626,20 +635,28 @@ def robust_download(
                         # can be checked against the remote representation.
                         _record_part_validator(response.headers)
 
-                    # Get total size
-                    if "content-length" in response.headers:
-                        content_length = int(response.headers["content-length"])
+                    # Get total size. Route both headers through the same hardened
+                    # parsers the resume probe uses, so a duplicated
+                    # ``Content-Length: "100, 100"`` or a ``Content-Range: .../*``
+                    # degrades to "unknown size" instead of raising ValueError into
+                    # the generic handler and aborting the download non-retryably.
+                    content_length = _parse_len(response.headers)
+                    content_range_total = _parse_content_range_total(response.headers)
+                    if content_length is not None:
                         total_size = content_length + resume_byte_pos
+                    elif content_range_total is not None:
+                        # For resumed downloads: "bytes start-end/total"
+                        total_size = content_range_total
                     else:
-                        # For resumed downloads: "bytes start-end/total". The
-                        # helper tolerates the legal unknown-total form
-                        # ("bytes 0-99/*") and malformed values → 0 (unknown).
-                        total_size = _parse_content_range_total(response.headers) or 0
+                        total_size = 0
 
                     if total_size > 0:
                         aprint(f"📦 Total size: {total_size / (1024**3):.2f} GB")
                     else:
-                        aprint("📦 Size: Unknown (no Content-Length header)")
+                        aprint(
+                            "📦 Size: Unknown (no usable Content-Length or "
+                            "Content-Range header)"
+                        )
 
                     # Download with progress
                     downloaded = resume_byte_pos
@@ -1376,8 +1393,10 @@ def download_zip_member(
             # never fetch a body. A legitimate empty member is STORED (method 0)
             # with zero uncompressed bytes and CRC 0 — the shortest empty DEFLATE
             # stream is two bytes, so a DEFLATE member (or any nonzero size/CRC)
-            # with zero compressed bytes is a malformed header. Reject it — as
-            # stdlib ``zipfile`` would — instead of silently extracting empty.
+            # with zero compressed bytes is a malformed header. Reject it —
+            # deliberately stricter than stdlib ``zipfile``, which accepts such a
+            # forged empty DEFLATE entry (a zero-byte raw stream flushes to empty
+            # and CRC 0 matches) — instead of silently extracting empty.
             # A valid empty member writes through the same ``.part``-then-
             # ``replace`` promotion the streaming path uses.
             if cd_method != 0 or uncomp_size != 0 or crc_expected != 0:

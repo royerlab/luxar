@@ -74,7 +74,7 @@ Each `*_impl` walks the same ordered decision tree:
    — an opt-in compiler heuristic (default off). A user-explicit `partition=`
    always wins. (Lines does not yet wire the auto-partition heuristic; it
    honors only explicit `partition=`.)
-4. **Partition branch** (when `partition` is set and `D >= 3`): run a BSP
+4. **Partition branch** (when `partition` is set and `D >= 2`): run a BSP
    (`median` / `midpoint` / `sah`) capped at `max_elements`, and if it yields
    more than one part, delegate to the partition wrapper. A single part falls
    through to the regular write.

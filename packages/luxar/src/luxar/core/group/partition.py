@@ -409,9 +409,9 @@ def midpoint_bsp_partition(
     """Recursively split ``positions`` along longest-axis midpoints.
 
     Args:
-        positions: ``(N, d)`` array of element positions. At least 3 spatial
-            dimensions are required (2 for planar data); only the first 3 are
-            used for splitting (extra dims ride along untouched — they don't
+        positions: ``(N, d)`` array of element positions. At least 2 spatial
+            dimensions are required (planar data splits fine); only the first 3
+            are used for splitting (extra dims ride along untouched — they don't
             drive frustum culling, which only cares about the screen-projected
             3D extent).
         max_elements: Cap on a single part's size. Each returned part has
@@ -535,9 +535,9 @@ def midpoint_bsp_polylines(
     partition assigns whole polylines to parts.
 
     Args:
-        vertices: ``(N, d)`` array of vertex positions. At least 3
-            spatial dimensions required, 2 for planar data (only the first 3
-            drive the split).
+        vertices: ``(N, d)`` array of vertex positions. At least 2
+            spatial dimensions required (planar data splits fine; only the
+            first 3 drive the split).
         polyline_indices: List of per-polyline vertex-index arrays — the
             output of :func:`luxar.core.group.lod.lines.identify_polylines`.
         max_elements: Cap on a single part's vertex count. The BSP
@@ -718,7 +718,7 @@ def sah_bsp_partition(
     better tree than median/midpoint alone.
 
     Args:
-        positions: ``(N, d)`` array. At least 3 spatial dims.
+        positions: ``(N, d)`` array. At least 2 spatial dims.
         max_elements: Cap on a single part's size. Recursion stops once
             ``len(part) <= max_elements``.
         n_candidates: Number of uniformly-spaced split positions

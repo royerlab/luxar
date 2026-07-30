@@ -297,6 +297,32 @@ class _MisalignedResumeHandler(_RangeHTTPHandler):
         return _LimitedFile(f, size)
 
 
+class _StarTotalContentRangeHandler(_RangeHTTPHandler):
+    """Unranged GET carries a malformed ``Content-Range: .../*`` and NO
+    ``Content-Length`` — so the in-loop size parse sees a star total.
+
+    Before the parse was hardened, ``int("*")`` raised ValueError into the
+    generic handler and aborted the whole download non-retryably; the parse now
+    degrades to "unknown size" and the body still downloads to completion.
+    """
+
+    def send_head(self):  # noqa: ANN201 - stdlib override
+        path = Path(self.translate_path(self.path))
+        if not path.is_file() or self.headers.get("Range") is not None:
+            return super().send_head()
+        size = path.stat().st_size
+        f = open(path, "rb")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/octet-stream")
+        self.send_header("Content-Range", f"bytes 0-{size - 1}/*")
+        self.send_header("Accept-Ranges", "bytes")
+        self.end_headers()
+        if self.command == "HEAD":
+            f.close()
+            return None
+        return _LimitedFile(f, size)
+
+
 class _LimitedFile:
     """File-like that stops after ``limit`` bytes (for copyfile)."""
 
@@ -1134,3 +1160,32 @@ class TestRobustDownloadResume416:
         assert result == out
         assert out.read_bytes() == payload, "misaligned 206 must never be appended"
         assert not part.exists(), "staging .part must be renamed onto out"
+
+    def test_malformed_content_range_total_degrades_to_unknown(
+        self, tmp_path: Path
+    ) -> None:
+        """A ``Content-Range: .../*`` (star total) with no Content-Length must
+        not abort the download: the in-loop size parse degrades to "unknown"
+        and the body still downloads to completion.
+
+        Before the parse was hardened, ``int("*")`` raised ValueError into the
+        generic handler, which re-raised non-retryably.
+        """
+        remote = _make_payload(seed=99)
+        (tmp_path / "data.bin").write_bytes(remote)
+
+        server, thread = _serve(tmp_path, _StarTotalContentRangeHandler)
+        try:
+            base_url = f"http://127.0.0.1:{server.server_address[1]}"
+            out = tmp_path / "cache" / "data.bin"
+            out.parent.mkdir(parents=True)
+            result = robust_download(
+                f"{base_url}/data.bin", out, expected_size=None, verify_size=True
+            )
+        finally:
+            server.shutdown()
+            thread.join(timeout=5)
+            server.server_close()
+
+        assert result == out
+        assert out.read_bytes() == remote, "body must download despite a star total"

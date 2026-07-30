@@ -53,3 +53,19 @@ def test_parse_axis_list_require_wrong_count_raises() -> None:
 
 def test_parse_axis_list_require_correct_count() -> None:
     assert parse_axis_list("0,1,2", 4, "x", require=3) == [0, 1, 2]
+
+
+def test_parse_axis_list_non_integer_token_beats_arity() -> None:
+    # Precedence: integer conversion runs before the arity check, so a
+    # non-integer token is reported even when the count is also wrong.
+    with pytest.raises(typer.BadParameter) as exc_info:
+        parse_axis_list("a,b", 4, "x", require=3)
+    assert "integer" in str(exc_info.value).lower()
+
+
+def test_parse_axis_list_arity_beats_bounds_and_duplicate() -> None:
+    # Precedence: the arity check wins over the bounds and duplicate checks
+    # (here "9,9" is also out of range and duplicated for a 4D input).
+    with pytest.raises(typer.BadParameter) as exc_info:
+        parse_axis_list("9,9", 4, "x", require=3)
+    assert "expects 3 axis indices" in str(exc_info.value)

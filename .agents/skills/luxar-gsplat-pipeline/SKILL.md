@@ -14,7 +14,7 @@ description: >-
 # Luxar GSplat pipeline
 
 Luxar fits **Gaussian splats** to scientific volumes and serves them to a WebGL
-viewer. The standalone artifact is a `.gsplats.zarr` (format v3.2 — a node tree;
+viewer. The standalone artifact is a `.gsplats.zarr` (format v3.3 — a node tree;
 older v3.x files are still read transparently).
 All commands below are subcommands of `luxar gsplat`.
 
@@ -145,7 +145,7 @@ luxar gsplat slice in.gsplats.zarr out.gsplats.zarr "0:50, :, 10:90"
 luxar gsplat transform in.gsplats.zarr out.gsplats.zarr --scale 4,1,1,1 --center
 luxar gsplat merge a.gsplats.zarr b.gsplats.zarr -o merged.gsplats.zarr
 luxar gsplat partition in.gsplats.zarr part.gsplats.zarr --parts 4 --rule sah
-luxar gsplat migrate-format legacy.gsplats.zarr v3.gsplats.zarr      # legacy -> v3.2
+luxar gsplat migrate-format legacy.gsplats.zarr v3.gsplats.zarr      # legacy -> v3.3
 ```
 
 ## Python fitting API
@@ -219,4 +219,4 @@ does (a) for you and writes a ready-to-serve scene.
   `gsplat additive` to ladder every leaf of an existing tree structure-preservingly.
 - LOD switch thresholds are auto-derived as viewport-relative `coverage_fraction`
   = `sqrt(N_i/N_finest)` (no threshold knob; self-calibrates on any monitor).
-- See `docs/specs/GSPLATS_ZARR_FORMAT.md` for the v3.2 node-tree format.
+- See `docs/specs/GSPLATS_ZARR_FORMAT.md` for the v3.3 node-tree format.

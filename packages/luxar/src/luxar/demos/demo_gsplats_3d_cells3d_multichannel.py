@@ -84,6 +84,7 @@ from arbol import Arbol, aprint, asection
 
 from luxar import Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
+from luxar.demos import require_module
 from luxar.encoding import EncodingMode
 from luxar.utils.demos import (
     launch_viewer,
@@ -146,16 +147,21 @@ def load_cells3d():
         list[np.ndarray]: One 3D volume per channel, shape (Z, Y, X), float32 [0, 1].
     """
     with asection("Loading cells3d dataset"):
-        try:
-            from skimage.data import cells3d
-        except ImportError:
-            raise ImportError(
-                "scikit-image is required for this demo.\n"
-                "Install with: pip install scikit-image"
-            )
+        cells3d = require_module("skimage.data").cells3d
 
         # cells3d() returns (60, 2, 256, 256) — (Z, Channel, Y, X), uint16
-        raw = cells3d()
+        try:
+            raw = cells3d()
+        except Exception as exc:
+            # The sample data is FETCHED, not bundled in the scikit-image wheel,
+            # and skimage's fetcher is pooch. A missing pooch is the usual cause
+            # here, so re-gate it to get the constrained hint; if pooch IS
+            # present the failure is something else (network), so say that.
+            require_module("pooch")
+            raise RuntimeError(
+                f"Failed to fetch the cells3d sample data: {exc}\n"
+                "It is downloaded on first use — check network access."
+            ) from exc
         aprint(f"Raw data shape: {raw.shape}, dtype: {raw.dtype}")
         aprint(
             f"  Axes: (Z={raw.shape[0]}, C={raw.shape[1]}, "

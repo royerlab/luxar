@@ -42,6 +42,20 @@ This package contains helper functions that simplify common tasks and provide co
 
 ## Modules
 
+### `arbol_warnings.py`
+Route Python warning *display* through arbol console output, so warnings land
+as `⚠️ UserWarning: ...` tree lines instead of raw stderr
+`path/to/file.py:299: UserWarning: ...` text that appears out of place
+mid-tree.
+
+**Key Functions:**
+- `install_arbol_warnings()`: Process-wide install for application entry points (called by the `luxar` CLI callback)
+- `arbol_warnings()`: Context manager / decorator scoping the override to a block (applied to the arbol-tree-producing public API entry points: `LuxarZarrCompiler`'s write methods, `fit_gaussian_splats`, `generate_seeds`, `save_gsplats`)
+
+**Features:**
+- Display-only: `warnings.warn` machinery, filters, `-W error`, `catch_warnings`, and `pytest.warns` behave exactly as before
+- Steps aside automatically when a recorder or custom `showwarning` hook owns warning display (so test harnesses keep capturing)
+
 ### `array.py`
 Array manipulation utilities.
 
