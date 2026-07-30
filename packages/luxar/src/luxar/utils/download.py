@@ -127,11 +127,12 @@ def quarantine_file(
     left in place would be appended to rather than replaced.
 
     The suffix is APPENDED (``foo.zip`` -> ``foo.zip.corrupt``) so the original
-    name and extension survive intact; that is also the form ``luxar demo clear``
-    classifies correctly. A pre-existing quarantine for the same file is
-    REPLACED, not stacked: one slot per file, so a repeated corrupt-fetch loop
-    cannot fill a disk with copies of a multi-gigabyte artifact, and the finders
-    (which match the exact ``.corrupt`` name) keep working.
+    name and extension survive intact; that is also the form
+    ``luxar demo cache clear`` classifies correctly. A pre-existing quarantine
+    for the same file is REPLACED, not stacked: one slot per file, so a
+    repeated corrupt-fetch loop cannot fill a disk with copies of a
+    multi-gigabyte artifact, and the finders (which match the exact
+    ``.corrupt`` name) keep working.
 
     Args:
         path: The rejected artifact. Must be an existing regular file.
@@ -154,7 +155,7 @@ def quarantine_file(
         detail = f" ({reason})" if reason else ""
         aprint(
             f"⚠️  Quarantined cache file{detail}: {path.name} → {target.name}. "
-            "It will never be reused; delete it (or run 'luxar demo clear') to "
+            "It will never be reused; delete it (or run 'luxar demo cache clear') to "
             f"reclaim {_format_bytes(target.stat().st_size)}."
         )
     return target
