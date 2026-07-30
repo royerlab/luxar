@@ -6,28 +6,31 @@ takes to decode and commit — ~85 s on the 9.75M-point DESI demo before its lev
 were laddered (royerlab/luxar#808). This walks built scenes and reports, per
 laddered leaf, whether the ladder is actually *useful*.
 
-The important check is the last one. A ladder can exist and still be worthless:
-``global_rivers_earth/terrain`` shipped ``additive_lod=dict(method="spatial-uniform",
-n_lods=5)`` over 8M points and produced levels of 8 / 56 / 272 / 1174 / 7,998,490 —
-99.98% of the data in the final commit. It streamed in name only. So a leaf fails
-if its largest level is more than ``--max-share`` of the total.
+A ladder can exist and still be worthless. For example,
+``global_rivers_earth/terrain`` once shipped levels of 8 / 56 / 272 / 1174 /
+7,998,490 over 8M points: 99.98% of the data remained in one commit. A large
+leaf therefore fails when any level exceeds either ``--max-share`` of the total
+or the absolute ``--max-level-elements`` commit budget.
 
 Usage:
-    hatch run python scripts/check_demo_ladders.py                 # all built demos
-    hatch run python scripts/check_demo_ladders.py path/to.luxar.zarr ...
-    hatch run python scripts/check_demo_ladders.py --min-elements 500000
+    hatch run check-demo-ladders                              # all built demos
+    hatch run check-demo-ladders path/to.luxar.zarr ...
+    hatch run check-demo-ladders --min-elements 500000
 
-Exit code is non-zero if any leaf fails, so this works as a gate.
+Exit code is non-zero if any leaf fails. The command is part of ``hatch run
+check``; on a checkout without built demos it is a read-only no-op.
 """
 
 from __future__ import annotations
 
 import argparse
 import sys
+from collections.abc import Iterator, Sequence
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Tuple
+from typing import Any
 
 import zarr
+from arbol import aprint, asection
 
 #: Leaves at or below this element count are reported but never failed — a small
 #: leaf commits fast enough that an all-at-once load is invisible.
@@ -45,18 +48,22 @@ DEFAULT_MIN_ELEMENTS = 200_000
 #: demo default chunk (small relative to n), so 0.6 is the right gate here.
 DEFAULT_MAX_SHARE = 0.6
 
+#: A relative share can look healthy while still leaving millions of elements
+#: in one commit. Cap every increment independently of the total leaf size.
+DEFAULT_MAX_LEVEL_ELEMENTS = 1_000_000
+
 #: Fewer levels than this cannot stream across more than one refinement pass.
 DEFAULT_MIN_SUBLODS = 3
 
 
-def _element_count(attrs: Dict[str, Any]) -> int:
+def _element_count(attrs: dict[str, Any]) -> int:
     for key in ("n_points", "n_vertices", "n_splats"):
         if key in attrs:
             return int(attrs[key] or 0)
     return 0
 
 
-def walk_leaves(group: Any, path: str = "") -> Iterator[Tuple[str, Any]]:
+def walk_leaves(group: Any, path: str = "") -> Iterator[tuple[str, Any]]:
     """Yield ``(path, group)`` for every points/lines/gsplats leaf in the tree."""
     attrs = dict(group.attrs)
     node_type = attrs.get("type")
@@ -68,13 +75,13 @@ def walk_leaves(group: Any, path: str = "") -> Iterator[Tuple[str, Any]]:
 
 
 def check_leaf(
-    path: str,
     leaf: Any,
     *,
     min_elements: int,
     max_share: float,
+    max_level_elements: int,
     min_sublods: int,
-) -> Tuple[str, str]:
+) -> tuple[str, str]:
     """Return ``(status, message)`` where status is ok / warn / fail / skip."""
     attrs = dict(leaf.attrs)
     total = _element_count(attrs)
@@ -89,7 +96,7 @@ def check_leaf(
             )
         return ("skip", f"{total:,} elements, no ladder (below threshold)")
 
-    sizes: List[int] = []
+    sizes: list[int] = []
     for i in range(n_sub):
         try:
             sizes.append(_element_count(dict(leaf[f"additive_{i}"].attrs)))
@@ -108,10 +115,16 @@ def check_leaf(
     detail = f"{n_sub} levels {sizes}, largest {share:.1%} of {summed:,}"
 
     if summed > min_elements:
+        if biggest > max_level_elements:
+            return (
+                "fail",
+                f"{detail} — largest level has {biggest:,} elements, above the "
+                f"{max_level_elements:,} absolute commit cap",
+            )
         if share > max_share:
             return (
                 "fail",
-                f"{detail} — degenerate ladder, the last level is effectively the "
+                f"{detail} — degenerate ladder, one level is effectively the "
                 "whole dataset",
             )
         if n_sub < min_sublods:
@@ -119,73 +132,80 @@ def check_leaf(
     return ("ok", detail)
 
 
-def scene_paths(args_paths: List[str]) -> List[Path]:
+def scene_paths(args_paths: Sequence[str]) -> list[Path]:
+    """Resolve explicit scenes or inventory the existing demo output directory."""
     if args_paths:
-        return [Path(p) for p in args_paths]
+        return [Path(path) for path in args_paths]
     from luxar.utils.paths import get_demos_output_dir
 
-    return sorted(get_demos_output_dir().glob("*.luxar.zarr"))
+    return sorted(get_demos_output_dir(create=False).glob("*.luxar.zarr"))
 
 
-def main() -> int:
+def main(argv: Sequence[str] | None = None) -> int:
+    """Run the ladder audit and return a process exit code."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("scenes", nargs="*", help="scene paths (default: built demos)")
     parser.add_argument("--min-elements", type=int, default=DEFAULT_MIN_ELEMENTS)
     parser.add_argument("--max-share", type=float, default=DEFAULT_MAX_SHARE)
+    parser.add_argument(
+        "--max-level-elements", type=int, default=DEFAULT_MAX_LEVEL_ELEMENTS
+    )
     parser.add_argument("--min-sublods", type=int, default=DEFAULT_MIN_SUBLODS)
     parser.add_argument(
         "--quiet", action="store_true", help="only print warnings and failures"
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     paths = scene_paths(args.scenes)
     if not paths:
-        print("No scenes found. Build a demo first, or pass a path explicitly.")
+        aprint("No scenes found. Build a demo first, or pass a path explicitly.")
         return 0
 
     counts = {"ok": 0, "warn": 0, "fail": 0, "skip": 0}
     icons = {"ok": "✅", "warn": "⚠️ ", "fail": "❌", "skip": "· "}
-    failures: List[str] = []
+    failures: list[str] = []
 
     for scene in paths:
         try:
             root = zarr.open(str(scene), mode="r")
         except Exception as exc:
-            print(f"❌ {scene.name}: cannot open ({exc})")
+            aprint(f"❌ {scene.name}: cannot open ({exc})")
             counts["fail"] += 1
             failures.append(scene.name)
             continue
 
-        header_shown = args.quiet
-        if not args.quiet:
-            print(f"\n{scene.name}")
-
+        results: list[tuple[str, str, str]] = []
         for leaf_path, leaf in walk_leaves(root):
             status, message = check_leaf(
-                leaf_path,
                 leaf,
                 min_elements=args.min_elements,
                 max_share=args.max_share,
+                max_level_elements=args.max_level_elements,
                 min_sublods=args.min_sublods,
             )
+            results.append((leaf_path, status, message))
             counts[status] += 1
             if status == "fail":
                 failures.append(f"{scene.name}{leaf_path}")
-            if args.quiet and status in ("ok", "skip"):
-                continue
-            if not header_shown:
-                print(f"\n{scene.name}")
-                header_shown = True
-            print(f"  {icons[status]} {leaf_path}: {message}")
 
-    print(
-        f"\n{counts['ok']} ok, {counts['warn']} warned, {counts['fail']} failed, "
+        visible_results = [
+            result
+            for result in results
+            if not args.quiet or result[1] in ("warn", "fail")
+        ]
+        if visible_results:
+            with asection(scene.name):
+                for leaf_path, status, message in visible_results:
+                    aprint(f"{icons[status]} {leaf_path}: {message}")
+
+    aprint(
+        f"{counts['ok']} ok, {counts['warn']} warned, {counts['fail']} failed, "
         f"{counts['skip']} below threshold"
     )
     if failures:
-        print("\nFailed leaves:")
-        for name in failures:
-            print(f"  {name}")
+        with asection("Failed leaves"):
+            for name in failures:
+                aprint(name)
         return 1
     return 0
 
