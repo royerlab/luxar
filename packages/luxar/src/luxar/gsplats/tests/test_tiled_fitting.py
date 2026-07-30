@@ -884,6 +884,37 @@ class _CountingArray:
         return out
 
 
+class _ShapeOnlyArray:
+    """Lazy array shim that records requested regions without storing a volume."""
+
+    def __init__(self, shape: tuple[int, ...]) -> None:
+        self.shape = shape
+        self.ndim = len(shape)
+        self.read_regions: list[tuple[tuple[int, int, int], ...]] = []
+        self.voxels_read = 0
+
+    def __getitem__(self, key: object) -> np.ndarray:
+        if key is Ellipsis:
+            indices = (slice(None),) * self.ndim
+        else:
+            assert isinstance(key, tuple)
+            assert len(key) <= self.ndim
+            indices = key + (slice(None),) * (self.ndim - len(key))
+
+        region: list[tuple[int, int, int]] = []
+        read_shape: list[int] = []
+        for index, axis_len in zip(indices, self.shape, strict=True):
+            assert isinstance(index, slice)
+            start, stop, step = index.indices(axis_len)
+            region.append((start, stop, step))
+            read_shape.append(len(range(start, stop, step)))
+
+        shape = tuple(read_shape)
+        self.read_regions.append(tuple(region))
+        self.voxels_read += int(np.prod(shape, dtype=np.int64))
+        return np.zeros(shape, dtype=np.float32)
+
+
 class _ExplodingArray:
     """Array shim that fails on any read — data must never be touched."""
 
@@ -1003,6 +1034,36 @@ class TestResolveVolumeFloor:
         f = pp.resolve_volume_floor(shim, "p10")
         assert f is not None
         assert 0 < shim.voxels_read <= budget
+
+    @pytest.mark.parametrize(
+        ("shape", "budget"),
+        [
+            ((50, 20, 128, 128), 4096),
+            ((97, 89, 83, 79), 1000),
+        ],
+    )
+    def test_memory_bound_when_one_slab_exceeds_budget(
+        self, shape: tuple[int, ...], budget: int
+    ) -> None:
+        """Oversized cross-sections are cropped recursively before reading."""
+        import luxar.gsplats.fitting.preprocessing as pp
+
+        first = _ShapeOnlyArray(shape)
+        second = _ShapeOnlyArray(shape)
+        sample = pp._sample_volume_for_floor(first, budget)
+        repeated = pp._sample_volume_for_floor(second, budget)
+
+        assert sample is not None
+        assert repeated is not None
+        assert 0 < sample.size == first.voxels_read <= budget
+        assert repeated.size == second.voxels_read <= budget
+        assert first.read_regions == second.read_regions
+
+    def test_non_positive_sample_budget_is_rejected(self) -> None:
+        import luxar.gsplats.fitting.preprocessing as pp
+
+        with pytest.raises(ValueError, match="at least 1 voxel"):
+            pp._sample_volume_for_floor(_ExplodingArray(), 0)
 
     def test_single_block_sample_reads_the_middle(self) -> None:
         """When the budget allows only one block, it is taken from the middle
