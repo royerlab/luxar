@@ -248,10 +248,75 @@ class TestExitOnException:
                     monkeypatch.setattr(
                         compiler,
                         "_compute_content_hashes",
-                        lambda store: (_ for _ in ()).throw(
-                            RuntimeError("disk full")
-                        ),
+                        lambda store: (_ for _ in ()).throw(RuntimeError("disk full")),
                     )
+
+            # finalize() failed → the store is not finalized.
+            assert compiler._is_finalized is False
+
+            # The half-finalized store carries the incomplete marker.
+            store = zarr.open_group(output_path, mode="r")
+            assert store.attrs.get("incomplete") is True
+
+            # The reader refuses to load the half-finalized store.
+            with pytest.raises(ValueError, match="incomplete"):
+                LuxarScene.load(output_path)
+
+    def test_finalize_pre_phase_failure_marks_incomplete(self, monkeypatch) -> None:
+        """A DIRECT finalize() (no with block) that fails BEFORE the finalize
+        phases — hover injection raising — must still mark the store incomplete
+        (the marker-clear + hover injection now run inside the boundary)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = Path(tmpdir) / "test.luxar.zarr"
+
+            compiler = LuxarZarrCompiler(output_path, enable_spatial_index=False)
+            compiler.create_scene(dimensions=Dimensions.default_3d())
+            positions = np.random.randn(100, 3).astype(np.float32)
+            compiler.write_points("pts", positions)
+
+            # Break hover injection, which runs before the finalize phases.
+            monkeypatch.setattr(
+                compiler._scene,
+                "_auto_inject_hover_overlay",
+                lambda: (_ for _ in ()).throw(RuntimeError("hover boom")),
+            )
+
+            with pytest.raises(ValueError, match="Could not finalize"):
+                compiler.finalize()
+
+            # finalize() failed → the store is not finalized.
+            assert compiler._is_finalized is False
+
+            # The partial store carries the incomplete marker.
+            store = zarr.open_group(output_path, mode="r")
+            assert store.attrs.get("incomplete") is True
+
+            # The reader refuses to load the partial store.
+            with pytest.raises(ValueError, match="incomplete"):
+                LuxarScene.load(output_path)
+
+    def test_finalize_keyboardinterrupt_marks_incomplete(self, monkeypatch) -> None:
+        """A DIRECT finalize() interrupted by KeyboardInterrupt (a
+        BaseException, not Exception) mid-phase must mark the store incomplete
+        and re-raise the ORIGINAL exception, unwrapped."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = Path(tmpdir) / "test.luxar.zarr"
+
+            compiler = LuxarZarrCompiler(output_path, enable_spatial_index=False)
+            compiler.create_scene(dimensions=Dimensions.default_3d())
+            positions = np.random.randn(100, 3).astype(np.float32)
+            compiler.write_points("pts", positions)
+
+            # Interrupt a finalize sub-step with a BaseException.
+            monkeypatch.setattr(
+                compiler,
+                "_compute_content_hashes",
+                lambda store: (_ for _ in ()).throw(KeyboardInterrupt()),
+            )
+
+            # Re-raised unchanged — NOT wrapped in ValueError.
+            with pytest.raises(KeyboardInterrupt):
+                compiler.finalize()
 
             # finalize() failed → the store is not finalized.
             assert compiler._is_finalized is False
@@ -295,9 +360,7 @@ class TestExitOnException:
         with tempfile.TemporaryDirectory() as tmpdir:
             output_path = Path(tmpdir) / "test.luxar.zarr"
 
-            with LuxarZarrCompiler(
-                output_path, enable_spatial_index=False
-            ) as compiler:
+            with LuxarZarrCompiler(output_path, enable_spatial_index=False) as compiler:
                 compiler.create_scene(dimensions=Dimensions.default_3d())
                 positions = np.random.randn(100, 3).astype(np.float32)
                 compiler.write_points("pts", positions)

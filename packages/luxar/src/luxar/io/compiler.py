@@ -1003,19 +1003,25 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         if self._is_finalized:
             return
 
-        # A prior aborted attempt may have marked the store incomplete; a real
-        # finalize supersedes that.
         try:
-            if "incomplete" in self.store.attrs:
-                del self.store.attrs["incomplete"]
-        except BaseException:
-            pass
+            # A prior aborted attempt may have marked the store incomplete; a
+            # real finalize supersedes that. Clearing it lives INSIDE the outer
+            # boundary so any later failure re-stamps it (see the handler).
+            try:
+                if "incomplete" in self.store.attrs:
+                    del self.store.attrs["incomplete"]
+            except Exception:
+                # Best-effort clear. Only swallow ordinary errors — a
+                # KeyboardInterrupt here must fall through to the outer handler
+                # so it re-stamps the marker instead of silently continuing.
+                pass
 
-        # Auto-inject default hover overlay if labels exist but no hover overlay defined
-        if self._scene is not None:
-            self._scene._auto_inject_hover_overlay()
+            # Auto-inject default hover overlay if labels exist but no hover
+            # overlay defined. Inside the boundary: if it raises, the store is
+            # already partial and must be marked incomplete.
+            if self._scene is not None:
+                self._scene._auto_inject_hover_overlay()
 
-        try:
             aprint("🔧 Finalizing Zarr store...")
 
             # Close the store to ensure all data is written
@@ -1074,16 +1080,29 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             self._is_finalized = True
             aprint(f"✅ Zarr store finalized at {self._store_path}")
 
-        except Exception as e:
-            aprint(f"⚠️ Failed to finalize: {e}")
-            # The store is half-finalized; mark it so LuxarScene.load rejects it
-            # (a direct finalize() call, e.g. via Scene.to_zarr(), does not go
-            # through __exit__'s failure handling).
+        except BaseException as e:
+            # ANY failure (marker clearing, hover injection, or a finalize
+            # phase) leaves the store half-finalized; mark it so
+            # LuxarScene.load rejects it. A direct finalize() call, e.g. via
+            # Scene.to_zarr(), does not go through __exit__'s failure handling,
+            # so this is the only safeguard. Covers BaseException too so a
+            # KeyboardInterrupt mid-consolidation still stamps the marker.
+            # Stamp FIRST — before the informational aprint, which can itself
+            # raise (e.g. BrokenPipeError on a closed stdout) and would
+            # otherwise skip the stamp and mask the original error.
             try:
                 self.store.attrs["incomplete"] = True
             except BaseException:
                 pass
-            raise ValueError(f"Could not finalize Zarr store: {e}") from e
+            try:
+                aprint(f"⚠️ Failed to finalize: {e}")
+            except BaseException:
+                pass
+            # Preserve the historical wrapping for ordinary Exceptions, but let
+            # a KeyboardInterrupt / SystemExit propagate unchanged.
+            if isinstance(e, Exception):
+                raise ValueError(f"Could not finalize Zarr store: {e}") from e
+            raise
 
     @property
     def store_path(self) -> str:
