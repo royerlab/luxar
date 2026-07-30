@@ -161,6 +161,12 @@ def validate_node_path(path: str) -> str:
     unloadable — and dot-prefixed segments collide with zarr's reserved
     metadata keys (``.zgroup``/``.zattrs``/``.zarray``/``.zmetadata``).
 
+    The exact single-segment root path ``overlays`` is likewise rejected: it is
+    reserved for screen-space overlay metadata (written internally as
+    ``overlays/<name>``), so a raw geometry writer must not claim it. Only the
+    bare root name collides; ``overlays/<name>`` and nested paths like
+    ``geometry/overlays`` are allowed.
+
     Raises:
         ValidationError: If the path or any of its segments is invalid.
     """
@@ -176,6 +182,13 @@ def validate_node_path(path: str) -> str:
             f"node path: Path must not be empty (got {path!r}). An empty path "
             "resolves to the zarr ROOT group and would overwrite the scene root.",
             "Provide a non-empty node name/path",
+        )
+    if stripped == "overlays":
+        raise ValidationError(
+            "node path: Top-level node path 'overlays' is reserved for "
+            "screen-space overlay metadata. Write internal overlays below "
+            "'overlays/<name>' or choose a different user node name.",
+            "Choose a different top-level node name",
         )
     for segment in stripped.split("/"):
         validate_node_name(segment, context=f"node path {path!r}")

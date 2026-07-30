@@ -23,7 +23,7 @@ The pipelines are stateless: they read only the narrow config in the `Ctx` datac
 
 1. **Fail-fast pre-write gate** (runs BEFORE zarr group creation):
    - `validate_render_attrs(attrs, POINTS_RESERVED_ATTRS)` — reserved writer-stamp collisions
-   - `validate_node_path(path)` — every segment must be a valid node name
+   - `validate_node_path(path)` — every segment must be a valid node name; the bare root path `overlays` is reserved (screen-space overlay metadata lives under `overlays/<name>`) and rejected here
    - `validate_positions_for_writing(positions)` → `(n_points, n_dims)`
    - `validate_colors_for_writing(colors, n_points, channels=(3,4))` — if colors is an array (Points accept RGBA: alpha is per-point opacity)
    - `validate_broadcast_color(colors, "colors")` — if colors is a tuple/list

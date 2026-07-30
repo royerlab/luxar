@@ -854,7 +854,10 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         """
         self._check_not_finalized("create_resizable_dataset")
 
-        path = path.lstrip("/")
+        # Validate every path segment (rejects empty/dot-prefixed names + the
+        # reserved 'overlays' root — the F1/F5 chokepoint) + strip the leading
+        # slash. Returns the stripped path, so the rsplit below is unchanged.
+        path = _validate_node_path(path)
 
         # Parse parent group and dataset name
         parts = path.rsplit("/", 1)
