@@ -61,6 +61,7 @@ def validate_gsplat_inputs(
         validate_colors_for_writing,
         validate_positions_for_writing,
     )
+    from .node_common import validate_broadcast_color
 
     if check_values:
         n_splats, n_dims = validate_positions_for_writing(centers)
@@ -115,10 +116,15 @@ def validate_gsplat_inputs(
     # Colors: the same check write_gsplat_arrays historically ran POST-write;
     # running it here puts colors in the pre-group gate on every path (flat
     # write_gsplats and the leaf preflight alike). GSplats accept RGBA — the
-    # alpha column is per-splat opacity. Broadcast list/tuple colors are
-    # handled downstream by write_colors and are not validated here.
-    if check_values and isinstance(colors, np.ndarray):
-        validate_colors_for_writing(colors, n_splats, channels=(3, 4))
+    # alpha column is per-splat opacity. Broadcast list/tuple colors get the
+    # same pre-write gate Points/Lines use (validate_broadcast_color) — a NaN
+    # or wrong-length tuple would otherwise be discovered only in write_colors,
+    # after centers/amplitudes/Cholesky were already on disk.
+    if check_values:
+        if isinstance(colors, np.ndarray):
+            validate_colors_for_writing(colors, n_splats, channels=(3, 4))
+        elif isinstance(colors, (list, tuple)):
+            validate_broadcast_color(colors)
 
     return (
         centers,

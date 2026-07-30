@@ -533,6 +533,65 @@ def test_flat_write_bad_colors_leaves_no_partial_node(tmp_path) -> None:
     assert not (store / "test").exists()
 
 
+def test_flat_write_bad_broadcast_color_leaves_no_partial_node(tmp_path) -> None:
+    """A NaN in a BROADCAST (tuple) color fails before any group is created.
+
+    Broadcast list/tuple colors bypass ``validate_colors_for_writing`` (an
+    ndarray-only check); they get the shared ``validate_broadcast_color`` gate
+    instead (the same one Points/Lines run). Without it, a non-finite tuple
+    component was discovered only in ``write_colors`` — after centers,
+    amplitudes, and Cholesky factors were already on disk.
+    """
+    store = tmp_path / "bad_bcast_color.luxar.zarr"
+    with LuxarZarrCompiler(store, enable_spatial_index=False) as compiler:
+        compiler.create_scene(dimensions=Dimensions.default_3d())
+        with pytest.raises(
+            (ValueError, ValidationError), match="Uniform color component"
+        ):
+            compiler.write_gsplats(
+                "test",
+                _gsplat_centers(10),
+                amplitudes=1.0,
+                cholesky_factors=_packed_chol(10),
+                colors=(np.nan, 0.0, 0.0),
+            )
+    assert not (store / "test").exists()
+
+
+def test_flat_write_wrong_length_broadcast_color_rejected(tmp_path) -> None:
+    """A 2-component broadcast color is rejected pre-write (RGB(A) only)."""
+    store = tmp_path / "short_bcast_color.luxar.zarr"
+    with LuxarZarrCompiler(store, enable_spatial_index=False) as compiler:
+        compiler.create_scene(dimensions=Dimensions.default_3d())
+        with pytest.raises(
+            (ValueError, ValidationError),
+            match="Uniform color must have 3 .RGB. or 4 .RGBA.",
+        ):
+            compiler.write_gsplats(
+                "test",
+                _gsplat_centers(10),
+                amplitudes=1.0,
+                cholesky_factors=_packed_chol(10),
+                colors=[0.5, 0.5],
+            )
+    assert not (store / "test").exists()
+
+
+def test_flat_write_valid_broadcast_color_accepted(tmp_path) -> None:
+    """A valid uniform RGB tuple still writes (the gate is not over-strict)."""
+    store = tmp_path / "good_bcast_color.luxar.zarr"
+    with LuxarZarrCompiler(store, enable_spatial_index=False) as compiler:
+        compiler.create_scene(dimensions=Dimensions.default_3d())
+        compiler.write_gsplats(
+            "test",
+            _gsplat_centers(10),
+            amplitudes=1.0,
+            cholesky_factors=_packed_chol(10),
+            colors=(1.0, 0.5, 0.0),
+        )
+    assert (store / "test" / "centers").exists()
+
+
 def test_leaf_value_scanned_exactly_once(tmp_path, monkeypatch) -> None:
     """The additive-ladder write value-scans each sub-LOD exactly once.
 
