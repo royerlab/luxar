@@ -17,7 +17,7 @@ import numpy as np
 import pytest
 import zarr
 
-from luxar import Dimensions, LuxarZarrCompiler
+from luxar import Dimension, Dimensions, LuxarZarrCompiler
 
 # ── Points metadata uses the "ndim" key ─────────────────────────────
 
@@ -210,6 +210,108 @@ class TestSceneDimensionsProperty:
             assert scene.dimensions is dims
             assert scene.dimensions.ndim == 3
             assert scene.dimensions.names == ["x", "y", "z"]
+
+    def test_dimensions_setter_persists_to_zarr(self, tmp_path: Path) -> None:
+        """Persist same-ndim metadata changes, the original silent failure."""
+        store_path = tmp_path / "test.luxar.zarr"
+        new_dims = Dimensions(
+            [
+                Dimension("row", unit="mm", range=(-5.0, 5.0), display=True),
+                Dimension("column", unit="mm", range=(0.0, 10.0), display=True),
+                Dimension(
+                    "time",
+                    unit="s",
+                    range=(0.0, 20.0),
+                    step=1.0,
+                    display=False,
+                    discrete=True,
+                ),
+            ]
+        )
+
+        with LuxarZarrCompiler(store_path) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.dimensions = new_dims
+
+            assert scene.dimensions is new_dims
+            assert scene.attrs["scene_dimensions"] == new_dims.to_dict()
+
+        store = zarr.open_group(str(store_path), mode="r")
+        assert store.attrs["scene_dimensions"] == new_dims.to_dict()
+
+    def test_dimensions_setter_after_finalize_warns_without_rewriting(
+        self, tmp_path: Path
+    ) -> None:
+        """After finalize, update the live scene but leave sealed metadata intact."""
+        store_path = tmp_path / "test.luxar.zarr"
+        original_dims = Dimensions.default_3d()
+        new_dims = Dimensions(
+            [
+                Dimension("row", unit="mm", display=True),
+                Dimension("column", unit="mm", display=True),
+                Dimension("depth", unit="mm", display=True),
+            ]
+        )
+
+        with LuxarZarrCompiler(store_path) as compiler:
+            scene = compiler.create_scene(dimensions=original_dims)
+
+        with pytest.warns(UserWarning, match="scene_dimensions"):
+            scene.dimensions = new_dims
+
+        assert scene.dimensions is new_dims
+        assert scene.attrs["scene_dimensions"] == new_dims.to_dict()
+        store = zarr.open_group(str(store_path), mode="r")
+        assert store.attrs["scene_dimensions"] == original_dims.to_dict()
+
+    def test_dimensions_setter_rejects_ndim_change_after_geometry(
+        self, tmp_path: Path
+    ) -> None:
+        """Reject a dimensionality change once geometry is authored, but still
+        allow same-ndim metadata updates (and never corrupt the store)."""
+        store_path = tmp_path / "test.luxar.zarr"
+        original_dims = Dimensions.default_3d()
+        four_d_dims = Dimensions(
+            [
+                Dimension("x", unit="mm", display=True),
+                Dimension("y", unit="mm", display=True),
+                Dimension("z", unit="mm", display=True),
+                Dimension("time", unit="s", step=1.0, display=False, discrete=True),
+            ]
+        )
+        same_ndim_dims = Dimensions(
+            [
+                Dimension("row", unit="um", range=(-1.0, 1.0), display=True),
+                Dimension("column", unit="um", range=(-1.0, 1.0), display=True),
+                Dimension("depth", unit="um", range=(-1.0, 1.0), display=True),
+            ]
+        )
+
+        with LuxarZarrCompiler(store_path) as compiler:
+            scene = compiler.create_scene(dimensions=original_dims)
+            scene.add_points("pts", np.zeros((5, 3), dtype=np.float32))
+
+            # ndim change with geometry present must be rejected...
+            with pytest.raises(ValueError, match="dimensionality"):
+                scene.dimensions = four_d_dims
+
+            # ...leaving the live object unchanged and, crucially, never
+            # persisting the 4D dict (a persist-before-raise bug would have
+            # written it into the attr cache). The final store check below
+            # can't see that transient write on its own, so assert it here.
+            assert scene.dimensions is original_dims
+            assert scene.dimensions.ndim == 3
+            assert scene.attrs.get("scene_dimensions") != four_d_dims.to_dict()
+
+            # Same-ndim metadata changes still succeed and persist.
+            scene.dimensions = same_ndim_dims
+            assert scene.dimensions is same_ndim_dims
+            assert scene.attrs["scene_dimensions"] == same_ndim_dims.to_dict()
+
+        # After finalization the store must reflect a valid 3D scene, never 4D.
+        store = zarr.open_group(str(store_path), mode="r")
+        assert len(store.attrs["scene_dimensions"]["dimensions"]) == 3
+        assert store.attrs["scene_dimensions"] == same_ndim_dims.to_dict()
 
     def test_dimensions_getter_enforces_initialization_invariant(
         self, tmp_path: Path
