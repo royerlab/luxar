@@ -79,6 +79,13 @@ func TestStartServerServesSameOriginNoCORS(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(viewer, "index.html"), []byte("<html>ok</html>"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	assets := filepath.Join(viewer, "assets")
+	if err := os.MkdirAll(assets, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(assets, "app.01234567.js"), []byte("export {};"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(data, ".zattrs"), []byte(`{"type":"scene"}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -106,9 +113,32 @@ func TestStartServerServesSameOriginNoCORS(t *testing.T) {
 	if len(body) == 0 {
 		t.Fatal("expected non-empty data body")
 	}
-	// ...with NO cross-origin header (same-origin needs none).
+	// ...with NO cross-origin header (same-origin needs none), but with forced
+	// revalidation because a scene can be replaced in place under the same URL.
 	if got := resp.Header.Get("Access-Control-Allow-Origin"); got != "" {
 		t.Fatalf("unexpected CORS header %q; same-origin bundle must not emit one", got)
+	}
+	if got := resp.Header.Get("Cache-Control"); got != "no-cache" {
+		t.Fatalf("data Cache-Control = %q, want no-cache", got)
+	}
+
+	// Content-hashed viewer assets are immutable and must not pay a revalidation
+	// round trip on every launch.
+	queryStart := indexOf(viewerURL, "?")
+	if queryStart < 0 {
+		t.Fatalf("viewer URL has no query string: %q", viewerURL)
+	}
+	assetURL := viewerURL[:queryStart] + "assets/app.01234567.js"
+	assetResp, err := http.Get(assetURL)
+	if err != nil {
+		t.Fatalf("GET viewer asset: %v", err)
+	}
+	defer assetResp.Body.Close()
+	if assetResp.StatusCode != http.StatusOK {
+		t.Fatalf("GET viewer asset status = %d, want 200", assetResp.StatusCode)
+	}
+	if got := assetResp.Header.Get("Cache-Control"); got == "no-cache" {
+		t.Fatal("content-hashed viewer asset must not be forced to revalidate")
 	}
 }
 

@@ -25,7 +25,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from starlette.datastructures import MutableHeaders
-from starlette.types import ASGIApp
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from .network_simulation import (
     NetworkSimulationMiddleware,
@@ -42,7 +42,7 @@ from .utils import (
 
 
 class _NoCacheMiddleware:
-    """Force browser revalidation of every response (``Cache-Control: no-cache``).
+    """Force browser revalidation unless a response declares its own policy.
 
     Starlette's ``StaticFiles`` sends ``ETag``/``Last-Modified`` but no
     ``Cache-Control``, so browsers fall back to HEURISTIC freshness (a
@@ -70,6 +70,7 @@ class _NoCacheMiddleware:
 
         async def send_with_no_cache(message: MutableMapping[str, Any]) -> None:
             if message["type"] == "http.response.start":
+                message.setdefault("headers", [])
                 headers = MutableHeaders(scope=message)
                 if "cache-control" not in headers:
                     headers["cache-control"] = "no-cache"
@@ -114,9 +115,6 @@ def _add_cors(api: FastAPI, cors_origin: str = _DEFAULT_CORS_ORIGIN) -> None:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    # Every server variant funnels through _add_cors, so this is the one
-    # chokepoint where the no-cache policy reaches data AND viewer mounts.
-    api.add_middleware(_NoCacheMiddleware)
 
 
 # Genuine loopback addresses only. The all-interfaces sentinel (0.0.0.0 / ::)
@@ -200,7 +198,11 @@ def _validate_serve_path(path: Path, *, allow_sensitive_path: bool = False) -> N
 
 
 class DirectoryListingStaticFiles(StaticFiles):
-    """Static files handler with JSON directory listing support."""
+    """Mutable data files with JSON listings and forced revalidation."""
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        """Serve this data mount through the revalidation middleware."""
+        await _NoCacheMiddleware(super().__call__)(scope, receive, send)
 
     async def get_response(self, path: str, scope: MutableMapping[str, Any]) -> Any:
         """Override to provide directory listing."""
