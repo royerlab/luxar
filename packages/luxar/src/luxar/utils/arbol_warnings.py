@@ -12,8 +12,9 @@ Two entry points:
 - :func:`install_arbol_warnings` — process-wide install for application entry
   points (the ``luxar`` CLI callback).
 - :func:`arbol_warnings` — a context manager / decorator that scopes the
-  override to a block (used on the compiler's public write methods so
-  Python-API scene builds get arbol-styled warnings too).
+  override to a block (applied to the arbol-tree-producing public Python API
+  entry points: the compiler's write methods, ``fit_gaussian_splats``,
+  ``generate_seeds``, and ``save_gsplats``).
 
 Both engage only when Python's *default* display path is active. If anything
 else owns warning display — a user-installed ``showwarning`` hook, or a

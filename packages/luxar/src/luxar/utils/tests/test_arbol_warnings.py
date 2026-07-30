@@ -115,11 +115,14 @@ class TestInstall:
             assert warnings.showwarning is _arbol_showwarning
 
     def test_skips_when_recorder_active(self) -> None:
-        # Under pytest's per-item capture a recorder is active, so the
-        # process-wide install must refuse to divert warnings from it.
-        before = warnings.showwarning
-        install_arbol_warnings()
-        assert warnings.showwarning is before
+        # With a recorder active, the process-wide install must refuse to
+        # divert warnings from it. An explicit catch_warnings(record=True)
+        # guarantees the recorder regardless of pytest's warnings plugin
+        # (and restores state, so a wrongly-engaging install can't leak).
+        with warnings.catch_warnings(record=True):
+            before = warnings.showwarning
+            install_arbol_warnings()
+            assert warnings.showwarning is before
 
 
 class TestPytestWarnsIntegration:
