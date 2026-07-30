@@ -414,6 +414,100 @@ def test_uniform_cholesky_accepted(tmp_path) -> None:
         )
 
 
+def test_multi_additive_bad_later_level_leaves_no_partial_node(tmp_path) -> None:
+    """A bad LATER additive level must leave NO partial node on disk.
+
+    Reproduces the reviewer's scenario through the PUBLIC scene API: a
+    two-level additive-ladder ``GSplatData`` whose level 0 is valid and whose
+    level 1 has a zero on the Cholesky diagonal. The writer's per-level pass
+    validates only the level it is about to write, so without an all-or-nothing
+    pre-flight gate the invalid level 1 would be caught only AFTER the parent
+    node group and a complete ``additive_0/`` were committed — a half-written
+    node. This locks in the pre-flight gate: no group is created when any
+    sub-LOD is invalid.
+    """
+    from luxar.gsplats.gsplat_data import AdditiveSubLOD, GSplatData
+
+    n = 10
+    good = AdditiveSubLOD(
+        centers=_gsplat_centers(n),
+        amplitudes=np.ones(n, dtype=np.float32),
+        cholesky_factors=_packed_chol(n),
+    )
+    bad_chol = _packed_chol(n)
+    bad_chol[2, 2] = 0.0  # diagonal slot for d=3 is column 2 — singular covariance
+    bad = AdditiveSubLOD(
+        centers=_gsplat_centers(n),
+        amplitudes=np.ones(n, dtype=np.float32),
+        cholesky_factors=bad_chol,
+    )
+    data = GSplatData(additive_sublods=[good, bad])
+
+    store = tmp_path / "bad.luxar.zarr"
+    with LuxarZarrCompiler(store, enable_spatial_index=False) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        with pytest.raises(
+            (ValueError, ValidationError),
+            match="Cholesky diagonal must be positive",
+        ):
+            scene.add_gsplats_from_data("bad", data)
+    # Transactional: the invalid LATER level was caught before any group was
+    # created, so neither the parent node nor a committed additive_0/ exists.
+    assert not (store / "bad").exists()
+    assert not (store / "bad" / "additive_0").exists()
+
+
+def test_multi_additive_bad_later_level_colors_leaves_no_partial_node(
+    tmp_path,
+) -> None:
+    """A bad LATER additive level's COLORS must leave NO partial node on disk.
+
+    Locks the COLORS half of the all-or-nothing gate (the sibling of
+    ``test_multi_additive_bad_later_level_leaves_no_partial_node``, which covers
+    the arrays half). ``validate_gsplat_inputs`` does NOT inspect colors —
+    colors are validated only deep inside ``write_gsplat_arrays``, AFTER that
+    level's centers/amplitudes/Cholesky are already on disk. So without hoisting
+    the colors check into the pre-flight gate, a valid level 0 followed by a
+    level 1 with bad colors would commit the parent node and a complete
+    ``additive_0/`` before failing — a half-written node. This asserts the
+    hoisted check fires up front instead.
+
+    A 5-channel colors array can't reach the writer (``GSplatData`` rejects it at
+    construction when it concatenates the ladder's colors), so the invalid case
+    here is NaN colors on level 1, which survives construction and reaches the
+    writer.
+    """
+    from luxar.gsplats.gsplat_data import AdditiveSubLOD, GSplatData
+
+    n = 10
+    good = AdditiveSubLOD(
+        centers=_gsplat_centers(n),
+        amplitudes=np.ones(n, np.float32),
+        cholesky_factors=_packed_chol(n),
+        colors=np.ones((n, 3), np.float32),
+    )
+    bad = AdditiveSubLOD(
+        centers=_gsplat_centers(n),
+        amplitudes=np.ones(n, np.float32),
+        cholesky_factors=_packed_chol(n),
+        colors=np.full((n, 3), np.nan, np.float32),  # invalid: non-finite colors
+    )
+    data = GSplatData(additive_sublods=[good, bad])
+
+    store = tmp_path / "bad.luxar.zarr"
+    with LuxarZarrCompiler(store, enable_spatial_index=False) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        with pytest.raises(
+            (ValueError, ValidationError),
+            match="colors: Contains",
+        ):
+            scene.add_gsplats_from_data("bad", data)
+    # Transactional: the bad later-level colors were caught before any group was
+    # created, so neither the parent node nor a committed additive_0/ exists.
+    assert not (store / "bad").exists()
+    assert not (store / "bad" / "additive_0").exists()
+
+
 # =============================================================================
 # Valid happy-path
 # =============================================================================

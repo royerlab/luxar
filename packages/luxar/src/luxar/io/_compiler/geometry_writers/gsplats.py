@@ -192,12 +192,22 @@ def write_gsplat_leaf_subtree(
 
     Returns the aggregate metadata; the caller records it in the metadata cache.
     """
-    from ..gsplat_tree import write_gsplat_leaf
+    from ..gsplat_tree import preflight_validate_leaf, write_gsplat_leaf
 
     # Fail fast on invalid render attrs (+ reserved writer-stamp collisions)
     # BEFORE creating the group, so a bad value cannot leave a partial node
     # on disk. (The compiler entry already validated the path segments.)
     validate_render_attrs(attrs, reserved_attrs=GSPLATS_RESERVED_ATTRS)
+
+    # Preflight EVERY sub-LOD's arrays/colors + cross-level consistency BEFORE
+    # creating the parent group, so an invalid later additive level cannot leave
+    # a half-written node (parent group + a committed additive_0/) on disk. This
+    # closes the input-validation half-writes (arrays, colors, and cross-level
+    # consistency all checked pre-write — stricter than the flat write_gsplats
+    # gate, which still validates colors post-write); it is NOT fully
+    # transactional, though (transform/nd_transform + custom-colormap-LUT
+    # resolution still run post-write — the same F7 residual noted in write_gsplats).
+    preflight_validate_leaf(leaf)
 
     path = path.lstrip("/")
     group = ctx.store.require_group(path)
