@@ -116,6 +116,21 @@ describe('initWasm + setWasmJsUrl — URL pass-through discriminator [wasm.md G2
     }
   });
 
+  it('[G23] initialized stale shim missing a required kernel falls back immediately', async () => {
+    // This mimics a pre-cap-suppression gitignored public/wasm build: the JS
+    // shim imports and its default initializer succeeds, but the newer kernel
+    // export is absent. The loader must reject it now rather than returning a
+    // partial module that throws TypeError during a later projection.
+    setWasmJsUrl('data:text/javascript,export default async function init() {}');
+    try {
+      const wasm = await initWasm();
+      expect(wasm).toBeInstanceOf(TypeScriptFallback);
+      expect(typeof wasm.compute_cap_suppression).toBe('function');
+    } finally {
+      setWasmJsUrl('');
+    }
+  });
+
   it('[G24] non-empty override is reflected immediately (state is module-local, not cached on first use)', async () => {
     // Pin that setWasmJsUrl mutates module-local state at call time, not on
     // first initWasm. A regression that captured the URL inside initWasm

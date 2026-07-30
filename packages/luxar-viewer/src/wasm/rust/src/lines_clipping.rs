@@ -341,10 +341,12 @@ pub fn lerp_vec3(a: &[f32], b: &[f32], t: f32) -> Vec<f32> {
 /// Calculate 3D Euclidean distance.
 #[wasm_bindgen]
 pub fn distance_3d(a: &[f32], b: &[f32]) -> f32 {
-    let dx = b[0] - a[0];
-    let dy = b[1] - a[1];
-    let dz = b[2] - a[2];
-    (dx * dx + dy * dy + dz * dz).sqrt()
+    // Match the TypeScript mirror: widen before subtraction/squaring so
+    // component deltas above sqrt(f32::MAX) stay finite.
+    let dx = b[0] as f64 - a[0] as f64;
+    let dy = b[1] as f64 - a[1] as f64;
+    let dz = b[2] as f64 - a[2] as f64;
+    (dx * dx + dy * dy + dz * dz).sqrt() as f32
 }
 
 /// Batch interpolate scalar attributes for visible segments.
@@ -627,6 +629,18 @@ pub fn compute_cap_suppression(
     }
 
     let visible_count = out_idx;
+    debug_assert!(
+        output_start.len() >= visible_count,
+        "output_start too small: {} < {}",
+        output_start.len(),
+        visible_count
+    );
+    debug_assert!(
+        output_end.len() >= visible_count,
+        "output_end too small: {} < {}",
+        output_end.len(),
+        visible_count
+    );
 
     // One unit direction per visible segment, computed ONCE (sequential, one
     // sqrt each). The joint test then needs no normalisation at all: the "away"
@@ -947,6 +961,17 @@ mod tests {
     }
 
     #[test]
+    fn test_distance_3d_huge_coordinates_no_f32_overflow() {
+        let a = [-1e30f32, 0.0, 0.0];
+        let b = [1e30f32, 0.0, 0.0];
+        let distance = distance_3d(&a, &b);
+
+        assert!(distance.is_finite());
+        let expected = (b[0] as f64 - a[0] as f64) as f32;
+        assert_eq!(distance, expected);
+    }
+
+    #[test]
     fn test_calculate_segment_lengths() {
         // 3 segments with known distances
         let starts: Vec<f32> = vec![
@@ -1062,6 +1087,29 @@ mod tests {
         assert_eq!(out_end[1], 0.0);
     }
 
+    /// The lower clamp is load-bearing for a 180-degree fold-back: the raw
+    /// value is -1 and must become 0 rather than darkening below the soft cap.
+    #[test]
+    fn test_compute_cap_suppression_fold_back_lower_clamp() {
+        let mut out_start = vec![0.0f32; 2];
+        let mut out_end = vec![0.0f32; 2];
+        compute_cap_suppression(
+            &[0, 1, 1, 2],
+            &[1, 1],
+            &[0.0, 0.0],
+            &[1.0, 1.0],
+            2,
+            3,
+            &[0.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+            &[1.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            &mut out_start,
+            &mut out_end,
+        );
+
+        assert_eq!(out_end[0], 0.0);
+        assert_eq!(out_start[1], 0.0);
+    }
+
     /// A 90-degree bend keeps the cap; a branch point keeps the cap.
     #[test]
     fn test_compute_cap_suppression_bend_and_branch() {
@@ -1098,6 +1146,50 @@ mod tests {
             &mut hub_end,
         );
         assert_eq!(hub, vec![0.0, 0.0, 0.0]);
+    }
+
+    /// A visible neighbour trimmed away from the shared vertex is not a joint.
+    #[test]
+    fn test_compute_cap_suppression_trimmed_neighbour() {
+        let mut out_start = vec![0.0f32; 2];
+        let mut out_end = vec![0.0f32; 2];
+        compute_cap_suppression(
+            &[0, 1, 1, 2],
+            &[1, 1],
+            &[0.0, 0.4],
+            &[1.0, 1.0],
+            2,
+            3,
+            &[0.0, 0.0, 0.0, 1.4, 0.0, 0.0],
+            &[1.0, 0.0, 0.0, 2.0, 0.0, 0.0],
+            &mut out_start,
+            &mut out_end,
+        );
+
+        assert_eq!(out_end[0], 0.0);
+        assert_eq!(out_start[1], 1.0); // the trimmed endpoint itself is capped
+    }
+
+    /// A zero-length neighbour has no direction and keeps the cap.
+    #[test]
+    fn test_compute_cap_suppression_degenerate_neighbour() {
+        let mut out_start = vec![0.0f32; 2];
+        let mut out_end = vec![0.0f32; 2];
+        compute_cap_suppression(
+            &[0, 1, 1, 2],
+            &[1, 1],
+            &[0.0, 0.0],
+            &[1.0, 1.0],
+            2,
+            3,
+            &[0.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+            &[1.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+            &mut out_start,
+            &mut out_end,
+        );
+
+        assert_eq!(out_end[0], 0.0);
+        assert_eq!(out_start[1], 0.0);
     }
 
     /// A gentle 45-degree bend interpolates: suppression = cos(45°) ≈ 0.7071
