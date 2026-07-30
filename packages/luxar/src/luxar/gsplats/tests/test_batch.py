@@ -2414,3 +2414,42 @@ class TestStatusPartitionMergeDetection:
 
         st = check_batch_status(out)
         assert st.merge_status == "completed"
+
+
+class TestStatusPackedSacctMapping:
+    def test_packed_task_states_map_through_array_element(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """With tasks_per_job > 1, sacct states are keyed by array ELEMENT index,
+        so each flat task id must map through task_id // tasks_per_job. Pre-fix,
+        task ids beyond the element range came back unknown and the rest read
+        the wrong element's state."""
+        from luxar.gsplats.batch import status as status_mod
+        from luxar.gsplats.batch.manifest import BatchManifest, save_manifest
+        from luxar.gsplats.batch.status import check_batch_status
+
+        out = tmp_path / "batch"
+        (out / "tiles").mkdir(parents=True)
+        m = BatchManifest(
+            input_path="/d/x.zarr",
+            output_dir=str(out),
+            n_timepoints=1,
+            n_channels=1,
+            spatial_shape=(64, 64, 64),
+            n_tiles=4,
+            total_tasks=4,
+            tasks_per_job=3,
+            slurm_partition="gpu",
+        )
+        m.array_job_id = 12345
+        save_manifest(m, out)
+
+        # Element 0 (tasks 0-2) failed; element 1 (task 3) is running.
+        monkeypatch.setattr(
+            status_mod, "_query_sacct", lambda job_id: {0: "FAILED", 1: "RUNNING"}
+        )
+
+        st = check_batch_status(out)
+        assert st.failed == 3
+        assert st.running == 1
+        assert st.unknown == 0
