@@ -1006,15 +1006,12 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         try:
             # A prior aborted attempt may have marked the store incomplete; a
             # real finalize supersedes that. Clearing it lives INSIDE the outer
-            # boundary so any later failure re-stamps it (see the handler).
-            try:
-                if "incomplete" in self.store.attrs:
-                    del self.store.attrs["incomplete"]
-            except Exception:
-                # Best-effort clear. Only swallow ordinary errors — a
-                # KeyboardInterrupt here must fall through to the outer handler
-                # so it re-stamps the marker instead of silently continuing.
-                pass
+            # boundary, and a failed clear must FAIL the finalize (the handler
+            # re-stamps and raises): a "successful" finalize that left the
+            # marker behind would set _is_finalized and produce a valid store
+            # that LuxarScene.load permanently rejects, with no way to retry.
+            if "incomplete" in self.store.attrs:
+                del self.store.attrs["incomplete"]
 
             # Auto-inject default hover overlay if labels exist but no hover
             # overlay defined. Inside the boundary: if it raises, the store is
@@ -1077,9 +1074,6 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             if hasattr(store, "close"):
                 store.close()
 
-            self._is_finalized = True
-            aprint(f"✅ Zarr store finalized at {self._store_path}")
-
         except BaseException as e:
             # ANY failure (marker clearing, hover injection, or a finalize
             # phase) leaves the store half-finalized; mark it so
@@ -1103,6 +1097,19 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             if isinstance(e, Exception):
                 raise ValueError(f"Could not finalize Zarr store: {e}") from e
             raise
+
+        # Finalization is complete. The flag flips OUTSIDE the failure
+        # boundary: nothing past this point may re-enter the handler above,
+        # which would stamp `incomplete` on a complete store that a repeat
+        # finalize() (early return) could never un-mark.
+        self._is_finalized = True
+        try:
+            aprint(f"✅ Zarr store finalized at {self._store_path}")
+        except Exception:
+            # Purely informational — a broken stdout (e.g. BrokenPipeError)
+            # must not fail an already-complete finalization. A
+            # KeyboardInterrupt here still propagates; the store stays valid.
+            pass
 
     @property
     def store_path(self) -> str:
