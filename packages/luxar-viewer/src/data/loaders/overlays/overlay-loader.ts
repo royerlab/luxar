@@ -9,6 +9,21 @@ import * as zarr from '../../zarr';
 import { hasContentsMethod } from '../../../types/zarr';
 import { log, Modules } from '../../../utils/log';
 
+/**
+ * Maximum allowed length, in CHARACTERS, of an overlay's raw `html` value.
+ *
+ * The browser HTML parser (`template.innerHTML = ...` in
+ * `OverlayManager.sanitizeHtml`) runs synchronously on the main thread and is
+ * superlinear in nesting depth, so a large deeply-nested `html` string can hang
+ * the tab (measured ~1.5 s at 220 KB, ~6 s at 440 KB). Every tag can be an
+ * allowlisted one, so sanitizer hardening cannot help — the ONLY effective bound
+ * is a cap on the raw input size BEFORE it reaches the parser. The largest
+ * legitimate overlay is a few hundred bytes, so 64 KiB is a very generous ceiling.
+ * Oversized values are rejected outright (never truncated — a mid-markup cut can
+ * yield its own broken, deeply-nested fragment).
+ */
+export const MAX_OVERLAY_HTML_CHARS = 64 * 1024;
+
 /** Configuration for a single overlay, as stored in zarr .zattrs */
 export interface OverlayConfig {
   /** Overlay name (zarr group name) */
@@ -127,6 +142,33 @@ export async function loadOverlayConfigs(
           blend_mode: attrs.blend_mode as string | undefined,
           html: attrs.html as string | undefined,
         };
+
+        // Reject an oversized `html` value before it can reach the DOM parser.
+        // Parse cost is superlinear in nesting depth and this runs on the main
+        // thread; the only effective bound is on the raw input size. See
+        // MAX_OVERLAY_HTML_CHARS.
+        if (config.html !== undefined && config.html.length > MAX_OVERLAY_HTML_CHARS) {
+          log.warning(
+            Modules.SCENE_LOADER,
+            `Overlay "${childName}" html is ${config.html.length} chars, exceeding the ` +
+              `${MAX_OVERLAY_HTML_CHARS}-char limit — dropping html to protect the main thread`
+          );
+          config.html = undefined;
+        }
+
+        // Apply the same cap to `text`: for an overlay_html overlay `text` is
+        // consumed as the hover template (`config.html ?? config.text`) and
+        // reaches the DOM via innerHTML through sanitizeHtml, so it carries the
+        // identical parse-cost threat; even for a plain text overlay a multi-MB
+        // value is unreasonable and 64 KiB is far above any legitimate overlay.
+        if (config.text !== undefined && config.text.length > MAX_OVERLAY_HTML_CHARS) {
+          log.warning(
+            Modules.SCENE_LOADER,
+            `Overlay "${childName}" text is ${config.text.length} chars, exceeding the ` +
+              `${MAX_OVERLAY_HTML_CHARS}-char limit — dropping text to protect the main thread`
+          );
+          config.text = undefined;
+        }
 
         configs.push(config);
       } catch {

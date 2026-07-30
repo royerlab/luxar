@@ -9,7 +9,7 @@
 import { sceneDimsManager } from '../scene/scene-dims-manager';
 import { log, Modules } from '../utils/log';
 import { getViewerContainer } from '../utils/viewer-container';
-import type { OverlayConfig } from '../data/loaders';
+import { MAX_OVERLAY_HTML_CHARS, type OverlayConfig } from '../data/loaders';
 
 /** Font preset mappings to CSS font-family stacks */
 export const FONT_PRESETS: Record<string, string> = {
@@ -599,6 +599,21 @@ export class OverlayManager {
    * unsanitized.
    */
   private sanitizeHtml(html: string): string {
+    // Defensive per-render guard: reject an oversized value BEFORE parsing.
+    // `template.innerHTML = html` is synchronous, main-thread, and superlinear
+    // in nesting depth, so a large deeply-nested string can hang the tab. The
+    // loader already caps `html` once per scene load, but this path also runs on
+    // every hover-content change (`updateHoverContent`), so we re-check here.
+    // See MAX_OVERLAY_HTML_CHARS.
+    if (html.length > MAX_OVERLAY_HTML_CHARS) {
+      log.warning(
+        Modules.UI,
+        `[Overlay] Refusing to sanitize ${html.length}-char html ` +
+          `(limit ${MAX_OVERLAY_HTML_CHARS}) — returning empty to protect the main thread`
+      );
+      return '';
+    }
+
     const template = document.createElement('template');
     template.innerHTML = html;
 

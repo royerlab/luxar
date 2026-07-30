@@ -20,8 +20,11 @@ vi.mock('zarrita', async () => {
 });
 
 import { open as zarrOpen } from 'zarrita';
-import { loadOverlayConfigs } from '../../../../../data/loaders/overlays/overlay-loader';
-import { log } from '../../../../../utils/log';
+import {
+  loadOverlayConfigs,
+  MAX_OVERLAY_HTML_CHARS,
+} from '../../../../../data/loaders/overlays/overlay-loader';
+import { log, Modules } from '../../../../../utils/log';
 
 const mockOpen = vi.mocked(zarrOpen);
 
@@ -211,5 +214,61 @@ describe('loadOverlayConfigs', () => {
     // The per-child failure was warned about, naming the broken overlay.
     expect(warnSpy).toHaveBeenCalledTimes(1);
     expect(warnSpy.mock.calls[0][1]).toContain('broken');
+  });
+
+  it('drops an oversized html value and warns, naming the overlay and sizes (issue #768)', async () => {
+    const oversized = 'a'.repeat(MAX_OVERLAY_HTML_CHARS + 1);
+    const store = makeStoreWithContents(['overlays/huge/.zattrs']);
+    wireOpen({
+      'overlays/huge': { type: 'overlay_html', z_index: 0, html: oversized },
+    });
+
+    const result = await loadOverlayConfigs(store, makeRootLocation());
+
+    // The overlay is still loaded, but its oversized html is stripped so
+    // nothing that could hang the parser reaches the DOM.
+    expect(result.map((c) => c.name)).toEqual(['huge']);
+    expect(result[0].html).toBeUndefined();
+    // Exactly one warning, on the SCENE_LOADER module, naming the overlay and both sizes.
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(warnSpy.mock.calls[0][0]).toBe(Modules.SCENE_LOADER);
+    const msg = String(warnSpy.mock.calls[0][1]);
+    expect(msg).toContain('huge');
+    expect(msg).toContain(String(oversized.length));
+    expect(msg).toContain(String(MAX_OVERLAY_HTML_CHARS));
+  });
+
+  it('drops an oversized text value and warns, naming the overlay and sizes (issue #768)', async () => {
+    // `text` is consumed as an overlay_html hover template and reaches the DOM
+    // via innerHTML, so it carries the same DoS threat as `html`.
+    const oversized = 'a'.repeat(MAX_OVERLAY_HTML_CHARS + 1);
+    const store = makeStoreWithContents(['overlays/wordy/.zattrs']);
+    wireOpen({
+      'overlays/wordy': { type: 'overlay_html', z_index: 0, text: oversized },
+    });
+
+    const result = await loadOverlayConfigs(store, makeRootLocation());
+
+    expect(result.map((c) => c.name)).toEqual(['wordy']);
+    expect(result[0].text).toBeUndefined();
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(warnSpy.mock.calls[0][0]).toBe(Modules.SCENE_LOADER);
+    const msg = String(warnSpy.mock.calls[0][1]);
+    expect(msg).toContain('wordy');
+    expect(msg).toContain(String(oversized.length));
+    expect(msg).toContain(String(MAX_OVERLAY_HTML_CHARS));
+  });
+
+  it('preserves an html value at the cap length (issue #768)', async () => {
+    const atCap = 'a'.repeat(MAX_OVERLAY_HTML_CHARS);
+    const store = makeStoreWithContents(['overlays/ok/.zattrs']);
+    wireOpen({
+      'overlays/ok': { type: 'overlay_html', z_index: 0, html: atCap },
+    });
+
+    const result = await loadOverlayConfigs(store, makeRootLocation());
+
+    expect(result[0].html).toBe(atCap);
+    expect(warnSpy).not.toHaveBeenCalled();
   });
 });
