@@ -105,6 +105,9 @@ Provides detailed validation functions specifically for write-time validation, w
 - `validate_radii_for_writing()`: Validate point radii (arrays AND broadcast scalars)
 - `validate_sharpness_for_writing()`: Validate sharpness (arrays AND broadcast scalars)
 - `validate_widths_for_writing()`: Validate line widths (arrays AND broadcast scalars)
+- `validate_cholesky_for_writing()`: Validate packed gsplat Cholesky factors —
+  finiteness across the whole array plus a strictly-positive diagonal (the
+  GSplats sibling of the radii/widths checks)
 - `validate_node_name()`: The single node-naming chokepoint — rejects empty/
   whitespace-only names (an empty name resolves to the zarr ROOT group and
   would clobber the scene root), `/`, dot-prefixed names (zarr reserves
