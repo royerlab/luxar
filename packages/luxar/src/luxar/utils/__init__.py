@@ -4,6 +4,7 @@ Note: As of v1.4.0, scalar broadcasting is handled by ArrayEncoder in luxar.enco
 The broadcast_*_to_points() functions have been removed (obsolete).
 """
 
+from .arbol_warnings import arbol_warnings, install_arbol_warnings
 from .array import (
     ensure_float32,
     validate_array_shape,
@@ -22,6 +23,9 @@ from .paths import (
 )
 
 __all__ = [
+    # From arbol_warnings
+    "arbol_warnings",
+    "install_arbol_warnings",
     # From array
     "ensure_float32",
     "validate_array_shape",
