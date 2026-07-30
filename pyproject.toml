@@ -182,7 +182,7 @@ exclude = [
     # are only meaningful in the source tree.
     "**/.gitignore",
     "**/.gitkeep",
-    # Demo data (~237 MB of Git-LFS catalogs/zarrs/parquets) must NOT ship in
+    # Demo data (~450 MB of Git-LFS catalogs/zarrs/parquets) must NOT ship in
     # the wheel: it blows past PyPI's 100 MB per-file limit, and in CI (no
     # `git lfs pull`) it would otherwise ship as broken ~130-byte pointer files.
     # Demo *scripts* stay; the data is fetched/regenerated separately.
