@@ -100,6 +100,7 @@ import numpy as np
 from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.demos import require_module
 from luxar.encoding import EncodingMode
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.utils.demos import (
@@ -311,12 +312,7 @@ def load_acto3d_heart_data() -> tuple[list[np.ndarray], tuple[float, ...]]:
         Tuple of (list of 3 channel volumes, effective voxel size after downsampling).
         Each volume is float32, normalised to [0, 1], shape ~(TARGET_SIZE,)*3.
     """
-    try:
-        import tifffile
-    except ImportError:
-        raise ImportError(
-            "tifffile is required for this demo.\nInstall with: pip install tifffile"
-        )
+    tifffile = require_module("tifffile")
 
     from scipy.ndimage import zoom
 

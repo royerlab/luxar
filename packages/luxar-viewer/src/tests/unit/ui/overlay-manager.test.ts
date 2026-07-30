@@ -20,7 +20,8 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { OverlayManager, FONT_PRESETS } from '../../../ui/overlay-manager';
-import type { OverlayConfig } from '../../../data/loaders';
+import { MAX_OVERLAY_HTML_CHARS, type OverlayConfig } from '../../../data/loaders';
+import { log, Modules } from '../../../utils/log';
 import type { SimpleDims } from '../../../types/dims';
 
 /**
@@ -930,5 +931,108 @@ describe('OverlayManager HTML sanitization (issue #720)', () => {
     expect(a!.textContent).toBe('link');
     expect(el.textContent).toContain('bold');
     expect(el.textContent).toContain('link');
+  });
+});
+
+describe('OverlayManager HTML size cap (issue #768)', () => {
+  let manager: OverlayManager;
+  let warnSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    document.body.innerHTML = '';
+    warnSpy = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    manager = new OverlayManager();
+  });
+
+  afterEach(() => {
+    manager.dispose();
+    warnSpy.mockRestore();
+  });
+
+  async function renderHtml(html: string): Promise<HTMLDivElement> {
+    await manager.loadOverlays([makeHtmlOverlay(html)], 'http://example.com');
+    return document.querySelector('[data-overlay-name="html-overlay"]') as HTMLDivElement;
+  }
+
+  it('rejects an html value over the cap (empty output + one warning)', async () => {
+    // A deeply-nested string past the cap would otherwise hang the parser.
+    // `sanitizeHtml` must refuse it before `template.innerHTML = html`.
+    const oversized = '<b>'.repeat(MAX_OVERLAY_HTML_CHARS); // length ≫ cap
+    expect(oversized.length).toBeGreaterThan(MAX_OVERLAY_HTML_CHARS);
+
+    const el = await renderHtml(oversized);
+
+    // Nothing oversized reached the DOM.
+    expect(el.innerHTML).toBe('');
+    expect(el.querySelector('b')).toBeNull();
+    // Exactly one warning, on the UI module, naming the offending size and cap.
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(warnSpy.mock.calls[0][0]).toBe(Modules.UI);
+    expect(String(warnSpy.mock.calls[0][1])).toContain(String(oversized.length));
+    expect(String(warnSpy.mock.calls[0][1])).toContain(String(MAX_OVERLAY_HTML_CHARS));
+  });
+
+  it('preserves a value of length EXACTLY the cap (boundary; not rejected)', async () => {
+    // Pad valid markup with a text node so total .length === cap exactly.
+    // Pins the guard as `>` (a `>=` regression would reject and warn here).
+    const wrapLen = '<span></span>'.length;
+    const atCap = `<span>${'x'.repeat(MAX_OVERLAY_HTML_CHARS - wrapLen)}</span>`;
+    expect(atCap.length).toBe(MAX_OVERLAY_HTML_CHARS);
+
+    const el = await renderHtml(atCap);
+
+    expect(el.querySelector('span')).not.toBeNull();
+    expect(el.querySelector('span')!.textContent!.length).toBe(MAX_OVERLAY_HTML_CHARS - wrapLen);
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it('rejects a value of length EXACTLY cap + 1 (boundary; rejected)', async () => {
+    const wrapLen = '<span></span>'.length;
+    const overCap = `<span>${'x'.repeat(MAX_OVERLAY_HTML_CHARS - wrapLen + 1)}</span>`;
+    expect(overCap.length).toBe(MAX_OVERLAY_HTML_CHARS + 1);
+
+    const el = await renderHtml(overCap);
+
+    expect(el.innerHTML).toBe('');
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(warnSpy.mock.calls[0][0]).toBe(Modules.UI);
+  });
+
+  it('rejects a non-string html value that would coerce past the cap (defense in depth)', async () => {
+    // Configs originate as untrusted .zattrs JSON: an array wrapping a huge
+    // payload has .length 1 (defeating a size-only check) but is coerced to
+    // the full string by the innerHTML assignment. The loader drops these,
+    // and sanitizeHtml must refuse them too.
+    const smuggled = ['<b>'.repeat(MAX_OVERLAY_HTML_CHARS)] as unknown as string;
+
+    const el = await renderHtml(smuggled);
+
+    expect(el.innerHTML).toBe('');
+    expect(el.querySelector('b')).toBeNull();
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(warnSpy.mock.calls[0][0]).toBe(Modules.UI);
+    expect(String(warnSpy.mock.calls[0][1])).toContain('non-string');
+  });
+
+  it('preserves normal markup and does not warn (existing behavior intact)', async () => {
+    const el = await renderHtml('<div><b>bold</b> <a href="https://example.org">link</a></div>');
+
+    expect(el.querySelector('div')).not.toBeNull();
+    expect(el.querySelector('b')!.textContent).toBe('bold');
+    expect(el.querySelector('a')!.getAttribute('href')).toBe('https://example.org');
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it('preserves a value just under the cap', async () => {
+    // A flat, allowlisted payload one character under the cap is parsed fully.
+    const filler = 'x'.repeat(MAX_OVERLAY_HTML_CHARS - '<span></span>'.length - 1);
+    const nearCap = `<span>${filler}</span>`;
+    expect(nearCap.length).toBeLessThan(MAX_OVERLAY_HTML_CHARS);
+
+    const el = await renderHtml(nearCap);
+
+    expect(el.querySelector('span')).not.toBeNull();
+    expect(el.querySelector('span')!.textContent).toBe(filler);
+    expect(warnSpy).not.toHaveBeenCalled();
   });
 });

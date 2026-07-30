@@ -172,7 +172,7 @@ Before running E2E tests:
 
 1. ✅ Generate example datasets: `make run-examples`
 2. ✅ Install Playwright browsers: `pnpm exec playwright install chromium`
-3. ✅ Ensure ports 5173 and 9000 are free
+3. ✅ Ensure ports 5173 and 9000 are free or already serve this checkout (foreign checkout servers are rejected)
 4. ✅ Run `pnpm` commands from `packages/luxar-viewer/` (from the project root, use `make test-e2e` instead — there is no root `package.json`)
 
 ---
@@ -260,6 +260,20 @@ test.describe('My Feature Tests', () => {
 
 ## 🐛 Common Issues & Solutions
 
+### Issue: Server identity check or port startup fails
+
+Playwright reuses ports 5173 and 9000 only when their checkout-specific marker
+matches the tree under test. Inspect a busy port before stopping it; another
+active worktree may own the process:
+
+```bash
+lsof -nP -iTCP:5173 -sTCP:LISTEN
+lsof -nP -iTCP:9000 -sTCP:LISTEN
+```
+
+Coordinate with the owner, stop only the stale process, and rerun the test. Do
+not blindly kill every listener on a shared development machine.
+
 ### Issue: Tests timeout waiting for initialization
 **Solution**: Check that:
 - Vite dev server started (port 5173)
@@ -268,7 +282,6 @@ test.describe('My Feature Tests', () => {
 
 ```bash
 make run-examples  # Generate datasets
-lsof -ti:5173 | xargs kill -9  # Kill stuck servers
 ```
 
 ### Issue: Visual regression tests fail
