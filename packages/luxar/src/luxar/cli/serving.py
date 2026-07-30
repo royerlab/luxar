@@ -380,13 +380,17 @@ def _serve_viewer(
 
 
 def _resolve_mount_root(path: Path) -> Path:
-    """Root directory actually mounted by the data server for ``path``.
+    """Resolve and revalidate the directory mounted by the data server.
 
-    A directory (zarr store or plain folder) is mounted itself; a single file
-    is served from its parent directory. Validation must run against this
-    root, not the argument, so the guard covers what is actually exposed.
+    Public CLI paths reject files before starting the server, but the mount is
+    constructed on a background thread. Re-checking here closes the
+    check-then-use window: if the path has become a file, fail instead of
+    silently mounting its parent directory and exposing siblings.
     """
-    return path if path.is_dir() else path.parent
+    mount_root = path.resolve()
+    if not mount_root.is_dir():
+        raise ValueError(f"Data mount root must be a directory: {path}")
+    return mount_root
 
 
 def _serve_data(
@@ -402,13 +406,14 @@ def _serve_data(
 ) -> None:
     """Internal function to serve data in background.
 
-    The mount root is the dataset itself (a ``.zarr`` store is served AT the
-    server root, so the data URL is ``http://host:port`` with no store-name
-    suffix). Serving the parent directory would expose every sibling file of
-    the dataset over HTTP.
+    The validated mount root is the dataset directory itself (a ``.zarr`` store
+    is served AT the server root, so the data URL is ``http://host:port`` with no
+    store-name suffix). A file path is rejected again when the server constructs
+    the mount; it never falls back to the parent directory, which would expose
+    every sibling file of the dataset over HTTP.
 
     Args:
-        path: Path to data directory or zarr file
+        path: Path to the data directory or directory-backed Zarr store
         host: Host address
         port: Port number
         bandwidth_mbps: Bandwidth limit in Mbps (optional)
