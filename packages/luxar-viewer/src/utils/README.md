@@ -120,8 +120,11 @@ loses a `DOMException`'s name, and `JSON.stringify(error)` yields `"{}"` because
 `name` / `message` / `stack` are non-enumerable. The debug console's Error branch
 uses these so a `log.*(…, error)` call keeps its message.
 
-- `getErrorMessage(error)` — the message; never throws (guards the
-  null-prototype `String()` TypeError, since this runs inside `catch` blocks)
+All three never throw — they run inside `catch` blocks and the patched
+`console.*` methods, so a hostile accessor or Proxy trap (or the null-prototype
+`String()` TypeError) must not break the very logging path reporting the error.
+
+- `getErrorMessage(error)` — the message
 - `formatErrorForDisplay(error)` — one-line `name: message`, name alone when the
   message is empty
 - `getErrorStack(error)` — the stack, including duck-typed carriers, else

@@ -22,14 +22,15 @@
  * `instanceof Error` per WebIDL, so one branch covers it.
  *
  * Never throws. `String(x)` raises `TypeError: Cannot convert object to
- * primitive value` for a null-prototype object, and this runs inside `catch`
- * blocks and logging paths — a helper whose job is "make this loggable" must not
- * become the thing that breaks the error handler. Same hazard the debug
- * console's object branch already guards.
+ * primitive value` for a null-prototype object, and a hostile `message`
+ * accessor can throw too; this runs inside `catch` blocks and logging paths —
+ * a helper whose job is "make this loggable" must not become the thing that
+ * breaks the error handler. Same hazard the debug console's object branch
+ * already guards.
  */
 export function getErrorMessage(error: unknown): string {
-  if (error instanceof Error) return error.message;
   try {
+    if (error instanceof Error) return error.message;
     return String(error);
   } catch {
     return '[unprintable error]';
@@ -41,10 +42,18 @@ export function getErrorMessage(error: unknown): string {
  *
  * An empty message renders as just the name rather than leaving a dangling
  * colon, so `new Error()` reads `Error` and not `Error: `.
+ *
+ * Never throws — a throwing `name`/`message` accessor must not break the
+ * console renderers, which previously guarded every property read via the
+ * try/catch around `JSON.stringify`.
  */
 export function formatErrorForDisplay(error: Error): string {
-  const name = error.name || 'Error';
-  return error.message ? `${name}: ${error.message}` : name;
+  try {
+    const name = error.name || 'Error';
+    return error.message ? `${name}: ${error.message}` : name;
+  } catch {
+    return '[unprintable error]';
+  }
 }
 
 /**
@@ -53,12 +62,21 @@ export function formatErrorForDisplay(error: Error): string {
  * The duck-typed branch is deliberate: some Firefox `DOMException`s carry a
  * `stack` without being reported as an `Error`, and a thrown plain object may
  * carry one too.
+ *
+ * Never throws. `stack` can be a throwing accessor and `'stack' in x` can hit
+ * a throwing Proxy trap — and this runs inside the patched `console.warn` /
+ * `console.error` BEFORE the original console call, so a throw here would
+ * swallow the very diagnostic being logged and break the calling code.
  */
 export function getErrorStack(error: unknown): string | undefined {
-  if (error instanceof Error) return error.stack;
-  if (typeof error === 'object' && error !== null && 'stack' in error) {
-    const stack = (error as { stack?: unknown }).stack;
-    return typeof stack === 'string' ? stack : undefined;
+  try {
+    if (error instanceof Error) return error.stack;
+    if (typeof error === 'object' && error !== null && 'stack' in error) {
+      const stack = (error as { stack?: unknown }).stack;
+      return typeof stack === 'string' ? stack : undefined;
+    }
+    return undefined;
+  } catch {
+    return undefined;
   }
-  return undefined;
 }

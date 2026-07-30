@@ -30,6 +30,16 @@ describe('getErrorMessage', () => {
     expect(() => getErrorMessage(Object.create(null))).not.toThrow();
     expect(getErrorMessage(Object.create(null))).toBe('[unprintable error]');
   });
+
+  it('never throws on an Error with a throwing message accessor', () => {
+    const err = new Error('boom');
+    Object.defineProperty(err, 'message', {
+      get() {
+        throw new Error('hostile message getter');
+      },
+    });
+    expect(getErrorMessage(err)).toBe('[unprintable error]');
+  });
 });
 
 describe('formatErrorForDisplay', () => {
@@ -57,6 +67,16 @@ describe('formatErrorForDisplay', () => {
     const e = new DOMException('A requested file could not be found', 'NotFoundError');
     expect(formatErrorForDisplay(e)).toBe('NotFoundError: A requested file could not be found');
   });
+
+  it('never throws on a throwing name/message accessor', () => {
+    const err = new Error('boom');
+    Object.defineProperty(err, 'name', {
+      get() {
+        throw new Error('hostile name getter');
+      },
+    });
+    expect(formatErrorForDisplay(err)).toBe('[unprintable error]');
+  });
 });
 
 describe('getErrorStack', () => {
@@ -77,5 +97,29 @@ describe('getErrorStack', () => {
     expect(getErrorStack(null)).toBeUndefined();
     // A non-string stack is not a stack.
     expect(getErrorStack({ stack: 42 })).toBeUndefined();
+  });
+
+  it('never throws on a throwing stack accessor', () => {
+    // This runs inside the patched console.warn/error BEFORE the original
+    // console call — a throw here would swallow the diagnostic being logged.
+    const err = new Error('boom');
+    Object.defineProperty(err, 'stack', {
+      get() {
+        throw new Error('hostile stack getter');
+      },
+    });
+    expect(getErrorStack(err)).toBeUndefined();
+  });
+
+  it('never throws on a Proxy with a throwing has trap', () => {
+    const trap = new Proxy(
+      {},
+      {
+        has() {
+          throw new Error('hostile has trap');
+        },
+      }
+    );
+    expect(getErrorStack(trap)).toBeUndefined();
   });
 });
