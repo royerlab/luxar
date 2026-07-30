@@ -6,18 +6,40 @@ grade screenshots without a physical monitor. Sibling to `scripts/` (which
 holds build / quality / perf-diff utilities); these are interactive
 browser-driving tools, not part of any build pipeline.
 
-Both files share the same recipe: launch headless Chromium via
-`@playwright/test` with GPU acceleration flags, navigate to a Luxar URL
-with `?debug` enabled, wait for the scene to initialize, poke at
-`window.__luxarDebug`, and write a PNG to disk.
+The two browser drivers share the same recipe: launch headless Chromium
+via `@playwright/test` with GPU acceleration flags, navigate to a Luxar
+URL with `?debug` enabled, wait for the scene to initialize, poke at
+`window.__luxarDebug`, and write a PNG to disk. The E2E server-identity
+helper is test-harness infrastructure rather than a browser driver.
 
 ## Contents
 
 ```
 tools/
-├── agent-driver.ts    # AI-debugging driver (pnpm agent:debug[:visible])
-└── capture-hires.ts   # High-resolution figure capture for papers
+├── agent-driver.ts          # Browser debugging driver
+├── capture-hires.ts         # High-resolution figure capture for papers
+└── e2e-server-identity.ts   # Checkout identity + Playwright preflight helpers
 ```
+
+## `e2e-server-identity.ts`
+
+Prevents local Playwright runs from silently reusing Vite or dataset
+servers rooted in another clone/worktree. It derives a deterministic
+identity from the checkout's canonical repository path, writes a small
+gitignored marker under `.luxar-e2e-identities/`, exposes the marker
+through Vite middleware, and validates the exact response during global
+setup. The repository-root `python3 -m http.server` serves the same
+marker directly.
+
+The standard, performance, screenshot, and video Playwright configs use
+the checkout-specific Vite marker as their `webServer.url` readiness
+probe. A sibling checkout therefore returns 404, while a same-checkout
+Vite server remains reusable. The standard and performance configs also
+probe the repository-root data marker; screenshot/video generation uses
+`luxar serve`, which has no identity endpoint, so those configs disable
+data-server reuse instead. The helper also performs the HTTP availability
+checks for required E2E datasets so filesystem presence cannot mask a
+mis-rooted server.
 
 ## `agent-driver.ts`
 
@@ -58,18 +80,18 @@ High-resolution figure capture for paper and slide figures. Same
 launch pattern as `agent-driver.ts`, but driven entirely by environment
 variables so it slots cleanly into figure-generation scripts:
 
-| Env var | Purpose | Default |
-|---------|---------|---------|
-| `APP_URL` | Viewer URL (required; must include `?debug`) | — |
-| `OUT` | Output PNG path | `test-results/debug/hires.png` |
-| `WAIT` | Total ms budget for scene init + post-camera streaming | `15000` |
-| `WIDTH` / `HEIGHT` | Viewport in CSS pixels | `2400` / `1600` |
-| `DSF` | `deviceScaleFactor` (for retina-quality output) | `1` |
-| `CAMERA_ZOOM` | Scale distance from orbit target | `1` |
-| `CAMERA_POS` | Absolute camera position `x,y,z` (world units) | — |
-| `CAMERA_TARGET` | Orbit target `x,y,z` | — |
-| `CAMERA_FOV` | Vertical FOV override (degrees) | — |
-| `SLICE` | nD slice override, e.g. `"time:240,channel:0"` | — |
+| Env var            | Purpose                                                | Default                        |
+| ------------------ | ------------------------------------------------------ | ------------------------------ |
+| `APP_URL`          | Viewer URL (required; must include `?debug`)           | —                              |
+| `OUT`              | Output PNG path                                        | `test-results/debug/hires.png` |
+| `WAIT`             | Total ms budget for scene init + post-camera streaming | `15000`                        |
+| `WIDTH` / `HEIGHT` | Viewport in CSS pixels                                 | `2400` / `1600`                |
+| `DSF`              | `deviceScaleFactor` (for retina-quality output)        | `1`                            |
+| `CAMERA_ZOOM`      | Scale distance from orbit target                       | `1`                            |
+| `CAMERA_POS`       | Absolute camera position `x,y,z` (world units)         | —                              |
+| `CAMERA_TARGET`    | Orbit target `x,y,z`                                   | —                              |
+| `CAMERA_FOV`       | Vertical FOV override (degrees)                        | —                              |
+| `SLICE`            | nD slice override, e.g. `"time:240,channel:0"`         | —                              |
 
 Camera and slice overrides are applied after the first 15s of the
 `WAIT` budget is consumed (so auto-fit and initial chunks land first);
@@ -97,7 +119,7 @@ the slice position is wrong or the dataset URL is stale.
 - The viewer dev server must be running (`pnpm dev`) — both tools talk
   to a live browser instance.
 - `@playwright/test` Chromium must be installed (`pnpm exec playwright
-  install chromium` if first-time setup).
+install chromium` if first-time setup).
 - The target URL must include `?debug` so `window.__luxarDebug` is
   exposed; `agent-driver.ts` auto-appends it, `capture-hires.ts` does
   not.

@@ -87,7 +87,8 @@ def parse_axis_list(
     Surrounding whitespace and empty trailing tokens are stripped; an empty
     selection is rejected. Each token must be an integer in ``0..ndim-1``;
     duplicates are rejected. When ``require`` is given, the count must match
-    exactly (checked first, so the arity message wins for a wrong-count list).
+    exactly (checked before the bounds/duplicate checks, so the arity message
+    wins over those; a non-integer token is still reported first).
     """
     tokens = [x.strip() for x in value.split(",") if x.strip()]
     try:

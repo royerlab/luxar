@@ -158,6 +158,55 @@ describe('WASM vs TypeScript Comparison', () => {
     });
   });
 
+  describe('regression: lines clip non-finite non-displayed dim (#806)', () => {
+    it.skipIf(!wasmFilesExist)('NaN on a hidden dim: both backends agree (invisible)', () => {
+      // 2 vertices, ndim=3, display dims [0,1]; hidden dim 2 carries a NaN on
+      // one endpoint. f32::max/min in Rust would keep the t-params finite and
+      // render, while TS propagated NaN — the two used to disagree. The fix
+      // makes BOTH treat it as invisible.
+      const positions = new Float32Array([0.0, 0.0, NaN, 1.0, 1.0, 0.05]);
+      const segments = new Uint32Array([0, 1]);
+      const slicePos = new Float32Array([0.0, 0.0, 0.0]);
+      const tolerance = new Float32Array([10.0, 10.0, 0.1]);
+      const displayDims = new Uint32Array([0, 1]);
+      const tsVis = new Uint8Array(1);
+      const tsT1 = new Float32Array(1);
+      const tsT2 = new Float32Array(1);
+      const wVis = new Uint8Array(1);
+      const wT1 = new Float32Array(1);
+      const wT2 = new Float32Array(1);
+      const tsCount = tsModule.clip_segments_batch(
+        positions,
+        segments,
+        slicePos,
+        tolerance,
+        displayDims,
+        3,
+        1,
+        tsVis,
+        tsT1,
+        tsT2
+      );
+      const wCount = wasmModule!.clip_segments_batch(
+        positions,
+        segments,
+        slicePos,
+        tolerance,
+        displayDims,
+        3,
+        1,
+        wVis,
+        wT1,
+        wT2
+      );
+      expect(wCount).toBe(tsCount);
+      expect(arraysEqual(wVis, tsVis)).toBe(true);
+      // Both must mark it invisible.
+      expect(tsVis[0]).toBe(0);
+      expect(wVis[0]).toBe(0);
+    });
+  });
+
   // ============================================================================
   // EFFECTIVE RADII MODULE
   // ============================================================================

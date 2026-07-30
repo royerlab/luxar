@@ -47,7 +47,8 @@ On a fresh machine this demo bootstraps itself with no manual steps:
      ``~/.cache/luxar/desi_galaxies/`` (resumable), reads them with ``astropy``,
      converts (RA, Dec, z) → comoving Mpc, and builds the scene (the substitutive
      LOD over ~10M points is GPU-accelerated but slow on CPU-only machines —
-     which is exactly why the built scene ships precomputed).
+     which is exactly why the built scene ships precomputed). If the DESI host
+     is unavailable, ``git lfs pull`` restores the no-download fast path.
 
 USAGE
 -----
@@ -311,13 +312,45 @@ def load_derived(path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
 
 
 # =============================================================================
-# Download + build (IO; not unit-tested)
+# Download + build (IO)
 # =============================================================================
+
+
+class DESICatalogDownloadError(RuntimeError):
+    """A DESI source catalog could not be downloaded."""
+
+
+def _catalog_download_error_message(url: str, exc: BaseException) -> str:
+    """Return actionable diagnostics while preserving HTTP context."""
+    response = getattr(exc, "response", None)
+    status = getattr(response, "status_code", None)
+    reason = getattr(response, "reason", None)
+    if status is not None:
+        detail = f"HTTP {status}"
+        if reason:
+            detail += f" {reason}"
+    else:
+        detail = f"{type(exc).__name__}: {exc}"
+
+    return (
+        "Could not download a DESI DR1 source catalog.\n"
+        f"  URL: {url}\n"
+        f"  Error: {detail}\n\n"
+        "The DESI data host may be temporarily unavailable or under "
+        "maintenance.\n"
+        "  Check host availability: https://data.desi.lbl.gov/\n\n"
+        "The shipped precomputed scene does not need the source catalogs. "
+        "Fetch it with:\n"
+        "  git lfs pull\n"
+        "Then rerun this demo without --recompute."
+    )
 
 
 def download_catalogs() -> list[tuple[str, Path]]:
     """Download the 8 DR1 LSS clustering FITS files (resumable). Returns
     (tracer_name, local_path) for each NGC/SGC file."""
+    from requests.exceptions import RequestException
+
     from luxar.utils.download import robust_download
 
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -326,14 +359,20 @@ def download_catalogs() -> list[tuple[str, Path]]:
         for name in TRACER_ORDER:
             for fname in TRACERS[name]["files"]:
                 dest = CACHE_DIR / fname
+                url = f"{BASE_URL}/{fname}"
                 aprint(f"{name}: {fname}")
-                robust_download(
-                    f"{BASE_URL}/{fname}",
-                    dest,
-                    max_retries=5,
-                    timeout=1800,
-                    expected_size=FILE_SIZES.get(fname),
-                )
+                try:
+                    robust_download(
+                        url,
+                        dest,
+                        max_retries=5,
+                        timeout=1800,
+                        expected_size=FILE_SIZES.get(fname),
+                    )
+                except RequestException as exc:
+                    raise DESICatalogDownloadError(
+                        _catalog_download_error_message(url, exc)
+                    ) from exc
                 out.append((name, dest))
     return out
 
@@ -559,6 +598,15 @@ def create_scene(
 # =============================================================================
 
 
+def _load_or_build_or_exit() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Build the cloud, converting known download failures to a clean CLI exit."""
+    try:
+        return load_or_build()
+    except DESICatalogDownloadError as exc:
+        aprint(f"❌ {exc}")
+        raise SystemExit(1) from None
+
+
 def main() -> None:
     aprint("=" * 70)
     aprint("DESI DR1 Demo: The Cosmic Web in 3D")
@@ -575,7 +623,7 @@ def main() -> None:
 
     if RECOMPUTE:
         # Full pipeline from source: download → convert → build LOD scene.
-        positions, redshift, tracer_ids = load_or_build()
+        positions, redshift, tracer_ids = _load_or_build_or_exit()
         aprint(f"Points: {len(positions):,}")
         create_scene(positions, redshift, tracer_ids, output_path)
     elif not output_path.exists():
@@ -588,7 +636,7 @@ def main() -> None:
                 "Precomputed scene not available (Git LFS asset not pulled). "
                 "Falling back to download + build (one-time; result is cached)."
             )
-            positions, redshift, tracer_ids = load_or_build()
+            positions, redshift, tracer_ids = _load_or_build_or_exit()
             aprint(f"Points: {len(positions):,}")
             create_scene(positions, redshift, tracer_ids, output_path)
     else:

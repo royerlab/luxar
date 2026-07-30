@@ -18,7 +18,7 @@ Internal implementation package for `luxar.gsplats.gsplat_data.GSplatData` — s
 
 - **`render.py`** — `RenderMixin`: `GSplatData.render_to_volume(shape, device=None, truncate=None, ...)` — GPU-accelerated volume rendering adapter. Delegates to `luxar.gsplats.rendering.volume_rendering.render_to_volume`.
 
-- **`io_adapter.py`** — `IOAdapterMixin`: `GSplatData.save(path, ordering="hilbert", ...)` and `GSplatData.load(path)` — .gsplats.zarr I/O adapter. Delegates to `luxar.gsplats.io.save_gsplats` / `load_gsplats`. Sentinel `_USE_DEFAULT_COMPRESSOR` distinguishes "not specified" (→ Blosc) from explicit `compressor=None` (→ uncompressed zarr).
+- **`io_adapter.py`** — `IOAdapterMixin`: `GSplatData.save(path, ordering="hilbert", ...)` and `GSplatData.load(path)` — .gsplats.zarr I/O adapter. `save()` delegates to `write_gsplats_tree` (in `luxar.gsplats.io.save_gsplats`) and `load()` to `load_gsplats` (in `luxar.gsplats.io.load_gsplats`). Sentinel `_USE_DEFAULT_COMPRESSOR` distinguishes "not specified" (→ Blosc) from explicit `compressor=None` (→ uncompressed zarr).
 
 - **`filtering.py`** — `FilteringMixin`: `filter(mask)`, `filter_by(**criteria)`, `slice_by(...)`, and the threshold resolver `_resolve_threshold(val, normalized, dataset_values, percentile)`.
   - `filter(mask)`: Boolean array of shape `(N,)` → new `GSplatData` with only `mask[i]==True` splats. **Multi-substitutive warning**: Drops coarser substitutive levels (mask is sized to the default level); warns loudly and points at `filter_by` / `cull` (which preserve pyramids).
@@ -30,7 +30,7 @@ Internal implementation package for `luxar.gsplats.gsplat_data.GSplatData` — s
 
 ## Ownership
 
-All six domain mixins (`_SplatArrayMixin`, `_GSplatDataOps`, `RenderMixin`, `IOAdapterMixin`, `FilteringMixin`, `CullingMixin`) are inherited by `GSplatData` in `luxar.gsplats.gsplat_data`. The parent class composes them via multiple inheritance, so the mixins' `self.` calls resolve through `_GSplatDataOps`'s stubs.
+All six domain mixins are inherited by `GSplatData` in `luxar.gsplats.gsplat_data`: four (`RenderMixin`, `IOAdapterMixin`, `FilteringMixin`, `CullingMixin`) as direct bases and the remaining two (`_GSplatDataOps`, `_SplatArrayMixin`) transitively, as the chain below shows. The mixins' `self.` calls resolve through `_GSplatDataOps`'s stubs.
 
 **Mixin inheritance chain**:
 ```

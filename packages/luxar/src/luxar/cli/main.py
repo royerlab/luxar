@@ -20,6 +20,7 @@ from fastapi import FastAPI
 from starlette.types import ASGIApp
 
 from luxar import __version__
+from luxar.utils.arbol_warnings import install_arbol_warnings
 
 from .common_options import (
     AllowSensitivePathOption,
@@ -100,6 +101,11 @@ def main_callback(
     ),
 ) -> None:
     """luxar – build and serve Zarr-backed nD scenes."""
+    # Every warning raised anywhere in a CLI run displays as an arbol line
+    # instead of Python's raw stderr `path:lineno: UserWarning:` format, which
+    # lands out of place mid-tree. Display-only: filters / -W / pytest.warns
+    # are unaffected, and the install is skipped when a recorder is active.
+    install_arbol_warnings()
     if not ctx.invoked_subcommand:
         aprint(ctx.get_help())
         raise typer.Exit(0)

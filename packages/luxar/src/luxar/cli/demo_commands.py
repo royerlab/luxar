@@ -8,6 +8,8 @@ time. Extra CLI args after the key are forwarded verbatim to the demo script.
 
 from __future__ import annotations
 
+import importlib
+import shlex
 import sys
 from pathlib import Path
 from typing import Optional
@@ -21,7 +23,7 @@ from ..utils.process import run_child_process
 from .utils import format_memory_size
 
 app_demo = typer.Typer(
-    help="Run and manage Luxar's bundled demos (list / info / run / cache).",
+    help="Run and manage Luxar's bundled demos (list / info / run / deps / cache).",
     no_args_is_help=False,
 )
 cache_app = typer.Typer(help="Inspect and clear demo download/compute caches.")
@@ -98,6 +100,7 @@ def _print_table(demos: list[DemoInfo]) -> None:
     aprint("")
     aprint("Run one:  luxar demo run <key|#>       Details:  luxar demo info <key|#>")
     aprint("Caches:   luxar demo cache list        Clear:    luxar demo cache clear …")
+    aprint("Deps:     luxar demo deps              Install:  luxar demo deps --install")
 
 
 def _resolve_or_exit(key_or_index: str) -> DemoInfo:
@@ -289,6 +292,168 @@ def demo_run_all(
         raise typer.Exit(1)
 
 
+# ──────────────────────────────── deps ──────────────────────────────────────
+def _luxar_checkout_root() -> Path | None:
+    """The Luxar dev-checkout root, but only if it owns the imported ``luxar``.
+
+    ``get_project_root`` walks up to the first ancestor with a ``pyproject.toml``,
+    which for a NON-editable install inside a project-local virtualenv
+    (``<proj>/.venv/.../site-packages/luxar`` — the default uv/poetry layout)
+    is the *user's own* project, not Luxar. Trust the root only when it actually
+    owns the imported package: a real checkout is ``<root>/packages/luxar/src/
+    luxar``. Otherwise (mismatch, or no root at all) return ``None``.
+    """
+    import luxar
+
+    try:
+        from ..utils.paths import get_project_root
+
+        root = get_project_root()
+    except RuntimeError:
+        return None
+    pkg_dir = Path(luxar.__file__).resolve().parent
+    if (root / "packages" / "luxar" / "src" / "luxar").resolve() == pkg_dir:
+        return root
+    return None
+
+
+def _pip_install_cmd(extras: list[str]) -> list[str]:
+    """The pip command that installs ``extras``, editable only in a checkout.
+
+    A genuine dev checkout must install ``-e <root>[…]``: a plain ``luxar[demos]``
+    would fetch the *published* wheel from PyPI and shadow the tree the user is
+    editing. The checkout is trusted only when the discovered root owns the
+    imported ``luxar`` (see ``_luxar_checkout_root``); otherwise name the
+    distribution so we never editable-install an unrelated project.
+    """
+    joined = ",".join(extras)
+    base = [sys.executable, "-m", "pip", "install"]
+    root = _luxar_checkout_root()
+    if root is not None:
+        return [*base, "-e", f"{root}[{joined}]"]
+    return [*base, f"luxar[{joined}]"]
+
+
+@app_demo.command("deps")
+def demo_deps(
+    extra: Optional[str] = typer.Option(
+        None,
+        "--extra",
+        # Long form only, deliberately: `-e` already means --encoding on the
+        # gsplat commands, and means "editable" to the pip this command drives.
+        help="Only consider one extra (demos / io / gsplats). Default: all.",
+    ),
+    install: bool = typer.Option(
+        False, "--install", help="Install the extras that have missing packages."
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="With --install, print the pip command only."
+    ),
+) -> None:
+    """Report (and optionally install) the demos' optional dependencies.
+
+    Demos deliberately keep heavyweight packages out of the core install, so a
+    fresh checkout can run `luxar demo list` but not every demo. This reports
+    exactly what is missing and, with ``--install``, installs the Luxar extras
+    that provide it.
+    """
+    from ..demos import extras_for, survey
+
+    if dry_run and not install:
+        # Silently ignoring a flag the user typed is worse than saying so.
+        aprint("ℹ️  --dry-run only applies with --install; reporting only.")
+
+    # Extra names are lowercase by PEP 685, so accept any casing the user types.
+    extra = extra.strip().lower() if extra else extra
+    rows = survey(extra)
+    if not rows:
+        known = extras_for(survey()) or ["(none)"]
+        aprint(
+            f"❌ No known dependencies for extra {extra!r}. "
+            f"Valid extras: {', '.join(known)}."
+        )
+        raise typer.Exit(1)
+
+    missing = [r for r in rows if not r.installed]
+    # Never let a column be narrower than its own header — a one-row report
+    # (e.g. `--extra gsplats`) would otherwise print a ragged table.
+    mw = max(max(len(r.module) for r in rows), len("MODULE"))
+    sw = max(max(len(r.spec.spec) for r in rows), len("REQUIREMENT"))
+
+    plural = "dependency" if len(rows) == 1 else "dependencies"
+    aprint(f"📦 [Luxar] {len(rows)} optional demo {plural}\n")
+    header = f"  {'MODULE':<{mw}}  {'REQUIREMENT':<{sw}}  {'EXTRA':<8} STATUS"
+    aprint(header)
+    # Rule the exact width of the header rather than a hand-counted constant
+    # (the old `mw + sw + 20` overshot by one and left a dangling glyph).
+    aprint("  " + "─" * (len(header) - 2))
+    for r in rows:
+        aprint(
+            f"  {r.module:<{mw}}  {r.spec.spec:<{sw}}  "
+            f"{(r.spec.extra or '—'):<8} {'ok' if r.installed else 'MISSING'}"
+        )
+    aprint("")
+
+    if not missing:
+        # Phrased to avoid subject-verb agreement on the count ("1 dependency
+        # are installed"), which a plural-noun-only fix leaves behind.
+        aprint(f"✅ Nothing missing — all {len(rows)} optional {plural} installed.")
+        raise typer.Exit(0)
+
+    aprint(f"⚠️  {len(missing)} missing: {', '.join(r.module for r in missing)}")
+
+    # Specs outside every extra can't be installed via luxar[…]; name them.
+    orphans = [r for r in missing if not r.spec.extra]
+    extras = extras_for(missing)
+    if orphans:
+        aprint(
+            "   Not in any extra (install individually): "
+            + ", ".join(f"'{r.spec.spec}'" for r in orphans)
+        )
+    if not extras:
+        raise typer.Exit(1)
+
+    cmd = _pip_install_cmd(extras)
+
+    # shlex.join, not " ".join: the interpreter path and the checkout root both
+    # routinely contain spaces (e.g. "Application Support"), and the extras
+    # brackets are shell globs — an unquoted line would not paste back in.
+    shown = shlex.join(cmd)
+    if not install:
+        aprint("\n   Install with:  luxar demo deps --install")
+        aprint(f"   Or directly:   {shown}")
+        raise typer.Exit(1)
+
+    aprint(f"\n▶️  {shown}")
+    if dry_run:
+        aprint("(--dry-run: nothing installed)")
+        raise typer.Exit(0)
+    code = run_child_process(cmd, label="pip install")
+    if code != 0:
+        aprint(f"❌ pip exited {code}")
+        raise typer.Exit(code)
+
+    # pip wrote into site-packages after our finders cached its contents, so a
+    # re-survey without this reports everything still missing.
+    importlib.invalidate_caches()
+    left = [r for r in survey(extra) if not r.installed]
+    # Judge the install ONLY on what it was asked to provide. An orphan spec
+    # (no extra) was never in the pip command, so listing it as "still missing
+    # after install" blames the install for something it never attempted.
+    still = [r for r in left if r.spec.extra in extras]
+    if still:
+        aprint(f"⚠️  Still missing after install: {', '.join(r.module for r in still)}")
+        raise typer.Exit(1)
+    aprint(f"✅ Installed: {', '.join(f'luxar[{e}]' for e in extras)}.")
+    # Don't claim completeness while an orphan is still absent — the install
+    # genuinely could not cover it.
+    if left:
+        aprint(
+            "ℹ️  Still to install by hand: "
+            + ", ".join(f"'{r.spec.spec}'" for r in left)
+        )
+
+
 # ─────────────────────────────── cache list ──────────────────────────────────
 @cache_app.command("list")
 def cache_list() -> None:
@@ -350,9 +515,7 @@ def cache_clear(
         raise typer.Exit(1)
 
     selected: list[DemoInfo] = (
-        _demos_or_exit()
-        if all_demos
-        else [_resolve_or_exit(k) for k in (keys or [])]
+        _demos_or_exit() if all_demos else [_resolve_or_exit(k) for k in (keys or [])]
     )
 
     # (path, size, label) tuples to delete.
@@ -426,4 +589,6 @@ def cache_clear(
                 cache_dir.rmdir()
     aprint(f"✅ Cleared {format_memory_size(freed)}.")
     if not_removed:
-        aprint(f"⚠️  Could not remove {len(not_removed)} item(s): {', '.join(not_removed)}")
+        aprint(
+            f"⚠️  Could not remove {len(not_removed)} item(s): {', '.join(not_removed)}"
+        )

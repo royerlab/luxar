@@ -94,6 +94,7 @@ from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
+from luxar.demos import require_module
 from luxar.encoding import EncodingMode
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.utils.demos import (
@@ -181,12 +182,7 @@ def extract_and_load_volume(zip_path: Path) -> np.ndarray:
     Returns:
         3D float32 volume normalised to [0, 1], shape (Z, Y, X).
     """
-    try:
-        import tifffile
-    except ImportError:
-        raise ImportError(
-            "tifffile is required for this demo.\nInstall with: pip install tifffile"
-        )
+    tifffile = require_module("tifffile")
 
     extract_dir = CACHE_DIR / "extracted"
 
