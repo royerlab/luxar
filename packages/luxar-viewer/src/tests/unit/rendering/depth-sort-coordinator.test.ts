@@ -94,11 +94,43 @@ async function loadCoordinator() {
   return await import('../../../rendering/depth-sort-coordinator');
 }
 
+/**
+ * Drive the per-frame pump until a staged ordering has swapped in, and
+ * return the buffer the shaders now read.
+ *
+ * A resolve no longer changes what renders on its own: the ordering
+ * streams into the INACTIVE buffer and the slot flips once that buffer
+ * holds the whole permutation, so the pump owns every slice AND the
+ * swap. Imported dynamically so it resolves to the same module instance
+ * the freshly-loaded coordinator holds (`loadCoordinator` resets the
+ * registry).
+ */
+async function applyStagedOrdering(mesh: THREE.Mesh): Promise<Uint32Array> {
+  const { pumpSortedIndexOrderingApply, getActiveSortedIndexAttribute } =
+    await import('../../../rendering/element-storage');
+  const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
+  for (let guard = 0; pumpSortedIndexOrderingApply(geometry).more; guard++) {
+    if (guard > 64) throw new Error('ordering stream did not converge');
+  }
+  return getActiveSortedIndexAttribute(geometry)!.array as Uint32Array;
+}
+
+/** The buffer the shaders are reading right now (no pumping). */
+function drawnOrdering(mesh: THREE.Mesh): Uint32Array {
+  const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
+  const slot = (geometry.userData as { sortedIndexSlot?: 0 | 1 }).sortedIndexSlot ?? 0;
+  const attr = geometry.getAttribute(slot === 1 ? 'aSortedIndexB' : 'aSortedIndex');
+  return attr.array as Uint32Array;
+}
+
 /** A minimal gsplats mesh with a REAL aSortedIndex attribute. */
 function makeGSplatsMesh(count: number, blendingMode: string): THREE.Mesh {
   const geometry = new THREE.InstancedBufferGeometry();
   const attr = new THREE.InstancedBufferAttribute(new Uint32Array(count), 1);
   geometry.setAttribute('aSortedIndex', attr);
+  // Mirror attachElementStorage: the second ordering name is ALIASED to
+  // the first until the node's first sort splits it.
+  geometry.setAttribute('aSortedIndexB', attr);
   // Committed gsplat geometry always carries bounds (the commit path
   // computes them); the Phase-3 translation threshold is bounds-relative.
   geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0, 0), 10);
@@ -179,8 +211,7 @@ describe('depth-sort coordinator', () => {
     sortResolvers[0]({ generation: sentGeneration, ordering: new Uint32Array([0, 2, 1]) });
     await flush();
 
-    const attr = (mesh.geometry as THREE.InstancedBufferGeometry).getAttribute('aSortedIndex');
-    expect(Array.from(attr.array as Uint32Array)).toEqual([0, 2, 1]);
+    expect(Array.from(await applyStagedOrdering(mesh))).toEqual([0, 2, 1]);
     expect(requestRender).toHaveBeenCalled();
   });
 
@@ -219,8 +250,7 @@ describe('depth-sort coordinator', () => {
     });
     await flush();
 
-    const attr = (mesh.geometry as THREE.InstancedBufferGeometry).getAttribute('aSortedIndex');
-    expect(Array.from(attr.array as Uint32Array)).toEqual([0, 2, 1]);
+    expect(Array.from(await applyStagedOrdering(mesh))).toEqual([0, 2, 1]);
     expect(requestRender).toHaveBeenCalled();
   });
 
@@ -271,8 +301,8 @@ describe('depth-sort coordinator', () => {
     // The FIRST dispatch's (now-stale) ordering resolves — must NOT be applied.
     sortResolvers[0]({ generation: staleGeneration, ordering: new Uint32Array([2, 1, 0]) });
     await flush();
-    const attr = (mesh.geometry as THREE.InstancedBufferGeometry).getAttribute('aSortedIndex');
-    expect(Array.from(attr.array as Uint32Array)).toEqual([0, 0, 0]); // untouched
+    // Nothing was even staged, so the drawn buffer is untouched.
+    expect(Array.from(drawnOrdering(mesh))).toEqual([0, 0, 0]);
 
     // The queued re-sort was issued for the current (newer) generation.
     expect(mockApi.sort).toHaveBeenCalledTimes(2);
@@ -282,7 +312,7 @@ describe('depth-sort coordinator', () => {
     // The fresh ordering applies.
     sortResolvers[1]({ generation: freshGeneration, ordering: new Uint32Array([1, 2, 0]) });
     await flush();
-    expect(Array.from(attr.array as Uint32Array)).toEqual([1, 2, 0]);
+    expect(Array.from(await applyStagedOrdering(mesh))).toEqual([1, 2, 0]);
   });
 
   it("stale sort from a released node's previous LIFETIME is dropped (demote → re-promote)", async () => {
@@ -317,13 +347,13 @@ describe('depth-sort coordinator', () => {
     // dropped: applied over the 2-splat commit it would be corrupt.
     sortResolvers[0]({ generation: generationA, ordering: new Uint32Array([2, 0, 1]) });
     await flush();
-    const attr = (mesh.geometry as THREE.InstancedBufferGeometry).getAttribute('aSortedIndex');
-    expect(Array.from(attr.array as Uint32Array)).toEqual([0, 0, 0]); // untouched
+    // Nothing was even staged, so the drawn buffer is untouched.
+    expect(Array.from(drawnOrdering(mesh))).toEqual([0, 0, 0]);
 
     // Lifetime B's own ordering applies normally.
     sortResolvers[1]({ generation: generationB, ordering: new Uint32Array([1, 0]) });
     await flush();
-    expect(Array.from(attr.array as Uint32Array)).toEqual([1, 0, 0]);
+    expect(Array.from(await applyStagedOrdering(mesh))).toEqual([1, 0, 0]);
   });
 
   it('enforces at most one in-flight sort per node', async () => {
@@ -405,8 +435,7 @@ describe('depth-sort coordinator', () => {
       ordering: new Uint32Array([1, 0]),
     });
     await flush();
-    const attrB = (meshB.geometry as THREE.InstancedBufferGeometry).getAttribute('aSortedIndex');
-    expect(Array.from(attrB.array as Uint32Array)).toEqual([1, 0]);
+    expect(Array.from(await applyStagedOrdering(meshB))).toEqual([1, 0]);
   });
 
   it('degrades gracefully (warn-once, no throw) when the worker cannot be created', async () => {
@@ -424,8 +453,7 @@ describe('depth-sort coordinator', () => {
     expect(mockApi.registerNode).not.toHaveBeenCalled();
     expect(mockApi.sort).not.toHaveBeenCalled();
     // Rendering itself is unaffected — identity ordering stays in place.
-    const attr = (mesh.geometry as THREE.InstancedBufferGeometry).getAttribute('aSortedIndex');
-    expect(Array.from(attr.array as Uint32Array)).toEqual([0, 0]);
+    expect(Array.from(await applyStagedOrdering(mesh))).toEqual([0, 0]);
   });
 
   it('cross-node renderOrder still assigns when the worker was never constructed', async () => {
@@ -485,10 +513,9 @@ describe('depth-sort coordinator', () => {
     });
     await flush();
 
-    const attrA = (meshA.geometry as THREE.InstancedBufferGeometry).getAttribute('aSortedIndex');
-    const attrB = (meshB.geometry as THREE.InstancedBufferGeometry).getAttribute('aSortedIndex');
-    expect(Array.from(attrA.array as Uint32Array)).toEqual([0, 0]); // discarded
-    expect(Array.from(attrB.array as Uint32Array)).toEqual([1, 0]); // applied
+    // A was released mid-flight, so its ordering never even staged.
+    expect(Array.from(drawnOrdering(meshA))).toEqual([0, 0]); // discarded
+    expect(Array.from(await applyStagedOrdering(meshB))).toEqual([1, 0]); // applied
   });
 
   it('orders BSP-partition parts back-to-front from the stored split planes (camera outside)', async () => {
@@ -1237,8 +1264,7 @@ describe('depth-sort coordinator', () => {
       ordering: new Uint32Array([1, 0]),
     });
     await flush();
-    const attr = (mesh.geometry as THREE.InstancedBufferGeometry).getAttribute('aSortedIndex');
-    expect(Array.from(attr.array as Uint32Array)).toEqual([0, 0]); // untouched
+    expect(Array.from(await applyStagedOrdering(mesh))).toEqual([0, 0]); // untouched
     expect(requestRender).not.toHaveBeenCalled();
   });
 
@@ -1258,8 +1284,7 @@ describe('depth-sort coordinator', () => {
       ordering: new Uint32Array([1, 0]),
     });
     await flush();
-    const attr = (mesh.geometry as THREE.InstancedBufferGeometry).getAttribute('aSortedIndex');
-    expect(Array.from(attr.array as Uint32Array)).toEqual([0, 0]); // untouched
+    expect(Array.from(await applyStagedOrdering(mesh))).toEqual([0, 0]); // untouched
   });
 
   it('mode switch TO normal clears the noop stamp and requests a reprocess', async () => {
@@ -1297,8 +1322,7 @@ describe('depth-sort coordinator', () => {
       ordering: new Uint32Array([1, 0]),
     });
     await flush();
-    const attr = (mesh.geometry as THREE.InstancedBufferGeometry).getAttribute('aSortedIndex');
-    expect(Array.from(attr.array as Uint32Array)).toEqual([0, 0]);
+    expect(Array.from(await applyStagedOrdering(mesh))).toEqual([0, 0]);
   });
 
   it('disposeDepthSort terminates the worker and resets state', async () => {
@@ -1625,8 +1649,7 @@ describe('depth-sort scheduler (Phase 3)', () => {
       ordering: new Uint32Array([1, 0]),
     });
     await flush();
-    const attr = (mesh.geometry as THREE.InstancedBufferGeometry).getAttribute('aSortedIndex');
-    expect(Array.from(attr.array as Uint32Array)).toEqual([1, 0]);
+    expect(Array.from(await applyStagedOrdering(mesh))).toEqual([1, 0]);
     expect(requestRender).toHaveBeenCalled();
   });
 
@@ -1703,8 +1726,7 @@ describe('depth-sort coordinator — points integration', () => {
       ordering: new Uint32Array([0, 2, 1]),
     });
     await flush();
-    const attr = (mesh.geometry as THREE.InstancedBufferGeometry).getAttribute('aSortedIndex');
-    expect(Array.from(attr.array as Uint32Array)).toEqual([0, 2, 1]);
+    expect(Array.from(await applyStagedOrdering(mesh))).toEqual([0, 2, 1]);
     expect(requestRender).toHaveBeenCalled();
   });
 
@@ -1923,8 +1945,7 @@ describe('depth-sort coordinator — lines integration', () => {
       ordering: new Uint32Array([0, 2, 1]),
     });
     await flush();
-    const attr = (mesh.geometry as THREE.InstancedBufferGeometry).getAttribute('aSortedIndex');
-    expect(Array.from(attr.array as Uint32Array)).toEqual([0, 2, 1]);
+    expect(Array.from(await applyStagedOrdering(mesh))).toEqual([0, 2, 1]);
     expect(requestRender).toHaveBeenCalled();
   });
 
@@ -2149,36 +2170,33 @@ describe('depth-sort coordinator — chunked ordering apply (perf lever L8)', ()
 
     const { mesh, ordering } = await resolveLargeOrdering(coord, 12);
     const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
-    const arr = geometry.getAttribute('aSortedIndex').array as Uint32Array;
 
-    // Resolve only recorded the apply (buffer untouched — still the
-    // previous, fully valid ordering) and requested the bootstrap frame.
+    // Resolve only staged the apply and requested the bootstrap frame.
     expect(storage.hasPendingSortedIndexOrderingApply(geometry)).toBe(true);
-    expect(Array.from(arr.subarray(0, 12))).toEqual(new Array(12).fill(0));
+    expect(Array.from(drawnOrdering(mesh).subarray(0, 12))).toEqual(new Array(12).fill(0));
     expect(requestRender).toHaveBeenCalled();
 
-    // Frame 1: slice [0, 4) + a follow-up frame request (the pump is the
-    // only thing keeping the on-demand loop alive between slices).
-    requestRender.mockClear();
-    coord.evaluateDepthSortPerFrame();
-    expect(Array.from(arr.subarray(0, 4))).toEqual([11, 10, 9, 8]);
-    expect(requestRender).toHaveBeenCalledTimes(1);
+    // Frames 1-2: slices land in the buffer NOT being drawn, so what
+    // renders is still the previous whole ordering. Each requests a
+    // follow-up frame (the pump is the only thing keeping the on-demand
+    // loop alive between slices).
+    for (let frame = 1; frame <= 2; frame++) {
+      requestRender.mockClear();
+      coord.evaluateDepthSortPerFrame();
+      expect(Array.from(drawnOrdering(mesh).subarray(0, 12))).toEqual(new Array(12).fill(0));
+      expect(requestRender).toHaveBeenCalledTimes(1);
+    }
 
-    // Frame 2: slice [4, 8).
-    requestRender.mockClear();
-    coord.evaluateDepthSortPerFrame();
-    expect(Array.from(arr.subarray(4, 8))).toEqual([7, 6, 5, 4]);
-    expect(requestRender).toHaveBeenCalledTimes(1);
-
-    // Frame 3: final slice — completes; the just-written slice rides this
-    // frame's flush, so no extra frame is requested.
+    // Frame 3: the final slice completes the back buffer and flips it in.
+    // The write and the flip ride THIS frame's flush.
     requestRender.mockClear();
     coord.evaluateDepthSortPerFrame();
     expect(storage.hasPendingSortedIndexOrderingApply(geometry)).toBe(false);
-    expect(Array.from(arr.subarray(0, 12))).toEqual(Array.from(ordering));
-    expect(requestRender).not.toHaveBeenCalled();
+    expect(Array.from(drawnOrdering(mesh).subarray(0, 12))).toEqual(Array.from(ordering));
+    expect(requestRender).toHaveBeenCalledTimes(1); // the flip repaints
 
     // Steady state: further frames neither write nor request.
+    requestRender.mockClear();
     coord.evaluateDepthSortPerFrame();
     expect(requestRender).not.toHaveBeenCalled();
   });
@@ -2195,11 +2213,10 @@ describe('depth-sort coordinator — chunked ordering apply (perf lever L8)', ()
     // Demotion: geometry returned to the pool (may already serve another
     // node) — the remaining slices describe the demoted population.
     delete mesh.userData.committedData;
-    const arr = geometry.getAttribute('aSortedIndex').array as Uint32Array;
-    const before = Array.from(arr);
+    const before = Array.from(drawnOrdering(mesh));
     coord.evaluateDepthSortPerFrame();
     expect(storage.hasPendingSortedIndexOrderingApply(geometry)).toBe(false);
-    expect(Array.from(arr)).toEqual(before); // no further writes
+    expect(Array.from(drawnOrdering(mesh))).toEqual(before); // no further writes
   });
 
   it('a stale-generation resolve never starts a chunked apply; the queued re-sort does', async () => {
@@ -2232,11 +2249,46 @@ describe('depth-sort coordinator — chunked ordering apply (perf lever L8)', ()
     coord.evaluateDepthSortPerFrame();
     coord.evaluateDepthSortPerFrame();
     coord.evaluateDepthSortPerFrame();
-    const arr = geometry.getAttribute('aSortedIndex').array as Uint32Array;
-    expect(Array.from(arr.subarray(0, 12))).toEqual(Array.from(ordering));
+    expect(Array.from(drawnOrdering(mesh).subarray(0, 12))).toEqual(Array.from(ordering));
   });
 
-  it('apply-gate: camera motion past the threshold does NOT dispatch while the stream runs', async () => {
+  it('the flip reaches BOTH the visual and the pick material', async () => {
+    // The pick pass shares the geometry and emits vElementId from the
+    // same index, so a pick material left pointing at the other slot
+    // would resolve hovers against a stale permutation.
+    const { coord } = await loadWithTinyChunks();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+
+    const mesh = makeGSplatsMesh(12, 'normal');
+    const visualUniform = { value: 0 };
+    const pickUniform = { value: 0 };
+    (mesh.material as THREE.Material & { uniforms: unknown }).uniforms = {
+      uSortedIndexSlot: visualUniform,
+    };
+    const pickMaterial = new THREE.Material() as THREE.Material & { uniforms: unknown };
+    pickMaterial.uniforms = { uSortedIndexSlot: pickUniform };
+    mesh.userData.pickNode = new THREE.Mesh(mesh.geometry, pickMaterial);
+
+    coord.noteDepthSortCommit(mesh, new Float32Array(36), 12);
+    await flush();
+    const generation = mockApi.sort.mock.calls[0][0].generation as number;
+    sortResolvers[0]({ generation, ordering: reversed(12) });
+    await flush();
+
+    expect(visualUniform.value).toBe(0);
+    coord.evaluateDepthSortPerFrame();
+    coord.evaluateDepthSortPerFrame();
+    expect(visualUniform.value).toBe(0); // still streaming
+    coord.evaluateDepthSortPerFrame(); // completes + flips
+    expect(visualUniform.value).toBe(1);
+    expect(pickUniform.value).toBe(1);
+  });
+
+  it('camera motion past the threshold dispatches WHILE a stream runs (no apply-gate)', async () => {
+    // The inverse of the old apply-gate test. A stream writes into the
+    // inactive buffer, so what renders stays a whole permutation the
+    // entire time — there is no reason to make a fresher sort wait for
+    // it. Sorting and applying run concurrently.
     const { coord, storage } = await loadWithTinyChunks();
     const camera = makeCamera();
     coord.configureDepthSort({ getCamera: () => camera, requestRender: vi.fn() });
@@ -2245,51 +2297,45 @@ describe('depth-sort coordinator — chunked ordering apply (perf lever L8)', ()
     const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
     expect(mockApi.sort).toHaveBeenCalledTimes(1);
 
-    // 5° — well past the 3° threshold; without the gate this would
-    // dispatch immediately (the continuous-orbit feedback loop that
-    // doubled the sort count and starved the stream).
-    camera.rotateY((5 * Math.PI) / 180);
-    coord.evaluateDepthSortPerFrame(); // slice [0, 4) — gated
-    coord.evaluateDepthSortPerFrame(); // slice [4, 8) — gated
-    expect(mockApi.sort).toHaveBeenCalledTimes(1);
+    camera.rotateY((5 * Math.PI) / 180); // past the 3° threshold
+    coord.evaluateDepthSortPerFrame(); // slice [0, 4) AND a dispatch
     expect(storage.hasPendingSortedIndexOrderingApply(geometry)).toBe(true);
-
-    // Final slice completes THIS frame; the trigger section then sees the
-    // gate cleared and the accumulated motion dispatches immediately —
-    // the natural cadence: sort → apply N frames → next sort.
-    coord.evaluateDepthSortPerFrame();
-    expect(storage.hasPendingSortedIndexOrderingApply(geometry)).toBe(false);
     expect(mockApi.sort).toHaveBeenCalledTimes(2);
   });
 
-  it('apply-gate: a sort request landing mid-stream is queued and drained at completion', async () => {
+  it('a sort landing mid-stream is held, then swaps in right after the current one', async () => {
     const { coord, storage } = await loadWithTinyChunks();
     const camera = makeCamera();
     coord.configureDepthSort({ getCamera: () => camera, requestRender: vi.fn() });
 
-    const { mesh } = await resolveLargeOrdering(coord, 12); // 3 slices pending
+    const { mesh, ordering: first } = await resolveLargeOrdering(coord, 12);
     const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
 
     // A commit lands mid-stream (test harness commits don't write
-    // identity, so the apply keeps streaming — the production identity
-    // write would cancel it first). Its sort must be QUEUED, not
-    // dispatched: scheduleSort's apply-gate parks it in resortQueued.
+    // identity, so the stream keeps running — the production identity
+    // write would cancel it first). Its sort dispatches IMMEDIATELY now.
     coord.noteDepthSortCommit(mesh, new Float32Array(36), 12);
     await flush();
     expect(mockApi.registerNode).toHaveBeenCalledTimes(2);
-    expect(mockApi.sort).toHaveBeenCalledTimes(1);
-
-    coord.evaluateDepthSortPerFrame(); // slice [0, 4)
-    coord.evaluateDepthSortPerFrame(); // slice [4, 8)
-    expect(mockApi.sort).toHaveBeenCalledTimes(1);
-
-    // Completion frame: the pump drains the queued re-sort, carrying the
-    // commit's CURRENT generation.
-    coord.evaluateDepthSortPerFrame();
-    expect(storage.hasPendingSortedIndexOrderingApply(geometry)).toBe(false);
     expect(mockApi.sort).toHaveBeenCalledTimes(2);
-    const drainedGeneration = mockApi.sort.mock.calls[1][0].generation as number;
-    expect(drainedGeneration).toBe(mockApi.registerNode.mock.calls[1][0].generation);
+
+    // Its result is held rather than restarting the stream: the first
+    // ordering finishes and swaps in, then the newer one streams.
+    const secondGeneration = mockApi.sort.mock.calls[1][0].generation as number;
+    const second = new Uint32Array([5, 4, 7, 6, 1, 0, 3, 2, 9, 8, 11, 10]);
+    sortResolvers[1]({ generation: secondGeneration, ordering: second });
+    await flush();
+
+    coord.evaluateDepthSortPerFrame();
+    coord.evaluateDepthSortPerFrame();
+    coord.evaluateDepthSortPerFrame(); // first completes + flips
+    expect(Array.from(drawnOrdering(mesh).subarray(0, 12))).toEqual(Array.from(first));
+
+    coord.evaluateDepthSortPerFrame();
+    coord.evaluateDepthSortPerFrame();
+    coord.evaluateDepthSortPerFrame(); // second completes + flips
+    expect(Array.from(drawnOrdering(mesh).subarray(0, 12))).toEqual(Array.from(second));
+    expect(storage.hasPendingSortedIndexOrderingApply(geometry)).toBe(false);
   });
 
   it("releaseDepthSortNode cancels the node's in-flight apply (no orphaned pump entry)", async () => {

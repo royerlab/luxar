@@ -57,6 +57,7 @@ import { wrap, transfer, type Remote } from 'comlink';
 import SortWorker from '../workers/sort-worker?worker';
 import type { SortWorkerAPI } from '../workers/sort-worker';
 import {
+  activeSortedIndexSlot,
   cancelAllSortedIndexOrderingApplies,
   cancelSortedIndexOrderingApply,
   hasPendingSortedIndexOrderingApply,
@@ -297,6 +298,41 @@ function ensureWorker(): Promise<void> {
   return initPromise;
 }
 
+/**
+ * Push the geometry's active ordering slot onto a material's
+ * `uSortedIndexSlot` uniform. Covers both backends: the GLSL materials
+ * expose a plain `IUniform`, and the TSL materials expose a
+ * `proxyIUniform` that writes straight through to the node — neither
+ * rebuilds or recompiles on a value change.
+ */
+function applySortedIndexSlotToMaterial(
+  material: THREE.Material | THREE.Material[] | undefined,
+  slot: number
+): void {
+  if (!material) return;
+  const list = Array.isArray(material) ? material : [material];
+  for (const m of list) {
+    const uniform = (m as THREE.ShaderMaterial | undefined)?.uniforms?.uSortedIndexSlot;
+    if (uniform) uniform.value = slot;
+  }
+}
+
+/**
+ * Point a node's shaders at whichever ordering buffer is currently
+ * complete. The PICK material must move with the visual one: it shares
+ * the geometry and emits `vElementId` from the same index, so a pick
+ * pass reading the other buffer would resolve hovers against a stale
+ * permutation.
+ */
+function syncSortedIndexSlot(mesh: THREE.Mesh): void {
+  const geometry = mesh.geometry as THREE.InstancedBufferGeometry | undefined;
+  if (!geometry) return;
+  const slot = activeSortedIndexSlot(geometry);
+  applySortedIndexSlotToMaterial(mesh.material, slot);
+  const pickNode = (mesh.userData as { pickNode?: THREE.Mesh } | undefined)?.pickNode;
+  if (pickNode) applySortedIndexSlotToMaterial(pickNode.material, slot);
+}
+
 /** Read the live REQUESTED blending mode stamped by the material wrappers. */
 function liveBlendingMode(mesh: THREE.Mesh): BlendingMode | undefined {
   const material = mesh.material as THREE.Material | THREE.Material[];
@@ -487,17 +523,20 @@ function scheduleSort(mesh: THREE.Mesh, nodeId: string): void {
     state.resortQueued = true;
     return;
   }
-  // Apply-gate (perf lever L8): while a chunked ordering apply is
-  // streaming for this geometry (or holding a newest ordering), a new
-  // sort could only produce another ordering the stream can't consume
-  // yet — sorting faster than the apply cadence measurably doubled the
-  // sort count and starved the stream. Queue exactly like the in-flight
-  // case; the per-frame pump drains the queue when the apply completes.
-  const geometry = mesh.geometry as THREE.InstancedBufferGeometry | undefined;
-  if (geometry && hasPendingSortedIndexOrderingApply(geometry)) {
-    state.resortQueued = true;
-    return;
-  }
+  // NO apply-gate. Sorting and applying run CONCURRENTLY: a stream writes
+  // into the inactive buffer, so the displayed ordering stays a complete
+  // permutation throughout and a fresher sort is never wasted — it is
+  // held and swapped in at the next flip. (The gate existed because a
+  // stream used to write into the LIVE attribute, where sorting faster
+  // than the apply cadence only prolonged the mixed state.)
+  //
+  // A throttle on "an ordering is already queued" was built and MEASURED
+  // on the 10M orbit bench: it cut sorts 24 -> ~15 but moved the
+  // sort-adjacent frame p99 only ~92 -> ~89 ms (inside run-to-run noise)
+  // while costing 41% more staleness on the 8M-point orbit (fitted
+  // sort-axis lag, fast orbit: mean 44 -> 63 deg). Freshness is the whole
+  // point of re-sorting, so it was dropped. Sort traffic stays bounded by
+  // one-in-flight-per-node.
   state.inFlight = true;
 
   const generation = state.generation;
@@ -653,12 +692,42 @@ let scratch: EvaluateScratch | null = null;
 function pumpChunkedOrderingApplies(): void {
   for (const [nodeId, state] of nodeStates) {
     const geometry = state.mesh.geometry as THREE.InstancedBufferGeometry | undefined;
-    if (!geometry || !hasPendingSortedIndexOrderingApply(geometry)) continue;
+    if (!geometry) continue;
+
+    // Re-assert the slot on EVERY tracked node every frame, not just on
+    // the frame it flips. The uniform lives on the materials while the
+    // slot lives on the geometry, and the two are re-paired behind our
+    // back: the pool hands a geometry (slot included) to another node,
+    // a TSL graph rebuild replaces the uniform leaves, a pick material
+    // is created after the flip. Idempotent and a couple of property
+    // writes per node, so re-asserting is cheaper than tracking every
+    // way they can desync.
+    syncSortedIndexSlot(state.mesh);
+
+    if (!hasPendingSortedIndexOrderingApply(geometry)) continue;
     if (!hasCommittedData(state.mesh)) {
+      // LOD demotion — the geometry went back to the pool, so the
+      // remaining slices describe a population this mesh no longer
+      // holds. Drain any queued re-sort too: only a real commit sets
+      // the flag, and dropping it here left the node unsorted until the
+      // NEXT commit or threshold crossing.
       cancelSortedIndexOrderingApply(geometry);
+      if (state.resortQueued) {
+        state.resortQueued = false;
+        scheduleSort(state.mesh, nodeId);
+      }
       continue;
     }
-    if (pumpSortedIndexOrderingApply(geometry)) {
+    const { more, flipped } = pumpSortedIndexOrderingApply(geometry);
+    if (flipped) {
+      // The just-completed buffer becomes the drawn one. This runs in a
+      // per-frame callback, which the animation controller invokes
+      // BEFORE the render, so the final slice's upload and this flip
+      // reach the GPU in the same frame.
+      syncSortedIndexSlot(state.mesh);
+      requestRender?.();
+    }
+    if (more) {
       requestRender?.();
     } else if (state.resortQueued) {
       state.resortQueued = false;
@@ -766,13 +835,9 @@ export function evaluateDepthSortPerFrame(): void {
 
     // === Within-mesh re-sort trigger (Phase 3) ===
     if (state.inFlight) continue;
-    // Apply-gate (L8): no new dispatches while an ordering is still
-    // streaming into this geometry — post-completion frames compare the
-    // live pose against the last DISPATCH pose, so accumulated orbit
-    // motion triggers the next sort immediately once the stream ends.
-    if (hasPendingSortedIndexOrderingApply(mesh.geometry as THREE.InstancedBufferGeometry)) {
-      continue;
-    }
+    // No apply-gate here either (see scheduleSort): a streaming apply no
+    // longer blocks a fresher sort, so camera motion is answered as soon
+    // as the threshold is crossed rather than after the stream drains.
     if (!state.lastSortAxis) {
       // Registered with the worker but no sort ever dispatched — the
       // first commit raced a null camera (init ordering / renderer

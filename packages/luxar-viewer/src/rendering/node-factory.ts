@@ -154,10 +154,18 @@ export class NodeFactory {
           // write can't downgrade the restore's full re-upload.
           markElementTextureFullDirty(tex);
         }
-        const idx = geom.getAttribute('aSortedIndex') as THREE.InstancedBufferAttribute | undefined;
-        if (idx) {
-          idx.clearUpdateRanges();
-          idx.needsUpdate = true;
+        // BOTH ordering buffers: a context loss zeroes the GPU side while
+        // the CPU mirrors survive, and either one may be the active slot
+        // (or become it when an in-flight stream completes). Marking only
+        // the front buffer would leave a freshly-flipped back buffer
+        // reading as zeros. They are the same object until a node first
+        // sorts, so the second pass is a harmless no-op on most nodes.
+        for (const name of ['aSortedIndex', 'aSortedIndexB']) {
+          const idx = geom.getAttribute(name) as THREE.InstancedBufferAttribute | undefined;
+          if (idx) {
+            idx.clearUpdateRanges();
+            idx.needsUpdate = true;
+          }
         }
         obj.userData.gpuPrefixIntact = false;
       }

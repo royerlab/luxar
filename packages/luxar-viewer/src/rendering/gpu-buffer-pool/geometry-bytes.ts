@@ -31,8 +31,15 @@ export function estimateGeometryBytes(geometry: THREE.BufferGeometry): number {
   // for each view would multi-count the shared backing array; dedupe
   // by visited-buffer identity.
   const seenInterleavedBuffers = new WeakSet<THREE.InterleavedBuffer>();
+  // Two NAMES can also resolve to one attribute object: the ordering pair
+  // `aSortedIndex`/`aSortedIndexB` is aliased onto a single buffer until
+  // a node first sorts. Counting it twice would charge every node — even
+  // one that never sorts — for a back buffer it does not own.
+  const seenAttributes = new WeakSet<THREE.BufferAttribute | THREE.InterleavedBufferAttribute>();
   for (const name in geometry.attributes) {
     const attr = geometry.attributes[name];
+    if (seenAttributes.has(attr)) continue;
+    seenAttributes.add(attr);
     const interleaved = (attr as THREE.InterleavedBufferAttribute).data;
     if (interleaved !== undefined) {
       if (seenInterleavedBuffers.has(interleaved)) continue;

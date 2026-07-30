@@ -22,6 +22,8 @@ import {
 } from '../../../rendering/element-texture-layout';
 import {
   SORTED_INDEX_CHUNK_ELEMENTS,
+  activeSortedIndexSlot,
+  getActiveSortedIndexAttribute,
   cancelAllSortedIndexOrderingApplies,
   cancelSortedIndexOrderingApply,
   configureSortedIndexChunkedApply,
@@ -396,9 +398,14 @@ describe('attachSplatStorage / writeSplatTexels — fused writer round-trip', ()
   it('writeSortedIndexIdentityRange appends identity for the suffix, preserving the prefix permutation', () => {
     const geometry = new THREE.InstancedBufferGeometry();
     attachSplatStorage(geometry, 16);
-    // Prefix carries a real depth-sort permutation over [0,4).
+    // Prefix carries a real depth-sort permutation over [0,4). An
+    // ordering stages into the back buffer, so drain the pump to make it
+    // the live one before appending onto it.
     writeSortedIndexOrdering(geometry, new Uint32Array([3, 2, 1, 0]), 4);
-    const attr = geometry.getAttribute('aSortedIndex') as THREE.InstancedBufferAttribute;
+    while (pumpSortedIndexOrderingApply(geometry).more) {
+      /* drain */
+    }
+    const attr = getActiveSortedIndexAttribute(geometry) as THREE.InstancedBufferAttribute;
     const arr = attr.array as Uint32Array;
     // Append identity for [4, 8): prefix permutation stays, suffix = identity.
     writeSortedIndexIdentityRange(geometry, 4, 8);
@@ -443,20 +450,20 @@ describe('attachSplatStorage / writeSplatTexels — fused writer round-trip', ()
   it('writeSortedIndexOrdering clamps to ordering AND attribute lengths', () => {
     const geometry = new THREE.InstancedBufferGeometry();
     attachSplatStorage(geometry, 8);
+    const capacity = (geometry.getAttribute('aSortedIndex').array as Uint32Array).length;
     // ordering shorter than count: writes only ordering.length entries.
     let n = writeSortedIndexOrdering(geometry, new Uint32Array([3, 1]), 5);
     expect(n).toBe(2);
-    const arr = geometry.getAttribute('aSortedIndex').array as Uint32Array;
+    while (pumpSortedIndexOrderingApply(geometry).more) {
+      /* drain */
+    }
+    const arr = getActiveSortedIndexAttribute(geometry)!.array as Uint32Array;
     expect(arr[0]).toBe(3);
     expect(arr[1]).toBe(1);
     // ordering longer than the attribute: clamps to the attribute.
     const long = new Uint32Array(32).fill(7);
     n = writeSortedIndexOrdering(geometry, long, 32);
-    expect(n).toBe(arr.length);
-    // Update ranges stay a single collapsed prefix across mixed writes.
-    const attr = geometry.getAttribute('aSortedIndex') as THREE.InstancedBufferAttribute;
-    expect(attr.updateRanges.length).toBe(1);
-    expect(attr.updateRanges[0].start).toBe(0);
+    expect(n).toBe(capacity);
   });
 
   it('clamps the attach capacity to the per-node bound (structural safety net)', () => {
@@ -563,6 +570,24 @@ describe('pool adapter — growth, dispose, byte accounting', () => {
     expect(bytes).toBeLessThanOrEqual(capacity * 68 + rowBytes + 256);
   });
 
+  it('charges the back buffer only once a node actually sorts', () => {
+    const geom = pool.acquireGSplatsGeometry('node', 1000);
+    const capacity = (geom.getAttribute('aSortedIndex').array as Uint32Array).length;
+    const before = estimateGeometryBytes(geom);
+
+    // Aliased: the two ordering names share ONE buffer, so the estimate
+    // must not charge for it twice (a node in a commutative mode never
+    // sorts and must pay nothing for a back buffer it will never own).
+    expect(geom.getAttribute('aSortedIndexB')).toBe(geom.getAttribute('aSortedIndex'));
+
+    writeSortedIndexOrdering(geom, new Uint32Array([3, 2, 1, 0]), 4);
+    // Splitting the alias grows the geometry by exactly one ordering
+    // buffer, and must invalidate the memoized estimate (nothing else in
+    // production does).
+    const after = estimateGeometryBytes(geom);
+    expect(after - before).toBe(capacity * 4);
+  });
+
   it('clamps acquire capacity AND written count to the per-node texture bound', () => {
     // Shrink the bound so the clamp is testable at unit scale:
     // maxTextureSize 16 -> width 16, bound = 16*16/4 = 64 splats.
@@ -622,12 +647,15 @@ describe('pool adapter — growth, dispose, byte accounting', () => {
     pool.updateGSplatsGeometry(geom, packed(src.amplitudes), 4);
     // The SortWorker landed a depth-sort permutation between commits.
     writeSortedIndexOrdering(geom, new Uint32Array([3, 2, 1, 0]), 4);
+    while (pumpSortedIndexOrderingApply(geom).more) {
+      /* drain: the ordering swaps in on completion */
+    }
 
     // Same-count recommit with preserveOrdering: permutation intact,
     // texels + instanceCount + bounds refreshed as usual.
     const newAmplitudes = new Float32Array([9, 8, 7, 6]);
     pool.updateGSplatsGeometry(geom, packed(newAmplitudes), 4, 3.0, { preserveOrdering: true });
-    const ordering = geom.getAttribute('aSortedIndex').array as Uint32Array;
+    const ordering = getActiveSortedIndexAttribute(geom)!.array as Uint32Array;
     expect(Array.from(ordering.subarray(0, 4))).toEqual([3, 2, 1, 0]);
     const texels = getSplatTexture(geom)!.image.data as Float32Array;
     expect(texels[3]).toBe(9); // splat 0 amplitude — texels WERE rewritten
@@ -650,6 +678,9 @@ describe('pool adapter — growth, dispose, byte accounting', () => {
     // Prefix commit of 4 splats, then a real permutation lands on it.
     pool.updateGSplatsGeometry(geom, packed(src6, 4), 4);
     writeSortedIndexOrdering(geom, new Uint32Array([3, 2, 1, 0]), 4);
+    while (pumpSortedIndexOrderingApply(geom).more) {
+      /* drain: the ordering swaps in on completion */
+    }
     const texels = getSplatTexture(geom)!.image.data as Float32Array;
     const sentinel = -999;
     texels[0] = sentinel; // splat 0 center.x — must survive the append
@@ -661,7 +692,7 @@ describe('pool adapter — growth, dispose, byte accounting', () => {
     // Suffix splat 5 center.x written.
     expect(texels[5 * SPLAT_FLOATS_PER_SPLAT]).toBe(src6.centers[15]);
     // Prefix permutation preserved; suffix gets identity.
-    const ordering = geom.getAttribute('aSortedIndex').array as Uint32Array;
+    const ordering = getActiveSortedIndexAttribute(geom)!.array as Uint32Array;
     expect(Array.from(ordering.subarray(0, 6))).toEqual([3, 2, 1, 0, 4, 5]);
   });
 });
@@ -875,8 +906,8 @@ describe('pool adapter — precomputed projection bounds fast path', () => {
   });
 });
 
-describe('chunked ordering apply (perf lever L8)', () => {
-  // Tiny chunk (4 indices) so tests stay readable; the production
+describe('double-buffered ordering apply (atomic swap)', () => {
+  // Tiny slice (4 indices) so tests stay readable; the production
   // constant is 1M (4 MB/frame — see the element-storage module note).
   const CHUNK = 4;
 
@@ -891,15 +922,18 @@ describe('chunked ordering apply (perf lever L8)', () => {
     configureSortedIndexChunkedApply(true);
   });
 
-  function makeGeometry(capacity: number): {
-    geometry: THREE.InstancedBufferGeometry;
-    attr: THREE.InstancedBufferAttribute;
-    arr: Uint32Array;
-  } {
+  function makeGeometry(capacity: number): { geometry: THREE.InstancedBufferGeometry } {
     const geometry = new THREE.InstancedBufferGeometry();
     attachSplatStorage(geometry, capacity);
-    const attr = geometry.getAttribute('aSortedIndex') as THREE.InstancedBufferAttribute;
-    return { geometry, attr, arr: attr.array as Uint32Array };
+    return { geometry };
+  }
+
+  /** The attribute the shaders are currently reading. */
+  function activeAttr(geometry: THREE.InstancedBufferGeometry): THREE.InstancedBufferAttribute {
+    return getActiveSortedIndexAttribute(geometry) as THREE.InstancedBufferAttribute;
+  }
+  function activeArr(geometry: THREE.InstancedBufferGeometry): Uint32Array {
+    return activeAttr(geometry).array as Uint32Array;
   }
 
   /** Reversed permutation over [0, n) — every entry differs from identity (n ≥ 2). */
@@ -914,130 +948,174 @@ describe('chunked ordering apply (perf lever L8)', () => {
     attr.clearUpdateRanges();
   }
 
-  it('exposes a 1M-index (4 MB) production chunk size', () => {
+  /**
+   * THE invariant this whole design exists for: what is on screen is a
+   * bijection of [0, n) onto itself. A duplicate means one element draws
+   * twice and the element it displaced draws not at all.
+   */
+  function expectPermutation(geometry: THREE.InstancedBufferGeometry, n: number): void {
+    const arr = activeArr(geometry);
+    const seen = new Set<number>();
+    for (let i = 0; i < n; i++) {
+      const v = arr[i];
+      expect(v, `index ${i} out of range`).toBeLessThan(n);
+      expect(seen.has(v), `index ${v} drawn twice (slot ${i})`).toBe(false);
+      seen.add(v);
+    }
+    expect(seen.size).toBe(n);
+  }
+
+  it('exposes a 1M-index (4 MB) production slice size', () => {
     expect(SORTED_INDEX_CHUNK_ELEMENTS).toBe(1_000_000);
   });
 
-  it('threshold routing: orderings ≤ one chunk stay single-shot', () => {
-    const { geometry, attr, arr } = makeGeometry(16);
-    const n = writeSortedIndexOrdering(geometry, reversed(CHUNK), CHUNK);
-    expect(n).toBe(CHUNK);
-    expect(hasPendingSortedIndexOrderingApply(geometry)).toBe(false);
-    expect(Array.from(arr.subarray(0, CHUNK))).toEqual([3, 2, 1, 0]);
-    // Single-shot keeps the collapsed [0, n) prefix discipline.
-    expect(attr.updateRanges.length).toBe(1);
-    expect(attr.updateRanges[0]).toMatchObject({ start: 0, count: CHUNK });
+  it('attaches the back buffer ALIASED, and splits it only on the first ordering', () => {
+    const { geometry } = makeGeometry(16);
+    const a = geometry.getAttribute('aSortedIndex');
+    // Aliased at attach: both shader names resolve, zero extra bytes, so
+    // a node in a commutative mode never pays for a buffer it won't use.
+    expect(geometry.getAttribute('aSortedIndexB')).toBe(a);
+
+    writeSortedIndexOrdering(geometry, reversed(12), 12);
+    const b = geometry.getAttribute('aSortedIndexB');
+    expect(b).not.toBe(a);
+    // Equal length is load-bearing: three derives _maxInstanceCount from
+    // the SMALLEST instanced attribute, so a short back buffer would
+    // silently clamp the draw.
+    expect((b.array as Uint32Array).length).toBe((a.array as Uint32Array).length);
   });
 
-  it('large ordering: the write only records the pending apply (previous permutation stays intact)', () => {
-    const { geometry, attr, arr } = makeGeometry(16);
+  it('staging leaves the DRAWN buffer untouched (no ranges, no version bump)', () => {
+    const { geometry } = makeGeometry(16);
     writeSortedIndexIdentity(geometry, 12);
+    const attr = activeAttr(geometry);
     flushAttr(attr);
     const versionBefore = attr.version;
 
-    const ordering = reversed(12); // 3 chunks of 4
-    const n = writeSortedIndexOrdering(geometry, ordering, 12);
+    const n = writeSortedIndexOrdering(geometry, reversed(12), 12);
     expect(n).toBe(12);
     expect(hasPendingSortedIndexOrderingApply(geometry)).toBe(true);
-    // The pump owns EVERY slice — the write itself leaves the previous
-    // (fully valid) permutation untouched, registers no ranges, and
-    // bumps no version. A never-pumped ordering degrades to "stale but
-    // valid", never "mixed".
-    expect(Array.from(arr.subarray(0, 12))).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+    expect(activeSortedIndexSlot(geometry)).toBe(0);
+    expect(Array.from(activeArr(geometry).subarray(0, 12))).toEqual([
+      0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11,
+    ]);
     expect(attr.updateRanges.length).toBe(0);
     expect(attr.version).toBe(versionBefore);
   });
 
-  it('pump progression: one slice per pump, per-slice ranges, final buffer EXACTLY the ordering', () => {
-    const { geometry, attr, arr } = makeGeometry(16);
+  it('the DRAWN buffer is a whole permutation after EVERY pump, and flips only on the last slice', () => {
+    // The regression guard. Pre-double-buffering this failed on the very
+    // first pump: the live attribute held new[0,4) ∪ old[4,12), which is
+    // not a permutation (index 8 sat at slots 3 and 8 — one splat drawn
+    // twice, indices 0-3 omitted).
+    const { geometry } = makeGeometry(16);
     writeSortedIndexIdentity(geometry, 12);
-    flushAttr(attr);
-    const ordering = reversed(12);
+    const ordering = reversed(12); // 3 slices of 4
     writeSortedIndexOrdering(geometry, ordering, 12);
 
-    // Frame 1: slice [0, 4) — more work remains. Mid-apply pin: buffer =
-    // NEW prefix [0, 4) ∪ OLD (identity) suffix [4, 12). This mix is NOT
-    // a permutation — e.g. index 8 appears at slots 3 (new) and 8 (old):
-    // one splat transiently draws twice while indices 0–3 are omitted.
-    // Deliberate, documented trade: bounded shimmer for ceil(n/chunk)
-    // frames instead of a 119–563 ms upload hitch.
-    expect(pumpSortedIndexOrderingApply(geometry)).toBe(true);
-    expect(Array.from(arr.subarray(0, 12))).toEqual([11, 10, 9, 8, 4, 5, 6, 7, 8, 9, 10, 11]);
-    // Only the slice's range is registered — not the whole prefix.
-    expect(attr.updateRanges.length).toBe(1);
-    expect(attr.updateRanges[0]).toMatchObject({ start: 0, count: CHUNK });
-    flushAttr(attr);
+    // Slices 1 and 2: still streaming, slot unchanged, screen unchanged.
+    for (let slice = 1; slice <= 2; slice++) {
+      const result = pumpSortedIndexOrderingApply(geometry);
+      expect(result).toEqual({ more: true, flipped: false });
+      expect(activeSortedIndexSlot(geometry)).toBe(0);
+      expectPermutation(geometry, 12);
+      expect(Array.from(activeArr(geometry).subarray(0, 12))).toEqual([
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11,
+      ]);
+    }
 
-    // Frame 2: slice [4, 8) — more work remains.
-    expect(pumpSortedIndexOrderingApply(geometry)).toBe(true);
-    expect(attr.updateRanges.length).toBe(1);
-    expect(attr.updateRanges[0]).toMatchObject({ start: CHUNK, count: CHUNK });
-    flushAttr(attr);
-
-    // Frame 3: slice [8, 12) — completes.
-    expect(pumpSortedIndexOrderingApply(geometry)).toBe(false);
-    expect(attr.updateRanges.length).toBe(1);
-    expect(attr.updateRanges[0]).toMatchObject({ start: 2 * CHUNK, count: CHUNK });
+    // Slice 3 completes the back buffer → the swap.
+    expect(pumpSortedIndexOrderingApply(geometry)).toEqual({ more: false, flipped: true });
+    expect(activeSortedIndexSlot(geometry)).toBe(1);
+    expectPermutation(geometry, 12);
+    expect(Array.from(activeArr(geometry).subarray(0, 12))).toEqual(Array.from(ordering));
     expect(hasPendingSortedIndexOrderingApply(geometry)).toBe(false);
-    // Completion invariant: the buffer EXACTLY equals the ordering.
-    expect(Array.from(arr.subarray(0, 12))).toEqual(Array.from(ordering));
     // Idempotent past completion.
-    expect(pumpSortedIndexOrderingApply(geometry)).toBe(false);
+    expect(pumpSortedIndexOrderingApply(geometry)).toEqual({ more: false, flipped: false });
+  });
+
+  it('registers per-slice ranges on the buffer being written, not the whole prefix', () => {
+    const { geometry } = makeGeometry(16);
+    writeSortedIndexOrdering(geometry, reversed(12), 12);
+    // The target is the INACTIVE attribute — re-registering [0, k·CHUNK)
+    // every frame would upload 4+8+12 MB instead of 4 MB/frame.
+    const back = geometry.getAttribute('aSortedIndexB') as THREE.InstancedBufferAttribute;
+    pumpSortedIndexOrderingApply(geometry);
+    expect(back.updateRanges[0]).toMatchObject({ start: 0, count: CHUNK });
+    flushAttr(back);
+    pumpSortedIndexOrderingApply(geometry);
+    expect(back.updateRanges[0]).toMatchObject({ start: CHUNK, count: CHUNK });
   });
 
   it('unflushed slices collapse into ONE contiguous range (WebGPU never-clears discipline)', () => {
-    const { geometry, attr } = makeGeometry(16);
-    const ordering = reversed(12);
-    writeSortedIndexOrdering(geometry, ordering, 12);
+    const { geometry } = makeGeometry(16);
+    writeSortedIndexOrdering(geometry, reversed(12), 12);
+    const back = geometry.getAttribute('aSortedIndexB') as THREE.InstancedBufferAttribute;
     // No flush between slices (hidden mesh / coalesced frames): ranges
     // must fold, never accumulate.
     pumpSortedIndexOrderingApply(geometry);
-    expect(attr.updateRanges.length).toBe(1);
-    expect(attr.updateRanges[0]).toMatchObject({ start: 0, count: CHUNK });
+    expect(back.updateRanges.length).toBe(1);
+    expect(back.updateRanges[0]).toMatchObject({ start: 0, count: CHUNK });
     pumpSortedIndexOrderingApply(geometry);
-    expect(attr.updateRanges.length).toBe(1);
-    expect(attr.updateRanges[0]).toMatchObject({ start: 0, count: 2 * CHUNK });
+    expect(back.updateRanges.length).toBe(1);
+    expect(back.updateRanges[0]).toMatchObject({ start: 0, count: 2 * CHUNK });
     pumpSortedIndexOrderingApply(geometry);
-    expect(attr.updateRanges.length).toBe(1);
-    expect(attr.updateRanges[0]).toMatchObject({ start: 0, count: 3 * CHUNK });
+    expect(back.updateRanges.length).toBe(1);
+    expect(back.updateRanges[0]).toMatchObject({ start: 0, count: 3 * CHUNK });
   });
 
-  it('a NEW ordering mid-apply is HELD and starts only after the current apply completes', () => {
+  it('successive orderings ping-pong the slot back to 0', () => {
+    const { geometry } = makeGeometry(16);
+    writeSortedIndexIdentity(geometry, 12);
+    const a = reversed(12);
+    writeSortedIndexOrdering(geometry, a, 12);
+    while (pumpSortedIndexOrderingApply(geometry).more) {
+      /* drain */
+    }
+    expect(activeSortedIndexSlot(geometry)).toBe(1);
+
+    const b = new Uint32Array([5, 4, 7, 6, 1, 0, 3, 2, 9, 8, 11, 10]);
+    writeSortedIndexOrdering(geometry, b, 12);
+    while (pumpSortedIndexOrderingApply(geometry).more) {
+      /* drain */
+    }
+    expect(activeSortedIndexSlot(geometry)).toBe(0);
+    expect(Array.from(activeArr(geometry).subarray(0, 12))).toEqual(Array.from(b));
+    expectPermutation(geometry, 12);
+  });
+
+  it('a NEW ordering mid-apply is HELD and starts only after the current one completes', () => {
     // Never restart a streaming apply: under a continuous orbit new
     // orderings arrive every sort round-trip, and restart-from-slice-0
     // meant the stream never converged (measured 8× frame-median
-    // regression). A fully-applied slightly-stale order is strictly
-    // better than a never-completing mix.
-    const { geometry, arr } = makeGeometry(16);
+    // regression). Finishing, flipping, then starting the newest always
+    // converges — and every intermediate frame shows a whole permutation.
+    const { geometry } = makeGeometry(16);
     const orderingA = reversed(12);
     writeSortedIndexOrdering(geometry, orderingA, 12);
     pumpSortedIndexOrderingApply(geometry);
-    pumpSortedIndexOrderingApply(geometry); // A applied through [0, 8)
+    pumpSortedIndexOrderingApply(geometry); // A written through [0, 8)
 
-    // B arrives (a newer sort resolve): held, NOT started.
     const orderingB = new Uint32Array([5, 4, 7, 6, 1, 0, 3, 2, 9, 8, 11, 10]);
     writeSortedIndexOrdering(geometry, orderingB, 12);
     expect(hasPendingSortedIndexOrderingApply(geometry)).toBe(true);
-    expect(Array.from(arr.subarray(0, CHUNK))).toEqual([11, 10, 9, 8]); // A's prefix intact
 
-    // A completes first (buffer EXACTLY equals A for one frame — a fully
-    // valid permutation); the pump reports more work (B's stream).
-    expect(pumpSortedIndexOrderingApply(geometry)).toBe(true); // A [8, 12) + promote B
-    expect(Array.from(arr.subarray(0, 12))).toEqual(Array.from(orderingA));
+    // A completes and swaps in; B's stream starts into the old front.
+    expect(pumpSortedIndexOrderingApply(geometry)).toEqual({ more: true, flipped: true });
+    expect(Array.from(activeArr(geometry).subarray(0, 12))).toEqual(Array.from(orderingA));
+    expectPermutation(geometry, 12);
 
-    // B streams from slice 0.
-    expect(pumpSortedIndexOrderingApply(geometry)).toBe(true); // B [0, 4)
-    expect(Array.from(arr.subarray(0, CHUNK))).toEqual([5, 4, 7, 6]);
-    expect(pumpSortedIndexOrderingApply(geometry)).toBe(true); // B [4, 8)
-    expect(pumpSortedIndexOrderingApply(geometry)).toBe(false); // B [8, 12) — done
-    expect(hasPendingSortedIndexOrderingApply(geometry)).toBe(false);
-    expect(Array.from(arr.subarray(0, 12))).toEqual(Array.from(orderingB));
+    expect(pumpSortedIndexOrderingApply(geometry)).toEqual({ more: true, flipped: false });
+    expectPermutation(geometry, 12); // still showing A while B streams
+    pumpSortedIndexOrderingApply(geometry);
+    expect(pumpSortedIndexOrderingApply(geometry)).toEqual({ more: false, flipped: true });
+    expect(Array.from(activeArr(geometry).subarray(0, 12))).toEqual(Array.from(orderingB));
+    expectPermutation(geometry, 12);
   });
 
   it('held ordering: LATEST wins — an even newer arrival replaces the held one', () => {
-    const { geometry, arr } = makeGeometry(16);
-    const orderingA = reversed(12);
-    writeSortedIndexOrdering(geometry, orderingA, 12);
+    const { geometry } = makeGeometry(16);
+    writeSortedIndexOrdering(geometry, reversed(12), 12);
     pumpSortedIndexOrderingApply(geometry); // A streaming
 
     const orderingB = new Uint32Array(12).fill(1);
@@ -1045,40 +1123,36 @@ describe('chunked ordering apply (perf lever L8)', () => {
     writeSortedIndexOrdering(geometry, orderingB, 12); // held...
     writeSortedIndexOrdering(geometry, orderingC, 12); // ...replaced (B dropped)
 
-    // Finish A (2 more slices), then C streams; B never touches the buffer.
-    pumpSortedIndexOrderingApply(geometry);
-    pumpSortedIndexOrderingApply(geometry); // A done + C promoted
-    pumpSortedIndexOrderingApply(geometry);
-    pumpSortedIndexOrderingApply(geometry);
-    expect(pumpSortedIndexOrderingApply(geometry)).toBe(false);
-    expect(Array.from(arr.subarray(0, 12))).toEqual(Array.from(orderingC));
+    for (let i = 0; i < 8 && pumpSortedIndexOrderingApply(geometry).more; i++) {
+      /* drain A then C */
+    }
+    expect(Array.from(activeArr(geometry).subarray(0, 12))).toEqual(Array.from(orderingC));
+    expectPermutation(geometry, 12);
   });
 
-  it('a SMALL (single-shot) ordering mid-apply cancels the stream — the full write wins', () => {
-    const { geometry, arr } = makeGeometry(16);
-    writeSortedIndexOrdering(geometry, reversed(12), 12);
-    pumpSortedIndexOrderingApply(geometry); // streaming
-    // A single-shot write leaves the buffer exactly equal to the newest
-    // ordering — dominating anything the stream could still produce.
-    const small = new Uint32Array([2, 0, 1]);
-    writeSortedIndexOrdering(geometry, small, 3);
-    expect(hasPendingSortedIndexOrderingApply(geometry)).toBe(false);
-    expect(pumpSortedIndexOrderingApply(geometry)).toBe(false);
-    expect(Array.from(arr.subarray(0, 3))).toEqual([2, 0, 1]);
+  it('an ordering that fits ONE slice completes and flips on the first pump', () => {
+    const { geometry } = makeGeometry(16);
+    const n = writeSortedIndexOrdering(geometry, reversed(CHUNK), CHUNK);
+    expect(n).toBe(CHUNK);
+    expect(pumpSortedIndexOrderingApply(geometry)).toEqual({ more: false, flipped: true });
+    expect(Array.from(activeArr(geometry).subarray(0, CHUNK))).toEqual([3, 2, 1, 0]);
   });
 
   it('writeSortedIndexIdentity cancels an in-flight apply AND its held ordering (commit supersedes)', () => {
-    const { geometry, arr } = makeGeometry(16);
+    const { geometry } = makeGeometry(16);
     writeSortedIndexOrdering(geometry, reversed(12), 12);
     pumpSortedIndexOrderingApply(geometry); // streaming
     writeSortedIndexOrdering(geometry, new Uint32Array(12).fill(2), 12); // held
     expect(hasPendingSortedIndexOrderingApply(geometry)).toBe(true);
     writeSortedIndexIdentity(geometry, 12);
     expect(hasPendingSortedIndexOrderingApply(geometry)).toBe(false);
-    expect(pumpSortedIndexOrderingApply(geometry)).toBe(false);
+    expect(pumpSortedIndexOrderingApply(geometry)).toEqual({ more: false, flipped: false });
     // Neither the stale stream nor the held ordering scribbles over the
-    // fresh identity.
-    expect(Array.from(arr.subarray(0, 12))).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+    // fresh identity, and the slot never moved.
+    expect(activeSortedIndexSlot(geometry)).toBe(0);
+    expect(Array.from(activeArr(geometry).subarray(0, 12))).toEqual([
+      0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11,
+    ]);
   });
 
   it('writeSortedIndexIdentityRange (append commit) cancels an in-flight apply', () => {
@@ -1086,7 +1160,21 @@ describe('chunked ordering apply (perf lever L8)', () => {
     writeSortedIndexOrdering(geometry, reversed(12), 12);
     writeSortedIndexIdentityRange(geometry, 12, 16);
     expect(hasPendingSortedIndexOrderingApply(geometry)).toBe(false);
-    expect(pumpSortedIndexOrderingApply(geometry)).toBe(false);
+    expect(pumpSortedIndexOrderingApply(geometry)).toEqual({ more: false, flipped: false });
+  });
+
+  it('identity writers target whichever buffer is live after a flip', () => {
+    const { geometry } = makeGeometry(16);
+    writeSortedIndexOrdering(geometry, reversed(12), 12);
+    while (pumpSortedIndexOrderingApply(geometry).more) {
+      /* drain */
+    }
+    expect(activeSortedIndexSlot(geometry)).toBe(1);
+    // A commit landing while slot 1 is live must reset THAT buffer.
+    writeSortedIndexIdentity(geometry, 12);
+    expect(Array.from(activeArr(geometry).subarray(0, 12))).toEqual([
+      0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11,
+    ]);
   });
 
   it('geometry dispose cancels the apply (structural lifetime pin)', () => {
@@ -1097,38 +1185,47 @@ describe('chunked ordering apply (perf lever L8)', () => {
     expect(hasPendingSortedIndexOrderingApply(geometry)).toBe(false);
   });
 
-  it('explicit cancel + cancel-all clear pending applies', () => {
+  it('explicit cancel + cancel-all clear pending applies, leaving the drawn order valid', () => {
     const a = makeGeometry(16);
     const b = makeGeometry(16);
+    writeSortedIndexIdentity(a.geometry, 12);
     writeSortedIndexOrdering(a.geometry, reversed(12), 12);
     writeSortedIndexOrdering(b.geometry, reversed(12), 12);
+    pumpSortedIndexOrderingApply(a.geometry); // mid-stream
     cancelSortedIndexOrderingApply(a.geometry);
     expect(hasPendingSortedIndexOrderingApply(a.geometry)).toBe(false);
+    // Abandoning mid-stream discards an un-drawn buffer — what is on
+    // screen is untouched and still whole.
+    expectPermutation(a.geometry, 12);
     expect(hasPendingSortedIndexOrderingApply(b.geometry)).toBe(true);
     cancelAllSortedIndexOrderingApplies();
     expect(hasPendingSortedIndexOrderingApply(b.geometry)).toBe(false);
   });
 
-  it('chunking disabled (WebGPU backends): large orderings stay single-shot', () => {
+  it('slicing disabled (WebGPU backends): one slice, then the same atomic flip', () => {
+    // The WebGPU backends ignore attribute ranges and re-upload the whole
+    // buffer per flush, so slicing there would multiply uploads. They
+    // still double-buffer — the swap is correctness, not an optimisation.
     configureSortedIndexChunkedApply(false);
-    const { geometry, attr, arr } = makeGeometry(16);
+    const { geometry } = makeGeometry(16);
     const ordering = reversed(12);
     const n = writeSortedIndexOrdering(geometry, ordering, 12);
     expect(n).toBe(12);
-    expect(hasPendingSortedIndexOrderingApply(geometry)).toBe(false);
-    expect(Array.from(arr.subarray(0, 12))).toEqual(Array.from(ordering));
-    expect(attr.updateRanges.length).toBe(1);
-    expect(attr.updateRanges[0]).toMatchObject({ start: 0, count: 12 });
+    expect(pumpSortedIndexOrderingApply(geometry)).toEqual({ more: false, flipped: true });
+    expect(activeSortedIndexSlot(geometry)).toBe(1);
+    expect(Array.from(activeArr(geometry).subarray(0, 12))).toEqual(Array.from(ordering));
+    const back = activeAttr(geometry);
+    expect(back.updateRanges.length).toBe(1);
+    expect(back.updateRanges[0]).toMatchObject({ start: 0, count: 12 });
   });
 
-  it('chunked path clamps to the attribute length like the single-shot path', () => {
-    const { geometry, arr } = makeGeometry(8); // attr length 8
+  it('clamps to the attribute length', () => {
+    const { geometry } = makeGeometry(8); // attr length 8
     const ordering = reversed(12); // longer than the attribute
     const n = writeSortedIndexOrdering(geometry, ordering, 12);
     expect(n).toBe(8);
-    expect(pumpSortedIndexOrderingApply(geometry)).toBe(true); // [0, 4)
-    expect(pumpSortedIndexOrderingApply(geometry)).toBe(false); // [4, 8) — done
-    expect(hasPendingSortedIndexOrderingApply(geometry)).toBe(false);
-    expect(Array.from(arr)).toEqual(Array.from(ordering.subarray(0, 8)));
+    expect(pumpSortedIndexOrderingApply(geometry)).toEqual({ more: true, flipped: false });
+    expect(pumpSortedIndexOrderingApply(geometry)).toEqual({ more: false, flipped: true });
+    expect(Array.from(activeArr(geometry))).toEqual(Array.from(ordering.subarray(0, 8)));
   });
 });

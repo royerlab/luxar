@@ -20,6 +20,35 @@ entry points (`LuxarZarrCompiler` write methods, `fit_gaussian_splats`,
 override steps aside whenever a recorder or custom `showwarning` hook owns
 warning display. New module: `luxar.utils.arbol_warnings`.
 
+#### Fixed — depth-sort orderings swap atomically (no more mid-rotation flicker)
+
+Rotating a large `normal`/`volumetric` node drew a **corrupt permutation**:
+some elements twice, an equal number not at all. The chunked ordering apply
+(perf lever L8) streamed slices into the LIVE `aSortedIndex` attribute and
+accepted the intermediate `new[0,cursor) ∪ old[cursor,n)` as bounded transient
+shimmer. The bound was real; the premise that it stays transient was not —
+under a continuous orbit a new sort arrives about as fast as a stream drains,
+so the mix is the steady state. Measured with a browser probe that validates
+the drawn index buffer every sampled frame: **27–33% of frames** on the 1.9M
+`visible_human_head` (27,613 double-drawn) and **70–80%** on the 8M
+`global_rivers_earth` terrain (up to 1,022,162 double-drawn, 12.8% of the
+node). It surfaced now because the bioimaging demos moved to `volumetric`,
+which is order-dependent where `additive` was not.
+
+Orderings now stream into the **inactive** buffer of an `aSortedIndex` /
+`aSortedIndexB` pair and a runtime `uSortedIndexSlot` uniform flips once that
+buffer holds the whole permutation — the A/B design
+`GSPLAT_DEPTH_SORTING_SPEC.md` §2.1 tier 3 specced and deferred. The pair is
+aliased onto one buffer until a node's first sort, so only nodes that actually
+sort pay the +4 B/element. The per-frame upload bound L8 bought is unchanged.
+Sorting and applying now run concurrently (the dispatch apply-gate is gone).
+
+Trade, measured on the 10M orbit bench: sort-adjacent frame p99 ~77 → ~92 ms
+(median and p95 unchanged, still far under the 119–563 ms chunking prevents),
+and waiting for a whole ordering instead of showing a partly-applied one costs
+some freshness (8M fast-orbit sort-axis lag 36.5° → 44.3° mean). Both are the
+deliberate price of never drawing a corrupt permutation.
+
 #### Added — spatial partitioning (BSP tiling) now works on 2D data
 
 `luxar gsplat partition`, `lod --recipe tiles|overview|adaptive`, and

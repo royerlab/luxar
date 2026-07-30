@@ -17,7 +17,11 @@ import {
   LINE_FLOATS_PER_SEGMENT,
   POINT_FLOATS_PER_POINT,
 } from '../../../rendering/element-texture-layout';
-import { writeSortedIndexOrdering } from '../../../rendering/element-storage';
+import {
+  writeSortedIndexOrdering,
+  pumpSortedIndexOrderingApply,
+  getActiveSortedIndexAttribute,
+} from '../../../rendering/element-storage';
 
 describe('GPUBufferPool', () => {
   let pool: GPUBufferPool;
@@ -81,7 +85,7 @@ describe('GPUBufferPool', () => {
       expect((texture!.image.data as Float32Array).length).toBeGreaterThanOrEqual(
         1500 * POINT_FLOATS_PER_POINT
       );
-      const sortedIndex = geom.getAttribute('aSortedIndex');
+      const sortedIndex = getActiveSortedIndexAttribute(geom)!;
       expect(sortedIndex).toBeDefined();
       expect(sortedIndex.array).toBeInstanceOf(Uint32Array);
       // Ownership marker consumed by the commit handoff's dispose gate:
@@ -102,7 +106,7 @@ describe('GPUBufferPool', () => {
       const geom = pool.acquirePointsGeometry('node1', 4);
       pool.updatePointsGeometry(geom, data, 4);
 
-      const attr = geom.getAttribute('aSortedIndex') as THREE.InstancedBufferAttribute;
+      const attr = getActiveSortedIndexAttribute(geom)! as THREE.InstancedBufferAttribute;
       expect(Array.from((attr.array as Uint32Array).subarray(0, 4))).toEqual([0, 1, 2, 3]);
       expect(attr.updateRanges.length).toBe(1);
       expect(attr.updateRanges[0].start).toBe(0);
@@ -118,11 +122,14 @@ describe('GPUBufferPool', () => {
       pool.updatePointsGeometry(geom, createMockLoadedPointsData(4), 4);
       // The SortWorker landed a depth-sort permutation between commits.
       writeSortedIndexOrdering(geom, new Uint32Array([3, 2, 1, 0]), 4);
+      while (pumpSortedIndexOrderingApply(geom).more) {
+        /* an ordering streams into the back buffer and swaps in on completion */
+      }
 
       const recommit = createMockLoadedPointsData(4);
       (recommit.positions as Float32Array).fill(7);
       pool.updatePointsGeometry(geom, recommit, 4, { preserveOrdering: true });
-      const ordering = geom.getAttribute('aSortedIndex').array as Uint32Array;
+      const ordering = getActiveSortedIndexAttribute(geom)!.array as Uint32Array;
       expect(Array.from(ordering.subarray(0, 4))).toEqual([3, 2, 1, 0]);
       const texels = getPointTexture(geom)!.image.data as Float32Array;
       expect(texels[0]).toBe(7); // point 0 center.x — texels WERE rewritten
@@ -140,9 +147,12 @@ describe('GPUBufferPool', () => {
       const geom = pool.acquirePointsGeometry('append-points', 6);
       pool.updatePointsGeometry(geom, createMockLoadedPointsData(4), 4);
       writeSortedIndexOrdering(geom, new Uint32Array([3, 2, 1, 0]), 4);
+      while (pumpSortedIndexOrderingApply(geom).more) {
+        /* an ordering streams into the back buffer and swaps in on completion */
+      }
 
       pool.updatePointsGeometry(geom, createMockLoadedPointsData(6), 6, { fromInstance: 4 });
-      const ordering = geom.getAttribute('aSortedIndex').array as Uint32Array;
+      const ordering = getActiveSortedIndexAttribute(geom)!.array as Uint32Array;
       expect(Array.from(ordering.subarray(0, 4))).toEqual([3, 2, 1, 0]); // prefix preserved
       expect(Array.from(ordering.subarray(4, 6))).toEqual([4, 5]); // suffix identity
       expect(geom.instanceCount).toBe(6);
@@ -313,7 +323,7 @@ describe('GPUBufferPool', () => {
       expect((texture!.image.data as Float32Array).length).toBeGreaterThanOrEqual(
         750 * LINE_FLOATS_PER_SEGMENT
       );
-      const sortedIndex = geom.getAttribute('aSortedIndex');
+      const sortedIndex = getActiveSortedIndexAttribute(geom)!;
       expect(sortedIndex).toBeDefined();
       expect(sortedIndex.array).toBeInstanceOf(Uint32Array);
       // Ownership marker consumed by the commit handoff's dispose gate.
@@ -417,9 +427,12 @@ describe('GPUBufferPool', () => {
       pool.updateLinesGeometry(geom, makeLinesData(4), 4);
       // The SortWorker landed a permutation between commits.
       writeSortedIndexOrdering(geom, new Uint32Array([3, 2, 1, 0]), 4);
+      while (pumpSortedIndexOrderingApply(geom).more) {
+        /* an ordering streams into the back buffer and swaps in on completion */
+      }
 
       pool.updateLinesGeometry(geom, makeLinesData(6), 6, { fromInstance: 4 });
-      const ordering = geom.getAttribute('aSortedIndex').array as Uint32Array;
+      const ordering = getActiveSortedIndexAttribute(geom)!.array as Uint32Array;
       expect(Array.from(ordering.subarray(0, 4))).toEqual([3, 2, 1, 0]); // prefix preserved
       expect(Array.from(ordering.subarray(4, 6))).toEqual([4, 5]); // suffix identity
       expect(geom.instanceCount).toBe(6);
@@ -437,7 +450,7 @@ describe('GPUBufferPool', () => {
       expect(texture).not.toBeNull();
       // Capacity = ceil(300 * 1.5) = 450 splats -> >= 450*16 floats.
       expect((texture!.image.data as Float32Array).length).toBeGreaterThanOrEqual(450 * 16);
-      const sortedIndex = geom.getAttribute('aSortedIndex');
+      const sortedIndex = getActiveSortedIndexAttribute(geom)!;
       expect(sortedIndex).toBeDefined();
       expect(sortedIndex.array).toBeInstanceOf(Uint32Array);
       // Ownership marker consumed by the commit handoff's dispose gate.
