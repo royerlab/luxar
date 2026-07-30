@@ -82,6 +82,8 @@ test = [
     "luxar[gsplats]",
     "pytest>=7.4.0",
     "pytest-cov>=4.1.0",
+    # Exercise the custom root-level hatch_build.py hook directly in tests.
+    "hatchling>=1.27",
     "hypothesis>=6.0"
 ]
 dev = [
