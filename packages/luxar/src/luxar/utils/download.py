@@ -127,11 +127,12 @@ def quarantine_file(
     left in place would be appended to rather than replaced.
 
     The suffix is APPENDED (``foo.zip`` -> ``foo.zip.corrupt``) so the original
-    name and extension survive intact; that is also the form ``luxar demo clear``
-    classifies correctly. A pre-existing quarantine for the same file is
-    REPLACED, not stacked: one slot per file, so a repeated corrupt-fetch loop
-    cannot fill a disk with copies of a multi-gigabyte artifact, and the finders
-    (which match the exact ``.corrupt`` name) keep working.
+    name and extension survive intact; that is also the form
+    ``luxar demo cache clear`` classifies correctly. A pre-existing quarantine
+    for the same file is REPLACED, not stacked: one slot per file, so a
+    repeated corrupt-fetch loop cannot fill a disk with copies of a
+    multi-gigabyte artifact, and the finders (which match the exact
+    ``.corrupt`` name) keep working.
 
     Args:
         path: The rejected artifact. Must be an existing regular file.
@@ -154,7 +155,7 @@ def quarantine_file(
         detail = f" ({reason})" if reason else ""
         aprint(
             f"⚠️  Quarantined cache file{detail}: {path.name} → {target.name}. "
-            "It will never be reused; delete it (or run 'luxar demo clear') to "
+            "It will never be reused; delete it (or run 'luxar demo cache clear') to "
             f"reclaim {_format_bytes(target.stat().st_size)}."
         )
     return target
@@ -177,7 +178,16 @@ def robust_download(
     - Resume partial downloads (HTTP Range requests)
     - Progress tracking with ETA
     - File size verification
-    - Cleanup of corrupted partial downloads
+    - Cleanup of partial downloads THIS call created (a pre-existing cache is
+      never deleted on error)
+    - A 416 (Range Not Satisfiable) while resuming at/after EOF is non-fatal:
+      the cache is proven at-least-complete, and is returned untouched unless
+      the 416's authoritative total contradicts its size (one clean restart)
+
+    When the destination already exists — and a matching ``expected_size``
+    hasn't already short-circuited the call — one or more size-probe requests
+    (a HEAD, and possibly an unranged GET) are issued up front to decide
+    whether to resume, restart, or return the cache as-is.
 
     Args:
         url: URL to download from
@@ -395,21 +405,28 @@ def robust_download(
                 else:
                     mode = "wb"
 
-                # Get total size
-                if "content-length" in response.headers:
-                    content_length = int(response.headers["content-length"])
+                # Get total size. Route both headers through the same hardened
+                # parsers the resume probe uses, so a duplicated
+                # ``Content-Length: "100, 100"`` or a ``Content-Range: .../*``
+                # degrades to "unknown size" instead of raising ValueError into
+                # the generic handler and aborting the download non-retryably.
+                content_length = _parse_len(response.headers)
+                content_range_total = _parse_content_range_total(response.headers)
+                if content_length is not None:
                     total_size = content_length + resume_byte_pos
-                elif "content-range" in response.headers:
+                elif content_range_total is not None:
                     # For resumed downloads: "bytes start-end/total"
-                    content_range = response.headers["content-range"]
-                    total_size = int(content_range.split("/")[-1])
+                    total_size = content_range_total
                 else:
                     total_size = 0
 
                 if total_size > 0:
                     aprint(f"📦 Total size: {total_size / (1024**3):.2f} GB")
                 else:
-                    aprint("📦 Size: Unknown (no Content-Length header)")
+                    aprint(
+                        "📦 Size: Unknown (no usable Content-Length or "
+                        "Content-Range header)"
+                    )
 
                 # Download with progress
                 downloaded = resume_byte_pos
