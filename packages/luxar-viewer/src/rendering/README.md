@@ -139,11 +139,11 @@ postProcessing.updateBloomSettings(
 ### Step 3: Choose Tone Mapping
 
 ```typescript
-// AgX: Neutral, film-like (recommended)
-postProcessing.setToneMapping(THREE.AgXToneMapping);
+// ACES Filmic: cinematic, the recommended default
+postProcessing.setToneMapping(THREE.ACESFilmicToneMapping);
 
 // Or try others:
-// THREE.ACESFilmicToneMapping - Cinematic with warm tones
+// THREE.AgXToneMapping       - Neutral, film-like
 // THREE.ReinhardToneMapping  - Classic, simple
 // THREE.LinearToneMapping    - No tone mapping
 ```
@@ -400,8 +400,8 @@ HDR bloom via the separate `BloomChain` pre-pass:
 
 Multiple tone mapping operators (all run inside the mega-shader via THREE's `<tonemapping_pars_fragment>` chunk):
 
-- Neutral (default) - Minimal color shift, preserves hue fidelity for scientific data
-- ACES Filmic - Industry standard cinematic look (used in cinematic mode)
+- ACES Filmic (default) - Industry standard cinematic look
+- Neutral - Minimal color shift, preserves hue fidelity for scientific data
 - AgX - Modern alternative
 - Reinhard / Cineon - Classic operators
 - Linear - Clamp/saturate to [0, 1]
