@@ -4,7 +4,8 @@
 (disk full, permission error, SIGKILL) leaves a half-written tree under the
 final path. Callers that promise atomicity to their users — `Scene.to_zarr`
 and the CLI `luxar export` — must instead copy to a sibling temp directory
-and atomically rename on success. This module provides that single helper.
+and atomically rename on success. This module provides those helpers
+(``atomic_copytree`` for directory trees, ``atomic_copy_file`` for single files).
 """
 
 from __future__ import annotations
