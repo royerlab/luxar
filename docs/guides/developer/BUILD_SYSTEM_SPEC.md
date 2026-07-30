@@ -145,6 +145,22 @@ make build-viewer
             └─ Runs wasm-pack build
 ```
 
+### Editable Installs vs. Release Wheels
+
+A fresh clone or git worktree does **not** contain
+`packages/luxar-viewer/dist/`; it is a gitignored production build artifact.
+Hatch editable installs (`hatch run ...`, `make install-dev`) therefore skip the
+wheel target's viewer `force-include` through `hatch_build.py`. Development uses
+the viewer from the source tree, so no production viewer build is required just
+to run Python tooling or generate viewer test fixtures.
+
+Standard wheel builds remain strict. `hatch build -t wheel` requires
+`packages/luxar-viewer/dist/index.html` and fails with an actionable
+`make build-viewer` message when it is absent. This prevents publishing a wheel
+without its bundled viewer while keeping clean-worktree development usable.
+The source distribution remains provenance-only: it includes the build hook but
+not the viewer artifact, so end users should install the published wheel.
+
 ### Native Launcher Setup Details
 
 The native launcher backs `luxar export --native macos|linux-amd64|linux-arm64`, which produces double-clickable native bundles. The launcher is a small Go program (`packages/luxar-launcher/main.go`) that opens the bundled viewer inside a system WebView and serves the bundled zarr over a local HTTP server.
