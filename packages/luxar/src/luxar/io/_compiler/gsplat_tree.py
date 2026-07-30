@@ -129,9 +129,16 @@ def _write_single_splat_set(
     :func:`apply_gsplat_group_attrs` so a scene leaf written through this path
     gets the same colormap-LUT tone handling as the compiler's own writer.
     """
+    # Shape normalization only: write_gsplat_leaf guarantees the whole leaf
+    # already passed preflight_validate_leaf, so the O(N) value scans are
+    # skipped here (each leaf is value-scanned exactly once).
     centers, amplitudes, cholesky, colors, n_splats, n_dims, chol_uniform = (
         validate_gsplat_inputs(
-            sublod.centers, sublod.amplitudes, sublod.cholesky_factors, sublod.colors
+            sublod.centers,
+            sublod.amplitudes,
+            sublod.cholesky_factors,
+            sublod.colors,
+            check_values=False,
         )
     )
     truncation_radius = float(
@@ -210,39 +217,15 @@ def _write_single_splat_set(
     return metadata
 
 
-def write_gsplat_leaf(
-    group: zarr.Group,
-    leaf: "GSplatLeaf",
-    *,
-    dataset_ctx: DatasetCtx,
-    ordering_ctx: OrderingCtx,
-    store: zarr.Group,
-    attrs: Optional[Dict[str, Any]] = None,
-    scene_tone_mapping: Optional[str] = None,
-    barrier_dims: Optional[Sequence[int]] = None,
-) -> Dict[str, Any]:
-    """Write a :class:`GSplatLeaf` (single set or additive ladder) into ``group``."""
-    sublods = leaf.additive_sublods
-    if len(sublods) == 1:
-        return _write_single_splat_set(
-            group,
-            sublods[0],
-            dataset_ctx=dataset_ctx,
-            ordering_ctx=ordering_ctx,
-            lightweight=False,
-            store=store,
-            attrs=attrs,
-            scene_tone_mapping=scene_tone_mapping,
-            barrier_dims=barrier_dims,
-        )
+def _validate_ladder_color_and_dim_consistency(sublods: Sequence[Any]) -> None:
+    """Reject an additive ladder the viewer could not load.
 
-    # Additive ladder → additive_<i>/ subgroups + aggregate parent attrs.
-    #
-    # Fail fast on ladders the viewer would reject at load: sub-LOD levels
-    # must agree on color layout (RGB vs RGBA), color dtype, and
-    # dimensionality — the viewer strides its progressive level-concat by
-    # each of these, so a mixed ladder is malformed data there. Refuse to
-    # write one instead of producing an unloadable store.
+    Sub-LOD levels must agree on color layout (RGB vs RGBA), color dtype, and
+    dimensionality — the viewer strides its progressive level-concat by each of
+    these, so a mixed ladder is malformed data there. A single-level ladder
+    trivially passes. Runs in the pre-flight gate (before any group is created)
+    so a mixed ladder never leaves a partial node.
+    """
     color_layouts = {s.colors.shape[1] for s in sublods if s.colors is not None}
     if len(color_layouts) > 1:
         raise ValueError(
@@ -267,6 +250,72 @@ def write_gsplat_leaf(
             "dimensionality."
         )
 
+
+def preflight_validate_leaf(leaf: "GSplatLeaf") -> None:
+    """Validate the WHOLE leaf before any group is created.
+
+    Runs every additive sub-LOD's arrays AND colors (both covered by
+    ``validate_gsplat_inputs``), then the cross-level consistency checks
+    (mixed color layout / dtype / ndim), so an invalid *later* level cannot
+    be discovered only after earlier levels — and the parent node group — are
+    already on disk (a half-written node). This is the ONE value scan per
+    leaf: the per-level writes downstream re-run only the cheap shape
+    normalization (``check_values=False``). It is NOT fully transactional,
+    though: ``transform``/``nd_transform`` and custom-colormap-LUT resolution
+    still run post-write (the F7 residual), so a bad ``transform=`` can still
+    leave a partial node. Side-effect-free (validators only inspect /
+    normalize copies).
+    """
+    sublods = leaf.additive_sublods
+    # Per-sub-LOD arrays + colors FIRST: these give a descriptive ValidationError
+    # on a malformed single level (e.g. 1-D colors/centers). The cross-level
+    # consistency check runs AFTER, so it only ever compares well-formed levels
+    # and never turns a bad shape into a bare IndexError on ``.shape[1]``.
+    for sub in sublods:
+        validate_gsplat_inputs(
+            sub.centers, sub.amplitudes, sub.cholesky_factors, sub.colors
+        )
+    _validate_ladder_color_and_dim_consistency(sublods)
+
+
+def write_gsplat_leaf(
+    group: zarr.Group,
+    leaf: "GSplatLeaf",
+    *,
+    dataset_ctx: DatasetCtx,
+    ordering_ctx: OrderingCtx,
+    store: zarr.Group,
+    attrs: Optional[Dict[str, Any]] = None,
+    scene_tone_mapping: Optional[str] = None,
+    barrier_dims: Optional[Sequence[int]] = None,
+    preflighted: bool = False,
+) -> Dict[str, Any]:
+    """Write a :class:`GSplatLeaf` (single set or additive ladder) into ``group``.
+
+    ``preflighted=True`` promises the caller already ran
+    :func:`preflight_validate_leaf` on this exact leaf (the scene compiler does,
+    BEFORE creating ``group``) so the leaf is not value-scanned twice.
+    """
+    # Preflight: validate every sub-LOD before writing any additive_<i> group.
+    if not preflighted:
+        preflight_validate_leaf(leaf)
+    sublods = leaf.additive_sublods
+    if len(sublods) == 1:
+        return _write_single_splat_set(
+            group,
+            sublods[0],
+            dataset_ctx=dataset_ctx,
+            ordering_ctx=ordering_ctx,
+            lightweight=False,
+            store=store,
+            attrs=attrs,
+            scene_tone_mapping=scene_tone_mapping,
+            barrier_dims=barrier_dims,
+        )
+
+    # Additive ladder → additive_<i>/ subgroups + aggregate parent attrs.
+    # (Per-level inputs and cross-level consistency were checked up front by
+    # preflight_validate_leaf, so every additive_<i> write below is safe.)
     n_dims: Optional[int] = None
     total = 0
     has_any_colors = False

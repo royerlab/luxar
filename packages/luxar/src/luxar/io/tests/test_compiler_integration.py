@@ -277,7 +277,7 @@ class TestCompilerIntegration:
         n = 16
         centers = rng.standard_normal((n, 3)).astype(np.float32)
         amplitudes = np.abs(rng.standard_normal(n)).astype(np.float32)
-        cholesky = np.tile(np.array([1, 0, 0, 1, 0, 1], dtype=np.float32), (n, 1))
+        cholesky = np.tile(np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (n, 1))
 
         with LuxarZarrCompiler(output_path) as compiler:
             compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -299,7 +299,7 @@ class TestCompilerIntegration:
         positions = rng.standard_normal((10, 3)).astype(np.float32)
         vertices = np.array([[0, 0, 0], [1, 1, 1]], dtype=np.float32)
         amplitudes = np.abs(rng.standard_normal(10)).astype(np.float32)
-        cholesky = np.tile(np.array([1, 0, 0, 1, 0, 1], dtype=np.float32), (10, 1))
+        cholesky = np.tile(np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (10, 1))
 
         with LuxarZarrCompiler(output_path) as compiler:
             compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -339,7 +339,7 @@ class TestCompilerIntegration:
         positions = rng.standard_normal((10, 3)).astype(np.float32)
         vertices = np.array([[0, 0, 0], [1, 1, 1]], dtype=np.float32)
         amplitudes = np.abs(rng.standard_normal(10)).astype(np.float32)
-        cholesky = np.tile(np.array([1, 0, 0, 1, 0, 1], dtype=np.float32), (10, 1))
+        cholesky = np.tile(np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (10, 1))
 
         with LuxarZarrCompiler(output_path) as compiler:
             compiler.create_scene(dimensions=Dimensions.default_3d())
