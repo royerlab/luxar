@@ -8,6 +8,7 @@ This package contains:
 
 from .base import (
     ValidationError,
+    validate_cholesky_for_writing,
     validate_colors_for_writing,
     validate_labels_for_writing,
     validate_node_name,
@@ -46,6 +47,7 @@ __all__ = [
     "ValidationError",
     "DimensionalCoverageError",
     # From base (detailed validation for writing)
+    "validate_cholesky_for_writing",
     "validate_colors_for_writing",
     "validate_labels_for_writing",
     "validate_node_name",

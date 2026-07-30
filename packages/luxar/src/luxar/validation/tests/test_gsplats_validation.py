@@ -266,6 +266,137 @@ def test_cholesky_packed_size_mismatch_rejected(tmp_path) -> None:
             )
 
 
+def test_cholesky_nan_rejected(tmp_path) -> None:
+    """A NaN anywhere in the Cholesky factors must fail before any write.
+
+    A single NaN used to pass the shape-only gate and die deep in the encoder
+    AFTER centers were already on disk (a half-written node) — the exact
+    failure the amplitudes/radii/widths finiteness checks already prevent.
+    """
+    # Use the canonical suffix so the store path is NOT rewritten
+    # (LuxarZarrCompiler normalizes ``foo.zarr`` → ``foo.luxar.zarr``); this
+    # makes the no-partial-node assertion below meaningful.
+    store = tmp_path / "chol_nan.luxar.zarr"
+    with LuxarZarrCompiler(store, enable_spatial_index=False) as compiler:
+        compiler.create_scene(dimensions=Dimensions.default_3d())
+        centers = _gsplat_centers(10)
+        bad_chol = _packed_chol(10)
+        bad_chol[3, 1] = np.nan  # off-diagonal NaN
+        # Match the validator's own context-prefixed message so this proves the
+        # early gate fired — not the deep encoder error (which also says
+        # "Contains 1 NaN or Inf" but without the "cholesky_factors:" prefix).
+        with pytest.raises(
+            (ValueError, ValidationError), match="cholesky_factors: Contains"
+        ):
+            compiler.write_gsplats(
+                "test",
+                centers,
+                amplitudes=1.0,
+                cholesky_factors=bad_chol,
+            )
+    # Rejected BEFORE any write: neither the node group nor its centers array
+    # may exist on disk (the transactional fail-fast property of the fix).
+    assert not (store / "test").exists()
+    assert not (store / "test" / "centers").exists()
+
+
+def test_cholesky_zero_diagonal_rejected(tmp_path) -> None:
+    """A zero on the Cholesky diagonal is a singular covariance — rejected."""
+    store = tmp_path / "chol_zero_diag.luxar.zarr"
+    with LuxarZarrCompiler(store, enable_spatial_index=False) as compiler:
+        compiler.create_scene(dimensions=Dimensions.default_3d())
+        centers = _gsplat_centers(10)
+        bad_chol = _packed_chol(10)
+        bad_chol[4, 2] = 0.0  # diagonal slot for d=3 is column 2
+        with pytest.raises(
+            (ValueError, ValidationError),
+            match="Cholesky diagonal must be positive",
+        ):
+            compiler.write_gsplats(
+                "test",
+                centers,
+                amplitudes=1.0,
+                cholesky_factors=bad_chol,
+            )
+    # Rejected before write — no partial node on disk.
+    assert not (store / "test").exists()
+    assert not (store / "test" / "centers").exists()
+
+
+def test_cholesky_negative_diagonal_rejected(tmp_path) -> None:
+    """A negative Cholesky diagonal (silently clamped by the uint8 encoder)."""
+    store = tmp_path / "chol_neg_diag.luxar.zarr"
+    with LuxarZarrCompiler(store, enable_spatial_index=False) as compiler:
+        compiler.create_scene(dimensions=Dimensions.default_3d())
+        centers = _gsplat_centers(10)
+        bad_chol = _packed_chol(10)
+        bad_chol[7, 5] = -2.0  # diagonal slot for d=3 includes column 5
+        with pytest.raises(
+            (ValueError, ValidationError),
+            match="Cholesky diagonal must be positive",
+        ):
+            compiler.write_gsplats(
+                "test",
+                centers,
+                amplitudes=1.0,
+                cholesky_factors=bad_chol,
+            )
+    assert not (store / "test").exists()
+
+
+def test_uniform_cholesky_bad_diagonal_rejected(tmp_path) -> None:
+    """A 1D uniform/broadcast Cholesky with a non-positive diagonal is rejected.
+
+    Exercises the shape-normalization path (``(k,)`` → ``(1, k)``) before the
+    diagonal check runs.
+    """
+    store = tmp_path / "uniform_bad_diag.luxar.zarr"
+    with LuxarZarrCompiler(store, enable_spatial_index=False) as compiler:
+        compiler.create_scene(dimensions=Dimensions.default_3d())
+        centers = _gsplat_centers(50)
+        uniform_chol = _packed_chol(1).reshape(-1)  # 1D, k=6
+        uniform_chol[0] = 0.0  # first diagonal slot
+        with pytest.raises(
+            (ValueError, ValidationError),
+            match="Cholesky diagonal must be positive",
+        ):
+            compiler.write_gsplats(
+                "test",
+                centers,
+                amplitudes=1.0,
+                cholesky_factors=uniform_chol,
+            )
+
+
+def test_cholesky_negative_offdiagonal_accepted(tmp_path) -> None:
+    """Negative OFF-diagonals are valid — the gate constrains only the diagonal.
+
+    A real lower-triangular Cholesky factor has strictly positive DIAGONAL
+    entries but arbitrarily-signed off-diagonals. This locks in that the
+    validator rejects non-positive diagonals ONLY and never touches the
+    off-diagonal (signed) slots.
+    """
+    store = tmp_path / "neg_offdiag.luxar.zarr"
+    with LuxarZarrCompiler(
+        store, encoding_mode=EncodingMode.PRECISION, enable_spatial_index=False
+    ) as compiler:
+        compiler.create_scene(dimensions=Dimensions.default_3d())
+        centers = _gsplat_centers(4)
+        # Packed lower-tri (d=3): diagonal slots [0, 2, 5] positive; the
+        # off-diagonal slots [1, 3, 4] carry negative values.
+        row = np.array([1.0, -0.5, 1.0, 0.3, -0.7, 1.0], dtype=np.float32)
+        cholesky = np.tile(row, (4, 1))
+        compiler.write_gsplats(
+            "test",
+            centers,
+            amplitudes=1.0,
+            cholesky_factors=cholesky,
+        )
+    # Wrote successfully: the node and its centers array are present.
+    assert (store / "test").exists()
+    assert (store / "test" / "centers").exists()
+
+
 def test_uniform_cholesky_accepted(tmp_path) -> None:
     """1D Cholesky (broadcast / uniform across all splats) is allowed."""
     store = tmp_path / "uniform_chol.zarr"

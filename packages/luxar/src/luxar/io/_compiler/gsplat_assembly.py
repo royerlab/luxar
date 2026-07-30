@@ -49,6 +49,7 @@ def validate_gsplat_inputs(
     """
     from ...validation.base import (
         _validate_numeric_finite_values,
+        validate_cholesky_for_writing,
         validate_positions_for_writing,
     )
 
@@ -69,6 +70,12 @@ def validate_gsplat_inputs(
             f"Cholesky factors shape mismatch: expected ({n_splats}, {expected_k}), "
             f"got {cholesky_factors.shape}"
         )
+
+    # Finiteness + positive-diagonal gate (shape is normalized above). Mirrors
+    # the radii/widths validators: a NaN or non-positive diagonal used to pass
+    # the shape-only check and either die deep in the encoder after centers were
+    # written or be silently clamped to a degenerate covariance.
+    validate_cholesky_for_writing(cholesky_factors, n_dims)
 
     # Validate amplitudes (finiteness first, mirroring radii/widths — a NaN
     # would silently pass `< 0` since `nan < 0` is False and corrupt the store).
