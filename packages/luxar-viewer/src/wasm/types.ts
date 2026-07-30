@@ -345,7 +345,8 @@ export interface WasmModule {
    * @param cholesky - Packed Cholesky factors [splatCount * packedSize]
    * @param visibility - Visibility mask [splatCount]
    * @param displayDims - Ordered display-axis dimension indices [1..=3]; their
-   *   order maps directly to renderer X/Y/Z, and missing rows are
+   *   requested order maps directly to renderer X/Y/Z (a permutation yields the
+   *   corresponding marginal, never a sorted one), and missing rows are
    *   scale-matched-padded for 1D/2D data
    * @param ndim - Total dimensionality
    * @param splatCount - Number of splats

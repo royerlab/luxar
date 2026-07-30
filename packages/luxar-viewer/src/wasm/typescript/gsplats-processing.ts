@@ -389,8 +389,10 @@ function mahalanobisDistanceInternal(
  *
  * @param cholesky - Packed Cholesky factors [splatCount * packedSize]
  * @param visibility - Visibility mask [splatCount]
- * @param displayDims - Display dimension indices (sorted) [1..=3]; missing rows
- *   are padded for 1D/2D data (see `computeDisplayCholesky3D`)
+ * @param displayDims - Display dimension indices in requested order (mapped to
+ *   X/Y/Z; a permuted order yields the correspondingly permuted marginal, not a
+ *   sorted one) [1..=3]; missing rows are padded for 1D/2D data (see
+ *   `computeDisplayCholesky3D`)
  * @param ndim - Total dimensionality
  * @param splatCount - Number of splats
  * @param output - Output 3D Cholesky factors [visibleCount * 6]

@@ -142,7 +142,9 @@ class LuxarScene:
 
         Raises:
             FileNotFoundError: If path doesn't exist
-            ValueError: If not a valid Luxar scene
+            ValueError: If not a valid Luxar scene, or if the store is marked
+                ``incomplete`` (the writer exited with an error before
+                finalizing, so nodes/metadata may be missing).
         """
         path = Path(path)
         if not path.exists():
@@ -155,6 +157,17 @@ class LuxarScene:
         if node_type != "scene":
             raise ValueError(
                 f"Not a valid Luxar scene: expected type='scene', got '{node_type}'"
+            )
+
+        # Reject a store the writer marked incomplete. The root type='scene'
+        # attr is written before any node, so a with-block that raised leaves
+        # a partial store that otherwise looks valid; the compiler stamps
+        # ``incomplete`` on error instead of finalizing.
+        if root.attrs.get("incomplete"):
+            raise ValueError(
+                f"Scene at {path} is incomplete: the writer exited with an "
+                "error before finalizing, so the store may be missing nodes "
+                "or metadata. Rebuild the scene from scratch."
             )
 
         # Warn on version mismatch (non-fatal: older files should still load)
