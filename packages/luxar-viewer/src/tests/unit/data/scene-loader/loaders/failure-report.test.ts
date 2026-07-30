@@ -53,7 +53,7 @@ describe('reportLoadOutcome', () => {
   });
 
   it('logs success and notifies nobody on a clean load', () => {
-    expect(reportLoadOutcome([], 3)).toBe('clean');
+    expect(reportLoadOutcome([], ['/a', '/b', '/c'])).toBe('clean');
 
     expect(logSpy.success).toHaveBeenCalledWith(
       expect.stringContaining('Scene loaded successfully')
@@ -65,9 +65,9 @@ describe('reportLoadOutcome', () => {
   });
 
   it('warns without claiming success on a partial failure', () => {
-    expect(reportLoadOutcome(['/a'], 3)).toBe('partial');
+    expect(reportLoadOutcome(['/a'], ['/a', '/b', '/c'])).toBe('partial');
 
-    expect(logSpy.warning).toHaveBeenCalledWith(expect.stringContaining('1 of 3'));
+    expect(logSpy.warning).toHaveBeenCalledWith(expect.stringContaining('1 node(s) failed'));
     expect(logSpy.warning).toHaveBeenCalledWith(expect.stringContaining('/a'));
     // The regression: success must NOT be claimed alongside a failure.
     expect(logSpy.success).not.toHaveBeenCalled();
@@ -77,7 +77,7 @@ describe('reportLoadOutcome', () => {
   });
 
   it('escalates to an error plus one toast when every node failed', () => {
-    expect(reportLoadOutcome(['/a', '/b', '/c'], 3)).toBe('total');
+    expect(reportLoadOutcome(['/a', '/b', '/c'], ['/a', '/b', '/c'])).toBe('total');
 
     expect(logSpy.error).toHaveBeenCalledWith(expect.stringContaining('all 3 node(s) failed'));
     expect(logSpy.success).not.toHaveBeenCalled();
@@ -88,16 +88,24 @@ describe('reportLoadOutcome', () => {
     );
   });
 
-  it('treats more failures than registered loaders as total', () => {
-    // A lazily-loaded substitutive LOD level can record a failure without ever
-    // registering a loader, so failures can outnumber the registered set.
-    expect(reportLoadOutcome(['/a', '/b'], 1)).toBe('total');
+  it('grades a rendered eager node plus a failed lazy level as partial, not total', () => {
+    // A lazy substitutive LOD level can record a failure without registering a
+    // loader. The one registered (eager) node rendered fine, so this is a
+    // partial outcome — not "all nodes failed".
+    expect(reportLoadOutcome(['/lazy'], ['/eager'])).toBe('partial');
+    expect(logSpy.error).not.toHaveBeenCalled();
+    expect(notifierMocks.toast).not.toHaveBeenCalled();
     expect(logSpy.success).not.toHaveBeenCalled();
   });
 
+  it('still grades every registered node failing as total even with an extra lazy failure', () => {
+    expect(reportLoadOutcome(['/a', '/lazy'], ['/a'])).toBe('total');
+    expect(notifierMocks.toast).toHaveBeenCalledTimes(1);
+  });
+
   it('reports partial rather than total when the attempted count is unknown', () => {
-    // Guard against a 0 denominator being read as "everything failed".
-    expect(reportLoadOutcome(['/a'], 0)).toBe('partial');
+    // Guard against an empty registered set being read as "everything failed".
+    expect(reportLoadOutcome(['/a'], [])).toBe('partial');
     expect(notifierMocks.toast).not.toHaveBeenCalled();
   });
 });

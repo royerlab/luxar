@@ -383,12 +383,13 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
   // Report what ACTUALLY happened. `loadScene` cannot throw on a failed node
   // (loadLeafNode swallows LoaderError so the rest of the scene still builds), so
   // without this a scene whose every node failed logged success over an empty
-  // viewport. Denominator: leaf loaders register in a `finally`, so a failed node
-  // still counts.
-  reportLoadOutcome(
-    ctx.getFailedLoaderPaths(),
-    ctx.loaders.size + ctx.linesLoaders.size + ctx.gsplatLoaders.size
-  );
+  // viewport. Totality is graded against the registered path set — a failed lazy
+  // LOD level records a failure without registering, so a count would over-report.
+  reportLoadOutcome(ctx.getFailedLoaderPaths(), [
+    ...ctx.loaders.keys(),
+    ...ctx.linesLoaders.keys(),
+    ...ctx.gsplatLoaders.keys(),
+  ]);
 
   // Schedule progressive LOD refinement after initial load.
   // Each per-type loader maps may include progressive loaders that

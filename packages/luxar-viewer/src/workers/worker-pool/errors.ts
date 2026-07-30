@@ -83,9 +83,12 @@ export class WorkerUnavailableError extends Error {
  * unrecognized error therefore does NOT qualify — callers fail closed and
  * propagate it.
  *
- * Name-based rather than `instanceof`, matching `data/loaders/abort-error.ts`:
- * these errors cross a Comlink boundary, which reconstructs them in the calling
- * realm and breaks prototype identity.
+ * Matched by `instanceof`, not by name: both types are constructed only on the
+ * main thread (the timeout wrapper and pool init / `getWorker`) and never cross
+ * the Comlink boundary, so their prototypes are intact here. A rejection that
+ * came back FROM a worker is reconstructed in this realm and loses its
+ * prototype, so it can never match — which is exactly the fail-closed behavior
+ * we want for a kernel fault.
  *
  * Known ambiguity in the timeout case, kept deliberately: a timeout can mean
  * either "the worker is wedged" (where the main thread is the only recovery) or
@@ -96,7 +99,5 @@ export class WorkerUnavailableError extends Error {
  * pathological either way. Revisit here, not at the call sites, if that changes.
  */
 export function isWorkerInfrastructureError(error: unknown): boolean {
-  if (typeof error !== 'object' || error === null) return false;
-  const name = (error as { name?: unknown }).name;
-  return name === 'WorkerTimeoutError' || name === 'WorkerUnavailableError';
+  return error instanceof WorkerTimeoutError || error instanceof WorkerUnavailableError;
 }

@@ -50,6 +50,7 @@ import {
   projectLinesTo3DUsingWorker,
 } from '../../../../data/scene-loader/process/data-processor-lines';
 import type { LoadedLinesData } from '../../../../types/lines';
+import { WorkerTimeoutError, WorkerUnavailableError } from '../../../../workers/worker-pool/errors';
 
 /**
  * Dispatcher-shaped result (keyed by `visibleSegmentCount`, plus empty
@@ -440,11 +441,12 @@ describe('projectLinesTo3DUsingWorker', () => {
 
   // Worker INFRASTRUCTURE failure — re-running on the main thread is meaningful.
   it.each([
-    ['WorkerTimeoutError', 'Worker call exceeded timeout'],
-    ['WorkerUnavailableError', '[WorkerPool] No workers available after initialization'],
-  ])('falls back to the in-process dispatcher on %s', async (name, message) => {
-    const infraError = new Error(message);
-    infraError.name = name;
+    ['WorkerTimeoutError', new WorkerTimeoutError('projectLinesTo3D', 60000)],
+    [
+      'WorkerUnavailableError',
+      new WorkerUnavailableError('[WorkerPool] No workers available after initialization'),
+    ],
+  ])('falls back to the in-process dispatcher on %s', async (_name, infraError) => {
     mockGetWorkerPool.mockReturnValue({
       runWithTimeout: vi.fn(async () => {
         throw infraError;
@@ -470,6 +472,23 @@ describe('projectLinesTo3DUsingWorker', () => {
     });
 
     await expect(callProjectLines()).rejects.toBe(trap);
+    expect(mockBuildInstanceBuffers).not.toHaveBeenCalled();
+  });
+
+  // A worker-RETURNED error reconstructed across Comlink loses its prototype but
+  // may still carry the name string. It must NOT be treated as infrastructure —
+  // otherwise the rejected kernel re-runs on the UI thread, the exact fault this
+  // guards. `instanceof` is what makes the name insufficient.
+  it('does not fall back for a non-instance error that merely spoofs the infra name', async () => {
+    const spoof = new Error('Worker call exceeded timeout');
+    spoof.name = 'WorkerTimeoutError';
+    mockGetWorkerPool.mockReturnValue({
+      runWithTimeout: vi.fn(async () => {
+        throw spoof;
+      }),
+    });
+
+    await expect(callProjectLines()).rejects.toBe(spoof);
     expect(mockBuildInstanceBuffers).not.toHaveBeenCalled();
   });
 

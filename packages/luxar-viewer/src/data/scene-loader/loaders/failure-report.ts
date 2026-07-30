@@ -60,13 +60,13 @@ export function warnFailedLoaders(failedPaths: readonly string[]): void {
  *   cannot tell: `loadScene` resolves successfully either way.
  *
  * @param failedPaths Scene paths whose load failed.
- * @param attemptedCount Nodes that attempted to load. Leaf loaders register in a
- *   `finally`, so a failed node still counts — which is what makes this a valid
- *   denominator.
+ * @param registeredPaths Scene paths that registered a loader — the attempted
+ *   set. A failed lazy LOD level may fail WITHOUT registering, so grade totality
+ *   against this set, not a count.
  */
 export function reportLoadOutcome(
   failedPaths: readonly string[],
-  attemptedCount: number
+  registeredPaths: readonly string[]
 ): LoadOutcome {
   if (failedPaths.length === 0) {
     log.success(Modules.SCENE_LOADER, 'Scene loaded successfully');
@@ -75,16 +75,21 @@ export function reportLoadOutcome(
 
   const joined = failedPaths.join(', ');
 
-  // `>=` rather than `===`: a lazily-loaded substitutive LOD level can record a
-  // failure without ever registering a loader, so failures can outnumber the
-  // registered set.
-  if (attemptedCount > 0 && failedPaths.length >= attemptedCount) {
+  // "total" means every REGISTERED (attempted) node failed. Grade against the
+  // path SET, not a count: a failed lazy substitutive LOD level records a
+  // failure without ever registering a loader, so a count comparison would
+  // mislabel "one eager node rendered + one lazy level failed" as total. Require
+  // at least one registered path AND every one of them in the failed set.
+  const failedSet = new Set(failedPaths);
+  const allRegisteredFailed =
+    registeredPaths.length > 0 && registeredPaths.every((p) => failedSet.has(p));
+  if (allRegisteredFailed) {
     log.error(
       Modules.SCENE_LOADER,
-      `Scene load FAILED — all ${failedPaths.length} node(s) failed to load: ${joined}`
+      `Scene load FAILED — all ${registeredPaths.length} node(s) failed to load: ${joined}`
     );
     notifier.toast(
-      `Scene failed to load: all ${failedPaths.length} data node(s) failed. ` +
+      `Scene failed to load: all ${registeredPaths.length} data node(s) failed. ` +
         'See the console for details.',
       TOTAL_FAILURE_TOAST_MS
     );
@@ -93,7 +98,8 @@ export function reportLoadOutcome(
 
   log.warning(
     Modules.SCENE_LOADER,
-    `Scene loaded with ${failedPaths.length} of ${attemptedCount} node(s) failed: ${joined}`
+    `Scene loaded with failures — ${failedPaths.length} node(s) failed to load: ${joined}. ` +
+      'Some data may be missing.'
   );
   return 'partial';
 }

@@ -55,7 +55,7 @@ The floor is now anchored to the largest diagonal of Σ_S
 that behaves identically at every scene scale, with the absolute constant kept as
 a backstop for a genuinely scaleless (all-zero) covariance. Same
 scale-free-conditioning reasoning as the shader's trace-normalized covariance
-inverse. Rank-deficient axes are still regularized, now as a fixed *fraction* of
+inverse. Rank-deficient axes are still regularized, now as a fixed _fraction_ of
 the real axis.
 
 #### Changed — volumetric joins the LOD anti-popping blendable set
@@ -96,12 +96,15 @@ reviewing the 2D-gsplat WASM trap.
 
 The worst turned a data error into a UI freeze: the gsplats and lines processors
 fell back to the in-process dispatcher on ANY worker rejection except a
-dataset-switch abort. That dispatcher runs the *same* kernel through the same
+dataset-switch abort. That dispatcher runs the _same_ kernel through the same
 `pickBackend`, so a WASM trap coming back from the worker trapped again on the main
-thread, blocking the frame. Only worker INFRASTRUCTURE failure now falls back, via a
-name-based `isWorkerInfrastructureError` allow-list (`instanceof` cannot work —
-Comlink reconstructs errors and loses the prototype, preserving only `name`).
-Unknown errors fail closed and propagate. Points is deliberately not included: its
+thread, blocking the frame. Only worker INFRASTRUCTURE failure now falls back, via
+an `isWorkerInfrastructureError` allow-list matching the two pool-internal
+error types (`WorkerTimeoutError`, `WorkerUnavailableError`) by `instanceof` —
+both are constructed on the main thread and never cross the Comlink boundary,
+so their prototypes stay intact. Unknown errors, and any rejection
+reconstructed from a worker (which loses its prototype), fail closed and
+propagate. Points is deliberately not included: its
 projection is main-thread-only, so it has no worker path.
 
 `loadScene` also logged "Scene loaded successfully" unconditionally. Because
@@ -124,7 +127,6 @@ persisted and automatic retries are gated on a transient cause under an attempt 
 — while a manual Retry still forces every path, since the user pressing it is new
 information.
 
-
 #### Added — Points and Lines LOD levels now stream progressively (#811, #808)
 
 `additive_lod` and `substitutive_lod` used to be mutually exclusive for Points
@@ -134,8 +136,8 @@ all-at-once however large it was. On the 9.75M-point DESI demo that single
 commit froze the main thread for ~85 s. GSplats have always composed the two
 axes, so this closes a three-geometry asymmetry as much as it fixes a stall.
 
-The axes now compose — substitutive chooses *which* level renders at the current
-zoom, additive describes *how* each level streams in — and every level is
+The axes now compose — substitutive chooses _which_ level renders at the current
+zoom, additive describes _how_ each level streams in — and every level is
 laddered by default (`additive_lod=False` opts out), with the sibling-aware
 first chunk on all but the coarsest. A level smaller than one stream chunk stays
 a flat leaf automatically.
@@ -267,7 +269,7 @@ centroid on the projected centerline) that fails pre-fix on both backends.
 
 Cross-node draw order sorted whole meshes by the view-depth of their
 bounds centers — a single number that cannot express "this tiny node is
-*inside* that huge node." For a node embedded in another (the galaxy
+_inside_ that huge node." For a node embedded in another (the galaxy
 demo's Sun/Betelgeuse/Rigel markers inside the 3M-star cloud), the
 container's center sorts nearer for roughly half of all camera
 orientations, making the container draw last; in `volumetric` (or
@@ -363,6 +365,7 @@ notch of axial length `2 × width` bottoming out at 50%. (PR #785; follow-ups
   while quad tiling/overlap is a screen-space, per-camera fact (#795 tracks a
   real screen-space suppression), and the outer-side miter wedge at sharp
   bends remains.
+
 #### Added — manifest-driven demo-data fetch (R17 step 1)
 
 `demos/data_manifest.json` is now the single source of truth for how every demo
@@ -388,10 +391,10 @@ in-place corruption changes neither. The manifest checksum is now authoritative
 at every step, and a failing cache entry is quarantined (`.corrupt`) instead of
 being silently reused.
 
-`cached_download` had the same flaw plus two more — a file *longer* than
+`cached_download` had the same flaw plus two more — a file _longer_ than
 `expected_size` and an unpulled Git LFS pointer were both handed to the resuming
 downloader, which appends to whatever bytes are already there. All three now
-quarantine first. A file *shorter* than expected is still left in place, since
+quarantine first. A file _shorter_ than expected is still left in place, since
 that is a genuine resumable partial download.
 
 #### Fixed — the demo-data manifest was excluded from the wheel and sdist
@@ -400,7 +403,6 @@ It was written inside `demos/data/`, which packaging excludes wholesale (~450 MB
 of Git LFS payload), so `load_manifest()` raised `FileNotFoundError` for every
 pip-installed user. Moved to `demos/data_manifest.json`, with a regression test
 that re-runs hatchling's own matcher over the committed exclude globs.
-
 
 #### Fixed — `gsplat transform --rotate-*` rotated the wrong center dims on stacked nD data (#722)
 

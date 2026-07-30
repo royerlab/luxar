@@ -1574,6 +1574,13 @@ export class SceneLoader {
 
     this._updateInProgress = true;
     try {
+      if (opts.onlyAutoRetryable) {
+        // Charge the automatic-retry budget once per connectivity-triggered
+        // attempt. Ordinary update sweeps and manual retries also record
+        // failures, but must not consume this budget — otherwise a scene that
+        // failed a few slices offline would be past the cap before `online` fires.
+        for (const path of failedPaths) this.registry.markAutoRetryAttempt(path);
+      }
       const { succeeded, failed } = await retryAllFailedLoadersUnlocked(
         failedPaths,
         this.makeRetryCtx()
