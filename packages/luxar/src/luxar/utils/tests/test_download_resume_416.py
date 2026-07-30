@@ -13,6 +13,7 @@ already-complete cached file.
 
 from __future__ import annotations
 
+import hashlib
 import http.server
 import threading
 from pathlib import Path
@@ -194,6 +195,108 @@ class _NoContentRangeChunkedHandler(_ChunkedRangeHTTPHandler):
         return _LimitedFile(f, end - start + 1)
 
 
+def _etag_of(path: Path) -> str:
+    """The strong ETag the ETag-aware test server derives from file content."""
+    return '"' + hashlib.md5(path.read_bytes(), usedforsecurity=False).hexdigest() + '"'
+
+
+class _EtagRangeHTTPHandler(_RangeHTTPHandler):
+    """Range handler with a strong content-derived ETag and ``If-Range`` semantics.
+
+    Sends ``ETag`` on every response. A ranged request carrying an ``If-Range``
+    that does NOT match the current ETag is answered with a 200 FULL body
+    (RFC 9110 §13.1.5 — the representation changed, so the tail must not be
+    served), exactly as validating servers (Zenodo, GitHub, S3) behave. Every
+    served status is recorded in ``self.server.served``.
+    """
+
+    def send_head(self):  # noqa: ANN201 - stdlib override
+        path = Path(self.translate_path(self.path))
+        range_header = self.headers.get("Range")
+
+        if not path.is_file():
+            return super().send_head()
+
+        size = path.stat().st_size
+        etag = _etag_of(path)
+
+        if_range = self.headers.get("If-Range")
+        if range_header is not None and if_range is not None and if_range != etag:
+            range_header = None  # validator mismatch → full body, ignore Range
+
+        if range_header is None:
+            self.server.served.append(200)  # type: ignore[attr-defined]
+            f = open(path, "rb")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Length", str(size))
+            self.send_header("Accept-Ranges", "bytes")
+            self.send_header("ETag", etag)
+            self.end_headers()
+            if self.command == "HEAD":
+                f.close()
+                return None
+            return _LimitedFile(f, size)
+
+        spec = range_header.replace("bytes=", "").strip()
+        start_s, _, end_s = spec.partition("-")
+        start = int(start_s) if start_s else 0
+        end = int(end_s) if end_s else size - 1
+        end = min(end, size - 1)
+
+        if start >= size or start > end:
+            self.server.served.append(416)  # type: ignore[attr-defined]
+            self.send_response(416, "Requested Range Not Satisfiable")
+            self.send_header("Content-Range", f"bytes */{size}")
+            self.send_header("Accept-Ranges", "bytes")
+            self.send_header("ETag", etag)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return None
+
+        self.server.served.append(206)  # type: ignore[attr-defined]
+        f = open(path, "rb")
+        f.seek(start)
+        self.send_response(206)
+        self.send_header("Content-Type", "application/octet-stream")
+        self.send_header("Content-Length", str(end - start + 1))
+        self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+        self.send_header("Accept-Ranges", "bytes")
+        self.send_header("ETag", etag)
+        self.end_headers()
+        return _LimitedFile(f, end - start + 1)
+
+
+class _MisalignedResumeHandler(_RangeHTTPHandler):
+    """Range handler that ACCEPTS a resume but answers from byte 0.
+
+    A misbehaving server: it returns 206 for any Range request, yet the body
+    (and ``Content-Range``) start at 0 rather than the requested offset. Blindly
+    appending such a body would corrupt the file at the wrong offset while
+    still passing size verification.
+    """
+
+    def send_head(self):  # noqa: ANN201 - stdlib override
+        path = Path(self.translate_path(self.path))
+        range_header = self.headers.get("Range")
+
+        if not path.is_file() or range_header is None:
+            return super().send_head()
+
+        size = path.stat().st_size
+        f = open(path, "rb")
+        self.send_response(206)
+        self.send_header("Content-Type", "application/octet-stream")
+        self.send_header("Content-Length", str(size))
+        self.send_header("Content-Range", f"bytes 0-{size - 1}/{size}")
+        self.send_header("Accept-Ranges", "bytes")
+        self.end_headers()
+        if self.command == "HEAD":
+            f.close()
+            return None
+        return _LimitedFile(f, size)
+
+
 class _LimitedFile:
     """File-like that stops after ``limit`` bytes (for copyfile)."""
 
@@ -270,6 +373,33 @@ def headerless_416_server(tmp_path: Path):
         server.server_close()
 
 
+@pytest.fixture()
+def etag_range_server(tmp_path: Path):
+    """Serve tmp_path with a strong ETag + ``If-Range`` validation.
+
+    Yields ``(base_url, server)`` so a test can inspect ``server.served``.
+    """
+    server, thread = _serve(tmp_path, _EtagRangeHTTPHandler)
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}", server
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+        server.server_close()
+
+
+@pytest.fixture()
+def misaligned_resume_server(tmp_path: Path):
+    """Serve tmp_path with a 206 whose body always starts at byte 0."""
+    server, thread = _serve(tmp_path, _MisalignedResumeHandler)
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}"
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+        server.server_close()
+
+
 def _make_payload(nbytes: int = 300_000, seed: int = 7) -> bytes:
     rng = np.random.default_rng(seed)
     return rng.integers(0, 256, nbytes).astype(np.uint8).tobytes()
@@ -317,6 +447,13 @@ class TestRobustDownloadResume416:
         DIFFER from the true remote prefix, so the only way the promoted ``out``
         can equal ``local_prefix + remote[N:]`` is if bytes ``[0, N)`` were kept
         (never re-fetched) — proving a real 206 resume onto the ``.part`` file.
+
+        This pins the NO-VALIDATOR best-effort path: neither a recorded
+        ``.part.validator`` sidecar nor a server ETag exists, so ``If-Range``
+        cannot be sent and the staged bytes are trusted as-is (the best that can
+        be done without a validator). A partial staged from a VALIDATING host
+        records its ETag and is protected against a changed remote — see
+        ``test_changed_remote_invalidates_recorded_validator``.
         """
         n = 120_000
         payload = _make_payload(nbytes=500_000, seed=1)
@@ -869,4 +1006,131 @@ class TestRobustDownloadResume416:
 
         assert result == out
         assert out.read_bytes() == remote, "re-fetch must be clean, never spliced"
+        assert not part.exists(), "staging .part must be renamed onto out"
+
+    def test_changed_remote_invalidates_recorded_validator(
+        self, etag_range_server, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A partial staged against an asset that CHANGED before the retry must
+        be re-fetched from scratch — never spliced ``old_prefix + new_tail``.
+
+        Run 1 downloads fresh from a validating (ETag) host and drops mid-body,
+        leaving a truncated ``.part`` plus the recorded validator of the OLD
+        representation. The remote is then replaced (different content, larger
+        size — the dangerous case, where a bare Range at the partial's length is
+        perfectly satisfiable). Run 2 must send ``If-Range`` with the recorded
+        validator, receive a 200 full body from the changed remote, and end
+        byte-identical to the NEW payload.
+
+        Pre-fix (no validator recorded, no ``If-Range`` sent) the server answers
+        206 with the new asset's tail, splicing ``old[:N] + new[N:]`` into a
+        corrupt file whose length passes size verification — so this test fails
+        against that code on the content assertion.
+        """
+        base_url, server = etag_range_server
+        old_remote = _make_payload(nbytes=300_000, seed=11)
+        (tmp_path / "data.bin").write_bytes(old_remote)
+
+        out = tmp_path / "cache" / "data.bin"
+        out.parent.mkdir(parents=True)
+        part = out.with_name(out.name + ".part")
+        validator = out.with_name(out.name + ".part.validator")
+
+        real_iter = requests.models.Response.iter_content
+
+        def dropping_iter(self, *args, **kwargs):  # noqa: ANN001, ANN202
+            for chunk in real_iter(self, *args, **kwargs):
+                yield chunk
+                raise requests.exceptions.ConnectionError("simulated mid-body drop")
+
+        monkeypatch.setattr(requests.models.Response, "iter_content", dropping_iter)
+        with pytest.raises(requests.exceptions.ConnectionError):
+            robust_download(
+                f"{base_url}/data.bin",
+                out,
+                expected_size=None,
+                verify_size=True,
+                max_retries=0,
+                chunk_size=40_000,
+            )
+        monkeypatch.undo()
+
+        assert part.exists(), "run 1 must leave a resumable partial"
+        assert validator.exists(), "run 1 must record the representation validator"
+        assert validator.read_text().strip() == _etag_of(tmp_path / "data.bin")
+
+        # The asset is re-uploaded: different content, LARGER size, so a bare
+        # (unvalidated) Range at the partial's length would be satisfiable.
+        new_remote = _make_payload(nbytes=400_000, seed=22)
+        (tmp_path / "data.bin").write_bytes(new_remote)
+        server.served.clear()
+
+        result = robust_download(
+            f"{base_url}/data.bin", out, expected_size=None, verify_size=True
+        )
+
+        assert result == out
+        assert out.read_bytes() == new_remote, "changed remote must re-fetch clean"
+        assert 206 not in server.served, "no tail of the NEW asset may be appended"
+        assert not part.exists(), "staging .part must be renamed onto out"
+        assert not validator.exists(), "the validator sidecar must not outlive .part"
+
+    def test_matching_validator_resumes_via_206(
+        self, etag_range_server, tmp_path: Path
+    ) -> None:
+        """A recorded validator that still matches the remote must RESUME (206),
+        not force a full re-download, and complete byte-identical."""
+        base_url, server = etag_range_server
+        n = 120_000
+        payload = _make_payload(nbytes=500_000, seed=1)
+        (tmp_path / "data.bin").write_bytes(payload)
+
+        out = tmp_path / "cache" / "data.bin"
+        out.parent.mkdir(parents=True)
+        part = out.with_name(out.name + ".part")
+        part.write_bytes(payload[:n])  # true remote prefix
+        validator = out.with_name(out.name + ".part.validator")
+        validator.write_text(_etag_of(tmp_path / "data.bin"))
+
+        result = robust_download(
+            f"{base_url}/data.bin", out, expected_size=None, verify_size=True
+        )
+
+        assert result == out
+        assert out.read_bytes() == payload
+        assert 206 in server.served, "matching validator must resume via 206"
+        assert not part.exists()
+        assert not validator.exists(), "the validator sidecar must not outlive .part"
+
+    def test_misaligned_206_restarts_clean(
+        self, misaligned_resume_server: str, tmp_path: Path
+    ) -> None:
+        """A 206 whose ``Content-Range`` start differs from the requested offset
+        must NOT be appended — restart clean and end byte-identical.
+
+        The misbehaving server answers every Range request 206-from-byte-0.
+        Pre-fix the body was appended at the resume offset, producing
+        ``prefix + whole_remote`` — which even passed size verification, because
+        the expected total was computed as ``content_length + resume_byte_pos``.
+        Post-fix the misalignment is detected, the staged bytes are discarded,
+        and the unranged re-fetch yields the exact remote payload.
+        """
+        n = 120_000
+        payload = _make_payload(nbytes=300_000, seed=1)
+        (tmp_path / "data.bin").write_bytes(payload)
+
+        out = tmp_path / "cache" / "data.bin"
+        out.parent.mkdir(parents=True)
+        part = out.with_name(out.name + ".part")
+        part.write_bytes(payload[:n])  # true prefix — a genuine partial
+
+        result = robust_download(
+            f"{misaligned_resume_server}/data.bin",
+            out,
+            expected_size=None,
+            verify_size=True,
+        )
+
+        assert result == out
+        assert out.read_bytes() == payload, "misaligned 206 must never be appended"
         assert not part.exists(), "staging .part must be renamed onto out"

@@ -65,7 +65,7 @@ success, so the destination either exists in full or not at all. Used by
 Robust download utilities with retry logic, resume capability, and progress tracking.
 
 **Key Functions:**
-- `robust_download()`: Download a file from a URL with automatic retry (exponential backoff), partial download resume via HTTP Range requests, progress tracking with ETA, and file-size verification
+- `robust_download()`: Download a file from a URL with automatic retry (exponential backoff), partial download resume via HTTP Range requests, progress tracking with ETA, and file-size verification. Bytes are staged in a sibling `<dest>.part` and atomically promoted onto the destination only once complete and size-verified, so a file at the destination is complete by construction; resumes are validated with `If-Range` against the ETag/Last-Modified recorded in a `<dest>.part.validator` sidecar, so a remote that changed is re-fetched clean instead of spliced
 - `verify_file_checksum()`: Verify a file's integrity against an expected MD5 and/or SHA256 hash
 - `download_with_checksum()`: Combine `robust_download()` with checksum verification, deleting the file if the checksum fails
 - `find_quarantined_files(target)`: Return the `.corrupt` files associated with a cache *file* (both the `foo.npy.corrupt` and `foo.corrupt` quarantine conventions) or every `*.corrupt` inside a cache *directory*

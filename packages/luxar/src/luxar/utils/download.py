@@ -177,7 +177,9 @@ def robust_download(
 
     Features:
     - Automatic retry on network errors (exponential backoff)
-    - Resume partial downloads (HTTP Range requests)
+    - Resume partial downloads (HTTP Range requests), validated with
+      ``If-Range`` against the recorded ETag/Last-Modified of the staged bytes
+      so a remote that changed is re-fetched clean, never spliced
     - Progress tracking with ETA
     - File size verification
     - Cleanup of corrupted partial downloads
@@ -224,6 +226,15 @@ def robust_download(
     # `.with_name(...+".part")` APPENDS the suffix (foo.zip → foo.zip.part), so
     # the original name/extension survive; `.with_suffix` would replace them.
     part_path = output_path.with_name(output_path.name + ".part")
+    # The staging file's provenance: the strong validator (ETag/Last-Modified)
+    # of the remote representation its bytes came from. Sent as `If-Range` on
+    # resume, so a remote that changed since the partial was written answers
+    # with a 200 full body (clean restart) instead of a 206 tail that would
+    # splice `old_prefix + new_tail` into a corrupt file passing size checks.
+    # (Re)written whenever the staging file is started from scratch; removed
+    # whenever the staging file is promoted or discarded. Absent (e.g. the
+    # server offers no validator), resume stays best-effort as before.
+    validator_path = output_path.with_name(output_path.name + ".part.validator")
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Check if file already exists and is complete
@@ -234,6 +245,7 @@ def robust_download(
             aprint(f"  Size: {current_size / (1024**3):.2f} GB")
             # Drop any stale staging file orphaned by an aborted prior run.
             part_path.unlink(missing_ok=True)
+            validator_path.unlink(missing_ok=True)
             return output_path
 
     # A quarantined `.corrupt` sibling means an earlier copy was rejected as
@@ -301,6 +313,61 @@ def robust_download(
         # of 0 is a REAL size (the remote was replaced by an empty file); only
         # the "*" marker means unknown, and that already failed int() above.
         return n if n >= 0 else None
+
+    def _parse_content_range_start(headers: Any) -> Optional[int]:
+        """Parse ``<start>`` from a 206 ``Content-Range: bytes <start>-<end>/<total>``.
+
+        Returns ``None`` for a missing/malformed header or the unsatisfied-range
+        form ``bytes */<total>`` (whose range part is ``*``, not an integer).
+        """
+        raw = headers.get("content-range")
+        if raw is None:
+            return None
+        value = raw.strip()
+        if not value.lower().startswith("bytes"):
+            return None
+        span = value[5:].strip().split("/", 1)[0]
+        try:
+            return int(span.partition("-")[0].strip())
+        except (TypeError, ValueError):
+            return None
+
+    def _strong_validator(headers: Any) -> Optional[str]:
+        """Pick a validator usable in ``If-Range`` (RFC 9110 §13.1.5).
+
+        Prefer a strong ETag (a weak ``W/`` tag must never be sent in
+        If-Range); fall back to ``Last-Modified`` (an HTTP-date is the other
+        allowed form). ``None`` when the response offers neither — resume then
+        stays best-effort, exactly as before.
+        """
+        etag = str(headers.get("etag") or "").strip()
+        if etag and not etag.startswith("W/"):
+            return etag
+        last_modified = str(headers.get("last-modified") or "").strip()
+        return last_modified or None
+
+    def _record_part_validator(headers: Any) -> None:
+        """Persist the response's validator alongside a from-scratch staging file.
+
+        A later run resumes the staged bytes with ``If-Range: <validator>``, so
+        a remote that changed in between answers 200 (full body → clean
+        restart) instead of a 206 tail that would splice old and new bytes.
+        Without a usable validator the sidecar is removed so a stale one can
+        never vouch for bytes it doesn't describe.
+        """
+        validator = _strong_validator(headers)
+        if validator is None:
+            validator_path.unlink(missing_ok=True)
+        else:
+            validator_path.write_text(validator, encoding="utf-8")
+
+    def _read_part_validator() -> Optional[str]:
+        """Read the staged file's recorded validator (``None`` if absent/empty)."""
+        try:
+            validator = validator_path.read_text(encoding="utf-8").strip()
+        except OSError:
+            return None
+        return validator or None
 
     def _resolve_remote_size() -> Optional[int]:
         """Best-effort remote Content-Length (``None`` if unknowable).
@@ -372,6 +439,7 @@ def robust_download(
                 )
             # Drop any stale staging file orphaned by an aborted prior run.
             part_path.unlink(missing_ok=True)
+            validator_path.unlink(missing_ok=True)
             return output_path
 
     # A pre-existing output_path whose completeness CANNOT be confirmed by size —
@@ -391,6 +459,9 @@ def robust_download(
     if output_path.exists() and remote_size is None and not part_path.exists():
         migrated_size = output_path.stat().st_size
         os.replace(output_path, part_path)
+        # A validator sidecar left by an older aborted run described a staging
+        # file that no longer exists — it must not vouch for the migrated bytes.
+        validator_path.unlink(missing_ok=True)
         migrated_from_output = True
 
     def _restore_migrated_cache() -> None:
@@ -430,6 +501,7 @@ def robust_download(
             # resume onto them (e.g. after the remote grows past their length)
             # and splice a corrupt file that passes size verification.
             part_path.unlink(missing_ok=True)
+            validator_path.unlink(missing_ok=True)
         else:
             # Genuinely partial (0 < part < remote) or unknown remote size:
             # best-effort resume. A resulting 416 is handled gracefully below.
@@ -448,8 +520,20 @@ def robust_download(
             try:
                 # Set up headers for resume
                 headers = dict(extra_headers or {})
+                sent_if_range = False
                 if resume_byte_pos > 0:
                     headers["Range"] = f"bytes={resume_byte_pos}-"
+                    # Prove the staged bytes still belong to the current remote
+                    # representation: with `If-Range`, a server whose content
+                    # changed answers 200 (full body → the clean-restart branch
+                    # below) instead of a 206 tail that would splice
+                    # `old_prefix + new_tail`. A migrated pre-existing cache
+                    # never has a recorded validator (the sidecar is removed at
+                    # migration), so its 416/206 confirm probe is unaffected.
+                    resume_validator = _read_part_validator()
+                    if resume_validator is not None:
+                        headers["If-Range"] = resume_validator
+                        sent_if_range = True
 
                 with asection(f"Download Attempt {attempt + 1}/{max_retries + 1}"):
                     # Make request
@@ -491,11 +575,43 @@ def robust_download(
                             # resume it (206) and splice `stale[:N] + remote[N:]`
                             # into a corrupt file that passes size verification.
                             part_path.unlink(missing_ok=True)
+                            validator_path.unlink(missing_ok=True)
+                            continue
+                        range_start = _parse_content_range_start(response.headers)
+                        if range_start != resume_byte_pos:
+                            # A single-part 206 MUST carry `Content-Range:
+                            # bytes <start>-<end>/<total>` with <start> equal to
+                            # the requested offset (RFC 9110). A missing header
+                            # or a different start means appending would land
+                            # the bytes at the wrong offset — corrupting the
+                            # file while still passing size verification.
+                            # Restart clean instead of appending blind.
+                            aprint(
+                                "⚠️  Resume response is misaligned (Content-Range "
+                                f"start {range_start!r}, requested "
+                                f"{resume_byte_pos}); restarting from scratch"
+                            )
+                            resume_byte_pos = 0
+                            response.close()
+                            part_path.unlink(missing_ok=True)
+                            validator_path.unlink(missing_ok=True)
                             continue
                         aprint(f"✓ Resuming from {resume_byte_pos / (1024**2):.1f} MB")
                         mode = "ab"  # Append mode
                     elif resume_byte_pos > 0:
-                        aprint("⚠️  Server doesn't support resume, restarting download")
+                        if sent_if_range:
+                            # The If-Range validator did not match: the remote
+                            # representation changed since the partial was
+                            # written, and the server correctly sent the full
+                            # body instead of a tail to splice.
+                            aprint(
+                                "⚠️  Remote content changed since the partial was "
+                                "written; restarting download"
+                            )
+                        else:
+                            aprint(
+                                "⚠️  Server doesn't support resume, restarting download"
+                            )
                         resume_byte_pos = 0
                         mode = "wb"
                         # Overwriting the migrated bytes → no longer a trustworthy
@@ -504,16 +620,21 @@ def robust_download(
                     else:
                         mode = "wb"
 
+                    if mode == "wb":
+                        # (Re)starting the staging file from scratch: record THIS
+                        # response's validator so a later resume of these bytes
+                        # can be checked against the remote representation.
+                        _record_part_validator(response.headers)
+
                     # Get total size
                     if "content-length" in response.headers:
                         content_length = int(response.headers["content-length"])
                         total_size = content_length + resume_byte_pos
-                    elif "content-range" in response.headers:
-                        # For resumed downloads: "bytes start-end/total"
-                        content_range = response.headers["content-range"]
-                        total_size = int(content_range.split("/")[-1])
                     else:
-                        total_size = 0
+                        # For resumed downloads: "bytes start-end/total". The
+                        # helper tolerates the legal unknown-total form
+                        # ("bytes 0-99/*") and malformed values → 0 (unknown).
+                        total_size = _parse_content_range_total(response.headers) or 0
 
                     if total_size > 0:
                         aprint(f"📦 Total size: {total_size / (1024**3):.2f} GB")
@@ -589,6 +710,7 @@ def robust_download(
                     # output_path exist, and it is COMPLETE by construction.
                     promoted = True
                     os.replace(part_path, output_path)
+                    validator_path.unlink(missing_ok=True)
                     return output_path
 
             except (
@@ -663,6 +785,7 @@ def robust_download(
                                 aprint(f"✓ Download complete: {output_path}")
                                 promoted = True
                                 os.replace(part_path, output_path)
+                                validator_path.unlink(missing_ok=True)
                                 return output_path
                             if not restarted_after_416:
                                 # Any size mismatch against the authoritative total
@@ -687,6 +810,7 @@ def robust_download(
                                 # grows past their length) and splice a corrupt
                                 # file that passes size verification.
                                 part_path.unlink(missing_ok=True)
+                                validator_path.unlink(missing_ok=True)
                                 continue
                         else:
                             # No total anywhere (a truly header-less 416, no
@@ -702,6 +826,7 @@ def robust_download(
                             aprint(f"✓ Download complete: {output_path}")
                             promoted = True
                             os.replace(part_path, output_path)
+                            validator_path.unlink(missing_ok=True)
                             return output_path
                     # 416 with no Range, no staged file, or after we already restarted
                     # once is a genuine error — surface it without touching the file
