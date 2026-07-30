@@ -229,15 +229,46 @@ class Scene(Group):
             dims: Dimensions object (REQUIRED - cannot be None)
 
         Raises:
-            ValueError: If dims is None
+            ValueError: If dims is None, or if the dimensionality (ndim)
+                differs from the current dimensions after geometry has been
+                added (existing data arrays would no longer match).
         """
         if dims is None:
             raise ValueError(
                 "dimensions cannot be None. Scene dimensions are required and "
                 "define the coordinate system for all data in the scene."
             )
+        if (
+            self._dimensions is not None
+            and dims.ndim != self._dimensions.ndim
+            and self._has_authored_geometry()
+        ):
+            raise ValueError(
+                f"Cannot change scene dimensionality from {self._dimensions.ndim}D "
+                f"to {dims.ndim}D after geometry has been added: existing data "
+                "arrays have the old number of coordinate columns and would no "
+                "longer match the scene dimensions. Set dimensions before adding "
+                "geometry. Same-dimensionality changes (names/units/ranges/display) "
+                "are still allowed."
+            )
         self._persist_attr("scene_dimensions", dims.to_dict())
         self._dimensions = dims
+
+    def _has_authored_geometry(self) -> bool:
+        """Return True if any descendant node is authored geometry (a DataNode).
+
+        Overlays and plain groups are not geometry; only ``DataNode`` instances
+        (Points/Lines/GSplats) count.
+        """
+        from ..datanode import DataNode
+
+        stack = list(self.children)
+        while stack:
+            node = stack.pop()
+            if isinstance(node, DataNode):
+                return True
+            stack.extend(node.children)
+        return False
 
     @property
     def viewer_config(self) -> Optional[ViewerConfig]:
