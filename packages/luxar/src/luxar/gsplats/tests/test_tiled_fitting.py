@@ -297,6 +297,55 @@ class TestFitTile:
                 verbose=False,
             )
 
+    @pytest.mark.skipif(not HAS_TORCH, reason="fitting requires torch")
+    def test_denoise_receives_global_norm_range(self, monkeypatch) -> None:
+        """Per-tile denoise must be handed the WHOLE-volume range (issue #754).
+
+        Guards the dict-key ↔ kwarg-name contract:
+        ``_denoise_params['norm_range']`` must reach
+        ``denoise_volume_array(norm_range=...)`` unchanged — a rename on either
+        side would otherwise pass silently. The spy wraps the real function
+        (capture then delegate) so the fit still runs.
+        """
+        import luxar.gsplats.preprocessing.denoise_pipeline as _dp
+        from luxar.gsplats.fit_tiled_gsplats import fit_tile
+
+        volume = np.zeros((16, 32, 32), dtype=np.float32)
+        volume[4:12, 8:24, 8:24] = 1.0
+        # A deliberate whole-volume range distinct from any tile's own min/max.
+        global_range = (0.0, 5.0)
+
+        real_denoise = _dp.denoise_volume_array
+        captured: dict = {}
+
+        def _spy(tile, *args, **kwargs):
+            captured["norm_range"] = kwargs.get("norm_range", "MISSING")
+            return real_denoise(tile, *args, **kwargs)
+
+        monkeypatch.setattr(_dp, "denoise_volume_array", _spy)
+
+        specs = compute_tile_specs(volume.shape, tile_size=64, overlap=8)
+        assert len(specs) == 1
+
+        fit_tile(
+            volume,
+            specs[0],
+            seeds=10,
+            n_iters=20,
+            verbose=False,
+            _denoise_h=0.05,
+            _denoise_params={
+                "patch_size": 3,
+                "search_distance": 5,
+                "backend": "skimage",
+                "device": None,
+                "use_2d": False,
+                "norm_range": global_range,
+            },
+        )
+
+        assert captured.get("norm_range") == global_range
+
 
 @pytest.mark.skipif(not HAS_TORCH, reason="torch not available")
 class TestFitTiled:
@@ -884,6 +933,37 @@ class _CountingArray:
         return out
 
 
+class _ShapeOnlyArray:
+    """Lazy array shim that records requested regions without storing a volume."""
+
+    def __init__(self, shape: tuple[int, ...]) -> None:
+        self.shape = shape
+        self.ndim = len(shape)
+        self.read_regions: list[tuple[tuple[int, int, int], ...]] = []
+        self.voxels_read = 0
+
+    def __getitem__(self, key: object) -> np.ndarray:
+        if key is Ellipsis:
+            indices = (slice(None),) * self.ndim
+        else:
+            assert isinstance(key, tuple)
+            assert len(key) <= self.ndim
+            indices = key + (slice(None),) * (self.ndim - len(key))
+
+        region: list[tuple[int, int, int]] = []
+        read_shape: list[int] = []
+        for index, axis_len in zip(indices, self.shape, strict=True):
+            assert isinstance(index, slice)
+            start, stop, step = index.indices(axis_len)
+            region.append((start, stop, step))
+            read_shape.append(len(range(start, stop, step)))
+
+        shape = tuple(read_shape)
+        self.read_regions.append(tuple(region))
+        self.voxels_read += int(np.prod(shape, dtype=np.int64))
+        return np.zeros(shape, dtype=np.float32)
+
+
 class _ExplodingArray:
     """Array shim that fails on any read — data must never be touched."""
 
@@ -1003,6 +1083,36 @@ class TestResolveVolumeFloor:
         f = pp.resolve_volume_floor(shim, "p10")
         assert f is not None
         assert 0 < shim.voxels_read <= budget
+
+    @pytest.mark.parametrize(
+        ("shape", "budget"),
+        [
+            ((50, 20, 128, 128), 4096),
+            ((97, 89, 83, 79), 1000),
+        ],
+    )
+    def test_memory_bound_when_one_slab_exceeds_budget(
+        self, shape: tuple[int, ...], budget: int
+    ) -> None:
+        """Oversized cross-sections are cropped recursively before reading."""
+        import luxar.gsplats.fitting.preprocessing as pp
+
+        first = _ShapeOnlyArray(shape)
+        second = _ShapeOnlyArray(shape)
+        sample = pp._sample_volume_for_floor(first, budget)
+        repeated = pp._sample_volume_for_floor(second, budget)
+
+        assert sample is not None
+        assert repeated is not None
+        assert 0 < sample.size == first.voxels_read <= budget
+        assert repeated.size == second.voxels_read <= budget
+        assert first.read_regions == second.read_regions
+
+    def test_non_positive_sample_budget_is_rejected(self) -> None:
+        import luxar.gsplats.fitting.preprocessing as pp
+
+        with pytest.raises(ValueError, match="at least 1 voxel"):
+            pp._sample_volume_for_floor(_ExplodingArray(), 0)
 
     def test_single_block_sample_reads_the_middle(self) -> None:
         """When the budget allows only one block, it is taken from the middle

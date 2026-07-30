@@ -8,6 +8,8 @@
  * IMPORTANT: This must be imported before any other code that uses console methods.
  */
 
+import { getErrorStack } from './format-error';
+
 export interface BufferedMessage {
   type: 'log' | 'warn' | 'error' | 'info' | 'debug';
   timestamp: Date;
@@ -131,15 +133,16 @@ class ConsoleInterceptor {
 
     // Override console.warn
     console.warn = (...args: unknown[]) => {
-      this.captureMessage('warn', args);
+      // Warnings get a stack too: ~30 `log.warning(…, error)` sites pass a real
+      // Error, and without this the in-app console had neither its message (see
+      // the formatters' Error branch) nor any trace to fall back on.
+      this.captureMessage('warn', args, this.extractStack(args));
       this.originalConsole.warn(...args);
     };
 
     // Override console.error
     console.error = (...args: unknown[]) => {
-      const error = args[0];
-      const stack = this.extractStack(error);
-      this.captureMessage('error', args, stack);
+      this.captureMessage('error', args, this.extractStack(args));
       this.originalConsole.error(...args);
     };
 
@@ -163,23 +166,22 @@ class ConsoleInterceptor {
   }
 
   /**
-   * Extract stack trace from error object or create one
+   * The stack of the first `Error` among `args`, or `undefined`.
+   *
+   * Scans ALL args rather than just the first: every `log.*` call formats its
+   * message into `args[0]` as a STRING and passes the error along behind it, so
+   * looking only at `args[0]` could never find one.
+   *
+   * Deliberately does NOT fabricate a stack. This used to synthesize
+   * `new Error().stack` whenever a message merely contained the word "error",
+   * which produced a plausible-looking trace rooted inside this interceptor —
+   * worse than no stack, because someone reading the bug report would follow it.
    */
-  private extractStack(error: unknown): string | undefined {
-    if (error instanceof Error && error.stack) {
-      return error.stack;
+  private extractStack(args: readonly unknown[]): string | undefined {
+    for (const arg of args) {
+      const stack = getErrorStack(arg);
+      if (stack) return stack;
     }
-    if (typeof error === 'object' && error !== null && 'stack' in error) {
-      const stack = (error as { stack?: unknown }).stack;
-      if (typeof stack === 'string') return stack;
-    }
-
-    // Create a stack trace if it's an error message without stack
-    if (typeof error === 'string' && error.toLowerCase().includes('error')) {
-      const tempError = new Error();
-      return tempError.stack;
-    }
-
     return undefined;
   }
 

@@ -19,7 +19,6 @@ import numpy as np
 from arbol import aprint, asection
 
 from ..core.dimensions import Dimension, Dimensions
-from ..io.compiler import LuxarZarrCompiler
 from ..typing_utils.aliases import PathLike
 from ..typing_utils.config import check_dataset_size_warning
 from .process import run_child_process
@@ -867,6 +866,10 @@ def create_lorenz_attractor(
     colors = np.column_stack([r + m, g + m, b + m]).astype(np.float32)
 
     # Create scene.
+    # Imported here (not at module top) to break the import cycle
+    # io.compiler -> luxar.utils -> utils.demos -> io.compiler.
+    from ..io.compiler import LuxarZarrCompiler
+
     with LuxarZarrCompiler(store_path) as compiler:
         # Define 3D dimensions
         dims = Dimensions(
@@ -910,6 +913,10 @@ def create_random_spheres(
     rng = np.random.default_rng(seed)
 
     aprint(f"Creating random spheres demo with {n_spheres} spheres")
+
+    # Imported here (not at module top) to break the import cycle
+    # io.compiler -> luxar.utils -> utils.demos -> io.compiler.
+    from ..io.compiler import LuxarZarrCompiler
 
     with LuxarZarrCompiler(store_path) as compiler:
         from luxar import Dimensions
@@ -989,6 +996,10 @@ def create_time_series_demo(
             ),
         ]
     )
+
+    # Imported here (not at module top) to break the import cycle
+    # io.compiler -> luxar.utils -> utils.demos -> io.compiler.
+    from ..io.compiler import LuxarZarrCompiler
 
     with LuxarZarrCompiler(store_path) as compiler:
         compiler.create_scene(dimensions=dims)

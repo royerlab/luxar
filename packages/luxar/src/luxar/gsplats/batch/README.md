@@ -7,7 +7,7 @@ Batch fitting orchestration for large OME-Zarr datasets, fanning a whole nD time
 - **`BatchManifest`** / **`BatchJob`** — Dataclasses representing the full batch job plan (dataset shape, tiling, Slurm parameters, fit config, denoising settings) and individual fitting tasks. Persisted as `manifest.json`.
 - **`save_manifest()`** / **`load_manifest()`** — Serialize/deserialize the manifest to/from the output directory.
 - **`decode_task_id()`** — Map a flat `SLURM_ARRAY_TASK_ID` back to `(timepoint, channel, tile_index)`.
-- **`generate_fit_sbatch()`** — Generate the main sbatch array job script for fitting, with support for sequential or parallel task packing, preemptible requeue, on-the-fly denoising, and preprocessed denoised input.
+- **`generate_fit_sbatch()`** — Generate the main sbatch array job script for fitting, with support for sequential or parallel task packing, preemptible requeue, on-the-fly denoising, and preprocessed denoised input. Both packing modes retain per-task failures and make the array element exit non-zero after all assigned tasks have been joined or attempted.
 - **`generate_calibrate_sbatch()`** / **`generate_denoise_sbatch()`** / **`generate_merge_sbatch()`** — Generate sbatch scripts for NLM calibration, denoise preprocessing, and post-fit merge jobs.
 - **`capture_environment()`** / **`CapturedEnv`** — Snapshot the current conda/venv, loaded modules (including those recorded in `cuda_build_info.json`), CUDA build info, and curated env vars for reproducible Slurm jobs.
 - **`generate_env_preamble()`** — Convert a `CapturedEnv` into a shell preamble for sbatch scripts.

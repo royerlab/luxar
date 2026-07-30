@@ -61,7 +61,14 @@ luxar demo run 3                  # Run by table index
 luxar demo run lorenz -- --no-serve --points=100000  # Forward args to the demo
 luxar demo cache list             # Inventory ~/.cache/luxar demo caches
 luxar demo cache clear lorenz --dry-run   # Preview a cache clear
+luxar demo deps                   # Which optional demo deps are missing?
+luxar demo deps --install         # Install the extras that provide them
+luxar demo deps --extra io        # Restrict to one extra (demos / io / gsplats)
 ```
+`deps` exits 1 when anything is missing, so it doubles as a CI/setup gate. It
+reports the *constrained* requirement from `luxar.demos.INSTALL_SPECS` — the same
+table the runtime `require_module` gate uses — and surveys with `find_spec`, so
+it never imports `torch` just to tell you `torch` is present.
 
 ### `luxar serve`
 Serve zarr datasets or directories via HTTP.
