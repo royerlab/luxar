@@ -32,6 +32,8 @@ def validate_gsplat_inputs(
     amplitudes: Union[NDArray[np.float32], float],
     cholesky_factors: NDArray[np.float32],
     colors: Optional[Union[NDArray[np.float32], List[float], Tuple[float, ...]]] = None,
+    *,
+    check_values: bool = True,
 ) -> Tuple[
     NDArray[np.float32],
     Union[NDArray[np.float32], float],
@@ -43,6 +45,12 @@ def validate_gsplat_inputs(
 ]:
     """Validate and normalize gsplat inputs.
 
+    ``check_values=False`` skips the O(N) value scans (finiteness / sign /
+    color checks) and keeps only the cheap shape normalization. It is for
+    callers that already ran the full check on the SAME arrays — the per-level
+    write after ``preflight_validate_leaf`` — so each leaf is value-scanned
+    exactly once instead of two or three times.
+
     Returns:
         (centers, amplitudes, cholesky_factors, colors,
          n_splats, n_dims, cholesky_is_uniform)
@@ -50,10 +58,15 @@ def validate_gsplat_inputs(
     from ...validation.base import (
         _validate_numeric_finite_values,
         validate_cholesky_for_writing,
+        validate_colors_for_writing,
         validate_positions_for_writing,
     )
 
-    n_splats, n_dims = validate_positions_for_writing(centers)
+    if check_values:
+        n_splats, n_dims = validate_positions_for_writing(centers)
+    else:
+        # Shape/finiteness already checked on these arrays by the caller.
+        n_splats, n_dims = centers.shape
     expected_k = n_dims * (n_dims + 1) // 2
     cholesky_is_uniform = False
 
@@ -75,7 +88,8 @@ def validate_gsplat_inputs(
     # the radii/widths validators: a NaN or non-positive diagonal used to pass
     # the shape-only check and either die deep in the encoder after centers were
     # written or be silently clamped to a degenerate covariance.
-    validate_cholesky_for_writing(cholesky_factors, n_dims)
+    if check_values:
+        validate_cholesky_for_writing(cholesky_factors, n_dims)
 
     # Validate amplitudes (finiteness first, mirroring radii/widths — a NaN
     # would silently pass `< 0` since `nan < 0` is False and corrupt the store).
@@ -84,17 +98,27 @@ def validate_gsplat_inputs(
             raise ValueError(
                 f"Amplitudes shape {amplitudes.shape} doesn't match n_splats {n_splats}"
             )
-        _validate_numeric_finite_values(amplitudes, "amplitudes")
-        if np.any(amplitudes < 0):
-            min_val = float(np.min(amplitudes))
-            raise ValueError(
-                f"Amplitudes must be non-negative (>= 0). Found minimum value: {min_val:.3f}"
-            )
+        if check_values:
+            _validate_numeric_finite_values(amplitudes, "amplitudes")
+            if np.any(amplitudes < 0):
+                min_val = float(np.min(amplitudes))
+                raise ValueError(
+                    f"Amplitudes must be non-negative (>= 0). "
+                    f"Found minimum value: {min_val:.3f}"
+                )
     elif isinstance(amplitudes, (int, float)):
         if not np.isfinite(amplitudes):
             raise ValueError(f"Amplitude must be finite. Got {amplitudes}")
         if amplitudes < 0:
             raise ValueError(f"Amplitude must be non-negative (>= 0). Got {amplitudes}")
+
+    # Colors: the same check write_gsplat_arrays historically ran POST-write;
+    # running it here puts colors in the pre-group gate on every path (flat
+    # write_gsplats and the leaf preflight alike). GSplats accept RGBA — the
+    # alpha column is per-splat opacity. Broadcast list/tuple colors are
+    # handled downstream by write_colors and are not validated here.
+    if check_values and isinstance(colors, np.ndarray):
+        validate_colors_for_writing(colors, n_splats, channels=(3, 4))
 
     return (
         centers,
@@ -212,14 +236,14 @@ def write_gsplat_arrays(
     """Write gsplat arrays to a zarr group and return metadata.
 
     This is the core array-writing routine used by both single-LOD
-    and multi-LOD writers.
+    and multi-LOD writers. Inputs (colors included) must already have been
+    validated via :func:`validate_gsplat_inputs` — both callers run it in
+    their pre-group gate, so nothing is re-scanned here.
 
     Returns:
         Metadata dict with n_splats, ndim, has_colors, amplitude_range,
         center_bounds, and ordering info.
     """
-    from ...validation.base import validate_colors_for_writing
-
     # Write centers
     chunks_centers = calculate_intelligent_chunks(
         centers.shape, spatial_index_data=ordering_data, dtype=centers.dtype
@@ -359,11 +383,10 @@ def write_gsplat_arrays(
     # branch, picks the right `color_mode`, and writes
     # `color_data_range` attrs identically across geometries.
     if colors is not None:
-        if isinstance(colors, np.ndarray):
-            # GSplats accept RGBA: the alpha column is per-splat opacity
-            # (consumed by every blending mode; mapped into optical depth in
-            # volumetric — see VOLUMETRIC_BLENDING_SPEC.md).
-            validate_colors_for_writing(colors, n_splats, channels=(3, 4))
+        # RGBA accepted: the alpha column is per-splat opacity (consumed by
+        # every blending mode; mapped into optical depth in volumetric — see
+        # VOLUMETRIC_BLENDING_SPEC.md). Validated pre-group by
+        # validate_gsplat_inputs, not here.
         write_colors(
             group=group,
             colors=colors,

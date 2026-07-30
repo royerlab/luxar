@@ -464,13 +464,13 @@ def test_multi_additive_bad_later_level_colors_leaves_no_partial_node(
 
     Locks the COLORS half of the all-or-nothing gate (the sibling of
     ``test_multi_additive_bad_later_level_leaves_no_partial_node``, which covers
-    the arrays half). ``validate_gsplat_inputs`` does NOT inspect colors —
-    colors are validated only deep inside ``write_gsplat_arrays``, AFTER that
-    level's centers/amplitudes/Cholesky are already on disk. So without hoisting
-    the colors check into the pre-flight gate, a valid level 0 followed by a
-    level 1 with bad colors would commit the parent node and a complete
-    ``additive_0/`` before failing — a half-written node. This asserts the
-    hoisted check fires up front instead.
+    the arrays half). Colors used to be validated only deep inside
+    ``write_gsplat_arrays``, AFTER that level's centers/amplitudes/Cholesky were
+    already on disk — a valid level 0 followed by a level 1 with bad colors
+    would commit the parent node and a complete ``additive_0/`` before failing
+    (a half-written node). Colors are now part of ``validate_gsplat_inputs``,
+    so the pre-flight gate catches them before any group is created; this
+    asserts that gate fires up front.
 
     A 5-channel colors array can't reach the writer (``GSplatData`` rejects it at
     construction when it concatenates the ladder's colors), so the invalid case
@@ -506,6 +506,70 @@ def test_multi_additive_bad_later_level_colors_leaves_no_partial_node(
     # created, so neither the parent node nor a committed additive_0/ exists.
     assert not (store / "bad").exists()
     assert not (store / "bad" / "additive_0").exists()
+
+
+def test_flat_write_bad_colors_leaves_no_partial_node(tmp_path) -> None:
+    """Invalid colors on the FLAT path fail before any group is created.
+
+    Colors used to be validated only inside ``write_gsplat_arrays``, AFTER
+    centers/amplitudes/Cholesky were on disk — the last input whose failure
+    could leave a partial node. ``validate_gsplat_inputs`` now covers colors,
+    so the flat ``write_gsplats`` pre-group gate catches them too.
+    """
+    store = tmp_path / "bad_colors_flat.luxar.zarr"
+    with LuxarZarrCompiler(store, enable_spatial_index=False) as compiler:
+        compiler.create_scene(dimensions=Dimensions.default_3d())
+        centers = _gsplat_centers(10)
+        bad_colors = np.ones((10, 3), dtype=np.float32)
+        bad_colors[4, 1] = np.nan
+        with pytest.raises((ValueError, ValidationError), match="colors: Contains"):
+            compiler.write_gsplats(
+                "test",
+                centers,
+                amplitudes=1.0,
+                cholesky_factors=_packed_chol(10),
+                colors=bad_colors,
+            )
+    assert not (store / "test").exists()
+
+
+def test_leaf_value_scanned_exactly_once(tmp_path, monkeypatch) -> None:
+    """The additive-ladder write value-scans each sub-LOD exactly once.
+
+    The pre-flight gate is the single O(N) value scan; the per-level writes
+    re-run only shape normalization (``check_values=False``). Counting calls
+    to the Cholesky validator pins that a two-level ladder is scanned twice
+    (once per sub-LOD in preflight) — not four or six times (double preflight
+    plus per-level re-validation).
+    """
+    from luxar.gsplats.gsplat_data import AdditiveSubLOD, GSplatData
+    from luxar.validation import base as validation_base
+
+    calls = {"n": 0}
+    real = validation_base.validate_cholesky_for_writing
+
+    def counting(*args, **kwargs):
+        calls["n"] += 1
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(validation_base, "validate_cholesky_for_writing", counting)
+
+    n = 10
+    data = GSplatData(
+        additive_sublods=[
+            AdditiveSubLOD(
+                centers=_gsplat_centers(n),
+                amplitudes=np.ones(n, dtype=np.float32),
+                cholesky_factors=_packed_chol(n),
+            )
+            for _ in range(2)
+        ]
+    )
+    store = tmp_path / "once.luxar.zarr"
+    with LuxarZarrCompiler(store, enable_spatial_index=False) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        scene.add_gsplats_from_data("ladder", data)
+    assert calls["n"] == 2
 
 
 # =============================================================================

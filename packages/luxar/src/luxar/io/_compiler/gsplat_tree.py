@@ -129,9 +129,16 @@ def _write_single_splat_set(
     :func:`apply_gsplat_group_attrs` so a scene leaf written through this path
     gets the same colormap-LUT tone handling as the compiler's own writer.
     """
+    # Shape normalization only: write_gsplat_leaf guarantees the whole leaf
+    # already passed preflight_validate_leaf, so the O(N) value scans are
+    # skipped here (each leaf is value-scanned exactly once).
     centers, amplitudes, cholesky, colors, n_splats, n_dims, chol_uniform = (
         validate_gsplat_inputs(
-            sublod.centers, sublod.amplitudes, sublod.cholesky_factors, sublod.colors
+            sublod.centers,
+            sublod.amplitudes,
+            sublod.cholesky_factors,
+            sublod.colors,
+            check_values=False,
         )
     )
     truncation_radius = float(
@@ -247,39 +254,27 @@ def _validate_ladder_color_and_dim_consistency(sublods: Sequence[Any]) -> None:
 def preflight_validate_leaf(leaf: "GSplatLeaf") -> None:
     """Validate the WHOLE leaf before any group is created.
 
-    Runs every additive sub-LOD's arrays AND colors, then the cross-level
-    consistency checks (mixed color layout / dtype / ndim), so an invalid
-    *later* level cannot be discovered only after earlier levels — and the
-    parent node group — are already on disk (a half-written node).
-    ``_write_single_splat_set`` validates only the level it is about to write and
-    colors are validated deep in ``write_gsplat_arrays`` (after that level's
-    arrays are on disk), so this up-front pass closes the additive ladder's
-    INPUT-validation half-write (invalid arrays, colors, or a mixed ladder — all
-    checked before any group is created; stricter than the flat ``write_gsplats``
-    gate, which still validates colors post-write). It is NOT fully
-    transactional, though:
-    ``transform``/``nd_transform`` and custom-colormap-LUT resolution still run
-    post-write (the F7 residual), so a bad ``transform=`` can still leave a
-    partial node. Cheap and side-effect-free (validators only inspect /
-    normalize copies), so it is safe to run here even though each level is
-    validated again as it is written.
+    Runs every additive sub-LOD's arrays AND colors (both covered by
+    ``validate_gsplat_inputs``), then the cross-level consistency checks
+    (mixed color layout / dtype / ndim), so an invalid *later* level cannot
+    be discovered only after earlier levels — and the parent node group — are
+    already on disk (a half-written node). This is the ONE value scan per
+    leaf: the per-level writes downstream re-run only the cheap shape
+    normalization (``check_values=False``). It is NOT fully transactional,
+    though: ``transform``/``nd_transform`` and custom-colormap-LUT resolution
+    still run post-write (the F7 residual), so a bad ``transform=`` can still
+    leave a partial node. Side-effect-free (validators only inspect /
+    normalize copies).
     """
-    from ...validation.base import validate_colors_for_writing
-
     sublods = leaf.additive_sublods
     # Per-sub-LOD arrays + colors FIRST: these give a descriptive ValidationError
     # on a malformed single level (e.g. 1-D colors/centers). The cross-level
     # consistency check runs AFTER, so it only ever compares well-formed levels
     # and never turns a bad shape into a bare IndexError on ``.shape[1]``.
     for sub in sublods:
-        _, _, _, colors, n_splats, _, _ = validate_gsplat_inputs(
+        validate_gsplat_inputs(
             sub.centers, sub.amplitudes, sub.cholesky_factors, sub.colors
         )
-        # Colors are validated inside write_gsplat_arrays only AFTER the level's
-        # arrays are on disk; hoist that identical check (channels=(3, 4)) here
-        # so a bad later-level color layout / finiteness also fails pre-write.
-        if isinstance(colors, np.ndarray):
-            validate_colors_for_writing(colors, n_splats, channels=(3, 4))
     _validate_ladder_color_and_dim_consistency(sublods)
 
 
@@ -293,10 +288,17 @@ def write_gsplat_leaf(
     attrs: Optional[Dict[str, Any]] = None,
     scene_tone_mapping: Optional[str] = None,
     barrier_dims: Optional[Sequence[int]] = None,
+    preflighted: bool = False,
 ) -> Dict[str, Any]:
-    """Write a :class:`GSplatLeaf` (single set or additive ladder) into ``group``."""
+    """Write a :class:`GSplatLeaf` (single set or additive ladder) into ``group``.
+
+    ``preflighted=True`` promises the caller already ran
+    :func:`preflight_validate_leaf` on this exact leaf (the scene compiler does,
+    BEFORE creating ``group``) so the leaf is not value-scanned twice.
+    """
     # Preflight: validate every sub-LOD before writing any additive_<i> group.
-    preflight_validate_leaf(leaf)
+    if not preflighted:
+        preflight_validate_leaf(leaf)
     sublods = leaf.additive_sublods
     if len(sublods) == 1:
         return _write_single_splat_set(
