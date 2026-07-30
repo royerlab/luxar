@@ -208,7 +208,9 @@ def add_lines_impl(
                 else:
                     centroids = np.array(
                         [
-                            vert_arr[p, :3].mean(axis=0) if p.size > 0 else np.zeros(3)
+                            vert_arr[p, :3].mean(axis=0)
+                            if p.size > 0
+                            else np.zeros(min(3, vert_arr.shape[1]))
                             for p in polyline_indices
                         ],
                         dtype=np.float64,

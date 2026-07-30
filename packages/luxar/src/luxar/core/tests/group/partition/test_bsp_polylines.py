@@ -273,6 +273,33 @@ class TestAddLinesPartition:
         assert isinstance(node, Group)
         assert node.attrs.get("kind") == "partition"
 
+    def test_2d_sah_rule_produces_partition(self, tmp_path) -> None:
+        """The 2D SAH path must partition without crashing.
+
+        Mirrors ``test_sah_rule_produces_partition`` but with a 2D scene
+        (``Dimensions.default_2d``) and shape-(2n, 2) segment vertices. This
+        locks in the reachable 2D SAH path, which previously had coverage
+        only for 3D. (The SAH centroid buffer's empty-polyline fallback was
+        also made dimension-consistent for #901, but that branch is
+        unreachable via ``add_lines`` since ``identify_polylines`` never
+        yields an empty polyline, so it can't be exercised end to end here.)
+        """
+        rng = np.random.RandomState(5)
+        n_segments = 200
+        v = rng.uniform(-10, 10, (2 * n_segments, 2)).astype(np.float32)
+        w = np.full(2 * n_segments, 0.05, dtype=np.float32)
+        with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_2d())
+            node = scene.add_lines(
+                "lines",
+                vertices=v,
+                widths=w,
+                line_type="segments",
+                partition=dict(max_elements=120, rule="sah"),
+            )
+        assert isinstance(node, Group)
+        assert node.attrs.get("kind") == "partition"
+
     def test_image_labels_alongside_partition_raises(self, tmp_path):
         v, w = self._segments_data(100, seed=6)
         with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
