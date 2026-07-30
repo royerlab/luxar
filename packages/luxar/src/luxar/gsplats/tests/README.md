@@ -19,8 +19,8 @@ gsplats/
 │   ├── test_gsplats_integration.py # Integration tests
 │   ├── test_metrics.py             # Quality metrics (PSNR, SSIM, MSE)
 │   ├── test_progressive_fitting.py # Progressive fitting pipeline
-│   ├── test_spatial_volume_filter.py # Spatial volume filtering
 │   ├── test_slurm_gen.py           # Generated Slurm control-flow behavior
+│   ├── test_spatial_volume_filter.py # Spatial volume filtering
 │   ├── test_tiled_fitting.py       # Tiled fitting for large volumes
 │   └── README.md                   # This file
 ├── fitting/

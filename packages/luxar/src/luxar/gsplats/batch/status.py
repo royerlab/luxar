@@ -53,14 +53,17 @@ def check_batch_status(output_dir: Path) -> BatchStatus:
             status.completed += 1
             completed_ids.add(job.task_id)
 
-    # 2. Query sacct for non-completed tasks
+    # 2. Query sacct for non-completed tasks. sacct states are keyed by array
+    # ELEMENT index; with packing (tasks_per_job > 1) each element covers
+    # tasks_per_job consecutive flat task ids, so map through the packing.
+    tpj = max(1, manifest.tasks_per_job)
     remaining = manifest.total_tasks - status.completed
     if remaining > 0 and manifest.array_job_id is not None:
         sacct_states = _query_sacct(manifest.array_job_id)
         for task_id in range(manifest.total_tasks):
             if task_id in completed_ids:
                 continue
-            state = sacct_states.get(task_id)
+            state = sacct_states.get(task_id // tpj)
             if state is None:
                 status.unknown += 1
             elif state in ("RUNNING",):
