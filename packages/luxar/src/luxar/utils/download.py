@@ -181,9 +181,11 @@ def robust_download(
     - Cleanup of partial downloads THIS call created (a pre-existing cache is
       never deleted on error)
     - A 416 (Range Not Satisfiable) while resuming at/after EOF is non-fatal:
-      the cache is proven at-least-complete and returned untouched
+      the cache is proven at-least-complete, and is returned untouched unless
+      the 416's authoritative total contradicts its size (one clean restart)
 
-    When the destination already exists, one or more size-probe requests
+    When the destination already exists — and a matching ``expected_size``
+    hasn't already short-circuited the call — one or more size-probe requests
     (a HEAD, and possibly an unranged GET) are issued up front to decide
     whether to resume, restart, or return the cache as-is.
 
@@ -421,7 +423,10 @@ def robust_download(
                 if total_size > 0:
                     aprint(f"📦 Total size: {total_size / (1024**3):.2f} GB")
                 else:
-                    aprint("📦 Size: Unknown (no Content-Length header)")
+                    aprint(
+                        "📦 Size: Unknown (no usable Content-Length or "
+                        "Content-Range header)"
+                    )
 
                 # Download with progress
                 downloaded = resume_byte_pos
