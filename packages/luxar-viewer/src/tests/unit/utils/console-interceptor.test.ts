@@ -131,3 +131,87 @@ describe('ConsoleInterceptor opt-in patching (embedability)', () => {
     expect(consoleInterceptor.getBufferedMessages().length).toBe(0);
   });
 });
+
+describe('ConsoleInterceptor stack capture', () => {
+  beforeEach(() => {
+    consoleInterceptor.patch();
+    consoleInterceptor.clearBuffer();
+  });
+
+  afterEach(() => {
+    consoleInterceptor.dispose();
+  });
+
+  const lastMessage = () => {
+    const msgs = consoleInterceptor.getBufferedMessages();
+    return msgs[msgs.length - 1];
+  };
+
+  it('captures the stack of an Error passed AFTER the message string', () => {
+    // Every `log.*` call formats its message into args[0] as a STRING and passes
+    // the error behind it, so looking only at args[0] could never find one.
+    const err = new Error('boom');
+    console.error('[❌] [Cache] failed', err);
+
+    expect(lastMessage().stack).toBe(err.stack);
+  });
+
+  it('captures a stack on the warn path too', () => {
+    // ~30 `log.warning(…, error)` sites pass a real Error; without this they had
+    // neither a message (pre-fix formatters) nor any trace to fall back on.
+    const err = new Error('cache write failed');
+    console.warn('[⚠️] [Cache] OPFSStore failed', err);
+
+    expect(lastMessage().stack).toBe(err.stack);
+  });
+
+  it('does NOT fabricate a stack when no Error was passed', () => {
+    // This used to synthesize `new Error().stack` whenever the message merely
+    // contained the word "error", producing a plausible-looking trace rooted
+    // inside the interceptor — worse than no stack, because a bug-report reader
+    // would follow it.
+    console.error('an error happened, but no Error object was passed');
+
+    expect(lastMessage().stack).toBeUndefined();
+  });
+
+  it('prefers the first Error when several args carry stacks', () => {
+    const first = new Error('first');
+    const second = new Error('second');
+    console.error('msg', first, second);
+
+    expect(lastMessage().stack).toBe(first.stack);
+  });
+
+  it('does not throw (and still buffers) when an arg has a throwing stack accessor', () => {
+    // extractStack runs inside the patched console.warn/error BEFORE the
+    // original console call — if it threw, the warning itself would vanish and
+    // the calling code (typically already inside a catch block) would throw.
+    const hostile = new Error('boom');
+    Object.defineProperty(hostile, 'stack', {
+      get() {
+        throw new Error('hostile stack getter');
+      },
+    });
+
+    // Stub the pass-through targets: Node's own console.warn/error ALSO read
+    // `.stack` when printing (util.inspect) and would throw on their own —
+    // what's under test is only the interceptor's capture path.
+    const orig = consoleInterceptor.getOriginalConsole();
+    const { warn: origWarn, error: origError } = orig;
+    orig.warn = () => {};
+    orig.error = () => {};
+    try {
+      expect(() => console.warn('[⚠️] [Cache] failed', hostile)).not.toThrow();
+      expect(() => console.error('[❌] [Cache] failed', hostile)).not.toThrow();
+    } finally {
+      orig.warn = origWarn;
+      orig.error = origError;
+    }
+
+    const msgs = consoleInterceptor.getBufferedMessages();
+    expect(msgs.length).toBe(2);
+    expect(msgs[0].stack).toBeUndefined();
+    expect(msgs[1].stack).toBeUndefined();
+  });
+});
