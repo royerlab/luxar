@@ -1,7 +1,6 @@
 {
   "schema_version": 1,
   "description": "Single source of truth for Luxar demo dataset disposition (R17). bucket: zenodo=fetch-on-demand redistributable; local-compute=fetch raw + build locally (not redistributable); regenerate=cheap CPU rebuild (not hosted). See scripts/gen_data_manifest.py.",
-  "cache_root": "~/.cache/luxar",
   "records": {
     "cc-by": {
       "title": "Luxar demo datasets (CC-BY / CC0 / public domain)",
