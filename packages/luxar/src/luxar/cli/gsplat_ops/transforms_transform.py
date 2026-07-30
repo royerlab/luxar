@@ -89,14 +89,20 @@ def run_transform_dataset(
             tokens = [t.strip() for t in spatial_dims.split(",")]
             explicit_rot_axes = []
             for token in tokens:
-                if re.fullmatch(r"[0-9]+", token) is None:
+                try:
+                    # The regex gate rejects the syntax; int() can still refuse
+                    # an absurdly long digit run (CPython's int-str conversion
+                    # limit, sys.get_int_max_str_digits) — same clean error.
+                    if re.fullmatch(r"[0-9]+", token) is None:
+                        raise ValueError(token)
+                    explicit_rot_axes.append(int(token))
+                except ValueError:
                     aprint(
                         f"❌ Invalid --spatial-dims '{spatial_dims}': "
                         f"'{token}' is not a valid axis index "
                         f"(use unsigned ASCII digits 0-9)"
                     )
-                    raise typer.Exit(1)
-                explicit_rot_axes.append(int(token))
+                    raise typer.Exit(1) from None
             if len(explicit_rot_axes) != 3:
                 aprint(
                     f"❌ --spatial-dims must list exactly 3 axis indices, "

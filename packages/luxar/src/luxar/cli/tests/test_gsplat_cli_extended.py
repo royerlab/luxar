@@ -2257,6 +2257,11 @@ class TestTransformCommand:
             "+0,+1,+2",
             "０,１,２",
             "٠,١,٢",
+            # all-digit token above CPython's int-str conversion limit
+            # (sys.get_int_max_str_digits, 4300): int() raises ValueError
+            # even though the syntax gate passes — same clean error, no
+            # traceback, still before the load.
+            pytest.param("9" * 5000 + ",1,2", id="digit-limit-overflow"),
         ],
     )
     def test_transform_spatial_dims_invalid_syntax_rejected_before_load(
