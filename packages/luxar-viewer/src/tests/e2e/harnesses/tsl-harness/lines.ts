@@ -356,6 +356,14 @@ function buildSortedPermutedLinesMesh(material: THREE.Material): THREE.Object3D 
     material
   );
   const geom = mesh.geometry as THREE.InstancedBufferGeometry;
+  // Clear the identity `createInstancedLinesMesh` just wrote, so the
+  // ordering below is the ONLY thing that can make the four segments read
+  // four distinct storage slots. Without this the test passes whether or
+  // not the ordering is ever applied — identity and any permutation both
+  // draw all four segments, so the image is the same and the assertion is
+  // vacuous. (The points twin gets this for free: its builder starts from
+  // a bare `attachPointStorage`, which leaves the buffer zero-filled.)
+  (geom.getAttribute('aSortedIndex').array as Uint32Array).fill(0);
   writeSortedIndexOrdering(geom, SORTED_PERMUTED_ORDERING, SORTED_PERMUTED_COUNT);
   // An ordering STAGES into the inactive buffer of the double-buffered pair
   // and swaps in when complete, so rendering straight after staging would

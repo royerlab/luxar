@@ -64,7 +64,9 @@ function createGSplatsGeometry(splatCapacity: number): THREE.InstancedBufferGeom
 
   // Splat data lives in the RGBA32F texture attached here (disposed BY
   // the geometry's dispose event, so every pool dispose site frees it);
-  // `aSortedIndex` is the only per-instance attribute.
+  // The `aSortedIndex`/`aSortedIndexB` ordering pair is the only
+  // per-instance data (double-buffered so a new ordering swaps atomically;
+  // aliased onto one buffer until the node first sorts).
   attachSplatStorage(geometry, splatCapacity);
   // Ownership marker — see the points adapter's twin comment.
   geometry.userData.luxarPooled = true;

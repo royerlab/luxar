@@ -34,7 +34,7 @@ Per-point data (`center`, `radius`, `color`, `sharpness`, `scalar`) does
 (`uPointTex`, 3 texels/point — layout authority in
 `../../element-texture-layout.ts`; per-texel map in
 `../../point-geometry.ts`), fetched in the vertex stage via `texelFetch`
-(GLSL) / `textureLoad` (TSL). The only per-instance attribute is
+(GLSL) / `textureLoad` (TSL). The only per-instance data is the double-buffered ordering pair
 `aSortedIndex` (Uint32): the draw-slot → storage-slot map, written as
 identity by every commit today and permuted by the sort worker from
 depth-sorting Phase 2 on. Consequences (mirroring the gsplat stack):

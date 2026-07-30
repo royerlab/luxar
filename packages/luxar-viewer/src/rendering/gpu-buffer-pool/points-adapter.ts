@@ -71,7 +71,9 @@ function createPointsGeometry(pointCapacity: number): THREE.InstancedBufferGeome
 
   // Point data lives in the RGBA32F texture attached here (disposed BY
   // the geometry's dispose event, so every pool dispose site frees it);
-  // `aSortedIndex` is the only per-instance attribute.
+  // The `aSortedIndex`/`aSortedIndexB` ordering pair is the only
+  // per-instance data (double-buffered so a new ordering swaps atomically;
+  // aliased onto one buffer until the node first sorts).
   attachPointStorage(geometry, pointCapacity);
   // Ownership marker: the commit handoff disposes a replaced geometry
   // ONLY when it is not pool-owned (pool geometries are released back to
