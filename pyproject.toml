@@ -49,14 +49,14 @@ dependencies = [
     "typer>=0.12,<1.0",
     "fastapi>=0.111,<1.0",
     "uvicorn[standard]>=0.27,<1.0",
-    "arbol>=0.3.5",
+    "arbol>=2025.2.27.2",
     "ansicolors>=1.1.8",
     "requests>=2.31.0",
     "aiohttp>=3.9.0",
     "fsspec>=2023.1.0",
     "xxhash>=3.0.0",
     "hilbertcurve>=2.0.5",
-    "pyyaml>=6.0"
+    "pyyaml>=6.0.1"
 ]
 
 [project.urls]
