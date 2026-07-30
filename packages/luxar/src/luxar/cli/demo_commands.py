@@ -293,21 +293,42 @@ def demo_run_all(
 
 
 # ──────────────────────────────── deps ──────────────────────────────────────
-def _pip_install_cmd(extras: list[str]) -> list[str]:
-    """The pip command that installs ``extras``, editable when in a checkout.
+def _luxar_checkout_root() -> Path | None:
+    """The Luxar dev-checkout root, but only if it owns the imported ``luxar``.
 
-    A dev checkout must install ``-e <root>[…]``: a plain ``luxar[demos]`` would
-    fetch the *published* wheel from PyPI and shadow the tree the user is
-    editing. From an installed wheel there is no root, so name the distribution.
+    ``get_project_root`` walks up to the first ancestor with a ``pyproject.toml``,
+    which for a NON-editable install inside a project-local virtualenv
+    (``<proj>/.venv/.../site-packages/luxar`` — the default uv/poetry layout)
+    is the *user's own* project, not Luxar. Trust the root only when it actually
+    owns the imported package: a real checkout is ``<root>/packages/luxar/src/
+    luxar``. Otherwise (mismatch, or no root at all) return ``None``.
     """
-    joined = ",".join(extras)
+    import luxar
+
     try:
         from ..utils.paths import get_project_root
 
         root = get_project_root()
     except RuntimeError:
-        root = None
+        return None
+    pkg_dir = Path(luxar.__file__).resolve().parent
+    if (root / "packages" / "luxar" / "src" / "luxar").resolve() == pkg_dir:
+        return root
+    return None
+
+
+def _pip_install_cmd(extras: list[str]) -> list[str]:
+    """The pip command that installs ``extras``, editable only in a checkout.
+
+    A genuine dev checkout must install ``-e <root>[…]``: a plain ``luxar[demos]``
+    would fetch the *published* wheel from PyPI and shadow the tree the user is
+    editing. The checkout is trusted only when the discovered root owns the
+    imported ``luxar`` (see ``_luxar_checkout_root``); otherwise name the
+    distribution so we never editable-install an unrelated project.
+    """
+    joined = ",".join(extras)
     base = [sys.executable, "-m", "pip", "install"]
+    root = _luxar_checkout_root()
     if root is not None:
         return [*base, "-e", f"{root}[{joined}]"]
     return [*base, f"luxar[{joined}]"]

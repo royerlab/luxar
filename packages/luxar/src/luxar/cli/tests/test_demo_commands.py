@@ -498,6 +498,58 @@ class TestDeps:
         # The extra named by the missing spec must be the one installed.
         assert any("[gsplats]" in part for part in cmd), cmd
 
+    def test_pip_cmd_names_distribution_for_a_foreign_project_root(
+        self, tmp_path
+    ) -> None:
+        """A foreign pyproject.toml root must not trigger an editable install.
+
+        For a non-editable Luxar in a project-local venv, ``get_project_root``
+        returns the *user's own* project. Since it does not own the imported
+        ``luxar``, the command must name the distribution, never ``-e <root>``.
+        """
+        from luxar.cli.demo_commands import _pip_install_cmd
+
+        (tmp_path / "pyproject.toml").write_text("[project]\nname='foreign'\n")
+        with patch("luxar.utils.paths.get_project_root", return_value=tmp_path):
+            cmd = _pip_install_cmd(["demos"])
+        assert "-e" not in cmd, cmd
+        assert cmd[-1] == "luxar[demos]", cmd
+
+    def test_pip_cmd_names_distribution_when_no_project_root(self) -> None:
+        """No pyproject.toml anywhere → distribution form, not editable."""
+        from luxar.cli.demo_commands import _luxar_checkout_root, _pip_install_cmd
+
+        with patch(
+            "luxar.utils.paths.get_project_root",
+            side_effect=RuntimeError("no root"),
+        ):
+            cmd = _pip_install_cmd(["demos"])
+            assert _luxar_checkout_root() is None
+        assert "-e" not in cmd, cmd
+        assert cmd[-1] == "luxar[demos]", cmd
+
+    def test_pip_cmd_uses_editable_for_a_root_that_owns_luxar(self, tmp_path) -> None:
+        """A root that genuinely owns the imported ``luxar`` → editable install.
+
+        This pins the positive branch of ``_luxar_checkout_root``: when the
+        discovered project root's ``packages/luxar/src/luxar`` IS the imported
+        package, the command must be the editable ``-e <root>[extras]`` form so a
+        dev checkout is not shadowed by a stale wheel.
+        """
+        import luxar
+        from luxar.cli.demo_commands import _pip_install_cmd
+
+        owned_pkg = tmp_path / "packages" / "luxar" / "src" / "luxar"
+        owned_pkg.mkdir(parents=True)
+        (owned_pkg / "__init__.py").write_text("")
+        with (
+            patch("luxar.utils.paths.get_project_root", return_value=tmp_path),
+            patch.object(luxar, "__file__", str(owned_pkg / "__init__.py")),
+        ):
+            cmd = _pip_install_cmd(["demos"])
+        assert "-e" in cmd, cmd
+        assert cmd[cmd.index("-e") + 1] == f"{tmp_path}[demos]", cmd
+
     def test_deps_names_specs_that_belong_to_no_extra(self, runner) -> None:
         """gdown is installable only by name, so --install can't cover it."""
         from luxar.demos._dependencies import DependencyStatus
