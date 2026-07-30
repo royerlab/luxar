@@ -613,12 +613,14 @@ def lod_recipe(
             # ── scale-derived defaults (logged) ──
             eff_max_elements: Optional[int] = max_elements
             if recipe in ("tiles", "overview", "adaptive"):
-                # BSP partitioning needs >= 3 spatial dims; fail cleanly (the
-                # rest of the command's validation style) rather than letting
-                # the deeper ValueError surface as a raw traceback.
-                if data.ndim < 3:
+                # BSP partitioning needs >= 2 spatial dims (matching
+                # spatial_bsp_tree's shape[1] < 2 guard); only 1D is rejected.
+                # Fail cleanly (the rest of the command's validation style)
+                # rather than letting the deeper ValueError surface as a raw
+                # traceback.
+                if data.ndim < 2:
                     raise typer.BadParameter(
-                        f"recipe '{recipe}' requires >=3 spatial dimensions for "
+                        f"recipe '{recipe}' requires >=2 spatial dimensions for "
                         f"BSP partitioning; got {data.ndim}D. Use --recipe "
                         f"stream or levels for {data.ndim}D data."
                     )

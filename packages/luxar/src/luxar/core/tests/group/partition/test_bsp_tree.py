@@ -76,8 +76,12 @@ def test_tree_disjoint_cover_and_plane_consistency(rule, seed) -> None:
         if node.is_leaf:
             return
         assert node.axis in (0, 1, 2)
-        left = np.concatenate([pos[leaf.indices][:, node.axis] for leaf in _leaves(node.left)])
-        right = np.concatenate([pos[leaf.indices][:, node.axis] for leaf in _leaves(node.right)])
+        left = np.concatenate(
+            [pos[leaf.indices][:, node.axis] for leaf in _leaves(node.left)]
+        )
+        right = np.concatenate(
+            [pos[leaf.indices][:, node.axis] for leaf in _leaves(node.right)]
+        )
         assert left.max() <= node.split + 1e-4
         assert right.min() >= node.split - 1e-4
         check(node.left)
@@ -130,8 +134,8 @@ def test_validation_errors() -> None:
     good = np.zeros((10, 3), dtype=np.float32)
     with pytest.raises(ValueError, match="2-D"):
         spatial_bsp_tree(np.zeros(10, dtype=np.float32), 5)
-    with pytest.raises(ValueError, match="3 spatial"):
-        spatial_bsp_tree(np.zeros((10, 2), dtype=np.float32), 5)
+    with pytest.raises(ValueError, match="2 spatial"):
+        spatial_bsp_tree(np.zeros((10, 1), dtype=np.float32), 5)
     with pytest.raises(ValueError, match="max_elements"):
         spatial_bsp_tree(good, 0)
     with pytest.raises(ValueError, match="non-empty"):

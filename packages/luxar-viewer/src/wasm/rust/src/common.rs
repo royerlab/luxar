@@ -15,6 +15,18 @@ pub const MAX_PACKED_CHOLESKY_SIZE: usize = (MAX_SUPPORTED_DIMS * (MAX_SUPPORTED
 /// Epsilon for degenerate diagonal detection during forward substitution.
 pub const CHOLESKY_EPSILON: f32 = 1e-10;
 
+/// RELATIVE floor for degenerate-variance detection in a marginal Cholesky,
+/// applied against the largest diagonal of the covariance being factorized.
+///
+/// A variance carries world-units², so an absolute threshold conflates "no
+/// extent" with "small scene units" and inflates genuinely tiny splats (see
+/// `gsplats_processing::compute_marginal_cholesky`). This is a condition-number
+/// bound instead: 1e-12 is below f32's ~1e-7 relative precision squared, so it
+/// only catches rank-deficient axes and never a legitimately small one. MUST
+/// stay identical to `CHOLESKY_RELATIVE_EPSILON` in
+/// `wasm/typescript/gsplats-processing.ts`.
+pub const CHOLESKY_RELATIVE_EPSILON: f32 = 1e-12;
+
 /// Threshold below which a segment is treated as parallel to the slice in a
 /// hidden dimension (so clipping in that dim is skipped). Sized to f32 precision
 /// for order-1 coordinates; MUST stay identical to the TS reference's

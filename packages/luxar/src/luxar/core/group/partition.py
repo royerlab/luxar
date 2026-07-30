@@ -220,7 +220,16 @@ def _bsp_tree_sah(
     """SAH-split BSP tree recursion (see :func:`sah_bsp_partition`)."""
 
     def surface_area(mins: NDArray, maxs: NDArray) -> float:
+        """SAH cost proxy: the measure of the box boundary.
+
+        SAH weights a child by the probability a random ray hits it, which is
+        proportional to the box's boundary measure — surface area
+        ``2(xy + xz + yz)`` in 3D, but **perimeter** ``2(x + y)`` in 2D. Using
+        the 3D form on planar data would index a non-existent third extent.
+        """
         ext = np.maximum(0.0, maxs - mins)
+        if ext.shape[0] == 2:
+            return float(2.0 * (ext[0] + ext[1]))
         return float(2.0 * (ext[0] * ext[1] + ext[0] * ext[2] + ext[1] * ext[2]))
 
     if indices.size <= max_elements:
@@ -235,7 +244,7 @@ def _bsp_tree_sah(
     best_score = np.inf
     best_axis = -1
     best_pos = 0.0
-    for axis in range(3):
+    for axis in range(sub.shape[1]):
         if extents[axis] == 0:
             continue
         cand = np.linspace(mins[axis], maxs[axis], n_candidates + 2)[1:-1]
@@ -251,9 +260,9 @@ def _bsp_tree_sah(
             right_mins = mins.copy()
             right_maxs = maxs.copy()
             right_mins[axis] = pos
-            score = n_left * surface_area(left_mins, left_maxs) + n_right * surface_area(
-                right_mins, right_maxs
-            )
+            score = n_left * surface_area(
+                left_mins, left_maxs
+            ) + n_right * surface_area(right_mins, right_maxs)
             if score < best_score:
                 best_score = score
                 best_axis = axis
@@ -298,15 +307,17 @@ def spatial_bsp_tree(
     (``"median"`` default / ``"midpoint"`` / ``"sah"``); ``n_candidates`` is
     forwarded to the SAH rule only.
 
-    Splits only ever fall on one of the first three (spatial) axes, so a
-    serialized tree's ``axis`` is always ``0``/``1``/``2`` — directly
-    comparable in the viewer's 3D local space.
+    Splits only ever fall on the first up-to-three (spatial) axes, so a
+    serialized tree's ``axis`` is always a center-column index below 3 (``0``/
+    ``1`` for 2D data, ``0``/``1``/``2`` for 3D+). The viewer maps that column
+    through ``displayDims`` to reach its own local axis — see
+    ``render-order.ts``; the two coincide only when ``displayDims == [0, 1, 2]``.
     """
     if positions.ndim != 2:
         raise ValueError(f"positions must be 2-D (N, d); got shape {positions.shape}")
-    if positions.shape[1] < 3:
+    if positions.shape[1] < 2:
         raise ValueError(
-            "spatial_bsp_tree needs at least 3 spatial dimensions; "
+            "spatial_bsp_tree needs at least 2 spatial dimensions; "
             f"got positions with shape {positions.shape}"
         )
     if max_elements < 1:
@@ -316,7 +327,7 @@ def spatial_bsp_tree(
     if n == 0:
         raise ValueError("spatial_bsp_tree needs a non-empty positions array")
 
-    spatial = positions[:, :3]
+    spatial = positions[:, : min(3, positions.shape[1])]
     root = np.arange(n, dtype=np.intp)
     if rule == "median":
         return _bsp_tree_median(spatial, max_elements, root)
@@ -362,6 +373,30 @@ def warn_if_oversized_single_part(
         )
 
 
+def warn_if_partition_needs_more_dims(ndim: int, name: str) -> bool:
+    """Warn when a requested partition can't run for want of spatial dims.
+
+    Splitting needs at least 2 spatial axes (see :func:`spatial_bsp_tree`), so
+    1D data cannot be partitioned. The three adders used to gate their partition
+    branch on a bare dimension check, which meant an explicit ``partition=`` —
+    or a compiler-level ``auto_partition_max_elements`` — was dropped in silence
+    and the caller got one un-partitioned leaf with no clue why. Sibling of
+    :func:`warn_if_oversized_single_part`, shared across points / lines /
+    gsplats per the three-geometry symmetry rule.
+
+    Returns:
+        ``True`` when partitioning can proceed, ``False`` (after warning) when
+        there are too few spatial dimensions.
+    """
+    if ndim < 2:
+        aprint(
+            f"  ⚠️  partition requested for '{name}' but spatial splitting needs "
+            f"at least 2 dimensions (got {ndim}D) — writing a single leaf."
+        )
+        return False
+    return True
+
+
 # ────────────────────────────────────────────────────────────────────────
 # Recursive midpoint BSP
 # ────────────────────────────────────────────────────────────────────────
@@ -375,9 +410,10 @@ def midpoint_bsp_partition(
 
     Args:
         positions: ``(N, d)`` array of element positions. At least 3 spatial
-            dimensions are required; only the first 3 are used for splitting
-            (extra dims ride along untouched — they don't drive frustum
-            culling, which only cares about the screen-projected 3D extent).
+            dimensions are required (2 for planar data); only the first 3 are
+            used for splitting (extra dims ride along untouched — they don't
+            drive frustum culling, which only cares about the screen-projected
+            3D extent).
         max_elements: Cap on a single part's size. Each returned part has
             ``len(part) <= max_elements`` except in the degenerate case
             where all elements coincide on every axis (then no split makes
@@ -398,9 +434,9 @@ def midpoint_bsp_partition(
     """
     if positions.ndim != 2:
         raise ValueError(f"positions must be 2-D (N, d); got shape {positions.shape}")
-    if positions.shape[1] < 3:
+    if positions.shape[1] < 2:
         raise ValueError(
-            "midpoint_bsp_partition needs at least 3 spatial dimensions; "
+            "midpoint_bsp_partition needs at least 2 spatial dimensions; "
             f"got positions with shape {positions.shape}"
         )
     if max_elements < 1:
@@ -413,8 +449,10 @@ def midpoint_bsp_partition(
     # Work over the first 3 spatial dims only (the rest ride along). The tree
     # builder is the single source of truth; the flat list is its leaves in
     # left-first DFS order (see :func:`spatial_bsp_tree` / :class:`BSPNode`).
-    spatial = positions[:, :3]
-    return _flat_parts(_bsp_tree_midpoint(spatial, max_elements, np.arange(n, dtype=np.intp)))
+    spatial = positions[:, : min(3, positions.shape[1])]
+    return _flat_parts(
+        _bsp_tree_midpoint(spatial, max_elements, np.arange(n, dtype=np.intp))
+    )
 
 
 # ────────────────────────────────────────────────────────────────────────
@@ -439,7 +477,7 @@ def median_bsp_partition(
     levels total).
 
     Args:
-        positions: ``(N, d)`` array; at least 3 spatial dims (only the
+        positions: ``(N, d)`` array; at least 2 spatial dims (only the
             first 3 drive the split, the rest ride along).
         max_elements: Cap on a single part's size. Each returned part has
             ``len(part) <= max_elements`` except the degenerate all-coincident
@@ -459,9 +497,9 @@ def median_bsp_partition(
     """
     if positions.ndim != 2:
         raise ValueError(f"positions must be 2-D (N, d); got shape {positions.shape}")
-    if positions.shape[1] < 3:
+    if positions.shape[1] < 2:
         raise ValueError(
-            "median_bsp_partition needs at least 3 spatial dimensions; "
+            "median_bsp_partition needs at least 2 spatial dimensions; "
             f"got positions with shape {positions.shape}"
         )
     if max_elements < 1:
@@ -473,8 +511,10 @@ def median_bsp_partition(
 
     # The tree builder is the single source of truth; the flat list is its
     # leaves in left-first DFS order (see :func:`spatial_bsp_tree`).
-    spatial = positions[:, :3]
-    return _flat_parts(_bsp_tree_median(spatial, max_elements, np.arange(n, dtype=np.intp)))
+    spatial = positions[:, : min(3, positions.shape[1])]
+    return _flat_parts(
+        _bsp_tree_median(spatial, max_elements, np.arange(n, dtype=np.intp))
+    )
 
 
 # ────────────────────────────────────────────────────────────────────────
@@ -496,7 +536,8 @@ def midpoint_bsp_polylines(
 
     Args:
         vertices: ``(N, d)`` array of vertex positions. At least 3
-            spatial dimensions required (only first 3 drive the split).
+            spatial dimensions required, 2 for planar data (only the first 3
+            drive the split).
         polyline_indices: List of per-polyline vertex-index arrays — the
             output of :func:`luxar.core.group.lod.lines.identify_polylines`.
         max_elements: Cap on a single part's vertex count. The BSP
@@ -519,9 +560,9 @@ def midpoint_bsp_polylines(
     """
     if vertices.ndim != 2:
         raise ValueError(f"vertices must be 2-D (N, d); got shape {vertices.shape}")
-    if vertices.shape[1] < 3:
+    if vertices.shape[1] < 2:
         raise ValueError(
-            "midpoint_bsp_polylines needs at least 3 spatial dimensions; "
+            "midpoint_bsp_polylines needs at least 2 spatial dimensions; "
             f"got vertices with shape {vertices.shape}"
         )
     if max_elements < 1:
@@ -532,8 +573,8 @@ def midpoint_bsp_polylines(
         return []
 
     # Per-polyline centroid (first 3 spatial dims) and vertex count.
-    spatial = vertices[:, :3]
-    centroids = np.zeros((n_polylines, 3), dtype=np.float64)
+    spatial = vertices[:, : min(3, vertices.shape[1])]
+    centroids = np.zeros((n_polylines, spatial.shape[1]), dtype=np.float64)
     sizes = np.zeros(n_polylines, dtype=np.intp)
     for p, members in enumerate(polyline_indices):
         if members.size == 0:
@@ -589,8 +630,8 @@ def median_bsp_polylines(
     the per-part cap is accounted in vertex counts.
 
     Args:
-        vertices: ``(N, d)`` array of vertex positions; at least 3 spatial
-            dims (only first 3 drive the split).
+        vertices: ``(N, d)`` array of vertex positions; at least 2 spatial
+            dims (only the first 3 drive the split).
         polyline_indices: Per-polyline vertex-index arrays (output of
             :func:`luxar.core.group.lod.lines.identify_polylines`).
         max_elements: Cap on a single part's vertex count.
@@ -601,9 +642,9 @@ def median_bsp_polylines(
     """
     if vertices.ndim != 2:
         raise ValueError(f"vertices must be 2-D (N, d); got shape {vertices.shape}")
-    if vertices.shape[1] < 3:
+    if vertices.shape[1] < 2:
         raise ValueError(
-            "median_bsp_polylines needs at least 3 spatial dimensions; "
+            "median_bsp_polylines needs at least 2 spatial dimensions; "
             f"got vertices with shape {vertices.shape}"
         )
     if max_elements < 1:
@@ -613,8 +654,8 @@ def median_bsp_polylines(
     if n_polylines == 0:
         return []
 
-    spatial = vertices[:, :3]
-    centroids = np.zeros((n_polylines, 3), dtype=np.float64)
+    spatial = vertices[:, : min(3, vertices.shape[1])]
+    centroids = np.zeros((n_polylines, spatial.shape[1]), dtype=np.float64)
     sizes = np.zeros(n_polylines, dtype=np.intp)
     for p, members in enumerate(polyline_indices):
         if members.size == 0:
@@ -698,9 +739,9 @@ def sah_bsp_partition(
     """
     if positions.ndim != 2:
         raise ValueError(f"positions must be 2-D (N, d); got shape {positions.shape}")
-    if positions.shape[1] < 3:
+    if positions.shape[1] < 2:
         raise ValueError(
-            "sah_bsp_partition needs at least 3 spatial dimensions; "
+            "sah_bsp_partition needs at least 2 spatial dimensions; "
             f"got positions with shape {positions.shape}"
         )
     if max_elements < 1:
@@ -717,7 +758,7 @@ def sah_bsp_partition(
 
     # The tree builder is the single source of truth; the flat list is its
     # leaves in left-first DFS order (see :func:`spatial_bsp_tree`).
-    spatial = positions[:, :3]
+    spatial = positions[:, : min(3, positions.shape[1])]
     return _flat_parts(
         _bsp_tree_sah(spatial, max_elements, np.arange(n, dtype=np.intp), n_candidates)
     )

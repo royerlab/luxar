@@ -125,12 +125,14 @@ describe('extract_visible_cholesky_3d — non-sequential displayDims [wasm.md G4
   });
 });
 
-describe('computeMarginalCholesky — CHOLESKY_EPSILON degenerate fallback [wasm.md G5]', () => {
-  it('[G5] rank-deficient marginal (zero variance dim) clamps to sqrt(EPSILON) rather than 0/NaN', () => {
-    // Construct a 2D L with zero variance in dim 0:
-    //   L = [[0, 0], [0, 1]] → Σ = L·Lᵀ = [[0, 0], [0, 1]].
-    // Marginal of dim 0: Σ_S[0,0] = 0 → Cholesky-Crout: sum = 0,
-    //   sum > CHOLESKY_EPSILON (1e-10) is FALSE → output = sqrt(1e-10) ≈ 1e-5.
+describe('computeMarginalCholesky — degenerate-variance floor [wasm.md G5]', () => {
+  // The floor is SCALE-RELATIVE: a variance carries world-units², so an absolute
+  // threshold would conflate "this axis has no extent" with "this scene uses
+  // small units" and inflate genuinely tiny splats. The regularizer is anchored
+  // to the largest diagonal of Σ_S (CHOLESKY_RELATIVE_EPSILON = 1e-12), with the
+  // absolute CHOLESKY_EPSILON reserved for a SCALELESS (all-zero) Σ_S.
+  it('[G5] scaleless marginal (all-zero variance) clamps to sqrt(EPSILON) rather than 0/NaN', () => {
+    // Σ_S = [[0]] — no scale to be relative to, so the absolute backstop applies.
     const fullL = packLowerTri([[0], [0, 1]]);
     const keepDims = new Uint32Array([0]); // marginal of dim 0 only
     const output = new Float32Array(1);
@@ -143,26 +145,38 @@ describe('computeMarginalCholesky — CHOLESKY_EPSILON degenerate fallback [wasm
   });
 
   it('[G5] off-diagonal floor: degenerate diagonal → off-diag set to 0 (not NaN)', () => {
-    // Construct a 2D Σ where Cholesky-Crout produces a near-zero diagonal:
-    //   Σ = [[1e-12, 0], [0, 1]] — first diag is below epsilon.
-    //   To make computeMarginalCholesky see this Σ, build L such that
-    //   L·Lᵀ has that shape. L = [[sqrt(1e-12) ≈ 1e-6, 0], [0, 1]].
-    //   Mit verbatim:
-    const eps = 1e-7; // sqrt(1e-14) — well below CHOLESKY_EPSILON when squared.
+    // Σ = [[1e-14, 0], [0, 1]] — a condition number of 1e14, genuinely
+    // rank-deficient at f32 precision. L = [[1e-7, 0], [0, 1]].
+    const eps = 1e-7;
     const fullL = packLowerTri([[eps], [0, 1]]);
     const keepDims = new Uint32Array([0, 1]);
     const output = new Float32Array(3);
     computeMarginalCholesky(fullL, 0, keepDims, 2, output, 0);
 
-    // Σ_S = [[eps², 0], [0, 1]]. Cholesky-Crout:
-    //   L_S[0,0]: sum = eps² (1e-14) < EPSILON (1e-10) → sqrt(EPS) ≈ 3.16e-6.
-    //   L_S[1,0]: diag = L_S[0,0] = 3.16e-6 > EPSILON → sum / diag = 0/3.16e-6 = 0.
-    //     But also diag check `> EPSILON` is true (3.16e-6 > 1e-10), so it's computed.
-    //   L_S[1,1]: sum = 1, > EPS → sqrt(1) = 1.
-    expect(output[0]).toBeCloseTo(Math.sqrt(1e-10), 8);
+    // Σ_S = [[eps², 0], [0, 1]], so max diagonal = 1 and the floor is 1e-12:
+    //   L_S[0,0]: sum = 1e-14 < 1e-12 → sqrt(1e-12) = 1e-6.
+    //   L_S[1,0]: diag = 1e-6 > 0 → sum / diag = 0 / 1e-6 = 0.
+    //   L_S[1,1]: sum = 1 → sqrt(1) = 1.
+    // Note the regularized diagonal is 1e-6 RELATIVE to the max axis, not the
+    // absolute sqrt(1e-10) = 1e-5 an absolute floor produced — that older value
+    // was scene-scale dependent and inflated nm-unit data 100x.
+    expect(output[0]).toBeCloseTo(1e-6, 9);
     expect(output[1]).toBeCloseTo(0, 8);
     expect(output[2]).toBeCloseTo(1, 4);
     expect(Number.isNaN(output[1])).toBe(false);
+  });
+
+  it('[G5] the floor scales WITH the covariance (no absolute magnitude)', () => {
+    // Same shape as above at two very different scene scales: the regularized
+    // diagonal must stay the same FRACTION of the real axis, not a constant.
+    const ratios = [1e-3, 1e3].map((scale) => {
+      const fullL = packLowerTri([[1e-7 * scale], [0, 1 * scale]]);
+      const output = new Float32Array(3);
+      computeMarginalCholesky(fullL, 0, new Uint32Array([0, 1]), 2, output, 0);
+      return output[0] / output[2];
+    });
+
+    expect(ratios[0]).toBeCloseTo(ratios[1], 9);
   });
 });
 
