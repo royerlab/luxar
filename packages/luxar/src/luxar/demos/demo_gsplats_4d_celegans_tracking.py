@@ -109,6 +109,7 @@ import numpy as np
 from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.demos import require_module
 from luxar.encoding import EncodingMode
 from luxar.gsplats import fit_gaussian_splats
 from luxar.gsplats.clahe import apply_clahe
@@ -368,12 +369,7 @@ def load_timepoint_volume(tiff_path: Path) -> np.ndarray:
     Returns:
         3D float32 volume normalised to [0, 1].
     """
-    try:
-        import tifffile
-    except ImportError:
-        raise ImportError(
-            "tifffile is required for this demo.\nInstall with: pip install tifffile"
-        )
+    tifffile = require_module("tifffile")
 
     volume = tifffile.imread(str(tiff_path)).astype(np.float32)
 

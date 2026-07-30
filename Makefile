@@ -4,7 +4,7 @@
 # This Makefile is designed to work on fresh Linux/macOS machines with minimal
 # pre-installed tools. Run 'make setup-dev' to automatically install all dependencies.
 #
-.PHONY: help install-dev format-python format-typescript format-rust format-cuda format-all gen-contract gen-data-manifest \
+.PHONY: help install-dev install-demo-deps format-python format-typescript format-rust format-cuda format-all gen-contract gen-data-manifest \
         lint-python lint-typescript type-check-python type-check-typescript security \
         test-all test-python test-cov-python test-cov-typescript test-cov-all test-fixtures test-wasm test-viewer test-viewer-fixtures test-e2e \
         clean-all clean-python clean-viewer clean-examples clean-cache clean-setup enable-pre-commit run-pre-commit \
@@ -404,6 +404,10 @@ help:  ## Show this help message
 	@echo "  make viewer         - Start the viewer dev server"
 	@echo "  luxar demo          - Generate demo + serve + open browser"
 	@echo ""
+	@echo "Demos:"
+	@echo "  make install-demo-deps - Install every optional dependency the demos need"
+	@echo "  luxar demo deps        - Report which demo dependencies are missing"
+	@echo ""
 	@echo "Optional accelerators:"
 	@echo "  make install-rust     - Install Rust/WASM for viewer builds"
 	@echo "  make setup-cuda     - Install CUDA dependencies + build extension"
@@ -417,6 +421,23 @@ help:  ## Show this help message
 install-dev:  ## Install Luxar Python package in editable mode for development
 	@mkdir -p packages/luxar-viewer/dist
 	pip install -e .
+
+install-demo-deps:  ## Install every optional dependency the bundled demos need
+# The gsplats extra carries torch. pip leaves an ALREADY-satisfied torch alone,
+# so a CUDA build put in place by `make setup-cuda` (or a custom --index-url
+# wheel) survives this target; only a torch-less env gets the PyPI default.
+	@echo "📦 Installing optional demo dependencies (demos + gsplats + io extras)..."
+# Same guard as install-dev: the wheel config force-includes the viewer's dist/,
+# so an editable install on a tree that has never built the viewer (a fresh
+# clone, a git worktree) dies with hatchling's obscure "Forced include not
+# found" instead of installing anything.
+	@mkdir -p packages/luxar-viewer/dist
+	$(HATCH) run pip install -e ".[demos,gsplats,io]"
+	@echo ""
+	@$(HATCH) run luxar demo deps || true
+	@echo ""
+	@echo "ℹ️  Some demos need credentials or a manual download instead of a"
+	@echo "   package — see 'luxar demo info <key>' (NEEDS column in 'luxar demo')."
 
 # Code formatting (using Hatch)
 format-python:  ## Format Python code with ruff
