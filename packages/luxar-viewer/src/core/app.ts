@@ -21,6 +21,7 @@ import type { RenderingControls } from '../ui/rendering-controls';
 import { showHelpOverlay } from '../ui/help-overlay';
 import type { DatasetBrowser } from '../ui/dataset-browser';
 import { log, Modules } from '../utils/log';
+import { getErrorMessage } from '../utils/format-error';
 import { sceneDimsManager } from '../scene/scene-dims-manager';
 import type { AdaptiveDPRManager } from '../rendering/adaptive-dpr-manager';
 import type { ResolutionIndicator } from '../ui/resolution-indicator';
@@ -259,7 +260,7 @@ export class LuxarApp {
 
       this.isInitialized = true;
     } catch (error) {
-      log.error(Modules.APP, 'Failed to initialize Luxar app:', error);
+      log.error(Modules.APP, `Failed to initialize Luxar app: ${getErrorMessage(error)}`, error);
       // Tear down whatever partial state was constructed before the throw.
       // The pipeline writes each subsystem into `partial` as it builds
       // it, so a mid-init failure still surfaces every disposable on

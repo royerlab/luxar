@@ -11,13 +11,12 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 _DEMO_PATH = Path(__file__).resolve().parents[1] / "demo_desi_galaxies.py"
 
 
 def _load_demo_module():
-    import pytest
-
     name = "_luxar_demo_desi_for_tests"
     spec = importlib.util.spec_from_file_location(name, _DEMO_PATH)
     if spec is None or spec.loader is None:
@@ -116,6 +115,96 @@ class TestQuantizeRoundtrip:
         assert np.max(np.abs(pos2 - pos)) < 0.15
         # float16 redshift → ~3 significant digits.
         np.testing.assert_allclose(z2, z, atol=2e-3)
+
+
+class TestCatalogDownloadErrors:
+    def test_http_failure_becomes_actionable_error(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        import requests
+
+        requested: list[str] = []
+
+        def _fail_download(url: str, output_path: Path, **kwargs: object) -> Path:
+            requested.append(url)
+            response = requests.Response()
+            response.status_code = 404
+            response.reason = "Not Found"
+            response.url = url
+            raise requests.HTTPError(
+                f"404 Client Error: Not Found for url: {url}", response=response
+            )
+
+        monkeypatch.setattr(_demo, "CACHE_DIR", tmp_path)
+        monkeypatch.setattr("luxar.utils.download.robust_download", _fail_download)
+
+        with pytest.raises(_demo.DESICatalogDownloadError) as exc_info:
+            _demo.download_catalogs()
+
+        expected_url = f"{_demo.BASE_URL}/BGS_BRIGHT_NGC_clustering.dat.fits"
+        assert requested == [expected_url]
+        message = str(exc_info.value)
+        assert expected_url in message
+        assert "HTTP 404 Not Found" in message
+        assert "data.desi.lbl.gov" in message
+        assert "git lfs pull" in message
+        assert "without --recompute" in message
+        assert isinstance(exc_info.value.__cause__, requests.HTTPError)
+
+    def test_connection_failure_becomes_actionable_error(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        import requests
+
+        def _fail_download(url: str, output_path: Path, **kwargs: object) -> Path:
+            raise requests.ConnectionError("network unreachable")
+
+        monkeypatch.setattr(_demo, "CACHE_DIR", tmp_path)
+        monkeypatch.setattr("luxar.utils.download.robust_download", _fail_download)
+
+        with pytest.raises(_demo.DESICatalogDownloadError) as exc_info:
+            _demo.download_catalogs()
+
+        message = str(exc_info.value)
+        assert "ConnectionError: network unreachable" in message
+        assert f"{_demo.BASE_URL}/BGS_BRIGHT_NGC_clustering.dat.fits" in message
+        assert "git lfs pull" in message
+        assert isinstance(exc_info.value.__cause__, requests.ConnectionError)
+
+    def test_non_request_failure_is_not_hidden(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        def _fail_download(url: str, output_path: Path, **kwargs: object) -> Path:
+            raise ValueError("catalog size mismatch")
+
+        monkeypatch.setattr(_demo, "CACHE_DIR", tmp_path)
+        monkeypatch.setattr("luxar.utils.download.robust_download", _fail_download)
+
+        with pytest.raises(ValueError, match="catalog size mismatch"):
+            _demo.download_catalogs()
+
+    def test_main_prints_download_guidance_and_exits_cleanly(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        message = "DESI host unavailable; run git lfs pull"
+
+        def _fail_build() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+            raise _demo.DESICatalogDownloadError(message)
+
+        monkeypatch.setattr(_demo, "SERVE_ONLY", False)
+        monkeypatch.setattr(_demo, "RECOMPUTE", True)
+        monkeypatch.setattr(_demo, "get_demos_output_dir", lambda: tmp_path)
+        monkeypatch.setattr(_demo, "load_or_build", _fail_build)
+
+        with pytest.raises(SystemExit) as exc_info:
+            _demo.main()
+
+        assert exc_info.value.code == 1
+        assert exc_info.value.__suppress_context__ is True
+        assert message in capsys.readouterr().out
 
 
 class TestOrbitCentre:
