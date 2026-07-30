@@ -71,9 +71,11 @@ when the author set no `tone_mapping` at all**. Its predicate was
 `!= "Neutral"`, so an explicit `"ACES"` tripped it too — nagging about a
 deliberate decision, while the message itself speaks of "the viewer's
 *default*", which is only what you get by saying nothing. Any explicit value,
-`"ACES"` included, now silences it. Sixteen demos move from `Neutral` to an
-explicit `ACES`; `demo_gsplats_3d_tribolium_embryo` keeps `Neutral`, whose
-pairing with `exposure=1.97` was tuned deliberately. `CLAUDE.md`, the HDR
+`"ACES"` included, now silences it. Fifteen demos move from `Neutral` to an
+explicit `ACES`. Two keep `Neutral` as verified exceptions:
+`demo_gsplats_3d_tribolium_embryo`, whose pairing with `exposure=1.97` was tuned
+deliberately, and `demo_flywire_connectome`, where ACES blew its luminous
+connection glow out into a white wash. `CLAUDE.md`, the HDR
 guide, the `gsplat convert` CLI help and the `ViewerConfig.tone_mapping`
 docstring all now recommend ACES, keeping `Neutral` for the narrower case where
 a colormap LUT carries an exact scientific colour encoding. Regenerate the demo

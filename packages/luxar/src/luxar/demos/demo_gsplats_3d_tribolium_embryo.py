@@ -373,7 +373,8 @@ def create_luxar_scene(
             scene = compiler.create_scene(
                 dimensions=dims,
                 # Neutral tone-mapping (not the viewer's default ACES, which lifts
-                # highlights and shifts hue) — matches the known-good gsplat demos.
+                # highlights and shifts hue) — a deliberate exception to the house
+                # ACES recommendation, verified against this volume.
                 # The blending mode below projects each splat's peak instead of
                 # integrating along the view ray, so nothing accumulates and the
                 # embryo needs ~2 stops of exposure to sit at a normal level.
