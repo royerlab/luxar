@@ -393,8 +393,9 @@ Supporting changes:
 - Hidden (`visible=false`) layers no longer fetch, decode and commit their LOD
   levels, and no longer escape eviction.
 - `scripts/check_demo_ladders.py` — a structural gate that fails a leaf whose
-  largest level is more than half the data, which is exactly the degeneracy a
-  level count alone cannot see.
+  largest level is more than 60% of the data (the `--max-share` default) or
+  exceeds the `--max-level-elements` absolute per-commit cap, which is exactly
+  the degeneracy a level count alone cannot see.
 
 #### Fixed — every 2D gsplats scene failed to load with a WASM `unreachable` trap
 

@@ -767,6 +767,20 @@ For automated environments (GitHub Actions, etc.):
 
 **Note**: In CI environments, the shell doesn't reload between steps, so we explicitly add `~/.local/bin` to `$GITHUB_PATH` to ensure pipx-installed tools are available.
 
+### CI fast path for docs-only changes
+
+A pull request whose changed files are **all** Markdown (`*.md`) or under `docs/`
+skips the heavy CI steps: the `changes` job classifies the diff, and the gated
+jobs (`python-tests`, `typescript-tests`, `release-readiness`, `go-launcher`)
+still run but short-circuit their expensive steps, so the required status
+contexts (`python-tests (3.10/3.11/3.12)`, `typescript-tests`,
+`release-readiness`) report an explicit green success in seconds instead of a
+grey "skipped". Any non-doc file — or a push to `main` — runs the full suite,
+and the gate fails safe: if the `changes` job itself fails, the gated jobs fall
+back to the full suite rather than skipping. Rename detection is disabled in
+the classifier (`git diff --no-renames`) so moving code onto a `docs/` or
+`*.md` path never hides a non-doc deletion.
+
 ## Architecture Notes
 
 ### Why nvm Instead of System Node.js?
