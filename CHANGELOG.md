@@ -53,9 +53,13 @@ alone is not sufficient, though: THREE's NodeMaterial appends
 scale the high half on the TSL path (the hand-written GLSL twins have no such
 tail). The pick factories therefore pin `.opacity = 1` so that multiply is
 provably identity. Both halves are ≤ 65535 and therefore exact, making the
-round-trip exact across the whole `uint32` range. The vote key scales by 2^32 instead of 2^24 to match: with the old
-multiplier, `(nodeId 1, element 2^24)` and `(nodeId 2, element 0)` hashed to
-the same bucket and merged their votes.
+round-trip exact across the whole `uint32` range. The vote key stride moves
+from 2^24 to 2^27 to match: with the old multiplier, `(nodeId 1, element
+2^24)` and `(nodeId 2, element 0)` hashed to the same bucket and merged their
+votes. 2^27 clears the largest reachable element index (44,728,319, for points
+on a 32768-texel device) while keeping every key exactly representable — a
+larger stride such as 2^32 would push keys past 2^53 and start merging
+adjacent elements instead.
 
 Below 65536 the DECODE is unchanged — the high half is 0 and `g` still
 holds the whole index, which is exactly what the old decoder read — so no
