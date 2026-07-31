@@ -233,7 +233,29 @@ def add_points_impl(
         # 1-part-partition fall-through so a user can pass both
         # ``partition=`` and ``additive_lod=`` and get the inner LOD
         # ladder when partition doesn't fire.
-        if additive_lod is not None:
+        if (
+            additive_lod is not None
+            and additive_lod is not False
+            and image_labels is not None
+        ):
+            from ..lod.points import resolve_additive_axis_points
+
+            # The multi-LOD writer has no image_labels channel, so laddering
+            # would silently drop them. Refuse the ladder, not the labels: fall
+            # through to the single-leaf write below (which forwards
+            # image_labels). Mirrors the substitutive path's suppress_reason
+            # guard in compose_additive_under_substitutive (which likewise
+            # treats the explicit ``additive_lod=False`` opt-out as "no ladder
+            # requested", so it stays silent — no spurious skip notice).
+            # Still validate (and discard) the spec so a malformed
+            # additive_lod= fails fast here exactly as it would without
+            # image_labels.
+            resolve_additive_axis_points(additive_lod)
+            aprint(
+                f"  ℹ️  '{name}': streaming ladder skipped (image_labels is set); "
+                "levels will load all-at-once."
+            )
+        elif additive_lod is not None:
             from ..lod.points import (
                 make_additive_lod_points,
                 resolve_additive_axis_points,
