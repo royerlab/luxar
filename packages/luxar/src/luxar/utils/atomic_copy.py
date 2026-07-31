@@ -75,11 +75,16 @@ def atomic_copy_file(src: Path, dst: Path) -> Path:
     full disk, SIGKILL) leaves a truncated file under the final name — which a
     later run may mistake for a complete cache entry, or must quarantine and
     re-fetch. Copying to a sibling temp file and renaming makes ``dst`` appear
-    only once it is complete.
+    only once it is complete. The temp file's contents are flushed with
+    ``os.fsync`` before the rename, so ``dst`` cannot surface with unwritten
+    blocks under a complete-looking name after a crash: ``os.replace`` orders
+    the rename against other renames, not against the preceding writes.
 
     Unlike :func:`atomic_copytree`, an existing ``dst`` IS replaced: every caller
     is refreshing a cache entry and wants overwrite semantics. Metadata is
-    preserved (``copy2``), so mtime-based staleness checks keep working.
+    preserved (``copystat``, i.e. ``copy2`` semantics), so mtime-based staleness
+    checks keep working — including a read-only source mode, which is applied
+    only after the flush so the copy itself never needs a writable ``dst``.
 
     Args:
         src: Existing regular file to copy.
@@ -101,7 +106,17 @@ def atomic_copy_file(src: Path, dst: Path) -> Path:
     tmp = dst.parent / f".tmp_{dst.name}_{uuid.uuid4().hex[:8]}"
 
     try:
-        shutil.copy2(src, tmp)
+        # copy2 split into its halves so the flush happens BETWEEN them: the
+        # temp file must be fsynced while it still has default (writable)
+        # permissions — copystat may apply a read-only source mode, and
+        # os.fsync maps to FlushFileBuffers on Windows, which needs a
+        # write-access handle a read-only file would refuse.
+        shutil.copyfile(src, tmp)
+        # Flush the copied bytes before the rename so dst cannot point at
+        # unwritten blocks after a crash (see docstring).
+        with open(tmp, "rb+") as fh:
+            os.fsync(fh.fileno())
+        shutil.copystat(src, tmp)
         os.replace(tmp, dst)
     except BaseException:
         tmp.unlink(missing_ok=True)
