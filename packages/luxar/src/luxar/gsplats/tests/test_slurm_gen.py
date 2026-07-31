@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
+import shlex
 import subprocess
+from pathlib import Path
 
 import pytest
 
 from luxar.gsplats.batch.manifest import BatchManifest
-from luxar.gsplats.batch.slurm_gen import generate_fit_sbatch
+from luxar.gsplats.batch.slurm_gen import (
+    generate_calibrate_sbatch,
+    generate_denoise_sbatch,
+    generate_fit_sbatch,
+    generate_merge_sbatch,
+)
 
 
 def _packed_manifest(total_tasks: int) -> BatchManifest:
@@ -22,6 +29,15 @@ def _packed_manifest(total_tasks: int) -> BatchManifest:
         slurm_partition="gpu",
         slurm_time_limit="01:00:00",
     )
+
+
+def _directive_value(script: str, option: str) -> str:
+    """Parse one generated ``#SBATCH --option=value`` directive."""
+    prefix = f"#SBATCH --{option}="
+    line = next(line for line in script.splitlines() if line.startswith(prefix))
+    arguments = shlex.split(line.removeprefix("#SBATCH "), comments=True)
+    assert len(arguments) == 1
+    return arguments[0].split("=", maxsplit=1)[1]
 
 
 def _run_sequential_driver(
@@ -111,3 +127,85 @@ def test_sequential_packing_succeeds_when_every_task_succeeds() -> None:
 
     assert result.returncode == 0, result.stderr
     assert result.stdout.splitlines() == ["ran:0", "ran:1", "ran:2"]
+
+
+def test_all_sbatch_log_paths_quote_the_output_directory() -> None:
+    output_dir = (
+        "/scratch/output dir 'single' \"double\" "
+        "$(touch injected) `touch injected-backtick` # hash"
+    )
+    manifest = _packed_manifest(1)
+    manifest.output_dir = output_dir
+
+    scripts = [
+        (generate_fit_sbatch(manifest, ""), "fit_%a.out", "fit_%a.err"),
+        (generate_calibrate_sbatch(manifest, ""), "calibrate.out", "calibrate.err"),
+        (generate_denoise_sbatch(manifest, ""), "denoise_%a.out", "denoise_%a.err"),
+        (generate_merge_sbatch(manifest, ""), "merge.out", "merge.err"),
+    ]
+
+    for script, stdout_name, stderr_name in scripts:
+        assert _directive_value(script, "output") == f"{output_dir}/logs/{stdout_name}"
+        assert _directive_value(script, "error") == f"{output_dir}/logs/{stderr_name}"
+
+
+def test_fit_script_keeps_output_dir_and_preset_literal(tmp_path: Path) -> None:
+    output_dir = tmp_path / (
+        "output $(touch output-injected) `touch output-backtick` "
+        "\"double\" 'single' # hash"
+    )
+    preset = (
+        "standard $(touch preset-injected) `touch preset-backtick` \"quoted\" 'single'"
+    )
+    capture_path = tmp_path / "fit-args.txt"
+    manifest = _packed_manifest(1)
+    manifest.output_dir = str(output_dir)
+    manifest.preset = preset
+
+    preamble = f"""
+SLURM_ARRAY_TASK_ID=0
+CAPTURE_ARGS={shlex.quote(str(capture_path))}
+luxar() {{
+    printf '%s\\n' "$@" > "$CAPTURE_ARGS"
+    mkdir -p "$4"
+}}
+mv() {{
+    if [ "$1" = "-T" ]; then shift; fi
+    command mv "$@"
+}}
+"""
+    script = generate_fit_sbatch(manifest, preamble)
+    result = subprocess.run(
+        ["bash"],
+        input=script,
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    arguments = capture_path.read_text().splitlines()
+    expected_output = output_dir / "tiles/t00_c00_tile000.gsplats.zarr"
+    assert arguments[:4] == [
+        "gsplat",
+        "fit",
+        "/data/test.zarr",
+        f"{expected_output}.tmp",
+    ]
+    preset_index = arguments.index("--preset")
+    assert arguments[preset_index + 1] == preset
+    assert expected_output.is_dir()
+    assert not (tmp_path / "output-injected").exists()
+    assert not (tmp_path / "output-backtick").exists()
+    assert not (tmp_path / "preset-injected").exists()
+    assert not (tmp_path / "preset-backtick").exists()
+
+
+@pytest.mark.parametrize("separator", ["\0", "\r", "\n"])
+def test_sbatch_output_dir_rejects_line_terminators(separator: str) -> None:
+    manifest = _packed_manifest(1)
+    manifest.output_dir = f"/output{separator}#SBATCH --partition=other"
+
+    with pytest.raises(ValueError, match="must not contain"):
+        generate_fit_sbatch(manifest, "")
