@@ -8,7 +8,7 @@
  * @module ui/debug-console/formatters
  */
 
-import { formatErrorForDisplay } from '../../utils/format-error';
+import { formatErrorForDisplay, isErrorLike } from '../../utils/format-error';
 
 /**
  * Convert an arbitrary console-arg list (strings, numbers, booleans,
@@ -43,7 +43,9 @@ export function formatArgs(args: readonly unknown[]): string {
       if (typeof arg === 'string') return arg;
       if (typeof arg === 'number') return arg.toString();
       if (typeof arg === 'boolean') return arg.toString();
-      if (arg instanceof Error) return formatErrorForDisplay(arg);
+      // `isErrorLike` also matches a cross-realm Error, which fails
+      // `instanceof Error` yet still stringifies to `{}`.
+      if (isErrorLike(arg)) return formatErrorForDisplay(arg as Error);
       if (typeof arg === 'object') {
         try {
           return JSON.stringify(arg, null, 2);

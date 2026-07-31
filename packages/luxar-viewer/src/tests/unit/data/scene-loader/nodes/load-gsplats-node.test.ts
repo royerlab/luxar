@@ -324,6 +324,34 @@ describe('loadGSplatsNode — happy path commit flow', () => {
   });
 });
 
+describe('loadGSplatsNode — failure-record clearing', () => {
+  // A recovered lazy level must drop out of the outcome report and the
+  // auto-retry budget, but only when its commit actually landed.
+  it('clears a prior failure record when the commit lands', async () => {
+    const data = { splatCount: 7 } as LoadedGSplatsData;
+    const staged = { path: '/scene/g' } as unknown as StagedGSplatsCommit;
+    createGSplatsLoaderMock.mockReturnValue(makeGSplatsLoader(vi.fn().mockResolvedValue(data)));
+    const ctx = makeCtx();
+    ctx.spies.processGSplatsData.mockResolvedValue(staged);
+    ctx.registry.recordFailure('/scene/g', new Error('earlier 503'), 'Network');
+
+    await loadGSplatsNode(makeSceneNode(), new THREE.Group(), {} as never, ctx);
+
+    expect(ctx.registry.failedLoaders.has('/scene/g')).toBe(false);
+  });
+
+  it('keeps the failure record when staged is null (load landed nowhere)', async () => {
+    const data = { splatCount: 7 } as LoadedGSplatsData;
+    createGSplatsLoaderMock.mockReturnValue(makeGSplatsLoader(vi.fn().mockResolvedValue(data)));
+    const ctx = makeCtx(); // processGSplatsData resolves null by default
+    ctx.registry.recordFailure('/scene/g', new Error('earlier 503'), 'Network');
+
+    await loadGSplatsNode(makeSceneNode(), new THREE.Group(), {} as never, ctx);
+
+    expect(ctx.registry.failedLoaders.has('/scene/g')).toBe(true);
+  });
+});
+
 describe('loadGSplatsNode — error path', () => {
   it('records failure and rethrows LoaderError', async () => {
     const cause = new Error('validation expected ndim>3');
