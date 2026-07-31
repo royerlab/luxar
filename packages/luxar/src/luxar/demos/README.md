@@ -40,7 +40,7 @@ load-bearing — why. Two consumers read it, which is what keeps them honest:
 | Consumer | Role |
 |---|---|
 | `require_module("x")` | The runtime gate. Raises `MissingDependencyError` naming the *constrained* spec and its extra. |
-| `luxar demo deps` | The installer/report. Surveys the table with `find_spec` (no imports), exits 1 if anything is missing. |
+| `luxar demo deps` | The installer/report. Surveys the table with `find_spec` (no imports), flags an installed-but-below-pin package `OUTDATED`, and exits 1 if anything is missing or out of date. |
 
 Two rules govern the gate, both learned from real bugs:
 
