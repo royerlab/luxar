@@ -518,19 +518,34 @@ export class OPFSStore {
       // eviction decisions based on the wrong size. With the new
       // ordering, a transient removeEntry failure leaves all three
       // pieces of state unchanged so callers can retry safely.
-      const bucket = getBucket(key);
-      const bucketHandle = await this.buckets.getHandle(this.opfsRoot, bucket, false);
-      if (bucketHandle) {
-        const fileName = keyToFileName(key);
-        await bucketHandle.removeEntry(fileName);
-      }
+      // Timeout-wrapped like get()/set(): delete() runs inside doSet()'s
+      // eviction loops, so a hung removeEntry handle would otherwise stall
+      // every subsequent write indefinitely.
+      await withTimeout(
+        (async () => {
+          const bucket = getBucket(key);
+          const bucketHandle = await this.buckets.getHandle(this.opfsRoot!, bucket, false);
+          if (bucketHandle) {
+            const fileName = keyToFileName(key);
+            await bucketHandle.removeEntry(fileName);
+          }
+        })(),
+        config.cache.opfsOperationTimeoutMs,
+        `delete(${key})`
+      );
     } catch (error) {
       // NotFound means the desired disk state already holds. Reconcile the
       // stale index entry below; retaining it would pin a phantom at the LRU
       // head and make every eviction loop stop for lack of progress. Any other
-      // I/O failure is potentially transient, so preserve index/size atomically
-      // and let a later caller retry.
-      if (!isNotFoundError(error)) return;
+      // I/O failure (including a timeout) is potentially transient, so preserve
+      // index/size atomically and let a later caller retry.
+      if (!isNotFoundError(error)) {
+        const msg = error instanceof Error ? error.message : String(error);
+        if (msg.startsWith('OPFS timeout')) {
+          log.warning(Modules.CACHE, msg);
+        }
+        return;
+      }
     }
 
     this.totalSize = Math.max(0, this.totalSize - entry.size);

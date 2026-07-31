@@ -388,6 +388,36 @@ describe('OPFSStore', () => {
       expect(await smallStore.get('new')).toEqual(new Uint8Array(80));
     });
 
+    it('a hung removeEntry times out and preserves state for retry', async () => {
+      await store.set('stuck', new Uint8Array(500));
+      const before = store.getStats();
+
+      const originalRemoveEntry = mockFS.mockDirHandle.removeEntry;
+      mockFS.mockDirHandle.removeEntry = () => new Promise(() => {}); // hangs forever
+
+      const { config: realConfig } = await import('../../../config');
+      const originalTimeout = realConfig.cache.opfsOperationTimeoutMs;
+      realConfig.cache.opfsOperationTimeoutMs = 50;
+
+      try {
+        const start = Date.now();
+        await store.delete('stuck');
+        expect(Date.now() - start).toBeLessThan(2000);
+
+        // Timeout is treated as transient: totalSize and index unchanged.
+        const stats = store.getStats();
+        expect(stats.size).toBe(before.size);
+        expect(stats.count).toBe(before.count);
+      } finally {
+        realConfig.cache.opfsOperationTimeoutMs = originalTimeout;
+        mockFS.mockDirHandle.removeEntry = originalRemoveEntry;
+      }
+
+      // With the handle working again, the retry completes the deletion.
+      await store.delete('stuck');
+      expect(store.getStats()).toMatchObject({ size: 0, count: 0 });
+    });
+
     // [cache OOS] Pre-fix, `delete(key)` decremented `totalSize` BEFORE
     // calling `removeEntry()`. If removeEntry threw, totalSize was
     // already decremented but the file remained on disk and the index
