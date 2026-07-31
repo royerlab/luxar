@@ -1231,7 +1231,7 @@ mod tests {
         );
 
         assert_eq!(out_end[0], 0.0);
-        assert_eq!(out_start[1], 1.0); // the trimmed endpoint itself is capped
+        assert_eq!(out_start[1], 1.0); // trimmed endpoint: dimming suppressed (clip boundary)
     }
 
     /// A zero-length neighbour has no direction and keeps the cap.
