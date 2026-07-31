@@ -509,7 +509,7 @@ help:  ## Show this help message
 	@echo "Demos:"
 	@echo "  luxar demo             - List the bundled demos"
 	@echo "  luxar demo run <key>   - Run one demo (generates + serves + opens browser)"
-	@echo "  make install-demo-deps - Install every optional dependency the demos need"
+	@echo "  make install-demo-deps - Install the demo extras (demos + gsplats + io)"
 	@echo "  luxar demo deps        - Report which demo dependencies are missing"
 	@echo ""
 	@echo "Optional accelerators:"
@@ -533,7 +533,7 @@ install-dev:  ## Install Luxar Python package in editable mode for development
 	@mkdir -p packages/luxar-viewer/dist
 	$(HATCH) run pip install -e .
 
-install-demo-deps:  ## Install every optional dependency the bundled demos need
+install-demo-deps:  ## Install the demo extras (demos + gsplats + io)
 # The gsplats extra carries torch. pip leaves an ALREADY-satisfied torch alone,
 # so a CUDA build put in place by `make setup-cuda` (or a custom --index-url
 # wheel) survives this target; only a torch-less env gets the PyPI default.
@@ -1443,16 +1443,18 @@ run-demos:  ## Generate ALL demo datasets (output to datasets/demos/)
 generate-readme-demos:  ## Generate only the demo datasets needed for README screenshots
 	@echo "🚀 Generating README demo datasets..."
 	@mkdir -p datasets/demos
-	@echo "[1/5] 🌀 Lorenz Attractor..."
+	@echo "[1/6] 🌀 Lorenz Attractor..."
 	@if [ -d "datasets/demos/lorenz.luxar.zarr" ]; then echo "   ✓ exists"; else $(HATCH) run python packages/luxar/src/luxar/demos/demo_lorenz.py --no-serve || echo "   ⚠️  Failed"; fi
-	@echo "[2/5] 🔮 Mandelbulb..."
+	@echo "[2/6] 🔮 Mandelbulb..."
 	@if [ -d "datasets/demos/mandelbulb.luxar.zarr" ]; then echo "   ✓ exists"; else $(HATCH) run python packages/luxar/src/luxar/demos/demo_mandelbulb.py --no-serve || echo "   ⚠️  Failed"; fi
-	@echo "[3/5] 🌌 Spiral Galaxy..."
+	@echo "[3/6] 🌌 Spiral Galaxy..."
 	@if [ -d "datasets/demos/spiral_galaxy.luxar.zarr" ]; then echo "   ✓ exists"; else $(HATCH) run python packages/luxar/src/luxar/demos/demo_spiral_galaxy.py --no-serve || echo "   ⚠️  Failed"; fi
-	@echo "[4/5] 🧬 Zebrahub Multiome UMAP..."
+	@echo "[4/6] 🧬 Zebrahub Multiome UMAP..."
 	@if [ -d "datasets/demos/zebrahub_multiome_peak_umap.luxar.zarr" ]; then echo "   ✓ exists"; else $(HATCH) run python packages/luxar/src/luxar/demos/demo_zebrahub_multiome_peak_umap.py --no-serve || echo "   ⚠️  Failed"; fi
-	@echo "[5/5] 🌈 Rainbow Sphere..."
+	@echo "[5/6] 🌈 Rainbow Sphere..."
 	@if [ -d "datasets/demos/rainbow_sphere.luxar.zarr" ]; then echo "   ✓ exists"; else $(HATCH) run python packages/luxar/src/luxar/demos/demo_rainbow_sphere.py --no-serve || echo "   ⚠️  Failed"; fi
+	@echo "[6/6] 📐 nD Transform Bench..."
+	@if [ -d "datasets/demos/nd_transforms_bench.luxar.zarr" ]; then echo "   ✓ exists"; else $(HATCH) run python packages/luxar/src/luxar/demos/demo_nd_transforms.py --no-serve || echo "   ⚠️  Failed"; fi
 	@echo "✅ README demos ready!"
 
 generate-readme-images: generate-readme-demos  ## Generate README screenshots using Playwright

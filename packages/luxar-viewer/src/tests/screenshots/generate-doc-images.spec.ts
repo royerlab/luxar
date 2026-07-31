@@ -143,9 +143,10 @@ test('Viewer UI overview', async ({ page }) => {
  * 3. nD navigation with dimension sliders — using a 5D dataset
  */
 test('nD navigation with sliders', async ({ page }) => {
-  // Use the 5D observatory dataset (X,Y,Z + Time + Channel) — lightweight Points-based,
-  // renders reliably in headless Chrome without blocking the main thread
-  const dataUrl = `${DATA_SERVER}/datasets/demos/nd_transforms_observatory.luxar.zarr`;
+  // Use the 5D nD-transform bench (X,Y,Z + Frame + Channel) — lightweight
+  // Points-based, renders reliably in headless Chrome without blocking the
+  // main thread. Produced by `luxar demo run nd_transforms`.
+  const dataUrl = `${DATA_SERVER}/datasets/demos/nd_transforms_bench.luxar.zarr`;
   await page.goto(`${VIEWER_URL}/?src=${dataUrl}&debug`, { waitUntil: 'networkidle' });
   await waitForReady(page);
   await centerCamera(page);

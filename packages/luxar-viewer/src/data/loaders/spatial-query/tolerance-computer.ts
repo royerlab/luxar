@@ -104,6 +104,16 @@ const DISPLAYED_TOLERANCE = 1e10;
  * unreachable in practice: discrete-dim navigation snaps the slice position to
  * exact category values (see `SceneDimsManager.setDimensionValue`), so queries
  * are always on-grid (offset 0) and the target cell always matches.
+ *
+ * That on-grid premise has exactly one other way to break, and it is guarded
+ * elsewhere: a non-unit affine `nd_transform` inverts an on-grid WORLD target
+ * into an off-grid LOCAL one (`scale: 2` at world 7 → local 3.5), at which
+ * point the half-cell membership window below admits BOTH neighbouring
+ * categories. `invertNdTransformForQuery` detects that case and reports
+ * `noPreimage`, and the per-geometry range queries return nothing — see the
+ * "no-preimage rule" in `data/transforms/README.md`. If you widen or narrow
+ * either fraction here, keep that guard in mind: it is what lets these windows
+ * assume an on-grid target.
  */
 const DISCRETE_TOLERANCE_FRACTION = 0.25;
 

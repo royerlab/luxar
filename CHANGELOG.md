@@ -6,6 +6,79 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Fixed — a scaling `nd_transform` no longer draws the wrong slice on a discrete dimension
+
+An `nd_transform` with a non-unit `scale` on a discrete non-displayed dimension
+rendered content from world slices the user had not selected. The inverse-query
+design maps the world slice into the node's local space, and a scale makes that
+mapping land **between** categories: `scale: 2` at world frame 7 inverts to local
+3.5. The per-element membership window is a half-step (`|value − target| ≤ 0.5 ×
+step`), so it admitted local 3 **and** local 4 — two frames belonging to world 6
+and world 8, drawn together while the slider read 7. With `scale: 3` at world 7
+(local 2.333) it silently admitted local 2.
+
+The window itself was fine; its documented premise was not. It is calibrated for
+slightly off-grid *data* against an on-grid *target*, and the whole stack
+guarantees on-grid targets because discrete navigation snaps to the `k · step`
+grid. A scaling `nd_transform` is the one thing that breaks that guarantee, and
+it breaks it on the query side where no amount of window tuning helps (a strict
+boundary would fix `scale: 2` and still get `scale: 3` wrong).
+
+The fix applies the spec's own forward rule for discrete ordinals
+(`effective = round(scale · original + offset)`): a world value that is the image
+of no local grid point has no preimage and must display nothing.
+`invertNdTransformForQuery` now walks the local grid candidates bracketing the
+exact inverse, keeps the one whose forward image rounds to the queried world
+value, and **snaps the query to it** — which makes the query exactly on-grid and
+so removes the midpoint tie that caused the double-draw in the first place. When
+no candidate qualifies it reports `noPreimage`, which rides the derived per-node
+`ViewState` and makes each geometry's range query return an empty range list —
+reusing every loader's existing "no visible elements → clear" path. One rule,
+applied once per node per slice, so Points, Lines and GSplats are all fixed
+together with no change to the WASM/TS projection kernels.
+
+Testing the forward rule matters rather than testing whether the exact inverse
+lands on the grid: those agree only for integer `scale`/`offset`, and fractional
+scale on a discrete dimension is explicitly valid (spec §11.3). Under
+`offset: 0.4`, `round(k + 0.4) = k` gives every world value a preimage, so an
+inverse-on-grid test would have blanked such a node permanently.
+
+Exemptions: categorical permutations (a bijection always has a preimage) and
+`extend_to_all` dimensions — keyed off the node's `extend_to_all` name list, not
+the 1e10 tolerance sentinel, since every Lines call site derives with
+`applyPartialExtendTolerance: false` and never carries it.
+
+#### Changed — the `nd_transforms` demo is now a calibrated test bench
+
+`demo_nd_transforms.py` was a "Multi-Instrument Observatory": three jittered
+Gaussian blob clouds that looked identical at every time slice, so there was no
+way to see whether `nd_transform` had done anything at all. It is now an
+instrument. A ruler along X (one tick = one frame index), a cyan cursor column of
+plain untransformed geometry marking the WORLD index, and one labelled row per
+transform whose markers are 3D point-font digits printing their own LOCAL index
+— so the gap between digit and cursor, read in ticks, *is* the transform. Faint
+always-on ghosts mark every slot a row could light (a dark row means "no
+preimage", not "failed to load"), and a `visible_range`-gated readout prints the
+expected local index per row for the current slice. It covers affine
+offset/scale/negative-scale/scale+offset, categorical permutations, nested-group
+composition **order**, a 4x4 transform and an `nd_transform` on one group, and
+doubles as the visual regression harness for the no-preimage fix above.
+
+#### Added — `luxar demo deps` and `make install-demo-deps`
+
+Demos deliberately keep heavyweight packages out of the core install, so a fresh
+checkout lists every demo but cannot run them all. `luxar demo deps` reports
+which optional demo dependencies are missing (exit 1 if any are) and, with
+`--install`, installs the Luxar extras that provide them; `--extra
+demos|io|gsplats` narrows the report to one extra. `make install-demo-deps`
+installs all three demo extras in one step. One tabled dependency, `gdown`, is
+deliberately in no extra (it serves only the Google-Drive download path), so
+neither covers it — the report and `--install` both name it for an individual
+`pip install` instead. The report and the runtime `require_module` gate are
+both driven by `luxar.demos._dependencies.INSTALL_SPECS`, so a package cannot
+be advertised without being installable. Newly tabled pins: `pooch`,
+`scikit-learn`, `matplotlib`.
+
 #### Fixed — the volumetric Absorption slider did nothing on thin geometry
 
 κ is a physical coefficient with units of 1/length: the volumetric shaders build
