@@ -190,6 +190,34 @@ class TestFitPlanned:
         assert c[:, 0].min() >= 0 and c[:, 0].max() < 64
         assert c[:, 2].min() >= 0 and c[:, 2].max() < 64
 
+    def test_fit_planned_ignores_voxel_size(self):
+        # The content pipeline is voxel-space end to end; a YAML-style
+        # voxel_size/output_space='real' pair must be stripped (with a warning)
+        # rather than leak into the inner fit — physical centers would get
+        # voxel-space origin offsets added and be mis-filtered by the core mask.
+        from luxar.gsplats.planner import fit_planned
+
+        V = _corner_blobs((64, 64, 64), n=6, corner=48)
+        plan = plan_volume(V, _density(), cell=8, min_leaf=16, max_leaf=32, overlap=4)
+        with pytest.warns(UserWarning, match="voxel space"):
+            merged = fit_planned(
+                V,
+                plan,
+                device="cpu",
+                n_iters=30,
+                early_stop_patience=30,
+                use_cuda=False,
+                use_metal=False,
+                voxel_size=(5.0, 1.0, 1.0),
+                output_space="real",
+            )
+        assert merged.n_splats > 0
+        c = merged.centers
+        # Centers stay in voxel space and inside the volume bounds — an
+        # unstripped voxel_size would scale axis 0 by 5x (out of bounds).
+        assert c[:, 0].min() >= 0 and c[:, 0].max() < 64
+        assert c[:, 2].min() >= 0 and c[:, 2].max() < 64
+
 
 class TestPlanCliResolveDensity:
     def test_explicit_flags_build_density(self):
