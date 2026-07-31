@@ -98,10 +98,11 @@ def _finalize_output(
     atomically renamed to ``out``. If ``out`` already exists (another attempt won
     the race), the duplicate staging is dropped instead of clobbering it (mirror
     of the Slurm loser path). With ``overwrite`` (a ``--no-resume`` refit) a
-    pre-existing ``out`` is a stale prior result, not a winner: it is replaced —
-    but only here, after the refit fully succeeded, so a failed refit never
-    destroys the previous valid tile. Returns ``(ok, empty)``. ``ok`` is False
-    when the worker exited 0 but left nothing usable.
+    pre-existing ``out`` is a stale prior result, not a winner: it is moved
+    aside and replaced — but only here, after the refit fully succeeded, and
+    restored if the promotion itself fails — so a failed refit never destroys
+    the previous valid tile. Returns ``(ok, empty)``. ``ok`` is False when the
+    worker exited 0 but left nothing usable.
     """
     out_empty = Path(str(out) + ".empty")
     staging_empty = Path(str(staging) + ".empty")
@@ -112,24 +113,38 @@ def _finalize_output(
             # The refit legitimately produced 0 splats; the stale real store
             # from the prior run goes with it.
             shutil.rmtree(out, ignore_errors=True)
-        elif out.exists():
-            # A concurrent attempt already promoted a real store — it wins.
-            # Never leave both terminal representations (store + marker) behind:
-            # if the store were later removed, a lingering marker would make
-            # resume/status/merge treat the slot as legitimately empty.
+            out_empty.touch()
             return True, True
+        # Claim the marker FIRST, then recheck. A racing real attempt removes
+        # the marker after its rename, so whichever way the two interleave, a
+        # real store and the marker never both survive. (Checking before
+        # touching leaves a window — the recheck passes, the real attempt
+        # promotes and clears, then the touch lands — that would strand both
+        # terminal representations behind: if the store were later removed, a
+        # lingering marker would make resume/status/merge treat the slot as
+        # legitimately empty.)
         out_empty.touch()
+        if out.exists():
+            # A concurrent attempt already promoted a real store — it wins.
+            out_empty.unlink(missing_ok=True)
         return True, True
     if staging.exists():
-        if overwrite:
-            # Replace the stale prior output only now that the refit succeeded;
-            # a stale empty marker from the prior run goes with it.
-            shutil.rmtree(out, ignore_errors=True)
-            out_empty.unlink(missing_ok=True)
-        elif out.exists():
-            shutil.rmtree(staging, ignore_errors=True)
-            return True, False
+        moved_aside: Path | None = None
         try:
+            if overwrite:
+                # Replace the stale prior output only now that the refit
+                # succeeded — and move it ASIDE rather than deleting it, so no
+                # moment exists where the old tile is gone and the new one is
+                # not yet in place. A stale empty marker from the prior run
+                # goes with it.
+                out_empty.unlink(missing_ok=True)
+                if out.exists():
+                    moved_aside = Path(str(staging) + ".old")
+                    shutil.rmtree(moved_aside, ignore_errors=True)
+                    os.replace(out, moved_aside)
+            elif out.exists():
+                shutil.rmtree(staging, ignore_errors=True)
+                return True, False
             os.replace(staging, out)  # atomic within the same filesystem
         except OSError:
             if not overwrite and out.exists():
@@ -138,11 +153,20 @@ def _finalize_output(
                 # dir). Drop our duplicate, completed-by-other (Slurm mv -T loser).
                 shutil.rmtree(staging, ignore_errors=True)
                 return True, False
+            if moved_aside is not None and not out.exists():
+                # The promotion failed after the prior tile was set aside — put
+                # it back, so a failed refit never leaves the slot with nothing.
+                try:
+                    os.replace(moved_aside, out)
+                except OSError:
+                    pass  # the aside copy stays on disk for manual recovery
             # Genuine failure (staging vanished — e.g. a concurrent
             # `validate --fix` glob-deleted it — or EACCES/EIO). Keep staging on
             # disk for inspection and report not-ok (mirrors the Slurm
             # "mv failed and output missing" → rc 1 branch).
             return False, False
+        if moved_aside is not None:
+            shutil.rmtree(moved_aside, ignore_errors=True)
         # A real store now stands at `out` — drop any stale empty marker (e.g.
         # from a lost-race empty attempt) so the two terminal representations
         # never coexist.

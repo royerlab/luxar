@@ -197,8 +197,11 @@ def test_validate_fix_reclaims_staging_leftovers_keeps_empty_marker(
 
     Staging dirs are now `{tile}.tmp.<token>` (local host+pid) /
     `{tile}.tmp.<jobid>.<taskid>.<restart>` (Slurm), plus a possible
-    `{tile}.tmp.<token>.empty` marker file. The `{tile}.tmp*` glob must match all
-    of them while NEVER touching the legitimate `{tile}.empty` marker.
+    `{tile}.tmp.<token>.empty` marker file and a possible
+    `{tile}.tmp.<token>.old` set-aside prior tile (a --no-resume refit that died
+    mid-promotion). The `{tile}.tmp*` glob must match all of them while NEVER
+    touching the legitimate `{tile}.empty` marker, and the liveness probe must
+    receive the bare token (`.empty`/`.old` stripped).
     """
     import luxar.cli.gsplat_ops.batch_status_validate_cancel as bsvc
     from luxar.cli.gsplat_ops.batch_status_validate_cancel import (
@@ -206,8 +209,15 @@ def test_validate_fix_reclaims_staging_leftovers_keeps_empty_marker(
     )
     from luxar.gsplats.batch.manifest import BatchJob, BatchManifest, save_manifest
 
-    # Both leftovers belong to attempts that are verifiably gone.
-    monkeypatch.setattr(bsvc, "_staging_attempt_live", lambda token: False)
+    # All leftovers belong to attempts that are verifiably gone; record the
+    # tokens the probe receives so the suffix stripping is asserted too.
+    seen_tokens: list[str] = []
+
+    def _gone(token: str) -> bool:
+        seen_tokens.append(token)
+        return False
+
+    monkeypatch.setattr(bsvc, "_staging_attempt_live", _gone)
 
     out_dir = tmp_path / "batch"
     tiles = out_dir / "tiles"
@@ -232,18 +242,25 @@ def test_validate_fix_reclaims_staging_leftovers_keeps_empty_marker(
 
     # Legitimate empty marker (task fit 0 splats) — MUST survive `--fix`.
     (tiles / f"{tile}.empty").touch()
-    # Stale local staging dir + a Slurm-shaped stale `.empty` marker file.
+    # Stale local staging dir + a Slurm-shaped stale `.empty` marker file + a
+    # set-aside prior tile from a --no-resume refit that died mid-promotion.
     staging = tiles / f"{tile}.tmp.host-1234"
     staging.mkdir()
     (staging / "data").write_text("partial")
     stale_marker = tiles / f"{tile}.tmp.42.0.1.empty"
     stale_marker.touch()
+    stale_aside = tiles / f"{tile}.tmp.host-1234.old"
+    stale_aside.mkdir()
+    (stale_aside / "data").write_text("prior")
 
     run_batch_validate_cmd(output_dir=out_dir, fix=True)
 
     assert not staging.exists()  # staging dir reclaimed
     assert not stale_marker.exists()  # stale staging marker reclaimed
+    assert not stale_aside.exists()  # set-aside prior tile reclaimed
     assert (tiles / f"{tile}.empty").exists()  # legitimate marker untouched
+    # The probe received bare tokens: `.empty` and `.old` suffixes stripped.
+    assert set(seen_tokens) == {"host-1234", "42.0.1"}
 
 
 def test_validate_report_counts_stray_staging_empty_markers(
@@ -382,9 +399,10 @@ def test_staging_attempt_live_slurm_token(monkeypatch):
     import luxar.cli.gsplat_ops.batch_status_validate_cancel as bsvc
 
     class _Res:
-        def __init__(self, rc, out):
+        def __init__(self, rc, out, err=""):
             self.returncode = rc
             self.stdout = out
+            self.stderr = err
 
     calls: list[list[str]] = []
 
@@ -396,9 +414,25 @@ def test_staging_attempt_live_slurm_token(monkeypatch):
     assert bsvc._staging_attempt_live("42.7.1") is True
     assert calls and calls[0][:3] == ["squeue", "-h", "-j"] and calls[0][3] == "42"
 
-    # Job left the queue (squeue errors on an unknown id) → reclaimable.
-    monkeypatch.setattr(bsvc.subprocess, "run", lambda *a, **kw: _Res(1, ""))
+    # Job left the queue (squeue rejects the unknown id) → reclaimable.
+    monkeypatch.setattr(
+        bsvc.subprocess,
+        "run",
+        lambda *a, **kw: _Res(1, "", "slurm_load_jobs error: Invalid job id specified"),
+    )
     assert bsvc._staging_attempt_live("42.7.1") is False
+
+    # squeue failed operationally (controller down, auth error) — that is NOT
+    # proof the job is gone; deleting live staging on it could corrupt a store
+    # a running attempt is about to promote. Keep, to be safe.
+    monkeypatch.setattr(
+        bsvc.subprocess,
+        "run",
+        lambda *a, **kw: _Res(
+            1, "", "slurm_load_jobs error: Unable to contact slurm controller"
+        ),
+    )
+    assert bsvc._staging_attempt_live("42.7.1") is None
 
     # No squeue on this machine → cannot verify → keep.
     def _no_squeue(*a, **kw):  # type: ignore[no-untyped-def]

@@ -288,6 +288,41 @@ def test_finalize_overwrite_replaces_stale_output(tmp_path: Path) -> None:
     assert ok and not empty
     assert (out / "data").read_text() == "fresh"
     assert not staging.exists()
+    # The set-aside prior tile is dropped once the promotion succeeded.
+    assert not Path(str(staging) + ".old").exists()
+
+
+def test_finalize_overwrite_failed_promotion_restores_prior_output(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A failed --no-resume promotion puts the prior tile back.
+
+    The stale output is moved ASIDE (not deleted) before the rename, so there
+    is never a moment where the old tile is gone and the new one is not yet in
+    place: if the promotion itself fails (EIO, staging vanished), the prior
+    tile is restored and the refit staging is kept for inspection.
+    """
+    import luxar.gsplats.batch.local_runner as lr
+
+    out = tmp_path / "t00_c00_tile000.gsplats.zarr"
+    out.mkdir()
+    (out / "data").write_text("stale")
+    staging = _staging_path(out, "host-1")
+    staging.mkdir()
+    (staging / "data").write_text("fresh")
+
+    real_replace = os.replace
+
+    def _fail_promotion(src, dst):  # type: ignore[no-untyped-def]
+        if Path(src) == staging:
+            raise OSError("EIO")
+        real_replace(src, dst)
+
+    monkeypatch.setattr(lr.os, "replace", _fail_promotion)
+    ok, empty = _finalize_output(out, staging, overwrite=True)
+    assert not ok and not empty
+    assert (out / "data").read_text() == "stale"  # prior tile restored
+    assert (staging / "data").read_text() == "fresh"  # refit kept for inspection
 
 
 def test_finalize_overwrite_empty_refit_replaces_stale_store(tmp_path: Path) -> None:

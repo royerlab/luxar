@@ -245,15 +245,19 @@ def test_fit_script_uses_per_attempt_staging_dir() -> None:
 def test_fit_script_empty_marker_defers_to_real_output() -> None:
     """A real store always wins over an empty result — never both on disk.
 
-    The 0-splat branch must only `touch "${OUTPUT}.empty"` when no concurrent
-    attempt has promoted a real OUTPUT, and a successful/lost `mv -T` claim must
-    drop any stale marker — otherwise both terminal representations coexist and
-    a later store removal silently turns the slot 'legitimately empty'.
+    The 0-splat branch claims the marker FIRST and then rechecks OUTPUT,
+    dropping the marker if a real store already stands; a successful/lost
+    `mv -T` claim also drops any stale marker. Touch-before-recheck (plus the
+    real path's remove-after-mv) closes every interleaving — checking before
+    touching leaves a window where a racing real promotion lands between the
+    check and the touch and both terminal representations survive, so a later
+    store removal would silently turn the slot 'legitimately empty'.
     """
     script = generate_fit_sbatch(_packed_manifest(1), "")
     lines = script.splitlines()
 
-    # The empty branch guards the marker behind an OUTPUT-existence check.
+    # The empty branch touches the marker, THEN rechecks OUTPUT and drops the
+    # marker when a real store already stands.
     empty_if = next(
         i for i, ln in enumerate(lines) if '[ -f "${STAGING}.empty" ]' in ln
     )
@@ -263,12 +267,17 @@ def test_fit_script_empty_marker_defers_to_real_output() -> None:
         for i, ln in enumerate(lines)
         if i > empty_if and 'if [ -d "$OUTPUT" ]; then' in ln
     )
-    assert empty_if < guard < touch
+    drop = next(
+        i for i, ln in enumerate(lines) if i > guard and 'rm -f "${OUTPUT}.empty"' in ln
+    )
+    assert empty_if < touch < guard < drop
 
     # After the atomic claim, a real store stands at OUTPUT: the stale marker
     # is removed (winner and loser paths both flow through this line).
     mv = next(i for i, ln in enumerate(lines) if 'mv -T "${STAGING}"' in ln)
-    marker_rm = next(i for i, ln in enumerate(lines) if 'rm -f "${OUTPUT}.empty"' in ln)
+    marker_rm = next(
+        i for i, ln in enumerate(lines) if i > mv and 'rm -f "${OUTPUT}.empty"' in ln
+    )
     assert marker_rm > mv
 
 
