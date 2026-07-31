@@ -18,11 +18,13 @@
  * how the path is normalized — same shape as the points equivalent
  * in `points/chunk-index-loader.ts`.
  *
- * The lines-specific helper `computeVertexRangesFromIndices` (run
- * after a query returns segment indices, to coalesce the unique
- * referenced vertex indices into contiguous runs) lives here too —
- * it operates on per-segment vertex indices, not on chunk bounds, but
- * conceptually belongs to the lines spatial-index path.
+ * The lines-specific vertex-index helpers live here too —
+ * `sortedUniqueVertexIndices`, `computeVertexRangesFromIndices`, and
+ * `remapSegmentIndices` (run after a query returns segment indices, to
+ * coalesce the unique referenced vertex indices into contiguous runs
+ * and remap them to local buffer positions). They operate on
+ * per-segment vertex indices, not on chunk bounds, but conceptually
+ * belong to the lines spatial-index path.
  *
  * @module data/lines/chunk-index-loader
  */
