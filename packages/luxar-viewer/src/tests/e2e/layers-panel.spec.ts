@@ -268,6 +268,52 @@ test.describe('Layers Panel', () => {
     await expect(absorptionGroup).toBeHidden();
   });
 
+  test('kind=partition layer: Blend reaches EVERY part material', async ({ page }) => {
+    // Regression: the blending test above deliberately picks a non-group layer,
+    // so the composite (kind=partition / kind=lod) path had no coverage — and it
+    // was broken. `graft_gsplat_node` re-stamped `blending_mode` on every part;
+    // the attr is nearest-setter-wins, so each part shadowed the wrapper and the
+    // layer's single Blend control did nothing. In the recipe gallery, flat /
+    // stream / levels layers switched while tiles / overview / adaptive did not.
+    const FIXTURE =
+      'http://localhost:9000/packages/luxar-viewer/tests/fixtures/test_partition_layer.luxar.zarr';
+    await page.goto(`/?src=${FIXTURE}&debug`);
+    await waitForLuxarReady(page);
+    await openLayersPanel(page);
+
+    // Exactly ONE layer row: the partition wrapper (the parts are internal).
+    const target = await page.evaluate(() => {
+      const debug = (window as any).__luxarDebug;
+      const panel = debug.app.layersPanel;
+      const layers = panel.layerState.getLayers();
+      panel.layerState.select(layers[0].path, 'single');
+      return { count: layers.length, path: layers[0].path, kind: layers[0].kind };
+    });
+    expect(target.count).toBe(1);
+    expect(target.kind).toBe('partition');
+
+    const blendSelect = page.locator(
+      '.luxar-layers-panel__control-group:has(.luxar-layers-panel__control-label:text-is("Blend")) select'
+    );
+    await expect(blendSelect).toHaveValue('volumetric');
+    await blendSelect.selectOption('max');
+    await waitForNextRender(page);
+
+    // Every part material followed the layer — none stayed on 'volumetric'.
+    const parts = await page.evaluate((path) => {
+      const debug = (window as any).__luxarDebug;
+      const out: string[] = [];
+      debug.scene.traverse((obj: any) => {
+        if (obj.userData?.nodeType === 'gsplats' && obj.material && obj.name?.startsWith(path)) {
+          out.push(obj.material.userData?.blendingMode);
+        }
+      });
+      return out;
+    }, target.path);
+    expect(parts.length).toBeGreaterThanOrEqual(2);
+    expect(parts.every((m) => m === 'max')).toBe(true);
+  });
+
   test('should update gamma via layer state API', async ({ page }) => {
     await openLayersPanel(page);
 

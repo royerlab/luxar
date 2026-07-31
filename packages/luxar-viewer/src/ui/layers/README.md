@@ -15,7 +15,7 @@ The Layers panel exposes scene graph nodes marked with `layer=True` (set in the 
 - **Colormap** (for gsplats with scalars/amplitudes, scalar-backed points/lines, and groups that fan out to such descendants)
 - **Active level** (LOD groups, and partitions wrapping LOD groups) — `auto` or lock to a specific level
 
-Rendering attributes compose along the scene graph per the Luxar composition spec: `opacity`, `absorption`, `gamma`, and `intensity` multiply through ancestors; `offset` adds; `blending_mode` takes the nearest ancestor's choice. Every panel mutation recomposes the effective attributes for each affected data-leaf (the layer itself, or every data descendant of a group layer) using live panel state for `layer=true` nodes and authoring-time zarr attrs for the rest. Colormap is the one exception — it applies per-leaf rather than composing.
+Rendering attributes compose along the scene graph per the Luxar composition spec: `opacity`, `absorption`, `gamma`, and `intensity` multiply through ancestors; `offset` adds; `blending_mode` takes the nearest ancestor's choice — except inside the edited layer's own subtree, where the layer's single Blend control wins (see [Blending mode inside a layer's subtree](#blending-mode-inside-a-layers-subtree)). Every panel mutation recomposes the effective attributes for each affected data-leaf (the layer itself, or every data descendant of a group layer) using live panel state for `layer=true` nodes and authoring-time zarr attrs for the rest. Colormap is the one exception — it applies per-leaf rather than composing.
 
 Edits made in the panel are viewer-only and not persisted back to the zarr store; reload the page to return to the authored state.
 
@@ -103,26 +103,49 @@ intensity = 1 / (max - min)
 offset    = -min / (max - min)
 ```
 
-Slider bounds come from the data-range zarr attr written during encoding:
-`scalar_data_range` (preferred when present), else `color_data_range`,
-else `amplitude_data_range` (gsplats), else `[0, 1]`. Group layers have no
-range of their own and fall through to `[0, 1]`. If the layer was authored
-with non-default `intensity` / `offset`, the recovered display range may
-extend beyond the stored data range — the slider bounds are widened to
-`[min(dataMin, displayMin), max(dataMax, displayMax)]` so the `<input>`
-doesn't silently clamp the thumb on first render.
+### Which window a layer STARTS at
+
+The window maps the **rendered value** to `[0, 1]`, so the default depends on
+what that value is (`layer-state.ts::initialDisplayRange`):
+
+| Layer renders                                               | Starting window                                                                                                                         | Why                                                                                                                                                                                                                     |
+| ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| through a colormap (`colormap` on the node or a descendant) | `scalar_data_range`, else `amplitude_data_range`, else the finest descendant leaf's (`deriveScalarRangeFromDescendants`), else `[0, 1]` | the value is a scalar; gsplat amplitudes are heavily right-skewed, so a linear `[0, 1]` window renders near-black (#522)                                                                                                |
+| direct RGB colours                                          | `[0, 1]` — the identity                                                                                                                 | the value IS authored colour. Windowing it on `color_data_range` is an unrequested contrast stretch: a uniform grey `(0.72, 0.74, 0.78)` has range `[0.72, 0.78]` → gain 16.7 / offset −12 → renders **saturated blue** |
+
+`color_data_range` therefore never sets the starting window — it only widens the
+**slider bounds** for direct-colour layers, so stretching authored colours stays
+a one-drag operation.
+
+Toggling the colormap select re-defaults the window to the new mode
+(`setColormapWindow`): a window carried over from the other mode is meaningless.
+
+Bounds are the union of the starting window, the recovered authored
+`intensity`/`offset` window, and (direct colour only) `color_data_range` —
+`[min(dataMin, displayMin), max(dataMax, displayMax)]` — so the `<input>` never
+silently clamps the thumb on first render.
+
+### Blending mode inside a layer's subtree
+
+`blending_mode` composes nearest-setter-wins, but a layer exposes exactly ONE
+Blend control for its whole subtree. So within a layer, the **layer's** mode
+wins: `LayerApplyEngine.composeEffective` ignores a `blending_mode` authored on
+a descendant that is not itself a layer (a nested layer keeps its own live
+value — it has its own control). Without this, a `kind=partition` /
+`kind=lod` layer whose parts carry their own stamped mode had an inert Blend
+control.
 
 ## Files
 
-| File                                       | Purpose                                                                            |
-| ------------------------------------------ | ---------------------------------------------------------------------------------- |
-| `layer-state.ts`                           | `LayerStateManager`, `computeUniforms` / `computeDisplayRange`, selection logic    |
-| `layers-panel.ts`                          | `LayersPanel` class — panel/list DOM + lifecycle; facade over controls + apply     |
-| `layer-controls.ts`                        | `LayerControls` — controls-section DOM (sliders, selects, live LOD readout)        |
-| `layer-apply.ts`                           | `LayerApplyEngine` — attr composition + material application per data-leaf         |
-| `luxar-material.ts`                        | `LuxarMaterial` interface, `isColormapActive` / `applyColorAdjustments` routing    |
-| `range-slider.ts`                          | `RangeSlider` — dual-thumb input component with editable / scrollable bound labels |
-| `labeled-slider.ts`                        | `LabeledSlider` — single-thumb labeled input component (gamma, opacity, absorption)            |
-| `attrs-utils.ts`                           | `clampGamma`, `getBlendingState`, `liveLayerAttrs` — pure helpers (no DOM)         |
-| `../layers.ts`                             | Public entrypoint — re-exports the layers surface                                  |
-| `../../styles/components/layers-panel.css` | Themed CSS styles                                                                  |
+| File                                       | Purpose                                                                             |
+| ------------------------------------------ | ----------------------------------------------------------------------------------- |
+| `layer-state.ts`                           | `LayerStateManager`, `computeUniforms` / `computeDisplayRange`, selection logic     |
+| `layers-panel.ts`                          | `LayersPanel` class — panel/list DOM + lifecycle; facade over controls + apply      |
+| `layer-controls.ts`                        | `LayerControls` — controls-section DOM (sliders, selects, live LOD readout)         |
+| `layer-apply.ts`                           | `LayerApplyEngine` — attr composition + material application per data-leaf          |
+| `luxar-material.ts`                        | `LuxarMaterial` interface, `isColormapActive` / `applyColorAdjustments` routing     |
+| `range-slider.ts`                          | `RangeSlider` — dual-thumb input component with editable / scrollable bound labels  |
+| `labeled-slider.ts`                        | `LabeledSlider` — single-thumb labeled input component (gamma, opacity, absorption) |
+| `attrs-utils.ts`                           | `clampGamma`, `getBlendingState`, `liveLayerAttrs` — pure helpers (no DOM)          |
+| `../layers.ts`                             | Public entrypoint — re-exports the layers surface                                   |
+| `../../styles/components/layers-panel.css` | Themed CSS styles                                                                   |

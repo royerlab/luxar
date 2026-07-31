@@ -291,6 +291,11 @@ export class LayerControls {
         l.colormap = cmName;
       });
       for (const sel of this.deps.state.getSelected()) {
+        // The display window means a different thing on each side of this
+        // toggle (scalar data range vs authored-RGB identity), so re-default
+        // it BEFORE applying — `applyColormap` derives the material's scalar
+        // range from the composed window.
+        this.deps.state.setColormapWindow(sel.path, !!cmName);
         this.deps.apply.applyColormap(sel);
       }
       this.controlsInteracting = false;

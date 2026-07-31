@@ -176,13 +176,85 @@ describe('LayerStateManager', () => {
     expect(mgr.getLayer('b')!.visible).toBe(false);
   });
 
-  it('initializes display range from color_data_range', () => {
+  it('starts a direct-colour layer at the IDENTITY window, not color_data_range', () => {
+    // The window maps the rendered value to [0, 1]. For a direct-colour layer
+    // that value is authored RGB, whose range already IS [0, 1] — windowing it
+    // on color_data_range is an unrequested contrast stretch.
     mgr.initFromSceneGraph(makeSceneGraph([{ color_data_range: [0.1, 0.9] as [number, number] }]));
     const layer = mgr.getLayers()[0];
-    expect(layer.dataMin).toBeCloseTo(0.1, 5);
-    expect(layer.dataMax).toBeCloseTo(0.9, 5);
-    expect(layer.displayMin).toBeCloseTo(0.1, 5);
-    expect(layer.displayMax).toBeCloseTo(0.9, 5);
+    expect(layer.displayMin).toBeCloseTo(0, 5);
+    expect(layer.displayMax).toBeCloseTo(1, 5);
+    // …which is the identity gain/offset — the authored colour reaches the
+    // shader untouched.
+    const { intensity, offset } = computeUniforms(layer.displayMin, layer.displayMax);
+    expect(intensity).toBeCloseTo(1, 5);
+    expect(offset).toBeCloseTo(0, 5);
+    // The colour range still bounds the slider so stretching stays one drag away.
+    expect(layer.dataMin).toBeLessThanOrEqual(0.1);
+    expect(layer.dataMax).toBeGreaterThanOrEqual(0.9);
+  });
+
+  it('does not blow up the gain on a near-uniform colour (grey → blue regression)', () => {
+    // demo_gsplats_recipes_tribolium paints a column a flat grey
+    // (0.72, 0.74, 0.78) → color_data_range [0.72, 0.78]. Windowing on it gave
+    // gain 16.7 / offset −12, mapping that grey to (0.00, 0.33, 1.00): the
+    // column rendered SATURATED BLUE and every other column clipped to white.
+    mgr.initFromSceneGraph(
+      makeSceneGraph([{ color_data_range: [0.72, 0.78] as [number, number] }])
+    );
+    const layer = mgr.getLayers()[0];
+    const { intensity, offset } = computeUniforms(layer.displayMin, layer.displayMax);
+    expect(intensity).toBeCloseTo(1, 5);
+    expect(offset).toBeCloseTo(0, 5);
+  });
+
+  it('keeps HDR colours (range beyond 1) at the identity window', () => {
+    mgr.initFromSceneGraph(makeSceneGraph([{ color_data_range: [0, 3.5] as [number, number] }]));
+    const layer = mgr.getLayers()[0];
+    // Windowing on [0, 3.5] would DIM authored HDR by 3.5× before tone mapping.
+    expect(layer.displayMax).toBeCloseTo(1, 5);
+    expect(layer.dataMax).toBeGreaterThanOrEqual(3.5);
+  });
+
+  it('still windows a COLORMAPPED layer on its scalar range', () => {
+    // The #522 case: a linear [0, 1] window on right-skewed gsplat amplitudes
+    // buries ~99% of splats in the bottom few % and renders near-black.
+    mgr.initFromSceneGraph(
+      makeSceneGraph([
+        {
+          colormap: 'gray',
+          amplitude_data_range: [0.0001, 0.02] as [number, number],
+          color_data_range: [0.72, 0.78] as [number, number],
+        },
+      ])
+    );
+    const layer = mgr.getLayers()[0];
+    expect(layer.displayMin).toBeCloseTo(0.0001, 6);
+    expect(layer.displayMax).toBeCloseTo(0.02, 6);
+  });
+
+  it('re-defaults the window when the colormap is toggled', () => {
+    mgr.initFromSceneGraph(
+      makeSceneGraph([
+        {
+          has_scalars: true,
+          scalar_data_range: [0.0001, 0.02] as [number, number],
+          color_data_range: [0.2, 0.6] as [number, number],
+        },
+      ])
+    );
+    const path = mgr.getLayers()[0].path;
+    // Direct colour to start…
+    expect(mgr.getLayer(path)!.displayMax).toBeCloseTo(1, 5);
+    // …colormap ON windows the SCALAR (a [0, 1] window on it renders near-black)…
+    mgr.setColormapWindow(path, true);
+    expect(mgr.getLayer(path)!.displayMin).toBeCloseTo(0.0001, 6);
+    expect(mgr.getLayer(path)!.displayMax).toBeCloseTo(0.02, 6);
+    expect(mgr.getLayer(path)!.dataMin).toBeLessThanOrEqual(0.0001);
+    // …and OFF restores the identity.
+    mgr.setColormapWindow(path, false);
+    expect(mgr.getLayer(path)!.displayMin).toBeCloseTo(0, 5);
+    expect(mgr.getLayer(path)!.displayMax).toBeCloseTo(1, 5);
   });
 
   it('defaults data range to [0, 1] when absent', () => {
@@ -280,11 +352,9 @@ describe('LayerStateManager', () => {
     });
   });
 
-  it('derives a composite group layer range from its finest descendant leaf', () => {
-    // Regression: a kind=partition/lod group carries no range of its own; the
-    // [0, 1] fallback makes a colormapped gsplat render near-black. Derive from
-    // the finest (largest-n_splats) descendant so the layer window is correct.
-    const graph: SceneNode = {
+  /** A kind=partition group layer over two gsplats leaves, coarse + fine. */
+  function makePartitionGraph(leafAttrs: Record<string, unknown>): SceneNode {
+    return {
       path: '/',
       type: 'scene',
       attrs: {},
@@ -297,23 +367,50 @@ describe('LayerStateManager', () => {
             {
               path: '/g/coarse',
               type: 'gsplats',
-              attrs: { amplitude_data_range: [0, 0.25] as [number, number], n_splats: 100 },
+              attrs: {
+                amplitude_data_range: [0, 0.25] as [number, number],
+                n_splats: 100,
+                ...leafAttrs,
+              },
               children: [],
             },
             {
               path: '/g/fine',
               type: 'gsplats',
-              attrs: { amplitude_data_range: [0, 0.03] as [number, number], n_splats: 5000 },
+              attrs: {
+                amplitude_data_range: [0, 0.03] as [number, number],
+                n_splats: 5000,
+                ...leafAttrs,
+              },
               children: [],
             },
           ],
         },
       ],
     } as unknown as SceneNode;
-    mgr.initFromSceneGraph(graph);
+  }
+
+  it('derives a COLORMAPPED composite group layer range from its finest descendant leaf', () => {
+    // Regression: a kind=partition/lod group carries no range of its own; the
+    // [0, 1] fallback makes a colormapped gsplat render near-black. Derive from
+    // the finest (largest-n_splats) descendant so the layer window is correct.
+    // The colormap is what makes the windowed value a SCALAR — a colourful
+    // partition instead keeps the identity (twin test below).
+    mgr.initFromSceneGraph(makePartitionGraph({ colormap: 'gray' }));
     const layer = mgr.getLayer('/g')!;
     // Finest leaf (n_splats=5000) wins → [0, 0.03], NOT the [0, 1] fallback.
     expect(layer.dataMax).toBeCloseTo(0.03, 5);
+    expect(layer.displayMax).toBeCloseTo(0.03, 5);
+  });
+
+  it('keeps a DIRECT-COLOUR composite group layer at the identity window', () => {
+    // The gallery demo's `tiles` / `adaptive` columns: parts carry per-splat
+    // RGB and no colormap, so their amplitude range must NOT become the window
+    // (that windowed authored colour by a scalar range and blew out the scene).
+    mgr.initFromSceneGraph(makePartitionGraph({ color_data_range: [0.35, 0.9] }));
+    const layer = mgr.getLayer('/g')!;
+    expect(layer.displayMin).toBeCloseTo(0, 5);
+    expect(layer.displayMax).toBeCloseTo(1, 5);
   });
 
   it('expands slider bounds to encompass authored intensity/offset display range', () => {

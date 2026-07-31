@@ -6,10 +6,12 @@
  * affected data-leaf (the layer itself, or every data descendant for a group
  * layer), recompose its effective attrs along the scene-graph ancestry per the
  * Luxar composition spec (opacity/gamma/intensity multiply, offset adds,
- * blending_mode takes the nearest ancestor's choice), and push the result into
- * the leaf material (clone-on-first-use so shared cached materials are never
- * mutated in place). Authoring-time zarr values are used for non-layer nodes
- * in the chain; live panel state overrides them for `layer=True` nodes.
+ * blending_mode takes the nearest ancestor's choice — except INSIDE the edited
+ * layer's own subtree, where the layer's single Blend control wins; see
+ * `composeEffective`), and push the result into the leaf material
+ * (clone-on-first-use so shared cached materials are never mutated in place).
+ * Authoring-time zarr values are used for non-layer nodes in the chain; live
+ * panel state overrides them for `layer=True` nodes.
  *
  * Constructed with ACCESSORS for the root group and scene graph (both are
  * reassigned by `LayersPanel.initFromScene` on every scene load) — never with
@@ -106,21 +108,38 @@ export class LayerApplyEngine {
    * Recompose the effective attrs for a single data-leaf by walking the
    * scene-graph ancestry, substituting panel state for every `layer=true`
    * node in the chain.
+   *
+   * `layerPath` is the layer whose control was just used. Inside that layer's
+   * own subtree the LAYER owns `blending_mode`: a mode authored on a
+   * descendant that is not itself a layer is dropped. `blending_mode` is
+   * nearest-setter-wins and a layer exposes exactly one Blend control, so
+   * without this a `kind=partition` / `kind=lod` layer whose parts carry
+   * their own stamped mode has an inert control — every part shadows the
+   * wrapper (the `graft_gsplat_node` stamping bug, and every scene already
+   * written by it). A nested node that IS a layer keeps its live value: it
+   * has its own control. Only `blending_mode` is affected — the
+   * multiplicative attrs still compose and `offset` still sums, so a part's
+   * authored opacity/gamma/κ is preserved.
    */
-  private composeEffective(leafPath: string): EffectiveAttrs | null {
+  private composeEffective(leafPath: string, layerPath?: string): EffectiveAttrs | null {
     const sceneGraph = this.deps.getSceneGraph();
     if (!sceneGraph) return null;
     const ancestors = collectAncestorNodes(sceneGraph, leafPath);
-    const chain: ComposableAttrs[] = ancestors.map((node) => {
+    const layerDepth =
+      layerPath === undefined ? -1 : ancestors.findIndex((n) => n.path === layerPath);
+    const chain: ComposableAttrs[] = ancestors.map((node, i) => {
       const layerInfo = this.deps.state.getLayer(node.path);
       if (layerInfo) return this.liveLayerAttrs(layerInfo);
+      const insideLayerSubtree = layerDepth >= 0 && i > layerDepth;
       return {
         opacity: node.attrs.opacity as number | undefined,
         absorption: node.attrs.absorption as number | undefined,
         gamma: node.attrs.gamma as number | undefined,
         intensity: node.attrs.intensity as number | undefined,
         offset: node.attrs.offset as number | undefined,
-        blending_mode: node.attrs.blending_mode as string | undefined,
+        blending_mode: insideLayerSubtree
+          ? undefined
+          : (node.attrs.blending_mode as string | undefined),
       };
     });
     return composeAttrs(chain);
@@ -173,7 +192,7 @@ export class LayerApplyEngine {
       if (!obj) continue;
       const mat = this.getLeafMaterial(obj);
       if (!mat) continue;
-      const eff = this.composeEffective(leaf.path);
+      const eff = this.composeEffective(leaf.path, layer.path);
       if (!eff) continue;
       // An in-flight LOD fade owns the live opacity uniform: it re-renders
       // `_lodFadeBase × fadeProduct` every frame (scene/lod-fade.ts), so a
@@ -269,7 +288,7 @@ export class LayerApplyEngine {
         // gain/offset so it matches what `applyComposed` will push. Falls
         // back to the authored scalar range when no composition exists.
         if (mat.updateScalarRange) {
-          const eff = this.composeEffective(leaf.path);
+          const eff = this.composeEffective(leaf.path, layer.path);
           if (eff) {
             const { min, max } = computeDisplayRange(eff.intensity, eff.offset);
             mat.updateScalarRange(min, max);

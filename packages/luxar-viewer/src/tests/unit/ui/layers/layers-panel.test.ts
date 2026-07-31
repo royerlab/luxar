@@ -851,6 +851,81 @@ describe('LayersPanel — blend select drives the leaf material', () => {
     expect(panel.layerState.getLayer('/cloud')!.blendingMode).toBe('max');
   });
 
+  it('a kind=partition layer overrides a blending mode stamped on its own parts', () => {
+    // Regression (gallery demo): `graft_gsplat_node` used to re-stamp
+    // blending_mode on every grafted part. blending_mode is
+    // nearest-setter-wins, so each part SHADOWED the wrapper and the layer's
+    // single Blend control did nothing — flat/stream/levels layers switched,
+    // tiles/overview/adaptive did not. Inside a layer's subtree the LAYER owns
+    // the mode, so a part's authored copy must not win.
+    const mats = ['/tiles/part_0', '/tiles/part_1'].map((name) => {
+      const applyBlendingMode = vi.fn();
+      const stubMat: Record<string, unknown> = {
+        userData: { blendingMode: 'volumetric' },
+        uniforms: { uOpacity: { value: 1.0 } },
+        defines: {},
+        updateIntensity: vi.fn(),
+        updateOffset: vi.fn(),
+        updateGamma: vi.fn(),
+        updateOpacity: vi.fn(),
+        applyBlendingMode,
+      };
+      stubMat.clone = vi.fn(() => stubMat);
+      const mesh = new THREE.Mesh(new THREE.BufferGeometry(), stubMat as unknown as THREE.Material);
+      mesh.name = name;
+      mesh.userData.nodeType = 'gsplats';
+      return { mesh, applyBlendingMode };
+    });
+    const rootGroup = new THREE.Group();
+    for (const { mesh } of mats) rootGroup.add(mesh);
+
+    // The layer is the kind=partition WRAPPER; the parts are plain nodes that
+    // (on legacy scenes) carry their own stamped blending_mode.
+    const graph = {
+      name: 'root',
+      path: '/',
+      type: 'group',
+      attrs: {},
+      children: [
+        {
+          name: 'tiles',
+          path: '/tiles',
+          type: 'group',
+          attrs: {
+            layer: true,
+            kind: 'partition',
+            display_type: 'gsplats',
+            blending_mode: 'volumetric',
+          },
+          children: mats.map(({ mesh }, i) => ({
+            name: `part_${i}`,
+            path: mesh.name,
+            type: 'gsplats',
+            attrs: { type: 'gsplats', blending_mode: 'volumetric' },
+            children: [],
+          })),
+        },
+      ],
+    } as unknown as SceneNode;
+
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(rootGroup, graph);
+    panel.show();
+    panel.layerState.select('/tiles', 'single');
+    for (const { applyBlendingMode } of mats) applyBlendingMode.mockClear();
+
+    const select = findBlendSelect(container);
+    expect(select).not.toBeNull();
+    select!.value = 'max';
+    select!.dispatchEvent(new Event('change', { bubbles: true }));
+
+    // EVERY part follows the layer — not its own stamped 'volumetric'.
+    for (const { applyBlendingMode } of mats) {
+      expect(applyBlendingMode).toHaveBeenCalledWith('max');
+    }
+    expect(panel.layerState.getLayer('/tiles')!.blendingMode).toBe('max');
+  });
+
   /**
    * Find the Absorption slider control group by its label. LabeledSlider
    * labels concatenate the name span with the value readout
