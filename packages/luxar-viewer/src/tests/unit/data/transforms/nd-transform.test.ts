@@ -453,6 +453,15 @@ describe('invertNdTransformForQuery — the no-preimage rule on discrete dims', 
     expect(half.slicePosition[3]).toBeCloseTo(6, 9); // round(0.5·6) = 3
   });
 
+  it('picks the NEAREST representative when both bracketing locals qualify', () => {
+    // scale 0.3 at world 2: exact inverse 6.67, and BOTH local 6 (round(1.8)=2)
+    // and local 7 (round(2.1)=2) are preimages. The nearest (7) must win — not
+    // whichever the floor/ceil loop happened to visit first.
+    const r = invert(2, { scale: 0.3 });
+    expect(r.noPreimage).toBe(false);
+    expect(r.slicePosition[3]).toBe(7);
+  });
+
   it('honours the dimension step when it is not 1', () => {
     const stepped = [
       { name: 'X' },

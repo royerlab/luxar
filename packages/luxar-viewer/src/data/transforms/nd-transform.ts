@@ -238,15 +238,18 @@ function resolveDiscretePreimage(
   const tol = gridStep * PREIMAGE_EPSILON;
 
   let best: number | null = null;
-  let bestErr = Infinity;
+  let bestDist = Infinity;
   for (const k of [Math.floor(ratio), Math.ceil(ratio)]) {
     const candidate = k * gridStep;
     // The forward rule rounds to the nearest WORLD grid point.
     const image = Math.round((scale * candidate + offset) / gridStep) * gridStep;
-    const err = Math.abs(image - world);
-    if (err <= tol && err < bestErr) {
+    if (Math.abs(image - world) > tol) continue;
+    // Both candidates can qualify at |scale| < 1 — keep the one nearest the
+    // exact inverse.
+    const dist = Math.abs(candidate - exact);
+    if (dist < bestDist) {
       best = candidate;
-      bestErr = err;
+      bestDist = dist;
     }
   }
   return best;
