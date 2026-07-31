@@ -374,8 +374,8 @@ export class DirectoryNavigator {
    * Normalizes any leading slash on `path` so the result never contains a
    * doubled `//` separator between the base URL and the path component.
    * Double-slash URLs are interpreted by zarr loaders as an extra path
-   * component and cause 404s (see CLAUDE.md "Data Source URLs Must NOT
-   * Have Trailing Slash").
+   * component and cause 404s (see CLAUDE.md "Data Source URLs Normalize
+   * Trailing Slashes").
    */
   getFullUrl(path: string): string {
     const cleanPath = path.startsWith('/') ? path.slice(1) : path;

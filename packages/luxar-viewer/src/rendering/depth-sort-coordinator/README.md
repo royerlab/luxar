@@ -132,16 +132,16 @@ Called on every non-noop commit of a sortable node (gsplats, points, lines). Alw
    - `scheduleSort(mesh, nodeId)`
 5. Catch: once per session, log a worker-unavailable warning (every later commit lands here when the cached `initPromise` is rejected); rendering degrades gracefully to unsorted normal mode
 
-### Single-In-Flight Rule + Apply Gate (scheduleSort)
+### Single-In-Flight Rule (scheduleSort)
 
 Enforces **at most one in-flight sort per node**; a commit landing mid-sort queues exactly one re-sort (stored in `state.resortQueued`, drained on resolve).
 
-**Additional gate** (perf lever L8, the pending-apply branch in `scheduleSort`): While a chunked ordering apply is streaming for this geometry (or holding a newest ordering), a new sort could only produce another ordering the stream can't consume yet — sorting faster than the apply cadence measurably doubled the sort count and starved the stream. Queue exactly like the in-flight case; the per-frame pump drains the queue when the apply completes.
+**No apply-gate**: sorting and applying run CONCURRENTLY. A chunked apply streams into the INACTIVE buffer of the double-buffered `aSortedIndex` pair, so the displayed ordering stays a complete permutation throughout, and a fresher ordering resolving mid-stream is held and swapped in at the next flip — never wasted. (A gate existed while streams wrote into the LIVE attribute, where out-sorting the apply cadence only prolonged the mixed state; the double-buffer swap removed it.)
 
 **Flow**:
 
 1. Get `state`, `camera` (from `getCamera()`)
-2. Return if already `inFlight` or `hasPendingSortedIndexOrderingApply(geometry)` — set `resortQueued = true` and return
+2. Return if already `inFlight` — set `resortQueued = true` and return
 3. Set `inFlight = true`
 4. Refresh `mesh.matrixWorld` and `camera.matrixWorld` (can be stale when a commit fires before the next frame)
 5. Derive `viewMatrix = inverse(camera.matrixWorld)`, `modelView = viewMatrix × mesh.matrixWorld`
@@ -171,8 +171,9 @@ Large orderings (>1M indices = 4 MB) apply **chunked** across frames on the clas
 - The per-frame pump (`pumpChunkedOrderingApplies`, called from `evaluateDepthSortPerFrame`) streams one slice per rendered frame
 - Each slice rides that frame's flush (per-frame callbacks run before render)
 - While slices remain, request another frame — the pump is the only thing keeping the on-demand loop alive between slices
-- Mid-application frames render a bounded old/new index mix (transient duplicate/omit shimmer for ≤ ceil(n/1M) frames)
-- On **completion**, drain a queued re-sort (the apply-gate in `scheduleSort` parked it)
+- Slices land in the INACTIVE buffer of the double-buffered `aSortedIndex` / `aSortedIndexB` pair; the `uSortedIndexSlot` uniform flips only once that buffer holds the whole new permutation, so mid-application frames keep rendering the previous COMPLETE ordering (no old/new mix)
+- A newer ordering arriving mid-stream is HELD and started after the flip (restart-on-arrival never converges under a continuous orbit)
+- On **completion**, drain a queued re-sort (a commit that landed mid-sort parked it)
 - **Abort** when `committedData` stamp is cleared (LOD demotion — the geometry went back to the evictable pool, possibly already serving another node)
 - The WebGPU backends ignore attribute update ranges (full re-upload per flush), so chunking is gated off there (`configureSortedIndexChunkedApply`, wired in renderer-setup)
 
@@ -192,8 +193,7 @@ Large orderings (>1M indices = 4 MB) apply **chunked** across frames on the clas
 **Skips**:
 
 - Pending view updates (`isLoadInProgress()` — the commit will sort anyway)
-- In-flight sorts (the resolve is at most a frame away)
-- In-flight chunked ordering applies (the L8 apply-gate — a new ordering couldn't be consumed until the stream completes anyway)
+- In-flight sorts (the resolve is at most a frame away). In-flight chunked ordering applies do NOT skip — a fresher sort streams into the inactive buffer concurrently
 - Invisible meshes (`isEffectivelyVisible` checks all ancestors — an LOD level can be a hidden GROUP)
 - Demoted meshes (`!hasCommittedData(mesh)`)
 - Nodes whose live mode is no longer order-dependent (switched to additive/luminous/max)
@@ -373,7 +373,7 @@ disposeDepthSort();
 
 - At most one sort RPC is in flight per node
 - A commit landing mid-sort queues exactly one re-sort (drained on resolve)
-- The apply-gate (chunked ordering streaming) also parks requests
+- A chunked ordering apply does NOT park requests — it streams into the inactive buffer while a fresher sort runs
 
 ### Pose-Clearing Invariant
 
