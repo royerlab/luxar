@@ -216,6 +216,11 @@ MIN_KEYWORD_COUNT = 10
 MIN_KEYWORD_LIFT = 2.0
 UNNAMED_CLUSTER_LABEL = "Mixed"
 
+#: Stand-in ids used when the bundle carries no accessions file. They are not
+#: UniProt accessions, so naming skips the lookup entirely rather than spending
+#: several minutes asking UniProt about 22k strings it has never heard of.
+SYNTHETIC_ID_PREFIX = "Protein_"
+
 
 # =============================================================================
 # Dataset Download
@@ -380,7 +385,7 @@ def load_protein_embeddings(
             # No accessions means no naming: say so rather than letting the
             # lookup silently fail on 142k synthetic "Protein_N" strings.
             aprint("⚠️  No matching accessions file — clusters cannot be named")
-            protein_ids = [f"Protein_{i}" for i in range(len(embeddings))]
+            protein_ids = [f"{SYNTHETIC_ID_PREFIX}{i}" for i in range(len(embeddings))]
 
         if len(protein_ids) != len(embeddings):  # pragma: no cover - guarded above
             raise ValueError(
@@ -506,7 +511,41 @@ def fetch_keyword_categories(cache_dir: Path) -> dict[str, str]:
     return categories
 
 
-def _uniprot_keyword_batch(batch: Sequence[str]) -> dict[str, list[str]]:
+def _parse_keyword_rows(
+    batch: Sequence[str], lines: Sequence[str]
+) -> dict[str, list[str] | None]:
+    """Pair a batch of requested accessions with the ID-mapping result rows.
+
+    An accession UniProt did NOT return (obsolete, demerged, deleted, or simply
+    not an accession) maps to ``None``, distinctly from the empty list a real
+    entry with no keywords gets. That distinction is what lets naming drop
+    absence-of-evidence from a cluster's denominator instead of counting it as
+    "annotated, no keywords" — while still caching the ``None`` so the accession
+    is never re-requested on a later run.
+
+    Args:
+        batch: The accessions that were submitted.
+        lines: The result TSV, header row first.
+
+    Returns:
+        Mapping of accession -> keyword names, or ``None`` when unmapped.
+
+    Raises:
+        ValueError: If the TSV is empty or carries no ``Keywords`` column.
+    """
+    if not lines:
+        raise ValueError("UniProt ID-mapping returned an empty result stream")
+    keyword_column = lines[0].split("\t").index("Keywords")
+
+    resolved: dict[str, list[str] | None] = dict.fromkeys(batch)
+    for line in lines[1:]:
+        fields = line.split("\t")
+        if len(fields) > keyword_column:
+            resolved[fields[0]] = [k for k in fields[keyword_column].split(";") if k]
+    return resolved
+
+
+def _uniprot_keyword_batch(batch: Sequence[str]) -> dict[str, list[str] | None]:
     """Resolve one batch of accessions through the UniProt ID-mapping service.
 
     Bulk mapping means a few thousand proteins cost one round trip rather than
@@ -517,8 +556,8 @@ def _uniprot_keyword_batch(batch: Sequence[str]) -> dict[str, list[str]]:
         batch: UniProt accessions to resolve.
 
     Returns:
-        Mapping of accession -> keyword names, with an empty list for the
-        accessions UniProt did not resolve (obsolete, demerged, ...).
+        Mapping of accession -> keyword names, with ``None`` for the accessions
+        UniProt did not resolve (see :func:`_parse_keyword_rows`).
     """
     payload = urllib.parse.urlencode(
         {"from": "UniProtKB_AC-ID", "to": "UniProtKB", "ids": ",".join(batch)}
@@ -529,7 +568,13 @@ def _uniprot_keyword_batch(batch: Sequence[str]) -> dict[str, list[str]]:
         headers={"User-Agent": UNIPROT_USER_AGENT},
     )
     with urllib.request.urlopen(request, timeout=120) as response:  # noqa: S310
-        job_id = json.load(response)["jobId"]
+        submitted = json.load(response)
+    # A refused submission answers 200 with an error payload rather than a job.
+    # Surface it as ValueError, which the caller retries and then skips — a bare
+    # KeyError would escape naming's fallback and abort the whole demo.
+    if "jobId" not in submitted:
+        raise ValueError(f"UniProt ID-mapping refused the batch: {submitted}")
+    job_id = submitted["jobId"]
 
     # A FINISHED job's status payload drops `jobStatus` entirely (it becomes
     # {"results": ..., "obsoleteCount": ...}), so completion is signalled by the
@@ -549,25 +594,14 @@ def _uniprot_keyword_batch(batch: Sequence[str]) -> dict[str, list[str]]:
         "?format=tsv&fields=accession,keyword&compressed=true",
         timeout=600,
     )
-    lines = gzip.decompress(raw).decode().splitlines()
-    header = lines[0].split("\t")
-    keyword_column = header.index("Keywords")
-
-    # Default every requested accession to "no keywords" so unmapped ones are
-    # remembered rather than retried on every run.
-    resolved: dict[str, list[str]] = {accession: [] for accession in batch}
-    for line in lines[1:]:
-        fields = line.split("\t")
-        if len(fields) > keyword_column:
-            resolved[fields[0]] = [k for k in fields[keyword_column].split(";") if k]
-    return resolved
+    return _parse_keyword_rows(batch, gzip.decompress(raw).decode().splitlines())
 
 
 def fetch_uniprot_keywords(
     accessions: Sequence[str],
     cache_dir: Path,
     batch_size: int = 5000,
-) -> dict[str, list[str]]:
+) -> dict[str, list[str] | None]:
     """Look up UniProt keywords for a list of accessions, with an on-disk cache.
 
     Batches are retried with exponential backoff and each success is persisted
@@ -584,11 +618,12 @@ def fetch_uniprot_keywords(
         batch_size: Accessions per ID-mapping job.
 
     Returns:
-        Mapping of accession -> list of keyword names (possibly empty). Keys are
-        the accessions that resolved, which may be a subset of ``accessions``.
+        Mapping of accession -> list of keyword names (possibly empty), or
+        ``None`` for an accession UniProt did not resolve. Accessions whose
+        batch failed outright are absent from the mapping altogether.
     """
     cache_path = cache_dir / "uniprot_keywords.json"
-    keywords: dict[str, list[str]] = _read_json_cache(cache_path) or {}
+    keywords: dict[str, list[str] | None] = _read_json_cache(cache_path) or {}
 
     missing = sorted({a for a in accessions if a not in keywords})
     if not missing:
@@ -626,7 +661,7 @@ def fetch_uniprot_keywords(
 
 def enriched_cluster_names(
     cluster_samples: Mapping[int, Sequence[str]],
-    keywords: Mapping[str, Sequence[str]],
+    keywords: Mapping[str, Sequence[str] | None],
     categories: Mapping[str, str],
 ) -> dict[int, tuple[str, float]]:
     """Name each cluster after the UniProt keyword most enriched within it.
@@ -656,7 +691,7 @@ def enriched_cluster_names(
         for accession in accessions:
             informative = {
                 k
-                for k in keywords.get(accession, ())
+                for k in keywords.get(accession) or ()
                 if categories.get(k) in INFORMATIVE_KEYWORD_CATEGORIES
             }
             counter.update(informative)
@@ -763,6 +798,13 @@ def name_clusters(
             cluster_samples[cluster] = [protein_ids[i] for i in picked]
 
         wanted = [a for sample in cluster_samples.values() for a in sample]
+        if not wanted or all(a.startswith(SYNTHETIC_ID_PREFIX) for a in wanted):
+            # No accessions were recovered from the bundle, so there is nothing
+            # UniProt can answer. Say so instead of spending several minutes
+            # submitting stand-in ids and then reporting every cluster "Mixed".
+            aprint("⚠️  No UniProt accessions available — using generic labels")
+            return fallback
+
         try:
             categories = fetch_keyword_categories(cache_dir)
             keywords = fetch_uniprot_keywords(wanted, cache_dir)
@@ -771,11 +813,12 @@ def name_clusters(
             return fallback
 
         # Keep only accessions UniProt actually answered for. An accession that
-        # resolved with no keywords is real evidence and stays; one that never
-        # resolved is absence of evidence and would otherwise dilute the
-        # frequencies of every cluster it landed in.
+        # resolved with no keywords is real evidence (an empty list) and stays;
+        # one that never resolved is ``None`` — absence of evidence, which would
+        # otherwise dilute the frequencies of every cluster it landed in — and so
+        # is an accession whose whole batch failed (absent from the mapping).
         resolved_samples = {
-            cluster: [a for a in sample if a in keywords]
+            cluster: [a for a in sample if keywords.get(a) is not None]
             for cluster, sample in cluster_samples.items()
         }
         resolved = sum(len(sample) for sample in resolved_samples.values())
@@ -983,7 +1026,9 @@ def generate_protein_landscape(
         # embeddings are no longer in hand.
         n_clusters = min(N_CLUSTERS, n_proteins)
         if n_clusters >= 2:
-            from sklearn.cluster import KMeans
+            # Needed on the cached path too, where UMAP never runs — so gate it
+            # here rather than relying on umap-learn having dragged it in.
+            KMeans = require_module("sklearn.cluster").KMeans
 
             cluster_ids = KMeans(
                 n_clusters=n_clusters, random_state=0, n_init=10

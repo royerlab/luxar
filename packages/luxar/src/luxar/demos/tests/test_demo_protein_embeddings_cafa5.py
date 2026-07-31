@@ -12,6 +12,8 @@ and the UMAP cache must carry the accessions the naming needs.
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 from pathlib import Path
 
@@ -469,6 +471,126 @@ class TestKeywordVocabulary:
         # diluted background and Hydrolase cannot be "enriched" versus itself.
         assert names[1] == UNNAMED_CLUSTER_LABEL
         assert len(names) == 2
+
+
+class TestUnmappedAccessions:
+    """UniProt answers for a SUBSET of what it is asked — obsolete, demerged and
+    deleted accessions are simply absent from the result stream.
+
+    The lookup must record that absence distinguishably from an entry that
+    genuinely carries no keywords: the former is absence of evidence and has to
+    leave the cluster's denominator, the latter is evidence and stays. Both are
+    cached, so neither is ever re-requested.
+    """
+
+    def test_unmapped_accession_is_none_not_an_empty_list(self) -> None:
+        rows = [
+            "Entry\tKeywords",
+            "P00001\tHydrolase;Nucleus",
+            "P00002\t",
+        ]
+
+        parsed = demo._parse_keyword_rows(["P00001", "P00002", "P99999"], rows)
+
+        assert parsed == {
+            "P00001": ["Hydrolase", "Nucleus"],
+            "P00002": [],  # a real entry with no keywords
+            "P99999": None,  # never came back
+        }
+
+    def test_empty_result_stream_is_reported_not_indexed(self) -> None:
+        """A truncated/blank stream must raise the error naming already handles."""
+        with pytest.raises(ValueError, match="empty result stream"):
+            demo._parse_keyword_rows(["P1"], [])
+
+    def test_a_refused_submission_raises_valueerror(self, monkeypatch) -> None:
+        """UniProt refuses a batch with 200-plus-error-payload, not a 4xx.
+
+        The lookup retries and then skips a ``ValueError``, and naming falls back
+        on one; a bare ``KeyError`` from ``payload["jobId"]`` matches neither and
+        would abort the whole demo.
+        """
+        monkeypatch.setattr(
+            demo.urllib.request,
+            "urlopen",
+            lambda *_a, **_kw: contextlib.closing(
+                io.BytesIO(b'{"messages": ["Invalid request"]}')
+            ),
+        )
+
+        with pytest.raises(ValueError, match="refused the batch"):
+            demo._uniprot_keyword_batch(["P1"])
+
+    def test_unmapped_members_do_not_dilute_their_cluster(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """The reason the ``None`` marker exists, end to end through the cache.
+
+        Cluster 0 is 12 hydrolases plus 108 accessions UniProt does not know.
+        Counting those 108 as "annotated, no keywords" puts Hydrolase at 10% of
+        the cluster against 5% pooled — lift 1.83, below the threshold — and the
+        real signal is lost. Dropping them lifts it to 9.3x and the cluster earns
+        its name.
+        """
+        monkeypatch.setattr(demo, "fetch_keyword_categories", lambda _dir: CATEGORIES)
+
+        def _batch(batch):
+            """UniProt's real shape: only the ids it knows come back."""
+            hits = {"A": ["Hydrolase"], "B": ["Nucleus"]}
+            return {a: hits.get(a[0]) for a in batch}
+
+        monkeypatch.setattr(demo, "_uniprot_keyword_batch", _batch)
+        protein_ids = (
+            [f"A{i}" for i in range(12)]
+            + [f"X{i}" for i in range(108)]
+            + [f"B{i}" for i in range(100)]
+        )
+        cluster_ids = np.array([0] * 120 + [1] * 100)
+
+        names = demo.name_clusters(cluster_ids, protein_ids, tmp_path)
+
+        assert names[0] == "Hydrolase"
+        # The unmapped ids are cached as null, so a later run does not re-ask.
+        cached = json.loads((tmp_path / "uniprot_keywords.json").read_text())
+        assert cached["X0"] is None
+
+    def test_a_wholly_unmapped_sample_falls_back_to_generic_labels(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """Nothing resolving means the demo cannot name anything — say `Cluster N`
+        rather than a legend of 14 identical `Mixed` rows."""
+        monkeypatch.setattr(demo, "fetch_keyword_categories", lambda _dir: CATEGORIES)
+        monkeypatch.setattr(
+            demo, "_uniprot_keyword_batch", lambda batch: dict.fromkeys(batch)
+        )
+
+        names = demo.name_clusters(
+            np.array([0, 0, 1, 1]), ["P1", "P2", "P3", "P4"], tmp_path
+        )
+
+        assert names == ["Cluster 0", "Cluster 1"]
+
+
+class TestSyntheticAccessions:
+    def test_synthetic_ids_skip_the_lookup_entirely(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """With no accessions file the ids are stand-ins, not proteins.
+
+        Submitting 22k of them costs minutes and can only come back empty, so
+        naming must not reach the network at all.
+        """
+
+        def _boom(*_args, **_kwargs):
+            raise AssertionError("UniProt must not be contacted for stand-in ids")
+
+        monkeypatch.setattr(demo, "fetch_keyword_categories", _boom)
+        monkeypatch.setattr(demo, "fetch_uniprot_keywords", _boom)
+        protein_ids = [f"{demo.SYNTHETIC_ID_PREFIX}{i}" for i in range(4)]
+
+        names = demo.name_clusters(np.array([0, 0, 1, 1]), protein_ids, tmp_path)
+
+        assert names == ["Cluster 0", "Cluster 1"]
 
     def test_nothing_resolving_falls_back_to_generic_labels(
         self, tmp_path: Path, monkeypatch
