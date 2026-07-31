@@ -364,7 +364,11 @@ def demo_deps(
         aprint("ℹ️  --dry-run only applies with --install; reporting only.")
 
     # Extra names are lowercase by PEP 685, so accept any casing the user types.
-    extra = extra.strip().lower() if extra else extra
+    # Normalize a blank value (`--extra ""` / "   ") to None: `survey` treats
+    # only None as "survey everything", so an empty-string extra is an active
+    # filter that matches just the no-extra specs (gdown) — never what a blank
+    # meant.
+    extra = (extra.strip().lower() or None) if extra else None
     rows = survey(extra)
     if not rows:
         known = extras_for(survey()) or ["(none)"]

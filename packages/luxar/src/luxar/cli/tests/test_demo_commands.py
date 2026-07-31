@@ -575,6 +575,19 @@ class TestDeps:
         assert loud.exit_code == quiet.exit_code
         assert "imageio" in loud.stdout
 
+    def test_deps_blank_extra_is_treated_as_unset(self, runner) -> None:
+        """A blank `--extra` surveys everything, not the no-extra (gdown) row.
+
+        `survey` treats only None as "everything", so without normalization an
+        empty-string extra was an active filter matching just the specs in no
+        extra — a gdown-only table.
+        """
+        blank = runner.invoke(app, ["demo", "deps", "--extra", "   "])
+        full = runner.invoke(app, ["demo", "deps"])
+        assert blank.exit_code == full.exit_code
+        # The full table lists demos-extra packages; the gdown-only path would not.
+        assert "anndata" in blank.stdout
+
     def test_deps_dry_run_without_install_says_it_is_inert(self, runner) -> None:
         result = runner.invoke(app, ["demo", "deps", "--dry-run"])
         assert "--dry-run only applies with --install" in result.stdout
