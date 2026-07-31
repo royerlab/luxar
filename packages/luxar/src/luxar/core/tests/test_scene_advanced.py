@@ -129,9 +129,10 @@ class TestAddGSplatsValidation:
 
                 # Pass list instead of numpy array
                 centers = [[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]]
-                # Cholesky factors: 3D -> k = 3*(3+1)/2 = 6
+                # Cholesky factors: 3D -> k = 3*(3+1)/2 = 6 (packed lower-tri
+                # identity: diagonal slots [0, 2, 5] = 1).
                 cholesky = np.array(
-                    [[1.0, 0, 0, 1.0, 0, 1.0], [1.0, 0, 0, 1.0, 0, 1.0]]
+                    [[1.0, 0, 1.0, 0, 0, 1.0], [1.0, 0, 1.0, 0, 0, 1.0]]
                 )
 
                 gsplats = scene.add_gsplats(

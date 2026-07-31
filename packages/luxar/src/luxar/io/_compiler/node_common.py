@@ -161,6 +161,12 @@ def validate_node_path(path: str) -> str:
     unloadable — and dot-prefixed segments collide with zarr's reserved
     metadata keys (``.zgroup``/``.zattrs``/``.zarray``/``.zmetadata``).
 
+    The exact single-segment root path ``overlays`` is likewise rejected: it is
+    reserved for screen-space overlay metadata (written internally as
+    ``overlays/<name>``), so a raw geometry writer must not claim it. Only the
+    bare root name collides; ``overlays/<name>`` and nested paths like
+    ``geometry/overlays`` are allowed.
+
     Raises:
         ValidationError: If the path or any of its segments is invalid.
     """
@@ -176,6 +182,13 @@ def validate_node_path(path: str) -> str:
             f"node path: Path must not be empty (got {path!r}). An empty path "
             "resolves to the zarr ROOT group and would overwrite the scene root.",
             "Provide a non-empty node name/path",
+        )
+    if stripped == "overlays":
+        raise ValidationError(
+            "node path: Top-level node path 'overlays' is reserved for "
+            "screen-space overlay metadata. Write internal overlays below "
+            "'overlays/<name>' or choose a different user node name.",
+            "Choose a different top-level node name",
         )
     for segment in stripped.split("/"):
         validate_node_name(segment, context=f"node path {path!r}")
@@ -263,6 +276,16 @@ def validate_scalars_preflight(
                 f"{context}: Scalar value must be finite. Got {scalars}",
                 "Provide a finite scalar value",
             )
+        # Scalars are stored as float32; a finite value beyond the float32
+        # range (|v| > ~3.4e38) overflows to inf on cast, which the encoder
+        # rejects AFTER positions are written. Reject here so the fail-fast
+        # gate stays sufficient (no partial node).
+        if not np.isfinite(np.float32(scalars)):
+            raise ValidationError(
+                f"{context}: Scalar value {scalars} is not representable as "
+                f"float32 (overflows to inf on cast).",
+                "Rescale scalars into the float32 range (|value| <= 3.4e38)",
+            )
         return
 
     if not isinstance(scalars, np.ndarray):
@@ -279,6 +302,26 @@ def validate_scalars_preflight(
         )
 
     _validate_numeric_finite_values(scalars, context)
+
+    # Scalars are stored as float32 (see write_scalars). A finite float64
+    # value beyond the float32 range overflows to inf on cast — the encoder
+    # would reject it AFTER positions are written, leaving a partial node.
+    # Validate float32-representability here so the pre-write gate is
+    # sufficient. Only float dtypes wider than float32 can overflow (int64
+    # tops out at ~9.2e18 << 3.4e38), and the float32 cast is monotone, so
+    # casting just the extrema is exact — no full-array copy in preflight.
+    if (
+        scalars.size > 0
+        and np.issubdtype(scalars.dtype, np.floating)
+        and scalars.dtype.itemsize > 4
+    ):
+        extrema = np.array([scalars.min(), scalars.max()], dtype=scalars.dtype)
+        if not np.all(np.isfinite(extrema.astype(np.float32))):
+            raise ValidationError(
+                f"{context}: One or more scalar values are not representable "
+                f"as float32 (overflow to inf on cast).",
+                "Rescale scalars into the float32 range (|value| <= 3.4e38)",
+            )
 
 
 def prepare_transform_attrs(attrs: Dict[str, Any], store: zarr.Group) -> None:

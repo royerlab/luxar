@@ -120,7 +120,11 @@ class TestChunkBoundsZarrAlignment:
                 scene = compiler.create_scene(dimensions=dims)
                 centers = np.random.randn(n_splats, ndim).astype(np.float32)
                 amplitudes = np.random.rand(n_splats).astype(np.float32)
-                cholesky = np.random.randn(n_splats, k).astype(np.float32)
+                # Positive diagonal required by the writer's Cholesky gate;
+                # values are irrelevant to this chunk-alignment test.
+                cholesky = (np.abs(np.random.randn(n_splats, k)) + 0.1).astype(
+                    np.float32
+                )
                 colors = np.random.rand(n_splats, 3).astype(np.float32)
 
                 scene.add_gsplats(
@@ -194,7 +198,11 @@ class TestChunkBoundsZarrAlignment:
                 scene = compiler.create_scene(dimensions=dims)
                 centers = np.random.randn(n_splats, ndim).astype(np.float32)
                 amplitudes = np.random.rand(n_splats).astype(np.float32)
-                cholesky = np.random.randn(n_splats, k).astype(np.float32)
+                # Positive diagonal required by the writer's Cholesky gate;
+                # values are irrelevant to this chunk-alignment test.
+                cholesky = (np.abs(np.random.randn(n_splats, k)) + 0.1).astype(
+                    np.float32
+                )
 
                 scene.add_gsplats(
                     "small",

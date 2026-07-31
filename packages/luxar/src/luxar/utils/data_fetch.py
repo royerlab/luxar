@@ -246,12 +246,13 @@ def _ensure_one(
       test could not see an in-place corruption and returned the bad file;
     * a copy taken from the in-repo git-LFS tree is verified AFTER copying, so
       the checksum we already hold is actually used rather than carried around;
-    * the Zenodo leg is never handed a pre-existing file, because
-      ``robust_download`` RESUMES onto whatever bytes sit at the destination
-      (issue #731) — appending a fresh download to stale garbage.
+    * the Zenodo leg is handed no stale file at ``dest``: ``robust_download``
+      now stages every download to a sibling ``.part`` and atomically promotes
+      it only once complete, so it never resumes onto (or appends to) a stale
+      file sitting at the destination (issues #731/#732).
 
-    Quarantining in step 1 is what establishes that last invariant: below it,
-    ``dest`` does not exist.
+    Quarantining in step 1 keeps that clean regardless: below it, ``dest`` does
+    not exist, so nothing wrong can be trusted or promoted in its place.
     """
     from .atomic_copy import atomic_copy_file
     from .download import download_with_checksum, quarantine_file, verify_file_checksum
@@ -272,7 +273,7 @@ def _ensure_one(
         if not dest.is_file():
             raise IsADirectoryError(
                 f"Cache entry {dest} exists but is not a regular file; remove it "
-                "(or run 'luxar demo clear') and retry."
+                "(or run 'luxar demo cache clear') and retry."
             )
         if sha is None and not is_lfs_pointer(dest):
             # Unverifiable: a pending-upload entry, or a manifest predating the

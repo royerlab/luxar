@@ -215,6 +215,15 @@ The root `.zattrs` file contains scene-wide configuration:
 }
 ```
 
+### `incomplete` (optional root attr)
+
+`incomplete` (boolean) is written to the root `.zattrs` only when the writer
+aborted before `finalize()` completed — an exception or Ctrl-C propagated out of
+the `LuxarZarrCompiler` context, or `finalize()` itself failed midway. A
+successful `finalize()`
+never leaves this marker. `LuxarScene.load` refuses to load a store carrying
+`incomplete: true`, since it may be missing nodes or consolidated metadata.
+
 ## Node Types
 
 ### 1. Group Nodes
@@ -610,6 +619,11 @@ Lines nodes contain polyline/segment data. All four user-facing line types
 **indexed representation** at write time — a `segments` array of vertex-index
 pairs — so the on-disk layout is identical for every type; the user's original
 choice is recorded in `original_line_type`.
+
+Joint continuity is defined by shared **indices**, not equal coordinates. Two
+segment endpoints stored as separate vertex rows remain independent even when
+their coordinates match, so connected thick curves should use `polyline` or
+`indexed` authoring with every joint referenced through one shared vertex row.
 
 **Attributes (.zattrs):**
 ```javascript

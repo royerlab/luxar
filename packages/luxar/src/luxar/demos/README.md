@@ -22,7 +22,50 @@ luxar demo run lorenz       # run by key or index; forwards -- args
 luxar demo run lorenz -- --no-serve --points=10000
 luxar demo run-all          # generate demo datasets (--no-serve; skips GPU/large-download by default)
 luxar demo cache list       # inventory demo caches under ~/.cache/luxar/
+luxar demo deps             # which optional dependencies are missing?
+luxar demo deps --install   # install the extras that provide them
 ```
+
+## Optional dependencies
+
+The core install deliberately excludes the heavyweight packages some demos need
+(`torch`, `umap-learn`, `esm`, `cellxgene-census`, `nibabel`, …), so a fresh
+checkout can list every demo but not run every demo.
+
+`_dependencies.py` is the single source of truth. `INSTALL_SPECS` maps each
+**import** name (`skimage`, not `scikit-image`) to the constrained requirement,
+the Luxar extra that provides it, and — where the bound or the skippability is
+load-bearing — why. Two consumers read it, which is what keeps them honest:
+
+| Consumer | Role |
+|---|---|
+| `require_module("x")` | The runtime gate. Raises `MissingDependencyError` naming the *constrained* spec and its extra. |
+| `luxar demo deps` | The installer/report. Surveys the table with `find_spec` (no imports), exits 1 if anything is missing. |
+
+Two rules govern the gate, both learned from real bugs:
+
+1. **Gate at the point of use, never at the entry point.** A demo whose
+   expensive artifact is already cached must run *without* the dependency that
+   produced it. `tests/test_no_entrypoint_dependency_preflight.py` fails the
+   build if an entry-point preflight reappears.
+2. **Advertise the constrained requirement.** A bare `pip install anndata`
+   resolves to 0.13+, which needs `zarr>=3.1` and would silently upgrade Luxar
+   past its `zarr<3.0` pin, breaking every store on disk.
+
+`tests/test_demos_dependencies.py` enforces both: every spec must accept exactly
+the versions its `pyproject.toml` pin accepts, and every module passed to
+`require_module` must exist in the table.
+
+Installing everything:
+
+```bash
+make install-demo-deps      # hatch env: the demos + gsplats + io extras
+luxar demo deps --install   # same thing from the CLI, any environment
+```
+
+Some demos need something a package manager can't supply — a Kaggle credential,
+a manual download, a `git lfs pull`, or a GPU. Those show up in the `NEEDS`
+column of `luxar demo` and in `luxar demo info <key>`, not here.
 
 ## The DEMO_META registry
 
@@ -224,7 +267,7 @@ Beautiful procedural forest using L-system grammars to showcase the **Lines** no
 
 **Run**: `luxar demo run forest [-- --iterations=6] [-- --trees=16]`
 
-**Demonstrates**: **Lines node type** with thousands of line segments, L-system grammar expansion and interpretation, width tapering (thick trunk to thin twigs), color gradients (bark to foliage), 3D branching, multiple tree varieties (elegant, fractal, willow, bush, cherry), seasonal color schemes.
+**Demonstrates**: **Lines node type** as an indexed branching network with shared joint vertices, L-system grammar expansion and interpretation, width tapering (thick trunk to thin twigs), color gradients (bark to foliage), 3D branching, multiple tree varieties (elegant, fractal, willow, bush, cherry), seasonal color schemes.
 
 ---
 
@@ -467,14 +510,14 @@ The large-scale structure of the Universe as a point cloud from the Dark Energy 
 
 **Run**: `luxar demo run desi_galaxies [-- --recompute]`
 
-**Requires**: Nothing extra by default — ships a compact precomputed point cloud (quantized XYZ + redshift + tracer id) via Git LFS. With `--recompute` (or if the LFS asset isn't pulled) it auto-downloads the ~1 GB of DR1 LSS clustering catalogs to `~/.cache/luxar/desi_galaxies/` (resumable), reads them with `astropy`, and converts (RA, Dec, z) → comoving Mpc. Adds `astropy` to the `demos` extra. The built scene (with substitutive LOD) is cached in the demos output dir, so only the first launch pays the LOD-build cost.
+**Requires**: Nothing extra by default — ships a compact precomputed point cloud (quantized XYZ + redshift + tracer id) via Git LFS. With `--recompute` (or if the LFS asset isn't pulled) it auto-downloads the ~1 GB of DR1 LSS clustering catalogs to `~/.cache/luxar/desi_galaxies/` (resumable), reads them with `astropy`, and converts (RA, Dec, z) → comoving Mpc. Adds `astropy` to the `demos` extra. The built scene (with substitutive LOD) is cached in the demos output dir, so only the first launch pays the LOD-build cost. If the DESI data host is unavailable, check `https://data.desi.lbl.gov/`, run `git lfs pull`, and rerun without `--recompute` to use the shipped scene without downloading the source catalogs.
 
 **Demonstrates**: Real spectroscopic-survey catalogs → a 3D cosmic-web Points cloud, `(RA, Dec, redshift)` → comoving-Mpc conversion via `astropy.cosmology` (DESI fiducial ΛCDM), substitutive Points LOD at ~9.75M points, dual coloring (categorical tracer vs. continuous redshift colormap) via layer toggles, HDR additive rendering, self-contained download → convert → cache-processed bootstrap. Data: [DESI DR1](https://data.desi.lbl.gov/doc/releases/dr1/) (DESI Collaboration 2025, arXiv:2503.14745; CC BY 4.0).
 
 ---
 
 #### demo_asteroids_solar_system.py - The Solar System (~1.5M Real Asteroids, JPL SBDB)
-Every catalogued minor planet placed in real 3D space by propagating its measured Keplerian orbit to a common epoch: ~1.5M asteroids as Points colored by semi-major axis, plus the eight planets, the Sun, and the planets' orbit ellipses (Lines). The main belt, Kirkwood gaps, Hilda triangle, and Jupiter Trojan clouds all emerge from the real orbital-element distribution.
+Every catalogued minor planet placed in real 3D space by propagating its measured Keplerian orbit to a common epoch: ~1.5M asteroids as Points colored by semi-major axis, plus the eight planets, the Sun, and the planets' orbit ellipses (Lines). The main belt, Kirkwood gaps, Hilda triangle, and Jupiter Trojan clouds all emerge from the real orbital-element distribution. The opening camera orbits the Sun and frames the outer planets instead of fitting sparse distant-object outliers.
 
 **Run**: `luxar demo run asteroids_solar_system [-- --animate] [-- --max-asteroids N]`
 
@@ -1028,10 +1071,10 @@ a preflight reappears.
 
 Version constraints live in one table, `INSTALL_SPECS` in
 [`_dependencies.py`](_dependencies.py) — never advertise a bare `pip install
-<pkg>`. `anndata` is the cautionary case: unconstrained it resolves to 0.13+,
-which requires `zarr>=3.1` and would silently upgrade Luxar past its
-`zarr>=2.16,<3.0` pin, breaking every store on disk.
-`tests/test_demos_dependencies.py` fails if a spec drifts from `pyproject.toml`.
+<pkg>`. See [Optional dependencies](#optional-dependencies) above for the table's
+two consumers, what the tests enforce, and the `anndata` cautionary case; adding
+a new optional dependency means pinning it in `pyproject.toml` **and** tabling it
+there, or the build fails.
 
 Soft checks that *degrade a feature* rather than refuse to run are fine and are
 not flagged — e.g. disabling image thumbnails when `Pillow` is absent.

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pytest
@@ -2216,15 +2216,106 @@ class TestTransformCommand:
         np.testing.assert_allclose(rot_c[:, 2], orig_c[:, 0], atol=1e-3)
         np.testing.assert_array_equal(rot_c[:, 3], orig_c[:, 3])
 
+    def test_transform_spatial_dims_order_assigns_rotation_roles(
+        self, runner: CliRunner, sample_gsplats_4d: Path, tmp_path: Path
+    ) -> None:
+        """A non-sorted axis list must retain its X/Y/Z role assignment."""
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        original = GSplatData.load(sample_gsplats_4d)
+        out = tmp_path / "rotated4d_dims203.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "transform",
+                str(sample_gsplats_4d),
+                str(out),
+                "--rotate-z",
+                "90",
+                "--spatial-dims",
+                "2,0,3",
+            ],
+        )
+        assert result.exit_code == 0, f"transform failed: {result.stdout}"
+
+        rotated = GSplatData.load(out)
+        orig_c = self._aligned_by_amplitude(original)
+        rot_c = self._aligned_by_amplitude(rotated)
+
+        # (X,Y,Z) roles = dims (2,0,3): new X = -Y, new Y = X.
+        np.testing.assert_allclose(rot_c[:, 2], -orig_c[:, 0], atol=1e-3)
+        np.testing.assert_allclose(rot_c[:, 0], orig_c[:, 2], atol=1e-3)
+        np.testing.assert_array_equal(rot_c[:, 1], orig_c[:, 1])
+        np.testing.assert_array_equal(rot_c[:, 3], orig_c[:, 3])
+
+    @pytest.mark.parametrize(
+        "bad_value",
+        [
+            "-1,1,2",
+            "1_0,1,2",
+            "+0,+1,+2",
+            "０,１,２",
+            "٠,١,٢",
+            # all-digit token above CPython's int-str conversion limit
+            # (sys.get_int_max_str_digits, 4300): int() raises ValueError
+            # even though the syntax gate passes — same clean error, no
+            # traceback, still before the load.
+            pytest.param("9" * 5000 + ",1,2", id="digit-limit-overflow"),
+        ],
+    )
+    def test_transform_spatial_dims_invalid_syntax_rejected_before_load(
+        self,
+        runner: CliRunner,
+        sample_gsplats_4d: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        bad_value: str,
+    ) -> None:
+        """Universally invalid axis syntax must fail before reading the store."""
+        import importlib
+
+        load_module = importlib.import_module("luxar.gsplats.io.load_gsplats")
+        original_load = load_module.load_gsplat_node
+        load_calls: list[Path] = []
+
+        def _recording_load(
+            path: str | Path, include_stats: bool = False
+        ) -> tuple[Any, dict[str, Any]]:
+            load_calls.append(Path(path))
+            return original_load(path, include_stats=include_stats)
+
+        monkeypatch.setattr(load_module, "load_gsplat_node", _recording_load)
+
+        out = tmp_path / "invalid-syntax.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "transform",
+                str(sample_gsplats_4d),
+                str(out),
+                "--rotate-x",
+                "90",
+                "--spatial-dims",
+                bad_value,
+            ],
+        )
+
+        assert result.exit_code != 0
+        assert "ASCII digits 0-9" in _plain(result.stdout)
+        assert load_calls == [], "invalid syntax must be rejected before dataset load"
+        assert not out.exists(), "no output must be written on a failed run"
+
     @pytest.mark.parametrize(
         ("bad_value", "expected_msg"),
         [
             ("0,1", "exactly 3 axis indices"),
             ("0,1,9", "out of range"),
             ("0,1,1", "must be distinct"),
-            ("0,1,x", "is not an integer"),
-            ("0,,1,2", "is not an integer"),  # empty tokens are rejected,
-            ("0,1,2,", "is not an integer"),  # not silently filtered out
+            ("0,1,x", "valid axis index"),
+            ("0,,1,2", "valid axis index"),  # empty tokens are rejected,
+            ("0,1,2,", "valid axis index"),  # not silently filtered out
         ],
     )
     def test_transform_spatial_dims_validation_errors(
@@ -2496,6 +2587,42 @@ class TestTransformCommand:
         assert total_splats(dst_node) == n_splats
         # --normalize-intensity 1.0 → the GLOBAL max amplitude is exactly 1.0
         assert global_amplitude_max(dst_node) == pytest.approx(1.0, abs=1e-5)
+
+    def test_transform_partition_rotation_updates_geometry(
+        self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
+    ) -> None:
+        """Rotation traverses partition leaves without flattening the tree."""
+        from luxar.gsplats.io.load_gsplats import load_gsplat_node
+        from luxar.gsplats.tree import GSplatPartition, center_bounds, total_splats
+
+        part = tmp_path / "rot-part.gsplats.zarr"
+        partition_result = runner.invoke(
+            app,
+            ["gsplat", "partition", str(sample_gsplats), str(part), "--parts", "2"],
+        )
+        assert partition_result.exit_code == 0, partition_result.stdout
+
+        src_node, _ = load_gsplat_node(part)
+        assert isinstance(src_node, GSplatPartition)
+        src_lo, src_hi = center_bounds(src_node)
+
+        out = tmp_path / "rotated-part.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            ["gsplat", "transform", str(part), str(out), "--rotate-z", "90"],
+        )
+        assert result.exit_code == 0, f"partition rotation failed: {result.stdout}"
+
+        dst_node, _ = load_gsplat_node(out)
+        assert isinstance(dst_node, GSplatPartition)
+        assert dst_node.n_children == src_node.n_children
+        assert total_splats(dst_node) == total_splats(src_node)
+
+        dst_lo, dst_hi = center_bounds(dst_node)
+        expected_lo = np.array([-src_hi[1], src_lo[0], src_lo[2]])
+        expected_hi = np.array([-src_lo[1], src_hi[0], src_hi[2]])
+        np.testing.assert_allclose(dst_lo, expected_lo, rtol=1e-4, atol=1e-3)
+        np.testing.assert_allclose(dst_hi, expected_hi, rtol=1e-4, atol=1e-3)
 
     def test_transform_partition_center_uses_global_centroid(
         self, runner: CliRunner, sample_gsplats: Path, tmp_path: Path
@@ -4095,9 +4222,7 @@ class TestLODCommand:
             assert isinstance(node, GSplatPartition)
             assert node.n_children >= 2
             assert all(isinstance(p, GSplatLodGroup) for p in node.children)
-            finest_total = sum(
-                total_splats(p.children[-1]) for p in node.children
-            )
+            finest_total = sum(total_splats(p.children[-1]) for p in node.children)
             assert finest_total == 30
 
     @pytest.mark.parametrize("recipe", ["tiles", "overview", "adaptive"])

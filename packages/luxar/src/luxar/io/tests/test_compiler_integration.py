@@ -277,7 +277,7 @@ class TestCompilerIntegration:
         n = 16
         centers = rng.standard_normal((n, 3)).astype(np.float32)
         amplitudes = np.abs(rng.standard_normal(n)).astype(np.float32)
-        cholesky = np.tile(np.array([1, 0, 0, 1, 0, 1], dtype=np.float32), (n, 1))
+        cholesky = np.tile(np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (n, 1))
 
         with LuxarZarrCompiler(output_path) as compiler:
             compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -299,7 +299,7 @@ class TestCompilerIntegration:
         positions = rng.standard_normal((10, 3)).astype(np.float32)
         vertices = np.array([[0, 0, 0], [1, 1, 1]], dtype=np.float32)
         amplitudes = np.abs(rng.standard_normal(10)).astype(np.float32)
-        cholesky = np.tile(np.array([1, 0, 0, 1, 0, 1], dtype=np.float32), (10, 1))
+        cholesky = np.tile(np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (10, 1))
 
         with LuxarZarrCompiler(output_path) as compiler:
             compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -339,7 +339,7 @@ class TestCompilerIntegration:
         positions = rng.standard_normal((10, 3)).astype(np.float32)
         vertices = np.array([[0, 0, 0], [1, 1, 1]], dtype=np.float32)
         amplitudes = np.abs(rng.standard_normal(10)).astype(np.float32)
-        cholesky = np.tile(np.array([1, 0, 0, 1, 0, 1], dtype=np.float32), (10, 1))
+        cholesky = np.tile(np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (10, 1))
 
         with LuxarZarrCompiler(output_path) as compiler:
             compiler.create_scene(dimensions=Dimensions.default_3d())
@@ -401,6 +401,8 @@ class TestCompilerIntegration:
 
     def test_error_handling_in_context(self, tmp_path) -> None:
         """Test error handling with context manager."""
+        from luxar import LuxarScene
+
         output_path = tmp_path / "test.luxar.zarr"
 
         with pytest.raises(ValueError):
@@ -411,9 +413,13 @@ class TestCompilerIntegration:
                 invalid_positions = np.random.randn(100)  # 1D instead of 2D
                 compiler.write_points("bad_points", invalid_positions)
 
-        # Even with error, context manager should clean up
-        # Store should still be finalized (though incomplete)
-        assert output_path.exists()
+        # After an exception in the with block the store is NOT finalized: it
+        # carries the `incomplete` marker and LuxarScene.load refuses it.
+        reopened = zarr.open_group(str(output_path), mode="r")
+        assert reopened.attrs.get("incomplete") is True
+
+        with pytest.raises(ValueError, match="incomplete"):
+            LuxarScene.load(output_path)
 
 
 # ─── Layer flag on Node via add_points ──────────────────

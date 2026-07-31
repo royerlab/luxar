@@ -66,13 +66,19 @@ export while the heavier logic lives in dedicated, individually testable units.
 `Scene(writer, dimensions, viewer_config=None)` — both `writer` and
 `dimensions` are required (a `ValueError` is raised if either is `None`).
 Construction writes `scene_dimensions` (and optionally `viewer_config`) into the
-root zarr group immediately.
+root zarr group immediately. Reassigning `scene.dimensions` inside the active
+compiler context updates both the live scene and the stored root metadata; as with
+other node property setters, assignment after writer finalization updates only the
+live object and emits a warning. Same-dimensionality changes (names, units, ranges,
+displayed axes) are allowed, but changing the dimension count (`ndim`) after any
+geometry has been added is rejected with a `ValueError` — existing data arrays would
+no longer match the scene's coordinate system.
 
 ### Properties
 
 | Property | Description |
 |----------|-------------|
-| `dimensions` | Get/set the scene `Dimensions`. Setter rejects `None`. |
+| `dimensions` | Get/set the scene `Dimensions`. Setter rejects `None` (and an `ndim` change once geometry exists) and persists changes to the root zarr attributes while the writer is active. |
 | `viewer_config` | Get/set `ViewerConfig` hints; lazily read back from zarr attrs. |
 | `overlays` | List of `Overlay` objects added to the scene. |
 | `get_store_path()` | Path to the backing Zarr store (requires a writer). |
@@ -93,6 +99,10 @@ delegates; the implementations live in [`overlays/`](overlays/README.md).
 
 All three accept `visible_range` (dimension-based visibility filter),
 `transition` / `transition_duration`, `interactive`, and `blend_mode`.
+
+The top-level scene-node name `overlays` is reserved for this internal storage
+namespace. Use another name for user-created groups or geometry nodes; nested
+nodes named `overlays` remain valid because they do not collide with the root.
 
 A default hover tooltip overlay is auto-injected at compiler finalization when
 nodes carry labels but no hover overlay was defined (`_auto_inject_hover_overlay`,

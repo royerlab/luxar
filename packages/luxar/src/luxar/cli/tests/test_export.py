@@ -335,6 +335,8 @@ class TestServeScript:
         viewer_dir = export_dir / "viewer"
         viewer_dir.mkdir()
         (viewer_dir / "index.html").write_text("<html><body>test</body></html>")
+        (viewer_dir / "assets").mkdir()
+        (viewer_dir / "assets" / "app.01234567.js").write_text("export {};")
         data_dir = export_dir / "data"
         data_dir.mkdir()
         (data_dir / ".zattrs").write_text('{"type": "scene"}')
@@ -389,6 +391,40 @@ class TestServeScript:
             # Last-Modified) and serve STALE files after the folder is
             # re-exported in place.
             assert resp.headers.get("Cache-Control") == "no-cache"
+
+            # Content-hashed viewer assets embed a build hash in their URL and
+            # are immutable, so they must stay cacheable (NOT forced to
+            # revalidate).
+            resp = urlopen(
+                f"http://127.0.0.1:{port}/viewer/assets/app.01234567.js", timeout=5
+            )
+            assert resp.status == 200
+            assert resp.headers.get("Cache-Control") != "no-cache"
+
+            # The unhashed viewer shell is replaced in place on re-export, so it
+            # must revalidate exactly like mutable data.
+            resp = urlopen(f"http://127.0.0.1:{port}/viewer/index.html", timeout=5)
+            assert resp.headers.get("Cache-Control") == "no-cache"
+
+            # A malformed request line must still get a clean 400 — end_headers
+            # reads self.path, which is unset before parse_request assigns it
+            # (a single-token line is classified HTTP/0.9 and rejected BEFORE
+            # self.path is set), so the handler must degrade gracefully instead
+            # of raising AttributeError. Pre-fix, that AttributeError aborted the
+            # response mid-flight and the client saw an empty/reset reply; a
+            # non-empty 400 error page proves it degraded cleanly. (HTTP/0.9
+            # responses carry no status line, so we assert on the body.)
+            with socket.create_connection(("127.0.0.1", port), timeout=5) as raw:
+                raw.sendall(b"BOGUS\r\n\r\n")
+                chunks = []
+                while True:
+                    chunk = raw.recv(1024)
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+            reply = b"".join(chunks)
+            assert reply, "server crashed on a malformed request (empty reply)"
+            assert b"400" in reply, f"expected a clean 400 response, got {reply!r}"
         finally:
             proc.terminate()
             proc.wait(timeout=5)
