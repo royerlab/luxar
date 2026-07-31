@@ -53,7 +53,10 @@ def write_colormap_lut_if_needed(
     # Fires ONLY when the author set no tone_mapping. An explicit value —
     # including "ACES" — is a deliberate decision and must not be second-
     # guessed; the message itself speaks of "the viewer's *default*", which is
-    # only what the author gets when they said nothing. Also skipped for the
+    # only what the author gets when they said nothing. The scene's
+    # tone_mapping is read as each node is written, so pass it to
+    # create_scene: assigning scene.viewer_config after adding a colormapped
+    # node is too late to silence the notice. Also skipped for the
     # implicit grayscale default ("gray"), which has no hue for ACES to
     # distort and is not a deliberate LUT choice.
     is_grayscale_default = isinstance(colormap, str) and colormap == "gray"

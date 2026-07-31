@@ -120,8 +120,9 @@ Two appearance tweaks round it out: the Milky Way dust cube moves from
 `additive` to a light `volumetric` (absorption 0.3, so near dust softly
 occludes far dust) under ACES at `exposure=-0.17`, with a `[0, 0.095]` display
 window that holds its faint diffuse filaments just below clipping; and the
-organoid DAPI nuclei demo gains a `plasma` colormap (it previously rendered
-uncolormapped). Regenerate the demo datasets to pick up the new look.
+organoid DAPI nuclei demo gains a `plasma` colormap (it previously fell back to
+the implicit grayscale default). Regenerate the demo datasets to pick up the new
+look.
 
 #### Fixed — errors logged as trailing arguments rendered as `{}` in the in-app console
 
