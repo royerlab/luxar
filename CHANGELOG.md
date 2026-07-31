@@ -64,12 +64,12 @@ answered "does this axis have extent?" by scene scale: a splat with σ = 1e-7
 verbatim, but a 2D scene — or any nD scene with hidden dims — always goes through
 the marginal.
 
-The floor is now anchored to the largest diagonal of Σ_S
+The floor is now anchored to the largest diagonal of `Σ_S`
 (`CHOLESKY_RELATIVE_EPSILON = 1e-12`), making it a pure condition-number check
 that behaves identically at every scene scale, with the absolute constant kept as
 a backstop for a genuinely scaleless (all-zero) covariance. Same
 scale-free-conditioning reasoning as the shader's trace-normalized covariance
-inverse. Rank-deficient axes are still regularized, now as a fixed *fraction* of
+inverse. Rank-deficient axes are still regularized, now as a fixed _fraction_ of
 the real axis.
 
 #### Fixed — errors logged as trailing arguments rendered as `{}` in the in-app console
@@ -137,6 +137,48 @@ comments in `lod-fade.ts` / `lod-group-registry.ts`. New fixture
 `test_lod_group_volumetric.luxar.zarr` covers the volumetric cross-fade
 contract end-to-end.
 
+#### Fixed — a rejected projection kernel was re-run on the UI thread, and load failures were reported as success
+
+Four defects in the loader's failure handling, all pre-existing, all surfaced while
+reviewing the 2D-gsplat WASM trap.
+
+The worst turned a data error into a UI freeze: the gsplats and lines processors
+fell back to the in-process dispatcher on ANY worker rejection except a
+dataset-switch abort. That dispatcher runs the _same_ kernel through the same
+`pickBackend`, so a WASM trap coming back from the worker trapped again on the main
+thread, blocking the frame. Only worker UNAVAILABILITY now falls back, via
+an `isWorkerInfrastructureError` allow-list matching the single pool-internal
+error type (`WorkerUnavailableError`) by `instanceof` — it is constructed on
+the main thread and never crosses the Comlink boundary, so its prototype stays
+intact. A worker timeout propagates too: it cannot distinguish a wedged worker
+from a data-dependent kernel hang or a projection genuinely slower than the
+budget, and re-running those in-process blocks the frame at least as long
+again — the pool evicts the timed-out worker, so the node stays retryable
+against a fresh one. Unknown errors, and any rejection reconstructed from a
+worker (which loses its prototype), fail closed and propagate. Points is
+deliberately not included: its projection is main-thread-only, so it has no
+worker path.
+
+`loadScene` also logged "Scene loaded successfully" unconditionally. Because
+`loadLeafNode` swallows every `LoaderError` so surviving siblings still render,
+`loadScene` structurally cannot throw — so a scene whose every node failed produced
+a green log over an empty viewport. A new end-of-load report grades the outcome:
+clean keeps the historical message, partial logs one aggregate warning, and total
+logs an error plus a long toast. The per-node failure toast is gone; with N failures
+it showed one toast naming the last path, and never fired at all for network
+failures.
+
+All three handlers cleared a path's failure record immediately after the fetch,
+though the record's scope is the whole load-and-stage step — so any post-fetch
+failure re-recorded with a zero counter, pinning the log at "(attempt 1)" however
+many times it failed, and `hasFailures()` briefly reported clean. And retries had no
+notion of a permanent failure: the classified error kind was computed for logging
+then discarded, and the retry counter was written in three places and never
+compared, so a WASM trap was re-fetched on every reconnect forever. The kind is now
+persisted and automatic retries are gated on a transient cause under an attempt cap
+— while a manual Retry still forces every path, since the user pressing it is new
+information.
+
 #### Changed — Default viewer background is now pitch black (`0x000000`)
 
 The scene background default was `0x111111` (dark gray, matched to the dark
@@ -160,8 +202,8 @@ all-at-once however large it was. On the 9.75M-point DESI demo that single
 commit froze the main thread for ~85 s. GSplats have always composed the two
 axes, so this closes a three-geometry asymmetry as much as it fixes a stall.
 
-The axes now compose — substitutive chooses *which* level renders at the current
-zoom, additive describes *how* each level streams in — and every level is
+The axes now compose — substitutive chooses _which_ level renders at the current
+zoom, additive describes _how_ each level streams in — and every level is
 laddered by default (`additive_lod=False` opts out), with the sibling-aware
 first chunk on all but the coarsest. A level smaller than one stream chunk stays
 a flat leaf automatically.
@@ -293,7 +335,7 @@ centroid on the projected centerline) that fails pre-fix on both backends.
 
 Cross-node draw order sorted whole meshes by the view-depth of their
 bounds centers — a single number that cannot express "this tiny node is
-*inside* that huge node." For a node embedded in another (the galaxy
+_inside_ that huge node." For a node embedded in another (the galaxy
 demo's Sun/Betelgeuse/Rigel markers inside the 3M-star cloud), the
 container's center sorts nearer for roughly half of all camera
 orientations, making the container draw last; in `volumetric` (or
@@ -341,13 +383,15 @@ stay as-is. Regenerate demo datasets to pick up the fix.
   validator counted rows via `len()`, not elements; it now uses
   `indices.size`. Odd-edge-count geometry (e.g. most L-system trees)
   previously could not be written as pairs at all.
-- **`luxar serve` (and the standalone `serve.py` that `luxar export`
-  generates) now send `Cache-Control: no-cache`**: responses carried only
+- **Mutable scene-data responses now send `Cache-Control: no-cache`** in
+  `luxar serve`, native export launchers, and the standalone `serve.py` that
+  `luxar export` generates. Responses previously carried only
   ETag/Last-Modified (or just Last-Modified for exports), so browsers used
   HEURISTIC freshness and silently served stale chunks after a dataset was
   regenerated — or a folder re-exported — in place (same URLs, new bytes);
   no viewer-side cache clearing could fix it. `no-cache` forces
-  revalidation; unchanged files still return as cheap 304s.
+  revalidation; unchanged files still return as cheap 304s. Content-hashed
+  viewer assets remain cacheable without per-load revalidation.
 
 #### Fixed — thick polylines rendered as bead chains: interior joint caps now suppressed per-endpoint (#780)
 
@@ -389,6 +433,7 @@ notch of axial length `2 × width` bottoming out at 50%. (PR #785; follow-ups
   while quad tiling/overlap is a screen-space, per-camera fact (#795 tracks a
   real screen-space suppression), and the outer-side miter wedge at sharp
   bends remains.
+
 #### Added — manifest-driven demo-data fetch (R17 step 1)
 
 `demos/data_manifest.json` is now the single source of truth for how every demo
@@ -414,10 +459,10 @@ in-place corruption changes neither. The manifest checksum is now authoritative
 at every step, and a failing cache entry is quarantined (`.corrupt`) instead of
 being silently reused.
 
-`cached_download` had the same flaw plus two more — a file *longer* than
+`cached_download` had the same flaw plus two more — a file _longer_ than
 `expected_size` and an unpulled Git LFS pointer were both handed to the resuming
 downloader, which appends to whatever bytes are already there. All three now
-quarantine first. A file *shorter* than expected is still left in place, since
+quarantine first. A file _shorter_ than expected is still left in place, since
 that is a genuine resumable partial download.
 
 #### Fixed — the demo-data manifest was excluded from the wheel and sdist
@@ -426,7 +471,6 @@ It was written inside `demos/data/`, which packaging excludes wholesale (~450 MB
 of Git LFS payload), so `load_manifest()` raised `FileNotFoundError` for every
 pip-installed user. Moved to `demos/data_manifest.json`, with a regression test
 that re-runs hatchling's own matcher over the committed exclude globs.
-
 
 #### Fixed — `gsplat transform --rotate-*` rotated the wrong center dims on stacked nD data (#722)
 

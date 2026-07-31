@@ -50,7 +50,11 @@ export async function loadScene(
     const scene = await sceneLoader.loadScene(src);
 
     // Log success
-    log.success(Modules.LUXAR, 'Scene loaded successfully');
+    // Only on a genuinely clean load — the SCENE_LOADER-tagged report above owns
+    // the partial/total cases. This LUXAR-tagged line is the public-API signal.
+    if (!sceneLoader.hasFailures()) {
+      log.success(Modules.LUXAR, 'Scene loaded successfully');
+    }
     logSceneStats(scene);
 
     return scene;

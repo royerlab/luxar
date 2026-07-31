@@ -90,21 +90,27 @@ function snapshotPath(shader: string, kind: 'vertex' | 'fragment'): string {
   return path.join(SNAPSHOT_DIR, `${shader}.${kind}.glsl.txt`);
 }
 
+/** Generated Three.js shaders carry indentation on otherwise blank lines. */
+function normalizeSnapshot(source: string): string {
+  return source.replace(/[ \t]+$/gm, '');
+}
+
 function assertSnapshot(shader: string, kind: 'vertex' | 'fragment', actual: string): void {
   const file = snapshotPath(shader, kind);
+  const normalizedActual = normalizeSnapshot(actual);
   const isUpdate = process.env.LUXAR_UPDATE_SNAPSHOTS === '1';
   if (!fs.existsSync(file) || isUpdate) {
     fs.mkdirSync(SNAPSHOT_DIR, { recursive: true });
-    fs.writeFileSync(file, actual);
+    fs.writeFileSync(file, normalizedActual);
 
     console.log(
       `  ${isUpdate ? 'updated' : 'created'} snapshot: ${path.relative(__dirname, file)}`
     );
     return;
   }
-  const expected = fs.readFileSync(file, 'utf8');
+  const expected = normalizeSnapshot(fs.readFileSync(file, 'utf8'));
   expect(
-    actual,
+    normalizedActual,
     `Generated ${kind} shader for "${shader}" differs from snapshot at ${path.relative(
       __dirname,
       file

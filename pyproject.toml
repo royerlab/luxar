@@ -46,7 +46,7 @@ requires-python = ">=3.10"
 dependencies = [
     "numpy>=2.0,<3.0",
     "zarr>=2.16,<3.0",
-    "typer>=0.12,<1.0",
+    "typer>=0.19,<1.0",
     "fastapi>=0.111,<1.0",
     "uvicorn[standard]>=0.27,<1.0",
     "arbol>=2025.2.27.2",
@@ -294,6 +294,9 @@ check-contract = "python scripts/gen_format_contract.py --check"
 gen-data-manifest = "python scripts/gen_data_manifest.py"
 # Assert the committed demo-data manifest matches the tree.
 check-data-manifest = "python scripts/gen_data_manifest.py --check"
+# Audit built demo scenes when present; a checkout without generated scenes is
+# a read-only no-op. The underlying gate is unit-tested in the Python suite.
+check-demo-ladders = "python scripts/check_demo_ladders.py"
 check = [
     "format",
     "lint",
@@ -301,6 +304,7 @@ check = [
     "check-versions",
     "check-contract",
     "check-data-manifest",
+    "check-demo-ladders",
     "security",
     "test-cov"
 ]

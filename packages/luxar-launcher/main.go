@@ -29,6 +29,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -98,6 +99,21 @@ func openSystemBrowser(url string) error {
 	return exec.Command(cmd, args...).Start()
 }
 
+// withCachePolicy forces revalidation for everything the launcher serves —
+// mutable scene data under /data and the unhashed viewer shell (index.html,
+// wasm) alike — EXCEPT the content-hashed viewer chunks under /viewer/assets/,
+// whose filenames embed a build hash and are safe to cache indefinitely.
+func withCachePolicy(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.URL.Path, "/viewer/assets/") {
+			if w.Header().Get("Cache-Control") == "" {
+				w.Header().Set("Cache-Control", "no-cache")
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // startServer binds a free localhost port and starts the file server on
 // it in a background goroutine. The returned URL is what the WebView (or
 // fallback browser) should load; the returned *http.Server is the handle
@@ -120,7 +136,7 @@ func startServer(root string) (string, *http.Server, error) {
 	// from this one origin, so same-origin fetches need none. A wildcard here
 	// would only let an unrelated web page read the locally-served scene.
 	srv := &http.Server{
-		Handler:           http.FileServer(http.Dir(root)),
+		Handler:           withCachePolicy(http.FileServer(http.Dir(root))),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	go func() {

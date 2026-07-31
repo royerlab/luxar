@@ -5,8 +5,9 @@ Top-level test suite for the `luxar` package.
 ## Scope
 
 This directory contains package-level tests (e.g., import/export sanity, version
-checks, and the custom Hatch build-hook contract). Subpackage-specific tests are
-colocated with each subpackage in their own `tests/` directories.
+checks, and the custom Hatch build-hook contract) plus tests for repository-level
+maintenance scripts that exercise the installed package. Subpackage-specific tests
+are colocated with each subpackage in their own `tests/` directories.
 
 ## Running Tests
 
@@ -20,7 +21,7 @@ hatch run test-cov                          # With coverage
 
 Tests are colocated throughout the package:
 
-- `luxar/tests/` -- top-level package tests (this directory)
+- `luxar/tests/` -- top-level package and maintenance-script tests (this directory)
 - `luxar/core/tests/` -- scene graph, transforms, dimensions
 - `luxar/io/tests/` -- compiler, reader, writer
 - `luxar/encoding/tests/` -- encoding strategies

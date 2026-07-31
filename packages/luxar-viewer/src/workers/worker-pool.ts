@@ -15,7 +15,13 @@ import DataWorker from './data-worker?worker';
 import { log, Modules } from '../utils/log';
 import { config } from '../config';
 import type { WorkerInstance } from './worker-pool/types';
-import { WorkerTimeoutError, WorkerAbortError, type TimeoutKind } from './worker-pool/errors';
+import {
+  WorkerTimeoutError,
+  WorkerAbortError,
+  WorkerUnavailableError,
+  isWorkerInfrastructureError,
+  type TimeoutKind,
+} from './worker-pool/errors';
 
 import { withTimeout } from './worker-pool/timeout/with-timeout';
 import { combineSignals } from './worker-pool/timeout/combine-signals';
@@ -32,7 +38,12 @@ import { nextRoundRobin } from './worker-pool/selection/round-robin';
 import { computeStats, computeQueueDepth, type PoolStats } from './worker-pool/stats';
 
 export type { WorkerInstance };
-export { WorkerTimeoutError, WorkerAbortError };
+export {
+  WorkerTimeoutError,
+  WorkerAbortError,
+  WorkerUnavailableError,
+  isWorkerInfrastructureError,
+};
 export type { TimeoutKind };
 
 /**
@@ -206,7 +217,7 @@ export class WorkerPool {
             }
           }
           this.pendingWorkers.clear();
-          throw new Error(
+          throw new WorkerUnavailableError(
             'Failed to initialize any data workers. ' +
               'Luxar requires WebAssembly and Web Workers support.'
           );
@@ -394,7 +405,7 @@ export class WorkerPool {
     await this.initialize();
 
     if (this.workers.length === 0) {
-      throw new Error('[WorkerPool] No workers available after initialization');
+      throw new WorkerUnavailableError('[WorkerPool] No workers available after initialization');
     }
 
     const { instance, nextIndex } = nextRoundRobin(this.workers, this.nextWorkerIndex);
@@ -442,8 +453,10 @@ export class WorkerPool {
    *
    * On timeout the responsible worker is evicted via
    * {@link handleWorkerFailure} and the caller receives a
-   * {@link WorkerTimeoutError} that the existing geometry-loader try/catch
-   * blocks already route to the main-thread fallback.
+   * {@link WorkerTimeoutError}. The geometry loaders deliberately do NOT
+   * run the projection in-process on a timeout (see
+   * `isWorkerInfrastructureError`) — the failure is recorded and the node
+   * retried against a fresh worker instead of blocking the UI thread.
    */
   async runWithTimeout<T>(
     op: string,
@@ -555,7 +568,7 @@ export class WorkerPool {
     await this.initialize();
 
     if (this.workers.length === 0) {
-      throw new Error('[WorkerPool] No workers available after initialization');
+      throw new WorkerUnavailableError('[WorkerPool] No workers available after initialization');
     }
 
     return selectLeastBusy(this.workers);

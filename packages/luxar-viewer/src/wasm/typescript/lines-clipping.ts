@@ -564,6 +564,11 @@ export function compute_cap_suppression(
     if (vertex >= numVertices || degree[vertex] !== 2) return 0;
     const partner = codeSum[vertex] - myCode;
     if (partner === myCode) return 0; // self-segment registered both its ends here
+    // A malformed NaN t-parameter can make this endpoint query a degree-2
+    // vertex without having registered its own code. Keep the TypeScript
+    // fallback symmetric with Rust: reject the resulting negative / out-of-
+    // range partner before indexing (`dirs[-1]` is undefined -> NaN).
+    if (partner < 0 || partner >> 1 >= visibleCount) return 0;
     const mo = (myCode >> 1) * 3;
     const po = (partner >> 1) * 3;
     if (mo + 2 >= dirs.length || po + 2 >= dirs.length) return 0;

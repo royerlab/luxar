@@ -272,8 +272,13 @@ class Group(Node):
                 Requires ``colormap`` in attrs. Mutually exclusive with ``colors``.
             labels: Optional list of strings, one per vertex. Used for hover tooltips.
             image_labels: Optional per-element images for hover thumbnails.
-            indices: Optional vertex indices for indexed line type
-            line_type: Connectivity ("segments", "polyline", "loop", "indexed")
+            indices: Vertex-index pairs for ``line_type="indexed"``, as a flat
+                even-element ``(2E,)`` array or an ``(E, 2)`` pair array. Connected
+                edges must reference the same vertex row for joint continuity;
+                duplicated rows at equal coordinates remain independent endpoints.
+            line_type: Connectivity (``"segments"``, ``"polyline"``, ``"loop"``,
+                or ``"indexed"``). Use ``polyline`` for one continuous chain and
+                ``indexed`` for multiple chains or graph topology with shared joints.
             parent: Parent node (default: this group)
             extend_to_all: Visibility extension across non-displayed dimensions
             dim_order: Map data columns to scene dimensions by name

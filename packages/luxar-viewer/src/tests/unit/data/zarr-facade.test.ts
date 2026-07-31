@@ -247,6 +247,25 @@ describe('Zarr facade contract', () => {
     expect(Array.from(missingChunk.data as Uint16Array)).toEqual([42, 42]);
   });
 
+  it('propagates store AbortError instead of substituting fill values', async () => {
+    const rawStore = makeFillValueStore();
+    const originalGet = rawStore.get.bind(rawStore);
+    rawStore.get = async (key, options) => {
+      if (key === '/values/1') {
+        throw new DOMException('Cache read aborted during invalidation', 'AbortError');
+      }
+      return originalGet(key, options);
+    };
+
+    const rootLoc = zarr.root(await zarr.openStore(rawStore));
+    const array = await zarr.openArray(rootLoc.resolve('values'));
+
+    await expect(zarr.readArray(array)).rejects.toMatchObject({
+      name: 'AbortError',
+      message: expect.stringContaining('invalidation'),
+    });
+  });
+
   it('normalizes backend missing-node errors', async () => {
     const rawStore = makeUnconsolidatedStore();
     const rootLoc = zarr.root(await zarr.openStore(rawStore));
