@@ -237,11 +237,15 @@ to ship after). Sequencing is at the bottom.
         resolved.
       - `milky_way_gaia_3m` — CC BY-**NC** 3.0 IGO (**non-commercial**). Decision
         2026-07-21: **do NOT host it** — the NC clause is incompatible with a
-        cleanly-reusable demo-data host. The Gaia demo instead queries the ESA
-        Gaia archive and builds the point cloud on the user's machine on first
-        run, caching to `~/.cache/luxar/` (compute once, stays cached), with the
-        mandatory ESA/Gaia/DPAC acknowledgement. No GPU needed (it's a point
-        cloud, not a fit) — only a catalog query.
+        cleanly-reusable demo-data host. **Still to build:** the Gaia demo will
+        query the ESA Gaia archive and build the point cloud on the user's
+        machine on first run, caching to `~/.cache/luxar/` (compute once, stays
+        cached), with the mandatory ESA/Gaia/DPAC acknowledgement. No GPU needed
+        (it's a point cloud, not a fit) — only a catalog query. Today
+        `demo_gaia_milky_way_3m.py` still loads the committed
+        `data/milky_way_gaia_3m.zarr.zip` and has no TAP query path (the archive
+        query lives only in its docstring, describing how that file was
+        produced), so this is pending work like the neuromast upload above.
       The gsplat cases total only ~35 MB, so the cost is a GPU-gated first run for
       those demos, not storage; Gaia needs only an archive query + CPU build.
       (Optional: email tng/acto3d/tribolium sources for written redistribution
@@ -261,8 +265,9 @@ to ship after). Sequencing is at the bottom.
       (~2.9 GB, **default** the demo fetches) and `253tp` (~16 GB, opt-in via
       `variant="253tp"`). Avoids a 16 GB first-run download over Zenodo's
       best-effort, unguaranteed bandwidth while still hosting the full timelapse.
-    - 37 unit tests (`utils/tests/test_data_fetch.py`); existing 75 demo-import
-      tests stay green; ruff clean.
+    - Unit tests in `utils/tests/test_data_fetch.py` (deliberately not counted
+      here — the number rots every time a test lands); demo-import tests stay
+      green; ruff clean.
   - **Migration runbook (irreversibility rules).** Publishing a Zenodo record is
     **permanent** (no self-delete; files immutable — edits become new versions).
     So: (1) rehearse on **`sandbox.zenodo.org`** first — a published Sandbox record
