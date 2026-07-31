@@ -23,6 +23,14 @@ import {
 } from '../../../../data/transforms/nd-transform';
 import type { NdTransformMap } from '../../../../types/zarr';
 
+/**
+ * Name-only dimension metadata for `invertNdTransformForQuery`. Omitting
+ * `discrete` keeps every dimension continuous, so the no-preimage rule (which
+ * only applies to discrete dims) never fires — these cases predate it and must
+ * keep their original expectations. Discrete cases pass explicit metadata.
+ */
+const dims = (names: string[]) => names.map((name) => ({ name }));
+
 const finiteFloat = fc.float({
   min: Math.fround(-1e6),
   max: Math.fround(1e6),
@@ -58,7 +66,7 @@ describe('invertNdTransformForQuery — algebraic invariants', () => {
             [0, 0, 0, worldValue],
             [1e10, 1e10, 1e10, worldTolerance],
             ndTransform,
-            ['X', 'Y', 'Z', 'Time'],
+            dims(['X', 'Y', 'Z', 'Time']),
             [0, 1, 2]
           );
           // Forward: world = scale * local + offset  ⇒  local = (world - offset) / scale
@@ -79,7 +87,7 @@ describe('invertNdTransformForQuery — algebraic invariants', () => {
           [0, 0, 0, 0],
           [1e10, 1e10, 1e10, worldTolerance],
           ndTransform,
-          ['X', 'Y', 'Z', 'Time'],
+          dims(['X', 'Y', 'Z', 'Time']),
           [0, 1, 2]
         );
         const expectedLocalTolerance = worldTolerance / Math.abs(scale);
@@ -106,7 +114,7 @@ describe('invertNdTransformForQuery — algebraic invariants', () => {
             [worldX, 0, 0, 0],
             [Math.abs(tolX) + 0.01, 1e10, 1e10, 1],
             ndTransform,
-            ['X', 'Y', 'Z', 'Time'],
+            dims(['X', 'Y', 'Z', 'Time']),
             [0, 1, 2] // X displayed
           );
           // Displayed dim should be untouched.
@@ -126,7 +134,7 @@ describe('invertNdTransformForQuery — algebraic invariants', () => {
           [0, 0, 0, worldValue],
           [1e10, 1e10, 1e10, 1],
           ndTransform,
-          ['X', 'Y', 'Z', 'Time'],
+          dims(['X', 'Y', 'Z', 'Time']),
           [0, 1, 2]
         );
         // local = world - offset (scale defaults to 1)
@@ -211,7 +219,7 @@ describe('invertNdTransformForQuery — algebraic invariants', () => {
             [0, 0, 0, 0, worldIndex],
             [1e10, 1e10, 1e10, 5, 0.5],
             ndTransform,
-            ['X', 'Y', 'Z', 'Time', 'Channel'],
+            dims(['X', 'Y', 'Z', 'Time', 'Channel']),
             [0, 1, 2]
           );
           // Definition: local[k] = world[perm[k]], so the inverse is:
