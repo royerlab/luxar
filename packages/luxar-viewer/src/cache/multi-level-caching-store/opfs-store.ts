@@ -18,6 +18,11 @@ interface PersistedMetadataFile {
   entries?: unknown[];
 }
 
+function isNotFoundError(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false;
+  return (error as { name?: unknown }).name === 'NotFoundError';
+}
+
 export interface CachedDatasetSummary {
   url: string;
   hash: string;
@@ -511,21 +516,26 @@ export class OPFSStore {
       // had already been decremented but the file was still on disk
       // and the index still had the entry. The next `set()` then made
       // eviction decisions based on the wrong size. With the new
-      // ordering, an exception in removeEntry leaves all three pieces
-      // of state — totalSize, index, disk — consistent as if delete()
-      // had never been called, so callers can retry safely.
+      // ordering, a transient removeEntry failure leaves all three
+      // pieces of state unchanged so callers can retry safely.
       const bucket = getBucket(key);
       const bucketHandle = await this.buckets.getHandle(this.opfsRoot, bucket, false);
       if (bucketHandle) {
         const fileName = keyToFileName(key);
         await bucketHandle.removeEntry(fileName);
       }
-      this.totalSize = Math.max(0, this.totalSize - entry.size);
-      this.index.delete(key);
-    } catch {
-      // File doesn't exist (or transient I/O error), ignore. State is
-      // unchanged so callers can retry.
+    } catch (error) {
+      // NotFound means the desired disk state already holds. Reconcile the
+      // stale index entry below; retaining it would pin a phantom at the LRU
+      // head and make every eviction loop stop for lack of progress. Any other
+      // I/O failure is potentially transient, so preserve index/size atomically
+      // and let a later caller retry.
+      if (!isNotFoundError(error)) return;
     }
+
+    this.totalSize = Math.max(0, this.totalSize - entry.size);
+    this.index.delete(key);
+    this.scheduleMetadataSave();
   }
 
   /**

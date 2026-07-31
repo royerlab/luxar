@@ -44,6 +44,9 @@ const createMockFileSystem = () => {
       return mockDirHandle; // Simplified: all paths return same handle
     },
     async removeEntry(name: string) {
+      if (!files.has(name) && !metaFiles.has(name)) {
+        throw new DOMException(`Entry not found: ${name}`, 'NotFoundError');
+      }
       files.delete(name);
       metaFiles.delete(name);
     },
@@ -332,6 +335,57 @@ describe('OPFSStore', () => {
       await store.delete('nonexistent'); // Should not throw
       const stats = store.getStats();
       expect(stats.count).toBe(0);
+    });
+
+    it('drops and persists a stale index entry when its OPFS file is already missing', async () => {
+      vi.useFakeTimers();
+      try {
+        await store.set('phantom', new Uint8Array(1000));
+        expect(store.getStats()).toMatchObject({ size: 1000, count: 1 });
+        await vi.advanceTimersByTimeAsync(1100);
+        const staleMetadata = JSON.parse(mockFS.metaFiles.get('_cache_meta.json') as string);
+        expect(staleMetadata.totalSize).toBe(1000);
+        expect(staleMetadata.entries).toHaveLength(1);
+
+        // Simulate a file removed by another tab after its metadata was saved.
+        // The spec-faithful mock now raises NotFoundError when delete() tries to
+        // remove it again.
+        mockFS.files.clear();
+        await store.delete('phantom');
+
+        expect(store.getStats()).toMatchObject({ size: 0, count: 0 });
+        await vi.advanceTimersByTimeAsync(1100);
+
+        // Deletion is itself a metadata mutation. Persist the reconciled state
+        // without requiring a later set() or dispose() to overwrite the stale
+        // entry left by the previous snapshot.
+        const metadata = JSON.parse(mockFS.metaFiles.get('_cache_meta.json') as string);
+        expect(metadata.totalSize).toBe(0);
+        expect(metadata.entries).toEqual([]);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('a missing LRU file does not wedge max-size eviction', async () => {
+      const smallStore = new OPFSStore('phantom-eviction', 'https://example.com', 100);
+      await smallStore.init();
+      await smallStore.set('old', new Uint8Array(80));
+      expect(smallStore.getStats()).toMatchObject({ size: 80, count: 1, evictions: 0 });
+
+      // Leave the index entry but remove its backing file out of band. Adding
+      // another 80-byte entry must reconcile and evict the phantom rather than
+      // breaking the no-progress loop with an over-budget two-entry index.
+      mockFS.files.clear();
+      await smallStore.set('new', new Uint8Array(80));
+
+      expect(smallStore.getStats()).toMatchObject({
+        size: 80,
+        count: 1,
+        evictions: 1,
+      });
+      expect(await smallStore.get('old')).toBeUndefined();
+      expect(await smallStore.get('new')).toEqual(new Uint8Array(80));
     });
 
     // [cache OOS] Pre-fix, `delete(key)` decremented `totalSize` BEFORE
