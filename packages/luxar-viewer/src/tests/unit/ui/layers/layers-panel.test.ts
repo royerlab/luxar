@@ -1249,7 +1249,10 @@ describe('LayersPanel — blend select drives the leaf material', () => {
     panel.layerState.select('/g', 'single');
 
     const before = panel.layerState.getLayer('/g')!;
-    expect(before.colormap).toBeUndefined();
+    // The wrapper carries no `colormap` attr, but the layer state surfaces the
+    // descendant palette so the dropdown and legend reflect the rendered mode
+    // (and "(direct colors)" is selectable as an off-switch).
+    expect(before.colormap).toBe('gray');
     expect(before.scalarWindow).toBe(true);
     expect(before.displayMax).toBeCloseTo(0.02, 6);
 

@@ -101,6 +101,34 @@ function usesColormap(node: SceneNode): boolean {
 }
 
 /**
+ * The palette a wrapper layer EFFECTIVELY renders through when it carries no
+ * `colormap` attr of its own: the single distinct palette authored on its
+ * descendants, or undefined when there is none or they disagree (a mixed
+ * subtree has no single palette the dropdown could show). `colormap` is
+ * deliberately NOT a compositing attr on the Python side — the writer copies
+ * it onto every leaf — so a kind=partition / kind=lod layer from
+ * `add_gsplats_from_file(..., colormap=...)` always has this shape. Surfacing
+ * the descendant palette keeps the dropdown and the legend truthful and makes
+ * "(direct colors)" an actual off-switch there (a select only emits `change`
+ * when its value moves).
+ */
+function deriveColormapFromDescendants(node: SceneNode): string | undefined {
+  let found: string | undefined;
+  let mixed = false;
+  const visit = (n: SceneNode): void => {
+    if (mixed) return;
+    const cm = n.attrs.colormap as string | undefined;
+    if (cm) {
+      if (found === undefined) found = cm;
+      else if (found !== cm) mixed = true;
+    }
+    n.children?.forEach(visit);
+  };
+  node.children?.forEach(visit);
+  return mixed ? undefined : found;
+}
+
+/**
  * The display window a layer starts at — i.e. what `[displayMin, displayMax]`
  * the panel pushes into the material before the user touches anything.
  *
@@ -365,7 +393,13 @@ export class LayerStateManager {
         // kind=lod / kind=partition groups are composite containers; the
         // colormap applies to descendants via composition just like a
         // plain group.
-        const colormap = node.attrs.colormap as string | undefined;
+        // The wrapper's own attr, else the (uniform) palette its descendants
+        // carry — `scalarWindow` below is descendant-aware, and a `colormap`
+        // that isn't would misreport an actively colormapped partition/lod
+        // layer as "(direct colors)" in the dropdown and hide it from the
+        // legend.
+        const colormap =
+          (node.attrs.colormap as string | undefined) || deriveColormapFromDescendants(node);
         const supportsColormap = node.type === 'group' || !!node.attrs.has_scalars || !!colormap;
         const colormapScalarRange =
           scalarRange || ampRange || deriveScalarRangeFromDescendants(node);

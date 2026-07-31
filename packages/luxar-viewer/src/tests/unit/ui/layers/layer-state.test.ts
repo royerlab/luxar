@@ -454,6 +454,34 @@ describe('LayerStateManager', () => {
     expect(layer.displayMax).toBeCloseTo(0.03, 5);
   });
 
+  it('surfaces a descendant-authored palette on the wrapper layer', () => {
+    // `colormap` is deliberately NOT a compositing attr: the Python writer
+    // copies it onto every part, so a kind=partition wrapper from
+    // `add_gsplats_from_file(..., colormap=...)` has none of its own while
+    // every leaf renders through the LUT. The wrapper layer must report the
+    // palette — otherwise the dropdown shows "(direct colors)", the legend
+    // omits the layer, and the direct-colours option can never fire a change
+    // event to switch the LUT off.
+    mgr.initFromSceneGraph(makePartitionGraph({ colormap: 'gray' }));
+    const layer = mgr.getLayer('/g')!;
+    expect(layer.colormap).toBe('gray');
+    expect(layer.scalarWindow).toBe(true);
+  });
+
+  it('leaves MIXED descendant palettes unrepresented on the wrapper', () => {
+    // Two parts with different palettes: the single dropdown cannot show
+    // both, so the wrapper keeps colormap undefined (the window still counts
+    // as scalar via scalarWindow).
+    const graph = makePartitionGraph({});
+    const parts = graph.children![0].children!;
+    parts[0].attrs.colormap = 'gray';
+    parts[1].attrs.colormap = 'viridis';
+    mgr.initFromSceneGraph(graph);
+    const layer = mgr.getLayer('/g')!;
+    expect(layer.colormap).toBeUndefined();
+    expect(layer.scalarWindow).toBe(true);
+  });
+
   it('keeps a DIRECT-COLOUR composite group layer at the identity window', () => {
     // The gallery demo's `tiles` / `adaptive` columns: parts carry per-splat
     // RGB and no colormap, so their amplitude range must NOT become the window
