@@ -175,7 +175,9 @@ class ConsoleInterceptor {
    *
    * Two passes, and the order matters: a plain object that merely carries a
    * `stack` string (a context bag such as `{ stack: 'phase: decode' }`) must not
-   * shadow the real `Error` behind it. Real `Error` instances win; the
+   * shadow the real `Error` behind it. Real `Error` instances win — including
+   * cross-realm ones (another window/iframe), caught by the `[object Error]`
+   * brand check where `instanceof` fails; the
    * duck-typed carriers `getErrorStack` also accepts (some Firefox
    * `DOMException`s, thrown plain objects) are only the fallback.
    *
@@ -186,13 +188,18 @@ class ConsoleInterceptor {
    */
   private extractStack(args: readonly unknown[]): string | undefined {
     for (const arg of args) {
-      // Guard `instanceof`: it walks [[GetPrototypeOf]], which throws for a
+      // Guard the checks: `instanceof` walks [[GetPrototypeOf]] and the brand
+      // check's Symbol.toStringTag lookup does a [[Get]] — both throw for a
       // revoked Proxy. This runs inside the patched console.warn/error BEFORE
       // the original call, so a throw here would swallow the diagnostic being
       // logged — the same never-throw contract `getErrorStack` upholds.
       let isError = false;
       try {
-        isError = arg instanceof Error;
+        // `instanceof` alone is realm-dependent: an Error created in another
+        // window/iframe has a foreign Error.prototype and fails it, letting an
+        // earlier context bag shadow the real stack. The spec brand check sees
+        // the [[ErrorData]] internal slot regardless of realm.
+        isError = arg instanceof Error || Object.prototype.toString.call(arg) === '[object Error]';
       } catch {
         isError = false;
       }

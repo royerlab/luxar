@@ -8,6 +8,7 @@
  */
 
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
+import vm from 'node:vm';
 import { consoleInterceptor } from '../../../utils/console-interceptor';
 
 describe('ConsoleInterceptor ring buffer', () => {
@@ -191,6 +192,20 @@ describe('ConsoleInterceptor stack capture', () => {
     console.error('failed', { stack: 'context: decoding' }, err);
 
     expect(lastMessage().stack).toBe(err.stack);
+  });
+
+  it('prefers a CROSS-REALM Error over an earlier duck-typed stack carrier', () => {
+    // An Error created in another realm (window/iframe) has a foreign
+    // Error.prototype, so `instanceof Error` is false — only the
+    // `[object Error]` brand check (the [[ErrorData]] internal slot) sees it.
+    // Without that check the context bag in front would shadow its stack.
+    const foreignErr = vm.runInNewContext('new Error("cross-realm boom")') as Error;
+    expect(foreignErr instanceof Error).toBe(false); // genuinely foreign realm
+    expect(typeof foreignErr.stack).toBe('string');
+
+    console.error('failed', { stack: 'context: decoding' }, foreignErr);
+
+    expect(lastMessage().stack).toBe(foreignErr.stack);
   });
 
   it('falls back to a duck-typed stack carrier when no real Error is present', () => {
