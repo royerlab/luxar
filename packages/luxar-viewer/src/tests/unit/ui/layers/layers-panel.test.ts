@@ -1000,6 +1000,11 @@ describe('LayersPanel — blend select drives the leaf material', () => {
     const layer = panel.layerState.getLayer('/cloud')!;
     expect(layer.displayMin).toBeCloseTo(0, 6);
     expect(layer.displayMax).toBeCloseTo(1, 6);
+    // The rejected palette is dropped from the layer state too — keeping it
+    // would leave contradictory state (`colormap` set, `scalarWindow` false)
+    // that lies to the dropdown + legend and mis-keys the next toggle.
+    expect(layer.colormap).toBeUndefined();
+    expect(layer.scalarWindow).toBe(false);
     // …and the material never got a scalar LUT.
     expect(stubMat.updateColormapTexture).not.toHaveBeenCalledWith(expect.anything());
   });
@@ -1170,6 +1175,85 @@ describe('LayersPanel — blend select drives the leaf material', () => {
     cmSelect.dispatchEvent(new Event('change', { bubbles: true }));
     expect(panel.layerState.getLayer('/cloud')!.displayMin).toBeCloseTo(0, 6);
     expect(panel.layerState.getLayer('/cloud')!.displayMax).toBeCloseTo(1, 6);
+  });
+
+  it('a group layer whose colormap lives on a DESCENDANT toggles by effective mode', () => {
+    // The wrapper has no `colormap` attr of its own, but the layer already
+    // windows a scalar (`scalarWindow` true from the descendant LUT). The
+    // toggle handler must key its off↔on detection on that effective mode:
+    // keying on the wrapper's attr misreads a palette pick as off→on (wiping
+    // the user's window) and misses the on→off flip entirely, stranding the
+    // layer on a scalar window its (now direct-colour) leaves route to the
+    // identity — an inert display slider.
+    const stubMat = makeColormapRoutingStub();
+    const geometry = new THREE.BufferGeometry();
+    geometry.userData.hasScalars = true;
+    const mesh = new THREE.Mesh(geometry, stubMat as unknown as THREE.Material);
+    mesh.name = '/g/p0';
+    mesh.userData.nodeType = 'points';
+    const rootGroup = new THREE.Group();
+    rootGroup.add(mesh);
+
+    const graph = {
+      name: 'root',
+      path: '/',
+      type: 'group',
+      attrs: {},
+      children: [
+        {
+          name: 'g',
+          path: '/g',
+          type: 'group',
+          attrs: { layer: true },
+          children: [
+            {
+              name: 'p0',
+              path: '/g/p0',
+              type: 'points',
+              attrs: {
+                type: 'points',
+                has_scalars: true,
+                colormap: 'gray',
+                scalar_data_range: [0.0001, 0.02],
+              },
+              children: [],
+            },
+          ],
+        },
+      ],
+    } as unknown as SceneNode;
+
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(rootGroup, graph);
+    panel.show();
+    panel.layerState.select('/g', 'single');
+
+    const before = panel.layerState.getLayer('/g')!;
+    expect(before.colormap).toBeUndefined();
+    expect(before.scalarWindow).toBe(true);
+    expect(before.displayMax).toBeCloseTo(0.02, 6);
+
+    // The user narrows the window…
+    panel.layerState.setDisplayRange('/g', 0.001, 0.01);
+
+    const cmSelect = Array.from(container.querySelectorAll('select')).find((s) =>
+      Array.from(s.options).some((o) => o.value === 'viridis')
+    )!;
+
+    // …and picking a palette is scalar→scalar, NOT off→on: the window survives.
+    cmSelect.value = 'plasma';
+    cmSelect.dispatchEvent(new Event('change', { bubbles: true }));
+    expect(panel.layerState.getLayer('/g')!.displayMin).toBeCloseTo(0.001, 6);
+    expect(panel.layerState.getLayer('/g')!.displayMax).toBeCloseTo(0.01, 6);
+
+    // Selecting "(direct colors)" IS the on→off flip: identity window,
+    // direct-colour mode.
+    cmSelect.value = '';
+    cmSelect.dispatchEvent(new Event('change', { bubbles: true }));
+    const after = panel.layerState.getLayer('/g')!;
+    expect(after.scalarWindow).toBe(false);
+    expect(after.displayMin).toBeCloseTo(0, 6);
+    expect(after.displayMax).toBeCloseTo(1, 6);
   });
 
   it('a kind=partition layer overrides a blending mode stamped on its own parts', () => {
