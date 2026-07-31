@@ -9,6 +9,14 @@ import {
 } from '../../../../data/transforms/nd-transform';
 import type { NdTransformMap } from '../../../../types/zarr';
 
+/**
+ * Name-only dimension metadata for `invertNdTransformForQuery`. Omitting
+ * `discrete` keeps every dimension continuous, so the no-preimage rule (which
+ * only applies to discrete dims) never fires — these cases predate it and must
+ * keep their original expectations. Discrete cases pass explicit metadata.
+ */
+const dims = (names: string[]) => names.map((name) => ({ name }));
+
 describe('invertNdTransformForQuery', () => {
   it('should inverse affine transform on slice position', () => {
     // nd_transform: effective = 2 * raw + 10
@@ -20,7 +28,7 @@ describe('invertNdTransformForQuery', () => {
       [0, 0, 0, 50], // world slice: time=50
       [1e10, 1e10, 1e10, 5], // tolerance: time=5
       ndTransform,
-      ['X', 'Y', 'Z', 'Time'],
+      dims(['X', 'Y', 'Z', 'Time']),
       [0, 1, 2] // X,Y,Z are displayed
     );
     // local_time = (50 - 10) / 2 = 20
@@ -42,7 +50,7 @@ describe('invertNdTransformForQuery', () => {
       [0, 0, 0, 0, 2], // world: channel=2
       [1e10, 1e10, 1e10, 5, 0.5],
       ndTransform,
-      ['X', 'Y', 'Z', 'Time', 'Channel'],
+      dims(['X', 'Y', 'Z', 'Time', 'Channel']),
       [0, 1, 2]
     );
     // world 2 → local 0 (since perm[0]=2, inverse[2]=0)
@@ -59,7 +67,7 @@ describe('invertNdTransformForQuery', () => {
       [0, 0, 0, 75], // world depth=75
       [1e10, 1e10, 1e10, 10],
       ndTransform,
-      ['X', 'Y', 'Z', 'Depth'],
+      dims(['X', 'Y', 'Z', 'Depth']),
       [0, 1, 2]
     );
     // local = (75 - 100) / (-1) = 25
@@ -77,7 +85,7 @@ describe('invertNdTransformForQuery', () => {
       [100, 0, 0, 50],
       [1e10, 1e10, 1e10, 5],
       ndTransform,
-      ['X', 'Y', 'Z', 'Time'],
+      dims(['X', 'Y', 'Z', 'Time']),
       [0, 1, 2]
     );
     // X unchanged (displayed)
@@ -91,7 +99,7 @@ describe('invertNdTransformForQuery', () => {
       [0, 0, 0, 50],
       [1e10, 1e10, 1e10, 5],
       {},
-      ['X', 'Y', 'Z', 'Time'],
+      dims(['X', 'Y', 'Z', 'Time']),
       [0, 1, 2]
     );
     expect(result.slicePosition).toEqual([0, 0, 0, 50]);
@@ -115,7 +123,7 @@ describe('invertNdTransformForQuery', () => {
       [0, 0, 0, 50, 2, 60], // world: time=50, channel=2, depth=60
       [1e10, 1e10, 1e10, 8, 0.5, 12], // tolerance per dim
       ndTransform,
-      ['X', 'Y', 'Z', 'Time', 'Channel', 'Depth'],
+      dims(['X', 'Y', 'Z', 'Time', 'Channel', 'Depth']),
       [0, 1, 2]
     );
 
@@ -144,7 +152,7 @@ describe('invertNdTransformForQuery', () => {
       [0, 0, 0, 50],
       [1e10, 1e10, 1e10, 5],
       ndTransform,
-      ['X', 'Y', 'Z', 'Time'],
+      dims(['X', 'Y', 'Z', 'Time']),
       [0, 1, 2]
     );
     // Unchanged — scale=0 is not invertible
@@ -293,7 +301,7 @@ describe('invertNdTransformForQuery — boundary cases (data.md G5)', () => {
       [0, 0, 0, -1], // world channel=-1 (out of range)
       [1e10, 1e10, 1e10, 0],
       ndTransform,
-      ['X', 'Y', 'Z', 'Channel'],
+      dims(['X', 'Y', 'Z', 'Channel']),
       [0, 1, 2]
     );
     // Out-of-range → slicePosition unchanged from input.
@@ -310,7 +318,7 @@ describe('invertNdTransformForQuery — boundary cases (data.md G5)', () => {
       [0, 0, 0, 99], // world channel=99 (out of range)
       [1e10, 1e10, 1e10, 0],
       ndTransform,
-      ['X', 'Y', 'Z', 'Channel'],
+      dims(['X', 'Y', 'Z', 'Channel']),
       [0, 1, 2]
     );
     expect(result.slicePosition[3]).toBe(99);
@@ -326,7 +334,7 @@ describe('invertNdTransformForQuery — boundary cases (data.md G5)', () => {
       [0, 0, 0, 0],
       [1e10, 1e10, 1e10, 0],
       ndTransform,
-      ['X', 'Y', 'Z', 'Channel'],
+      dims(['X', 'Y', 'Z', 'Channel']),
       [0, 1, 2]
     );
     expect(result.slicePosition[3]).toBe(0);
@@ -342,7 +350,7 @@ describe('invertNdTransformForQuery — boundary cases (data.md G5)', () => {
       [0, 0, 0, 5],
       [1e10, 1e10, 1e10, 0],
       ndTransform,
-      ['X', 'Y', 'Z', 'Channel'],
+      dims(['X', 'Y', 'Z', 'Channel']),
       [0, 1, 2]
     );
     expect(result.slicePosition[3]).toBe(5);
@@ -357,7 +365,7 @@ describe('invertNdTransformForQuery — boundary cases (data.md G5)', () => {
       [0, 0, 0, 42],
       [1e10, 1e10, 1e10, 5],
       ndTransform,
-      ['X', 'Y', 'Z', 'Time'],
+      dims(['X', 'Y', 'Z', 'Time']),
       [0, 1, 2]
     );
     // Position and tolerance must pass through unchanged (no NaN/Infinity).
@@ -365,6 +373,113 @@ describe('invertNdTransformForQuery — boundary cases (data.md G5)', () => {
     expect(result.tolerance[3]).toBe(5);
     expect(Number.isFinite(result.slicePosition[3])).toBe(true);
     expect(Number.isFinite(result.tolerance[3])).toBe(true);
+  });
+});
+
+describe('invertNdTransformForQuery — the no-preimage rule on discrete dims', () => {
+  /** X,Y,Z displayed; Frame a discrete ordinal on the integer grid. */
+  const frameDims = [
+    { name: 'X' },
+    { name: 'Y' },
+    { name: 'Z' },
+    { name: 'Frame', discrete: true, step: 1 },
+  ];
+  const DISPLAYED = [0, 1, 2];
+  /** Discrete dims are queried with an exact (zero) tolerance. */
+  const exactTol = [1e10, 1e10, 1e10, 0];
+
+  const invert = (world: number, entry: NdTransformMap['Frame'], d = frameDims, tol = exactTol) =>
+    invertNdTransformForQuery([0, 0, 0, world], tol, { Frame: entry }, d, DISPLAYED);
+
+  it('reports no preimage when scale=2 lands the query between two categories', () => {
+    // world 7 → local 3.5. The half-step membership gate would otherwise admit
+    // BOTH local 3 and local 4 — two categories from other world slices.
+    const result = invert(7, { scale: 2 });
+    expect(result.slicePosition[3]).toBeCloseTo(3.5, 6);
+    expect(result.noPreimage).toBe(true);
+  });
+
+  it('reports a preimage when scale=2 lands the query exactly on a category', () => {
+    const result = invert(8, { scale: 2 });
+    expect(result.slicePosition[3]).toBeCloseTo(4, 6);
+    expect(result.noPreimage).toBe(false);
+  });
+
+  it('catches non-half off-grid queries too (scale=3 → local 2.333)', () => {
+    // A strict/half-open membership boundary would NOT catch this one: local 2
+    // is only 0.333 away and would sneak through the half-step window.
+    const result = invert(7, { scale: 3 });
+    expect(result.noPreimage).toBe(true);
+    expect(invert(6, { scale: 3 }).noPreimage).toBe(false);
+  });
+
+  it('catches a fractional offset', () => {
+    expect(invert(7, { offset: 0.5 }).noPreimage).toBe(true);
+    expect(invert(7, { offset: 5 }).noPreimage).toBe(false);
+  });
+
+  it('honours the dimension step when it is not 1', () => {
+    const stepped = [
+      { name: 'X' },
+      { name: 'Y' },
+      { name: 'Z' },
+      { name: 'Frame', discrete: true, step: 0.5 },
+    ];
+    // scale=2 → local 3.5, which IS on the 0.5 grid.
+    expect(invert(7, { scale: 2 }, stepped).noPreimage).toBe(false);
+    // local 3.25 is not.
+    expect(invert(6.5, { scale: 2 }, stepped).noPreimage).toBe(true);
+  });
+
+  it('never fires on a CONTINUOUS dimension (fractional slices are legitimate)', () => {
+    // Same name so the transform still applies — only `discrete` differs.
+    const continuousDims = [{ name: 'X' }, { name: 'Y' }, { name: 'Z' }, { name: 'Frame' }];
+    const result = invert(7, { scale: 2 }, continuousDims, [1e10, 1e10, 1e10, 5]);
+    expect(result.slicePosition[3]).toBeCloseTo(3.5, 6);
+    expect(result.noPreimage).toBe(false);
+  });
+
+  it('never fires on an extend_to_all dimension (it is not being sliced)', () => {
+    // The extend_to_all sentinel tolerance means "ignore this axis"; a node that
+    // extends the very dim it transforms must keep rendering.
+    const extended = [1e10, 1e10, 1e10, 1e10];
+    const result = invert(7, { scale: 2 }, frameDims, extended);
+    expect(result.noPreimage).toBe(false);
+  });
+
+  it('never fires on a categorical permutation (a bijection always has a preimage)', () => {
+    const catDims = [
+      { name: 'X' },
+      { name: 'Y' },
+      { name: 'Z' },
+      { name: 'Channel', discrete: true, step: 1 },
+    ];
+    for (const world of [0, 1, 2]) {
+      const result = invertNdTransformForQuery(
+        [0, 0, 0, world],
+        exactTol,
+        { Channel: { permutation: [2, 0, 1] } },
+        catDims,
+        DISPLAYED
+      );
+      expect(result.noPreimage).toBe(false);
+    }
+  });
+
+  it('never fires for an identity-scale offset transform (the common case)', () => {
+    for (const world of [0, 5, 7, 15]) {
+      expect(invert(world, { offset: 5 }).noPreimage).toBe(false);
+      expect(invert(world, { offset: -3 }).noPreimage).toBe(false);
+      expect(invert(world, { scale: -1, offset: 15 }).noPreimage).toBe(false);
+    }
+  });
+
+  it('does not fire from float error on an exactly-representable inverse', () => {
+    // (world - offset) / scale must not drift off-grid for the values a real
+    // dataset uses. 0.1-style scales are the classic float hazard.
+    const result = invert(70, { scale: 0.1 });
+    expect(result.slicePosition[3]).toBeCloseTo(700, 6);
+    expect(result.noPreimage).toBe(false);
   });
 });
 

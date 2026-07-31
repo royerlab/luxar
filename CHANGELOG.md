@@ -6,6 +6,51 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Fixed — a scaling `nd_transform` no longer draws the wrong slice on a discrete dimension
+
+An `nd_transform` with a non-unit `scale` on a discrete non-displayed dimension
+rendered content from world slices the user had not selected. The inverse-query
+design maps the world slice into the node's local space, and a scale makes that
+mapping land **between** categories: `scale: 2` at world frame 7 inverts to local
+3.5. The per-element membership window is a half-step (`|value − target| ≤ 0.5 ×
+step`), so it admitted local 3 **and** local 4 — two frames belonging to world 6
+and world 8, drawn together while the slider read 7. With `scale: 3` at world 7
+(local 2.333) it silently admitted local 2.
+
+The window itself was fine; its documented premise was not. It is calibrated for
+slightly off-grid *data* against an on-grid *target*, and the whole stack
+guarantees on-grid targets because discrete navigation snaps to the `k · step`
+grid. A scaling `nd_transform` is the one thing that breaks that guarantee, and
+it breaks it on the query side where no amount of window tuning helps (a strict
+boundary would fix `scale: 2` and still get `scale: 3` wrong).
+
+Per the spec's forward rule for discrete ordinals
+(`effective = round(scale · original + offset)`), a world value that is not the
+image of any local grid point simply has no preimage and must display nothing.
+`invertNdTransformForQuery` now detects that and reports `noPreimage`, which
+rides the derived per-node `ViewState` and makes each geometry's range query
+return an empty range list — reusing every loader's existing "no visible
+elements → clear" path. One rule, applied once per node per slice, so Points,
+Lines and GSplats are all fixed together with no change to the WASM/TS
+projection kernels. `extend_to_all` dimensions and categorical permutations are
+exempt (the former is not being sliced; the latter is a bijection).
+
+#### Changed — the `nd_transforms` demo is now a calibrated test bench
+
+`demo_nd_transforms.py` was a "Multi-Instrument Observatory": three jittered
+Gaussian blob clouds that looked identical at every time slice, so there was no
+way to see whether `nd_transform` had done anything at all. It is now an
+instrument. A ruler along X (one tick = one frame index), a cyan cursor column of
+plain untransformed geometry marking the WORLD index, and one labelled row per
+transform whose markers are 3D point-font digits printing their own LOCAL index
+— so the gap between digit and cursor, read in ticks, *is* the transform. Faint
+always-on ghosts mark every slot a row could light (a dark row means "no
+preimage", not "failed to load"), and a `visible_range`-gated readout prints the
+expected local index per row for the current slice. It covers affine
+offset/scale/negative-scale/scale+offset, categorical permutations, nested-group
+composition **order**, a 4x4 transform and an `nd_transform` on one group, and
+doubles as the visual regression harness for the no-preimage fix above.
+
 #### Fixed — warnings now display through arbol instead of raw stderr lines
 
 Python's default warning display wrote `path/to/file.py:299: UserWarning: ...`

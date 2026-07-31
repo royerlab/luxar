@@ -282,6 +282,36 @@ For each non-displayed dimension with a transform:
   - Compute inverse permutation, remap slice index
   - Tolerance unchanged (categorical matching)
 
+#### 9.2.1 The no-preimage rule (discrete dimensions)
+
+The forward rule for discrete ordinals rounds (§4.1), so not every world value
+is the image of a local one. Inverting `scale: 2` at world `T = 7` gives local
+`3.5`, which is **no category at all** — `round(2k) = 7` has no integer
+solution.
+
+The inverse query alone cannot express that. Left unguarded, the per-element
+membership window (a half-step, `|value − target| ≤ 0.5 × step`) admits both
+local 3 and local 4, drawing two frames that belong to world 6 and world 8
+while the slider reads 7; with `scale: 3` at `T = 7` (local `2.333`) it admits
+local 2.
+
+`invertNdTransformForQuery` therefore also reports **`noPreimage`**: true when a
+`discrete` dimension's inverse query lands off that dimension's `k · step` grid.
+It rides the derived per-node `ViewState.noPreimage`, and each geometry's range
+query (`queryVisiblePointRanges` / `queryVisibleSegmentRanges` /
+`queryVisibleSplatRanges`) returns an empty range list, which every loader
+already renders as "cleared". The guard sits ahead of both the
+no-spatial-index load-all fallback and the `extend_to_all` short-circuit, since
+either would otherwise pass every element to the membership gate.
+
+Exemptions: `extend_to_all` dimensions (tolerance is the infinite sentinel — the
+dimension is not being sliced), and categorical permutations (a bijection always
+has exactly one preimage).
+
+The `nd_transforms` demo (`demos/demo_nd_transforms.py`) is the visual
+regression harness: one row per transform, markers that print their own local
+index against a world ruler and cursor.
+
 ### 9.3 Where It's Applied
 
 In `scene-loader.ts`, centralized alongside the existing `extend_to_all` tolerance modification. Applied ONCE per node update, BEFORE passing viewState to the loader:

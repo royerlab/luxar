@@ -22,6 +22,36 @@ import { NdTransformMap, NdTransformEntry, isPermutation } from '../../types/zar
 import type { SceneNode } from '../data-loader-types';
 
 /**
+ * Per-dimension metadata the inverse-query needs: the `name` to look the
+ * transform entry up by, plus enough to know where a DISCRETE dimension's
+ * values may sit (see the no-preimage rule in
+ * {@link invertNdTransformForQuery}).
+ *
+ * Structurally a subset of `DimensionMetadata`, so callers pass
+ * `viewState.dimensions` straight through.
+ */
+export interface QueryDimensionInfo {
+  name?: string;
+  discrete?: boolean;
+  step?: number;
+}
+
+/**
+ * Tolerance at or above this is the `extend_to_all` "infinite" sentinel
+ * (`EXTEND_TO_ALL_TOLERANCE` is 1e10, and the inverse divides it by |scale|,
+ * which keeps it far above this floor for any sane scale). A dimension flagged
+ * that way is not being sliced, so the no-preimage rule must not fire on it.
+ */
+const EXTENDED_TOLERANCE_FLOOR = 1e9;
+
+/**
+ * Relative slack when testing whether a local position lands on a discrete
+ * dimension's `k · step` grid: generous enough to absorb the float error of one
+ * divide, far tighter than any real fraction-of-a-step gap.
+ */
+const ON_GRID_EPSILON = 1e-6;
+
+/**
  * Inverse-transform slicePosition and tolerance from world space to local space.
  *
  * For affine (effective = scale * raw + offset):
@@ -34,28 +64,61 @@ import type { SceneNode } from '../data-loader-types';
  * This allows querying the spatial index in local (stored) coordinates
  * without transforming any point data — O(1) per dimension.
  *
+ * ## The no-preimage rule
+ *
+ * A DISCRETE dimension's values live on the `k · step` grid — that is the
+ * format's discrete contract, and the whole slicing stack leans on it: the
+ * navigation UI snaps slice targets to that grid, and the per-element
+ * MEMBERSHIP gates therefore use a half-step window (`|value − target| ≤ 0.5 ×
+ * step`; see `tolerance-computer.ts` and `effective-radius-calculator.ts`),
+ * which selects exactly one category *for an on-grid target*.
+ *
+ * A non-unit affine `nd_transform` breaks that premise: an on-grid WORLD target
+ * inverts to an OFF-grid LOCAL target. `scale: 2` at world T = 7 gives local
+ * 3.5, and the half-step window then admits local 3 AND local 4 — two
+ * neighbouring categories drawn at once, neither of which belongs to the
+ * requested world slice. At `scale: 3`, world T = 7 (local 2.333) silently
+ * admits local 2.
+ *
+ * The spec's forward rule for discrete ordinals is
+ * `effective = round(scale · original + offset)`
+ * (`docs/guides/specs/ND_TRANSFORMS_SPEC.md` §4.1), so a world value that is not
+ * the image of any local grid point has **no preimage** and must display
+ * nothing. "Nothing" cannot be encoded as a slice position, so it is reported
+ * out of band as `noPreimage`; the per-geometry range queries turn that into an
+ * empty range list, which every loader already renders as "cleared".
+ *
+ * `extend_to_all` dimensions are exempt — their tolerance is the infinite
+ * sentinel, meaning the dimension is not being sliced at all.
+ *
  * @param slicePosition - Current slice position in world (transformed) space
  * @param tolerance - Per-dimension tolerance in world space
  * @param ndTransform - Composed world nD transform for this node
- * @param dimensionNames - Dimension name for each index (length = ndim)
+ * @param dimensions - Per-dimension metadata (length = ndim). `name` is matched
+ *   against `ndTransform` keys; `discrete`/`step` drive the no-preimage rule.
  * @param displayDims - Indices of displayed dimensions (to skip)
- * @returns New slicePosition and tolerance in local (raw) space
+ * @returns New slicePosition and tolerance in local (raw) space, plus
+ *   `noPreimage` when the world slice has no local counterpart at all
  */
 export function invertNdTransformForQuery(
   slicePosition: readonly number[],
   tolerance: readonly number[],
   ndTransform: NdTransformMap,
-  dimensionNames: string[],
+  dimensions: readonly QueryDimensionInfo[],
   displayDims: readonly number[]
-): { slicePosition: number[]; tolerance: number[] } {
+): { slicePosition: number[]; tolerance: number[]; noPreimage: boolean } {
   const localSlice = [...slicePosition];
   const localTolerance = [...tolerance];
+  let noPreimage = false;
 
   for (let d = 0; d < localSlice.length; d++) {
     if (displayDims.includes(d)) continue;
-    if (d >= dimensionNames.length) continue;
+    if (d >= dimensions.length) continue;
 
-    const entry = ndTransform[dimensionNames[d]];
+    const dim = dimensions[d];
+    if (dim?.name === undefined) continue;
+
+    const entry = ndTransform[dim.name];
     if (!entry) continue;
 
     if (isPermutation(entry)) {
@@ -70,7 +133,9 @@ export function invertNdTransformForQuery(
       if (worldIndex >= 0 && worldIndex < inversePerm.length) {
         localSlice[d] = inversePerm[worldIndex];
       }
-      // Tolerance unchanged for categorical (integer matching)
+      // Tolerance unchanged for categorical (integer matching). A permutation
+      // is a bijection, so every world index has exactly one preimage — the
+      // no-preimage rule cannot apply to a categorical dimension.
     } else {
       // Affine inverse: raw = (effective - offset) / scale
       const scale = entry.scale ?? 1.0;
@@ -81,12 +146,31 @@ export function invertNdTransformForQuery(
         continue;
       }
 
-      localSlice[d] = (localSlice[d] - offset) / scale;
+      // Read the extend_to_all sentinel BEFORE it is rescaled below.
+      const isExtended = localTolerance[d] >= EXTENDED_TOLERANCE_FLOOR;
+      const local = (localSlice[d] - offset) / scale;
+
+      localSlice[d] = local;
       localTolerance[d] = localTolerance[d] / Math.abs(scale);
+
+      if (dim.discrete && !isExtended && !isOnDiscreteGrid(local, dim.step)) {
+        noPreimage = true;
+      }
     }
   }
 
-  return { slicePosition: localSlice, tolerance: localTolerance };
+  return { slicePosition: localSlice, tolerance: localTolerance, noPreimage };
+}
+
+/**
+ * True when `local` sits on a discrete dimension's `k · step` grid (within
+ * {@link ON_GRID_EPSILON} of an exact multiple). A missing or non-positive step
+ * falls back to 1, matching the rest of the slicing stack's default.
+ */
+function isOnDiscreteGrid(local: number, step: number | undefined): boolean {
+  const gridStep = step !== undefined && step !== null && step > 0 ? step : 1;
+  const ratio = local / gridStep;
+  return Math.abs(ratio - Math.round(ratio)) <= ON_GRID_EPSILON;
 }
 
 /**

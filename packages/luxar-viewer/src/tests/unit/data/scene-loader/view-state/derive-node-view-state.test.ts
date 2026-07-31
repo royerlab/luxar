@@ -278,3 +278,48 @@ describe('deriveNodeViewState — combined partial-extend + nd_transform', () =>
     expect(result.viewState.tolerance[1]).toBeCloseTo(0.25, 10);
   });
 });
+
+describe('deriveNodeViewState — nd_transform no-preimage propagation', () => {
+  /** Same 4D layout, but `time` is a discrete ordinal on the integer grid. */
+  function discreteDims(): DimensionMetadata[] {
+    return [
+      { name: 'time', unit: '', scale: 1.0, discrete: true, step: 1 },
+      { name: 'channel', unit: '', scale: 1.0 },
+      { name: 'z', unit: 'um', scale: 1.0 },
+      { name: 'y', unit: 'um', scale: 1.0 },
+    ];
+  }
+
+  const scaledNode = (scale: number) =>
+    node('', {}, [node('points', { nd_transform: { time: { scale } } })]);
+
+  it('flags noPreimage when the inverse query falls between discrete categories', () => {
+    // world time 5, scale 2 → local 2.5: no local category maps to world 5.
+    const base = baseViewState({ dimensions: discreteDims(), tolerance: [0, 0.5, 0, 0] });
+    const result = deriveNodeViewState('points', undefined, base, scaledNode(2), noTransformOpts);
+    if (result.skip !== false) throw new Error('expected non-skip');
+    expect(result.viewState.noPreimage).toBe(true);
+    // The position is still inverted — the flag is what suppresses the render.
+    expect(result.viewState.slicePosition[0]).toBeCloseTo(2.5, 10);
+  });
+
+  it('leaves noPreimage unset when the inverse query lands on a category', () => {
+    const base = baseViewState({
+      dimensions: discreteDims(),
+      slicePosition: [4, 1, 0, 0],
+      tolerance: [0, 0.5, 0, 0],
+    });
+    const result = deriveNodeViewState('points', undefined, base, scaledNode(2), noTransformOpts);
+    if (result.skip !== false) throw new Error('expected non-skip');
+    expect(result.viewState.noPreimage).toBeUndefined();
+    expect(result.viewState.slicePosition[0]).toBeCloseTo(2, 10);
+  });
+
+  it('leaves noPreimage unset for a plain offset transform', () => {
+    const root = node('', {}, [node('points', { nd_transform: { time: { offset: 3 } } })]);
+    const base = baseViewState({ dimensions: discreteDims(), tolerance: [0, 0.5, 0, 0] });
+    const result = deriveNodeViewState('points', undefined, base, root, noTransformOpts);
+    if (result.skip !== false) throw new Error('expected non-skip');
+    expect(result.viewState.noPreimage).toBeUndefined();
+  });
+});
