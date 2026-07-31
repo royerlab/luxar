@@ -92,6 +92,8 @@ export class LabeledSlider {
     this.valueEl = document.createElement('span');
     this.valueEl.className = 'luxar-layers-panel__control-value';
     this.valueEl.textContent = this.formatValue(options.initialValue);
+    // `writeReadout` also needs `this.input`, which does not exist yet — the
+    // aria mirror is applied right after the input is created below.
 
     labelEl.appendChild(labelText);
     labelEl.appendChild(this.valueEl);
@@ -109,12 +111,14 @@ export class LabeledSlider {
     }
     this.input.value = String(this.toPosition(options.initialValue));
     this.input.className = 'luxar-layers-panel__slider';
+    this.syncAriaValueText(options.initialValue);
 
     this.inputHandler = (): void => {
       const raw = this.toValue(parseFloat(this.input.value));
       const value = options.constrain ? options.constrain(raw) : raw;
       this.lastValue = value;
       this.valueEl.textContent = this.formatValue(value);
+      this.syncAriaValueText(value);
       options.onChange(value);
     };
     this.input.addEventListener('input', this.inputHandler);
@@ -143,6 +147,19 @@ export class LabeledSlider {
     return this.min * Math.pow(this.max / this.min, t);
   }
 
+  /**
+   * Mirror the visible readout into `aria-valuetext` on a `log` track.
+   *
+   * On a linear track the input's native `value` IS the value, so assistive
+   * tech reads it correctly and no override is needed. A log track drives the
+   * input in NORMALISED position space, so AT would otherwise announce the
+   * position ("0.75") instead of the value the readout shows ("1.00").
+   */
+  private syncAriaValueText(value: number): void {
+    if (this.scale !== 'log') return;
+    this.input.setAttribute('aria-valuetext', this.formatValue(value));
+  }
+
   private formatValue(v: number): string {
     return this.options.format ? this.options.format(v) : v.toFixed(2);
   }
@@ -152,6 +169,7 @@ export class LabeledSlider {
     this.lastValue = value;
     this.input.value = String(this.toPosition(value));
     this.valueEl.textContent = this.formatValue(value);
+    this.syncAriaValueText(value);
   }
 
   /**

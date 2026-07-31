@@ -554,10 +554,26 @@ and rendering agree.
   comparable stat and their `τ = κ·opacity·rayMass` is already O(1)-calibrated
   for fitted volumes, so they keep the historical 0.001–10 span, which is also
   the floor for every derived bound (an authored κ ≤ 10 must stay reachable).
-  Position 0 on the log track is an exact κ = 0 (the additive limit).
   A fixed 0–10 track had made the knob a visual no-op on thin geometry: at the
   3D-Hilbert-curve demo's `width = 1.5e-3`, the whole slider spanned
   τ ≤ 0.012 — below one 8-bit level.
+- **The current κ is always representable on the track**, or the readout would
+  show a value the thumb cannot express and a touch that moves nothing would
+  write the clamped end back. Three mechanics enforce that: κ = 0 gets a
+  DEDICATED stop at position 0 (the geometric span starts one DOM step in, so
+  `min` itself round-trips and cannot collapse to zero); `max` is raised to an
+  authored κ above the derived opaque point; and `min` is LOWERED onto a
+  positive authored κ beneath the nominal floor (very thin geometry derives a
+  large `max`, whose 4-decade floor would otherwise sit above the default
+  κ = 1). Two clamps bound that accommodation — `ABSORPTION_MAX_LIMIT` and
+  `ABSORPTION_LOG_DECADES_MAX` — because unbounded accommodation would compress
+  the useful region off the track and recreate the original bug. Outside them
+  the thumb seats at the clamped end: accepted, because past the ceiling both κ
+  are far beyond opaque and below the floor both are ≥ 7 decades below visible
+  absorption, so the swapped states are visually identical.
+- On a log track the input's native `value` is a normalised POSITION, so the
+  component mirrors the κ readout into `aria-valuetext` (assistive tech would
+  otherwise announce the position). Linear tracks need no override.
 - Visibility: the slider is shown/enabled **only when the selected layer's
   effective mode is `volumetric`** — κ is inert elsewhere and the UI should say
   so. Sync with the existing dropdown-change handler
