@@ -18,10 +18,18 @@ permissions:
 jobs:
   # Change detection: decide whether this ref's changes are DOCS/MARKDOWN-ONLY.
   # When they are, the heavy jobs below skip their expensive steps but STILL RUN
-  # (checkout + this gate), so every required check context (`python-tests (…)`,
-  # `typescript-tests`, `release-readiness`) still reports success — skipping the
-  # jobs entirely would leave required checks unreported and DEADLOCK the merge.
+  # (checkout + this gate), so every check context (`python-tests (…)`,
+  # `typescript-tests`, `release-readiness`) reports an explicit green success
+  # instead of a grey "skipped" (which GitHub also counts as passing, but is
+  # easy to misread and fragile if those contexts ever become required).
   # Any non-doc file (or a push to main, which has no PR base) => full CI.
+  #
+  # FAIL-SAFE: every dependent job carries `if: ${{ !cancelled() }}`. Without
+  # it, a failure of THIS job (flaky checkout, runner outage) would skip the
+  # dependents, and skipped checks count as passing — i.e. the gate would fail
+  # OPEN with no CI at all. With the guard the dependents still run, the
+  # `docs_only` output is empty, and every `!= 'true'` step condition selects
+  # the full suite.
   changes:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -56,6 +64,9 @@ jobs:
 
   python-tests:
     needs: changes
+    # Fail-safe fallback to full CI if `changes` fails — see the note on the
+    # `changes` job.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     # `hatch run test-cov` runs `pytest -m 'not slow'` — the heavy CPU-fitting
     # tests (content-fit CLI, tiled/progressive fitting) are marked `slow` and
@@ -179,6 +190,9 @@ jobs:
 
   typescript-tests:
     needs: changes
+    # Fail-safe fallback to full CI if `changes` fails — see the note on the
+    # `changes` job.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     defaults:
@@ -287,6 +301,9 @@ jobs:
 
   release-readiness:
     needs: changes
+    # Fail-safe fallback to full CI if `changes` fails — see the note on the
+    # `changes` job.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     defaults:
@@ -361,6 +378,9 @@ jobs:
 
   go-launcher:
     needs: changes
+    # Fail-safe fallback to full CI if `changes` fails — see the note on the
+    # `changes` job.
+    if: ${{ !cancelled() }}
     # Pinned to 22.04: the launcher's webview_go (latest available) links
     # webkit2gtk-4.0 via pkg-config, and ubuntu-24.04 (ubuntu-latest) ships only
     # the 4.1 dev package. 22.04 provides libwebkit2gtk-4.0-dev.
