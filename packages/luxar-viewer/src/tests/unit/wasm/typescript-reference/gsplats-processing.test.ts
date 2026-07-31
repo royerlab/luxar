@@ -553,3 +553,283 @@ describe('gsplats_processing: fewer than 3 display dims (TS reference)', () => {
     }
   });
 });
+
+/**
+ * Regression for issue #725: the TS reference is the UNCAPPED >16-dimension
+ * backend (`pickBackend` routes ndim > MAX_SUPPORTED_DIMS here because the WASM
+ * kernel panics above 16), yet its scratch buffers and the marginal-covariance
+ * matrix stride were hardwired to MAX_SUPPORTED_DIMS (16). With more than 16
+ * CONTINUOUS hidden dims the workspaces overflowed, the marginal Cholesky read
+ * garbage, and amplitudes came back NaN — and since `NaN < minAmplitude` is
+ * false EVERY splat was emitted as "visible" with a NaN amplitude (silent
+ * corruption, no error).
+ */
+describe('gsplats_processing: >16 continuous hidden dims (issue #725)', () => {
+  // Packed lower-triangular index, matching the module's packedIndex().
+  const packedIdx = (row: number, col: number): number => (row * (row + 1)) / 2 + col;
+
+  // Identity Cholesky (L = I) packed for `ndim` dims: unit diagonal, zero off-diag.
+  const identityPackedCholesky = (ndim: number): Float32Array => {
+    const packed = new Float32Array((ndim * (ndim + 1)) / 2);
+    for (let i = 0; i < ndim; i++) packed[packedIdx(i, i)] = 1.0;
+    return packed;
+  };
+
+  it('returns finite ~1.0 amplitudes for on-slice splats at ndim=20 (17 continuous hidden dims)', () => {
+    const ndim = 20;
+    const displayDims = new Uint32Array([0, 1, 2]);
+    // Dims 3..19 (17 dims) are continuous hidden — one MORE than MAX_SUPPORTED_DIMS.
+    const continuousHiddenDims = new Uint32Array(Array.from({ length: ndim - 3 }, (_, k) => k + 3));
+    expect(continuousHiddenDims.length).toBe(17);
+
+    const splatCount = 2;
+    const fullPacked = identityPackedCholesky(ndim);
+    // Both splats sit exactly on the slice (all coords 0) → hidden distance 0.
+    const positions = new Float32Array(splatCount * ndim); // all zeros
+    const cholesky = new Float32Array(splatCount * fullPacked.length);
+    cholesky.set(fullPacked, 0);
+    cholesky.set(fullPacked, fullPacked.length);
+    const amplitudes = new Float32Array([1.0, 1.0]);
+    const colors = new Float32Array(splatCount * 3).fill(1.0);
+    const discreteVisibility = new Uint8Array([1, 1]);
+    const slicePosition = new Float32Array(ndim); // all zeros
+
+    const outCenters3d = new Float32Array(splatCount * 3);
+    const outCholesky3d = new Float32Array(splatCount * 6);
+    const outAmplitudes = new Float32Array(splatCount);
+    const outColors = new Float32Array(splatCount * 3);
+
+    const count = project_gsplats_nd_to_3d(
+      positions,
+      cholesky,
+      amplitudes,
+      colors,
+      discreteVisibility,
+      slicePosition,
+      continuousHiddenDims,
+      displayDims,
+      ndim,
+      splatCount,
+      3,
+      1e-6,
+      4.0,
+      outCenters3d,
+      outCholesky3d,
+      outAmplitudes,
+      outColors
+    );
+
+    // On the buggy code the workspaces overflow, mahalDist is NaN, attenuation is
+    // NaN, and `NaN < minAmplitude` is false → both splats emitted with NaN amps.
+    // The NaN emission would still yield count===2, so the real assertion is that
+    // the amplitudes are FINITE and ~1.0 (not NaN).
+    expect(count).toBe(2);
+    expect(Number.isFinite(outAmplitudes[0])).toBe(true);
+    expect(Number.isFinite(outAmplitudes[1])).toBe(true);
+    expect(outAmplitudes[0]).toBeCloseTo(1.0, 5);
+    expect(outAmplitudes[1]).toBeCloseTo(1.0, 5);
+
+    // GROWN-BUFFER REUSE: after the 17-D hidden marginal grows the workspaces,
+    // the SAME call does a subNdim=3 display marginal (computeDisplayCholesky3D).
+    // With an identity input the packed-3D display Cholesky must be exactly the
+    // identity [1,0,1,0,0,1] — proving the grown workspaces are re-zeroed and no
+    // stale 17-D data leaks into the later 3-D computation.
+    for (let s = 0; s < 2; s++) {
+      const c = s * 6;
+      expect(Array.from(outCholesky3d.subarray(c, c + 6))).toEqual([1, 0, 1, 0, 0, 1]);
+    }
+  });
+
+  it('attenuates a splat far off the slice in a hidden dim beyond index 16', () => {
+    const ndim = 20;
+    const displayDims = new Uint32Array([0, 1, 2]);
+    const continuousHiddenDims = new Uint32Array(Array.from({ length: ndim - 3 }, (_, k) => k + 3));
+
+    const splatCount = 3;
+    const fullPacked = identityPackedCholesky(ndim);
+    const cholesky = new Float32Array(splatCount * fullPacked.length);
+    for (let s = 0; s < splatCount; s++) cholesky.set(fullPacked, s * fullPacked.length);
+
+    const positions = new Float32Array(splatCount * ndim); // start all on-slice
+    // Splat 2 sits far away in dim 19 — a CONTINUOUS hidden dim past index 16, so
+    // its distance is only computed correctly if the >16-D marginal is right.
+    positions[2 * ndim + 19] = 10.0;
+
+    const amplitudes = new Float32Array([1.0, 1.0, 1.0]);
+    const colors = new Float32Array(splatCount * 3).fill(1.0);
+    const discreteVisibility = new Uint8Array([1, 1, 1]);
+    const slicePosition = new Float32Array(ndim);
+
+    const outCenters3d = new Float32Array(splatCount * 3);
+    const outCholesky3d = new Float32Array(splatCount * 6);
+    const outAmplitudes = new Float32Array(splatCount);
+    const outColors = new Float32Array(splatCount * 3);
+
+    const count = project_gsplats_nd_to_3d(
+      positions,
+      cholesky,
+      amplitudes,
+      colors,
+      discreteVisibility,
+      slicePosition,
+      continuousHiddenDims,
+      displayDims,
+      ndim,
+      splatCount,
+      3,
+      1e-6,
+      4.0,
+      outCenters3d,
+      outCholesky3d,
+      outAmplitudes,
+      outColors
+    );
+
+    // Only the two on-slice splats survive. If the >16-D distance were silently
+    // zero (as under the overflow), the far splat would pass with attenuation 1.0
+    // and count would be 3.
+    expect(count).toBe(2);
+    expect(outAmplitudes[0]).toBeCloseTo(1.0, 5);
+    expect(outAmplitudes[1]).toBeCloseTo(1.0, 5);
+  });
+
+  // A 20-D identity Cholesky with ONE off-diagonal in the hidden region:
+  // L[19,18] = 1.5 (dims 18,19 are hidden indices 15,16). The hidden 17×17
+  // marginal is identity except a 2×2 block on (15,16):
+  //   Σ = [[1, 1.5], [1.5, 1 + 1.5²]] = [[1, 1.5], [1.5, 3.25]]  (det = 1).
+  const correlatedNdim = 20;
+  const correlatedOffDiag = 1.5;
+  const correlatedPacked = (): Float32Array => {
+    const packed = identityPackedCholesky(correlatedNdim);
+    packed[packedIdx(19, 18)] = correlatedOffDiag; // L[19,18]
+    return packed;
+  };
+
+  it('computes the CORRELATED >16-D marginal Cholesky (pins the stride, not just overflow)', () => {
+    // Direct computeMarginalCholesky over the 17 hidden dims 3..19.
+    const hidden = new Uint32Array(Array.from({ length: correlatedNdim - 3 }, (_, k) => k + 3));
+    expect(hidden.length).toBe(17);
+    const subPacked = (hidden.length * (hidden.length + 1)) / 2; // 153
+    const out = new Float32Array(subPacked);
+
+    computeMarginalCholesky(correlatedPacked(), 0, hidden, hidden.length, out, 0);
+
+    // Cholesky of the 2×2 block: L_S[15,15]=1, L_S[16,15]=1.5, L_S[16,16]=√(3.25-2.25)=1.
+    // (hidden index 15 = dim 18, hidden index 16 = dim 19.)
+    expect(out[packedIdx(15, 15)]).toBeCloseTo(1.0, 5);
+    expect(out[packedIdx(16, 15)]).toBeCloseTo(1.5, 5);
+    expect(out[packedIdx(16, 16)]).toBeCloseTo(1.0, 5);
+    // Every other diagonal is the untouched identity, and the coupling does NOT
+    // bleed into neighbouring cells. A wrong stride scrambles these to finite
+    // garbage, so this fails on a stride regression even though the NaN test won't.
+    expect(out[packedIdx(14, 14)]).toBeCloseTo(1.0, 5);
+    expect(out[packedIdx(16, 14)]).toBeCloseTo(0.0, 5);
+    expect(out[packedIdx(15, 14)]).toBeCloseTo(0.0, 5);
+  });
+
+  it('applies the CORRELATED >16-D attenuation to a splat offset in a hidden dim past index 16', () => {
+    const ndim = correlatedNdim;
+    const displayDims = new Uint32Array([0, 1, 2]);
+    const continuousHiddenDims = new Uint32Array(Array.from({ length: ndim - 3 }, (_, k) => k + 3));
+
+    // Offset ONLY in dim 18 (hidden index 15), the correlated column. With the
+    // marginal above, D² = δ²·(Σ⁻¹)[15,15] = δ²·(3.25/det) = 3.25·δ² — distinct
+    // from the identity backend's δ². δ = 0.5 → D² = 0.8125.
+    const delta = 0.5;
+    const packed = correlatedPacked();
+    const positions = new Float32Array(ndim);
+    positions[18] = delta;
+
+    const truncate = 4.0;
+    const shiftC = Math.exp(-0.5 * truncate * truncate);
+    const invOneMinusC = 1.0 / (1.0 - shiftC);
+    const d2 = 3.25 * delta * delta;
+    const expectedAtten = Math.max(0.0, invOneMinusC * (Math.exp(-0.5 * d2) - shiftC));
+    // Sanity: the correlated answer is clearly separated from the identity one.
+    const identityAtten = Math.max(0.0, invOneMinusC * (Math.exp(-0.5 * delta * delta) - shiftC));
+    expect(Math.abs(expectedAtten - identityAtten)).toBeGreaterThan(0.1);
+
+    const outCenters3d = new Float32Array(3);
+    const outCholesky3d = new Float32Array(6);
+    const outAmplitudes = new Float32Array(1);
+    const outColors = new Float32Array(3);
+
+    const count = project_gsplats_nd_to_3d(
+      positions,
+      packed,
+      new Float32Array([1.0]),
+      new Float32Array(3).fill(1.0),
+      new Uint8Array([1]),
+      new Float32Array(ndim),
+      continuousHiddenDims,
+      displayDims,
+      ndim,
+      1,
+      3,
+      1e-6,
+      truncate,
+      outCenters3d,
+      outCholesky3d,
+      outAmplitudes,
+      outColors
+    );
+
+    expect(count).toBe(1);
+    expect(outAmplitudes[0]).toBeCloseTo(expectedAtten, 5);
+  });
+
+  it('legacy compute_gsplats_attenuation matches the correlated >16-D result', () => {
+    const ndim = correlatedNdim;
+    const hiddenDims = new Uint32Array(Array.from({ length: ndim - 3 }, (_, k) => k + 3));
+    const delta = 0.5;
+    const positions = new Float32Array(ndim);
+    positions[18] = delta;
+
+    const truncate = 4.0;
+    const shiftC = Math.exp(-0.5 * truncate * truncate);
+    const invOneMinusC = 1.0 / (1.0 - shiftC);
+    const expectedAtten = Math.max(
+      0.0,
+      invOneMinusC * (Math.exp(-0.5 * 3.25 * delta * delta) - shiftC)
+    );
+
+    const visibility = new Uint8Array(1);
+    const attenuation = new Float32Array(1);
+    const count = compute_gsplats_attenuation(
+      positions,
+      correlatedPacked(),
+      new Float32Array([1.0]),
+      new Float32Array(ndim),
+      hiddenDims,
+      ndim,
+      1,
+      1e-6,
+      truncate,
+      visibility,
+      attenuation
+    );
+
+    expect(count).toBe(1);
+    expect(visibility[0]).toBe(1);
+    expect(attenuation[0]).toBeCloseTo(expectedAtten, 5);
+  });
+
+  it('INTERLEAVE: a small subNdim=2 marginal after a >16-D one is uncorrupted', () => {
+    // First a >16-D correlated marginal — this GROWS the module workspaces.
+    const hidden = new Uint32Array(Array.from({ length: correlatedNdim - 3 }, (_, k) => k + 3));
+    const bigOut = new Float32Array((hidden.length * (hidden.length + 1)) / 2);
+    computeMarginalCholesky(correlatedPacked(), 0, hidden, hidden.length, bigOut, 0);
+
+    // Then a small subNdim=2 marginal on an UNRELATED 3-D correlated factor
+    // (the exact case from the earlier `should produce correct marginal` test).
+    // If grow-then-reuse leaked stale 17-D data, this small result would be wrong.
+    const small = new Float32Array([2, 1, 3, 0.5, 0.5, 4]); // L=[[2,0,0],[1,3,0],[0.5,0.5,4]]
+    const smallOut = new Float32Array(3);
+    computeMarginalCholesky(small, 0, new Uint32Array([0, 2]), 2, smallOut, 0);
+
+    // Σ_S = [[4,1],[1,16.5]] → L_S = [2, 0.5, √16.25].
+    expect(smallOut[0]).toBeCloseTo(2.0, 4);
+    expect(smallOut[1]).toBeCloseTo(0.5, 4);
+    expect(smallOut[2]).toBeCloseTo(Math.sqrt(16.25), 3);
+  });
+});
