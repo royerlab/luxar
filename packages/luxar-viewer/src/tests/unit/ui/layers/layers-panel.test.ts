@@ -851,6 +851,86 @@ describe('LayersPanel — blend select drives the leaf material', () => {
     expect(panel.layerState.getLayer('/cloud')!.blendingMode).toBe('max');
   });
 
+  it('colormap toggle re-syncs the range slider, so the first drag cannot revert the window', () => {
+    // The colormap select re-defaults the display window (the window means a
+    // different thing on each side of the toggle), but it runs with
+    // `controlsInteracting = true`, which suppresses the state-change
+    // re-render. RangeSlider emits values parsed from its own <input>
+    // elements, so if the handler doesn't re-render, the thumbs keep the OLD
+    // window and the first drag writes it back — silently reverting the
+    // re-default (colormap ON → a [0, 1] window on amplitudes = the #522
+    // near-black; OFF → the scalar range re-applied as a colour gain).
+    const stubMat: Record<string, unknown> = {
+      userData: {},
+      uniforms: { uOpacity: { value: 1.0 } },
+      defines: {},
+      updateIntensity: vi.fn(),
+      updateOffset: vi.fn(),
+      updateGamma: vi.fn(),
+      updateOpacity: vi.fn(),
+      updateColormapTexture: vi.fn(),
+      updateScalarRange: vi.fn(),
+      applyBlendingMode: vi.fn(),
+    };
+    stubMat.clone = vi.fn(() => stubMat);
+    const mesh = new THREE.Mesh(new THREE.BufferGeometry(), stubMat as unknown as THREE.Material);
+    mesh.name = '/cloud';
+    mesh.userData.nodeType = 'points';
+    const rootGroup = new THREE.Group();
+    rootGroup.add(mesh);
+
+    const graph = {
+      name: 'root',
+      path: '/',
+      type: 'group',
+      attrs: {},
+      children: [
+        {
+          name: 'cloud',
+          path: '/cloud',
+          type: 'points',
+          attrs: {
+            layer: true,
+            type: 'points',
+            has_scalars: true,
+            scalar_data_range: [0.0001, 0.02],
+            color_data_range: [0.2, 0.6],
+          },
+          children: [],
+        },
+      ],
+    } as unknown as SceneNode;
+
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(rootGroup, graph);
+    panel.show();
+    panel.layerState.select('/cloud', 'single');
+
+    const readSliderInputs = () =>
+      Array.from(container.querySelectorAll('.luxar-range-slider__input')).map((el) =>
+        Number((el as HTMLInputElement).value)
+      );
+
+    // Direct colour to start: identity window, and the widget agrees.
+    expect(panel.layerState.getLayer('/cloud')!.displayMax).toBeCloseTo(1, 5);
+
+    const cmSelect = Array.from(container.querySelectorAll('select')).find((s) =>
+      Array.from(s.options).some((o) => o.value === 'viridis')
+    );
+    expect(cmSelect).toBeDefined();
+    cmSelect!.value = 'viridis';
+    cmSelect!.dispatchEvent(new Event('change', { bubbles: true }));
+
+    // State moved to the scalar window…
+    const layer = panel.layerState.getLayer('/cloud')!;
+    expect(layer.displayMin).toBeCloseTo(0.0001, 6);
+    expect(layer.displayMax).toBeCloseTo(0.02, 6);
+    // …and so did the widget — otherwise the next drag emits the stale [0, 1].
+    const [low, high] = readSliderInputs();
+    expect(low).toBeCloseTo(layer.displayMin, 6);
+    expect(high).toBeCloseTo(layer.displayMax, 6);
+  });
+
   it('a kind=partition layer overrides a blending mode stamped on its own parts', () => {
     // Regression (gallery demo): `graft_gsplat_node` used to re-stamp
     // blending_mode on every grafted part. blending_mode is

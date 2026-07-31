@@ -299,6 +299,17 @@ export class LayerControls {
         this.deps.apply.applyColormap(sel);
       }
       this.controlsInteracting = false;
+      // Re-sync the widgets this handler just invalidated. `setColormapWindow`
+      // moved the display window (and widened the bounds), but
+      // `controlsInteracting` suppressed the state-change re-render — and
+      // RangeSlider emits values parsed from its own <input> elements, which
+      // only `render()` updates. Without this the thumbs keep the OLD window
+      // and the first drag writes it back, silently reverting the re-default:
+      // toggling a colormap on would re-apply a [0, 1] window to amplitudes
+      // (the #522 near-black), and off would re-apply the scalar range as a
+      // colour gain (the contrast stretch this campaign removed). The blend
+      // handler does the same for the κ slider via syncAbsorptionVisibility().
+      this.render();
     });
     cmGroup.appendChild(cmLabel);
     cmGroup.appendChild(this.colormapSelect);
