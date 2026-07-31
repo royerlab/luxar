@@ -60,12 +60,10 @@ O(N) only when the ray genuinely misses every node.
 `voteWinner` reads a 5×5 block from the float32 pick target where each
 pixel encodes `(nodeId, elementId-low16, brightness, elementId-high16)`. Background pixels
 (`r < 0.5`) are skipped; the rest are tallied into the caller-supplied
-`votesScratch` map keyed by `nodeId * 2^32 + elementId` (lossless for
-24-bit IDs), accumulating brightness as the vote weight. The brightest
-total wins. The 5×5 footprint is deliberate: it gives a tiny amount of
-slack so a single-pixel-wide point or line edge still picks reliably,
-but it's small enough that the brightness weighting still resolves
-overlapping splats by intensity rather than by which-fragment-was-drawn-last.
+`votesScratch` map keyed by `nodeId * 2^27 + elementId` — a stride that both
+exceeds every reachable element index (44,728,319 at max capacity) and keeps
+the product exactly representable for any `nodeId` an f32 channel can carry
+(see `VOTE_KEY_STRIDE`, pinned against the live layout maxima by a unit test).
 
 ## Hover settle decision
 

@@ -19,7 +19,9 @@
  * 5. Readback of a 5×5 region followed by brightness-weighted
  *    majority voting picks the winning (nodeId, elementId).
  *
- * The pick buffer encodes: R=nodeId, G=elementId, B=brightness, A=1.0
+ * The pick buffer encodes: R=nodeId, G=elementId low 16 bits,
+ * B=brightness, A=elementId high 16 bits (split so an index past f32's
+ * 24-bit exact range survives — see picking-system/pick-render.ts)
  * Brightness-as-depth (gl_FragDepth = 1 - brightness) ensures the
  * brightest element at each pixel wins the depth test. Exception:
  * gsplat nodes in surface ('normal') blending mode write real projected

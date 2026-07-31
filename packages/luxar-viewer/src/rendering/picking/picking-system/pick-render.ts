@@ -30,14 +30,40 @@ export interface VoteEntry {
  * halves are <= 65535 and exact, so the recombination below is exact for
  * the whole uint32 range.
  *
- * The vote key must not alias across nodes now that `elementId` can
- * exceed 2^24, so it scales by 2^32 rather than 2^24. That is exact in a
- * double while `nodeId < 2^21` — and nodeId rides an f32 channel, which
- * caps it at 2^24 anyway, so the binding limit is the 2^21 here.
- *
  * `votesScratch` is reused across calls (cleared here) to keep the
- * hot path allocation-free.
+ * hot path allocation-free — which is why the key stays a NUMBER rather
+ * than a string or a nested map.
+ *
+ * See {@link VOTE_KEY_STRIDE} for why that is safe.
  */
+/**
+ * Multiplier packing `(nodeId, elementId)` into one numeric vote key.
+ *
+ * Two conditions must hold simultaneously, and 2^27 is the value that
+ * satisfies both with room to spare:
+ *
+ * 1. **Alias-free** — the stride must exceed every reachable `elementId`,
+ *    or `(node n, element stride)` collides with `(node n+1, element 0)`
+ *    and two different elements merge their brightness votes. The largest
+ *    reachable index is a node at max capacity, which is
+ *    `getMaxElementCapacityPerNode` = `width x maxTextureSize /
+ *    texelsPerElement`: 44,728,319 for points on a 32768-texel device.
+ *    2^27 = 134,217,728 clears that ~3x over, so even a future
+ *    `maxTextureSize` of 65536 (~89M) still fits.
+ * 2. **Exactly representable** — `nodeId * stride + elementId` must stay
+ *    under 2^53 or adjacent keys round onto each other. `nodeId` rides an
+ *    f32 channel of the pick buffer, so it cannot exceed 2^24; the worst
+ *    case is `(2^24 - 1) * 2^27 + 44,728,319` ~ 2.25e15, comfortably
+ *    inside 9.007e15.
+ *
+ * A stride of 2^32 would satisfy (1) but violate (2) past `nodeId` 2^21 —
+ * an unenforced bound is not a bound, hence 2^27. `assertVoteKeyHeadroom`
+ * in the unit tests pins both conditions against the live layout maxima,
+ * so a capacity increase that outgrows this stride fails there rather
+ * than silently merging votes.
+ */
+export const VOTE_KEY_STRIDE = 134217728; // 2^27
+
 export function voteWinner(
   pixels: Float32Array,
   pickSize: number,
@@ -52,7 +78,7 @@ export function voteWinner(
     if (r < 0.5) continue;
     const nodeId = Math.round(r);
     const elementId = Math.round(a) * 65536 + Math.round(g);
-    const key = nodeId * 4294967296 + elementId;
+    const key = nodeId * VOTE_KEY_STRIDE + elementId;
     const existing = votesScratch.get(key);
     if (existing) existing.weight += b;
     else votesScratch.set(key, { nodeId, elementId, weight: b });

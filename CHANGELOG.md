@@ -53,9 +53,11 @@ range. The vote key scales by 2^32 instead of 2^24 to match: with the old
 multiplier, `(nodeId 1, element 2^24)` and `(nodeId 2, element 0)` hashed to
 the same bucket and merged their votes.
 
-Below 65536 the encoding is byte-for-byte what it was (the high half is 0
-and `g` still holds the whole index), so ordinary scenes are unaffected —
-pinned by a test.
+Below 65536 the DECODE is unchanged — the high half is 0 and `g` still
+holds the whole index, which is exactly what the old decoder read — so no
+resolved id moves and ordinary scenes are unaffected. (The buffer bytes do
+differ there: alpha went from a constant 1.0 to the zero high half.) Pinned
+by a test.
 
 #### Fixed — a scaling `nd_transform` no longer draws the wrong slice on a discrete dimension
 

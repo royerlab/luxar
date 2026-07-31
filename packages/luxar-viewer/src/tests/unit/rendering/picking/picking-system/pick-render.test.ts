@@ -6,9 +6,19 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
+  VOTE_KEY_STRIDE,
   voteWinner,
   type VoteEntry,
 } from '../../../../../rendering/picking/picking-system/pick-render';
+import {
+  configureElementTextureLayout,
+  getElementTextureWidth,
+  getMaxElementCapacityPerNode,
+  resetElementTextureLayoutForTests,
+  SPLAT_TEXTURE_LAYOUT,
+  POINT_TEXTURE_LAYOUT,
+  LINE_TEXTURE_LAYOUT,
+} from '../../../../../rendering/element-texture-layout';
 
 const PICK_SIZE = 5;
 
@@ -56,7 +66,7 @@ function setHit(
 }
 
 /** The key `voteWinner` uses internally, for scratch-map assertions. */
-const voteKey = (nodeId: number, elementId: number): number => nodeId * 4294967296 + elementId;
+const voteKey = (nodeId: number, elementId: number): number => nodeId * VOTE_KEY_STRIDE + elementId;
 
 describe('voteWinner', () => {
   let scratch: Map<number, VoteEntry>;
@@ -168,13 +178,15 @@ describe('voteWinner', () => {
     expect(winner!.nodeId).toBe(2);
   });
 
-  it('is byte-for-byte compatible with the old one-channel encoding below 2^16', () => {
+  it('is DECODE-compatible with the old one-channel encoding below 2^16', () => {
     // The split only engages above 65535: under it the high half is 0, so
     // `g` still holds the whole index and the decode reduces to
     // `0 * 65536 + g` — exactly what the single-channel path produced.
-    // This is why the change cannot perturb ordinary scenes, and why a
-    // cross-backend pick difference at small ids would have to come from
-    // rasterization, not from this encoding.
+    // DECODE-compatible, not byte-identical: alpha went from a constant
+    // 1.0 to the (zero) high half, so a raw buffer dump does differ. What
+    // matters is that no decoded id moves, which is why the change cannot
+    // perturb ordinary scenes — and why a cross-backend pick difference at
+    // small ids has to come from rasterization, not from this encoding.
     for (const elementId of [0, 1, 42, 65_535]) {
       const pixels = buildPixels();
       setHit(pixels, 1, 1, 4, elementId, 0.7);
@@ -216,6 +228,52 @@ describe('voteWinner', () => {
     expect(winner!.nodeId).toBe(2);
     expect(winner!.elementId).toBe(0);
     expect(winner!.weight).toBeCloseTo(0.6, 5);
+  });
+
+  it('keeps the vote key alias-free AND exact across every supported layout', () => {
+    // The stride has to clear the largest reachable elementId (or two
+    // elements merge votes) while `nodeId * stride + elementId` stays under
+    // 2^53 (or adjacent keys round together). Pinned against the LIVE
+    // layout maxima so a capacity increase that outgrows the stride fails
+    // here instead of silently merging votes in the field.
+    try {
+      let maxElementId = 0;
+      for (const maxTextureSize of [4096, 8192, 16384, 32768]) {
+        configureElementTextureLayout(maxTextureSize);
+        for (const layout of [SPLAT_TEXTURE_LAYOUT, POINT_TEXTURE_LAYOUT, LINE_TEXTURE_LAYOUT]) {
+          // Sanity: the capacity really is width x height / texels.
+          expect(getElementTextureWidth(layout)).toBeGreaterThan(0);
+          maxElementId = Math.max(maxElementId, getMaxElementCapacityPerNode(layout) - 1);
+        }
+      }
+      expect(maxElementId, 'stride must exceed every reachable elementId').toBeLessThan(
+        VOTE_KEY_STRIDE
+      );
+
+      // nodeId rides an f32 channel of the pick buffer, so 2^24 is its ceiling.
+      const worstKey = (2 ** 24 - 1) * VOTE_KEY_STRIDE + maxElementId;
+      expect(worstKey, 'worst-case key must stay exactly representable').toBeLessThan(
+        Number.MAX_SAFE_INTEGER
+      );
+      expect(worstKey + 1).not.toBe(worstKey); // i.e. still in exact-integer territory
+    } finally {
+      resetElementTextureLayoutForTests();
+    }
+  });
+
+  it('does not merge adjacent elements at the nodeId ceiling', () => {
+    // The 2^32 stride this replaced broke exactly here: at nodeId 2^21 the
+    // key crosses 2^53 and elementId 0 vs 1 round onto the same number.
+    for (const nodeId of [2 ** 21, 2 ** 24 - 1]) {
+      const pixels = buildPixels();
+      setHit(pixels, 0, 0, nodeId, 0, 0.4);
+      setHit(pixels, 1, 0, nodeId, 1, 0.6);
+      const scratchLocal = new Map<number, VoteEntry>();
+      const winner = voteWinner(pixels, PICK_SIZE, scratchLocal);
+      expect(scratchLocal.size, `nodeId ${nodeId}: adjacent elements merged`).toBe(2);
+      expect(winner!.elementId).toBe(1);
+      expect(winner!.weight).toBeCloseTo(0.6, 5);
+    }
   });
 
   it('honors pickSize parameter (3×3 block reads only the first 9 RGBA quads)', () => {

@@ -1130,7 +1130,7 @@ test.describe('TSL ↔ GLSL shader parity', () => {
   // axis: instance 0 NEARER but DIMMER (amplitude 0.3), instance 1
   // FARTHER but BRIGHTER (1.0), footprints coinciding at the
   // viewport-centre probe pixel (32,32). The pick buffer encodes
-  // (nodeId, elementId, brightness, 1): in the RGBA8 readback nodeId 42
+  // (nodeId, elementIdLow16, brightness, elementIdHigh16): in the RGBA8 readback nodeId 42
   // clamps to R=255 (coverage marker), elementId quantises to G=0
   // (instance 0) or G=255 (instance 1), and brightness lands in B
   // (≈77 for the dim splat, 255 for the bright one).
