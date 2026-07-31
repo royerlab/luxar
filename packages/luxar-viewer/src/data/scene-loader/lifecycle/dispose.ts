@@ -76,6 +76,12 @@ export async function disposeSceneLoader(ctx: DisposeCtx): Promise<{
   // Dispose all geometry loaders via registry
   ctx.registry.disposeAll();
 
+  // Also drop failure tracking. `disposeAll` clears only the loader maps, but
+  // `loadScene` supports same-instance reuse, and a stale failure record from
+  // the previous dataset would otherwise be counted by the new load's outcome
+  // report and retried against the new scene.
+  ctx.registry.clearAllFailures();
+
   // dispose GPU buffer pool. Without this, the pool retains
   // active+pooled InstancedBufferGeometry references after a dataset
   // switch — at million-element scale this can leak hundreds of MB

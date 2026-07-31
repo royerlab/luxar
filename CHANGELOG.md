@@ -64,13 +64,65 @@ answered "does this axis have extent?" by scene scale: a splat with σ = 1e-7
 verbatim, but a 2D scene — or any nD scene with hidden dims — always goes through
 the marginal.
 
-The floor is now anchored to the largest diagonal of Σ_S
+The floor is now anchored to the largest diagonal of `Σ_S`
 (`CHOLESKY_RELATIVE_EPSILON = 1e-12`), making it a pure condition-number check
 that behaves identically at every scene scale, with the absolute constant kept as
 a backstop for a genuinely scaleless (all-zero) covariance. Same
 scale-free-conditioning reasoning as the shader's trace-normalized covariance
-inverse. Rank-deficient axes are still regularized, now as a fixed *fraction* of
+inverse. Rank-deficient axes are still regularized, now as a fixed _fraction_ of
 the real axis.
+
+#### Changed — ACES is now the recommended tone mapping, and choosing it explicitly no longer warns
+
+`ACES` is the right tone mapping for almost every scene — its filmic highlight
+rolloff is what keeps bright, dense structure from clipping flat — and it is
+already the viewer's default. The tree was built around the opposite
+assumption: seventeen demos pinned `Neutral`, and the compiler warned authors
+away from ACES.
+
+The LUT tone-mapping warning in `io/_compiler/colormap.py` now fires **only
+when the author set no `tone_mapping` at all**. Its predicate was
+`!= "Neutral"`, so an explicit `"ACES"` tripped it too — nagging about a
+deliberate decision, while the message itself speaks of "the viewer's
+*default*", which is only what you get by saying nothing. Any explicit value,
+`"ACES"` included, now silences it. Fifteen demos move from `Neutral` to an
+explicit `ACES`. Two keep `Neutral` as verified exceptions:
+`demo_gsplats_3d_tribolium_embryo`, whose pairing with `exposure=1.97` was tuned
+deliberately, and `demo_flywire_connectome`, where ACES blew its luminous
+connection glow out into a white wash. The classical-capture interop demos also
+stay on `Neutral`, via the `build_interop_scene` default — their baked per-splat
+RGB is already display-referred, so ACES would distort it. `CLAUDE.md`, the HDR
+guide, the `gsplat convert` CLI help and the `ViewerConfig.tone_mapping`
+docstring all now recommend ACES, keeping `Neutral` for the narrower case where
+a colormap LUT carries an exact scientific colour encoding. Regenerate the demo
+datasets to pick up the new look.
+
+#### Changed — five gsplat demos bake their preferred viewer appearance
+
+The blanket `volumetric` + kappa 1.0 default from the bioimaging demo sweep was
+wrong for scenes whose layers are *superimposed over the same specimen*: there,
+emission-absorption makes whichever layer draws first occlude the other, so
+channel overlap reads as one channel hiding the rest instead of the colours
+mixing. The multi-channel organoid now composites `additive` (a pure sum, no
+attenuation) and the 4D neuromast timelapse drops to absorption 0.05 — the
+absorption slider's smallest non-zero step, which keeps volumetric's bounded
+accumulation without the occlusion. At kappa 1.0 the neuromast rendered as a
+dim blue haze with its hair-cell cluster and membrane filaments lost.
+
+The Tribolium embryo switches to `normal`. That light-sheet volume carries a
+heavy diffuse background, and integrating it along every ray saturates into a
+solid slab with the embryo buried inside; `normal` composites the projected
+2D-Gaussian peak with alpha-over instead, so the background stops accumulating
+and the surface nuclei stay crisp. Because nothing sums any more the scene
+needs `exposure=1.97` to sit at a normal level.
+
+Two appearance tweaks round it out: the Milky Way dust cube moves from
+`additive` to a light `volumetric` (absorption 0.3, so near dust softly
+occludes far dust) under ACES at `exposure=-0.17`, with a `[0, 0.095]` display
+window that holds its faint diffuse filaments just below clipping; and the
+organoid DAPI nuclei demo gains a `plasma` colormap (it previously fell back to
+the implicit grayscale default). Regenerate the demo datasets to pick up the new
+look.
 
 #### Fixed — errors logged as trailing arguments rendered as `{}` in the in-app console
 
@@ -105,7 +157,6 @@ caller stall on a hung handle.
 
 New `utils/format-error.ts` promotes an idiom that was inlined roughly 31 times.
 
-
 #### Changed — volumetric joins the LOD anti-popping blendable set
 
 `volumetric` is now in `BLENDABLE_MODES` (`packages/luxar-viewer/src/scene/lod-fade.ts`),
@@ -137,6 +188,48 @@ comments in `lod-fade.ts` / `lod-group-registry.ts`. New fixture
 `test_lod_group_volumetric.luxar.zarr` covers the volumetric cross-fade
 contract end-to-end.
 
+#### Fixed — a rejected projection kernel was re-run on the UI thread, and load failures were reported as success
+
+Four defects in the loader's failure handling, all pre-existing, all surfaced while
+reviewing the 2D-gsplat WASM trap.
+
+The worst turned a data error into a UI freeze: the gsplats and lines processors
+fell back to the in-process dispatcher on ANY worker rejection except a
+dataset-switch abort. That dispatcher runs the _same_ kernel through the same
+`pickBackend`, so a WASM trap coming back from the worker trapped again on the main
+thread, blocking the frame. Only worker UNAVAILABILITY now falls back, via
+an `isWorkerInfrastructureError` allow-list matching the single pool-internal
+error type (`WorkerUnavailableError`) by `instanceof` — it is constructed on
+the main thread and never crosses the Comlink boundary, so its prototype stays
+intact. A worker timeout propagates too: it cannot distinguish a wedged worker
+from a data-dependent kernel hang or a projection genuinely slower than the
+budget, and re-running those in-process blocks the frame at least as long
+again — the pool evicts the timed-out worker, so the node stays retryable
+against a fresh one. Unknown errors, and any rejection reconstructed from a
+worker (which loses its prototype), fail closed and propagate. Points is
+deliberately not included: its projection is main-thread-only, so it has no
+worker path.
+
+`loadScene` also logged "Scene loaded successfully" unconditionally. Because
+`loadLeafNode` swallows every `LoaderError` so surviving siblings still render,
+`loadScene` structurally cannot throw — so a scene whose every node failed produced
+a green log over an empty viewport. A new end-of-load report grades the outcome:
+clean keeps the historical message, partial logs one aggregate warning, and total
+logs an error plus a long toast. The per-node failure toast is gone; with N failures
+it showed one toast naming the last path, and never fired at all for network
+failures.
+
+All three handlers cleared a path's failure record immediately after the fetch,
+though the record's scope is the whole load-and-stage step — so any post-fetch
+failure re-recorded with a zero counter, pinning the log at "(attempt 1)" however
+many times it failed, and `hasFailures()` briefly reported clean. And retries had no
+notion of a permanent failure: the classified error kind was computed for logging
+then discarded, and the retry counter was written in three places and never
+compared, so a WASM trap was re-fetched on every reconnect forever. The kind is now
+persisted and automatic retries are gated on a transient cause under an attempt cap
+— while a manual Retry still forces every path, since the user pressing it is new
+information.
+
 #### Changed — Default viewer background is now pitch black (`0x000000`)
 
 The scene background default was `0x111111` (dark gray, matched to the dark
@@ -160,8 +253,8 @@ all-at-once however large it was. On the 9.75M-point DESI demo that single
 commit froze the main thread for ~85 s. GSplats have always composed the two
 axes, so this closes a three-geometry asymmetry as much as it fixes a stall.
 
-The axes now compose — substitutive chooses *which* level renders at the current
-zoom, additive describes *how* each level streams in — and every level is
+The axes now compose — substitutive chooses _which_ level renders at the current
+zoom, additive describes _how_ each level streams in — and every level is
 laddered by default (`additive_lod=False` opts out), with the sibling-aware
 first chunk on all but the coarsest. A level smaller than one stream chunk stays
 a flat leaf automatically.
@@ -293,7 +386,7 @@ centroid on the projected centerline) that fails pre-fix on both backends.
 
 Cross-node draw order sorted whole meshes by the view-depth of their
 bounds centers — a single number that cannot express "this tiny node is
-*inside* that huge node." For a node embedded in another (the galaxy
+_inside_ that huge node." For a node embedded in another (the galaxy
 demo's Sun/Betelgeuse/Rigel markers inside the 3M-star cloud), the
 container's center sorts nearer for roughly half of all camera
 orientations, making the container draw last; in `volumetric` (or
@@ -391,6 +484,7 @@ notch of axial length `2 × width` bottoming out at 50%. (PR #785; follow-ups
   while quad tiling/overlap is a screen-space, per-camera fact (#795 tracks a
   real screen-space suppression), and the outer-side miter wedge at sharp
   bends remains.
+
 #### Added — manifest-driven demo-data fetch (R17 step 1)
 
 `demos/data_manifest.json` is now the single source of truth for how every demo
@@ -416,10 +510,10 @@ in-place corruption changes neither. The manifest checksum is now authoritative
 at every step, and a failing cache entry is quarantined (`.corrupt`) instead of
 being silently reused.
 
-`cached_download` had the same flaw plus two more — a file *longer* than
+`cached_download` had the same flaw plus two more — a file _longer_ than
 `expected_size` and an unpulled Git LFS pointer were both handed to the resuming
 downloader, which appends to whatever bytes are already there. All three now
-quarantine first. A file *shorter* than expected is still left in place, since
+quarantine first. A file _shorter_ than expected is still left in place, since
 that is a genuine resumable partial download.
 
 #### Fixed — the demo-data manifest was excluded from the wheel and sdist
@@ -428,7 +522,6 @@ It was written inside `demos/data/`, which packaging excludes wholesale (~450 MB
 of Git LFS payload), so `load_manifest()` raised `FileNotFoundError` for every
 pip-installed user. Moved to `demos/data_manifest.json`, with a regression test
 that re-runs hatchling's own matcher over the committed exclude globs.
-
 
 #### Fixed — `gsplat transform --rotate-*` rotated the wrong center dims on stacked nD data (#722)
 
