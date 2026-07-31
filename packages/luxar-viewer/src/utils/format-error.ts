@@ -57,6 +57,32 @@ export function formatErrorForDisplay(error: Error): string {
 }
 
 /**
+ * Whether a value is a genuine `Error` — a same-realm instance, or an object
+ * whose `[[Class]]` brand reports `Error` (which a cross-realm Error does
+ * regardless of its foreign prototype chain).
+ *
+ * Deliberately NARROWER than {@link isErrorLike}: the duck-typed
+ * `name`+`message`+`stack` triple does not qualify. The console interceptor's
+ * stack-precedence pass depends on exactly this distinction — a context bag
+ * that happens to carry the full triple must not outrank a real Error's stack.
+ *
+ * `instanceof Error` comes first because the brand check can miss real Errors:
+ * a Firefox `DOMException` is `instanceof Error` (WebIDL) but tags as
+ * `[object DOMException]`.
+ *
+ * Never throws — `instanceof` walks [[GetPrototypeOf]] and the brand check's
+ * Symbol.toStringTag lookup does a [[Get]], both of which throw for a revoked
+ * Proxy, and this runs inside the patched console methods.
+ */
+export function isGenuineError(value: unknown): boolean {
+  try {
+    return value instanceof Error || Object.prototype.toString.call(value) === '[object Error]';
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Whether an unknown value should be rendered as an Error rather than JSON.
  *
  * A same-realm `instanceof Error` misses an Error created in another realm
@@ -67,8 +93,8 @@ export function formatErrorForDisplay(error: Error): string {
  *
  * Two realm-proof signals, neither of which fires on an ordinary
  * `{ name, message }` data object:
- *   - `[[Class]]` is `Error` regardless of realm (covers cross-realm `Error`
- *     and its subclasses);
+ *   - a genuine Error ({@link isGenuineError}: instance or `[[Class]]` brand,
+ *     covering cross-realm `Error` and its subclasses);
  *   - failing that, the full string `name` + `message` + `stack` triple, which
  *     a plain data object almost never carries (covers a structured-clone /
  *     `postMessage` surface that is not an `Error` instance at all).
@@ -78,13 +104,7 @@ export function formatErrorForDisplay(error: Error): string {
 export function isErrorLike(value: unknown): boolean {
   try {
     if (typeof value !== 'object' || value === null) return false;
-    // `instanceof Error` first: this function replaces `instanceof Error`
-    // checks, so it must be a strict superset of them. A Firefox DOMException
-    // is `instanceof Error` (WebIDL) but tags as `[object DOMException]` and a
-    // platform-thrown one may lack `stack`, so the two structural signals
-    // below can BOTH miss it.
-    if (value instanceof Error) return true;
-    if (Object.prototype.toString.call(value) === '[object Error]') return true;
+    if (isGenuineError(value)) return true;
     const v = value as { name?: unknown; message?: unknown; stack?: unknown };
     return (
       typeof v.name === 'string' && typeof v.message === 'string' && typeof v.stack === 'string'

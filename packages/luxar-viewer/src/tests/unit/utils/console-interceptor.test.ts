@@ -195,12 +195,27 @@ describe('ConsoleInterceptor stack capture', () => {
 
   it('prefers a CROSS-REALM Error over an earlier duck-typed stack carrier', () => {
     // A cross-realm Error fails `instanceof Error`, so the priority pass must
-    // detect it structurally (isErrorLike) or the context string wins again.
+    // detect it via the [[Class]] brand (isGenuineError) or the context string
+    // wins again.
     const crossRealm = runInNewContext('new Error("the real failure")') as Error;
     expect((crossRealm as unknown) instanceof Error).toBe(false);
     console.error('failed', { stack: 'just some context string' }, crossRealm);
 
     expect(lastMessage().stack).toBe(crossRealm.stack);
+  });
+
+  it('prefers a real Error over an earlier FULL-TRIPLE context object', () => {
+    // A context bag carrying all three of name/message/stack satisfies the
+    // wide isErrorLike (it renders as an Error), but it must NOT satisfy the
+    // stack-precedence pass — only a genuine Error may outrank the real trace.
+    const realError = new Error('the real failure');
+    console.error(
+      'failed',
+      { name: 'Context', message: 'decode phase', stack: 'context stack' },
+      realError
+    );
+
+    expect(lastMessage().stack).toBe(realError.stack);
   });
 
   it('falls back to a duck-typed stack carrier when no real Error is present', () => {

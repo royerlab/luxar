@@ -10,6 +10,7 @@ import {
   formatErrorForDisplay,
   getErrorStack,
   isErrorLike,
+  isGenuineError,
 } from '../../../utils/format-error';
 
 describe('getErrorMessage', () => {
@@ -181,5 +182,33 @@ describe('isErrorLike', () => {
     expect(isErrorLike(null)).toBe(false);
     expect(isErrorLike(undefined)).toBe(false);
     expect(isErrorLike(42)).toBe(false);
+  });
+});
+
+describe('isGenuineError', () => {
+  it('matches real, subclass, and cross-realm Errors', () => {
+    expect(isGenuineError(new Error('boom'))).toBe(true);
+    class Sub extends Error {}
+    expect(isGenuineError(new Sub('boom'))).toBe(true);
+    const crossRealm = runInNewContext('new TypeError("boom")') as object;
+    expect(crossRealm instanceof Error).toBe(false);
+    expect(isGenuineError(crossRealm)).toBe(true);
+  });
+
+  it('does NOT match a duck-typed full triple — that is isErrorLike territory', () => {
+    // The console interceptor's stack-precedence pass relies on this: a
+    // context bag carrying name+message+stack renders as an Error (wide
+    // check) but must never outrank a real Error's stack (narrow check).
+    const triple = { name: 'Error', message: 'boom', stack: 'at somewhere' };
+    expect(isErrorLike(triple)).toBe(true);
+    expect(isGenuineError(triple)).toBe(false);
+  });
+
+  it('never throws on hostile values', () => {
+    const revoked = Proxy.revocable({}, {});
+    revoked.revoke();
+    expect(isGenuineError(revoked.proxy)).toBe(false);
+    expect(isGenuineError(null)).toBe(false);
+    expect(isGenuineError(42)).toBe(false);
   });
 });
