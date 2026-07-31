@@ -174,14 +174,14 @@ The native launcher backs `luxar export --native macos|linux-amd64|linux-arm64`,
 1. Locates `go` (PATH or `~/.local/go/bin/go`)
 2. Builds the launcher with **`CGO_ENABLED=1`** because the WebView library links against system WebKit
 3. On macOS: builds `darwin-arm64` + `darwin-amd64` then `lipo`-merges into `darwin-universal`. Fails loudly if amd64 build fails (no silent rename — universal binary must actually be universal)
-4. On Linux: builds `linux-<host-arch>` (requires `libwebkit2gtk-4.1-dev` + `pkg-config`)
+4. On Linux: builds `linux-<host-arch>` (requires `libwebkit2gtk-4.0-dev` + `pkg-config` — the pinned `webview_go` declares `#cgo pkg-config: gtk+-3.0 webkit2gtk-4.0`, which is why CI builds the launcher on ubuntu-22.04; 24.04 ships only the 4.1 package)
 5. Drops binaries into `packages/luxar/src/luxar/cli/_launchers/`
 
 **Critical constraint: CGO blocks pure cross-compilation.** Unlike Rust/WASM (where pure-Go cross-compile from any host worked previously), the launcher cannot be built for Linux from a macOS host or vice-versa without a CGO cross-toolchain (Zig, etc.). For full cross-platform release artifacts, build each OS on its own CI matrix runner.
 
 **System library dependencies (end-user runtime):**
 - macOS: `WebKit.framework` — system-provided, present on every Mac, no install needed
-- Linux: `libwebkit2gtk-4.1` (or `4.0` on older distros) — present on every modern desktop Linux distribution; missing only on minimal/server installs
+- Linux: SONAME `libwebkit2gtk-4.0.so.37`, packaged on Debian/Ubuntu as `libwebkit2gtk-4.0-37` — the runtime counterpart of the `webkit2gtk-4.0` pkg-config module the pinned `webview_go` links. Missing on minimal/server installs **and on distros that ship only 4.1** (verified: Ubuntu 24.04 offers only `libwebkit2gtk-4.1-0`), where the prebuilt launcher cannot start at all — see the launcher README
 
 **Wheel packaging:** `_launchers/` and `_launcher_assets/` (icons) live inside the Python package, so they ride along into wheel builds automatically when present. Run `make build-launchers` before `hatch build` to populate the binaries; without it the wheel installs but `luxar export --native` raises `LauncherNotBuiltError` with a clear "run `make build-launchers`" hint.
 
@@ -245,16 +245,19 @@ MIN_NODE_MINOR := 19
 
 | Command | Description |
 |---------|-------------|
-| `make check-all` | Run all quality checks (Python, TypeScript, Go) |
+| `make check-all` | Run all quality checks (Python, TypeScript, Rust, Go). **Not read-only** — `hatch run check` begins with `format`, so this rewrites `packages/luxar/src`. Use the scoped `lint-*` / `type-check-*` / `check-typescript` / `check-rust` targets for a read-only verdict. |
 | `make check-typescript` | Run all TypeScript checks (typecheck, lint, test) |
 | `make check-rust` | Run Rust type/lint checks (cargo check + clippy) |
-| `make test-all` | Run all tests (Python + Rust/WASM + TypeScript, plus CUDA extension tests and Go launcher tests when those toolchains are available) |
-| `make test-cov-all` | Run all tests with coverage (Python + TypeScript) |
+| `make check-knip` | **Report only, non-gating** — full knip (unused files/exports/types + `@internal` tag hints). The enforced subset (`files,dependencies`) runs inside `make check-all`; the full run has a standing backlog, so it never fails the build. |
+| `make test-all` | Run all tests (Python + Rust/WASM + TypeScript, plus Go launcher tests when that toolchain is available). CUDA extension tests are part of the Python suite — they live under pytest's `testpaths` and skip themselves without a GPU. |
+| `make test-cov-all` | Run all tests with coverage (Python, minus `-m slow`, + TypeScript) |
 | `make test-python` | Run Python tests only |
 | `make test-cov-python` | Run Python tests with coverage |
 | `make test-fixtures` | Generate test fixtures for TypeScript tests |
 | `make test-viewer-fixtures` | Generate fixtures + run TypeScript tests |
-| `make test-e2e` | Run Playwright E2E tests |
+| `make test-e2e` | Run the full Playwright E2E suite (~17 min) |
+| `make test-e2e-smoke` | Run the E2E smoke subset (the interaction-focused specs CI would run) |
+| `make test-perf-e2e` | Run the opt-in Playwright performance suite |
 | `make lint-python` | Run ruff linting on Python |
 | `make lint-typescript` | Run ESLint on TypeScript |
 | `make type-check-python` | Run mypy type checking |
@@ -277,6 +280,7 @@ MIN_NODE_MINOR := 19
 |---------|-------------|
 | `make viewer` | Start viewer dev server (port 5173) |
 | `make build-viewer` | Build viewer for production (auto-installs Rust/wasm-pack via `install-rust` if missing) |
+| `make build-viewer-lib` | Build + verify the viewer's npm **library** bundle (`pnpm ci:release`) — the artifact `publish-npm.yml` ships, distinct from the web app bundled into the wheel |
 | `make rebuild-viewer` | Clean rebuild of viewer |
 | `make test-viewer` | Run TypeScript unit tests |
 | `make test-cov-typescript` | Run TypeScript tests with coverage |
@@ -339,7 +343,7 @@ MIN_NODE_MINOR := 19
 | `make clean-all` | Clean all artifacts (Python, TypeScript, WASM, CUDA, launchers, datasets, and the `~/.cache/luxar` user cache via `clean-launchers` + `clean-cache`) |
 | `make clean-examples` | Clean generated example datasets |
 | `make clean-python` | Clean Python build artifacts and caches |
-| `make clean-viewer` | Clean viewer build artifacts (node_modules, dist, etc.) |
+| `make clean-viewer` | Clean viewer build artifacts (node_modules, dist, `.vite`, coverage, playwright-report, test-results) |
 | `make clean-launchers` | Clean native launcher binaries |
 | `make clean-cache` | Clear the Luxar user cache (`~/.cache/luxar`) |
 | `make stats` | Generate project statistics report |

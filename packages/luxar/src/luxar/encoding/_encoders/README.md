@@ -1,6 +1,6 @@
 # luxar.encoding._encoders
 
-**Internal mixin package** for the encoding layer. The mixins here implement the domain-specific encoding logic that `ArrayEncoder` (in `../encoder.py`) inherits. Application code uses `ArrayEncoder` directly; these mixins are never imported or instantiated on their own. (The one exception is `delta_codec.LuxarDelta` — a numcodecs codec, not a mixin — which is re-exported publicly from `luxar.encoding`.)
+**Internal mixin package** for the encoding layer. The mixins here implement the domain-specific encoding logic that `ArrayEncoder` (in `../encoder.py`) inherits directly or transitively. Application code uses `ArrayEncoder` rather than the mixin classes. `delta_codec.LuxarDelta` is not a mixin and is re-exported publicly from `luxar.encoding`.
 
 ## Purpose
 
@@ -12,7 +12,7 @@ Break the monolithic `ArrayEncoder` into focused, testable mixins, each owning o
 - **CholeskyEncoderMixin** — Cholesky split-pair policy with encode-time covariance certificate
 - **delta_codec.py** — zarr v2 filter for columnar delta + zigzag pre-filtering
 
-`ArrayEncoder` multiply-inherits all mixins, so `encode(...)` resolves through the priority order defined on the orchestrator.
+`ArrayEncoder` directly inherits `StructuralEncoderMixin`, `PerChannelEncoderMixin`, and `CholeskyEncoderMixin`; each of those inherits `BaseEncoderMixin`. Its `encode(...)` dispatch follows the priority order defined on the orchestrator.
 
 ## Module Ownership
 

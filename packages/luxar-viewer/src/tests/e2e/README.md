@@ -325,8 +325,8 @@ post-processing regression check.
 4. Prefer 3D datasets for general specs — 4D/nD slicing may show 0
    points at arbitrary slice positions. Specs that test nD behavior
    should drive to a slice known to contain geometry.
-5. **No trailing slash on `?src=`** — the zarr loader treats it as
-   a path component and 404s the metadata probes.
+5. **Use the canonical `?src=` spelling without a trailing slash** — both
+   forms are accepted, but one spelling keeps fixtures and logs consistent.
 6. If a spec intentionally produces console errors, annotate it
    with `ALLOW_CONSOLE_ERRORS`; do not broaden
    `DEFAULT_ALLOWED_CONSOLE_ERRORS` unless the noise is genuinely
