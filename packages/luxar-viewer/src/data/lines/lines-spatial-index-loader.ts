@@ -828,6 +828,14 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
    * range when no spatial index is available.
    */
   private async queryVisibleSegmentRanges(viewState: LinesViewState): Promise<SegmentRange[]> {
+    // No local preimage for this world slice under the node's nd_transform —
+    // see the identical guard in the points/gsplats loaders and
+    // `ViewState.noPreimage`.
+    if (viewState.noPreimage) {
+      log.query(Modules.LINES_LOADER, 'No preimage for this slice under nd_transform');
+      return [];
+    }
+
     const attrs = this.node.attrs as unknown as LinesMetadata;
     const extendDims: string[] = this.node.attrs.extend_to_all || [];
 
