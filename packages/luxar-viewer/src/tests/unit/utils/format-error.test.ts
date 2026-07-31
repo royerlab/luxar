@@ -4,6 +4,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import { runInNewContext } from 'node:vm';
 import {
   getErrorMessage,
   formatErrorForDisplay,
@@ -137,13 +138,34 @@ describe('isErrorLike', () => {
     expect(isErrorLike(new DOMException('x', 'NotFoundError'))).toBe(true);
   });
 
-  it('matches a cross-realm Error by its realm-proof [[Class]]', () => {
-    // A same-realm `instanceof Error` misses this; the internal [[Class]] tag
-    // does not. Emulate it: a plain object whose Symbol.toStringTag is 'Error'
-    // reports as '[object Error]' without being an Error instance.
-    const crossRealm = { [Symbol.toStringTag]: 'Error', name: 'TypeError', message: 'boom' };
+  it('matches a GENUINE cross-realm Error (created in another VM context)', () => {
+    // The real thing, not an emulation: an Error constructed in a different
+    // realm fails a same-realm `instanceof Error` but its internal [[Class]]
+    // still reports '[object Error]'.
+    const crossRealm = runInNewContext('new TypeError("boom")') as object;
     expect(crossRealm instanceof Error).toBe(false);
+    expect(Object.prototype.toString.call(crossRealm)).toBe('[object Error]');
     expect(isErrorLike(crossRealm)).toBe(true);
+  });
+
+  it('matches an object that merely spoofs Symbol.toStringTag as Error', () => {
+    // Intentional: an object claiming to be an Error via its tag is treated as
+    // one (rendering it as `name: message` is harmless; `{}` is not).
+    const spoofed = { [Symbol.toStringTag]: 'Error', name: 'TypeError', message: 'boom' };
+    expect(spoofed instanceof Error).toBe(false);
+    expect(isErrorLike(spoofed)).toBe(true);
+  });
+
+  it('matches a same-realm Error whose tag is overridden and stack removed', () => {
+    // The Firefox DOMException shape: `instanceof Error` per WebIDL, but
+    // [[Class]]/toStringTag is not 'Error' and a platform-thrown one may carry
+    // no stack — both structural signals miss it, so the instanceof fast path
+    // must catch it or it regresses back to rendering as `{}`.
+    const e = new Error('boom');
+    Object.defineProperty(e, Symbol.toStringTag, { value: 'DOMException' });
+    Object.defineProperty(e, 'stack', { value: undefined });
+    expect(Object.prototype.toString.call(e)).not.toBe('[object Error]');
+    expect(isErrorLike(e)).toBe(true);
   });
 
   it('matches a plain object carrying the full name+message+stack triple', () => {

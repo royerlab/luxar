@@ -8,6 +8,7 @@
  */
 
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
+import { runInNewContext } from 'node:vm';
 import { consoleInterceptor } from '../../../utils/console-interceptor';
 
 describe('ConsoleInterceptor ring buffer', () => {
@@ -190,6 +191,16 @@ describe('ConsoleInterceptor stack capture', () => {
     console.error('failed', { stack: 'just some context string' }, realError);
 
     expect(lastMessage().stack).toBe(realError.stack);
+  });
+
+  it('prefers a CROSS-REALM Error over an earlier duck-typed stack carrier', () => {
+    // A cross-realm Error fails `instanceof Error`, so the priority pass must
+    // detect it structurally (isErrorLike) or the context string wins again.
+    const crossRealm = runInNewContext('new Error("the real failure")') as Error;
+    expect((crossRealm as unknown) instanceof Error).toBe(false);
+    console.error('failed', { stack: 'just some context string' }, crossRealm);
+
+    expect(lastMessage().stack).toBe(crossRealm.stack);
   });
 
   it('does not throw (and still buffers) when an arg has a throwing stack accessor', () => {

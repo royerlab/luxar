@@ -120,13 +120,17 @@ loses a `DOMException`'s name, and `JSON.stringify(error)` yields `"{}"` because
 `name` / `message` / `stack` are non-enumerable. The debug console's Error branch
 uses these so a `log.*(…, error)` call keeps its message.
 
-All three never throw — they run inside `catch` blocks and the patched
+All four never throw — they run inside `catch` blocks and the patched
 `console.*` methods, so a hostile accessor or Proxy trap (or the null-prototype
 `String()` TypeError) must not break the very logging path reporting the error.
 
 - `getErrorMessage(error)` — the message
 - `formatErrorForDisplay(error)` — one-line `name: message`, name alone when the
   message is empty
+- `isErrorLike(value)` — whether a value should render as an Error rather than
+  JSON; realm-safe (`instanceof Error`, the `[[Class]]` tag, or a full
+  `name`+`message`+`stack` string triple), so cross-realm Errors don't
+  stringify to `{}`
 - `getErrorStack(error)` — the stack, including duck-typed carriers, else
   `undefined`
 

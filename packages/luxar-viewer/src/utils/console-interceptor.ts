@@ -8,7 +8,7 @@
  * IMPORTANT: This must be imported before any other code that uses console methods.
  */
 
-import { getErrorStack } from './format-error';
+import { getErrorStack, isErrorLike } from './format-error';
 
 export interface BufferedMessage {
   type: 'log' | 'warn' | 'error' | 'info' | 'debug';
@@ -172,11 +172,13 @@ class ConsoleInterceptor {
    * message into `args[0]` as a STRING and passes the error along behind it, so
    * looking only at `args[0]` could never find one.
    *
-   * Two passes so a REAL `Error` always wins over a duck-typed stack carrier:
+   * Two passes so a real error always wins over a duck-typed stack carrier:
    * `getErrorStack` also accepts a plain `{ stack: '…' }` object, so a single
    * pass would let `console.error('failed', { stack: 'context' }, realError)`
    * record the context string instead of `realError.stack`. The real Error is
-   * the diagnostic worth keeping.
+   * the diagnostic worth keeping. The priority pass uses `isErrorLike`, not
+   * `instanceof Error`, so a cross-realm Error (which fails `instanceof`)
+   * gets the same precedence as a same-realm one.
    *
    * Deliberately does NOT fabricate a stack. This used to synthesize
    * `new Error().stack` whenever a message merely contained the word "error",
@@ -185,7 +187,7 @@ class ConsoleInterceptor {
    */
   private extractStack(args: readonly unknown[]): string | undefined {
     for (const arg of args) {
-      if (arg instanceof Error) {
+      if (isErrorLike(arg)) {
         const stack = getErrorStack(arg);
         if (stack) return stack;
       }

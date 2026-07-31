@@ -78,6 +78,12 @@ export function formatErrorForDisplay(error: Error): string {
 export function isErrorLike(value: unknown): boolean {
   try {
     if (typeof value !== 'object' || value === null) return false;
+    // `instanceof Error` first: this function replaces `instanceof Error`
+    // checks, so it must be a strict superset of them. A Firefox DOMException
+    // is `instanceof Error` (WebIDL) but tags as `[object DOMException]` and a
+    // platform-thrown one may lack `stack`, so the two structural signals
+    // below can BOTH miss it.
+    if (value instanceof Error) return true;
     if (Object.prototype.toString.call(value) === '[object Error]') return true;
     const v = value as { name?: unknown; message?: unknown; stack?: unknown };
     return (
