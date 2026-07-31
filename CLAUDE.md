@@ -371,7 +371,12 @@ luxar gsplat convert splats.gsplats.zarr scene.luxar.zarr --center
 # Appearance is baked at convert time: --colormap (builtin/matplotlib/colorcet,
 # default gray), --tone-mapping (None/Linear/Reinhard/Cineon/ACES/AgX/Neutral;
 # default = viewer default ACES), --gamma, --intensity, --absorption (volumetric kappa), --layer/--no-layer.
-# For faithful scientific colors pair a colormap with Neutral (ACES shifts hues):
+# ACES is the right choice for almost every scene (its filmic rolloff keeps
+# bright structure from clipping flat) — prefer it, and set it EXPLICITLY so the
+# compiler's LUT notice (which only fires when nothing was chosen) stays quiet:
+luxar gsplat convert splats.gsplats.zarr scene.luxar.zarr --colormap plasma --tone-mapping ACES
+# Reach for Neutral only in the narrower case where the colormap carries an exact
+# scientific color encoding that must survive to the screen (ACES shifts hues):
 luxar gsplat convert splats.gsplats.zarr scene.luxar.zarr --colormap plasma --tone-mapping Neutral
 
 # Render gsplats back to volume for quality comparison

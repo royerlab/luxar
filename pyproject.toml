@@ -82,6 +82,8 @@ test = [
     "luxar[gsplats]",
     "pytest>=7.4.0",
     "pytest-cov>=4.1.0",
+    # Exercise the custom root-level hatch_build.py hook directly in tests.
+    "hatchling>=1.27",
     "hypothesis>=6.0"
 ]
 dev = [
@@ -115,8 +117,8 @@ demos = [
     # zarr>=2.16,<3.0 pin (installing it would silently upgrade zarr and break
     # every Luxar store). 0.10/0.11 declare no zarr dependency; 0.12 asks for
     # zarr>=2.18.7,!=3.0.* which zarr 2.18.7 satisfies. Lift when the project
-    # migrates to zarr 3. Mirrored by _INSTALL_SPECS in
-    # demos/demo_zebrahub_velocity_streamlines.py.
+    # migrates to zarr 3. Mirrored by INSTALL_SPECS in
+    # luxar.demos._dependencies.
     "anndata>=0.10.0,<0.13",
     "cellxgene-census>=1.0.0",
     "esm>=3.0.0",

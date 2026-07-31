@@ -70,8 +70,10 @@ export interface RetryCtx {
 /**
  * Retry a single failed loader without touching the orchestrator's
  * update lock. Returns true on success (failure cleared from the
- * registry), false on continued failure (registry updated with new
- * retry count), or false if the path is no longer in failed-loaders.
+ * registry — except for a lazy LOD level, where true means "retry
+ * kicked" and the record is kept until the thunk settles), false on
+ * continued failure (registry updated with new retry count), or false
+ * if the path is no longer in failed-loaders.
  */
 export async function retryFailedLoaderUnlocked(path: string, ctx: RetryCtx): Promise<boolean> {
   const { registry } = ctx;
@@ -167,12 +169,17 @@ export async function retryFailedLoaderUnlocked(path: string, ctx: RetryCtx): Pr
       // without this fallback their records would be discarded below and
       // lazy levels would be unretryable through this API. Re-kick the
       // level's deferred loader instead.
+      //
       // Fire-and-forget semantics: `true` means "retry started" (the thunk
-      // owns the ready/failed outcome; a repeat failure re-records itself
-      // via recordFailure in the expensive half, so bookkeeping stays
-      // consistent).
+      // owns the ready/failed outcome). KEEP the failure record across the
+      // kick — deleting it here reset `autoRetryCount` to 0 on the next
+      // `recordFailure`, so `MAX_AUTO_RETRY_ATTEMPTS` never bound a lazy
+      // level and a permanently-failing one (e.g. a 404 that classifies
+      // `Network`) was re-kicked on every `online` transition forever. On
+      // success the lazy loader clears the record
+      // (load-{points,lines,gsplats}-node.ts); on a repeat failure
+      // `recordFailure` preserves the accumulated counter.
       if (ctx.lodGroupRegistry?.retryLazyChildByLeafPath(path)) {
-        registry.failedLoaders.delete(path);
         log.info(Modules.SCENE_LOADER, `Retry kicked for lazy LOD level: ${path}`);
         return true;
       }
@@ -182,14 +189,12 @@ export async function retryFailedLoaderUnlocked(path: string, ctx: RetryCtx): Pr
       return false;
     }
   } catch (error) {
-    // Update error tracking with new attempt
-    const errorInfo = registry.failedLoaders.get(path);
-    const retryCount = errorInfo ? errorInfo.retryCount + 1 : 1;
-    registry.failedLoaders.set(path, {
-      error: error as Error,
-      timestamp: Date.now(),
-      retryCount,
-    });
+    // Update error tracking with the new attempt. Routed through
+    // `recordFailure` (rather than an inline `.set`) so the classified `kind` is
+    // refreshed and the counter has one owner — this call site used to baseline
+    // `retryCount` at 1 while the update sweep baselined it at 0.
+    registry.recordFailure(path, error as Error);
+    const retryCount = registry.failedLoaders.get(path)?.retryCount ?? 0;
     log.error(
       Modules.SCENE_LOADER,
       `Retry failed for ${path} (attempt ${retryCount}): ${(error as Error).message}`

@@ -22,7 +22,11 @@ import {
   updateInstancedGSplatsMesh,
   type InstancedGSplatsMeshConfig,
 } from '../../../rendering/gsplat-geometry';
-import { writeSortedIndexOrdering } from '../../../rendering/element-storage';
+import {
+  writeSortedIndexOrdering,
+  pumpSortedIndexOrderingApply,
+  getActiveSortedIndexAttribute,
+} from '../../../rendering/element-storage';
 import {
   configureElementTextureLayout,
   resetElementTextureLayoutForTests,
@@ -105,7 +109,7 @@ describe('non-pool writers — capacity clamp self-consistency', () => {
     // an over-bound node renders its clamped prefix instead of going black
     // (pre-fix, the uncapped texture height blew past maxTextureSize).
     expect(geometry.instanceCount).toBe(16);
-    expect((geometry.getAttribute('aSortedIndex').array as Uint32Array).length).toBe(16);
+    expect((getActiveSortedIndexAttribute(geometry)!.array as Uint32Array).length).toBe(16);
   });
 
   it('updateInstancedGSplatsMesh does NOT rebuild on a same-count-over-bound recommit', () => {
@@ -123,14 +127,21 @@ describe('non-pool writers — capacity clamp self-consistency', () => {
 });
 
 describe('updateInstancedGSplatsMesh — preserveOrdering (same-node same-count recommit)', () => {
-  const orderingOf = (mesh: THREE.Mesh, n: number): number[] =>
-    Array.from((mesh.geometry.getAttribute('aSortedIndex').array as Uint32Array).subarray(0, n));
+  /** The ordering the shaders actually read (either slot of the pair). */
+  const orderingOf = (mesh: THREE.Mesh, n: number): number[] => {
+    const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
+    const attr = getActiveSortedIndexAttribute(geometry)!;
+    return Array.from((attr.array as Uint32Array).subarray(0, n));
+  };
 
   it('same-size branch keeps the sort permutation when the flag is set', () => {
     const mesh = createInstancedGSplatsMesh(makeConfig(4), materialWithTruncate(3.0));
     const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
     // The SortWorker landed a depth-sort permutation between commits.
     writeSortedIndexOrdering(geometry, new Uint32Array([3, 2, 1, 0]), 4);
+    while (pumpSortedIndexOrderingApply(geometry).more) {
+      /* an ordering streams into the back buffer and swaps in on completion */
+    }
 
     const rebuilt = updateInstancedGSplatsMesh(mesh, makeConfig(4), { preserveOrdering: true });
     expect(rebuilt).toBe(false);
@@ -149,6 +160,9 @@ describe('updateInstancedGSplatsMesh — preserveOrdering (same-node same-count 
       new Uint32Array([3, 2, 1, 0]),
       4
     );
+    while (pumpSortedIndexOrderingApply(mesh.geometry as THREE.InstancedBufferGeometry).more) {
+      /* an ordering streams into the back buffer and swaps in on completion */
+    }
 
     // Count change: fresh geometry+texture pair. Fresh aSortedIndex arrays
     // are zero-filled, not identity, so the identity write is structurally

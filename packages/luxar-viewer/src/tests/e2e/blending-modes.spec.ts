@@ -592,10 +592,19 @@ test.describe('GSplat normal mode (premultiplied coverage alpha)', () => {
         (debug.scene as { traverse: (cb: (obj: unknown) => void) => void }).traverse((obj) => {
           const o = obj as {
             userData?: { nodeType?: string; visibleSplatCount?: number };
-            geometry?: { attributes?: { aSortedIndex?: { array?: ArrayLike<number> } } };
+            geometry?: {
+              attributes?: {
+                aSortedIndex?: { array?: ArrayLike<number> };
+                aSortedIndexB?: { array?: ArrayLike<number> };
+              };
+              userData?: { sortedIndexSlot?: 0 | 1 };
+            };
           };
           if (o.userData?.nodeType !== 'gsplats') return;
-          const arr = o.geometry?.attributes?.aSortedIndex?.array;
+          const arr =
+            o.geometry?.userData?.sortedIndexSlot === 1
+              ? o.geometry?.attributes?.aSortedIndexB?.array
+              : o.geometry?.attributes?.aSortedIndex?.array;
           const count = o.userData?.visibleSplatCount ?? 0;
           if (!arr || count < 2) return;
           for (let i = 0; i < count; i++) {
@@ -620,7 +629,10 @@ test.describe('GSplat normal mode (premultiplied coverage alpha)', () => {
       debug.scene.traverse((obj: any) => {
         if (obj.userData?.nodeType !== 'gsplats') return;
         const count = obj.userData?.visibleSplatCount ?? 0;
-        const arr = obj.geometry?.attributes?.aSortedIndex?.array;
+        const arr =
+          obj.geometry?.userData?.sortedIndexSlot === 1
+            ? obj.geometry?.attributes?.aSortedIndexB?.array
+            : obj.geometry?.attributes?.aSortedIndex?.array;
         const texData = obj.geometry?.userData?.elementTexture?.image?.data;
         if (!arr || !texData || count < 2) return;
         const mwi = debug.camera.matrixWorldInverse.elements;
@@ -724,7 +736,10 @@ test.describe('GSplat normal mode (premultiplied coverage alpha)', () => {
     debug.scene.traverse((obj: any) => {
       if (obj.userData?.nodeType !== 'gsplats') return;
       const count = obj.userData?.visibleSplatCount ?? 0;
-      const arr = obj.geometry?.attributes?.aSortedIndex?.array;
+      const arr =
+        obj.geometry?.userData?.sortedIndexSlot === 1
+          ? obj.geometry?.attributes?.aSortedIndexB?.array
+          : obj.geometry?.attributes?.aSortedIndex?.array;
       const texData = obj.geometry?.userData?.elementTexture?.image?.data;
       if (!arr || !texData || count < 2) return;
       checked++;
@@ -824,7 +839,10 @@ test.describe('GSplat normal mode (premultiplied coverage alpha)', () => {
         debug.scene.traverse((obj: any) => {
           if (obj.userData?.nodeType !== 'gsplats') return;
           const count = obj.userData?.visibleSplatCount ?? 0;
-          const arr = obj.geometry?.attributes?.aSortedIndex?.array;
+          const arr =
+            obj.geometry?.userData?.sortedIndexSlot === 1
+              ? obj.geometry?.attributes?.aSortedIndexB?.array
+              : obj.geometry?.attributes?.aSortedIndex?.array;
           if (!arr || count < 1) return;
           let identity = true;
           for (let i = 0; i < count; i++) {
@@ -944,10 +962,19 @@ test.describe('Points normal mode depth sorting', () => {
         (debug.scene as { traverse: (cb: (obj: unknown) => void) => void }).traverse((obj) => {
           const o = obj as {
             userData?: { nodeType?: string; visiblePointCount?: number };
-            geometry?: { attributes?: { aSortedIndex?: { array?: ArrayLike<number> } } };
+            geometry?: {
+              attributes?: {
+                aSortedIndex?: { array?: ArrayLike<number> };
+                aSortedIndexB?: { array?: ArrayLike<number> };
+              };
+              userData?: { sortedIndexSlot?: 0 | 1 };
+            };
           };
           if (o.userData?.nodeType !== 'points') return;
-          const arr = o.geometry?.attributes?.aSortedIndex?.array;
+          const arr =
+            o.geometry?.userData?.sortedIndexSlot === 1
+              ? o.geometry?.attributes?.aSortedIndexB?.array
+              : o.geometry?.attributes?.aSortedIndex?.array;
           const count = o.userData?.visiblePointCount ?? 0;
           if (!arr || count < 2) return;
           for (let i = 0; i < count; i++) {
@@ -973,7 +1000,10 @@ test.describe('Points normal mode depth sorting', () => {
       debug.scene.traverse((obj: any) => {
         if (obj.userData?.nodeType !== 'points') return;
         const count = obj.userData?.visiblePointCount ?? 0;
-        const arr = obj.geometry?.attributes?.aSortedIndex?.array;
+        const arr =
+          obj.geometry?.userData?.sortedIndexSlot === 1
+            ? obj.geometry?.attributes?.aSortedIndexB?.array
+            : obj.geometry?.attributes?.aSortedIndex?.array;
         const texData = obj.geometry?.userData?.elementTexture?.image?.data;
         if (!arr || !texData || count < 2) return;
         const mwi = debug.camera.matrixWorldInverse.elements;
@@ -1297,10 +1327,19 @@ test.describe('GSplat volumetric mode (emission–absorption)', () => {
         (debug.scene as { traverse: (cb: (obj: unknown) => void) => void }).traverse((obj) => {
           const o = obj as {
             userData?: { nodeType?: string; visibleSplatCount?: number };
-            geometry?: { attributes?: { aSortedIndex?: { array?: ArrayLike<number> } } };
+            geometry?: {
+              attributes?: {
+                aSortedIndex?: { array?: ArrayLike<number> };
+                aSortedIndexB?: { array?: ArrayLike<number> };
+              };
+              userData?: { sortedIndexSlot?: 0 | 1 };
+            };
           };
           if (o.userData?.nodeType !== 'gsplats') return;
-          const arr = o.geometry?.attributes?.aSortedIndex?.array;
+          const arr =
+            o.geometry?.userData?.sortedIndexSlot === 1
+              ? o.geometry?.attributes?.aSortedIndexB?.array
+              : o.geometry?.attributes?.aSortedIndex?.array;
           const count = o.userData?.visibleSplatCount ?? 0;
           if (!arr || count < 2) return;
           for (let i = 0; i < count; i++) {
@@ -1322,7 +1361,10 @@ test.describe('GSplat volumetric mode (emission–absorption)', () => {
       debug.scene.traverse((obj: any) => {
         if (obj.userData?.nodeType !== 'gsplats') return;
         const count = obj.userData?.visibleSplatCount ?? 0;
-        const arr = obj.geometry?.attributes?.aSortedIndex?.array;
+        const arr =
+          obj.geometry?.userData?.sortedIndexSlot === 1
+            ? obj.geometry?.attributes?.aSortedIndexB?.array
+            : obj.geometry?.attributes?.aSortedIndex?.array;
         const texData = obj.geometry?.userData?.elementTexture?.image?.data;
         if (!arr || !texData || count < 2) return;
         const mwi = debug.camera.matrixWorldInverse.elements;

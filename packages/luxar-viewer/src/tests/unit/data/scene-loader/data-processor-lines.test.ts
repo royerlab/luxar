@@ -50,6 +50,7 @@ import {
   projectLinesTo3DUsingWorker,
 } from '../../../../data/scene-loader/process/data-processor-lines';
 import type { LoadedLinesData } from '../../../../types/lines';
+import { WorkerTimeoutError, WorkerUnavailableError } from '../../../../workers/worker-pool/errors';
 
 /**
  * Dispatcher-shaped result (keyed by `visibleSegmentCount`, plus empty
@@ -430,39 +431,109 @@ describe('projectLinesTo3DUsingWorker', () => {
     });
   });
 
-  it('falls back to the in-process dispatcher on worker failure', async () => {
-    mockGetWorkerPool.mockReturnValue({
-      runWithTimeout: vi.fn(async () => {
-        throw new Error('boom');
-      }),
-    });
-    mockBuildInstanceBuffers.mockReturnValue(makeDispatcherLinesResult(3));
-
-    const result = await projectLinesTo3DUsingWorker(
+  const callProjectLines = () =>
+    projectLinesTo3DUsingWorker(
       makeData(),
       { displayDims: [0, 1, 2], slicePosition: [0, 0, 0], tolerance: [0, 0, 0] },
       [1, 1, 1],
       1
     );
+
+  // Worker UNAVAILABILITY — the pool never got the work to a worker at all, so
+  // the in-process dispatcher is the only executor left.
+  it('falls back to the in-process dispatcher on WorkerUnavailableError', async () => {
+    mockGetWorkerPool.mockReturnValue({
+      runWithTimeout: vi.fn(async () => {
+        throw new WorkerUnavailableError('[WorkerPool] No workers available after initialization');
+      }),
+    });
+    mockBuildInstanceBuffers.mockReturnValue(makeDispatcherLinesResult(3));
+
+    const result = await callProjectLines();
     expect(result.segmentCount).toBe(3);
     expect(mockBuildInstanceBuffers).toHaveBeenCalledTimes(1);
   });
 
-  it('takes the main-thread fallback path when scalars are present (no throw)', async () => {
-    // data.md C1[P2] fix: prior test name "emits a one-shot warning when
-    // scalars force main-thread fallback" was misleading — the body
-    // explicitly admits the module-scoped warned-flag cannot be reliably
-    // reset, so the warning emission is NOT asserted. The behavioural
-    // contract the test actually verifies is "scalars → main-thread
-    // fallback (buildInstanceBuffers runs) — no throw, no crash."
-    // Renamed accordingly; the warning-emission assertion is left as
-    // future work (would require a public reset hook on the
-    // module-private flag).
+  // A timeout does NOT establish infrastructure failure: a hung kernel or a
+  // genuinely-slow projection re-run on the main thread blocks the frame at
+  // least as long again. Mirrors data-processor-gsplats.
+  it('propagates a worker timeout instead of re-running the projection on the main thread', async () => {
+    const timeout = new WorkerTimeoutError('projectLinesTo3D', 60000);
+    mockGetWorkerPool.mockReturnValue({
+      runWithTimeout: vi.fn(async () => {
+        throw timeout;
+      }),
+    });
+
+    await expect(callProjectLines()).rejects.toBe(timeout);
+    expect(mockBuildInstanceBuffers).not.toHaveBeenCalled();
+  });
+
+  // Mirrors data-processor-gsplats: the in-process dispatcher runs the SAME
+  // kernel, so a rejection that came back FROM the worker must propagate rather
+  // than reproduce the fault on the UI thread.
+  it('re-throws a kernel fault instead of re-running it on the main thread', async () => {
+    const trap = new Error('unreachable');
+    trap.name = 'RuntimeError';
+    mockGetWorkerPool.mockReturnValue({
+      runWithTimeout: vi.fn(async () => {
+        throw trap;
+      }),
+    });
+
+    await expect(callProjectLines()).rejects.toBe(trap);
+    expect(mockBuildInstanceBuffers).not.toHaveBeenCalled();
+  });
+
+  // A worker-RETURNED error reconstructed across Comlink loses its prototype but
+  // may still carry the name string. It must NOT be treated as infrastructure —
+  // otherwise the rejected kernel re-runs on the UI thread, the exact fault this
+  // guards. `instanceof` is what makes the name insufficient.
+  it('does not fall back for a non-instance error that merely spoofs the infra name', async () => {
+    const spoof = new Error('No workers available');
+    spoof.name = 'WorkerUnavailableError';
+    mockGetWorkerPool.mockReturnValue({
+      runWithTimeout: vi.fn(async () => {
+        throw spoof;
+      }),
+    });
+
+    await expect(callProjectLines()).rejects.toBe(spoof);
+    expect(mockBuildInstanceBuffers).not.toHaveBeenCalled();
+  });
+
+  // Fail closed on an unrecognized error.
+  it('re-throws an unrecognized error rather than assuming infrastructure failure', async () => {
+    mockGetWorkerPool.mockReturnValue({
+      runWithTimeout: vi.fn(async () => {
+        throw new Error('boom');
+      }),
+    });
+
+    await expect(callProjectLines()).rejects.toThrow('boom');
+    expect(mockBuildInstanceBuffers).not.toHaveBeenCalled();
+  });
+
+  it('forwards per-vertex scalars along the WORKER path (no main-thread fallback)', async () => {
+    // This test previously claimed "scalars force main-thread fallback" and
+    // asserted buildInstanceBuffers ran. That contract no longer exists —
+    // scalars ride the worker payload and are interpolated there
+    // (`interpolate_scalars_batch`, see the note above `buildLinesParams`).
+    // It only passed because it never mocked the pool: `getWorkerPool()`
+    // returned undefined, the TypeError hit the catch, and the old blind
+    // fallback swallowed it into the in-process dispatcher. Now that only
+    // infrastructure failures fall back, that accident is gone, so the test
+    // asserts what the code actually does.
     const dataWithScalars: LoadedLinesData = {
       ...makeData(2000),
       scalars: new Float32Array(2 * 2000), // 2 vertices per segment
     };
-    mockBuildInstanceBuffers.mockReturnValue(makeDispatcherLinesResult(2000));
+    const projectLinesTo3D = vi.fn(async (_params: { scalars?: Float32Array | null }) =>
+      makeDispatcherLinesResult(2000)
+    );
+    mockGetWorkerPool.mockReturnValue({
+      runWithTimeout: vi.fn(async (_op, _kind, fn) => fn({ projectLinesTo3D })),
+    });
 
     await projectLinesTo3DUsingWorker(
       dataWithScalars,
@@ -470,13 +541,12 @@ describe('projectLinesTo3DUsingWorker', () => {
       [1, 1, 1],
       1
     );
-    await projectLinesTo3DUsingWorker(
-      dataWithScalars,
-      { displayDims: [0, 1, 2], slicePosition: [0, 0, 0], tolerance: [0, 0, 0] },
-      [1, 1, 1],
-      2
-    );
-    // Main-thread fallback runs once per call → 2 invocations total.
-    expect(mockBuildInstanceBuffers).toHaveBeenCalledTimes(2);
+
+    expect(projectLinesTo3D).toHaveBeenCalledTimes(1);
+    expect(projectLinesTo3D.mock.calls[0][0]).toMatchObject({
+      scalars: dataWithScalars.scalars,
+    });
+    // The whole point: the main-thread dispatcher is NOT involved.
+    expect(mockBuildInstanceBuffers).not.toHaveBeenCalled();
   });
 });

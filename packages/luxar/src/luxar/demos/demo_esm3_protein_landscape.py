@@ -65,6 +65,7 @@ from luxar.utils.download import (
     QUARANTINE_SUFFIX,
     find_quarantined_files,
     format_quarantine_notice,
+    quarantine_file,
     warn_if_quarantined,
 )
 from luxar.utils.paths import get_demos_output_dir
@@ -400,13 +401,9 @@ def _compute_esm3_embeddings(
                 )
                 return embeddings
             actual = "unreadable" if embeddings is None else f"shape {embeddings.shape}"
-            corrupt_path = embeddings_cache.with_name(
-                embeddings_cache.name + ".corrupt"
-            )
-            embeddings_cache.rename(corrupt_path)
-            aprint(
-                f"⚠ Cached embeddings are invalid ({actual}, expected "
-                f"{expected_shape}); quarantined to {corrupt_path.name} — recomputing."
+            quarantine_file(
+                embeddings_cache,
+                reason=f"invalid embeddings ({actual}, expected {expected_shape})",
             )
 
     # Report ANY quarantined copy — including one left behind by an EARLIER run

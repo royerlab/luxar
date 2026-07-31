@@ -203,6 +203,11 @@ export class GSplatMaterial
         uIntensity: { value: materialConfig.intensity ?? 1.0 },
         uOffset: { value: materialConfig.offset ?? 0.0 },
         uIsOrtho: { value: 0 }, // 0 = perspective, 1 = orthographic
+        // Active ordering buffer: 0 = aSortedIndex, 1 = aSortedIndexB.
+        // Flipped by the depth-sort coordinator once the inactive buffer
+        // holds a whole permutation (runtime uniform: never a define — a
+        // flip must not recompile the program).
+        uSortedIndexSlot: { value: 0 },
         uNearCull: { value: 0.1 }, // Default; overridden per-scene by updateCameraParams
         uMaxExtentFactor: { value: materialConfig.maxExtentFactor ?? 0.33 },
         uCov2DDilation: {
@@ -513,6 +518,10 @@ export class GSplatMaterial
     cloned.uniforms.uNearCull.value = this.uniforms.uNearCull.value;
     cloned.uniforms.uProjectionMode.value = this.uniforms.uProjectionMode.value;
     cloned.uniforms.uInvGamma.value = this.uniforms.uInvGamma.value;
+    // The active ordering slot must ride along: a clone taken while the
+    // geometry draws from slot 1 would otherwise read the stale buffer
+    // until the coordinator's next per-frame re-assert.
+    cloned.uniforms.uSortedIndexSlot.value = this.uniforms.uSortedIndexSlot.value;
 
     return cloned as this;
   }
