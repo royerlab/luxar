@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import threading
 from pathlib import Path
-from typing import Any, MutableMapping, Optional, cast
+from typing import Any, Callable, MutableMapping, Optional, cast
 
 import uvicorn
 from arbol import aprint
@@ -25,7 +25,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from starlette.datastructures import MutableHeaders
-from starlette.types import ASGIApp
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from .network_simulation import (
     NetworkSimulationMiddleware,
@@ -42,7 +42,7 @@ from .utils import (
 
 
 class _NoCacheMiddleware:
-    """Force browser revalidation of every response (``Cache-Control: no-cache``).
+    """Force browser revalidation unless a response declares its own policy.
 
     Starlette's ``StaticFiles`` sends ``ETag``/``Last-Modified`` but no
     ``Cache-Control``, so browsers fall back to HEURISTIC freshness (a
@@ -55,8 +55,14 @@ class _NoCacheMiddleware:
     ETag, so unchanged chunks still come back as cheap 304s.
     """
 
-    def __init__(self, app: ASGIApp) -> None:
+    def __init__(
+        self,
+        app: ASGIApp,
+        *,
+        should_revalidate: Optional[Callable[[str], bool]] = None,
+    ) -> None:
         self.app = app
+        self.should_revalidate = should_revalidate
 
     async def __call__(
         self,
@@ -68,14 +74,44 @@ class _NoCacheMiddleware:
             await self.app(scope, receive, send)
             return
 
+        if self.should_revalidate is not None and not self.should_revalidate(
+            scope.get("path", "")
+        ):
+            await self.app(scope, receive, send)
+            return
+
         async def send_with_no_cache(message: MutableMapping[str, Any]) -> None:
             if message["type"] == "http.response.start":
+                message.setdefault("headers", [])
                 headers = MutableHeaders(scope=message)
                 if "cache-control" not in headers:
                     headers["cache-control"] = "no-cache"
             await send(message)
 
         await self.app(scope, receive, send_with_no_cache)
+
+
+def _is_immutable_viewer_asset(path: str) -> bool:
+    """True for Vite's content-hashed viewer chunks (the ``assets/`` subtree).
+
+    Their filenames embed a build hash, so the URL changes on every rebuild and
+    the bytes at a given URL never change — safe to cache indefinitely. The
+    unhashed ``index.html`` shell and the fixed-name ``wasm/`` payloads are
+    replaced in place on rebuild, so they must revalidate exactly like mutable
+    dataset chunks.
+    """
+    return "/assets/" in path
+
+
+class _ViewerStaticFiles(StaticFiles):
+    """Revalidate the unhashed viewer shell; leave content-hashed assets cacheable."""
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        """Serve the viewer mount, revalidating everything but the assets subtree."""
+        await _NoCacheMiddleware(
+            super().__call__,
+            should_revalidate=lambda p: not _is_immutable_viewer_asset(p),
+        )(scope, receive, send)
 
 
 def _add_cors(api: FastAPI, cors_origin: str = _DEFAULT_CORS_ORIGIN) -> None:
@@ -114,9 +150,6 @@ def _add_cors(api: FastAPI, cors_origin: str = _DEFAULT_CORS_ORIGIN) -> None:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    # Every server variant funnels through _add_cors, so this is the one
-    # chokepoint where the no-cache policy reaches data AND viewer mounts.
-    api.add_middleware(_NoCacheMiddleware)
 
 
 # Genuine loopback addresses only. The all-interfaces sentinel (0.0.0.0 / ::)
@@ -200,7 +233,11 @@ def _validate_serve_path(path: Path, *, allow_sensitive_path: bool = False) -> N
 
 
 class DirectoryListingStaticFiles(StaticFiles):
-    """Static files handler with JSON directory listing support."""
+    """Mutable data files with JSON listings and forced revalidation."""
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        """Serve this data mount through the revalidation middleware."""
+        await _NoCacheMiddleware(super().__call__)(scope, receive, send)
 
     async def get_response(self, path: str, scope: MutableMapping[str, Any]) -> Any:
         """Override to provide directory listing."""
@@ -320,6 +357,20 @@ def create_server_app(
     return api
 
 
+def _build_viewer_app(
+    viewer_dist: Path, *, cors_origin: str = _DEFAULT_CORS_ORIGIN
+) -> FastAPI:
+    """Build the viewer-server FastAPI app for ``viewer_dist``.
+
+    Split out so tests can exercise the mount (and its cache policy) with a
+    ``TestClient`` instead of a live uvicorn server.
+    """
+    api = FastAPI(title="Luxar Viewer", docs_url=None, redoc_url=None)
+    _add_cors(api, cors_origin)
+    api.mount("/", _ViewerStaticFiles(directory=str(viewer_dist), html=True))
+    return api
+
+
 def _serve_viewer(
     host: str,
     port: int,
@@ -341,11 +392,7 @@ def _serve_viewer(
     """
     viewer_dist = get_viewer_dist_path()
 
-    api = FastAPI(title="Luxar Viewer", docs_url=None, redoc_url=None)
-    _add_cors(api, cors_origin)
-
-    # Mount viewer static files
-    api.mount("/", StaticFiles(directory=str(viewer_dist), html=True))
+    api = _build_viewer_app(viewer_dist, cors_origin=cors_origin)
 
     # Construct viewer URL - ensure data_url has no trailing slash
     if data_url:

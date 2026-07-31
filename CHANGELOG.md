@@ -341,13 +341,15 @@ stay as-is. Regenerate demo datasets to pick up the fix.
   validator counted rows via `len()`, not elements; it now uses
   `indices.size`. Odd-edge-count geometry (e.g. most L-system trees)
   previously could not be written as pairs at all.
-- **`luxar serve` (and the standalone `serve.py` that `luxar export`
-  generates) now send `Cache-Control: no-cache`**: responses carried only
+- **Mutable scene-data responses now send `Cache-Control: no-cache`** in
+  `luxar serve`, native export launchers, and the standalone `serve.py` that
+  `luxar export` generates. Responses previously carried only
   ETag/Last-Modified (or just Last-Modified for exports), so browsers used
   HEURISTIC freshness and silently served stale chunks after a dataset was
   regenerated — or a folder re-exported — in place (same URLs, new bytes);
   no viewer-side cache clearing could fix it. `no-cache` forces
-  revalidation; unchanged files still return as cheap 304s.
+  revalidation; unchanged files still return as cheap 304s. Content-hashed
+  viewer assets remain cacheable without per-load revalidation.
 
 #### Fixed — thick polylines rendered as bead chains: interior joint caps now suppressed per-endpoint (#780)
 

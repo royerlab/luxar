@@ -194,17 +194,62 @@ class TestServeIntegration:
         assert response.headers["Access-Control-Allow-Origin"] == origin
 
     def test_no_cache_header_on_data_responses(self, test_server):
-        """Every response must carry ``Cache-Control: no-cache``.
+        """Every mutable data response must require browser revalidation."""
+        response = requests.get(f"{test_server}/.zattrs")
+        assert response.headers.get("Cache-Control") == "no-cache"
 
-        StaticFiles sends ETag/Last-Modified but no Cache-Control, so
-        browsers fall back to heuristic freshness and serve STALE chunks
-        after a dataset is regenerated in place (same URLs, new bytes).
-        ``no-cache`` forces ETag revalidation (unchanged chunks are still
-        cheap 304s) so a regenerated dataset is always picked up.
-        """
-        for path in ("/.zattrs", "/health"):
-            response = requests.get(f"{test_server}{path}")
-            assert response.headers.get("Cache-Control") == "no-cache", path
+    def test_no_cache_middleware_accepts_start_without_headers(self):
+        """A spec-legal minimal response start still receives the policy."""
+        from luxar.cli.serving import _NoCacheMiddleware
+
+        async def minimal_app(scope, receive, send):
+            await send({"type": "http.response.start", "status": 200})
+            await send({"type": "http.response.body", "body": b"ok"})
+
+        response = TestClient(_NoCacheMiddleware(minimal_app)).get("/")
+        assert response.status_code == 200
+        assert response.headers["Cache-Control"] == "no-cache"
+
+    def test_no_cache_middleware_preserves_existing_policy(self):
+        """Applications retain an explicit, more specific cache policy."""
+        from luxar.cli.serving import _NoCacheMiddleware
+
+        async def cacheable_app(scope, receive, send):
+            await send(
+                {
+                    "type": "http.response.start",
+                    "status": 200,
+                    "headers": [(b"cache-control", b"public, max-age=60")],
+                }
+            )
+            await send({"type": "http.response.body", "body": b"ok"})
+
+        response = TestClient(_NoCacheMiddleware(cacheable_app)).get("/")
+        assert response.headers["Cache-Control"] == "public, max-age=60"
+
+    def test_viewer_shell_revalidates_but_assets_do_not(self, tmp_path):
+        """Unhashed shell revalidates; content-hashed assets stay cacheable."""
+        from luxar.cli.serving import _build_viewer_app
+
+        viewer = tmp_path / "viewer"
+        assets = viewer / "assets"
+        assets.mkdir(parents=True)
+        (assets / "app.01234567.js").write_text("export {};")
+        (viewer / "index.html").write_text("<html><body>shell</body></html>")
+
+        client = TestClient(_build_viewer_app(viewer))
+
+        # Content-hashed asset: immutable URL, must NOT be forced to revalidate.
+        asset = client.get("/assets/app.01234567.js")
+        assert asset.status_code == 200
+        assert asset.headers.get("Cache-Control") != "no-cache"
+
+        # Unhashed shell (both "/" and "/index.html"): replaced in place on
+        # rebuild, so it MUST revalidate exactly like mutable dataset chunks.
+        for shell_path in ("/", "/index.html"):
+            response = client.get(shell_path)
+            assert response.status_code == 200
+            assert response.headers.get("Cache-Control") == "no-cache"
 
     def test_non_local_cors_origin_rejected_by_default(self, sample_scene):
         """Default CORS policy should only allow loopback browser clients."""
