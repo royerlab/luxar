@@ -201,6 +201,7 @@ encoder.encode(
 )
 
 # Result: Stored as (1,) or (1,3) array with metadata {"name": "broadcasted", "n_elements": N}
+#         (COLOR arrays additionally carry "original_dtype": "<dtype>")
 # Performance: Zero intermediate array allocation!
 ```
 
@@ -441,7 +442,7 @@ When all elements share the same value, store only one value with metadata.
 
 **Storage Format:**
 - Array shape: `(1,)` or `(1, d)` instead of `(N,)` or `(N, d)`
-- Metadata: `{"encoding": {"name": "broadcasted", "n_elements": N}}`
+- Metadata: `{"encoding": {"name": "broadcasted", "n_elements": N}}`. **COLOR** arrays additionally carry `"original_dtype": "<numpy dtype>"` (e.g. `"uint8"`, `"uint16"`) so readers restore the native integer color dtype and normalize it, rather than reading raw 0-255 floats. Non-color arrays (radii/sharpness/amplitudes) omit it and decode as Float32.
 
 **Example:**
 ```python

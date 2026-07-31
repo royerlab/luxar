@@ -84,6 +84,40 @@ def test_cached_download_returns_present_file_without_network(tmp_path, monkeypa
     assert p.read_bytes() == b"hello world"
 
 
+def test_cached_download_checksum_hit_is_silent_when_quiet(
+    tmp_path, monkeypatch, capsys
+):
+    """A checksum-verified cache hit under ``verbose=False`` must print nothing.
+
+    ``cached_download`` re-hashes the cached file on every call, so a
+    ``verify_file_checksum`` that ignores ``verbose`` logs a per-file
+    "Verifying …" block for a caller that asked for silence.
+    """
+    import hashlib
+
+    cache_dir = (tmp_path / "cache") / "demoQuiet"
+    cache_dir.mkdir(parents=True)
+    payload = b"hello world"
+    (cache_dir / "data.bin").write_bytes(payload)
+
+    def _boom(*a, **k):  # pragma: no cover - must not be called
+        raise AssertionError("network download attempted for a cached file")
+
+    monkeypatch.setattr("luxar.utils.download.robust_download", _boom)
+    monkeypatch.setattr("luxar.utils.download.download_with_checksum", _boom)
+
+    p = demo_utils.cached_download(
+        "http://example.invalid/data.bin",
+        "demoQuiet",
+        "data.bin",
+        sha256=hashlib.sha256(payload).hexdigest(),
+        verbose=False,
+    )
+
+    assert p.read_bytes() == payload
+    assert capsys.readouterr().out == ""
+
+
 def test_parse_int_arg_equals_space_and_default():
     assert demo_utils.parse_int_arg("points", 100, ["--points=4000"]) == 4000
     assert demo_utils.parse_int_arg("points", 100, ["--points", "2000"]) == 2000

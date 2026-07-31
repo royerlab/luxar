@@ -1,7 +1,8 @@
-"""Smoke tests for the pure helpers in demo_gsplats_3d_ct_totalsegmentator.
+"""Smoke tests for demo_gsplats_3d_ct_totalsegmentator.
 
-Only deterministic array helpers are exercised (no network, no nibabel IO, no
-GPU fit). The demo is loaded by file path (see test_demo_ppi_flow_field).
+Covers the deterministic array helpers and the scene builder's authored
+blending — no network, no nibabel IO, no GPU fit. The demo is loaded by file
+path (see test_demo_ppi_flow_field).
 """
 
 from __future__ import annotations
@@ -12,6 +13,9 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+import zarr
+
+from luxar.gsplats.gsplat_data import GSplatData
 
 pytest.importorskip("scipy")
 
@@ -44,6 +48,52 @@ _save_labels_u8 = _demo._save_labels_u8
 _load_labels = _demo._load_labels
 CLASS_MAP = _demo.CLASS_MAP
 SUPERGROUPS = _demo.SUPERGROUPS
+create_luxar_scene = _demo.create_luxar_scene
+
+
+def _tiny_gsplat_data(n: int, seed: int = 0) -> GSplatData:
+    """A handful of valid splats — no GPU fit, enough to build the scene."""
+    rng = np.random.default_rng(seed)
+    return GSplatData(
+        centers=rng.uniform(-4.0, 4.0, (n, 3)).astype(np.float32),
+        amplitudes=rng.uniform(0.2, 1.0, n).astype(np.float32),
+        cholesky_factors=np.tile([1, 0, 1, 0, 0, 1], (n, 1)).astype(np.float32),
+    )
+
+
+def _gsplat_layers(scene_path: Path) -> list:
+    """Attr dicts of the scene's top-level gsplats layer nodes."""
+    root = zarr.open_group(str(scene_path), mode="r")
+    return [
+        dict(group.attrs)
+        for _name, group in root.groups()
+        if dict(group.attrs).get("type") == "gsplats"
+    ]
+
+
+class TestSceneBlending:
+    def test_scene_bakes_volumetric_blending_on_every_layer(self, tmp_path) -> None:
+        # Every per-tissue toggle layer must composite volumetrically
+        # (emission-absorption) so organs read through one another instead of
+        # summing to additive glow; pin it so a silent revert is caught (the
+        # helper smoke tests never build the scene). Seed one label per
+        # supergroup so the scene really carries every layer — a layer that is
+        # never built could not be checked.
+        all_ids = np.array(sorted(CLASS_MAP), dtype=np.int32)
+        super_idx = splat_layer_indices(all_ids)
+        labels = []
+        for i, (layer_name, *_rest) in enumerate(SUPERGROUPS):
+            members = all_ids[super_idx == i]
+            assert members.size, f"no CLASS_MAP label lands in layer {layer_name!r}"
+            labels.append(int(members[0]))
+        fit = _tiny_gsplat_data(len(labels))
+        out = create_luxar_scene(
+            fit, np.array(labels, dtype=np.int32), tmp_path / "ct.luxar.zarr"
+        )
+        layers = _gsplat_layers(out)
+        assert len(layers) == len(SUPERGROUPS)
+        for attrs in layers:
+            assert attrs.get("blending_mode") == "volumetric"
 
 
 class TestTissueGroup:

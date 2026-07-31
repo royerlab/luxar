@@ -53,8 +53,9 @@ def fit_tile(
         Tile specification from :func:`compute_tile_specs`. Contains the
         per-face overlap sizes used for cosine window construction.
     voxel_size : float or sequence of float, optional
-        Physical voxel spacing. Passed through to :func:`fit_gaussian_splats`
-        and used for correct center translation when ``output_space="real"``.
+        Physical voxel spacing. Passed through to the per-tile fitter (both
+        :func:`fit_gaussian_splats` and the progressive fitter) and used for
+        correct center translation when ``output_space="real"``.
     output_space : str, default "real"
         Coordinate space for output centers (``"real"`` or ``"voxel"``).
     progressive : bool, default False
@@ -171,10 +172,9 @@ def fit_tile(
         elif prog_max_splats is None:
             prog_max_splats = 5000
 
-        # Progressive fitting always works in voxel space internally
-        # (it pops output_space/voxel_size from kwargs), so we don't
-        # pass them here. The tile offset translation handles coordinate
-        # space conversion.
+        # Forward voxel_size/output_space so the progressive fitter converts
+        # centers AND Cholesky factors to physical coordinates when requested,
+        # matching the non-progressive branch (it pops both from kwargs).
         # Map n_iters → iters_per_pass (progressive uses its own param name)
         # Check iters_per_pass first (direct callers), then n_iters (CLI path)
         prog_iters = fit_kwargs.pop("iters_per_pass", None)
@@ -187,6 +187,8 @@ def fit_tile(
             iters_per_pass=prog_iters,
             psnr_patience=psnr_patience,
             max_passes=max_passes,
+            voxel_size=voxel_size,
+            output_space=output_space,
             cull_retention=None,  # Disable per-tile; fit_tiled culls the merged result
             **fit_kwargs,
         )
@@ -202,10 +204,10 @@ def fit_tile(
     # 4. Translate centers from tile-local to global coordinates
     if result.n_splats > 0:
         origin = np.array(spec.origin, dtype=np.float32)
-        # Progressive fitting always returns voxel-space centers (it pops
-        # output_space/voxel_size internally), so the offset must be in
-        # voxel space regardless of the caller's output_space.
-        if not progressive and output_space == "real" and voxel_size is not None:
+        # Both branches now return centers in the caller's requested space, so
+        # scale the tile-origin offset to match: physical when output_space is
+        # "real" with a voxel_size, raw voxel-space otherwise.
+        if output_space == "real" and voxel_size is not None:
             vs = np.broadcast_to(
                 np.asarray(voxel_size, dtype=np.float32), (len(origin),)
             )
