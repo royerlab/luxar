@@ -20,6 +20,14 @@ export interface ShowDatasetBrowserPorts {
   updateBrowserUrl: boolean;
   inputHandler: InputHandler;
   onSrcChange: (src: string) => void;
+  /**
+   * True while a guarded dataset switch is already in flight. Consulted
+   * BEFORE the selection side effects (host-URL replacement, onSrcChange):
+   * a selection arriving mid-switch is rejected by `loadDataset` below, and
+   * must not leave the host URL or the src snapshot pointing at a dataset
+   * that never loaded.
+   */
+  isSwitchInFlight: () => boolean;
   loadDataset: (src: string) => Promise<void>;
   onClose: () => void;
 }
@@ -36,16 +44,23 @@ export function showDatasetBrowser(ports: ShowDatasetBrowserPorts): DatasetBrows
       // Strip any trailing slashes to ensure consistent URL format
       const cleanUrl = fullUrl.replace(/\/+$/, '');
 
-      // Reflect the chosen dataset in the URL bar only for callers that opt in.
-      // The standalone bootstrap opts in; programmatic/embedded usage defaults
-      // to no host-page URL mutation.
-      if (ports.updateBrowserUrl) {
-        replaceBrowserDataSourceUrl(cleanUrl);
-      }
+      // Selection side effects run only when the guarded switch can actually
+      // start. If another switch is already in flight (e.g. the embedder
+      // kicked one off while the modal was open), `loadDataset` below rejects
+      // — running these first would leave the host URL and the src snapshot
+      // pointing at a dataset that never loaded.
+      if (!ports.isSwitchInFlight()) {
+        // Reflect the chosen dataset in the URL bar only for callers that opt in.
+        // The standalone bootstrap opts in; programmatic/embedded usage defaults
+        // to no host-page URL mutation.
+        if (ports.updateBrowserUrl) {
+          replaceBrowserDataSourceUrl(cleanUrl);
+        }
 
-      // Track the new src in our options snapshot so a subsequent browser
-      // open lands in the right directory.
-      ports.onSrcChange(cleanUrl);
+        // Track the new src in our options snapshot so a subsequent browser
+        // open lands in the right directory.
+        ports.onSrcChange(cleanUrl);
+      }
 
       // [core OOS] Wrap `loadDataset` in try/catch. The DatasetBrowser
       // modal's `onDatasetSelect` contract is `Promise<void>` — the
