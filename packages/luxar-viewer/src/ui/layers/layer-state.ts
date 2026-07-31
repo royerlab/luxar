@@ -10,7 +10,7 @@ import { getEffectiveAttrs } from '../../data/attrs-composer';
 import type { BlendingMode } from '../../types/blending';
 import type { NodeKind } from '../../types/format-contract';
 import { log, Modules } from '../../utils/log';
-import { absorptionMaxForNode } from './absorption-range';
+import { absorptionBoundsForNode } from './absorption-range';
 
 /**
  * Geometry type of a layer.
@@ -104,6 +104,13 @@ export interface LayerInfo {
    * `absorption-range.ts`.
    */
   absorptionMax: number;
+  /**
+   * Smallest per-leaf κ bound in the subtree (the THICKEST descendant's
+   * opaque point) — anchors the slider FLOOR, so a mixed-thickness group
+   * can still reach near-transparency for its fattest geometry. Equals
+   * `absorptionMax` for single-thickness or stat-less layers.
+   */
+  absorptionMinBound: number;
   /** Current display-range minimum (maps to intensity+offset in shader) */
   displayMin: number;
   /** Current display-range maximum */
@@ -344,6 +351,10 @@ export class LayerStateManager {
         const lodGroupChildCount = kind === 'lod' ? (node.children?.length ?? 0) : undefined;
         const partCount = kind === 'partition' ? (node.children?.length ?? 0) : undefined;
 
+        // Per-layer κ track bounds from the subtree's recorded thickness —
+        // one walk yields both ends (thinnest → max, thickest → floor anchor).
+        const absorptionBounds = absorptionBoundsForNode(node);
+
         // Partition-of-LOD discovery. A kind=partition layer that wraps
         // kind=lod descendants gets a broadcast dropdown over every
         // nested lod_group. The walk stops at the first lod_group it
@@ -386,7 +397,8 @@ export class LayerStateManager {
           // each layer's live values per ancestry node, so a composed
           // init would multiply ancestor κ in twice.
           absorption: (node.attrs.absorption as number) ?? 1.0,
-          absorptionMax: absorptionMaxForNode(node),
+          absorptionMax: absorptionBounds.max,
+          absorptionMinBound: absorptionBounds.minBound,
           displayMin,
           displayMax,
           dataMin,

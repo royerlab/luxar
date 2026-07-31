@@ -547,10 +547,13 @@ and rendering agree.
   `LuxarMaterial` interface (`ui/layers/luxar-material.ts`).
 - **The track is logarithmic with PER-LAYER bounds** (`ui/layers/absorption-range.ts`),
   not a fixed 0–10: κ has units of 1/length, so the κ that produces a given τ
-  scales as 1/thickness. `absorptionMaxForNode` derives the top of the track
-  from the thickness the writer records for the layer's subtree (`max_width` for
-  lines, `max_radius` for points; the thinnest descendant wins because one κ
-  drives them all) so it lands near τ = 5 — "opaque". Gsplats have no
+  scales as 1/thickness. `absorptionBoundsForNode` derives the track from the
+  thickness the writer records for the layer's subtree (`max_width` for lines,
+  `max_radius` for points): the TOP from the thinnest descendant (one κ drives
+  them all) so it lands near τ = 5 — "opaque" — and the FLOOR anchored to the
+  thickest descendant, so a mixed-thickness group can also reach
+  near-transparency for its fattest geometry instead of stalling at visible
+  absorption above the zero stop. Gsplats have no
   comparable stat and their `τ = κ·opacity·rayMass` is already O(1)-calibrated
   for fitted volumes, so they keep the historical 0.001–10 span, which is also
   the floor for every derived bound (an authored κ ≤ 10 must stay reachable).

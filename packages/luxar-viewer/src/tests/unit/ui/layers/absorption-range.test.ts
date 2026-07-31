@@ -16,7 +16,7 @@ import {
   ABSORPTION_LOG_DECADES_MAX,
   ABSORPTION_MAX_LIMIT,
   ABSORPTION_TAU_TARGET,
-  absorptionMaxForNode,
+  absorptionBoundsForNode,
   absorptionSliderRange,
   formatAbsorption,
 } from '../../../../ui/layers/absorption-range';
@@ -31,61 +31,70 @@ function node(
   return { path: `/${type}`, name: type, type, attrs, children } as unknown as SceneNode;
 }
 
-describe('absorptionMaxForNode', () => {
+describe('absorptionBoundsForNode', () => {
   it('derives the bound from a lines node max_width so the top of the track is opaque', () => {
     const width = 0.0015; // the 3D-Hilbert-curve demo's line width
-    const max = absorptionMaxForNode(node('lines', { max_width: width }));
+    const { max, minBound } = absorptionBoundsForNode(node('lines', { max_width: width }));
 
     // τ at the top of the track must be the "clearly opaque" target.
     expect(max * width * LINE_CHORD_SCALE).toBeCloseTo(ABSORPTION_TAU_TARGET, 6);
     // And it must be far above the old fixed bound — that is the bug.
     expect(max).toBeGreaterThan(100 * ABSORPTION_DEFAULT_MAX);
+    // A single-thickness subtree has one opaque point: both ends agree.
+    expect(minBound).toBe(max);
   });
 
   it('derives the bound from a points node max_radius', () => {
     const radius = 0.02;
-    const max = absorptionMaxForNode(node('points', { max_radius: radius }));
+    const { max } = absorptionBoundsForNode(node('points', { max_radius: radius }));
     expect(max * radius * POINT_CHORD_SCALE).toBeCloseTo(ABSORPTION_TAU_TARGET, 6);
   });
 
   it('falls back to the default for gsplats (τ = κ·opacity·rayMass is already O(1)-calibrated)', () => {
-    expect(absorptionMaxForNode(node('gsplats', { n_splats: 1000 }))).toBe(ABSORPTION_DEFAULT_MAX);
+    expect(absorptionBoundsForNode(node('gsplats', { n_splats: 1000 }))).toEqual({
+      max: ABSORPTION_DEFAULT_MAX,
+      minBound: ABSORPTION_DEFAULT_MAX,
+    });
   });
 
   it('falls back to the default when the thickness stat is missing or degenerate', () => {
-    expect(absorptionMaxForNode(node('lines', {}))).toBe(ABSORPTION_DEFAULT_MAX);
-    expect(absorptionMaxForNode(node('lines', { max_width: 0 }))).toBe(ABSORPTION_DEFAULT_MAX);
-    expect(absorptionMaxForNode(node('lines', { max_width: -1 }))).toBe(ABSORPTION_DEFAULT_MAX);
-    expect(absorptionMaxForNode(node('lines', { max_width: NaN }))).toBe(ABSORPTION_DEFAULT_MAX);
-    expect(absorptionMaxForNode(node('points', { max_radius: 'fat' }))).toBe(
-      ABSORPTION_DEFAULT_MAX
-    );
+    const fallback = { max: ABSORPTION_DEFAULT_MAX, minBound: ABSORPTION_DEFAULT_MAX };
+    expect(absorptionBoundsForNode(node('lines', {}))).toEqual(fallback);
+    expect(absorptionBoundsForNode(node('lines', { max_width: 0 }))).toEqual(fallback);
+    expect(absorptionBoundsForNode(node('lines', { max_width: -1 }))).toEqual(fallback);
+    expect(absorptionBoundsForNode(node('lines', { max_width: NaN }))).toEqual(fallback);
+    expect(absorptionBoundsForNode(node('points', { max_radius: 'fat' }))).toEqual(fallback);
   });
 
   it('never drops BELOW the default, so authored κ ≤ 10 stays reachable on fat geometry', () => {
     // A 50-unit-wide line would derive κ_max ≈ 0.086 on its own.
-    expect(absorptionMaxForNode(node('lines', { max_width: 50 }))).toBe(ABSORPTION_DEFAULT_MAX);
+    expect(absorptionBoundsForNode(node('lines', { max_width: 50 })).max).toBe(
+      ABSORPTION_DEFAULT_MAX
+    );
   });
 
   it('clamps a degenerate (near-zero) thickness to the hard ceiling', () => {
-    expect(absorptionMaxForNode(node('lines', { max_width: 1e-30 }))).toBe(ABSORPTION_MAX_LIMIT);
+    expect(absorptionBoundsForNode(node('lines', { max_width: 1e-30 })).max).toBe(
+      ABSORPTION_MAX_LIMIT
+    );
   });
 
-  it('takes the THINNEST descendant for a group layer (one κ drives the whole subtree)', () => {
+  it('takes the THINNEST descendant for the top and the THICKEST for the floor anchor', () => {
     const group = node('group', {}, [
-      node('lines', { max_width: 0.5 }),
+      node('lines', { max_width: 0.5 }), // thickest → anchors the floor
       node('lines', { max_width: 0.002 }), // thinnest → needs the largest κ
-      node('gsplats', {}),
+      node('gsplats', {}), // no stat — must not drag either end
     ]);
-    const max = absorptionMaxForNode(group);
+    const { max, minBound } = absorptionBoundsForNode(group);
     expect(max * 0.002 * LINE_CHORD_SCALE).toBeCloseTo(ABSORPTION_TAU_TARGET, 6);
+    expect(minBound * 0.5 * LINE_CHORD_SCALE).toBeCloseTo(ABSORPTION_TAU_TARGET, 6);
   });
 
   it('walks nested kind=lod / kind=partition subtrees', () => {
     const partition = node('group', { kind: 'partition' }, [
       node('group', { kind: 'lod' }, [node('lines', { max_width: 0.004 })]),
     ]);
-    const max = absorptionMaxForNode(partition);
+    const { max } = absorptionBoundsForNode(partition);
     expect(max * 0.004 * LINE_CHORD_SCALE).toBeCloseTo(ABSORPTION_TAU_TARGET, 6);
   });
 });
@@ -107,7 +116,7 @@ describe('absorptionSliderRange', () => {
     // 4-decade floor can sit ABOVE the authored default κ = 1. The readout
     // would then show 1.00 while the thumb could not represent it, and the
     // first drag would silently jump κ up to the floor.
-    const thin = absorptionMaxForNode(node('lines', { max_width: 6e-4 }));
+    const thin = absorptionBoundsForNode(node('lines', { max_width: 6e-4 })).max;
     expect(thin / Math.pow(10, ABSORPTION_LOG_DECADES)).toBeGreaterThan(1); // nominal floor > κ=1
     const { min, max } = absorptionSliderRange(thin, 1);
     expect(min).toBe(1); // floor lowered exactly onto the current κ
@@ -117,6 +126,40 @@ describe('absorptionSliderRange', () => {
   it('bounds how far the floor is lowered for a κ that is already ~zero', () => {
     const { min, max } = absorptionSliderRange(4035.77, 1e-30);
     expect(min).toBeCloseTo(max / Math.pow(10, ABSORPTION_LOG_DECADES_MAX), 12);
+  });
+
+  it('anchors the floor to the THICKEST descendant so a mixed group reaches near-transparency', () => {
+    // Regression: with the floor fixed 4 decades below `max` (the thinnest
+    // descendant's bound), the 0.5-wide sibling in this group still had
+    // τ ≈ 0.125 (~12% absorption) at the lowest positive stop — meaningful
+    // low absorption was unreachable except via the abrupt zero stop.
+    const group = node('group', {}, [
+      node('lines', { max_width: 0.5 }),
+      node('lines', { max_width: 0.002 }),
+    ]);
+    const { max, minBound } = absorptionBoundsForNode(group);
+    const { min } = absorptionSliderRange(max, 1, minBound);
+    // τ for the WIDE line at the floor is the same "optically nothing" a
+    // single-thickness layer gets: 4 decades below the opaque target.
+    expect(min * 0.5 * LINE_CHORD_SCALE).toBeCloseTo(
+      ABSORPTION_TAU_TARGET / Math.pow(10, ABSORPTION_LOG_DECADES),
+      9
+    );
+    // The top is untouched: still the thin line's opaque point.
+    expect(max * 0.002 * LINE_CHORD_SCALE).toBeCloseTo(ABSORPTION_TAU_TARGET, 6);
+  });
+
+  it('caps the span for a pathological thickness spread (ratio beyond the decade cap)', () => {
+    // minBound 4 decades of spread below max would ask for 8+ decades of
+    // track; the span cap wins so the useful region cannot be compressed away.
+    const { min, max } = absorptionSliderRange(1e6, 1, 10);
+    expect(max).toBe(1e6);
+    expect(min).toBeCloseTo(max / Math.pow(10, ABSORPTION_LOG_DECADES_MAX), 12);
+  });
+
+  it('treats a missing/degenerate minBound as max (single-thickness behaviour)', () => {
+    expect(absorptionSliderRange(2000, 1, NaN)).toEqual(absorptionSliderRange(2000, 1));
+    expect(absorptionSliderRange(2000, 1, 0)).toEqual(absorptionSliderRange(2000, 1));
   });
 
   it('caps the widening at the hard ceiling so an absurd authored κ keeps a usable track', () => {

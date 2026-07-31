@@ -19,7 +19,9 @@ the mode change itself — κ is not read in `max` at all.)
 
 The track is now **logarithmic with bounds re-derived per layer** from the
 thickness the writer already records (`max_width` / `max_radius`; the thinnest
-descendant wins, since one κ drives the whole subtree), so its top lands near
+descendant sets the top, since one κ drives the whole subtree, and the thickest
+anchors the floor so a mixed-thickness group can still reach near-transparency
+for its fattest geometry), so its top lands near
 τ = 5 — opaque — whatever the scene's units. That 1.5e-3-wide line now reaches
 κ ≈ 4.0e3; sweeping the track moves mean luminance 53 → 21 where it used to move
 one 8-bit level. Gsplats carry no comparable thickness stat and their

@@ -425,7 +425,11 @@ export class LayerControls {
     // that one κ out to every selected layer (same as opacity / gamma) — a
     // co-selected thicker layer just saturates earlier along the track.
     if (this.absorptionSlider) {
-      const { min, max } = absorptionSliderRange(primary.absorptionMax, primary.absorption);
+      const { min, max } = absorptionSliderRange(
+        primary.absorptionMax,
+        primary.absorption,
+        primary.absorptionMinBound
+      );
       this.absorptionSlider.setRange(min, max);
       this.absorptionSlider.setValue(primary.absorption);
     }
