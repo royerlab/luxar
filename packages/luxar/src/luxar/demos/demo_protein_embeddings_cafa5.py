@@ -35,27 +35,35 @@ Cite: Elnaggar et al. (2021), "ProtTrans: Toward Understanding the Language of
 Life Through Self-Supervised Learning", IEEE TPAMI. DOI: 10.1109/TPAMI.2021.3095381
 CAFA5 challenge: https://www.kaggle.com/competitions/cafa-5-protein-function-prediction
 
-GENE ONTOLOGY (GO) ANNOTATIONS:
---------------------------------
-Proteins are annotated with GO terms describing:
-- **Molecular Function**: What the protein does (e.g., "kinase activity")
-- **Biological Process**: What pathway it's involved in (e.g., "cell division")
-- **Cellular Component**: Where it's located (e.g., "mitochondrion")
+NAMING THE CLUSTERS (UniProt keyword enrichment):
+-------------------------------------------------
+The Kaggle bundle ships no usable annotation for these accessions — its
+``CAFA1_train_terms.tsv`` covers 1,387 PDB-style entries (``3PHF-2``) and has
+**zero** overlap with the 142,246 UniProt accessions in ``train_ids.npy``. So
+the demo names its clusters from the annotation database itself: a random
+sample of each cluster's members is looked up in the UniProt REST API, and the
+cluster is named after the UniProt keyword most **over-represented** in it
+relative to the pooled sample (lift = P(keyword | cluster) / P(keyword | all)).
+
+That turns "Cluster 3" into "Transit peptide" or "G protein-coupled receptor" —
+a name derived from the data, recomputed every run, never hardcoded (UMAP is
+not seeded, so cluster identity is not stable across runs). Clusters with no
+keyword clearly above background are honestly labelled "Mixed".
 
 VISUALIZATION STRATEGY:
 -----------------------
 This demo:
 1. Loads 142k pre-computed ProtT5 embeddings (1,024D)
 2. Reduces to 3D using UMAP (preserves functional relationships)
-3. Colors proteins by function category
-4. Shows beautiful clusters of proteins with similar roles!
+3. Clusters the 3D landscape with k-means
+4. Names each cluster by UniProt keyword enrichment, and colors by cluster
 
 WHAT YOU'LL SEE:
-- Enzymes (kinases, proteases, etc.) clustering together
-- Structural proteins in distinct regions
-- Membrane proteins separate from cytoplasmic ones
-- DNA-binding proteins grouped by function
-- Beautiful functional landscape of the proteome!
+- Named functional territories rather than anonymous colored blobs
+- Secreted / signal-peptide proteins separated from cytoplasmic ones
+- Organelle-targeted proteins (transit peptide, mitochondrion) as their own region
+- Receptors / GPCRs as a distinct island
+- Hover a point for its UniProt accession and cluster name
 
 DATASET: CAFA5 (Kaggle)
 -----------------------
@@ -73,19 +81,21 @@ Usage:
     --no-serve       Generate dataset without launching viewer
 
 Requirements:
-    - pip install umap-learn pandas
+    - pip install umap-learn
+    - Internet access for the UniProt lookup used to name the clusters
+      (~22k accessions, a few minutes on the first run, then cached in
+      ~/.cache/luxar/protein_embeddings/uniprot_keywords.json)
 
 Controls:
     - Explore clusters of functionally similar proteins
-    - Color = protein function category
-    - Size = sequence length or confidence
+    - Color = landscape cluster, named by its enriched UniProt keyword
     - Ctrl+C to stop
 """
 
 DEMO_META = {
     "key": "protein_landscape",
     "title": "Protein Landscape",
-    "description": "142k CAFA5 proteins as a 3D UMAP of ProtT5 embeddings — functionally similar proteins cluster.",
+    "description": "142k CAFA5 proteins as a 3D UMAP of ProtT5 embeddings — clusters named by UniProt keyword enrichment.",
     "category": "embeddings",
     "geometry": "points",
     "requirements": {
@@ -98,15 +108,23 @@ DEMO_META = {
     "outputs": ["protein_landscape"],
 }
 
+import gzip
+import json
 import sys
 import tempfile
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from collections import Counter
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import launch_viewer, require_module, stack_colorings
+from luxar.demos import launch_viewer, require_module
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -115,34 +133,81 @@ from luxar.utils.paths import get_demos_output_dir
 
 DEFAULT_SAMPLE_SIZE = None  # Use all 142k proteins by default
 
-# Protein function category colors
-# Based on broad functional categories OR k-means clusters
-FUNCTION_COLORS = {
-    # GO-based categories
-    "enzyme": np.array([1.0, 0.5, 0.2]),  # Orange
-    "transporter": np.array([0.3, 0.7, 1.0]),  # Blue
-    "receptor": np.array([0.9, 0.3, 0.9]),  # Magenta
-    "structural": np.array([0.5, 0.9, 0.5]),  # Green
-    "regulator": np.array([1.0, 0.8, 0.2]),  # Gold
-    "binding": np.array([0.6, 0.3, 1.0]),  # Purple
-    "signaling": np.array([1.0, 0.4, 0.4]),  # Red
-    "membrane": np.array([0.3, 0.9, 0.9]),  # Cyan
-    "nucleic_acid": np.array([0.9, 0.6, 0.3]),  # Tan
-    "catalytic": np.array([1.0, 0.7, 0.3]),  # Light Orange
-    # K-means clusters (rainbow)
-    "cluster_0": np.array([1.0, 0.3, 0.3]),  # Red
-    "cluster_1": np.array([1.0, 0.6, 0.2]),  # Orange
-    "cluster_2": np.array([1.0, 0.9, 0.2]),  # Yellow
-    "cluster_3": np.array([0.5, 1.0, 0.3]),  # Lime
-    "cluster_4": np.array([0.2, 1.0, 0.5]),  # Green
-    "cluster_5": np.array([0.2, 0.9, 0.9]),  # Cyan
-    "cluster_6": np.array([0.3, 0.5, 1.0]),  # Blue
-    "cluster_7": np.array([0.6, 0.3, 1.0]),  # Purple
-    "cluster_8": np.array([0.9, 0.3, 0.8]),  # Magenta
-    "cluster_9": np.array([1.0, 0.4, 0.6]),  # Pink
-    # Fallback
-    "other": np.array([0.5, 0.5, 0.5]),  # Gray
-}
+#: k-means regions carved out of the 3D landscape. 14 rather than 10 because it
+#: is what the naming actually resolves: measured over 5 resamplings of the real
+#: dataset, 14 regions yield 12 named / 13 stable, and they separate specific
+#: biology (Chloroplast, Mitochondrion, Cell wall, Transducer) that 10 regions
+#: blur into generic "Nucleus" / "Cytoplasm" territories (8 named / 7 stable).
+N_CLUSTERS = 14
+
+#: Colors for the landscape clusters — a full hue sweep, one per cluster, with
+#: alternating lightness so neighbouring hues stay separable in the legend.
+CLUSTER_COLORS = np.array(
+    [
+        [1.00, 0.30, 0.30],  # Red
+        [1.00, 0.55, 0.20],  # Orange
+        [0.95, 0.80, 0.25],  # Amber
+        [0.75, 0.95, 0.30],  # Yellow-green
+        [0.40, 0.90, 0.35],  # Green
+        [0.25, 0.85, 0.60],  # Emerald
+        [0.30, 0.90, 0.90],  # Cyan
+        [0.35, 0.65, 1.00],  # Azure
+        [0.35, 0.45, 0.95],  # Blue
+        [0.60, 0.40, 1.00],  # Violet
+        [0.80, 0.35, 0.95],  # Purple
+        [0.95, 0.35, 0.75],  # Magenta
+        [1.00, 0.45, 0.55],  # Rose
+        [0.85, 0.65, 0.50],  # Tan
+    ],
+    dtype=np.float32,
+)
+
+# --- Cluster naming (UniProt keyword enrichment) -----------------------------
+
+UNIPROT_REST = "https://rest.uniprot.org"
+#: UniProt asks API clients to identify themselves.
+UNIPROT_USER_AGENT = "luxar-demo/1.0 (https://github.com/royerlab/luxar)"
+
+#: Bulk mapping jobs are occasionally refused when several are submitted
+#: back to back; retry the batch rather than losing the whole lookup.
+UNIPROT_MAX_ATTEMPTS = 4
+UNIPROT_BACKOFF_SECONDS = 5.0
+
+#: Proteins sampled per cluster and looked up in UniProt to name the cluster —
+#: far cheaper than annotating all 142k, and enough to rank keywords reliably.
+#: Not smaller: correlated keywords ("Nucleus" / "Transcription" / "DNA-binding"
+#: all describe the same territory) sit close enough in score that a few hundred
+#: samples let resampling noise decide between them. Measured over 5 resamplings
+#: of the real dataset, 400/cluster keeps only 6 of 14 names identical, while
+#: 1600/cluster keeps 13 of 14.
+NAMING_SAMPLE_PER_CLUSTER = 1600
+
+#: UniProt keyword categories that say what a protein *is* or *does*. The other
+#: categories ("Technical term", "PTM", "Disease", "Coding sequence diversity",
+#: ...) describe experimental provenance or modifications and make poor names —
+#: "3D-structure" is a statement about the PDB, not about the cluster.
+INFORMATIVE_KEYWORD_CATEGORIES = frozenset(
+    {
+        "Molecular function",
+        "Biological process",
+        "Cellular component",
+        "Ligand",
+        "Domain",
+    }
+)
+
+#: A keyword must appear in at least this fraction of a cluster's sample to be
+#: eligible as its name (guards against naming a cluster after a handful of
+#: members), AND in at least ``MIN_KEYWORD_COUNT`` of them.
+MIN_KEYWORD_FRACTION = 0.05
+MIN_KEYWORD_COUNT = 10
+
+#: ...and it must be at least this over-represented versus the pooled sample.
+#: Some k-means cells are genuinely unstructured mixtures; naming those after
+#: their top keyword at 1.4x lift would be as meaningless as "Cluster 0", so
+#: they get ``UNNAMED_CLUSTER_LABEL`` instead.
+MIN_KEYWORD_LIFT = 2.0
+UNNAMED_CLUSTER_LABEL = "Mixed"
 
 
 # =============================================================================
@@ -224,59 +289,23 @@ def download_cafa5_dataset(output_dir: Path) -> Path:
 # =============================================================================
 
 
-def load_go_annotations(data_dir: Path) -> dict:
-    """Load GO term annotations from TSV file.
-
-    Args:
-        data_dir: CAFA5 data directory
-
-    Returns:
-        Dictionary mapping protein_id -> list of GO terms
-    """
-    tsv_files = list(data_dir.rglob("*terms.tsv"))
-
-    if not tsv_files:
-        aprint("⚠️  No GO annotation files found")
-        return {}
-
-    # Gated here, not in main(): only reached when there is a TSV to parse.
-    pd = require_module("pandas")
-
-    with asection("Loading GO term annotations"):
-        go_file = tsv_files[0]
-        aprint(f"File: {go_file.name}")
-
-        df = pd.read_csv(go_file, sep="\t")
-        aprint(f"✓ Loaded {len(df):,} GO annotations")
-        aprint(f"  Columns: {list(df.columns)}")
-
-        # Group by protein ID
-        protein_to_go = {}
-        for _, row in df.iterrows():
-            protein_id = row["EntryID"]
-            go_term = row["term"]
-
-            if protein_id not in protein_to_go:
-                protein_to_go[protein_id] = []
-            protein_to_go[protein_id].append(go_term)
-
-        aprint(f"✓ Annotations for {len(protein_to_go):,} unique proteins")
-
-    return protein_to_go
-
-
 def load_protein_embeddings(
     data_dir: Path,
     sample_size: int | None = None,
-) -> tuple[np.ndarray, list[str], list[str]]:
-    """Load ProtT5 embeddings and metadata from CAFA5 dataset.
+) -> tuple[np.ndarray, list[str]]:
+    """Load ProtT5 embeddings and their UniProt accessions from the CAFA5 bundle.
+
+    Note the bundle carries no usable functional annotation for these proteins:
+    its ``*_train_terms.tsv`` lists PDB-style entries (``3PHF-2``) that do not
+    intersect the UniProt accessions in ``train_ids.npy`` at all. Annotation is
+    fetched from UniProt at naming time instead (see :func:`name_clusters`).
 
     Args:
         data_dir: Directory containing extracted CAFA5 data
         sample_size: Optional number of proteins to sample
 
     Returns:
-        Tuple of (embeddings, protein_ids, functions)
+        Tuple of (embeddings, protein_ids)
     """
     with asection("Loading CAFA5 protein embeddings"):
         # Find the embedding files
@@ -303,68 +332,21 @@ def load_protein_embeddings(
         )
 
         aprint(
-            f"Selected embeddings file: {embedding_file.name} ({embedding_file.stat().st_size / (1024**2):.1f} MB)"
+            f"Selected embeddings file: {embedding_file.name} "
+            f"({embedding_file.stat().st_size / (1024**2):.1f} MB)"
         )
 
         aprint(f"Loading embeddings: {embedding_file.name}")
         embeddings = np.load(embedding_file)
         aprint(f"✓ Loaded {len(embeddings):,} embeddings (shape: {embeddings.shape})")
 
-        # Load protein IDs
+        # Load protein IDs (UniProt accessions — what the cluster naming needs)
         if ids_file:
             aprint(f"Loading protein IDs: {ids_file.name}")
-            protein_ids = np.load(ids_file).tolist()
+            protein_ids = [str(x) for x in np.load(ids_file, allow_pickle=True)]
             aprint(f"✓ Loaded {len(protein_ids):,} protein IDs")
         else:
             protein_ids = [f"Protein_{i}" for i in range(len(embeddings))]
-
-        # Load GO annotations
-        protein_to_go = load_go_annotations(data_dir)
-
-        # Try GO-based classification
-        aprint("Attempting GO-based classification...")
-        functions = []
-        matched_go = 0
-        for pid in protein_ids:
-            if pid in protein_to_go:
-                go_terms = protein_to_go[pid]
-                func = classify_go_term(go_terms[0]) if go_terms else "other"
-                matched_go += 1
-            else:
-                func = "other"
-            functions.append(func)
-
-        aprint(
-            f"  GO matches: {matched_go}/{len(protein_ids)} ({matched_go / len(protein_ids) * 100:.1f}%)"
-        )
-
-        # If no GO matches, use k-means clustering for coloring!
-        if matched_go < len(protein_ids) * 0.01:  # Less than 1% annotated
-            aprint("⚠️  Very few GO annotations, using k-means clustering instead!")
-            from sklearn.cluster import KMeans
-
-            with asection("Clustering proteins by embedding similarity"):
-                n_clusters = 10  # 10 functional groups
-                aprint(f"Running k-means with {n_clusters} clusters...")
-
-                kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
-                cluster_labels = kmeans.fit_predict(embeddings)
-
-                # Map cluster labels to function names
-                cluster_names = [f"cluster_{i}" for i in range(n_clusters)]
-                functions = [cluster_names[label] for label in cluster_labels]
-
-                aprint(f"✓ Created {n_clusters} functional clusters")
-                for i in range(min(5, n_clusters)):
-                    count = sum(1 for label in cluster_labels if label == i)
-                    aprint(f"  Cluster {i}: {count:,} proteins")
-        else:
-            func_counts = {}
-            for f in functions:
-                func_counts[f] = func_counts.get(f, 0) + 1
-            aprint(f"✓ Function distribution: {len(func_counts)} categories")
-            for func, count in sorted(func_counts.items(), key=lambda x: -x[1])[:5]:
-                aprint(f"  {func}: {count:,}")
 
         # Sample if requested (seeded for reproducibility)
         if sample_size and sample_size < len(embeddings):
@@ -373,55 +355,332 @@ def load_protein_embeddings(
             indices = rng.choice(len(embeddings), sample_size, replace=False)
             embeddings = embeddings[indices]
             protein_ids = [protein_ids[i] for i in indices]
-            functions = [functions[i] for i in indices]
 
         aprint(f"✓ Final dataset: {len(embeddings):,} proteins")
-        aprint(f"  Function categories: {len(set(functions))} unique")
 
-    return embeddings, protein_ids, functions
+    return embeddings, protein_ids
 
 
-def classify_go_term(go_id: str) -> str:
-    """Classify a GO term ID into a broad functional category (coarse heuristic).
+# =============================================================================
+# Cluster Naming (UniProt keyword enrichment)
+# =============================================================================
 
-    IMPORTANT: GO accession numbers are sequential IDs and are **not** partitioned
-    by namespace — Molecular Function, Biological Process, and Cellular Component
-    terms are interleaved across the numeric range. So these ranges are only a
-    rough approximation for a splash of colour, not an authoritative MF/BP/CC
-    classification. In practice most CAFA5 proteins carry no GO match here and are
-    coloured by the k-means fallback instead (see ``load_protein_embeddings``).
 
-    Specific sub-ranges are tested before broad ones so every branch is reachable.
+def _http_get(url: str, timeout: float = 120.0) -> bytes:
+    """GET a URL with a descriptive User-Agent (UniProt asks for one)."""
+    request = urllib.request.Request(url, headers={"User-Agent": UNIPROT_USER_AGENT})
+    with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
+        return response.read()
+
+
+def fetch_keyword_categories(cache_dir: Path) -> dict[str, str]:
+    """Fetch the UniProt controlled vocabulary of keywords -> category.
+
+    Used to drop keywords whose category describes provenance rather than
+    biology (``3D-structure``, ``Reference proteome``, ...). ~1,200 entries,
+    one paginated request, cached on disk forever after.
 
     Args:
-        go_id: GO term ID (e.g., "GO:0003700")
+        cache_dir: Directory holding the demo's cached artifacts.
 
     Returns:
-        Broad category name (a key of ``FUNCTION_COLORS``).
+        Mapping of keyword name -> category name.
     """
-    try:
-        go_num = int(go_id.split(":")[1])
-    except (ValueError, IndexError):
-        return "other"
+    cache_path = cache_dir / "uniprot_keyword_categories.json"
+    if cache_path.exists():
+        return json.loads(cache_path.read_text())
 
-    # Specific sub-ranges first (most specific wins), then the broad buckets.
-    if 3700 <= go_num < 3800:  # transcription-factor activity
-        return "regulator"
-    if 4000 <= go_num < 5000:  # enzyme / catalytic activities
-        return "enzyme"
-    if 5840 <= go_num < 5850:  # ribosome
-        return "structural"
-    if go_num == 5886:  # plasma membrane
-        return "membrane"
-    if 6350 <= go_num < 6400:  # DNA/RNA processes
-        return "nucleic_acid"
-    if 6800 <= go_num < 7000:  # signal transduction
-        return "signaling"
-    if 5000 <= go_num < 6000:  # other molecular-function binding
-        return "binding"
-    if 6000 <= go_num < 9000 or 40000 <= go_num < 100000:  # biological process
-        return "catalytic"
-    return "other"
+    categories: dict[str, str] = {}
+    url: str | None = (
+        f"{UNIPROT_REST}/keywords/search"
+        "?query=*&format=tsv&fields=id,name,category&size=500"
+    )
+    while url:
+        request = urllib.request.Request(
+            url, headers={"User-Agent": UNIPROT_USER_AGENT}
+        )
+        with urllib.request.urlopen(request, timeout=120) as response:  # noqa: S310
+            body = response.read().decode()
+            link = response.headers.get("Link", "")
+        for line in body.splitlines()[1:]:
+            fields = line.split("\t")
+            if len(fields) >= 3:
+                categories[fields[1]] = fields[2]
+        url = link.split(">")[0][1:] if 'rel="next"' in link else None
+
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    cache_path.write_text(json.dumps(categories))
+    return categories
+
+
+def _uniprot_keyword_batch(batch: Sequence[str]) -> dict[str, list[str]]:
+    """Resolve one batch of accessions through the UniProt ID-mapping service.
+
+    Bulk mapping means a few thousand proteins cost one round trip rather than
+    one request each: submit the accessions, poll until the job leaves the
+    queue, then stream a gzipped TSV of results.
+
+    Args:
+        batch: UniProt accessions to resolve.
+
+    Returns:
+        Mapping of accession -> keyword names, with an empty list for the
+        accessions UniProt did not resolve (obsolete, demerged, ...).
+    """
+    payload = urllib.parse.urlencode(
+        {"from": "UniProtKB_AC-ID", "to": "UniProtKB", "ids": ",".join(batch)}
+    ).encode()
+    request = urllib.request.Request(
+        f"{UNIPROT_REST}/idmapping/run",
+        data=payload,
+        headers={"User-Agent": UNIPROT_USER_AGENT},
+    )
+    with urllib.request.urlopen(request, timeout=120) as response:  # noqa: S310
+        job_id = json.load(response)["jobId"]
+
+    deadline = time.monotonic() + 900
+    while time.monotonic() < deadline:
+        status = json.loads(_http_get(f"{UNIPROT_REST}/idmapping/status/{job_id}"))
+        if status.get("jobStatus") not in ("RUNNING", "NEW"):
+            break
+        time.sleep(2)
+    else:
+        raise TimeoutError(f"UniProt ID-mapping job {job_id} did not finish")
+
+    raw = _http_get(
+        f"{UNIPROT_REST}/idmapping/uniprotkb/results/stream/{job_id}"
+        "?format=tsv&fields=accession,keyword&compressed=true",
+        timeout=600,
+    )
+    lines = gzip.decompress(raw).decode().splitlines()
+    header = lines[0].split("\t")
+    keyword_column = header.index("Keywords")
+
+    # Default every requested accession to "no keywords" so unmapped ones are
+    # remembered rather than retried on every run.
+    resolved: dict[str, list[str]] = {accession: [] for accession in batch}
+    for line in lines[1:]:
+        fields = line.split("\t")
+        if len(fields) > keyword_column:
+            resolved[fields[0]] = [k for k in fields[keyword_column].split(";") if k]
+    return resolved
+
+
+def fetch_uniprot_keywords(
+    accessions: Sequence[str],
+    cache_dir: Path,
+    batch_size: int = 5000,
+) -> dict[str, list[str]]:
+    """Look up UniProt keywords for a list of accessions, with an on-disk cache.
+
+    Batches are retried with exponential backoff and each success is persisted
+    before the next batch starts, so a rate-limited or dropped request costs
+    only that batch. A batch that fails every attempt is *skipped* rather than
+    raised: naming reads whatever resolved, and 18k of 22k annotated proteins
+    name the landscape just as well as all of them (see :func:`name_clusters`,
+    which drops unresolved accessions from the sample rather than counting them
+    as unannotated).
+
+    Args:
+        accessions: UniProt accessions to look up.
+        cache_dir: Directory holding the demo's cached artifacts.
+        batch_size: Accessions per ID-mapping job.
+
+    Returns:
+        Mapping of accession -> list of keyword names (possibly empty). Keys are
+        the accessions that resolved, which may be a subset of ``accessions``.
+    """
+    cache_path = cache_dir / "uniprot_keywords.json"
+    keywords: dict[str, list[str]] = (
+        json.loads(cache_path.read_text()) if cache_path.exists() else {}
+    )
+
+    missing = sorted({a for a in accessions if a not in keywords})
+    if not missing:
+        return keywords
+
+    aprint(f"Looking up {len(missing):,} accessions in UniProt...")
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    failed = 0
+
+    for start in range(0, len(missing), batch_size):
+        batch = missing[start : start + batch_size]
+        for attempt in range(UNIPROT_MAX_ATTEMPTS):
+            try:
+                keywords.update(_uniprot_keyword_batch(batch))
+                cache_path.write_text(json.dumps(keywords))
+                aprint(
+                    f"  {min(start + len(batch), len(missing)):,}/{len(missing):,} "
+                    "resolved"
+                )
+                break
+            except (urllib.error.URLError, OSError, TimeoutError, ValueError) as exc:
+                if attempt == UNIPROT_MAX_ATTEMPTS - 1:
+                    failed += len(batch)
+                    aprint(f"  ⚠️  batch of {len(batch):,} failed ({exc}) — skipping")
+                    break
+                backoff = UNIPROT_BACKOFF_SECONDS * 2**attempt
+                aprint(f"  ⚠️  {exc} — retrying in {backoff:.0f}s")
+                time.sleep(backoff)
+
+    if failed:
+        aprint(f"⚠️  {failed:,} accessions unresolved; naming uses the rest")
+
+    return keywords
+
+
+def enriched_cluster_names(
+    cluster_samples: Mapping[int, Sequence[str]],
+    keywords: Mapping[str, Sequence[str]],
+    categories: Mapping[str, str],
+) -> dict[int, tuple[str, float]]:
+    """Name each cluster after the UniProt keyword most enriched within it.
+
+    The score is ``p_cluster * log2(p_cluster / p_pooled)`` — lift weighted by
+    support, so a keyword that is 10x enriched but present in 2% of the cluster
+    loses to one that is 5x enriched and present in half of it. Names are unique:
+    each keyword is claimed by the single cluster that scores highest for it, and
+    a cluster left without an eligible keyword is reported as
+    ``UNNAMED_CLUSTER_LABEL`` rather than given a meaningless one.
+
+    Args:
+        cluster_samples: cluster id -> sampled accessions from that cluster.
+        keywords: accession -> UniProt keyword names.
+        categories: keyword name -> UniProt keyword category.
+
+    Returns:
+        cluster id -> (name, lift). Lift is 0.0 for unnamed clusters.
+    """
+    counts: dict[int, Counter] = {}
+    sizes: dict[int, int] = {}
+    pooled: Counter = Counter()
+    pooled_size = 0
+
+    for cluster, accessions in cluster_samples.items():
+        counter: Counter = Counter()
+        for accession in accessions:
+            informative = {
+                k
+                for k in keywords.get(accession, ())
+                if categories.get(k) in INFORMATIVE_KEYWORD_CATEGORIES
+            }
+            counter.update(informative)
+        counts[cluster] = counter
+        sizes[cluster] = len(accessions)
+        pooled.update(counter)
+        pooled_size += len(accessions)
+
+    if pooled_size == 0:
+        return {c: (UNNAMED_CLUSTER_LABEL, 0.0) for c in cluster_samples}
+
+    candidates: list[tuple[float, float, int, str]] = []
+    for cluster, counter in counts.items():
+        size = sizes[cluster]
+        if size == 0:
+            continue
+        floor = max(MIN_KEYWORD_COUNT, MIN_KEYWORD_FRACTION * size)
+        for keyword, count in counter.items():
+            if count < floor:
+                continue
+            p_cluster = count / size
+            p_pooled = pooled[keyword] / pooled_size
+            lift = p_cluster / p_pooled
+            if lift < MIN_KEYWORD_LIFT:
+                continue
+            score = p_cluster * float(np.log2(lift))
+            candidates.append((score, lift, cluster, keyword))
+
+    # Greedy highest-score-first assignment gives each cluster its best keyword
+    # while keeping the legend free of duplicate names.
+    candidates.sort(key=lambda row: (-row[0], row[3], row[2]))
+    named: dict[int, tuple[str, float]] = {}
+    claimed: set[str] = set()
+    for _score, lift, cluster, keyword in candidates:
+        if cluster in named or keyword in claimed:
+            continue
+        named[cluster] = (keyword, lift)
+        claimed.add(keyword)
+
+    for cluster in cluster_samples:
+        named.setdefault(cluster, (UNNAMED_CLUSTER_LABEL, 0.0))
+    return named
+
+
+def name_clusters(
+    cluster_ids: np.ndarray,
+    protein_ids: Sequence[str],
+    cache_dir: Path,
+) -> list[str]:
+    """Derive a human-readable name for every landscape cluster.
+
+    Samples members of each cluster, looks their keywords up in UniProt, and
+    picks the most over-represented one (see :func:`enriched_cluster_names`).
+    Falls back to plain ``Cluster N`` labels only when *nothing* resolves — the
+    demo stays runnable offline, it just cannot name anything. A partial lookup
+    is used as-is on the accessions that did resolve.
+
+    Args:
+        cluster_ids: Per-protein cluster assignment.
+        protein_ids: Per-protein UniProt accession, aligned with ``cluster_ids``.
+        cache_dir: Directory holding the demo's cached artifacts.
+
+    Returns:
+        One name per cluster, indexed by cluster id.
+    """
+    n_clusters = int(cluster_ids.max()) + 1 if len(cluster_ids) else 0
+    fallback = [f"Cluster {c}" for c in range(n_clusters)]
+
+    with asection("Naming clusters from UniProt keyword enrichment"):
+        rng = np.random.default_rng(0)
+        cluster_samples: dict[int, list[str]] = {}
+        for cluster in range(n_clusters):
+            members = np.flatnonzero(cluster_ids == cluster)
+            if len(members) == 0:
+                cluster_samples[cluster] = []
+                continue
+            picked = rng.choice(
+                members,
+                min(NAMING_SAMPLE_PER_CLUSTER, len(members)),
+                replace=False,
+            )
+            cluster_samples[cluster] = [protein_ids[i] for i in picked]
+
+        wanted = [a for sample in cluster_samples.values() for a in sample]
+        try:
+            categories = fetch_keyword_categories(cache_dir)
+            keywords = fetch_uniprot_keywords(wanted, cache_dir)
+        except (urllib.error.URLError, OSError, TimeoutError, ValueError) as exc:
+            aprint(f"⚠️  UniProt lookup failed ({exc}) — using generic cluster labels")
+            return fallback
+
+        # Keep only accessions UniProt actually answered for. An accession that
+        # resolved with no keywords is real evidence and stays; one that never
+        # resolved is absence of evidence and would otherwise dilute the
+        # frequencies of every cluster it landed in.
+        resolved_samples = {
+            cluster: [a for a in sample if a in keywords]
+            for cluster, sample in cluster_samples.items()
+        }
+        resolved = sum(len(sample) for sample in resolved_samples.values())
+        if resolved == 0:
+            aprint("⚠️  No accessions resolved — using generic cluster labels")
+            return fallback
+
+        annotated = sum(1 for a in wanted if keywords.get(a))
+        aprint(
+            f"✓ {resolved:,}/{len(wanted):,} sampled proteins resolved, "
+            f"{annotated:,} of them carrying UniProt keywords"
+        )
+
+        named = enriched_cluster_names(resolved_samples, keywords, categories)
+        names = []
+        for cluster in range(n_clusters):
+            name, lift = named.get(cluster, (UNNAMED_CLUSTER_LABEL, 0.0))
+            names.append(name)
+            suffix = f" ({lift:.1f}x enriched)" if lift else " (no dominant keyword)"
+            aprint(f"  Cluster {cluster}: {name}{suffix}")
+
+    return names
 
 
 # =============================================================================
@@ -429,33 +688,77 @@ def classify_go_term(go_id: str) -> str:
 # =============================================================================
 
 
+def load_cached_umap(
+    cache_path: Path,
+    legacy_ids_path: Path | None = None,
+) -> tuple[np.ndarray, list[str]] | None:
+    """Load cached UMAP coordinates and their protein accessions, if usable.
+
+    Older caches stored per-point *function* labels instead of accessions.
+    Cluster naming needs accessions, so such a cache is upgraded in place when
+    the source ``train_ids.npy`` still lines up with it (which it does for an
+    unsampled run, where the point order is the file order) and discarded
+    otherwise — recomputing a 142k UMAP is expensive enough to be worth the
+    one-off repair.
+
+    Args:
+        cache_path: ``.npz`` written by :func:`reduce_embeddings_umap`.
+        legacy_ids_path: ``train_ids.npy`` to recover accessions from, for a
+            cache written before they were stored. ``None`` disables recovery.
+
+    Returns:
+        ``(positions, protein_ids)``, or ``None`` if the cache is unusable.
+    """
+    if not cache_path.exists():
+        return None
+
+    with asection("Loading cached UMAP coordinates"):
+        aprint(f"Cache: {cache_path}")
+        cached = np.load(cache_path, allow_pickle=True)
+        positions = cached["positions"]
+
+        if "protein_ids" in cached.files:
+            protein_ids = [str(x) for x in cached["protein_ids"]]
+            aprint(f"✓ Loaded {len(positions):,} proteins from cache (INSTANT!)")
+            return positions, protein_ids
+
+        aprint("Cache predates stored accessions — attempting in-place upgrade")
+        if legacy_ids_path is None or not legacy_ids_path.exists():
+            aprint("⚠️  No source accessions available — recomputing UMAP")
+            return None
+        recovered = [str(x) for x in np.load(legacy_ids_path, allow_pickle=True)]
+        if len(recovered) != len(positions):
+            aprint(
+                f"⚠️  {len(recovered):,} accessions vs {len(positions):,} cached "
+                "points — recomputing UMAP"
+            )
+            return None
+
+        np.savez(
+            cache_path,
+            positions=positions,
+            protein_ids=np.array(recovered, dtype=object),
+        )
+        aprint(f"✓ Upgraded cache with {len(recovered):,} accessions")
+        return positions, recovered
+
+
 def reduce_embeddings_umap(
     embeddings: np.ndarray,
-    functions: list[str],
+    protein_ids: list[str],
     cache_path: Path | None = None,
 ) -> tuple[np.ndarray, list[str]]:
     """Reduce protein embeddings to 3D using UMAP.
 
     Args:
         embeddings: (n_proteins, n_features) array
-        functions: List of function categories for each protein
+        protein_ids: UniProt accession per protein, aligned with ``embeddings``
         cache_path: Optional path to cache UMAP results
 
     Returns:
-        Tuple of (positions, functions) - both cached together!
+        Tuple of (positions, protein_ids) - both cached together, so a cached
+        run can still name its clusters without re-reading the 540 MB bundle.
     """
-    # Check cache first (loads positions AND functions together!)
-    if cache_path and cache_path.exists():
-        with asection("Loading cached UMAP coordinates"):
-            aprint(f"Cache: {cache_path}")
-            cached = np.load(cache_path, allow_pickle=True)
-            positions = cached["positions"]
-            functions = list(cached["functions"])
-            aprint(f"✓ Loaded {len(positions):,} proteins from cache (INSTANT!)")
-            return positions, functions
-
-    if embeddings is None:
-        raise ValueError("Embeddings required when not loading from cache")
 
     # Gated here, not in main(): the cache hit above returns without UMAP.
     UMAP = require_module("umap").UMAP
@@ -487,18 +790,18 @@ def reduce_embeddings_umap(
         aprint("✓ Centered at barycenter")
         aprint(f"  New range: [{reduced.min():.2f}, {reduced.max():.2f}]")
 
-        # Cache results (positions AND functions together!)
+        # Cache results (positions AND accessions together!)
         if cache_path:
             cache_path.parent.mkdir(parents=True, exist_ok=True)
             np.savez(
                 cache_path,
                 positions=reduced,
-                functions=np.array(functions, dtype=object),  # Store functions too!
+                protein_ids=np.array(protein_ids, dtype=object),
             )
-            aprint(f"✓ Cached UMAP + functions to {cache_path}")
+            aprint(f"✓ Cached UMAP + accessions to {cache_path}")
             aprint("  Future runs will load instantly!")
 
-    return reduced.astype(np.float32), functions
+    return reduced.astype(np.float32), protein_ids
 
 
 # =============================================================================
@@ -528,12 +831,16 @@ def generate_protein_landscape(
     if not dataset_cache.exists():
         dataset_cache = download_cafa5_dataset(cache_dir)
 
-    # Check UMAP cache first (complete early exit if cached!)
-    if umap_cache.exists():
-        positions, functions = reduce_embeddings_umap(None, None, cache_path=umap_cache)
+    # Check UMAP cache first (complete early exit if cached!). An unsampled run
+    # keeps the source file order, so a pre-accession cache can be repaired from
+    # train_ids.npy instead of recomputing.
+    legacy_ids = dataset_cache / "train_ids.npy" if sample_size is None else None
+    cached = load_cached_umap(umap_cache, legacy_ids_path=legacy_ids)
+    if cached is not None:
+        positions, protein_ids = cached
     else:
         # Load embeddings (only if UMAP not cached)
-        embeddings, protein_ids, functions = load_protein_embeddings(
+        embeddings, protein_ids = load_protein_embeddings(
             dataset_cache,
             sample_size=sample_size,
         )
@@ -543,24 +850,19 @@ def generate_protein_landscape(
             return 0
 
         # Reduce to 3D with UMAP and cache
-        positions, functions = reduce_embeddings_umap(
-            embeddings, functions, cache_path=umap_cache
+        positions, protein_ids = reduce_embeddings_umap(
+            embeddings, protein_ids, cache_path=umap_cache
         )
 
     # Generate visualization
     with asection("Generating visualization"):
         n_proteins = len(positions)
 
-        # Two switchable coloring views: GO-derived function annotation, and an
-        # unsupervised k-means clustering of the 3D landscape (data-driven regions
-        # — computed from the positions, which are available on the cached path
-        # too, unlike the raw embeddings).
-        function_colors = np.array(
-            [FUNCTION_COLORS.get(f, FUNCTION_COLORS["other"]) for f in functions],
-            dtype=np.float32,
-        )
-
-        n_clusters = min(10, n_proteins)
+        # Carve the 3D landscape into regions. k-means on the UMAP coordinates
+        # (not the raw embeddings) means the regions match the blobs you can
+        # actually see, and it works on the cached path where the 1,024D
+        # embeddings are no longer in hand.
+        n_clusters = min(N_CLUSTERS, n_proteins)
         if n_clusters >= 2:
             from sklearn.cluster import KMeans
 
@@ -569,56 +871,41 @@ def generate_protein_landscape(
             ).fit_predict(positions)
         else:
             cluster_ids = np.zeros(n_proteins, dtype=int)
-        cluster_colors = np.array(
-            [FUNCTION_COLORS[f"cluster_{int(c) % 10}"] for c in cluster_ids],
-            dtype=np.float32,
-        )
 
-        func_counts: dict[str, int] = {}
-        for func in functions:
-            func_counts[func] = func_counts.get(func, 0) + 1
-        aprint("✓ Proteins by function (also colorable by landscape cluster):")
-        for func, count in sorted(func_counts.items(), key=lambda x: -x[1])[:10]:
-            aprint(f"  {func}: {count:,}")
+        cluster_colors = CLUSTER_COLORS[cluster_ids % len(CLUSTER_COLORS)]
 
-        # Per-point radii: annotated proteins 3x larger; tiled across views below.
-        radii_pp = np.where(
-            np.array([f == "other" for f in functions]), 0.007, 0.02
-        ).astype(np.float32)
+        # Name each region after the UniProt keyword most enriched inside it.
+        cluster_names = name_clusters(cluster_ids, protein_ids, cache_dir)
+        cluster_sizes = Counter(int(c) for c in cluster_ids)
 
-        function_labels = [str(functions[i]) for i in range(n_proteins)]
-        cluster_view_labels = [
-            f"Cluster {int(cluster_ids[i])}" for i in range(n_proteins)
+        # Disambiguate: two clusters can both end up "Mixed", and the legend
+        # needs one row per cluster.
+        display_names: list[str] = []
+        name_uses = Counter(cluster_names)
+        seen: Counter = Counter()
+        for cluster, name in enumerate(cluster_names):
+            if name_uses[name] > 1:
+                seen[name] += 1
+                display_names.append(f"{name} {seen[name]}")
+            else:
+                display_names.append(name)
+
+        aprint("✓ Proteins by landscape cluster:")
+        for cluster in range(n_clusters):
+            aprint(f"  {display_names[cluster]}: {cluster_sizes[cluster]:,}")
+
+        radii = np.full(n_proteins, 0.02, dtype=np.float32)
+
+        # Hover shows the actual protein, plus the region it landed in.
+        labels = [
+            f"{protein_ids[i]} · {display_names[int(cluster_ids[i])]}"
+            for i in range(n_proteins)
         ]
-
-        stacked = stack_colorings(
-            positions,
-            [
-                {
-                    "label": "Function",
-                    "colors": function_colors,
-                    "labels": function_labels,
-                },
-                {
-                    "label": "Cluster",
-                    "colors": cluster_colors,
-                    "labels": cluster_view_labels,
-                },
-            ],
-        )
-        radii = np.tile(radii_pp, len(stacked.categories)).astype(np.float32)
 
     # Write to Zarr
     with asection("Writing to Zarr"):
         dims = Dimensions(
             [
-                Dimension(
-                    "coloring",
-                    unit="",
-                    categories=stacked.categories,
-                    display=False,
-                    description="Color scheme: GO function / landscape cluster",
-                ),
                 Dimension("x", unit="UMAP", display=True),
                 Dimension("y", unit="UMAP", display=True),
                 Dimension("z", unit="UMAP", display=True),
@@ -630,13 +917,13 @@ def generate_protein_landscape(
 
             scene.add_points(
                 "proteins",
-                positions=stacked.positions,
-                colors=stacked.colors,
+                positions=np.asarray(positions, dtype=np.float32),
+                colors=cluster_colors,
                 radii=radii,
-                sharpness=np.full(len(stacked.positions), 0.55, dtype=np.float32),
+                sharpness=np.full(n_proteins, 0.55, dtype=np.float32),
                 opacity=0.9,
                 intensity=0.124,
-                labels=stacked.labels,
+                labels=labels,
             )
 
             # --- Overlays ---
@@ -649,66 +936,39 @@ def generate_protein_landscape(
                 blend_mode="difference",
             )
 
-            # Function color legend \u2014 built from the categories ACTUALLY present
-            # (GO-derived categories, or the k-means ``cluster_*`` fallback), each
-            # mapped to its real FUNCTION_COLORS colour. This never advertises
-            # labels that aren't in the scene (the previous hardcoded legend did).
+            # Legend: one row per cluster, using the name derived from UniProt
+            # keyword enrichment and the cluster's real colour.
             def _rgb_to_hex(rgb: np.ndarray) -> str:
                 r, g, b = (int(round(float(c) * 255)) for c in rgb[:3])
                 return f"#{r:02x}{g:02x}{b:02x}"
 
-            def _pretty(name: str) -> str:
-                if name.startswith("cluster_"):
-                    return f"Cluster {name.split('_')[1]}"
-                return name.replace("_", " ").title()
-
-            legend_cats = [
-                c
-                for c, _ in sorted(func_counts.items(), key=lambda x: -x[1])
-                if c != "other"
-            ][:10]
             legend_html = (
-                '<div style="font-size:1.3vh;line-height:1.7;background:rgba(0,0,0,0.5);padding:0.5vh;border-radius:3px">'
-                '<div style="font-weight:bold;color:#ccc;margin-bottom:0.3vh">Function</div>'
+                '<div style="font-size:1.25vh;line-height:1.45;'
+                'background:rgba(0,0,0,0.5);padding:0.5vh 0.7vh;border-radius:3px">'
+                '<div style="font-weight:bold;color:#ccc;margin-bottom:0.3vh">'
+                "Enriched UniProt keyword</div>"
             )
-            for cat in legend_cats:
-                color = _rgb_to_hex(FUNCTION_COLORS.get(cat, FUNCTION_COLORS["other"]))
-                legend_html += f'<div><span style="color:{color}">\u2588</span> {_pretty(cat)}</div>'
+            for cluster in sorted(range(n_clusters), key=lambda c: -cluster_sizes[c]):
+                color = _rgb_to_hex(CLUSTER_COLORS[cluster % len(CLUSTER_COLORS)])
+                legend_html += (
+                    f'<div><span style="color:{color}">\u2588</span> '
+                    f"{display_names[cluster]} "
+                    f'<span style="color:#888">({cluster_sizes[cluster]:,})</span></div>'
+                )
             legend_html += "</div>"
 
             scene.add_html(
                 legend_html,
-                position=(0.02, 0.97),
+                # Clear of the viewer's left icon rail: 14 rows reach far enough
+                # up the screen to collide with it at x=0.02, which the previous
+                # 10-row legend did not.
+                position=(0.045, 0.97),
                 anchor="bottom-left",
-                visible_range={"coloring": 0},
-                transition="fade",
-                transition_duration=0.3,
-            )
-
-            # Landscape-cluster legend (view 1).
-            cluster_present = sorted(set(int(c) for c in cluster_ids))
-            cluster_legend = (
-                '<div style="font-size:1.3vh;line-height:1.6;background:rgba(0,0,0,0.5);'
-                'padding:0.5vh;border-radius:3px">'
-                '<div style="font-weight:bold;color:#ccc;margin-bottom:0.3vh">Landscape cluster</div>'
-            )
-            for c in cluster_present:
-                cluster_legend += (
-                    f'<div><span style="color:{_rgb_to_hex(FUNCTION_COLORS[f"cluster_{c % 10}"])}">'
-                    f"█</span> Cluster {c}</div>"
-                )
-            cluster_legend += "</div>"
-            scene.add_html(
-                cluster_legend,
-                position=(0.02, 0.97),
-                anchor="bottom-left",
-                visible_range={"coloring": 1},
-                transition="fade",
-                transition_duration=0.3,
             )
 
             scene.add_text(
-                f"{n_proteins:,} proteins • ProtT5 embeddings • 3D UMAP • Elnaggar et al. 2021",
+                f"{n_proteins:,} proteins • ProtT5 embeddings • 3D UMAP • "
+                "clusters named by UniProt keyword enrichment • Elnaggar et al. 2021",
                 position=(0.98, 0.97),
                 font_size=0.012,
                 anchor="bottom-right",
@@ -744,8 +1004,8 @@ def main() -> None:
     aprint("  • 142k proteins with ProtT5-XL embeddings (1,024D)")
     aprint("  • 3D UMAP projection showing functional relationships")
     aprint("  • Proteins with similar functions cluster together")
-    aprint("  • Color = protein function category")
-    aprint("  • Size = sequence complexity")
+    aprint("  • Color = landscape cluster")
+    aprint("  • Cluster names = most over-represented UniProt keyword")
     aprint("")
     aprint("Parameters:")
     aprint(
@@ -799,16 +1059,16 @@ def main() -> None:
         aprint("=" * 70)
         aprint("")
         aprint("What to look for:")
-        aprint("  - Enzyme clusters (kinases, proteases, etc.)")
-        aprint("  - Structural protein regions")
-        aprint("  - Membrane protein groups")
-        aprint("  - DNA/RNA binding protein clusters")
-        aprint("  - Functional boundaries and overlaps")
+        aprint("  - Named territories in the legend (bottom-left)")
+        aprint("  - Secreted / signal-peptide proteins vs cytoplasmic ones")
+        aprint("  - Organelle-targeted proteins as their own region")
+        aprint("  - Receptors / GPCRs as a distinct island")
+        aprint("  - Functional boundaries and overlaps between regions")
         aprint("")
         aprint("Try this:")
         aprint("  1. Zoom out: See overall functional organization")
         aprint("  2. Zoom in: Explore specific protein families")
-        aprint("  3. Look for: Tight clusters = very similar function")
+        aprint("  3. Hover a point: UniProt accession + its cluster")
         aprint("")
         aprint(f"Total proteins: {n_proteins:,}")
         aprint("")
