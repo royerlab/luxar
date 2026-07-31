@@ -4,13 +4,14 @@
 # This Makefile is designed to work on fresh Linux/macOS machines with minimal
 # pre-installed tools. Run 'make setup-dev' to automatically install all dependencies.
 #
-.PHONY: help install-dev install-demo-deps format-python format-typescript format-rust format-cuda format-all gen-contract gen-data-manifest \
+.PHONY: help install-dev install-demo-deps format-python format-typescript format-rust format-cuda format-go format-all gen-contract gen-data-manifest \
         lint-python lint-typescript type-check-python type-check-typescript security \
-        test-all test-python test-cov-python test-cov-typescript test-cov-all test-fixtures test-wasm test-viewer test-viewer-fixtures test-e2e \
+        test-all test-python test-cov-python test-cov-typescript test-cov-all test-fixtures test-wasm test-viewer test-viewer-fixtures \
+        test-e2e test-e2e-smoke test-perf-e2e \
         clean-all clean-python clean-viewer clean-examples clean-cache clean-setup enable-pre-commit run-pre-commit \
-        check-all check-typescript check-rust check-wasm-deps setup-dev \
+        check-all check-typescript check-rust check-knip check-wasm-deps setup-dev \
         check-docs check-docs-verbose clean-docs build-docs build-typedoc serve-docs \
-        demo run-demos run-examples serve-examples serve-dataset install-viewer-deps viewer build-viewer rebuild-viewer \
+        demo run-demos run-examples serve-examples serve-dataset install-viewer-deps viewer build-viewer build-viewer-lib rebuild-viewer \
         install-rust build-wasm clean-wasm generate-readme-demos generate-readme-images generate-doc-images generate-readme-videos \
 	generate-gallery-datasets generate-gallery \
         stats stats-fast show-env prune-env shell build publish-test publish \
@@ -29,6 +30,17 @@
 # silently swallowed. `.DELETE_ON_ERROR` removes half-written targets on
 # failure. (nounset/-u is intentionally NOT set: this Makefile relies on many
 # conditionally-set shell vars.)
+#
+# ⚠️  CAVEAT — `.SHELLFLAGS` requires GNU make >= 3.82. **Stock macOS ships GNU
+# make 3.81**, which silently IGNORES the assignment below: on that make there
+# is no errexit and no pipefail, so a failure mid-way through a `;`-joined
+# recipe line is swallowed and only the LAST command's status is seen. make
+# still aborts a recipe when a whole recipe *line* exits non-zero, so
+# single-command lines behave the same either way — it is the multi-command
+# lines that lose their guard. Linux distros and CI ship make 4.x and do get
+# the hardening. To get it on a Mac: `brew install make` and use `gmake`.
+# Verified 2026-07-31: `make --version` = 3.81 on macOS 15; a probe recipe
+# `@false; echo REACHED` printed REACHED under it.
 SHELL := bash
 .SHELLFLAGS := -e -o pipefail -c
 .DELETE_ON_ERROR:
@@ -65,9 +77,12 @@ else
     PKG_MANAGER := unknown
 endif
 
-# Minimum Node.js version required by Vite 8.x
+# Minimum Node.js version required by Vite 8.x. Keep in sync with
+# `engines.node` in packages/luxar-viewer/package.json.
 MIN_NODE_MAJOR := 20
 MIN_NODE_MINOR := 19
+# Mirrors `engines.pnpm` in packages/luxar-viewer/package.json.
+MIN_PNPM_MAJOR := 9
 
 # ============================================================================
 # Dependency Checking and Installation Helpers
@@ -169,9 +184,27 @@ check-deps:  ## Check all development dependencies and their versions
 		echo "❌ npm not found"; \
 	fi; \
 	if command -v pnpm >/dev/null 2>&1; then \
-		echo "✅ pnpm: $$(pnpm --version)"; \
+		PNPM_VERSION=$$(pnpm --version); \
+		PNPM_MAJOR=$$(echo $$PNPM_VERSION | cut -d. -f1); \
+		if ! echo "$$PNPM_MAJOR" | grep -qE '^[0-9]+$$'; then \
+			echo "⚠️  pnpm $$PNPM_VERSION - cannot parse a major version (need $(MIN_PNPM_MAJOR)+)"; \
+		elif [ "$$PNPM_MAJOR" -lt $(MIN_PNPM_MAJOR) ]; then \
+			echo "⚠️  pnpm $$PNPM_VERSION - UPGRADE NEEDED: package.json requires $(MIN_PNPM_MAJOR)+"; \
+		else \
+			echo "✅ pnpm: $$PNPM_VERSION"; \
+		fi; \
 	else \
 		echo "❌ pnpm not found (run: npm install -g pnpm)"; \
+	fi
+	@# Git LFS: several demo datasets (.npz/.zip under demos/data) are LFS-backed.
+	@# Without it they check out as ~130-byte pointer files and the demos fail
+	@# with a baffling parse/"file not found" error rather than anything useful.
+	@if command -v git-lfs >/dev/null 2>&1 || git lfs version >/dev/null 2>&1; then \
+		echo "✅ Git LFS: $$(git lfs version 2>/dev/null | head -1)"; \
+	elif [ "$(OS)" = "macos" ]; then \
+		echo "⚠️  Git LFS not found - demo data will be pointer files (run: brew install git-lfs && git lfs install)"; \
+	else \
+		echo "⚠️  Git LFS not found - demo data will be pointer files (run: sudo apt-get install git-lfs && git lfs install)"; \
 	fi
 	@echo ""
 	@echo "=== Optional Dependencies (for WASM builds) ==="
@@ -261,9 +294,72 @@ ifeq ($(OS),macos)
 		echo "📥 Installing Homebrew first..."; \
 		/bin/bash -c "$$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"; \
 	fi
-	brew install node@22 || brew upgrade node
-	@echo "✅ Node.js installed via Homebrew"
-	@echo "Installed version: $$(node --version)"
+	@# node@22 is a VERSIONED formula and therefore keg-only: brew installs it
+	@# but does NOT symlink it into the prefix, so `node` stays missing/old and
+	@# this target would report success while leaving nothing usable on PATH.
+	@# `brew link --force` is what actually puts it there.
+	brew install node@22
+	@# Only link when the requirement is NOT already met. A machine can legally
+	@# have node@22 installed-but-unlinked while a NEWER linked node (say 26)
+	@# already satisfies $(MIN_NODE_MAJOR).$(MIN_NODE_MINOR)+ — running
+	@# `brew link --force` there would fight the linked formula for no benefit
+	@# and can leave a half-linked keg. This target's contract is "get Node to
+	@# the required version", so a satisfying node means there is nothing to do.
+	@#
+	@# The link itself is non-fatal: make aborts a recipe as soon as a recipe
+	@# LINE exits non-zero (true on every make, independent of the .SHELLFLAGS
+	@# caveat at the top), so a bare failing `brew link` would kill the recipe
+	@# and the actionable diagnosis below would never print.
+	@# Same `[ ] || ([ ] && [ ])` comparison shape as every other node-version
+	@# check in this file (the `-a`/`-o` form is deprecated and not well defined
+	@# across shells), and the major/minor are extracted once instead of per-test.
+	@NODE_SATISFIES=0; \
+	if command -v node >/dev/null 2>&1; then \
+		NODE_VERSION=$$(node -v | sed 's/v//'); \
+		NODE_MAJOR=$$(echo $$NODE_VERSION | cut -d. -f1); \
+		NODE_MINOR=$$(echo $$NODE_VERSION | cut -d. -f2); \
+		if [ "$$NODE_MAJOR" -gt $(MIN_NODE_MAJOR) ] || \
+		   ([ "$$NODE_MAJOR" -eq $(MIN_NODE_MAJOR) ] && [ "$$NODE_MINOR" -ge $(MIN_NODE_MINOR) ]); then \
+			NODE_SATISFIES=1; \
+		fi; \
+	fi; \
+	if [ "$$NODE_SATISFIES" = "1" ]; then \
+		echo "ℹ️  node v$$NODE_VERSION already satisfies $(MIN_NODE_MAJOR).$(MIN_NODE_MINOR)+ — leaving the current link alone."; \
+	else \
+		brew link --force node@22 || true; \
+	fi
+	@# Assert the VERSION, not merely that some `node` resolves. If linking did
+	@# not take and a pre-existing older node is still first on PATH, a
+	@# presence-only check would report success for exactly the situation this
+	@# target exists to fix.
+	@if command -v node >/dev/null 2>&1; then \
+		NODE_VERSION=$$(node -v | sed 's/v//'); \
+		NODE_MAJOR=$$(echo $$NODE_VERSION | cut -d. -f1); \
+		NODE_MINOR=$$(echo $$NODE_VERSION | cut -d. -f2); \
+		if [ "$$NODE_MAJOR" -lt $(MIN_NODE_MAJOR) ] || \
+		   ([ "$$NODE_MAJOR" -eq $(MIN_NODE_MAJOR) ] && [ "$$NODE_MINOR" -lt $(MIN_NODE_MINOR) ]); then \
+			echo "❌ node on PATH is still v$$NODE_VERSION (need $(MIN_NODE_MAJOR).$(MIN_NODE_MINOR)+)."; \
+			echo "   'brew link' did not take — another node is shadowing node@22."; \
+			NODE_FIX=1; \
+		else \
+			echo "✅ Node.js installed via Homebrew"; \
+			echo "   Installed version: v$$NODE_VERSION"; \
+			NODE_FIX=0; \
+		fi; \
+	else \
+		echo "❌ node@22 installed but nothing named 'node' is on PATH."; \
+		NODE_FIX=1; \
+	fi; \
+	if [ "$$NODE_FIX" = "1" ]; then \
+		echo ""; \
+		echo "   Inspect, then link explicitly:"; \
+		echo "     brew list --versions node node@22"; \
+		echo "     brew unlink node && brew link --force node@22"; \
+		echo ""; \
+		echo "   Or use node@22 without linking, by putting its keg first on PATH:"; \
+		echo "     export PATH=\"$$(brew --prefix node@22)/bin:\$$PATH\""; \
+		exit 1; \
+	fi
 else
 	@# Linux: use nvm (no sudo needed)
 	@export NVM_DIR="$$HOME/.nvm"; \
@@ -389,8 +485,11 @@ install-hatch:  ## Install Hatch for Python environment management
 
 # Default target
 help:  ## Show this help message
+	@# The character class MUST include digits: without them `test-e2e` (and any
+	@# future target with a digit) silently vanishes from this listing. The width
+	@# is sized to the longest target name (`generate-gallery-datasets`, 25).
 	@echo "Available targets:"
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
+	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-26s\033[0m %s\n", $$1, $$2}'
 	@echo ""
 	@echo "Quick start (for a fresh machine):"
 	@echo "  make setup-dev      - Set up development environment (auto-installs dependencies)"
@@ -398,19 +497,20 @@ help:  ## Show this help message
 	@echo ""
 	@echo "Common workflows:"
 	@echo "  make test-all       - Run all tests"
-	@echo "  make check-all      - Run all quality checks"
+	@echo "  make check-all      - Run all quality checks (NOTE: reformats the tree)"
 	@echo "  make clean-all      - Clean all artifacts"
 	@echo "  make format-all     - Format all code"
 	@echo "  make viewer         - Start the viewer dev server"
-	@echo "  luxar demo          - Generate demo + serve + open browser"
 	@echo ""
 	@echo "Demos:"
+	@echo "  luxar demo             - List the bundled demos"
+	@echo "  luxar demo run <key>   - Run one demo (generates + serves + opens browser)"
 	@echo "  make install-demo-deps - Install every optional dependency the demos need"
 	@echo "  luxar demo deps        - Report which demo dependencies are missing"
 	@echo ""
 	@echo "Optional accelerators:"
 	@echo "  make install-rust     - Install Rust/WASM for viewer builds"
-	@echo "  make setup-cuda     - Install CUDA dependencies + build extension"
+	@echo "  make setup-cuda       - Install CUDA dependencies + build extension"
 	@echo "  make install-go       - Install Go for native launcher builds"
 	@echo "  make build-launchers  - Build native launchers (luxar export --native)"
 	@echo ""
@@ -419,18 +519,25 @@ help:  ## Show this help message
 
 # Installation
 install-dev:  ## Install Luxar Python package in editable mode for development
+# Goes through $(HATCH) like every other Python target: a bare `pip` installs
+# into whatever interpreter happens to be active (often the system one), which
+# then diverges from the env `make test` / `make check-all` actually use.
+# The mkdir is belt-and-suspenders, NOT a hard requirement: hatch_build.py's
+# `initialize()` swaps in `force_include_editable` for editable builds,
+# replacing the wheel target's viewer force-include, so an editable install on
+# a tree that has never built the viewer already succeeds without dist/.
 	@mkdir -p packages/luxar-viewer/dist
-	pip install -e .
+	$(HATCH) run pip install -e .
 
 install-demo-deps:  ## Install every optional dependency the bundled demos need
 # The gsplats extra carries torch. pip leaves an ALREADY-satisfied torch alone,
 # so a CUDA build put in place by `make setup-cuda` (or a custom --index-url
 # wheel) survives this target; only a torch-less env gets the PyPI default.
 	@echo "📦 Installing optional demo dependencies (demos + gsplats + io extras)..."
-# Same guard as install-dev: the wheel config force-includes the viewer's dist/,
-# so an editable install on a tree that has never built the viewer (a fresh
-# clone, a git worktree) dies with hatchling's obscure "Forced include not
-# found" instead of installing anything.
+# Same belt-and-suspenders mkdir as install-dev — see the note there: editable
+# builds get `force_include_editable` from hatch_build.py instead of the wheel
+# target's viewer force-include, so a tree that has never built the viewer (a
+# fresh clone, a git worktree) installs fine without dist/.
 	@mkdir -p packages/luxar-viewer/dist
 	$(HATCH) run pip install -e ".[demos,gsplats,io]"
 	@echo ""
@@ -531,7 +638,7 @@ security:  ## Run bandit security checks
 	$(HATCH) run bandit -r packages/luxar/src/luxar/ -c pyproject.toml
 
 # Testing (using Hatch)
-test-all:  ## Run all tests (Python, Rust/WASM, and TypeScript with fresh fixtures)
+test-all:  ## Run all tests (Python+CUDA, Rust/WASM, TypeScript, Go)
 	@echo "🐍 Running Python tests..."
 	$(HATCH) run test
 	@echo ""
@@ -575,18 +682,20 @@ test-all:  ## Run all tests (Python, Rust/WASM, and TypeScript with fresh fixtur
 		cd packages/luxar-viewer && pnpm test --run; \
 	fi
 	@echo ""
-	@echo "🎮 Checking CUDA tests..."
-	@if ls $(CUDA_EXT_DIR)/cuda_splatting_backend*.so 1>/dev/null 2>&1; then \
-		if $(HATCH) run python -c "import torch; assert torch.cuda.is_available()" 2>/dev/null; then \
-			echo "Running CUDA extension tests..."; \
-			$(HATCH) run pytest $(CUDA_EXT_DIR)/tests/ -v; \
-		else \
-			echo "⚠️  PyTorch CUDA not available - CUDA tests skipped"; \
-			echo "   Run 'make check-cuda-deps' for details"; \
-		fi; \
-	else \
-		echo "⚠️  CUDA extension not built - CUDA tests skipped"; \
+	@echo "🎮 CUDA extension tests..."
+	@# NOT re-run here: $(CUDA_EXT_DIR)/tests/ lives under pytest's `testpaths`
+	@# (packages/luxar/src/luxar), so `hatch run test` above already collected
+	@# them. Running them a second time doubled the GPU time for nothing — and
+	@# doing it concurrently is the exact contention hazard flagged below.
+	@# This block only reports why they may have been skipped.
+	@if ! ls $(CUDA_EXT_DIR)/cuda_splatting_backend*.so 1>/dev/null 2>&1; then \
+		echo "⚠️  CUDA extension not built - CUDA tests were skipped above"; \
 		echo "   Run 'make setup-cuda' to enable CUDA testing"; \
+	elif ! $(HATCH) run python -c "import torch; assert torch.cuda.is_available()" 2>/dev/null; then \
+		echo "⚠️  PyTorch CUDA not available - CUDA tests were skipped above"; \
+		echo "   Run 'make check-cuda-deps' for details"; \
+	else \
+		echo "✅ Ran as part of the Python suite above"; \
 	fi
 	@echo ""
 	@echo "🐹 Checking Go launcher tests..."
@@ -609,7 +718,10 @@ test-python:  ## Run Python tests only
 test-cov-python:  ## Run Python tests with coverage report
 	$(HATCH) run test-cov
 
-test-cov-all:  ## Run all tests with coverage (Python + TypeScript)
+# NB: `make test-cov-all` is NOT `hatch run test-cov-all`. This target runs
+# `hatch run test-cov` (which deselects `-m slow`) plus the TypeScript suite;
+# the hatch script of the same name runs the Python suite INCLUDING slow tests.
+test-cov-all:  ## Run all tests with coverage (Python w/o slow + TypeScript)
 	@echo "🐍 Running Python tests with coverage..."
 	$(HATCH) run test-cov
 	@echo ""
@@ -623,7 +735,7 @@ test-cov-all:  ## Run all tests with coverage (Python + TypeScript)
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 	@echo "✅ Coverage reports generated!"
 	@echo ""
-	@echo "📊 Python coverage: See terminal output above or run '$(HATCH) run coverage html'"
+	@echo "📊 Python coverage:     coverage/python/htmlcov/index.html"
 	@echo "📊 TypeScript coverage: packages/luxar-viewer/coverage/"
 
 # Pre-commit
@@ -634,15 +746,34 @@ run-pre-commit:  ## Run pre-commit on all files
 	$(HATCH) run pre-commit run --all-files
 
 # Quality checks (run all using Hatch)
-check-all:  ## Run all quality checks (Python, TypeScript, Go)
-	@echo "🐍 Running Python checks (ruff, mypy, import-linter, version, bandit, tests)..."
+#
+# ⚠️  NOT READ-ONLY. `hatch run check` starts with the `format` script
+# (`ruff format` + `ruff check --fix`) over packages/luxar/src, so this target
+# REWRITES source files across the whole tree. That is fine solo, but it will
+# stomp on a concurrently-running agent's or colleague's unsaved edits. For a
+# read-only verdict use the scoped targets instead:
+#     make lint-python type-check-python security check-typescript check-rust
+check-all:  ## All quality checks (Python/TS/Rust/Go) — WARNING: reformats tree
+	@echo "🐍 Running Python checks (ruff FORMAT+fix, mypy, import-linter, version, bandit, tests)..."
 	$(HATCH) run check
-	@echo "📘 Running TypeScript checks (CI: typecheck + lint + layers + coverage)..."
+	@echo "📘 Running TypeScript checks (CI: typecheck + lint + layers + knip + coverage)..."
 	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
 		echo "📦 Installing TypeScript dependencies first..."; \
 		cd packages/luxar-viewer && pnpm install; \
 	fi
 	cd packages/luxar-viewer && pnpm run check:ci
+	@# Rust is checked here for symmetry with format-all, which formats it.
+	@# Skips (rather than fails) when the optional toolchain is absent, matching
+	@# how the Go and WASM steps behave.
+	@echo "🦀 Running Rust checks (cargo check + clippy)..."
+	@if [ -f "$(HOME)/.cargo/env" ]; then \
+		. "$(HOME)/.cargo/env"; \
+	fi; \
+	if command -v cargo >/dev/null 2>&1; then \
+		$(MAKE) check-rust; \
+	else \
+		echo "⚠️  cargo not found - skipping Rust checks (run 'make install-rust')"; \
+	fi
 	@echo "🐹 Running Go launcher checks (go vet)..."
 	@GO_BIN=$$(command -v go || echo "$(HOME)/.local/go/bin/go"); \
 	if [ -x "$$GO_BIN" ] || command -v go >/dev/null 2>&1; then \
@@ -661,7 +792,7 @@ check-docs:  ## Check documentation quality and coverage
 		echo "📦 Installing TypeScript dependencies first..."; \
 		cd packages/luxar-viewer && pnpm install; \
 	fi
-	cd packages/luxar-viewer && npx tsx scripts/check-jsdoc-coverage.ts --threshold=70
+	cd packages/luxar-viewer && pnpm exec tsx scripts/check-jsdoc-coverage.ts --threshold=70
 
 check-docs-verbose:  ## Check documentation with detailed output
 	@echo "📚 Checking documentation (verbose mode)..."
@@ -670,7 +801,7 @@ check-docs-verbose:  ## Check documentation with detailed output
 		echo "📦 Installing TypeScript dependencies first..."; \
 		cd packages/luxar-viewer && pnpm install; \
 	fi
-	cd packages/luxar-viewer && npx tsx scripts/check-jsdoc-coverage.ts --threshold=70 --verbose
+	cd packages/luxar-viewer && pnpm exec tsx scripts/check-jsdoc-coverage.ts --threshold=70 --verbose
 
 clean-docs:  ## Clean built documentation
 	@echo "🧹 Cleaning documentation build artifacts..."
@@ -708,7 +839,7 @@ clean-python:  ## Clean Python build artifacts and caches
 	rm -rf coverage/
 	rm -rf .coverage*
 
-clean-viewer:  ## Clean viewer build artifacts (node_modules, dist, etc.)
+clean-viewer:  ## Clean viewer artifacts (node_modules, dist, coverage)
 	@echo "📘 Cleaning TypeScript/Node.js artifacts..."
 	rm -rf packages/luxar-viewer/dist/
 	rm -rf packages/luxar-viewer/node_modules/
@@ -716,6 +847,11 @@ clean-viewer:  ## Clean viewer build artifacts (node_modules, dist, etc.)
 	rm -rf packages/luxar-viewer/.parcel-cache/
 	rm -f packages/luxar-viewer/*.tsbuildinfo
 	rm -f packages/luxar-viewer/vite.config.*.timestamp-*
+	@# Test/coverage output — the TS counterpart of the root coverage/ that
+	@# clean-python removes. Left behind by test:coverage / check:ci / playwright.
+	rm -rf packages/luxar-viewer/coverage/
+	rm -rf packages/luxar-viewer/playwright-report/
+	rm -rf packages/luxar-viewer/test-results/
 
 clean-cache:  ## Clear the Luxar user cache (~/.cache/luxar)
 	@echo "🧹 Clearing Luxar cache..."
@@ -748,6 +884,7 @@ clean-setup:  ## Remove ALL dev tools to simulate a fresh machine (USE WITH CAUT
 	@echo "  • pre-commit hooks        - Git hooks (this repository only)"
 	@echo "  • WASM build artifacts    - Compiled WASM files (this project only)"
 	@echo "  • CUDA build artifacts    - CUDA extension .so files (this project only)"
+	@echo "  • Native launchers        - Go launcher binaries (this project only)"
 	@echo ""
 	@echo "SYSTEM-WIDE TOOLS (⚠️  may affect other projects):"
 	@echo "  • python3-dev             - Python development headers (system package)"
@@ -756,14 +893,16 @@ clean-setup:  ## Remove ALL dev tools to simulate a fresh machine (USE WITH CAUT
 	@echo "  • Rust toolchain          - rustup, cargo, rustc (may be used by other projects)"
 	@echo "  • wasm-pack               - WASM build tool (may be used by other projects)"
 	@echo "  • nvm + Node.js           - Node.js version manager (may be used by other projects)"
+	@echo "  • Go toolchain            - ~/.local/go only (Homebrew Go is left alone)"
 	@echo "  • pnpm cache              - Global package cache (~/.local/share/pnpm)"
 	@echo ""
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 	@echo ""
 	@echo "💡 To reinstall after cleaning:"
-	@echo "   make setup-dev      - Reinstall Node.js, pnpm, Hatch, and project deps"
-	@echo "   make install-rust     - Reinstall Rust and wasm-pack"
-	@echo "   make setup-cuda     - Reinstall python3-dev, PyTorch CUDA, and build extension"
+	@echo "   make setup-dev     - Reinstall Node.js, pnpm, Hatch, and project deps"
+	@echo "   make install-rust  - Reinstall Rust and wasm-pack"
+	@echo "   make install-go    - Reinstall Go (for native launcher builds)"
+	@echo "   make setup-cuda    - Reinstall python3-dev, PyTorch CUDA, and build extension"
 	@echo ""
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 	@read -p "⚠️  Remove SYSTEM-WIDE tools (may affect other projects)? [y/N] " confirm; \
@@ -775,6 +914,7 @@ clean-setup:  ## Remove ALL dev tools to simulate a fresh machine (USE WITH CAUT
 		echo "  make clean-viewer   - Clean TypeScript artifacts"; \
 		echo "  make clean-cuda     - Clean CUDA artifacts"; \
 		echo "  make clean-wasm     - Clean WASM artifacts"; \
+		echo "  make clean-launchers - Clean native launcher binaries"; \
 		echo "  make clean-cache    - Clear user cache (~/.cache/luxar)"; \
 		exit 1; \
 	fi
@@ -790,20 +930,22 @@ clean-setup:  ## Remove ALL dev tools to simulate a fresh machine (USE WITH CAUT
 	@$(MAKE) clean-wasm 2>/dev/null || true
 	@$(MAKE) clean-cuda 2>/dev/null || true
 	@echo ""
-	@echo "🧹 [1/12] Removing node_modules..."
+	@echo "🧹 [1/13] Removing node_modules..."
 	@rm -rf packages/luxar-viewer/node_modules
 	@echo "   ✓ Done"
 	@echo ""
-	@echo "🧹 [2/12] Removing Hatch environments (includes PyTorch with CUDA)..."
-	@if command -v hatch >/dev/null 2>&1; then \
+	@echo "🧹 [2/13] Removing Hatch environments (includes PyTorch with CUDA)..."
+	@# Probe $(HATCH), not a bare `hatch`: on HPC/no-sudo boxes hatch lives only
+	@# in ~/.local/bin, and a bare-`hatch` guard silently skipped this step.
+	@if command -v "$(HATCH)" >/dev/null 2>&1; then \
 		$(HATCH) env prune -y 2>/dev/null || true; \
 	fi
 	@rm -rf ~/.local/share/hatch/env/virtual/luxar* 2>/dev/null || true
 	@echo "   ✓ Done"
 	@echo ""
-	@echo "🧹 [3/12] Removing pre-commit hooks..."
+	@echo "🧹 [3/13] Removing pre-commit hooks..."
 	@if [ -d ".git/hooks" ]; then \
-		if command -v hatch >/dev/null 2>&1; then \
+		if command -v "$(HATCH)" >/dev/null 2>&1; then \
 			$(HATCH) run pre-commit uninstall 2>/dev/null || true; \
 			echo "   ✓ pre-commit hooks uninstalled"; \
 		elif [ -f ".git/hooks/pre-commit" ] && grep -q "pre-commit" ".git/hooks/pre-commit" 2>/dev/null; then \
@@ -816,18 +958,18 @@ clean-setup:  ## Remove ALL dev tools to simulate a fresh machine (USE WITH CAUT
 		echo "   ⚪ Not a git repository, skipping"; \
 	fi
 	@echo ""
-	@echo "🧹 [4/12] Removing WASM build artifacts..."
+	@echo "🧹 [4/13] Removing WASM build artifacts..."
 	@rm -rf packages/luxar-viewer/public/wasm
 	@rm -rf packages/luxar-viewer/src/wasm/rust/target
 	@echo "   ✓ Done"
 	@echo ""
-	@echo "🧹 [5/12] Removing CUDA build artifacts..."
+	@echo "🧹 [5/13] Removing CUDA build artifacts..."
 	@rm -rf $(CUDA_EXT_DIR)/build/
 	@rm -rf $(CUDA_EXT_DIR)/*.egg-info/
 	@rm -f $(CUDA_EXT_DIR)/cuda_splatting_backend*.so
 	@echo "   ✓ Done"
 	@echo ""
-	@echo "🧹 [6/12] Removing python3-dev (system package)..."
+	@echo "🧹 [6/13] Removing python3-dev (system package)..."
 	@if [ "$(PKG_MANAGER)" = "apt" ]; then \
 		if dpkg -l | grep -q python3-dev; then \
 			echo "   Found python3-dev, removing with sudo..."; \
@@ -845,7 +987,7 @@ clean-setup:  ## Remove ALL dev tools to simulate a fresh machine (USE WITH CAUT
 		echo "   ⚪ Unsupported OS, skipping"; \
 	fi
 	@echo ""
-	@echo "🧹 [7/12] Removing wasm-pack..."
+	@echo "🧹 [7/13] Removing wasm-pack..."
 	@if [ -f "$(HOME)/.cargo/env" ]; then \
 		. "$(HOME)/.cargo/env"; \
 	fi; \
@@ -856,7 +998,7 @@ clean-setup:  ## Remove ALL dev tools to simulate a fresh machine (USE WITH CAUT
 		echo "   ⚪ Not installed, skipping"; \
 	fi
 	@echo ""
-	@echo "🧹 [8/12] Removing Rust toolchain..."
+	@echo "🧹 [8/13] Removing Rust toolchain..."
 	@if command -v rustup >/dev/null 2>&1; then \
 		rustup self uninstall -y 2>/dev/null || true; \
 		echo "   ✓ Done"; \
@@ -864,7 +1006,7 @@ clean-setup:  ## Remove ALL dev tools to simulate a fresh machine (USE WITH CAUT
 		echo "   ⚪ Not installed, skipping"; \
 	fi
 	@echo ""
-	@echo "🧹 [9/12] Removing Hatch..."
+	@echo "🧹 [9/13] Removing Hatch..."
 	@if command -v pipx >/dev/null 2>&1 && pipx list 2>/dev/null | grep -q hatch; then \
 		pipx uninstall hatch 2>/dev/null || true; \
 		echo "   ✓ Removed via pipx"; \
@@ -884,7 +1026,7 @@ clean-setup:  ## Remove ALL dev tools to simulate a fresh machine (USE WITH CAUT
 		echo "   ⚪ Not installed, skipping"; \
 	fi
 	@echo ""
-	@echo "🧹 [10/12] Removing pnpm (global package)..."
+	@echo "🧹 [10/13] Removing pnpm (global package)..."
 	@export NVM_DIR="$$HOME/.nvm"; \
 	if [ -s "$$NVM_DIR/nvm.sh" ]; then \
 		. "$$NVM_DIR/nvm.sh"; \
@@ -897,7 +1039,7 @@ clean-setup:  ## Remove ALL dev tools to simulate a fresh machine (USE WITH CAUT
 		echo "   ⚪ pnpm not installed, skipping"; \
 	fi
 	@echo ""
-	@echo "🧹 [11/12] Removing nvm and Node.js..."
+	@echo "🧹 [11/13] Removing nvm and Node.js..."
 	@NVM_REMOVED=0; \
 	HOMEBREW_NODE=0; \
 	if [ -d "$(HOME)/.nvm" ]; then \
@@ -918,7 +1060,7 @@ clean-setup:  ## Remove ALL dev tools to simulate a fresh machine (USE WITH CAUT
 		echo "   ⚪ nvm not installed, skipping"; \
 	fi
 	@echo ""
-	@echo "🧹 [12.5/12] Removing Go toolchain (if installed by us)..."
+	@echo "🧹 [12/13] Removing Go toolchain (if installed by us)..."
 	@if [ -d "$$HOME/.local/go" ]; then \
 		rm -rf "$$HOME/.local/go"; \
 		echo "   ✓ Removed ~/.local/go"; \
@@ -935,7 +1077,7 @@ clean-setup:  ## Remove ALL dev tools to simulate a fresh machine (USE WITH CAUT
 	fi
 	@$(MAKE) clean-launchers 2>/dev/null || true
 	@echo ""
-	@echo "🧹 [12/12] Removing pnpm cache..."
+	@echo "🧹 [13/13] Removing pnpm cache..."
 	@if [ -d "$(HOME)/.local/share/pnpm" ]; then \
 		rm -rf "$(HOME)/.local/share/pnpm"; \
 		echo "   ✓ Removed ~/.local/share/pnpm"; \
@@ -993,7 +1135,7 @@ setup-dev:  ## Complete development setup (auto-installs missing dependencies)
 	@# Step 1: Check and install Python dependencies
 	@echo "=== Step 1: Python Environment ==="
 	@if ! command -v python3 >/dev/null 2>&1; then \
-		echo "❌ Python3 not found. Please install Python 3.9+ first:"; \
+		echo "❌ Python3 not found. Please install Python 3.10+ first:"; \
 		if [ "$(OS)" = "macos" ]; then \
 			echo "   brew install python@3.11"; \
 		elif [ "$(PKG_MANAGER)" = "apt" ]; then \
@@ -1112,7 +1254,23 @@ setup-dev:  ## Complete development setup (auto-installs missing dependencies)
 				echo "📥 Installing Homebrew first..."; \
 				/bin/bash -c "$$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"; \
 			fi; \
-			brew install node@22 || brew upgrade node; \
+			brew install node@22; \
+			brew link --force node@22 || true; \
+			NEW_OK=0; \
+			if command -v node >/dev/null 2>&1; then \
+				NV=$$(node -v | sed 's/v//'); \
+				NMAJ=$$(echo $$NV | cut -d. -f1); \
+				NMIN=$$(echo $$NV | cut -d. -f2); \
+				if [ "$$NMAJ" -gt $(MIN_NODE_MAJOR) ] || \
+				   ([ "$$NMAJ" -eq $(MIN_NODE_MAJOR) ] && [ "$$NMIN" -ge $(MIN_NODE_MINOR) ]); then \
+					NEW_OK=1; \
+				fi; \
+			fi; \
+			if [ "$$NEW_OK" = "0" ]; then \
+				echo "❌ node@22 installed but PATH still resolves an old/absent node."; \
+				echo "   Run 'make install-node' for the full diagnosis, then re-run 'make setup-dev'."; \
+				exit 1; \
+			fi; \
 			echo "✅ Node.js installed: $$(node --version)"; \
 		else \
 			if [ ! -s "$$NVM_DIR/nvm.sh" ]; then \
@@ -1222,8 +1380,13 @@ run-examples:  ## Run all examples to generate zarr files (output to datasets/ex
 	@echo "🚀 Running all examples to generate zarr files..."
 	@echo "📂 Output directory: datasets/examples/"
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@# Every example is attempted (one failure must not hide the rest), but the
+	@# target FAILS at the end if any did. CI's e2e job builds its datasets with
+	@# this target — exiting 0 on a broken example turns a clear generator error
+	@# into a baffling downstream rendering failure.
 	@total=$$(ls -1 packages/luxar/examples/*_example.py 2>/dev/null | wc -l || echo 0); \
 	count=0; \
+	failed=""; \
 	for script in packages/luxar/examples/*_example.py; do \
 		count=$$((count + 1)); \
 		name=$$(basename $$script); \
@@ -1234,11 +1397,16 @@ run-examples:  ## Run all examples to generate zarr files (output to datasets/ex
 			echo "✅ Success: $${name}"; \
 		else \
 			echo "❌ Failed: $${name}"; \
+			failed="$$failed $$name"; \
 		fi; \
-	done
-	@echo ""
-	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-	@echo "✅ All examples completed!"
+	done; \
+	echo ""; \
+	echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
+	if [ -n "$$failed" ]; then \
+		echo "❌ Examples FAILED:$$failed"; \
+		exit 1; \
+	fi; \
+	echo "✅ All examples completed!"
 	@echo ""
 	@echo "📁 Generated zarr files in datasets/examples/:"
 	@for zarr in datasets/examples/*.zarr; do \
@@ -1468,6 +1636,40 @@ build-viewer:  ## Build the viewer for production (auto-installs Rust/wasm-pack 
 	fi; \
 	echo "🦀 Building viewer with Rust/WASM support..."; \
 	cd packages/luxar-viewer && pnpm build
+
+build-viewer-lib:  ## Build + verify the viewer's npm library bundle
+	@# `build-viewer` produces the standalone web app that gets bundled into the
+	@# Python wheel. This is the other artifact: the importable npm package
+	@# (vite.lib.config.ts + the export-surface check). CI runs the same
+	@# `pnpm ci:release` in .github/workflows/publish-npm.yml.
+	@# One shell for the whole recipe: the node_modules guard must run AFTER nvm
+	@# is sourced. Split across two recipe lines (the shape most viewer targets
+	@# use), the guard's `pnpm install` would run in a shell that never saw nvm
+	@# and die with `pnpm: not found` on a box where pnpm lives only under
+	@# ~/.nvm — even though the block below goes to the trouble of sourcing it.
+	@export NVM_DIR="$$HOME/.nvm"; \
+	if [ -s "$$NVM_DIR/nvm.sh" ]; then \
+		. "$$NVM_DIR/nvm.sh"; \
+	fi; \
+	if [ -f "$(HOME)/.cargo/env" ]; then \
+		. "$(HOME)/.cargo/env"; \
+	fi; \
+	if ! command -v pnpm >/dev/null 2>&1; then \
+		echo "❌ pnpm not found. Run 'make setup-dev' to install Node.js and pnpm."; \
+		exit 1; \
+	fi; \
+	if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
+		echo "📦 Installing TypeScript dependencies first..."; \
+		(cd packages/luxar-viewer && pnpm install); \
+	fi; \
+	if ! command -v wasm-pack >/dev/null 2>&1; then \
+		echo "❌ wasm-pack not found (the lib bundle embeds WASM)."; \
+		echo "   Run 'make install-rust' first."; \
+		exit 1; \
+	fi; \
+	echo "📦 Building viewer library bundle..."; \
+	cd packages/luxar-viewer && pnpm run ci:release
+	@echo "✅ Viewer library bundle built and export surface verified"
 
 rebuild-viewer:  ## Complete clean rebuild of viewer (auto-installs dependencies as needed)
 	@echo "🧹 Cleaning viewer build artifacts..."
@@ -1705,6 +1907,14 @@ build-launchers:  ## Build native launchers for the host platform (requires Go +
 	@# the host OS only; CI will produce the other binaries on their
 	@# respective runners. Set LUXAR_LAUNCHER_NO_WEBVIEW=1 at runtime if
 	@# you want the launcher to open the default browser instead.
+	@#
+	@# Output paths go through $$OUT_ABS (absolute) rather than a relative
+	@# ../../ path: the recipe `cd`s into the launcher source dir, so a
+	@# repo-root-relative path silently resolves to the wrong place — which is
+	@# how the darwin/amd64 failure branch used to *fail* to delete the
+	@# arm64-only binary it promises to remove. That matters because
+	@# cli/_launchers/ is inside the wheel's package dir, so anything left
+	@# there rides along into the next `hatch build`.
 	@GO_BIN=""; \
 	if command -v go >/dev/null 2>&1; then \
 		GO_BIN=go; \
@@ -1716,12 +1926,13 @@ build-launchers:  ## Build native launchers for the host platform (requires Go +
 	fi; \
 	echo "🐹 Building native launcher with $$GO_BIN ($$($$GO_BIN version | sed 's/^go version //'))"; \
 	mkdir -p $(LAUNCHER_OUT_DIR); \
+	OUT_ABS="$(CURDIR)/$(LAUNCHER_OUT_DIR)"; \
 	cd $(LAUNCHER_SRC_DIR); \
 	if [ "$(OS)" = "macos" ]; then \
 		echo "  • darwin/arm64 (CGO=1, WKWebView)..."; \
-		GOOS=darwin GOARCH=arm64 CGO_ENABLED=1 $$GO_BIN build -trimpath -ldflags="-s -w" -o ../../$(LAUNCHER_OUT_DIR)/darwin-arm64 .; \
+		GOOS=darwin GOARCH=arm64 CGO_ENABLED=1 $$GO_BIN build -trimpath -ldflags="-s -w" -o "$$OUT_ABS/darwin-arm64" .; \
 		echo "  • darwin/amd64 (CGO=1, WKWebView)..."; \
-		if ! GOOS=darwin GOARCH=amd64 CGO_ENABLED=1 $$GO_BIN build -trimpath -ldflags="-s -w" -o ../../$(LAUNCHER_OUT_DIR)/darwin-amd64 .; then \
+		if ! GOOS=darwin GOARCH=amd64 CGO_ENABLED=1 $$GO_BIN build -trimpath -ldflags="-s -w" -o "$$OUT_ABS/darwin-amd64" .; then \
 			echo ""; \
 			echo "❌ darwin/amd64 build failed (likely missing universal SDK)."; \
 			echo ""; \
@@ -1731,7 +1942,7 @@ build-launchers:  ## Build native launchers for the host platform (requires Go +
 			echo ""; \
 			echo "   Either install Xcode's full universal SDK and re-run, or"; \
 			echo "   ship the arm64-only binary explicitly via your CI matrix."; \
-			rm -f $(LAUNCHER_OUT_DIR)/darwin-arm64; \
+			rm -f "$$OUT_ABS/darwin-arm64"; \
 			exit 1; \
 		fi; \
 		cd - >/dev/null; \
@@ -1753,8 +1964,10 @@ build-launchers:  ## Build native launchers for the host platform (requires Go +
 			*) echo "❌ Unsupported Linux architecture: $$ARCH"; exit 1 ;; \
 		esac; \
 		echo "  • linux/$$GOARCH (CGO=1, WebKitGTK)..."; \
-		echo "    Requires: libwebkit2gtk-4.1-dev (or 4.0-dev on older distros)"; \
-		GOOS=linux GOARCH=$$GOARCH CGO_ENABLED=1 $$GO_BIN build -trimpath -ldflags="-s -w" -o ../../$(LAUNCHER_OUT_DIR)/linux-$$GOARCH .; \
+		echo "    Requires: libwebkit2gtk-4.0-dev + pkg-config"; \
+		echo "    (webview_go pins webkit2gtk-4.0 — this is why CI builds the"; \
+		echo "     launcher on ubuntu-22.04; 24.04 ships only the 4.1 package)"; \
+		GOOS=linux GOARCH=$$GOARCH CGO_ENABLED=1 $$GO_BIN build -trimpath -ldflags="-s -w" -o "$$OUT_ABS/linux-$$GOARCH" .; \
 		cd - >/dev/null; \
 	else \
 		echo "❌ Unsupported host OS: $(OS)"; \
@@ -1796,6 +2009,27 @@ define CHECK_MACOS_CUDA
 		echo ""; \
 		echo "   NVIDIA dropped CUDA support for macOS after toolkit 10.2 (2020)."; \
 		echo "   To build/run CUDA extensions, use a Linux machine with an NVIDIA GPU."; \
+		exit 1; \
+	fi
+endef
+
+# Mirror guard: Metal/MPS exists only on Apple silicon. Same shape as
+# CHECK_MACOS_CUDA so the two accelerator families fail symmetrically.
+# Checks the ARCHITECTURE too, not just the OS: torch's MPS backend does not
+# exist on Intel Macs, so an x86_64 Mac would otherwise sail past a guard whose
+# own message promises "Apple silicon" and die later inside the benchmark with
+# a much less actionable torch error.
+define CHECK_NOT_MACOS_METAL
+	@if [ "$(OS)" != "macos" ]; then \
+		echo "❌ Metal (MPS) benchmarks require macOS on Apple silicon."; \
+		echo ""; \
+		echo "   Detected OS: $(OS). For NVIDIA GPUs use 'make benchmark-cuda'."; \
+		exit 1; \
+	elif [ "$$(uname -m)" != "arm64" ]; then \
+		echo "❌ Metal (MPS) benchmarks require Apple silicon."; \
+		echo ""; \
+		echo "   Detected macOS on $$(uname -m). PyTorch has no MPS backend on"; \
+		echo "   Intel Macs — there is nothing for this benchmark to measure."; \
 		exit 1; \
 	fi
 endef
@@ -2239,6 +2473,7 @@ test-cuda:  ## Run CUDA extension tests
 	@echo "✅ CUDA tests completed!"
 
 benchmark-metal:  ## Run Metal (MPS) performance benchmarks (M-series only)
+	$(CHECK_NOT_MACOS_METAL)
 	@echo "Running Metal performance benchmarks..."
 	@mkdir -p benchmarks
 	$(HATCH) run python scripts/benchmarks/benchmark_metal_optimizations.py \
@@ -2248,6 +2483,7 @@ benchmark-metal:  ## Run Metal (MPS) performance benchmarks (M-series only)
 	@echo "Benchmark completed! Results in benchmarks/"
 
 benchmark-metal-stress:  ## Run Metal RSS leak-check (validates MET-1 @autoreleasepool)
+	$(CHECK_NOT_MACOS_METAL)
 	@echo "Running Metal stress / leak-check..."
 	@mkdir -p benchmarks
 	$(HATCH) run python scripts/benchmarks/benchmark_metal_optimizations.py \
@@ -2338,12 +2574,26 @@ test-cov-typescript:  ## Run TypeScript tests with coverage
 	fi
 	cd packages/luxar-viewer && pnpm run test:coverage
 
-test-e2e:  ## Run Playwright E2E tests
+test-e2e:  ## Run the full Playwright E2E suite (~17 min)
 	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
 		echo "📦 Installing TypeScript dependencies first..."; \
 		cd packages/luxar-viewer && pnpm install; \
 	fi
 	cd packages/luxar-viewer && pnpm test:e2e
+
+test-e2e-smoke:  ## Run the E2E smoke subset (what CI would run)
+	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
+		echo "📦 Installing TypeScript dependencies first..."; \
+		cd packages/luxar-viewer && pnpm install; \
+	fi
+	cd packages/luxar-viewer && pnpm test:e2e:smoke
+
+test-perf-e2e:  ## Run the opt-in Playwright performance suite
+	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
+		echo "📦 Installing TypeScript dependencies first..."; \
+		cd packages/luxar-viewer && pnpm install; \
+	fi
+	cd packages/luxar-viewer && pnpm test:perf:e2e
 
 check-typescript:  ## Run all TypeScript checks (typecheck, lint, test)
 	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
@@ -2351,6 +2601,30 @@ check-typescript:  ## Run all TypeScript checks (typecheck, lint, test)
 		cd packages/luxar-viewer && pnpm install; \
 	fi
 	cd packages/luxar-viewer && pnpm run check
+
+check-knip:  ## Report unused viewer files/exports/deps (non-gating)
+	@# Deliberately non-fatal. The ENFORCED subset is `check:knip:ci`
+	@# (--include files,dependencies), which runs inside `pnpm check:ci` and
+	@# therefore inside `make check-all`. The full run additionally reports
+	@# unused exports/types and @internal tag hints, of which the tree has a
+	@# standing backlog — so a non-zero exit here is the normal state, not a
+	@# regression. Exiting 1 would make this look like a broken gate.
+	@#
+	@# But "knip ran and reported a backlog" and "knip never ran" must not look
+	@# the same: the `|| true` below would otherwise swallow a missing pnpm and
+	@# still print the reassuring footer. Guard the toolchain explicitly first.
+	@if ! command -v pnpm >/dev/null 2>&1; then \
+		echo "❌ pnpm not found — cannot run knip."; \
+		echo "   Run 'make setup-dev' to install Node.js and pnpm."; \
+		exit 1; \
+	fi
+	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
+		echo "📦 Installing TypeScript dependencies first..."; \
+		cd packages/luxar-viewer && pnpm install; \
+	fi
+	@cd packages/luxar-viewer && pnpm run check:knip || true
+	@echo ""
+	@echo "ℹ️  Report only — the enforced subset (files + dependencies) runs in 'make check-all'."
 
 check-rust:  ## Run Rust type/lint checks (cargo check + clippy)
 	@if [ -f "$(HOME)/.cargo/env" ]; then \
@@ -2475,7 +2749,9 @@ release-check:  ## Dry-run release: run ALL preflight checks, tag/push nothing
 release:  ## Cut release: validate main + CI green, then tag v<version> and push (triggers PyPI publish)
 	bash scripts/release.sh
 
-publish publish-test:  ## DISABLED — use `make release` (tag-triggered OIDC publish). See scripts/release.sh
+# One body, two targets: `publish publish-test:` on a single line kept BOTH of
+# them out of `make help`, whose grep anchors on a single target name.
+define PUBLISH_DISABLED
 	@echo "❌ 'make $@' is disabled. Luxar publishes via a tag-triggered GitHub"; \
 	echo "   Actions workflow using PyPI trusted publishing (OIDC) — not local uploads."; \
 	echo "   A local 'hatch publish' would ship a wheel with NO viewer and your host"; \
@@ -2486,3 +2762,10 @@ publish publish-test:  ## DISABLED — use `make release` (tag-triggered OIDC pu
 	echo "     make release-check      # dry-run preflight (safe)"; \
 	echo "     make release            # tag + push -> CI builds & publishes"; \
 	exit 1
+endef
+
+publish:  ## DISABLED — use `make release` (tag-triggered OIDC publish). See scripts/release.sh
+	$(PUBLISH_DISABLED)
+
+publish-test:  ## DISABLED — use `make release` (tag-triggered OIDC publish). See scripts/release.sh
+	$(PUBLISH_DISABLED)
