@@ -18,6 +18,12 @@ import type { BlendingMode } from '../../rendering';
 import { type LayerInfo, type LayerStateManager } from './layer-state';
 import { RangeSlider } from './range-slider';
 import { LabeledSlider } from './labeled-slider';
+import {
+  ABSORPTION_DEFAULT_MAX,
+  ABSORPTION_LOG_DECADES,
+  absorptionSliderRange,
+  formatAbsorption,
+} from './absorption-range';
 import { log, Modules } from '../../utils/log';
 import { EventGroup } from '../../utils/cross-layer/event-group';
 import { BLENDING_MODES } from '../../rendering/blending-state';
@@ -200,14 +206,20 @@ export class LayerControls {
     });
 
     // Absorption κ — only meaningful in volumetric mode; hidden for every
-    // other mode (see syncAbsorptionVisibility). Range 0–10 covers the
-    // useful span (the attr itself is unbounded); κ=0 looks additive.
+    // other mode (see syncAbsorptionVisibility). κ has units of 1/length
+    // (τ = κ · density · thickness), so its useful magnitude spans decades
+    // across scenes: a LOG track whose bounds are re-derived per layer in
+    // render() (absorption-range.ts). Position 0 on a log track is an exact
+    // κ=0 — the additive limit. The bounds here are placeholders for the
+    // pre-selection window only.
     this.absorptionSlider = new LabeledSlider({
       container: this.controlsEl,
       label: 'Absorption',
-      min: 0,
-      max: 10,
+      min: ABSORPTION_DEFAULT_MAX / Math.pow(10, ABSORPTION_LOG_DECADES),
+      max: ABSORPTION_DEFAULT_MAX,
       step: 0.05,
+      scale: 'log',
+      format: formatAbsorption,
       initialValue: 1.0,
       constrain: (v) => Math.max(0, v),
       onChange: (val) => {
@@ -405,7 +417,22 @@ export class LayerControls {
 
     this.gammaSlider?.setValue(primary.gamma);
     this.opacitySlider?.setValue(primary.opacity);
-    this.absorptionSlider?.setValue(primary.absorption);
+    // Re-scale the κ track to THIS layer before seating the thumb: the
+    // reachable κ depends on the layer's geometry thickness (a 1.5e-3-wide
+    // line needs κ ≈ 4×10³ for the same optical depth a 1-voxel gsplat gets
+    // at κ ≈ 1). setRange keeps the value put.
+    // Multi-selection: the track is the PRIMARY layer's, and onChange fans
+    // that one κ out to every selected layer (same as opacity / gamma) — a
+    // co-selected thicker layer just saturates earlier along the track.
+    if (this.absorptionSlider) {
+      const { min, max } = absorptionSliderRange(
+        primary.absorptionMax,
+        primary.absorption,
+        primary.absorptionMinBound
+      );
+      this.absorptionSlider.setRange(min, max);
+      this.absorptionSlider.setValue(primary.absorption);
+    }
 
     if (this.blendSelect) {
       this.blendSelect.value = primary.blendingMode;
