@@ -4,7 +4,14 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { getErrorMessage, formatErrorForDisplay, getErrorStack } from '../../../utils/format-error';
+import { runInNewContext } from 'node:vm';
+import {
+  getErrorMessage,
+  formatErrorForDisplay,
+  getErrorStack,
+  isErrorLike,
+  isGenuineError,
+} from '../../../utils/format-error';
 
 describe('getErrorMessage', () => {
   it('reads the message off an Error', () => {
@@ -121,5 +128,87 @@ describe('getErrorStack', () => {
       }
     );
     expect(getErrorStack(trap)).toBeUndefined();
+  });
+});
+
+describe('isErrorLike', () => {
+  it('matches a real Error and its subclasses', () => {
+    expect(isErrorLike(new Error('boom'))).toBe(true);
+    class Sub extends Error {}
+    expect(isErrorLike(new Sub('boom'))).toBe(true);
+    expect(isErrorLike(new DOMException('x', 'NotFoundError'))).toBe(true);
+  });
+
+  it('matches a GENUINE cross-realm Error (created in another VM context)', () => {
+    // The real thing, not an emulation: an Error constructed in a different
+    // realm fails a same-realm `instanceof Error` but its internal [[Class]]
+    // still reports '[object Error]'.
+    const crossRealm = runInNewContext('new TypeError("boom")') as object;
+    expect(crossRealm instanceof Error).toBe(false);
+    expect(Object.prototype.toString.call(crossRealm)).toBe('[object Error]');
+    expect(isErrorLike(crossRealm)).toBe(true);
+  });
+
+  it('matches an object that merely spoofs Symbol.toStringTag as Error', () => {
+    // Intentional: an object claiming to be an Error via its tag is treated as
+    // one (rendering it as `name: message` is harmless; `{}` is not).
+    const spoofed = { [Symbol.toStringTag]: 'Error', name: 'TypeError', message: 'boom' };
+    expect(spoofed instanceof Error).toBe(false);
+    expect(isErrorLike(spoofed)).toBe(true);
+  });
+
+  it('matches a same-realm Error whose tag is overridden and stack removed', () => {
+    // The Firefox DOMException shape: `instanceof Error` per WebIDL, but
+    // [[Class]]/toStringTag is not 'Error' and a platform-thrown one may carry
+    // no stack — both structural signals miss it, so the instanceof fast path
+    // must catch it or it regresses back to rendering as `{}`.
+    const e = new Error('boom');
+    Object.defineProperty(e, Symbol.toStringTag, { value: 'DOMException' });
+    Object.defineProperty(e, 'stack', { value: undefined });
+    expect(Object.prototype.toString.call(e)).not.toBe('[object Error]');
+    expect(isErrorLike(e)).toBe(true);
+  });
+
+  it('matches a plain object carrying the full name+message+stack triple', () => {
+    expect(isErrorLike({ name: 'Error', message: 'boom', stack: 'at somewhere' })).toBe(true);
+  });
+
+  it('does NOT match an ordinary data object', () => {
+    // The false-positive that must not happen: a legitimate `{ name, message }`
+    // payload should still render as JSON, not as an Error.
+    expect(isErrorLike({ name: 'Widget', message: 'hello' })).toBe(false);
+    expect(isErrorLike({ foo: 1 })).toBe(false);
+    expect(isErrorLike('a string')).toBe(false);
+    expect(isErrorLike(null)).toBe(false);
+    expect(isErrorLike(undefined)).toBe(false);
+    expect(isErrorLike(42)).toBe(false);
+  });
+});
+
+describe('isGenuineError', () => {
+  it('matches real, subclass, and cross-realm Errors', () => {
+    expect(isGenuineError(new Error('boom'))).toBe(true);
+    class Sub extends Error {}
+    expect(isGenuineError(new Sub('boom'))).toBe(true);
+    const crossRealm = runInNewContext('new TypeError("boom")') as object;
+    expect(crossRealm instanceof Error).toBe(false);
+    expect(isGenuineError(crossRealm)).toBe(true);
+  });
+
+  it('does NOT match a duck-typed full triple — that is isErrorLike territory', () => {
+    // The console interceptor's stack-precedence pass relies on this: a
+    // context bag carrying name+message+stack renders as an Error (wide
+    // check) but must never outrank a real Error's stack (narrow check).
+    const triple = { name: 'Error', message: 'boom', stack: 'at somewhere' };
+    expect(isErrorLike(triple)).toBe(true);
+    expect(isGenuineError(triple)).toBe(false);
+  });
+
+  it('never throws on hostile values', () => {
+    const revoked = Proxy.revocable({}, {});
+    revoked.revoke();
+    expect(isGenuineError(revoked.proxy)).toBe(false);
+    expect(isGenuineError(null)).toBe(false);
+    expect(isGenuineError(42)).toBe(false);
   });
 });
