@@ -139,6 +139,9 @@ These contracts span every tier and are enforced by the unit tests in
   invalidation callbacks. L0 stays populated.
 - Content-hash mismatch in `doValidateCache` defensively clears L1
   alongside L2, then fans out via `onInvalidate` to L0.
+- Coalesced `pendingGets` clean up by entry identity, not key alone. An older
+  aborted chain settling after invalidation therefore cannot evict a newer
+  same-key request from the map or make that replacement unabortable.
 
 ### OPFS mutation ordering
 
