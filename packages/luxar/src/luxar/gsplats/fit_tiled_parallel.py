@@ -389,5 +389,7 @@ def fit_tiled_parallel(
 
     if not keep_tiles:
         shutil.rmtree(tmp_dir, ignore_errors=True)
+    else:
+        aprint(f"Kept tiles at {tmp_dir}")
 
     return merged
