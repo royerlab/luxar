@@ -218,18 +218,20 @@ class TestAddPointsAdditiveLod:
         # Regression: the plain additive multi-LOD writer has no image_labels
         # channel, so an explicit ladder used to SILENTLY DROP the labels. It
         # must instead refuse the ladder (write a single leaf) and keep the
-        # labels — mirroring the substitutive path's suppress_reason guard.
+        # labels — mirroring the substitutive path's suppress_reason guard —
+        # and warn, since the explicit request cannot be honoured.
         output = tmp_path / "t.luxar.zarr"
         rng = np.random.RandomState(0)
         positions = rng.rand(200, 3).astype(np.float32)
         with LuxarZarrCompiler(output) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-            scene.add_points(
-                "pts",
-                positions,
-                image_labels=[b"x"] * 200,
-                additive_lod=dict(n_lods=3, method="random"),
-            )
+            with pytest.warns(UserWarning, match="cannot be honoured"):
+                scene.add_points(
+                    "pts",
+                    positions,
+                    image_labels=[b"x"] * 200,
+                    additive_lod=dict(n_lods=3, method="random"),
+                )
         grp = zarr.open(str(output), mode="r")["pts"]
         assert grp.attrs["type"] == "points"
         assert grp.attrs["n_points"] == 200

@@ -251,6 +251,8 @@ def fit_planned_parallel(
 
     if not keep_boxes:
         shutil.rmtree(tmp_dir, ignore_errors=True)
+    else:
+        aprint(f"Kept boxes at {tmp_dir}")
     return result
 
 
