@@ -69,11 +69,23 @@ export async function loadAndStage(
     applyPartialExtendTolerance: true,
     extendedToleranceCache: ctx.extendedToleranceCache,
   });
+  /**
+   * Mark this path healthy. Called at every terminal success, NOT right after
+   * the fetch: the failure record's scope is the whole `loadAndStage` step (see
+   * `run-loader-updates`' catch), so clearing after the fetch alone meant a
+   * post-fetch failure re-recorded with `retryCount` 0 — pinning the log at
+   * "(attempt 1)" forever — and left `hasFailures()` briefly reporting clean.
+   */
+  const markPathHealthy = (): void => ctx.clearFailure(path);
+
   if (derived.skip) {
     log.info(
       Modules.SCENE_LOADER,
       `Skipping update for ${path} - all non-displayed dims are extended`
     );
+    // Deliberately NOT marking healthy here: a skipped node loaded nothing, so a
+    // previously-recorded failure is still unresolved. Clearing it would drop
+    // the node from the retry set and hide a real breakage.
     session.markSkipped(derived.skip);
     // S6: drop the path from prev state so the next non-skip update
     // re-baselines rather than extrapolating from a stale snapshot.
@@ -87,14 +99,17 @@ export async function loadAndStage(
       ? { ...derived.viewState, frameBudgetMs: ctx.frameBudgetMs }
       : derived.viewState;
   const data = await loader.updateView(pointsViewState, session, ctx.signal);
-  ctx.clearFailure(path);
-  if (!data) return null;
+  if (!data) {
+    markPathHealthy();
+    return null;
+  }
   if (ctx.currentVersion <= 1) {
     log.info(
       Modules.SCENE_LOADER,
       `[GEOM] v${ctx.currentVersion} points ${path}: ${data.pointCount} visible`
     );
   }
+  markPathHealthy();
   session.setMetadata({ points: data.metadata.loadedPoints });
   // S6: per-loader predictive prefetch using the derived view-state — but
   // not for a SUPERSEDED update: extrapolating from an abandoned state warms
