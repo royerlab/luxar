@@ -915,16 +915,14 @@ result = result @ transform  # Correct
 - Use 3D datasets for general-purpose loading tests
 - For nD tests, navigate to slices known to have points
 
-### Data Source URLs Must NOT Have Trailing Slash
-When loading data via URL, **never include a trailing slash**:
+### Data Source URLs Normalize Trailing Slashes
+The viewer trims trailing slashes from dataset base URLs before appending zarr
+metadata paths, so both forms are accepted:
 ```bash
-# ❌ WRONG - trailing slash breaks data loading
-http://localhost:5173/?src=http://127.0.0.1:8005/
-
-# ✅ CORRECT - no trailing slash
 http://localhost:5173/?src=http://127.0.0.1:8005
+http://localhost:5173/?src=http://127.0.0.1:8005/
 ```
-The zarr loader interprets trailing slashes as path components, causing 404s.
+Prefer the no-trailing-slash form in examples and logs as the canonical spelling.
 
 ### WASM 16-Dimension Limit (with automatic >16D fallback)
 The compiled WASM kernels use fixed-size arrays (for performance) and support a
