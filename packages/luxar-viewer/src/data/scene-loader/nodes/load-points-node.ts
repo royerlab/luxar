@@ -168,7 +168,10 @@ export async function loadPointsNodeExpensive(
     // A settled successful (re)load clears any prior failure record so a
     // recovered lazy level stops counting against the outcome report and the
     // auto-retry budget. No-op on a first successful load. Symmetric with the
-    // catch's recordFailure.
+    // catch's recordFailure. Unconditional (unlike the lines/gsplats twins,
+    // which clear only when their `staged` commit landed): updatePointsGeometry
+    // commits internally and exposes no landed signal, matching the sweep
+    // handler's markPathHealthy.
     ctx.registry.clearFailure(node.path);
     log.success(Modules.SCENE_LOADER, `Loaded ${data.pointCount} points for ${node.path}`);
   } catch (error) {

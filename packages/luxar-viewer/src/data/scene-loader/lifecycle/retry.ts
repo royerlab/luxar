@@ -70,8 +70,10 @@ export interface RetryCtx {
 /**
  * Retry a single failed loader without touching the orchestrator's
  * update lock. Returns true on success (failure cleared from the
- * registry), false on continued failure (registry updated with new
- * retry count), or false if the path is no longer in failed-loaders.
+ * registry — except for a lazy LOD level, where true means "retry
+ * kicked" and the record is kept until the thunk settles), false on
+ * continued failure (registry updated with new retry count), or false
+ * if the path is no longer in failed-loaders.
  */
 export async function retryFailedLoaderUnlocked(path: string, ctx: RetryCtx): Promise<boolean> {
   const { registry } = ctx;
