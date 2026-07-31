@@ -68,7 +68,8 @@ LUT, writes a `colormap_lut` dataset, and rewrites the attr value to
 directly). Emits an at-most-once `UserWarning` advising authors to pin
 `tone_mapping="Neutral"` when the scene uses a LUT but the viewer's default
 ACES tone-mapping would shift hues — skipped for the implicit `"gray"` default
-and when the author already chose `"Neutral"`. The warn flag is threaded by
+and whenever the author set a `tone_mapping` at all (any explicit value,
+`"ACES"` included, is a deliberate choice). The warn flag is threaded by
 value.
 
 ### `bounds.py`
