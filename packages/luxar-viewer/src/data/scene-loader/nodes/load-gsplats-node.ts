@@ -183,8 +183,15 @@ export async function loadGSplatsNodeExpensive(
       timeLodStageSync('lazy:commit', () =>
         ctx.commitGSplatsGeometry(staged, undefined, loadedViewVersion)
       );
+      // A settled successful (re)load clears any prior failure record so a
+      // recovered lazy level stops counting against the outcome report and
+      // the auto-retry budget. No-op on a first successful load. Symmetric
+      // with the catch's recordFailure. Inside the `staged` guard: a null
+      // staged means the placeholder is gone and nothing was committed, so a
+      // load that landed nowhere must not clear the failure — the same rule
+      // as the retry path's verifyAndClear.
+      ctx.registry.clearFailure(node.path);
     }
-
     log.success(
       Modules.SCENE_LOADER,
       `Loaded ${data.splatCount.toLocaleString()} gsplats for ${node.path}`
