@@ -15,7 +15,7 @@ The Layers panel exposes scene graph nodes marked with `layer=True` (set in the 
 - **Colormap** (for gsplats with scalars/amplitudes, scalar-backed points/lines, and groups that fan out to such descendants)
 - **Active level** (LOD groups, and partitions wrapping LOD groups) — `auto` or lock to a specific level
 
-Rendering attributes compose along the scene graph per the Luxar composition spec: `opacity`, `absorption`, `gamma`, and `intensity` multiply through ancestors; `offset` adds; `blending_mode` takes the nearest ancestor's choice. Every panel mutation recomposes the effective attributes for each affected data-leaf (the layer itself, or every data descendant of a group layer) using live panel state for `layer=true` nodes and authoring-time zarr attrs for the rest. Colormap is the one exception — it applies per-leaf rather than composing.
+Rendering attributes compose along the scene graph per the Luxar composition spec: `opacity`, `absorption`, `gamma`, and `intensity` multiply through ancestors; `offset` adds; `blending_mode` takes the nearest ancestor's choice — except inside the edited layer's own subtree, where the layer's single Blend control wins (see [Blending mode inside a layer's subtree](#blending-mode-inside-a-layers-subtree)). Every panel mutation recomposes the effective attributes for each affected data-leaf (the layer itself, or every data descendant of a group layer) using live panel state for `layer=true` nodes and authoring-time zarr attrs for the rest. Colormap is the one exception — it applies per-leaf rather than composing.
 
 Edits made in the panel are viewer-only and not persisted back to the zarr store; reload the page to return to the authored state.
 
@@ -104,14 +104,69 @@ intensity = 1 / (max - min)
 offset    = -min / (max - min)
 ```
 
-Slider bounds come from the data-range zarr attr written during encoding:
-`scalar_data_range` (preferred when present), else `color_data_range`,
-else `amplitude_data_range` (gsplats), else `[0, 1]`. Group layers have no
-range of their own and fall through to `[0, 1]`. If the layer was authored
-with non-default `intensity` / `offset`, the recovered display range may
-extend beyond the stored data range — the slider bounds are widened to
-`[min(dataMin, displayMin), max(dataMax, displayMax)]` so the `<input>`
-doesn't silently clamp the thumb on first render.
+### Which window a layer STARTS at
+
+The window maps the **rendered value** to `[0, 1]`, so the default depends on
+what that value is (`layer-state.ts::initialDisplayRange`):
+
+| Layer renders                                               | Starting window                                                                                                                         | Why                                                                                                                                                                                                                     |
+| ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| through a colormap (`colormap` on the node or a descendant) | `scalar_data_range`, else `amplitude_data_range`, else the finest descendant leaf's (`deriveScalarRangeFromDescendants`), else `[0, 1]` | the value is a scalar; gsplat amplitudes are heavily right-skewed, so a linear `[0, 1]` window renders near-black (#522)                                                                                                |
+| direct RGB colours                                          | `[0, 1]` — the identity                                                                                                                 | the value IS authored colour. Windowing it on `color_data_range` is an unrequested contrast stretch: a uniform grey `(0.72, 0.74, 0.78)` has range `[0.72, 0.78]` → gain 16.7 / offset −12 → renders **saturated blue** |
+
+`color_data_range` therefore never sets the starting window — it only widens the
+**slider bounds** for direct-colour layers, so stretching authored colours stays
+a one-drag operation.
+
+The "or a descendant" walk stops at a nested `layer=true` node: that node is its
+own row with its own colormap control, so a palette derived from it would be a
+snapshot that goes stale on the first inner edit. Writers route `layer` onto the
+wrapper only, so a `kind=partition` / `kind=lod` layer never has layer
+descendants and is unaffected.
+
+Bounds are the union of the starting window, the recovered authored
+`intensity`/`offset` window, and (direct colour only) `color_data_range` —
+`[min(dataMin, displayMin), max(dataMax, displayMax)]` — so the `<input>` never
+silently clamps the thumb on first render.
+
+#### Toggling the colormap
+
+On an off↔on MODE flip, `setColormapWindow` re-defaults the window AND the
+bounds to the new mode — a window carried over from the other mode is
+meaningless, and merely widening the bounds would leave the useful window as an
+unusable sliver (an amplitude window of `[1e-4, 0.02]` inside `[0, 1]` bounds
+is 2% of the track). Both land exactly where a natively authored layer of that
+mode inits, which is why `LayerInfo` keeps `colorDataRange` alongside
+`scalarDataRange`. Switching between two active palettes is NOT a mode flip —
+the rendered value stays the same scalar, so a user-adjusted window survives.
+
+Two things the select handler must do that are easy to miss:
+
+- **Re-render.** It runs with `controlsInteracting = true`, which suppresses the
+  state-change re-render, and `RangeSlider` emits values parsed from its own
+  `<input>` elements. Without an explicit `render()` the thumbs keep the old
+  window and the first drag writes it back, reverting the re-default.
+- **Honour the fail-closed guard.** `applyColormap` returns whether any leaf
+  actually took the LUT. The C1 guard suppresses it on leaves with no scalar
+  data bound (a group layer over scalar-less points still offers the dropdown);
+  such a layer keeps rendering direct colour, so the handler puts the identity
+  window back rather than applying a scalar range as a colour gain.
+
+For a MIXED group layer (some leaves accept the LUT, some are suppressed), the
+layer keeps the scalar window for its colormapped leaves, and `applyComposed`
+routes per leaf: a leaf whose material is not colormap-active while the layer's
+window is a scalar one (`LayerInfo.scalarWindow`) gets the identity window
+instead, so the scalar range is never applied to authored RGB as a colour gain.
+
+### Blending mode inside a layer's subtree
+
+`blending_mode` composes nearest-setter-wins, but a layer exposes exactly ONE
+Blend control for its whole subtree. So within a layer, the **layer's** mode
+wins: `LayerApplyEngine.composeEffective` ignores a `blending_mode` authored on
+a descendant that is not itself a layer (a nested layer keeps its own live
+value — it has its own control). Without this, a `kind=partition` /
+`kind=lod` layer whose parts carry their own stamped mode had an inert Blend
+control.
 
 ## Files
 

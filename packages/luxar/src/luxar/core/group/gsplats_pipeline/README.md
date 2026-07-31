@@ -60,7 +60,14 @@ Both functions produce a `GSplatData` and hand it to
 
 - `add_gsplats_from_file_impl` — loads a `.gsplats.zarr` via
   `luxar.gsplats.io.load_gsplats` (raises `FileNotFoundError` if the path
-  is missing).
+  is missing). A matrix-shaped tree goes down the normal data path; a
+  genuinely nested one (kind=partition root, or a lod with non-leaf children)
+  is GRAFTED node-for-node by `graft_gsplat_node`, which routes attrs exactly
+  like `lod_dispatch` does: [`COMPOSITING_ATTRS`](../compositing.py) — including
+  `blending_mode` — land on the wrapper **only**, everything else rides onto
+  each child. `blending_mode` must NOT be duplicated onto the parts: it is
+  nearest-setter-wins, so a part's copy shadows the wrapper and the layer's
+  Blend control goes inert.
 - `add_gsplats_from_volume_impl` — fits in one step. With
   `progressive=True` it calls `fit_progressive_gaussian_splats`
   (honoring `max_splats_per_pass`, `psnr_patience`, `max_passes`);

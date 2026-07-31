@@ -87,17 +87,23 @@ class TestInteropCommon:
         )
         assert scene.exists()
 
-    def test_tiled_scene_propagates_normal_blending_to_parts(
+    def test_tiled_scene_sets_normal_blending_on_the_wrapper_only(
         self, splat_fixture: Path, tmp_path: Path
     ) -> None:
-        # A tiled import is a kind=partition. The graft propagates the
-        # wrapper's blending_mode to every child so each part carries the
-        # mode EXPLICITLY — parts stay self-consistent even when later
-        # flattened / re-exported outside the scene graph. (Historically this
-        # also countered a default "additive" stamped by the leaf writer,
-        # which shadowed the wrapper's "normal" and made tiled photogrammetric
-        # imports render as additive GLOW; that stamp is gone, the explicit
-        # propagation remains.) Assert every part carries "normal".
+        # A tiled import is a kind=partition, and it must not render as
+        # additive GLOW — the original bug here was a default "additive"
+        # stamped by the leaf writer that shadowed the wrapper's "normal".
+        # That stamp is gone, and `blending_mode` is nearest-setter-wins, so
+        # the invariant is now the INVERSE of what this test used to assert:
+        # only the wrapper may set the mode. The graft used to re-stamp it on
+        # every part too, which made the parts shadow the wrapper the same way
+        # the leaf writer once did — leaving the layers panel's single Blend
+        # control inert on every partition / nested-lod layer.
+        #
+        # The parts still RENDER normal: both the loader
+        # (`applyEffectiveAttrs` → `getEffectiveAttrs`) and the layers panel
+        # compose root→leaf, so a wrapper-only mode reaches every part
+        # material. See core/tests/test_graft_compositing_attrs.py.
         cache = build_gsplats_cache(
             splat_fixture,
             tmp_path / "t.gsplats.zarr",
@@ -114,11 +120,15 @@ class TestInteropCommon:
         )
         root = zarr.open_group(str(scene), mode="r")
         layer = root["lizard"]
+        assert dict(layer.attrs).get("blending_mode") == "normal", (
+            "the layer wrapper must set the mode the parts inherit"
+        )
         part_names = [k for k in layer.group_keys() if k.startswith("part_")]
         assert part_names, "expected a kind=partition with part_* children"
         for pn in part_names:
-            assert dict(layer[pn].attrs).get("blending_mode") == "normal", (
-                f"part {pn} must inherit the layer's normal blending, not additive"
+            assert "blending_mode" not in dict(layer[pn].attrs), (
+                f"part {pn} shadows the wrapper's blending_mode — the layer's "
+                f"Blend control can never override it"
             )
 
     def test_cache_is_reused(self, splat_fixture: Path, tmp_path: Path) -> None:
