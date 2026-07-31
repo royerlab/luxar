@@ -1004,7 +1004,8 @@ describe('LuxarApp', () => {
     });
 
     it('serializes browser selections through the shared dataset-switch guard', async () => {
-      await app.init({ canvas: mockCanvas, src: '' });
+      const replaceStateSpy = vi.spyOn(window.history, 'replaceState').mockImplementation(() => {});
+      await app.init({ canvas: mockCanvas, src: '', updateBrowserUrl: true });
       const browserCall = (DatasetBrowser as any).mock.calls.at(-1);
       const onSelect = browserCall[0].onDatasetSelect as (url: string) => Promise<void>;
 
@@ -1013,6 +1014,7 @@ describe('LuxarApp', () => {
         () => new Promise<void>((resolve) => (release = resolve))
       );
 
+      replaceStateSpy.mockClear();
       const first = onSelect('http://example.com/a.zarr');
       await expect(onSelect('http://example.com/b.zarr')).rejects.toThrow(/in progress/);
       expect(mockSceneManager.loadSceneData).toHaveBeenCalledTimes(1);
@@ -1020,9 +1022,14 @@ describe('LuxarApp', () => {
         'http://example.com/a.zarr',
         undefined
       );
+      // The rejected selection must not leave the configured src or the
+      // host-page URL pointing at the dataset that never loaded.
+      expect((app as any).options.src).toBe('http://example.com/a.zarr');
+      expect(replaceStateSpy).toHaveBeenCalledTimes(1);
 
       release();
       await first;
+      replaceStateSpy.mockRestore();
     });
 
     it('does not reopen the browser shortcut until a selected dataset finishes switching', async () => {

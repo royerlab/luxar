@@ -299,6 +299,9 @@ export class LuxarApp {
       onSrcChange: (src) => {
         this.options = { ...this.options, src };
       },
+      // Lets the selection handler skip its URL/src side effects when the
+      // guarded switch below is going to reject the selection anyway.
+      isSwitchInFlight: () => this.switchInFlight !== undefined,
       // Browser selections must share the same in-flight guard as the public
       // embedder API. Calling loadDataset() directly here used to allow two
       // full teardown+reload passes to interleave.
