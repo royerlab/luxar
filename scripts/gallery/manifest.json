@@ -144,8 +144,7 @@
       "script": "demo_gsplats_3d_organoid_multichannel.py",
       "dataset": "datasets/demos/gsplats_3d_organoid_multichannel.luxar.zarr",
       "distance": 400,
-      "exposure": 2.5,
-      "note": "was underexposed+small; bright+65pct fill"
+      "note": "the +2.5 exposure override was calibrated against the old occluding volumetric look; the scene now composites additive (brighter), so auto-exposure recalibrates"
     },
     {
       "id": "gsplats_4d_neuromast_2ch",
@@ -389,8 +388,7 @@
       "category": "microscopy",
       "script": "demo_gsplats_3d_tribolium_embryo.py",
       "dataset": "datasets/demos/gsplats_3d_tribolium_embryo.luxar.zarr",
-      "exposure": -2.0,
-      "note": "Neutral+intensity fixed white; -2 reveals structure; faint bg rectangle remains"
+      "note": "the -2 exposure override fixed the old volumetric white-out; the scene now composites normal (peak projection) and bakes exposure=1.97, so auto-exposure recalibrates. Faint bg rectangle may remain"
     },
     {
       "id": "gsplats_4d_zebrafish_timelapse",

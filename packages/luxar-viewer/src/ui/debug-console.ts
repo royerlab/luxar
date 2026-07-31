@@ -369,8 +369,11 @@ export class DebugConsole {
       messageEl.appendChild(argEl);
     });
 
-    // Add stack trace if present
-    if (message.stack && message.type === 'error') {
+    // Add stack trace if present. Warnings carry one too (~30 `log.warning(…,
+    // error)` sites pass a real Error, captured on the warn path in
+    // console-interceptor.ts), so render it for both — matching the clipboard
+    // export in `copyToClipboard`, which already emits any `message.stack`.
+    if (message.stack && (message.type === 'error' || message.type === 'warn')) {
       const stackEl = document.createElement('div');
       stackEl.className = 'luxar-console-message-stack';
       stackEl.textContent = message.stack;

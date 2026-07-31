@@ -10,7 +10,7 @@
  * Per-splat data comes from the RGBA32F splat texture (`uSplatTex`,
  * 4 texels/splat — layout in `rendering/element-texture-layout.ts`),
  * fetched in the vertex stage via `textureLoad` and indexed by the
- * only per-instance attribute:
+ * ordering attributes (double-buffered pair):
  *   - aSortedIndex (uint) — draw-slot → storage-slot mapping
  *     (identity in Phase 1; the sort worker permutes it in Phase 2+)
  *
@@ -73,6 +73,7 @@ import {
   perspectiveNearFadeTSL,
   sanitizeAlpha,
   type TSLNode,
+  sortedIndexNode,
 } from '../_shared/tsl-helpers';
 import {
   applyBlendingStateToMaterial,
@@ -166,6 +167,8 @@ export interface GSplatTSLNodes {
   readonly uRayIntegralFactor: TSLNode;
   readonly uProjectionMode: TSLNode;
   readonly uIsOrtho: TSLNode;
+  /** Active ordering buffer: 0 = aSortedIndex, 1 = aSortedIndexB. */
+  readonly uSortedIndexSlot: TSLNode;
   readonly uNearCull: TSLNode;
   readonly uMaxExtentFactor: TSLNode;
   readonly uCov2DDilation: TSLNode;
@@ -205,7 +208,7 @@ export function gsplatWebGPUFactory(
   // the splat texture; `aSortedIndex` maps the draw slot to a storage
   // slot (identity in Phase 1, permuted by the sort worker in Phase 2+).
   const aQuadCorner: TSLNode = attribute<'vec2'>('aQuadCorner', 'vec2');
-  const aSortedIndex: TSLNode = attribute<'uint'>('aSortedIndex', 'uint');
+  const aSortedIndex: TSLNode = sortedIndexNode(nodes.uSortedIndexSlot);
 
   // Uniform leaves come from the wrapper. No per-render callbacks:
   // mutations to `material.uniforms.X.value` already route to
@@ -779,6 +782,7 @@ export function buildGSplatTSLNodesFromUniforms(
     uRayIntegralFactor: uniform((uniforms.uRayIntegralFactor?.value as number) ?? 1.0),
     uProjectionMode: uniform((uniforms.uProjectionMode?.value as number) ?? 0),
     uIsOrtho: uniform((uniforms.uIsOrtho?.value as number) ?? 0),
+    uSortedIndexSlot: uniform((uniforms.uSortedIndexSlot?.value as number) ?? 0),
     uNearCull: uniform((uniforms.uNearCull?.value as number) ?? 1e-4),
     uMaxExtentFactor: uniform((uniforms.uMaxExtentFactor?.value as number) ?? 1.0),
     // Neutral fallback 0 (no dilation) — matches GLSL's missing-uniform default,

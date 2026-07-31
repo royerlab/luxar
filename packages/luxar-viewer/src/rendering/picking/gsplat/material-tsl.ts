@@ -19,7 +19,7 @@
 import * as THREE from 'three';
 import { texture, uniform } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
-import { gsplatPickWebGPUFactory, type GSplatPickTSLNodes } from './pick.tsl';
+import { gsplatPickWebGPUFactory } from './pick.tsl';
 import type { CameraAwareMaterial } from '../../materials/_shared/camera-aware-material';
 import { computeFocalLength } from '../../materials/_shared/camera-uniforms';
 import { proxyIUniform, type TSLNode } from '../../materials/_shared/tsl-helpers';
@@ -48,6 +48,7 @@ export class GSplatPickingTSLMaterial
     uCov2DDilation: TSLNode;
     uSurfaceDepth: TSLNode;
     uNodeId: TSLNode;
+    uSortedIndexSlot: TSLNode;
   };
 
   constructor(config: GSplatPickingMaterialConfig) {
@@ -79,6 +80,13 @@ export class GSplatPickingTSLMaterial
       // setSurfacePickDepth() — mirrors the GLSL wrapper.
       uSurfaceDepth: uniform(0),
       uNodeId: uniform(config.nodeId),
+      // Active ordering buffer: 0 = aSortedIndex, 1 = aSortedIndexB.
+      // The pick pass MUST track the visual one — it emits `vElementId`
+      // from the same index, so reading the other buffer resolves hovers
+      // against a stale permutation. Pushed by the depth-sort
+      // coordinator's `syncSortedIndexSlot`, which finds it through
+      // `uniforms` below.
+      uSortedIndexSlot: uniform(0),
     };
 
     this.uniforms = {
@@ -96,12 +104,13 @@ export class GSplatPickingTSLMaterial
       uCov2DDilation: proxyIUniform(this.tslNodes.uCov2DDilation),
       uSurfaceDepth: proxyIUniform(this.tslNodes.uSurfaceDepth),
       uNodeId: proxyIUniform(this.tslNodes.uNodeId),
+      uSortedIndexSlot: proxyIUniform(this.tslNodes.uSortedIndexSlot),
     };
 
     this.toneMapped = false;
     this.side = THREE.DoubleSide;
 
-    gsplatPickWebGPUFactory(this.tslNodes as GSplatPickTSLNodes, this);
+    gsplatPickWebGPUFactory(this.tslNodes, this);
   }
 
   /**
@@ -115,7 +124,7 @@ export class GSplatPickingTSLMaterial
     if (current === next) return;
     this.tslNodes.uSplatTex = texture(next);
     this.uniforms.uSplatTex = proxyIUniform(this.tslNodes.uSplatTex);
-    gsplatPickWebGPUFactory(this.tslNodes as GSplatPickTSLNodes, this);
+    gsplatPickWebGPUFactory(this.tslNodes, this);
     this.needsUpdate = true;
   }
 
@@ -154,6 +163,10 @@ export class GSplatPickingTSLMaterial
     cloned.uniforms.uMaxExtentFactor.value = this.uniforms.uMaxExtentFactor.value;
     cloned.uniforms.uCov2DDilation.value = this.uniforms.uCov2DDilation.value;
     cloned.uniforms.uSurfaceDepth.value = this.uniforms.uSurfaceDepth.value;
+    // The active ordering slot must ride along: a clone taken while the
+    // geometry draws from slot 1 would otherwise read the stale buffer
+    // until the coordinator's next per-frame re-assert.
+    cloned.uniforms.uSortedIndexSlot.value = this.uniforms.uSortedIndexSlot.value;
     return cloned as this;
   }
 

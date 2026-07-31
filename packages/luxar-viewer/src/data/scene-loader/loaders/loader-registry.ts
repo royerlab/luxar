@@ -12,6 +12,7 @@ import type { DataLoader } from '../../data-loader-types';
 import type { LinesDataLoader } from '../../../types/lines';
 import type { GSplatsDataLoader } from '../../../types/gsplats';
 import { log, Modules } from '../../../utils/log';
+import { classifyLoaderError, type LoaderErrorKind } from '../nodes/load-leaf-error-dispatch';
 
 /**
  * Error information tracked for failed loaders.
@@ -20,7 +21,38 @@ export interface FailedLoaderInfo {
   error: Error;
   timestamp: number;
   retryCount: number;
+  /**
+   * Automatic (connectivity-triggered) retry attempts charged against this
+   * path. Distinct from `retryCount`, which logs EVERY failure (update
+   * sweeps + manual retries included). The automatic budget must not be
+   * consumed by ordinary interaction, or a scene that failed a few slices
+   * offline would be past the cap before `online` ever fires — so only
+   * `markAutoRetryAttempt` (called by the connectivity retry) bumps this.
+   */
+  autoRetryCount: number;
+  /**
+   * Classified cause. Persisted so retry policy can tell a transient failure
+   * from a deterministic one — previously the kind was computed for logging and
+   * then thrown away, so a WASM trap was retried on every reconnect exactly like
+   * a 503.
+   */
+  kind: LoaderErrorKind;
 }
+
+/**
+ * Automatic (connectivity-triggered) retries a single path gets before it is
+ * left to the monitor banner and a manual Retry.
+ *
+ * Mirrors `MAX_CONSECUTIVE_REFINEMENT_FAILURES` in `progressive/refinement.ts`,
+ * for the same reason: without a cap, a path that fails for a reason
+ * connectivity cannot fix is re-fetched on every `online` transition forever. A
+ * permanently-404 chunk classifies as `Network`, so the kind filter alone does
+ * not bound it. `autoRetryCount` starts at 0 and is charged only by
+ * `markAutoRetryAttempt` on each connectivity-triggered attempt, so this allows
+ * exactly this many automatic attempts regardless of how many times ordinary
+ * update sweeps or manual retries recorded the same failure.
+ */
+export const MAX_AUTO_RETRY_ATTEMPTS = 3;
 
 /**
  * Registry that manages all geometry loaders (Points, Lines, GSplats)
@@ -128,16 +160,38 @@ export class LoaderRegistry {
   // ---------------------------------------------------------------------------
 
   /**
-   * Record a loader failure.
+   * Record a loader failure. `kind` defaults to the heuristic classification of
+   * `error`; pass it explicitly when the caller already computed one.
+   *
+   * The single writer for `failedLoaders` — the retry and update-sweep paths
+   * route through here rather than calling `.set` inline, which also removes a
+   * pre-existing skew where those two baselined `retryCount` at 1 and 0.
+   *
+   * Bumps the diagnostic `retryCount` but leaves `autoRetryCount` untouched —
+   * only `markAutoRetryAttempt` charges the automatic-retry budget.
    */
-  recordFailure(path: string, error: Error): void {
+  recordFailure(path: string, error: Error, kind?: LoaderErrorKind): void {
     const existing = this.failedLoaders.get(path);
     const retryCount = existing ? existing.retryCount + 1 : 0;
     this.failedLoaders.set(path, {
       error,
       timestamp: Date.now(),
       retryCount,
+      autoRetryCount: existing ? existing.autoRetryCount : 0,
+      kind: kind ?? classifyLoaderError(error),
     });
+  }
+
+  /**
+   * Charge one automatic (connectivity-triggered) retry attempt against a
+   * path. No-op if the path has no failure record. Kept separate from
+   * `recordFailure` so update sweeps and manual retries — which also record
+   * failures — cannot drain the automatic budget gated by
+   * {@link autoRetryablePaths}.
+   */
+  markAutoRetryAttempt(path: string): void {
+    const info = this.failedLoaders.get(path);
+    if (info) info.autoRetryCount += 1;
   }
 
   /**
@@ -157,6 +211,29 @@ export class LoaderRegistry {
   /** Whether there are any failed loaders. */
   hasFailures(): boolean {
     return this.failedLoaders.size > 0;
+  }
+
+  /**
+   * Paths an AUTOMATIC retry should attempt: a transient (`Network`) cause that
+   * is still under {@link MAX_AUTO_RETRY_ATTEMPTS}.
+   *
+   * A manual Retry deliberately ignores both filters — the user pressing the
+   * button is new information (they may have just fixed the server), and a
+   * deterministic failure is still worth one more look on request.
+   */
+  autoRetryablePaths(): string[] {
+    const paths: string[] = [];
+    for (const [path, info] of this.failedLoaders) {
+      if (info.kind === 'Network' && info.autoRetryCount < MAX_AUTO_RETRY_ATTEMPTS) {
+        paths.push(path);
+      }
+    }
+    return paths;
+  }
+
+  /** Whether any failed loader is worth an automatic retry. */
+  hasAutoRetryableFailures(): boolean {
+    return this.autoRetryablePaths().length > 0;
   }
 
   /**
