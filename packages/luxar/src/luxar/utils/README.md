@@ -102,6 +102,21 @@ each demo keeps its own binning, smoothing, caching, and seeding policy.
 - `rk4_step()`: Vectorized 4-stage Runge-Kutta advection step (NaN-fills streamlines that leave the domain)
 - `add_reference_cube_to_scene()`: Add the field's cubic domain as a 12-edge wire cube (Lines geometry) to a Luxar scene
 
+### `lod_breakpoints.py`
+Streaming-ladder breakpoint math, shared by all three geometries (Points, Lines,
+GSplats). An additive (streaming) ladder cuts an importance-ordered element
+sequence into cumulative prefixes so a viewer can paint a coarse prefix
+immediately and refine as later chunks arrive. The cut geometry is a property of
+the network and payload, not the geometry type, so this is the one place both
+`luxar.core` and `luxar.gsplats` derive identical cuts from an identical spec
+(stdlib-only, to avoid a new import direction).
+
+**Key Functions:**
+- `streaming_chunk_splats(target_ms, bandwidth_mbps, bytes_per_splat)`: First-chunk element count whose download takes `target_ms` at the given bandwidth
+- `parse_stream_chunk(spec)`: Extract `c` from a `"stream:<c>"` spec (validated `>= 1`)
+- `stream_cuts(n, chunk, max_levels=...)`: Cumulative geometric cuts `[c, 2c, 4c, …, n]` over `n` elements
+- `sibling_aware_stream_breakpoints(...)`: Raise a `stream:C` ladder's first chunk for a leaf that has a coarser sibling in its lod group
+
 ### `paths.py`
 Path utilities for Luxar dataset generation.
 
@@ -156,7 +171,7 @@ sha256.
 **Key Functions:**
 - `ensure_dataset(name, ...)`: Resolve a dataset's files to local paths, cache -> in-repo Git LFS -> Zenodo. The manifest sha256 is authoritative at every step: a copy that fails it is quarantined (`.corrupt`) and never returned, so a stale download can never be resumed onto corrupt bytes
 - `load_dataset_gsplats(name, ...)`: Mirror of `demos.load_precomputed_gsplats` (returns `GSplatData`, `None` on recompute) sourced through `ensure_dataset` — the one-line swap for migrating a demo. Only `zenodo`-bucket datasets are eligible
-- `load_manifest()` / `dataset_spec(name)`: Read the packaged manifest
+- `load_manifest()` / `dataset_spec(name)`: Read the packaged manifest. The parse is memoised but each call returns an independent copy, so mutating the result (or a nested spec) cannot poison later readers; `clear_manifest_cache()` drops the parse after the manifest is rewritten on disk
 - Raises `DatasetNotFound` for an unknown key and `LocalComputeDataset` for data we cannot redistribute (the caller builds it locally)
 
 ### `demos.py`

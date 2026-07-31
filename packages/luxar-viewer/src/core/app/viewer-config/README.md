@@ -4,7 +4,7 @@ Apply the per-dataset `viewer_config` blob (read from a zarr scene by
 `SceneManager`) onto the running `LuxarApp`, and capture/restore UI-panel
 visibility around panel-sensitive operations (e.g. recording).
 
-The 47 rendering-pipeline knobs inside `viewer_config` (bloom, EOG, tone
+The rendering-pipeline knobs inside `viewer_config` (bloom, EOG, tone
 mapping, detector noise, control type, etc.) are routed through
 `RenderingControls` via `setZarrViewerConfig` — see
 `src/config/zarr-bridge/`. This folder handles **the rest**: UI panel

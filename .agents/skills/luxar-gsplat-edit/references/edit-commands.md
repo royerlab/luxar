@@ -96,8 +96,10 @@ Wrap a fitted dataset as a web scene. `--center`/`--no-center` (default on),
 Appearance is baked in here:
 - `--colormap` (default `gray`) — builtin or any matplotlib/colorcet name (e.g. `plasma`).
 - `--tone-mapping` (default `ACES`, the viewer default) — `None`/`Linear`/`Reinhard`/
-  `Cineon`/`ACES`/`AgX`/`Neutral`. Pair a colormap with `Neutral` for faithful
-  scientific colors (ACES shifts hues).
+  `Cineon`/`ACES`/`AgX`/`Neutral`. Prefer `ACES` and pass it explicitly (that
+  records the choice and silences the compiler's LUT notice, which only fires
+  when nothing was chosen); reach for `Neutral` when the colormap carries an
+  exact scientific color encoding (ACES shifts hues).
 - `--gamma` (1.0) — display gamma.
 - `--intensity` (1.0) — display intensity multiplier.
 - `--layer`/`--no-layer` (default `layer`) — list the gsplats node in the viewer Layers panel.

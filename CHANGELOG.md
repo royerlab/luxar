@@ -64,6 +64,105 @@ offset/scale/negative-scale/scale+offset, categorical permutations, nested-group
 composition **order**, a 4x4 transform and an `nd_transform` on one group, and
 doubles as the visual regression harness for the no-preimage fix above.
 
+#### Added — `luxar demo deps` and `make install-demo-deps`
+
+Demos deliberately keep heavyweight packages out of the core install, so a fresh
+checkout lists every demo but cannot run them all. `luxar demo deps` reports
+which optional demo dependencies are missing (exit 1 if any are) and, with
+`--install`, installs the Luxar extras that provide them; `--extra
+demos|io|gsplats` narrows the report to one extra. `make install-demo-deps`
+installs all three demo extras in one step. One tabled dependency, `gdown`, is
+deliberately in no extra (it serves only the Google-Drive download path), so
+neither covers it — the report and `--install` both name it for an individual
+`pip install` instead. The report and the runtime `require_module` gate are
+both driven by `luxar.demos._dependencies.INSTALL_SPECS`, so a package cannot
+be advertised without being installable. Newly tabled pins: `pooch`,
+`scikit-learn`, `matplotlib`.
+
+#### Fixed — the volumetric Absorption slider did nothing on thin geometry
+
+κ is a physical coefficient with units of 1/length: the volumetric shaders build
+optical depth as `τ = κ · density · through-thickness`, where the thickness is
+the geometry's own world size (`width · √(π/ln 100)` for lines, `radius · …` for
+points, the ray integral through Σ for gsplats). The layers panel offered a fixed
+**0–10** track, so on the 3D-Hilbert-curve demo's 1.5e-3-wide lines the WHOLE
+slider spanned τ ≤ 0.012 — a sub-1/255 change, i.e. a knob that visibly did
+nothing. (Switching to `max` mode appeared to "make absorption work"; that was
+the mode change itself — κ is not read in `max` at all.)
+
+The track is now **logarithmic with bounds re-derived per layer** from the
+thickness the writer already records (`max_width` / `max_radius`; the thinnest
+descendant sets the top, since one κ drives the whole subtree, and the thickest
+anchors the floor so a mixed-thickness group can still reach near-transparency
+for its fattest geometry), so its top lands near
+τ = 5 — opaque — whatever the scene's units. That 1.5e-3-wide line now reaches
+κ ≈ 4.0e3; sweeping the track moves mean luminance 53 → 21 where it used to move
+one 8-bit level. Gsplats carry no comparable thickness stat and their
+`τ = κ·opacity·rayMass` is already O(1)-calibrated for fitted volumes, so they
+keep the historical 0.001–10 span — also the floor of every derived bound, so an
+authored κ ≤ 10 stays reachable. Position 0 is a dedicated stop for exactly
+κ = 0, the additive limit, and the floor lowers onto a smaller authored κ so the
+value the readout shows is always the value the thumb represents.
+
+#### Fixed — nD scenes were framed around a non-displayed axis on load
+
+Auto-framing, scene scale, clipping planes and the near-cull margin all project
+the nD `position_bounds` through `sceneDimsManager`'s displayed dims, which fall
+back to `[0, 1, 2]` when it is uninitialised — and the dimension-navigation UI
+only initialised it *after* the scene load resolved. So any scene whose displayed
+dims are not the first three (a leading non-displayed time / channel / order
+axis — the common nD shape) was framed around the wrong axes: that axis' extent
+landed on world X, putting the look-at target off to one side of the geometry and
+inflating the fit distance by its range. The Hilbert demo opened at target
+`(2.50, 0, 0)` with diagonal 5.19 instead of `(0, 0, 0)` and 1.73 — off-centre at
+3× over-zoom, which pressing `F` then "fixed" (that path measures loaded
+geometry instead of metadata). The dims are now resolved from the freshly loaded
+scene before anything reads bounds, and stale dims are dropped when a scene
+carries no dimension metadata so a 3D scene loaded after an nD one cannot
+inherit its axes.
+
+#### Fixed — overlay HTML sanitizer: attribute allowlist + reverse-tabnabbing (#767)
+
+`OverlayManager.sanitizeHtml` allowlisted tags but only denylisted attributes,
+so everything the earlier pass did not explicitly name survived — `id`/`name`
+(DOM clobbering), `data-*`, `ping`, `srcset`, `download`, and the `vbscript:`,
+`data:` and `style: url(javascript:...)` vectors the #720 note had flagged as
+still uncovered. The scrub is now an attribute **allowlist**: only `style`,
+`href`, `src`, `alt`, `class`, `target`, `title`, `rel` and the inert
+presentational `colspan`/`rowspan`/`width`/`height` survive, and every
+other attribute (including `on*` handlers) is dropped. The value-bearing
+survivors then face a per-attribute guard: `href`/`src` block the
+`javascript:`, `vbscript:` and `data:` schemes; `style` is dropped if it carries
+`javascript:`, `vbscript:` or `expression(` (which also catches
+`url(javascript:...)` after whitespace/C0 normalization), or any CSS escape
+(`\`) or comment opener (`/*`) — a substring check cannot see through CSS
+tokenization (`\6a avascript:` decodes to `javascript:`), so escape/comment
+syntax is rejected wholesale rather than parsed. Reverse tabnabbing is
+neutralized on both fronts: `rel` is dropped when it carries a bare `opener`
+token, and `target` is restricted to `_blank`/`_self` so a named target can no
+longer open a top-level window with a live `window.opener` able to
+cross-origin-navigate the viewer tab. Over-blocking is the deliberate
+preference: this sanitizer is the only XSS control on the `?src=<url>` path,
+where a hand-crafted zarr never meets the Python compiler.
+
+#### Changed — the two PDB structure demos render as surfaces, not emissive media
+
+`nuclear_pore_complex` and `atp_synthase` shipped on the default `additive`
+blending, which sums every atom along the view ray. A dense atomic shell washes
+toward pastel white that way, and both demos held it back with an intensity
+anti-blowout workaround (0.125 and 0.0625) that left them dim. An atomic
+structure is a *surface*: both nodes now use depth-sorted `normal` blending at
+full exposure (opacity 1.0, intensity 1.0), so the nearest atom wins the pixel.
+Measured at the opening framing as mean CIELAB chroma over the covered pixels,
+the NPC goes 6.2 → 13.1; on ATP the chain hues go 44.8 → 57.8 at lightness
+L\* 40.2 → 76.4, i.e. the subunits stop reading as a dark wash. Volumetric was
+tried across kappa 2–20 and loses the colours at every setting (3.9–8.3), so it
+is not the default — but both nodes are now `layer=True`, so blending, opacity
+and the display range (and absorption, once you pick `volumetric`) are live in
+the Layers panel. `docs/images/readme/gallery/atp_synthase.{webp,webm}` were
+recaptured through the gallery harness. Regenerate the demo datasets to pick up
+the new look.
+
 #### Fixed — warnings now display through arbol instead of raw stderr lines
 
 Python's default warning display wrote `path/to/file.py:299: UserWarning: ...`
@@ -77,6 +176,43 @@ entry points (`LuxarZarrCompiler` write methods, `fit_gaussian_splats`,
 (filters, `-W error`, `catch_warnings`, `pytest.warns`) are unchanged, and the
 override steps aside whenever a recorder or custom `showwarning` hook owns
 warning display. New module: `luxar.utils.arbol_warnings`.
+
+#### Fixed — depth-sort orderings swap atomically (no more mid-rotation flicker)
+
+Rotating a large `normal`/`volumetric` node drew a **corrupt permutation**:
+some elements twice, an equal number not at all. The chunked ordering apply
+(perf lever L8) streamed slices into the LIVE `aSortedIndex` attribute and
+accepted the intermediate `new[0,cursor) ∪ old[cursor,n)` as bounded transient
+shimmer. The bound was real; the premise that it stays transient was not —
+under a continuous orbit a new sort arrives about as fast as a stream drains,
+so the mix is the steady state. Measured with a browser probe that validates
+the drawn index buffer every sampled frame: **27–33% of frames** on the 1.9M
+`visible_human_head` (27,613 double-drawn) and **70–80%** on the 8M
+`global_rivers_earth` terrain (up to 1,022,162 double-drawn, 12.8% of the
+node). It surfaced now because the bioimaging demos moved to `volumetric`,
+which is order-dependent where `additive` was not.
+
+Orderings now stream into the **inactive** buffer of an `aSortedIndex` /
+`aSortedIndexB` pair and a runtime `uSortedIndexSlot` uniform flips once that
+buffer holds the whole permutation — the A/B design
+`GSPLAT_DEPTH_SORTING_SPEC.md` §2.1 tier 3 specced and deferred. Both buffers
+are allocated at attach, so every node pays +4 B/element whether it sorts or
+not. Materialising the second one lazily (the obvious saving, and how this
+first landed) is unsafe on the **native WebGPU** backend: three keys a
+pipeline's vertex-buffer layout by BufferAttribute identity but rebuilds the
+pipeline only on a name-level cache-key change, so growing the attribute set
+after first render shifted every later attribute down a vertex-buffer slot —
+the quad-corner attribute read the ordering buffer's `u32`s as `vec2<f32>` and
+the scene rendered black, with no validation error and no console warning.
+WebGL binds by program location and never saw it. The per-frame upload bound L8
+bought is unchanged. Sorting and applying now run concurrently (the dispatch
+apply-gate is gone).
+
+Trade, measured on the 10M orbit bench: sort-adjacent frame p99 ~77 → ~92 ms
+(median and p95 unchanged, still far under the 119–563 ms chunking prevents),
+and waiting for a whole ordering instead of showing a partly-applied one costs
+some freshness (8M fast-orbit sort-axis lag 36.5° → 44.3° mean). Both are the
+deliberate price of never drawing a corrupt permutation.
 
 #### Added — spatial partitioning (BSP tiling) now works on 2D data
 
@@ -130,6 +266,58 @@ scale-free-conditioning reasoning as the shader's trace-normalized covariance
 inverse. Rank-deficient axes are still regularized, now as a fixed _fraction_ of
 the real axis.
 
+#### Changed — ACES is now the recommended tone mapping, and choosing it explicitly no longer warns
+
+`ACES` is the right tone mapping for almost every scene — its filmic highlight
+rolloff is what keeps bright, dense structure from clipping flat — and it is
+already the viewer's default. The tree was built around the opposite
+assumption: seventeen demos pinned `Neutral`, and the compiler warned authors
+away from ACES.
+
+The LUT tone-mapping warning in `io/_compiler/colormap.py` now fires **only
+when the author set no `tone_mapping` at all**. Its predicate was
+`!= "Neutral"`, so an explicit `"ACES"` tripped it too — nagging about a
+deliberate decision, while the message itself speaks of "the viewer's
+*default*", which is only what you get by saying nothing. Any explicit value,
+`"ACES"` included, now silences it. Fifteen demos move from `Neutral` to an
+explicit `ACES`. Two keep `Neutral` as verified exceptions:
+`demo_gsplats_3d_tribolium_embryo`, whose pairing with `exposure=1.97` was tuned
+deliberately, and `demo_flywire_connectome`, where ACES blew its luminous
+connection glow out into a white wash. The classical-capture interop demos also
+stay on `Neutral`, via the `build_interop_scene` default — their baked per-splat
+RGB is already display-referred, so ACES would distort it. `CLAUDE.md`, the HDR
+guide, the `gsplat convert` CLI help and the `ViewerConfig.tone_mapping`
+docstring all now recommend ACES, keeping `Neutral` for the narrower case where
+a colormap LUT carries an exact scientific colour encoding. Regenerate the demo
+datasets to pick up the new look.
+
+#### Changed — five gsplat demos bake their preferred viewer appearance
+
+The blanket `volumetric` + kappa 1.0 default from the bioimaging demo sweep was
+wrong for scenes whose layers are *superimposed over the same specimen*: there,
+emission-absorption makes whichever layer draws first occlude the other, so
+channel overlap reads as one channel hiding the rest instead of the colours
+mixing. The multi-channel organoid now composites `additive` (a pure sum, no
+attenuation) and the 4D neuromast timelapse drops to absorption 0.05 — the
+absorption slider's smallest non-zero step, which keeps volumetric's bounded
+accumulation without the occlusion. At kappa 1.0 the neuromast rendered as a
+dim blue haze with its hair-cell cluster and membrane filaments lost.
+
+The Tribolium embryo switches to `normal`. That light-sheet volume carries a
+heavy diffuse background, and integrating it along every ray saturates into a
+solid slab with the embryo buried inside; `normal` composites the projected
+2D-Gaussian peak with alpha-over instead, so the background stops accumulating
+and the surface nuclei stay crisp. Because nothing sums any more the scene
+needs `exposure=1.97` to sit at a normal level.
+
+Two appearance tweaks round it out: the Milky Way dust cube moves from
+`additive` to a light `volumetric` (absorption 0.3, so near dust softly
+occludes far dust) under ACES at `exposure=-0.17`, with a `[0, 0.095]` display
+window that holds its faint diffuse filaments just below clipping; and the
+organoid DAPI nuclei demo gains a `plasma` colormap (it previously fell back to
+the implicit grayscale default). Regenerate the demo datasets to pick up the new
+look.
+
 #### Fixed — errors logged as trailing arguments rendered as `{}` in the in-app console
 
 A bug report contained the line `OPFSStore metadata save failed {}` — the cause
@@ -162,7 +350,6 @@ costing a duplicate warning per chunk and up to twice the operation timeout in
 caller stall on a hung handle.
 
 New `utils/format-error.ts` promotes an idiom that was inlined roughly 31 times.
-
 
 #### Changed — volumetric joins the LOD anti-popping blendable set
 
@@ -279,8 +466,9 @@ Supporting changes:
 - Hidden (`visible=false`) layers no longer fetch, decode and commit their LOD
   levels, and no longer escape eviction.
 - `scripts/check_demo_ladders.py` — a structural gate that fails a leaf whose
-  largest level is more than half the data, which is exactly the degeneracy a
-  level count alone cannot see.
+  largest level is more than 60% of the data (the `--max-share` default) or
+  exceeds the `--max-level-elements` absolute per-commit cap, which is exactly
+  the degeneracy a level count alone cannot see.
 
 #### Fixed — every 2D gsplats scene failed to load with a WASM `unreachable` trap
 

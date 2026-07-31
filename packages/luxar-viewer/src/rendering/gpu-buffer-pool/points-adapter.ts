@@ -33,7 +33,11 @@ import {
   writePointTexels,
   type PointTexelSource,
 } from '../point-geometry';
-import { writeSortedIndexIdentity, writeSortedIndexIdentityRange } from '../element-storage';
+import {
+  cancelSortedIndexOrderingApply,
+  writeSortedIndexIdentity,
+  writeSortedIndexIdentityRange,
+} from '../element-storage';
 import { clampPointCapacity } from '../element-texture-layout';
 import type { LoadedPointsData } from '../../data/data-loader-types';
 import type { PooledBuffer } from './pool-stats';
@@ -71,7 +75,10 @@ function createPointsGeometry(pointCapacity: number): THREE.InstancedBufferGeome
 
   // Point data lives in the RGBA32F texture attached here (disposed BY
   // the geometry's dispose event, so every pool dispose site frees it);
-  // `aSortedIndex` is the only per-instance attribute.
+  // The `aSortedIndex`/`aSortedIndexB` ordering pair is the only
+  // per-instance data (two distinct buffers from attach, so a new ordering
+  // swaps atomically and the vertex layout never changes under a cached
+  // WebGPU pipeline).
   attachPointStorage(geometry, pointCapacity);
   // Ownership marker: the commit handoff disposes a replaced geometry
   // ONLY when it is not pool-owned (pool geometries are released back to
@@ -103,6 +110,7 @@ export interface PointsAdapterHost {
   _lastAcquireRebuilt: boolean;
   getBucket(count: number): number;
   evictUnused(fromAcquire?: boolean): number;
+  registerPooledGeometryInvalidation(geometry: THREE.BufferGeometry): void;
 }
 
 export class PointsBufferAdapter {
@@ -121,7 +129,11 @@ export class PointsBufferAdapter {
     pointCount = clampPointCapacity(pointCount);
 
     const active = host.activeBuffers.get(nodeId);
-    if (active && active.type === 'points') {
+    // `luxarInvalidated` guards against a geometry whose out-of-band
+    // `dispose()` already fired (the pool's self-invalidation listener
+    // normally deletes the entry, so `active` is usually undefined here —
+    // this is defense-in-depth against an ordering where it survived).
+    if (active && active.type === 'points' && !active.geometry.userData.luxarInvalidated) {
       if (active.capacity >= pointCount) {
         active.lastUsedFrame = host.frameCount;
         host.stats.reuses++;
@@ -190,6 +202,10 @@ export class PointsBufferAdapter {
     for (const pooled of this.pointBuffers.values()) {
       for (let i = pooled.length - 1; i >= 0; i--) {
         const candidate = pooled[i];
+        // Skip a free-bucket resident whose out-of-band dispose already
+        // fired (see registerPooledGeometryInvalidation): adopting it
+        // would resurrect the #689 use-after-dispose through the free list.
+        if (candidate.geometry.userData.luxarInvalidated) continue;
         if (candidate.capacity >= pointCount && candidate.capacity < bestCapacity) {
           bestList = pooled;
           bestIndex = i;
@@ -219,6 +235,10 @@ export class PointsBufferAdapter {
     // the chosen capacity too (still >= pointCount, which was clamped).
     const capacity = clampPointCapacity(chooseCapacity(pointCount));
     const geometry = createPointsGeometry(capacity);
+    // Self-invalidation: if this pool-owned geometry is disposed
+    // out-of-band (scene-graph teardown calls geometry.dispose() directly),
+    // drop its activeBuffers entry so a later acquire can't hand it back.
+    host.registerPooledGeometryInvalidation(geometry);
 
     const newBuffer: PooledBuffer = {
       geometry,
@@ -306,6 +326,15 @@ export class PointsBufferAdapter {
 
     host.activeBuffers.delete(nodeId);
     buffer.inUse = false;
+    // A released buffer is no longer drawn, so an ordering still
+    // streaming into it is dead work — and `chunkedApplies` keys its
+    // state by GEOMETRY in a strong Map, so leaving it would pin this
+    // geometry AND its ordering (4 B/element — ~32 MB for an 8M node)
+    // on the free list until the buffer is re-acquired or evicted.
+    // Dispose already cancels via the geometry's own listener; release
+    // is the other exit from "in use" and needs the same treatment.
+    cancelSortedIndexOrderingApply(buffer.geometry as THREE.InstancedBufferGeometry);
+
     // Stamp the release frame so acquire-triggered byte sweeps later in
     // this same frame grace the buffer (see EvictorCtx.graceFrame) — a
     // released buffer otherwise carries the frame of its last ACQUIRE
@@ -464,11 +493,14 @@ export class PointsBufferAdapter {
   }
 
   dispose(): void {
+    // Drain the buckets BEFORE disposing: dispose() fires the pool's
+    // self-invalidation listener, which splices free-bucket arrays —
+    // clearing first keeps it a no-op here (see GPUBufferPool.dispose).
+    const geometries: THREE.BufferGeometry[] = [];
     for (const buffers of this.pointBuffers.values()) {
-      for (const buffer of buffers) {
-        buffer.geometry.dispose();
-      }
+      for (const buffer of buffers) geometries.push(buffer.geometry);
     }
     this.pointBuffers.clear();
+    for (const geometry of geometries) geometry.dispose();
   }
 }

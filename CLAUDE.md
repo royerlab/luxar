@@ -36,20 +36,31 @@ make clean-setup  # Remove ALL dev tools to simulate fresh machine
 # Installs the demos+gsplats+io extras, then reports the result via
 # `luxar demo deps`. NOT part of setup-dev: the extras are heavy (torch,
 # cellxgene-census, esm) and most work needs none of them.
-make install-demo-deps  # Install every optional dependency the bundled demos need
+make install-demo-deps  # Install the demo extras (demos + gsplats + io)
 
 # Quality & Testing
-make test-all     # All tests (Python + TypeScript + WASM + CUDA if available)
-make test-cov-all # All tests with coverage (Python + TypeScript)
+make test-all     # All tests (Python incl. CUDA + WASM/Rust + TypeScript + Go launcher)
+make test-cov-all # Coverage: Python (minus `-m slow`) + TypeScript
 make test-python  # Python tests only
-make test-e2e     # Playwright E2E tests
-make check-all    # All quality checks
+make test-e2e     # Full Playwright E2E suite (~17 min)
+make test-e2e-smoke  # E2E smoke subset (the specs CI would run)
+make test-perf-e2e   # Opt-in Playwright performance suite
+# check-all is NOT read-only: `hatch run check` begins with `format`, so it
+# REWRITES packages/luxar/src. When other agents/people are editing the same
+# tree, use the read-only scoped targets instead (listed right below it).
+make check-all    # All quality checks (Python, TypeScript, Rust, Go) — reformats
+make lint-python        # read-only: ruff check
+make type-check-python  # read-only: mypy
+make security           # read-only: bandit
+make check-typescript   # read-only: typecheck + lint + unit tests
 make check-rust   # Rust type/lint checks (cargo check + clippy)
-make format-all   # Format all code (Python, TypeScript, Rust, CUDA)
+make check-knip   # REPORT only (non-gating): unused viewer files/exports/deps
+make format-all   # Format all code (Python, TypeScript, Rust, Go, CUDA)
 
 # Viewer
 make viewer       # Start viewer dev server (port 5173)
 make build-viewer # Build viewer for production (requires Rust)
+make build-viewer-lib  # Build + verify the npm LIBRARY bundle (publish-npm.yml)
 make build-wasm   # Build WASM module only
 make test-wasm    # Run Rust unit tests
 make benchmark-wasm  # Run WASM vs TypeScript performance benchmarks
@@ -70,8 +81,11 @@ make build-launchers  # Build launcher binaries for the host platform (CGO block
 make clean-launchers  # Clean built launcher binaries
 # Runtime override: LUXAR_LAUNCHER_NO_WEBVIEW=1 ./luxar-launcher
 #   Opens the system default browser instead of the embedded WebView —
-#   useful for headless smoke tests and minimal Linux installs without
-#   libwebkit2gtk.
+#   useful for headless smoke tests. NOT a rescue for a missing
+#   libwebkit2gtk: cgo links WebKit at build time, so the binary has a hard
+#   DT_NEEDED on libwebkit2gtk-4.0.so and the loader aborts before main()
+#   ever reads this variable. A 4.1-only distro (Ubuntu 24.04+) needs the
+#   4.0 runtime installed, or a separate browser-only build. See #998.
 # Runtime override: LUXAR_CACHE_BUDGET_MB=<N> ./luxar-launcher
 #   Total in-memory cache pool (L0+L1+S-cache) the launcher passes to the
 #   viewer via ?cacheBudgetMB=. WKWebView has no performance.memory, so the
@@ -357,7 +371,12 @@ luxar gsplat convert splats.gsplats.zarr scene.luxar.zarr --center
 # Appearance is baked at convert time: --colormap (builtin/matplotlib/colorcet,
 # default gray), --tone-mapping (None/Linear/Reinhard/Cineon/ACES/AgX/Neutral;
 # default = viewer default ACES), --gamma, --intensity, --absorption (volumetric kappa), --layer/--no-layer.
-# For faithful scientific colors pair a colormap with Neutral (ACES shifts hues):
+# ACES is the right choice for almost every scene (its filmic rolloff keeps
+# bright structure from clipping flat) — prefer it, and set it EXPLICITLY so the
+# compiler's LUT notice (which only fires when nothing was chosen) stays quiet:
+luxar gsplat convert splats.gsplats.zarr scene.luxar.zarr --colormap plasma --tone-mapping ACES
+# Reach for Neutral only in the narrower case where the colormap carries an exact
+# scientific color encoding that must survive to the screen (ACES shifts hues):
 luxar gsplat convert splats.gsplats.zarr scene.luxar.zarr --colormap plasma --tone-mapping Neutral
 
 # Render gsplats back to volume for quality comparison
@@ -910,16 +929,14 @@ result = result @ transform  # Correct
 - Use 3D datasets for general-purpose loading tests
 - For nD tests, navigate to slices known to have points
 
-### Data Source URLs Must NOT Have Trailing Slash
-When loading data via URL, **never include a trailing slash**:
+### Data Source URLs Normalize Trailing Slashes
+The viewer trims trailing slashes from dataset base URLs before appending zarr
+metadata paths, so both forms are accepted:
 ```bash
-# ❌ WRONG - trailing slash breaks data loading
-http://localhost:5173/?src=http://127.0.0.1:8005/
-
-# ✅ CORRECT - no trailing slash
 http://localhost:5173/?src=http://127.0.0.1:8005
+http://localhost:5173/?src=http://127.0.0.1:8005/
 ```
-The zarr loader interprets trailing slashes as path components, causing 404s.
+Prefer the no-trailing-slash form in examples and logs as the canonical spelling.
 
 ### WASM 16-Dimension Limit (with automatic >16D fallback)
 The compiled WASM kernels use fixed-size arrays (for performance) and support a

@@ -28,7 +28,11 @@ import {
   stampLinePresenceFlags,
   writeLineTexels,
 } from '../line-geometry';
-import { writeSortedIndexIdentity, writeSortedIndexIdentityRange } from '../element-storage';
+import {
+  cancelSortedIndexOrderingApply,
+  writeSortedIndexIdentity,
+  writeSortedIndexIdentityRange,
+} from '../element-storage';
 import { clampLineCapacity } from '../element-texture-layout';
 import type { ProcessedLinesData } from '../../types/lines';
 import type { PooledBuffer } from './pool-stats';
@@ -65,7 +69,10 @@ function createLinesGeometry(segmentCapacity: number): THREE.InstancedBufferGeom
 
   // Segment data lives in the RGBA32F texture attached here (disposed BY
   // the geometry's dispose event, so every pool dispose site frees it);
-  // `aSortedIndex` is the only per-instance attribute.
+  // The `aSortedIndex`/`aSortedIndexB` ordering pair is the only
+  // per-instance data (two distinct buffers from attach, so a new ordering
+  // swaps atomically and the vertex layout never changes under a cached
+  // WebGPU pipeline).
   attachLineStorage(geometry, segmentCapacity);
   // Ownership marker: the commit handoff disposes a replaced geometry
   // ONLY when it is not pool-owned (pool geometries are released back to
@@ -97,6 +104,7 @@ export interface LinesAdapterHost {
   _lastAcquireRebuilt: boolean;
   getBucket(count: number): number;
   evictUnused(fromAcquire?: boolean): number;
+  registerPooledGeometryInvalidation(geometry: THREE.BufferGeometry): void;
 }
 
 export class LinesBufferAdapter {
@@ -115,7 +123,9 @@ export class LinesBufferAdapter {
     segmentCount = clampLineCapacity(segmentCount);
 
     const active = host.activeBuffers.get(nodeId);
-    if (active && active.type === 'lines') {
+    // See the points adapter: `luxarInvalidated` guards a geometry whose
+    // out-of-band `dispose()` already fired (defense-in-depth).
+    if (active && active.type === 'lines' && !active.geometry.userData.luxarInvalidated) {
       if (active.capacity >= segmentCount) {
         active.lastUsedFrame = host.frameCount;
         host.stats.reuses++;
@@ -161,6 +171,9 @@ export class LinesBufferAdapter {
     for (const pooled of this.lineBuffers.values()) {
       for (let i = pooled.length - 1; i >= 0; i--) {
         const candidate = pooled[i];
+        // Skip a free-bucket resident disposed out-of-band — see the
+        // points adapter's twin comment.
+        if (candidate.geometry.userData.luxarInvalidated) continue;
         if (candidate.capacity >= segmentCount && candidate.capacity < bestCapacity) {
           bestList = pooled;
           bestIndex = i;
@@ -190,6 +203,8 @@ export class LinesBufferAdapter {
     // the chosen capacity too (still >= segmentCount, which was clamped).
     const capacity = clampLineCapacity(chooseCapacity(segmentCount));
     const geometry = createLinesGeometry(capacity);
+    // Self-invalidation — see the points adapter's twin comment.
+    host.registerPooledGeometryInvalidation(geometry);
 
     const newBuffer: PooledBuffer = {
       geometry,
@@ -256,6 +271,15 @@ export class LinesBufferAdapter {
 
     host.activeBuffers.delete(nodeId);
     buffer.inUse = false;
+    // A released buffer is no longer drawn, so an ordering still
+    // streaming into it is dead work — and `chunkedApplies` keys its
+    // state by GEOMETRY in a strong Map, so leaving it would pin this
+    // geometry AND its ordering (4 B/element — ~32 MB for an 8M node)
+    // on the free list until the buffer is re-acquired or evicted.
+    // Dispose already cancels via the geometry's own listener; release
+    // is the other exit from "in use" and needs the same treatment.
+    cancelSortedIndexOrderingApply(buffer.geometry as THREE.InstancedBufferGeometry);
+
     // Stamp the release frame so acquire-triggered byte sweeps later in
     // this same frame grace the buffer (see EvictorCtx.graceFrame) — a
     // released buffer otherwise carries the frame of its last ACQUIRE
@@ -331,11 +355,12 @@ export class LinesBufferAdapter {
   }
 
   dispose(): void {
+    // Drain the buckets BEFORE disposing — see the points adapter.
+    const geometries: THREE.BufferGeometry[] = [];
     for (const buffers of this.lineBuffers.values()) {
-      for (const buffer of buffers) {
-        buffer.geometry.dispose();
-      }
+      for (const buffer of buffers) geometries.push(buffer.geometry);
     }
     this.lineBuffers.clear();
+    for (const geometry of geometries) geometry.dispose();
   }
 }

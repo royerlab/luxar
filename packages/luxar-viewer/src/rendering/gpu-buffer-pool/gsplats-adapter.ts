@@ -19,7 +19,11 @@ import {
   stampGSplatPresenceFlags,
   writeSplatTexels,
 } from '../gsplat-geometry';
-import { writeSortedIndexIdentity, writeSortedIndexIdentityRange } from '../element-storage';
+import {
+  cancelSortedIndexOrderingApply,
+  writeSortedIndexIdentity,
+  writeSortedIndexIdentityRange,
+} from '../element-storage';
 import { clampSplatCapacity } from '../element-texture-layout';
 import type { GSplatsProjectionBounds } from '../../types/gsplats';
 import type { PooledBuffer } from './pool-stats';
@@ -64,7 +68,10 @@ function createGSplatsGeometry(splatCapacity: number): THREE.InstancedBufferGeom
 
   // Splat data lives in the RGBA32F texture attached here (disposed BY
   // the geometry's dispose event, so every pool dispose site frees it);
-  // `aSortedIndex` is the only per-instance attribute.
+  // The `aSortedIndex`/`aSortedIndexB` ordering pair is the only
+  // per-instance data (two distinct buffers from attach, so a new ordering
+  // swaps atomically and the vertex layout never changes under a cached
+  // WebGPU pipeline).
   attachSplatStorage(geometry, splatCapacity);
   // Ownership marker — see the points adapter's twin comment.
   geometry.userData.luxarPooled = true;
@@ -89,6 +96,7 @@ export interface GSplatsAdapterHost {
   _lastAcquireRebuilt: boolean;
   getBucket(count: number): number;
   evictUnused(fromAcquire?: boolean): number;
+  registerPooledGeometryInvalidation(geometry: THREE.BufferGeometry): void;
 }
 
 export class GSplatsBufferAdapter {
@@ -107,7 +115,9 @@ export class GSplatsBufferAdapter {
     splatCount = clampSplatCapacity(splatCount);
 
     const active = host.activeBuffers.get(nodeId);
-    if (active && active.type === 'gsplats') {
+    // See the points adapter: `luxarInvalidated` guards a geometry whose
+    // out-of-band `dispose()` already fired (defense-in-depth).
+    if (active && active.type === 'gsplats' && !active.geometry.userData.luxarInvalidated) {
       if (active.capacity >= splatCount) {
         active.lastUsedFrame = host.frameCount;
         host.stats.reuses++;
@@ -153,6 +163,9 @@ export class GSplatsBufferAdapter {
     for (const pooled of this.gsplatBuffers.values()) {
       for (let i = pooled.length - 1; i >= 0; i--) {
         const candidate = pooled[i];
+        // Skip a free-bucket resident disposed out-of-band — see the
+        // points adapter's twin comment.
+        if (candidate.geometry.userData.luxarInvalidated) continue;
         if (candidate.capacity >= splatCount && candidate.capacity < bestCapacity) {
           bestList = pooled;
           bestIndex = i;
@@ -180,6 +193,8 @@ export class GSplatsBufferAdapter {
     // the chosen capacity too (still >= splatCount, which was clamped).
     const capacity = clampSplatCapacity(chooseCapacity(splatCount));
     const geometry = createGSplatsGeometry(capacity);
+    // Self-invalidation — see the points adapter's twin comment.
+    host.registerPooledGeometryInvalidation(geometry);
 
     const newBuffer: PooledBuffer = {
       geometry,
@@ -246,6 +261,15 @@ export class GSplatsBufferAdapter {
 
     host.activeBuffers.delete(nodeId);
     buffer.inUse = false;
+    // A released buffer is no longer drawn, so an ordering still
+    // streaming into it is dead work — and `chunkedApplies` keys its
+    // state by GEOMETRY in a strong Map, so leaving it would pin this
+    // geometry AND its ordering (4 B/element — ~32 MB for an 8M node)
+    // on the free list until the buffer is re-acquired or evicted.
+    // Dispose already cancels via the geometry's own listener; release
+    // is the other exit from "in use" and needs the same treatment.
+    cancelSortedIndexOrderingApply(buffer.geometry as THREE.InstancedBufferGeometry);
+
     // Stamp the release frame so acquire-triggered byte sweeps later in
     // this same frame grace the buffer (see EvictorCtx.graceFrame) — a
     // released buffer otherwise carries the frame of its last ACQUIRE
@@ -361,11 +385,12 @@ export class GSplatsBufferAdapter {
   }
 
   dispose(): void {
+    // Drain the buckets BEFORE disposing — see the points adapter.
+    const geometries: THREE.BufferGeometry[] = [];
     for (const buffers of this.gsplatBuffers.values()) {
-      for (const buffer of buffers) {
-        buffer.geometry.dispose();
-      }
+      for (const buffer of buffers) geometries.push(buffer.geometry);
     }
     this.gsplatBuffers.clear();
+    for (const geometry of geometries) geometry.dispose();
   }
 }
