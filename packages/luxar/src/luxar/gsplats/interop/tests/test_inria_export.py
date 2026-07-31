@@ -15,6 +15,7 @@ import numpy as np
 import pytest
 
 from luxar.gsplats.gsplat_data import GSplatData
+from luxar.gsplats.interop._color import linear_to_srgb
 from luxar.gsplats.interop.classical_splats import (
     classical_to_gsplat_data,
     import_gsplats,
@@ -215,6 +216,42 @@ class TestColorSources:
         with tempfile.TemporaryDirectory() as tmp:
             cs = _parse_ply(payload, Path(tmp))
         assert cs.colors.std() > 0.01  # actually varied, not white
+
+    def test_uint8_rgba_colors_not_clipped_to_white(self) -> None:
+        # Regression (#728): uint8 colors store values at full scale (0..255);
+        # they must be normalized to [0, 1] before export, or the RGB channels
+        # clip to white in linear_to_srgb and the alpha channel saturates to
+        # fully-opaque in _opacity_logits. Here every splat is (200, 100, 50)
+        # RGB with alpha 128 — the exported DC must reproduce
+        # linear_to_srgb([200/255, 100/255, 50/255]) and opacity ~= 128/255.
+        n = 12
+        colors = np.tile(
+            np.array([200, 100, 50, 128], dtype=np.uint8), (n, 1)
+        )
+        data = GSplatData(
+            centers=np.zeros((n, 3), np.float32),
+            amplitudes=np.ones(n, np.float32),  # amplitude policy -> opacity = alpha
+            cholesky_factors=np.tile(
+                np.array([0.3, 0, 0.3, 0, 0, 0.3], np.float32), (n, 1)
+            ),
+            colors=colors,
+        )
+        payload = gsplat_data_to_inria_ply(data, opacity_policy="amplitude")
+        with tempfile.TemporaryDirectory() as tmp:
+            cs = _parse_ply(payload, Path(tmp))
+
+        expected_rgb = linear_to_srgb(
+            np.array([200.0 / 255.0, 100.0 / 255.0, 50.0 / 255.0])
+        )
+        # Tight tolerance: only float32 f_dc/logit quantization (~1e-7) should
+        # separate us from the exact value, so a ~1/255 off-by-one normalizer
+        # (e.g. dividing by 256) would still be caught.
+        assert np.allclose(cs.colors, expected_rgb, atol=1e-4)
+        # Not washed to white.
+        assert cs.colors.max() < 0.999
+        # Opacity reflects alpha 128/255 ~= 0.502, NOT a saturated 1.0.
+        assert np.allclose(cs.opacities, 128.0 / 255.0, atol=1e-4)
+        assert cs.opacities.max() < 0.6
 
     def test_colors_source_requires_colors(self) -> None:
         data = _synthetic_gsplat_data()
