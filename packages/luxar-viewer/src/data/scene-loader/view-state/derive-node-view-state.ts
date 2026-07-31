@@ -88,15 +88,29 @@ export function deriveNodeViewState(
   if (sceneGraph && derived.dimensions) {
     const worldNdT = computeWorldNdTransform(sceneGraph, path);
     if (hasOwnProperties(worldNdT)) {
-      const dimNames = derived.dimensions.map((d: { name?: string }) => d.name ?? '');
       const inverted = invertNdTransformForQuery(
         derived.slicePosition,
         derived.tolerance,
         worldNdT,
-        dimNames,
-        derived.displayDims
+        derived.dimensions,
+        derived.displayDims,
+        // Pass the node's extend_to_all NAMES: the no-preimage rule must not
+        // fire on a dimension the node extends, and the 1e10 tolerance sentinel
+        // is not a reliable proxy — every Lines call site derives with
+        // `applyPartialExtendTolerance: false`, so a lines node's extended dims
+        // never carry it.
+        extendDims
       );
-      derived = { ...derived, ...inverted };
+      // `noPreimage` rides the derived state only when set, so nodes with an
+      // ordinary transform keep a view state that is shape-identical to before
+      // (see ViewState.noPreimage for why it must stay out of the cache key).
+      derived = inverted.noPreimage
+        ? { ...derived, ...inverted }
+        : {
+            ...derived,
+            slicePosition: inverted.slicePosition,
+            tolerance: inverted.tolerance,
+          };
     }
   }
 
