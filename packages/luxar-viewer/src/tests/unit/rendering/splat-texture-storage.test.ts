@@ -447,10 +447,9 @@ describe('attachSplatStorage / writeSplatTexels — fused writer round-trip', ()
     for (let i = 0; i < 10; i++) expect(arr[i]).toBe(i);
   });
 
-  it('writeSortedIndexOrdering REJECTS a truncated ordering, clamps to the attribute', () => {
+  it('writeSortedIndexOrdering REJECTS a truncated or oversized ordering', () => {
     const geometry = new THREE.InstancedBufferGeometry();
     attachSplatStorage(geometry, 8);
-    const capacity = (geometry.getAttribute('aSortedIndex').array as Uint32Array).length;
 
     // Fewer indices than drawn elements is not a permutation of the drawn
     // population. Staging it would flip the slot with the tail holding
@@ -461,11 +460,12 @@ describe('attachSplatStorage / writeSplatTexels — fused writer round-trip', ()
     expect(hasPendingSortedIndexOrderingApply(geometry)).toBe(false);
     expect(activeSortedIndexSlot(geometry)).toBe(0);
 
-    // Clamping the other way is pure memory safety — capacity is always
-    // >= instanceCount, so a count above it still covers every drawn
-    // element and the ordering is not truncated.
+    // An ordering LARGER than the buffers is rejected the same way, never
+    // clamped: the retained prefix of a larger permutation is not a
+    // permutation of anything — its entries index past the kept range.
     const long = new Uint32Array(32).fill(7);
-    expect(writeSortedIndexOrdering(geometry, long, 32)).toBe(capacity);
+    expect(writeSortedIndexOrdering(geometry, long, 32)).toBe(0);
+    expect(hasPendingSortedIndexOrderingApply(geometry)).toBe(false);
   });
 
   it('writeSortedIndexOrdering REJECTS a malformed ordering pair instead of repairing it', () => {
@@ -1274,16 +1274,17 @@ describe('double-buffered ordering apply (atomic swap)', () => {
     expect(Array.from(activeArr(geometry).subarray(0, 8))).toEqual(shown);
   });
 
-  it('a NEGATIVE or NaN count is rejected like an empty one', () => {
-    // Same failure mode as the empty ordering above, and the reason the
-    // guard is `!(n > 0)` and not `n === 0`: `Math.min` propagates both a
-    // negative and a NaN, and the first pump then writes nothing while
-    // `cursor >= count` is already satisfied — so it FLIPS, publishing
-    // whatever stale content the inactive buffer held as the new
-    // ordering. Unreachable from the coordinator (it only ever passes
-    // `ordering.length`), but this writer's whole contract is that a
-    // half- or un-written buffer is never swapped in.
-    for (const bad of [-5, Number.NaN]) {
+  it('a NEGATIVE, NaN, or FRACTIONAL count is rejected like an empty one', () => {
+    // Same failure mode as the empty ordering above, and why the guard
+    // demands a positive INTEGER: a negative or NaN count writes nothing
+    // on the first pump while `cursor >= count` is already satisfied — so
+    // it FLIPS, publishing whatever stale content the inactive buffer
+    // held as the new ordering — and a fractional count flips with only
+    // `floor(count)` entries written (`subarray` truncates while the
+    // cursor reaches `count` exactly). Unreachable from the coordinator
+    // (it only ever passes `ordering.length`), but this writer's whole
+    // contract is that a half- or un-written buffer is never swapped in.
+    for (const bad of [-5, Number.NaN, 6.5]) {
       const { geometry } = makeGeometry(16);
       writeSortedIndexIdentity(geometry, 8);
       const good = reversed(8);
@@ -1383,14 +1384,19 @@ describe('double-buffered ordering apply (atomic swap)', () => {
     expect(back.updateRanges[0]).toMatchObject({ start: 0, count: 12 });
   });
 
-  it('clamps to the attribute length', () => {
+  it('rejects an ordering larger than the attribute capacity (never clamps to a prefix)', () => {
     const { geometry } = makeGeometry(8); // attr length 8
-    const ordering = reversed(12); // longer than the attribute
-    const n = writeSortedIndexOrdering(geometry, ordering, 12);
-    expect(n).toBe(8);
-    expect(pumpSortedIndexOrderingApply(geometry)).toEqual({ more: true, flipped: false });
-    expect(pumpSortedIndexOrderingApply(geometry)).toEqual({ more: false, flipped: true });
-    expect(Array.from(activeArr(geometry))).toEqual(Array.from(ordering.subarray(0, 8)));
+    writeSortedIndexIdentity(geometry, 8);
+    const shown = Array.from(activeArr(geometry).subarray(0, 8));
+    // reversed(12) clamped to 8 entries would publish [11,10,9,8,7,6,5,4]
+    // — every entry indexing past the drawn population. Such an ordering
+    // belongs to a population this geometry cannot hold (capacity >=
+    // instanceCount), so it is dropped whole, keeping the shown order.
+    expect(writeSortedIndexOrdering(geometry, reversed(12), 12)).toBe(0);
+    expect(hasPendingSortedIndexOrderingApply(geometry)).toBe(false);
+    expect(pumpSortedIndexOrderingApply(geometry)).toEqual({ more: false, flipped: false });
+    expect(activeSortedIndexSlot(geometry)).toBe(0);
+    expect(Array.from(activeArr(geometry).subarray(0, 8))).toEqual(shown);
   });
 });
 

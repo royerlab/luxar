@@ -364,7 +364,7 @@ function getInactiveSortedIndexAttribute(
  * `_maxInstanceCount` from the SMALLEST instanced attribute (a short
  * back buffer would silently clamp the draw), and the chunk pump clamps
  * each slice against the INACTIVE buffer while the staged count is
- * clamped against the ACTIVE one — so a short back buffer would leave
+ * validated against the ACTIVE one — so a short back buffer would leave
  * `cursor` permanently below `count`, requesting renders forever and
  * never flipping.
  *
@@ -707,9 +707,9 @@ export function writeSortedIndexIdentityRange(
 
 /**
  * Stage a depth-sort permutation (the SortWorker's back-to-front
- * ordering, depth-sorting Phase 2). Returns the number of entries that
- * WILL be written, clamped to both the ordering's and the attribute's
- * length.
+ * ordering, depth-sorting Phase 2). Returns `count` when the ordering is
+ * staged, or 0 when it is rejected (truncated or oversized ordering,
+ * non-positive/non-integer count, malformed buffer pair).
  *
  * The ordering is never written to the buffer being drawn. It streams
  * into the INACTIVE one and the slot flips when that buffer holds the
@@ -746,21 +746,27 @@ export function writeSortedIndexOrdering(
   // prevent, so drop it rather than clamp. Matches the coordinator's
   // apply-invariant, which only ever passes `ordering.length` as `count`.
   if (ordering.length < count) return 0;
-  // Clamping the other way is pure memory safety: capacity is always
-  // >= instanceCount, so a count above it still covers every drawn
-  // element.
-  const n = Math.min(count, (active.array as Uint32Array).length);
-  // A NON-POSITIVE count stages nothing. Otherwise the first pump writes
-  // no entries yet finds `cursor >= count` already true, so it FLIPS —
-  // publishing whatever stale content the inactive buffer holds as if it
-  // were the new ordering, which is exactly the corruption
-  // double-buffering exists to prevent. `!(n > 0)` rather than `n === 0`
-  // so a negative or NaN count falls in here too: `Math.min` propagates
-  // both, and `cursor = min(count, …)` then satisfies `cursor >= count`
-  // on the first slice. (The commit path only ever passes
+  // An OVERSIZED count (larger than the buffers) is rejected the same
+  // way, never clamped to a prefix: capacity is always >= instanceCount,
+  // so such an ordering describes a population this geometry does not
+  // hold, and the retained prefix of a larger permutation is not a
+  // permutation of anything — its entries index past the kept range.
+  // (Unreachable from the coordinator: a commit that grew the population
+  // acquires a larger geometry and bumps the generation, so an oversized
+  // resolve is dropped there first.)
+  if (count > (active.array as Uint32Array).length) return 0;
+  // A count that is not a positive integer stages nothing. A NON-POSITIVE
+  // (or NaN) count would otherwise write no entries on the first pump yet
+  // find `cursor >= count` already true, so it would FLIP — publishing
+  // whatever stale content the inactive buffer holds as if it were the
+  // new ordering, which is exactly the corruption double-buffering exists
+  // to prevent. A FRACTIONAL count would likewise flip with only
+  // `floor(count)` entries written (`subarray` truncates while the cursor
+  // reaches `count` exactly). (The commit path only ever passes
   // `ordering.length`, so this guards the writer's own contract rather
   // than a live caller.)
-  if (!(n > 0)) return 0;
+  if (!Number.isInteger(count) || count <= 0) return 0;
+  const n = count;
   // Malformed pair — never repair it here (see `sortedIndexBuffersUsable`).
   if (!sortedIndexBuffersUsable(geometry)) return 0;
 
