@@ -44,10 +44,13 @@ vi.mock('../../../../rendering/material-manager', () => ({
   },
 }));
 
-// `getColormapTexture` reads a sampler uniform; not exercised by
-// these public-surface tests but imported eagerly.
+// `getColormapTexture` builds a real DataTexture; the panel only ever hands
+// the result to `material.updateColormapTexture`, so an opaque stub is enough.
+// It must be TRUTHY: `applyColormap` treats a null texture as "no colormap
+// could be applied", which is the fail-closed path — a null-returning mock
+// silently made every colormap-ON test exercise the suppressed branch.
 vi.mock('../../../../rendering/colormap-textures', () => ({
-  getColormapTexture: vi.fn(() => null),
+  getColormapTexture: vi.fn((name?: string) => (name ? { isTexture: true, name } : null)),
 }));
 
 // `SceneLoaderManager` is consulted by the LOD-level dropdown to find
@@ -871,6 +874,536 @@ describe('LayersPanel — blend select drives the leaf material', () => {
     expect(panel.layerState.getLayer('/cloud')!.blendingMode).toBe('max');
   });
 
+  it('colormap toggle re-syncs the range slider, so the first drag cannot revert the window', () => {
+    // The colormap select re-defaults the display window (the window means a
+    // different thing on each side of the toggle), but it runs with
+    // `controlsInteracting = true`, which suppresses the state-change
+    // re-render. RangeSlider emits values parsed from its own <input>
+    // elements, so if the handler doesn't re-render, the thumbs keep the OLD
+    // window and the first drag writes it back — silently reverting the
+    // re-default (colormap ON → a [0, 1] window on amplitudes = the #522
+    // near-black; OFF → the scalar range re-applied as a colour gain).
+    const stubMat: Record<string, unknown> = {
+      userData: {},
+      uniforms: { uOpacity: { value: 1.0 } },
+      defines: {},
+      updateIntensity: vi.fn(),
+      updateOffset: vi.fn(),
+      updateGamma: vi.fn(),
+      updateOpacity: vi.fn(),
+      updateColormapTexture: vi.fn(),
+      updateScalarRange: vi.fn(),
+      applyBlendingMode: vi.fn(),
+    };
+    stubMat.clone = vi.fn(() => stubMat);
+    const geometry = new THREE.BufferGeometry();
+    // The C1 fail-closed guard needs real scalar data behind a points leaf,
+    // else the colormap is suppressed and the window correctly stays identity
+    // (covered by the next test).
+    geometry.userData.hasScalars = true;
+    const mesh = new THREE.Mesh(geometry, stubMat as unknown as THREE.Material);
+    mesh.name = '/cloud';
+    mesh.userData.nodeType = 'points';
+    const rootGroup = new THREE.Group();
+    rootGroup.add(mesh);
+
+    const graph = {
+      name: 'root',
+      path: '/',
+      type: 'group',
+      attrs: {},
+      children: [
+        {
+          name: 'cloud',
+          path: '/cloud',
+          type: 'points',
+          attrs: {
+            layer: true,
+            type: 'points',
+            has_scalars: true,
+            scalar_data_range: [0.0001, 0.02],
+            color_data_range: [0.2, 0.6],
+          },
+          children: [],
+        },
+      ],
+    } as unknown as SceneNode;
+
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(rootGroup, graph);
+    panel.show();
+    panel.layerState.select('/cloud', 'single');
+
+    const readSliderInputs = () =>
+      Array.from(container.querySelectorAll('.luxar-range-slider__input')).map((el) =>
+        Number((el as HTMLInputElement).value)
+      );
+
+    // Direct colour to start: identity window, and the widget agrees.
+    expect(panel.layerState.getLayer('/cloud')!.displayMax).toBeCloseTo(1, 5);
+
+    const cmSelect = Array.from(container.querySelectorAll('select')).find((s) =>
+      Array.from(s.options).some((o) => o.value === 'viridis')
+    );
+    expect(cmSelect).toBeDefined();
+    cmSelect!.value = 'viridis';
+    cmSelect!.dispatchEvent(new Event('change', { bubbles: true }));
+
+    // State moved to the scalar window…
+    const layer = panel.layerState.getLayer('/cloud')!;
+    expect(layer.displayMin).toBeCloseTo(0.0001, 6);
+    expect(layer.displayMax).toBeCloseTo(0.02, 6);
+    // …and so did the widget — otherwise the next drag emits the stale [0, 1].
+    const [low, high] = readSliderInputs();
+    expect(low).toBeCloseTo(layer.displayMin, 6);
+    expect(high).toBeCloseTo(layer.displayMax, 6);
+  });
+
+  it('a suppressed colormap keeps the direct-colour window (no scalar gain on RGB)', () => {
+    // The dropdown is offered whenever a layer *might* take a colormap (any
+    // group layer does), but the C1 fail-closed guard suppresses it on a leaf
+    // with no scalar data bound. That layer keeps rendering DIRECT COLOUR, so
+    // moving its window to the scalar range would apply e.g. a 50× gain to
+    // authored RGB — the exact contrast stretch this branch removes.
+    const stubMat: Record<string, unknown> = {
+      userData: {},
+      uniforms: { uOpacity: { value: 1.0 } },
+      defines: {},
+      updateIntensity: vi.fn(),
+      updateOffset: vi.fn(),
+      updateGamma: vi.fn(),
+      updateOpacity: vi.fn(),
+      updateColormapTexture: vi.fn(),
+      updateScalarRange: vi.fn(),
+      applyBlendingMode: vi.fn(),
+    };
+    stubMat.clone = vi.fn(() => stubMat);
+    // NO `geometry.userData.hasScalars` stamp → the guard suppresses.
+    const mesh = new THREE.Mesh(new THREE.BufferGeometry(), stubMat as unknown as THREE.Material);
+    mesh.name = '/cloud';
+    mesh.userData.nodeType = 'points';
+    const rootGroup = new THREE.Group();
+    rootGroup.add(mesh);
+
+    const graph = {
+      name: 'root',
+      path: '/',
+      type: 'group',
+      attrs: {},
+      children: [
+        {
+          name: 'cloud',
+          path: '/cloud',
+          type: 'points',
+          attrs: {
+            layer: true,
+            type: 'points',
+            has_scalars: true,
+            scalar_data_range: [0.0001, 0.02],
+          },
+          children: [],
+        },
+      ],
+    } as unknown as SceneNode;
+
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(rootGroup, graph);
+    panel.show();
+    panel.layerState.select('/cloud', 'single');
+
+    const cmSelect = Array.from(container.querySelectorAll('select')).find((s) =>
+      Array.from(s.options).some((o) => o.value === 'viridis')
+    );
+    cmSelect!.value = 'viridis';
+    cmSelect!.dispatchEvent(new Event('change', { bubbles: true }));
+
+    const layer = panel.layerState.getLayer('/cloud')!;
+    expect(layer.displayMin).toBeCloseTo(0, 6);
+    expect(layer.displayMax).toBeCloseTo(1, 6);
+    // The rejected palette is dropped from the layer state too — keeping it
+    // would leave contradictory state (`colormap` set, `scalarWindow` false)
+    // that lies to the dropdown + legend and mis-keys the next toggle.
+    expect(layer.colormap).toBeUndefined();
+    expect(layer.scalarWindow).toBe(false);
+    // …and the material never got a scalar LUT.
+    expect(stubMat.updateColormapTexture).not.toHaveBeenCalledWith(expect.anything());
+  });
+
+  it('keeps a colormap pick when the layer meshes have not streamed in yet', () => {
+    // Partition parts and LOD levels stream in over time, so a layer can have
+    // NO reachable leaf material when the user picks a palette. That is not a
+    // C1 guard suppression: reverting the pick would fight the user mid-load
+    // and desync the panel from the LUT an authored-colormap part renders with
+    // once it arrives (a later slider drag would then push the identity window
+    // into a colormap-active material — the #522 near-black).
+    const rootGroup = new THREE.Group(); // deliberately empty: nothing loaded
+
+    const graph = {
+      name: 'root',
+      path: '/',
+      type: 'group',
+      attrs: {},
+      children: [
+        {
+          name: 'cloud',
+          path: '/cloud',
+          type: 'points',
+          attrs: {
+            layer: true,
+            type: 'points',
+            has_scalars: true,
+            scalar_data_range: [0.0001, 0.02],
+          },
+          children: [],
+        },
+      ],
+    } as unknown as SceneNode;
+
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(rootGroup, graph);
+    panel.show();
+    panel.layerState.select('/cloud', 'single');
+
+    const cmSelect = Array.from(container.querySelectorAll('select')).find((s) =>
+      Array.from(s.options).some((o) => o.value === 'viridis')
+    )!;
+    cmSelect.value = 'viridis';
+    cmSelect.dispatchEvent(new Event('change', { bubbles: true }));
+
+    // The pick sticks — state moves to the scalar window instead of snapping
+    // back to "(direct colors)".
+    const layer = panel.layerState.getLayer('/cloud')!;
+    expect(layer.colormap).toBe('viridis');
+    expect(layer.scalarWindow).toBe(true);
+    expect(layer.displayMin).toBeCloseTo(0.0001, 6);
+    expect(layer.displayMax).toBeCloseTo(0.02, 6);
+  });
+
+  /**
+   * Stub material whose `updateColormapTexture` emulates the real one: a LUT
+   * toggles the `USE_COLORMAP` define, which `applyColorAdjustments` routes
+   * on (scalar window vs colour GOG).
+   */
+  function makeColormapRoutingStub() {
+    const stubMat: Record<string, unknown> = {
+      userData: {},
+      uniforms: { uOpacity: { value: 1.0 } },
+      defines: {} as Record<string, unknown>,
+      updateIntensity: vi.fn(),
+      updateOffset: vi.fn(),
+      updateGamma: vi.fn(),
+      updateOpacity: vi.fn(),
+      updateScalarRange: vi.fn(),
+      applyBlendingMode: vi.fn(),
+    };
+    stubMat.updateColormapTexture = vi.fn((tex: unknown) => {
+      const defines = stubMat.defines as Record<string, unknown>;
+      if (tex) defines.USE_COLORMAP = '';
+      else delete defines.USE_COLORMAP;
+    });
+    stubMat.clone = vi.fn(() => stubMat);
+    return stubMat;
+  }
+
+  it('a MIXED group layer keeps the scalar window off its direct-colour leaves', () => {
+    // A group layer over one scalar-backed leaf and one scalar-less leaf:
+    // picking a colormap moves the LAYER window to the scalar range because
+    // the scalar leaf accepted the LUT — but the C1 guard keeps the other
+    // leaf on direct colour. That leaf must get the IDENTITY, not the scalar
+    // window applied as a ~50× colour gain (the contrast stretch this branch
+    // removes).
+    const scalarMat = makeColormapRoutingStub();
+    const rgbMat = makeColormapRoutingStub();
+
+    const scalarGeom = new THREE.BufferGeometry();
+    scalarGeom.userData.hasScalars = true;
+    const scalarMesh = new THREE.Mesh(scalarGeom, scalarMat as unknown as THREE.Material);
+    scalarMesh.name = '/g/scalar';
+    scalarMesh.userData.nodeType = 'points';
+    // NO hasScalars stamp → the C1 guard suppresses the LUT on this leaf.
+    const rgbMesh = new THREE.Mesh(new THREE.BufferGeometry(), rgbMat as unknown as THREE.Material);
+    rgbMesh.name = '/g/rgb';
+    rgbMesh.userData.nodeType = 'points';
+    const rootGroup = new THREE.Group();
+    rootGroup.add(scalarMesh);
+    rootGroup.add(rgbMesh);
+
+    const graph = {
+      name: 'root',
+      path: '/',
+      type: 'group',
+      attrs: {},
+      children: [
+        {
+          name: 'g',
+          path: '/g',
+          type: 'group',
+          attrs: { layer: true },
+          children: [
+            {
+              name: 'scalar',
+              path: '/g/scalar',
+              type: 'points',
+              attrs: { type: 'points', has_scalars: true, scalar_data_range: [0.0001, 0.02] },
+              children: [],
+            },
+            {
+              name: 'rgb',
+              path: '/g/rgb',
+              type: 'points',
+              attrs: { type: 'points', color_data_range: [0.2, 0.6] },
+              children: [],
+            },
+          ],
+        },
+      ],
+    } as unknown as SceneNode;
+
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(rootGroup, graph);
+    panel.show();
+    panel.layerState.select('/g', 'single');
+
+    const cmSelect = Array.from(container.querySelectorAll('select')).find((s) =>
+      Array.from(s.options).some((o) => o.value === 'viridis')
+    );
+    cmSelect!.value = 'viridis';
+    cmSelect!.dispatchEvent(new Event('change', { bubbles: true }));
+
+    // The layer window moved to the scalar range (the scalar leaf accepted)…
+    const layer = panel.layerState.getLayer('/g')!;
+    expect(layer.displayMax).toBeCloseTo(0.02, 6);
+    // …the scalar leaf renders through the LUT windowed on that range…
+    const scalarRangeCalls = (scalarMat.updateScalarRange as ReturnType<typeof vi.fn>).mock.calls;
+    expect(scalarRangeCalls.length).toBeGreaterThan(0);
+    const [sMin, sMax] = scalarRangeCalls[scalarRangeCalls.length - 1];
+    expect(sMin).toBeCloseTo(0.0001, 6);
+    expect(sMax).toBeCloseTo(0.02, 6);
+    // …while the direct-colour leaf got the identity, not gain ≈ 50.
+    expect(rgbMat.updateIntensity).toHaveBeenLastCalledWith(1);
+    expect(rgbMat.updateOffset).toHaveBeenLastCalledWith(0);
+  });
+
+  it('switching between two active palettes keeps a user-adjusted scalar window', () => {
+    // Re-defaulting the window is for the off↔on MODE flip only — the
+    // rendered value is the same scalar on both sides of viridis → plasma,
+    // so a window the user dialled in must survive the palette change.
+    const stubMat = makeColormapRoutingStub();
+    const geometry = new THREE.BufferGeometry();
+    geometry.userData.hasScalars = true;
+    const mesh = new THREE.Mesh(geometry, stubMat as unknown as THREE.Material);
+    mesh.name = '/cloud';
+    mesh.userData.nodeType = 'points';
+    const rootGroup = new THREE.Group();
+    rootGroup.add(mesh);
+
+    const graph = {
+      name: 'root',
+      path: '/',
+      type: 'group',
+      attrs: {},
+      children: [
+        {
+          name: 'cloud',
+          path: '/cloud',
+          type: 'points',
+          attrs: {
+            layer: true,
+            type: 'points',
+            has_scalars: true,
+            scalar_data_range: [0.0001, 0.02],
+          },
+          children: [],
+        },
+      ],
+    } as unknown as SceneNode;
+
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(rootGroup, graph);
+    panel.show();
+    panel.layerState.select('/cloud', 'single');
+
+    const cmSelect = Array.from(container.querySelectorAll('select')).find((s) =>
+      Array.from(s.options).some((o) => o.value === 'viridis')
+    )!;
+    cmSelect.value = 'viridis';
+    cmSelect.dispatchEvent(new Event('change', { bubbles: true }));
+    expect(panel.layerState.getLayer('/cloud')!.displayMax).toBeCloseTo(0.02, 6);
+
+    // The user narrows the window…
+    panel.layerState.setDisplayRange('/cloud', 0.001, 0.01);
+
+    // …and a palette swap keeps it.
+    cmSelect.value = 'plasma';
+    cmSelect.dispatchEvent(new Event('change', { bubbles: true }));
+    const after = panel.layerState.getLayer('/cloud')!;
+    expect(after.displayMin).toBeCloseTo(0.001, 6);
+    expect(after.displayMax).toBeCloseTo(0.01, 6);
+
+    // Switching OFF is a mode flip and re-defaults to the identity.
+    cmSelect.value = '';
+    cmSelect.dispatchEvent(new Event('change', { bubbles: true }));
+    expect(panel.layerState.getLayer('/cloud')!.displayMin).toBeCloseTo(0, 6);
+    expect(panel.layerState.getLayer('/cloud')!.displayMax).toBeCloseTo(1, 6);
+  });
+
+  it('a group layer whose colormap lives on a DESCENDANT toggles by effective mode', () => {
+    // The wrapper has no `colormap` attr of its own, but the layer already
+    // windows a scalar (`scalarWindow` true from the descendant LUT). The
+    // toggle handler must key its off↔on detection on that effective mode:
+    // keying on the wrapper's attr misreads a palette pick as off→on (wiping
+    // the user's window) and misses the on→off flip entirely, stranding the
+    // layer on a scalar window its (now direct-colour) leaves route to the
+    // identity — an inert display slider.
+    const stubMat = makeColormapRoutingStub();
+    const geometry = new THREE.BufferGeometry();
+    geometry.userData.hasScalars = true;
+    const mesh = new THREE.Mesh(geometry, stubMat as unknown as THREE.Material);
+    mesh.name = '/g/p0';
+    mesh.userData.nodeType = 'points';
+    const rootGroup = new THREE.Group();
+    rootGroup.add(mesh);
+
+    const graph = {
+      name: 'root',
+      path: '/',
+      type: 'group',
+      attrs: {},
+      children: [
+        {
+          name: 'g',
+          path: '/g',
+          type: 'group',
+          attrs: { layer: true },
+          children: [
+            {
+              name: 'p0',
+              path: '/g/p0',
+              type: 'points',
+              attrs: {
+                type: 'points',
+                has_scalars: true,
+                colormap: 'gray',
+                scalar_data_range: [0.0001, 0.02],
+              },
+              children: [],
+            },
+          ],
+        },
+      ],
+    } as unknown as SceneNode;
+
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(rootGroup, graph);
+    panel.show();
+    panel.layerState.select('/g', 'single');
+
+    const before = panel.layerState.getLayer('/g')!;
+    // The wrapper carries no `colormap` attr, but the layer state surfaces the
+    // descendant palette so the dropdown and legend reflect the rendered mode
+    // (and "(direct colors)" is selectable as an off-switch).
+    expect(before.colormap).toBe('gray');
+    expect(before.scalarWindow).toBe(true);
+    expect(before.displayMax).toBeCloseTo(0.02, 6);
+
+    // The user narrows the window…
+    panel.layerState.setDisplayRange('/g', 0.001, 0.01);
+
+    const cmSelect = Array.from(container.querySelectorAll('select')).find((s) =>
+      Array.from(s.options).some((o) => o.value === 'viridis')
+    )!;
+
+    // …and picking a palette is scalar→scalar, NOT off→on: the window survives.
+    cmSelect.value = 'plasma';
+    cmSelect.dispatchEvent(new Event('change', { bubbles: true }));
+    expect(panel.layerState.getLayer('/g')!.displayMin).toBeCloseTo(0.001, 6);
+    expect(panel.layerState.getLayer('/g')!.displayMax).toBeCloseTo(0.01, 6);
+
+    // Selecting "(direct colors)" IS the on→off flip: identity window,
+    // direct-colour mode.
+    cmSelect.value = '';
+    cmSelect.dispatchEvent(new Event('change', { bubbles: true }));
+    const after = panel.layerState.getLayer('/g')!;
+    expect(after.scalarWindow).toBe(false);
+    expect(after.displayMin).toBeCloseTo(0, 6);
+    expect(after.displayMax).toBeCloseTo(1, 6);
+  });
+
+  it('a kind=partition layer overrides a blending mode stamped on its own parts', () => {
+    // Regression (gallery demo): `graft_gsplat_node` used to re-stamp
+    // blending_mode on every grafted part. blending_mode is
+    // nearest-setter-wins, so each part SHADOWED the wrapper and the layer's
+    // single Blend control did nothing — flat/stream/levels layers switched,
+    // tiles/overview/adaptive did not. Inside a layer's subtree the LAYER owns
+    // the mode, so a part's authored copy must not win.
+    const mats = ['/tiles/part_0', '/tiles/part_1'].map((name) => {
+      const applyBlendingMode = vi.fn();
+      const stubMat: Record<string, unknown> = {
+        userData: { blendingMode: 'volumetric' },
+        uniforms: { uOpacity: { value: 1.0 } },
+        defines: {},
+        updateIntensity: vi.fn(),
+        updateOffset: vi.fn(),
+        updateGamma: vi.fn(),
+        updateOpacity: vi.fn(),
+        applyBlendingMode,
+      };
+      stubMat.clone = vi.fn(() => stubMat);
+      const mesh = new THREE.Mesh(new THREE.BufferGeometry(), stubMat as unknown as THREE.Material);
+      mesh.name = name;
+      mesh.userData.nodeType = 'gsplats';
+      return { mesh, applyBlendingMode };
+    });
+    const rootGroup = new THREE.Group();
+    for (const { mesh } of mats) rootGroup.add(mesh);
+
+    // The layer is the kind=partition WRAPPER; the parts are plain nodes that
+    // (on legacy scenes) carry their own stamped blending_mode.
+    const graph = {
+      name: 'root',
+      path: '/',
+      type: 'group',
+      attrs: {},
+      children: [
+        {
+          name: 'tiles',
+          path: '/tiles',
+          type: 'group',
+          attrs: {
+            layer: true,
+            kind: 'partition',
+            display_type: 'gsplats',
+            blending_mode: 'volumetric',
+          },
+          children: mats.map(({ mesh }, i) => ({
+            name: `part_${i}`,
+            path: mesh.name,
+            type: 'gsplats',
+            attrs: { type: 'gsplats', blending_mode: 'volumetric' },
+            children: [],
+          })),
+        },
+      ],
+    } as unknown as SceneNode;
+
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(rootGroup, graph);
+    panel.show();
+    panel.layerState.select('/tiles', 'single');
+    for (const { applyBlendingMode } of mats) applyBlendingMode.mockClear();
+
+    const select = findBlendSelect(container);
+    expect(select).not.toBeNull();
+    select!.value = 'max';
+    select!.dispatchEvent(new Event('change', { bubbles: true }));
+
+    // EVERY part follows the layer — not its own stamped 'volumetric'.
+    for (const { applyBlendingMode } of mats) {
+      expect(applyBlendingMode).toHaveBeenCalledWith('max');
+    }
+    expect(panel.layerState.getLayer('/tiles')!.blendingMode).toBe('max');
+  });
+
   /**
    * Find the Absorption slider control group by its label. LabeledSlider
    * labels concatenate the name span with the value readout
@@ -1105,6 +1638,97 @@ describe('LayersPanel — blend select drives the leaf material', () => {
       panel as unknown as { applyEngine: { applyOpacity(l: unknown): void } }
     ).applyEngine.applyOpacity(grpLayer);
     expect(updateAbsorption).toHaveBeenCalledWith(0.5);
+  });
+
+  it('the blending-mode subtree rule does NOT swallow a leaf-authored opacity/gamma/intensity/offset', () => {
+    // The subtree rule drops a `blending_mode` authored on a non-layer
+    // descendant so the layer's single Blend control wins. It must stay scoped
+    // to that ONE attr: the multiplicative attrs still compose and `offset`
+    // still sums, so a part's authored values survive. (Mutation-tested: each
+    // of these attrs added to the drop list must fail this test.)
+    const updateOpacity = vi.fn();
+    const updateGamma = vi.fn();
+    const updateIntensity = vi.fn();
+    const updateOffset = vi.fn();
+    const applyBlendingMode = vi.fn();
+    const stubMat: Record<string, unknown> = {
+      userData: { blendingMode: 'volumetric' },
+      uniforms: { uOpacity: { value: 1.0 } },
+      defines: {},
+      updateIntensity,
+      updateOffset,
+      updateGamma,
+      updateOpacity,
+      updateAbsorption: vi.fn(),
+      applyBlendingMode,
+    };
+    stubMat.clone = vi.fn(() => stubMat);
+
+    const mesh = new THREE.Mesh(new THREE.BufferGeometry(), stubMat as unknown as THREE.Material);
+    mesh.name = '/grp/part_0';
+    const rootGroup = new THREE.Group();
+    rootGroup.add(mesh);
+
+    const graph = {
+      name: 'root',
+      path: '/',
+      type: 'group',
+      attrs: {},
+      children: [
+        {
+          name: 'grp',
+          path: '/grp',
+          type: 'group',
+          attrs: { layer: true, kind: 'partition', display_type: 'gsplats' },
+          children: [
+            {
+              name: 'part_0',
+              path: '/grp/part_0',
+              type: 'gsplats',
+              // A part authoring its own everything, including a mode that
+              // would otherwise shadow the layer.
+              attrs: {
+                opacity: 0.5,
+                gamma: 2.0,
+                intensity: 3.0,
+                offset: 0.25,
+                blending_mode: 'volumetric',
+              },
+              children: [],
+            },
+          ],
+        },
+      ],
+    } as unknown as SceneNode;
+
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(rootGroup, graph);
+    panel.show();
+    panel.layerState.select('/grp', 'single');
+
+    updateOpacity.mockClear();
+    updateGamma.mockClear();
+    updateIntensity.mockClear();
+    updateOffset.mockClear();
+    applyBlendingMode.mockClear();
+
+    const grpLayer = panel.layerState.getLayer('/grp')!;
+    grpLayer.opacity = 0.4;
+    grpLayer.gamma = 1.5;
+    grpLayer.blendingMode = 'max';
+    (
+      panel as unknown as { applyEngine: { applyBlendingMode(l: unknown): void } }
+    ).applyEngine.applyBlendingMode(grpLayer);
+
+    // Multiplicative attrs compose (layer × part); offset sums (0 + 0.25).
+    expect(updateOpacity).toHaveBeenCalledWith(0.4 * 0.5);
+    expect(updateGamma).toHaveBeenCalledWith(1.5 * 2.0);
+    // The layer's display window is the identity (direct colour), so the
+    // composed intensity is the part's own 3.0 and the offset its own 0.25.
+    expect(updateIntensity).toHaveBeenCalledWith(3.0);
+    expect(updateOffset).toHaveBeenCalledWith(0.25);
+    // …while the part's own blending_mode is the ONE thing overridden.
+    expect(applyBlendingMode).toHaveBeenCalledWith('max');
   });
 
   it('a panel opacity edit during an in-flight LOD fade rebases the fade snapshot instead of the live uniform', () => {

@@ -299,13 +299,55 @@ export class LayerControls {
     this.events.on(this.colormapSelect, 'change', () => {
       this.controlsInteracting = true;
       const cmName = this.colormapSelect!.value || undefined;
+      // Capture each layer's mode BEFORE mutating: the window re-default
+      // below applies only to an off→on / on→off flip. Switching between two
+      // active palettes keeps the user's scalar window — the rendered value
+      // is the same scalar either side. Key on `scalarWindow` (the effective
+      // mode), NOT on the layer's own `colormap` attr: a group layer whose
+      // colormap lives on a DESCENDANT has no palette of its own but already
+      // windows a scalar, so the attr would misread a palette change as
+      // off→on (wiping the user's window) and miss the on→off flip entirely
+      // (stranding the layer on an inert scalar window).
+      const wasColormapped = new Map(
+        this.deps.state.getSelected().map((l) => [l.path, l.scalarWindow])
+      );
       this.deps.state.applyToSelected((l) => {
         l.colormap = cmName;
       });
       for (const sel of this.deps.state.getSelected()) {
-        this.deps.apply.applyColormap(sel);
+        // The display window means a different thing on each side of the
+        // off↔on toggle (scalar data range vs authored-RGB identity), so
+        // re-default it BEFORE applying — `applyColormap` derives the
+        // material's scalar range from the composed window.
+        if (wasColormapped.get(sel.path) !== !!cmName) {
+          this.deps.state.setColormapWindow(sel.path, !!cmName);
+        }
+        if (!this.deps.apply.applyColormap(sel) && cmName) {
+          // The C1 fail-closed guard suppressed the colormap on every leaf
+          // (e.g. a group layer over scalar-less points, where the dropdown is
+          // still offered). The layer keeps rendering DIRECT COLOUR, so the
+          // scalar window would be applied as a colour gain — put the identity
+          // window back and re-push the corrected GOG. Drop the rejected
+          // palette too: keeping it would leave contradictory state (`colormap`
+          // set, `scalarWindow` false) that lies to the dropdown and the
+          // legend, and mis-keys the next toggle's off→on detection.
+          sel.colormap = undefined;
+          this.deps.state.setColormapWindow(sel.path, false);
+          this.deps.apply.applyColormap(sel);
+        }
       }
       this.controlsInteracting = false;
+      // Re-sync the widgets this handler just invalidated. `setColormapWindow`
+      // moved the display window (and widened the bounds), but
+      // `controlsInteracting` suppressed the state-change re-render — and
+      // RangeSlider emits values parsed from its own <input> elements, which
+      // only `render()` updates. Without this the thumbs keep the OLD window
+      // and the first drag writes it back, silently reverting the re-default:
+      // toggling a colormap on would re-apply a [0, 1] window to amplitudes
+      // (the #522 near-black), and off would re-apply the scalar range as a
+      // colour gain (the contrast stretch this campaign removed). The blend
+      // handler does the same for the κ slider via syncAbsorptionVisibility().
+      this.render();
     });
     cmGroup.appendChild(cmLabel);
     cmGroup.appendChild(this.colormapSelect);

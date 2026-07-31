@@ -12,6 +12,7 @@ Run from project root:
 """
 
 import shutil
+import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -92,6 +93,7 @@ FIXTURE_NAMES: list[str] = [
     "test_mixed.luxar.zarr",
     "test_nd_transforms.luxar.zarr",
     "test_overview.gsplats.zarr",
+    "test_partition_layer.luxar.zarr",
     "test_points_blending_modes.luxar.zarr",
     "test_points_normal_overlap.luxar.zarr",
     "test_points_normal_overlap_reversed.luxar.zarr",
@@ -3081,6 +3083,79 @@ def generate_overview_test() -> None:
         aprint("  overview: coarse cap + kind=partition of 4 laddered parts")
 
 
+def generate_partition_layer_test() -> None:
+    """A SCENE whose single layer is a grafted kind=partition gsplats node.
+
+    The shape that shipped broken: `add_gsplats_from_file` on a nested
+    (kind=partition) `.gsplats.zarr` grafts the subtree and marks the WRAPPER
+    `layer=True`, so the layers panel shows one row that fans out to N parts.
+
+    `blending_mode` is nearest-setter-wins, so the graft must stamp it on the
+    wrapper only — a copy on each part shadows the wrapper and makes the
+    layer's Blend control inert. `layers-panel.spec.ts` loads this fixture,
+    switches Blend on the partition layer, and asserts EVERY part's material
+    followed. The existing blending case deliberately picks a non-group layer,
+    which is why the partition path had no coverage.
+
+    60 splats, `max_elements=30` → 2 spatial parts; node-safe encoding
+    (PRECISION float32, no blosc) like every fixture.
+    """
+    with asection("Generating Partition-Layer Test (E2E layers panel)"):
+        from luxar.gsplats import GSplatData
+        from luxar.gsplats.io.save_gsplats import write_gsplats_tree
+
+        output = FIXTURES_DIR / "test_partition_layer.luxar.zarr"
+
+        # Two well-separated clusters so the BSP split is unambiguous.
+        rng = np.random.default_rng(11)
+        a = rng.uniform(-6.0, -2.0, size=(30, 3)).astype(np.float32)
+        b = rng.uniform(2.0, 6.0, size=(30, 3)).astype(np.float32)
+        centers = np.concatenate([a, b], axis=0)
+        n = centers.shape[0]
+        cholesky = np.zeros((n, 6), dtype=np.float32)
+        cholesky[:, [0, 2, 5]] = 0.6
+        data = GSplatData(
+            centers=centers,
+            amplitudes=np.linspace(0.5, 1.0, n).astype(np.float32),
+            cholesky_factors=cholesky,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "parts.gsplats.zarr"
+            write_gsplats_tree(
+                src,
+                data.to_spatial_partition(max_elements=30),
+                ordering="none",
+                encoding_mode=EncodingMode.PRECISION,
+                compressor=COMPRESSOR_DISABLED,
+            )
+
+            dims = Dimensions(
+                [
+                    Dimension("x", display=True),
+                    Dimension("y", display=True),
+                    Dimension("z", display=True),
+                ]
+            )
+            with LuxarZarrCompiler(
+                output,
+                encoding_mode=EncodingMode.PRECISION,
+                compressor=COMPRESSOR_DISABLED,
+            ) as compiler:
+                scene = compiler.create_scene(dimensions=dims)
+                scene.add_gsplats_from_file(
+                    "tiles",
+                    str(src),
+                    opacity=1.0,
+                    absorption=1.0,
+                    blending_mode="volumetric",
+                    layer=True,
+                )
+
+        aprint(f"  Created {output}")
+        aprint("  partition layer: 1 layer row → 2 parts, blending_mode on the wrapper")
+
+
 def generate_labelled_points_test() -> None:
     """Small labelled-points dataset for the hover-tooltip E2E spec.
 
@@ -3246,6 +3321,9 @@ def main() -> None:
         aprint("")
 
         generate_overview_test()
+        aprint("")
+
+        generate_partition_layer_test()
         aprint("")
 
         generate_labelled_points_test()

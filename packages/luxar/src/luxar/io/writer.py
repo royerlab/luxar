@@ -39,11 +39,21 @@ class ZarrWriterProtocol(Protocol):
     without keeping data in memory.
     """
 
-    def write_group(self, path: NodePath, **attrs: Any) -> None:
+    def write_group(
+        self, path: NodePath, *, _transform_normalized: bool = False, **attrs: Any
+    ) -> None:
         """Create a group structure in the Zarr store.
 
         Args:
             path: Path within the Zarr store for the group
+            _transform_normalized: Internal control parameter (NOT a group
+                attribute — never persisted). Set to True by the Node/Scene
+                API to declare that ``transform`` / ``nd_transform`` in
+                ``attrs`` are already in the on-disk normalized form
+                (column-major flat list / validated dict), so the writer must
+                not normalize them a second time (the conversion is not
+                idempotent). All other callers leave the default False and
+                get full normalization + validation.
             **attrs: Attributes to attach to the group
         """
         ...
