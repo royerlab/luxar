@@ -1209,6 +1209,71 @@ describe('MultiLevelCachingStore', () => {
       expect(fetchCount).toBe(2);
     });
 
+    it('an aborted chain cannot delete a same-key replacement entry', async () => {
+      let fetchCount = 0;
+      const fetchSignals: AbortSignal[] = [];
+      let releaseFirst!: () => void;
+      let releaseReplacement!: () => void;
+      const firstGate = new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      });
+      const replacementGate = new Promise<void>((resolve) => {
+        releaseReplacement = resolve;
+      });
+
+      global.fetch = vi.fn(async (_url: string, init?: RequestInit) => {
+        const call = ++fetchCount;
+        fetchSignals.push(init?.signal as AbortSignal);
+        await (call === 1 ? firstGate : replacementGate);
+        return {
+          ok: true,
+          status: 200,
+          async arrayBuffer() {
+            return new Uint8Array([call]).buffer;
+          },
+        } as Response;
+      }) as unknown as typeof fetch;
+
+      const waitForFetchCount = async (expected: number) => {
+        for (let i = 0; i < 20 && fetchCount < expected; i++) {
+          await Promise.resolve();
+        }
+        expect(fetchCount).toBe(expected);
+      };
+
+      // Start an old chain, then invalidate it. clearAll aborts and removes
+      // the map entry synchronously, while our mock keeps the fetch pending.
+      const oldRequest = store.getResult('replace-race');
+      await waitForFetchCount(1);
+      await store.clearAll();
+      expect(fetchSignals[0].aborted).toBe(true);
+
+      // A new same-key request legitimately owns pendingGets now.
+      const replacement = store.getResult('replace-race');
+      await waitForFetchCount(2);
+      expect(fetchSignals[1].aborted).toBe(false);
+
+      // Settling the old aborted chain must not delete that replacement.
+      releaseFirst();
+      const oldResult = await oldRequest;
+      expect(oldResult.ok).toBe(false);
+
+      const waiter = store.getResult('replace-race');
+      for (let i = 0; i < 20; i++) await Promise.resolve();
+      const fetchesAfterWaiter = fetchCount;
+
+      // A second invalidation must still find and abort the replacement.
+      // Finish the clear before observing the signal, then release the mock
+      // fetches so cleanup completes even when either assertion would fail.
+      await store.clearAll();
+      const replacementWasAborted = fetchSignals[1].aborted;
+      releaseReplacement();
+      await Promise.all([replacement, waiter]);
+
+      expect(fetchesAfterWaiter).toBe(2);
+      expect(replacementWasAborted).toBe(true);
+    });
+
     // R6b: demand-while-prefetch-in-flight. A prefetch-originated
     // getResult (suppressPrefetch: true) and a user-demand call for
     // the same key must share one underlying network fetch via

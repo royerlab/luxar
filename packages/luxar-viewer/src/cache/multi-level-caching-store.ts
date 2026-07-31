@@ -455,8 +455,17 @@ export class MultiLevelCachingStore implements AsyncReadable {
         // in-flight gets on a content-hash mismatch so the post-fetch
         // L1/L2 populate cannot resurrect stale data after a clear.
         const controller = new AbortController();
-        const fresh = this.fetchKeyChain(key, controller.signal).finally(() => {
-          this.pendingGets.delete(key);
+        let fresh!: Promise<{
+          result: Result<Uint8Array, CacheError>;
+          source: 'l2' | 'network' | 'missing';
+        }>;
+        fresh = this.fetchKeyChain(key, controller.signal).finally(() => {
+          // An invalidation clears pendingGets before an aborted chain settles.
+          // A new request may install a replacement for the same key during
+          // that window, so the old chain must only remove its own entry.
+          if (this.pendingGets.get(key)?.promise === fresh) {
+            this.pendingGets.delete(key);
+          }
         });
         this.pendingGets.set(key, { promise: fresh, controller });
         inflight = fresh;
