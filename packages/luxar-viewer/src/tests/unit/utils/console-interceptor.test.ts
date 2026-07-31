@@ -8,6 +8,7 @@
  */
 
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
+import vm from 'node:vm';
 import { consoleInterceptor } from '../../../utils/console-interceptor';
 
 describe('ConsoleInterceptor ring buffer', () => {
@@ -183,6 +184,37 @@ describe('ConsoleInterceptor stack capture', () => {
     expect(lastMessage().stack).toBe(first.stack);
   });
 
+  it('prefers a real Error over an earlier duck-typed stack carrier', () => {
+    // A plain object carrying a `stack` string (a context bag) precedes the real
+    // Error; the Error's own stack must win, not the context string — otherwise
+    // the bug-report trace points at the log site's metadata, not the fault.
+    const err = new Error('boom');
+    console.error('failed', { stack: 'context: decoding' }, err);
+
+    expect(lastMessage().stack).toBe(err.stack);
+  });
+
+  it('prefers a CROSS-REALM Error over an earlier duck-typed stack carrier', () => {
+    // An Error created in another realm (window/iframe) has a foreign
+    // Error.prototype, so `instanceof Error` is false — only the
+    // `[object Error]` brand check (the [[ErrorData]] internal slot) sees it.
+    // Without that check the context bag in front would shadow its stack.
+    const foreignErr = vm.runInNewContext('new Error("cross-realm boom")') as Error;
+    expect(foreignErr instanceof Error).toBe(false); // genuinely foreign realm
+    expect(typeof foreignErr.stack).toBe('string');
+
+    console.error('failed', { stack: 'context: decoding' }, foreignErr);
+
+    expect(lastMessage().stack).toBe(foreignErr.stack);
+  });
+
+  it('falls back to a duck-typed stack carrier when no real Error is present', () => {
+    // Some Firefox DOMExceptions carry a stack without reporting as an Error.
+    console.error('failed', { stack: 'at somewhere' });
+
+    expect(lastMessage().stack).toBe('at somewhere');
+  });
+
   it('does not throw (and still buffers) when an arg has a throwing stack accessor', () => {
     // extractStack runs inside the patched console.warn/error BEFORE the
     // original console call — if it threw, the warning itself would vanish and
@@ -213,5 +245,28 @@ describe('ConsoleInterceptor stack capture', () => {
     expect(msgs.length).toBe(2);
     expect(msgs[0].stack).toBeUndefined();
     expect(msgs[1].stack).toBeUndefined();
+  });
+
+  it('does not throw on a revoked Proxy arg and still finds a later Error stack', () => {
+    // The real-Error preference pass evaluates `instanceof`, which walks
+    // [[GetPrototypeOf]] and throws for a revoked Proxy. That throw must be
+    // contained (same never-throw contract as above), and the real Error behind
+    // the Proxy must still be found.
+    const { proxy, revoke } = Proxy.revocable({}, {});
+    revoke();
+    const err = new Error('boom');
+
+    // Node's own console.error inspects the revoked Proxy and throws on its
+    // own; stub the pass-through so only the interceptor's capture is tested.
+    const orig = consoleInterceptor.getOriginalConsole();
+    const origError = orig.error;
+    orig.error = () => {};
+    try {
+      expect(() => console.error('cleanup failed', proxy, err)).not.toThrow();
+    } finally {
+      orig.error = origError;
+    }
+
+    expect(lastMessage().stack).toBe(err.stack);
   });
 });

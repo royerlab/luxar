@@ -5,7 +5,11 @@
  * Contains 3D-to-2D covariance projection, perspective Jacobian, amplitude calculation,
  * oriented quad expansion, near-plane fade, and screen-coverage safety.
  */
-import { GLSL_SANITIZE_FUNCTIONS, GLSL_NEAR_FADE_FUNCTIONS } from '../_shared/glsl-lib';
+import {
+  GLSL_SANITIZE_FUNCTIONS,
+  GLSL_NEAR_FADE_FUNCTIONS,
+  GLSL_SORTED_INDEX,
+} from '../_shared/glsl-lib';
 import type { ShaderSource } from '../_shared/shader-source';
 import { gsplatWebGPUFactory, buildGSplatTSLNodesFromUniforms } from './shader-tsl';
 import {
@@ -25,11 +29,11 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
     // Quad corner attribute (static geometry)
     in vec2 aQuadCorner;  // (-1,-1), (1,-1), (-1,1), (1,1)
 
-    // Draw-slot → storage-slot mapping. Identity in Phase 1; the sort
-    // worker permutes it (Phase 2+) so draw order tracks view depth
-    // without rewriting splat data. Uint32Array attribute → bound via
-    // vertexAttribIPointer, matching this uint declaration.
-    in uint aSortedIndex;
+    // Draw-slot → storage-slot mapping, double-buffered so a new ordering
+    // swaps atomically (declaration + luxarSortedIndex() in glsl-lib).
+    // Uint32Array attributes → bound via vertexAttribIPointer, matching
+    // the uint declarations.
+    ${GLSL_SORTED_INDEX}
 
     // Splat data texture: RGBA32F, 4 texels/splat (see
     // rendering/element-texture-layout.ts for the texel layout).
@@ -105,7 +109,7 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
         // changes downstream of this block. The width is a multiple of
         // 4 (element-texture-layout.ts), so a splat's 4 texels share one
         // row and only x advances.
-        int splatBase = int(aSortedIndex) * 4;
+        int splatBase = int(luxarSortedIndex()) * 4;
         int splatTexW = textureSize(uSplatTex, 0).x;
         ivec2 texel0 = ivec2(splatBase % splatTexW, splatBase / splatTexW);
         vec4 splatT0 = texelFetch(uSplatTex, texel0, 0);

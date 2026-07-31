@@ -20,6 +20,7 @@ import type { ShaderSource } from '../../materials/_shared/shader-source';
 import {
   GLSL_SANITIZE_FUNCTIONS,
   GLSL_NEAR_FADE_FUNCTIONS,
+  GLSL_SORTED_INDEX,
 } from '../../materials/_shared/glsl-lib';
 import { pointPickWebGPUFactory, buildPointPickTSLNodesFromUniforms } from './pick.tsl';
 
@@ -41,7 +42,7 @@ export const POINT_PICK_VERTEX_SHADER = /* glsl */ `
     // pick buffer must report the storage slot -- the id the rest of
     // the pipeline (loaders, selection) addresses points by -- not the
     // transient draw slot.
-    in uint aSortedIndex;
+    ${GLSL_SORTED_INDEX}
 
     // Point data texture: RGBA32F, 3 texels/point (see
     // rendering/element-texture-layout.ts). Picking needs texels 0-1
@@ -67,7 +68,7 @@ export const POINT_PICK_VERTEX_SHADER = /* glsl */ `
     void main() {
       // === Point-texture fetch prologue (visual-shader parity) ===
       // Width is a multiple of 3, so a point's texels share one row.
-      int pointBase = int(aSortedIndex) * 3;
+      int pointBase = int(luxarSortedIndex()) * 3;
       int pointTexW = textureSize(uPointTex, 0).x;
       ivec2 texel0 = ivec2(pointBase % pointTexW, pointBase / pointTexW);
       vec4 pointT0 = texelFetch(uPointTex, texel0, 0);
@@ -131,7 +132,7 @@ export const POINT_PICK_VERTEX_SHADER = /* glsl */ `
       // Storage slot, NOT gl_InstanceID (the draw slot): identical
       // under Phase-1 identity ordering, and stays correct once the
       // sort worker permutes draw order (Phase 2+).
-      vElementId = float(aSortedIndex);
+      vElementId = float(luxarSortedIndex());
     }
 `;
 

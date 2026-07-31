@@ -47,20 +47,21 @@ layout( std140 ) uniform object {
 	float nodeUniform6;
 	float nodeUniform7;
 	float nodeUniform8;
-	mat3 nodeUniform11;
-	uint nodeUniform12;
-	mat3 nodeUniform13;
-	uint nodeUniform14;
-	mat3 nodeUniform15;
-	uint nodeUniform16;
-	float nodeUniform17;
+	float nodeUniform9;
+	mat3 nodeUniform12;
+	uint nodeUniform13;
+	mat3 nodeUniform14;
+	uint nodeUniform15;
+	mat3 nodeUniform16;
+	uint nodeUniform17;
 	float nodeUniform18;
-	vec2 nodeUniform19;
-	float nodeUniform20;
+	float nodeUniform19;
+	vec2 nodeUniform20;
 	float nodeUniform21;
 	float nodeUniform22;
 	float nodeUniform23;
 	float nodeUniform24;
+	float nodeUniform25;
 };
 
 layout( std140 ) uniform render {
@@ -87,11 +88,11 @@ float nodeVar2;
 float nodeVar3;
 float nodeVar4;
 float nodeVar5;
-float nodeVar6;
+float nodeVar7;
 vec4 Output;
-vec4 nodeVar7;
-float nodeVar8;
-vec4 nodeVar82;
+vec4 nodeVar8;
+float nodeVar9;
+vec4 nodeVar83;
 vec3 positionView;
 
 // codes
@@ -122,27 +123,27 @@ void main() {
 
 	}
 
-	nodeVar6 = clamp( nodeVar5, 0.0, 1.0 );
-	DiffuseColor = vec4( nodeVarying3, nodeVarying4, nodeVar6, 1.0 );
-	DiffuseColor.w = ( DiffuseColor.w * nodeUniform7 );
-	nodeVar7 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
-	Output = nodeVar7;
+	nodeVar7 = clamp( nodeVar5, 0.0, 1.0 );
+	DiffuseColor = vec4( nodeVarying3, nodeVarying4, nodeVar7, 1.0 );
+	DiffuseColor.w = ( DiffuseColor.w * nodeUniform8 );
+	nodeVar8 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
+	Output = nodeVar8;
 
-	if ( ( int( nodeUniform8 ) == 1 ) ) {
+	if ( ( int( nodeUniform9 ) == 1 ) ) {
 
-		nodeVar82 = ( cameraProjectionMatrixInverse * v_clipSpace );
-		positionView = ( nodeVar82.xyz / vec3( nodeVar82.w ) );
-		nodeVar8 = ( ( positionView.z + cameraNear ) / ( cameraNear - cameraFar ) );
+		nodeVar83 = ( cameraProjectionMatrixInverse * v_clipSpace );
+		positionView = ( nodeVar83.xyz / vec3( nodeVar83.w ) );
+		nodeVar9 = ( ( positionView.z + cameraNear ) / ( cameraNear - cameraFar ) );
 
 	} else {
 
-		nodeVar8 = ( 1.0 - nodeVar6 );
+		nodeVar9 = ( 1.0 - nodeVar7 );
 
 	}
 
-	gl_FragDepth = nodeVar8;
+	gl_FragDepth = nodeVar9;
 
 	// result
-	fragColor = nodeVar7;
+	fragColor = nodeVar8;
 
 }

@@ -1,8 +1,8 @@
 /**
  * Pure dispatch helper for applying `ZarrViewerConfig` state that lives
  * outside of the rendering-controls surface (panel visibility, theme,
- * dimension navigation). RenderingControls handles the 47 rendering
- * settings on its own; this helper is for the rest.
+ * dimension navigation). RenderingControls handles the rendering settings
+ * on its own; this helper is for the rest.
  *
  * Extracted from `core/app.ts::applyViewerConfigState` so the dispatch
  * logic can be unit-tested without spinning up a full LuxarApp. The

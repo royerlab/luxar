@@ -35,6 +35,15 @@ def _format_bytes(n_bytes: int) -> str:
     return f"{size:.2f} TB"  # pragma: no cover - loop always returns
 
 
+def _force_identity_encoding(headers: dict) -> None:
+    """Default Accept-Encoding to identity unless the caller already set it
+    (case-insensitively). An identity byte stream is required: ``total_size``
+    comes from Content-Length but the body is decoded, and ``.part`` byte-range
+    resume assumes identity."""
+    if not any(k.lower() == "accept-encoding" for k in headers):
+        headers["Accept-Encoding"] = "identity"
+
+
 def find_quarantined_files(target: Union[str, Path]) -> list[Path]:
     """Return the quarantined ``.corrupt`` files associated with *target*.
 
@@ -206,6 +215,9 @@ def robust_download(
         expected_size: Expected file size in bytes (optional, for validation)
         extra_headers: Extra HTTP headers to send on every request (e.g. an
             API key: ``{"api-key": "..."}``). Merged with the Range header.
+            Unless it already contains an ``Accept-Encoding`` (any casing),
+            requests default to ``Accept-Encoding: identity`` so size
+            verification and ``.part`` resume see the raw byte stream.
 
     Returns:
         Path to downloaded file
@@ -394,7 +406,7 @@ def robust_download(
         # that matches the on-disk file — a `Content-Encoding: gzip` response
         # would otherwise report the COMPRESSED length and make a complete
         # cache look "larger than remote", truncating it.
-        probe_headers.setdefault("Accept-Encoding", "identity")
+        _force_identity_encoding(probe_headers)
         try:
             head = session.head(
                 url, timeout=timeout, headers=probe_headers, allow_redirects=True
@@ -532,6 +544,9 @@ def robust_download(
             try:
                 # Set up headers for resume
                 headers = dict(extra_headers or {})
+                # Force an identity byte stream (see _force_identity_encoding):
+                # size verification + `.part` byte-range resume require it.
+                _force_identity_encoding(headers)
                 sent_if_range = False
                 if resume_byte_pos > 0:
                     headers["Range"] = f"bytes={resume_byte_pos}-"
@@ -547,11 +562,18 @@ def robust_download(
                         headers["If-Range"] = resume_validator
                         sent_if_range = True
 
-                with asection(f"Download Attempt {attempt + 1}/{max_retries + 1}"):
-                    # Make request
-                    response = session.get(
-                        url, headers=headers, stream=True, timeout=timeout
-                    )
+                # Bind the streamed GET in contextlib.closing so its socket is
+                # released deterministically on EVERY exit — success (return),
+                # 416 restart (`continue`), or re-raise — instead of leaking to
+                # the GC. raise_for_status still leaves `e.response` usable
+                # afterward: the headers are already buffered, only the socket is
+                # released (the 416 handler reads headers, never the body).
+                with (
+                    asection(f"Download Attempt {attempt + 1}/{max_retries + 1}"),
+                    contextlib.closing(
+                        session.get(url, headers=headers, stream=True, timeout=timeout)
+                    ) as response,
+                ):
                     response.raise_for_status()
 
                     # Check if resume was accepted
