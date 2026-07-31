@@ -41,6 +41,7 @@ This module hosts:
 
 from __future__ import annotations
 
+import warnings
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
 from arbol import aprint
@@ -695,9 +696,12 @@ def compose_additive_under_substitutive(
             re-resolution — which is what makes it safe to hand straight to the
             PUBLIC ``add_points`` / ``add_lines`` for the finest child.
         name: Node name, for messages.
-        suppress_reason: When set, no ladder is built and the reason is printed.
-            Used for the two cases where laddering would lose data or be a
-            no-op rather than a win.
+        suppress_reason: When set, no ladder is built and the reason is
+            reported. Used for the cases where laddering would lose data or be a
+            no-op rather than a win. A *default* ladder (``additive_lod`` left as
+            ``None``) is skipped quietly; an *explicitly* requested one
+            (``True`` / a ``dict``) raises a ``UserWarning``, since the caller
+            asked for something that cannot be honoured.
 
     Returns:
         A normalized spec dict, or ``None`` for "write flat levels".
@@ -705,10 +709,18 @@ def compose_additive_under_substitutive(
     if additive_lod is False:
         return None
     if suppress_reason is not None:
-        aprint(
-            f"  ℹ️  '{name}': streaming ladder skipped ({suppress_reason}); "
-            "levels will load all-at-once."
-        )
+        if additive_lod is not None:
+            warnings.warn(
+                f"'{name}': the requested streaming ladder cannot be honoured "
+                f"({suppress_reason}); levels will load all-at-once.",
+                UserWarning,
+                stacklevel=2,
+            )
+        else:
+            aprint(
+                f"  ℹ️  '{name}': streaming ladder skipped ({suppress_reason}); "
+                "levels will load all-at-once."
+            )
         return None
     spec = additive_lod if additive_lod is not None else default_composed_additive_lod()
     return resolve(spec)

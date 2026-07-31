@@ -337,7 +337,8 @@ class TestAddLinesAdditiveLod:
         # Regression: the plain additive multi-LOD writer has no image_labels
         # channel, so an explicit ladder used to SILENTLY DROP the labels. It
         # must instead refuse the ladder (write a single leaf) and keep the
-        # labels — mirroring the substitutive path's suppress_reason guard.
+        # labels — mirroring the substitutive path's suppress_reason guard —
+        # and warn, since the explicit request cannot be honoured.
         output = tmp_path / "t.luxar.zarr"
         rng = np.random.RandomState(0)
         vertices = rng.rand(40, 3).astype(np.float32)
@@ -345,14 +346,15 @@ class TestAddLinesAdditiveLod:
 
         with LuxarZarrCompiler(output) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-            scene.add_lines(
-                "ln",
-                vertices,
-                widths=widths,
-                line_type="segments",
-                image_labels=[b"x"] * 40,
-                additive_lod=dict(n_lods=4, method="random"),
-            )
+            with pytest.warns(UserWarning, match="cannot be honoured"):
+                scene.add_lines(
+                    "ln",
+                    vertices,
+                    widths=widths,
+                    line_type="segments",
+                    image_labels=[b"x"] * 40,
+                    additive_lod=dict(n_lods=4, method="random"),
+                )
 
         grp = zarr.open(str(output), mode="r")["ln"]
         assert grp.attrs["type"] == "lines"
