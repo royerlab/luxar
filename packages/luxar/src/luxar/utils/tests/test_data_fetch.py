@@ -489,6 +489,22 @@ def test_ensure_dataset_cache_hit_is_reused(fake_repo, monkeypatch):
     assert paths[0].read_bytes() == b"toy-splat-bytes"
 
 
+def test_ensure_dataset_warm_cache_hit_is_silent_when_quiet(fake_repo, capsys):
+    """A warm cache hit under ``verbose=False`` must print nothing at all.
+
+    The manifest sha256 is re-verified on every hit, so a ``verify_file_checksum``
+    that ignores ``verbose`` puts a "Verifying …/Computing SHA256…/✓ verified"
+    block on screen per file for a caller that explicitly asked for silence.
+    """
+    manifest, cache = fake_repo
+    ensure_dataset("gsplats_toy", manifest=manifest, cache_root=cache, verbose=False)
+    capsys.readouterr()  # discard the cold-resolution output
+
+    ensure_dataset("gsplats_toy", manifest=manifest, cache_root=cache, verbose=False)
+
+    assert capsys.readouterr().out == ""
+
+
 def test_local_compute_and_regenerate_raise(fake_repo):
     manifest, cache = fake_repo
     for name in ("toy_gaia", "toy_dipc"):
