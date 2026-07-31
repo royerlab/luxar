@@ -331,7 +331,7 @@ def cached_download(
             # robust_download would otherwise happily resume from.
             quarantine_file(dest, reason="unpulled git-LFS pointer", verbose=verbose)
         elif sha256 is not None:
-            if verify_file_checksum(dest, None, sha256):
+            if verify_file_checksum(dest, None, sha256, verbose=verbose):
                 if verbose:
                     aprint(f"✓ Cached (checksum ok): {dest}")
                 return dest
