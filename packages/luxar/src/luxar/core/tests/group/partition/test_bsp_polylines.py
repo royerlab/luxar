@@ -282,7 +282,8 @@ class TestAddLinesPartition:
         only for 3D. (The SAH centroid buffer's empty-polyline fallback was
         also made dimension-consistent for #901, but that branch is
         unreachable via ``add_lines`` since ``identify_polylines`` never
-        yields an empty polyline, so it can't be exercised end to end here.)
+        yields an empty polyline — it is covered directly by
+        ``TestSahPolylineCentroids`` below instead.)
         """
         rng = np.random.RandomState(5)
         n_segments = 200
@@ -529,3 +530,48 @@ class TestIndexedPartitionTopology:
                 line_type="indexed",
                 partition=dict(max_elements=2),
             )
+
+
+# ────────────────────────────────────────────────────────────────────────
+# _sah_polyline_centroids — pure centroid builder (incl. #901 fallback)
+# ────────────────────────────────────────────────────────────────────────
+
+
+class TestSahPolylineCentroids:
+    """Direct coverage of the SAH centroid builder's empty-polyline fallback.
+
+    ``identify_polylines`` never yields an empty polyline, so the fallback
+    can't be reached through ``add_lines``; these tests exercise it directly.
+    The 2D case fails without the #901 fix (a width-3 zero row mixed with
+    width-2 centroid rows makes ``np.array`` raise on the ragged input).
+    """
+
+    def test_empty_polyline_fallback_is_2d_consistent(self) -> None:
+        from luxar.core.group.adders.lines import _sah_polyline_centroids
+
+        v = np.array([[0.0, 0.0], [2.0, 4.0]], dtype=np.float32)
+        plys = [np.array([0, 1], dtype=np.intp), np.array([], dtype=np.intp)]
+        centroids = _sah_polyline_centroids(v, plys)
+        assert centroids.shape == (2, 2)
+        np.testing.assert_allclose(centroids[0], [1.0, 2.0])
+        np.testing.assert_allclose(centroids[1], [0.0, 0.0])
+
+    def test_empty_polyline_fallback_is_3d_consistent(self) -> None:
+        from luxar.core.group.adders.lines import _sah_polyline_centroids
+
+        v = np.array([[0.0, 0.0, 0.0], [2.0, 4.0, 6.0]], dtype=np.float32)
+        plys = [np.array([], dtype=np.intp), np.array([0, 1], dtype=np.intp)]
+        centroids = _sah_polyline_centroids(v, plys)
+        assert centroids.shape == (2, 3)
+        np.testing.assert_allclose(centroids[0], [0.0, 0.0, 0.0])
+        np.testing.assert_allclose(centroids[1], [1.0, 2.0, 3.0])
+
+    def test_nd_vertices_use_first_three_dims(self) -> None:
+        """>3D input: centroids span the first-3-spatial columns only."""
+        from luxar.core.group.adders.lines import _sah_polyline_centroids
+
+        v = np.array([[0.0, 0.0, 0.0, 9.0], [2.0, 4.0, 6.0, 9.0]], dtype=np.float32)
+        plys = [np.array([0, 1], dtype=np.intp), np.array([], dtype=np.intp)]
+        centroids = _sah_polyline_centroids(v, plys)
+        assert centroids.shape == (2, 3)
+        np.testing.assert_allclose(centroids[0], [1.0, 2.0, 3.0])

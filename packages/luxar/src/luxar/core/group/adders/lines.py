@@ -35,6 +35,28 @@ if TYPE_CHECKING:
     from ..group import Group
 
 
+def _sah_polyline_centroids(
+    vert_arr: np.ndarray,
+    polyline_indices: List[np.ndarray],
+) -> np.ndarray:
+    """Per-polyline spatial centroids for the SAH split, width ``min(3, ndim)``.
+
+    An empty polyline (unreachable via ``identify_polylines``; kept for
+    defensive symmetry with ``median_bsp_polylines``) contributes a zero row
+    of the SAME width as the real rows, so 2D input never builds a ragged
+    array (#901).
+    """
+    return np.array(
+        [
+            vert_arr[p, :3].mean(axis=0)
+            if p.size > 0
+            else np.zeros(min(3, vert_arr.shape[1]))
+            for p in polyline_indices
+        ],
+        dtype=np.float64,
+    )
+
+
 def add_lines_impl(
     group: "Group",
     *,
@@ -206,15 +228,7 @@ def add_lines_impl(
                 if not polyline_indices:
                     polyline_parts: List[List[int]] = []
                 else:
-                    centroids = np.array(
-                        [
-                            vert_arr[p, :3].mean(axis=0)
-                            if p.size > 0
-                            else np.zeros(min(3, vert_arr.shape[1]))
-                            for p in polyline_indices
-                        ],
-                        dtype=np.float64,
-                    )
+                    centroids = _sah_polyline_centroids(vert_arr, polyline_indices)
                     # Cap is per-vertex; SAH gives us per-centroid
                     # parts; we re-aggregate to vertex-count parts.
                     approx_per_poly = max(
