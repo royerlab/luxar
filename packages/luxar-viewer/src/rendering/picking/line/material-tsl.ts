@@ -18,7 +18,7 @@
 import * as THREE from 'three';
 import { uniform, texture } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
-import { linePickWebGPUFactory, type LinePickTSLNodes } from './pick.tsl';
+import { linePickWebGPUFactory } from './pick.tsl';
 import type { CameraAwareMaterial } from '../../materials/_shared/camera-aware-material';
 import { proxyIUniform, type TSLNode } from '../../materials/_shared/tsl-helpers';
 import { getPlaceholderElementTexture } from '../../element-texture-layout';
@@ -36,6 +36,7 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
     uNodeId: TSLNode;
     uPerspectiveLineScale: TSLNode;
     uOrthoLineScale: TSLNode;
+    uSortedIndexSlot: TSLNode;
   };
 
   constructor(config: LinePickingMaterialConfig) {
@@ -55,6 +56,13 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
       uNodeId: uniform(config.nodeId),
       uPerspectiveLineScale: uniform(1.0),
       uOrthoLineScale: uniform(1.0),
+      // Active ordering buffer: 0 = aSortedIndex, 1 = aSortedIndexB.
+      // The pick pass MUST track the visual one — it emits `vElementId`
+      // from the same index, so reading the other buffer resolves hovers
+      // against a stale permutation. Pushed by the depth-sort
+      // coordinator's `syncSortedIndexSlot`, which finds it through
+      // `uniforms` below.
+      uSortedIndexSlot: uniform(0),
     };
 
     this.uniforms = {
@@ -68,6 +76,7 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
       uNodeId: proxyIUniform(this.tslNodes.uNodeId),
       uPerspectiveLineScale: proxyIUniform(this.tslNodes.uPerspectiveLineScale),
       uOrthoLineScale: proxyIUniform(this.tslNodes.uOrthoLineScale),
+      uSortedIndexSlot: proxyIUniform(this.tslNodes.uSortedIndexSlot),
     };
 
     this.toneMapped = false;
@@ -77,7 +86,7 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
     // matches the visual material and documents intent.
     this.forceSinglePass = true;
 
-    linePickWebGPUFactory(this.tslNodes as LinePickTSLNodes, this._currentConfig(), this);
+    linePickWebGPUFactory(this.tslNodes, this._currentConfig(), this);
   }
 
   /**
@@ -115,7 +124,7 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
     cloned.uniforms.uPerspectiveLineScale.value = this.uniforms.uPerspectiveLineScale.value;
     cloned.uniforms.uOrthoLineScale.value = this.uniforms.uOrthoLineScale.value;
     if (cloned._currentConfig().isOrtho) {
-      linePickWebGPUFactory(cloned.tslNodes as LinePickTSLNodes, cloned._currentConfig(), cloned);
+      linePickWebGPUFactory(cloned.tslNodes, cloned._currentConfig(), cloned);
       cloned.needsUpdate = true;
     }
     return cloned as this;
@@ -149,7 +158,7 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
     }
     // Rebuild on projection-mode flip so the unused branch drops.
     if (isOrtho !== prevIsOrtho) {
-      linePickWebGPUFactory(this.tslNodes as LinePickTSLNodes, this._currentConfig(), this);
+      linePickWebGPUFactory(this.tslNodes, this._currentConfig(), this);
       this.needsUpdate = true;
     }
   }
@@ -167,7 +176,7 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
     if (current === next) return;
     this.tslNodes.uLineTex = texture(next);
     this.uniforms.uLineTex = proxyIUniform(this.tslNodes.uLineTex);
-    linePickWebGPUFactory(this.tslNodes as LinePickTSLNodes, this._currentConfig(), this);
+    linePickWebGPUFactory(this.tslNodes, this._currentConfig(), this);
     this.needsUpdate = true;
   }
 }

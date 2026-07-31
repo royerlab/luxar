@@ -478,3 +478,50 @@ describe('LinePickingTSLMaterial sharpness', () => {
 // previous duplicate block here covered the same algorithm with overlapping
 // inputs; all unique cases (asymmetric cap, floor-fractional, negative-clamp)
 // have been merged into the canonical file.
+
+/**
+ * The pick pass emits `vElementId` from the SAME draw-slot → storage-slot
+ * index as the visual pass, so it must read whichever ordering buffer is
+ * currently active. The depth-sort coordinator pushes that through
+ * `applySortedIndexSlotToMaterial`, which reaches a material ONLY via
+ * `material.uniforms.uSortedIndexSlot`.
+ *
+ * REGRESSION GUARD. The three TSL pick materials originally shipped
+ * without this uniform: their `tslNodes` literal omitted it, an
+ * `as …PickTSLNodes` cast at the factory call silenced the type error,
+ * and `sortedIndexNode(undefined)` folds to `int(0)` — a CONSTANT. So
+ * TSL picking silently resolved every hover against `aSortedIndex`
+ * whatever the active slot was, i.e. against a stale permutation after
+ * any flip. The casts are gone (so an omitted NODE is now a compile
+ * error), but `uniforms` is a `Record<string, IUniform>`, so an omitted
+ * PROXY would still be silent — hence this test.
+ */
+describe('picking materials — depth-sort ordering slot', () => {
+  const cases: Array<
+    [string, () => { uniforms: Record<string, THREE.IUniform>; dispose(): void }]
+  > = [
+    ['PointPickingMaterial', () => new PointPickingMaterial({ nodeId: 1 })],
+    ['PointPickingTSLMaterial', () => new PointPickingTSLMaterial({ nodeId: 1 })],
+    ['LinePickingMaterial', () => new LinePickingMaterial({ nodeId: 1 })],
+    ['LinePickingTSLMaterial', () => new LinePickingTSLMaterial({ nodeId: 1 })],
+    ['GSplatPickingMaterial', () => new GSplatPickingMaterial({ nodeId: 1 })],
+    ['GSplatPickingTSLMaterial', () => new GSplatPickingTSLMaterial({ nodeId: 1 })],
+  ];
+
+  for (const [name, make] of cases) {
+    it(`${name} exposes a writable uSortedIndexSlot uniform defaulting to 0`, () => {
+      const material = make();
+      const uniform = material.uniforms.uSortedIndexSlot;
+      expect(uniform, `${name}.uniforms.uSortedIndexSlot is missing`).toBeDefined();
+      // Default 0 matches a freshly attached geometry's slot, so a node
+      // that never sorts is consistent without anyone pushing anything.
+      expect(uniform.value).toBe(0);
+      // Writable THROUGH the record: the TSL wrappers expose a
+      // getter/setter proxy onto the UniformNode, not a plain object, so
+      // a read-back is the only proof the write actually lands.
+      uniform.value = 1;
+      expect(material.uniforms.uSortedIndexSlot.value).toBe(1);
+      material.dispose();
+    });
+  }
+});

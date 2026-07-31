@@ -588,15 +588,26 @@ describe('pool adapter — growth, dispose, byte accounting', () => {
     expect(disposed).toBe(true);
   });
 
-  it('estimateGeometryBytes counts texture + ordering (≈68 B/splat envelope)', () => {
+  it('estimateGeometryBytes counts texture + BOTH ordering buffers (≈72 B/splat envelope)', () => {
     const geom = pool.acquireGSplatsGeometry('node', 1000);
     const capacity = (geom.getAttribute('aSortedIndex').array as Uint32Array).length;
     const bytes = estimateGeometryBytes(geom);
-    // Texture is row-padded, so expect at least capacity × (64 + 4) B
-    // and no more than one extra texture row + static quad overhead.
+
+    // Envelope, for the headline number: 64 B texture (4 texels × 16 B)
+    // + 2 × 4 B for the ordering PAIR.
     const rowBytes = getSplatTextureWidth() * 16;
-    expect(bytes).toBeGreaterThanOrEqual(capacity * 68);
-    expect(bytes).toBeLessThanOrEqual(capacity * 68 + rowBytes + 256);
+    expect(bytes).toBeGreaterThanOrEqual(capacity * 72);
+    expect(bytes).toBeLessThanOrEqual(capacity * 72 + rowBytes + 256);
+
+    // The envelope ALONE cannot see the ordering buffers: texture rows
+    // are padded by up to `rowBytes` (64 KB), which dwarfs 4 B/element,
+    // so dropping a whole ordering buffer still lands inside it. Net out
+    // the texture's exact byte length and the remainder is pinned.
+    const textureBytes = (getSplatTexture(geom)!.image.data as Float32Array).byteLength;
+    const nonTexture = bytes - textureBytes;
+    expect(nonTexture).toBeGreaterThanOrEqual(capacity * 8);
+    // …and nothing beyond the pair except the shared quad + index.
+    expect(nonTexture).toBeLessThanOrEqual(capacity * 8 + 256);
   });
 
   it('charges BOTH ordering buffers from attach, and sorting adds nothing', () => {
@@ -608,7 +619,11 @@ describe('pool adapter — growth, dispose, byte accounting', () => {
     // already carry both — under-reporting here would let the pool
     // over-admit nodes and blow the GPU byte budget.
     expect(geom.getAttribute('aSortedIndexB')).not.toBe(geom.getAttribute('aSortedIndex'));
-    expect(before).toBeGreaterThanOrEqual(capacity * 8);
+    // Net out the texture: `before` is dominated by it (64 B/element plus
+    // up to a 64 KB row pad), so a bare `before >= capacity * 8` would
+    // hold even with the back buffer uncounted.
+    const textureBytes = (getSplatTexture(geom)!.image.data as Float32Array).byteLength;
+    expect(before - textureBytes).toBeGreaterThanOrEqual(capacity * 8);
 
     // A node's first sort no longer allocates anything, so the estimate
     // must not move (the alias-splitting era grew it by one buffer here).
@@ -1348,5 +1363,107 @@ describe('double-buffered ordering apply (atomic swap)', () => {
     expect(pumpSortedIndexOrderingApply(geometry)).toEqual({ more: true, flipped: false });
     expect(pumpSortedIndexOrderingApply(geometry)).toEqual({ more: false, flipped: true });
     expect(Array.from(activeArr(geometry))).toEqual(Array.from(ordering.subarray(0, 8)));
+  });
+});
+
+/**
+ * The whole point of double-buffering, stated as ONE property and tested
+ * against randomized interleavings rather than scripted ones: whatever
+ * the shaders would read at any instant is a COMPLETE permutation of the
+ * live population — every storage slot drawn exactly once, none out of
+ * range.
+ *
+ * The scripted tests above each pin one transition. This pins the
+ * property across the whole reachable state space, including the
+ * combinations nobody thought to script (a resize landing between two
+ * slices, an append while an ordering is held, a cancel one pump before
+ * completion). That mix is what the shipped-then-reverted chunked apply
+ * got wrong: it satisfied every scripted case and still drew a corrupt
+ * permutation 70-80% of frames under a continuous orbit.
+ *
+ * Deterministic (seeded LCG), so a failure reproduces exactly from the
+ * printed seed/step/op.
+ */
+describe('ordering invariant — randomized interleavings', () => {
+  function prng(seed: number): () => number {
+    let s = seed >>> 0;
+    return () => (s = (s * 1664525 + 1013904223) >>> 0) / 2 ** 32;
+  }
+  function shuffled(n: number, r: () => number): Uint32Array {
+    const a = Uint32Array.from({ length: n }, (_, i) => i);
+    for (let i = n - 1; i > 0; i--) {
+      const j = Math.floor(r() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+  }
+  /** null when `a[0, n)` is a permutation of `[0, n)`, else why not. */
+  function permError(a: Uint32Array, n: number): string | null {
+    const seen = new Uint8Array(n);
+    for (let i = 0; i < n; i++) {
+      const v = a[i];
+      if (v >= n) return `slot ${i} -> ${v} out of range (n=${n})`;
+      if (seen[v]) return `storage ${v} drawn twice (slot ${i})`;
+      seen[v] = 1;
+    }
+    return null;
+  }
+
+  it('the DRAWN ordering is a whole permutation after every operation', () => {
+    configureSortedIndexChunkedApply(true);
+    const opTally: Record<string, number> = {};
+    let checks = 0;
+
+    for (let seed = 1; seed <= 400; seed++) {
+      const r = prng(seed);
+      // Small chunks so a stream spans many frames — the window the
+      // single-buffer apply corrupted.
+      setSortedIndexChunkElementsForTests(1 + Math.floor(r() * 5));
+      const capacityRequest = 64;
+      const geometry = new THREE.InstancedBufferGeometry();
+      attachSplatStorage(geometry, capacityRequest);
+      let n = 1 + Math.floor(r() * 24);
+      writeSortedIndexIdentity(geometry, n);
+
+      for (let step = 0; step < 40; step++) {
+        const roll = r();
+        let op: string;
+        if (roll < 0.3) {
+          op = 'sort';
+          writeSortedIndexOrdering(geometry, shuffled(n, r), n);
+        } else if (roll < 0.7) {
+          op = 'pump';
+          pumpSortedIndexOrderingApply(geometry);
+        } else if (roll < 0.8) {
+          op = 'cancel';
+          cancelSortedIndexOrderingApply(geometry);
+        } else if (roll < 0.9) {
+          op = 'commit-resize';
+          n = 1 + Math.floor(r() * 24);
+          writeSortedIndexIdentity(geometry, n);
+        } else {
+          op = 'append';
+          const from = n;
+          const grown = Math.min(capacityRequest, n + 1 + Math.floor(r() * 8));
+          writeSortedIndexIdentityRange(geometry, from, grown);
+          n = grown;
+        }
+        opTally[op] = (opTally[op] ?? 0) + 1;
+
+        const drawn = getActiveSortedIndexAttribute(geometry)!.array as Uint32Array;
+        const err = permError(drawn, n);
+        checks++;
+        expect(
+          err,
+          `seed=${seed} step=${step} op=${op} n=${n} slot=${activeSortedIndexSlot(geometry)}`
+        ).toBeNull();
+      }
+    }
+
+    // Non-vacuity: the run really visited every op class, many times.
+    expect(checks).toBe(400 * 40);
+    for (const op of ['sort', 'pump', 'cancel', 'commit-resize', 'append']) {
+      expect(opTally[op] ?? 0, `op '${op}' never exercised`).toBeGreaterThan(50);
+    }
   });
 });

@@ -159,7 +159,10 @@ export class NodeFactory {
         // (or become it when an in-flight stream completes). Marking only
         // the front buffer would leave a freshly-flipped back buffer
         // reading as zeros. attachElementStorage allocates them as two
-        // DISTINCT buffers, so both need the full re-upload.
+        // DISTINCT buffers, so both need the full re-upload. The active
+        // SLOT is deliberately left alone: the buffer it points at still
+        // holds a whole permutation, so resetting it would swap in the
+        // other, staler one.
         for (const name of ['aSortedIndex', 'aSortedIndexB']) {
           const idx = geom.getAttribute(name) as THREE.InstancedBufferAttribute | undefined;
           if (idx) {
