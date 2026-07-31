@@ -110,6 +110,7 @@ export interface PointsAdapterHost {
   _lastAcquireRebuilt: boolean;
   getBucket(count: number): number;
   evictUnused(fromAcquire?: boolean): number;
+  registerPooledGeometryInvalidation(geometry: THREE.BufferGeometry): void;
 }
 
 export class PointsBufferAdapter {
@@ -128,7 +129,11 @@ export class PointsBufferAdapter {
     pointCount = clampPointCapacity(pointCount);
 
     const active = host.activeBuffers.get(nodeId);
-    if (active && active.type === 'points') {
+    // `luxarInvalidated` guards against a geometry whose out-of-band
+    // `dispose()` already fired (the pool's self-invalidation listener
+    // normally deletes the entry, so `active` is usually undefined here —
+    // this is defense-in-depth against an ordering where it survived).
+    if (active && active.type === 'points' && !active.geometry.userData.luxarInvalidated) {
       if (active.capacity >= pointCount) {
         active.lastUsedFrame = host.frameCount;
         host.stats.reuses++;
@@ -197,6 +202,10 @@ export class PointsBufferAdapter {
     for (const pooled of this.pointBuffers.values()) {
       for (let i = pooled.length - 1; i >= 0; i--) {
         const candidate = pooled[i];
+        // Skip a free-bucket resident whose out-of-band dispose already
+        // fired (see registerPooledGeometryInvalidation): adopting it
+        // would resurrect the #689 use-after-dispose through the free list.
+        if (candidate.geometry.userData.luxarInvalidated) continue;
         if (candidate.capacity >= pointCount && candidate.capacity < bestCapacity) {
           bestList = pooled;
           bestIndex = i;
@@ -226,6 +235,10 @@ export class PointsBufferAdapter {
     // the chosen capacity too (still >= pointCount, which was clamped).
     const capacity = clampPointCapacity(chooseCapacity(pointCount));
     const geometry = createPointsGeometry(capacity);
+    // Self-invalidation: if this pool-owned geometry is disposed
+    // out-of-band (scene-graph teardown calls geometry.dispose() directly),
+    // drop its activeBuffers entry so a later acquire can't hand it back.
+    host.registerPooledGeometryInvalidation(geometry);
 
     const newBuffer: PooledBuffer = {
       geometry,
@@ -480,11 +493,14 @@ export class PointsBufferAdapter {
   }
 
   dispose(): void {
+    // Drain the buckets BEFORE disposing: dispose() fires the pool's
+    // self-invalidation listener, which splices free-bucket arrays —
+    // clearing first keeps it a no-op here (see GPUBufferPool.dispose).
+    const geometries: THREE.BufferGeometry[] = [];
     for (const buffers of this.pointBuffers.values()) {
-      for (const buffer of buffers) {
-        buffer.geometry.dispose();
-      }
+      for (const buffer of buffers) geometries.push(buffer.geometry);
     }
     this.pointBuffers.clear();
+    for (const geometry of geometries) geometry.dispose();
   }
 }

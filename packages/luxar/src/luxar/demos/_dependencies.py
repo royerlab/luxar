@@ -46,7 +46,10 @@ class DependencySpec(NamedTuple):
     #: PEP 440 requirement to advertise, e.g. ``anndata>=0.10,<0.13``. MUST stay
     #: equivalent to the corresponding pin in ``pyproject.toml``.
     spec: str
-    #: Luxar extra that installs it with the right constraints already applied.
+    #: Luxar extra this spec is ATTRIBUTED to (``""`` for specs in no extra). A
+    #: package pinned in two extras (e.g. ``tifffile`` in both ``io`` and
+    #: ``demos``) records only one here, so filtering by extra reports what is
+    #: attributed to it, not everything installing that extra would pull in.
     extra: str
     #: Optional explanation, used when the bound is load-bearing or when a warm
     #: cache makes the dependency skippable.
@@ -230,9 +233,11 @@ def survey(extra: str | None = None) -> list[DependencyStatus]:
     """Report install status for every known optional dependency.
 
     Args:
-        extra: Restrict to specs provided by this Luxar extra (``"demos"``,
-            ``"io"``, ``"gsplats"``). ``None`` surveys the whole table,
-            including the specs that deliberately belong to no extra.
+        extra: Restrict to specs ATTRIBUTED to this Luxar extra (``"demos"``,
+            ``"io"``, ``"gsplats"``) — i.e. recorded under it in the table, not
+            every spec installing the extra would pull in (a package pinned in
+            two extras is attributed to only one). ``None`` surveys the whole
+            table, including the specs that deliberately belong to no extra.
 
     Returns:
         One :class:`DependencyStatus` per spec, sorted case-insensitively by
