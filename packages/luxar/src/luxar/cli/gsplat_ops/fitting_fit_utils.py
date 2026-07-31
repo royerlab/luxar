@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+import socket
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Optional
@@ -16,6 +19,31 @@ from .fitting_recipe_args import (
 
 if TYPE_CHECKING:
     pass
+
+
+def _invocation_token() -> str:
+    """Unique per-invocation token for parallel-fit staging paths.
+
+    host+pid alone can collide — two threads in one process share a pid, and
+    containers with identical (user-set) hostnames and PID-namespaced pids can
+    mount the same output directory — so a random component guarantees the
+    token is unique per invocation. host+pid are kept for diagnosability
+    (a retained staging dir names the run that produced it).
+    """
+    return f"{socket.gethostname()}-{os.getpid()}-{uuid.uuid4().hex[:8]}"
+
+
+def _parallel_staging_dir(output_path: Path, token: str) -> Path:
+    """Per-invocation staging dir for the parallel tiled fit.
+
+    ``fit_tiled_parallel`` clean-slates (``rmtree`` + ``mkdir``) whatever
+    ``tmp_dir`` it is handed, so a directory derived only from the output
+    path would let two concurrent ``fit -j`` runs to the SAME output delete
+    each other's in-progress tiles. Appending a unique per-invocation
+    ``token`` gives each invocation its own dir, so it only ever cleans its
+    OWN tiles.
+    """
+    return output_path.parent / f".{output_path.name}.tiles.{token}"
 
 
 @dataclass
@@ -475,7 +503,10 @@ def dispatch_parallel_tiled(
                 allow_empty_tile=True,
             )
 
-        tmp_dir = ctx.output_path.parent / f".{ctx.output_path.name}.tiles"
+        # Per-invocation staging (unique token): so concurrent `fit -j`
+        # runs targeting one output can't clobber each other's in-progress
+        # tiles — the helper clean-slates only its OWN unique dir.
+        tmp_dir = _parallel_staging_dir(ctx.output_path, _invocation_token())
         merge_cull = fit_config.get("cull_retention")
 
         with asection("Optimization (parallel tiles)"):
