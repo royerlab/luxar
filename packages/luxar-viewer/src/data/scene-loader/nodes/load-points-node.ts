@@ -165,6 +165,11 @@ export async function loadPointsNodeExpensive(
     // updateView() / retry calls use.
     ctx.updatePointsGeometry(node.path, data, undefined, loadedViewVersion);
 
+    // A settled successful (re)load clears any prior failure record so a
+    // recovered lazy level stops counting against the outcome report and the
+    // auto-retry budget. No-op on a first successful load. Symmetric with the
+    // catch's recordFailure.
+    ctx.registry.clearFailure(node.path);
     log.success(Modules.SCENE_LOADER, `Loaded ${data.pointCount} points for ${node.path}`);
   } catch (error) {
     // Expected dispose-crossing: a read that passed its abort check can

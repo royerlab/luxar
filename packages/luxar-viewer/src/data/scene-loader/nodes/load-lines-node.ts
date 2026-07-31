@@ -156,6 +156,11 @@ export async function loadLinesNodeExpensive(
     if (!ctx.isDatasetLive()) return;
     if (staged) ctx.commitLinesGeometry(staged, undefined, loadedViewVersion);
 
+    // A settled successful (re)load clears any prior failure record so a
+    // recovered lazy level stops counting against the outcome report and the
+    // auto-retry budget. No-op on a first successful load. Symmetric with the
+    // catch's recordFailure.
+    ctx.registry.clearFailure(node.path);
     log.success(Modules.SCENE_LOADER, `Loaded ${data.segmentCount} segments for ${node.path}`);
   } catch (error) {
     // Expected dispose-crossing — see the load-points-node.ts twin.

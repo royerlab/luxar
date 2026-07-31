@@ -167,12 +167,17 @@ export async function retryFailedLoaderUnlocked(path: string, ctx: RetryCtx): Pr
       // without this fallback their records would be discarded below and
       // lazy levels would be unretryable through this API. Re-kick the
       // level's deferred loader instead.
+      //
       // Fire-and-forget semantics: `true` means "retry started" (the thunk
-      // owns the ready/failed outcome; a repeat failure re-records itself
-      // via recordFailure in the expensive half, so bookkeeping stays
-      // consistent).
+      // owns the ready/failed outcome). KEEP the failure record across the
+      // kick — deleting it here reset `autoRetryCount` to 0 on the next
+      // `recordFailure`, so `MAX_AUTO_RETRY_ATTEMPTS` never bound a lazy
+      // level and a permanently-failing one (e.g. a 404 that classifies
+      // `Network`) was re-kicked on every `online` transition forever. On
+      // success the lazy loader clears the record
+      // (load-{points,lines,gsplats}-node.ts); on a repeat failure
+      // `recordFailure` preserves the accumulated counter.
       if (ctx.lodGroupRegistry?.retryLazyChildByLeafPath(path)) {
-        registry.failedLoaders.delete(path);
         log.info(Modules.SCENE_LOADER, `Retry kicked for lazy LOD level: ${path}`);
         return true;
       }
