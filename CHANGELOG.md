@@ -47,9 +47,13 @@ node resolved to a neighbouring element, silently.
 The index is now split into two 16-bit halves in INT space
 (`luxarElementIdParts` in `glsl-lib.ts` and its TSL twin), carried in the
 `g` (low) and `a` (high) channels — `a` was an unused constant 1.0, and pick
-materials are `NoBlending`, so it was free. Both halves are ≤ 65535 and
-therefore exact, making the round-trip exact across the whole `uint32`
-range. The vote key scales by 2^32 instead of 2^24 to match: with the old
+materials are `NoBlending`, so the blend stage cannot touch it. `NoBlending`
+alone is not sufficient, though: THREE's NodeMaterial appends
+`DiffuseColor.w *= material.opacity` inside the fragment body, which would
+scale the high half on the TSL path (the hand-written GLSL twins have no such
+tail). The pick factories therefore pin `.opacity = 1` so that multiply is
+provably identity. Both halves are ≤ 65535 and therefore exact, making the
+round-trip exact across the whole `uint32` range. The vote key scales by 2^32 instead of 2^24 to match: with the old
 multiplier, `(nodeId 1, element 2^24)` and `(nodeId 2, element 0)` hashed to
 the same bucket and merged their votes.
 
