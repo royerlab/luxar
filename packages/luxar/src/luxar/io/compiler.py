@@ -68,6 +68,7 @@ from ._compiler.geometry_writers.gsplats import write_gsplats as _write_gsplats_
 from ._compiler.geometry_writers.lines import write_lines as _write_lines_impl
 from ._compiler.geometry_writers.points import write_points as _write_points_impl
 from ._compiler.gsplat_assembly import apply_gsplat_group_attrs
+from ._compiler.node_common import prepare_transform_attrs as _prepare_transform_attrs
 from ._compiler.node_common import validate_node_path as _validate_node_path
 from ._compiler.node_common import validate_render_attrs as _validate_render_attrs
 
@@ -342,9 +343,20 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
 
         Args:
             path: Path for the group within the store
-            **attrs: Attributes to attach to the group
+            **attrs: Attributes to attach to the group. The internal
+                ``_transform_normalized`` flag (set by the Node/Scene API, which
+                normalizes ``transform``/``nd_transform`` itself before calling
+                this method) is consumed here and never persisted; it suppresses
+                the transform normalization below so a Node-supplied, already
+                column-major matrix is not transposed a second time.
         """
         self._check_not_finalized("write_group")
+        # The Node/Scene API pre-normalizes transforms (its attrs cache stores
+        # the column-major form for the ``transform`` getter) and flags the call
+        # so we don't transpose/validate a second time. Raw compiler-API callers
+        # (``compiler.write_group(...)``) never set this flag and go through the
+        # normalization gate below (issue #678).
+        transform_already_normalized = bool(attrs.pop("_transform_normalized", False))
         # Fail fast on invalid render attrs BEFORE creating the group (same
         # contract as the geometry writers; the Node path validates earlier,
         # this covers the raw compiler API). The scene root ("/") and actual
@@ -368,6 +380,14 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 "overlays/"
             )
         _validate_render_attrs(attrs, reject_unknown=not is_internal_namespace)
+        # Normalize transform (NumPy→THREE.js column-major, reject NaN/Inf/
+        # non-affine) and validate nd_transform BEFORE the group is created,
+        # so a bad transform fails fast without leaving a partial node. Only
+        # the incoming attrs are normalized; already-stored group attrs are
+        # merged below and stay untouched (no double-transpose). Skipped when
+        # the Node/Scene API already normalized (see the flag above).
+        if not transform_already_normalized:
+            _prepare_transform_attrs(attrs, self.store)
         # Handle root path
         if path == "/" or path == "":
             group = self.store
@@ -620,6 +640,12 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
 
         # Fail fast on invalid render attrs BEFORE creating the parent group.
         _validate_render_attrs(attrs)
+        # Normalize/validate the parent transform + nd_transform before the
+        # group is created. The per-level subgroups get their own default
+        # attrs (via write_points), NOT these parent attrs, so the transform is
+        # normalized exactly once here — safe despite prepare_transform_attrs
+        # being non-idempotent.
+        _prepare_transform_attrs(attrs, self.store)
 
         # Validate every path segment (rejects empty/dot-prefixed names —
         # the F1/F5 chokepoint) + strip the leading slash.
@@ -712,6 +738,12 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
 
         # Fail fast on invalid render attrs BEFORE creating the parent group.
         _validate_render_attrs(attrs)
+        # Normalize/validate the parent transform + nd_transform before the
+        # group is created. The per-level subgroups get their own default
+        # attrs (via write_lines), NOT these parent attrs, so the transform is
+        # normalized exactly once here — safe despite prepare_transform_attrs
+        # being non-idempotent.
+        _prepare_transform_attrs(attrs, self.store)
 
         # Validate every path segment (rejects empty/dot-prefixed names —
         # the F1/F5 chokepoint) + strip the leading slash.
