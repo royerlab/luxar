@@ -79,6 +79,11 @@ Key behaviours:
   in-flight metadata save is awaited before the final flush.
 - **Per-call timeout** — every OPFS call goes through `withTimeout` so a
   hung browser handle cannot stall the cache indefinitely.
+- **Missing-file delete reconciliation** — `delete()` treats `NotFoundError` as
+  logical success, removes the stale index/size entry, and schedules the repaired
+  metadata snapshot for persistence. A phantom LRU head therefore cannot wedge
+  max-size or quota eviction or reappear next session. Other I/O failures preserve
+  state for a safe retry.
 - **Health counters** — `oversizedWriteSkipped`, `quotaWriteSkipped`,
   `evictions`, `writeFailures`, `corruptedEntries`,
   `metadataParseFailures`, `orphanedFilesRemoved` are surfaced via
