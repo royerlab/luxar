@@ -12,15 +12,19 @@ and the UMAP cache must carry the accessions the naming needs.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from luxar.demos import demo_protein_embeddings_cafa5 as demo
 from luxar.demos.demo_protein_embeddings_cafa5 import (
     UNNAMED_CLUSTER_LABEL,
+    disambiguate_cluster_names,
     enriched_cluster_names,
     load_cached_umap,
+    select_bundle_files,
 )
 
 # Categories mirroring the UniProt vocabulary: "Technical term" entries are the
@@ -217,3 +221,263 @@ class TestUmapCache:
 
     def test_missing_cache_returns_none(self, tmp_path: Path) -> None:
         assert load_cached_umap(tmp_path / "absent.npz") is None
+
+
+class TestDisambiguateClusterNames:
+    def test_repeated_names_are_suffixed_with_the_cluster_index(self) -> None:
+        """Several clusters can be ``Mixed``; the legend needs one row each.
+
+        The suffix is the cluster INDEX, not a running counter, so a legend row,
+        a hover label and the console log all point at the same cluster.
+        """
+        assert disambiguate_cluster_names(["Signal", "Mixed", "Nucleus", "Mixed"]) == [
+            "Signal",
+            "Mixed (1)",
+            "Nucleus",
+            "Mixed (3)",
+        ]
+
+    def test_unique_names_are_left_alone(self) -> None:
+        names = ["Signal", "Nucleus", "Mixed"]
+        assert disambiguate_cluster_names(names) == names
+
+    def test_result_is_always_distinct(self) -> None:
+        out = disambiguate_cluster_names(["Mixed"] * 5)
+        assert len(set(out)) == 5
+
+
+class TestSelectBundleFiles:
+    """The accessions file must be chosen by MATCHING the embedding count.
+
+    Picking it by file size (as an earlier revision did) is only right while
+    every candidate shares a string width: a wider dtype makes a shorter array
+    the largest file, which would pair every coordinate with the wrong protein
+    and turn naming into confident nonsense.
+    """
+
+    def _bundle(self, root: Path, *, n_main: int = 40, n_subset: int = 5) -> None:
+        root.mkdir(parents=True, exist_ok=True)
+        np.save(root / "train_embeddings.npy", np.zeros((n_main, 4), dtype=np.float32))
+        np.save(root / "train_ids.npy", np.array([f"P{i:05d}" for i in range(n_main)]))
+        sub = root / "subset"
+        sub.mkdir(exist_ok=True)
+        np.save(sub / "train_embeddings.npy", np.zeros((n_subset, 4), dtype=np.float32))
+        np.save(sub / "train_ids.npy", np.array([f"Q{i}" for i in range(n_subset)]))
+
+    def test_picks_the_pair_that_matches(self, tmp_path: Path) -> None:
+        self._bundle(tmp_path)
+        embeddings, ids = select_bundle_files(tmp_path)
+        assert embeddings.name == "train_embeddings.npy"
+        assert embeddings.parent == tmp_path
+        assert ids is not None and len(np.load(ids)) == 40
+
+    def test_a_wider_but_shorter_ids_file_does_not_win(self, tmp_path: Path) -> None:
+        """The regression this function exists for.
+
+        ``decoy_train_ids.npy`` is the LARGEST ids file on disk (30 very long
+        strings) but has the wrong length; size-based selection would take it.
+        """
+        self._bundle(tmp_path)
+        np.save(
+            tmp_path / "decoy_train_ids.npy",
+            np.array(["X" * 400 for _ in range(30)]),
+        )
+        decoy = tmp_path / "decoy_train_ids.npy"
+        real = tmp_path / "train_ids.npy"
+        assert decoy.stat().st_size > real.stat().st_size, "decoy must be bigger"
+
+        _embeddings, ids = select_bundle_files(tmp_path)
+
+        assert ids == real
+
+    def test_no_matching_ids_file_returns_none(self, tmp_path: Path) -> None:
+        """Better to report "cannot name" than to mispair silently."""
+        tmp_path.mkdir(parents=True, exist_ok=True)
+        np.save(tmp_path / "train_embeddings.npy", np.zeros((40, 4), dtype=np.float32))
+        np.save(tmp_path / "train_ids.npy", np.array(["a", "b", "c"]))
+
+        _embeddings, ids = select_bundle_files(tmp_path)
+
+        assert ids is None
+
+    def test_missing_embeddings_raise(self, tmp_path: Path) -> None:
+        tmp_path.mkdir(parents=True, exist_ok=True)
+        with pytest.raises(FileNotFoundError):
+            select_bundle_files(tmp_path)
+        np.save(tmp_path / "unrelated.npy", np.zeros(3))
+        with pytest.raises(FileNotFoundError, match="train_embeddings"):
+            select_bundle_files(tmp_path)
+
+
+class TestKeywordCacheDurability:
+    """A cache is derived data: a truncated one must be refetched, not trusted.
+
+    Writing it in place meant a run killed mid-write left JSON that raises on
+    every later read — which naming caught and turned into a permanent, silent
+    downgrade to generic `Cluster N` labels with nothing pointing at the file.
+    """
+
+    def test_truncated_cache_is_discarded_and_refetched(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        cache = tmp_path / "uniprot_keywords.json"
+        cache.write_text('{"P1": ["Hydrolase"], "P2": ["Nu')
+        monkeypatch.setattr(
+            demo, "_uniprot_keyword_batch", lambda batch: {a: ["Signal"] for a in batch}
+        )
+
+        keywords = demo.fetch_uniprot_keywords(["P1", "P2"], tmp_path)
+
+        assert keywords == {"P1": ["Signal"], "P2": ["Signal"]}
+        assert json.loads(cache.read_text()) == keywords
+
+    def test_non_dict_cache_is_discarded(self, tmp_path: Path) -> None:
+        path = tmp_path / "c.json"
+        path.write_text("[1, 2, 3]")
+        assert demo._read_json_cache(path) is None
+
+    def test_write_leaves_no_staging_file(self, tmp_path: Path) -> None:
+        target = tmp_path / "nested" / "c.json"
+        demo._write_json_atomic(target, {"a": [1]})
+        assert json.loads(target.read_text()) == {"a": [1]}
+        assert not list(tmp_path.rglob("*.part"))
+
+    def test_destination_is_untouched_until_the_rename(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """The point of staging: a failed write must not damage the old cache.
+
+        Discriminates against writing in place — an in-place ``write_text`` never
+        reaches ``os.replace``, so the destination would already be clobbered by
+        the time the failure surfaced.
+        """
+        target = tmp_path / "c.json"
+        target.write_text('{"previous": ["value"]}')
+
+        def _fail(_src, _dst):
+            raise OSError("rename failed")
+
+        monkeypatch.setattr(demo.os, "replace", _fail)
+        with pytest.raises(OSError, match="rename failed"):
+            demo._write_json_atomic(target, {"new": ["value"]})
+
+        assert json.loads(target.read_text()) == {"previous": ["value"]}
+
+
+class TestKeywordVocabulary:
+    """The category vocabulary is what keeps `3D-structure` from naming a cluster.
+
+    Silently caching an empty vocabulary would disable the filter entirely, so
+    every provenance keyword would become an eligible name.
+    """
+
+    def test_empty_vocabulary_raises_and_is_not_cached(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        monkeypatch.setattr(
+            demo, "_http_get_paged", lambda url, **_kw: ("header\n", "")
+        )
+
+        with pytest.raises(ValueError, match="empty keyword vocabulary"):
+            demo.fetch_keyword_categories(tmp_path)
+
+        assert not (tmp_path / "uniprot_keyword_categories.json").exists()
+
+    def test_pages_are_followed_and_never_repeated(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """A cursor that never advances must terminate, not spin forever."""
+        seen: list[str] = []
+
+        def _paged(url, **_kw):
+            seen.append(url)
+            # Always advertise the SAME url as "next" — a server-side bug that an
+            # unbounded `while url` loop would follow indefinitely.
+            return (
+                "id\tname\tcategory\nKW-1\tHydrolase\tMolecular function\n",
+                '<https://stuck>; rel="next"',
+            )
+
+        monkeypatch.setattr(demo, "_http_get_paged", _paged)
+        categories = demo.fetch_keyword_categories(tmp_path)
+
+        assert categories == {"Hydrolase": "Molecular function"}
+        assert len(seen) == 2, (
+            f"followed {len(seen)} pages, expected to stop at the repeat"
+        )
+
+    def test_page_cap_bounds_a_runaway_cursor(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        counter = {"n": 0}
+
+        def _paged(_url, **_kw):
+            counter["n"] += 1
+            return (
+                f"id\tname\tcategory\nKW-{counter['n']}\tK{counter['n']}\tLigand\n",
+                f'<https://page/{counter["n"]}>; rel="next"',
+            )
+
+        monkeypatch.setattr(demo, "_http_get_paged", _paged)
+        categories = demo.fetch_keyword_categories(tmp_path)
+
+        assert counter["n"] == demo.KEYWORD_VOCABULARY_MAX_PAGES
+        assert len(categories) == demo.KEYWORD_VOCABULARY_MAX_PAGES
+
+    def test_a_failing_batch_is_skipped_not_raised(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """Partial coverage still names the landscape; losing it all does not."""
+        monkeypatch.setattr(demo, "UNIPROT_BACKOFF_SECONDS", 0.0)
+        calls: list[int] = []
+
+        def _flaky(batch):
+            calls.append(len(batch))
+            if "P1" in batch:
+                raise OSError("rate limited")
+            return {a: ["Signal"] for a in batch}
+
+        monkeypatch.setattr(demo, "_uniprot_keyword_batch", _flaky)
+
+        keywords = demo.fetch_uniprot_keywords(["P1", "P2"], tmp_path, batch_size=1)
+
+        # P1's batch exhausted its attempts and was skipped; P2 still resolved.
+        assert "P1" not in keywords
+        assert keywords["P2"] == ["Signal"]
+        assert calls.count(1) == demo.UNIPROT_MAX_ATTEMPTS + 1
+
+    def test_unresolved_accessions_are_dropped_from_the_sample(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """An accession that never resolved is absence of evidence.
+
+        Counting it as "no keywords" would dilute the frequency of every cluster
+        it landed in, dragging real enrichment below the lift threshold.
+        """
+        monkeypatch.setattr(demo, "fetch_keyword_categories", lambda _dir: CATEGORIES)
+        # Only the first cluster's members resolve.
+        resolved = {f"A{i}": ["Hydrolase"] for i in range(30)}
+        monkeypatch.setattr(
+            demo, "fetch_uniprot_keywords", lambda _acc, _dir: dict(resolved)
+        )
+        cluster_ids = np.array([0] * 30 + [1] * 30)
+        protein_ids = [f"A{i}" for i in range(30)] + [f"B{i}" for i in range(30)]
+
+        names = demo.name_clusters(cluster_ids, protein_ids, tmp_path)
+
+        # Cluster 1 contributed nothing, so cluster 0 is not measured against a
+        # diluted background and Hydrolase cannot be "enriched" versus itself.
+        assert names[1] == UNNAMED_CLUSTER_LABEL
+        assert len(names) == 2
+
+    def test_nothing_resolving_falls_back_to_generic_labels(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        monkeypatch.setattr(demo, "fetch_keyword_categories", lambda _dir: CATEGORIES)
+        monkeypatch.setattr(demo, "fetch_uniprot_keywords", lambda _acc, _dir: {})
+
+        names = demo.name_clusters(
+            np.array([0, 0, 1, 1]), ["a", "b", "c", "d"], tmp_path
+        )
+
+        assert names == ["Cluster 0", "Cluster 1"]

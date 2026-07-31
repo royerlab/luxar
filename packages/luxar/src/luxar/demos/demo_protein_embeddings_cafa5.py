@@ -45,10 +45,11 @@ sample of each cluster's members is looked up in the UniProt REST API, and the
 cluster is named after the UniProt keyword most **over-represented** in it
 relative to the pooled sample (lift = P(keyword | cluster) / P(keyword | all)).
 
-That turns "Cluster 3" into "Transit peptide" or "G protein-coupled receptor" —
-a name derived from the data, recomputed every run, never hardcoded (UMAP is
+That turns "Cluster 2" into "Transit peptide" and "Cluster 5" into "Transducer"
+— names derived from the data, recomputed every run, never hardcoded (UMAP is
 not seeded, so cluster identity is not stable across runs). Clusters with no
-keyword clearly above background are honestly labelled "Mixed".
+keyword clearly above background are honestly labelled "Mixed"; on the full
+dataset 13 of the 14 regions earn a name.
 
 VISUALIZATION STRATEGY:
 -----------------------
@@ -61,8 +62,8 @@ This demo:
 WHAT YOU'LL SEE:
 - Named functional territories rather than anonymous colored blobs
 - Secreted / signal-peptide proteins separated from cytoplasmic ones
-- Organelle-targeted proteins (transit peptide, mitochondrion) as their own region
-- Receptors / GPCRs as a distinct island
+- Organelle-targeted proteins (transit peptide, mitochondrion) as their own regions
+- A signal-transducer island, well away from the cytoplasmic bulk
 - Hover a point for its UniProt accession and cluster name
 
 DATASET: CAFA5 (Kaggle)
@@ -110,6 +111,7 @@ DEMO_META = {
 
 import gzip
 import json
+import os
 import sys
 import tempfile
 import time
@@ -134,10 +136,12 @@ from luxar.utils.paths import get_demos_output_dir
 DEFAULT_SAMPLE_SIZE = None  # Use all 142k proteins by default
 
 #: k-means regions carved out of the 3D landscape. 14 rather than 10 because it
-#: is what the naming actually resolves: measured over 5 resamplings of the real
-#: dataset, 14 regions yield 12 named / 13 stable, and they separate specific
-#: biology (Chloroplast, Mitochondrion, Cell wall, Transducer) that 10 regions
-#: blur into generic "Nucleus" / "Cytoplasm" territories (8 named / 7 stable).
+#: is what the naming actually resolves: the shipped run names 13 of 14 regions,
+#: separating specific biology (Mitochondrion 7.8x, Transit peptide 7.5x,
+#: Glycosidase 5.7x, Transducer 10.3x) that 10 regions blur into generic
+#: "Nucleus" / "Cytoplasm" territories. Comparing the two over 5 resamplings of
+#: the annotated subset, 14 regions held 12-13 named and 13/14 names identical
+#: across seeds, against 8-9 named and 5/10 identical at 10 regions.
 N_CLUSTERS = 14
 
 #: Colors for the landscape clusters — a full hue sweep, one per cluster, with
@@ -173,12 +177,15 @@ UNIPROT_USER_AGENT = "luxar-demo/1.0 (https://github.com/royerlab/luxar)"
 UNIPROT_MAX_ATTEMPTS = 4
 UNIPROT_BACKOFF_SECONDS = 5.0
 
+#: Page cap for the keyword vocabulary (~1,200 entries at 500 per page).
+KEYWORD_VOCABULARY_MAX_PAGES = 20
+
 #: Proteins sampled per cluster and looked up in UniProt to name the cluster —
 #: far cheaper than annotating all 142k, and enough to rank keywords reliably.
 #: Not smaller: correlated keywords ("Nucleus" / "Transcription" / "DNA-binding"
 #: all describe the same territory) sit close enough in score that a few hundred
 #: samples let resampling noise decide between them. Measured over 5 resamplings
-#: of the real dataset, 400/cluster keeps only 6 of 14 names identical, while
+#: of the annotated subset, 400/cluster keeps only 6 of 14 names identical, while
 #: 1600/cluster keeps 13 of 14.
 NAMING_SAMPLE_PER_CLUSTER = 1600
 
@@ -289,6 +296,51 @@ def download_cafa5_dataset(output_dir: Path) -> Path:
 # =============================================================================
 
 
+def select_bundle_files(data_dir: Path) -> tuple[Path, Path | None]:
+    """Resolve the CAFA5 bundle's embeddings file and its matching accessions.
+
+    The bundle ships more than one ``train_*.npy`` pair (the full 142,246-protein
+    set at the top level, a 1,387-protein CAFA1 subset under ``CAFA1_pT5/``), so
+    the embeddings file is the largest candidate. The accessions file is then
+    chosen by **matching the embedding count**, not by size: size orders by
+    protein count only while every candidate shares a string width, and picking
+    a mismatched ids file would pair each coordinate with the wrong accession —
+    which cluster naming would turn into confident, entirely wrong names.
+
+    Args:
+        data_dir: Directory containing the extracted CAFA5 data.
+
+    Returns:
+        ``(embeddings_path, ids_path)``; ``ids_path`` is ``None`` when the bundle
+        carries no accessions file whose length matches the embeddings.
+
+    Raises:
+        FileNotFoundError: If no embeddings file is present.
+    """
+    npy_files = list(data_dir.rglob("*.npy"))
+    if not npy_files:
+        raise FileNotFoundError(f"No .npy files found in {data_dir}")
+
+    embedding_candidates = [
+        f for f in npy_files if "embeddings" in f.name and "train" in f.name
+    ]
+    if not embedding_candidates:
+        raise FileNotFoundError("Could not find train_embeddings.npy")
+    embedding_file = max(embedding_candidates, key=lambda f: f.stat().st_size)
+    n_proteins = len(np.load(embedding_file, mmap_mode="r"))
+
+    ids_file: Path | None = None
+    for candidate in sorted(
+        (f for f in npy_files if "ids" in f.name and "train" in f.name),
+        key=lambda f: -f.stat().st_size,
+    ):
+        if len(np.load(candidate, mmap_mode="r")) == n_proteins:
+            ids_file = candidate
+            break
+
+    return embedding_file, ids_file
+
+
 def load_protein_embeddings(
     data_dir: Path,
     sample_size: int | None = None,
@@ -308,28 +360,7 @@ def load_protein_embeddings(
         Tuple of (embeddings, protein_ids)
     """
     with asection("Loading CAFA5 protein embeddings"):
-        # Find the embedding files
-        npy_files = list(data_dir.rglob("*.npy"))
-
-        if not npy_files:
-            raise FileNotFoundError(f"No .npy files found in {data_dir}")
-
-        # Find the LARGEST train_embeddings.npy (main dataset, not subsets)
-        embedding_candidates = [
-            f for f in npy_files if "embeddings" in f.name and "train" in f.name
-        ]
-        ids_candidates = [f for f in npy_files if "ids" in f.name and "train" in f.name]
-
-        if not embedding_candidates:
-            raise FileNotFoundError("Could not find train_embeddings.npy")
-
-        # Use the largest embedding file (full dataset)
-        embedding_file = max(embedding_candidates, key=lambda f: f.stat().st_size)
-        ids_file = (
-            max(ids_candidates, key=lambda f: f.stat().st_size)
-            if ids_candidates
-            else None
-        )
+        embedding_file, ids_file = select_bundle_files(data_dir)
 
         aprint(
             f"Selected embeddings file: {embedding_file.name} "
@@ -341,12 +372,20 @@ def load_protein_embeddings(
         aprint(f"✓ Loaded {len(embeddings):,} embeddings (shape: {embeddings.shape})")
 
         # Load protein IDs (UniProt accessions — what the cluster naming needs)
-        if ids_file:
+        if ids_file is not None:
             aprint(f"Loading protein IDs: {ids_file.name}")
             protein_ids = [str(x) for x in np.load(ids_file, allow_pickle=True)]
             aprint(f"✓ Loaded {len(protein_ids):,} protein IDs")
         else:
+            # No accessions means no naming: say so rather than letting the
+            # lookup silently fail on 142k synthetic "Protein_N" strings.
+            aprint("⚠️  No matching accessions file — clusters cannot be named")
             protein_ids = [f"Protein_{i}" for i in range(len(embeddings))]
+
+        if len(protein_ids) != len(embeddings):  # pragma: no cover - guarded above
+            raise ValueError(
+                f"{len(protein_ids):,} accessions vs {len(embeddings):,} embeddings"
+            )
 
         # Sample if requested (seeded for reproducibility)
         if sample_size and sample_size < len(embeddings):
@@ -366,11 +405,55 @@ def load_protein_embeddings(
 # =============================================================================
 
 
+def _write_json_atomic(path: Path, payload: object) -> None:
+    """Write JSON via a sibling ``.part`` and one atomic rename.
+
+    Matches the convention the download cache already follows: a run killed
+    mid-write must never leave a half-written file that later runs trust. Writing
+    in place here would poison the keyword cache permanently — the truncated JSON
+    raises on every subsequent read, which naming catches and silently degrades to
+    generic labels, with nothing telling the user a file needs deleting.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    staging = path.with_suffix(path.suffix + ".part")
+    staging.write_text(json.dumps(payload))
+    os.replace(staging, path)
+
+
+def _read_json_cache(path: Path) -> dict | None:
+    """Read a JSON cache, returning ``None`` if it is absent or unreadable.
+
+    A cache that cannot be parsed is discarded rather than raised: it is derived
+    data that can always be re-fetched, and the alternative (propagating the
+    decode error) makes an unrelated crash look like a permanent UniProt outage.
+    """
+    if not path.exists():
+        return None
+    try:
+        loaded = json.loads(path.read_text())
+    except (json.JSONDecodeError, UnicodeDecodeError, OSError) as exc:
+        aprint(f"⚠️  Discarding unreadable cache {path.name} ({exc}) — refetching")
+        return None
+    return loaded if isinstance(loaded, dict) else None
+
+
 def _http_get(url: str, timeout: float = 120.0) -> bytes:
     """GET a URL with a descriptive User-Agent (UniProt asks for one)."""
     request = urllib.request.Request(url, headers={"User-Agent": UNIPROT_USER_AGENT})
     with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
         return response.read()
+
+
+def _http_get_paged(url: str, timeout: float = 120.0) -> tuple[str, str]:
+    """GET a URL, returning ``(body, link_header)``.
+
+    Separate from :func:`_http_get` because cursor pagination needs the ``Link``
+    header, and separate from the caller so the pagination logic can be tested
+    without reaching the network.
+    """
+    request = urllib.request.Request(url, headers={"User-Agent": UNIPROT_USER_AGENT})
+    with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
+        return response.read().decode(), response.headers.get("Link", "")
 
 
 def fetch_keyword_categories(cache_dir: Path) -> dict[str, str]:
@@ -387,29 +470,39 @@ def fetch_keyword_categories(cache_dir: Path) -> dict[str, str]:
         Mapping of keyword name -> category name.
     """
     cache_path = cache_dir / "uniprot_keyword_categories.json"
-    if cache_path.exists():
-        return json.loads(cache_path.read_text())
+    cached = _read_json_cache(cache_path)
+    if cached:
+        return cached
 
     categories: dict[str, str] = {}
     url: str | None = (
         f"{UNIPROT_REST}/keywords/search"
         "?query=*&format=tsv&fields=id,name,category&size=500"
     )
-    while url:
-        request = urllib.request.Request(
-            url, headers={"User-Agent": UNIPROT_USER_AGENT}
-        )
-        with urllib.request.urlopen(request, timeout=120) as response:  # noqa: S310
-            body = response.read().decode()
-            link = response.headers.get("Link", "")
+    # The vocabulary is ~1,200 entries at 500 per page. Cursor pages terminate by
+    # dropping the Link header, but bound the loop anyway: an unbounded `while`
+    # driven by a server-supplied cursor is one malformed response from hanging
+    # the demo with no output.
+    for _page in range(KEYWORD_VOCABULARY_MAX_PAGES):
+        if not url:
+            break
+        body, link = _http_get_paged(url)
         for line in body.splitlines()[1:]:
             fields = line.split("\t")
             if len(fields) >= 3:
                 categories[fields[1]] = fields[2]
-        url = link.split(">")[0][1:] if 'rel="next"' in link else None
+        next_url = link.split(">")[0][1:] if 'rel="next"' in link else None
+        url = next_url if next_url != url else None  # never re-request a page
+    else:
+        aprint(
+            f"⚠️  Keyword vocabulary paged past {KEYWORD_VOCABULARY_MAX_PAGES} "
+            f"pages; using the {len(categories):,} keywords collected"
+        )
 
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    cache_path.write_text(json.dumps(categories))
+    if not categories:
+        raise ValueError("UniProt returned an empty keyword vocabulary")
+
+    _write_json_atomic(cache_path, categories)
     return categories
 
 
@@ -438,6 +531,10 @@ def _uniprot_keyword_batch(batch: Sequence[str]) -> dict[str, list[str]]:
     with urllib.request.urlopen(request, timeout=120) as response:  # noqa: S310
         job_id = json.load(response)["jobId"]
 
+    # A FINISHED job's status payload drops `jobStatus` entirely (it becomes
+    # {"results": ..., "obsoleteCount": ...}), so completion is signalled by the
+    # key's ABSENCE as much as by its value — hence `.get`, and hence testing for
+    # "not still queued" rather than for a success value that never arrives.
     deadline = time.monotonic() + 900
     while time.monotonic() < deadline:
         status = json.loads(_http_get(f"{UNIPROT_REST}/idmapping/status/{job_id}"))
@@ -491,9 +588,7 @@ def fetch_uniprot_keywords(
         the accessions that resolved, which may be a subset of ``accessions``.
     """
     cache_path = cache_dir / "uniprot_keywords.json"
-    keywords: dict[str, list[str]] = (
-        json.loads(cache_path.read_text()) if cache_path.exists() else {}
-    )
+    keywords: dict[str, list[str]] = _read_json_cache(cache_path) or {}
 
     missing = sorted({a for a in accessions if a not in keywords})
     if not missing:
@@ -508,7 +603,7 @@ def fetch_uniprot_keywords(
         for attempt in range(UNIPROT_MAX_ATTEMPTS):
             try:
                 keywords.update(_uniprot_keyword_batch(batch))
-                cache_path.write_text(json.dumps(keywords))
+                _write_json_atomic(cache_path, keywords)
                 aprint(
                     f"  {min(start + len(batch), len(missing)):,}/{len(missing):,} "
                     "resolved"
@@ -604,6 +699,28 @@ def enriched_cluster_names(
     for cluster in cluster_samples:
         named.setdefault(cluster, (UNNAMED_CLUSTER_LABEL, 0.0))
     return named
+
+
+def disambiguate_cluster_names(cluster_names: Sequence[str]) -> list[str]:
+    """Make cluster names unique for display by appending the cluster index.
+
+    :func:`enriched_cluster_names` already guarantees distinct *keywords*, but
+    every cluster it declines to name shares ``UNNAMED_CLUSTER_LABEL``, and the
+    legend needs one distinguishable row per cluster. The suffix is the cluster
+    index rather than a running counter so a legend row, a hover label and the
+    console log all identify the same cluster.
+
+    Args:
+        cluster_names: One name per cluster, indexed by cluster id.
+
+    Returns:
+        One display name per cluster, all distinct.
+    """
+    repeated = {name for name, uses in Counter(cluster_names).items() if uses > 1}
+    return [
+        f"{name} ({cluster})" if name in repeated else name
+        for cluster, name in enumerate(cluster_names)
+    ]
 
 
 def name_clusters(
@@ -833,8 +950,10 @@ def generate_protein_landscape(
 
     # Check UMAP cache first (complete early exit if cached!). An unsampled run
     # keeps the source file order, so a pre-accession cache can be repaired from
-    # train_ids.npy instead of recomputing.
-    legacy_ids = dataset_cache / "train_ids.npy" if sample_size is None else None
+    # the bundle's accessions instead of recomputing. Resolve that file with the
+    # SAME selector the cache was built through — a hardcoded name could pick a
+    # different file than the one whose order the coordinates follow.
+    legacy_ids = select_bundle_files(dataset_cache)[1] if sample_size is None else None
     cached = load_cached_umap(umap_cache, legacy_ids_path=legacy_ids)
     if cached is not None:
         positions, protein_ids = cached
@@ -878,21 +997,22 @@ def generate_protein_landscape(
         cluster_names = name_clusters(cluster_ids, protein_ids, cache_dir)
         cluster_sizes = Counter(int(c) for c in cluster_ids)
 
-        # Disambiguate: two clusters can both end up "Mixed", and the legend
-        # needs one row per cluster.
-        display_names: list[str] = []
-        name_uses = Counter(cluster_names)
-        seen: Counter = Counter()
-        for cluster, name in enumerate(cluster_names):
-            if name_uses[name] > 1:
-                seen[name] += 1
-                display_names.append(f"{name} {seen[name]}")
-            else:
-                display_names.append(name)
+        # Disambiguate: several clusters can end up "Mixed", and the legend needs
+        # one row per cluster. Suffix with the CLUSTER INDEX rather than a running
+        # counter, so a legend row names the same cluster the console log does.
+        display_names = disambiguate_cluster_names(cluster_names)
 
         aprint("✓ Proteins by landscape cluster:")
         for cluster in range(n_clusters):
             aprint(f"  {display_names[cluster]}: {cluster_sizes[cluster]:,}")
+
+        unnamed = sum(1 for n in cluster_names if n.startswith(UNNAMED_CLUSTER_LABEL))
+        if n_clusters and unnamed > n_clusters / 2:
+            aprint(
+                f"⚠️  {unnamed}/{n_clusters} clusters unnamed — a keyword must appear "
+                f"in >= {MIN_KEYWORD_COUNT} sampled members of a cluster to name it, "
+                "which a small --sample cannot supply"
+            )
 
         radii = np.full(n_proteins, 0.02, dtype=np.float32)
 
@@ -1061,8 +1181,8 @@ def main() -> None:
         aprint("What to look for:")
         aprint("  - Named territories in the legend (bottom-left)")
         aprint("  - Secreted / signal-peptide proteins vs cytoplasmic ones")
-        aprint("  - Organelle-targeted proteins as their own region")
-        aprint("  - Receptors / GPCRs as a distinct island")
+        aprint("  - Organelle-targeted proteins as their own regions")
+        aprint("  - A signal-transducer island, away from the cytoplasmic bulk")
         aprint("  - Functional boundaries and overlaps between regions")
         aprint("")
         aprint("Try this:")

@@ -319,7 +319,7 @@ Visualizes arXiv papers using pre-computed OpenAI embeddings from the Kaggle "op
 ---
 
 #### demo_protein_embeddings_cafa5.py - Protein Function Landscape (ProtT5 Embeddings)
-Visualizes 142k proteins from the CAFA5 challenge in 3D embedding space, showing how proteins with similar functions cluster together. The 14 landscape regions carry **derived names** rather than `Cluster 0` ... `Cluster 13`: each is named after the UniProt keyword most over-represented among its members (`Transit peptide`, `Chloroplast`, `Transducer`, `Cell inner membrane`, ...), and a region with no keyword clearly above background reads `Mixed` instead of being given a name the data does not support. Hovering a point shows its UniProt accession plus its region.
+Visualizes 142k proteins from the CAFA5 challenge in 3D embedding space, showing how proteins with similar functions cluster together. The 14 landscape regions carry **derived names** rather than `Cluster 0` ... `Cluster 13`: each is named after the UniProt keyword most over-represented among its members (`Mitochondrion`, `Transit peptide`, `Transducer`, `Cell inner membrane`, ...), and a region with no keyword clearly above background reads `Mixed` instead of being given a name the data does not support. Hovering a point shows its UniProt accession plus its region.
 
 **Run**: `luxar demo run protein_landscape`
 
