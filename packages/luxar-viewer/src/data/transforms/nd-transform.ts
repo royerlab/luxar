@@ -45,9 +45,11 @@ export interface QueryDimensionInfo {
 
 /**
  * Tolerance at or above this is the `extend_to_all` "infinite" sentinel
- * (`EXTEND_TO_ALL_TOLERANCE` is 1e10, and the inverse divides it by |scale|,
- * which keeps it above this floor for any scale ≤ 10). A dimension flagged that
- * way is not being sliced, so the no-preimage rule must not fire on it.
+ * (`EXTEND_TO_ALL_TOLERANCE` is 1e10). A dimension flagged that way is not being
+ * sliced, so the no-preimage rule must not fire on it — and the inverse passes
+ * such a tolerance through UNSCALED, because dividing it by |scale| > 10 would
+ * drop it under this floor and silently un-extend the dimension for every
+ * downstream consumer of the same convention.
  *
  * This is a BACKSTOP only — the authoritative signal is the node's own
  * `extend_to_all` name list, passed in as `extendDims`. The sentinel never
@@ -185,15 +187,24 @@ export function invertNdTransformForQuery(
       }
 
       // A dimension the node extends is not being sliced. The NAME list is
-      // authoritative; the rescaled-sentinel check is only a backstop (it never
-      // fires on a Lines path). Read it BEFORE the tolerance is rescaled below.
-      const isExtended =
-        extendDims.includes(dim.name) || localTolerance[d] >= EXTENDED_TOLERANCE_FLOOR;
+      // authoritative; the sentinel check is only a backstop (it never fires on
+      // a Lines path).
+      const hasSentinel = localTolerance[d] >= EXTENDED_TOLERANCE_FLOOR;
+      const isExtended = extendDims.includes(dim.name) || hasSentinel;
       const world = localSlice[d];
       const local = (world - offset) / scale;
 
       localSlice[d] = local;
-      localTolerance[d] = localTolerance[d] / Math.abs(scale);
+      // An infinite tolerance stays infinite. Rescaling the sentinel would drop
+      // it below the `>= 1e9` floor for any |scale| > 10, silently un-extending
+      // the dimension for every DOWNSTREAM consumer of that convention
+      // (`effective-radius-calculator`'s `isExtendToAll`,
+      // `calculateSpatialQueryTolerance`, `fallbackQueryTolerance`) — so an
+      // `extend_to_all` dim under a unit-conversion scale would start being
+      // sliced. Only finite tolerances carry a meaningful world→local scale.
+      if (!hasSentinel) {
+        localTolerance[d] = localTolerance[d] / Math.abs(scale);
+      }
 
       if (dim.discrete && !isExtended) {
         const resolved = resolveDiscretePreimage(world, scale, offset, dim.step);

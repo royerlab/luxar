@@ -366,7 +366,9 @@ if (hasOwnProperties(worldNdT) && derived.dimensions) {
 
 ### 9.5 `extend_to_all` Interaction
 
-If a dimension has `extend_to_all`, its tolerance is already set to 1e10 (infinite). The inverse transform scales this: `1e10 / |scale|` is still effectively infinite. No special handling needed.
+If a dimension has `extend_to_all`, its tolerance is already set to 1e10 (infinite). The inverse transform passes that sentinel through **unscaled**: `1e10 / |scale|` is *not* still effectively infinite once `|scale| > 10`, because every downstream extend check tests `tolerance >= 1e9` (`effective-radius-calculator`'s `isExtendToAll`, `calculateSpatialQueryTolerance`, `fallbackQueryTolerance`). Rescaling it would drop an extended dimension back into being sliced under exactly the unit-conversion scales §4.1 advertises. Only finite tolerances carry a meaningful world→local conversion.
+
+The no-preimage rule (§9.2.1) exempts extended dimensions from the node's `extend_to_all` **name list** rather than from the sentinel, because a Lines node never carries the sentinel at derive time — every lines call site uses `applyPartialExtendTolerance: false`.
 
 ### 9.6 Hierarchical Composition
 
