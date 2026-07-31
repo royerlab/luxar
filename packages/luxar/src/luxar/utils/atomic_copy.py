@@ -82,7 +82,9 @@ def atomic_copy_file(src: Path, dst: Path) -> Path:
 
     Unlike :func:`atomic_copytree`, an existing ``dst`` IS replaced: every caller
     is refreshing a cache entry and wants overwrite semantics. Metadata is
-    preserved (``copy2``), so mtime-based staleness checks keep working.
+    preserved (``copystat``, i.e. ``copy2`` semantics), so mtime-based staleness
+    checks keep working — including a read-only source mode, which is applied
+    only after the flush so the copy itself never needs a writable ``dst``.
 
     Args:
         src: Existing regular file to copy.
@@ -104,13 +106,17 @@ def atomic_copy_file(src: Path, dst: Path) -> Path:
     tmp = dst.parent / f".tmp_{dst.name}_{uuid.uuid4().hex[:8]}"
 
     try:
-        shutil.copy2(src, tmp)
+        # copy2 split into its halves so the flush happens BETWEEN them: the
+        # temp file must be fsynced while it still has default (writable)
+        # permissions — copystat may apply a read-only source mode, and
+        # os.fsync maps to FlushFileBuffers on Windows, which needs a
+        # write-access handle a read-only file would refuse.
+        shutil.copyfile(src, tmp)
         # Flush the copied bytes before the rename so dst cannot point at
-        # unwritten blocks after a crash (see docstring). Open read+write, not
-        # read-only: os.fsync maps to FlushFileBuffers on Windows, which needs
-        # a write-access handle.
+        # unwritten blocks after a crash (see docstring).
         with open(tmp, "rb+") as fh:
             os.fsync(fh.fileno())
+        shutil.copystat(src, tmp)
         os.replace(tmp, dst)
     except BaseException:
         tmp.unlink(missing_ok=True)
