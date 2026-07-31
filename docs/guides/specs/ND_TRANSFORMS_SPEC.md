@@ -297,18 +297,36 @@ local 3 and local 4, drawing two frames that belong to world 6 and world 8
 while the slider reads 7; with `scale: 3` at `T = 7` (local `2.333`) it admits
 local 2.
 
-`invertNdTransformForQuery` therefore also reports **`noPreimage`**: true when a
-`discrete` dimension's inverse query lands off that dimension's `k · step` grid.
-It rides the derived per-node `ViewState.noPreimage`, and each geometry's range
-query (`queryVisiblePointRanges` / `queryVisibleSegmentRanges` /
-`queryVisibleSplatRanges`) returns an empty range list, which every loader
-already renders as "cleared". The guard sits ahead of both the
-no-spatial-index load-all fallback and the `extend_to_all` short-circuit, since
-either would otherwise pass every element to the membership gate.
+The test is the forward rule itself, not exact inverse-grid alignment — the two
+agree only for integer `scale`/`offset`, and §11.3 blesses fractional scale.
+`resolveDiscretePreimage` walks the local grid candidates bracketing the exact
+inverse and keeps the one whose forward image rounds to the queried world value:
 
-Exemptions: `extend_to_all` dimensions (tolerance is the infinite sentinel — the
-dimension is not being sliced), and categorical permutations (a bijection always
-has exactly one preimage).
+| transform     | world | resolves to | why                              |
+| ------------- | ----- | ----------- | -------------------------------- |
+| `scale: 2`    | 8     | local 4     | `round(2·4) = 8`                 |
+| `scale: 2`    | 7     | **none**    | `round(2·3)=6`, `round(2·4)=8`   |
+| `scale: 1.2`  | 1     | local 1     | `round(1.2·1) = 1`               |
+| `offset: 0.4` | *w*   | local *w*   | `round(w + 0.4) = w` — never dark |
+
+On success the local slice position is **snapped** to that candidate, which also
+removes the midpoint tie that caused the original double-draw. On failure
+`invertNdTransformForQuery` reports **`noPreimage`**, which rides the derived
+per-node `ViewState.noPreimage`, and each geometry's range query
+(`queryVisiblePointRanges` / `queryVisibleSegmentRanges` /
+`queryVisibleSplatRanges`) returns an empty range list, which every loader
+already renders as "cleared". The guard sits ahead of both the no-spatial-index
+load-all fallback and the `extend_to_all` short-circuit, since either would
+otherwise pass every element to the membership gate.
+
+Exemptions: categorical permutations (a bijection always has exactly one
+preimage), and `extend_to_all` dimensions — keyed off the node's `extend_to_all`
+**name list**, not the tolerance sentinel, because every Lines call site derives
+with `applyPartialExtendTolerance: false` and so never carries it.
+
+Known limitation: the local grid is taken to be the dimension's declared `step`
+(a world-space quantity); no metadata describes the local grid, and the
+downstream membership window makes the same assumption.
 
 The `nd_transforms` demo (`demos/demo_nd_transforms.py`) is the visual
 regression harness: one row per transform, markers that print their own local

@@ -46,17 +46,23 @@ export interface QueryDimensionInfo {
 /**
  * Tolerance at or above this is the `extend_to_all` "infinite" sentinel
  * (`EXTEND_TO_ALL_TOLERANCE` is 1e10, and the inverse divides it by |scale|,
- * which keeps it far above this floor for any sane scale). A dimension flagged
- * that way is not being sliced, so the no-preimage rule must not fire on it.
+ * which keeps it above this floor for any scale ≤ 10). A dimension flagged that
+ * way is not being sliced, so the no-preimage rule must not fire on it.
+ *
+ * This is a BACKSTOP only — the authoritative signal is the node's own
+ * `extend_to_all` name list, passed in as `extendDims`. The sentinel never
+ * reaches here for a Lines node (every lines call site derives with
+ * `applyPartialExtendTolerance: false`), so inferring extension from the
+ * tolerance alone would blank extended lines nodes.
  */
 const EXTENDED_TOLERANCE_FLOOR = 1e9;
 
 /**
- * Relative slack when testing whether a local position lands on a discrete
- * dimension's `k · step` grid: generous enough to absorb the float error of one
- * divide, far tighter than any real fraction-of-a-step gap.
+ * Float-comparison slack (in units of the dimension's step) when deciding
+ * whether a candidate's forward image hits the queried world value. Generous
+ * enough to absorb one multiply + one divide, far tighter than any real gap.
  */
-const ON_GRID_EPSILON = 1e-6;
+const PREIMAGE_EPSILON = 1e-6;
 
 /**
  * Inverse-transform slicePosition and tolerance from world space to local space.
@@ -87,16 +93,36 @@ const ON_GRID_EPSILON = 1e-6;
  * requested world slice. At `scale: 3`, world T = 7 (local 2.333) silently
  * admits local 2.
  *
- * The spec's forward rule for discrete ordinals is
+ * The question is therefore not "is the inverse on the grid?" but the spec's
+ * own forward rule for discrete ordinals,
  * `effective = round(scale · original + offset)`
- * (`docs/guides/specs/ND_TRANSFORMS_SPEC.md` §4.1), so a world value that is not
- * the image of any local grid point has **no preimage** and must display
- * nothing. "Nothing" cannot be encoded as a slice position, so it is reported
- * out of band as `noPreimage`; the per-geometry range queries turn that into an
- * empty range list, which every loader already renders as "cleared".
+ * (`docs/guides/specs/ND_TRANSFORMS_SPEC.md` §4.1): **does any local grid point
+ * map to the queried world value?** Those two predicates coincide only for
+ * integer `scale`/`offset`. Testing inverse-on-grid instead would blank every
+ * slice of a node with, say, `offset: 0.4` — for which `round(k + 0.4) = k`
+ * gives every world value a preimage — and §11.3 explicitly blesses fractional
+ * scale on discrete dims ("valid but lossy"), as does the Python validator.
  *
- * `extend_to_all` dimensions are exempt — their tolerance is the infinite
- * sentinel, meaning the dimension is not being sliced at all.
+ * So {@link resolveDiscretePreimage} walks the local grid candidates bracketing
+ * the exact inverse and keeps the first whose forward image rounds to the
+ * queried world value. On success the local slice position is **snapped to that
+ * candidate**, which additionally makes the query exactly on-grid — so the
+ * downstream half-step window selects that one category and can no longer admit
+ * a neighbour at an exact midpoint. On failure the world value is the image of
+ * no local value and must display nothing; "nothing" cannot be encoded as a
+ * slice position, so it is reported out of band as `noPreimage` and the
+ * per-geometry range queries turn it into an empty range list, which every
+ * loader already renders as "cleared".
+ *
+ * Exempt: `extend_to_all` dimensions (named in `extendDims` — the dimension is
+ * not being sliced at all) and categorical permutations (a bijection always has
+ * exactly one preimage).
+ *
+ * KNOWN LIMITATION: the local grid is taken to be the dimension's declared
+ * `step`, which is a WORLD-space quantity. For a unit-converting transform the
+ * local data may sit on a different grid, and there is no metadata describing
+ * it. This matches what the downstream membership window already assumes (it
+ * applies the same `step` as a LOCAL half-width), so the two stay consistent.
  *
  * @param slicePosition - Current slice position in world (transformed) space
  * @param tolerance - Per-dimension tolerance in world space
@@ -104,15 +130,20 @@ const ON_GRID_EPSILON = 1e-6;
  * @param dimensions - Per-dimension metadata (length = ndim). `name` is matched
  *   against `ndTransform` keys; `discrete`/`step` drive the no-preimage rule.
  * @param displayDims - Indices of displayed dimensions (to skip)
- * @returns New slicePosition and tolerance in local (raw) space, plus
- *   `noPreimage` when the world slice has no local counterpart at all
+ * @param extendDims - The node's `extend_to_all` dimension NAMES. Authoritative
+ *   exemption list: the tolerance sentinel is absent on every Lines path, so it
+ *   cannot be inferred from `tolerance` alone.
+ * @returns New slicePosition (snapped to the resolved local grid point where a
+ *   preimage exists) and tolerance in local (raw) space, plus `noPreimage` when
+ *   the world slice has no local counterpart at all
  */
 export function invertNdTransformForQuery(
   slicePosition: readonly number[],
   tolerance: readonly number[],
   ndTransform: NdTransformMap,
   dimensions: readonly QueryDimensionInfo[],
-  displayDims: readonly number[]
+  displayDims: readonly number[],
+  extendDims: readonly string[] = []
 ): { slicePosition: number[]; tolerance: number[]; noPreimage: boolean } {
   const localSlice = [...slicePosition];
   const localTolerance = [...tolerance];
@@ -153,15 +184,26 @@ export function invertNdTransformForQuery(
         continue;
       }
 
-      // Read the extend_to_all sentinel BEFORE it is rescaled below.
-      const isExtended = localTolerance[d] >= EXTENDED_TOLERANCE_FLOOR;
-      const local = (localSlice[d] - offset) / scale;
+      // A dimension the node extends is not being sliced. The NAME list is
+      // authoritative; the rescaled-sentinel check is only a backstop (it never
+      // fires on a Lines path). Read it BEFORE the tolerance is rescaled below.
+      const isExtended =
+        extendDims.includes(dim.name) || localTolerance[d] >= EXTENDED_TOLERANCE_FLOOR;
+      const world = localSlice[d];
+      const local = (world - offset) / scale;
 
       localSlice[d] = local;
       localTolerance[d] = localTolerance[d] / Math.abs(scale);
 
-      if (dim.discrete && !isExtended && !isOnDiscreteGrid(local, dim.step)) {
-        noPreimage = true;
+      if (dim.discrete && !isExtended) {
+        const resolved = resolveDiscretePreimage(world, scale, offset, dim.step);
+        if (resolved === null) {
+          noPreimage = true;
+        } else {
+          // Snap to the resolved grid point: the query is now exactly on-grid,
+          // so the downstream half-step window selects that single category.
+          localSlice[d] = resolved;
+        }
       }
     }
   }
@@ -170,14 +212,44 @@ export function invertNdTransformForQuery(
 }
 
 /**
- * True when `local` sits on a discrete dimension's `k · step` grid (within
- * {@link ON_GRID_EPSILON} of an exact multiple). A missing or non-positive step
- * falls back to 1, matching the rest of the slicing stack's default.
+ * Resolve which local grid point (if any) the queried world value is the image
+ * of, under the spec's forward rule for discrete ordinals
+ * (`effective = round(scale · local + offset)`, §4.1).
+ *
+ * Returns the winning local value — snap the query to it — or `null` when the
+ * world value is the image of no local grid point.
+ *
+ * Only the two grid points bracketing the exact inverse need testing: the
+ * forward map is affine hence monotonic, so the local values sharing a world
+ * image form one contiguous run around the inverse. `|scale| > 1` admits at most
+ * one; `|scale| < 1` (a lossy downsample, §11.3) admits several and the nearest
+ * is the right representative. A missing or non-positive step falls back to 1,
+ * matching the rest of the slicing stack's default.
  */
-function isOnDiscreteGrid(local: number, step: number | undefined): boolean {
+function resolveDiscretePreimage(
+  world: number,
+  scale: number,
+  offset: number,
+  step: number | undefined
+): number | null {
   const gridStep = step !== undefined && step !== null && step > 0 ? step : 1;
-  const ratio = local / gridStep;
-  return Math.abs(ratio - Math.round(ratio)) <= ON_GRID_EPSILON;
+  const exact = (world - offset) / scale;
+  const ratio = exact / gridStep;
+  const tol = gridStep * PREIMAGE_EPSILON;
+
+  let best: number | null = null;
+  let bestErr = Infinity;
+  for (const k of [Math.floor(ratio), Math.ceil(ratio)]) {
+    const candidate = k * gridStep;
+    // The forward rule rounds to the nearest WORLD grid point.
+    const image = Math.round((scale * candidate + offset) / gridStep) * gridStep;
+    const err = Math.abs(image - world);
+    if (err <= tol && err < bestErr) {
+      best = candidate;
+      bestErr = err;
+    }
+  }
+  return best;
 }
 
 /**

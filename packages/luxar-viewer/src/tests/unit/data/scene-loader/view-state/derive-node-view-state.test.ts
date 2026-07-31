@@ -322,4 +322,40 @@ describe('deriveNodeViewState — nd_transform no-preimage propagation', () => {
     if (result.skip !== false) throw new Error('expected non-skip');
     expect(result.viewState.noPreimage).toBeUndefined();
   });
+
+  it('exempts an extended dim on the LINES path, which never sets the sentinel', () => {
+    // Lines derive with applyPartialExtendTolerance: false, so an extended dim
+    // carries its ORDINARY tolerance here — the 1e10 sentinel never appears.
+    // The exemption must therefore come from the extend_to_all NAMES, or a lines
+    // node with a partial extend on a scaled discrete dim goes dark while its
+    // points/gsplats siblings render.
+    const root = node('', {}, [
+      node('lines', { extend_to_all: ['time'], nd_transform: { time: { scale: 2 } } }),
+    ]);
+    const base = baseViewState({ dimensions: discreteDims(), tolerance: [0, 0.5, 0, 0] });
+    const result = deriveNodeViewState(
+      'lines',
+      { extend_to_all: ['time'] },
+      base,
+      root,
+      { applyPartialExtendTolerance: false } // the lines contract
+    );
+    if (result.skip !== false) throw new Error('expected non-skip');
+    expect(result.viewState.tolerance[0]).toBeLessThan(1e9); // no sentinel, as expected
+    expect(result.viewState.noPreimage).toBeUndefined(); // ...but still exempt
+  });
+
+  it('still flags a NON-extended scaled dim on the lines path', () => {
+    // Same lines contract, but the extended dim is a different one — the
+    // exemption is per-dimension, so `time` must still be flagged.
+    const root = node('', {}, [
+      node('lines', { extend_to_all: ['channel'], nd_transform: { time: { scale: 2 } } }),
+    ]);
+    const base = baseViewState({ dimensions: discreteDims(), tolerance: [0, 0.5, 0, 0] });
+    const result = deriveNodeViewState('lines', { extend_to_all: ['channel'] }, base, root, {
+      applyPartialExtendTolerance: false,
+    });
+    if (result.skip !== false) throw new Error('expected non-skip');
+    expect(result.viewState.noPreimage).toBe(true);
+  });
 });

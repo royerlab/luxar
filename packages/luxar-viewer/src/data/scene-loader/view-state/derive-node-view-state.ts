@@ -93,7 +93,13 @@ export function deriveNodeViewState(
         derived.tolerance,
         worldNdT,
         derived.dimensions,
-        derived.displayDims
+        derived.displayDims,
+        // Pass the node's extend_to_all NAMES: the no-preimage rule must not
+        // fire on a dimension the node extends, and the 1e10 tolerance sentinel
+        // is not a reliable proxy — every Lines call site derives with
+        // `applyPartialExtendTolerance: false`, so a lines node's extended dims
+        // never carry it.
+        extendDims
       );
       // `noPreimage` rides the derived state only when set, so nodes with an
       // ordinary transform keep a view state that is shape-identical to before

@@ -24,16 +24,29 @@ grid. A scaling `nd_transform` is the one thing that breaks that guarantee, and
 it breaks it on the query side where no amount of window tuning helps (a strict
 boundary would fix `scale: 2` and still get `scale: 3` wrong).
 
-Per the spec's forward rule for discrete ordinals
-(`effective = round(scale · original + offset)`), a world value that is not the
-image of any local grid point simply has no preimage and must display nothing.
-`invertNdTransformForQuery` now detects that and reports `noPreimage`, which
-rides the derived per-node `ViewState` and makes each geometry's range query
-return an empty range list — reusing every loader's existing "no visible
-elements → clear" path. One rule, applied once per node per slice, so Points,
-Lines and GSplats are all fixed together with no change to the WASM/TS
-projection kernels. `extend_to_all` dimensions and categorical permutations are
-exempt (the former is not being sliced; the latter is a bijection).
+The fix applies the spec's own forward rule for discrete ordinals
+(`effective = round(scale · original + offset)`): a world value that is the image
+of no local grid point has no preimage and must display nothing.
+`invertNdTransformForQuery` now walks the local grid candidates bracketing the
+exact inverse, keeps the one whose forward image rounds to the queried world
+value, and **snaps the query to it** — which makes the query exactly on-grid and
+so removes the midpoint tie that caused the double-draw in the first place. When
+no candidate qualifies it reports `noPreimage`, which rides the derived per-node
+`ViewState` and makes each geometry's range query return an empty range list —
+reusing every loader's existing "no visible elements → clear" path. One rule,
+applied once per node per slice, so Points, Lines and GSplats are all fixed
+together with no change to the WASM/TS projection kernels.
+
+Testing the forward rule matters rather than testing whether the exact inverse
+lands on the grid: those agree only for integer `scale`/`offset`, and fractional
+scale on a discrete dimension is explicitly valid (spec §11.3). Under
+`offset: 0.4`, `round(k + 0.4) = k` gives every world value a preimage, so an
+inverse-on-grid test would have blanked such a node permanently.
+
+Exemptions: categorical permutations (a bijection always has a preimage) and
+`extend_to_all` dimensions — keyed off the node's `extend_to_all` name list, not
+the 1e10 tolerance sentinel, since every Lines call site derives with
+`applyPartialExtendTolerance: false` and never carries it.
 
 #### Changed — the `nd_transforms` demo is now a calibrated test bench
 

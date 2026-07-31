@@ -418,9 +418,39 @@ describe('invertNdTransformForQuery — the no-preimage rule on discrete dims', 
     expect(invert(6, { scale: 3 }).noPreimage).toBe(false);
   });
 
-  it('catches a fractional offset', () => {
-    expect(invert(7, { offset: 0.5 }).noPreimage).toBe(true);
+  it('does NOT blank a fractional offset — round(k + 0.4) = k has a preimage', () => {
+    // The rule implements the spec's forward round(), not exact inverse-on-grid
+    // alignment. `offset: 0.4` maps every local k to world k, so every world
+    // value has a preimage and the node must keep rendering. (Testing
+    // inverse-on-grid here would blank it permanently.)
+    for (const world of [0, 1, 5, 7, 15]) {
+      const r = invert(world, { offset: 0.4 });
+      expect(r.noPreimage).toBe(false);
+      expect(r.slicePosition[3]).toBeCloseTo(world, 9); // snapped to local k = world
+    }
     expect(invert(7, { offset: 5 }).noPreimage).toBe(false);
+  });
+
+  it('does NOT blank a fractional scale that still has a preimage', () => {
+    // scale 1.2: round(1.2·1) = 1, so world 1 resolves to local 1.
+    const r = invert(1, { scale: 1.2 });
+    expect(r.noPreimage).toBe(false);
+    expect(r.slicePosition[3]).toBeCloseTo(1, 9);
+    // world 6 = round(1.2·5); world 2 is the image of no integer k
+    // (1.2·1 → 1, 1.2·2 → 2.4 → 2 ✓) so 2 DOES resolve, to local 2.
+    expect(invert(6, { scale: 1.2 }).slicePosition[3]).toBeCloseTo(5, 9);
+    expect(invert(2, { scale: 1.2 }).noPreimage).toBe(false);
+  });
+
+  it('snaps the query onto the resolved grid point (kills midpoint ties)', () => {
+    // scale 2 at world 8 resolves to local 4 exactly, so the downstream
+    // half-step window brackets only local 4 — no neighbour can tie in.
+    const r = invert(8, { scale: 2 });
+    expect(r.slicePosition[3]).toBe(4);
+    // A lossy downsample (|scale| < 1) picks the nearest representative.
+    const half = invert(3, { scale: 0.5 });
+    expect(half.noPreimage).toBe(false);
+    expect(half.slicePosition[3]).toBeCloseTo(6, 9); // round(0.5·6) = 3
   });
 
   it('honours the dimension step when it is not 1', () => {
