@@ -58,14 +58,26 @@ def run_batch_validate_cmd(*, output_dir: Path, fix: bool) -> None:
 
         for tile_name in expected_tiles:
             tile_path = tiles_dir / tile_name
-            tmp_path = tiles_dir / f"{tile_name}.tmp"
 
-            # Check for stale .tmp
-            if tmp_path.is_dir():
-                stale_tmp += 1
-                if fix:
-                    shutil.rmtree(tmp_path)
-                    aprint(f"  Deleted: {tile_name}.tmp")
+            # Check for stale per-attempt staging leftovers. Staging dirs are now
+            # named `{tile}.tmp.<token>` — `{tile}.tmp.<host>-<pid>` for a local
+            # run, `{tile}.tmp.<jobid>.<taskid>.<restart>` for Slurm — plus a
+            # possible `{tile}.tmp.<token>.empty` marker file. The glob matches
+            # every such leftover while NEVER matching the legitimate
+            # `{tile}.empty` marker (it has no `.tmp` in its name).
+            for leftover in tiles_dir.glob(f"{tile_name}.tmp*"):
+                if leftover.is_dir():
+                    stale_tmp += 1
+                    if fix:
+                        shutil.rmtree(leftover)
+                        aprint(f"  Deleted: {leftover.name}")
+                elif leftover.name.endswith(".empty"):
+                    # A stale `<staging>.empty` marker orphaned by a crash. Count
+                    # it regardless of --fix so report/dry-run mode is honest.
+                    stale_tmp += 1
+                    if fix:
+                        leftover.unlink(missing_ok=True)
+                        aprint(f"  Deleted: {leftover.name}")
 
             if not tile_path.is_dir():
                 # A `<tile>.empty` marker = the task ran and legitimately produced

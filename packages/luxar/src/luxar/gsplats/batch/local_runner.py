@@ -17,6 +17,7 @@ from __future__ import annotations
 import math
 import os
 import shutil
+import socket
 from pathlib import Path
 from typing import Any, List, Optional, Tuple
 
@@ -73,23 +74,54 @@ def build_device_assignment(
     return {tid: slots[i % len(slots)] for i, tid in enumerate(task_ids)}
 
 
-def _finalize_output(out: Path) -> Tuple[bool, bool]:
-    """Promote a worker's ``{out}.tmp`` to its final path.
+def _staging_path(out: Path, token: str | int) -> Path:
+    """Per-attempt staging directory for a task's fit output.
 
-    Mirrors the Slurm ``run_task`` finalization: a sibling ``{out}.tmp.empty``
-    marker (0-splat box) becomes ``{out}.empty``; otherwise the ``.tmp`` store is
-    atomically renamed to ``out``. Returns ``(ok, empty)``. ``ok`` is False when
-    the worker exited 0 but left nothing usable.
+    Isolated by ``token`` (host + pid of the runner) so two concurrent
+    ``run_batch_local`` processes targeting the same ``output_dir`` never share a
+    ``.tmp`` store: they can neither delete each other's in-progress staging nor
+    interleave chunk/metadata writes. The host prefix keeps the token unique even
+    when two invocations on different machines share an NFS ``output_dir`` and
+    happen to hold equal pids. Only the atomic claim of the final ``out`` races
+    between attempts.
     """
-    tmp = Path(str(out) + ".tmp")
-    tmp_empty = Path(str(out) + ".tmp.empty")
-    if tmp_empty.exists():
-        tmp_empty.unlink(missing_ok=True)
-        shutil.rmtree(tmp, ignore_errors=True)
+    return Path(str(out) + f".tmp.{token}")
+
+
+def _finalize_output(out: Path, staging: Path) -> Tuple[bool, bool]:
+    """Promote a worker's per-attempt ``staging`` store to its final path.
+
+    Mirrors the Slurm ``run_task`` finalization: a sibling ``{staging}.empty``
+    marker (0-splat box) becomes ``{out}.empty``; otherwise the staging store is
+    atomically renamed to ``out``. If ``out`` already exists (another attempt won
+    the race), the duplicate staging is dropped instead of clobbering it (mirror
+    of the Slurm loser path). Returns ``(ok, empty)``. ``ok`` is False when the
+    worker exited 0 but left nothing usable.
+    """
+    staging_empty = Path(str(staging) + ".empty")
+    if staging_empty.exists():
+        staging_empty.unlink(missing_ok=True)
+        shutil.rmtree(staging, ignore_errors=True)
         Path(str(out) + ".empty").touch()
         return True, True
-    if tmp.exists():
-        os.replace(tmp, out)  # atomic within the same filesystem
+    if staging.exists():
+        if out.exists():
+            shutil.rmtree(staging, ignore_errors=True)
+            return True, False
+        try:
+            os.replace(staging, out)  # atomic within the same filesystem
+        except OSError:
+            if out.exists():
+                # TOCTOU: another attempt claimed `out` between the check above
+                # and this rename (os.replace refuses to overwrite a non-empty
+                # dir). Drop our duplicate, completed-by-other (Slurm mv -T loser).
+                shutil.rmtree(staging, ignore_errors=True)
+                return True, False
+            # Genuine failure with `out` still absent (staging vanished — e.g. a
+            # concurrent `validate --fix` glob-deleted it — or EACCES/EIO). Keep
+            # staging on disk for inspection and report not-ok (mirrors the Slurm
+            # "mv failed and output missing" → rc 1 branch).
+            return False, False
         return True, False
     return False, False
 
@@ -149,6 +181,13 @@ def run_batch_local(
 
     job_by_id = {j.task_id: j for j in manifest.jobs}
 
+    # Per-invocation staging token: host + pid. Two concurrent run_batch_local()
+    # processes never share a token (distinct pids on one host; the host prefix
+    # disambiguates equal pids on different machines over a shared NFS
+    # output_dir), so their staging dirs never collide. Resume/skip still keys
+    # off the final out.
+    staging_token = f"{socket.gethostname()}-{os.getpid()}"
+
     def _out_path(job: BatchJob) -> Path:
         return tiles_dir / job.output_filename
 
@@ -169,11 +208,21 @@ def run_batch_local(
     def _argv(task_id: int) -> list[str]:
         job = job_by_id[task_id]
         out = _out_path(job)
-        tmp = Path(str(out) + ".tmp")
-        # Clear a stale .tmp from an interrupted run so fit writes cleanly.
-        shutil.rmtree(tmp, ignore_errors=True)
-        Path(str(out) + ".tmp.empty").unlink(missing_ok=True)
-        return build_task_fit_argv(manifest, job, tmp, denoise_h=_denoise_h(job))
+        # With resume disabled, a task is NOT skipped even when a prior run's
+        # final output exists, so we must overwrite it: remove the stale final
+        # output up front. Otherwise the fresh refit lands in staging and the
+        # finalize loser-guard (out already exists) would silently discard it,
+        # keeping the stale tile. After this, an existing `out` at finalize
+        # genuinely means a concurrent race loser.
+        if not resume:
+            shutil.rmtree(out, ignore_errors=True)
+            Path(str(out) + ".empty").unlink(missing_ok=True)
+        staging = _staging_path(out, staging_token)
+        # Clear a stale staging from a crashed run of THIS invocation so fit
+        # writes cleanly. Never touch another process's staging (different token).
+        shutil.rmtree(staging, ignore_errors=True)
+        Path(str(staging) + ".empty").unlink(missing_ok=True)
+        return build_task_fit_argv(manifest, job, staging, denoise_h=_denoise_h(job))
 
     def _env(task_id: int) -> dict[str, str]:
         gpu = assignment.get(task_id, -1)
@@ -210,8 +259,9 @@ def run_batch_local(
             verbose=verbose,
         )
 
-    # Promote successful .tmp outputs; collect failures (curated like the
-    # parallel tiled path — name failing (t,c,k) + stderr tails, keep .tmp).
+    # Promote each successful per-attempt staging store; collect failures
+    # (curated like the parallel tiled path — name failing (t,c,k) + stderr
+    # tails, keep the staging store on disk for inspection).
     failures: list[tuple[int, str]] = []
     for res in results:
         if res.skipped:
@@ -222,10 +272,14 @@ def run_batch_local(
             tail = "\n".join(res.output.strip().splitlines()[-20:])
             failures.append((res.key, tail))
             continue
-        ok, _empty = _finalize_output(out)
+        ok, _empty = _finalize_output(out, _staging_path(out, staging_token))
         if not ok:
             failures.append(
-                (res.key, "worker exited 0 but wrote no output (.tmp missing)")
+                (
+                    res.key,
+                    "worker exited 0 but its output could not be promoted "
+                    "(staging missing, or the rename to the final path failed)",
+                )
             )
 
     if failures:
@@ -244,11 +298,14 @@ def run_batch_local(
         )
 
     with asection(f"Merging {len(task_ids)} results → partition"):
+        # resume=False means the user asked to refit every tile, so the merge
+        # must be rebuilt over the fresh tiles — otherwise it short-circuits on a
+        # pre-existing merged/final.gsplats.zarr and serves the STALE artifact.
         return merge_batch_results(
             manifest=manifest,
             output_dir=output_dir,
             channel_colors=channel_colors,
-            force=force_merge,
+            force=force_merge or not resume,
             recipe=recipe if recipe is not None else manifest.merge_recipe,
             recipe_params=recipe_params,
             verbose=verbose,

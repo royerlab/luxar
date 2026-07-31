@@ -189,6 +189,106 @@ def test_missing_offdiag_for_dgt1_is_corrupt(tmp_path):
     assert "missing_cholesky_factors_offdiag" in _validate_tile(p)
 
 
+def test_validate_fix_reclaims_staging_leftovers_keeps_empty_marker(tmp_path):
+    """`--fix` must reclaim per-attempt staging leftovers, not the old `.tmp`.
+
+    Staging dirs are now `{tile}.tmp.<token>` (local host+pid) /
+    `{tile}.tmp.<jobid>.<taskid>.<restart>` (Slurm), plus a possible
+    `{tile}.tmp.<token>.empty` marker file. The `{tile}.tmp*` glob must match all
+    of them while NEVER touching the legitimate `{tile}.empty` marker.
+    """
+    from luxar.cli.gsplat_ops.batch_status_validate_cancel import (
+        run_batch_validate_cmd,
+    )
+    from luxar.gsplats.batch.manifest import BatchJob, BatchManifest, save_manifest
+
+    out_dir = tmp_path / "batch"
+    tiles = out_dir / "tiles"
+    tiles.mkdir(parents=True)
+    tile = "t00_c00_tile000.gsplats.zarr"
+
+    manifest = BatchManifest(
+        input_path="/data/x.zarr",
+        output_dir=str(out_dir),
+        jobs=[
+            BatchJob(
+                task_id=0,
+                timepoint=0,
+                channel=0,
+                tile_index=0,
+                output_filename=tile,
+                estimated_wall_seconds=1.0,
+            )
+        ],
+    )
+    save_manifest(manifest, out_dir)
+
+    # Legitimate empty marker (task fit 0 splats) — MUST survive `--fix`.
+    (tiles / f"{tile}.empty").touch()
+    # Stale local staging dir + a Slurm-shaped stale `.empty` marker file.
+    staging = tiles / f"{tile}.tmp.host-1234"
+    staging.mkdir()
+    (staging / "data").write_text("partial")
+    stale_marker = tiles / f"{tile}.tmp.42.0.1.empty"
+    stale_marker.touch()
+
+    run_batch_validate_cmd(output_dir=out_dir, fix=True)
+
+    assert not staging.exists()  # staging dir reclaimed
+    assert not stale_marker.exists()  # stale staging marker reclaimed
+    assert (tiles / f"{tile}.empty").exists()  # legitimate marker untouched
+
+
+def test_validate_report_counts_stray_staging_empty_markers(tmp_path, capsys):
+    """Report-only `validate` (no --fix) must COUNT stray staging leftovers.
+
+    A stray `{tile}.tmp.<token>.empty` marker and a stale staging dir both count
+    toward STALE_TMP even without --fix, so the report is honest; neither is
+    deleted in report mode.
+    """
+    from luxar.cli.gsplat_ops.batch_status_validate_cancel import (
+        run_batch_validate_cmd,
+    )
+    from luxar.gsplats.batch.manifest import BatchJob, BatchManifest, save_manifest
+
+    out_dir = tmp_path / "batch"
+    tiles = out_dir / "tiles"
+    tiles.mkdir(parents=True)
+    tile = "t00_c00_tile000.gsplats.zarr"
+
+    manifest = BatchManifest(
+        input_path="/data/x.zarr",
+        output_dir=str(out_dir),
+        jobs=[
+            BatchJob(
+                task_id=0,
+                timepoint=0,
+                channel=0,
+                tile_index=0,
+                output_filename=tile,
+                estimated_wall_seconds=1.0,
+            )
+        ],
+    )
+    save_manifest(manifest, out_dir)
+
+    (tiles / f"{tile}.empty").touch()  # legitimate empty marker
+    staging = tiles / f"{tile}.tmp.host-1234"
+    staging.mkdir()
+    stray_marker = tiles / f"{tile}.tmp.42.0.1.empty"
+    stray_marker.touch()
+
+    run_batch_validate_cmd(output_dir=out_dir, fix=False)
+
+    out = capsys.readouterr().out
+    # 1 staging dir + 1 stray .empty marker = 2 counted.
+    assert "STALE_TMP:  2" in out
+    # Report mode deletes nothing.
+    assert staging.exists()
+    assert stray_marker.exists()
+    assert (tiles / f"{tile}.empty").exists()
+
+
 def test_1d_tile_no_offdiag_is_ok(tmp_path):
     """A 1D leaf legitimately has no off-diagonal array (k - d == 0); the
     d>1 offdiag-required check must NOT false-flag it as corrupt."""
