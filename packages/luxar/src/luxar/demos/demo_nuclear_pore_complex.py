@@ -3,14 +3,14 @@
 
 This demo demonstrates:
 - Downloading real Nup107-160 subcomplex structure from PDB
-- Creating C-alpha backbone trace for clean visualization
+- Rendering every atom (or a C-alpha trace with --representation=calpha)
 - Applying PERFECT 8-fold rotational symmetry
-- Color-coding each spoke for beautiful symmetry display
+- CPK element coloring (or one color per spoke with --color=spoke)
 - Van der Waals radii for realistic atomic sizes
 
 Visualization approach:
-- C-alpha trace (backbone only) - reduces visual clutter
-- Each of 8 spokes gets a distinct color
+- All atoms by default; --representation=calpha reduces visual clutter
+- CPK element colors by default; --color=spoke shows the symmetry
 - Shows the beautiful octagonal architecture clearly
 - Central pore is visible!
 
@@ -43,9 +43,9 @@ KEY STRUCTURAL COMPONENTS:
 
 VISUALIZATION STRATEGY:
 - Download ONE Nup107-160 Y-complex (PDB: 3I4R)
-- Extract C-alpha atoms only (protein backbone trace)
+- Extract all atoms (--representation=calpha for a backbone trace)
 - Apply 8-fold rotational symmetry
-- Color each spoke differently to show symmetry
+- Color by element (--color=spoke colors each spoke to show symmetry)
 - Position at correct radius to create ring with central pore
 
 This creates a clean, beautiful visualization similar to textbook illustrations!
@@ -69,14 +69,14 @@ Usage:
 Controls:
     - Rotate to see PERFECT 8-fold symmetry
     - Top-down view: Beautiful octagonal ring with central pore!
-    - Each spoke is a different color
+    - Press L for the Layers panel (blending, opacity, display range)
     - Ctrl+C to stop and cleanup
 """
 
 DEMO_META = {
     "key": "nuclear_pore_complex",
     "title": "Nuclear Pore Complex",
-    "description": "Real Nup107-160 Y-complex (PDB 3I4R) tiled into the NPC's 8-fold symmetric ring (C-alpha trace).",
+    "description": "Real Nup107-160 Y-complex (PDB 3I4R) tiled into the NPC's 8-fold symmetric ring (all atoms, CPK colors).",
     "category": "structural",
     "geometry": "points",
     "requirements": {
@@ -615,8 +615,9 @@ def generate_nuclear_pore_complex(
                 # IS the aliasing — no fringe pixels left to dilute the hue.
                 #
                 # `layer=True` exposes the node in the Layers panel (press L)
-                # so blending, opacity, intensity — and absorption once you
-                # switch to volumetric — stay live-adjustable.
+                # so blending, opacity, the display range — and absorption
+                # once you switch to volumetric, which is the only mode whose
+                # slider the panel shows — stay live-adjustable.
                 scene.add_points(
                     "nuclear_pore_complex",
                     positions=sym_positions,

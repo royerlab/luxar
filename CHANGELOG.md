@@ -6,6 +6,24 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Changed — the two PDB structure demos render as surfaces, not emissive media
+
+`nuclear_pore_complex` and `atp_synthase` shipped on the default `additive`
+blending, which sums every atom along the view ray. A dense atomic shell washes
+toward pastel white that way, and both demos held it back with an intensity
+anti-blowout workaround (0.125 and 0.0625) that left them dim. An atomic
+structure is a *surface*: both nodes now use depth-sorted `normal` blending at
+full exposure (opacity 1.0, intensity 1.0), so the nearest atom wins the pixel.
+Measured at the opening framing as mean CIELAB chroma over the covered pixels,
+the NPC goes 6.2 → 13.1; on ATP the chain hues go 44.8 → 57.8 at lightness
+L\* 40.2 → 76.4, i.e. the subunits stop reading as a dark wash. Volumetric was
+tried across kappa 2–20 and loses the colours at every setting (3.9–8.3), so it
+is not the default — but both nodes are now `layer=True`, so blending, opacity
+and the display range (and absorption, once you pick `volumetric`) are live in
+the Layers panel. `docs/images/readme/gallery/atp_synthase.{webp,webm}` were
+recaptured through the gallery harness. Regenerate the demo datasets to pick up
+the new look.
+
 #### Fixed — warnings now display through arbol instead of raw stderr lines
 
 Python's default warning display wrote `path/to/file.py:299: UserWarning: ...`

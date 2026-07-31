@@ -495,7 +495,8 @@ def generate_atp_synthase(
                 # muddy) to 57.8 at L* 76.4, so the subunits read as distinct
                 # hues instead of a dark wash. `layer=True` exposes the node in
                 # the Layers panel (press L) for live blending / opacity /
-                # intensity / absorption control.
+                # display-range control — plus absorption, whose slider the
+                # panel only shows once the layer is switched to volumetric.
                 scene.add_points(
                     "atp_synthase",
                     positions=positions,
