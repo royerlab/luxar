@@ -269,9 +269,11 @@ function invertNdTransformForQuery(
   slicePosition: number[],   // world space
   tolerance: number[],        // world space
   ndTransform: NdTransformMap,
-  dimensionNames: string[],
+  // Per-dimension metadata: `name` matches the ndTransform keys,
+  // `discrete`/`step` drive the no-preimage rule (§9.2.1).
+  dimensions: readonly { name?: string; discrete?: boolean; step?: number }[],
   displayDims: number[]
-): { slicePosition: number[]; tolerance: number[] }
+): { slicePosition: number[]; tolerance: number[]; noPreimage: boolean }
 ```
 
 For each non-displayed dimension with a transform:
@@ -282,21 +284,74 @@ For each non-displayed dimension with a transform:
   - Compute inverse permutation, remap slice index
   - Tolerance unchanged (categorical matching)
 
+#### 9.2.1 The no-preimage rule (discrete dimensions)
+
+The forward rule for discrete ordinals rounds (§4.1), so not every world value
+is the image of a local one. Inverting `scale: 2` at world `T = 7` gives local
+`3.5`, which is **no category at all** — `round(2k) = 7` has no integer
+solution.
+
+The inverse query alone cannot express that. Left unguarded, the per-element
+membership window (a half-step, `|value − target| ≤ 0.5 × step`) admits both
+local 3 and local 4, drawing two frames that belong to world 6 and world 8
+while the slider reads 7; with `scale: 3` at `T = 7` (local `2.333`) it admits
+local 2.
+
+The test is the forward rule itself, not exact inverse-grid alignment — the two
+agree only for integer `scale`/`offset`, and §11.3 blesses fractional scale.
+`resolveDiscretePreimage` walks the local grid candidates bracketing the exact
+inverse and keeps the one whose forward image rounds to the queried world value:
+
+| transform     | world | resolves to | why                              |
+| ------------- | ----- | ----------- | -------------------------------- |
+| `scale: 2`    | 8     | local 4     | `round(2·4) = 8`                 |
+| `scale: 2`    | 7     | **none**    | `round(2·3)=6`, `round(2·4)=8`   |
+| `scale: 1.2`  | 1     | local 1     | `round(1.2·1) = 1`               |
+| `offset: 0.4` | *w*   | local *w*   | `round(w + 0.4) = w` — never dark |
+
+On success the local slice position is **snapped** to that candidate, which also
+removes the midpoint tie that caused the original double-draw. On failure
+`invertNdTransformForQuery` reports **`noPreimage`**, which rides the derived
+per-node `ViewState.noPreimage`, and each geometry's range query
+(`queryVisiblePointRanges` / `queryVisibleSegmentRanges` /
+`queryVisibleSplatRanges`) returns an empty range list, which every loader
+already renders as "cleared". The guard sits ahead of both the no-spatial-index
+load-all fallback and the `extend_to_all` short-circuit, since either would
+otherwise pass every element to the membership gate.
+
+Exemptions: categorical permutations (a bijection always has exactly one
+preimage), and `extend_to_all` dimensions — keyed off the node's `extend_to_all`
+**name list**, not the tolerance sentinel, because every Lines call site derives
+with `applyPartialExtendTolerance: false` and so never carries it.
+
+Known limitation: the local grid is taken to be the dimension's declared `step`
+(a world-space quantity); no metadata describes the local grid, and the
+downstream membership window makes the same assumption.
+
+The `nd_transforms` demo (`demos/demo_nd_transforms.py`) is the visual
+regression harness: one row per transform, markers that print their own local
+index against a world ruler and cursor.
+
 ### 9.3 Where It's Applied
 
-In `scene-loader.ts`, centralized alongside the existing `extend_to_all` tolerance modification. Applied ONCE per node update, BEFORE passing viewState to the loader:
+In `data/scene-loader/view-state/derive-node-view-state.ts`, centralized alongside the existing `extend_to_all` tolerance modification. Applied ONCE per node update, BEFORE passing viewState to the loader:
 
 ```typescript
-// After extend_to_all tolerance override:
-const ndT = attrs?.nd_transform;
-if (ndT && Object.keys(ndT).length > 0 && viewState.dimensions) {
+// After the extend_to_all tolerance override:
+const worldNdT = computeWorldNdTransform(sceneGraph, path);
+if (hasOwnProperties(worldNdT) && derived.dimensions) {
   const inverted = invertNdTransformForQuery(
-    viewState.slicePosition, viewState.tolerance,
-    ndT, dimNames, viewState.displayDims
+    derived.slicePosition, derived.tolerance,
+    worldNdT, derived.dimensions, derived.displayDims
   );
-  viewState = { ...viewState, ...inverted };
+  // `noPreimage` only rides the derived state when set (§9.2.1); otherwise
+  // just the inverted position + tolerance are folded in.
+  derived = inverted.noPreimage
+    ? { ...derived, ...inverted }
+    : { ...derived, slicePosition: inverted.slicePosition, tolerance: inverted.tolerance };
 }
-// Then pass to loader — no changes needed inside loaders
+// Then pass to loader — the only loader-side change is the noPreimage guard
+// at the top of each geometry's range query.
 ```
 
 ### 9.4 Advantages Over Per-Point Transform
@@ -305,7 +360,7 @@ if (ndT && Object.keys(ndT).length > 0 && viewState.dimensions) {
 |--------|---------------------|---------------------------|
 | Complexity | O(N * D_nd) per frame | O(D_nd) per frame |
 | Data mutation | Modifies position arrays | No data mutation |
-| Code changes | Every loader's internals | Scene-loader only |
+| Code changes | Every loader's internals | Scene-loader, plus a one-line no-preimage early-out per geometry range query (§9.2.1) |
 | Cached data | Must copy before transform | Untouched |
 | WASM | Would need changes | No changes needed |
 
