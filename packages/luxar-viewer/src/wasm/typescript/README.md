@@ -54,5 +54,9 @@ performance.
 `MAX_SUPPORTED_DIMS = 16` is imported from
 `../../config/constants.ts` (the single source of truth) and is used
 by `gsplats-processing.ts` to size module-level workspace buffers for
-the marginal Cholesky reconstruction. The Rust side
-(`src/wasm/rust/src/common.rs`) must mirror this value.
+the marginal Cholesky reconstruction. That size is only the initial
+allocation: because this reference is the uncapped `ndim > 16` backend
+(WASM panics above the cap, so `pickBackend` routes those operations
+here), the buffers grow on demand when the continuous hidden-dim count
+exceeds 16, and the `ndim <= 16` path stays allocation-free. The Rust
+side (`src/wasm/rust/src/common.rs`) must mirror this value.

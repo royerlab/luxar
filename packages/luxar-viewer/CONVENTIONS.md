@@ -304,7 +304,10 @@ prefer a port + factory pair.
   - `src/data/scene-loader.ts` leaf-node loads — `loadLeafNode` catches
     per-node failures, classifies them, logs with the appropriate
     severity, and **returns null** so sibling nodes still render. It
-    does not rethrow.
+    does not rethrow. It also does **not** notify the user: since
+    `loadScene` cannot throw on a failed node, the end-of-load aggregate
+    (`scene-loader/loaders/failure-report.ts`) owns that, and it is the
+    only surface that can name every failure at once.
 - Use `Result<T, E>` (see §8) for recoverable failures where the caller
   is expected to branch on the outcome (cache lookups, optional
   resolves), not for unexpected programmer errors.

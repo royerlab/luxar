@@ -26,9 +26,21 @@ const CHOLESKY_EPSILON = 1e-10;
 const CHOLESKY_RELATIVE_EPSILON = 1e-12;
 
 // Module-level workspace buffers — safe because JS is single-threaded.
-// Avoids per-call allocation in hot loops.
-const _sigmaWorkspace = new Float32Array(MAX_SUPPORTED_DIMS * MAX_SUPPORTED_DIMS);
-const _lSubWorkspace = new Float32Array(MAX_PACKED_CHOLESKY_SIZE);
+// Avoids per-call allocation in hot loops. Sized for the common ndim <= 16 case
+// so that path never reallocates; grown on demand only when the number of
+// continuous hidden dims exceeds MAX_SUPPORTED_DIMS (the uncapped >16-D backend).
+let _sigmaWorkspace = new Float32Array(MAX_SUPPORTED_DIMS * MAX_SUPPORTED_DIMS);
+let _lSubWorkspace = new Float32Array(MAX_PACKED_CHOLESKY_SIZE);
+
+/**
+ * Return `buf` unchanged when it already holds at least `n` elements, otherwise a
+ * freshly-allocated larger Float32Array. Keeps the ndim <= 16 hot path
+ * allocation-free — the module-level buffers start at the 16-D sizes, so the
+ * common case never reallocates.
+ */
+function ensureCapacity(buf: Float32Array<ArrayBuffer>, n: number): Float32Array<ArrayBuffer> {
+  return buf.length >= n ? buf : new Float32Array(n);
+}
 
 /**
  * Compute the packed index for a Cholesky element L[row, col].
@@ -66,9 +78,16 @@ export function computeMarginalCholesky(
   outputOffset: number
 ): void {
   // Step 1: Reconstruct marginal covariance Σ_S[i,j] = Σ_k L[s_i,k]·L[s_j,k]
-  // Uses module-level workspace buffer (zeroed below, safe in single-threaded JS)
+  // Uses module-level workspace buffer (zeroed below, safe in single-threaded JS).
+  // The sigma matrix is subNdim x subNdim, so its row stride is subNdim — NOT the
+  // fixed MAX_SUPPORTED_DIMS. Grow the workspace when subNdim > 16 (the >16-D
+  // backend); the <= 16 case keeps the pre-allocated buffer (no reallocation).
+  const stride = subNdim;
+  const subPackedSize = (subNdim * (subNdim + 1)) / 2;
+  _sigmaWorkspace = ensureCapacity(_sigmaWorkspace, stride * stride);
+  _lSubWorkspace = ensureCapacity(_lSubWorkspace, subPackedSize);
   const sigma = _sigmaWorkspace;
-  sigma.fill(0, 0, subNdim * MAX_SUPPORTED_DIMS);
+  sigma.fill(0, 0, stride * stride);
 
   for (let i = 0; i < subNdim; i++) {
     const si = keepDims[i];
@@ -81,13 +100,12 @@ export function computeMarginalCholesky(
         const lSjK = fullPackedL[fullPackedOffset + packedIndex(sj, k)];
         sum += lSiK * lSjK;
       }
-      sigma[i * MAX_SUPPORTED_DIMS + j] = sum;
-      sigma[j * MAX_SUPPORTED_DIMS + i] = sum;
+      sigma[i * stride + j] = sum;
+      sigma[j * stride + i] = sum;
     }
   }
 
   // Step 2: Cholesky-Crout factorization of Σ_S → L_S
-  const subPackedSize = (subNdim * (subNdim + 1)) / 2;
   const lSub = _lSubWorkspace;
   lSub.fill(0, 0, subPackedSize);
 
@@ -102,7 +120,7 @@ export function computeMarginalCholesky(
   // all-zero Σ_S.
   let maxDiag = 0;
   for (let i = 0; i < subNdim; i++) {
-    const d = sigma[i * MAX_SUPPORTED_DIMS + i];
+    const d = sigma[i * stride + i];
     if (d > maxDiag) maxDiag = d;
   }
   // The absolute constant is a fallback for a SCALELESS (all-zero) Σ_S only —
@@ -116,7 +134,7 @@ export function computeMarginalCholesky(
 
   for (let i = 0; i < subNdim; i++) {
     for (let j = 0; j <= i; j++) {
-      let sum = sigma[i * MAX_SUPPORTED_DIMS + j];
+      let sum = sigma[i * stride + j];
       for (let k = 0; k < j; k++) {
         sum -= lSub[packedIndex(i, k)] * lSub[packedIndex(j, k)];
       }
@@ -455,10 +473,11 @@ export function compact_attenuated_amplitudes(
 }
 
 // Module-level forward-substitution + marginal-Cholesky scratch for the fused
-// kernel (single-threaded JS — safe to reuse across the splat loop).
-const _fusedDiff = new Float32Array(MAX_SUPPORTED_DIMS);
-const _fusedY = new Float32Array(MAX_SUPPORTED_DIMS);
-const _fusedHiddenCholesky = new Float32Array(MAX_PACKED_CHOLESKY_SIZE);
+// kernel (single-threaded JS — safe to reuse across the splat loop). Sized for
+// ndim <= 16; grown on demand when numContinuous > 16 (the >16-D backend).
+let _fusedDiff = new Float32Array(MAX_SUPPORTED_DIMS);
+let _fusedY = new Float32Array(MAX_SUPPORTED_DIMS);
+let _fusedHiddenCholesky = new Float32Array(MAX_PACKED_CHOLESKY_SIZE);
 
 /**
  * Fused nD→3D GSplat projection — TypeScript reference mirroring
@@ -508,6 +527,13 @@ export function project_gsplats_nd_to_3d(
   const shiftC = Math.exp(-0.5 * truncate * truncate);
   const invOneMinusC = 1.0 / (1.0 - shiftC);
 
+  // Grow the fused scratch when numContinuous > 16 (the uncapped >16-D backend);
+  // the <= 16 case keeps the pre-allocated buffers (no reallocation). Re-bind the
+  // locals AFTER growing so diff/hiddenCholesky/_fusedY point at the grown arrays.
+  const continuousPackedSize = (numContinuous * (numContinuous + 1)) / 2;
+  _fusedDiff = ensureCapacity(_fusedDiff, numContinuous);
+  _fusedY = ensureCapacity(_fusedY, numContinuous);
+  _fusedHiddenCholesky = ensureCapacity(_fusedHiddenCholesky, continuousPackedSize);
   const diff = _fusedDiff;
   const hiddenCholesky = _fusedHiddenCholesky;
 
@@ -537,12 +563,9 @@ export function project_gsplats_nd_to_3d(
         hiddenCholesky,
         0
       );
-      const mahalDist = mahalanobisDistanceInternal(
-        diff.subarray(0, numContinuous),
-        hiddenCholesky,
-        numContinuous,
-        _fusedY
-      );
+      // Pass `diff` whole — mahalanobisDistanceInternal reads only [0, ndim), so a
+      // `.subarray(0, numContinuous)` view would allocate once PER SPLAT here.
+      const mahalDist = mahalanobisDistanceInternal(diff, hiddenCholesky, numContinuous, _fusedY);
       const rawExp = Math.exp(-0.5 * mahalDist * mahalDist);
       attenuation = Math.max(0.0, invOneMinusC * (rawExp - shiftC));
     }

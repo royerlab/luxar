@@ -6,6 +6,19 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import * as THREE from 'three';
+
+// Spy-wrapped with the REAL implementation as the default: one test below stages
+// a genuine commit through it. Individual tests override the mock to simulate a
+// failure that happens AFTER the fetch (the projection step).
+vi.mock('../../../../data/scene-loader/process/data-processor-gsplats', async (importOriginal) => {
+  const actual =
+    await importOriginal<
+      typeof import('../../../../data/scene-loader/process/data-processor-gsplats')
+    >();
+  return { ...actual, processGSplatsData: vi.fn(actual.processGSplatsData) };
+});
+
+import { processGSplatsData } from '../../../../data/scene-loader/process/data-processor-gsplats';
 import { kind, label, loadAndStage } from '../../../../data/gsplats/handler';
 import { ViewStateQueue } from '../../../../data/scene-loader/view-state/view-state-queue';
 import type { GSplatsDataLoader } from '../../../../types/gsplats';
@@ -230,5 +243,92 @@ describe('gsplats handler — no-op commit skip', () => {
 
     expect(staged).not.toBeNull();
     expect(staged?.noop).toBeUndefined();
+  });
+
+  // The failure record's scope is the WHOLE loadAndStage step, so it must not be
+  // cleared until everything fallible after the fetch has also succeeded.
+  // Clearing right after the fetch meant a post-fetch failure re-recorded with
+  // retryCount 0 — pinning the log at "(attempt 1)" — and left hasFailures()
+  // transiently reporting clean.
+  describe('failure-record lifetime', () => {
+    const makeLoaderReturning = (value: unknown): GSplatsDataLoader =>
+      ({
+        loadGSplats: vi.fn(),
+        updateView: vi.fn().mockResolvedValue(value),
+        dispose: vi.fn(),
+      }) as unknown as GSplatsDataLoader;
+
+    const makeCtx = (clearFailure: () => void, root: THREE.Group) => ({
+      rootGroup: root,
+      viewStateQueue: new ViewStateQueue(),
+      clearFailure,
+      currentVersion: 2,
+      updateVersion: 2,
+      extendedToleranceCache: new Map(),
+      deriveNodeViewState: () => ({
+        skip: false as const,
+        viewState: { displayDims: [0, 1, 2], slicePosition: [0, 0, 0], tolerance: [0, 0, 0] },
+      }),
+    });
+
+    it('does NOT clear the failure record when projection fails after the fetch', async () => {
+      vi.mocked(processGSplatsData).mockRejectedValueOnce(new Error('projection boom'));
+      const root = new THREE.Group();
+      const mesh = makeGSplatsMesh('/g');
+      (mesh.userData as { committedData?: unknown }).committedData = { other: true };
+      root.add(mesh);
+      const clearFailure = vi.fn();
+
+      await expect(
+        loadAndStage('/g', makeLoaderReturning(data), makeSession(), makeCtx(clearFailure, root))
+      ).rejects.toThrow('projection boom');
+
+      expect(clearFailure).not.toHaveBeenCalled();
+    });
+
+    it('clears the failure record once fetch AND projection both succeed', async () => {
+      const root = new THREE.Group();
+      const mesh = makeGSplatsMesh('/g');
+      (mesh.userData as { committedData?: unknown }).committedData = { other: true };
+      root.add(mesh);
+      const clearFailure = vi.fn();
+
+      await loadAndStage(
+        '/g',
+        makeLoaderReturning(data),
+        makeSession(),
+        makeCtx(clearFailure, root)
+      );
+
+      expect(clearFailure).toHaveBeenCalledWith('/g');
+    });
+
+    it('clears the failure record when the loader legitimately returns no data', async () => {
+      // An empty slice is a healthy outcome: a formerly-failing node that now
+      // yields nothing must not keep a permanent failure record.
+      const clearFailure = vi.fn();
+
+      const result = await loadAndStage(
+        '/g',
+        makeLoaderReturning(null),
+        makeSession(),
+        makeCtx(clearFailure, new THREE.Group())
+      );
+
+      expect(result).toBeNull();
+      expect(clearFailure).toHaveBeenCalledWith('/g');
+    });
+
+    it('does NOT clear the failure record on an extend_to_all skip', async () => {
+      // A skipped node loaded nothing, so a recorded failure is still unresolved.
+      const clearFailure = vi.fn();
+
+      await loadAndStage('/g', makeLoaderReturning(data), makeSession(), {
+        ...makeCtx(clearFailure, new THREE.Group()),
+        deriveNodeViewState: () => ({ skip: 'extend_to_all' as const }),
+      });
+
+      expect(clearFailure).not.toHaveBeenCalled();
+    });
   });
 });

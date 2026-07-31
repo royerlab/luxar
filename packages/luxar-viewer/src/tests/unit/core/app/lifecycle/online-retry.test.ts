@@ -15,10 +15,17 @@ import {
 
 function makeLoader(
   hasFailures: boolean,
-  result: { succeeded: string[]; failed: string[] } = { succeeded: ['/p'], failed: [] }
+  result: { succeeded: string[]; failed: string[] } = { succeeded: ['/p'], failed: [] },
+  /**
+   * Whether any failure is worth an automatic retry. Defaults to `hasFailures`
+   * so existing cases behave as before; pass `false` with `hasFailures: true` to
+   * express "failures exist, but all deterministic / past the cap".
+   */
+  hasAutoRetryableFailures: boolean = hasFailures
 ): RetryCapableLoader & { retryAllFailedLoaders: ReturnType<typeof vi.fn> } {
   return {
     hasFailures: () => hasFailures,
+    hasAutoRetryableFailures: () => hasAutoRetryableFailures,
     retryAllFailedLoaders: vi.fn().mockResolvedValue(result),
   };
 }
@@ -67,6 +74,31 @@ describe('installOnlineRetry', () => {
     expect(toast).not.toHaveBeenCalled();
   });
 
+  it('does nothing when every failure is deterministic or past the attempt cap', async () => {
+    // Reconnecting cannot fix a decode error or a permanent 404 that already
+    // exhausted its attempts. Retrying anyway re-fetched them on every `online`
+    // transition forever, and the "Connection restored" toast promised a
+    // recovery that could not happen.
+    const loader = makeLoader(true, { succeeded: [], failed: ['/bad'] }, false);
+    installOnlineRetry({ events, getLoader: () => loader, toast });
+
+    window.dispatchEvent(new Event('online'));
+    await Promise.resolve();
+
+    expect(loader.retryAllFailedLoaders).not.toHaveBeenCalled();
+    expect(toast).not.toHaveBeenCalled();
+  });
+
+  it('retries only the auto-retryable subset when failures are transient', async () => {
+    const loader = makeLoader(true);
+    installOnlineRetry({ events, getLoader: () => loader, toast });
+
+    window.dispatchEvent(new Event('online'));
+    await Promise.resolve();
+
+    expect(loader.retryAllFailedLoaders).toHaveBeenCalledWith({ onlyAutoRetryable: true });
+  });
+
   it('is a silent no-op when no loader is live', async () => {
     installOnlineRetry({ events, getLoader: () => null, toast });
     window.dispatchEvent(new Event('online'));
@@ -78,6 +110,7 @@ describe('installOnlineRetry', () => {
     let resolveBatch!: (r: { succeeded: string[]; failed: string[] }) => void;
     const loader: RetryCapableLoader & { retryAllFailedLoaders: ReturnType<typeof vi.fn> } = {
       hasFailures: () => true,
+      hasAutoRetryableFailures: () => true,
       retryAllFailedLoaders: vi.fn().mockImplementation(
         () =>
           new Promise((res) => {
@@ -111,6 +144,7 @@ describe('installOnlineRetry', () => {
       let call = 0;
       const loader: RetryCapableLoader = {
         hasFailures: () => true,
+        hasAutoRetryableFailures: () => true,
         retryAllFailedLoaders: vi.fn().mockImplementation(async () => {
           call += 1;
           if (call <= 2) return { succeeded: [], failed: ['/a', '/b'], deferred: true };
@@ -140,6 +174,7 @@ describe('installOnlineRetry', () => {
     try {
       const loader: RetryCapableLoader = {
         hasFailures: () => true,
+        hasAutoRetryableFailures: () => true,
         retryAllFailedLoaders: vi
           .fn()
           .mockResolvedValue({ succeeded: [], failed: ['/a'], deferred: true }),
@@ -169,6 +204,7 @@ describe('installOnlineRetry', () => {
     try {
       const loader: RetryCapableLoader = {
         hasFailures: () => true,
+        hasAutoRetryableFailures: () => true,
         retryAllFailedLoaders: vi
           .fn()
           .mockResolvedValue({ succeeded: [], failed: ['/a'], deferred: true }),
