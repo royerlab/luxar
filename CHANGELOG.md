@@ -653,8 +653,8 @@ pointer and the sha256-mismatch cases up front. A file whose size merely differs
 from `expected_size` — _longer_ or _shorter_ — is left in place, since
 `expected_size` is only a skip-if-matches hint (it can be a stale client-side
 guess) and must never destroy a complete cached file; `robust_download`
-reconciles it against the true remote size, staging into a sibling `.part` (the
-destination is never resumed from).
+reconciles it against the true remote size, staging every fetch into a sibling
+`.part` so the stale bytes at the destination are never appended to.
 
 #### Fixed — the demo-data manifest was excluded from the wheel and sdist
 

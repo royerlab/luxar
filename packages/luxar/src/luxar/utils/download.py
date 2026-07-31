@@ -929,7 +929,12 @@ def verify_file_checksum(
         verbose: Emit the "Verifying…/Computing…/verified" progress lines. Set
             False for a quiet check — ``ensure_dataset(verbose=False)`` re-hashes
             every warm cache hit, and the header/line-per-file noise is pure spam
-            for a caller that asked for silence.
+            for a caller that asked for silence. False silences the MISMATCH
+            report too, not just the progress lines, so a caller that asks for
+            silence owns surfacing the False return. Both in-tree callers
+            quarantine the rejected file, which leaves it discoverable as a
+            ``.corrupt`` sibling (``warn_if_quarantined`` / ``luxar demo cache
+            list``) even when nothing was printed here.
 
     Returns:
         True if file matches expected checksum(s), False otherwise
