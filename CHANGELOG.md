@@ -13,9 +13,10 @@ load, derived from `scalar_data_range || color_data_range || amplitude_data_rang
 For a **direct-colour** layer that windowed the authored RGB by its own spread —
 a contrast stretch nobody asked for. A uniform grey `(0.72, 0.74, 0.78)` has
 `color_data_range` `[0.72, 0.78]`, which maps to gain 16.7 / offset −12 and
-renders as **saturated blue**. A sweep of a generated demo corpus found the
-stretch on 104 direct-colour layers (asteroid planets 8.3×,
-`collision/detector_geometry` 10×) and on no colormapped layer.
+renders as **saturated blue**. Replaying both rules over a generated corpus of
+166 scenes found 111 layers whose starting window moves — **every one of them
+direct-colour** (asteroid planets 8.3×, `collision/detector_geometry` 10×), and
+not a single colormapped layer.
 
 The window maps the *rendered value*, so it now follows what that value is: a
 colormapped layer still windows on its scalar range (a linear `[0, 1]` window on
