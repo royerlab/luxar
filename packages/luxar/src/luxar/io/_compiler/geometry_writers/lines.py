@@ -41,6 +41,39 @@ from ..node_common import (
 )
 from ..spatial_ordering.lines import build_lines_ordering, write_lines_ordering_to_zarr
 
+_AUTHORING_LINT_MIN_VERTICES = 16
+_AUTHORING_LINT_SHARED_THRESHOLD = 0.9
+
+
+def _exploded_chain_fraction(vertices: NDArray[np.float32]) -> Optional[float]:
+    """Return the forward-chain adjacency fraction when it strongly signals intent.
+
+    Immediate ``(a, b), (b, a)`` reversals are excluded: they are common in
+    directed/symmetric graph edge lists and are not evidence of a polyline.
+    """
+    if len(vertices) < _AUTHORING_LINT_MIN_VERTICES:
+        return None
+    vertices_array = np.asarray(vertices)
+    shared = np.all(vertices_array[1:-1:2] == vertices_array[2::2], axis=1)
+    reversals = np.all(vertices_array[0:-2:2] == vertices_array[3::2], axis=1)
+    forward_shared = shared & ~reversals
+    if forward_shared.size == 0:
+        return None
+    shared_fraction = float(np.mean(forward_shared))
+    if shared_fraction <= _AUTHORING_LINT_SHARED_THRESHOLD:
+        return None
+    return shared_fraction
+
+
+def _line_authoring_warning_key(ctx: GeometryWriteCtx, path: str) -> str:
+    """Collapse partition leaves to their logical parent warning key."""
+    parent_path, separator, _leaf = path.rpartition("/")
+    if separator and parent_path in ctx.store:
+        parent = ctx.store[parent_path]
+        if getattr(parent, "attrs", {}).get("kind") == "partition":
+            return parent_path
+    return path
+
 
 def write_lines(
     ctx: GeometryWriteCtx,
@@ -136,31 +169,13 @@ def write_lines(
         if np.max(indices) >= n_vertices:
             raise ValueError(f"Index {np.max(indices)} >= n_vertices {n_vertices}")
 
-    # 0d-bis. Authoring lint: "segments" input that is actually a chain of
-    # EXPLODED CONTINUOUS polylines (consecutive segments share an endpoint
-    # coordinate, duplicated instead of index-shared). The viewer's joint
-    # continuity (endpoint-cap suppression) matches joints by shared vertex
-    # INDEX, so exploded authoring renders every interior joint as a dark
-    # bead — the classic thick-polyline bead-chain artifact. Warn (never
-    # reject: duplicated coordinates can also be a legitimate coincidence).
-    if line_type == "segments" and n_vertices >= 16:
-        verts_arr = np.asarray(vertices)
-        seg_ends = verts_arr[1:-1:2]  # end of segment i      (i < last)
-        next_starts = verts_arr[2::2]  # start of segment i+1
-        shared = np.all(seg_ends == next_starts, axis=1)
-        if shared.size > 0:
-            shared_frac = float(np.mean(shared))
-            if shared_frac > 0.5:
-                aprint(
-                    f"  ⚠️ {shared_frac:.0%} of consecutive segments share an "
-                    "endpoint coordinate — this looks like continuous "
-                    "polylines exploded into independent segments. Authored "
-                    "this way, interior joints do not share vertex indices, "
-                    "so thick lines render as bead chains. Author connected "
-                    "geometry as line_type='polyline' (single chain) or "
-                    "line_type='indexed' with per-chain edge lists (many "
-                    "chains in one node)."
-                )
+    # 0d-bis. Prepare the warn-only authoring lint, but print it after the node
+    # header so multi-node output identifies the affected path. Requiring >90%
+    # forward adjacency and excluding immediate reversals avoids treating common
+    # DFS/BFS, wireframe, and symmetric graph-edge orderings as polylines.
+    authoring_warning_fraction = (
+        _exploded_chain_fraction(vertices) if line_type == "segments" else None
+    )
 
     # 0e. Shared validator (the Lines sibling of validate_radii_for_writing)
     validate_widths_for_writing(widths, n_vertices)
@@ -196,6 +211,20 @@ def write_lines(
     group = ctx.store.require_group(path)
 
     aprint(f"📝 Writing {n_vertices:,} line vertices ({n_dims}D) to {path}")
+
+    if authoring_warning_fraction is not None:
+        warning_key = _line_authoring_warning_key(ctx, path)
+        if ctx.claim_line_authoring_warning(warning_key):
+            aprint(
+                f"  ⚠️ Node '{warning_key}': {authoring_warning_fraction:.0%} "
+                "of consecutive segments share a forward endpoint coordinate "
+                "— this looks like continuous polylines exploded into "
+                "independent segments. Authored this way, interior joints do "
+                "not share vertex indices, so thick lines render as bead "
+                "chains. Use line_type='polyline' for one chain or "
+                "line_type='indexed' with shared vertex indices for multiple "
+                "chains."
+            )
 
     # Scalars are now passed directly to encoder - no expansion needed
     # Just log what we're receiving
