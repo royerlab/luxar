@@ -10,6 +10,33 @@ from luxar.gsplats.batch.fit_command import iter_fit_arg_flags
 from luxar.gsplats.batch.manifest import BatchManifest
 
 
+def _validated_output_dir(output_dir: str) -> str:
+    """Return an output directory safe to embed in a generated sbatch file.
+
+    Slurm's directive parser and Bash both honor shell-style quoting for
+    ordinary metacharacters, but an sbatch directive is physically line-oriented.
+    A line break could therefore terminate an
+    ``--output``/``--error`` directive before either Slurm or Bash sees the
+    quoted value.  NUL likewise truncates C-string parsing.
+    """
+    if any(char in output_dir for char in ("\0", "\r", "\n")):
+        raise ValueError(
+            "Batch output directory must not contain NUL, carriage returns, or newlines"
+        )
+    return output_dir
+
+
+def _slurm_log_path(output_dir: str, log_name: str) -> str:
+    """Quote one ``--output``/``--error`` directive value.
+
+    Quoting alone is not enough here: Slurm expands filename-pattern tokens
+    (``%j``, ``%A``, ``%a``, ...) in these directives after tokenization, so a
+    percent sign in the user's directory must be doubled to stay literal.
+    ``log_name`` is appended verbatim, keeping its intentional ``%a``.
+    """
+    return shlex.quote(f"{output_dir.replace('%', '%%')}/logs/{log_name}")
+
+
 def generate_fit_sbatch(
     manifest: BatchManifest,
     env_preamble: str,
@@ -42,6 +69,8 @@ def generate_fit_sbatch(
 
     effective_partition = partition_override or manifest.slurm_partition
     effective_concurrent = max_concurrent_override or manifest.max_concurrent
+    output_dir = _validated_output_dir(manifest.output_dir)
+    log_stem = job_name.removeprefix("luxar-")
 
     lines = [
         "#!/bin/bash",
@@ -54,8 +83,8 @@ def generate_fit_sbatch(
         f"#SBATCH --cpus-per-task={manifest.slurm_cpus}",
         f"#SBATCH --mem={manifest.slurm_mem_gb}G",
         f"#SBATCH --time={manifest.slurm_time_limit}",
-        f"#SBATCH --output={manifest.output_dir}/logs/{job_name.removeprefix('luxar-')}_%a.out",
-        f"#SBATCH --error={manifest.output_dir}/logs/{job_name.removeprefix('luxar-')}_%a.err",
+        f"#SBATCH --output={_slurm_log_path(output_dir, f'{log_stem}_%a.out')}",
+        f"#SBATCH --error={_slurm_log_path(output_dir, f'{log_stem}_%a.err')}",
     ]
 
     if manifest.slurm_account:
@@ -148,7 +177,7 @@ def generate_fit_sbatch(
     if manifest.n_timepoints > 1 or has_explicit_timepoints:
         fit_cmd_parts.append("    --timepoint $T")
     if manifest.preset:
-        fit_cmd_parts.append(f"    --preset {manifest.preset}")
+        fit_cmd_parts.append(f"    --preset {shlex.quote(manifest.preset)}")
     # Shared fit_args -> flag mapping (single source: fit_command.iter_fit_arg_flags),
     # formatted here as quoted bash lines.
     for flag, value in iter_fit_arg_flags(manifest.fit_args):
@@ -223,6 +252,7 @@ def generate_fit_sbatch(
     # Helper function: decode task ID and run fit
     has_t_map = manifest.timepoint_indices is not None
     has_c_map = manifest.channel_indices is not None
+    output_tiles_dir = shlex.quote(f"{output_dir}/tiles")
     lines.extend(
         [
             "run_task() {",
@@ -237,9 +267,9 @@ def generate_fit_sbatch(
             "    local T=${T_INDICES[$T_IDX]}" if has_t_map else "    local T=$T_IDX",
             "    local C=${C_INDICES[$C_IDX]}" if has_c_map else "    local C=$C_IDX",
             "",
-            f'    local OUTPUT="{manifest.output_dir}/tiles/'
+            f"    local OUTPUT={output_tiles_dir}/"
             f"t$(printf '%0{t_width}d' $T)_c$(printf '%0{c_width}d' $C)_{slot_label}$(printf '%0{k_width}d' $K)"
-            '.gsplats.zarr"',
+            ".gsplats.zarr",
             "",
             "    # Clean up leftovers from a previous crashed/preempted run.",
             "    # A stale .tmp.empty marker must go too (the local runner does",
@@ -267,7 +297,7 @@ def generate_fit_sbatch(
         and manifest.denoise_mode == "on-the-fly"
         and manifest.denoise_h is None
     ):
-        h_json_path = shlex.quote(f"{manifest.output_dir}/denoise_h_values.json")
+        h_json_path = shlex.quote(f"{output_dir}/denoise_h_values.json")
         lines.extend(
             [
                 f"    local H_JSON={h_json_path}",
@@ -383,6 +413,7 @@ def generate_calibrate_sbatch(manifest: BatchManifest, env_preamble: str) -> str
     Single GPU, ~10 min. Runs ``luxar gsplat batch-fit denoise-calibrate``
     which calibrates h per channel and writes results to manifest + JSON.
     """
+    output_dir = _validated_output_dir(manifest.output_dir)
     lines = [
         "#!/bin/bash",
         "#SBATCH --job-name=luxar-calibrate",
@@ -392,8 +423,8 @@ def generate_calibrate_sbatch(manifest: BatchManifest, env_preamble: str) -> str
         "#SBATCH --cpus-per-task=4",
         f"#SBATCH --mem={manifest.slurm_mem_gb}G",
         "#SBATCH --time=01:00:00",  # Large zarr.zip archives need I/O time
-        f"#SBATCH --output={manifest.output_dir}/logs/calibrate.out",
-        f"#SBATCH --error={manifest.output_dir}/logs/calibrate.err",
+        f"#SBATCH --output={_slurm_log_path(output_dir, 'calibrate.out')}",
+        f"#SBATCH --error={_slurm_log_path(output_dir, 'calibrate.err')}",
     ]
 
     if manifest.slurm_account:
@@ -404,9 +435,7 @@ def generate_calibrate_sbatch(manifest: BatchManifest, env_preamble: str) -> str
     lines.append("")
     lines.append(env_preamble)
     lines.append("")
-    lines.append(
-        f"luxar gsplat batch-fit denoise-calibrate {shlex.quote(manifest.output_dir)}"
-    )
+    lines.append(f"luxar gsplat batch-fit denoise-calibrate {shlex.quote(output_dir)}")
     lines.append("")
 
     return "\n".join(lines)
@@ -418,6 +447,7 @@ def generate_denoise_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
     Array job: one task per (timepoint, channel). Each task denoises one
     volume and writes to ``denoised.zarr``.
     """
+    output_dir = _validated_output_dir(manifest.output_dir)
     # Use actual selected counts (not original dataset counts) for task array
     n_t = (
         len(manifest.timepoint_indices)
@@ -441,8 +471,8 @@ def generate_denoise_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
         "#SBATCH --cpus-per-task=4",
         f"#SBATCH --mem={max(manifest.slurm_mem_gb, 64)}G",  # NLM + volume loading headroom
         "#SBATCH --time=01:00:00",
-        f"#SBATCH --output={manifest.output_dir}/logs/denoise_%a.out",
-        f"#SBATCH --error={manifest.output_dir}/logs/denoise_%a.err",
+        f"#SBATCH --output={_slurm_log_path(output_dir, 'denoise_%a.out')}",
+        f"#SBATCH --error={_slurm_log_path(output_dir, 'denoise_%a.err')}",
     ]
 
     if manifest.slurm_account:
@@ -455,7 +485,7 @@ def generate_denoise_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
     lines.append("")
     lines.append(
         f"luxar gsplat batch-fit denoise-preprocess "
-        f"{shlex.quote(manifest.output_dir)} $SLURM_ARRAY_TASK_ID"
+        f"{shlex.quote(output_dir)} $SLURM_ARRAY_TASK_ID"
     )
     lines.append("")
 
@@ -475,6 +505,7 @@ def generate_merge_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
     Returns:
         Complete sbatch script as a string.
     """
+    output_dir = _validated_output_dir(manifest.output_dir)
     lines = [
         "#!/bin/bash",
         "#SBATCH --job-name=luxar-merge",
@@ -484,8 +515,8 @@ def generate_merge_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
         "#SBATCH --cpus-per-task=8",
         f"#SBATCH --mem={max(manifest.slurm_mem_gb, 64)}G",
         "#SBATCH --time=04:00:00",
-        f"#SBATCH --output={manifest.output_dir}/logs/merge.out",
-        f"#SBATCH --error={manifest.output_dir}/logs/merge.err",
+        f"#SBATCH --output={_slurm_log_path(output_dir, 'merge.out')}",
+        f"#SBATCH --error={_slurm_log_path(output_dir, 'merge.err')}",
     ]
 
     if manifest.slurm_account:
@@ -498,7 +529,7 @@ def generate_merge_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
     lines.append("")
 
     # Merge command
-    merge_cmd = f"luxar gsplat batch-fit merge {shlex.quote(manifest.output_dir)}"
+    merge_cmd = f"luxar gsplat batch-fit merge {shlex.quote(output_dir)}"
     if manifest.channel_colors:
         colors_str = ",".join(manifest.channel_colors)
         merge_cmd += f" --channel-colors {shlex.quote(colors_str)}"
