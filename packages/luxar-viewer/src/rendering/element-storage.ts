@@ -351,10 +351,18 @@ function getInactiveSortedIndexAttribute(
 }
 
 /**
- * Split the attach-time alias so the geometry owns TWO real ordering
- * buffers. Called on the first ordering a geometry ever receives, so a
- * node in a commutative blending mode (which never sorts) never pays the
- * 4 B/element.
+ * Last-resort guarantee that the geometry owns TWO distinct ordering
+ * buffers before an ordering streams into one of them.
+ *
+ * `attachElementStorage` allocates both up front, so on every geometry
+ * the viewer builds this is a no-op — deliberately. Materialising the
+ * second buffer LATE changes the attribute set, and hence the WebGPU
+ * vertex-buffer layout, behind a render pipeline three has already
+ * cached and will not rebuild (full reasoning at the allocation site);
+ * the result is a silently black scene on the native backend. This
+ * function therefore exists only for a geometry assembled by hand
+ * outside the chokepoint, which would otherwise have no buffer to
+ * stream into and would silently never apply an ordering at all.
  *
  * The new buffer is seeded from the live one rather than left zeroed:
  * every index outside the streamed `[0, count)` span then still reads as
@@ -369,10 +377,9 @@ function ensureSortedIndexBackBuffer(geometry: THREE.InstancedBufferGeometry): v
   const front = getActiveSortedIndexAttribute(geometry);
   if (!front) return;
   const other = getInactiveSortedIndexAttribute(geometry);
-  // Split when the pair is still aliased, and ALSO when the second name
-  // is missing entirely: a geometry assembled outside
-  // `attachElementStorage` would otherwise have no buffer to stream into
-  // and would silently never apply an ordering.
+  // Materialise when the second name is missing entirely, and ALSO when
+  // the pair happens to be aliased onto one attribute object — either
+  // way there is nowhere safe to stream a new ordering.
   if (other && other !== front) return;
 
   const back = new THREE.InstancedBufferAttribute(
@@ -555,15 +562,48 @@ export function attachElementStorage(
   const sortedIndex = new THREE.InstancedBufferAttribute(new Uint32Array(capacity), 1);
   sortedIndex.setUsage(THREE.DynamicDrawUsage);
   geometry.setAttribute('aSortedIndex', sortedIndex);
-  // Ordering slot B starts ALIASED to slot A (same attribute object, so
-  // zero extra bytes). Every shader references both names, so the
-  // attribute must exist on every geometry — WebGPU's RenderObject
-  // dereferences a graph-referenced attribute before its undefined
-  // guard, so a missing one throws rather than degrading. Aliasing
-  // satisfies that from this single chokepoint while a node that never
-  // sorts (any commutative blending mode) pays nothing;
-  // `ensureSortedIndexBackBuffer` splits the alias on first ordering.
-  geometry.setAttribute('aSortedIndexB', sortedIndex);
+  // Slot B is a DISTINCT buffer from the very first frame — never an
+  // alias onto slot A, and never lazily materialised.
+  //
+  // Every shader references both names, so both attributes must exist on
+  // every geometry (WebGPU's `RenderObject.getAttributes` dereferences a
+  // graph-referenced attribute before its undefined guard, so a missing
+  // one throws rather than degrading). Aliasing the pair onto one
+  // attribute object satisfies existence for free, and an earlier
+  // revision did exactly that — splitting on a node's first sort so a
+  // commutative-mode node paid no extra bytes. That is WRONG on the
+  // native WebGPU backend, and silently so:
+  //
+  //   `WebGPUAttributeUtils.createShaderVertexBuffers` keys the vertex
+  //   buffer LAYOUT by BufferAttribute IDENTITY, so an aliased pair
+  //   compiles to ONE instanced buffer carrying two shader locations at
+  //   offset 0, and a split pair to TWO. But three rebuilds a render
+  //   pipeline only on a material/cache-key change: `getGeometryCacheKey`
+  //   hashes attribute NAMES, itemSize and normalized — never identity —
+  //   and `RenderObjects.get` responds to `needsGeometryUpdate` with a
+  //   bare `setGeometry()` that refreshes the attribute list but leaves
+  //   `Pipelines`' cached pipeline alone. So after the split the draw
+  //   binds three vertex buffers into a two-buffer layout: every
+  //   subsequent attribute shifts down a slot and the quad-corner
+  //   attribute reads the ordering buffer's u32s as vec2<f32>. Corners
+  //   collapse to denormals, every quad degenerates, and the scene
+  //   renders BLACK — no validation error, no console warning.
+  //
+  // WebGL is immune (it binds attributes by program location, not by
+  // ordinal slot), which is why the whole unit + TSL-parity suite stayed
+  // green: `tsl-shader-parity` runs `WebGPURenderer({ forceWebGL: true })`,
+  // which exercises the WGSL-adjacent node graph through the WebGL2
+  // bridge and never builds a WebGPU vertex layout at all.
+  //
+  // Allocating both buffers here makes the attribute SET, and therefore
+  // the vertex layout, invariant for the geometry's whole lifetime — the
+  // property three's pipeline cache assumes but does not enforce. It
+  // costs a flat +4 B/element on nodes that never sort (≈6% of a
+  // gsplat's 68 B/element), which is the honest price of not depending
+  // on a cache-invalidation path that does not exist.
+  const sortedIndexB = new THREE.InstancedBufferAttribute(new Uint32Array(capacity), 1);
+  sortedIndexB.setUsage(THREE.DynamicDrawUsage);
+  geometry.setAttribute('aSortedIndexB', sortedIndexB);
 
   const width = getElementTextureWidth(layout);
   const height = elementTextureHeightForCapacity(capacity, layout);

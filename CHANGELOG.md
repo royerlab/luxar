@@ -38,10 +38,18 @@ which is order-dependent where `additive` was not.
 Orderings now stream into the **inactive** buffer of an `aSortedIndex` /
 `aSortedIndexB` pair and a runtime `uSortedIndexSlot` uniform flips once that
 buffer holds the whole permutation — the A/B design
-`GSPLAT_DEPTH_SORTING_SPEC.md` §2.1 tier 3 specced and deferred. The pair is
-aliased onto one buffer until a node's first sort, so only nodes that actually
-sort pay the +4 B/element. The per-frame upload bound L8 bought is unchanged.
-Sorting and applying now run concurrently (the dispatch apply-gate is gone).
+`GSPLAT_DEPTH_SORTING_SPEC.md` §2.1 tier 3 specced and deferred. Both buffers
+are allocated at attach, so every node pays +4 B/element whether it sorts or
+not. Materialising the second one lazily (the obvious saving, and how this
+first landed) is unsafe on the **native WebGPU** backend: three keys a
+pipeline's vertex-buffer layout by BufferAttribute identity but rebuilds the
+pipeline only on a name-level cache-key change, so growing the attribute set
+after first render shifted every later attribute down a vertex-buffer slot —
+the quad-corner attribute read the ordering buffer's `u32`s as `vec2<f32>` and
+the scene rendered black, with no validation error and no console warning.
+WebGL binds by program location and never saw it. The per-frame upload bound L8
+bought is unchanged. Sorting and applying now run concurrently (the dispatch
+apply-gate is gone).
 
 Trade, measured on the 10M orbit bench: sort-adjacent frame p99 ~77 → ~92 ms
 (median and p95 unchanged, still far under the 119–563 ms chunking prevents),

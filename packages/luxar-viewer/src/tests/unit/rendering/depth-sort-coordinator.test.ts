@@ -128,9 +128,13 @@ function makeGSplatsMesh(count: number, blendingMode: string): THREE.Mesh {
   const geometry = new THREE.InstancedBufferGeometry();
   const attr = new THREE.InstancedBufferAttribute(new Uint32Array(count), 1);
   geometry.setAttribute('aSortedIndex', attr);
-  // Mirror attachElementStorage: the second ordering name is ALIASED to
-  // the first until the node's first sort splits it.
-  geometry.setAttribute('aSortedIndexB', attr);
+  // Mirror attachElementStorage: TWO distinct ordering buffers from the
+  // start, so the attribute set never changes under a cached WebGPU
+  // vertex layout.
+  geometry.setAttribute(
+    'aSortedIndexB',
+    new THREE.InstancedBufferAttribute(new Uint32Array(count), 1)
+  );
   // Committed gsplat geometry always carries bounds (the commit path
   // computes them); the Phase-3 translation threshold is bounds-relative.
   geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0, 0), 10);

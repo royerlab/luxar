@@ -570,22 +570,21 @@ describe('pool adapter — growth, dispose, byte accounting', () => {
     expect(bytes).toBeLessThanOrEqual(capacity * 68 + rowBytes + 256);
   });
 
-  it('charges the back buffer only once a node actually sorts', () => {
+  it('charges BOTH ordering buffers from attach, and sorting adds nothing', () => {
     const geom = pool.acquireGSplatsGeometry('node', 1000);
     const capacity = (geom.getAttribute('aSortedIndex').array as Uint32Array).length;
     const before = estimateGeometryBytes(geom);
 
-    // Aliased: the two ordering names share ONE buffer, so the estimate
-    // must not charge for it twice (a node in a commutative mode never
-    // sorts and must pay nothing for a back buffer it will never own).
-    expect(geom.getAttribute('aSortedIndexB')).toBe(geom.getAttribute('aSortedIndex'));
+    // Both buffers are real and distinct from attach, so the budget must
+    // already carry both — under-reporting here would let the pool
+    // over-admit nodes and blow the GPU byte budget.
+    expect(geom.getAttribute('aSortedIndexB')).not.toBe(geom.getAttribute('aSortedIndex'));
+    expect(before).toBeGreaterThanOrEqual(capacity * 8);
 
+    // A node's first sort no longer allocates anything, so the estimate
+    // must not move (the alias-splitting era grew it by one buffer here).
     writeSortedIndexOrdering(geom, new Uint32Array([3, 2, 1, 0]), 4);
-    // Splitting the alias grows the geometry by exactly one ordering
-    // buffer, and must invalidate the memoized estimate (nothing else in
-    // production does).
-    const after = estimateGeometryBytes(geom);
-    expect(after - before).toBe(capacity * 4);
+    expect(estimateGeometryBytes(geom)).toBe(before);
   });
 
   it('clamps acquire capacity AND written count to the per-node texture bound', () => {
@@ -1021,20 +1020,40 @@ describe('double-buffered ordering apply (atomic swap)', () => {
     expect(SORTED_INDEX_CHUNK_ELEMENTS).toBe(1_000_000);
   });
 
-  it('attaches the back buffer ALIASED, and splits it only on the first ordering', () => {
+  it('keeps the ordering attribute OBJECTS fixed for the geometry lifetime', () => {
+    // REGRESSION GUARD, native WebGPU. Three keys a pipeline's vertex
+    // buffer layout by BufferAttribute IDENTITY but hashes only attribute
+    // NAMES into the geometry cache key, and answers `needsGeometryUpdate`
+    // with a bare `setGeometry()` that never rebuilds the pipeline. So
+    // swapping in a new attribute object after first render — as the
+    // alias-splitting revision of this module did on a node's first sort —
+    // leaves the draw binding N+1 vertex buffers into an N-buffer layout:
+    // every later attribute shifts a slot, the quad-corner attribute reads
+    // the ordering buffer's u32s as vec2<f32>, and the scene goes BLACK
+    // with no validation error. WebGL binds by program location and is
+    // immune, as is the `forceWebGL` TSL-parity harness, so this unit
+    // invariant is the only cheap guard we have.
     const { geometry } = makeGeometry(16);
     const a = geometry.getAttribute('aSortedIndex');
-    // Aliased at attach: both shader names resolve, zero extra bytes, so
-    // a node in a commutative mode never pays for a buffer it won't use.
-    expect(geometry.getAttribute('aSortedIndexB')).toBe(a);
-
-    writeSortedIndexOrdering(geometry, reversed(12), 12);
     const b = geometry.getAttribute('aSortedIndexB');
     expect(b).not.toBe(a);
     // Equal length is load-bearing: three derives _maxInstanceCount from
     // the SMALLEST instanced attribute, so a short back buffer would
     // silently clamp the draw.
     expect((b.array as Uint32Array).length).toBe((a.array as Uint32Array).length);
+
+    // Drive a full cycle through BOTH slots — identity write, a sort that
+    // flips to B, and a second sort that flips back to A.
+    writeSortedIndexIdentity(geometry, 12);
+    for (const ordering of [reversed(12), reversed(12)]) {
+      writeSortedIndexOrdering(geometry, ordering, 12);
+      while (pumpSortedIndexOrderingApply(geometry).more) {
+        /* drain */
+      }
+    }
+    expect(activeSortedIndexSlot(geometry)).toBe(0);
+    expect(geometry.getAttribute('aSortedIndex')).toBe(a);
+    expect(geometry.getAttribute('aSortedIndexB')).toBe(b);
   });
 
   it('staging leaves the DRAWN buffer untouched (no ranges, no version bump)', () => {

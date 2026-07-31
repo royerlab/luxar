@@ -66,8 +66,9 @@ function createLinesGeometry(segmentCapacity: number): THREE.InstancedBufferGeom
   // Segment data lives in the RGBA32F texture attached here (disposed BY
   // the geometry's dispose event, so every pool dispose site frees it);
   // The `aSortedIndex`/`aSortedIndexB` ordering pair is the only
-  // per-instance data (double-buffered so a new ordering swaps atomically;
-  // aliased onto one buffer until the node first sorts).
+  // per-instance data (two distinct buffers from attach, so a new ordering
+  // swaps atomically and the vertex layout never changes under a cached
+  // WebGPU pipeline).
   attachLineStorage(geometry, segmentCapacity);
   // Ownership marker: the commit handoff disposes a replaced geometry
   // ONLY when it is not pool-owned (pool geometries are released back to
