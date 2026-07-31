@@ -68,8 +68,10 @@ queries; percentile/soft resolution lives in `filter_by` /
 validated), `--tone-mapping` (scene `viewer_config`, validated against
 `VALID_TONE_MAPPINGS`), `--gamma`, `--intensity`, `--layer/--no-layer`.
 Colormap/gamma/intensity/layer flow through `**attrs`; tone-mapping goes through
-`ViewerConfig` on `create_scene`. Pair a scientific colormap with
-`--tone-mapping Neutral` — the viewer default (ACES) shifts hues.
+`ViewerConfig` on `create_scene`. Prefer `--tone-mapping ACES` (the house
+default; passing it explicitly records the choice and silences the compiler's
+LUT notice, which fires only when nothing was chosen), and reach for `Neutral`
+when a colormap carries an exact scientific color encoding — ACES shifts hues.
 - `inspect_commands.py` — Typer command signatures + registration for inspect commands
 - `benchmark.py` — GPU benchmark helpers
 - `batch_planning.py`, `planner.py`, `encoding.py` — shared helpers

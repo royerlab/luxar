@@ -308,10 +308,14 @@ class ViewerConfig:
     background_color: Optional[str] = None
 
     # Rendering pipeline
-    # None lets the viewer use its default ("ACES"), which gives the most
-    # consistent, pleasing HDR look but intentionally shifts hues. Set
-    # "Neutral" when exact color fidelity matters (e.g. scientific colormap
-    # LUTs); the compiler warns when a LUT is used under the ACES default.
+    # "ACES" is the recommended choice for almost every scene: its filmic
+    # highlight rolloff is what keeps dense, bright structure from clipping
+    # flat, and it is also the viewer's default when this is left None. It
+    # does intentionally shift hues, so prefer "Neutral" in the narrower case
+    # where a colormap LUT carries an exact scientific color encoding that
+    # must survive to the screen. Setting this explicitly — to "ACES" as much
+    # as to anything else — silences the compiler's LUT tone-mapping notice,
+    # which only fires when no choice was made at all.
     tone_mapping: Optional[str] = None
     exposure: Optional[float] = None  # Log2 stops, default 0.0
     global_offset: Optional[float] = None  # Additive shift, default 0.0
