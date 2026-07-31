@@ -556,9 +556,7 @@ def robust_download(
                 with (
                     asection(f"Download Attempt {attempt + 1}/{max_retries + 1}"),
                     contextlib.closing(
-                        session.get(
-                            url, headers=headers, stream=True, timeout=timeout
-                        )
+                        session.get(url, headers=headers, stream=True, timeout=timeout)
                     ) as response,
                 ):
                     response.raise_for_status()

@@ -1337,9 +1337,9 @@ class TestRobustDownloadResume416:
         assert ("HEAD", False) in server.served, "identity size probe must have run"
         # The identity guard means the probe never negotiated gzip, so the
         # reported size matched the decoded cache and NO body GET was needed.
-        assert all(
-            not used_gzip for _cmd, used_gzip in server.served
-        ), "size probe must send Accept-Encoding: identity, not gzip"
-        assert not any(
-            cmd == "GET" for cmd, _used_gzip in server.served
-        ), "a complete cache must be confirmed by the HEAD probe, not re-downloaded"
+        assert all(not used_gzip for _cmd, used_gzip in server.served), (
+            "size probe must send Accept-Encoding: identity, not gzip"
+        )
+        assert not any(cmd == "GET" for cmd, _used_gzip in server.served), (
+            "a complete cache must be confirmed by the HEAD probe, not re-downloaded"
+        )
