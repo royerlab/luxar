@@ -291,9 +291,13 @@ console.log('Float support:', !!gl.getExtension('EXT_color_buffer_float'));
 - Use `dtype=np.float32` for HDR color arrays
 - Keep most colors in [0.0, 3.0] range
 - Reserve values > 3.0 for very bright emissive objects
-- Keep the default ACES tone mapping for the best overall look; switch to
-  Neutral when you need exact color fidelity (e.g. scientific colormap LUTs,
-  where ACES's hue shift can distort encoded colors)
+- Keep ACES tone mapping for the best overall look — it is both the viewer
+  default and the right choice for almost every scene. Set it explicitly
+  (`tone_mapping="ACES"`) when a scene uses a colormap: that records the
+  decision and silences the compiler's LUT notice, which fires only when no
+  tone mapping was chosen at all. Switch to Neutral when you need exact color
+  fidelity (e.g. scientific colormap LUTs, where ACES's hue shift can distort
+  encoded colors)
 - Test on both HDR and SDR displays
 
 ### DON'T:

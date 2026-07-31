@@ -44,25 +44,34 @@ def write_colormap_lut_if_needed(
         return lut_tone_mapping_warned
 
     # The viewer defaults to ACES filmic tone-mapping, which intentionally
-    # shifts hues for a pleasing HDR look. That hue shift distorts the exact
-    # colors of a colormap LUT, so warn authors who rely on LUTs that they
-    # may want to pin tone_mapping="Neutral" in the scene's viewer_config.
-    # Skip the warning when:
-    #   - the author has already chosen "Neutral", or
-    #   - the colormap is the implicit grayscale default ("gray"), which has
-    #     no hue for ACES to distort and is not a deliberate LUT choice.
+    # shifts hues for a pleasing HDR look. ACES is the right default for
+    # almost every scene, but that hue shift does distort the exact colors of
+    # a colormap LUT, so flag it for authors who have not considered the
+    # choice at all — they may want to pin tone_mapping="Neutral" when the LUT
+    # carries a scientific color encoding.
+    #
+    # Fires ONLY when the author set no tone_mapping. An explicit value —
+    # including "ACES" — is a deliberate decision and must not be second-
+    # guessed; the message itself speaks of "the viewer's *default*", which is
+    # only what the author gets when they said nothing. The scene's
+    # tone_mapping is read as each node is written, so pass it to
+    # create_scene: assigning scene.viewer_config after adding a colormapped
+    # node is too late to silence the notice. Also skipped for the
+    # implicit grayscale default ("gray"), which has no hue for ACES to
+    # distort and is not a deliberate LUT choice.
     is_grayscale_default = isinstance(colormap, str) and colormap == "gray"
     if (
         not lut_tone_mapping_warned
-        and scene_tone_mapping != "Neutral"
+        and scene_tone_mapping is None
         and not is_grayscale_default
     ):
         warnings.warn(
-            "This scene uses a colormap LUT, but the viewer's default HDR "
-            "tone-mapping is 'ACES', which intentionally shifts hues and can "
-            "distort LUT colors. If exact colormap fidelity matters (e.g. for "
-            "scientific color encoding), set tone_mapping='Neutral' in the "
-            "scene's viewer_config.",
+            "This scene uses a colormap LUT and sets no tone_mapping, so the "
+            "viewer's default 'ACES' applies. ACES intentionally shifts hues, "
+            "which can distort LUT colors. That is usually the look you want; "
+            "if exact colormap fidelity matters (e.g. for scientific color "
+            "encoding), set tone_mapping='Neutral' in the scene's "
+            "viewer_config — or set 'ACES' explicitly to silence this.",
             UserWarning,
             stacklevel=3,
         )
