@@ -828,6 +828,17 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
    * the defensive metadata-missing warning ourselves.
    */
   private async queryVisiblePointRanges(viewState: ViewState): Promise<PointRange[]> {
+    // This node's nd_transform gives the current world slice no local preimage
+    // on a discrete dimension, so nothing here belongs to it. Checked ahead of
+    // both the no-index load-all fallback and the extend_to_all short-circuit,
+    // either of which would otherwise hand every element to the half-step
+    // membership gate and let a neighbouring category through. See
+    // `ViewState.noPreimage` / `invertNdTransformForQuery`.
+    if (viewState.noPreimage) {
+      log.query(Modules.SPATIAL_INDEX_LOADER, 'No preimage for this slice under nd_transform');
+      return [];
+    }
+
     const extendDims = this.node.attrs.extend_to_all || [];
 
     warnExtendToAllNoDimensions({
