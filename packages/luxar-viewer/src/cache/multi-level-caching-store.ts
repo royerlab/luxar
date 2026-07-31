@@ -309,12 +309,12 @@ export class MultiLevelCachingStore implements AsyncReadable {
    *
    * @returns Promise resolving to chunk data as Uint8Array, or undefined if:
    *          - Chunk doesn't exist (404 Not Found)
-   *          - Network error occurs
-   *          - Fetch fails for any reason
-   *          undefined is NOT an error - zarrita handles it gracefully
+   *          - Network retries are exhausted
+   *          - The store is being disposed with its owning scene
    *
-   * @throws Never throws - all errors caught and returned as undefined.
-   *         Errors are logged to console.warn for debugging.
+   * @throws {DOMException} `AbortError` when a live demand read is cancelled by
+   *         cache invalidation. Rejecting is required because zarrita treats
+   *         `undefined` as a missing chunk and substitutes fill values.
    *
    * @example
    * ```typescript
@@ -361,13 +361,17 @@ export class MultiLevelCachingStore implements AsyncReadable {
    * @see {@link setPrefetcher} for enabling automatic adjacent chunk loading
    */
   async get(key: string, _options?: unknown): Promise<Uint8Array | undefined> {
-    // zarrita's AsyncReadable contract is `Uint8Array | undefined`; both
-    // Missing and transient NetworkError collapse to undefined here. Internal
-    // callers that need to distinguish the cases use `getResult` directly.
+    // zarrita interprets undefined as "key missing" and decodes the chunk as
+    // fill values. Missing and exhausted NetworkError therefore keep that
+    // contract, but a live-store invalidation abort must reject instead of
+    // silently committing zero-filled geometry. Disposal remains quiet because
+    // the owning scene/load is being discarded at the same time.
     const result = await this.getResult(key);
     if (isErr(result)) {
       if (result.error.kind === 'NetworkError') {
         log.warning(Modules.CACHE, `Network error fetching ${key}: ${result.error.cause.message}`);
+      } else if (result.error.kind === 'Aborted' && !this.disposed) {
+        throw new DOMException(`Cache read aborted during invalidation: ${key}`, 'AbortError');
       }
       return undefined;
     }
@@ -384,7 +388,8 @@ export class MultiLevelCachingStore implements AsyncReadable {
    *   stored" without alarm.
    * - `err({ kind: 'NetworkError', cause })` — transient network/DNS
    *   error or 5xx after retries exhausted. Caller may back off.
-   * - `err({ kind: 'Aborted' })` — caller-supplied AbortSignal fired.
+   * - `err({ kind: 'Aborted' })` — caller signal, cache invalidation, or
+   *   store disposal aborted the read.
    */
   async getResult(
     key: string,
@@ -455,8 +460,17 @@ export class MultiLevelCachingStore implements AsyncReadable {
         // in-flight gets on a content-hash mismatch so the post-fetch
         // L1/L2 populate cannot resurrect stale data after a clear.
         const controller = new AbortController();
-        const fresh = this.fetchKeyChain(key, controller.signal).finally(() => {
-          this.pendingGets.delete(key);
+        let fresh!: Promise<{
+          result: Result<Uint8Array, CacheError>;
+          source: 'l2' | 'network' | 'missing';
+        }>;
+        fresh = this.fetchKeyChain(key, controller.signal).finally(() => {
+          // An invalidation clears pendingGets before an aborted chain settles.
+          // A new request may install a replacement for the same key during
+          // that window, so the old chain must only remove its own entry.
+          if (this.pendingGets.get(key)?.promise === fresh) {
+            this.pendingGets.delete(key);
+          }
         });
         this.pendingGets.set(key, { promise: fresh, controller });
         inflight = fresh;

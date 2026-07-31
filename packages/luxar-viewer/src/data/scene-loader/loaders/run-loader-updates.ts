@@ -11,7 +11,7 @@
 import { log, Modules } from '../../../utils/log';
 import type { UpdateProfiler, UpdateSession } from '../../../profiling/update-profiler';
 import type { ViewStateQueue } from '../view-state/view-state-queue';
-import type { FailedLoaderInfo } from './loader-registry';
+import type { LoaderRegistry } from './loader-registry';
 import { isAbortError } from '../../loaders/abort-error';
 
 const NOOP_SESSION: UpdateSession = {
@@ -33,7 +33,7 @@ export async function runLoaderUpdates<TLoader, TStaged>(
   ctx: {
     profiler: UpdateProfiler | null;
     viewStateQueue: ViewStateQueue;
-    failedLoaders: Map<string, FailedLoaderInfo>;
+    registry: Pick<LoaderRegistry, 'failedLoaders' | 'recordFailure'>;
   }
 ): Promise<Array<{ staged: TStaged | null; session: UpdateSession }>> {
   const tasks = Array.from(loaders.entries()).map(async ([path, loader]) => {
@@ -66,13 +66,10 @@ export async function runLoaderUpdates<TLoader, TStaged>(
       // gap and warming irrelevant chunks.
       ctx.viewStateQueue.forgetPath(path);
 
-      const errorInfo = ctx.failedLoaders.get(path);
-      const retryCount = errorInfo ? errorInfo.retryCount + 1 : 0;
-      ctx.failedLoaders.set(path, {
-        error: error as Error,
-        timestamp: Date.now(),
-        retryCount,
-      });
+      // Routed through `recordFailure` so the classified `kind` is persisted
+      // (retry policy consumes it) and the counter has a single owner.
+      ctx.registry.recordFailure(path, error as Error);
+      const retryCount = ctx.registry.failedLoaders.get(path)?.retryCount ?? 0;
       const lcType = loaderType === 'Points' ? '' : `${loaderType.toLowerCase()} `;
       log.error(
         Modules.SCENE_LOADER,

@@ -1209,6 +1209,71 @@ describe('MultiLevelCachingStore', () => {
       expect(fetchCount).toBe(2);
     });
 
+    it('an aborted chain cannot delete a same-key replacement entry', async () => {
+      let fetchCount = 0;
+      const fetchSignals: AbortSignal[] = [];
+      let releaseFirst!: () => void;
+      let releaseReplacement!: () => void;
+      const firstGate = new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      });
+      const replacementGate = new Promise<void>((resolve) => {
+        releaseReplacement = resolve;
+      });
+
+      global.fetch = vi.fn(async (_url: string, init?: RequestInit) => {
+        const call = ++fetchCount;
+        fetchSignals.push(init?.signal as AbortSignal);
+        await (call === 1 ? firstGate : replacementGate);
+        return {
+          ok: true,
+          status: 200,
+          async arrayBuffer() {
+            return new Uint8Array([call]).buffer;
+          },
+        } as Response;
+      }) as unknown as typeof fetch;
+
+      const waitForFetchCount = async (expected: number) => {
+        for (let i = 0; i < 20 && fetchCount < expected; i++) {
+          await Promise.resolve();
+        }
+        expect(fetchCount).toBe(expected);
+      };
+
+      // Start an old chain, then invalidate it. clearAll aborts and removes
+      // the map entry synchronously, while our mock keeps the fetch pending.
+      const oldRequest = store.getResult('replace-race');
+      await waitForFetchCount(1);
+      await store.clearAll();
+      expect(fetchSignals[0].aborted).toBe(true);
+
+      // A new same-key request legitimately owns pendingGets now.
+      const replacement = store.getResult('replace-race');
+      await waitForFetchCount(2);
+      expect(fetchSignals[1].aborted).toBe(false);
+
+      // Settling the old aborted chain must not delete that replacement.
+      releaseFirst();
+      const oldResult = await oldRequest;
+      expect(oldResult.ok).toBe(false);
+
+      const waiter = store.getResult('replace-race');
+      for (let i = 0; i < 20; i++) await Promise.resolve();
+      const fetchesAfterWaiter = fetchCount;
+
+      // A second invalidation must still find and abort the replacement.
+      // Finish the clear before observing the signal, then release the mock
+      // fetches so cleanup completes even when either assertion would fail.
+      await store.clearAll();
+      const replacementWasAborted = fetchSignals[1].aborted;
+      releaseReplacement();
+      await Promise.all([replacement, waiter]);
+
+      expect(fetchesAfterWaiter).toBe(2);
+      expect(replacementWasAborted).toBe(true);
+    });
+
     // R6b: demand-while-prefetch-in-flight. A prefetch-originated
     // getResult (suppressPrefetch: true) and a user-demand call for
     // the same key must share one underlying network fetch via
@@ -1361,6 +1426,42 @@ describe('MultiLevelCachingStore', () => {
       const result = await store.get('missing');
       expect(result).toBeUndefined();
       expect(global.fetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('rejects invalidation-aborted coalesced reads instead of reporting missing chunks', async () => {
+      let observedSignal: AbortSignal | undefined;
+      global.fetch = vi.fn((_url: string, init?: RequestInit) => {
+        observedSignal = init?.signal as AbortSignal | undefined;
+        return new Promise<Response>((_resolve, reject) => {
+          if (observedSignal?.aborted) {
+            reject(new DOMException('Aborted', 'AbortError'));
+            return;
+          }
+          observedSignal?.addEventListener(
+            'abort',
+            () => reject(new DOMException('Aborted', 'AbortError')),
+            { once: true }
+          );
+        });
+      }) as unknown as typeof fetch;
+
+      const firstRead = store.get('invalidation-race');
+      const coalescedRead = store.get('invalidation-race');
+      for (let i = 0; i < 20 && observedSignal === undefined; i++) {
+        await Promise.resolve();
+      }
+      expect(observedSignal).toBeDefined();
+      expect(global.fetch).toHaveBeenCalledTimes(1);
+
+      const clear = store.clearAll();
+      const expectedAbort = {
+        name: 'AbortError',
+        message: expect.stringContaining('invalidation-race'),
+      };
+      await expect(firstRead).rejects.toMatchObject(expectedAbort);
+      await expect(coalescedRead).rejects.toMatchObject(expectedAbort);
+      await clear;
+      expect(observedSignal?.aborted).toBe(true);
     });
 
     it('retry backoff includes jitter (commit 4.3)', async () => {
@@ -1580,7 +1681,7 @@ describe('MultiLevelCachingStore', () => {
       }
     );
 
-    it('disposed-store getResult returns Aborted synchronously without touching tiers', async () => {
+    it('disposed-store reads unwind quietly without touching tiers', async () => {
       // After dispose, callers must not be able to populate L1/L2 or
       // trigger network. The early-return guards both the Map-poke
       // and the prefetcher.onAccess fan-out.
@@ -1603,7 +1704,9 @@ describe('MultiLevelCachingStore', () => {
       const result = await target.getResult('chunk');
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error.kind).toBe('Aborted');
-      // No L1 mutation, no fetch initiation.
+      await expect(target.get('chunk')).resolves.toBeUndefined();
+      // No L1 mutation, no fetch initiation. The AsyncReadable path stays
+      // quiet because disposal means its owning scene is already discarded.
       expect(target.getStats().l1.chunksCount).toBe(0);
       expect(fetchSpy).not.toHaveBeenCalled();
     });
