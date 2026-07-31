@@ -316,6 +316,21 @@ test.describe('Layers Panel', () => {
     expect(target.count).toBe(1);
     expect(target.kind).toBe('partition');
 
+    // Both part meshes must exist BEFORE the switch: a part that streams in
+    // afterwards is built from the composed attrs and would read 'max' for the
+    // wrong reason (or be missing entirely and pass an empty assertion).
+    const countParts = () =>
+      page.evaluate((path) => {
+        const debug = (window as any).__luxarDebug;
+        let n = 0;
+        debug.scene.traverse((obj: any) => {
+          const inLayer = obj.name?.startsWith(`${path}/`);
+          if (obj.userData?.nodeType === 'gsplats' && obj.material && inLayer) n++;
+        });
+        return n;
+      }, target.path);
+    await expect.poll(countParts, { timeout: 15000 }).toBeGreaterThanOrEqual(2);
+
     const blendSelect = page.locator(
       '.luxar-layers-panel__control-group:has(.luxar-layers-panel__control-label:text-is("Blend")) select'
     );

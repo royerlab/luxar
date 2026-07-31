@@ -94,10 +94,22 @@ function deriveColorRangeFromDescendants(node: SceneNode): [number, number] | un
   return min <= max ? [min, max] : undefined;
 }
 
-/** True when `node` (or any descendant) renders through a colormap LUT. */
+/**
+ * True when `node` — or a descendant it OWNS — renders through a colormap LUT.
+ *
+ * The walk stops at a nested `layer=true` descendant: that node is its own row
+ * in the panel with its own colormap control, so its palette can change at any
+ * time. Deriving THIS layer's mode from it would freeze a snapshot that goes
+ * stale the moment the inner control is used, leaving the outer layer claiming
+ * a scalar window over a leaf that has since gone back to direct colour (its
+ * range control then routes to the identity and does nothing). Every writer
+ * routes `layer` through `COMPOSITING_ATTRS` onto the wrapper only, so a
+ * kind=partition / kind=lod layer never has layer descendants — the boundary
+ * only bites on explicitly nested authored layers.
+ */
 function usesColormap(node: SceneNode): boolean {
   if (node.attrs.colormap) return true;
-  return (node.children ?? []).some(usesColormap);
+  return (node.children ?? []).some((c) => !isLayerEnabled(c.attrs.layer) && usesColormap(c));
 }
 
 /**
@@ -111,12 +123,15 @@ function usesColormap(node: SceneNode): boolean {
  * the descendant palette keeps the dropdown and the legend truthful and makes
  * "(direct colors)" an actual off-switch there (a select only emits `change`
  * when its value moves).
+ *
+ * Stops at nested `layer=true` descendants for the same reason
+ * {@link usesColormap} does — they own their palette.
  */
 function deriveColormapFromDescendants(node: SceneNode): string | undefined {
   let found: string | undefined;
   let mixed = false;
   const visit = (n: SceneNode): void => {
-    if (mixed) return;
+    if (mixed || isLayerEnabled(n.attrs.layer)) return;
     const cm = n.attrs.colormap as string | undefined;
     if (cm) {
       if (found === undefined) found = cm;

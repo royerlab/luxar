@@ -482,6 +482,26 @@ describe('LayerStateManager', () => {
     expect(layer.scalarWindow).toBe(true);
   });
 
+  it('does not derive a palette from a descendant that is a LAYER of its own', () => {
+    // A nested layer owns its colormap control, so its palette can change at
+    // any time. Snapshotting it onto the ancestor at init would go stale on
+    // the first inner edit: the ancestor would keep claiming a scalar window
+    // over a leaf that is back on direct colour, and its range control would
+    // route to the identity for that leaf (silently inert).
+    const graph = makePartitionGraph({});
+    const inner = graph.children![0].children![0];
+    inner.attrs.layer = true;
+    inner.attrs.colormap = 'viridis';
+    mgr.initFromSceneGraph(graph);
+    const wrapper = mgr.getLayer('/g')!;
+    expect(wrapper.colormap).toBeUndefined();
+    expect(wrapper.scalarWindow).toBe(false);
+    expect(wrapper.displayMax).toBeCloseTo(1, 5);
+    // The nested layer still reports its own palette on its own row.
+    expect(mgr.getLayer('/g/coarse')!.colormap).toBe('viridis');
+    expect(mgr.getLayer('/g/coarse')!.scalarWindow).toBe(true);
+  });
+
   it('keeps a DIRECT-COLOUR composite group layer at the identity window', () => {
     // The gallery demo's `tiles` / `adaptive` columns: parts carry per-splat
     // RGB and no colormap, so their amplitude range must NOT become the window

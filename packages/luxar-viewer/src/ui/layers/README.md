@@ -118,6 +118,12 @@ what that value is (`layer-state.ts::initialDisplayRange`):
 **slider bounds** for direct-colour layers, so stretching authored colours stays
 a one-drag operation.
 
+The "or a descendant" walk stops at a nested `layer=true` node: that node is its
+own row with its own colormap control, so a palette derived from it would be a
+snapshot that goes stale on the first inner edit. Writers route `layer` onto the
+wrapper only, so a `kind=partition` / `kind=lod` layer never has layer
+descendants and is unaffected.
+
 Bounds are the union of the starting window, the recovered authored
 `intensity`/`offset` window, and (direct colour only) `color_data_range` —
 `[min(dataMin, displayMin), max(dataMax, displayMax)]` — so the `<input>` never
