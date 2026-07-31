@@ -239,6 +239,23 @@ class TestAddPointsAdditiveLod:
         # Labels survived to the leaf.
         assert grp.attrs.get("has_image_labels") is True
 
+    def test_invalid_additive_spec_raises_even_with_image_labels(
+        self, tmp_path
+    ) -> None:
+        # The image_labels guard refuses the ladder but must still validate
+        # the spec — a malformed additive_lod= fails fast on every path.
+        output = tmp_path / "t.luxar.zarr"
+        positions = np.random.RandomState(0).rand(20, 3).astype(np.float32)
+        with LuxarZarrCompiler(output) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            with pytest.raises(ValueError, match="method must be"):
+                scene.add_points(
+                    "pts",
+                    positions,
+                    image_labels=[b"x"] * 20,
+                    additive_lod=dict(method="bogus"),
+                )
+
     def test_default_true_writes_4_levels(self, tmp_path) -> None:
         output = tmp_path / "t.luxar.zarr"
         rng = np.random.RandomState(0)

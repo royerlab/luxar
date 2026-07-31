@@ -363,6 +363,28 @@ class TestAddLinesAdditiveLod:
         # Labels survived to the leaf.
         assert grp.attrs.get("has_image_labels") is True
 
+    def test_invalid_additive_spec_raises_even_with_image_labels(
+        self, tmp_path
+    ) -> None:
+        # The image_labels guard refuses the ladder but must still validate
+        # the spec — a malformed additive_lod= fails fast on every path.
+        output = tmp_path / "t.luxar.zarr"
+        rng = np.random.RandomState(0)
+        vertices = rng.rand(40, 3).astype(np.float32)
+        widths = np.ones(40, dtype=np.float32) * 0.1
+
+        with LuxarZarrCompiler(output) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            with pytest.raises(ValueError, match="method must be"):
+                scene.add_lines(
+                    "ln",
+                    vertices,
+                    widths=widths,
+                    line_type="segments",
+                    image_labels=[b"x"] * 40,
+                    additive_lod=dict(method="bogus"),
+                )
+
     def test_explicit_n_lods_is_honored(self, tmp_path) -> None:
         """B8-G2/[P8]: symmetric with ``test_points.py::
         test_dict_with_explicit_n_lods`` — an explicit ``n_lods`` (≠ the
