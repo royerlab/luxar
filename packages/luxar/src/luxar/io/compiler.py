@@ -338,25 +338,24 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
 
         return scene
 
-    def write_group(self, path: NodePath, **attrs: Any) -> None:
+    def write_group(
+        self, path: NodePath, *, _transform_normalized: bool = False, **attrs: Any
+    ) -> None:
         """Create a group in the Zarr store.
 
         Args:
             path: Path for the group within the store
-            **attrs: Attributes to attach to the group. The internal
-                ``_transform_normalized`` flag (set by the Node/Scene API, which
-                normalizes ``transform``/``nd_transform`` itself before calling
-                this method) is consumed here and never persisted; it suppresses
-                the transform normalization below so a Node-supplied, already
-                column-major matrix is not transposed a second time.
+            _transform_normalized: Internal control parameter (part of the
+                writer protocol, never persisted). The Node/Scene API
+                pre-normalizes ``transform``/``nd_transform`` (its attrs cache
+                must hold the column-major form for the ``transform`` getter)
+                and passes True so an already column-major matrix is not
+                transposed a second time. Raw compiler-API callers leave the
+                default False and go through the normalization gate below
+                (issue #678).
+            **attrs: Attributes to attach to the group
         """
         self._check_not_finalized("write_group")
-        # The Node/Scene API pre-normalizes transforms (its attrs cache stores
-        # the column-major form for the ``transform`` getter) and flags the call
-        # so we don't transpose/validate a second time. Raw compiler-API callers
-        # (``compiler.write_group(...)``) never set this flag and go through the
-        # normalization gate below (issue #678).
-        transform_already_normalized = bool(attrs.pop("_transform_normalized", False))
         # Fail fast on invalid render attrs BEFORE creating the group (same
         # contract as the geometry writers; the Node path validates earlier,
         # this covers the raw compiler API). The scene root ("/") and actual
@@ -385,8 +384,8 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         # so a bad transform fails fast without leaving a partial node. Only
         # the incoming attrs are normalized; already-stored group attrs are
         # merged below and stay untouched (no double-transpose). Skipped when
-        # the Node/Scene API already normalized (see the flag above).
-        if not transform_already_normalized:
+        # the Node/Scene API already normalized (see ``_transform_normalized``).
+        if not _transform_normalized:
             _prepare_transform_attrs(attrs, self.store)
         # Handle root path
         if path == "/" or path == "":
