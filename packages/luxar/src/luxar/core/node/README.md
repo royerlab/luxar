@@ -66,6 +66,11 @@ updated, but a `UserWarning` is raised so the disk/memory drift is not silent.
 Set attributes inside the compiler context (or before `to_zarr`) for
 persistence.
 
+Clearing an attribute (`_delete_attr`, reached by setting `transform` /
+`nd_transform` to `None`) has the same post-finalize contract: it updates the
+cache, warns, and leaves the sealed on-disk store untouched, so the raw
+`.zattrs` and consolidated `.zmetadata` stay in agreement.
+
 ### Transforms
 
 | Property | Description |
