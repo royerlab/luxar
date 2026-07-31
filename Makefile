@@ -14,7 +14,7 @@
         demo run-demos run-examples serve-examples serve-dataset install-viewer-deps viewer build-viewer build-viewer-lib rebuild-viewer \
         install-rust build-wasm clean-wasm generate-readme-demos generate-readme-images generate-doc-images generate-readme-videos \
 	generate-gallery-datasets generate-gallery \
-        stats stats-fast show-env prune-env shell build publish-test publish \
+        stats stats-fast show-env prune-env shell build publish-test publish set-version release-check release \
         check-deps install-node install-pnpm install-hatch \
         setup-cuda check-cuda-deps build-cuda build-cuda-slurm clean-cuda test-cuda benchmark-cuda \
         benchmark-metal benchmark-metal-stress \
