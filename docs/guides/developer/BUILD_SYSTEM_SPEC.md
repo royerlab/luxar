@@ -799,3 +799,13 @@ For automated environments (GitHub Actions, etc.):
 - `CLAUDE.md` (repo root) - AI assistant instructions
 - [TESTING_GUIDELINES.md](./TESTING_GUIDELINES.md) - Testing best practices
 - [PLAYWRIGHT_GUIDE.md](./PLAYWRIGHT_GUIDE.md) - E2E testing guide
+
+## CI fast path for docs-only changes
+
+A pull request whose changed files are **all** Markdown (`*.md`) or under `docs/`
+skips the heavy CI steps: the `changes` job classifies the diff, and the required
+jobs (`python-tests`, `typescript-tests`, `release-readiness`, `go-launcher`) still
+run but short-circuit their expensive steps, so their required status contexts still
+report success in seconds. Any non-doc file — or a push to `main` — runs the full
+suite. Rename detection is disabled in the classifier (`git diff --no-renames`) so
+moving code onto a `docs/` or `*.md` path never hides a non-doc deletion.
