@@ -543,7 +543,7 @@ def _solar_system_viewer_config() -> ViewerConfig:
     )
     return ViewerConfig(
         camera=camera,
-        tone_mapping="Neutral",
+        tone_mapping="ACES",
         dynamic_clipping_enabled=True,
     )
 

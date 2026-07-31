@@ -358,7 +358,7 @@ def build_scene(etopo_path: Path, shp_path: Path, output_path: Path) -> Path:
         )
         with LuxarZarrCompiler(output_path, encoding_mode=EncodingMode.PRECISION) as c:
             scene = c.create_scene(
-                dimensions=dims, viewer_config=ViewerConfig(tone_mapping="Neutral")
+                dimensions=dims, viewer_config=ViewerConfig(tone_mapping="ACES")
             )
             scene.attrs["title"] = "Rivers of Earth — global topography + HydroRIVERS"
             scene.add_points(

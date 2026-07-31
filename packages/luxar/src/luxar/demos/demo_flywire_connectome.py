@@ -592,8 +592,12 @@ def build_scene(
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(
                 dimensions=dims,
-                # Neutral tone-mapping (not the viewer default ACES, which lifts
-                # highlights) — the luminous connection glow was blowing out.
+                # Deliberate exception to the house ACES recommendation: this
+                # demo was tuned to Neutral (together with the low intensities
+                # below) precisely because ACES lifts mid-tones and blew the
+                # 300K-line luminous connection glow out into a white wash.
+                # Only move it to ACES alongside a re-tuned exposure and an
+                # actual A/B render.
                 viewer_config=ViewerConfig(tone_mapping="Neutral"),
             )
 
