@@ -547,6 +547,10 @@ export class LineTSLMaterial
     cloned.uniforms.uPerspectiveLineScale.value = this.uniforms.uPerspectiveLineScale.value;
     cloned.uniforms.uOrthoLineScale.value = this.uniforms.uOrthoLineScale.value;
     cloned.uniforms.uInvGamma.value = this.uniforms.uInvGamma.value;
+    // The active ordering slot must ride along: a clone taken while the
+    // geometry draws from slot 1 would otherwise read the stale buffer
+    // until the coordinator's next per-frame re-assert.
+    cloned.uniforms.uSortedIndexSlot.value = this.uniforms.uSortedIndexSlot.value;
     if (sourceIsOrtho) {
       cloned.rebuildGraph();
     }

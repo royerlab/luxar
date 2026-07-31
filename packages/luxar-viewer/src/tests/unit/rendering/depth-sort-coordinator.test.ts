@@ -2223,6 +2223,68 @@ describe('depth-sort coordinator — chunked ordering apply (perf lever L8)', ()
     expect(Array.from(drawnOrdering(mesh))).toEqual(before); // no further writes
   });
 
+  it('demotion CLEARS a queued re-sort instead of dispatching it (pump branch)', async () => {
+    // A queued re-sort surviving demotion would start a worker sort over
+    // the released registration's centers, only for the resolve path to
+    // discard the result — wasted multi-million-element worker time that
+    // delays live nodes. Re-promotion re-commits, which schedules the
+    // sort the node actually needs.
+    const { coord, storage } = await loadWithTinyChunks();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+
+    const { mesh } = await resolveLargeOrdering(coord, 12); // sort #1 resolved, apply streaming
+    const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
+    expect(storage.hasPendingSortedIndexOrderingApply(geometry)).toBe(true);
+
+    coord.noteDepthSortCommit(mesh, new Float32Array(36), 12); // sort #2 in flight
+    await flush();
+    expect(mockApi.sort).toHaveBeenCalledTimes(2);
+    coord.noteDepthSortCommit(mesh, new Float32Array(36), 12); // queues a re-sort
+    await flush();
+    expect(mockApi.sort).toHaveBeenCalledTimes(2);
+
+    // Demotion, then a pump frame: the apply is aborted AND the queued
+    // request is dropped — not re-dispatched through scheduleSort.
+    delete mesh.userData.committedData;
+    coord.evaluateDepthSortPerFrame();
+    expect(storage.hasPendingSortedIndexOrderingApply(geometry)).toBe(false);
+
+    // Sort #2 resolves onto the demoted node: stale generation, cleared
+    // stamp, no queued request left — nothing new may be dispatched.
+    const gen2 = mockApi.sort.mock.calls[1][0].generation as number;
+    sortResolvers[1]({ generation: gen2, ordering: reversed(12) });
+    await flush();
+    expect(mockApi.sort).toHaveBeenCalledTimes(2);
+  });
+
+  it('a queued re-sort resolving onto a demoted node is dropped, and re-promotion re-sorts', async () => {
+    // Same waste, resolve-path flavor: the drain after a resolve must not
+    // dispatch for a mesh whose committedData stamp is gone.
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+
+    const mesh = makeGSplatsMesh(4, 'normal');
+    coord.noteDepthSortCommit(mesh, new Float32Array(12), 4); // sort #1 in flight
+    await flush();
+    coord.noteDepthSortCommit(mesh, new Float32Array(12), 4); // queues a re-sort
+    await flush();
+    expect(mockApi.sort).toHaveBeenCalledTimes(1);
+
+    // Demoted before the sort resolves.
+    delete mesh.userData.committedData;
+    const gen1 = mockApi.sort.mock.calls[0][0].generation as number;
+    sortResolvers[0]({ generation: gen1, ordering: new Uint32Array([3, 2, 1, 0]) });
+    await flush();
+    expect(mockApi.sort).toHaveBeenCalledTimes(1); // queued request dropped
+
+    // Re-promotion re-commits (the commit path re-stamps committedData
+    // before calling the coordinator) — THAT schedules the needed sort.
+    mesh.userData.committedData = { some: 'source' };
+    coord.noteDepthSortCommit(mesh, new Float32Array(12), 4);
+    await flush();
+    expect(mockApi.sort).toHaveBeenCalledTimes(2);
+  });
+
   it('a stale-generation resolve never starts a chunked apply; the queued re-sort does', async () => {
     const { coord, storage } = await loadWithTinyChunks();
     const camera = makeCamera();

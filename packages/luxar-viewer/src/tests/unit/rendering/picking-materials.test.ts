@@ -523,5 +523,20 @@ describe('picking materials — depth-sort ordering slot', () => {
       expect(material.uniforms.uSortedIndexSlot.value).toBe(1);
       material.dispose();
     });
+
+    it(`${name} clone() preserves a non-default uSortedIndexSlot`, () => {
+      // A clone taken while the geometry draws from slot 1 must not fall
+      // back to the constructor default 0 — it would read the stale
+      // ordering buffer until the coordinator's next per-frame re-assert
+      // (and the settle-scheduled pick pass can render before that).
+      const material = make() as ReturnType<typeof make> & {
+        clone(): { uniforms: Record<string, THREE.IUniform>; dispose(): void };
+      };
+      material.uniforms.uSortedIndexSlot.value = 1;
+      const cloned = material.clone();
+      expect(cloned.uniforms.uSortedIndexSlot.value).toBe(1);
+      material.dispose();
+      cloned.dispose();
+    });
   }
 });

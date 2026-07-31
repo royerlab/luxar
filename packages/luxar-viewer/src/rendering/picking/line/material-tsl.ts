@@ -123,6 +123,10 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
     cloned.uniforms.uMaxLinePixelWidth.value = this.uniforms.uMaxLinePixelWidth.value;
     cloned.uniforms.uPerspectiveLineScale.value = this.uniforms.uPerspectiveLineScale.value;
     cloned.uniforms.uOrthoLineScale.value = this.uniforms.uOrthoLineScale.value;
+    // The active ordering slot must ride along: a clone taken while the
+    // geometry draws from slot 1 would otherwise read the stale buffer
+    // until the coordinator's next per-frame re-assert.
+    cloned.uniforms.uSortedIndexSlot.value = this.uniforms.uSortedIndexSlot.value;
     if (cloned._currentConfig().isOrtho) {
       linePickWebGPUFactory(cloned.tslNodes, cloned._currentConfig(), cloned);
       cloned.needsUpdate = true;

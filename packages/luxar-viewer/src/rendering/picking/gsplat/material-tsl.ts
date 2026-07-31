@@ -163,6 +163,10 @@ export class GSplatPickingTSLMaterial
     cloned.uniforms.uMaxExtentFactor.value = this.uniforms.uMaxExtentFactor.value;
     cloned.uniforms.uCov2DDilation.value = this.uniforms.uCov2DDilation.value;
     cloned.uniforms.uSurfaceDepth.value = this.uniforms.uSurfaceDepth.value;
+    // The active ordering slot must ride along: a clone taken while the
+    // geometry draws from slot 1 would otherwise read the stale buffer
+    // until the coordinator's next per-frame re-assert.
+    cloned.uniforms.uSortedIndexSlot.value = this.uniforms.uSortedIndexSlot.value;
     return cloned as this;
   }
 

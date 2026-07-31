@@ -518,6 +518,10 @@ export class GSplatMaterial
     cloned.uniforms.uNearCull.value = this.uniforms.uNearCull.value;
     cloned.uniforms.uProjectionMode.value = this.uniforms.uProjectionMode.value;
     cloned.uniforms.uInvGamma.value = this.uniforms.uInvGamma.value;
+    // The active ordering slot must ride along: a clone taken while the
+    // geometry draws from slot 1 would otherwise read the stale buffer
+    // until the coordinator's next per-frame re-assert.
+    cloned.uniforms.uSortedIndexSlot.value = this.uniforms.uSortedIndexSlot.value;
 
     return cloned as this;
   }

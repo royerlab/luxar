@@ -310,11 +310,20 @@ function applySortedIndexSlotToMaterial(
   slot: number
 ): void {
   if (!material) return;
-  const list = Array.isArray(material) ? material : [material];
-  for (const m of list) {
-    const uniform = (m as THREE.ShaderMaterial | undefined)?.uniforms?.uSortedIndexSlot;
-    if (uniform) uniform.value = slot;
+  // Scalar and array handled without a temporary wrapper array: this runs
+  // for every tracked node on every frame (twice with a pick material), so
+  // it must stay allocation-free — the per-frame scratch invariant below.
+  if (Array.isArray(material)) {
+    for (const m of material) setSortedIndexSlotUniform(m, slot);
+  } else {
+    setSortedIndexSlotUniform(material, slot);
   }
+}
+
+/** Write one material's `uSortedIndexSlot`, if it has one. */
+function setSortedIndexSlotUniform(material: THREE.Material, slot: number): void {
+  const uniform = (material as THREE.ShaderMaterial | undefined)?.uniforms?.uSortedIndexSlot;
+  if (uniform) uniform.value = slot;
 }
 
 /**
@@ -638,7 +647,12 @@ function scheduleSort(mesh: THREE.Mesh, nodeId: string): void {
 
       if (current.resortQueued) {
         current.resortQueued = false;
-        scheduleSort(mesh, nodeId);
+        // Demoted mid-sort (stamp cleared): the queued request describes a
+        // population the geometry no longer holds, and re-promotion always
+        // re-commits — which schedules the sort it actually needs. Dispatching
+        // here would burn worker time on an ordering the resolve path is
+        // guaranteed to discard.
+        if (stillCommitted) scheduleSort(mesh, nodeId);
       }
     })
     .catch((error) => {
@@ -650,10 +664,12 @@ function scheduleSort(mesh: THREE.Mesh, nodeId: string): void {
       // Drain a queued re-sort even on failure — a commit landed while
       // this sort was out, and dropping its request would leave the node
       // stale until the NEXT commit. Bounded: only a real commit sets
-      // resortQueued, so a persistently failing worker cannot loop.
+      // resortQueued, so a persistently failing worker cannot loop. Same
+      // demotion guard as the resolve path: a cleared stamp means the
+      // re-promotion commit will schedule the sort that matters.
       if (current.resortQueued) {
         current.resortQueued = false;
-        scheduleSort(mesh, nodeId);
+        if (hasCommittedData(mesh)) scheduleSort(mesh, nodeId);
       }
     });
 }
@@ -716,14 +732,13 @@ function pumpChunkedOrderingApplies(): void {
     if (!hasCommittedData(state.mesh)) {
       // LOD demotion — the geometry went back to the pool, so the
       // remaining slices describe a population this mesh no longer
-      // holds. Drain any queued re-sort too: only a real commit sets
-      // the flag, and dropping it here left the node unsorted until the
-      // NEXT commit or threshold crossing.
+      // holds. A queued re-sort is CLEARED, not drained: dispatching it
+      // would sort the released registration's old centers only for the
+      // resolve path to discard the result (an invisible multi-million-
+      // element sort delaying live nodes), and re-promotion always
+      // re-commits, which schedules the sort the node actually needs.
       cancelSortedIndexOrderingApply(geometry);
-      if (state.resortQueued) {
-        state.resortQueued = false;
-        scheduleSort(state.mesh, nodeId);
-      }
+      state.resortQueued = false;
       continue;
     }
     const { more, flipped } = pumpSortedIndexOrderingApply(geometry);
