@@ -44,6 +44,7 @@ import argparse
 import difflib
 import hashlib
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Optional
@@ -277,10 +278,19 @@ DATASETS: dict[str, dict] = {
 
 
 _LFS_POINTER_V1 = "version https://git-lfs.github.com/spec/v1"
+# A git-LFS oid is a lowercase hex sha256. Anything else can never match
+# hashlib's ``hexdigest()`` (the comparison downstream is case-sensitive), so an
+# entry built from it would be permanently unverifiable — reject it instead.
+_LFS_OID_RE = re.compile(r"[0-9a-f]{64}")
+_LFS_SIZE_RE = re.compile(r"[0-9]+")
 
 
 def _pointer_checksum(path: Path) -> Optional[dict]:
-    """``{sha256, bytes}`` read out of an unpulled git-LFS pointer, else None.
+    """``{sha256, bytes}`` read out of an unpulled git-LFS pointer.
+
+    Returns None for anything that is not a pointer stub (a pulled data file);
+    raises ValueError for a file that carries the v1 header but no usable
+    (oid, size) — a corrupt pointer must fail loudly, not be hashed as data.
 
     A pointer is a <1 KB text stub::
 
@@ -299,11 +309,24 @@ def _pointer_checksum(path: Path) -> Optional[dict]:
     oid: Optional[str] = None
     size: Optional[int] = None
     for line in text.splitlines():
+        # A malformed value leaves oid/size unset, so it lands on the
+        # corrupt-pointer error below instead of aborting with a bare,
+        # unattributed ValueError (or, worse, shipping a bogus entry).
         if line.startswith("oid sha256:"):
-            oid = line.split(":", 1)[1].strip()
+            value = line.split(":", 1)[1].strip()
+            if _LFS_OID_RE.fullmatch(value):
+                oid = value
         elif line.startswith("size "):
-            size = int(line.split(" ", 1)[1].strip())
-    return {"sha256": oid, "bytes": size} if oid and size is not None else None
+            value = line.split(" ", 1)[1].strip()
+            if _LFS_SIZE_RE.fullmatch(value):
+                size = int(value)
+    if oid is not None and size is not None:
+        return {"sha256": oid, "bytes": size}
+    # A file carrying the v1 header but no usable (oid, size) is a corrupt
+    # pointer. Returning None here would hand it to _checksum, which hashes the
+    # ~130-byte stub and silently ships a plausible-but-bogus {sha256, bytes};
+    # fail loudly and name the file instead.
+    raise ValueError(f"corrupt git-LFS pointer (missing or malformed oid/size): {path}")
 
 
 def _checksum(path: Path) -> dict:
@@ -328,9 +351,18 @@ def _checksum(path: Path) -> dict:
     return {"sha256": digest.hexdigest(), "bytes": path.stat().st_size}
 
 
+# Local scratch that must never enter the shipped manifest: quarantined copies
+# (``.corrupt``), interrupted downloads (``.part`` plus its ``.part.validator``
+# If-Range resume sidecar), and generic temporaries.
+_SCRATCH_SUFFIXES = (".corrupt", ".part", ".part.validator", ".tmp")
+
+
 def _keep(p: Path) -> bool:
-    # Real data files only — skip dotfiles (e.g. .gitkeep).
-    return p.is_file() and not p.name.startswith(".")
+    # Real data files only — skip dotfiles (e.g. .gitkeep) and local scratch
+    # (quarantined/partial/temp copies) that ensure_dataset could never resolve.
+    if not p.is_file() or p.name.startswith("."):
+        return False
+    return not p.name.endswith(_SCRATCH_SUFFIXES)
 
 
 def _files_in(base: Path, glob: str, *, prune: bool) -> Optional[list[dict]]:
