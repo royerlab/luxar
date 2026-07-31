@@ -312,7 +312,7 @@ describe('retryFailedLoaderUnlocked — no loader registered', () => {
 describe('retryFailedLoaderUnlocked — lazy LOD level fallback', () => {
   // Lazy substitutive levels never join the sweep maps but DO record
   // failures; previously the no-loader branch silently discarded them.
-  it('kicks the lazy child via the LOD registry, clears the record, returns true', async () => {
+  it('kicks the lazy child via the LOD registry, keeps the record, returns true', async () => {
     const retryLazyChildByLeafPath = vi.fn().mockReturnValue(true);
     const ctx = makeRetryCtx({
       rootGroup: makeRootGroupWith(PATH),
@@ -324,7 +324,34 @@ describe('retryFailedLoaderUnlocked — lazy LOD level fallback', () => {
 
     expect(ok).toBe(true);
     expect(retryLazyChildByLeafPath).toHaveBeenCalledWith(PATH);
-    expect(ctx.registry.failedLoaders.has(PATH)).toBe(false); // re-recorded on repeat failure
+    // The record is KEPT across the kick — the fire-and-forget thunk owns the
+    // outcome (success clears it; a repeat failure re-records). Deleting it
+    // here reset autoRetryCount, so MAX_AUTO_RETRY_ATTEMPTS never bound a
+    // permanently-failing lazy level.
+    expect(ctx.registry.failedLoaders.has(PATH)).toBe(true);
+  });
+
+  it('preserves autoRetryCount across a lazy kick so the auto-retry budget binds', async () => {
+    const retryLazyChildByLeafPath = vi.fn().mockReturnValue(true);
+    const ctx = makeRetryCtx({
+      rootGroup: makeRootGroupWith(PATH),
+      lodGroupRegistry: { retryLazyChildByLeafPath } as never,
+    });
+    // A network failure that has already burned two automatic attempts.
+    ctx.registry.recordFailure(PATH, new Error('lazy 404'), 'Network');
+    ctx.registry.markAutoRetryAttempt(PATH);
+    ctx.registry.markAutoRetryAttempt(PATH);
+    expect(ctx.registry.failedLoaders.get(PATH)!.autoRetryCount).toBe(2);
+
+    await retryFailedLoaderUnlocked(PATH, ctx);
+    // The kick leaves the record intact; a repeat failure re-records without
+    // resetting the accumulated budget.
+    ctx.registry.recordFailure(PATH, new Error('lazy 404 again'), 'Network');
+
+    expect(ctx.registry.failedLoaders.get(PATH)!.autoRetryCount).toBe(2);
+    expect(ctx.registry.autoRetryablePaths()).toContain(PATH);
+    ctx.registry.markAutoRetryAttempt(PATH); // reaches MAX_AUTO_RETRY_ATTEMPTS (3)
+    expect(ctx.registry.autoRetryablePaths()).not.toContain(PATH);
   });
 
   it('falls through to the stale-entry cleanup when the registry has no lazy child', async () => {
