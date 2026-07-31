@@ -1,7 +1,8 @@
-"""Smoke tests for the pure helper in demo_gsplats_3d_cryoem_virus.
+"""Smoke tests for demo_gsplats_3d_cryoem_virus.
 
-Only ``normalize_map_volume`` is exercised (no network, no mrcfile IO, no GPU).
-The demo is loaded by file path (see test_demo_ppi_flow_field for the rationale).
+Covers ``normalize_map_volume`` and the scene builder's authored blending — no
+network, no mrcfile IO, no GPU fit. The demo is loaded by file path (see
+test_demo_ppi_flow_field for the rationale).
 """
 
 from __future__ import annotations
@@ -12,6 +13,9 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+import zarr
+
+from luxar.gsplats.gsplat_data import GSplatData
 
 pytest.importorskip("scipy")
 
@@ -31,6 +35,29 @@ def _load_demo_module():
 
 _demo = _load_demo_module()
 normalize_map_volume = _demo.normalize_map_volume
+create_luxar_scene = _demo.create_luxar_scene
+
+
+def _tiny_gsplat_data(n: int = 8, seed: int = 0) -> GSplatData:
+    """A handful of valid splats — no GPU fit, enough to build the scene."""
+    rng = np.random.default_rng(seed)
+    return GSplatData(
+        centers=rng.uniform(-4.0, 4.0, (n, 3)).astype(np.float32),
+        amplitudes=rng.uniform(0.2, 1.0, n).astype(np.float32),
+        cholesky_factors=np.tile([1, 0, 1, 0, 0, 1], (n, 1)).astype(np.float32),
+    )
+
+
+class TestSceneBlending:
+    def test_scene_bakes_volumetric_blending(self, tmp_path) -> None:
+        # The capsid reads as a hollow shell only under volumetric
+        # (emission-absorption) compositing with strong absorption; pin both
+        # so a silent revert to additive glow is caught (the helper smoke
+        # test never builds the scene). See the interop demos' blending test.
+        out = create_luxar_scene(_tiny_gsplat_data(), tmp_path / "virus.luxar.zarr")
+        node = zarr.open_group(str(out), mode="r")["virus_capsid"]
+        assert dict(node.attrs).get("blending_mode") == "volumetric"
+        assert dict(node.attrs).get("absorption") == 5.0
 
 
 class TestNormalizeMapVolume:
