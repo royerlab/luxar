@@ -7,8 +7,16 @@ from unittest.mock import MagicMock
 import pytest
 
 # Pytest imports this file through the ``luxar.tests`` package, so the repository
-# root (which owns hatch_build.py) is not otherwise on sys.path.
-PROJECT_ROOT = Path(__file__).resolve().parents[5]
+# root (which owns hatch_build.py) is not otherwise on sys.path. Wheels ship this
+# test module but not the root-level hook, so skip outside a source checkout
+# (mirroring the installed-wheel guards in other repository-only tests).
+_PARENTS = Path(__file__).resolve().parents
+PROJECT_ROOT = _PARENTS[5] if len(_PARENTS) > 5 else None
+if PROJECT_ROOT is None or not (PROJECT_ROOT / "hatch_build.py").is_file():
+    pytest.skip(
+        "hatch_build.py only exists in a source checkout, not in installed wheels",
+        allow_module_level=True,
+    )
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from hatch_build import LuxarBuildHook  # noqa: E402
