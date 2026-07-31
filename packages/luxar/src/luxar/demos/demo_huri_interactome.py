@@ -159,8 +159,11 @@ DEFAULT_MAX_EDGES = 60_000
 # both the compressed archive we stream to disk and the extracted (uncompressed)
 # member — the latter guards against a decompression bomb. CORUM's real zip is
 # only a few MB, so these are generous but hard caps, not tight limits. The
-# archive cap also curbs the worst-case RAM the eager ZipFile central-directory
-# parse can allocate on a hostile many-entry archive.
+# archive cap is also what bounds the eager ZipFile central-directory parse: a
+# zip entry costs at least ~76 bytes on disk (central + local header), so 64 MiB
+# admits at most ~0.8M entries, i.e. a few hundred MB of transient ZipInfo
+# objects in the pathological case — well under this demo's own working set, and
+# a tighter bound than an entry-count preflight would add on top.
 _CORUM_MAX_ARCHIVE_BYTES = 64 * 1024 * 1024  # 64 MiB compressed archive cap
 _CORUM_MAX_MEMBER_BYTES = 512 * 1024 * 1024  # 512 MiB extracted member cap
 

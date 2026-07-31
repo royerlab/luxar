@@ -200,6 +200,51 @@ def test_zero_byte_member_is_rejected(tmp_path, monkeypatch) -> None:
     assert _no_temp_files_left(dest)
 
 
+def test_missing_member_falls_through_to_next_url(tmp_path, monkeypatch) -> None:
+    # A well-formed archive that simply lacks the member takes the
+    # ``target is None`` branch (a plain ``continue``, not an exception), so the
+    # next mirror must still be tried and the archive temp file cleaned up.
+    member_data = b"complex_id\tname\n1\tribosome\n"
+    url1 = "http://example.invalid/first.zip"
+    url2 = "http://example.invalid/second.zip"
+    _patch_get_per_url(
+        monkeypatch,
+        {
+            url1: _make_zip_bytes("readme.txt", b"nothing useful here"),
+            url2: _make_zip_bytes("allComplexes.txt", member_data),
+        },
+    )
+
+    dest = tmp_path / "allComplexes.txt"
+    ok = demo._download_corum_zip_member(
+        (url1, url2),
+        "allComplexes.txt",
+        dest,
+        "CORUM (test)",
+    )
+
+    assert ok is True
+    assert dest.read_bytes() == member_data
+    assert _no_temp_files_left(dest)
+
+
+def test_missing_member_everywhere_returns_false(tmp_path, monkeypatch) -> None:
+    body = _make_zip_bytes("readme.txt", b"nothing useful here")
+    _patch_get(monkeypatch, body)
+
+    dest = tmp_path / "allComplexes.txt"
+    ok = demo._download_corum_zip_member(
+        ("http://example.invalid/corum.zip",),
+        "allComplexes.txt",
+        dest,
+        "CORUM (test)",
+    )
+
+    assert ok is False
+    assert not dest.exists()
+    assert _no_temp_files_left(dest)
+
+
 def test_multi_url_fallback_second_succeeds(tmp_path, monkeypatch) -> None:
     member_data = b"complex_id\tname\n1\tribosome\n"
     good = _make_zip_bytes("allComplexes.txt", member_data)
