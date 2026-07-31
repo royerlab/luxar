@@ -54,8 +54,10 @@ def convert_to_scene(
         None,
         "--tone-mapping",
         help="Scene HDR tone-mapping (None/Linear/Reinhard/Cineon/ACES/AgX/"
-        "Neutral). Default: viewer default (ACES). Use 'Neutral' for faithful "
-        "colormap colors (ACES shifts hues).",
+        "Neutral). 'ACES' suits almost every scene and is also the viewer "
+        "default when unset; pass it explicitly to record the choice. Use "
+        "'Neutral' when a colormap carries an exact scientific color encoding "
+        "(ACES shifts hues).",
     ),
     gamma: Optional[float] = typer.Option(
         None, "--gamma", help="Display gamma (default 1.0)"
@@ -78,13 +80,17 @@ def convert_to_scene(
     ``luxar serve``. By default, centers the data at the centroid.
 
     Appearance (colormap / tone-mapping / gamma / intensity) is baked into the
-    scene here. For faithful scientific colors pair a colormap with Neutral
-    tone-mapping — the viewer default (ACES) intentionally shifts hues.
+    scene here. Prefer ``--tone-mapping ACES`` (its filmic rolloff keeps bright
+    structure from clipping flat, and passing it explicitly records the choice);
+    reach for ``Neutral`` when a colormap carries an exact scientific color
+    encoding, since ACES intentionally shifts hues.
 
     Examples:
         luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr
         luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr --no-center
         luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr --scale-intensity 0.1
+        luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr \\
+            --colormap plasma --tone-mapping ACES
         luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr \\
             --colormap plasma --tone-mapping Neutral
     """
