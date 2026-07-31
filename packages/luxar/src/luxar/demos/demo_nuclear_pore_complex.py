@@ -448,8 +448,8 @@ def generate_nuclear_pore_complex(
     pdb_id: str = "3I4R",
     max_atoms: int = 100000,
     n_fold: int = 8,
-    representation: str = "calpha",
-    color_by: str = "spoke",
+    representation: str = "all",
+    color_by: str = "element",
 ) -> int:
     """Generate Nuclear Pore Complex with perfect 8-fold symmetry.
 
@@ -555,11 +555,8 @@ def generate_nuclear_pore_complex(
             vdw_radii_angstrom = element_to_vdw_radius(sym_elements)
             radii = vdw_radii_angstrom * 0.1  # Convert to nm
 
-            # Scale radii for visibility
-            if representation == "calpha":
-                radii *= 0.4  # Larger for C-alpha trace
-            else:
-                radii *= 0.4  # Moderate scaling for all atoms
+            # Scale radii for visibility (VdW ratios, not absolute sizes)
+            radii *= 0.4
 
             aprint("✓ Van der Waals radii applied (different per element):")
             aprint(f"  C: {1.70 * 0.1 * 0.4:.3f} nm")
@@ -599,9 +596,12 @@ def generate_nuclear_pore_complex(
                 # panel-legal one (kappa=3, intensity 0.15) reaches 6.7 — a
                 # hair over additive, half of normal. Normal also retires
                 # the intensity=0.125 anti-blowout workaround the additive
-                # default needed: at opacity >= 0.99 `normal` writes depth
-                # (normalModeDepthWrite), so atoms occlude instead of
-                # accumulating and full intensity is the correct exposure.
+                # default needed: back-to-front alpha-over lets the nearest
+                # atom cover the pixel instead of accumulating into it, so
+                # full intensity is the correct exposure. (opacity >= 0.99
+                # additionally flips on depth writes — normalModeDepthWrite
+                # — which is what occludes any layer BEHIND this one; inside
+                # one depth-sorted node it is inert.)
                 #
                 # `opaque` scores HIGHER chroma still (17.3) — do not "fix" this
                 # to opaque on that number alone. It is the same blend state as
@@ -704,7 +704,7 @@ def main() -> None:
     aprint("")
     aprint("What makes this beautiful:")
     aprint("  • Octagonal ring structure (top-down view)")
-    aprint("  • Each spoke is a different rainbow color")
+    aprint("  • Eight atom-for-atom identical spokes")
     aprint("  • Central pore clearly visible")
     aprint("  • Perfect 45° rotational symmetry")
     aprint("")
@@ -764,22 +764,23 @@ def main() -> None:
         aprint("")
         aprint("Navigation:")
         aprint("  - Top-down (Z-axis): OCTAGONAL RING with CENTRAL PORE!")
-        aprint("  - Rotate slowly: See 8 distinct colored spokes")
+        aprint("  - Rotate slowly: See the 8 identical spokes")
         aprint("  - Rotate by 45 degrees: Symmetry test - should look identical!")
         aprint("  - Side view: See Y-shaped Nup107-160 complexes")
         aprint("")
         aprint("What to look for:")
-        aprint("  - 8 rainbow-colored spokes arranged in perfect octagon")
+        aprint("  - 8 spokes arranged in perfect octagon")
         aprint("  - Central pore/channel in the middle (molecular highway!)")
         aprint("  - Each spoke is identical (perfect symmetry)")
-        aprint("  - Protein backbone showing 3D architecture")
+        aprint("  - The 3D architecture of each Y-complex")
         aprint("")
-        aprint("Color guide (spoke mode):")
-        aprint(
-            "  Red -> Orange -> Yellow -> Green -> Cyan -> Blue -> Purple -> Magenta"
-        )
-        aprint("  (Each color = one of the 8 identical spokes)")
-        aprint("")
+        if color_by == "spoke":
+            aprint("Color guide (spoke mode):")
+            aprint(
+                "  Red -> Orange -> Yellow -> Green -> Cyan -> Blue -> Purple -> Magenta"
+            )
+            aprint("  (Each color = one of the 8 identical spokes)")
+            aprint("")
         aprint(f"Total atoms: {n_atoms:,}")
         aprint("")
         aprint("=" * 70)

@@ -108,6 +108,7 @@ Controls:
     - Top view: See hexagonal F1 head with rotating γ stalk
     - Side view: See membrane portion (F0) and catalytic head (F1)
     - Each chain/subunit has a distinct color
+    - Press L for the Layers panel (blending, opacity, display range)
     - Ctrl+C to stop and cleanup
 """
 
