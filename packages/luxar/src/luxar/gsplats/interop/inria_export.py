@@ -185,7 +185,21 @@ def _select_3d(
     L = unpack_tril(np.asarray(data.cholesky_factors, dtype=np.float64), d)
     sigma = L @ L.transpose(0, 2, 1)
     amplitudes = np.asarray(data.amplitudes, dtype=np.float64)
-    colors = None if data.colors is None else np.asarray(data.colors, dtype=np.float64)
+    # Integer color arrays store values at full scale (uint8 255 == linear 1.0),
+    # but the color/alpha contract downstream (linear_to_srgb, _opacity_logits)
+    # is [0, 1] — normalize integers by their dtype max before the float cast, or
+    # every channel clips to white and alpha saturates to opaque. Same convention
+    # as luxar.gsplats.utils.alpha.effective_amplitudes. Float colors may be HDR
+    # (> 1) and pass through unchanged.
+    colors: Optional[np.ndarray]
+    if data.colors is None:
+        colors = None
+    else:
+        raw = np.asarray(data.colors)
+        if np.issubdtype(raw.dtype, np.integer):
+            colors = raw.astype(np.float64) / float(np.iinfo(raw.dtype).max)
+        else:
+            colors = raw.astype(np.float64)
 
     if timepoint is not None:
         if slice_dim is not None or slice_index is not None:
