@@ -571,11 +571,14 @@ in-place corruption changes neither. The manifest checksum is now authoritative
 at every step, and a failing cache entry is quarantined (`.corrupt`) instead of
 being silently reused.
 
-`cached_download` had the same flaw plus two more — a file _longer_ than
-`expected_size` and an unpulled Git LFS pointer were both handed to the resuming
-downloader, which appends to whatever bytes are already there. All three now
-quarantine first. A file _shorter_ than expected is still left in place, since
-that is a genuine resumable partial download.
+`cached_download` had the same flaw for an unpulled Git LFS pointer, which was
+handed to the downloader as if it were real data; it now quarantines the LFS
+pointer and the sha256-mismatch cases up front. A file whose size merely differs
+from `expected_size` — _longer_ or _shorter_ — is left in place, since
+`expected_size` is only a skip-if-matches hint (it can be a stale client-side
+guess) and must never destroy a complete cached file; `robust_download`
+reconciles it against the true remote size, staging into a sibling `.part` (the
+destination is never resumed from).
 
 #### Fixed — the demo-data manifest was excluded from the wheel and sdist
 
