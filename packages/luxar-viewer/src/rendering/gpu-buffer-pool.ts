@@ -612,28 +612,119 @@ export class GPUBufferPool {
   }
 
   /**
+   * Register a one-time self-invalidation `dispose` listener on a freshly
+   * created pooled geometry. Called by the per-type adapters at fresh
+   * allocation — the single choke point every pooled geometry passes
+   * through exactly once (adopted/reused geometries were registered at
+   * their original creation).
+   *
+   * The scene-graph disposal helpers (`scene-disposal.ts`) are pure over a
+   * THREE.Scene with NO pool reference, so on a dataset switch / teardown
+   * they call `geometry.dispose()` directly on meshes that still hold
+   * pool-owned geometries. Without this guard the pool keeps the disposed
+   * geometry recorded in `activeBuffers`, and a later `acquire*Geometry`
+   * for the same nodeId hands it back as reusable — a use-after-dispose
+   * that also over-counts resident bytes.
+   *
+   * When `dispose` fires this:
+   *  - flags the geometry `userData.luxarInvalidated` (the acquire fast
+   *    paths treat a flagged active entry as a miss — defense-in-depth
+   *    against an ordering where the entry is somehow still present);
+   *  - drops any `activeBuffers` entry that still references THIS geometry.
+   *    Matching by identity is inherently safe — a geometry appears in
+   *    `activeBuffers` at most once, so a newer entry that replaced it (a
+   *    grow moves the old geometry to the free list first) is never
+   *    clobbered (the guard the issue asks for);
+   *  - otherwise drops the geometry's free-bucket entry (a RELEASED
+   *    buffer disposed out-of-band). Leaving it would keep the disposed
+   *    geometry counted by {@link getStats} / {@link getResidentBytes}
+   *    (phantom bytes that pressure the byte-budget pass into evicting
+   *    live buffers), holding a `maxPoolSize` slot (which can flip the
+   *    LRU sweep into aggressive `mustEvict` mode), and queued for a
+   *    second `dispose()` by the evictors.
+   *
+   * Resident-byte / stats accounting is DERIVED from `activeBuffers` +
+   * free-bucket membership (see {@link getStats} / {@link getResidentBytes}),
+   * so removing the entry is the entire correction — there is no persistent
+   * counter to decrement. On the normal release/evict/dispose paths the
+   * entry (or its free-bucket slot) is already gone before `dispose()`
+   * runs, so this listener finds nothing and is a safe no-op there — it
+   * never double-counts eviction stats and never mutates a bucket array
+   * those paths are still iterating (they all commit removals BEFORE
+   * disposing). It never calls `dispose()` again (no re-entrancy) and
+   * removes itself on first fire (idempotent).
+   *
+   * @internal — called by the per-type adapters via their host interface.
+   */
+  registerPooledGeometryInvalidation(geometry: THREE.BufferGeometry): void {
+    const onDispose = (): void => {
+      geometry.removeEventListener('dispose', onDispose);
+      geometry.userData.luxarInvalidated = true;
+      for (const [nodeId, buffer] of this.activeBuffers) {
+        if (buffer.geometry === geometry) {
+          this.activeBuffers.delete(nodeId);
+          return;
+        }
+      }
+      // Not active — the geometry may instead sit in a free bucket
+      // (released, then disposed out-of-band). Drop that entry too, or
+      // the disposed geometry stays counted, holds a pool slot, and is
+      // disposed a second time by the evictors (see the doc comment).
+      this.removeFromFreeBuckets(geometry);
+    };
+    geometry.addEventListener('dispose', onDispose);
+  }
+
+  /**
+   * Remove the free-bucket entry referencing `geometry`, if any. A
+   * geometry appears in at most one bucket of one type pool, so the
+   * scan stops at the first identity match. No eviction counter moves:
+   * this is out-of-band disposal bookkeeping, not an eviction.
+   */
+  private removeFromFreeBuckets(geometry: THREE.BufferGeometry): void {
+    const pools = [this.points.pointBuffers, this.lines.lineBuffers, this.gsplats.gsplatBuffers];
+    for (const pool of pools) {
+      for (const [bucket, buffers] of pool) {
+        const index = buffers.findIndex((b) => b.geometry === geometry);
+        if (index !== -1) {
+          buffers.splice(index, 1);
+          if (buffers.length === 0) pool.delete(bucket);
+          return;
+        }
+      }
+    }
+  }
+
+  /**
    * Dispose all pooled geometries (for cleanup or context loss).
    */
   dispose(): void {
-    // Dispose all active geometries
+    // Collect every geometry FIRST, clear the maps, THEN dispose — the
+    // same commit-before-dispose ordering the evictors use. Each
+    // `dispose()` fires the self-invalidation listener; emptying the
+    // maps first keeps it a no-op, so it never splices a bucket array
+    // this method is still iterating (which would skip siblings).
+    const geometries: THREE.BufferGeometry[] = [];
     for (const buffer of this.activeBuffers.values()) {
-      buffer.geometry.dispose();
+      geometries.push(buffer.geometry);
     }
     this.activeBuffers.clear();
 
-    // Dispose all pooled geometries
-    const disposePool = (pool: Map<number, PooledBuffer[]>) => {
+    const drainPool = (pool: Map<number, PooledBuffer[]>): void => {
       for (const buffers of pool.values()) {
         for (const buffer of buffers) {
-          buffer.geometry.dispose();
+          geometries.push(buffer.geometry);
         }
       }
       pool.clear();
     };
+    drainPool(this.points.pointBuffers);
+    drainPool(this.lines.lineBuffers);
+    drainPool(this.gsplats.gsplatBuffers);
 
-    disposePool(this.points.pointBuffers);
-    disposePool(this.lines.lineBuffers);
-    disposePool(this.gsplats.gsplatBuffers);
+    for (const geometry of geometries) {
+      geometry.dispose();
+    }
 
     log.info(Modules.GPU_BUFFER_POOL, 'All pooled geometries disposed');
   }
