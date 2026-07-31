@@ -35,8 +35,8 @@ The pipelines are stateless: they read only the narrow config in the `Ctx` datac
 
 2. **Setup**: `ctx.store.require_group(path)`
 
-3. **Spatial ordering** (if `ctx.ordering_ctx.enable_spatial_index`):
-   - `build_points_ordering(positions, n_points, n_dims, radii_for_ordering, ctx.ordering_ctx, ctx.store)` → `ordering_data` or `None`
+3. **Spatial ordering**:
+   - `build_points_ordering(positions, n_points, n_dims, radii_for_ordering, ctx.ordering_ctx, ctx.store)` is called unconditionally; it returns `ordering_data` when spatial ordering applies and `None` when ordering is disabled or not applicable
    - Apply `ordering_data["sort_order"]` to `positions` and all non-broadcasted arrays (skip arrays with `shape[0] == 1`)
 
 4. **Write arrays**:

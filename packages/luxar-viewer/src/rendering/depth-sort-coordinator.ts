@@ -715,10 +715,10 @@ let scratch: EvaluateScratch | null = null;
  *   thing keeping the on-demand loop alive between slices. The slice
  *   just written rides THIS frame's flush (per-frame callbacks run
  *   before render), so the final slice needs no extra frame.
- * - On COMPLETION, drain a queued re-sort (a commit or the apply-gate
- *   in scheduleSort parked it) — the counterpart of the resolve path's
- *   drain, restoring the natural cadence: sort → apply N frames → next
- *   sort.
+ * - On COMPLETION, drain a queued re-sort (a commit that landed while a
+ *   sort was in flight parked it) — the counterpart of the resolve
+ *   path's drain, restoring the natural cadence: sort → apply N frames
+ *   → next sort.
  *
  * Per-node bound: one slice per pending node per frame — several large
  * nodes resolving simultaneously each add one slice's cost to a frame
@@ -795,10 +795,10 @@ function pumpChunkedOrderingApplies(): void {
  * the threshold AGAIN. Frames between dispatch and resolve render the
  * previous order — bounded staleness, standard 3DGS behavior. Skips:
  * pending view updates (the commit will sort anyway), in-flight sorts
- * (the resolve is at most a frame away), in-flight chunked ordering
- * applies (the L8 apply-gate — a new ordering couldn't be consumed
- * until the stream completes anyway), invisible/demoted meshes, and
- * nodes whose live mode is no longer order-dependent.
+ * (the resolve is at most a frame away), invisible/demoted meshes, and
+ * nodes whose live mode is no longer order-dependent. A streaming
+ * chunked apply does NOT skip — a fresher sort fills the inactive
+ * buffer concurrently.
  */
 export function evaluateDepthSortPerFrame(): void {
   // Drop the previous frame's render-order state FIRST — before any
