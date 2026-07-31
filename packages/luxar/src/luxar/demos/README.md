@@ -151,7 +151,7 @@ Visualizes the complete ATP Synthase rotary motor structure with F1 catalytic he
 
 **Run**: `luxar demo run atp_synthase`
 
-**Demonstrates**: Molecular machine visualization, multi-subunit protein complex, color-coded structural components (alpha, beta, gamma, c-ring), biological energy production machinery (~600 kDa enzyme).
+**Demonstrates**: Molecular machine visualization, multi-subunit protein complex, color-coded structural components (alpha, beta, gamma, c-ring), biological energy production machinery (~600 kDa enzyme), depth-sorted `normal` blending for surface-like atomic structures, `layer=True` for live blending/opacity/absorption control in the Layers panel (press **L**).
 
 ---
 
@@ -162,7 +162,7 @@ Downloads real Nup107-160 subcomplex structure from PDB and applies perfect 8-fo
 
 **Requires**: Internet access (downloads PDB structure).
 
-**Demonstrates**: PDB structure download and parsing, C-alpha backbone trace, 8-fold rotational symmetry application, van der Waals radii for atomic sizes, color-coded spokes.
+**Demonstrates**: PDB structure download and parsing, C-alpha backbone trace, 8-fold rotational symmetry application, van der Waals radii for atomic sizes, color-coded spokes, depth-sorted `normal` blending for surface-like atomic structures, `layer=True` for live blending/opacity/absorption control in the Layers panel (press **L**).
 
 ---
 

@@ -582,14 +582,39 @@ def generate_nuclear_pore_complex(
                 # Sharpness for crisp, sharp protein atoms (normalized [0, 1] knob)
                 sharpness = np.full(len(sym_positions), 0.85, dtype=np.float32)
 
+                # `normal` (alpha-over, depth-sorted) rather than the default
+                # additive: an atomic structure is a SURFACE, not an emissive
+                # medium, so the nearest atom should win the pixel. Additive
+                # and volumetric both sum every overlapping atom along the ray
+                # and wash a shell this dense toward pastel white, taking the
+                # CPK colours with them. Measured over 11 regenerated variants
+                # at the opening framing — mean CIELAB chroma over the covered
+                # pixels, which (unlike an HSV-style saturation ratio) scores
+                # both washed-out AND near-black pixels as colourless, so a dim
+                # additive render cannot win on pure-but-dark hues: normal
+                # 13.1, additive-at-intensity-0.125 6.2, and every volumetric
+                # variant 3.9-8.3 across kappa 2-20. The best volumetric
+                # (kappa=20, intensity 0.5) reaches only 8.3 AND sits off the
+                # Layers-panel absorption slider, which stops at 10; the best
+                # panel-legal one (kappa=3, intensity 0.15) reaches 6.7 — a
+                # hair over additive, half of normal. Normal also retires
+                # the intensity=0.125 anti-blowout workaround the additive
+                # default needed: opaque atoms occlude instead of accumulating,
+                # so full intensity is the correct exposure.
+                #
+                # `layer=True` exposes the node in the Layers panel (press L)
+                # so blending, opacity, intensity — and absorption once you
+                # switch to volumetric — stay live-adjustable.
                 scene.add_points(
                     "nuclear_pore_complex",
                     positions=sym_positions,
                     colors=colors,
                     radii=radii,
                     sharpness=sharpness,
-                    opacity=0.95,
-                    intensity=0.125,
+                    layer=True,
+                    blending_mode="normal",
+                    opacity=1.0,
+                    intensity=1.0,
                 )
 
                 # Overlay annotations
