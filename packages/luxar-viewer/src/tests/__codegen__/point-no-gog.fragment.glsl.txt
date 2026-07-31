@@ -43,18 +43,19 @@ layout( std140 ) uniform object {
 	float nodeUniform2;
 	float nodeUniform3;
 	float nodeUniform4;
-	mat3 nodeUniform6;
-	uint nodeUniform7;
-	mat3 nodeUniform8;
-	uint nodeUniform9;
-	mat3 nodeUniform10;
-	uint nodeUniform11;
-	float nodeUniform12;
-	float nodeUniform14;
+	float nodeUniform5;
+	mat3 nodeUniform7;
+	uint nodeUniform8;
+	mat3 nodeUniform9;
+	uint nodeUniform10;
+	mat3 nodeUniform11;
+	uint nodeUniform12;
+	float nodeUniform13;
 	float nodeUniform15;
 	float nodeUniform16;
 	float nodeUniform17;
-	vec2 nodeUniform18;
+	float nodeUniform18;
+	vec2 nodeUniform19;
 };
 
 

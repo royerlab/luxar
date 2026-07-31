@@ -29,6 +29,8 @@ import {
 import {
   writeSortedIndexIdentity,
   writeSortedIndexOrdering,
+  pumpSortedIndexOrderingApply,
+  getActiveSortedIndexAttribute,
 } from '../../../../rendering/element-storage';
 import type { RegistryEntry } from './types';
 import { buildBehindCamera, buildColormapTexture } from './shared';
@@ -276,6 +278,27 @@ const SORTED_PERMUTED_POINTS: PointTexelSource = {
 const SORTED_PERMUTED_ORDERING = new Uint32Array([2, 0, 3, 1]);
 
 /**
+ * Drain a staged ordering and leave it in the FRONT (slot 0) buffer.
+ *
+ * The parity harness builds materials by hand, so nothing pushes the
+ * active slot into `uSortedIndexSlot` the way the depth-sort coordinator
+ * does per frame; both backends therefore sample slot 0. Draining and then
+ * folding the swapped-in permutation back onto slot 0 keeps the production
+ * writer in the loop while matching what the hand-built shaders read.
+ */
+function drainOrderingOntoFrontBuffer(geom: THREE.InstancedBufferGeometry): void {
+  for (let guard = 0; pumpSortedIndexOrderingApply(geom).more; guard++) {
+    if (guard > 64) throw new Error('ordering stream did not converge');
+  }
+  const active = getActiveSortedIndexAttribute(geom);
+  const front = geom.getAttribute('aSortedIndex') as THREE.InstancedBufferAttribute;
+  if (active && active !== front) {
+    (front.array as Uint32Array).set(active.array as Uint32Array);
+    front.needsUpdate = true;
+  }
+}
+
+/**
  * Four-point data texture, deliberately THREE TEXELS WIDE (one point
  * per ROW): storage slot i has texel base 3·i, so with W = 3 every
  * slot i > 0 resolves to row y = base / W = i > 0. This exercises the
@@ -312,6 +335,17 @@ function buildSortedPermutedMesh(material: THREE.Material): THREE.Object3D {
   const texture = attachPointStorage(geom, SORTED_PERMUTED_COUNT);
   writePointTexels(texture, SORTED_PERMUTED_POINTS, SORTED_PERMUTED_COUNT);
   writeSortedIndexOrdering(geom, SORTED_PERMUTED_ORDERING, SORTED_PERMUTED_COUNT);
+  // An ordering STAGES into the inactive buffer of the double-buffered pair
+  // and swaps in when complete, so rendering straight after staging would
+  // draw the un-permuted buffer — and this case exists precisely to prove
+  // the permutation reaches the shader. Drain the pump the way the
+  // per-frame scheduler does, then fold the result back onto slot 0:
+  // production pushes the live slot into `uSortedIndexSlot`, but these
+  // harness materials are hand-built (the TSL one has no writable uniform
+  // map at all), so both backends read the default slot. The permutation
+  // still comes from the production writer — only where it lands is
+  // normalised.
+  drainOrderingOntoFrontBuffer(geom);
   geom.instanceCount = SORTED_PERMUTED_COUNT;
   geom.setDrawRange(0, 6);
   const mesh = new THREE.Mesh(geom, material);
