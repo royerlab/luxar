@@ -70,22 +70,27 @@ function deriveScalarRangeFromDescendants(node: SceneNode): [number, number] | u
   return best;
 }
 
-/** `color_data_range` of the node, else of its first descendant declaring one. */
+/**
+ * `color_data_range` of the node, else the UNION of every descendant's.
+ * A partition's parts each declare their own spread, and the slider bounds
+ * must cover the whole layer — taking the first part's range alone would
+ * leave a later HDR part's colours unreachable.
+ */
 function deriveColorRangeFromDescendants(node: SceneNode): [number, number] | undefined {
   const own = node.attrs.color_data_range as [number, number] | undefined;
   if (own) return own;
-  let best: [number, number] | undefined;
+  let min = Infinity;
+  let max = -Infinity;
   const visit = (n: SceneNode): void => {
-    if (best) return;
     const r = n.attrs.color_data_range as [number, number] | undefined;
     if (r) {
-      best = r;
-      return;
+      min = Math.min(min, r[0]);
+      max = Math.max(max, r[1]);
     }
     n.children?.forEach(visit);
   };
   node.children?.forEach(visit);
-  return best;
+  return min <= max ? [min, max] : undefined;
 }
 
 /** True when `node` (or any descendant) renders through a colormap LUT. */
@@ -179,6 +184,15 @@ export interface LayerInfo {
    * direct-colour slider bounds, symmetric with {@link LayerInfo.scalarDataRange}.
    */
   colorDataRange?: [number, number];
+  /**
+   * Whether the current display window is a SCALAR window (a colormap is in
+   * play for the layer — on the node or a descendant) rather than an
+   * authored-RGB one. `LayerApplyEngine.applyComposed` routes on this per
+   * leaf: a leaf the C1 guard keeps on direct colour must NOT receive the
+   * scalar window as a colour gain (a mixed group layer contains both kinds).
+   * Follows the colormap toggle via {@link LayerStateManager.setColormapWindow}.
+   */
+  scalarWindow: boolean;
   /**
    * For ``kind === 'lod'`` layers: number of child levels. Drives the
    * "Active level" dropdown's option count and the "N LODs" badge.
@@ -459,6 +473,7 @@ export class LayerStateManager {
           supportsColormap,
           scalarDataRange: colormapScalarRange,
           colorDataRange,
+          scalarWindow: usesColormap(node),
           lodGroupChildCount,
           partCount,
           nestedLodGroupPaths,
@@ -622,6 +637,7 @@ export class LayerStateManager {
   setColormapWindow(path: string, colormapOn: boolean): void {
     const layer = this.layers.get(path);
     if (!layer) return;
+    layer.scalarWindow = colormapOn;
     const [min, max] = colormapOn ? (layer.scalarDataRange ?? [0, 1]) : [0, 1];
     layer.displayMin = min;
     layer.displayMax = max;

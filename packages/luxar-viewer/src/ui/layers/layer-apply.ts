@@ -35,7 +35,12 @@ import {
 } from '../../data/attrs-composer';
 import { getBlendingState, liveLayerAttrs as deriveLiveLayerAttrs } from './attrs-utils';
 import { computeDisplayRange, type LayerInfo, type LayerStateManager } from './layer-state';
-import { applyColorAdjustments, isLuxarMaterial, type LuxarMaterial } from './luxar-material';
+import {
+  applyColorAdjustments,
+  isColormapActive,
+  isLuxarMaterial,
+  type LuxarMaterial,
+} from './luxar-material';
 
 /**
  * Dependencies injected by the owning {@link LayersPanel}. `getRootGroup` /
@@ -120,8 +125,18 @@ export class LayerApplyEngine {
    * has its own control. Only `blending_mode` is affected — the
    * multiplicative attrs still compose and `offset` still sums, so a part's
    * authored opacity/gamma/κ is preserved.
+   *
+   * `identityLayerWindow` substitutes the IDENTITY for the edited layer's own
+   * display window (intensity/offset) — used by `applyComposed` for a leaf
+   * that renders direct colour while the layer's window is a SCALAR window
+   * (a mixed group layer), so the scalar window is never applied as a colour
+   * gain. Ancestor/leaf-authored windows still compose.
    */
-  private composeEffective(leafPath: string, layerPath: string): EffectiveAttrs | null {
+  private composeEffective(
+    leafPath: string,
+    layerPath: string,
+    identityLayerWindow = false
+  ): EffectiveAttrs | null {
     const sceneGraph = this.deps.getSceneGraph();
     if (!sceneGraph) return null;
     const ancestors = collectAncestorNodes(sceneGraph, leafPath);
@@ -130,7 +145,13 @@ export class LayerApplyEngine {
     const layerDepth = ancestors.findIndex((n) => n.path === layerPath);
     const chain: ComposableAttrs[] = ancestors.map((node, i) => {
       const layerInfo = this.deps.state.getLayer(node.path);
-      if (layerInfo) return this.liveLayerAttrs(layerInfo);
+      if (layerInfo) {
+        const live = this.liveLayerAttrs(layerInfo);
+        if (identityLayerWindow && node.path === layerPath) {
+          return { ...live, intensity: 1, offset: 0 };
+        }
+        return live;
+      }
       const insideLayerSubtree = layerDepth >= 0 && i > layerDepth;
       return {
         opacity: node.attrs.opacity as number | undefined,
@@ -193,7 +214,15 @@ export class LayerApplyEngine {
       if (!obj) continue;
       const mat = this.getLeafMaterial(obj);
       if (!mat) continue;
-      const eff = this.composeEffective(leaf.path, layer.path);
+      // Per-leaf window routing. A layer whose window is a SCALAR window
+      // (colormap in play) can still contain leaves rendering direct colour:
+      // the C1 guard suppresses the LUT on geometry with no scalars bound,
+      // and a MIXED group keeps the scalar window because some other leaf
+      // accepted it. Pushing that window into a direct-colour leaf's colour
+      // GOG is exactly the contrast stretch this panel no longer does — such
+      // a leaf gets the identity window instead.
+      const identityLayerWindow = layer.scalarWindow && !isColormapActive(mat);
+      const eff = this.composeEffective(leaf.path, layer.path, identityLayerWindow);
       if (!eff) continue;
       // An in-flight LOD fade owns the live opacity uniform: it re-renders
       // `_lodFadeBase × fadeProduct` every frame (scene/lod-fade.ts), so a

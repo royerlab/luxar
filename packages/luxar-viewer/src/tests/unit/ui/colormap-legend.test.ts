@@ -44,6 +44,7 @@ function makeLayer(overrides: Partial<LayerInfo> = {}): LayerInfo {
     selected: false,
     colormap: 'viridis',
     supportsColormap: true,
+    scalarWindow: true,
     ...overrides,
   };
 }

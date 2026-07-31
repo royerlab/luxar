@@ -464,6 +464,44 @@ describe('LayerStateManager', () => {
     expect(layer.displayMax).toBeCloseTo(1, 5);
   });
 
+  it('unions descendant colour ranges so a later HDR part stays reachable', () => {
+    // A direct-colour partition's slider bounds must cover EVERY part's
+    // colour spread — taking the first part's range alone would leave a later
+    // HDR part's colours (here up to 3.5) beyond the slider's reach.
+    const graph: SceneNode = {
+      path: '/',
+      type: 'scene',
+      attrs: {},
+      children: [
+        {
+          path: '/g',
+          type: 'group',
+          attrs: { layer: true, kind: 'partition', display_type: 'gsplats' },
+          children: [
+            {
+              path: '/g/p0',
+              type: 'gsplats',
+              attrs: { color_data_range: [0.1, 0.8] as [number, number] },
+              children: [],
+            },
+            {
+              path: '/g/p1',
+              type: 'gsplats',
+              attrs: { color_data_range: [0, 3.5] as [number, number] },
+              children: [],
+            },
+          ],
+        },
+      ],
+    } as unknown as SceneNode;
+    mgr.initFromSceneGraph(graph);
+    const layer = mgr.getLayer('/g')!;
+    expect(layer.dataMin).toBeLessThanOrEqual(0);
+    expect(layer.dataMax).toBeGreaterThanOrEqual(3.5);
+    // The window itself stays the direct-colour identity.
+    expect(layer.displayMax).toBeCloseTo(1, 5);
+  });
+
   it('expands slider bounds to encompass authored intensity/offset display range', () => {
     // Regression: when a node has authored intensity != 1, the recovered
     // display range can extend beyond color_data_range. If the slider's

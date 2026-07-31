@@ -124,12 +124,14 @@ silently clamps the thumb on first render.
 
 #### Toggling the colormap
 
-`setColormapWindow` re-defaults the window AND the bounds to the new mode — a
-window carried over from the other mode is meaningless, and merely widening the
-bounds would leave the useful window as an unusable sliver (an amplitude window
-of `[1e-4, 0.02]` inside `[0, 1]` bounds is 2% of the track). Both land exactly
-where a natively authored layer of that mode inits, which is why `LayerInfo`
-keeps `colorDataRange` alongside `scalarDataRange`.
+On an off↔on MODE flip, `setColormapWindow` re-defaults the window AND the
+bounds to the new mode — a window carried over from the other mode is
+meaningless, and merely widening the bounds would leave the useful window as an
+unusable sliver (an amplitude window of `[1e-4, 0.02]` inside `[0, 1]` bounds
+is 2% of the track). Both land exactly where a natively authored layer of that
+mode inits, which is why `LayerInfo` keeps `colorDataRange` alongside
+`scalarDataRange`. Switching between two active palettes is NOT a mode flip —
+the rendered value stays the same scalar, so a user-adjusted window survives.
 
 Two things the select handler must do that are easy to miss:
 
@@ -142,6 +144,12 @@ Two things the select handler must do that are easy to miss:
   data bound (a group layer over scalar-less points still offers the dropdown);
   such a layer keeps rendering direct colour, so the handler puts the identity
   window back rather than applying a scalar range as a colour gain.
+
+For a MIXED group layer (some leaves accept the LUT, some are suppressed), the
+layer keeps the scalar window for its colormapped leaves, and `applyComposed`
+routes per leaf: a leaf whose material is not colormap-active while the layer's
+window is a scalar one (`LayerInfo.scalarWindow`) gets the identity window
+instead, so the scalar range is never applied to authored RGB as a colour gain.
 
 ### Blending mode inside a layer's subtree
 

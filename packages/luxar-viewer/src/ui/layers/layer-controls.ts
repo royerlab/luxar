@@ -287,15 +287,24 @@ export class LayerControls {
     this.events.on(this.colormapSelect, 'change', () => {
       this.controlsInteracting = true;
       const cmName = this.colormapSelect!.value || undefined;
+      // Capture each layer's mode BEFORE mutating: the window re-default
+      // below applies only to an off→on / on→off flip. Switching between two
+      // active palettes keeps the user's scalar window — the rendered value
+      // is the same scalar either side.
+      const wasColormapped = new Map(
+        this.deps.state.getSelected().map((l) => [l.path, !!l.colormap])
+      );
       this.deps.state.applyToSelected((l) => {
         l.colormap = cmName;
       });
       for (const sel of this.deps.state.getSelected()) {
-        // The display window means a different thing on each side of this
-        // toggle (scalar data range vs authored-RGB identity), so re-default
-        // it BEFORE applying — `applyColormap` derives the material's scalar
-        // range from the composed window.
-        this.deps.state.setColormapWindow(sel.path, !!cmName);
+        // The display window means a different thing on each side of the
+        // off↔on toggle (scalar data range vs authored-RGB identity), so
+        // re-default it BEFORE applying — `applyColormap` derives the
+        // material's scalar range from the composed window.
+        if (wasColormapped.get(sel.path) !== !!cmName) {
+          this.deps.state.setColormapWindow(sel.path, !!cmName);
+        }
         if (!this.deps.apply.applyColormap(sel) && cmName) {
           // The C1 fail-closed guard suppressed the colormap on every leaf
           // (e.g. a group layer over scalar-less points, where the dropdown is
