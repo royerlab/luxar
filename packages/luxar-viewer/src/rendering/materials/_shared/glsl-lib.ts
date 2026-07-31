@@ -72,3 +72,46 @@ float perspectiveNearFade(int isOrtho, float viewZ, float nearCull) {
   return smoothstep(nearCull, nearCull * 2.0, -viewZ);
 }
 `;
+
+/**
+ * Double-buffered draw-slot → storage-slot mapping (depth-sorting spec
+ * §2.1 tier 3). Declares BOTH ordering attributes plus the slot selector,
+ * and exposes `luxarSortedIndex()` as the single read point.
+ *
+ * A permutation must swap ATOMICALLY: a half-applied ordering is not a
+ * reordering but a corrupt permutation (elements drawn twice / not at
+ * all). So the coordinator streams each new ordering into the INACTIVE
+ * attribute across frames and flips `uSortedIndexSlot` only once that
+ * buffer holds the whole permutation — the attribute being read is
+ * therefore always complete.
+ *
+ * Both attributes are ALWAYS present on the geometry, as two DISTINCT
+ * buffers allocated together by `attachElementStorage` — never aliased
+ * onto one and never materialised later. That is load-bearing on
+ * WebGPU twice over: `RenderObject` dereferences a graph-referenced
+ * attribute before its undefined guard, and the vertex-buffer layout is
+ * cached from the attribute set at first draw and never rebuilt, so a
+ * set that grows afterwards renders the scene black (`element-storage.ts`).
+ *
+ * `uSortedIndexSlot` is a RUNTIME uniform, never a define: a flip must
+ * not recompile the program.
+ *
+ * Inject once per vertex shader that indexes an element texture, then
+ * read the index via `luxarSortedIndex()`:
+ *
+ * ```ts
+ * const vertexShader = `
+ *   ${GLSL_SORTED_INDEX}
+ *   void main() { int base = int(luxarSortedIndex()) * 4; ... }
+ * `;
+ * ```
+ */
+export const GLSL_SORTED_INDEX = `
+in uint aSortedIndex;
+in uint aSortedIndexB;
+uniform int uSortedIndexSlot;
+
+uint luxarSortedIndex() {
+  return uSortedIndexSlot == 1 ? aSortedIndexB : aSortedIndex;
+}
+`;

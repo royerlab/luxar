@@ -11,9 +11,10 @@
  *
  * Per-point data lives in an RGBA32F **point texture** (3 texels/point —
  * see `./element-texture-layout` for the layout authority) sampled by the
- * vertex shader via `texelFetch`; the only per-instance attribute is
- * `aSortedIndex` (Uint32), which maps the draw slot to a storage slot so
- * draw order can be permuted without rewriting point data. The per-texel
+ * vertex shader via `texelFetch`. The only per-instance data is the
+ * double-buffered ordering pair `aSortedIndex` / `aSortedIndexB` (Uint32),
+ * which maps the draw slot to a storage slot so draw order can be
+ * permuted without rewriting point data. The per-texel
  * layout is FIXED regardless of which optional fields the dataset has
  * (pool geometries are reused across nodes, so the layout never varies):
  *

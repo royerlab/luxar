@@ -29,6 +29,11 @@ export class LinePickingMaterial extends THREE.ShaderMaterial implements CameraA
         uLineTex: { value: null },
         uResolution: { value: new THREE.Vector2(1, 1) },
         uIsOrtho: { value: 0 },
+        // Active ordering buffer: 0 = aSortedIndex, 1 = aSortedIndexB.
+        // Flipped by the depth-sort coordinator once the inactive buffer
+        // holds a whole permutation (runtime uniform: never a define — a
+        // flip must not recompile the program).
+        uSortedIndexSlot: { value: 0 },
         // 0.1 matches the visual line material ctor default (pre-first-
         // broadcast only; updateCameraParams overwrites with the scene value).
         uNearCull: { value: 0.1 },
@@ -70,6 +75,10 @@ export class LinePickingMaterial extends THREE.ShaderMaterial implements CameraA
     cloned.uniforms.uMaxLinePixelWidth.value = this.uniforms.uMaxLinePixelWidth.value;
     cloned.uniforms.uPerspectiveLineScale.value = this.uniforms.uPerspectiveLineScale.value;
     cloned.uniforms.uOrthoLineScale.value = this.uniforms.uOrthoLineScale.value;
+    // The active ordering slot must ride along: a clone taken while the
+    // geometry draws from slot 1 would otherwise read the stale buffer
+    // until the coordinator's next per-frame re-assert.
+    cloned.uniforms.uSortedIndexSlot.value = this.uniforms.uSortedIndexSlot.value;
     return cloned as this;
   }
 
