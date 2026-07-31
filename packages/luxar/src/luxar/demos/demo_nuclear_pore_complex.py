@@ -599,8 +599,20 @@ def generate_nuclear_pore_complex(
                 # panel-legal one (kappa=3, intensity 0.15) reaches 6.7 — a
                 # hair over additive, half of normal. Normal also retires
                 # the intensity=0.125 anti-blowout workaround the additive
-                # default needed: opaque atoms occlude instead of accumulating,
-                # so full intensity is the correct exposure.
+                # default needed: at opacity >= 0.99 `normal` writes depth
+                # (normalModeDepthWrite), so atoms occlude instead of
+                # accumulating and full intensity is the correct exposure.
+                #
+                # `opaque` scores HIGHER chroma still (17.3) — do not "fix" this
+                # to opaque on that number alone. It is the same blend state as
+                # normal-at-opacity-1 except `transparent: false`, which turns
+                # GL blending off entirely: the soft falloff alpha is computed
+                # and then ignored. Zoomed A/B at camDist 11, over the covered
+                # pixels: normal keeps a 0.042 anti-aliased edge band and 0.14%
+                # hard edges, opaque has a 0.000 band and 1.47% (10.5x) hard
+                # edges, plus crescent-clipped atoms where a nearer sprite's
+                # unblended quad punches through a farther one. The chroma win
+                # IS the aliasing — no fringe pixels left to dilute the hue.
                 #
                 # `layer=True` exposes the node in the Layers panel (press L)
                 # so blending, opacity, intensity — and absorption once you
