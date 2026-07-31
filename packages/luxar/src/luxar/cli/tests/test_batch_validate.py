@@ -16,6 +16,7 @@ The ``--fix`` loop keys the non-deletable bucket on the
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import numpy as np
@@ -189,7 +190,9 @@ def test_missing_offdiag_for_dgt1_is_corrupt(tmp_path):
     assert "missing_cholesky_factors_offdiag" in _validate_tile(p)
 
 
-def test_validate_fix_reclaims_staging_leftovers_keeps_empty_marker(tmp_path):
+def test_validate_fix_reclaims_staging_leftovers_keeps_empty_marker(
+    tmp_path, monkeypatch
+):
     """`--fix` must reclaim per-attempt staging leftovers, not the old `.tmp`.
 
     Staging dirs are now `{tile}.tmp.<token>` (local host+pid) /
@@ -197,10 +200,14 @@ def test_validate_fix_reclaims_staging_leftovers_keeps_empty_marker(tmp_path):
     `{tile}.tmp.<token>.empty` marker file. The `{tile}.tmp*` glob must match all
     of them while NEVER touching the legitimate `{tile}.empty` marker.
     """
+    import luxar.cli.gsplat_ops.batch_status_validate_cancel as bsvc
     from luxar.cli.gsplat_ops.batch_status_validate_cancel import (
         run_batch_validate_cmd,
     )
     from luxar.gsplats.batch.manifest import BatchJob, BatchManifest, save_manifest
+
+    # Both leftovers belong to attempts that are verifiably gone.
+    monkeypatch.setattr(bsvc, "_staging_attempt_live", lambda token: False)
 
     out_dir = tmp_path / "batch"
     tiles = out_dir / "tiles"
@@ -239,17 +246,22 @@ def test_validate_fix_reclaims_staging_leftovers_keeps_empty_marker(tmp_path):
     assert (tiles / f"{tile}.empty").exists()  # legitimate marker untouched
 
 
-def test_validate_report_counts_stray_staging_empty_markers(tmp_path, capsys):
+def test_validate_report_counts_stray_staging_empty_markers(
+    tmp_path, capsys, monkeypatch
+):
     """Report-only `validate` (no --fix) must COUNT stray staging leftovers.
 
     A stray `{tile}.tmp.<token>.empty` marker and a stale staging dir both count
     toward STALE_TMP even without --fix, so the report is honest; neither is
     deleted in report mode.
     """
+    import luxar.cli.gsplat_ops.batch_status_validate_cancel as bsvc
     from luxar.cli.gsplat_ops.batch_status_validate_cancel import (
         run_batch_validate_cmd,
     )
     from luxar.gsplats.batch.manifest import BatchJob, BatchManifest, save_manifest
+
+    monkeypatch.setattr(bsvc, "_staging_attempt_live", lambda token: False)
 
     out_dir = tmp_path / "batch"
     tiles = out_dir / "tiles"
@@ -287,6 +299,113 @@ def test_validate_report_counts_stray_staging_empty_markers(tmp_path, capsys):
     assert staging.exists()
     assert stray_marker.exists()
     assert (tiles / f"{tile}.empty").exists()
+
+
+def test_validate_fix_keeps_staging_of_running_attempt(tmp_path, capsys, monkeypatch):
+    """`--fix` must NEVER delete staging owned by a still-running attempt.
+
+    Running fits write into exactly these paths; a partial delete under a live
+    zarr writer can end with a corrupt store being promoted by that attempt's
+    atomic claim. Live (or unverifiable) staging is counted as ACTIVE and kept.
+    """
+    import luxar.cli.gsplat_ops.batch_status_validate_cancel as bsvc
+    from luxar.cli.gsplat_ops.batch_status_validate_cancel import (
+        run_batch_validate_cmd,
+    )
+    from luxar.gsplats.batch.manifest import BatchJob, BatchManifest, save_manifest
+
+    monkeypatch.setattr(bsvc, "_staging_attempt_live", lambda token: True)
+
+    out_dir = tmp_path / "batch"
+    tiles = out_dir / "tiles"
+    tiles.mkdir(parents=True)
+    tile = "t00_c00_tile000.gsplats.zarr"
+
+    manifest = BatchManifest(
+        input_path="/data/x.zarr",
+        output_dir=str(out_dir),
+        jobs=[
+            BatchJob(
+                task_id=0,
+                timepoint=0,
+                channel=0,
+                tile_index=0,
+                output_filename=tile,
+                estimated_wall_seconds=1.0,
+            )
+        ],
+    )
+    save_manifest(manifest, out_dir)
+
+    staging = tiles / f"{tile}.tmp.host-1234"
+    staging.mkdir()
+    (staging / "data").write_text("in-progress")
+
+    run_batch_validate_cmd(output_dir=out_dir, fix=True)
+
+    out = capsys.readouterr().out
+    assert staging.exists()  # the live attempt's store is untouched
+    assert (staging / "data").read_text() == "in-progress"
+    assert "STALE_TMP:  0" in out
+    assert "ACTIVE_TMP: 1" in out
+    assert "Kept: " in out
+
+
+def test_staging_attempt_live_token_parsing(monkeypatch):
+    """Token → liveness routing: local host+pid, Slurm jobid, legacy, unknown."""
+    import socket as socket_mod
+
+    import luxar.cli.gsplat_ops.batch_status_validate_cancel as bsvc
+
+    host = socket_mod.gethostname()
+
+    # Our own (running) pid on this host is live.
+    assert bsvc._staging_attempt_live(f"{host}-{os.getpid()}") is True
+
+    # A dead pid on this host is reclaimable.
+    def _dead(pid, sig):  # type: ignore[no-untyped-def]
+        raise ProcessLookupError()
+
+    monkeypatch.setattr(bsvc.os, "kill", _dead)
+    assert bsvc._staging_attempt_live(f"{host}-4242") is False
+    monkeypatch.undo()
+
+    # Another machine's pid can't be probed — keep, to be safe.
+    assert bsvc._staging_attempt_live("some-other-host-4242") is None
+
+    # Legacy shared `.tmp` (empty token) has no owner — always reclaimable.
+    assert bsvc._staging_attempt_live("") is False
+
+
+def test_staging_attempt_live_slurm_token(monkeypatch):
+    """Slurm tokens are probed via squeue; no squeue means 'cannot verify'."""
+    import luxar.cli.gsplat_ops.batch_status_validate_cancel as bsvc
+
+    class _Res:
+        def __init__(self, rc, out):
+            self.returncode = rc
+            self.stdout = out
+
+    calls: list[list[str]] = []
+
+    def _fake_run(argv, **kw):  # type: ignore[no-untyped-def]
+        calls.append(argv)
+        return _Res(0, "RUNNING\n")
+
+    monkeypatch.setattr(bsvc.subprocess, "run", _fake_run)
+    assert bsvc._staging_attempt_live("42.7.1") is True
+    assert calls and calls[0][:3] == ["squeue", "-h", "-j"] and calls[0][3] == "42"
+
+    # Job left the queue (squeue errors on an unknown id) → reclaimable.
+    monkeypatch.setattr(bsvc.subprocess, "run", lambda *a, **kw: _Res(1, ""))
+    assert bsvc._staging_attempt_live("42.7.1") is False
+
+    # No squeue on this machine → cannot verify → keep.
+    def _no_squeue(*a, **kw):  # type: ignore[no-untyped-def]
+        raise FileNotFoundError("squeue")
+
+    monkeypatch.setattr(bsvc.subprocess, "run", _no_squeue)
+    assert bsvc._staging_attempt_live("42.7.1") is None
 
 
 def test_1d_tile_no_offdiag_is_ok(tmp_path):

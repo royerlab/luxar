@@ -2,13 +2,64 @@
 
 from __future__ import annotations
 
+import os
+import re
 import shutil
+import socket
+import subprocess  # nosec B404 - controlled squeue liveness probe
 from pathlib import Path
 
 import typer
 from arbol import aprint
 
 from .batch_validation import validate_tile as _validate_tile_impl
+
+# Per-attempt staging tokens (the part after `{tile}.tmp.`):
+# Slurm attempts are `<jobid>.<taskid>.<restart>`, local attempts `<host>-<pid>`
+# (see slurm_gen.generate_fit_sbatch / local_runner._staging_path).
+_SLURM_TOKEN_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
+_LOCAL_TOKEN_RE = re.compile(r"^(.+)-(\d+)$")
+
+
+def _staging_attempt_live(token: str) -> bool | None:
+    """Best-effort liveness of the attempt that owns a staging ``token``.
+
+    Returns ``True`` (the attempt is still running — its staging must NOT be
+    deleted: a partial delete under a live zarr writer can end with a corrupt
+    store being promoted), ``False`` (the attempt is gone — safe to reclaim), or
+    ``None`` (cannot verify from this machine — keep it, to be safe). A legacy
+    shared ``.tmp`` (empty token, pre-attempt-isolation) carries no owner and is
+    always reclaimable.
+    """
+    if not token:
+        return False
+    m = _SLURM_TOKEN_RE.match(token)
+    if m:
+        try:
+            res = subprocess.run(  # nosec B603, B607 - trusted squeue probe
+                ["squeue", "-h", "-j", m.group(1), "-o", "%T"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+            return None  # no squeue here — cannot verify
+        if res.returncode != 0:
+            return False  # Slurm no longer knows the job
+        return bool(res.stdout.strip())
+    m = _LOCAL_TOKEN_RE.match(token)
+    if m:
+        host, pid = m.group(1), int(m.group(2))
+        if host != socket.gethostname():
+            return None  # another machine's pid — cannot probe over NFS
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True  # pid exists, owned by another user
+        return True
+    return None  # unrecognized token — keep, to be safe
 
 
 def run_batch_status_cmd(*, output_dir: Path, verbose: bool) -> None:
@@ -53,6 +104,7 @@ def run_batch_validate_cmd(*, output_dir: Path, fix: bool) -> None:
         corrupt = 0
         unmigrated = 0
         stale_tmp = 0
+        active_tmp = 0
         corrupt_reasons: list[str] = []
         unmigrated_reasons: list[str] = []
 
@@ -64,20 +116,38 @@ def run_batch_validate_cmd(*, output_dir: Path, fix: bool) -> None:
             # run, `{tile}.tmp.<jobid>.<taskid>.<restart>` for Slurm — plus a
             # possible `{tile}.tmp.<token>.empty` marker file. The glob matches
             # every such leftover while NEVER matching the legitimate
-            # `{tile}.empty` marker (it has no `.tmp` in its name).
-            for leftover in tiles_dir.glob(f"{tile_name}.tmp*"):
-                if leftover.is_dir():
-                    stale_tmp += 1
+            # `{tile}.empty` marker (it has no `.tmp` in its name). A leftover
+            # whose owning attempt is still running (or can't be verified) is
+            # counted as ACTIVE and never deleted — these are exactly the paths
+            # live fits write into, and deleting one mid-write can corrupt the
+            # store that attempt is about to promote.
+            for leftover in sorted(tiles_dir.glob(f"{tile_name}.tmp*")):
+                is_marker = not leftover.is_dir() and leftover.name.endswith(".empty")
+                if not leftover.is_dir() and not is_marker:
+                    continue
+                suffix = leftover.name[len(tile_name) + len(".tmp") :]
+                if is_marker:
+                    suffix = suffix[: -len(".empty")]
+                live = _staging_attempt_live(suffix.lstrip("."))
+                if live is not False:
+                    active_tmp += 1
                     if fix:
+                        why = (
+                            "attempt still running"
+                            if live
+                            else "cannot verify the attempt finished"
+                        )
+                        aprint(f"  Kept: {leftover.name} ({why})")
+                    continue
+                # Orphaned by a crash/preemption. Count it regardless of --fix
+                # so report/dry-run mode is honest.
+                stale_tmp += 1
+                if fix:
+                    if leftover.is_dir():
                         shutil.rmtree(leftover)
-                        aprint(f"  Deleted: {leftover.name}")
-                elif leftover.name.endswith(".empty"):
-                    # A stale `<staging>.empty` marker orphaned by a crash. Count
-                    # it regardless of --fix so report/dry-run mode is honest.
-                    stale_tmp += 1
-                    if fix:
+                    else:
                         leftover.unlink(missing_ok=True)
-                        aprint(f"  Deleted: {leftover.name}")
+                    aprint(f"  Deleted: {leftover.name}")
 
             if not tile_path.is_dir():
                 # A `<tile>.empty` marker = the task ran and legitimately produced
@@ -112,6 +182,8 @@ def run_batch_validate_cmd(*, output_dir: Path, fix: bool) -> None:
         aprint(f"  CORRUPT:    {corrupt}")
         aprint(f"  UNMIGRATED: {unmigrated}")
         aprint(f"  STALE_TMP:  {stale_tmp}")
+        if active_tmp:
+            aprint(f"  ACTIVE_TMP: {active_tmp} (in use by a running attempt — kept)")
 
         if corrupt_reasons and not fix:
             aprint("")

@@ -330,10 +330,17 @@ def generate_fit_sbatch(
     lines.extend(
         [
             '    if [ "$FIT_RC" -eq 0 ] && [ -f "${STAGING}.empty" ]; then',
-            f'        echo "Empty {slot_label} (0 splats): ${{OUTPUT}}.empty"',
             '        rm -f "${STAGING}.empty"',
             '        rm -rf "${STAGING}"',
-            '        touch "${OUTPUT}.empty"',
+            "        # Record the empty marker only if no concurrent attempt has",
+            "        # already promoted a real store — a real result always wins,",
+            "        # so the two terminal representations never coexist.",
+            '        if [ -d "$OUTPUT" ]; then',
+            '            echo "Completed by another task, dropping empty result"',
+            "        else",
+            f'            echo "Empty {slot_label} (0 splats): ${{OUTPUT}}.empty"',
+            '            touch "${OUTPUT}.empty"',
+            "        fi",
             "        return 0",
             "    fi",
         ]
@@ -360,6 +367,11 @@ def generate_fit_sbatch(
             "    else",
             '        echo "Tile saved: $OUTPUT"',
             "    fi",
+            "    # A real store now stands at OUTPUT (ours or the winner's) —",
+            "    # drop any stale empty marker from an earlier 0-splat attempt so",
+            "    # resume/status/merge never mistake this slot for legitimately",
+            "    # empty after the store is later removed.",
+            '    rm -f "${OUTPUT}.empty"',
             "}",
             "",
         ]

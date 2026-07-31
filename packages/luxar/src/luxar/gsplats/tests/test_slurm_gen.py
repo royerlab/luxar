@@ -242,6 +242,36 @@ def test_fit_script_uses_per_attempt_staging_dir() -> None:
     assert '[ -f "${STAGING}.empty" ]' in script
 
 
+def test_fit_script_empty_marker_defers_to_real_output() -> None:
+    """A real store always wins over an empty result — never both on disk.
+
+    The 0-splat branch must only `touch "${OUTPUT}.empty"` when no concurrent
+    attempt has promoted a real OUTPUT, and a successful/lost `mv -T` claim must
+    drop any stale marker — otherwise both terminal representations coexist and
+    a later store removal silently turns the slot 'legitimately empty'.
+    """
+    script = generate_fit_sbatch(_packed_manifest(1), "")
+    lines = script.splitlines()
+
+    # The empty branch guards the marker behind an OUTPUT-existence check.
+    empty_if = next(
+        i for i, ln in enumerate(lines) if '[ -f "${STAGING}.empty" ]' in ln
+    )
+    touch = next(i for i, ln in enumerate(lines) if 'touch "${OUTPUT}.empty"' in ln)
+    guard = next(
+        i
+        for i, ln in enumerate(lines)
+        if i > empty_if and 'if [ -d "$OUTPUT" ]; then' in ln
+    )
+    assert empty_if < guard < touch
+
+    # After the atomic claim, a real store stands at OUTPUT: the stale marker
+    # is removed (winner and loser paths both flow through this line).
+    mv = next(i for i, ln in enumerate(lines) if 'mv -T "${STAGING}"' in ln)
+    marker_rm = next(i for i, ln in enumerate(lines) if 'rm -f "${OUTPUT}.empty"' in ln)
+    assert marker_rm > mv
+
+
 def test_content_fit_script_uses_staging_dir() -> None:
     """Content mode (plan-box) fit also writes into ${STAGING}, not .tmp."""
     manifest = _packed_manifest(1)

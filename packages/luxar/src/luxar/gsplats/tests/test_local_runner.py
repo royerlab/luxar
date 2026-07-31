@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import os
+import socket
 from pathlib import Path
 
 import numpy as np
@@ -268,17 +270,84 @@ def test_argv_staging_is_per_invocation(tmp_path: Path, monkeypatch) -> None:
     assert s1 != s2  # distinct invocations never share a staging dir
 
 
-def test_no_resume_removes_stale_final_output_before_refit(
-    tmp_path: Path, monkeypatch
-) -> None:
-    """resume=False must delete a prior run's final output before refitting.
+def test_finalize_overwrite_replaces_stale_output(tmp_path: Path) -> None:
+    """overwrite=True (--no-resume refit) replaces a stale prior output.
 
-    Otherwise the fresh refit lands in staging and the finalize loser-guard
-    (``out`` already exists) silently discards it, keeping the STALE tile — the
-    regression introduced by the per-attempt loser-guard. ``_argv`` must remove
-    the stale final output up front so overwrite-on-refit is restored.
+    A pre-existing ``out`` under overwrite is a stale prior result, not a
+    concurrent winner: the loser-guard must not silently discard the fresh
+    refit, and the replacement happens at finalize — after the refit succeeded.
     """
-    import luxar.gsplats.batch.local_runner as lr
+    out = tmp_path / "t00_c00_tile000.gsplats.zarr"
+    out.mkdir()
+    (out / "data").write_text("stale")
+    staging = _staging_path(out, "host-1")
+    staging.mkdir()
+    (staging / "data").write_text("fresh")
+
+    ok, empty = _finalize_output(out, staging, overwrite=True)
+    assert ok and not empty
+    assert (out / "data").read_text() == "fresh"
+    assert not staging.exists()
+
+
+def test_finalize_overwrite_empty_refit_replaces_stale_store(tmp_path: Path) -> None:
+    """overwrite=True with a 0-splat refit removes the stale real store too.
+
+    Otherwise the old store would win over the fresh (legitimately empty)
+    result: resume/merge prefer a real store over the ``.empty`` marker.
+    """
+    out = tmp_path / "t00_c00_tile000.gsplats.zarr"
+    out.mkdir()
+    (out / "data").write_text("stale")
+    staging = _staging_path(out, "host-1")
+    staging.mkdir()
+    Path(str(staging) + ".empty").touch()
+
+    ok, empty = _finalize_output(out, staging, overwrite=True)
+    assert ok and empty
+    assert not out.exists()
+    assert Path(str(out) + ".empty").exists()
+
+
+def test_finalize_empty_defers_to_promoted_real_output(tmp_path: Path) -> None:
+    """An empty attempt must NOT leave a marker next to a real promoted store.
+
+    If a concurrent attempt already promoted a real ``out``, the empty result
+    loses: touching ``{out}.empty`` anyway would leave BOTH terminal
+    representations behind, and a later removal of the store (e.g. `validate
+    --fix` on a corrupt tile) would make resume/status/merge treat the slot as
+    legitimately empty — a silent spatial hole.
+    """
+    out = tmp_path / "t00_c00_tile000.gsplats.zarr"
+    out.mkdir()
+    (out / "data").write_text("winner")
+    staging = _staging_path(out, "host-1")
+    staging.mkdir()
+    Path(str(staging) + ".empty").touch()
+
+    ok, empty = _finalize_output(out, staging)
+    assert ok and empty
+    assert (out / "data").read_text() == "winner"
+    assert not Path(str(out) + ".empty").exists()
+    assert not staging.exists()
+    assert not Path(str(staging) + ".empty").exists()
+
+
+def test_finalize_real_promotion_clears_stale_empty_marker(tmp_path: Path) -> None:
+    """Promoting a real store removes a stale/lost-race ``{out}.empty`` marker."""
+    out = tmp_path / "t00_c00_tile000.gsplats.zarr"
+    Path(str(out) + ".empty").touch()
+    staging = _staging_path(out, "host-1")
+    staging.mkdir()
+    (staging / "data").write_text("x")
+
+    ok, empty = _finalize_output(out, staging)
+    assert ok and not empty
+    assert out.exists()
+    assert not Path(str(out) + ".empty").exists()
+
+
+def _plan_single_tile_manifest(tmp_path: Path):  # type: ignore[no-untyped-def]
     from luxar.cli.gsplat_ops.batch_planning import (
         ContentKnobs,
         DenoiseConfig,
@@ -290,7 +359,6 @@ def test_no_resume_removes_stale_final_output_before_refit(
     src = tmp_path / "vol.zarr"
     _make_4d_zarr(src, n_t=1)
     out_dir = tmp_path / "out"
-
     manifest = plan_batch(
         input_path=src,
         output_dir=out_dir,
@@ -307,27 +375,80 @@ def test_no_resume_removes_stale_final_output_before_refit(
         merge=MergeConfig(),
         merge_recipe_args={},
     ).manifest
+    return manifest, out_dir
+
+
+def test_no_resume_replaces_stale_output_only_after_successful_refit(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """resume=False keeps the stale tile on disk until the refit SUCCEEDED.
+
+    Deleting the prior output before the fit even runs would destroy the
+    previous valid result minutes before its replacement exists (a failed refit
+    would then leave nothing, and a concurrent run's merge would see the tile
+    missing for the whole fit duration). The stale output must survive the fit
+    launch and be replaced at finalize, not discarded by the loser-guard.
+    """
+    import luxar.gsplats.batch.local_runner as lr
+    from luxar.gsplats.batch.task_pool import TaskResult
+
+    manifest, out_dir = _plan_single_tile_manifest(tmp_path)
     task0 = manifest.jobs[0].task_id
 
-    # A prior completed run left a STALE final output on disk.
     stale_out = out_dir / "tiles" / manifest.jobs[0].output_filename
     stale_out.mkdir(parents=True)
     (stale_out / "STALE").write_text("old")
 
-    # Drive the real `_argv` for task 0 (which, under resume=False, must nuke the
-    # stale final output), then abort before any fit/merge runs.
+    token = f"{socket.gethostname()}-{os.getpid()}"
+
     def _fake_pool(task_ids, *, argv_builder, **kw):  # type: ignore[no-untyped-def]
         argv_builder(task0)
-        raise _StopRun()
+        # The stale output must still be intact while the "fit" runs.
+        assert (stale_out / "STALE").exists()
+        staging = _staging_path(stale_out, token)
+        staging.mkdir()
+        (staging / "FRESH").write_text("new")
+        return [TaskResult(key=task0, returncode=0, output="")]
+
+    monkeypatch.setattr(lr, "run_task_pool", _fake_pool)
+    monkeypatch.setattr(
+        lr,
+        "merge_batch_results",
+        lambda **kw: out_dir / "merged" / "final.gsplats.zarr",
+    )
+
+    lr.run_batch_local(manifest, out_dir, gpus="cpu", resume=False, verbose=False)
+
+    # Finalize replaced the stale store with the fresh refit.
+    assert (stale_out / "FRESH").exists()
+    assert not (stale_out / "STALE").exists()
+
+
+def test_no_resume_failed_refit_keeps_previous_output(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A failed --no-resume refit must NOT have destroyed the previous tile."""
+    import luxar.gsplats.batch.local_runner as lr
+    from luxar.gsplats.batch.task_pool import TaskResult
+
+    manifest, out_dir = _plan_single_tile_manifest(tmp_path)
+    task0 = manifest.jobs[0].task_id
+
+    stale_out = out_dir / "tiles" / manifest.jobs[0].output_filename
+    stale_out.mkdir(parents=True)
+    (stale_out / "STALE").write_text("old")
+
+    def _fake_pool(task_ids, *, argv_builder, **kw):  # type: ignore[no-untyped-def]
+        argv_builder(task0)
+        return [TaskResult(key=task0, returncode=1, output="boom")]
 
     monkeypatch.setattr(lr, "run_task_pool", _fake_pool)
 
-    with pytest.raises(_StopRun):
+    with pytest.raises(RuntimeError, match="fit tasks failed"):
         lr.run_batch_local(manifest, out_dir, gpus="cpu", resume=False, verbose=False)
 
-    # The stale output was removed up front, so a subsequent refit+promote lands
-    # the fresh result instead of being discarded by the loser-guard.
-    assert not stale_out.exists()
+    # The previous valid result is still there for the user to fall back on.
+    assert (stale_out / "STALE").exists()
 
 
 def test_no_resume_forces_merge_rebuild(tmp_path: Path, monkeypatch) -> None:

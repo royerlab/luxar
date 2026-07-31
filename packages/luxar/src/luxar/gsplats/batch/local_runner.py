@@ -88,40 +88,65 @@ def _staging_path(out: Path, token: str | int) -> Path:
     return Path(str(out) + f".tmp.{token}")
 
 
-def _finalize_output(out: Path, staging: Path) -> Tuple[bool, bool]:
+def _finalize_output(
+    out: Path, staging: Path, *, overwrite: bool = False
+) -> Tuple[bool, bool]:
     """Promote a worker's per-attempt ``staging`` store to its final path.
 
     Mirrors the Slurm ``run_task`` finalization: a sibling ``{staging}.empty``
     marker (0-splat box) becomes ``{out}.empty``; otherwise the staging store is
     atomically renamed to ``out``. If ``out`` already exists (another attempt won
     the race), the duplicate staging is dropped instead of clobbering it (mirror
-    of the Slurm loser path). Returns ``(ok, empty)``. ``ok`` is False when the
-    worker exited 0 but left nothing usable.
+    of the Slurm loser path). With ``overwrite`` (a ``--no-resume`` refit) a
+    pre-existing ``out`` is a stale prior result, not a winner: it is replaced —
+    but only here, after the refit fully succeeded, so a failed refit never
+    destroys the previous valid tile. Returns ``(ok, empty)``. ``ok`` is False
+    when the worker exited 0 but left nothing usable.
     """
+    out_empty = Path(str(out) + ".empty")
     staging_empty = Path(str(staging) + ".empty")
     if staging_empty.exists():
         staging_empty.unlink(missing_ok=True)
         shutil.rmtree(staging, ignore_errors=True)
-        Path(str(out) + ".empty").touch()
+        if overwrite:
+            # The refit legitimately produced 0 splats; the stale real store
+            # from the prior run goes with it.
+            shutil.rmtree(out, ignore_errors=True)
+        elif out.exists():
+            # A concurrent attempt already promoted a real store — it wins.
+            # Never leave both terminal representations (store + marker) behind:
+            # if the store were later removed, a lingering marker would make
+            # resume/status/merge treat the slot as legitimately empty.
+            return True, True
+        out_empty.touch()
         return True, True
     if staging.exists():
-        if out.exists():
+        if overwrite:
+            # Replace the stale prior output only now that the refit succeeded;
+            # a stale empty marker from the prior run goes with it.
+            shutil.rmtree(out, ignore_errors=True)
+            out_empty.unlink(missing_ok=True)
+        elif out.exists():
             shutil.rmtree(staging, ignore_errors=True)
             return True, False
         try:
             os.replace(staging, out)  # atomic within the same filesystem
         except OSError:
-            if out.exists():
+            if not overwrite and out.exists():
                 # TOCTOU: another attempt claimed `out` between the check above
                 # and this rename (os.replace refuses to overwrite a non-empty
                 # dir). Drop our duplicate, completed-by-other (Slurm mv -T loser).
                 shutil.rmtree(staging, ignore_errors=True)
                 return True, False
-            # Genuine failure with `out` still absent (staging vanished — e.g. a
-            # concurrent `validate --fix` glob-deleted it — or EACCES/EIO). Keep
-            # staging on disk for inspection and report not-ok (mirrors the Slurm
+            # Genuine failure (staging vanished — e.g. a concurrent
+            # `validate --fix` glob-deleted it — or EACCES/EIO). Keep staging on
+            # disk for inspection and report not-ok (mirrors the Slurm
             # "mv failed and output missing" → rc 1 branch).
             return False, False
+        # A real store now stands at `out` — drop any stale empty marker (e.g.
+        # from a lost-race empty attempt) so the two terminal representations
+        # never coexist.
+        out_empty.unlink(missing_ok=True)
         return True, False
     return False, False
 
@@ -208,18 +233,13 @@ def run_batch_local(
     def _argv(task_id: int) -> list[str]:
         job = job_by_id[task_id]
         out = _out_path(job)
-        # With resume disabled, a task is NOT skipped even when a prior run's
-        # final output exists, so we must overwrite it: remove the stale final
-        # output up front. Otherwise the fresh refit lands in staging and the
-        # finalize loser-guard (out already exists) would silently discard it,
-        # keeping the stale tile. After this, an existing `out` at finalize
-        # genuinely means a concurrent race loser.
-        if not resume:
-            shutil.rmtree(out, ignore_errors=True)
-            Path(str(out) + ".empty").unlink(missing_ok=True)
         staging = _staging_path(out, staging_token)
         # Clear a stale staging from a crashed run of THIS invocation so fit
         # writes cleanly. Never touch another process's staging (different token).
+        # With resume disabled a stale final output may also exist; it is kept
+        # until finalize replaces it (overwrite=True) AFTER the refit succeeded —
+        # deleting it here would destroy the previous valid tile minutes before
+        # its replacement exists, and a failed refit would then leave nothing.
         shutil.rmtree(staging, ignore_errors=True)
         Path(str(staging) + ".empty").unlink(missing_ok=True)
         return build_task_fit_argv(manifest, job, staging, denoise_h=_denoise_h(job))
@@ -272,7 +292,9 @@ def run_batch_local(
             tail = "\n".join(res.output.strip().splitlines()[-20:])
             failures.append((res.key, tail))
             continue
-        ok, _empty = _finalize_output(out, _staging_path(out, staging_token))
+        ok, _empty = _finalize_output(
+            out, _staging_path(out, staging_token), overwrite=not resume
+        )
         if not ok:
             failures.append(
                 (
