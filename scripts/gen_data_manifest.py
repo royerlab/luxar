@@ -302,8 +302,19 @@ def _pointer_checksum(path: Path) -> Optional[dict]:
         if line.startswith("oid sha256:"):
             oid = line.split(":", 1)[1].strip()
         elif line.startswith("size "):
-            size = int(line.split(" ", 1)[1].strip())
-    return {"sha256": oid, "bytes": size} if oid and size is not None else None
+            try:
+                size = int(line.split(" ", 1)[1].strip())
+            except ValueError:
+                # Malformed size — fall through to the corrupt-pointer error
+                # below rather than aborting with a bare, unattributed ValueError.
+                size = None
+    if oid and size is not None:
+        return {"sha256": oid, "bytes": size}
+    # A file carrying the v1 header but no parseable (oid, size) is a corrupt
+    # pointer. Returning None here would hand it to _checksum, which hashes the
+    # ~130-byte stub and silently ships a plausible-but-bogus {sha256, bytes};
+    # fail loudly and name the file instead.
+    raise ValueError(f"corrupt git-LFS pointer (missing oid/size): {path}")
 
 
 def _checksum(path: Path) -> dict:
@@ -328,9 +339,18 @@ def _checksum(path: Path) -> dict:
     return {"sha256": digest.hexdigest(), "bytes": path.stat().st_size}
 
 
+# Local scratch that must never enter the shipped manifest: quarantined copies
+# (``.corrupt``), interrupted downloads (``.part`` plus its ``.part.validator``
+# If-Range resume sidecar), and generic temporaries.
+_SCRATCH_SUFFIXES = (".corrupt", ".part", ".part.validator", ".tmp")
+
+
 def _keep(p: Path) -> bool:
-    # Real data files only — skip dotfiles (e.g. .gitkeep).
-    return p.is_file() and not p.name.startswith(".")
+    # Real data files only — skip dotfiles (e.g. .gitkeep) and local scratch
+    # (quarantined/partial/temp copies) that ensure_dataset could never resolve.
+    if not p.is_file() or p.name.startswith("."):
+        return False
+    return not p.name.endswith(_SCRATCH_SUFFIXES)
 
 
 def _files_in(base: Path, glob: str, *, prune: bool) -> Optional[list[dict]]:

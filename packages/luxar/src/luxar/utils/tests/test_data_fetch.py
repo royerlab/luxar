@@ -174,6 +174,12 @@ def test_gaia_is_local_compute_not_hosted():
     assert d.get("redistribute") is False
 
 
+# Local scratch the generator deliberately omits (mirrors gen_data_manifest's
+# _SCRATCH_SUFFIXES) — kept inline so this dependency-free guard still runs on a
+# packaged install with no scripts/.
+_SCRATCH_SUFFIXES = (".corrupt", ".part", ".part.validator", ".tmp")
+
+
 def test_manifest_matches_files_on_disk():
     """Every in-repo dataset file appears in the manifest with a matching name."""
     if not DATA_DIR.is_dir():  # installed wheel, or post-R17 checkout
@@ -183,7 +189,11 @@ def test_manifest_matches_files_on_disk():
     for sub in DATA_DIR.iterdir():
         if sub.is_dir() and sub.name != "tests":
             for f in sub.glob("*"):
-                if f.is_file() and not f.name.startswith("."):
+                if (
+                    f.is_file()
+                    and not f.name.startswith(".")
+                    and not f.name.endswith(_SCRATCH_SUFFIXES)
+                ):
                     assert f.name in listed, (
                         f"{sub.name}/{f.name} missing from manifest"
                     )
@@ -231,6 +241,49 @@ def test_regeneration_preserves_entries_when_the_data_is_gone(tmp_path, monkeypa
     )
     # --prune is the explicit opt-in that DOES empty them.
     assert mod.build(committed, prune=True)["datasets"]["gsplats_kidney"]["files"] == []
+
+
+@pytest.mark.skipif(not GEN_SCRIPT.exists(), reason=_NO_SCRIPT)
+def test_generator_skips_local_scratch_files(tmp_path):
+    """Quarantined/partial/temp scratch must never be admitted into the manifest.
+
+    ``ensure_dataset`` could never resolve a ``.corrupt``/``.part``/``.tmp`` copy,
+    so listing one would ship a permanently-unfetchable entry.
+    """
+    mod = _load_generator()
+    (tmp_path / "dataset.npz").write_bytes(b"data")
+    for scratch in (
+        "dataset.npz.corrupt",
+        "dataset.npz.part",
+        "dataset.npz.part.validator",
+        "notes.tmp",
+    ):
+        (tmp_path / scratch).write_bytes(b"scratch")
+
+    kept = sorted(p.name for p in tmp_path.iterdir() if mod._keep(p))
+    assert kept == ["dataset.npz"]
+
+
+@pytest.mark.skipif(not GEN_SCRIPT.exists(), reason=_NO_SCRIPT)
+def test_generator_rejects_a_corrupt_lfs_pointer(tmp_path):
+    """A malformed LFS pointer must fail loudly, naming the file.
+
+    A non-numeric ``size`` used to abort with a bare ``ValueError``; a pointer
+    missing ``oid``/``size`` used to fall through to hashing the ~130-byte stub,
+    silently shipping a plausible-but-bogus checksum.
+    """
+    mod = _load_generator()
+    header = "version https://git-lfs.github.com/spec/v1\n"
+
+    good = tmp_path / "good.bin"
+    good.write_text(f"{header}oid sha256:{'a' * 64}\nsize 123\n")
+    assert mod._pointer_checksum(good) == {"sha256": "a" * 64, "bytes": 123}
+
+    for bad_body in (f"oid sha256:{'a' * 64}\nsize notanumber\n", "size 123\n"):
+        corrupt = tmp_path / "corrupt.bin"
+        corrupt.write_text(header + bad_body)
+        with pytest.raises(ValueError, match="corrupt git-LFS pointer"):
+            mod._pointer_checksum(corrupt)
 
 
 # --------------------------------------------------------------------------- #
