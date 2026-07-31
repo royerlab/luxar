@@ -287,7 +287,9 @@ def _ensure_one(
         short-circuit that a later edit could drop.
         """
         return (
-            sha is not None and path.is_file() and verify_file_checksum(path, None, sha)
+            sha is not None
+            and path.is_file()
+            and verify_file_checksum(path, None, sha, verbose=verbose)
         )
 
     # ── 1. Local cache ──────────────────────────────────────────────────────
