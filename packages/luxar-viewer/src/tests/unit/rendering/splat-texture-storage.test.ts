@@ -1274,6 +1274,34 @@ describe('double-buffered ordering apply (atomic swap)', () => {
     expect(Array.from(activeArr(geometry).subarray(0, 8))).toEqual(shown);
   });
 
+  it('a NEGATIVE or NaN count is rejected like an empty one', () => {
+    // Same failure mode as the empty ordering above, and the reason the
+    // guard is `!(n > 0)` and not `n === 0`: `Math.min` propagates both a
+    // negative and a NaN, and the first pump then writes nothing while
+    // `cursor >= count` is already satisfied — so it FLIPS, publishing
+    // whatever stale content the inactive buffer held as the new
+    // ordering. Unreachable from the coordinator (it only ever passes
+    // `ordering.length`), but this writer's whole contract is that a
+    // half- or un-written buffer is never swapped in.
+    for (const bad of [-5, Number.NaN]) {
+      const { geometry } = makeGeometry(16);
+      writeSortedIndexIdentity(geometry, 8);
+      const good = reversed(8);
+      writeSortedIndexOrdering(geometry, good, 8);
+      while (pumpSortedIndexOrderingApply(geometry).more) {
+        /* drain */
+      }
+      const slot = activeSortedIndexSlot(geometry);
+      const shown = Array.from(activeArr(geometry).subarray(0, 8));
+
+      expect(writeSortedIndexOrdering(geometry, reversed(8), bad), `count=${bad}`).toBe(0);
+      expect(hasPendingSortedIndexOrderingApply(geometry)).toBe(false);
+      expect(pumpSortedIndexOrderingApply(geometry)).toEqual({ more: false, flipped: false });
+      expect(activeSortedIndexSlot(geometry), `count=${bad} flipped the slot`).toBe(slot);
+      expect(Array.from(activeArr(geometry).subarray(0, 8))).toEqual(shown);
+    }
+  });
+
   it('writeSortedIndexIdentity cancels an in-flight apply AND its held ordering (commit supersedes)', () => {
     const { geometry } = makeGeometry(16);
     writeSortedIndexOrdering(geometry, reversed(12), 12);

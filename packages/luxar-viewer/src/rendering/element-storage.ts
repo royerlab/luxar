@@ -750,12 +750,17 @@ export function writeSortedIndexOrdering(
   // >= instanceCount, so a count above it still covers every drawn
   // element.
   const n = Math.min(count, (active.array as Uint32Array).length);
-  // An EMPTY ordering stages nothing. Otherwise it would "complete" on its
-  // first pump and FLIP — swapping the newest ordering out for the older
-  // buffer sitting behind it. (The commit path already returns early on an
-  // empty frame, so this guards the writer's own contract rather than a
-  // live caller.)
-  if (n === 0) return 0;
+  // A NON-POSITIVE count stages nothing. Otherwise the first pump writes
+  // no entries yet finds `cursor >= count` already true, so it FLIPS —
+  // publishing whatever stale content the inactive buffer holds as if it
+  // were the new ordering, which is exactly the corruption
+  // double-buffering exists to prevent. `!(n > 0)` rather than `n === 0`
+  // so a negative or NaN count falls in here too: `Math.min` propagates
+  // both, and `cursor = min(count, …)` then satisfies `cursor >= count`
+  // on the first slice. (The commit path only ever passes
+  // `ordering.length`, so this guards the writer's own contract rather
+  // than a live caller.)
+  if (!(n > 0)) return 0;
   // Malformed pair — never repair it here (see `sortedIndexBuffersUsable`).
   if (!sortedIndexBuffersUsable(geometry)) return 0;
 

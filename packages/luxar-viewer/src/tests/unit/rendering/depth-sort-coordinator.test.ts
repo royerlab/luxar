@@ -2350,6 +2350,49 @@ describe('depth-sort coordinator — chunked ordering apply (perf lever L8)', ()
     expect(pickUniform.value).toBe(1);
   });
 
+  it('reaches every material of a multi-material mesh, visual and pick alike', async () => {
+    // `applySortedIndexSlotToMaterial` accepts `Material | Material[]`
+    // because THREE meshes may carry an array. Nothing in the suite
+    // exercised the array branch, so silently dropping it (`Array.isArray
+    // ? [] : [material]`) passed every other test — while in a
+    // multi-material mesh the extra materials would keep reading the
+    // stale buffer.
+    const { coord } = await loadWithTinyChunks();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+
+    const mesh = makeGSplatsMesh(12, 'normal');
+    const visA = { value: 0 };
+    const visB = { value: 0 };
+    const matA = new THREE.Material() as THREE.Material & { uniforms: unknown };
+    const matB = new THREE.Material() as THREE.Material & { uniforms: unknown };
+    matA.uniforms = { uSortedIndexSlot: visA };
+    matB.uniforms = { uSortedIndexSlot: visB };
+    matA.userData.blendingMode = 'normal';
+    mesh.material = [matA, matB];
+
+    const pickA = { value: 0 };
+    const pickB = { value: 0 };
+    const pmA = new THREE.Material() as THREE.Material & { uniforms: unknown };
+    const pmB = new THREE.Material() as THREE.Material & { uniforms: unknown };
+    pmA.uniforms = { uSortedIndexSlot: pickA };
+    pmB.uniforms = { uSortedIndexSlot: pickB };
+    mesh.userData.pickNode = new THREE.Mesh(mesh.geometry, [pmA, pmB]);
+
+    coord.noteDepthSortCommit(mesh, new Float32Array(36), 12);
+    await flush();
+    sortResolvers[0]({
+      generation: mockApi.sort.mock.calls[0][0].generation as number,
+      ordering: reversed(12),
+    });
+    await flush();
+    for (let i = 0; i < 4; i++) coord.evaluateDepthSortPerFrame();
+
+    expect(visA.value).toBe(1);
+    expect(visB.value).toBe(1);
+    expect(pickA.value).toBe(1);
+    expect(pickB.value).toBe(1);
+  });
+
   it('re-asserts the slot every frame, not only on the frame it flips', async () => {
     // The slot lives on the geometry, the selector uniform on the material,
     // and they get re-paired behind the coordinator's back: the pool hands a
