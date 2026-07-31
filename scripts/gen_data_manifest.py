@@ -286,7 +286,11 @@ _LFS_SIZE_RE = re.compile(r"[0-9]+")
 
 
 def _pointer_checksum(path: Path) -> Optional[dict]:
-    """``{sha256, bytes}`` read out of an unpulled git-LFS pointer, else None.
+    """``{sha256, bytes}`` read out of an unpulled git-LFS pointer.
+
+    Returns None for anything that is not a pointer stub (a pulled data file);
+    raises ValueError for a file that carries the v1 header but no usable
+    (oid, size) — a corrupt pointer must fail loudly, not be hashed as data.
 
     A pointer is a <1 KB text stub::
 
