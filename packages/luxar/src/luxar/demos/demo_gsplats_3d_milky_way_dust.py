@@ -305,9 +305,13 @@ def create_luxar_scene(gsplats_data: GSplatData, output_path: Path) -> Path:
         with LuxarZarrCompiler(
             output_path, encoding_mode=EncodingMode.PRECISION
         ) as compiler:
+            # ACES on purpose, not by omission: its highlight rolloff is what
+            # keeps the dense cloud cores from clipping flat. It trades away some
+            # exact `inferno` hue fidelity, which is the right call here — this
+            # is dust, not a scientific colour encoding.
             scene = compiler.create_scene(
                 dimensions=dims,
-                viewer_config=ViewerConfig(tone_mapping="Neutral"),
+                viewer_config=ViewerConfig(tone_mapping="ACES", exposure=-0.17),
             )
             scene.attrs["title"] = (
                 "GSplats: Milky Way Interstellar Dust (Leike & Enßlin 2020)"
@@ -318,8 +322,16 @@ def create_luxar_scene(gsplats_data: GSplatData, output_path: Path) -> Path:
                 result=gsplats_data,
                 colormap="inferno",
                 opacity=1.0,
-                blending_mode="additive",
-                intensity=1.0,
+                # Light volumetric compositing: near dust softly occludes far
+                # dust, giving the clouds depth without crushing the diffuse
+                # structure the way full kappa=1 absorption would.
+                blending_mode="volumetric",
+                absorption=0.3,
+                # Display window [0, 0.095]. The shipped fit's robust range
+                # (p99.9) tops out near 0.081, so this holds the faint diffuse
+                # filaments just below clipping — brighter and the dense cores
+                # flatten into featureless white.
+                intensity=1.0 / 0.095,
                 layer=True,
             )
 
