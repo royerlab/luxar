@@ -236,7 +236,7 @@ MIN_NODE_MINOR := 19
 | `make build-launchers` | Build native launchers for the host platform (requires Go + CGO) |
 | `make install-viewer-deps` | Install viewer dependencies (node_modules) |
 | `make install-dev` | Install Luxar Python package in editable mode |
-| `make install-demo-deps` | Install every optional dependency the bundled demos need (demos + gsplats + io extras), then report via `luxar demo deps` |
+| `make install-demo-deps` | Install the demo extras (demos + gsplats + io), then report via `luxar demo deps` |
 | `make enable-pre-commit` | Enable and activate pre-commit hooks |
 | `make check-wasm-deps` | Check WASM dev dependencies (Rust, wasm-pack) |
 | `make clean-setup` | Remove ALL dev tools to simulate fresh machine |
