@@ -848,6 +848,23 @@ def name_clusters(
 # =============================================================================
 
 
+def _save_npz_atomic(path: Path, **arrays: np.ndarray) -> None:
+    """Write an ``.npz`` via a sibling ``.part`` and one atomic rename.
+
+    Same reasoning as :func:`_write_json_atomic`, with more at stake: the UMAP
+    cache costs tens of minutes to recompute, and the legacy upgrade below
+    rewrites a file that is already good. A run killed mid-write would destroy
+    it and leave an archive that raises on every later load.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    staging = path.with_suffix(path.suffix + ".part")
+    # Through a handle, not a path: given a path np.savez appends its own
+    # ".npz", which would stage to "umap_all.npz.part.npz" and never be renamed.
+    with open(staging, "wb") as handle:
+        np.savez(handle, **arrays)
+    os.replace(staging, path)
+
+
 def load_cached_umap(
     cache_path: Path,
     legacy_ids_path: Path | None = None,
@@ -874,13 +891,26 @@ def load_cached_umap(
 
     with asection("Loading cached UMAP coordinates"):
         aprint(f"Cache: {cache_path}")
-        cached = np.load(cache_path, allow_pickle=True)
-        positions = cached["positions"]
+        with np.load(cache_path, allow_pickle=True) as cached:
+            positions = cached["positions"]
+            stored_ids = (
+                [str(x) for x in cached["protein_ids"]]
+                if "protein_ids" in cached.files
+                else None
+            )
 
-        if "protein_ids" in cached.files:
-            protein_ids = [str(x) for x in cached["protein_ids"]]
+        if stored_ids is not None:
+            # Checked on this path too, not just on the repair below: a cache
+            # whose accessions have drifted out of step with its coordinates
+            # would name every cluster after the wrong proteins.
+            if len(stored_ids) != len(positions):
+                aprint(
+                    f"⚠️  {len(stored_ids):,} cached accessions vs "
+                    f"{len(positions):,} cached points — recomputing UMAP"
+                )
+                return None
             aprint(f"✓ Loaded {len(positions):,} proteins from cache (INSTANT!)")
-            return positions, protein_ids
+            return positions, stored_ids
 
         aprint("Cache predates stored accessions — attempting in-place upgrade")
         if legacy_ids_path is None or not legacy_ids_path.exists():
@@ -894,7 +924,7 @@ def load_cached_umap(
             )
             return None
 
-        np.savez(
+        _save_npz_atomic(
             cache_path,
             positions=positions,
             protein_ids=np.array(recovered, dtype=object),
@@ -952,8 +982,7 @@ def reduce_embeddings_umap(
 
         # Cache results (positions AND accessions together!)
         if cache_path:
-            cache_path.parent.mkdir(parents=True, exist_ok=True)
-            np.savez(
+            _save_npz_atomic(
                 cache_path,
                 positions=reduced,
                 protein_ids=np.array(protein_ids, dtype=object),
@@ -996,7 +1025,15 @@ def generate_protein_landscape(
     # the bundle's accessions instead of recomputing. Resolve that file with the
     # SAME selector the cache was built through — a hardcoded name could pick a
     # different file than the one whose order the coordinates follow.
-    legacy_ids = select_bundle_files(dataset_cache)[1] if sample_size is None else None
+    # A bundle that has gone missing must not abort a run whose cache already
+    # carries its accessions — the repair is the only thing that needs it.
+    legacy_ids = None
+    if sample_size is None:
+        try:
+            legacy_ids = select_bundle_files(dataset_cache)[1]
+        except FileNotFoundError as exc:
+            aprint(f"⚠️  Cannot resolve the bundle's accessions ({exc})")
+
     cached = load_cached_umap(umap_cache, legacy_ids_path=legacy_ids)
     if cached is not None:
         positions, protein_ids = cached

@@ -221,6 +221,57 @@ class TestUmapCache:
 
         assert load_cached_umap(cache, legacy_ids_path=ids_path) is None
 
+    def test_mismatched_stored_accessions_are_rejected(self, tmp_path: Path) -> None:
+        """A cache whose two arrays disagree cannot be trusted to pair up.
+
+        The legacy repair path checks this; so must the ordinary one, or naming
+        happily reports the wrong protein for every point it can still index.
+        """
+        cache = tmp_path / "umap.npz"
+        np.savez(
+            cache,
+            positions=np.zeros((3, 3), dtype=np.float32),
+            protein_ids=np.array(["P1", "P2"], dtype=object),
+        )
+
+        assert load_cached_umap(cache) is None
+
+    def test_upgrade_does_not_clobber_the_cache_when_the_write_fails(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """The repair rewrites a cache that is already good.
+
+        Writing it in place would trade tens of minutes of UMAP for a truncated
+        archive that raises on every later load — so the upgrade stages and
+        renames, and a failed rename leaves the original readable.
+        """
+        cache = tmp_path / "umap.npz"
+        positions = np.arange(6, dtype=np.float32).reshape(2, 3)
+        np.savez(
+            cache, positions=positions, functions=np.array(["a", "b"], dtype=object)
+        )
+        ids_path = tmp_path / "train_ids.npy"
+        np.save(ids_path, np.array(["P1", "P2"]))
+
+        def _fail(_src, _dst):
+            raise OSError("rename failed")
+
+        monkeypatch.setattr(demo.os, "replace", _fail)
+        with pytest.raises(OSError, match="rename failed"):
+            load_cached_umap(cache, legacy_ids_path=ids_path)
+
+        with np.load(cache, allow_pickle=True) as survived:
+            np.testing.assert_array_equal(survived["positions"], positions)
+
+    def test_atomic_save_leaves_no_staging_file(self, tmp_path: Path) -> None:
+        """``np.savez`` appends ``.npz`` to a *path*, so the staging write has to
+        go through a handle or the rename would never find its source."""
+        target = tmp_path / "nested" / "umap.npz"
+        demo._save_npz_atomic(target, positions=np.zeros((2, 3), dtype=np.float32))
+
+        assert target.exists()
+        assert not list(tmp_path.rglob("*.part*"))
+
     def test_missing_cache_returns_none(self, tmp_path: Path) -> None:
         assert load_cached_umap(tmp_path / "absent.npz") is None
 
@@ -569,6 +620,44 @@ class TestUnmappedAccessions:
         )
 
         assert names == ["Cluster 0", "Cluster 1"]
+
+
+class TestGenerateLandscape:
+    def test_a_missing_bundle_does_not_defeat_a_complete_cache(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """The UMAP cache hit is meant to be a complete early exit.
+
+        The bundle is only consulted to recover accessions for a cache written
+        before they were stored; resolving it unconditionally let a bundle that
+        had gone missing abort a run whose cache already carried everything.
+        """
+        monkeypatch.setattr(demo.Path, "home", lambda: tmp_path)
+        cache_dir = tmp_path / ".cache" / "luxar" / "protein_embeddings"
+        # Present but empty: the download is skipped, the .npy files are not there.
+        (cache_dir / "cafa5_data").mkdir(parents=True)
+
+        rng = np.random.default_rng(0)
+        positions = rng.normal(size=(40, 3)).astype(np.float32)
+        np.savez(
+            cache_dir / "umap_all.npz",
+            positions=positions,
+            protein_ids=np.array(
+                [f"{demo.SYNTHETIC_ID_PREFIX}{i}" for i in range(40)], dtype=object
+            ),
+        )
+
+        def _boom(*_args, **_kwargs):
+            raise AssertionError("UniProt must not be contacted for stand-in ids")
+
+        monkeypatch.setattr(demo, "fetch_keyword_categories", _boom)
+        monkeypatch.setattr(demo, "fetch_uniprot_keywords", _boom)
+
+        output = tmp_path / "protein_landscape.luxar.zarr"
+        n_proteins = demo.generate_protein_landscape(output, sample_size=None)
+
+        assert n_proteins == 40
+        assert output.exists()
 
 
 class TestSyntheticAccessions:
