@@ -204,6 +204,19 @@ describe('loadPointsNode — happy path', () => {
     expect(result).not.toBeNull();
     expect(ctx.spies.updatePointsGeometry).toHaveBeenCalledWith('/scene/p', data, undefined, 1);
   });
+
+  it('clears a prior failure record on a successful (re)load', async () => {
+    // A recovered lazy level must drop out of the outcome report and the
+    // auto-retry budget once its reload commits.
+    const data = { pointCount: 5 } as LoadedPointsData;
+    createPointsLoaderMock.mockReturnValue(makePointsLoader(vi.fn().mockResolvedValue(data)));
+    const ctx = makeCtx();
+    ctx.registry.recordFailure('/scene/p', new Error('earlier 503'), 'Network');
+
+    await loadPointsNode(makeSceneNode(), new THREE.Group(), {} as never, ctx);
+
+    expect(ctx.registry.failedLoaders.has('/scene/p')).toBe(false);
+  });
 });
 
 describe('loadPointsNode — extend_to_all skip fallback on initial load', () => {
