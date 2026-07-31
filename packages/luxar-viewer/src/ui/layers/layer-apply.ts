@@ -6,10 +6,12 @@
  * affected data-leaf (the layer itself, or every data descendant for a group
  * layer), recompose its effective attrs along the scene-graph ancestry per the
  * Luxar composition spec (opacity/gamma/intensity multiply, offset adds,
- * blending_mode takes the nearest ancestor's choice), and push the result into
- * the leaf material (clone-on-first-use so shared cached materials are never
- * mutated in place). Authoring-time zarr values are used for non-layer nodes
- * in the chain; live panel state overrides them for `layer=True` nodes.
+ * blending_mode takes the nearest ancestor's choice — except INSIDE the edited
+ * layer's own subtree, where the layer's single Blend control wins; see
+ * `composeEffective`), and push the result into the leaf material
+ * (clone-on-first-use so shared cached materials are never mutated in place).
+ * Authoring-time zarr values are used for non-layer nodes in the chain; live
+ * panel state overrides them for `layer=True` nodes.
  *
  * Constructed with ACCESSORS for the root group and scene graph (both are
  * reassigned by `LayersPanel.initFromScene` on every scene load) — never with
@@ -33,7 +35,12 @@ import {
 } from '../../data/attrs-composer';
 import { getBlendingState, liveLayerAttrs as deriveLiveLayerAttrs } from './attrs-utils';
 import { computeDisplayRange, type LayerInfo, type LayerStateManager } from './layer-state';
-import { applyColorAdjustments, isLuxarMaterial, type LuxarMaterial } from './luxar-material';
+import {
+  applyColorAdjustments,
+  isColormapActive,
+  isLuxarMaterial,
+  type LuxarMaterial,
+} from './luxar-material';
 
 /**
  * Dependencies injected by the owning {@link LayersPanel}. `getRootGroup` /
@@ -106,21 +113,55 @@ export class LayerApplyEngine {
    * Recompose the effective attrs for a single data-leaf by walking the
    * scene-graph ancestry, substituting panel state for every `layer=true`
    * node in the chain.
+   *
+   * `layerPath` is the layer whose control was just used. Inside that layer's
+   * own subtree the LAYER owns `blending_mode`: a mode authored on a
+   * descendant that is not itself a layer is dropped. `blending_mode` is
+   * nearest-setter-wins and a layer exposes exactly one Blend control, so
+   * without this a `kind=partition` / `kind=lod` layer whose parts carry
+   * their own stamped mode has an inert control — every part shadows the
+   * wrapper (the `graft_gsplat_node` stamping bug, and every scene already
+   * written by it). A nested node that IS a layer keeps its live value: it
+   * has its own control. Only `blending_mode` is affected — the
+   * multiplicative attrs still compose and `offset` still sums, so a part's
+   * authored opacity/gamma/κ is preserved.
+   *
+   * `identityLayerWindow` substitutes the IDENTITY for the edited layer's own
+   * display window (intensity/offset) — used by `applyComposed` for a leaf
+   * that renders direct colour while the layer's window is a SCALAR window
+   * (a mixed group layer), so the scalar window is never applied as a colour
+   * gain. Ancestor/leaf-authored windows still compose.
    */
-  private composeEffective(leafPath: string): EffectiveAttrs | null {
+  private composeEffective(
+    leafPath: string,
+    layerPath: string,
+    identityLayerWindow = false
+  ): EffectiveAttrs | null {
     const sceneGraph = this.deps.getSceneGraph();
     if (!sceneGraph) return null;
     const ancestors = collectAncestorNodes(sceneGraph, leafPath);
-    const chain: ComposableAttrs[] = ancestors.map((node) => {
+    // Required, not optional: an omitted `layerPath` would silently disable the
+    // subtree rule below and re-open the inert-Blend-control bug.
+    const layerDepth = ancestors.findIndex((n) => n.path === layerPath);
+    const chain: ComposableAttrs[] = ancestors.map((node, i) => {
       const layerInfo = this.deps.state.getLayer(node.path);
-      if (layerInfo) return this.liveLayerAttrs(layerInfo);
+      if (layerInfo) {
+        const live = this.liveLayerAttrs(layerInfo);
+        if (identityLayerWindow && node.path === layerPath) {
+          return { ...live, intensity: 1, offset: 0 };
+        }
+        return live;
+      }
+      const insideLayerSubtree = layerDepth >= 0 && i > layerDepth;
       return {
         opacity: node.attrs.opacity as number | undefined,
         absorption: node.attrs.absorption as number | undefined,
         gamma: node.attrs.gamma as number | undefined,
         intensity: node.attrs.intensity as number | undefined,
         offset: node.attrs.offset as number | undefined,
-        blending_mode: node.attrs.blending_mode as string | undefined,
+        blending_mode: insideLayerSubtree
+          ? undefined
+          : (node.attrs.blending_mode as string | undefined),
       };
     });
     return composeAttrs(chain);
@@ -173,7 +214,15 @@ export class LayerApplyEngine {
       if (!obj) continue;
       const mat = this.getLeafMaterial(obj);
       if (!mat) continue;
-      const eff = this.composeEffective(leaf.path);
+      // Per-leaf window routing. A layer whose window is a SCALAR window
+      // (colormap in play) can still contain leaves rendering direct colour:
+      // the C1 guard suppresses the LUT on geometry with no scalars bound,
+      // and a MIXED group keeps the scalar window because some other leaf
+      // accepted it. Pushing that window into a direct-colour leaf's colour
+      // GOG is exactly the contrast stretch this panel no longer does — such
+      // a leaf gets the identity window instead.
+      const identityLayerWindow = layer.scalarWindow && !isColormapActive(mat);
+      const eff = this.composeEffective(leaf.path, layer.path, identityLayerWindow);
       if (!eff) continue;
       // An in-flight LOD fade owns the live opacity uniform: it re-renders
       // `_lodFadeBase × fadeProduct` every frame (scene/lod-fade.ts), so a
@@ -238,17 +287,33 @@ export class LayerApplyEngine {
   /**
    * Colormap applies per-leaf (not composed). For a group-layer we push
    * the selected colormap to every data descendant that accepts one.
+   *
+   * Returns whether the layer now actually renders through a colormap — i.e.
+   * at least one leaf accepted the LUT. Clearing a colormap always "takes", so
+   * that returns `false` (no colormap in effect). The caller needs this because
+   * the C1 fail-closed guard below can suppress the colormap on every leaf
+   * (a group layer over scalar-less points still offers the dropdown): the
+   * layer then keeps rendering DIRECT COLOUR, so its display window must stay
+   * the direct-colour identity rather than move to a scalar range.
+   *
+   * A leaf whose mesh/material is not in the scene yet (partition parts and
+   * LOD levels stream in) is NOT a guard suppression — when no leaf material
+   * was reachable at all, the request is taken at face value so the caller
+   * keeps the user's pick instead of reverting it mid-load.
    */
-  applyColormap(layer: LayerInfo): void {
+  applyColormap(layer: LayerInfo): boolean {
     const leaves = this.getAffectedDataLeaves(layer.path);
-    if (leaves.length === 0) return;
+    if (leaves.length === 0) return false;
 
+    let colormapInEffect = false;
+    let anyMaterialReached = false;
     const tex = layer.colormap ? getColormapTexture(layer.colormap) : null;
     for (const leaf of leaves) {
       const obj = this.getMesh(leaf.path);
       if (!obj) continue;
       const mat = this.getLeafMaterial(obj);
       if (!mat || !mat.updateColormapTexture) continue;
+      anyMaterialReached = true;
       if (layer.colormap && tex) {
         // C1 fail-closed guard: enabling USE_COLORMAP requires real
         // scalar data behind the geometry (the `userData.hasScalars`
@@ -264,12 +329,13 @@ export class LayerApplyEngine {
           continue;
         }
         mat.updateColormapTexture(tex);
+        colormapInEffect = true;
         // The scalar window (value→LUT mapping) is driven by the display
         // range, not a static attr — recover it from the composed
         // gain/offset so it matches what `applyComposed` will push. Falls
         // back to the authored scalar range when no composition exists.
         if (mat.updateScalarRange) {
-          const eff = this.composeEffective(leaf.path);
+          const eff = this.composeEffective(leaf.path, layer.path);
           if (eff) {
             const { min, max } = computeDisplayRange(eff.intensity, eff.offset);
             mat.updateScalarRange(min, max);
@@ -294,5 +360,9 @@ export class LayerApplyEngine {
     // particular, restoring the color GOG when a colormap is turned off.
     this.applyComposed(layer);
     this.deps.requestRender();
+    // "No colormap in effect" is only meaningful when at least one leaf
+    // material was actually evaluated; with none reachable (still streaming),
+    // report the requested state so the caller doesn't fight the user.
+    return colormapInEffect || (!anyMaterialReached && !!layer.colormap);
   }
 }
