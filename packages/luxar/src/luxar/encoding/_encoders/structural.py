@@ -191,6 +191,7 @@ class StructuralEncoderMixin(BaseEncoderMixin):
         n_elements: int,
         chunks: Optional[tuple],
         compressor: Optional[Any],
+        semantic_type: SemanticType,
     ) -> None:
         """Encode uniform array as broadcasted.
 
@@ -201,6 +202,8 @@ class StructuralEncoderMixin(BaseEncoderMixin):
             n_elements: Number of elements this represents
             chunks: Optional chunk shape (ignored for broadcast, uses minimal)
             compressor: Optional compressor
+            semantic_type: Semantic type of the array (only COLOR stamps
+                original_dtype so integer colors are restored/normalized)
         """
         # Store single value with shape (1,) or (1, d)
         if data.ndim == 1:
@@ -216,10 +219,18 @@ class StructuralEncoderMixin(BaseEncoderMixin):
         )
 
         # Set encoding metadata
-        zarr_group[name].attrs["encoding"] = {
+        encoding: dict[str, Any] = {
             "name": "broadcasted",
             "n_elements": n_elements,
         }
+        # Only COLOR stamps original_dtype: it lets the viewer restore native
+        # integer color dtypes (uint8/uint16) so they normalize instead of
+        # rendering as raw 0-255 floats. Non-color arrays (radii/sharpness/
+        # amplitudes) must decode as Float32, so stamping their integer dtype
+        # would wrongly widen (e.g. uint16 radii ÷65535 → points vanish).
+        if semantic_type == SemanticType.COLOR:
+            encoding["original_dtype"] = str(broadcast_data.dtype)
+        zarr_group[name].attrs["encoding"] = encoding
 
     def _scalar_to_array(
         self,
@@ -269,6 +280,7 @@ class StructuralEncoderMixin(BaseEncoderMixin):
         n_elements: int,
         chunks: Optional[tuple],
         compressor: Optional[Any],
+        semantic_type: SemanticType,
     ) -> None:
         """Encode scalar as broadcasted array.
 
@@ -282,6 +294,8 @@ class StructuralEncoderMixin(BaseEncoderMixin):
             n_elements: Number of elements this scalar represents
             chunks: Optional chunk shape (ignored for broadcast)
             compressor: Optional compressor
+            semantic_type: Semantic type of the array (only COLOR stamps
+                original_dtype)
         """
         # Write the single value
         zarr_group.create_dataset(
@@ -291,11 +305,16 @@ class StructuralEncoderMixin(BaseEncoderMixin):
             overwrite=True,
         )
 
-        # Set encoding metadata
-        zarr_group[name].attrs["encoding"] = {
+        # Set encoding metadata. Only COLOR stamps original_dtype (see
+        # _encode_broadcasted); the scalar path is always float32 so this is a
+        # no-op either way, but the guard keeps the behaviour color-scoped.
+        encoding: dict[str, Any] = {
             "name": "broadcasted",
             "n_elements": n_elements,
         }
+        if semantic_type == SemanticType.COLOR:
+            encoding["original_dtype"] = str(data.dtype)
+        zarr_group[name].attrs["encoding"] = encoding
 
     def _encode_array_ref(
         self,
@@ -585,4 +604,3 @@ class StructuralEncoderMixin(BaseEncoderMixin):
             np.uint8 if "uint8" in encoder_name else np.uint16
         )
         return encoded_data, {"name": encoder_name, "original_dtype": original_dtype}
-
