@@ -73,6 +73,16 @@ export function clip_segment_single(
     const v1 = p1[dim];
     const v2 = p2[dim];
 
+    // #806: a non-finite (NaN or ±Inf) coordinate on a slicing (non-displayed)
+    // dimension cannot be localized against the slice, so the segment is
+    // treated as invisible. Enforced here, identically in the Rust backend
+    // (`lines_clipping.rs`), so the two backends stay in parity — without this
+    // the comparisons below are all false for NaN, the "both out, same side"
+    // check falls through, and NaN t-params leak out as a "visible" result.
+    if (!Number.isFinite(v1) || !Number.isFinite(v2)) {
+      return new Float32Array([0.0, 0.0, 0.0]); // [visible=0, t1, t2]
+    }
+
     // Classify endpoints relative to slice
     const p1In = v1 >= sliceMin && v1 <= sliceMax;
     const p2In = v2 >= sliceMin && v2 <= sliceMax;
@@ -171,6 +181,15 @@ export function clip_segments_batch(
 
       const v1Val = positions[p1Offset + dim];
       const v2Val = positions[p2Offset + dim];
+
+      // #806: a non-finite (NaN or ±Inf) coordinate on a slicing (non-displayed)
+      // dimension cannot be localized against the slice, so the segment is
+      // treated as invisible. Enforced here, identically in the Rust backend
+      // (`lines_clipping.rs`), so the two backends stay in parity.
+      if (!Number.isFinite(v1Val) || !Number.isFinite(v2Val)) {
+        visible = false;
+        break;
+      }
 
       const p1In = v1Val >= sliceMin && v1Val <= sliceMax;
       const p2In = v2Val >= sliceMin && v2Val <= sliceMax;
@@ -545,6 +564,11 @@ export function compute_cap_suppression(
     if (vertex >= numVertices || degree[vertex] !== 2) return 0;
     const partner = codeSum[vertex] - myCode;
     if (partner === myCode) return 0; // self-segment registered both its ends here
+    // A malformed NaN t-parameter can make this endpoint query a degree-2
+    // vertex without having registered its own code. Keep the TypeScript
+    // fallback symmetric with Rust: reject the resulting negative / out-of-
+    // range partner before indexing (`dirs[-1]` is undefined -> NaN).
+    if (partner < 0 || partner >> 1 >= visibleCount) return 0;
     const mo = (myCode >> 1) * 3;
     const po = (partner >> 1) * 3;
     if (mo + 2 >= dirs.length || po + 2 >= dirs.length) return 0;

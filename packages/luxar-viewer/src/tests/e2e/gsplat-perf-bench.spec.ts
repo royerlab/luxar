@@ -163,7 +163,7 @@ const SCENARIOS: ScenarioSpec[] = [
   {
     kind: 'zarr-ladder',
     id: 'visible-human-ladder-load',
-    label: 'gsplats_3d_visible_human_head.luxar.zarr (1.91 M, single node, additive ladder)',
+    label: 'gsplats_3d_visible_human_head.luxar.zarr (1.91 M, single node, volumetric ladder)',
     url: `${DATA_BASE}/datasets/demos/gsplats_3d_visible_human_head.luxar.zarr`,
   },
   {

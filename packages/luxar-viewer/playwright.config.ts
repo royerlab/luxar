@@ -11,17 +11,23 @@
 
 import { defineConfig, devices } from '@playwright/test';
 import * as path from 'path';
-import * as fs from 'fs';
 import { fileURLToPath } from 'url';
+import { createE2EServerMetadata, ensureCheckoutIdentity } from './tools/e2e-server-identity';
 
 // `package.json` declares `"type": "module"`, so the CommonJS `__dirname`
 // global is undefined at config load. Reconstruct it from `import.meta.url`.
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const projectRoot = path.resolve(__dirname, '../..');
+const viewerBaseURL = 'http://127.0.0.1:5173';
+const dataBaseURL = 'http://127.0.0.1:9000';
+const checkoutIdentity = ensureCheckoutIdentity(projectRoot, __dirname);
+const serverMetadata = createE2EServerMetadata(checkoutIdentity, viewerBaseURL, dataBaseURL);
 
 /**
  * See https://playwright.dev/docs/test-configuration
  */
 export default defineConfig({
+  metadata: { luxarE2E: serverMetadata },
   // Global setup - runs before any tests
   globalSetup: path.join(__dirname, 'src/tests/e2e/global-setup.ts'),
 
@@ -60,7 +66,7 @@ export default defineConfig({
   // Shared settings for all projects
   use: {
     // Base URL for tests
-    baseURL: 'http://localhost:5173',
+    baseURL: viewerBaseURL,
 
     // Collect trace on failure for debugging
     trace: 'retain-on-failure',
@@ -135,8 +141,10 @@ export default defineConfig({
       // WebGL is the default) and `VITE_LUXAR_USE_WEBGPU_RENDERER` (an
       // alias for the WebGPU opt-in) are forwarded too so existing CI
       // invocations keep working harmlessly.
-      command: 'pnpm dev',
-      url: 'http://localhost:5173',
+      command: 'pnpm dev --host 127.0.0.1 --strictPort',
+      // A sibling checkout has a different marker path and cannot satisfy this
+      // readiness probe. If its Vite owns 5173, strictPort fails loudly.
+      url: serverMetadata.viewerIdentityURL,
       reuseExistingServer: !process.env.CI,
       timeout: 120000,
       stdout: 'pipe',
@@ -151,10 +159,12 @@ export default defineConfig({
       // Python HTTP server to serve repository datasets/examples for E2E tests.
       // E2E global setup checks expected datasets and reports any missing fixtures.
       // Using port 9000 (ports 8000-8001 are used by luxar serve)
-      command: 'python3 -m http.server 9000',
-      url: 'http://localhost:9000',
+      command: 'python3 -m http.server 9000 --bind 127.0.0.1',
+      // The marker is an ignored file unique to this checkout. A static server
+      // rooted in a sibling worktree returns 404 instead of being reused.
+      url: serverMetadata.dataIdentityURL,
       // Use cwd to set working directory to project root (2 levels up from this file)
-      cwd: path.resolve(__dirname, '../..'),
+      cwd: projectRoot,
       reuseExistingServer: !process.env.CI,
       timeout: 15000, // Increased timeout for reliability
       stdout: 'ignore', // Reduce noise in test output

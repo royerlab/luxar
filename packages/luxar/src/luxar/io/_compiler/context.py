@@ -47,10 +47,11 @@ class GeometryWriteCtx:
     """Narrow context for the extracted Points/Lines write pipelines.
 
     Carries the encoder/ordering configs + scene compressor the dataset
-    serializers and ordering writers need, plus two bound-method hooks for the
-    orchestrator state a write must mutate: the scene-bounds accumulator and the
-    warn-once colormap-LUT flag. The finalized guard and the metadata-cache write
-    stay on the orchestrator (they bracket the extracted body in its delegate).
+    serializers and ordering writers need, plus bound-method hooks for the
+    orchestrator state a write must mutate: the scene-bounds accumulator, the
+    warn-once colormap-LUT flag, and the line-authoring warning registry. The
+    finalized guard and metadata-cache write stay on the orchestrator (they
+    bracket the extracted body in its delegate).
     """
 
     store: "zarr.Group"
@@ -59,6 +60,7 @@ class GeometryWriteCtx:
     compressor: "CompressorLike"
     update_scene_bounds: "Callable[[Dict[str, List[float]]], None]"
     write_colormap_lut: "Callable[[zarr.Group, Dict[str, Any]], None]"
+    claim_line_authoring_warning: "Callable[[str], bool]"
 
 
 @dataclass(frozen=True)

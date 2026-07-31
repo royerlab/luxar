@@ -638,3 +638,163 @@ class TestColormapMultiLodAdditive:
             store = zarr.open(str(path), mode="r")
             assert store["pts"].attrs["colormap"] == "custom"
             assert "colormap_lut" in store["pts"]
+
+
+class TestSignedColormapScalars:
+    """Regression tests for issue #730: colormap scalars are legitimately
+    signed (z-scores, velocities, divergence).
+
+    Before the fix, the ``scalars`` dataset was written as POSITIVE_SCALAR,
+    whose encoder rejects negative values — but only AFTER ``positions`` had
+    already been written to disk. The result was a partial, corrupt node (a
+    group with only ``positions`` and no ``type`` attr) that ``finalize()``
+    consolidated into ``.zmetadata``. Scalars are now BOUNDED_SCALAR, which
+    accepts signed values.
+    """
+
+    def test_points_signed_scalar_array_roundtrips(self) -> None:
+        """A signed float scalar array writes cleanly and decodes back."""
+        from luxar.encoding.decoder import ArrayDecoder
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "test.luxar.zarr"
+            dims = Dimensions([Dimension("x"), Dimension("y"), Dimension("z")])
+            positions = np.random.rand(20, 3).astype(np.float32)
+            scalars = np.linspace(-1.0, 1.0, 20).astype(np.float32)
+
+            with LuxarZarrCompiler(path) as c:
+                c.create_scene(dimensions=dims)
+                c.write_points("neg", positions, scalars=scalars)
+
+            store = zarr.open(str(path), mode="r")
+            # Node is complete: type attr present, scalars dataset present.
+            assert store["neg"].attrs["type"] == "points"
+            assert "scalars" in store["neg"]
+            sr = store["neg"].attrs["scalar_data_range"]
+            assert sr[0] == pytest.approx(-1.0)
+            assert sr[1] == pytest.approx(1.0)
+
+            decoder = ArrayDecoder()
+            read_scalars = decoder.decode(store["neg"]["scalars"])
+            assert np.all(np.isfinite(read_scalars))
+
+            # Spatial ordering may permute elements; compare the SORTED sets.
+            # Values round-trip within uint8-over-span-2.0 tolerance
+            # (step ≈ 2/255 ≈ 0.0078).
+            np.testing.assert_allclose(
+                np.sort(read_scalars),
+                np.sort(scalars),
+                atol=2.0 / 255 + 1e-4,
+                err_msg="Signed scalars differ beyond uint8 quantization tolerance",
+            )
+
+    def test_lines_signed_scalar_array_roundtrips(self) -> None:
+        """Signed scalars on Lines also write cleanly (vertices key path)."""
+        from luxar.encoding.decoder import ArrayDecoder
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "test.luxar.zarr"
+            dims = Dimensions([Dimension("x"), Dimension("y"), Dimension("z")])
+            vertices = np.random.rand(30, 3).astype(np.float32)
+            widths = np.full(30, 0.05, dtype=np.float32)
+            scalars = np.linspace(-3.0, 2.0, 30).astype(np.float32)
+
+            with LuxarZarrCompiler(path) as c:
+                c.create_scene(dimensions=dims)
+                c.write_lines("ln", vertices, widths, scalars=scalars)
+
+            store = zarr.open(str(path), mode="r")
+            assert store["ln"].attrs["type"] == "lines"
+            assert "scalars" in store["ln"]
+
+            decoder = ArrayDecoder()
+            read_scalars = decoder.decode(store["ln"]["scalars"])
+            assert np.all(np.isfinite(read_scalars))
+            assert float(read_scalars.min()) < 0.0  # signed values preserved
+
+    def test_points_signed_broadcast_scalar(self) -> None:
+        """A uniform NEGATIVE broadcast scalar value writes without error."""
+        from luxar.encoding.decoder import ArrayDecoder
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "test.luxar.zarr"
+            dims = Dimensions([Dimension("x"), Dimension("y"), Dimension("z")])
+            positions = np.random.rand(15, 3).astype(np.float32)
+
+            with LuxarZarrCompiler(path) as c:
+                c.create_scene(dimensions=dims)
+                c.write_points("neg", positions, scalars=-0.5)
+
+            store = zarr.open(str(path), mode="r")
+            assert store["neg"].attrs["type"] == "points"
+            assert "scalars" in store["neg"]
+            sr = store["neg"].attrs["scalar_data_range"]
+            assert sr[0] == pytest.approx(-0.5)
+            assert sr[1] == pytest.approx(-0.5)
+
+            decoder = ArrayDecoder()
+            read_scalars = decoder.decode(store["neg"]["scalars"])
+            np.testing.assert_allclose(read_scalars, -0.5)
+
+    def test_signed_scalars_leave_no_partial_node(self) -> None:
+        """The previously-failing case must leave a COMPLETE node.
+
+        Asserts the full expected surface (type attr + positions + scalars +
+        has_scalars) so a regression to POSITIVE_SCALAR — which would abort
+        mid-write after positions — is caught.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "test.luxar.zarr"
+            dims = Dimensions([Dimension("x"), Dimension("y"), Dimension("z")])
+            positions = np.random.rand(40, 3).astype(np.float32)
+            scalars = np.random.uniform(-5.0, 5.0, 40).astype(np.float32)
+
+            with LuxarZarrCompiler(path) as c:
+                c.create_scene(dimensions=dims)
+                c.write_points("z", positions, scalars=scalars, colormap="viridis")
+
+            store = zarr.open(str(path), mode="r")
+            grp = store["z"]
+            assert grp.attrs["type"] == "points"
+            assert grp.attrs.get("has_scalars") is True
+            assert "positions" in grp
+            assert "scalars" in grp
+            assert grp.attrs["colormap"] == "viridis"
+
+    def test_float32_overflow_array_fails_fast_no_partial_node(self) -> None:
+        """A float64 scalar array beyond the float32 range is rejected BEFORE
+        any write — the exact #730 signature via a different trigger.
+
+        Scalars are stored as float32; ``1e40`` overflows to inf on cast. The
+        pre-write gate must reject it so ``positions`` is never committed and
+        no partial node is left for ``finalize()`` to consolidate.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "test.luxar.zarr"
+            dims = Dimensions([Dimension("x"), Dimension("y"), Dimension("z")])
+            positions = np.random.rand(10, 3).astype(np.float32)
+            scalars = np.array([1e40] * 10, dtype=np.float64)
+
+            with LuxarZarrCompiler(path) as c:
+                c.create_scene(dimensions=dims)
+                with pytest.raises(ValueError, match="float32"):
+                    c.write_points("p", positions, scalars=scalars)
+
+            # Store finalized on clean context exit — no partial node "p".
+            store = zarr.open(str(path), mode="r")
+            assert "p" not in store, "float32-overflow left a partial node"
+
+    def test_float32_overflow_broadcast_fails_fast_no_partial_node(self) -> None:
+        """A broadcast scalar beyond the float32 range is also rejected up front."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "test.luxar.zarr"
+            dims = Dimensions([Dimension("x"), Dimension("y"), Dimension("z")])
+            positions = np.random.rand(10, 3).astype(np.float32)
+
+            with LuxarZarrCompiler(path) as c:
+                c.create_scene(dimensions=dims)
+                with pytest.raises(ValueError, match="float32"):
+                    c.write_points("p", positions, scalars=1e40)
+
+            store = zarr.open(str(path), mode="r")
+            assert "p" not in store, "float32-overflow left a partial node"

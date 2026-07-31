@@ -60,6 +60,7 @@ On first run this downloads the SBDB catalog (~a few hundred MB) to
 
 Controls:
     - Mouse drag: rotate,  Scroll: zoom,  Right-drag: pan
+    - 'F': return to the Sun-centered outer-planet view
     - With --animate: press '1' then '[' / ']' to step through time
 """
 
@@ -90,7 +91,7 @@ import numpy as np
 from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.core.viewer_config import ViewerConfig
+from luxar.core.viewer_config import CameraConfig, ViewerConfig
 from luxar.demos import launch_viewer
 from luxar.utils.demos import parse_demo_flags
 from luxar.utils.paths import get_demos_output_dir
@@ -526,6 +527,27 @@ def build_labels(cat: dict, top_n: int = LABEL_TOP_N) -> list[str]:
 # -----------------------------------------------------------------------------
 
 
+def _solar_system_viewer_config() -> ViewerConfig:
+    """Return the shared Sun-centered opening view for both scene variants."""
+    # The catalog contains a sparse tail of high-semi-major-axis objects. A
+    # bounds fit includes those outliers, putting the Sun off-center and
+    # shrinking the planets to a dot. Instead, orbit exactly around the
+    # heliocentric origin and frame the ~30 AU Neptune orbit from a moderately
+    # elevated ecliptic view. Dynamic clipping still keeps distant objects
+    # available when the user zooms out.
+    camera = CameraConfig(
+        position=(50.0, -50.0, 30.0),
+        target=(0.0, 0.0, 0.0),
+        up=(0.0, 0.0, 1.0),
+        fov=50.0,  # slight margin around Neptune's ~30 AU orbit
+    )
+    return ViewerConfig(
+        camera=camera,
+        tone_mapping="ACES",
+        dynamic_clipping_enabled=True,
+    )
+
+
 def _orbit_colors(p: dict) -> np.ndarray:
     """Dim per-vertex color for a planet's orbit ellipse."""
     return np.tile(np.array(p["color"], dtype=np.float32) * 0.5, (len(p["orbit"]), 1))
@@ -649,7 +671,7 @@ def build_static_scene(output_path: Path, cat: dict) -> int:
         )
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(
-                dimensions=dims, viewer_config=ViewerConfig(tone_mapping="ACES")
+                dimensions=dims, viewer_config=_solar_system_viewer_config()
             )
 
             scene.add_points(
@@ -715,7 +737,7 @@ def build_animated_scene(output_path: Path, cat: dict) -> int:
         )
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(
-                dimensions=dims, viewer_config=ViewerConfig(tone_mapping="ACES")
+                dimensions=dims, viewer_config=_solar_system_viewer_config()
             )
 
             all_pos = np.empty((n_ast * ANIMATE_FRAMES, 4), dtype=np.float32)

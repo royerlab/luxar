@@ -7,11 +7,14 @@ WebView window. Setting `LUXAR_LAUNCHER_NO_WEBVIEW=1` falls back to the
 user's default browser (no native window) — useful for headless smoke
 tests and minimal Linux installs without `libwebkit2gtk`.
 
-The launcher also passes a cache budget to the viewer via
-`?cacheBudgetMB=<N>` (default **2048** — desktop-class). WebKit (WKWebView / WebKitGTK)
-does not implement `performance.memory`, so the viewer cannot auto-size
-its in-memory caches from the JS heap the way it does in Chrome — without
-this it would fall back to a tiny fixed budget and re-decode timelapse
+The launcher forces browser revalidation for everything it serves — mutable
+`/data` responses and the unhashed viewer shell (`index.html`, wasm) alike —
+while leaving content-hashed `/viewer/assets` cacheable. It also passes a cache budget
+to the viewer via `?cacheBudgetMB=<N>` (default **2048** — desktop-class).
+WebKit (WKWebView / WebKitGTK) does not implement `performance.memory`, so the
+viewer cannot auto-size its in-memory caches from the JS heap the way it does
+in Chrome. Without this override, it would fall back to a tiny fixed budget and
+re-decode timelapse
 frames on every loop. Override with `LUXAR_CACHE_BUDGET_MB=<N>` on a
 memory-constrained machine (e.g. `=512`).
 
@@ -52,9 +55,10 @@ If neither layout matches, the launcher prints a clear error and exits.
 - `github.com/webview/webview_go` for the native window (WKWebView /
   WebView2 / WebKitGTK)
 - `net/http` + `http.FileServer` for serving viewer and data
+- a small cache-policy wrapper that revalidates everything except the
+  content-hashed `/viewer/assets` chunks
 - `os/exec` for the browser fallback (`open` / `xdg-open` / `rundll32`)
 - `os/signal` for graceful Ctrl-C shutdown
-- CORS middleware mirroring the policy used by `luxar serve`
 
 ## Assets (app icon)
 

@@ -11,13 +11,11 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  // Clean up any help overlays
-  const helpOverlay = document.getElementById('luxar-help-overlay');
-  if (helpOverlay) {
-    helpOverlay.remove();
-  }
+  // Use the public teardown so module-level listener/timer state cannot leak
+  // across tests even when a case fails before its own cleanup.
+  hideHelpOverlay();
 
-  // Clear all pending timers before teardown
+  // Clear any unrelated pending timers before teardown.
   vi.clearAllTimers();
   vi.useRealTimers();
 
@@ -54,6 +52,54 @@ describe('showHelpOverlay - Memory Leak Prevention', () => {
   // A regression that switched outside-click dismissal from 'click' to
   // 'mousedown' / 'pointerdown' would NOT slip through here the way the
   // previous removeEventListener('click', ...) spy allowed.
+  it('hideHelpOverlay cancels delayed listener registration', () => {
+    showHelpOverlay();
+    hideHelpOverlay();
+
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('close button cancels delayed listener registration', () => {
+    showHelpOverlay();
+    const closeBtn = document.querySelector('button[title="Close (Escape)"]') as HTMLButtonElement;
+
+    closeBtn.click();
+
+    expect(document.getElementById('luxar-help-overlay')).toBeNull();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('rapid hide then show cannot attach the stale overlay listener', () => {
+    showHelpOverlay();
+    vi.advanceTimersByTime(20);
+    hideHelpOverlay();
+
+    showHelpOverlay();
+    const reopened = document.getElementById('luxar-help-overlay');
+    expect(reopened).toBeTruthy();
+
+    // Reach the first overlay's original 100 ms deadline, but not the
+    // reopened overlay's. A stale handler would treat this inside click as
+    // outside its detached element and close the newly opened overlay.
+    vi.advanceTimersByTime(80);
+    reopened?.click();
+
+    expect(document.getElementById('luxar-help-overlay')).toBe(reopened);
+  });
+
+  it('only outside clicks dismiss the current overlay after the delay', () => {
+    showHelpOverlay();
+    const overlay = document.getElementById('luxar-help-overlay');
+    expect(overlay).toBeTruthy();
+    vi.advanceTimersByTime(150);
+
+    overlay?.click();
+    expect(document.getElementById('luxar-help-overlay')).toBe(overlay);
+
+    document.body.click();
+    expect(document.getElementById('luxar-help-overlay')).toBeNull();
+  });
+
   it('hideHelpOverlay removes the outside-click listener (observable contract)', () => {
     showHelpOverlay();
     // Audit W3 fix: pin id so a wrong-element bug surfaces here.

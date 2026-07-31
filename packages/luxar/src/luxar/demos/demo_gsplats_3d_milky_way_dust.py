@@ -76,6 +76,7 @@ from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
+from luxar.demos import require_module
 from luxar.encoding import EncodingMode
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.utils.demos import (
@@ -170,13 +171,7 @@ def normalize_dust_volume(mean: np.ndarray, target_size: int) -> np.ndarray:
 
 def load_dust_volume(target_size: int = TARGET_SIZE) -> np.ndarray:
     """Download (resumable) + load the dust cube, ready for fitting."""
-    try:
-        import h5py
-    except ImportError as exc:  # pragma: no cover - env-dependent
-        raise ImportError(
-            "h5py is required for this demo. Install with: pip install h5py "
-            "(or `pip install luxar[demos]`)."
-        ) from exc
+    h5py = require_module("h5py")
 
     from luxar.utils.download import robust_download
 

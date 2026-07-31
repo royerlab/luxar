@@ -206,8 +206,9 @@ export function linePickWebGPUFactory(
     // whose near-clip boundary cuts through the pick footprint). Keeps
     // every vertex at viewZ >= nearCull and remaps t (tEff) so the cap
     // math and per-endpoint attributes keep the original
-    // parameterization. select() evaluates both branches, so
-    // denominators are floored to keep the untaken lane finite.
+    // parameterization. select() evaluates both branches, so each
+    // denominator gets a benign 1.0 only in its UNTAKEN lane. The taken lane
+    // keeps the exact positive depth delta, matching the GLSL division.
     let tA: TSLNode = float(0.0);
     let tB: TSLNode = float(1.0);
     if (!config.isOrtho) {
@@ -217,24 +218,14 @@ export function linePickWebGPUFactory(
       const endNear: TSLNode = endDepth
         .lessThan(nearCull)
         .and(startDepth.greaterThanEqual(nearCull));
+      const startDenominator: TSLNode = startNear
+        .select(endDepth.sub(startDepth), float(1.0))
+        .toVar();
+      const endDenominator: TSLNode = endNear.select(startDepth.sub(endDepth), float(1.0)).toVar();
       tA = startNear
-        .select(
-          nearCull
-            .sub(startDepth)
-            .div(max(endDepth.sub(startDepth), float(1e-20)))
-            .toVar(),
-          float(0.0)
-        )
+        .select(nearCull.sub(startDepth).div(startDenominator).toVar(), float(0.0))
         .toVar();
-      tB = endNear
-        .select(
-          startDepth
-            .sub(nearCull)
-            .div(max(startDepth.sub(endDepth), float(1e-20)))
-            .toVar(),
-          float(1.0)
-        )
-        .toVar();
+      tB = endNear.select(startDepth.sub(nearCull).div(endDenominator).toVar(), float(1.0)).toVar();
       const mvStartClipped: TSLNode = mix(mvStart, mvEnd, tA).toVar();
       const mvEndClipped: TSLNode = mix(mvStart, mvEnd, tB).toVar();
       mvStart.assign(mvStartClipped);

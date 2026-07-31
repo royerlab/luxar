@@ -61,6 +61,7 @@ DEMO_META = {
     "outputs": ["performance_test"],
 }
 
+import argparse
 import sys
 import tempfile
 from pathlib import Path
@@ -311,23 +312,49 @@ def generate_performance_test_dataset(
         aprint("✓ Moving slider will show smooth continuous slicing through 4D space")
 
 
-def main() -> None:
-    """Main demo entry point."""
-    # Parse command line arguments
-    n_points = 1000000  # 1M points by default
-    network_profile = "slow-broadband"  # Slow broadband by default
-    no_serve = False
-    no_simulation = False
+def parse_args(argv: list[str]) -> argparse.Namespace:
+    """Parse demo arguments, accepting both ``--name value`` and ``--name=value``."""
+    parser = argparse.ArgumentParser(
+        description="Generate and serve the Luxar network-performance demo.",
+        allow_abbrev=False,
+    )
+    parser.add_argument(
+        "--points",
+        type=int,
+        default=1_000_000,
+        metavar="N",
+        help="Number of generated points (default: 1000000).",
+    )
+    parser.add_argument(
+        "--profile",
+        default="slow-broadband",
+        metavar="NAME",
+        help="Network simulation profile (default: slow-broadband).",
+    )
+    parser.add_argument(
+        "--no-serve",
+        action="store_true",
+        help="Generate the dataset without launching the viewer.",
+    )
+    parser.add_argument(
+        "--no-simulation",
+        action="store_true",
+        help="Serve at full speed without network simulation.",
+    )
+    return parser.parse_args(argv)
 
-    for arg in sys.argv[1:]:
-        if arg.startswith("--points="):
-            n_points = int(arg.split("=")[1])
-        elif arg.startswith("--profile="):
-            network_profile = arg.split("=")[1]
-        elif arg == "--no-serve":
-            no_serve = True
-        elif arg == "--no-simulation":
-            no_simulation = True
+
+def main(argv: list[str] | None = None) -> None:
+    """Run the demo.
+
+    Args:
+        argv: Arguments to parse, or ``None`` to use ``sys.argv[1:]``.
+    """
+    args = parse_args(sys.argv[1:] if argv is None else argv)
+    n_points = args.points
+    network_profile = args.profile
+    no_serve = args.no_serve
+    no_simulation = args.no_simulation
 
     # Display demo information
     aprint("=" * 70)

@@ -203,6 +203,41 @@ function assertCrossingBandCentered(pixels: number[], label: string): void {
   ).toBeLessThan(2.0);
 }
 
+/** Peak max-mode red contribution near the left line endpoint. */
+function capEndpointContribution(pixels: number[]): number {
+  let peak = 0;
+  for (let y = 30; y <= 33; y++) {
+    for (let x = 15; x <= 17; x++) {
+      peak = Math.max(peak, pixels[(y * 64 + x) * 4]);
+    }
+  }
+  return peak;
+}
+
+/**
+ * Content stats for the clipped (right-hand) side of the remap fixture.
+ * Correct tEff starts at 2/3 there, so it is blue-dominant and thick; using
+ * raw t starts from the red/thin source endpoint instead.
+ */
+function clippedSideStats(pixels: number[]): { maxRows: number; red: number; blue: number } {
+  let maxRows = 0;
+  let red = 0;
+  let blue = 0;
+  for (let x = 44; x < 64; x++) {
+    let rows = 0;
+    for (let y = 0; y < 64; y++) {
+      const o = (y * 64 + x) * 4;
+      if (pixels[o] + pixels[o + 1] + pixels[o + 2] > 10) {
+        rows++;
+        red += pixels[o];
+        blue += pixels[o + 2];
+      }
+    }
+    maxRows = Math.max(maxRows, rows);
+  }
+  return { maxRows, red, blue };
+}
+
 test.describe('TSL ↔ GLSL shader parity', () => {
   test('const-rgb diagnostic: solid-colour fragment matches between backends', async ({ page }) => {
     await bootHarness(page);
@@ -656,6 +691,36 @@ test.describe('TSL ↔ GLSL shader parity', () => {
       diff,
       `Line parity: mean abs diff ${diff.toFixed(2)} on 0-255 scale.\nLine samples:\n${samples}`
     ).toBeLessThan(2.0);
+  });
+
+  test('line cap suppression renders fractional values instead of quantising to a flag', async ({
+    page,
+  }) => {
+    await bootHarness(page);
+
+    for (const backend of ['GLSL', 'TSL'] as const) {
+      const render = async (name: string): Promise<number[]> =>
+        backend === 'GLSL' ? runGLSL(page, name) : (await runTSL(page, name)).pixels;
+      const zeroPixels = await render('line-cap-zero');
+      const fractionalPixels = await render('line-cap-fractional');
+      const fullPixels = await render('line-cap-full');
+      const zero = capEndpointContribution(zeroPixels);
+      const fractional = capEndpointContribution(fractionalPixels);
+      const full = capEndpointContribution(fullPixels);
+
+      expect(
+        fractional,
+        `${backend}: fractional cap must be visibly brighter than s=0 (got ${zero}, ${fractional}, ${full})`
+      ).toBeGreaterThan(zero + 15);
+      expect(
+        full,
+        `${backend}: s=1 cap must be visibly brighter than s=0.5 (got ${zero}, ${fractional}, ${full})`
+      ).toBeGreaterThan(fractional + 15);
+      expect(
+        fractional,
+        `${backend}: s=0.5 endpoint should stay near the midpoint of s=0 and s=1`
+      ).toBeCloseTo((zero + full) * 0.5, -1);
+    }
   });
 
   // Multi-row texture-orientation parity (one per geometry type): the
@@ -1457,6 +1522,78 @@ test.describe('TSL ↔ GLSL shader parity', () => {
       nonUniformPixelCount(tslResult.pixels),
       'ortho near-slab line must render (TSL)'
     ).toBeGreaterThan(20);
+  });
+
+  for (const variant of ['line-on-near-plane', 'line-pick-on-near-plane'] as const) {
+    test(`${variant}: endpoint exactly at nearCull stays finite and renders`, async ({ page }) => {
+      await bootHarness(page);
+      const glslPixels = await runGLSL(page, variant);
+      const tslResult = await runTSL(page, variant);
+
+      assertBothRendered(glslPixels, tslResult.pixels, variant);
+      expect(
+        meanAbsDiffPerCoveredPixel(glslPixels, tslResult.pixels),
+        `${variant} parity`
+      ).toBeLessThan(2.0);
+      expect(
+        nonUniformPixelCount(glslPixels),
+        `${variant} GLSL must not cull the boundary`
+      ).toBeGreaterThan(20);
+      expect(
+        nonUniformPixelCount(tslResult.pixels),
+        `${variant} TSL must not cull the boundary`
+      ).toBeGreaterThan(20);
+    });
+  }
+
+  test('line-crossing-remap: clipped endpoint uses remapped color/width/sharpness', async ({
+    page,
+  }) => {
+    await bootHarness(page);
+    const glslPixels = await runGLSL(page, 'line-crossing-remap');
+    const tslResult = await runTSL(page, 'line-crossing-remap');
+
+    assertBothRendered(glslPixels, tslResult.pixels, 'line-crossing-remap');
+    expect(
+      meanAbsDiffPerCoveredPixel(glslPixels, tslResult.pixels),
+      'line-crossing-remap parity'
+    ).toBeLessThan(2.0);
+    for (const [backend, pixels] of [
+      ['GLSL', glslPixels],
+      ['TSL', tslResult.pixels],
+    ] as const) {
+      const stats = clippedSideStats(pixels);
+      expect(
+        stats.blue,
+        `${backend}: clipped side must start from tEff=2/3 (blue-dominant), not raw red t=0; ${JSON.stringify(stats)}`
+      ).toBeGreaterThan(stats.red * 1.25);
+      expect(
+        stats.maxRows,
+        `${backend}: remapped near-side width must stay visibly thick; ${JSON.stringify(stats)}`
+      ).toBeGreaterThanOrEqual(6);
+    }
+  });
+
+  test('line-pick-crossing-remap: picking footprint uses remapped width/sharpness', async ({
+    page,
+  }) => {
+    await bootHarness(page);
+    const glslPixels = await runGLSL(page, 'line-pick-crossing-remap');
+    const tslResult = await runTSL(page, 'line-pick-crossing-remap');
+
+    assertBothRendered(glslPixels, tslResult.pixels, 'line-pick-crossing-remap');
+    expect(
+      meanAbsDiffPerCoveredPixel(glslPixels, tslResult.pixels),
+      'line-pick-crossing-remap parity'
+    ).toBeLessThan(2.0);
+    expect(
+      clippedSideStats(glslPixels).maxRows,
+      'pick GLSL remapped near-side width'
+    ).toBeGreaterThanOrEqual(6);
+    expect(
+      clippedSideStats(tslResult.pixels).maxRows,
+      'pick TSL remapped near-side width'
+    ).toBeGreaterThanOrEqual(6);
   });
 
   test('line-crossing: camera-plane-crossing segment clips at nearCull — no wrapped-quad band', async ({

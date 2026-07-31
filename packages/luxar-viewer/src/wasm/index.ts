@@ -44,6 +44,23 @@ export type { WasmModule } from './types';
 let wasmJsUrlOverride: string | undefined;
 
 /**
+ * Export added with the line cap-suppression kernel. A stale gitignored
+ * `public/wasm/` build can still import and initialise successfully while
+ * missing this post-rename function, otherwise failing later at first use.
+ */
+const REQUIRED_WASM_EXPORTS = [
+  'compute_cap_suppression',
+] as const satisfies readonly (keyof WasmModule)[];
+
+function assertRequiredWasmExports(module: Record<string, unknown>): void {
+  for (const name of REQUIRED_WASM_EXPORTS) {
+    if (typeof module[name] !== 'function') {
+      throw new Error(`Loaded WASM module is stale: missing required export "${name}"`);
+    }
+  }
+}
+
+/**
  * Override the URL used to load the WASM JS shim. Pass an absolute URL
  * (e.g. `new URL('/static/luxar/wasm/luxar_wasm.js', location.origin).href`).
  * Call before {@link initWasm}.
@@ -108,8 +125,11 @@ export async function initWasm(): Promise<WasmModule> {
     const importWasm = new Function('url', 'return import(url)');
     const wasmModule = await importWasm(wasmJsUrl);
 
-    // Initialize WASM (loads the .wasm binary)
+    // Initialize WASM (loads the .wasm binary), then reject mixed/stale dev
+    // artifacts before returning them as the WasmModule interface. Throwing
+    // here deliberately enters the normal TypeScript fallback path.
     await wasmModule.default();
+    assertRequiredWasmExports(wasmModule as Record<string, unknown>);
 
     log.info(Modules.WASM, 'Loaded compiled WASM module');
 

@@ -274,7 +274,6 @@ def fake_repo(tmp_path, monkeypatch):
 
     manifest = {
         "schema_version": 1,
-        "cache_root": "~/.cache/luxar",
         "records": {
             "cc-by": {"license": "cc-by-4.0", "zenodo_record": None, "base_url": None}
         },
@@ -402,7 +401,6 @@ def test_ensure_dataset_resolves_toplevel_dir(tmp_path, monkeypatch):
 
     manifest = {
         "schema_version": 1,
-        "cache_root": "~/.cache/luxar",
         "records": {
             "cc-by": {"license": "cc-by-4.0", "zenodo_record": None, "base_url": None}
         },

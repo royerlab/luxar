@@ -1,6 +1,7 @@
 import type { OPFSMetadata, CacheValidationMode } from '../../types';
 import { OPFS_ENCODING_VERSION } from '../../types';
 import { log, Modules } from '../../../utils/log';
+import { getErrorMessage } from '../../../utils/format-error';
 
 type IterableFileSystemDirectoryHandle = FileSystemDirectoryHandle & {
   keys(): AsyncIterableIterator<string>;
@@ -224,7 +225,11 @@ export class OPFSMetadataManager {
     try {
       await writeSnapshot(root, snapshot);
     } catch (error) {
-      log.warning(Modules.CACHE, 'OPFSStore failed to save metadata', error);
+      log.warning(
+        Modules.CACHE,
+        `OPFSStore failed to save metadata: ${getErrorMessage(error)}`,
+        error
+      );
     }
   }
 
