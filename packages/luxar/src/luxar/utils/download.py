@@ -35,6 +35,15 @@ def _format_bytes(n_bytes: int) -> str:
     return f"{size:.2f} TB"  # pragma: no cover - loop always returns
 
 
+def _force_identity_encoding(headers: dict) -> None:
+    """Default Accept-Encoding to identity unless the caller already set it
+    (case-insensitively). An identity byte stream is required: ``total_size``
+    comes from Content-Length but the body is decoded, and ``.part`` byte-range
+    resume assumes identity."""
+    if not any(k.lower() == "accept-encoding" for k in headers):
+        headers["Accept-Encoding"] = "identity"
+
+
 def find_quarantined_files(target: Union[str, Path]) -> list[Path]:
     """Return the quarantined ``.corrupt`` files associated with *target*.
 
@@ -394,7 +403,7 @@ def robust_download(
         # that matches the on-disk file — a `Content-Encoding: gzip` response
         # would otherwise report the COMPRESSED length and make a complete
         # cache look "larger than remote", truncating it.
-        probe_headers.setdefault("Accept-Encoding", "identity")
+        _force_identity_encoding(probe_headers)
         try:
             head = session.head(
                 url, timeout=timeout, headers=probe_headers, allow_redirects=True
@@ -532,6 +541,9 @@ def robust_download(
             try:
                 # Set up headers for resume
                 headers = dict(extra_headers or {})
+                # Force an identity byte stream (see _force_identity_encoding):
+                # size verification + `.part` byte-range resume require it.
+                _force_identity_encoding(headers)
                 sent_if_range = False
                 if resume_byte_pos > 0:
                     headers["Range"] = f"bytes={resume_byte_pos}-"
