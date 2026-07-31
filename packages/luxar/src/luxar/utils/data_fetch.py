@@ -87,7 +87,7 @@ class LocalComputeDataset(RuntimeError):
 
 @lru_cache(maxsize=1)
 def _load_manifest_cached(path: Optional[str] = None) -> Manifest:
-    """Parse the demo-data manifest once per path (internal, shared instance)."""
+    """Parse the manifest for the most recent path (internal, shared instance)."""
     p = Path(path) if path else MANIFEST_PATH
     try:
         with open(p, "r") as f:
@@ -111,6 +111,16 @@ def load_manifest(path: Optional[str] = None) -> Manifest:
     would poison every later read process-wide.
     """
     return copy.deepcopy(_load_manifest_cached(path))
+
+
+def clear_manifest_cache() -> None:
+    """Drop the memoised manifest parse.
+
+    Needed by anything that rewrites a manifest on disk and then reads it back
+    (a generator script, a test): the parse is cached, so without this the stale
+    copy would be re-served for the rest of the process.
+    """
+    _load_manifest_cached.cache_clear()
 
 
 def dataset_spec(name: str, manifest: Optional[Manifest] = None) -> Manifest:

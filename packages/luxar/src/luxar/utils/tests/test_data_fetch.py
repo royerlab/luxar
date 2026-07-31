@@ -22,6 +22,8 @@ from luxar.utils.data_fetch import (
     MANIFEST_PATH,
     DatasetNotFound,
     LocalComputeDataset,
+    clear_manifest_cache,
+    dataset_spec,
     ensure_dataset,
     load_dataset_gsplats,
     load_manifest,
@@ -60,6 +62,48 @@ def test_manifest_loads_and_has_expected_shape():
     assert m["records"] and m["datasets"]
     for key in ("cc-by", "cc-by-sa", "h2afva"):
         assert key in m["records"], f"missing record group {key}"
+
+
+def test_load_manifest_hands_out_an_independent_copy():
+    """A caller must not be able to poison the cached parse.
+
+    The parse is memoised process-wide, so returning it directly meant one
+    caller mutating the manifest — or a nested ``dataset_spec`` out of it —
+    changed what every later reader saw.
+    """
+    first = load_manifest()
+    first["schema_version"] = 999
+    first["datasets"]["not_a_real_dataset"] = {"bucket": "zenodo"}
+    dataset_spec("milky_way_gaia_3m", first)["bucket"] = "zenodo"
+
+    second = load_manifest()
+    assert second is not first
+    assert second["schema_version"] == 1
+    assert "not_a_real_dataset" not in second["datasets"]
+    assert second["datasets"]["milky_way_gaia_3m"]["bucket"] == "local-compute"
+
+
+def test_manifest_parse_is_cached_and_can_be_invalidated(tmp_path):
+    """The cache still exists (and is still droppable) after the copy-on-read split.
+
+    Moving the ``lru_cache`` onto a private helper must not take the ability to
+    invalidate it with it: a caller that rewrites a manifest on disk needs the
+    next read to see the new bytes.
+    """
+    custom = tmp_path / "data_manifest.json"
+    base = {"schema_version": 1, "records": {}, "datasets": {}}
+    custom.write_text(json.dumps(base))
+    assert load_manifest(str(custom))["datasets"] == {}
+
+    custom.write_text(json.dumps({**base, "datasets": {"toy": {"bucket": "zenodo"}}}))
+    assert load_manifest(str(custom))["datasets"] == {}, "parse is no longer cached"
+
+    clear_manifest_cache()
+    try:
+        assert "toy" in load_manifest(str(custom))["datasets"]
+    finally:
+        # maxsize=1: don't leave the tmp manifest occupying the slot.
+        clear_manifest_cache()
 
 
 def test_every_dataset_has_valid_bucket_license_and_files():
