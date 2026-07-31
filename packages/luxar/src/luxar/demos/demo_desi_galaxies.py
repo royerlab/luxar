@@ -473,7 +473,7 @@ def warn_if_scene_lacks_ladder(scene_path: Path) -> None:
         try:
             finest = root[layer_name]["child_3"]
             n_sublods = int(finest.attrs.get("n_additive_sublods", 1))
-        except Exception as exc:  # pragma: no cover - diagnostics only
+        except Exception as exc:
             aprint(
                 f"  ⚠ Could not inspect {scene_path} [{layer_name}] for a "
                 f"streaming ladder: {exc}"
