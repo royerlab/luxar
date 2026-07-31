@@ -21,6 +21,7 @@ import {
   writeSortedIndexOrdering,
   pumpSortedIndexOrderingApply,
   getActiveSortedIndexAttribute,
+  hasPendingSortedIndexOrderingApply,
 } from '../../../rendering/element-storage';
 
 describe('GPUBufferPool', () => {
@@ -183,6 +184,25 @@ describe('GPUBufferPool', () => {
       const stats = pool.getStats();
       expect(stats.capacityGrowths).toBe(1);
       expect(stats.pooledBuffers).toBeGreaterThan(0);
+    });
+
+    it('grow-swap cancels a staged ordering apply left on the OLD geometry', () => {
+      // The grow path (release + reacquire inside acquire) never goes
+      // through releaseDepthSortNode — the coordinator still tracks the
+      // NODE, which now points at the fresh geometry. A staged ordering
+      // left on the old geometry would therefore never be pumped again,
+      // and the strong applies map would pin its ordering array(s) until
+      // some future tenant's identity write. The pool-release cancel
+      // (splat-texture-storage.test.ts covers the direct-release flavor
+      // on the gsplats adapter) must fire on this path too.
+      const geom1 = pool.acquirePointsGeometry('node1', 1000);
+      pool.updatePointsGeometry(geom1, createMockLoadedPointsData(4), 4);
+      writeSortedIndexOrdering(geom1, new Uint32Array([3, 2, 1, 0]), 4);
+      expect(hasPendingSortedIndexOrderingApply(geom1)).toBe(true);
+
+      const geom2 = pool.acquirePointsGeometry('node1', 2000); // grow: release + reacquire
+      expect(geom2).not.toBe(geom1);
+      expect(hasPendingSortedIndexOrderingApply(geom1)).toBe(false);
     });
 
     it('grow path bumps byType.points.allocations (MED-11 regression)', () => {
