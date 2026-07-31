@@ -4,7 +4,12 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { getErrorMessage, formatErrorForDisplay, getErrorStack } from '../../../utils/format-error';
+import {
+  getErrorMessage,
+  formatErrorForDisplay,
+  getErrorStack,
+  isErrorLike,
+} from '../../../utils/format-error';
 
 describe('getErrorMessage', () => {
   it('reads the message off an Error', () => {
@@ -121,5 +126,38 @@ describe('getErrorStack', () => {
       }
     );
     expect(getErrorStack(trap)).toBeUndefined();
+  });
+});
+
+describe('isErrorLike', () => {
+  it('matches a real Error and its subclasses', () => {
+    expect(isErrorLike(new Error('boom'))).toBe(true);
+    class Sub extends Error {}
+    expect(isErrorLike(new Sub('boom'))).toBe(true);
+    expect(isErrorLike(new DOMException('x', 'NotFoundError'))).toBe(true);
+  });
+
+  it('matches a cross-realm Error by its realm-proof [[Class]]', () => {
+    // A same-realm `instanceof Error` misses this; the internal [[Class]] tag
+    // does not. Emulate it: a plain object whose Symbol.toStringTag is 'Error'
+    // reports as '[object Error]' without being an Error instance.
+    const crossRealm = { [Symbol.toStringTag]: 'Error', name: 'TypeError', message: 'boom' };
+    expect(crossRealm instanceof Error).toBe(false);
+    expect(isErrorLike(crossRealm)).toBe(true);
+  });
+
+  it('matches a plain object carrying the full name+message+stack triple', () => {
+    expect(isErrorLike({ name: 'Error', message: 'boom', stack: 'at somewhere' })).toBe(true);
+  });
+
+  it('does NOT match an ordinary data object', () => {
+    // The false-positive that must not happen: a legitimate `{ name, message }`
+    // payload should still render as JSON, not as an Error.
+    expect(isErrorLike({ name: 'Widget', message: 'hello' })).toBe(false);
+    expect(isErrorLike({ foo: 1 })).toBe(false);
+    expect(isErrorLike('a string')).toBe(false);
+    expect(isErrorLike(null)).toBe(false);
+    expect(isErrorLike(undefined)).toBe(false);
+    expect(isErrorLike(42)).toBe(false);
   });
 });

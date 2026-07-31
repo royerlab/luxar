@@ -57,6 +57,38 @@ export function formatErrorForDisplay(error: Error): string {
 }
 
 /**
+ * Whether an unknown value should be rendered as an Error rather than JSON.
+ *
+ * A same-realm `instanceof Error` misses an Error created in another realm
+ * (iframe / jsdom test env / worker error surface — the same class of object
+ * `data/loaders/abort-error.ts` duck-types by name). Such an object stringifies
+ * to `{}` because `name`/`message`/`stack` are non-enumerable, so the console
+ * renderers drop its message unless they detect it structurally.
+ *
+ * Two realm-proof signals, neither of which fires on an ordinary
+ * `{ name, message }` data object:
+ *   - `[[Class]]` is `Error` regardless of realm (covers cross-realm `Error`
+ *     and its subclasses);
+ *   - failing that, the full string `name` + `message` + `stack` triple, which
+ *     a plain data object almost never carries (covers a structured-clone /
+ *     `postMessage` surface that is not an `Error` instance at all).
+ *
+ * Never throws — same rationale as the other helpers here.
+ */
+export function isErrorLike(value: unknown): boolean {
+  try {
+    if (typeof value !== 'object' || value === null) return false;
+    if (Object.prototype.toString.call(value) === '[object Error]') return true;
+    const v = value as { name?: unknown; message?: unknown; stack?: unknown };
+    return (
+      typeof v.name === 'string' && typeof v.message === 'string' && typeof v.stack === 'string'
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
  * The stack from an unknown thrown value, or `undefined` when there isn't one.
  *
  * The duck-typed branch is deliberate: some Firefox `DOMException`s carry a

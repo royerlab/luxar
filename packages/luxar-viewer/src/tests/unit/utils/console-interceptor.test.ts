@@ -183,6 +183,15 @@ describe('ConsoleInterceptor stack capture', () => {
     expect(lastMessage().stack).toBe(first.stack);
   });
 
+  it('prefers a real Error over an earlier duck-typed stack carrier', () => {
+    // A plain `{ stack }` object satisfies getErrorStack, so a single-pass scan
+    // would record the context string ahead of the real Error's trace.
+    const realError = new Error('the real failure');
+    console.error('failed', { stack: 'just some context string' }, realError);
+
+    expect(lastMessage().stack).toBe(realError.stack);
+  });
+
   it('does not throw (and still buffers) when an arg has a throwing stack accessor', () => {
     // extractStack runs inside the patched console.warn/error BEFORE the
     // original console call — if it threw, the warning itself would vanish and
