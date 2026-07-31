@@ -487,6 +487,57 @@ def validate_widths_for_writing(
         )
 
 
+def validate_cholesky_for_writing(
+    cholesky_factors: NDArray[Any],
+    n_dims: int,
+    context: str = "cholesky_factors",
+) -> None:
+    """Validate packed lower-triangular Cholesky factors for writing.
+
+    The GSplats sibling of :func:`validate_radii_for_writing` (Points) and
+    :func:`validate_widths_for_writing` (Lines), per the three-geometry
+    symmetry rule. The gsplat assembly gate normalizes SHAPE before calling
+    (a 1D uniform ``(k,)`` input is reshaped to ``(1, k)``), so this validator
+    accepts a 2D array of shape ``(n_splats, k)`` OR the uniform/broadcast
+    ``(1, k)`` form, with ``k = n_dims * (n_dims + 1) // 2``.
+
+    Two checks, mirroring the amplitudes/radii/widths validators:
+
+    - Finiteness across the WHOLE packed array (a single NaN/Inf used to pass
+      the shape-only gate and die deep in the encoder AFTER centers were
+      already on disk, leaving a half-written node).
+    - Strictly positive diagonal. The packed diagonal slots are
+      ``np.cumsum(np.arange(1, n_dims + 1)) - 1`` (e.g. ``[0, 2, 5]`` for
+      ``n_dims=3``); the format invariant is diag > 0 (positive, scale-like).
+      A zero/negative diagonal is a degenerate/singular covariance that the
+      uint8 log encoder silently clamps to 0 → a sliver splat with no
+      diagnostic.
+
+    Args:
+        cholesky_factors: Packed lower-triangular factors, shape
+            ``(n_splats, k)`` or ``(1, k)``.
+        n_dims: Number of spatial dimensions (used to locate the diagonal
+            slots; the caller already has it).
+        context: Context for error messages.
+
+    Raises:
+        ValidationError: If the factors contain NaN/Inf or any non-positive
+            diagonal value.
+    """
+    _validate_numeric_finite_values(cholesky_factors, context)
+
+    diag_indices = np.cumsum(np.arange(1, n_dims + 1)) - 1
+    diagonal = cholesky_factors[:, diag_indices]
+    if np.any(diagonal <= 0):
+        min_val: float = float(np.min(diagonal))
+        raise ValidationError(
+            f"{context}: Cholesky diagonal must be positive (> 0). "
+            f"Found zero or negative values (minimum: {min_val:.3f}).",
+            "The diagonal is scale-like; ensure a positive-definite "
+            "Cholesky factor (positive diagonal entries)",
+        )
+
+
 def validate_sharpness_for_writing(
     sharpness: Union[NDArray[Any], float, int],
     n_points: int,

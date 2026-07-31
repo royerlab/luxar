@@ -54,6 +54,7 @@ import {
   perspectiveNearFadeStaticTSL,
   sanitizeNonNegative,
   type TSLNode,
+  sortedIndexNode,
 } from '../../materials/_shared/tsl-helpers';
 import { getPlaceholderElementTexture } from '../../element-texture-layout';
 
@@ -71,6 +72,8 @@ export interface LinePickTSLNodes {
   readonly uLineTex: TSLNode;
   readonly uResolution: TSLNode;
   readonly uIsOrtho: TSLNode;
+  /** Active ordering buffer: 0 = aSortedIndex, 1 = aSortedIndexB. */
+  readonly uSortedIndexSlot: TSLNode;
   readonly uNodeId: TSLNode;
   readonly uNearCull: TSLNode;
   readonly uMaxLinePixelWidth: TSLNode;
@@ -108,10 +111,10 @@ export function linePickWebGPUFactory(
   outMaterial?: NodeMaterial
 ): NodeMaterial {
   const aQuadCorner: TSLNode = attribute<'vec2'>('aQuadCorner', 'vec2');
-  // The only per-instance attribute (visual-factory parity): segment
+  // The ordering attributes (visual-factory parity): segment
   // data lives in the line texture; `aSortedIndex` maps the draw slot
   // to a storage slot.
-  const aSortedIndex: TSLNode = attribute<'uint'>('aSortedIndex', 'uint');
+  const aSortedIndex: TSLNode = sortedIndexNode(nodes.uSortedIndexSlot);
 
   // Pixel-width math consumes the CPU-precomputed
   // uPerspectiveLineScale / uOrthoLineScale (no FOV uniform exists).
@@ -206,8 +209,9 @@ export function linePickWebGPUFactory(
     // whose near-clip boundary cuts through the pick footprint). Keeps
     // every vertex at viewZ >= nearCull and remaps t (tEff) so the cap
     // math and per-endpoint attributes keep the original
-    // parameterization. select() evaluates both branches, so
-    // denominators are floored to keep the untaken lane finite.
+    // parameterization. select() evaluates both branches, so each
+    // denominator gets a benign 1.0 only in its UNTAKEN lane. The taken lane
+    // keeps the exact positive depth delta, matching the GLSL division.
     let tA: TSLNode = float(0.0);
     let tB: TSLNode = float(1.0);
     if (!config.isOrtho) {
@@ -217,24 +221,14 @@ export function linePickWebGPUFactory(
       const endNear: TSLNode = endDepth
         .lessThan(nearCull)
         .and(startDepth.greaterThanEqual(nearCull));
+      const startDenominator: TSLNode = startNear
+        .select(endDepth.sub(startDepth), float(1.0))
+        .toVar();
+      const endDenominator: TSLNode = endNear.select(startDepth.sub(endDepth), float(1.0)).toVar();
       tA = startNear
-        .select(
-          nearCull
-            .sub(startDepth)
-            .div(max(endDepth.sub(startDepth), float(1e-20)))
-            .toVar(),
-          float(0.0)
-        )
+        .select(nearCull.sub(startDepth).div(startDenominator).toVar(), float(0.0))
         .toVar();
-      tB = endNear
-        .select(
-          startDepth
-            .sub(nearCull)
-            .div(max(startDepth.sub(endDepth), float(1e-20)))
-            .toVar(),
-          float(1.0)
-        )
-        .toVar();
+      tB = endNear.select(startDepth.sub(nearCull).div(endDenominator).toVar(), float(1.0)).toVar();
       const mvStartClipped: TSLNode = mix(mvStart, mvEnd, tA).toVar();
       const mvEndClipped: TSLNode = mix(mvStart, mvEnd, tB).toVar();
       mvStart.assign(mvStartClipped);
@@ -446,6 +440,7 @@ export function buildLinePickTSLNodesFromUniforms(
       (uniforms.uResolution?.value as THREE.Vector2 | undefined) ?? new THREE.Vector2(1, 1)
     ),
     uIsOrtho: uniform((uniforms.uIsOrtho?.value as number) ?? 0),
+    uSortedIndexSlot: uniform((uniforms.uSortedIndexSlot?.value as number) ?? 0),
     uNodeId: uniform((uniforms.uNodeId?.value as number) ?? 0),
     uNearCull: uniform((uniforms.uNearCull?.value as number) ?? 1e-4),
     uMaxLinePixelWidth: uniform((uniforms.uMaxLinePixelWidth?.value as number) ?? 1.0),

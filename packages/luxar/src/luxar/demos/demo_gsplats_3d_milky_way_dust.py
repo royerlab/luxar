@@ -76,6 +76,7 @@ from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
+from luxar.demos import require_module
 from luxar.encoding import EncodingMode
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.utils.demos import (
@@ -170,13 +171,7 @@ def normalize_dust_volume(mean: np.ndarray, target_size: int) -> np.ndarray:
 
 def load_dust_volume(target_size: int = TARGET_SIZE) -> np.ndarray:
     """Download (resumable) + load the dust cube, ready for fitting."""
-    try:
-        import h5py
-    except ImportError as exc:  # pragma: no cover - env-dependent
-        raise ImportError(
-            "h5py is required for this demo. Install with: pip install h5py "
-            "(or `pip install luxar[demos]`)."
-        ) from exc
+    h5py = require_module("h5py")
 
     from luxar.utils.download import robust_download
 
@@ -310,9 +305,13 @@ def create_luxar_scene(gsplats_data: GSplatData, output_path: Path) -> Path:
         with LuxarZarrCompiler(
             output_path, encoding_mode=EncodingMode.PRECISION
         ) as compiler:
+            # ACES on purpose, not by omission: its highlight rolloff is what
+            # keeps the dense cloud cores from clipping flat. It trades away some
+            # exact `inferno` hue fidelity, which is the right call here — this
+            # is dust, not a scientific colour encoding.
             scene = compiler.create_scene(
                 dimensions=dims,
-                viewer_config=ViewerConfig(tone_mapping="Neutral"),
+                viewer_config=ViewerConfig(tone_mapping="ACES", exposure=-0.17),
             )
             scene.attrs["title"] = (
                 "GSplats: Milky Way Interstellar Dust (Leike & Enßlin 2020)"
@@ -323,8 +322,16 @@ def create_luxar_scene(gsplats_data: GSplatData, output_path: Path) -> Path:
                 result=gsplats_data,
                 colormap="inferno",
                 opacity=1.0,
-                blending_mode="additive",
-                intensity=1.0,
+                # Light volumetric compositing: near dust softly occludes far
+                # dust, giving the clouds depth without crushing the diffuse
+                # structure the way full kappa=1 absorption would.
+                blending_mode="volumetric",
+                absorption=0.3,
+                # Display window [0, 0.095]. The shipped fit's robust range
+                # (p99.9) tops out near 0.081, so this holds the faint diffuse
+                # filaments just below clipping — brighter and the dense cores
+                # flatten into featureless white.
+                intensity=1.0 / 0.095,
                 layer=True,
             )
 

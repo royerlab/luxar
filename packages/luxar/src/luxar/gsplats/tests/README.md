@@ -19,6 +19,7 @@ gsplats/
 │   ├── test_gsplats_integration.py # Integration tests
 │   ├── test_metrics.py             # Quality metrics (PSNR, SSIM, MSE)
 │   ├── test_progressive_fitting.py # Progressive fitting pipeline
+│   ├── test_slurm_gen.py           # Generated Slurm control-flow behavior
 │   ├── test_spatial_volume_filter.py # Spatial volume filtering
 │   ├── test_tiled_fitting.py       # Tiled fitting for large volumes
 │   └── README.md                   # This file
@@ -141,6 +142,10 @@ hatch run pytest --cov=luxar.gsplats packages/luxar/src/luxar/gsplats/ --cov-rep
 - Batch manifest creation and serialization
 - Task ID encoding/decoding
 - Slurm script generation
+
+**`test_slurm_gen.py`**:
+- Generated sequential task-packing exit behavior
+- Failure retention across later successes and padded-tail breaks
 
 **`test_cholesky_dim_ops.py`** (requires torch):
 - Cholesky factor dimension operations and transformations

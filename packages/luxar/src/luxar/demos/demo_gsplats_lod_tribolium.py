@@ -293,9 +293,11 @@ def create_luxar_scene(colored: GSplatData, output_path: Path) -> Path:
         ) as compiler:
             scene = compiler.create_scene(
                 dimensions=dims,
-                # Neutral tone-mapping (not the viewer default ACES) + matched
-                # intensity, consistent with the other gsplat demos.
-                viewer_config=ViewerConfig(tone_mapping="Neutral"),
+                # ACES, set explicitly + matched intensity, consistent with the
+                # other gsplat demos. NOTE: the per-level debug colours
+                # (green -> amber -> red) must stay tellable apart; ACES shifts
+                # hues, so check them if this demo's level cues get muddy.
+                viewer_config=ViewerConfig(tone_mapping="ACES"),
             )
 
             scene.attrs["title"] = (

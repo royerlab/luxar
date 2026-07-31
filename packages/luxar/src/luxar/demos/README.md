@@ -22,7 +22,50 @@ luxar demo run lorenz       # run by key or index; forwards -- args
 luxar demo run lorenz -- --no-serve --points=10000
 luxar demo run-all          # generate demo datasets (--no-serve; skips GPU/large-download by default)
 luxar demo cache list       # inventory demo caches under ~/.cache/luxar/
+luxar demo deps             # which optional dependencies are missing?
+luxar demo deps --install   # install the extras that provide them
 ```
+
+## Optional dependencies
+
+The core install deliberately excludes the heavyweight packages some demos need
+(`torch`, `umap-learn`, `esm`, `cellxgene-census`, `nibabel`, …), so a fresh
+checkout can list every demo but not run every demo.
+
+`_dependencies.py` is the single source of truth. `INSTALL_SPECS` maps each
+**import** name (`skimage`, not `scikit-image`) to the constrained requirement,
+the Luxar extra that provides it, and — where the bound or the skippability is
+load-bearing — why. Two consumers read it, which is what keeps them honest:
+
+| Consumer | Role |
+|---|---|
+| `require_module("x")` | The runtime gate. Raises `MissingDependencyError` naming the *constrained* spec and its extra. |
+| `luxar demo deps` | The installer/report. Surveys the table with `find_spec` (no imports), exits 1 if anything is missing. |
+
+Two rules govern the gate, both learned from real bugs:
+
+1. **Gate at the point of use, never at the entry point.** A demo whose
+   expensive artifact is already cached must run *without* the dependency that
+   produced it. `tests/test_no_entrypoint_dependency_preflight.py` fails the
+   build if an entry-point preflight reappears.
+2. **Advertise the constrained requirement.** A bare `pip install anndata`
+   resolves to 0.13+, which needs `zarr>=3.1` and would silently upgrade Luxar
+   past its `zarr<3.0` pin, breaking every store on disk.
+
+`tests/test_demos_dependencies.py` enforces both: every spec must accept exactly
+the versions its `pyproject.toml` pin accepts, and every module passed to
+`require_module` must exist in the table.
+
+Installing everything:
+
+```bash
+make install-demo-deps      # hatch env: the demos + gsplats + io extras
+luxar demo deps --install   # same thing from the CLI, any environment
+```
+
+Some demos need something a package manager can't supply — a Kaggle credential,
+a manual download, a `git lfs pull`, or a GPU. Those show up in the `NEEDS`
+column of `luxar demo` and in `luxar demo info <key>`, not here.
 
 ## The DEMO_META registry
 
@@ -224,7 +267,7 @@ Beautiful procedural forest using L-system grammars to showcase the **Lines** no
 
 **Run**: `luxar demo run forest [-- --iterations=6] [-- --trees=16]`
 
-**Demonstrates**: **Lines node type** with thousands of line segments, L-system grammar expansion and interpretation, width tapering (thick trunk to thin twigs), color gradients (bark to foliage), 3D branching, multiple tree varieties (elegant, fractal, willow, bush, cherry), seasonal color schemes.
+**Demonstrates**: **Lines node type** as an indexed branching network with shared joint vertices, L-system grammar expansion and interpretation, width tapering (thick trunk to thin twigs), color gradients (bark to foliage), 3D branching, multiple tree varieties (elegant, fractal, willow, bush, cherry), seasonal color schemes.
 
 ---
 
@@ -467,14 +510,14 @@ The large-scale structure of the Universe as a point cloud from the Dark Energy 
 
 **Run**: `luxar demo run desi_galaxies [-- --recompute]`
 
-**Requires**: Nothing extra by default — ships a compact precomputed point cloud (quantized XYZ + redshift + tracer id) via Git LFS. With `--recompute` (or if the LFS asset isn't pulled) it auto-downloads the ~1 GB of DR1 LSS clustering catalogs to `~/.cache/luxar/desi_galaxies/` (resumable), reads them with `astropy`, and converts (RA, Dec, z) → comoving Mpc. Adds `astropy` to the `demos` extra. The built scene (with substitutive LOD) is cached in the demos output dir, so only the first launch pays the LOD-build cost.
+**Requires**: Nothing extra by default — ships a compact precomputed point cloud (quantized XYZ + redshift + tracer id) via Git LFS. With `--recompute` (or if the LFS asset isn't pulled) it auto-downloads the ~1 GB of DR1 LSS clustering catalogs to `~/.cache/luxar/desi_galaxies/` (resumable), reads them with `astropy`, and converts (RA, Dec, z) → comoving Mpc. Adds `astropy` to the `demos` extra. The built scene (with substitutive LOD) is cached in the demos output dir, so only the first launch pays the LOD-build cost. If the DESI data host is unavailable, check `https://data.desi.lbl.gov/`, run `git lfs pull`, and rerun without `--recompute` to use the shipped scene without downloading the source catalogs.
 
 **Demonstrates**: Real spectroscopic-survey catalogs → a 3D cosmic-web Points cloud, `(RA, Dec, redshift)` → comoving-Mpc conversion via `astropy.cosmology` (DESI fiducial ΛCDM), substitutive Points LOD at ~9.75M points, dual coloring (categorical tracer vs. continuous redshift colormap) via layer toggles, HDR additive rendering, self-contained download → convert → cache-processed bootstrap. Data: [DESI DR1](https://data.desi.lbl.gov/doc/releases/dr1/) (DESI Collaboration 2025, arXiv:2503.14745; CC BY 4.0).
 
 ---
 
 #### demo_asteroids_solar_system.py - The Solar System (~1.5M Real Asteroids, JPL SBDB)
-Every catalogued minor planet placed in real 3D space by propagating its measured Keplerian orbit to a common epoch: ~1.5M asteroids as Points colored by semi-major axis, plus the eight planets, the Sun, and the planets' orbit ellipses (Lines). The main belt, Kirkwood gaps, Hilda triangle, and Jupiter Trojan clouds all emerge from the real orbital-element distribution.
+Every catalogued minor planet placed in real 3D space by propagating its measured Keplerian orbit to a common epoch: ~1.5M asteroids as Points colored by semi-major axis, plus the eight planets, the Sun, and the planets' orbit ellipses (Lines). The main belt, Kirkwood gaps, Hilda triangle, and Jupiter Trojan clouds all emerge from the real orbital-element distribution. The opening camera orbits the Sun and frames the outer planets instead of fitting sparse distant-object outliers.
 
 **Run**: `luxar demo run asteroids_solar_system [-- --animate] [-- --max-asteroids N]`
 
@@ -579,7 +622,7 @@ Gaussian splatting compression of real 3D confocal microscopy data (DAPI-stained
 
 **Requires**: Internet access (downloads OME-ZARR from IDR). Supports Metal (MPS) acceleration on Apple Silicon.
 
-**Demonstrates**: 3D Gaussian splat fitting to real microscopy volumes, 20-50x compression vs raw voxels, oriented ellipsoids capturing elongated nuclear shapes, IDR/OME-ZARR data loading.
+**Demonstrates**: 3D Gaussian splat fitting to real microscopy volumes, 20-50x compression vs raw voxels, oriented ellipsoids capturing elongated nuclear shapes, IDR/OME-ZARR data loading, `plasma` colormap + ACES tone-mapping.
 
 ---
 
@@ -590,7 +633,7 @@ Multi-channel 3D microscopy data as Gaussian splats, with full compute pipeline 
 
 **Requires**: Git LFS data (default) or internet access + GPU (with `--recompute`).
 
-**Demonstrates**: Multi-channel Gaussian splatting with distinct colors per channel, full pipeline (fetch from IDR, fit per channel, merge), precomputed gsplats via Git LFS for fast demo.
+**Demonstrates**: Multi-channel Gaussian splatting with distinct colors per channel, additive blending so the two superimposed channels mix instead of occluding each other, full pipeline (fetch from IDR, fit per channel, merge), precomputed gsplats via Git LFS for fast demo.
 
 ---
 
@@ -601,7 +644,7 @@ Two-channel scikit-image `cells3d` fluorescence volume (membranes + nuclei) fitt
 
 **Requires**: Git LFS data (default) or `scikit-image` + GPU (with `--recompute`).
 
-**Demonstrates**: Per-channel `layer=True` gsplats nodes with built-in BOP LUTs applied at display time (interactive colormap switching in the Layers panel, press L), shared amplitude-weighted centroid alignment, volumetric blending, Neutral tone-mapping for faithful hues. The lightweight, no-download sibling of `organoid_multichannel` and `kidney_multichannel_layers`.
+**Demonstrates**: Per-channel `layer=True` gsplats nodes with built-in BOP LUTs applied at display time (interactive colormap switching in the Layers panel, press L), shared amplitude-weighted centroid alignment, volumetric blending, ACES tone-mapping. The lightweight, no-download sibling of `organoid_multichannel` and `kidney_multichannel_layers`.
 
 ---
 
@@ -656,7 +699,7 @@ Large isotropic 3D light-sheet volume of a developing beetle (*Tribolium castane
 
 **Requires**: Internet access (downloads ~2.6 GB from Zenodo), GPU recommended. 965 x 1871 x 991 voxels.
 
-**Demonstrates**: Large-volume Gaussian splatting, isotropic light-sheet microscopy, Zenodo/Cell Tracking Challenge data, Zeiss LightSheet Z.1 data.
+**Demonstrates**: Large-volume Gaussian splatting, isotropic light-sheet microscopy, Zenodo/Cell Tracking Challenge data, Zeiss LightSheet Z.1 data, `normal` (peak-projection) blending to keep this volume's heavy diffuse background out of the way instead of accumulating it along every ray.
 
 ---
 
@@ -667,7 +710,7 @@ Gaussian-splats a real 3D reconstruction of the Milky Way's interstellar dust ar
 
 **Requires**: Nothing extra by default — ships a precomputed **full-resolution** fit via Git LFS (~8 MB: the native 740×740×540 cube fit to ~675k splats, PSNR ~35 dB). With `--recompute` (or if the LFS asset isn't pulled) it auto-downloads the 2.4 GB reconstruction (`mean_std.h5`) to `~/.cache/luxar/gsplats_milkyway_dust/` (resumable) and refits. The `--recompute` default reproduces the shipped full-res fit and needs a large-VRAM GPU (~40 GB+); on a smaller card pass `--target-size 256 --max-splats 200000` for a lighter downscaled refit.
 
-**Demonstrates**: Real *volumetric astronomy* → Gaussian splats (the same `cal → fit → convert` pipeline used for microscopy, on a dust-density cube), 20–50× compression, `inferno` colormap + Neutral tone-mapping + additive HDR rendering, self-contained download → fit → cache-processed bootstrap. Data: [Leike, Glatzle & Enßlin 2020](https://doi.org/10.1051/0004-6361/202038169), A&A 639, A138 (Zenodo record 3993082, CC BY 4.0).
+**Demonstrates**: Real *volumetric astronomy* → Gaussian splats (the same `cal → fit → convert` pipeline used for microscopy, on a dust-density cube), 20–50× compression, `inferno` colormap + ACES tone-mapping + light volumetric HDR rendering (absorption κ=0.3, so near dust softly occludes far dust), self-contained download → fit → cache-processed bootstrap. Data: [Leike, Glatzle & Enßlin 2020](https://doi.org/10.1051/0004-6361/202038169), A&A 639, A138 (Zenodo record 3993082, CC BY 4.0).
 
 ---
 
@@ -678,7 +721,7 @@ The human head Gaussian-splatted in **true photographic color** from the NLM Vis
 
 **Requires**: Nothing extra by default — ships a precomputed fit + per-splat colors via Git LFS. With `--recompute` (or if the LFS assets aren't pulled) it auto-downloads the 377 color head slices (~1.1 GB) to `~/.cache/luxar/gsplats_visible_human_head/`, builds the masked RGB volume, fits luminance (GPU), and samples per-splat colors.
 
-**Demonstrates**: True-color volumetric anatomy → Gaussian splats via a **single luminance fit + per-splat color sampling** (one fit, real photographic color — vs. the scalar-intensity-plus-colormap microscopy demos), warm-vs-blue tissue masking to drop the frozen-gel background, Neutral tone-mapping, self-contained download → mask → fit → cache-processed bootstrap. Data: [NLM Visible Human Project](https://www.nlm.nih.gov/research/visible/visible_human.html) (Male color cryosections, head subset; public domain).
+**Demonstrates**: True-color volumetric anatomy → Gaussian splats via a **single luminance fit + per-splat color sampling** (one fit, real photographic color — vs. the scalar-intensity-plus-colormap microscopy demos), warm-vs-blue tissue masking to drop the frozen-gel background, ACES tone-mapping, self-contained download → mask → fit → cache-processed bootstrap. Data: [NLM Visible Human Project](https://www.nlm.nih.gov/research/visible/visible_human.html) (Male color cryosections, head subset; public domain).
 
 ---
 
@@ -689,7 +732,7 @@ Gaussian-splats a real cryo-electron-microscopy density map from the EMDB: the i
 
 **Requires**: Nothing extra by default — ships a precomputed fit via Git LFS (~12 MB: the 700³ EMDB map downsampled to 512³, fit to ~1.0M splats, PSNR ~28 dB). With `--recompute` (or if the LFS asset isn't pulled) it auto-downloads the 1.3 GB EMDB map (`emd_5384.map.gz`) to `~/.cache/luxar/gsplats_cryoem_virus/` (resumable), reads it with `mrcfile`, downsamples to 512³, and fits Gaussian splats on the GPU. Adds `mrcfile` to the `demos` extra.
 
-**Demonstrates**: Real *structural-biology* electron density → Gaussian splats (the same `cal → fit → convert` pipeline used for microscopy, on an EMDB MRC/CCP4 map), solvent clipping + percentile normalization, `inferno` colormap (starts at black, so empty space stays black) + Neutral tone-mapping + volumetric HDR rendering (absorption κ=5, so the near shell occludes the far one), self-contained download → read → fit → cache-processed bootstrap. Data: [EMDB EMD-5384](https://www.ebi.ac.uk/emdb/EMD-5384) (Zhang et al. 2011, PNAS 108(36):14837; public domain / CC0).
+**Demonstrates**: Real *structural-biology* electron density → Gaussian splats (the same `cal → fit → convert` pipeline used for microscopy, on an EMDB MRC/CCP4 map), solvent clipping + percentile normalization, `inferno` colormap (starts at black, so empty space stays black) + ACES tone-mapping + volumetric HDR rendering (absorption κ=5, so the near shell occludes the far one), self-contained download → read → fit → cache-processed bootstrap. Data: [EMDB EMD-5384](https://www.ebi.ac.uk/emdb/EMD-5384) (Zhang et al. 2011, PNAS 108(36):14837; public domain / CC0).
 
 ---
 
@@ -700,7 +743,7 @@ Gaussian-splats a real clinical CT scan — a neck-to-pelvis study (the fullest 
 
 **Requires**: Nothing extra by default — ships a precomputed fit + per-splat organ labels via Git LFS (~8 MB: a neck-to-pelvis subject at 1.5 mm, fit to ~0.66M splats, PSNR ~43 dB; colors, layers and hover tooltips are all derived from the labels at scene build). With `--recompute` (or if the LFS assets aren't pulled) it auto-downloads the 3.2 GB TotalSegmentator subset to `~/.cache/luxar/gsplats_ct_totalsegmentator/` (resumable), extracts one subject, combines its 117 organ masks with `nibabel`, windows + fits on the GPU, and samples the per-splat organ label. Adds `nibabel` to the `demos` extra.
 
-**Demonstrates**: Real *clinical CT* (neck-to-pelvis) + multi-organ segmentation → colored Gaussian splats, combining per-structure NIfTI masks into one label volume, Hounsfield windowing, per-splat organ-label sampling driving a tissue-grouped color palette + **per-splat hover tooltips** (specific structure names) + a split into **toggle-able tissue layers** (Skeleton/Organs/Vessels & heart/Nervous system/Muscles), cubic-voxel resampling, Neutral tone-mapping + volumetric HDR rendering, self-contained download → combine → fit → cache-processed bootstrap. Data: [TotalSegmentator](https://zenodo.org/records/10047263) (Wasserthal et al. 2023, Radiology: AI; CC BY 4.0).
+**Demonstrates**: Real *clinical CT* (neck-to-pelvis) + multi-organ segmentation → colored Gaussian splats, combining per-structure NIfTI masks into one label volume, Hounsfield windowing, per-splat organ-label sampling driving a tissue-grouped color palette + **per-splat hover tooltips** (specific structure names) + a split into **toggle-able tissue layers** (Skeleton/Organs/Vessels & heart/Nervous system/Muscles), cubic-voxel resampling, ACES tone-mapping + volumetric HDR rendering, self-contained download → combine → fit → cache-processed bootstrap. Data: [TotalSegmentator](https://zenodo.org/records/10047263) (Wasserthal et al. 2023, Radiology: AI; CC BY 4.0).
 
 ---
 
@@ -799,7 +842,7 @@ Fetches the aerial "small city" MatrixCity scene — **13,589,514 Gaussians** �
 
 **Requires**: The two pre-fit `.gsplats.zarr` (~220 MB) in a local store (`~/luxar_demo_data/gsplats_neuromast_2ch/`, or `$LUXAR_NEUROMAST_DATA_DIR`). ⚠️ **Not bundled/hosted yet** — this is the outstanding follow-up (upload to the demo data host and switch to `load_precomputed_gsplats`, like the other gsplat demos). No network/GPU needed once the store is populated.
 
-**Demonstrates**: 4D + multi-channel gsplats, per-channel `layer=True` + named colormaps (`bop_blue`/`bop_orange`) for the Layers panel, `add_gsplats_from_file` grafting of pre-fit multi-LOD (`stream`, 8 LODs) nodes, Z-anisotropy correction baked via `transform --scale`, redundancy-based culling. Options: `--no-serve`, `--serve-only`.
+**Demonstrates**: 4D + multi-channel gsplats, per-channel `layer=True` + named colormaps (`bop_blue`/`bop_orange`) for the Layers panel, `add_gsplats_from_file` grafting of pre-fit multi-LOD (`stream`, 8 LODs) nodes, Z-anisotropy correction baked via `transform --scale`, redundancy-based culling, near-zero volumetric absorption (κ=0.05) so the two superimposed channels barely occlude each other. Options: `--no-serve`, `--serve-only`.
 
 ---
 
@@ -1028,10 +1071,10 @@ a preflight reappears.
 
 Version constraints live in one table, `INSTALL_SPECS` in
 [`_dependencies.py`](_dependencies.py) — never advertise a bare `pip install
-<pkg>`. `anndata` is the cautionary case: unconstrained it resolves to 0.13+,
-which requires `zarr>=3.1` and would silently upgrade Luxar past its
-`zarr>=2.16,<3.0` pin, breaking every store on disk.
-`tests/test_demos_dependencies.py` fails if a spec drifts from `pyproject.toml`.
+<pkg>`. See [Optional dependencies](#optional-dependencies) above for the table's
+two consumers, what the tests enforce, and the `anndata` cautionary case; adding
+a new optional dependency means pinning it in `pyproject.toml` **and** tabling it
+there, or the build fails.
 
 Soft checks that *degrade a feature* rather than refuse to run are fine and are
 not flagged — e.g. disabling image thumbnails when `Pillow` is absent.

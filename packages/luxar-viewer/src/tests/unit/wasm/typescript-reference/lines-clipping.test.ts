@@ -71,6 +71,91 @@ describe('lines_clipping: clip_segment_single', () => {
     expect(result[2]).toBeCloseTo(0.55, 5); // t2 = (5.5 - 0) / 10
   });
 
+  it('#806: returns invisible when NaN is on the FIRST endpoint of a non-displayed dim', () => {
+    // Both endpoints coincide/inside on the displayed dims [0,1,2]; the FIRST
+    // endpoint (p1) carries a NaN on the slicing (non-displayed) dim 3. Such a
+    // segment cannot be localized against the slice, so it must be invisible
+    // — NOT a "visible" result with NaN interpolation params.
+    //
+    // Pins the `!Number.isFinite(v1)` guard branch: without it the old code
+    // returns [1, NaN, NaN] (dv=5-NaN=NaN is not < epsilon, so no `continue`;
+    // NaN t-params never trip the `t1 >= t2` gate), so this assertion is
+    // genuinely red on the pre-#806 kernel.
+    const p1 = new Float32Array([1, 2, 3, NaN]);
+    const p2 = new Float32Array([1, 2, 3, 5]);
+    const slicePos = new Float32Array([0, 0, 0, 5]);
+    const tolerance = new Float32Array([1e10, 1e10, 1e10, 0.5]);
+    const displayDims = new Uint32Array([0, 1, 2]);
+
+    const result = clip_segment_single(p1, p2, slicePos, tolerance, displayDims, 4);
+
+    expect(result[0]).toBe(0.0); // invisible
+    expect(result[1]).toBe(0.0);
+    expect(result[2]).toBe(0.0);
+    expect(Number.isNaN(result[1])).toBe(false);
+    expect(Number.isNaN(result[2])).toBe(false);
+  });
+
+  it('#806: returns invisible when NaN is on the SECOND endpoint of a non-displayed dim', () => {
+    // Mirror of the above, pinning the `!Number.isFinite(v2)` guard branch: the
+    // FIRST endpoint is finite and inside the slice, the SECOND (p2) carries a
+    // NaN on dim 3. Old code: p1_in is true so the both-out short-circuit is
+    // skipped, dv=NaN-5=NaN is not < epsilon (no `continue`), and the NaN
+    // t-params never trip `t1 >= t2` → it returns [1, NaN, NaN] (visible with
+    // NaN params). Genuinely red without the guard.
+    const p1 = new Float32Array([1, 2, 3, 5]);
+    const p2 = new Float32Array([1, 2, 3, NaN]);
+    const slicePos = new Float32Array([0, 0, 0, 5]);
+    const tolerance = new Float32Array([1e10, 1e10, 1e10, 0.5]);
+    const displayDims = new Uint32Array([0, 1, 2]);
+
+    const result = clip_segment_single(p1, p2, slicePos, tolerance, displayDims, 4);
+
+    expect(result[0]).toBe(0.0); // invisible
+    expect(result[1]).toBe(0.0);
+    expect(result[2]).toBe(0.0);
+    expect(Number.isNaN(result[1])).toBe(false);
+    expect(Number.isNaN(result[2])).toBe(false);
+  });
+
+  it('#806: returns invisible when a non-displayed dim is +/-Inf on the FIRST endpoint', () => {
+    // The non-finite value must sit on the FIRST endpoint (p1). With +/-Inf on
+    // p1 and a finite in-slice p2, the old code produces dv=+/-Inf, whose
+    // t_min/t_max become NaN (finite/Inf mixes divide to NaN), so it returns
+    // [1, NaN, NaN] — genuinely red without the guard. (Note: putting -Inf on
+    // p2 instead would spuriously pass via the legacy `t1 >= t2` path, so it
+    // would NOT exercise the guard.)
+    const slicePos = new Float32Array([0, 0, 0, 5]);
+    const tolerance = new Float32Array([1e10, 1e10, 1e10, 0.5]);
+    const displayDims = new Uint32Array([0, 1, 2]);
+
+    // +Inf on the first endpoint's non-displayed dim.
+    const posInf = clip_segment_single(
+      new Float32Array([1, 2, 3, Infinity]),
+      new Float32Array([1, 2, 3, 5]),
+      slicePos,
+      tolerance,
+      displayDims,
+      4
+    );
+    expect(posInf[0]).toBe(0.0);
+    expect(posInf[1]).toBe(0.0);
+    expect(posInf[2]).toBe(0.0);
+
+    // -Inf on the first endpoint's non-displayed dim.
+    const negInf = clip_segment_single(
+      new Float32Array([1, 2, 3, -Infinity]),
+      new Float32Array([1, 2, 3, 5]),
+      slicePos,
+      tolerance,
+      displayDims,
+      4
+    );
+    expect(negInf[0]).toBe(0.0);
+    expect(negInf[1]).toBe(0.0);
+    expect(negInf[2]).toBe(0.0);
+  });
+
   it('MED-20: reusing a pre-allocated workspace buffer yields identical results across calls', () => {
     // Hot loops call clip_segment_single per segment; passing a single
     // workspace Uint8Array avoids per-call allocation while producing
@@ -152,6 +237,51 @@ describe('lines_clipping: clip_segments_batch', () => {
     expect(visibility[1]).toBe(1);
     expect(t1[1]).toBeCloseTo(0.0, 5); // v1 is inside
     expect(t2[1]).toBeCloseTo(0.1, 5); // t where dim3 crosses 4.5: 5 + t*(0-5) = 4.5 -> t = 0.1
+  });
+
+  it('#806: marks a segment invisible when a non-displayed dim is NaN', () => {
+    // seg0: normal, both in slice. seg1: v2 carries NaN on non-displayed dim 3.
+    const positions = new Float32Array([
+      0,
+      0,
+      0,
+      5, // v0: in slice
+      10,
+      10,
+      10,
+      5, // v1: in slice
+      20,
+      20,
+      20,
+      NaN, // v2: NaN on the slicing dim
+    ]);
+    const segments = new Uint32Array([0, 1, 1, 2]); // seg0: v0-v1, seg1: v1-v2
+    const slicePos = new Float32Array([0, 0, 0, 5]);
+    const tolerance = new Float32Array([1e10, 1e10, 1e10, 0.5]);
+    const displayDims = new Uint32Array([0, 1, 2]);
+
+    const visibility = new Uint8Array(2);
+    const t1 = new Float32Array(2);
+    const t2 = new Float32Array(2);
+
+    const count = clip_segments_batch(
+      positions,
+      segments,
+      slicePos,
+      tolerance,
+      displayDims,
+      4,
+      2,
+      visibility,
+      t1,
+      t2
+    );
+
+    expect(count).toBe(1); // only seg0 visible
+    expect(visibility[0]).toBe(1);
+    expect(visibility[1]).toBe(0); // NaN segment invisible, not NaN-visible
+    expect(Number.isNaN(t1[1])).toBe(false);
+    expect(Number.isNaN(t2[1])).toBe(false);
   });
 });
 
@@ -547,6 +677,57 @@ describe('lines_clipping: compute_cap_suppression', () => {
     );
     expect(outEnd[0]).toBeCloseTo(1, 6);
     expect(outEnd[1]).toBeCloseTo(1, 6);
+  });
+
+  it('uses compacted endpoint codes when visibility is non-contiguous', () => {
+    // seg0 and seg2 survive and share v1; the disjoint middle segment is
+    // culled. The position arrays are compacted to the two survivors, so a
+    // regression that keys direction-table codes on source segIdx would read
+    // the wrong row and lose this straight-through joint.
+    const outStart = new Float32Array(2);
+    const outEnd = new Float32Array(2);
+    const count = compute_cap_suppression(
+      new Uint32Array([0, 1, 3, 4, 1, 2]),
+      new Uint8Array([1, 0, 1]),
+      new Float32Array([0, 0, 0]),
+      new Float32Array([1, 1, 1]),
+      3,
+      5,
+      new Float32Array([0, 0, 0, 1, 0, 0]),
+      new Float32Array([1, 0, 0, 2, 0, 0]),
+      outStart,
+      outEnd
+    );
+
+    expect(count).toBe(2);
+    expect(outStart[0]).toBe(0);
+    expect(outEnd[0]).toBeCloseTo(1, 6);
+    expect(outStart[1]).toBeCloseTo(1, 6);
+    expect(outEnd[1]).toBe(0);
+  });
+
+  it('keeps malformed unregistered endpoint codes finite', () => {
+    // The first two starts register degree 2 at v0. The third start has a
+    // NaN t1, so it does NOT register but later queries the same vertex with
+    // myCode=4. codeSum=0+2 then yields partner=-2. JavaScript negative array
+    // indexing returns undefined, which used to poison the dot product and
+    // emit NaN; Rust rejects the out-of-range partner and returns 0.
+    const outStart = new Float32Array(3);
+    compute_cap_suppression(
+      new Uint32Array([0, 1, 0, 2, 0, 3]),
+      new Uint8Array([1, 1, 1]),
+      new Float32Array([0, 0, Number.NaN]),
+      new Float32Array([1, 1, 1]),
+      3,
+      4,
+      new Float32Array([0, 0, 0, 0, 0, 0, 0, 0, 0]),
+      new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]),
+      outStart,
+      new Float32Array(3)
+    );
+
+    expect(outStart[2]).toBe(0);
+    expect(Number.isFinite(outStart[2])).toBe(true);
   });
 
   it('keeps the cap on a degenerate zero-length neighbour', () => {

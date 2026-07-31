@@ -3,8 +3,8 @@
  * instanced-line variants (gamma / no-GOG fast paths, max-mode
  * premultiply, volumetric emission–absorption, colormap LUT,
  * behind-camera + ortho-near culling, sorted-index permutation) plus
- * the line-pick counterparts + the multi-row texture-orientation
- * variant. 17 registry entries.
+ * the line-pick counterparts + multi-row, cap-suppression, clipping-remap,
+ * and exact-near-plane boundary variants. 24 registry entries.
  *
  * @module tests/e2e/harnesses/tsl-harness/lines
  */
@@ -25,7 +25,11 @@ import {
   writeLineTexels,
   type LineTexelSource,
 } from '../../../../rendering/line-geometry';
-import { writeSortedIndexOrdering } from '../../../../rendering/element-storage';
+import {
+  writeSortedIndexOrdering,
+  pumpSortedIndexOrderingApply,
+  getActiveSortedIndexAttribute,
+} from '../../../../rendering/element-storage';
 import type { RegistryEntry } from './types';
 import { buildBehindCamera, buildColormapTexture } from './shared';
 
@@ -41,26 +45,40 @@ import { buildBehindCamera, buildColormapTexture } from './shared';
  * stage's sanitize + along-t mix and the fragment's w(a) map are
  * exercised on both backends.
  */
+interface LineFixtureStyle {
+  readonly startColor?: readonly [number, number, number];
+  readonly endColor?: readonly [number, number, number];
+  readonly startWidth?: number;
+  readonly endWidth?: number;
+  readonly startSharpness?: number;
+  readonly endSharpness?: number;
+  readonly startCapSuppression?: number;
+  readonly endCapSuppression?: number;
+}
+
 function lineTexelSource(
   start: readonly [number, number, number] = [-0.5, 0, 0],
   end: readonly [number, number, number] = [0.5, 0, 0],
   scalars?: readonly [number, number],
-  alphas?: readonly [number, number]
+  alphas?: readonly [number, number],
+  style: LineFixtureStyle = {}
 ): LineTexelSource {
+  const startColor = style.startColor ?? [1.0, 0.5, 0.25];
+  const endColor = style.endColor ?? [1.0, 0.5, 0.25];
   return {
     startPositions: new Float32Array([start[0], start[1], start[2]]),
     endPositions: new Float32Array([end[0], end[1], end[2]]),
-    startColors: new Float32Array([1.0, 0.5, 0.25]),
-    endColors: new Float32Array([1.0, 0.5, 0.25]),
-    startWidths: new Float32Array([0.1]),
-    endWidths: new Float32Array([0.1]),
+    startColors: new Float32Array(startColor),
+    endColors: new Float32Array(endColor),
+    startWidths: new Float32Array([style.startWidth ?? 0.1]),
+    endWidths: new Float32Array([style.endWidth ?? 0.1]),
     // Sharpness is the normalised [0, 1] knob -> super-Gaussian exponent
     // beta = 2^(6s - 2). 0.5 -> beta=2 (a true Gaussian, the default).
-    startSharpness: new Float32Array([0.5]),
-    endSharpness: new Float32Array([0.5]),
+    startSharpness: new Float32Array([style.startSharpness ?? 0.5]),
+    endSharpness: new Float32Array([style.endSharpness ?? 0.5]),
     segmentLengths: new Float32Array([1.0]),
-    startCapSuppression: new Float32Array([0]),
-    endCapSuppression: new Float32Array([0]),
+    startCapSuppression: new Float32Array([style.startCapSuppression ?? 0]),
+    endCapSuppression: new Float32Array([style.endCapSuppression ?? 0]),
     startScalars: scalars ? new Float32Array([scalars[0]]) : undefined,
     endScalars: scalars ? new Float32Array([scalars[1]]) : undefined,
     startAlphas: alphas ? new Float32Array([alphas[0]]) : undefined,
@@ -80,14 +98,15 @@ function buildLineDataTexture(
   start: readonly [number, number, number] = [-0.5, 0, 0],
   end: readonly [number, number, number] = [0.5, 0, 0],
   scalars?: readonly [number, number],
-  alphas?: readonly [number, number]
+  alphas?: readonly [number, number],
+  style: LineFixtureStyle = {}
 ): THREE.DataTexture {
   const tex = new THREE.DataTexture(new Float32Array(24), 6, 1, THREE.RGBAFormat, THREE.FloatType);
   tex.magFilter = THREE.NearestFilter;
   tex.minFilter = THREE.NearestFilter;
   tex.generateMipmaps = false;
   tex.flipY = false;
-  writeLineTexels(tex, lineTexelSource(start, end, scalars, alphas), 1);
+  writeLineTexels(tex, lineTexelSource(start, end, scalars, alphas, style), 1);
   return tex;
 }
 
@@ -161,7 +180,8 @@ function buildLineInstancedMesh(
   start: readonly [number, number, number] = [-0.5, 0, 0],
   end: readonly [number, number, number] = [0.5, 0, 0],
   scalars?: readonly [number, number],
-  alphas?: readonly [number, number]
+  alphas?: readonly [number, number],
+  style: LineFixtureStyle = {}
 ): THREE.Object3D {
   // PRODUCTION assembly (createInstancedLinesMesh), not a hand-rolled
   // geometry: a plain BufferGeometry quad TEMPLATE decorated by hand is
@@ -172,7 +192,7 @@ function buildLineInstancedMesh(
   // testing the real path (texture storage + aSortedIndex) and makes
   // instancing correct by construction.
   const mesh = createInstancedLinesMesh(
-    { ...lineTexelSource(start, end, scalars, alphas), segmentCount: 1 },
+    { ...lineTexelSource(start, end, scalars, alphas, style), segmentCount: 1 },
     material
   );
   mesh.frustumCulled = false;
@@ -276,6 +296,27 @@ const SORTED_PERMUTED_LINES: LineTexelSource = {
 const SORTED_PERMUTED_ORDERING = new Uint32Array([2, 0, 3, 1]);
 
 /**
+ * Drain a staged ordering and leave it in the FRONT (slot 0) buffer.
+ *
+ * The parity harness builds materials by hand, so nothing pushes the
+ * active slot into `uSortedIndexSlot` the way the depth-sort coordinator
+ * does per frame; both backends therefore sample slot 0. Draining and then
+ * folding the swapped-in permutation back onto slot 0 keeps the production
+ * writer in the loop while matching what the hand-built shaders read.
+ */
+function drainOrderingOntoFrontBuffer(geom: THREE.InstancedBufferGeometry): void {
+  for (let guard = 0; pumpSortedIndexOrderingApply(geom).more; guard++) {
+    if (guard > 64) throw new Error('ordering stream did not converge');
+  }
+  const active = getActiveSortedIndexAttribute(geom);
+  const front = geom.getAttribute('aSortedIndex') as THREE.InstancedBufferAttribute;
+  if (active && active !== front) {
+    (front.array as Uint32Array).set(active.array as Uint32Array);
+    front.needsUpdate = true;
+  }
+}
+
+/**
  * Four-segment line data texture, deliberately SIX TEXELS WIDE (one
  * segment per ROW): storage slot i has texel base 6·i, so with W = 6
  * every slot i > 0 resolves to row y = base / W = i > 0. This
@@ -314,13 +355,120 @@ function buildSortedPermutedLinesMesh(material: THREE.Material): THREE.Object3D 
     { ...SORTED_PERMUTED_LINES, segmentCount: SORTED_PERMUTED_COUNT },
     material
   );
-  writeSortedIndexOrdering(
-    mesh.geometry as THREE.InstancedBufferGeometry,
-    SORTED_PERMUTED_ORDERING,
-    SORTED_PERMUTED_COUNT
-  );
+  const geom = mesh.geometry as THREE.InstancedBufferGeometry;
+  // Clear the identity `createInstancedLinesMesh` just wrote, so the
+  // ordering below is the ONLY thing that can make the four segments read
+  // four distinct storage slots. Without this the test passes whether or
+  // not the ordering is ever applied — identity and any permutation both
+  // draw all four segments, so the image is the same and the assertion is
+  // vacuous. (The points twin gets this for free: its builder starts from
+  // a bare `attachPointStorage`, which leaves the buffer zero-filled.)
+  (geom.getAttribute('aSortedIndex').array as Uint32Array).fill(0);
+  writeSortedIndexOrdering(geom, SORTED_PERMUTED_ORDERING, SORTED_PERMUTED_COUNT);
+  // An ordering STAGES into the inactive buffer of the double-buffered pair
+  // and swaps in when complete, so rendering straight after staging would
+  // draw the un-permuted buffer — and this case exists precisely to prove
+  // the permutation reaches the shader. Drain the pump the way the
+  // per-frame scheduler does, then fold the result back onto slot 0:
+  // production pushes the live slot into `uSortedIndexSlot`, but these
+  // harness materials are hand-built (the TSL one has no writable uniform
+  // map at all), so both backends read the default slot. The permutation
+  // still comes from the production writer — only where it lands is
+  // normalised.
+  drainOrderingOntoFrontBuffer(geom);
   mesh.frustumCulled = false;
   return mesh;
+}
+
+function buildVisualLineUniforms(
+  texture: THREE.DataTexture,
+  isOrtho: boolean,
+  nearCull = 0.01
+): Record<string, THREE.IUniform> {
+  return {
+    uLineTex: { value: texture },
+    uResolution: { value: new THREE.Vector2(64, 64) },
+    uIsOrtho: { value: isOrtho ? 1 : 0 },
+    uNearCull: { value: nearCull },
+    uMaxLinePixelWidth: { value: 32.0 },
+    uPerspectiveLineScale: { value: isOrtho ? 1.0 : 64.0 },
+    uOrthoLineScale: { value: isOrtho ? 64.0 : 1.0 },
+    uOpacity: { value: 1.0 },
+    uInvGamma: { value: 1.0 },
+    uIntensity: { value: 1.0 },
+    uOffset: { value: 0.0 },
+  };
+}
+
+function buildPickLineUniforms(
+  texture: THREE.DataTexture,
+  isOrtho: boolean,
+  nearCull = 0.01
+): Record<string, THREE.IUniform> {
+  return {
+    uLineTex: { value: texture },
+    uResolution: { value: new THREE.Vector2(64, 64) },
+    uIsOrtho: { value: isOrtho ? 1 : 0 },
+    uNodeId: { value: 42 },
+    uNearCull: { value: nearCull },
+    uMaxLinePixelWidth: { value: 32.0 },
+    uPerspectiveLineScale: { value: isOrtho ? 1.0 : 64.0 },
+    uOrthoLineScale: { value: isOrtho ? 64.0 : 1.0 },
+  };
+}
+
+function buildVisualLineTSLMaterial(
+  uniforms: Record<string, THREE.IUniform>,
+  isOrtho: boolean
+): THREE.Material {
+  const material = lineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
+    gammaOne: true,
+    isOrtho,
+  }) as unknown as THREE.Material;
+  material.transparent = false;
+  material.blending = THREE.NoBlending;
+  return material;
+}
+
+const REMAP_STYLE: LineFixtureStyle = {
+  startColor: [1.0, 0.0, 0.0],
+  endColor: [0.0, 0.0, 1.0],
+  startWidth: 0.02,
+  endWidth: 0.2,
+  startSharpness: 0.0,
+  endSharpness: 1.0,
+};
+
+function capSuppressionEntry(suppression: number): RegistryEntry {
+  const style: LineFixtureStyle = {
+    startCapSuppression: suppression,
+    endCapSuppression: suppression,
+  };
+  return {
+    source: LINE_SOURCE,
+    buildUniforms: () =>
+      buildVisualLineUniforms(
+        buildLineDataTexture([-0.5, 0, 0], [0.5, 0, 0], undefined, undefined, style),
+        true
+      ),
+    // Max-mode premultiplies RGB by the cap/profile intensity, making the
+    // suppression value observable in readback even with NoBlending (normal
+    // mode carries coverage only in alpha, while the opaque target resolves
+    // alpha to 1).
+    buildDefines: () => ({ LUXAR_GAMMA_ONE: '', LUXAR_MAX_RGB_CONTRIBUTION: '' }),
+    buildTSLMaterial: (uniforms) => {
+      const material = lineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
+        blendingMode: 'max',
+        gammaOne: true,
+        isOrtho: true,
+      }) as unknown as THREE.Material;
+      material.transparent = false;
+      material.blending = THREE.NoBlending;
+      return material;
+    },
+    buildMesh: (material) =>
+      buildLineInstancedMesh(material, [-0.5, 0, 0], [0.5, 0, 0], undefined, undefined, style),
+  };
 }
 
 export const LINE_SHADERS: Record<string, RegistryEntry> = {
@@ -354,6 +502,13 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
     },
     buildMesh: buildLineInstancedMesh,
   },
+  // Rendered cap-suppression ladder: identical line/colour at s=0, 0.5,
+  // and 1. The parity spec samples the start endpoint and requires the
+  // fractional case to land strictly between the soft cap and fully lifted
+  // cap on BOTH backends — catching storage/shader boolean quantisation.
+  'line-cap-zero': capSuppressionEntry(0.0),
+  'line-cap-fractional': capSuppressionEntry(0.5),
+  'line-cap-full': capSuppressionEntry(1.0),
   // Multi-row texture-orientation parity: the segment renders from
   // STORAGE SLOT 1 of a 2-row texture (row 0 is a green decoy). Both
   // backends must resolve the same row — a Y-flip mismatch between the
@@ -674,6 +829,78 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
         isOrtho: false,
       }) as unknown as THREE.Material,
     buildMesh: (m) => buildLineInstancedMesh(m, [-0.5, 0, 3], [0.5, 0, 3]),
+    buildCamera: buildBehindCamera,
+  },
+  // Endpoint exactly ON nearCull: strict `<` means neither crossing branch
+  // fires. The visual and picking twins below pin that boundary across GLSL
+  // and TSL (w == nearCull remains finite and the segment still renders).
+  'line-on-near-plane': {
+    source: LINE_SOURCE,
+    buildUniforms: () =>
+      buildVisualLineUniforms(buildLineDataTexture([-0.2, 0, 0.5], [0.2, 0, 0]), false, 0.5),
+    buildDefines: () => ({ LUXAR_GAMMA_ONE: '' }),
+    buildTSLMaterial: (uniforms) => buildVisualLineTSLMaterial(uniforms, false),
+    buildMesh: (material) => buildLineInstancedMesh(material, [-0.2, 0, 0.5], [0.2, 0, 0]),
+    buildCamera: buildBehindCamera,
+  },
+  'line-pick-on-near-plane': {
+    source: LINE_PICK_SOURCE,
+    buildUniforms: () =>
+      buildPickLineUniforms(buildLineDataTexture([-0.2, 0, 0.5], [0.2, 0, 0]), false, 0.5),
+    buildTSLMaterial: (uniforms) =>
+      linePickWebGPUFactory(buildLinePickTSLNodesFromUniforms(uniforms), {
+        isOrtho: false,
+      }) as unknown as THREE.Material,
+    buildMesh: (material) => buildLineInstancedMesh(material, [-0.2, 0, 0.5], [0.2, 0, 0]),
+    buildCamera: buildBehindCamera,
+  },
+  // Distinct endpoint colour/width/sharpness on a crossing segment. With
+  // nearCull=0.5 the clipped start is tA=2/3, so its visible side must already
+  // be blue-dominant and substantially wider than the raw red/thin start.
+  // This makes a `t`/swapped-endpoint remap bug observable in pixels instead
+  // of passing vacuously with identical endpoint attributes.
+  'line-crossing-remap': {
+    source: LINE_SOURCE,
+    buildUniforms: () =>
+      buildVisualLineUniforms(
+        buildLineDataTexture([0.15, 0, 1.5], [0.15, 0, 0], undefined, undefined, REMAP_STYLE),
+        false,
+        0.5
+      ),
+    buildDefines: () => ({ LUXAR_GAMMA_ONE: '' }),
+    buildTSLMaterial: (uniforms) => buildVisualLineTSLMaterial(uniforms, false),
+    buildMesh: (material) =>
+      buildLineInstancedMesh(
+        material,
+        [0.15, 0, 1.5],
+        [0.15, 0, 0],
+        undefined,
+        undefined,
+        REMAP_STYLE
+      ),
+    buildCamera: buildBehindCamera,
+  },
+  'line-pick-crossing-remap': {
+    source: LINE_PICK_SOURCE,
+    buildUniforms: () =>
+      buildPickLineUniforms(
+        buildLineDataTexture([0.15, 0, 1.5], [0.15, 0, 0], undefined, undefined, REMAP_STYLE),
+        false,
+        0.5
+      ),
+    buildTSLMaterial: (uniforms) =>
+      linePickWebGPUFactory(buildLinePickTSLNodesFromUniforms(uniforms), {
+        isOrtho: false,
+      }) as unknown as THREE.Material,
+    buildMesh: (material) =>
+      buildLineInstancedMesh(
+        material,
+        [0.15, 0, 1.5],
+        [0.15, 0, 0],
+        undefined,
+        undefined,
+        REMAP_STYLE
+      ),
     buildCamera: buildBehindCamera,
   },
   // Segment CROSSING the camera plane: start at world z=1.5 (view depth

@@ -44,6 +44,9 @@ const createMockFileSystem = () => {
       return mockDirHandle; // Simplified: all paths return same handle
     },
     async removeEntry(name: string) {
+      if (!files.has(name) && !metaFiles.has(name)) {
+        throw new DOMException(`Entry not found: ${name}`, 'NotFoundError');
+      }
       files.delete(name);
       metaFiles.delete(name);
     },
@@ -332,6 +335,87 @@ describe('OPFSStore', () => {
       await store.delete('nonexistent'); // Should not throw
       const stats = store.getStats();
       expect(stats.count).toBe(0);
+    });
+
+    it('drops and persists a stale index entry when its OPFS file is already missing', async () => {
+      vi.useFakeTimers();
+      try {
+        await store.set('phantom', new Uint8Array(1000));
+        expect(store.getStats()).toMatchObject({ size: 1000, count: 1 });
+        await vi.advanceTimersByTimeAsync(1100);
+        const staleMetadata = JSON.parse(mockFS.metaFiles.get('_cache_meta.json') as string);
+        expect(staleMetadata.totalSize).toBe(1000);
+        expect(staleMetadata.entries).toHaveLength(1);
+
+        // Simulate a file removed by another tab after its metadata was saved.
+        // The spec-faithful mock now raises NotFoundError when delete() tries to
+        // remove it again.
+        mockFS.files.clear();
+        await store.delete('phantom');
+
+        expect(store.getStats()).toMatchObject({ size: 0, count: 0 });
+        await vi.advanceTimersByTimeAsync(1100);
+
+        // Deletion is itself a metadata mutation. Persist the reconciled state
+        // without requiring a later set() or dispose() to overwrite the stale
+        // entry left by the previous snapshot.
+        const metadata = JSON.parse(mockFS.metaFiles.get('_cache_meta.json') as string);
+        expect(metadata.totalSize).toBe(0);
+        expect(metadata.entries).toEqual([]);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('a missing LRU file does not wedge max-size eviction', async () => {
+      const smallStore = new OPFSStore('phantom-eviction', 'https://example.com', 100);
+      await smallStore.init();
+      await smallStore.set('old', new Uint8Array(80));
+      expect(smallStore.getStats()).toMatchObject({ size: 80, count: 1, evictions: 0 });
+
+      // Leave the index entry but remove its backing file out of band. Adding
+      // another 80-byte entry must reconcile and evict the phantom rather than
+      // breaking the no-progress loop with an over-budget two-entry index.
+      mockFS.files.clear();
+      await smallStore.set('new', new Uint8Array(80));
+
+      expect(smallStore.getStats()).toMatchObject({
+        size: 80,
+        count: 1,
+        evictions: 1,
+      });
+      expect(await smallStore.get('old')).toBeUndefined();
+      expect(await smallStore.get('new')).toEqual(new Uint8Array(80));
+    });
+
+    it('a hung removeEntry times out and preserves state for retry', async () => {
+      await store.set('stuck', new Uint8Array(500));
+      const before = store.getStats();
+
+      const originalRemoveEntry = mockFS.mockDirHandle.removeEntry;
+      mockFS.mockDirHandle.removeEntry = () => new Promise(() => {}); // hangs forever
+
+      const { config: realConfig } = await import('../../../config');
+      const originalTimeout = realConfig.cache.opfsOperationTimeoutMs;
+      realConfig.cache.opfsOperationTimeoutMs = 50;
+
+      try {
+        const start = Date.now();
+        await store.delete('stuck');
+        expect(Date.now() - start).toBeLessThan(2000);
+
+        // Timeout is treated as transient: totalSize and index unchanged.
+        const stats = store.getStats();
+        expect(stats.size).toBe(before.size);
+        expect(stats.count).toBe(before.count);
+      } finally {
+        realConfig.cache.opfsOperationTimeoutMs = originalTimeout;
+        mockFS.mockDirHandle.removeEntry = originalRemoveEntry;
+      }
+
+      // With the handle working again, the retry completes the deletion.
+      await store.delete('stuck');
+      expect(store.getStats()).toMatchObject({ size: 0, count: 0 });
     });
 
     // [cache OOS] Pre-fix, `delete(key)` decremented `totalSize` BEFORE
@@ -630,12 +714,128 @@ describe('OPFSStore', () => {
       failWrites = true;
       await failStore.set('boom', new Uint8Array(50));
       const stats = failStore.getStats();
-      // HIGH-2 regression: a single broken write that exhausts the retry
-      // loop must count as exactly 1 in writeFailures. The previous code
-      // incremented writeFailures on EVERY failed attempt inside the
-      // for-loop, so a single broken set() counted as 2.
+      // A single broken write counts exactly 1. This used to be enforced by an
+      // "already counted" flag while the loop still ran twice; the non-stale path
+      // now returns on the first failure, so the invariant is structural.
       expect(stats.writeFailures).toBe(1);
       expect(stats.count).toBe(0);
+    });
+
+    it('attempts a non-stale write exactly once and warns once', async () => {
+      // Only a stale bucket handle may retry. Retrying an ENOSPC/quota/timeout
+      // error buys nothing (no backoff, no space reclaimed) and costs a second
+      // opfsOperationTimeoutMs of caller stall plus a duplicate warning line.
+      let failWrites = false;
+      let createWritableCalls = 0;
+      const failingDir: any = {
+        ...mockFS.mockDirHandle,
+        async getFileHandle() {
+          return {
+            async getFile() {
+              return {
+                async arrayBuffer() {
+                  return new ArrayBuffer(0);
+                },
+              };
+            },
+            async createWritable() {
+              createWritableCalls++;
+              if (failWrites) throw new Error('ENOSPC: simulated I/O failure');
+              return { async write(_d: ArrayBuffer | string) {}, async close() {} };
+            },
+          };
+        },
+        async getDirectoryHandle() {
+          return failingDir;
+        },
+        async removeEntry() {},
+      };
+      vi.stubGlobal('navigator', {
+        storage: {
+          async getDirectory() {
+            return {
+              async getDirectoryHandle() {
+                return failingDir;
+              },
+              async removeEntry() {},
+            };
+          },
+          async estimate() {
+            return { quota: 10e9, usage: 1e9 };
+          },
+        },
+      });
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      const store = new OPFSStore('once-id', 'https://example.com', 1000);
+      await store.init();
+      failWrites = true;
+      createWritableCalls = 0;
+      await store.set('boom', new Uint8Array(50));
+
+      expect(createWritableCalls).toBe(1);
+      expect(
+        warnSpy.mock.calls.filter((c) => String(c[0]).includes('failed to write')).length
+      ).toBe(1);
+      warnSpy.mockRestore();
+    });
+
+    it('retries exactly once on a stale bucket handle, then succeeds', async () => {
+      // The guard rail on the fix above: "only stale retries" must not become
+      // "never retries". This behavior had no test at all.
+      // Armed only AFTER init: the init-time write probe also calls
+      // createWritable, and failing it would disable the store outright.
+      let armStale = false;
+      let createWritableCalls = 0;
+      const dir: any = {
+        ...mockFS.mockDirHandle,
+        async getFileHandle() {
+          return {
+            async getFile() {
+              return {
+                async arrayBuffer() {
+                  return new ArrayBuffer(0);
+                },
+              };
+            },
+            async createWritable() {
+              createWritableCalls++;
+              if (armStale && createWritableCalls === 1) {
+                throw new Error('A requested file or directory could not be found');
+              }
+              return { async write(_d: ArrayBuffer | string) {}, async close() {} };
+            },
+          };
+        },
+        async getDirectoryHandle() {
+          return dir;
+        },
+        async removeEntry() {},
+      };
+      vi.stubGlobal('navigator', {
+        storage: {
+          async getDirectory() {
+            return {
+              async getDirectoryHandle() {
+                return dir;
+              },
+              async removeEntry() {},
+            };
+          },
+          async estimate() {
+            return { quota: 10e9, usage: 1e9 };
+          },
+        },
+      });
+
+      const store = new OPFSStore('stale-id', 'https://example.com', 1000);
+      await store.init();
+      armStale = true;
+      createWritableCalls = 0;
+      await store.set('key', new Uint8Array(50));
+
+      expect(createWritableCalls).toBe(2); // failed once, retried, succeeded
+      expect(store.getStats().writeFailures).toBe(0);
     });
 
     it('quota-skipped writes increment quotaWriteSkipped and do not write data', async () => {

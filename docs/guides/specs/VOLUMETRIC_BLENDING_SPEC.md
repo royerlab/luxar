@@ -605,13 +605,21 @@ and rendering agree.
   combined **transmittance is exactly order-independent** (transmittances
   multiply), so occlusion of anything behind the pair is correct at every fade
   weight; **emission is order-dependent**, but only where the two levels' local
-  radiance differs — equal-color fragments commute exactly under over-compositing
-  — so the residual is second order (the product of the levels' per-fragment
-  alphas, each already scaled by `w`/`1−w`, times the local color difference) and
-  is bounded by the very inter-level difference the hard swap used to present in
-  full as a one-frame pop. Do not restate this as "absorption is conserved
-  exactly"; the accurate summary is *absorption-exact in the order sense,
-  emission approximate to second order*. `?no-lod-fade` is the escape hatch.
+  radiance differs — equal-color fragments commute exactly under over-compositing.
+  In the optically thin regime, where each alpha is linear in its `w`/`1−w`-
+  scaled optical depth, the ordering residual
+  `α_fine·α_coarse·(c_fine − c_coarse)` is second order in the alphas (and optical
+  depths) but first order in the local radiance difference. For individually
+  thick fragments both alphas can saturate, removing that second-order alpha
+  suppression while the residual stays first order in radiance difference. In
+  either regime its magnitude is bounded by the local inter-level radiance
+  difference `|c_fine − c_coarse|`. That is a
+  bound on the ordering residual, not on the rendered hard-swap pop, which also
+  depends on both alphas and the background and may be smaller (even zero). Do
+  not restate this as "absorption is conserved exactly"; the accurate summary is
+  *transmittance is order-exact; emission ordering error is thin-regime second
+  order in the alphas and always bounded by the local radiance difference*.
+  `?no-lod-fade` is the escape hatch.
 - **Tone mapping / HDR**: pure additive accumulates without bound and can blow
   out under ACES; volumetric bounds accumulated radiance near c/κ, improving
   tone-mapped appearance on dense scenes. Emission remains unclamped HDR — a

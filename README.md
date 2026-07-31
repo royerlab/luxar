@@ -313,7 +313,7 @@ physics, on both the WebGL/GLSL and WebGPU/TSL backends.
 
 ```bash
 luxar gsplat convert fit.gsplats.zarr scene.luxar.zarr \
-    --blending-mode volumetric --absorption 4 --colormap plasma --tone-mapping Neutral
+    --blending-mode volumetric --absorption 4 --colormap plasma --tone-mapping ACES
 ```
 
 The other modes cover the rest of the classical spectrum: `additive`/`luminous`

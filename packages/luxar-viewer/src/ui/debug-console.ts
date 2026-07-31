@@ -34,6 +34,7 @@
 import { consoleInterceptor, type BufferedMessage } from '../utils/console-interceptor';
 import { config } from '../config';
 import { getViewerContainer } from '../utils/viewer-container';
+import { formatErrorForDisplay } from '../utils/format-error';
 import { log, Modules, LogEmoji } from '../utils/log';
 import { EventGroup } from '../utils/cross-layer/event-group';
 import {
@@ -368,8 +369,11 @@ export class DebugConsole {
       messageEl.appendChild(argEl);
     });
 
-    // Add stack trace if present
-    if (message.stack && message.type === 'error') {
+    // Add stack trace if present. Warnings carry one too (~30 `log.warning(…,
+    // error)` sites pass a real Error, captured on the warn path in
+    // console-interceptor.ts), so render it for both — matching the clipboard
+    // export in `copyToClipboard`, which already emits any `message.stack`.
+    if (message.stack && (message.type === 'error' || message.type === 'warn')) {
       const stackEl = document.createElement('div');
       stackEl.className = 'luxar-console-message-stack';
       stackEl.textContent = message.stack;
@@ -404,6 +408,13 @@ export class DebugConsole {
     } else if (typeof arg === 'boolean') {
       span.className = 'luxar-console-message-boolean';
       span.textContent = String(arg);
+    } else if (arg instanceof Error) {
+      // Before the object branch: an Error's name/message/stack are
+      // non-enumerable, so JSON.stringify would render it as `{}`. Kept in
+      // lockstep with `debug-console/formatters.ts::formatArgs` — the two must
+      // agree for Errors or the visible row and the copied text disagree.
+      span.className = 'luxar-console-message-object';
+      span.textContent = formatErrorForDisplay(arg);
     } else if (typeof arg === 'object') {
       span.className = 'luxar-console-message-object';
       try {
@@ -503,7 +514,11 @@ export class DebugConsole {
     const text = messages
       .map((m) => {
         const formatted = this.formatArgs(m.args);
-        return `[${m.timestamp.toISOString()}] [${m.type.toUpperCase()}] ${formatted}`;
+        const line = `[${m.timestamp.toISOString()}] [${m.type.toUpperCase()}] ${formatted}`;
+        // Include the stack. This is the bug-report path — someone pastes this
+        // into an issue — and it was dropped entirely, so even a captured
+        // `console.error` stack never left the app.
+        return m.stack ? `${line}\n${m.stack}` : line;
       })
       .join('\n');
 

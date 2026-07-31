@@ -148,6 +148,7 @@ from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
+from luxar.demos import require_module
 from luxar.encoding import EncodingMode
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.utils.demos import (
@@ -232,22 +233,20 @@ def load_kidney():
         list[np.ndarray]: One 3D volume per channel, shape (Z, Y, X), float32 [0, 1].
     """
     with asection("Loading kidney dataset"):
-        try:
-            from skimage.data import kidney
-        except ImportError:
-            raise ImportError(
-                "scikit-image is required for this demo.\n"
-                "Install with: pip install scikit-image pooch"
-            )
+        kidney = require_module("skimage.data").kidney
 
         try:
             raw = kidney()
-        except Exception as e:
+        except Exception as exc:
+            # The sample data is FETCHED, not bundled in the scikit-image wheel,
+            # and skimage's fetcher is pooch. A missing pooch is the usual cause
+            # here, so re-gate it to get the constrained hint; if pooch IS
+            # present the failure is something else (network), so say that.
+            require_module("pooch")
             raise RuntimeError(
-                f"Failed to load kidney dataset: {e}\n"
-                "This dataset is downloaded on first use and requires 'pooch'.\n"
-                "Install with: pip install pooch"
-            ) from e
+                f"Failed to fetch the kidney sample data: {exc}\n"
+                "It is downloaded on first use — check network access."
+            ) from exc
         aprint(f"Raw data shape: {raw.shape}, dtype: {raw.dtype}")
         aprint(
             f"  Axes: (Z={raw.shape[0]}, Y={raw.shape[1]}, X={raw.shape[2]}, C={raw.shape[3]})"
@@ -390,11 +389,12 @@ def create_luxar_scene(gsplats_list, output_path=None):
         with LuxarZarrCompiler(
             output_path, encoding_mode=EncodingMode.PRECISION
         ) as compiler:
-            # Neutral tone-mapping keeps the per-channel colormap hues faithful
-            # (the viewer's default ACES shifts scientific LUT colors).
+            # ACES, set explicitly, for the per-channel colormaps
+            # (ACES is the house default; it shifts LUT hues slightly, which is
+            # the accepted trade for its highlight rolloff).
             scene = compiler.create_scene(
                 dimensions=dims,
-                viewer_config=ViewerConfig(tone_mapping="Neutral"),
+                viewer_config=ViewerConfig(tone_mapping="ACES"),
             )
 
             scene.attrs["title"] = "GSplats: 3D Kidney Multi-Channel (Layers panel)"

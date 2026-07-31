@@ -42,6 +42,7 @@ from ..io.reader import DEFAULT_COMP
 from ..io.writer import ZarrWriterProtocol
 from ..typing_utils.aliases import ChunkSpec, MaxShape, NodePath, PointsMetadata
 from ..typing_utils.config import DEFAULT_VERSION
+from ..utils.arbol_warnings import arbol_warnings
 from ._compiler.bounds import (
     compute_position_bounds,
     expand_bounds_with_transforms,
@@ -190,6 +191,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         # Emit the ACES-vs-LUT tone-mapping warning at most once per compile,
         # the first time a colormap LUT is written (see _write_colormap_lut_if_needed).
         self._lut_tone_mapping_warned: bool = False
+        # Partition wrappers write one Lines leaf per part. Keep the heuristic
+        # authoring warning once per logical node rather than once per leaf.
+        self._line_authoring_warnings: set[str] = set()
 
         # Create array encoder with specified encoding mode and float16 control
         self._encoder = ArrayEncoder(float16_allowed=float16_allowed)
@@ -241,14 +245,54 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             )
 
     def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
-        """Exit context manager and finalize."""
-        if not self._is_finalized:
-            self.finalize()
+        """Exit context manager, finalizing only on a clean exit.
 
-        # Clean up temporary directory if used
-        if self._tmpdir is not None:
-            self._tmpdir.cleanup()
+        If an exception is propagating out of the ``with`` block (a write
+        error, or Ctrl-C / KeyboardInterrupt) and the store was NOT already
+        finalized, the store is left UNfinalized and a root ``incomplete``
+        marker is stamped so the half-written artifact is detectable.
+        Finalizing here would seal a partial store as a valid, hash-stamped
+        scene (the root ``type='scene'`` attr is written up front), silently
+        corrupting downstream consumers. The marker is stamped only when the
+        store was not already finalized — if the body finalized explicitly
+        (e.g. ``Scene.to_zarr()``) and an unrelated exception then raised, the
+        complete store is left untouched. The marker write is best-effort so it
+        can never mask the original exception. The temporary directory (if any)
+        is cleaned up on every path.
+        """
+        try:
+            if exc_type is not None and not self._is_finalized:
+                # An exception is propagating and the store is only partially
+                # written: do NOT finalize, mark it incomplete instead.
+                try:
+                    self.store.attrs["incomplete"] = True
+                    aprint(
+                        "⚠️ Build errored — leaving the store unfinalized "
+                        "and marked incomplete"
+                    )
+                except BaseException:
+                    # Best-effort marker: never raise a new exception that
+                    # would mask the one already propagating out of the with
+                    # block (a second Ctrl-C is a BaseException, not Exception).
+                    pass
+            elif not self._is_finalized:
+                # Clean exit: finalize. If finalize() itself fails it leaves a
+                # half-finalized store; mark it incomplete so it is rejected,
+                # then re-raise the original finalize error.
+                try:
+                    self.finalize()
+                except BaseException:
+                    try:
+                        self.store.attrs["incomplete"] = True
+                    except BaseException:
+                        pass
+                    raise
+        finally:
+            # Clean up temporary directory if used (every path).
+            if self._tmpdir is not None:
+                self._tmpdir.cleanup()
 
+    @arbol_warnings()
     def create_scene(
         self,
         dimensions: Dimensions,
@@ -314,6 +358,12 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         is_internal_namespace = False
         if isinstance(path, str):
             normalized_path = path.lstrip("/")
+            if normalized_path == "overlays":
+                raise ValueError(
+                    "Top-level node path 'overlays' is reserved for screen-space "
+                    "overlay metadata. Write internal overlays below 'overlays/<name>' "
+                    "or choose a different user node name."
+                )
             is_internal_namespace = path in ("/", "") or normalized_path.startswith(
                 "overlays/"
             )
@@ -363,6 +413,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             group.attrs.clear()
             group.attrs.update(attrs)
 
+    @arbol_warnings()
     def write_points(  # type: ignore[override]
         self,
         path: NodePath,
@@ -421,6 +472,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         self._metadata_cache[metadata["path"]] = metadata
         return metadata
 
+    @arbol_warnings()
     def write_lines(  # type: ignore[override]
         self,
         path: NodePath,
@@ -457,8 +509,11 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             colors: Colors - array (N, 3), RGB tuple/list, or None
             sharpness: Sharpness - array (N,), scalar float, or None
             scalars: Scalars for colormap lookup - array (N,), scalar float, or None
-            indices: Optional vertex indices for indexed line type
-            line_type: Type of line connectivity
+            indices: Vertex-index pairs for indexed lines, as flat ``(2E,)``
+                elements or an ``(E, 2)`` pair array. Joint continuity requires
+                connected edges to reference the same vertex row.
+            line_type: Type of line connectivity. Use ``polyline`` for one chain
+                or ``indexed`` for multiple chains / graph topology.
             labels: Optional list of strings, one per vertex. Stored as CSR-encoded
                 label_offsets + label_bytes arrays for hover tooltips.
             image_labels: Optional per-element images for hover thumbnails.
@@ -518,6 +573,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
 
     # ── Multi-additive-LOD write helpers for Points and Lines ──
 
+    @arbol_warnings()
     def write_points_multi_lod(
         self,
         path: NodePath,
@@ -630,6 +686,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         )
         return metadata
 
+    @arbol_warnings()
     def write_lines_multi_lod(
         self,
         path: NodePath,
@@ -738,6 +795,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
 
     # ── GSplats public write methods ───────────────────────────
 
+    @arbol_warnings()
     def write_gsplats(  # type: ignore[override]
         self,
         path: NodePath,
@@ -786,6 +844,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         self._metadata_cache[path.lstrip("/")] = metadata
         return metadata
 
+    @arbol_warnings()
     def write_gsplat_leaf_subtree(
         self,
         path: NodePath,
@@ -848,7 +907,10 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         """
         self._check_not_finalized("create_resizable_dataset")
 
-        path = path.lstrip("/")
+        # Validate every path segment (rejects empty/dot-prefixed names + the
+        # reserved 'overlays' root — the F1/F5 chokepoint) + strip the leading
+        # slash. Returns the stripped path, so the rsplit below is unchanged.
+        path = _validate_node_path(path)
 
         # Parse parent group and dataset name
         parts = path.rsplit("/", 1)
@@ -913,12 +975,18 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             compressor=self.compressor,
         )
 
+    def _claim_line_authoring_warning(self, path: str) -> bool:
+        """Return True once for each logical Lines node path."""
+        if path in self._line_authoring_warnings:
+            return False
+        self._line_authoring_warnings.add(path)
+        return True
+
     def _make_geometry_ctx(self) -> GeometryWriteCtx:
         """Build the narrow context for the extracted geometry write pipelines.
 
-        Bundles the dataset/ordering configs + compressor with two bound-method
-        hooks for the orchestrator state a write mutates: the scene-bounds
-        accumulator and the warn-once colormap-LUT flag.
+        Bundles the dataset/ordering configs + compressor with bound-method hooks
+        for scene bounds, colormap warnings, and line-authoring warnings.
         """
         return GeometryWriteCtx(
             store=self.store,
@@ -927,6 +995,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             compressor=self.compressor,
             update_scene_bounds=self._update_scene_bounds,
             write_colormap_lut=self._write_colormap_lut_if_needed,
+            claim_line_authoring_warning=self._claim_line_authoring_warning,
         )
 
     def _make_gsplats_ctx(self) -> GSplatsWriteCtx:
@@ -959,16 +1028,28 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
     def _compute_content_hashes(self, store: zarr.Group) -> str:
         return compute_content_hashes(store)
 
+    @arbol_warnings()
     def finalize(self) -> None:
         """Finalize the Zarr store with metadata consolidation."""
         if self._is_finalized:
             return
 
-        # Auto-inject default hover overlay if labels exist but no hover overlay defined
-        if self._scene is not None:
-            self._scene._auto_inject_hover_overlay()
-
         try:
+            # A prior aborted attempt may have marked the store incomplete; a
+            # real finalize supersedes that. Clearing it lives INSIDE the outer
+            # boundary, and a failed clear must FAIL the finalize (the handler
+            # re-stamps and raises): a "successful" finalize that left the
+            # marker behind would set _is_finalized and produce a valid store
+            # that LuxarScene.load permanently rejects, with no way to retry.
+            if "incomplete" in self.store.attrs:
+                del self.store.attrs["incomplete"]
+
+            # Auto-inject default hover overlay if labels exist but no hover
+            # overlay defined. Inside the boundary: if it raises, the store is
+            # already partial and must be marked incomplete.
+            if self._scene is not None:
+                self._scene._auto_inject_hover_overlay()
+
             aprint("🔧 Finalizing Zarr store...")
 
             # Close the store to ensure all data is written
@@ -1024,12 +1105,42 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             if hasattr(store, "close"):
                 store.close()
 
-            self._is_finalized = True
-            aprint(f"✅ Zarr store finalized at {self._store_path}")
+        except BaseException as e:
+            # ANY failure (marker clearing, hover injection, or a finalize
+            # phase) leaves the store half-finalized; mark it so
+            # LuxarScene.load rejects it. A direct finalize() call, e.g. via
+            # Scene.to_zarr(), does not go through __exit__'s failure handling,
+            # so this is the only safeguard. Covers BaseException too so a
+            # KeyboardInterrupt mid-consolidation still stamps the marker.
+            # Stamp FIRST — before the informational aprint, which can itself
+            # raise (e.g. BrokenPipeError on a closed stdout) and would
+            # otherwise skip the stamp and mask the original error.
+            try:
+                self.store.attrs["incomplete"] = True
+            except BaseException:
+                pass
+            try:
+                aprint(f"⚠️ Failed to finalize: {e}")
+            except BaseException:
+                pass
+            # Preserve the historical wrapping for ordinary Exceptions, but let
+            # a KeyboardInterrupt / SystemExit propagate unchanged.
+            if isinstance(e, Exception):
+                raise ValueError(f"Could not finalize Zarr store: {e}") from e
+            raise
 
-        except Exception as e:
-            aprint(f"⚠️ Failed to finalize: {e}")
-            raise ValueError(f"Could not finalize Zarr store: {e}") from e
+        # Finalization is complete. The flag flips OUTSIDE the failure
+        # boundary: nothing past this point may re-enter the handler above,
+        # which would stamp `incomplete` on a complete store that a repeat
+        # finalize() (early return) could never un-mark.
+        self._is_finalized = True
+        try:
+            aprint(f"✅ Zarr store finalized at {self._store_path}")
+        except Exception:
+            # Purely informational — a broken stdout (e.g. BrokenPipeError)
+            # must not fail an already-complete finalization. A
+            # KeyboardInterrupt here still propagates; the store stays valid.
+            pass
 
     @property
     def store_path(self) -> str:

@@ -206,6 +206,62 @@ export function getLineTexture(geometry: THREE.BufferGeometry): THREE.DataTextur
   return getElementTexture(geometry);
 }
 
+function samePosition3(a: Float32Array, ai: number, b: Float32Array, bi: number): boolean {
+  return a[ai] === b[bi] && a[ai + 1] === b[bi + 1] && a[ai + 2] === b[bi + 2];
+}
+
+/**
+ * Capacity clamping keeps a prefix of the projected segment stream. When the
+ * boundary lands between two adjacent polyline segments, cap suppression was
+ * computed while both still existed, so the retained endpoint stays lifted
+ * (a bright hard stub) even though its partner is not drawn. Detect that
+ * adjacent split from the compacted endpoint positions + positive suppression
+ * on both sides and restore the retained endpoint's soft cap in the texture.
+ *
+ * This is intentionally boundary-local and allocation-free: arbitrary indexed
+ * neighbours can appear anywhere in the stream and their source indices are no
+ * longer present in `ProcessedLinesData`, while the normal polyline path emits
+ * adjacent segments. The per-node overflow path already warns; this repairs
+ * the common visible artifact without an O(N) topology table on every commit.
+ */
+function softenCapacitySplitCap(arr: Float32Array, src: LineTexelSource, written: number): void {
+  if (
+    written <= 0 ||
+    written >= src.segmentLengths.length ||
+    src.startPositions.length < (written + 1) * 3 ||
+    src.endPositions.length < (written + 1) * 3 ||
+    src.startCapSuppression.length <= written ||
+    src.endCapSuppression.length <= written
+  ) {
+    return;
+  }
+
+  const kept = written - 1;
+  const omitted = written;
+  const keptP = kept * 3;
+  const omittedP = omitted * 3;
+  const texel = kept * LINE_FLOATS_PER_SEGMENT;
+
+  if (
+    src.startCapSuppression[kept] > 0 &&
+    ((src.startCapSuppression[omitted] > 0 &&
+      samePosition3(src.startPositions, keptP, src.startPositions, omittedP)) ||
+      (src.endCapSuppression[omitted] > 0 &&
+        samePosition3(src.startPositions, keptP, src.endPositions, omittedP)))
+  ) {
+    arr[texel + 17] = 0.0;
+  }
+  if (
+    src.endCapSuppression[kept] > 0 &&
+    ((src.startCapSuppression[omitted] > 0 &&
+      samePosition3(src.endPositions, keptP, src.startPositions, omittedP)) ||
+      (src.endCapSuppression[omitted] > 0 &&
+        samePosition3(src.endPositions, keptP, src.endPositions, omittedP)))
+  ) {
+    arr[texel + 18] = 0.0;
+  }
+}
+
 /**
  * Fused texel writer: one pass over the staged arrays into the
  * texture's backing store, in the 6-texel layout documented in the
@@ -323,6 +379,7 @@ export function writeLineTexels(
     arr[o + 22] = hasAlphas ? startAlphas[i] : 1.0;
     arr[o + 23] = hasAlphas ? endAlphas[i] : 1.0;
   }
+  if (from < n) softenCapacitySplitCap(arr, src, n);
   // Ranged upload: only the [from, n) rows just written go to the GPU, not
   // the full capacity-sized image (pool slack rows past n never re-upload;
   // on an append, prefix rows [0, from) stay on the GPU untouched).

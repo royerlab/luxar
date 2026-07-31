@@ -198,18 +198,49 @@ class TestBrightestAndLabels:
         assert labels[1].startswith("b")  # brightest gets the label
 
 
-class TestSceneBuild:
-    """End-to-end scene builds (no network) — lock the dim_order/fill contracts."""
+def _assert_sun_centered_opening_camera(path: Path) -> None:
+    import zarr
 
-    def test_static_scene_writes_store(self, tmp_path) -> None:
+    viewer_config = zarr.open(str(path), mode="r").attrs["viewer_config"]
+    assert viewer_config["dynamic_clipping_enabled"] is True
+    camera = viewer_config["camera"]
+    position = np.asarray(camera["position"], dtype=np.float64)
+    target = np.asarray(camera["target"], dtype=np.float64)
+
+    np.testing.assert_array_equal(target, [0.0, 0.0, 0.0])
+    np.testing.assert_array_equal(camera["up"], [0.0, 0.0, 1.0])
+    distance = float(np.linalg.norm(position - target))
+    assert 30.0 <= distance <= 80.0
+    assert position[2] > 0.0  # view the ecliptic from above, not edge-on
+    half_height_at_sun = distance * np.tan(np.radians(camera["fov"]) / 2.0)
+    # Neptune's ~30 AU orbit fits, but distant catalog outliers do not drive an
+    # all-bounds opening view that shrinks the planetary system to a dot.
+    assert 30.0 <= half_height_at_sun <= 40.0
+
+
+class TestSceneBuild:
+    """End-to-end builds lock dimension mapping and the opening camera."""
+
+    @staticmethod
+    def _catalog_with_distant_outlier() -> dict:
+        cat = _tiny_catalog()
+        cat["a"][-1] = 500.0
+        return cat
+
+    def test_static_scene_writes_store_with_sun_centered_camera(self, tmp_path) -> None:
         out = tmp_path / "static.luxar.zarr"
-        n = build_static_scene(out, _tiny_catalog())
+        n = build_static_scene(out, self._catalog_with_distant_outlier())
         assert n == 6
         assert out.exists() and any(out.iterdir())
+        _assert_sun_centered_opening_camera(out)
 
-    def test_animated_scene_writes_store(self, tmp_path) -> None:
-        # Regression guard for the --animate dim_order/fill crash.
+    def test_animated_scene_writes_store_with_sun_centered_camera(
+        self, tmp_path
+    ) -> None:
+        # Regression guard for both the --animate dim_order/fill contract and
+        # the shared camera configuration.
         out = tmp_path / "animated.luxar.zarr"
-        n = build_animated_scene(out, _tiny_catalog())
+        n = build_animated_scene(out, self._catalog_with_distant_outlier())
         assert n > 0
         assert out.exists() and any(out.iterdir())
+        _assert_sun_centered_opening_camera(out)

@@ -17,6 +17,7 @@ scripts/
 | Script | Purpose |
 |--------|---------|
 | `check_documentation.py` | Check top-level package READMEs plus Python docstring and TypeScript JSDoc coverage |
+| `check_demo_ladders.py` | Audit built demo scenes for missing or degenerate additive streaming ladders |
 | `check_version_consistency.py` | Verify the zero-padded Python CalVer and npm-normalized viewer version describe the same release |
 | `set_version.py` | Update the Python and viewer release versions together |
 | `release.sh` | Run release preflight checks, then create and push the release tag |
@@ -35,6 +36,28 @@ scripts/
 | `refit_gsplat_demos.sh` | Force-refit every gsplat demo (sequential) |
 | `run_demo_recompute.sh` | Sequential demo recompute from scratch |
 | `test_batch_plan_fixes.py`, `test_cholesky_fix.py` | Ad-hoc regression check scripts |
+
+## Demo Ladder Structural Gate
+
+### `check_demo_ladders.py`
+
+Audits every built `*.luxar.zarr` demo (or explicitly supplied scenes) and
+fails when a large Points, Lines, or GSplats leaf has no additive ladder, a
+single increment exceeds the relative `--max-share` limit, or an increment
+exceeds the absolute `--max-level-elements` commit budget. The existing demo
+output directory is inventoried read-only; the check does not create it.
+
+```bash
+hatch run check-demo-ladders
+hatch run check-demo-ladders path/to/scene.luxar.zarr
+hatch run check-demo-ladders --max-share 0.6 --max-level-elements 1000000
+```
+
+The command is included in `hatch run check`. A checkout without generated demo
+scenes reports that none were found and succeeds; unit tests still exercise the
+gate logic in CI.
+
+---
 
 ## Documentation Quality Checker
 

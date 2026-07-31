@@ -14,13 +14,21 @@
 import { describe, it, expect, vi } from 'vitest';
 import { runLoaderUpdates } from '../../../../../data/scene-loader/loaders/run-loader-updates';
 import { ViewStateQueue } from '../../../../../data/scene-loader/view-state/view-state-queue';
-import type { FailedLoaderInfo } from '../../../../../data/scene-loader/loaders/loader-registry';
+import { LoaderRegistry } from '../../../../../data/scene-loader/loaders/loader-registry';
 
 function makeCtx() {
   const viewStateQueue = new ViewStateQueue();
   const forgetPath = vi.spyOn(viewStateQueue, 'forgetPath');
-  const failedLoaders = new Map<string, FailedLoaderInfo>();
-  return { profiler: null, viewStateQueue, failedLoaders, forgetPath };
+  // A real registry rather than a bare Map: failure recording is now routed
+  // through `recordFailure`, which also persists the classified error kind.
+  const registry = new LoaderRegistry();
+  return {
+    profiler: null,
+    viewStateQueue,
+    registry,
+    forgetPath,
+    failedLoaders: registry.failedLoaders,
+  };
 }
 
 /** An abort error shaped like the ones zarrita / the worker pool throw. */

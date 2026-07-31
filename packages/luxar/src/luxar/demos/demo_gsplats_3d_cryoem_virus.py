@@ -68,6 +68,7 @@ from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
+from luxar.demos import require_module
 from luxar.encoding import EncodingMode
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.utils.demos import (
@@ -161,13 +162,7 @@ def normalize_map_volume(density: np.ndarray, target_size: int) -> np.ndarray:
 
 def load_map_volume(target_size: int = TARGET_SIZE) -> np.ndarray:
     """Download (resumable) + read the EMDB map, ready for fitting."""
-    try:
-        import mrcfile
-    except ImportError as exc:  # pragma: no cover - env-dependent
-        raise ImportError(
-            "mrcfile is required for this demo. Install with: pip install mrcfile "
-            "(or `pip install luxar[demos]`)."
-        ) from exc
+    mrcfile = require_module("mrcfile")
 
     from luxar.utils.download import robust_download
 
@@ -267,7 +262,7 @@ def create_luxar_scene(gsplats_data: GSplatData, output_path: Path) -> Path:
         ) as compiler:
             scene = compiler.create_scene(
                 dimensions=dims,
-                viewer_config=ViewerConfig(tone_mapping="Neutral"),
+                viewer_config=ViewerConfig(tone_mapping="ACES"),
             )
             scene.attrs["title"] = (
                 "GSplats: Cryo-EM Giant Virus Capsid (PBCV-1, EMD-5384)"

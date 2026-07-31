@@ -33,6 +33,10 @@ make setup-dev    # Complete development environment setup (auto-installs depend
 make check-deps   # Check what dependencies are installed/missing
 make install-rust # Install Rust + wasm-pack for viewer builds
 make clean-setup  # Remove ALL dev tools to simulate fresh machine
+# Installs the demos+gsplats+io extras, then reports the result via
+# `luxar demo deps`. NOT part of setup-dev: the extras are heavy (torch,
+# cellxgene-census, esm) and most work needs none of them.
+make install-demo-deps  # Install every optional dependency the bundled demos need
 
 # Quality & Testing
 make test-all     # All tests (Python + TypeScript + WASM + CUDA if available)
@@ -202,6 +206,14 @@ See `docs/guides/developer/BUILD_SYSTEM_SPEC.md` for complete documentation.
 luxar demo                       # List the 75 bundled demos (table)
 luxar demo run lorenz            # Run a demo by key/index (forwards -- args)
 luxar demo cache list            # Inventory / clear demo caches (cache clear …)
+# Demos keep heavyweight packages OUT of the core install, so a fresh checkout
+# lists every demo but cannot run them all. `deps` reports what's missing (exit
+# 1 if anything is) and installs the extras that provide it. The table is
+# `luxar.demos.INSTALL_SPECS`, which also drives the runtime `require_module`
+# gate — so a package can't be advertised without being installable.
+luxar demo deps                  # Report which optional demo deps are missing
+luxar demo deps --install        # Install the extras that have missing packages
+luxar demo deps --extra io       # Restrict to one extra (demos / io / gsplats)
 luxar serve <data.luxar.zarr> --viewer # Serve with viewer
 luxar info <data.luxar.zarr> --stats   # Dataset info
 luxar profiles                   # Network simulation profiles
@@ -345,7 +357,12 @@ luxar gsplat convert splats.gsplats.zarr scene.luxar.zarr --center
 # Appearance is baked at convert time: --colormap (builtin/matplotlib/colorcet,
 # default gray), --tone-mapping (None/Linear/Reinhard/Cineon/ACES/AgX/Neutral;
 # default = viewer default ACES), --gamma, --intensity, --absorption (volumetric kappa), --layer/--no-layer.
-# For faithful scientific colors pair a colormap with Neutral (ACES shifts hues):
+# ACES is the right choice for almost every scene (its filmic rolloff keeps
+# bright structure from clipping flat) — prefer it, and set it EXPLICITLY so the
+# compiler's LUT notice (which only fires when nothing was chosen) stays quiet:
+luxar gsplat convert splats.gsplats.zarr scene.luxar.zarr --colormap plasma --tone-mapping ACES
+# Reach for Neutral only in the narrower case where the colormap carries an exact
+# scientific color encoding that must survive to the screen (ACES shifts hues):
 luxar gsplat convert splats.gsplats.zarr scene.luxar.zarr --colormap plasma --tone-mapping Neutral
 
 # Render gsplats back to volume for quality comparison

@@ -53,6 +53,7 @@ import {
   perspectiveNearFadeTSL,
   invalidFloatTSL,
   type TSLNode,
+  sortedIndexNode,
 } from '../../materials/_shared/tsl-helpers';
 
 const vec2: (a?: TSLNode, b?: TSLNode) => TSLNode = _vec2 as TSLNode;
@@ -80,6 +81,8 @@ export interface GSplatPickTSLNodes {
   readonly uTruncate: TSLNode;
   readonly uTruncateSq: TSLNode;
   readonly uIsOrtho: TSLNode;
+  /** Active ordering buffer: 0 = aSortedIndex, 1 = aSortedIndexB. */
+  readonly uSortedIndexSlot: TSLNode;
   readonly uNearCull: TSLNode;
   readonly uMaxExtentFactor: TSLNode;
   readonly uCov2DDilation: TSLNode;
@@ -108,7 +111,7 @@ export function gsplatPickWebGPUFactory(
   const aQuadCorner: TSLNode = attribute<'vec2'>('aQuadCorner', 'vec2');
   // Draw-slot -> storage-slot mapping; splat data comes from the splat
   // texture (visual-factory parity, shader-tsl.ts).
-  const aSortedIndex: TSLNode = attribute<'uint'>('aSortedIndex', 'uint');
+  const aSortedIndex: TSLNode = sortedIndexNode(nodes.uSortedIndexSlot);
 
   const uSplatTex = nodes.uSplatTex;
   const uResolution = nodes.uResolution;
@@ -444,6 +447,7 @@ export function buildGSplatPickTSLNodesFromUniforms(
     // visual builder's 3.0/9.0 and sized the quad for 1.5σ while discarding at 3σ).
     uTruncateSq: uniform((uniforms.uTruncateSq?.value as number) ?? 2.25),
     uIsOrtho: uniform((uniforms.uIsOrtho?.value as number) ?? 0),
+    uSortedIndexSlot: uniform((uniforms.uSortedIndexSlot?.value as number) ?? 0),
     uNearCull: uniform((uniforms.uNearCull?.value as number) ?? 1e-4),
     uMaxExtentFactor: uniform((uniforms.uMaxExtentFactor?.value as number) ?? 1.0),
     // Neutral fallback 0 (harness/snapshot adapter; production sets 0.3).

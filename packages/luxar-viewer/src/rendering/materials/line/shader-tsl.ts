@@ -10,7 +10,7 @@
  * Per-segment data comes from the RGBA32F line texture (`uLineTex`,
  * 6 texels/segment — layout in `rendering/line-geometry.ts` /
  * `rendering/element-texture-layout.ts`), fetched in the vertex stage
- * via `textureLoad` and indexed by the only per-instance attribute:
+ * via `textureLoad` and indexed by the ordering attributes:
  *   - aSortedIndex (uint) — draw-slot → storage-slot mapping
  *     (identity after a fresh commit; permuted by the sort worker)
  *
@@ -67,6 +67,7 @@ import {
   sanitizeAlpha,
   sanitizeNonNegative,
   type TSLNode,
+  sortedIndexNode,
 } from '../_shared/tsl-helpers';
 import {
   ALPHA_CLAMP,
@@ -147,6 +148,8 @@ export interface LineTSLNodes {
   readonly uLineTex: TSLNode;
   readonly uResolution: TSLNode;
   readonly uIsOrtho: TSLNode;
+  /** Active ordering buffer: 0 = aSortedIndex, 1 = aSortedIndexB. */
+  readonly uSortedIndexSlot: TSLNode;
   readonly uNearCull: TSLNode;
   readonly uMaxLinePixelWidth: TSLNode;
   readonly uPerspectiveLineScale: TSLNode;
@@ -192,10 +195,10 @@ export function lineWebGPUFactory(
 ): NodeMaterial {
   // Per-vertex.
   const aQuadCorner: TSLNode = attribute<'vec2'>('aQuadCorner', 'vec2');
-  // The only per-instance attribute: segment data itself lives in the
+  // The ordering attributes (double-buffered): segment data lives in the
   // line texture; `aSortedIndex` maps the draw slot to a storage slot
   // (identity after a fresh commit, permuted by the sort worker).
-  const aSortedIndex: TSLNode = attribute<'uint'>('aSortedIndex', 'uint');
+  const aSortedIndex: TSLNode = sortedIndexNode(nodes.uSortedIndexSlot);
 
   // Bind directly to the persistent `UniformNode`s owned by the
   // wrapper class (or by `buildLineTSLNodesFromUniforms` for the
@@ -352,8 +355,10 @@ export function lineWebGPUFactory(
     // exactly where the per-fragment near fade reaches zero — no seam.
     // t is remapped onto the clipped sub-range (tEff) so per-endpoint
     // attributes and the cap math keep the ORIGINAL parameterization.
-    // GLSL twin: shader-glsl.ts. select() evaluates both branches, so
-    // denominators are floored to keep the untaken lane finite.
+    // GLSL twin: shader-glsl.ts. select() evaluates both branches, so each
+    // denominator gets a benign 1.0 only in its UNTAKEN lane. The taken lane
+    // divides by the exact positive depth delta, matching GLSL even at tiny
+    // scene scales (a blanket max(delta, 1e-20) changed the real result).
     let tA: TSLNode = float(0.0);
     let tB: TSLNode = float(1.0);
     if (!config.isOrtho) {
@@ -363,24 +368,14 @@ export function lineWebGPUFactory(
       const endNear: TSLNode = endDepth
         .lessThan(nearCull)
         .and(startDepth.greaterThanEqual(nearCull));
+      const startDenominator: TSLNode = startNear
+        .select(endDepth.sub(startDepth), float(1.0))
+        .toVar();
+      const endDenominator: TSLNode = endNear.select(startDepth.sub(endDepth), float(1.0)).toVar();
       tA = startNear
-        .select(
-          nearCull
-            .sub(startDepth)
-            .div(max(endDepth.sub(startDepth), float(1e-20)))
-            .toVar(),
-          float(0.0)
-        )
+        .select(nearCull.sub(startDepth).div(startDenominator).toVar(), float(0.0))
         .toVar();
-      tB = endNear
-        .select(
-          startDepth
-            .sub(nearCull)
-            .div(max(startDepth.sub(endDepth), float(1e-20)))
-            .toVar(),
-          float(1.0)
-        )
-        .toVar();
+      tB = endNear.select(startDepth.sub(nearCull).div(endDenominator).toVar(), float(1.0)).toVar();
       const mvStartClipped: TSLNode = mix(mvStart, mvEnd, tA).toVar();
       const mvEndClipped: TSLNode = mix(mvStart, mvEnd, tB).toVar();
       mvStart.assign(mvStartClipped);
@@ -748,6 +743,7 @@ export function buildLineTSLNodesFromUniforms(
       (uniforms.uResolution?.value as THREE.Vector2 | undefined) ?? new THREE.Vector2(1, 1)
     ),
     uIsOrtho: uniform((uniforms.uIsOrtho?.value as number) ?? 0),
+    uSortedIndexSlot: uniform((uniforms.uSortedIndexSlot?.value as number) ?? 0),
     uNearCull: uniform((uniforms.uNearCull?.value as number) ?? 1e-4),
     uMaxLinePixelWidth: uniform((uniforms.uMaxLinePixelWidth?.value as number) ?? 1.0),
     uPerspectiveLineScale: uniform((uniforms.uPerspectiveLineScale?.value as number) ?? 1.0),

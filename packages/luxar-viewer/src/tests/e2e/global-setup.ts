@@ -7,9 +7,15 @@
  * 3. Basic environment checks
  */
 
+import type { FullConfig } from '@playwright/test';
 import * as fs from 'fs';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
+import {
+  assertCheckoutServerIdentity,
+  assertHTTPResource,
+  requireE2EServerMetadata,
+} from '../../../tools/e2e-server-identity';
 
 // `package.json` declares `"type": "module"`, so the CommonJS `__dirname`
 // global is undefined at module load. Reconstruct it from `import.meta.url`.
@@ -29,16 +35,29 @@ const REQUIRED_DATASETS = [
   'progressive_timelapse_example.luxar.zarr',
 ];
 
-export default async function globalSetup() {
+export default async function globalSetup(config: FullConfig) {
   console.log('\n🔍 Running pre-flight checks...\n');
 
-  // Get project root (5 levels up from this file)
-  // src/tests/e2e -> tests -> src -> luxar-viewer -> packages -> project root
-  const projectRoot = path.resolve(__dirname, '../../../../..');
+  const serverMetadata = requireE2EServerMetadata(config.metadata);
+  await assertCheckoutServerIdentity(
+    'Viewer',
+    serverMetadata.viewerIdentityURL,
+    serverMetadata.checkout
+  );
+  await assertCheckoutServerIdentity(
+    'Dataset',
+    serverMetadata.dataIdentityURL,
+    serverMetadata.checkout
+  );
+  console.log(`✅ Viewer and dataset servers match: ${serverMetadata.checkout.projectRoot}`);
+
+  const projectRoot = serverMetadata.checkout.projectRoot;
   const examplesDir = path.join(projectRoot, 'datasets/examples');
+  let hasDatasetWarnings = false;
 
   // Check 1: Verify examples directory exists
   if (!fs.existsSync(examplesDir)) {
+    hasDatasetWarnings = true;
     console.warn(`⚠️  Examples directory not found: ${examplesDir}`);
     console.warn('   Run "make run-examples" to generate test datasets');
     console.warn('   Tests requiring example datasets will fail.\n');
@@ -47,7 +66,7 @@ export default async function globalSetup() {
   } else {
     console.log(`✅ Examples directory found: ${examplesDir}`);
 
-    // Check 2: Verify required datasets exist
+    // Check 2: Verify required datasets exist locally and through the HTTP server.
     const missingDatasets: string[] = [];
     const foundDatasets: string[] = [];
 
@@ -62,7 +81,17 @@ export default async function globalSetup() {
 
     console.log(`✅ Found ${foundDatasets.length}/${REQUIRED_DATASETS.length} required datasets`);
 
+    for (const dataset of foundDatasets) {
+      const datasetURL = new URL(
+        `/datasets/examples/${encodeURIComponent(dataset)}/`,
+        serverMetadata.dataBaseURL
+      ).toString();
+      await assertHTTPResource(`Required dataset ${dataset}`, datasetURL);
+    }
+    console.log(`✅ ${foundDatasets.length} required datasets are reachable over HTTP`);
+
     if (missingDatasets.length > 0) {
+      hasDatasetWarnings = true;
       console.warn('\n⚠️  Warning: Some datasets are missing:');
       for (const dataset of missingDatasets) {
         console.warn(`   - ${dataset}`);
@@ -90,5 +119,9 @@ export default async function globalSetup() {
     throw error;
   }
 
-  console.log('\n✅ Pre-flight checks passed!\n');
+  if (hasDatasetWarnings) {
+    console.warn('\n⚠️  Pre-flight checks completed with dataset warnings.\n');
+  } else {
+    console.log('\n✅ Pre-flight checks passed!\n');
+  }
 }

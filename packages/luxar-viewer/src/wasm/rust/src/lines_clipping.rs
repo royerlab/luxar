@@ -68,6 +68,16 @@ pub fn clip_segment_single(
         let v1 = p1[dim];
         let v2 = p2[dim];
 
+        // #806: a non-finite (NaN or ±Inf) coordinate on a slicing (non-displayed)
+        // dimension cannot be localized against the slice, so the segment is
+        // treated as invisible. Enforced here, identically in the TypeScript
+        // backend (`lines-clipping.ts`), so the two backends stay in parity —
+        // f32::max/min ignore a NaN operand and would otherwise leave the
+        // t-params finite, rendering a segment the TS path drops.
+        if !v1.is_finite() || !v2.is_finite() {
+            return vec![0.0, 0.0, 0.0]; // [visible=0, t1, t2]
+        }
+
         // Classify endpoints relative to slice
         let p1_in = v1 >= slice_min && v1 <= slice_max;
         let p2_in = v2 >= slice_min && v2 <= slice_max;
@@ -196,6 +206,16 @@ pub fn clip_segments_batch(
 
             let v1_val = positions[p1_offset + dim];
             let v2_val = positions[p2_offset + dim];
+
+            // #806: a non-finite (NaN or ±Inf) coordinate on a slicing
+            // (non-displayed) dimension cannot be localized against the slice,
+            // so the segment is treated as invisible. Enforced here, identically
+            // in the TypeScript backend (`lines-clipping.ts`), so the two
+            // backends stay in parity.
+            if !v1_val.is_finite() || !v2_val.is_finite() {
+                visible = false;
+                break;
+            }
 
             let p1_in = v1_val >= slice_min && v1_val <= slice_max;
             let p2_in = v2_val >= slice_min && v2_val <= slice_max;
@@ -341,10 +361,12 @@ pub fn lerp_vec3(a: &[f32], b: &[f32], t: f32) -> Vec<f32> {
 /// Calculate 3D Euclidean distance.
 #[wasm_bindgen]
 pub fn distance_3d(a: &[f32], b: &[f32]) -> f32 {
-    let dx = b[0] - a[0];
-    let dy = b[1] - a[1];
-    let dz = b[2] - a[2];
-    (dx * dx + dy * dy + dz * dz).sqrt()
+    // Match the TypeScript mirror: widen before subtraction/squaring so
+    // component deltas above sqrt(f32::MAX) stay finite.
+    let dx = b[0] as f64 - a[0] as f64;
+    let dy = b[1] as f64 - a[1] as f64;
+    let dz = b[2] as f64 - a[2] as f64;
+    (dx * dx + dy * dy + dz * dz).sqrt() as f32
 }
 
 /// Batch interpolate scalar attributes for visible segments.
@@ -627,6 +649,18 @@ pub fn compute_cap_suppression(
     }
 
     let visible_count = out_idx;
+    debug_assert!(
+        output_start.len() >= visible_count,
+        "output_start too small: {} < {}",
+        output_start.len(),
+        visible_count
+    );
+    debug_assert!(
+        output_end.len() >= visible_count,
+        "output_end too small: {} < {}",
+        output_end.len(),
+        visible_count
+    );
 
     // One unit direction per visible segment, computed ONCE (sequential, one
     // sqrt each). The joint test then needs no normalisation at all: the "away"
@@ -789,6 +823,50 @@ mod tests {
         assert_eq!(result[0], 0.0); // not visible
     }
 
+    /// #806: a NaN on a NON-displayed (slicing) dim cannot be localized
+    /// against the slice, so the segment is invisible — on BOTH endpoints.
+    /// Without the guard, f32::max/min ignore the NaN operand and the segment
+    /// would render, disagreeing with the TypeScript backend.
+    #[test]
+    fn test_clip_segment_nan_hidden_dim() {
+        let slice_pos = vec![0.0, 0.0, 0.0, 5.0];
+        let tolerance = vec![1e10, 1e10, 1e10, 0.5];
+        let display_dims = vec![0, 1, 2];
+
+        // NaN on the first endpoint's hidden dim.
+        let p1 = vec![1.0, 2.0, 3.0, f32::NAN];
+        let p2 = vec![1.0, 2.0, 3.0, 5.0];
+        let result = clip_segment_single(&p1, &p2, &slice_pos, &tolerance, &display_dims, 4);
+        assert_eq!(result, vec![0.0, 0.0, 0.0]);
+
+        // NaN on the second endpoint's hidden dim.
+        let p1 = vec![1.0, 2.0, 3.0, 5.0];
+        let p2 = vec![1.0, 2.0, 3.0, f32::NAN];
+        let result = clip_segment_single(&p1, &p2, &slice_pos, &tolerance, &display_dims, 4);
+        assert_eq!(result, vec![0.0, 0.0, 0.0]);
+    }
+
+    /// #806: +Inf / -Inf on a NON-displayed dim is likewise non-finite and
+    /// must mark the segment invisible, on either endpoint.
+    #[test]
+    fn test_clip_segment_inf_hidden_dim() {
+        let slice_pos = vec![0.0, 0.0, 0.0, 5.0];
+        let tolerance = vec![1e10, 1e10, 1e10, 0.5];
+        let display_dims = vec![0, 1, 2];
+
+        // +Inf on the first endpoint's hidden dim.
+        let p1 = vec![1.0, 2.0, 3.0, f32::INFINITY];
+        let p2 = vec![1.0, 2.0, 3.0, 5.0];
+        let result = clip_segment_single(&p1, &p2, &slice_pos, &tolerance, &display_dims, 4);
+        assert_eq!(result, vec![0.0, 0.0, 0.0]);
+
+        // -Inf on the second endpoint's hidden dim.
+        let p1 = vec![1.0, 2.0, 3.0, 5.0];
+        let p2 = vec![1.0, 2.0, 3.0, f32::NEG_INFINITY];
+        let result = clip_segment_single(&p1, &p2, &slice_pos, &tolerance, &display_dims, 4);
+        assert_eq!(result, vec![0.0, 0.0, 0.0]);
+    }
+
     #[test]
     fn test_clip_segment_crosses_slice() {
         // Segment crosses slice in dim3
@@ -947,6 +1025,17 @@ mod tests {
     }
 
     #[test]
+    fn test_distance_3d_huge_coordinates_no_f32_overflow() {
+        let a = [-1e30f32, 0.0, 0.0];
+        let b = [1e30f32, 0.0, 0.0];
+        let distance = distance_3d(&a, &b);
+
+        assert!(distance.is_finite());
+        let expected = (b[0] as f64 - a[0] as f64) as f32;
+        assert_eq!(distance, expected);
+    }
+
+    #[test]
     fn test_calculate_segment_lengths() {
         // 3 segments with known distances
         let starts: Vec<f32> = vec![
@@ -1062,6 +1151,29 @@ mod tests {
         assert_eq!(out_end[1], 0.0);
     }
 
+    /// The lower clamp is load-bearing for a 180-degree fold-back: the raw
+    /// value is -1 and must become 0 rather than darkening below the soft cap.
+    #[test]
+    fn test_compute_cap_suppression_fold_back_lower_clamp() {
+        let mut out_start = vec![0.0f32; 2];
+        let mut out_end = vec![0.0f32; 2];
+        compute_cap_suppression(
+            &[0, 1, 1, 2],
+            &[1, 1],
+            &[0.0, 0.0],
+            &[1.0, 1.0],
+            2,
+            3,
+            &[0.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+            &[1.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            &mut out_start,
+            &mut out_end,
+        );
+
+        assert_eq!(out_end[0], 0.0);
+        assert_eq!(out_start[1], 0.0);
+    }
+
     /// A 90-degree bend keeps the cap; a branch point keeps the cap.
     #[test]
     fn test_compute_cap_suppression_bend_and_branch() {
@@ -1098,6 +1210,50 @@ mod tests {
             &mut hub_end,
         );
         assert_eq!(hub, vec![0.0, 0.0, 0.0]);
+    }
+
+    /// A visible neighbour trimmed away from the shared vertex is not a joint.
+    #[test]
+    fn test_compute_cap_suppression_trimmed_neighbour() {
+        let mut out_start = vec![0.0f32; 2];
+        let mut out_end = vec![0.0f32; 2];
+        compute_cap_suppression(
+            &[0, 1, 1, 2],
+            &[1, 1],
+            &[0.0, 0.4],
+            &[1.0, 1.0],
+            2,
+            3,
+            &[0.0, 0.0, 0.0, 1.4, 0.0, 0.0],
+            &[1.0, 0.0, 0.0, 2.0, 0.0, 0.0],
+            &mut out_start,
+            &mut out_end,
+        );
+
+        assert_eq!(out_end[0], 0.0);
+        assert_eq!(out_start[1], 1.0); // trimmed endpoint: dimming suppressed (clip boundary)
+    }
+
+    /// A zero-length neighbour has no direction and keeps the cap.
+    #[test]
+    fn test_compute_cap_suppression_degenerate_neighbour() {
+        let mut out_start = vec![0.0f32; 2];
+        let mut out_end = vec![0.0f32; 2];
+        compute_cap_suppression(
+            &[0, 1, 1, 2],
+            &[1, 1],
+            &[0.0, 0.0],
+            &[1.0, 1.0],
+            2,
+            3,
+            &[0.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+            &[1.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+            &mut out_start,
+            &mut out_end,
+        );
+
+        assert_eq!(out_end[0], 0.0);
+        assert_eq!(out_start[1], 0.0);
     }
 
     /// A gentle 45-degree bend interpolates: suppression = cos(45°) ≈ 0.7071

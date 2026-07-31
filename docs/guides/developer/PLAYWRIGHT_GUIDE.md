@@ -428,6 +428,30 @@ npx playwright show-trace test-results/trace.zip
 
 ### Common Issues
 
+#### Server identity or fixed port is already in use
+
+The E2E config reuses ports 5173 and 9000 only when both servers expose the
+deterministic identity marker for the checkout being tested. A server from a
+sibling clone/worktree no longer satisfies the readiness probe. Vite is started
+with `--strictPort`, so an occupied viewer port fails immediately instead of
+silently shifting to another port or exercising a foreign bundle. Both servers
+are pinned to `127.0.0.1` so IPv4 and IPv6 listeners cannot split the probes
+between different processes.
+
+Inspect an occupied port before stopping anything; it may belong to another
+active checkout:
+
+```bash
+lsof -nP -iTCP:5173 -sTCP:LISTEN
+lsof -nP -iTCP:9000 -sTCP:LISTEN
+```
+
+Coordinate with the process owner, stop the stale server, and rerun Playwright.
+The global setup also compares the exact identity response body and probes each
+locally present required dataset over HTTP. An unrelated catch-all server or a
+mis-rooted dataset server therefore fails during preflight rather than surfacing
+later as a viewer initialization timeout.
+
 #### 1. Test Times Out
 
 **Problem**: Test exceeds 60-second timeout

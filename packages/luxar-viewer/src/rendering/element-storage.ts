@@ -4,11 +4,14 @@
  * Per-element data lives in an RGBA32F **element texture** (gsplats:
  * 4 texels/splat; points: 3 texels/point; lines: 6 texels/segment —
  * layout authority in `./element-texture-layout`) sampled by the vertex
- * shader via `texelFetch`; the only per-instance attribute is
- * `aSortedIndex` (Uint32), which maps the draw slot to a storage slot
- * so draw order can be permuted without rewriting element data
- * (depth-sorting plan, `docs/guides/specs/GSPLAT_DEPTH_SORTING_SPEC.md`
- * §4/§8).
+ * shader via `texelFetch`. The only per-instance data is the ordering
+ * pair `aSortedIndex` / `aSortedIndexB` (Uint32), which maps the draw
+ * slot to a storage slot so draw order can be permuted without
+ * rewriting element data (depth-sorting plan,
+ * `docs/guides/specs/GSPLAT_DEPTH_SORTING_SPEC.md` §4/§8). The pair is
+ * DOUBLE-BUFFERED — a new ordering streams into the inactive buffer and
+ * the `uSortedIndexSlot` uniform flips on completion (spec §2.1 tier 3),
+ * so no frame ever samples a half-applied permutation.
  *
  * Texture lifetime = geometry lifetime: `attachElementStorage`
  * registers a `dispose` listener on the geometry, so every dispose
@@ -190,45 +193,54 @@ interface ElementStorageUserData {
 // per-frame cost to roughly 1/10th of the 10M stall (~12–56 ms worst
 // case → low-single-digit ms typical) instead of one 119–563 ms hitch.
 //
-// CORRECTNESS TRADE (documented, deliberate): mid-application the
-// attribute holds `new ordering[0, cursor) ∪ old ordering[cursor, n)`.
-// Both halves are valid storage-slot indices, but the MIX is not a
-// permutation: an element indexed by both halves draws twice and the
-// one it displaced draws zero times. Visually that is transient
-// shimmer of the same class as the stale-order frames every 3DGS
-// renderer shows between camera move and sort resolve — strictly
-// bounded by `ceil(n / chunk)` frames (≤ 10 frames at 10M), after
-// which the buffer EXACTLY equals the new ordering. Order-independent
-// (additive/commutative) modes never receive orderings (identity is
-// pinned), so only normal/volumetric see it. The pick path shares the
-// same attribute: a transiently duplicated index means two instances
-// briefly resolve to the same element id — a hover mid-shimmer can
-// pick either duplicate, equally acceptable and equally transient.
+// Slices land in the INACTIVE buffer of a double-buffered pair, and the
+// `uSortedIndexSlot` uniform flips only once that buffer holds the whole
+// permutation (depth-sorting spec §2.1 tier 3). So chunking costs
+// nothing in correctness: every rendered frame samples a complete
+// ordering.
+//
+// It did not always. L8 originally streamed into the LIVE attribute and
+// accepted the mix `new[0, cursor) ∪ old[cursor, n)` as "transient
+// shimmer bounded by ceil(n / chunk) frames". Both halves are valid
+// storage slots but the MIX is not a permutation — an element indexed by
+// both draws twice and the one it displaced not at all. The bound was
+// real; the premise that it stays transient was not. Under a CONTINUOUS
+// orbit a new sort arrives about as fast as a stream drains, so the
+// mixed state is the steady state: measured on 2026-07-29 at 27–33% of
+// sampled frames on a 1.9M-splat volumetric node (27,613 double-drawn)
+// and 80% on an 8M-point normal node (59,345), always beginning exactly
+// at the chunk boundary. Hence the A/B pair the spec had specced and
+// deferred. Only normal/volumetric ever saw it — commutative modes pin
+// identity and never receive orderings — but that is precisely the
+// population depth sorting exists for.
 //
 // WebGPU: both WebGPU backends ignore attribute update ranges and
-// re-upload the whole buffer on every `needsUpdate`, so chunking there
-// would turn ONE full upload into `ceil(n / chunk)` full uploads
-// (only the JS memcpy would be bounded). Chunking is therefore
-// feature-gated to the classic WebGL backend via
-// {@link configureSortedIndexChunkedApply} (renderer-setup calls it
-// with `apiSurface === 'webgl2'`); WebGPU keeps the single-shot path.
+// re-upload the whole buffer on every `needsUpdate`, so SLICING there
+// would turn ONE full upload into `ceil(n / chunk)` full uploads (only
+// the JS memcpy would be bounded). Slicing is therefore feature-gated to
+// the classic WebGL backend via {@link configureSortedIndexChunkedApply}
+// (renderer-setup calls it with `apiSurface === 'webgl2'`); the WebGPU
+// backends write the ordering in ONE slice and flip on the next pump.
+// Double-buffering itself is unconditional — the atomic swap is a
+// correctness property, not a per-backend optimisation.
 // ────────────────────────────────────────────────────────────────────
 
 /**
- * Chunk size AND single-shot threshold, in Uint32 indices (4 MB per
- * chunk). Threshold = chunk size: an ordering that fits one chunk
- * gains nothing from deferral (the chunked path would apply it in one
- * slice anyway), and the baseline showed sort-adjacent tail spikes
- * already at 5M (20 MB) single-shot uploads, so the cutoff sits well
- * below that — a 1M single-shot upload is the spec §6 exit-criterion
- * size (4 MB @ 1M) that held target FPS on the Phase-3 perf gate.
+ * Per-frame slice size, in Uint32 indices (4 MB per slice). Purely a
+ * PACING knob now — no longer a single-shot threshold, because there is
+ * no single-shot path: every ordering streams into the inactive buffer
+ * and flips when complete, and an ordering that fits one slice simply
+ * finishes on its first pump. The baseline showed sort-adjacent tail
+ * spikes already at 5M (20 MB) in one shot, so the slice sits well below
+ * that — 4 MB @ 1M is the spec §6 exit-criterion size that held target
+ * FPS on the Phase-3 perf gate.
  */
 export const SORTED_INDEX_CHUNK_ELEMENTS = 1_000_000;
 
-/** Live chunk size — test-overridable so unit tests stay tiny. */
+/** Live slice size — test-overridable so unit tests stay tiny. */
 let sortedIndexChunkElements = SORTED_INDEX_CHUNK_ELEMENTS;
 
-/** Override the chunk size/threshold (tests only). `null` restores the default. */
+/** Override the slice size (tests only). `null` restores the default. */
 export function setSortedIndexChunkElementsForTests(elements: number | null): void {
   sortedIndexChunkElements = elements ?? SORTED_INDEX_CHUNK_ELEMENTS;
 }
@@ -283,6 +295,92 @@ const chunkedApplies = new Map<THREE.InstancedBufferGeometry, ChunkedOrderingApp
 /** Geometries whose dispose listener already cancels chunked applies. */
 const chunkedDisposeHooked = new WeakSet<THREE.InstancedBufferGeometry>();
 
+/** Outcome of one {@link pumpSortedIndexOrderingApply} call. */
+export interface SortedIndexPumpResult {
+  /**
+   * Slices remain — the caller must keep the on-demand frame loop alive
+   * (the per-frame pump is the only thing driving the stream forward).
+   */
+  more: boolean;
+  /**
+   * The active slot changed on this call: the newly-written buffer is
+   * now the one to draw. The caller must push
+   * {@link activeSortedIndexSlot} to the node's materials.
+   */
+  flipped: boolean;
+}
+
+/** `geometry.userData` slot carrying the active ordering-buffer index. */
+interface SortedIndexSlotUserData {
+  sortedIndexSlot?: 0 | 1;
+}
+
+/**
+ * Which ordering attribute is currently DRAWN: 0 = `aSortedIndex`,
+ * 1 = `aSortedIndexB`. Lives on `geometry.userData` so it survives the
+ * pool's release/re-acquire cycle with the buffers it describes.
+ */
+export function activeSortedIndexSlot(geometry: THREE.InstancedBufferGeometry): 0 | 1 {
+  return (geometry.userData as SortedIndexSlotUserData).sortedIndexSlot ?? 0;
+}
+
+function setSortedIndexSlot(geometry: THREE.InstancedBufferGeometry, slot: 0 | 1): void {
+  (geometry.userData as SortedIndexSlotUserData).sortedIndexSlot = slot;
+}
+
+const SLOT_ATTRIBUTE_NAMES = ['aSortedIndex', 'aSortedIndexB'] as const;
+
+/** The ordering attribute currently being drawn. */
+export function getActiveSortedIndexAttribute(
+  geometry: THREE.InstancedBufferGeometry
+): THREE.InstancedBufferAttribute | undefined {
+  return geometry.getAttribute(SLOT_ATTRIBUTE_NAMES[activeSortedIndexSlot(geometry)]) as
+    | THREE.InstancedBufferAttribute
+    | undefined;
+}
+
+/** The ordering attribute a new ordering streams into (never drawn). */
+function getInactiveSortedIndexAttribute(
+  geometry: THREE.InstancedBufferGeometry
+): THREE.InstancedBufferAttribute | undefined {
+  return geometry.getAttribute(
+    SLOT_ATTRIBUTE_NAMES[activeSortedIndexSlot(geometry) === 0 ? 1 : 0]
+  ) as THREE.InstancedBufferAttribute | undefined;
+}
+
+/**
+ * Whether the geometry's ordering pair can safely receive a new
+ * ordering: both names present, DISTINCT objects, same length and
+ * itemSize.
+ *
+ * This VALIDATES; it never repairs. An earlier revision materialised a
+ * missing/aliased back buffer here instead, and that is precisely the
+ * native-WebGPU black-screen bug documented at the allocation site —
+ * growing the attribute set behind a cached pipeline shifts every later
+ * attribute down a vertex-buffer slot. Repairing here would reintroduce
+ * it for exactly the geometries that reach this path.
+ *
+ * Equal lengths are load-bearing twice over: three derives
+ * `_maxInstanceCount` from the SMALLEST instanced attribute (a short
+ * back buffer would silently clamp the draw), and the chunk pump clamps
+ * each slice against the INACTIVE buffer while the staged count is
+ * validated against the ACTIVE one — so a short back buffer would leave
+ * `cursor` permanently below `count`, requesting renders forever and
+ * never flipping.
+ *
+ * `attachElementStorage` satisfies all of this by construction, so every
+ * geometry the viewer builds passes. A hand-assembled one that does not
+ * simply never sorts, which is the correct failure: a stale-but-whole
+ * ordering on screen beats a corrupt one, or a black frame.
+ */
+function sortedIndexBuffersUsable(geometry: THREE.InstancedBufferGeometry): boolean {
+  const front = getActiveSortedIndexAttribute(geometry);
+  const back = getInactiveSortedIndexAttribute(geometry);
+  if (!front || !back || front === back) return false;
+  if (front.itemSize !== back.itemSize) return false;
+  return (front.array as Uint32Array).length === (back.array as Uint32Array).length;
+}
+
 /**
  * Write the next pending slice into `aSortedIndex` and register ITS
  * update range (not the collapsed `[0, …)` prefix — re-registering the
@@ -300,16 +398,22 @@ const chunkedDisposeHooked = new WeakSet<THREE.InstancedBufferGeometry>();
 function applyNextSortedIndexChunk(
   geometry: THREE.InstancedBufferGeometry,
   state: ChunkedOrderingApply
-): boolean {
-  const attr = geometry.getAttribute('aSortedIndex') as THREE.InstancedBufferAttribute | undefined;
+): SortedIndexPumpResult {
+  const attr = getInactiveSortedIndexAttribute(geometry);
   if (!attr) {
     // Attribute gone (defensive — release paths cancel first).
     chunkedApplies.delete(geometry);
-    return false;
+    return { more: false, flipped: false };
   }
   const arr = attr.array as Uint32Array;
   const start = state.cursor;
-  const end = Math.min(state.count, start + sortedIndexChunkElements, arr.length);
+  // Backend gate: on WebGL a slice bounds the per-frame memcpy+upload;
+  // the WebGPU backends ignore attribute ranges and re-upload the whole
+  // buffer per flush, so slicing there would multiply ONE upload into
+  // ceil(n / chunk). They write the ordering whole and flip next frame —
+  // still atomic, still one upload.
+  const sliceEnd = chunkedApplyEnabled ? start + sortedIndexChunkElements : state.count;
+  const end = Math.min(state.count, sliceEnd, arr.length);
   arr.set(state.ordering.subarray(start, end), start);
   state.cursor = end;
 
@@ -324,30 +428,45 @@ function applyNextSortedIndexChunk(
   attr.addUpdateRange(rangeStart, rangeEnd - rangeStart);
   attr.needsUpdate = true;
 
-  if (state.cursor >= state.count) {
-    if (state.pending) {
-      // Promote the held newest ordering: the buffer EXACTLY equals the
-      // just-completed ordering for this frame (a fully valid
-      // permutation renders), and the next pump starts the new stream.
-      state.ordering = state.pending.ordering;
-      state.count = state.pending.count;
-      state.cursor = 0;
-      state.pending = null;
-      return true;
-    }
-    chunkedApplies.delete(geometry);
-    return false;
+  if (state.cursor < state.count) return { more: true, flipped: false };
+
+  // === The atomic swap ===
+  // The inactive buffer now holds the WHOLE new permutation, so it is
+  // safe to draw from. Flipping the slot is a single uniform write: no
+  // rebind, no recompile, and no frame ever samples a half-written
+  // ordering. The caller pushes the new slot to the materials, and the
+  // per-frame callback that drives this pump runs BEFORE the render, so
+  // this slice's upload and the flip land in the same frame.
+  setSortedIndexSlot(geometry, activeSortedIndexSlot(geometry) === 0 ? 1 : 0);
+
+  if (state.pending) {
+    // Start the held newest ordering into what just became the inactive
+    // buffer. Held rather than restarted mid-stream on purpose: under a
+    // continuous orbit a restart-on-arrival never converges (measured as
+    // constant jank when L8 shipped) — whereas finishing, flipping, then
+    // starting the newest always converges and always shows a complete
+    // order.
+    state.ordering = state.pending.ordering;
+    state.count = state.pending.count;
+    state.cursor = 0;
+    state.pending = null;
+    return { more: true, flipped: true };
   }
-  return true;
+  chunkedApplies.delete(geometry);
+  return { more: false, flipped: true };
 }
 
 /**
- * True while a chunked ordering application is in flight for `geometry`
- * (including while a held newest ordering is waiting its turn). Doubles
- * as the coordinator's DISPATCH GATE: no new sorts are dispatched for a
- * node while this is true — sorting faster than the stream can apply
- * just churns held orderings (the natural cadence is sort → apply N
- * frames → next sort).
+ * True while an ordering application is in flight for `geometry`
+ * (including while a held newest ordering is waiting its turn).
+ *
+ * This is NOT a dispatch gate. It once was — no new sort was dispatched
+ * for a node while a stream ran, because a stream wrote into the LIVE
+ * attribute and sorting faster than it could apply just churned held
+ * orderings. Now that a stream writes into the inactive buffer, the
+ * displayed ordering is complete throughout, so sorting and applying
+ * proceed CONCURRENTLY; the only thing bounding sort traffic is the
+ * one-in-flight-per-node rule.
  */
 export function hasPendingSortedIndexOrderingApply(
   geometry: THREE.InstancedBufferGeometry
@@ -356,26 +475,33 @@ export function hasPendingSortedIndexOrderingApply(
 }
 
 /**
- * Apply the next pending slice for `geometry` (one call per rendered
- * frame — the depth-sort coordinator's per-frame scheduler is the
- * driver). Returns true when more slices remain (the caller should
- * request another frame); false when the application completed this
- * call or none was pending.
+ * Apply the next slice for `geometry` (one call per rendered frame — the
+ * depth-sort coordinator's per-frame scheduler is the driver), and flip
+ * the active slot when the slice completes the ordering.
+ *
+ * The caller must honour BOTH result fields: request another frame while
+ * `more`, and push {@link activeSortedIndexSlot} to the node's materials
+ * on `flipped`.
  */
-export function pumpSortedIndexOrderingApply(geometry: THREE.InstancedBufferGeometry): boolean {
+export function pumpSortedIndexOrderingApply(
+  geometry: THREE.InstancedBufferGeometry
+): SortedIndexPumpResult {
   const state = chunkedApplies.get(geometry);
-  if (!state) return false;
+  if (!state) return { more: false, flipped: false };
   return applyNextSortedIndexChunk(geometry, state);
 }
 
 /**
- * Abort an in-flight chunked application — the streaming ordering AND
- * any held newest ordering — leaving the attribute as-is (a valid mix
- * of old/new indices — same transient class as mid-application frames;
- * the caller is about to overwrite it or has released the geometry).
- * Callers: small single-shot ordering writes, both identity writers
- * (the commit path), LOD-demotion detection in the coordinator's pump,
- * node release, geometry dispose.
+ * Abort an in-flight application — the streaming ordering AND any held
+ * newest ordering.
+ *
+ * Safe by construction now that a stream writes into the INACTIVE
+ * buffer: abandoning one mid-slice discards a partially-written buffer
+ * that was never drawn, and the displayed ordering is untouched. (Before
+ * double-buffering this left the live attribute holding a mix of old and
+ * new indices.) Callers: both identity writers (the commit path),
+ * LOD-demotion detection in the coordinator's pump, node release,
+ * geometry dispose.
  */
 export function cancelSortedIndexOrderingApply(geometry: THREE.InstancedBufferGeometry): void {
   chunkedApplies.delete(geometry);
@@ -423,6 +549,48 @@ export function attachElementStorage(
   const sortedIndex = new THREE.InstancedBufferAttribute(new Uint32Array(capacity), 1);
   sortedIndex.setUsage(THREE.DynamicDrawUsage);
   geometry.setAttribute('aSortedIndex', sortedIndex);
+  // Slot B is a DISTINCT buffer from the very first frame — never an
+  // alias onto slot A, and never lazily materialised.
+  //
+  // Every shader references both names, so both attributes must exist on
+  // every geometry (WebGPU's `RenderObject.getAttributes` dereferences a
+  // graph-referenced attribute before its undefined guard, so a missing
+  // one throws rather than degrading). Aliasing the pair onto one
+  // attribute object satisfies existence for free, and an earlier
+  // revision did exactly that — splitting on a node's first sort so a
+  // commutative-mode node paid no extra bytes. That is WRONG on the
+  // native WebGPU backend, and silently so:
+  //
+  //   `WebGPUAttributeUtils.createShaderVertexBuffers` keys the vertex
+  //   buffer LAYOUT by BufferAttribute IDENTITY, so an aliased pair
+  //   compiles to ONE instanced buffer carrying two shader locations at
+  //   offset 0, and a split pair to TWO. But three rebuilds a render
+  //   pipeline only on a material/cache-key change: `getGeometryCacheKey`
+  //   hashes attribute NAMES, itemSize and normalized — never identity —
+  //   and `RenderObjects.get` responds to `needsGeometryUpdate` with a
+  //   bare `setGeometry()` that refreshes the attribute list but leaves
+  //   `Pipelines`' cached pipeline alone. So after the split the draw
+  //   binds three vertex buffers into a two-buffer layout: every
+  //   subsequent attribute shifts down a slot and the quad-corner
+  //   attribute reads the ordering buffer's u32s as vec2<f32>. Corners
+  //   collapse to denormals, every quad degenerates, and the scene
+  //   renders BLACK — no validation error, no console warning.
+  //
+  // WebGL is immune (it binds attributes by program location, not by
+  // ordinal slot), which is why the whole unit + TSL-parity suite stayed
+  // green: `tsl-shader-parity` runs `WebGPURenderer({ forceWebGL: true })`,
+  // which exercises the WGSL-adjacent node graph through the WebGL2
+  // bridge and never builds a WebGPU vertex layout at all.
+  //
+  // Allocating both buffers here makes the attribute SET, and therefore
+  // the vertex layout, invariant for the geometry's whole lifetime — the
+  // property three's pipeline cache assumes but does not enforce. It
+  // costs a flat +4 B/element on nodes that never sort (≈6% of a
+  // gsplat's 68 B/element), which is the honest price of not depending
+  // on a cache-invalidation path that does not exist.
+  const sortedIndexB = new THREE.InstancedBufferAttribute(new Uint32Array(capacity), 1);
+  sortedIndexB.setUsage(THREE.DynamicDrawUsage);
+  geometry.setAttribute('aSortedIndexB', sortedIndexB);
 
   const width = getElementTextureWidth(layout);
   const height = elementTextureHeightForCapacity(capacity, layout);
@@ -471,6 +639,22 @@ export function elementTexelCapacity(texture: THREE.DataTexture, floatsPerElemen
  * commits while a mesh is not drawn and the WebGPU backends replay
  * them verbatim (no flush-time merge), so every write collapses the
  * pending set to one `[0, max-end)` range.
+ *
+ * Also re-homes the geometry on SLOT 0, which is what makes the split
+ * ownership of the swap safe. The slot lives on the geometry (so it
+ * survives the pool's release/re-acquire with the buffers it describes)
+ * while the selector uniform lives on the material, and the pool re-pairs
+ * the two freely: a geometry a sorted tenant left on slot 1, handed to a
+ * node whose fresh material defaults to slot 0, would draw the PREVIOUS
+ * tenant's permutation over a different element count — and an
+ * order-independent tenant is never tracked by the coordinator, so
+ * nothing would push the slot to its uniform. A full identity write is
+ * precisely the fresh-start signal, so normalising here means a default
+ * uniform is always correct and untracked nodes need no sync at all.
+ *
+ * The append writer ({@link writeSortedIndexIdentityRange}) deliberately
+ * does NOT do this: it preserves the prefix permutation in whichever
+ * buffer is live.
  */
 export function writeSortedIndexIdentity(
   geometry: THREE.InstancedBufferGeometry,
@@ -480,7 +664,11 @@ export function writeSortedIndexIdentity(
   // its remaining slices belong to the OLD element population and
   // would scribble a stale permutation over the identity just written.
   cancelSortedIndexOrderingApply(geometry);
-  const attr = geometry.getAttribute('aSortedIndex') as THREE.InstancedBufferAttribute;
+  // Normalise to slot 0 BEFORE picking the target, so identity always
+  // lands in the buffer a default-valued selector uniform reads.
+  setSortedIndexSlot(geometry, 0);
+  const attr = getActiveSortedIndexAttribute(geometry);
+  if (!attr) return;
   const arr = attr.array as Uint32Array;
   const n = Math.min(count, arr.length);
   for (let i = 0; i < n; i++) arr[i] = i;
@@ -507,7 +695,10 @@ export function writeSortedIndexIdentityRange(
   // invalidates the ordering an in-flight chunked apply was streaming
   // (the coordinator re-sorts the grown population on a later frame).
   cancelSortedIndexOrderingApply(geometry);
-  const attr = geometry.getAttribute('aSortedIndex') as THREE.InstancedBufferAttribute;
+  // Identity targets the ACTIVE buffer: it is a complete permutation by
+  // construction, so writing it live is safe and needs no flip.
+  const attr = getActiveSortedIndexAttribute(geometry);
+  if (!attr) return;
   const arr = attr.array as Uint32Array;
   const n = Math.min(count, arr.length);
   for (let i = Math.max(0, from); i < n; i++) arr[i] = i;
@@ -515,58 +706,72 @@ export function writeSortedIndexIdentityRange(
 }
 
 /**
- * Write a depth-sort permutation into `aSortedIndex[0..count)` (the
- * SortWorker's back-to-front ordering, depth-sorting Phase 2). Returns
- * the number of entries that WILL be written (clamped to both the
- * ordering's and the attribute's length).
+ * Stage a depth-sort permutation (the SortWorker's back-to-front
+ * ordering, depth-sorting Phase 2). Returns `count` when the ordering is
+ * staged, or 0 when it is rejected (truncated or oversized ordering,
+ * non-positive/non-integer count, malformed buffer pair).
  *
- * Routing (perf lever L8 — see the chunked-apply module note):
- * - `n ≤ SORTED_INDEX_CHUNK_ELEMENTS` or chunking disabled (WebGPU
- *   backends): single-shot — full write + the same collapsed-prefix
- *   update-range discipline as {@link writeSortedIndexIdentity}.
- * - Larger orderings apply CHUNKED, and the per-frame pump
- *   ({@link pumpSortedIndexOrderingApply} — the depth-sort
- *   coordinator's scheduler) owns EVERY slice: this call only records
- *   the pending state (the attribute is untouched — still the previous
- *   fully-valid permutation), and each subsequent rendered frame
- *   writes one slice until the buffer EXACTLY equals the ordering.
- *   Deferring slice 1 too keeps the per-frame bound strict — a
- *   synchronous first slice would fold into frame 1's pump slice for
- *   a double-size first upload — and means a never-pumped ordering
- *   degrades to "stale but valid", not "mixed". Mid-application
- *   frames render a bounded old/new mix — the documented
- *   transient-duplication trade.
+ * The ordering is never written to the buffer being drawn. It streams
+ * into the INACTIVE one and the slot flips when that buffer holds the
+ * WHOLE permutation (depth-sorting spec §2.1 tier 3), so every rendered
+ * frame samples a complete ordering. There is no size threshold and no
+ * single-shot branch: one path, and a half-applied ordering — which is
+ * not a reordering but a corrupt permutation, drawing elements twice
+ * and omitting as many — is structurally impossible.
  *
- * A NEW large ordering arriving while an apply is streaming does NOT
- * restart the stream: it is HELD (at most one — latest wins, an older
- * held ordering is dropped) and starts only after the current apply
- * completes (see ChunkedOrderingApply.pending for why restarting never
- * converges under a continuous orbit). A SMALL (single-shot) ordering
- * cancels the stream instead — the full write leaves the buffer
- * exactly equal to the newest ordering, which dominates anything the
- * stream could still produce. The coordinator's generation guard
- * ensures only current-generation orderings reach this writer either
- * way.
+ * This call only STAGES: {@link pumpSortedIndexOrderingApply} (driven by
+ * the coordinator's per-frame callback) owns every slice and the flip.
+ * That costs nothing in latency — a resolve lands between frames, so the
+ * first slice still rides the very next render — and it keeps the
+ * per-frame upload bound strict.
+ *
+ * A newer ordering arriving mid-stream is HELD (at most one; latest
+ * wins) and started after the current stream completes, rather than
+ * restarting it: under a continuous orbit a restart-on-arrival never
+ * converges. The coordinator's generation guard ensures only
+ * current-generation orderings reach this writer.
  */
 export function writeSortedIndexOrdering(
   geometry: THREE.InstancedBufferGeometry,
   ordering: Uint32Array,
   count: number
 ): number {
-  const attr = geometry.getAttribute('aSortedIndex') as THREE.InstancedBufferAttribute;
-  const arr = attr.array as Uint32Array;
-  const n = Math.min(count, ordering.length, arr.length);
-  if (!chunkedApplyEnabled || n <= sortedIndexChunkElements) {
-    cancelSortedIndexOrderingApply(geometry);
-    arr.set(ordering.subarray(0, n));
-    collapseSortedIndexRanges(attr, n);
-    return n;
-  }
+  const active = getActiveSortedIndexAttribute(geometry);
+  if (!active) return 0;
+  // A TRUNCATED ordering is not a permutation of the drawn population,
+  // and staging it would flip the slot with the tail left holding
+  // whatever the inactive buffer happened to contain (zeros on a freshly
+  // attached geometry) — elements drawn several times, others not at
+  // all. That is the exact corruption double-buffering exists to
+  // prevent, so drop it rather than clamp. Matches the coordinator's
+  // apply-invariant, which only ever passes `ordering.length` as `count`.
+  if (ordering.length < count) return 0;
+  // An OVERSIZED count (larger than the buffers) is rejected the same
+  // way, never clamped to a prefix: capacity is always >= instanceCount,
+  // so such an ordering describes a population this geometry does not
+  // hold, and the retained prefix of a larger permutation is not a
+  // permutation of anything — its entries index past the kept range.
+  // (Unreachable from the coordinator: a commit that grew the population
+  // acquires a larger geometry and bumps the generation, so an oversized
+  // resolve is dropped there first.)
+  if (count > (active.array as Uint32Array).length) return 0;
+  // A count that is not a positive integer stages nothing. A NON-POSITIVE
+  // (or NaN) count would otherwise write no entries on the first pump yet
+  // find `cursor >= count` already true, so it would FLIP — publishing
+  // whatever stale content the inactive buffer holds as if it were the
+  // new ordering, which is exactly the corruption double-buffering exists
+  // to prevent. A FRACTIONAL count would likewise flip with only
+  // `floor(count)` entries written (`subarray` truncates while the cursor
+  // reaches `count` exactly). (The commit path only ever passes
+  // `ordering.length`, so this guards the writer's own contract rather
+  // than a live caller.)
+  if (!Number.isInteger(count) || count <= 0) return 0;
+  const n = count;
+  // Malformed pair — never repair it here (see `sortedIndexBuffersUsable`).
+  if (!sortedIndexBuffersUsable(geometry)) return 0;
 
   const inFlight = chunkedApplies.get(geometry);
   if (inFlight) {
-    // Hold-latest: never restart a streaming apply (see the pending
-    // field's doc); the newest ordering waits its turn.
     inFlight.pending = { ordering, count: n };
     return n;
   }

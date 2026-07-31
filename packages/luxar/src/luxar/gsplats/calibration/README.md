@@ -180,12 +180,12 @@ Calibration applies `--floor` (default `"auto"`) **once** to the volume before m
 All tests colocated in `packages/luxar/src/luxar/gsplats/tests/test_calibration.py`:
 
 - `cv_mask`: Determinism, fraction Binomial CI, shape/dtype, invalid bounds
-- `donut_median_fill`: Constant volume unchanged, unmasked voxels untouched, interior gradient local average, 2D/3D/4D behavior, empty-mask copy, and invalid shape/radius checks
+- `donut_median_fill`: Constant volume unchanged, unmasked voxels untouched, gradient volume local average, 2D/3D/4D shape correctness, empty mask early return, radius-bounds validation
 - Noise floor estimators: Laplacian/Haar/background MAD on constant/noisy volumes
 - `estimate_floor`: Mode histogram vs percentile, zero-padding exclusion
-- `build_k_grid`: Exponential/polynomial spacing, endpoint pinning, explicit-grid precedence/validation, and invalid progression/range checks
+- `build_k_grid`: Exponential/polynomial spacing, endpoint pinning, explicit-grid override & precedence, input validation (bad progression, too few points, `k_max ≤ k_min`)
 - `find_k_star`: Peak/plateau/signal-limited regime detection, flank thresholds, tail-rise gate, `k_knee` vs `k_star`, backward-compatible hydration
-- Feature content: `count_features` (peaks/edges/intensity), `feature_threshold` shared scale, and `select_calibration_region` (`densest` / `whole` plus unknown-strategy rejection)
+- Feature content: `count_features` (peaks/edges/intensity), `feature_threshold` shared scale, `select_calibration_region` (`densest`, small-volume `whole` fallback, hot-outlier robustness, unknown-strategy rejection)
 - `CalibrationResult`: JSON round-trip (non-finite floats → `null`), additive field defaults
 - Full sweep integration: Calls `fit_gaussian_splats` → `render_to_volume_tensor` → held-out/train/full metrics → noise floor → `find_k_star` → `CalibrationResult` with all metadata
 

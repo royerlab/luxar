@@ -464,7 +464,8 @@ fn mahalanobis_distance_internal(diff: &[f32], packed_l: &[f32], ndim: usize) ->
 /// * `cholesky` - Packed Cholesky factors [splatCount * packedSize]
 /// * `visibility` - Visibility mask [splatCount]
 /// * `display_dims` - Ordered display-axis dimension indices [1..=3]; their
-///   order maps directly to output X/Y/Z, and missing rows are
+///   requested order maps directly to output X/Y/Z (a permutation yields the
+///   corresponding marginal, never a sorted one), and missing rows are
 ///   scale-matched-padded for 1D/2D data (see `compute_display_cholesky_3d`)
 /// * `ndim` - Total dimensionality (max 16)
 /// * `splat_count` - Number of splats
@@ -1517,6 +1518,28 @@ mod tests {
                         "display={display:?} splat {s} axis {axis}: got {}, expected {}",
                         out_c[s * 3 + axis],
                         expected_center[axis]
+                    );
+                }
+
+                // Pin the actual marginal for the permuted, high-index-mapped-to-X
+                // case so the order-maps-to-axes contract is tested, not just SPD
+                // shape. Σ_full = L·Lᵀ of the packed 4D L above gives
+                // Σ[3,3]=16.5, Σ[3,1]=2, Σ[1,1]=10; display=[3,1] therefore factors
+                // the marginal [[16.5, 2], [2, 10]] to L≈(4.062, 0.492, 3.124). A
+                // mutant that sorted display_dims to [1,3] would factor
+                // [[10, 2], [2, 16.5]] to L≈(3.162, 0.632, 4.012) and be caught here.
+                if display == [3, 1] {
+                    assert!(
+                        (l[0] - 4.062019).abs() < 1e-4,
+                        "display={display:?}: L00 {l:?}"
+                    );
+                    assert!(
+                        (l[1] - 0.492366).abs() < 1e-4,
+                        "display={display:?}: L10 {l:?}"
+                    );
+                    assert!(
+                        (l[2] - 3.123712).abs() < 1e-4,
+                        "display={display:?}: L11 {l:?}"
                     );
                 }
             }

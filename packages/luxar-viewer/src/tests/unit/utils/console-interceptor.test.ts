@@ -8,6 +8,7 @@
  */
 
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
+import vm from 'node:vm';
 import { consoleInterceptor } from '../../../utils/console-interceptor';
 
 describe('ConsoleInterceptor ring buffer', () => {
@@ -129,5 +130,143 @@ describe('ConsoleInterceptor opt-in patching (embedability)', () => {
     // Post-dispose: console.log no longer goes through the interceptor.
     console.log('post-dispose');
     expect(consoleInterceptor.getBufferedMessages().length).toBe(0);
+  });
+});
+
+describe('ConsoleInterceptor stack capture', () => {
+  beforeEach(() => {
+    consoleInterceptor.patch();
+    consoleInterceptor.clearBuffer();
+  });
+
+  afterEach(() => {
+    consoleInterceptor.dispose();
+  });
+
+  const lastMessage = () => {
+    const msgs = consoleInterceptor.getBufferedMessages();
+    return msgs[msgs.length - 1];
+  };
+
+  it('captures the stack of an Error passed AFTER the message string', () => {
+    // Every `log.*` call formats its message into args[0] as a STRING and passes
+    // the error behind it, so looking only at args[0] could never find one.
+    const err = new Error('boom');
+    console.error('[❌] [Cache] failed', err);
+
+    expect(lastMessage().stack).toBe(err.stack);
+  });
+
+  it('captures a stack on the warn path too', () => {
+    // ~30 `log.warning(…, error)` sites pass a real Error; without this they had
+    // neither a message (pre-fix formatters) nor any trace to fall back on.
+    const err = new Error('cache write failed');
+    console.warn('[⚠️] [Cache] OPFSStore failed', err);
+
+    expect(lastMessage().stack).toBe(err.stack);
+  });
+
+  it('does NOT fabricate a stack when no Error was passed', () => {
+    // This used to synthesize `new Error().stack` whenever the message merely
+    // contained the word "error", producing a plausible-looking trace rooted
+    // inside the interceptor — worse than no stack, because a bug-report reader
+    // would follow it.
+    console.error('an error happened, but no Error object was passed');
+
+    expect(lastMessage().stack).toBeUndefined();
+  });
+
+  it('prefers the first Error when several args carry stacks', () => {
+    const first = new Error('first');
+    const second = new Error('second');
+    console.error('msg', first, second);
+
+    expect(lastMessage().stack).toBe(first.stack);
+  });
+
+  it('prefers a real Error over an earlier duck-typed stack carrier', () => {
+    // A plain object carrying a `stack` string (a context bag) precedes the real
+    // Error; the Error's own stack must win, not the context string — otherwise
+    // the bug-report trace points at the log site's metadata, not the fault.
+    const err = new Error('boom');
+    console.error('failed', { stack: 'context: decoding' }, err);
+
+    expect(lastMessage().stack).toBe(err.stack);
+  });
+
+  it('prefers a CROSS-REALM Error over an earlier duck-typed stack carrier', () => {
+    // An Error created in another realm (window/iframe) has a foreign
+    // Error.prototype, so `instanceof Error` is false — only the
+    // `[object Error]` brand check (the [[ErrorData]] internal slot) sees it.
+    // Without that check the context bag in front would shadow its stack.
+    const foreignErr = vm.runInNewContext('new Error("cross-realm boom")') as Error;
+    expect(foreignErr instanceof Error).toBe(false); // genuinely foreign realm
+    expect(typeof foreignErr.stack).toBe('string');
+
+    console.error('failed', { stack: 'context: decoding' }, foreignErr);
+
+    expect(lastMessage().stack).toBe(foreignErr.stack);
+  });
+
+  it('falls back to a duck-typed stack carrier when no real Error is present', () => {
+    // Some Firefox DOMExceptions carry a stack without reporting as an Error.
+    console.error('failed', { stack: 'at somewhere' });
+
+    expect(lastMessage().stack).toBe('at somewhere');
+  });
+
+  it('does not throw (and still buffers) when an arg has a throwing stack accessor', () => {
+    // extractStack runs inside the patched console.warn/error BEFORE the
+    // original console call — if it threw, the warning itself would vanish and
+    // the calling code (typically already inside a catch block) would throw.
+    const hostile = new Error('boom');
+    Object.defineProperty(hostile, 'stack', {
+      get() {
+        throw new Error('hostile stack getter');
+      },
+    });
+
+    // Stub the pass-through targets: Node's own console.warn/error ALSO read
+    // `.stack` when printing (util.inspect) and would throw on their own —
+    // what's under test is only the interceptor's capture path.
+    const orig = consoleInterceptor.getOriginalConsole();
+    const { warn: origWarn, error: origError } = orig;
+    orig.warn = () => {};
+    orig.error = () => {};
+    try {
+      expect(() => console.warn('[⚠️] [Cache] failed', hostile)).not.toThrow();
+      expect(() => console.error('[❌] [Cache] failed', hostile)).not.toThrow();
+    } finally {
+      orig.warn = origWarn;
+      orig.error = origError;
+    }
+
+    const msgs = consoleInterceptor.getBufferedMessages();
+    expect(msgs.length).toBe(2);
+    expect(msgs[0].stack).toBeUndefined();
+    expect(msgs[1].stack).toBeUndefined();
+  });
+
+  it('does not throw on a revoked Proxy arg and still finds a later Error stack', () => {
+    // The real-Error preference pass evaluates `instanceof`, which walks
+    // [[GetPrototypeOf]] and throws for a revoked Proxy. That throw must be
+    // contained (same never-throw contract as above), and the real Error behind
+    // the Proxy must still be found.
+    const { proxy, revoke } = Proxy.revocable({}, {});
+    revoke();
+    const err = new Error('boom');
+
+    // Node's own console.error inspects the revoked Proxy and throws on its
+    // own; stub the pass-through so only the interceptor's capture is tested.
+    const orig = consoleInterceptor.getOriginalConsole();
+    const origError = orig.error;
+    orig.error = () => {};
+    try {
+      expect(() => console.error('cleanup failed', proxy, err)).not.toThrow();
+    } finally {
+      orig.error = origError;
+    }
+
+    expect(lastMessage().stack).toBe(err.stack);
   });
 });

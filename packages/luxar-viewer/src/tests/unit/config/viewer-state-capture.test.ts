@@ -30,7 +30,7 @@ function createMockSceneManager() {
     scene: {
       background: {
         isColor: true,
-        getHexString: () => '111111',
+        getHexString: () => '000000',
       },
     },
     controls: {
@@ -130,7 +130,7 @@ describe('captureViewerState', () => {
       createMockSceneDimsManager()
     );
 
-    expect(state.background_color).toBe('#111111');
+    expect(state.background_color).toBe('#000000');
   });
 
   it('should capture rendering settings in snake_case', () => {

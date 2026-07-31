@@ -70,11 +70,23 @@ export async function loadAndStage(
     applyPartialExtendTolerance: true,
     extendedToleranceCache: ctx.extendedToleranceCache,
   });
+  /**
+   * Mark this path healthy. Called at every terminal success, NOT right after
+   * the fetch: the failure record's scope is the whole `loadAndStage` step (see
+   * `run-loader-updates`' catch), so clearing after the fetch alone meant a
+   * post-fetch failure re-recorded with `retryCount` 0 — pinning the log at
+   * "(attempt 1)" forever — and left `hasFailures()` briefly reporting clean.
+   */
+  const markPathHealthy = (): void => ctx.clearFailure(path);
+
   if (derived.skip) {
     log.info(
       Modules.SCENE_LOADER,
       `Skipping gsplats update for ${path} - all non-displayed dims are extended`
     );
+    // Deliberately NOT marking healthy here: a skipped node loaded nothing, so a
+    // previously-recorded failure is still unresolved. Clearing it would drop
+    // the node from the retry set and hide a real breakage.
     session.markSkipped(derived.skip);
     // S6: see Points handler — drop prev to avoid stale extrap.
     ctx.viewStateQueue.forgetPath(path);
@@ -91,13 +103,16 @@ export async function loadAndStage(
     session,
     ctx.signal
   );
-  ctx.clearFailure(path);
-  if (!data) return null;
+  if (!data) {
+    markPathHealthy();
+    return null;
+  }
   // No-op fast path: the loader returned the SAME data reference it did
   // last commit (memoized progressive concat, unchanged view state) — the
   // GPU already holds exactly this data. Skip the expensive nD→3D
   // projection and stage a stamp-only commit (see noop-commit.ts).
   if (isAlreadyCommitted(mesh, data)) {
+    markPathHealthy();
     session.setMetadata({ splats: data.splatCount, info: 'unchanged' });
     if (!ctx.signal?.aborted) {
       ctx.viewStateQueue.dispatchPrefetch(path, gsplatsViewState, loader);
@@ -112,6 +127,7 @@ export async function loadAndStage(
     ctx.updateVersion,
     session
   );
+  markPathHealthy();
   session.setMetadata({ splats: data.splatCount });
   // S6: per-loader predictive prefetch using the derived view-state — but
   // not for a SUPERSEDED update: extrapolating from an abandoned state warms

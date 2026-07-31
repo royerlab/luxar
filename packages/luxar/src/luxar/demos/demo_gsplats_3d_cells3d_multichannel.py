@@ -84,6 +84,7 @@ from arbol import Arbol, aprint, asection
 
 from luxar import Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
+from luxar.demos import require_module
 from luxar.encoding import EncodingMode
 from luxar.utils.demos import (
     launch_viewer,
@@ -112,9 +113,10 @@ CHANNELS = [
     {"index": 1, "name": "Nuclei", "colormap": "bop_blue"},
 ]
 
-# Per-channel brightness multiplier applied before writing (raise for a
-# brighter render; volumetric compositing bounds accumulated radiance, so it
-# tolerates a hotter value than the ~0.6 the former additive sum saturated at).
+# Per-channel brightness multiplier applied before writing. Kept conservative
+# here; volumetric compositing bounds accumulated radiance (unlike the former
+# additive sum, which saturated around ~0.6), so a hotter value stays
+# well-behaved if a brighter render is wanted.
 LAYER_INTENSITY = 0.4
 
 # Cache directory
@@ -145,16 +147,21 @@ def load_cells3d():
         list[np.ndarray]: One 3D volume per channel, shape (Z, Y, X), float32 [0, 1].
     """
     with asection("Loading cells3d dataset"):
-        try:
-            from skimage.data import cells3d
-        except ImportError:
-            raise ImportError(
-                "scikit-image is required for this demo.\n"
-                "Install with: pip install scikit-image"
-            )
+        cells3d = require_module("skimage.data").cells3d
 
         # cells3d() returns (60, 2, 256, 256) — (Z, Channel, Y, X), uint16
-        raw = cells3d()
+        try:
+            raw = cells3d()
+        except Exception as exc:
+            # The sample data is FETCHED, not bundled in the scikit-image wheel,
+            # and skimage's fetcher is pooch. A missing pooch is the usual cause
+            # here, so re-gate it to get the constrained hint; if pooch IS
+            # present the failure is something else (network), so say that.
+            require_module("pooch")
+            raise RuntimeError(
+                f"Failed to fetch the cells3d sample data: {exc}\n"
+                "It is downloaded on first use — check network access."
+            ) from exc
         aprint(f"Raw data shape: {raw.shape}, dtype: {raw.dtype}")
         aprint(
             f"  Axes: (Z={raw.shape[0]}, C={raw.shape[1]}, "
@@ -271,11 +278,12 @@ def create_luxar_scene(gsplats_list, output_path=None):
         with LuxarZarrCompiler(
             output_path, encoding_mode=EncodingMode.PRECISION
         ) as compiler:
-            # Neutral tone-mapping keeps the per-channel BOP LUT hues faithful
-            # (the viewer's default ACES shifts scientific LUT colors).
+            # ACES, set explicitly, for the per-channel BOP LUTs
+            # (ACES is the house default; it shifts LUT hues slightly, which is
+            # the accepted trade for its highlight rolloff).
             scene = compiler.create_scene(
                 dimensions=Dimensions.default_3d(),
-                viewer_config=ViewerConfig(tone_mapping="Neutral"),
+                viewer_config=ViewerConfig(tone_mapping="ACES"),
             )
 
             scene.attrs["title"] = "GSplats: 3D Cells Multi-Channel (BOP layers)"

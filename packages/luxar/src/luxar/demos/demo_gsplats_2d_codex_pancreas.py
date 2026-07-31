@@ -116,6 +116,7 @@ from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import UIConfig, ViewerConfig
+from luxar.demos import require_module
 from luxar.encoding import EncodingMode
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.utils.demos import (
@@ -311,12 +312,7 @@ def load_channel(tiff_dir: Path, ch_config: dict) -> np.ndarray:
     Returns:
         2D float32 image (H, W), normalised to [0, 1].
     """
-    try:
-        import tifffile
-    except ImportError:
-        raise ImportError(
-            "tifffile is required for this demo.\nInstall with: pip install tifffile"
-        )
+    tifffile = require_module("tifffile")
 
     from scipy.ndimage import zoom
 
@@ -478,11 +474,12 @@ def create_luxar_scene(
                 ]
             )
             # 2D data: start in orthographic mode with scale bar visible.
-            # Neutral tone-mapping keeps the per-marker colormap hues faithful —
-            # the viewer's default ACES shifts scientific LUT colors.
+            # ACES, set explicitly (the house default). It shifts LUT hues a
+            # little; Neutral is the alternative if exact per-marker colour
+            # fidelity ever matters more than the filmic look.
             viewer_config = ViewerConfig(
                 control_type="ortho",
-                tone_mapping="Neutral",
+                tone_mapping="ACES",
                 ui=UIConfig(show_scale_bar=True),
             )
             scene = compiler.create_scene(dimensions=dims, viewer_config=viewer_config)
@@ -554,11 +551,14 @@ Controls:
                         opacity=1.0,
                         # Stays additive while the other bioimaging gsplat
                         # demos are volumetric: this fit is strictly 2D, so
-                        # every splat shares one view-depth plane, the depth
-                        # sorter takes its identity-ordering branch, and
-                        # volumetric would composite in storage order with no
-                        # depth meaning. For a 2D fit the additive sum IS the
-                        # reconstruction.
+                        # there is no depth structure for volumetric to
+                        # resolve. Viewed face-on (the default under this
+                        # demo's control_type="ortho") every splat shares one
+                        # view-depth plane and the depth sorter takes its
+                        # identity-ordering branch, so volumetric would just
+                        # composite in storage order. Additive blending is
+                        # order-independent, so for a 2D fit the additive sum
+                        # IS the reconstruction regardless of the camera.
                         blending_mode="additive",
                         layer=True,
                         colormap=colormap,

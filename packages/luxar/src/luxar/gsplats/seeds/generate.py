@@ -16,8 +16,10 @@ from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.seeds.grid import seed_from_grid
 from luxar.gsplats.seeds.multiscale_decomposition import seed_from_decomposition
 from luxar.gsplats.seeds.peaks import seed_from_peaks
+from luxar.utils.arbol_warnings import arbol_warnings
 
 
+@arbol_warnings()
 def generate_seeds(
     V: np.ndarray,
     method: str = "auto",

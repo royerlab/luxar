@@ -180,13 +180,14 @@ to ship after). Sequencing is at the bottom.
     All 23 datasets are classified and licensed; every record ID is still null,
     so the fetch path is dormant and demos run off the in-repo LFS copy. No demo
     is migrated yet.
-  - **⚠ Step 4 has a licensing trigger, not just a size one.** `gsplats_tribolium`
-    and `gsplats_acto3d_heart` are `local-compute` ("cannot redistribute even the
-    derived product") yet their fitted files are committed in LFS **today**. They
-    must be `git rm`-ed before the repo goes public, independently of the Zenodo
-    upload — and those two demos must *not* be migrated to the fetch helper (it
+  - **⚠ Step 4 has a licensing trigger, not just a size one.** `gsplats_tribolium`,
+    `gsplats_acto3d_heart`, `gsplats_tng_cosmic_web`, and `milky_way_gaia_3m` are
+    `local-compute` ("cannot redistribute even the derived product") yet their
+    derived files are committed in LFS **today** (see `demos/data/README.md`). All
+    four must be `git rm`-ed before the repo goes public, independently of the
+    Zenodo upload — and those demos must *not* be migrated to the fetch helper (it
     returns `None` for a `local-compute` dataset, which would silently start a
-    from-scratch GPU fit instead of loading the file that is right there).
+    from-scratch rebuild instead of loading the file that is right there).
   - **License audit — DONE (web-verified 2026-07-15).** A gsplat fit / point
     catalog is a *derived* product (lossy transform, not the raw voxels/pixels),
     which is broadly redistributable — but "derived" does **not** launder three

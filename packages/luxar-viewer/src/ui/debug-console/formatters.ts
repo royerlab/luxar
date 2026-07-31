@@ -8,6 +8,8 @@
  * @module ui/debug-console/formatters
  */
 
+import { formatErrorForDisplay } from '../../utils/format-error';
+
 /**
  * Convert an arbitrary console-arg list (strings, numbers, booleans,
  * objects, null, undefined) into a single space-separated display
@@ -18,6 +20,20 @@
  * Objects are pretty-printed with `JSON.stringify(_, null, 2)`. If
  * stringify throws (e.g. a circular reference), falls back to
  * `String(arg)`.
+ *
+ * `Error` (and `DOMException`) is checked FIRST, before the object branch:
+ * `name` / `message` / `stack` are non-enumerable, so `JSON.stringify(err)` is
+ * `"{}"` — and the `catch → String(arg)` fallback never fires, because
+ * stringify succeeds at producing that empty object. Every `log.*(…, error)`
+ * call site therefore lost its message here, which is exactly what made a real
+ * bug report read `OPFSStore metadata save failed {}`. Ordering matters beyond
+ * plain Errors too: a subclass that assigns own enumerable fields (`LoaderError`
+ * sets `name`/`cause`) stringifies to a non-empty but still message-LESS object.
+ *
+ * KEEP IN LOCKSTEP with `debug-console.ts::formatArgAsDOMElement`, which renders
+ * the same values into DOM. The two must agree for Errors or the visible row and
+ * the copied text disagree. (They differ for plain strings by design — the DOM
+ * renderer quotes them.)
  */
 export function formatArgs(args: readonly unknown[]): string {
   return args
@@ -27,6 +43,7 @@ export function formatArgs(args: readonly unknown[]): string {
       if (typeof arg === 'string') return arg;
       if (typeof arg === 'number') return arg.toString();
       if (typeof arg === 'boolean') return arg.toString();
+      if (arg instanceof Error) return formatErrorForDisplay(arg);
       if (typeof arg === 'object') {
         try {
           return JSON.stringify(arg, null, 2);

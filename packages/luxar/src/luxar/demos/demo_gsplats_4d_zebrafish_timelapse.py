@@ -90,6 +90,7 @@ import numpy as np
 from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.demos import require_module
 from luxar.encoding import EncodingMode
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.utils.demos import (
@@ -182,12 +183,7 @@ def load_zebrafish_volumes() -> tuple:
         - voxel_size_zyx: Tuple of (Z, Y, X) voxel spacing in micrometres, or None.
         - time_indices: List of source frame indices used (for cache key stability).
     """
-    try:
-        import tifffile
-    except ImportError:
-        raise ImportError(
-            "tifffile is required for this demo.\nInstall with: pip install tifffile"
-        )
+    tifffile = require_module("tifffile")
 
     lsm_path = download_zebrafish_data()
 

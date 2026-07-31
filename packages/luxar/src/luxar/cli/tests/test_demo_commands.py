@@ -10,6 +10,7 @@ import pytest
 from typer.testing import CliRunner
 
 from luxar.cli import app
+from luxar.demos._dependencies import DependencySpec
 from luxar.demos.registry import iter_demos
 
 
@@ -382,3 +383,225 @@ class TestRunRealSubprocess:
             import shutil
 
             shutil.rmtree(out, ignore_errors=True)
+
+
+class TestDeps:
+    """``luxar demo deps`` reports (and installs) the optional demo packages."""
+
+    def test_deps_lists_every_known_dependency(self, runner) -> None:
+        from luxar.demos import INSTALL_SPECS
+
+        result = runner.invoke(app, ["demo", "deps"])
+        # Exit code is 1 when anything is missing, 0 when all present — both are
+        # valid here (it depends on the test machine), so only the table matters.
+        assert result.exit_code in (0, 1)
+        for module in INSTALL_SPECS:
+            assert module in result.stdout, f"{module} missing from the table"
+
+    def test_deps_shows_the_constrained_requirement_not_a_bare_name(
+        self, runner
+    ) -> None:
+        """The whole point of INSTALL_SPECS: never advertise an unbounded pin."""
+        result = runner.invoke(app, ["demo", "deps"])
+        assert "anndata>=0.10,<0.13" in result.stdout
+
+    def test_deps_rejects_an_unknown_extra(self, runner) -> None:
+        result = runner.invoke(app, ["demo", "deps", "--extra", "nope"])
+        assert result.exit_code == 1
+        assert "No known dependencies" in result.stdout
+
+    def test_deps_filters_to_one_extra(self, runner) -> None:
+        result = runner.invoke(app, ["demo", "deps", "--extra", "io"])
+        assert result.exit_code in (0, 1)
+        assert "imageio" in result.stdout
+        # A demos-only package must not appear in an io-filtered report.
+        assert "anndata" not in result.stdout
+
+    def test_deps_exits_nonzero_when_something_is_missing(self, runner) -> None:
+        """A CI gate can rely on the exit code, so it must track missing-ness."""
+        from luxar.demos._dependencies import DependencyStatus
+
+        fake = [
+            DependencyStatus(
+                "phony_xyz", DependencySpec("phony-xyz>=1", "demos"), False
+            )
+        ]
+        with patch("luxar.demos.survey", return_value=fake):
+            result = runner.invoke(app, ["demo", "deps"])
+        assert result.exit_code == 1
+        assert "1 missing: phony_xyz" in result.stdout
+
+    def test_deps_exits_zero_when_all_present(self, runner) -> None:
+        from luxar.demos._dependencies import DependencyStatus
+
+        fake = [
+            DependencyStatus("phony_xyz", DependencySpec("phony-xyz>=1", "demos"), True)
+        ]
+        with patch("luxar.demos.survey", return_value=fake):
+            result = runner.invoke(app, ["demo", "deps"])
+        assert result.exit_code == 0
+        assert "all 1 optional dependency installed." in result.stdout
+
+    def test_deps_columns_are_never_narrower_than_their_headers(self, runner) -> None:
+        """A one-row report (module shorter than "MODULE") must not go ragged."""
+        import re
+
+        from luxar.demos._dependencies import DependencyStatus
+
+        fake = [DependencyStatus("ab", DependencySpec("ab>=1", "demos"), True)]
+        with patch("luxar.demos.survey", return_value=fake):
+            result = runner.invoke(app, ["demo", "deps"])
+        plain = [re.sub(r"\x1b\[[0-9;]*m", "", ln) for ln in result.stdout.splitlines()]
+        header = next(ln for ln in plain if "MODULE" in ln)
+        row = next(ln for ln in plain if "ab>=1" in ln)
+        # The EXTRA column must start at the same offset in both lines.
+        assert header.index("EXTRA") == row.index("demos"), f"{header!r} vs {row!r}"
+        # ...and the rule must be exactly as wide as the header it underlines
+        # (a hand-counted constant overshot by one glyph).
+        sep = next(ln for ln in plain if "─" * 10 in ln)
+        gutter = header.index("MODULE") - 2  # arbol prefix + the 2-space indent
+        assert len(sep.rstrip()) - gutter == len(header.rstrip()) - gutter, (
+            f"rule {len(sep.rstrip())} != header {len(header.rstrip())}"
+        )
+
+    def test_deps_dry_run_install_runs_no_pip(self, runner) -> None:
+        from luxar.demos._dependencies import DependencyStatus
+
+        fake = [
+            DependencyStatus(
+                "phony_xyz", DependencySpec("phony-xyz>=1", "demos"), False
+            )
+        ]
+        with patch("luxar.demos.survey", return_value=fake):
+            with patch("luxar.cli.demo_commands.run_child_process") as proc:
+                result = runner.invoke(app, ["demo", "deps", "--install", "--dry-run"])
+        assert result.exit_code == 0
+        proc.assert_not_called()
+        assert "pip install" in result.stdout
+
+    def test_deps_install_invokes_pip_with_the_missing_extras(self, runner) -> None:
+        from luxar.demos._dependencies import DependencyStatus
+
+        fake = [
+            DependencyStatus(
+                "phony_xyz", DependencySpec("phony-xyz>=1", "gsplats"), False
+            )
+        ]
+        with patch("luxar.demos.survey", return_value=fake):
+            with patch(
+                "luxar.cli.demo_commands.run_child_process", return_value=0
+            ) as proc:
+                runner.invoke(app, ["demo", "deps", "--install"])
+        proc.assert_called_once()
+        cmd = proc.call_args[0][0]
+        assert cmd[:4] == [sys.executable, "-m", "pip", "install"]
+        # The extra named by the missing spec must be the one installed.
+        assert any("[gsplats]" in part for part in cmd), cmd
+
+    def test_pip_cmd_names_distribution_for_a_foreign_project_root(
+        self, tmp_path
+    ) -> None:
+        """A foreign pyproject.toml root must not trigger an editable install.
+
+        For a non-editable Luxar in a project-local venv, ``get_project_root``
+        returns the *user's own* project. Since it does not own the imported
+        ``luxar``, the command must name the distribution, never ``-e <root>``.
+        """
+        from luxar.cli.demo_commands import _pip_install_cmd
+
+        (tmp_path / "pyproject.toml").write_text("[project]\nname='foreign'\n")
+        with patch("luxar.utils.paths.get_project_root", return_value=tmp_path):
+            cmd = _pip_install_cmd(["demos"])
+        assert "-e" not in cmd, cmd
+        assert cmd[-1] == "luxar[demos]", cmd
+
+    def test_pip_cmd_names_distribution_when_no_project_root(self) -> None:
+        """No pyproject.toml anywhere → distribution form, not editable."""
+        from luxar.cli.demo_commands import _luxar_checkout_root, _pip_install_cmd
+
+        with patch(
+            "luxar.utils.paths.get_project_root",
+            side_effect=RuntimeError("no root"),
+        ):
+            cmd = _pip_install_cmd(["demos"])
+            assert _luxar_checkout_root() is None
+        assert "-e" not in cmd, cmd
+        assert cmd[-1] == "luxar[demos]", cmd
+
+    def test_pip_cmd_uses_editable_for_a_root_that_owns_luxar(self, tmp_path) -> None:
+        """A root that genuinely owns the imported ``luxar`` → editable install.
+
+        This pins the positive branch of ``_luxar_checkout_root``: when the
+        discovered project root's ``packages/luxar/src/luxar`` IS the imported
+        package, the command must be the editable ``-e <root>[extras]`` form so a
+        dev checkout is not shadowed by a stale wheel.
+        """
+        import luxar
+        from luxar.cli.demo_commands import _pip_install_cmd
+
+        owned_pkg = tmp_path / "packages" / "luxar" / "src" / "luxar"
+        owned_pkg.mkdir(parents=True)
+        (owned_pkg / "__init__.py").write_text("")
+        with (
+            patch("luxar.utils.paths.get_project_root", return_value=tmp_path),
+            patch.object(luxar, "__file__", str(owned_pkg / "__init__.py")),
+        ):
+            cmd = _pip_install_cmd(["demos"])
+        assert "-e" in cmd, cmd
+        assert cmd[cmd.index("-e") + 1] == f"{tmp_path}[demos]", cmd
+
+    def test_deps_names_specs_that_belong_to_no_extra(self, runner) -> None:
+        """gdown is installable only by name, so --install can't cover it."""
+        from luxar.demos._dependencies import DependencyStatus
+
+        fake = [DependencyStatus("gdown", DependencySpec("gdown", ""), False)]
+        with patch("luxar.demos.survey", return_value=fake):
+            result = runner.invoke(app, ["demo", "deps"])
+        assert result.exit_code == 1
+        assert "Not in any extra" in result.stdout
+        assert "gdown" in result.stdout
+
+    def test_deps_unknown_extra_lists_the_valid_ones(self, runner) -> None:
+        """A bare "no such extra" leaves the user guessing what to type."""
+        result = runner.invoke(app, ["demo", "deps", "--extra", "nope"])
+        assert result.exit_code == 1
+        assert "Valid extras:" in result.stdout
+        assert "demos" in result.stdout
+
+    def test_deps_extra_is_case_and_space_insensitive(self, runner) -> None:
+        """Extra names are lowercase per PEP 685; accept what the user types."""
+        loud = runner.invoke(app, ["demo", "deps", "--extra", "  IO  "])
+        quiet = runner.invoke(app, ["demo", "deps", "--extra", "io"])
+        assert loud.exit_code == quiet.exit_code
+        assert "imageio" in loud.stdout
+
+    def test_deps_dry_run_without_install_says_it_is_inert(self, runner) -> None:
+        result = runner.invoke(app, ["demo", "deps", "--dry-run"])
+        assert "--dry-run only applies with --install" in result.stdout
+
+    def test_deps_does_not_blame_the_install_for_an_orphan_spec(self, runner) -> None:
+        """gdown is in no extra, so --install never attempts it.
+
+        Reporting it as "still missing after install" made a successful install
+        look like a failure, and exited 1 on work that fully succeeded.
+        """
+        from luxar.demos._dependencies import DependencyStatus
+
+        orphan = DependencyStatus("gdown", DependencySpec("gdown", ""), False)
+        before = [orphan, DependencyStatus("m", DependencySpec("m>=1", "demos"), False)]
+        after = [orphan, DependencyStatus("m", DependencySpec("m>=1", "demos"), True)]
+        calls = {"n": 0}
+
+        def fake_survey(extra=None):
+            calls["n"] += 1
+            return before if calls["n"] == 1 else after
+
+        with patch("luxar.demos.survey", side_effect=fake_survey):
+            with patch("luxar.cli.demo_commands.run_child_process", return_value=0):
+                result = runner.invoke(app, ["demo", "deps", "--install"])
+
+        assert result.exit_code == 0, "the extra installed fine; must not exit 1"
+        assert "Still missing after install" not in result.stdout
+        # ...but it must not claim completeness either.
+        assert "Still to install by hand" in result.stdout
+        assert "gdown" in result.stdout

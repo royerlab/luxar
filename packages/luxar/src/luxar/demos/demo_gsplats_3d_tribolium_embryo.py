@@ -94,6 +94,7 @@ from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
+from luxar.demos import require_module
 from luxar.encoding import EncodingMode
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.utils.demos import (
@@ -181,12 +182,7 @@ def extract_and_load_volume(zip_path: Path) -> np.ndarray:
     Returns:
         3D float32 volume normalised to [0, 1], shape (Z, Y, X).
     """
-    try:
-        import tifffile
-    except ImportError:
-        raise ImportError(
-            "tifffile is required for this demo.\nInstall with: pip install tifffile"
-        )
+    tifffile = require_module("tifffile")
 
     extract_dir = CACHE_DIR / "extracted"
 
@@ -373,8 +369,12 @@ def create_luxar_scene(
             scene = compiler.create_scene(
                 dimensions=dims,
                 # Neutral tone-mapping (not the viewer's default ACES, which lifts
-                # highlights and shifts hue) — matches the known-good gsplat demos.
-                viewer_config=ViewerConfig(tone_mapping="Neutral"),
+                # highlights and shifts hue) — a deliberate exception to the house
+                # ACES recommendation, verified against this volume.
+                # The blending mode below projects each splat's peak instead of
+                # integrating along the view ray, so nothing accumulates and the
+                # embryo needs ~2 stops of exposure to sit at a normal level.
+                viewer_config=ViewerConfig(tone_mapping="Neutral", exposure=1.97),
             )
 
             scene.attrs["title"] = "GSplats: Tribolium castaneum Embryo (Light-Sheet)"
@@ -421,8 +421,13 @@ Navigation:
                     cholesky_factors=gsplats_data.cholesky_factors,
                     colors=colors,
                     opacity=1.0,
-                    absorption=1.0,
-                    blending_mode="volumetric",
+                    # `normal` rather than an accumulating mode: this light-sheet
+                    # volume carries a heavy diffuse background, and integrating
+                    # it along every ray buries the embryo in haze. `normal`
+                    # composites the projected 2D-Gaussian peak (surface
+                    # density) with alpha-over instead, so the background stops
+                    # summing and the surface nuclei stay crisp.
+                    blending_mode="normal",
                     layer=True,
                 )
                 aprint(f"Added {n_splats:,} splats")

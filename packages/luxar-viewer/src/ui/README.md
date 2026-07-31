@@ -603,6 +603,13 @@ Context-sensitive help and keyboard shortcuts.
 - First-time user hints
 - Loading indicators
 
+The help overlay delays its document-level outside-click listener so the opening
+click cannot immediately close it. That pending timer, the installed listener,
+and the focus-trap release are all tracked and cancelled by `hideHelpOverlay()`;
+the delayed callback also verifies that it still belongs to the currently mounted
+overlay before attaching. Rapid `H` toggles therefore cannot arm stale handlers
+that close or retain a subsequently opened panel.
+
 ### 8. Recording Panel
 
 Screenshot and video capture panel with multiple export options.

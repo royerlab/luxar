@@ -4,6 +4,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { formatArgs } from '../../../ui/debug-console/formatters';
 import { DebugConsole } from '../../../ui/debug-console';
 
 // Mock console interceptor
@@ -171,6 +172,29 @@ describe('DebugConsole - Critical Fixes', () => {
 
       debugConsole.dispose();
     });
+
+    it('renders the stack trace for warn messages, not only errors', () => {
+      // The interceptor captures a stack on the warn path too, and the clipboard
+      // export already emits it, but the panel used to gate stack rendering on
+      // type === 'error' — so a warn's stack was copyable yet invisible in the UI.
+      const debugConsole = new DebugConsole();
+      debugConsole.show();
+
+      const console_any = debugConsole as any;
+      console_any.renderMessage({
+        type: 'warn' as const,
+        timestamp: new Date(),
+        args: ['cache write failed'],
+        formatted: 'cache write failed',
+        stack: 'Error: cache write failed\n    at save (opfs-store.ts:1:1)',
+      });
+
+      const stackEl = document.querySelector('.luxar-console-message-stack');
+      expect(stackEl).toBeTruthy();
+      expect(stackEl?.textContent).toContain('at save');
+
+      debugConsole.dispose();
+    });
   });
 
   describe('Dispose Cleanup', () => {
@@ -231,6 +255,36 @@ describe('DebugConsole - Critical Fixes', () => {
   // null-prototype / cyclic objects is a robustness concern (JSON.stringify
   // fallback path), not an accessibility one.
   describe('Argument Formatting Robustness', () => {
+    it('renders an Error as name: message in the DOM, not {}', () => {
+      const debugConsole = new DebugConsole();
+      const console_any = debugConsole as unknown as {
+        formatArgAsDOMElement: (arg: unknown) => HTMLElement;
+      };
+
+      const el = console_any.formatArgAsDOMElement(new Error('boom'));
+
+      expect(el.textContent).toBe('Error: boom');
+      expect(el.textContent).not.toContain('{}');
+    });
+
+    it('agrees with formatArgs for Errors (the two formatters must not drift)', () => {
+      // There are two independent renderers — the DOM span here and `formatArgs`
+      // in debug-console/formatters.ts, which feeds the filter haystack and the
+      // CLIPBOARD (the bug-report path). If they disagree for Errors, the visible
+      // row and the copied text say different things.
+      //
+      // Scoped to Errors on purpose: they legitimately differ for plain strings,
+      // which the DOM renderer quotes.
+      const debugConsole = new DebugConsole();
+      const console_any = debugConsole as unknown as {
+        formatArgAsDOMElement: (arg: unknown) => HTMLElement;
+      };
+
+      for (const err of [new Error('boom'), new Error(), new TypeError('bad type')]) {
+        expect(console_any.formatArgAsDOMElement(err).textContent).toBe(formatArgs([err]));
+      }
+    });
+
     it('formats null-prototype objects without throwing', () => {
       const debugConsole = new DebugConsole();
       const console_any = debugConsole as unknown as {

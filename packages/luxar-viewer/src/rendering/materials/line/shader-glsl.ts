@@ -49,7 +49,11 @@
  *     `LineMaterial.applyBlendingMode('volumetric')` (volumetric
  *     phase 4 — VOLUMETRIC_BLENDING_SPEC.md §7).
  */
-import { GLSL_SANITIZE_FUNCTIONS, GLSL_NEAR_FADE_FUNCTIONS } from '../_shared/glsl-lib';
+import {
+  GLSL_SANITIZE_FUNCTIONS,
+  GLSL_NEAR_FADE_FUNCTIONS,
+  GLSL_SORTED_INDEX,
+} from '../_shared/glsl-lib';
 import {
   ALPHA_CLAMP,
   VOLUMETRIC_SERIES_C1,
@@ -70,11 +74,11 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
     // Static geometry attribute (per quad vertex)
     in vec2 aQuadCorner;  // (-1,-1), (1,-1), (-1,1), (1,1)
 
-    // Draw-slot → storage-slot mapping. Identity after a fresh commit;
-    // the sort worker permutes it so draw order tracks view depth
-    // without rewriting segment data. Uint32Array attribute → bound via
-    // vertexAttribIPointer, matching this uint declaration.
-    in uint aSortedIndex;
+    // Draw-slot → storage-slot mapping, double-buffered so a new ordering
+    // swaps atomically (declaration + luxarSortedIndex() in glsl-lib).
+    // Uint32Array attributes → bound via vertexAttribIPointer, matching
+    // the uint declarations.
+    ${GLSL_SORTED_INDEX}
 
     // Line data texture: RGBA32F, 6 texels/segment (see
     // rendering/line-geometry.ts for the texel layout). Replaces the
@@ -124,7 +128,7 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
       // (scalars in .xy, per-endpoint alphas in .zw) are fetched only PAST
       // the bothBehind cull below, keeping the cheap-cull ordering the
       // interleaved shader had.
-      int lineBase = int(aSortedIndex) * 6;
+      int lineBase = int(luxarSortedIndex()) * 6;
       int lineTexW = textureSize(uLineTex, 0).x;
       ivec2 texel0 = ivec2(lineBase % lineTexW, lineBase / lineTexW);
       vec4 lineT0 = texelFetch(uLineTex, texel0, 0);

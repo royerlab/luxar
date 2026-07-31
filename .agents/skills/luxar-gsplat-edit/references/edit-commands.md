@@ -96,14 +96,16 @@ Wrap a fitted dataset as a web scene. `--center`/`--no-center` (default on),
 Appearance is baked in here:
 - `--colormap` (default `gray`) — builtin or any matplotlib/colorcet name (e.g. `plasma`).
 - `--tone-mapping` (default `ACES`, the viewer default) — `None`/`Linear`/`Reinhard`/
-  `Cineon`/`ACES`/`AgX`/`Neutral`. Pair a colormap with `Neutral` for faithful
-  scientific colors (ACES shifts hues).
+  `Cineon`/`ACES`/`AgX`/`Neutral`. Prefer `ACES` and pass it explicitly (that
+  records the choice and silences the compiler's LUT notice, which only fires
+  when nothing was chosen); reach for `Neutral` when the colormap carries an
+  exact scientific color encoding (ACES shifts hues).
 - `--gamma` (1.0) — display gamma.
 - `--intensity` (1.0) — display intensity multiplier.
 - `--layer`/`--no-layer` (default `layer`) — list the gsplats node in the viewer Layers panel.
 
 ## migrate-format IN OUT
-Upgrade legacy layouts → v3.2. Five input shapes are auto-detected: v1.0 (flat),
+Upgrade legacy layouts → v3.3. Five input shapes are auto-detected: v1.0 (flat),
 v1.1 (multi-LOD additive), v2.0 (substitutive×additive matrix), a substitutive
 directory (manifest.json + level_<i> files), and a v3.0/v3.1 store still carrying
 the pre-v3.2 `pixel_size` lod selector attrs (rewritten to `coverage` +
