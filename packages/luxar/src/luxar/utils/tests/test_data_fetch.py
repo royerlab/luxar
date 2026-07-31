@@ -251,6 +251,10 @@ def test_generator_skips_local_scratch_files(tmp_path):
     so listing one would ship a permanently-unfetchable entry.
     """
     mod = _load_generator()
+    assert mod._SCRATCH_SUFFIXES == _SCRATCH_SUFFIXES, (
+        "the inline copy above has drifted from the generator's list, so the "
+        "disk-consistency guard and the generator no longer agree"
+    )
     (tmp_path / "dataset.npz").write_bytes(b"data")
     for scratch in (
         "dataset.npz.corrupt",
@@ -270,7 +274,10 @@ def test_generator_rejects_a_corrupt_lfs_pointer(tmp_path):
 
     A non-numeric ``size`` used to abort with a bare ``ValueError``; a pointer
     missing ``oid``/``size`` used to fall through to hashing the ~130-byte stub,
-    silently shipping a plausible-but-bogus checksum.
+    silently shipping a plausible-but-bogus checksum. An oid that is not a
+    lowercase hex sha256 (or a negative size) is just as unusable: the downstream
+    checksum compare is case-sensitive against ``hexdigest()``, so such an entry
+    could never verify.
     """
     mod = _load_generator()
     header = "version https://git-lfs.github.com/spec/v1\n"
@@ -279,7 +286,15 @@ def test_generator_rejects_a_corrupt_lfs_pointer(tmp_path):
     good.write_text(f"{header}oid sha256:{'a' * 64}\nsize 123\n")
     assert mod._pointer_checksum(good) == {"sha256": "a" * 64, "bytes": 123}
 
-    for bad_body in (f"oid sha256:{'a' * 64}\nsize notanumber\n", "size 123\n"):
+    for bad_body in (
+        f"oid sha256:{'a' * 64}\nsize notanumber\n",  # non-numeric size
+        "size 123\n",  # no oid line
+        f"oid sha256:{'a' * 64}\n",  # no size line
+        "oid sha256:not-a-digest\nsize 123\n",  # oid is not hex
+        f"oid sha256:{'a' * 63}\nsize 123\n",  # oid too short
+        f"oid sha256:{'A' * 64}\nsize 123\n",  # oid not lowercase
+        f"oid sha256:{'a' * 64}\nsize -1\n",  # negative size
+    ):
         corrupt = tmp_path / "corrupt.bin"
         corrupt.write_text(header + bad_body)
         with pytest.raises(ValueError, match="corrupt git-LFS pointer"):
