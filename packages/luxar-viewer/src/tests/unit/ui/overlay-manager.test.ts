@@ -932,6 +932,154 @@ describe('OverlayManager HTML sanitization (issue #720)', () => {
     expect(el.textContent).toContain('bold');
     expect(el.textContent).toContain('link');
   });
+
+  // ---------------------------------------------------------------- issue #767
+  // attributes are now allowlisted (ALLOWED_ATTRS), not denylisted
+
+  it('strips non-allowlisted attributes while keeping allowlisted ones', async () => {
+    const el = await renderHtml(
+      '<a href="https://example.org" ping="//evil" srcset="x 2x" download ' +
+        'data-x="y" id="clobber" name="clobber" class="c" title="t" target="_blank" ' +
+        'alt="a">x</a>'
+    );
+    const a = el.querySelector('a')!;
+    expect(a.hasAttribute('ping')).toBe(false);
+    expect(a.hasAttribute('srcset')).toBe(false);
+    expect(a.hasAttribute('download')).toBe(false);
+    expect(a.hasAttribute('data-x')).toBe(false);
+    expect(a.hasAttribute('id')).toBe(false);
+    expect(a.hasAttribute('name')).toBe(false);
+    // Allowlisted attributes survive.
+    expect(a.getAttribute('class')).toBe('c');
+    expect(a.getAttribute('title')).toBe('t');
+    expect(a.getAttribute('target')).toBe('_blank');
+    expect(a.getAttribute('alt')).toBe('a');
+  });
+
+  it('drops a vbscript: href', async () => {
+    const el = await renderHtml('<a href="vbscript:msgbox(1)">x</a>');
+    expect(el.querySelector('a')!.hasAttribute('href')).toBe(false);
+  });
+
+  it('drops a data: href', async () => {
+    const el = await renderHtml('<a href="data:text/html,<b>x</b>">x</a>');
+    expect(el.querySelector('a')!.hasAttribute('href')).toBe(false);
+  });
+
+  it('drops a data: src', async () => {
+    const el = await renderHtml('<img src="data:text/html,<b>x</b>">');
+    expect(el.querySelector('img')!.hasAttribute('src')).toBe(false);
+  });
+
+  it('drops a style with a url(javascript:...) payload', async () => {
+    const el = await renderHtml('<div style="background:url(javascript:alert(1))">x</div>');
+    expect(el.querySelector('div')!.hasAttribute('style')).toBe(false);
+  });
+
+  it('keeps a benign style attribute', async () => {
+    const el = await renderHtml('<div style="color:red">x</div>');
+    expect(el.querySelector('div')!.getAttribute('style')).toBe('color:red');
+  });
+
+  it('drops a style carrying a vbscript: token', async () => {
+    const el = await renderHtml('<div style="color:red;background:vbscript:msgbox(1)">x</div>');
+    expect(el.querySelector('div')!.hasAttribute('style')).toBe(false);
+  });
+
+  it('drops a style carrying an expression( token', async () => {
+    const el = await renderHtml('<div style="width:expression(alert(1))">x</div>');
+    expect(el.querySelector('div')!.hasAttribute('style')).toBe(false);
+  });
+
+  it('drops a style whose url(javascript:...) is obfuscated with an interior tab', async () => {
+    // Pins the normalizeUrlForScheme reuse on the style branch: the parser
+    // decodes &Tab; to a literal U+0009 inside the value, and normalization
+    // strips it before the substring check — mirroring the href obfuscation
+    // tests above.
+    const payload = '<div style="background:url(java&Tab;script:alert(1))">x</div>';
+
+    // Sanity-check the input is genuinely obfuscated: the HTML parser decodes
+    // &Tab; to a literal U+0009 inside the style value. Without this the test
+    // could pass vacuously on an entity the parser left alone.
+    const raw = document.createElement('template');
+    raw.innerHTML = payload;
+    expect(raw.content.querySelector('div')!.getAttribute('style')).toContain('\t');
+
+    const el = await renderHtml(payload);
+    expect(el.querySelector('div')!.hasAttribute('style')).toBe(false);
+  });
+
+  it('keeps a rel attribute on a benign anchor', async () => {
+    const el = await renderHtml(
+      '<a href="https://x" target="_blank" rel="noopener noreferrer">x</a>'
+    );
+    expect(el.querySelector('a')!.getAttribute('rel')).toBe('noopener noreferrer');
+  });
+
+  it('drops a rel="opener" (reverse tabnabbing opt-out)', async () => {
+    const el = await renderHtml('<a href="https://x" target="_blank" rel="opener">x</a>');
+    const a = el.querySelector('a')!;
+    expect(a.hasAttribute('rel')).toBe(false);
+    // Dropping `rel` is safe precisely because `_blank` keeps its implicit
+    // noopener — the anchor never regains a live window.opener.
+    expect(a.getAttribute('target')).toBe('_blank');
+  });
+
+  it('drops a rel that mixes noopener with an opener token', async () => {
+    // `noopener` must not shield an `opener` token elsewhere in the value:
+    // token equality, not substring, so this whole attribute is removed.
+    const el = await renderHtml('<a href="https://x" target="_blank" rel="noopener opener">x</a>');
+    expect(el.querySelector('a')!.hasAttribute('rel')).toBe(false);
+  });
+
+  it('drops a named target (reverse tabnabbing — new window keeps window.opener)', async () => {
+    const el = await renderHtml('<a href="https://x" target="w1">x</a>');
+    expect(el.querySelector('a')!.hasAttribute('target')).toBe(false);
+  });
+
+  it('drops target="_parent" (only _blank/_self survive)', async () => {
+    const el = await renderHtml('<a href="https://x" target="_parent">x</a>');
+    expect(el.querySelector('a')!.hasAttribute('target')).toBe(false);
+  });
+
+  it('keeps target="_blank" (implicit noopener, safe)', async () => {
+    const el = await renderHtml('<a href="https://x" target="_blank">x</a>');
+    expect(el.querySelector('a')!.getAttribute('target')).toBe('_blank');
+  });
+
+  it('drops a target with a leading space (browser treats " _blank" as named)', async () => {
+    // HTML matches the `_blank` keyword with NO trimming, so a leading space
+    // makes this a NAMED target in the browser — the guard must not normalize
+    // more than the browser does.
+    const el = await renderHtml('<a href="https://x" target=" _blank">x</a>');
+    expect(el.querySelector('a')!.hasAttribute('target')).toBe(false);
+  });
+
+  it('drops a target obfuscated with a trailing tab', async () => {
+    // The parser decodes &#9; to a literal U+0009, which the browser keeps as
+    // part of the (now named) target value; the raw-value guard must reject it.
+    const payload = '<a href="https://x" target="_blank&#9;">x</a>';
+
+    // Sanity-check the input is genuinely obfuscated: the decoded target value
+    // literally contains a tab (mirrors the href/style obfuscation tests).
+    const raw = document.createElement('template');
+    raw.innerHTML = payload;
+    expect(raw.content.querySelector('a')!.getAttribute('target')).toContain('\t');
+
+    const el = await renderHtml(payload);
+    expect(el.querySelector('a')!.hasAttribute('target')).toBe(false);
+  });
+
+  it('keeps href/class/title/target on a benign anchor', async () => {
+    const el = await renderHtml(
+      '<a href="https://example.org" class="c" title="t" target="_blank">x</a>'
+    );
+    const a = el.querySelector('a')!;
+    expect(a.getAttribute('href')).toBe('https://example.org');
+    expect(a.getAttribute('class')).toBe('c');
+    expect(a.getAttribute('title')).toBe('t');
+    expect(a.getAttribute('target')).toBe('_blank');
+  });
 });
 
 describe('OverlayManager HTML size cap (issue #768)', () => {

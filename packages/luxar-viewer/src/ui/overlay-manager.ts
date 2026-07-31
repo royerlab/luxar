@@ -41,7 +41,15 @@ const ANCHOR_TRANSFORM: Record<string, string> = {
   'bottom-right': 'translate(-100%, -100%)',
 };
 
-/** Allowed HTML tags for client-side sanitization (see `sanitizeHtml`) */
+/**
+ * Allowed HTML tags for client-side sanitization (see `sanitizeHtml`).
+ *
+ * Note: foreign-content tags (`svg`, `math`) and raw-text tags (`style`,
+ * `xmp`, `noscript`, `iframe`) are intentionally kept OUT. Their contents
+ * serialize as raw text rather than escaped markup, which sidesteps the
+ * escaping the unwrap pass relies on and reopens a mutation-XSS (mXSS) vector;
+ * allowlisting them would reintroduce it.
+ */
 const ALLOWED_TAGS = new Set([
   'b',
   'i',
@@ -73,6 +81,18 @@ const ALLOWED_TAGS = new Set([
   'thead',
   'tbody',
 ]);
+
+/**
+ * Allowed HTML attributes for client-side sanitization (see `sanitizeHtml`).
+ *
+ * This is an ALLOWLIST: any attribute whose lowercased name is not in this set
+ * is removed. That drops `on*` event handlers, DOM-clobbering `id`/`name`,
+ * `ping`/`srcset`/`download`, `data-*`, etc. for free — only these survive
+ * (and `href`/`src`/`style` values still pass a scheme/content guard, while a
+ * `rel` carrying the `opener` token is dropped to preserve the `noopener`
+ * default `target="_blank"` implies).
+ */
+const ALLOWED_ATTRS = new Set(['style', 'href', 'src', 'alt', 'class', 'target', 'title', 'rel']);
 
 /** ASCII whitespace + C0 controls — see {@link normalizeUrlForScheme}. */
 // eslint-disable-next-line no-control-regex
@@ -577,7 +597,17 @@ export class OverlayManager {
   }
 
   /**
-   * Client-side HTML sanitization against a DOM tag allowlist.
+   * Client-side HTML sanitization against DOM tag and attribute allowlists.
+   *
+   * Pass 1 is an attribute ALLOWLIST (see ALLOWED_ATTRS): every attribute not
+   * in the set is removed — this is what drops `on*` handlers, DOM-clobbering
+   * `id`/`name`, `ping`/`srcset`/`download`, `data-*`, etc. The allowlisted
+   * value-bearing attributes then pass a per-attribute guard (see below):
+   * `href`/`src` block `javascript:`/`vbscript:`/`data:` schemes, `style`
+   * blocks `javascript:`/`vbscript:`/`expression(`, `rel` drops an `opener`
+   * token, and `target` is restricted to `_blank`/`_self` — the last two
+   * neutralize reverse tabnabbing. Pass 2 is a tag allowlist (see
+   * ALLOWED_TAGS).
    *
    * A disallowed tag is *unwrapped*, not dropped — its children are lifted
    * into its parent — so every element has to be scrubbed whether or not its
@@ -634,20 +664,63 @@ export class OverlayManager {
     // (ancestors before descendants) — both passes iterate it.
     const elements = Array.from(template.content.querySelectorAll('*'));
 
-    // Pass 1 — attribute scrub, applied to allowed and disallowed alike.
+    // Pass 1 — attribute allowlist scrub, applied to allowed and disallowed
+    // alike. Anything not in ALLOWED_ATTRS is dropped, which covers `on*`
+    // event handlers and DOM-clobbering `id`/`name` (plus `ping`, `srcset`,
+    // `download`, `data-*`, …) for free. The value-bearing allowlisted
+    // attributes then face a per-attribute guard: scheme checks on
+    // `href`/`src`, content checks on `style`, an `opener`-token check on
+    // `rel`, and a `_blank`/`_self` restriction on `target`. Over-blocking is
+    // the deliberate, documented preference here.
     for (const el of elements) {
       for (const attr of Array.from(el.attributes)) {
         const attrName = attr.name.toLowerCase();
-        // Tags are allowlisted; attributes are not. Anything not matched
-        // below is kept — blocked here are `on*` event handlers and
-        // `javascript:` URLs in `href`/`src`.
-        if (attrName.startsWith('on')) {
+        if (!ALLOWED_ATTRS.has(attrName)) {
           el.removeAttribute(attr.name);
-        } else if (
-          (attrName === 'href' || attrName === 'src') &&
-          normalizeUrlForScheme(attr.value).startsWith('javascript:')
-        ) {
-          el.removeAttribute(attr.name);
+        } else if (attrName === 'href' || attrName === 'src') {
+          // Block script-bearing and data-URI schemes.
+          const scheme = normalizeUrlForScheme(attr.value);
+          if (
+            scheme.startsWith('javascript:') ||
+            scheme.startsWith('vbscript:') ||
+            scheme.startsWith('data:')
+          ) {
+            el.removeAttribute(attr.name);
+          }
+        } else if (attrName === 'style') {
+          // A `url(javascript:…)` collapses to contain `javascript:` after
+          // normalization, so this single check also covers the CSS-url vector.
+          const normalized = normalizeUrlForScheme(attr.value);
+          if (
+            normalized.includes('javascript:') ||
+            normalized.includes('vbscript:') ||
+            normalized.includes('expression(')
+          ) {
+            el.removeAttribute(attr.name);
+          }
+        } else if (attrName === 'rel') {
+          // `target="_blank"` implies `noopener` by default; a hostile
+          // `rel="opener"` opts back OUT of it, handing the opened page a live
+          // `window.opener` to cross-origin-navigate the viewer tab (reverse
+          // tabnabbing). Drop the whole attribute if the exact `opener` token
+          // is present. Token equality, not substring — `noopener` must NOT
+          // match. A legitimate author never writes a bare `opener`.
+          const tokens = attr.value.toLowerCase().split(/\s+/);
+          if (tokens.includes('opener')) {
+            el.removeAttribute(attr.name);
+          }
+        } else if (attrName === 'target') {
+          // Implicit `noopener` is granted ONLY to an EXACT `_blank`/`_self`
+          // target (ASCII case-insensitive, no trimming — matching HTML's
+          // keyword rule). A near-miss the browser treats as a NAMED target
+          // ("_blank " with a stray space, a Kelvin-sign homoglyph, …) opens a
+          // top-level window with a live `window.opener` (reverse tabnabbing),
+          // so compare the RAW value and drop anything that is not
+          // letter-for-letter `_blank`/`_self`. The `i` flag folds ASCII case
+          // only; do NOT add `u`, which would wrongly accept `_blanK` (Kelvin).
+          if (!/^_(blank|self)$/i.test(attr.value)) {
+            el.removeAttribute(attr.name);
+          }
         }
       }
     }
