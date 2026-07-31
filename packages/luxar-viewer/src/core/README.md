@@ -51,9 +51,10 @@ core/
     │   ├── build-rail-items.ts      # Build control-rail descriptors from shared UI actions
     │   ├── environment-guards.ts    # Browser + THREE.REVISION peer-dep checks
     │   └── module-overrides.ts      # Wire `wasmPath` / `workerPath` into module singletons
-    ├── lifecycle/                   # dispose / focus / unload
+    ├── lifecycle/                   # dispose / focus / unload / connectivity recovery
     │   ├── dispose-pipeline.ts      # Per-component safeDispose teardown + singleton clear
     │   ├── focus-handling.ts        # Window-focus + visibility-change → animation pause/resume
+    │   ├── online-retry.ts          # `online` event → bounded retry of failed scene loads
     │   └── unload-handling.ts       # `beforeunload` → app.dispose()
     ├── dataset/                     # Dataset routing
     │   ├── load-dataset.ts          # Scene load + scene-dependent UI init sequence
@@ -63,7 +64,7 @@ core/
     │   └── browser-shortcut.ts      # `open-dataset-browser` custom-event listener
     ├── viewer-config/               # Zarr `viewer_config` + panel visibility
     │   ├── apply-state.ts           # Dispatch `viewer_config` fields to UI subsystems
-    │   └── panel-visibility.ts      # Capture / restore RecordingControls + RecordingPanel state
+    │   └── panel-visibility.ts      # Capture / restore RenderingControls + RecordingPanel state
     ├── snapshot/                    # Camera / dimension state JSON
     │   └── viewer-snapshot.ts       # captureSnapshot / restoreSnapshot for embed share-links
     ├── embedder/                    # Public programmatic embedder API

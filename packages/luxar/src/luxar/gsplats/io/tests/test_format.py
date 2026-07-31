@@ -33,7 +33,7 @@ def create_test_splats_3d(n_splats: int = 100) -> dict:
 
 
 class TestFormatCompliance:
-    """Test v3.0 format specification compliance."""
+    """Test current gsplats format specification compliance."""
 
     def test_root_attributes(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

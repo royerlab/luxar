@@ -23,6 +23,7 @@ import type { ShaderSource } from '../../materials/_shared/shader-source';
 import {
   GLSL_SANITIZE_FUNCTIONS,
   GLSL_NEAR_FADE_FUNCTIONS,
+  GLSL_SORTED_INDEX,
 } from '../../materials/_shared/glsl-lib';
 import { gsplatPickWebGPUFactory, buildGSplatPickTSLNodesFromUniforms } from './pick.tsl';
 
@@ -44,7 +45,7 @@ export const GSPLAT_PICK_VERTEX_SHADER = /* glsl */ `
     // pick buffer must report the storage slot -- the id the rest of
     // the pipeline (loaders, selection) addresses splats by -- not the
     // transient draw slot.
-    in uint aSortedIndex;
+    ${GLSL_SORTED_INDEX}
 
     // Splat data texture: RGBA32F, 4 texels/splat (see
     // rendering/element-texture-layout.ts). Picking needs texels 0-2
@@ -94,7 +95,7 @@ export const GSPLAT_PICK_VERTEX_SHADER = /* glsl */ `
     void main() {
         // === Splat-texture fetch prologue (visual-shader parity) ===
         // Width is a multiple of 4, so a splat's texels share one row.
-        int splatBase = int(aSortedIndex) * 4;
+        int splatBase = int(luxarSortedIndex()) * 4;
         int splatTexW = textureSize(uSplatTex, 0).x;
         ivec2 texel0 = ivec2(splatBase % splatTexW, splatBase / splatTexW);
         vec4 splatT0 = texelFetch(uSplatTex, texel0, 0);
@@ -251,7 +252,7 @@ export const GSPLAT_PICK_VERTEX_SHADER = /* glsl */ `
         // Storage slot, NOT gl_InstanceID (the draw slot): identical
         // under Phase-1 identity ordering, and stays correct once the
         // sort worker permutes draw order (Phase 2+).
-        vElementId = float(aSortedIndex);
+        vElementId = float(luxarSortedIndex());
     }
 `;
 

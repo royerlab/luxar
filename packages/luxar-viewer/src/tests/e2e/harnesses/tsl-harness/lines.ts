@@ -25,7 +25,11 @@ import {
   writeLineTexels,
   type LineTexelSource,
 } from '../../../../rendering/line-geometry';
-import { writeSortedIndexOrdering } from '../../../../rendering/element-storage';
+import {
+  writeSortedIndexOrdering,
+  pumpSortedIndexOrderingApply,
+  getActiveSortedIndexAttribute,
+} from '../../../../rendering/element-storage';
 import type { RegistryEntry } from './types';
 import { buildBehindCamera, buildColormapTexture } from './shared';
 
@@ -292,6 +296,27 @@ const SORTED_PERMUTED_LINES: LineTexelSource = {
 const SORTED_PERMUTED_ORDERING = new Uint32Array([2, 0, 3, 1]);
 
 /**
+ * Drain a staged ordering and leave it in the FRONT (slot 0) buffer.
+ *
+ * The parity harness builds materials by hand, so nothing pushes the
+ * active slot into `uSortedIndexSlot` the way the depth-sort coordinator
+ * does per frame; both backends therefore sample slot 0. Draining and then
+ * folding the swapped-in permutation back onto slot 0 keeps the production
+ * writer in the loop while matching what the hand-built shaders read.
+ */
+function drainOrderingOntoFrontBuffer(geom: THREE.InstancedBufferGeometry): void {
+  for (let guard = 0; pumpSortedIndexOrderingApply(geom).more; guard++) {
+    if (guard > 64) throw new Error('ordering stream did not converge');
+  }
+  const active = getActiveSortedIndexAttribute(geom);
+  const front = geom.getAttribute('aSortedIndex') as THREE.InstancedBufferAttribute;
+  if (active && active !== front) {
+    (front.array as Uint32Array).set(active.array as Uint32Array);
+    front.needsUpdate = true;
+  }
+}
+
+/**
  * Four-segment line data texture, deliberately SIX TEXELS WIDE (one
  * segment per ROW): storage slot i has texel base 6·i, so with W = 6
  * every slot i > 0 resolves to row y = base / W = i > 0. This
@@ -330,11 +355,27 @@ function buildSortedPermutedLinesMesh(material: THREE.Material): THREE.Object3D 
     { ...SORTED_PERMUTED_LINES, segmentCount: SORTED_PERMUTED_COUNT },
     material
   );
-  writeSortedIndexOrdering(
-    mesh.geometry as THREE.InstancedBufferGeometry,
-    SORTED_PERMUTED_ORDERING,
-    SORTED_PERMUTED_COUNT
-  );
+  const geom = mesh.geometry as THREE.InstancedBufferGeometry;
+  // Clear the identity `createInstancedLinesMesh` just wrote, so the
+  // ordering below is the ONLY thing that can make the four segments read
+  // four distinct storage slots. Without this the test passes whether or
+  // not the ordering is ever applied — identity and any permutation both
+  // draw all four segments, so the image is the same and the assertion is
+  // vacuous. (The points twin gets this for free: its builder starts from
+  // a bare `attachPointStorage`, which leaves the buffer zero-filled.)
+  (geom.getAttribute('aSortedIndex').array as Uint32Array).fill(0);
+  writeSortedIndexOrdering(geom, SORTED_PERMUTED_ORDERING, SORTED_PERMUTED_COUNT);
+  // An ordering STAGES into the inactive buffer of the double-buffered pair
+  // and swaps in when complete, so rendering straight after staging would
+  // draw the un-permuted buffer — and this case exists precisely to prove
+  // the permutation reaches the shader. Drain the pump the way the
+  // per-frame scheduler does, then fold the result back onto slot 0:
+  // production pushes the live slot into `uSortedIndexSlot`, but these
+  // harness materials are hand-built (the TSL one has no writable uniform
+  // map at all), so both backends read the default slot. The permutation
+  // still comes from the production writer — only where it lands is
+  // normalised.
+  drainOrderingOntoFrontBuffer(geom);
   mesh.frustumCulled = false;
   return mesh;
 }

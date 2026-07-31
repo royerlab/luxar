@@ -45,9 +45,9 @@ function hasUnsafeSrcCharacter(src: string): boolean {
  * strings, and excessively long values.
  *
  * Trailing slashes are stripped: the zarr loader appends path components
- * (metadata, chunks) to this string, so a trailing `/` produces malformed
- * requests on stricter servers (see CLAUDE.md "Data Source URLs Must NOT
- * Have Trailing Slash").
+ * (metadata, chunks) to this string, and stripping here is what lets the
+ * viewer accept both spellings while storing the canonical no-trailing-slash
+ * form (see CLAUDE.md "Data Source URLs Normalize Trailing Slashes").
  */
 export function normalizeDataSourceUrl(rawSrc: string | null): string | null {
   if (rawSrc === null) return null;
@@ -305,10 +305,10 @@ export interface BrowserUrlWriter {
 }
 
 /**
- * Strip trailing slashes from a `src` value so the viewer's downstream zarr
- * fetches don't accumulate `//` from the data root. The viewer treats trailing
- * slashes as an empty path component and they cause 404s on the loader; the
- * URL contract for `?src=` is "no trailing slash".
+ * Strip trailing slashes from a `src` value before writing it into the
+ * address bar. Parsing normalizes trailing slashes away anyway (see
+ * `normalizeDataSourceUrl`), so this keeps the STORED URL in the canonical
+ * no-trailing-slash spelling instead of round-tripping a non-canonical form.
  */
 function normalizeSrcForUrl(src: string): string {
   return src.replace(/\/+$/, '');

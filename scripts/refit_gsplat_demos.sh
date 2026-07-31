@@ -10,8 +10,7 @@ set -eu
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
-LOGDIR=/tmp/luxar-refit
-mkdir -p "$LOGDIR"
+LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/luxar-refit-${USER:-$(id -u)}.XXXXXX")"
 
 echo "=========================================="
 echo "$(date): Starting gsplat demo refit sequence"
