@@ -54,6 +54,7 @@ import {
   perspectiveNearFadeStaticTSL,
   sanitizeNonNegative,
   type TSLNode,
+  sortedIndexNode,
 } from '../../materials/_shared/tsl-helpers';
 import { getPlaceholderElementTexture } from '../../element-texture-layout';
 
@@ -71,6 +72,8 @@ export interface LinePickTSLNodes {
   readonly uLineTex: TSLNode;
   readonly uResolution: TSLNode;
   readonly uIsOrtho: TSLNode;
+  /** Active ordering buffer: 0 = aSortedIndex, 1 = aSortedIndexB. */
+  readonly uSortedIndexSlot: TSLNode;
   readonly uNodeId: TSLNode;
   readonly uNearCull: TSLNode;
   readonly uMaxLinePixelWidth: TSLNode;
@@ -108,10 +111,10 @@ export function linePickWebGPUFactory(
   outMaterial?: NodeMaterial
 ): NodeMaterial {
   const aQuadCorner: TSLNode = attribute<'vec2'>('aQuadCorner', 'vec2');
-  // The only per-instance attribute (visual-factory parity): segment
+  // The ordering attributes (visual-factory parity): segment
   // data lives in the line texture; `aSortedIndex` maps the draw slot
   // to a storage slot.
-  const aSortedIndex: TSLNode = attribute<'uint'>('aSortedIndex', 'uint');
+  const aSortedIndex: TSLNode = sortedIndexNode(nodes.uSortedIndexSlot);
 
   // Pixel-width math consumes the CPU-precomputed
   // uPerspectiveLineScale / uOrthoLineScale (no FOV uniform exists).
@@ -437,6 +440,7 @@ export function buildLinePickTSLNodesFromUniforms(
       (uniforms.uResolution?.value as THREE.Vector2 | undefined) ?? new THREE.Vector2(1, 1)
     ),
     uIsOrtho: uniform((uniforms.uIsOrtho?.value as number) ?? 0),
+    uSortedIndexSlot: uniform((uniforms.uSortedIndexSlot?.value as number) ?? 0),
     uNodeId: uniform((uniforms.uNodeId?.value as number) ?? 0),
     uNearCull: uniform((uniforms.uNearCull?.value as number) ?? 1e-4),
     uMaxLinePixelWidth: uniform((uniforms.uMaxLinePixelWidth?.value as number) ?? 1.0),
