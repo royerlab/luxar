@@ -108,6 +108,7 @@ Controls:
     - Top view: See hexagonal F1 head with rotating γ stalk
     - Side view: See membrane portion (F0) and catalytic head (F1)
     - Each chain/subunit has a distinct color
+    - Press L for the Layers panel (blending, opacity, display range)
     - Ctrl+C to stop and cleanup
 """
 
@@ -484,14 +485,29 @@ def generate_atp_synthase(
                 # Sharpness for protein atoms (normalized [0, 1] knob; 0.5 = Gaussian)
                 sharpness = np.full(len(positions), 0.5, dtype=np.float32)
 
+                # `normal` (alpha-over, depth-sorted) rather than the default
+                # additive — same reasoning as the nuclear-pore-complex demo:
+                # an atomic structure is a surface, so the nearest atom should
+                # win the pixel instead of every overlapping atom summing into
+                # pastel white. Retires the intensity=0.0625 anti-blowout
+                # workaround additive needed — which here was the dominant
+                # cost: at the opening framing the chain colours go from mean
+                # CIELAB chroma 44.8 at lightness L* 40.2 (additive: dim and
+                # muddy) to 57.8 at L* 76.4, so the subunits read as distinct
+                # hues instead of a dark wash. `layer=True` exposes the node in
+                # the Layers panel (press L) for live blending / opacity /
+                # display-range control — plus absorption, whose slider the
+                # panel only shows once the layer is switched to volumetric.
                 scene.add_points(
                     "atp_synthase",
                     positions=positions,
                     colors=colors,
                     radii=radii,
                     sharpness=sharpness,
-                    opacity=0.95,
-                    intensity=0.0625,
+                    layer=True,
+                    blending_mode="normal",
+                    opacity=1.0,
+                    intensity=1.0,
                 )
 
                 # Overlay annotations

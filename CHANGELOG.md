@@ -6,6 +6,48 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Fixed — the volumetric Absorption slider did nothing on thin geometry
+
+κ is a physical coefficient with units of 1/length: the volumetric shaders build
+optical depth as `τ = κ · density · through-thickness`, where the thickness is
+the geometry's own world size (`width · √(π/ln 100)` for lines, `radius · …` for
+points, the ray integral through Σ for gsplats). The layers panel offered a fixed
+**0–10** track, so on the 3D-Hilbert-curve demo's 1.5e-3-wide lines the WHOLE
+slider spanned τ ≤ 0.012 — a sub-1/255 change, i.e. a knob that visibly did
+nothing. (Switching to `max` mode appeared to "make absorption work"; that was
+the mode change itself — κ is not read in `max` at all.)
+
+The track is now **logarithmic with bounds re-derived per layer** from the
+thickness the writer already records (`max_width` / `max_radius`; the thinnest
+descendant sets the top, since one κ drives the whole subtree, and the thickest
+anchors the floor so a mixed-thickness group can still reach near-transparency
+for its fattest geometry), so its top lands near
+τ = 5 — opaque — whatever the scene's units. That 1.5e-3-wide line now reaches
+κ ≈ 4.0e3; sweeping the track moves mean luminance 53 → 21 where it used to move
+one 8-bit level. Gsplats carry no comparable thickness stat and their
+`τ = κ·opacity·rayMass` is already O(1)-calibrated for fitted volumes, so they
+keep the historical 0.001–10 span — also the floor of every derived bound, so an
+authored κ ≤ 10 stays reachable. Position 0 is a dedicated stop for exactly
+κ = 0, the additive limit, and the floor lowers onto a smaller authored κ so the
+value the readout shows is always the value the thumb represents.
+
+#### Fixed — nD scenes were framed around a non-displayed axis on load
+
+Auto-framing, scene scale, clipping planes and the near-cull margin all project
+the nD `position_bounds` through `sceneDimsManager`'s displayed dims, which fall
+back to `[0, 1, 2]` when it is uninitialised — and the dimension-navigation UI
+only initialised it *after* the scene load resolved. So any scene whose displayed
+dims are not the first three (a leading non-displayed time / channel / order
+axis — the common nD shape) was framed around the wrong axes: that axis' extent
+landed on world X, putting the look-at target off to one side of the geometry and
+inflating the fit distance by its range. The Hilbert demo opened at target
+`(2.50, 0, 0)` with diagonal 5.19 instead of `(0, 0, 0)` and 1.73 — off-centre at
+3× over-zoom, which pressing `F` then "fixed" (that path measures loaded
+geometry instead of metadata). The dims are now resolved from the freshly loaded
+scene before anything reads bounds, and stale dims are dropped when a scene
+carries no dimension metadata so a 3D scene loaded after an nD one cannot
+inherit its axes.
+
 #### Fixed — overlay HTML sanitizer: attribute allowlist + reverse-tabnabbing (#767)
 
 `OverlayManager.sanitizeHtml` allowlisted tags but only denylisted attributes,
@@ -29,6 +71,24 @@ longer open a top-level window with a live `window.opener` able to
 cross-origin-navigate the viewer tab. Over-blocking is the deliberate
 preference: this sanitizer is the only XSS control on the `?src=<url>` path,
 where a hand-crafted zarr never meets the Python compiler.
+
+#### Changed — the two PDB structure demos render as surfaces, not emissive media
+
+`nuclear_pore_complex` and `atp_synthase` shipped on the default `additive`
+blending, which sums every atom along the view ray. A dense atomic shell washes
+toward pastel white that way, and both demos held it back with an intensity
+anti-blowout workaround (0.125 and 0.0625) that left them dim. An atomic
+structure is a *surface*: both nodes now use depth-sorted `normal` blending at
+full exposure (opacity 1.0, intensity 1.0), so the nearest atom wins the pixel.
+Measured at the opening framing as mean CIELAB chroma over the covered pixels,
+the NPC goes 6.2 → 13.1; on ATP the chain hues go 44.8 → 57.8 at lightness
+L\* 40.2 → 76.4, i.e. the subunits stop reading as a dark wash. Volumetric was
+tried across kappa 2–20 and loses the colours at every setting (3.9–8.3), so it
+is not the default — but both nodes are now `layer=True`, so blending, opacity
+and the display range (and absorption, once you pick `volumetric`) are live in
+the Layers panel. `docs/images/readme/gallery/atp_synthase.{webp,webm}` were
+recaptured through the gallery harness. Regenerate the demo datasets to pick up
+the new look.
 
 #### Fixed — warnings now display through arbol instead of raw stderr lines
 
@@ -333,8 +393,9 @@ Supporting changes:
 - Hidden (`visible=false`) layers no longer fetch, decode and commit their LOD
   levels, and no longer escape eviction.
 - `scripts/check_demo_ladders.py` — a structural gate that fails a leaf whose
-  largest level is more than half the data, which is exactly the degeneracy a
-  level count alone cannot see.
+  largest level is more than 60% of the data (the `--max-share` default) or
+  exceeds the `--max-level-elements` absolute per-commit cap, which is exactly
+  the degeneracy a level count alone cannot see.
 
 #### Fixed — every 2D gsplats scene failed to load with a WASM `unreachable` trap
 

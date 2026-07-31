@@ -39,17 +39,28 @@ make clean-setup  # Remove ALL dev tools to simulate fresh machine
 make install-demo-deps  # Install every optional dependency the bundled demos need
 
 # Quality & Testing
-make test-all     # All tests (Python + TypeScript + WASM + CUDA if available)
-make test-cov-all # All tests with coverage (Python + TypeScript)
+make test-all     # All tests (Python incl. CUDA + WASM/Rust + TypeScript + Go launcher)
+make test-cov-all # Coverage: Python (minus `-m slow`) + TypeScript
 make test-python  # Python tests only
-make test-e2e     # Playwright E2E tests
-make check-all    # All quality checks
+make test-e2e     # Full Playwright E2E suite (~17 min)
+make test-e2e-smoke  # E2E smoke subset (the specs CI would run)
+make test-perf-e2e   # Opt-in Playwright performance suite
+# check-all is NOT read-only: `hatch run check` begins with `format`, so it
+# REWRITES packages/luxar/src. When other agents/people are editing the same
+# tree, use the read-only scoped targets instead (listed right below it).
+make check-all    # All quality checks (Python, TypeScript, Rust, Go) — reformats
+make lint-python        # read-only: ruff check
+make type-check-python  # read-only: mypy
+make security           # read-only: bandit
+make check-typescript   # read-only: typecheck + lint + unit tests
 make check-rust   # Rust type/lint checks (cargo check + clippy)
-make format-all   # Format all code (Python, TypeScript, Rust, CUDA)
+make check-knip   # REPORT only (non-gating): unused viewer files/exports/deps
+make format-all   # Format all code (Python, TypeScript, Rust, Go, CUDA)
 
 # Viewer
 make viewer       # Start viewer dev server (port 5173)
 make build-viewer # Build viewer for production (requires Rust)
+make build-viewer-lib  # Build + verify the npm LIBRARY bundle (publish-npm.yml)
 make build-wasm   # Build WASM module only
 make test-wasm    # Run Rust unit tests
 make benchmark-wasm  # Run WASM vs TypeScript performance benchmarks
@@ -70,8 +81,11 @@ make build-launchers  # Build launcher binaries for the host platform (CGO block
 make clean-launchers  # Clean built launcher binaries
 # Runtime override: LUXAR_LAUNCHER_NO_WEBVIEW=1 ./luxar-launcher
 #   Opens the system default browser instead of the embedded WebView —
-#   useful for headless smoke tests and minimal Linux installs without
-#   libwebkit2gtk.
+#   useful for headless smoke tests. NOT a rescue for a missing
+#   libwebkit2gtk: cgo links WebKit at build time, so the binary has a hard
+#   DT_NEEDED on libwebkit2gtk-4.0.so and the loader aborts before main()
+#   ever reads this variable. A 4.1-only distro (Ubuntu 24.04+) needs the
+#   4.0 runtime installed, or a separate browser-only build. See #998.
 # Runtime override: LUXAR_CACHE_BUDGET_MB=<N> ./luxar-launcher
 #   Total in-memory cache pool (L0+L1+S-cache) the launcher passes to the
 #   viewer via ?cacheBudgetMB=. WKWebView has no performance.memory, so the
