@@ -397,6 +397,54 @@ describe('loadColorRanges (orchestrator)', () => {
     expect(rl.loadRangesResolvingRef.mock.calls[0][7]).toBe('GSplats');
   });
 
+  it('restores a broadcast encoding with original_dtype=uint8 to a Uint8Array (issue #727)', async () => {
+    // Uniform integer color arrays are stored broadcast-encoded. Without the
+    // producer stamping original_dtype the decoded Float32 0-255 values reached
+    // the GPU unnormalized (blown out). With original_dtype=uint8 the loader
+    // must restore the native dtype so THREE.js normalizes.
+    const array = {
+      dtype: 'uint8',
+      shape: [10, 3],
+      attrs: { encoding: { name: 'broadcasted', n_elements: 10, original_dtype: 'uint8' } },
+    } as never;
+    const rl = makeFakeRangeLoader();
+    rl.loadRangesResolvingRef.mockImplementationOnce(
+      async (_a, _attrs, _ranges, output: Float32Array) => {
+        output.set([200, 120, 30, 255, 0, 128]);
+        return 6;
+      }
+    );
+    const ranges: ColorRange[] = [{ start: 0, end: 2 }];
+
+    const out = await loadColorRanges(array, ranges, rl, {} as never, 'TEST');
+
+    expect(out).toBeInstanceOf(Uint8Array);
+    expect(Array.from(out as Uint8Array)).toEqual([200, 120, 30, 255, 0, 128]);
+    expect(rl.loadRangesResolvingRef).toHaveBeenCalledTimes(1);
+  });
+
+  it('restores a broadcast encoding with original_dtype=uint16 to a Uint16Array (issue #727)', async () => {
+    const array = {
+      dtype: 'uint16',
+      shape: [10, 3],
+      attrs: { encoding: { name: 'broadcasted', n_elements: 10, original_dtype: 'uint16' } },
+    } as never;
+    const rl = makeFakeRangeLoader();
+    rl.loadRangesResolvingRef.mockImplementationOnce(
+      async (_a, _attrs, _ranges, output: Float32Array) => {
+        output.set([40000, 20000, 5000, 65535, 0, 12345]);
+        return 6;
+      }
+    );
+    const ranges: ColorRange[] = [{ start: 0, end: 2 }];
+
+    const out = await loadColorRanges(array, ranges, rl, {} as never, 'TEST');
+
+    expect(out).toBeInstanceOf(Uint16Array);
+    expect(Array.from(out as Uint16Array)).toEqual([40000, 20000, 5000, 65535, 0, 12345]);
+    expect(rl.loadRangesResolvingRef).toHaveBeenCalledTimes(1);
+  });
+
   // [P5] empty ranges → totalItems 0 → zero-length buffer, no zarr reads.
   it('returns a zero-length buffer for empty ranges (totalItems 0)', async () => {
     const array = { dtype: 'uint8', shape: [10, 3], attrs: {} } as never;
