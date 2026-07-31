@@ -42,20 +42,24 @@ export function isLayerEnabled(value: unknown): boolean {
 }
 
 /**
- * Derive a display data-range for a composite group (kind=lod / kind=partition)
- * that carries no range of its own, by walking to the FINEST descendant leaf
- * (largest `n_splats`) that declares one. The finest level is the full-detail
- * data, so its range is the representative signal window; using it avoids the
- * near-black render a [0, 1] fallback produces for a colormapped gsplat layer.
- * Returns undefined when no descendant declares a range.
+ * Derive a SCALAR display data-range for a composite group (kind=lod /
+ * kind=partition) that carries no range of its own, by walking to the FINEST
+ * descendant leaf (largest `n_splats`) that declares one. The finest level is
+ * the full-detail data, so its range is the representative signal window; using
+ * it avoids the near-black render a [0, 1] fallback produces for a colormapped
+ * gsplat layer. Returns undefined when no descendant declares a range.
+ *
+ * Deliberately does NOT consider `color_data_range`: that attr describes the
+ * spread of authored RGB, not a scalar signal, and windowing on it
+ * contrast-stretches the author's colours (see `initialDisplayRange`).
  */
-function deriveRangeFromDescendants(node: SceneNode): [number, number] | undefined {
+function deriveScalarRangeFromDescendants(node: SceneNode): [number, number] | undefined {
   let best: [number, number] | undefined;
   let bestCount = -1;
   const visit = (n: SceneNode): void => {
-    const r = (n.attrs.scalar_data_range ||
-      n.attrs.color_data_range ||
-      n.attrs.amplitude_data_range) as [number, number] | undefined;
+    const r = (n.attrs.scalar_data_range || n.attrs.amplitude_data_range) as
+      | [number, number]
+      | undefined;
     const count = (n.attrs.n_splats as number | undefined) ?? 0;
     if (r && count > bestCount) {
       best = r;
@@ -65,6 +69,102 @@ function deriveRangeFromDescendants(node: SceneNode): [number, number] | undefin
   };
   node.children?.forEach(visit);
   return best;
+}
+
+/**
+ * `color_data_range` of the node, else the UNION of every descendant's.
+ * A partition's parts each declare their own spread, and the slider bounds
+ * must cover the whole layer — taking the first part's range alone would
+ * leave a later HDR part's colours unreachable.
+ */
+function deriveColorRangeFromDescendants(node: SceneNode): [number, number] | undefined {
+  const own = node.attrs.color_data_range as [number, number] | undefined;
+  if (own) return own;
+  let min = Infinity;
+  let max = -Infinity;
+  const visit = (n: SceneNode): void => {
+    const r = n.attrs.color_data_range as [number, number] | undefined;
+    if (r) {
+      min = Math.min(min, r[0]);
+      max = Math.max(max, r[1]);
+    }
+    n.children?.forEach(visit);
+  };
+  node.children?.forEach(visit);
+  return min <= max ? [min, max] : undefined;
+}
+
+/**
+ * True when `node` — or a descendant it OWNS — renders through a colormap LUT.
+ *
+ * The walk stops at a nested `layer=true` descendant: that node is its own row
+ * in the panel with its own colormap control, so its palette can change at any
+ * time. Deriving THIS layer's mode from it would freeze a snapshot that goes
+ * stale the moment the inner control is used, leaving the outer layer claiming
+ * a scalar window over a leaf that has since gone back to direct colour (its
+ * range control then routes to the identity and does nothing). Every writer
+ * routes `layer` through `COMPOSITING_ATTRS` onto the wrapper only, so a
+ * kind=partition / kind=lod layer never has layer descendants — the boundary
+ * only bites on explicitly nested authored layers.
+ */
+function usesColormap(node: SceneNode): boolean {
+  if (node.attrs.colormap) return true;
+  return (node.children ?? []).some((c) => !isLayerEnabled(c.attrs.layer) && usesColormap(c));
+}
+
+/**
+ * The palette a wrapper layer EFFECTIVELY renders through when it carries no
+ * `colormap` attr of its own: the single distinct palette authored on its
+ * descendants, or undefined when there is none or they disagree (a mixed
+ * subtree has no single palette the dropdown could show). `colormap` is
+ * deliberately NOT a compositing attr on the Python side — the writer copies
+ * it onto every leaf — so a kind=partition / kind=lod layer from
+ * `add_gsplats_from_file(..., colormap=...)` always has this shape. Surfacing
+ * the descendant palette keeps the dropdown and the legend truthful and makes
+ * "(direct colors)" an actual off-switch there (a select only emits `change`
+ * when its value moves).
+ *
+ * Stops at nested `layer=true` descendants for the same reason
+ * {@link usesColormap} does — they own their palette.
+ */
+function deriveColormapFromDescendants(node: SceneNode): string | undefined {
+  let found: string | undefined;
+  let mixed = false;
+  const visit = (n: SceneNode): void => {
+    if (mixed || isLayerEnabled(n.attrs.layer)) return;
+    const cm = n.attrs.colormap as string | undefined;
+    if (cm) {
+      if (found === undefined) found = cm;
+      else if (found !== cm) mixed = true;
+    }
+    n.children?.forEach(visit);
+  };
+  node.children?.forEach(visit);
+  return mixed ? undefined : found;
+}
+
+/**
+ * The display window a layer starts at — i.e. what `[displayMin, displayMax]`
+ * the panel pushes into the material before the user touches anything.
+ *
+ * The window maps the rendered VALUE to [0, 1], so which range is right depends
+ * on what that value is:
+ *
+ * * **Colormapped layers** window a scalar (gsplat amplitude / points-lines
+ *   scalar), whose useful range is the data range — a linear [0, 1] window on a
+ *   heavily right-skewed amplitude renders near-black (#522).
+ * * **Direct-colour layers** window authored RGB, whose range IS [0, 1]. Any
+ *   other window is a contrast stretch of colours the author already chose:
+ *   a uniform grey `(0.72, 0.74, 0.78)` has `color_data_range` [0.72, 0.78],
+ *   which windows to gain 16.7 / offset −12 and renders as saturated BLUE.
+ *   So direct colour starts at the identity window.
+ */
+function initialDisplayRange(node: SceneNode): [number, number] {
+  if (!usesColormap(node)) return [0, 1];
+  const scalarRange = (node.attrs.scalar_data_range || node.attrs.amplitude_data_range) as
+    | [number, number]
+    | undefined;
+  return scalarRange ?? deriveScalarRangeFromDescendants(node) ?? [0, 1];
 }
 
 /**
@@ -115,9 +215,14 @@ export interface LayerInfo {
   displayMin: number;
   /** Current display-range maximum */
   displayMax: number;
-  /** Data-range minimum from color_data_range (slider lower bound) */
+  /**
+   * Slider lower bound. Wide enough to reach every window the layer can
+   * usefully take: the mode's default (scalar range / identity), the authored
+   * `intensity`/`offset` window, and — for a direct-colour layer — its
+   * `color_data_range`, so "stretch these colours" stays one drag away.
+   */
   dataMin: number;
-  /** Data-range maximum from color_data_range (slider upper bound) */
+  /** Slider upper bound (see {@link LayerInfo.dataMin}). */
   dataMax: number;
   /** Gamma correction value */
   gamma: number;
@@ -131,6 +236,21 @@ export interface LayerInfo {
   supportsColormap: boolean;
   /** Scalar data range for colormap normalization */
   scalarDataRange?: [number, number];
+  /**
+   * Authored RGB spread (`color_data_range`). Never the starting window — see
+   * {@link LayerInfo.dataMin} — but kept so a colormap toggle can restore the
+   * direct-colour slider bounds, symmetric with {@link LayerInfo.scalarDataRange}.
+   */
+  colorDataRange?: [number, number];
+  /**
+   * Whether the current display window is a SCALAR window (a colormap is in
+   * play for the layer — on the node or a descendant) rather than an
+   * authored-RGB one. `LayerApplyEngine.applyComposed` routes on this per
+   * leaf: a leaf the C1 guard keeps on direct colour must NOT receive the
+   * scalar window as a colour gain (a mixed group layer contains both kinds).
+   * Follows the colormap toggle via {@link LayerStateManager.setColormapWindow}.
+   */
+  scalarWindow: boolean;
   /**
    * For ``kind === 'lod'`` layers: number of child levels. Drives the
    * "Active level" dropdown's option count and the "N LODs" badge.
@@ -271,18 +391,13 @@ export class LayerStateManager {
       if (isLayerType) {
         const name = node.path.split('/').pop() || node.path;
 
-        // Determine data range from zarr attrs. A composite group (kind=lod /
-        // kind=partition) carries no range of its own, so derive it from the
-        // finest (largest-n_splats) descendant leaf — otherwise the [0, 1]
-        // fallback makes a colormapped gsplat layer render near-black (the
-        // signal occupies only the bottom few % of [0, 1]).
-        const colorRange = node.attrs.color_data_range as [number, number] | undefined;
+        // The window the layer starts at. Colormapped layers window a scalar
+        // (from this node or, for a composite kind=lod / kind=partition group,
+        // its finest descendant leaf); direct-colour layers window authored RGB
+        // and so start at the identity [0, 1] — see `initialDisplayRange`.
         const ampRange = node.attrs.amplitude_data_range as [number, number] | undefined;
         const scalarRange = node.attrs.scalar_data_range as [number, number] | undefined;
-        const dataRange = scalarRange ||
-          colorRange ||
-          ampRange ||
-          deriveRangeFromDescendants(node) || [0, 1];
+        const dataRange = initialDisplayRange(node);
 
         // Colormap support — groups inherit no colormap, but they do apply
         // a chosen colormap to every data descendant that can accept one.
@@ -293,9 +408,16 @@ export class LayerStateManager {
         // kind=lod / kind=partition groups are composite containers; the
         // colormap applies to descendants via composition just like a
         // plain group.
-        const colormap = node.attrs.colormap as string | undefined;
+        // The wrapper's own attr, else the (uniform) palette its descendants
+        // carry — `scalarWindow` below is descendant-aware, and a `colormap`
+        // that isn't would misreport an actively colormapped partition/lod
+        // layer as "(direct colors)" in the dropdown and hide it from the
+        // legend.
+        const colormap =
+          (node.attrs.colormap as string | undefined) || deriveColormapFromDescendants(node);
         const supportsColormap = node.type === 'group' || !!node.attrs.has_scalars || !!colormap;
-        const colormapScalarRange = scalarRange || ampRange || deriveRangeFromDescendants(node);
+        const colormapScalarRange =
+          scalarRange || ampRange || deriveScalarRangeFromDescendants(node);
 
         // Initialize display range from existing intensity/offset if present,
         // otherwise default to full data range
@@ -322,8 +444,15 @@ export class LayerStateManager {
         // values on first render, and the first slider interaction would write
         // the clamped values back — snapping intensity from the authored value
         // to the slider-implied one and causing a sudden brightness jump.
-        const dataMin = Math.min(dataRange[0], displayMin);
-        const dataMax = Math.max(dataRange[1], displayMax);
+        // A direct-colour layer no longer STARTS at its colour range, but the
+        // slider must still reach it so "stretch these colours" stays a
+        // one-drag operation. Kept on the layer either way (even when a
+        // colormap currently wins) so `setColormapWindow` can restore these
+        // bounds when the colormap is switched off.
+        const colorDataRange = deriveColorRangeFromDescendants(node);
+        const colorRange = usesColormap(node) ? undefined : colorDataRange;
+        const dataMin = Math.min(dataRange[0], displayMin, colorRange?.[0] ?? Infinity);
+        const dataMax = Math.max(dataRange[1], displayMax, colorRange?.[1] ?? -Infinity);
 
         // Honor the authoring-time `visible` attr (default true). Allows
         // Python authors to start a layer hidden via add_points(..., visible=False).
@@ -413,6 +542,8 @@ export class LayerStateManager {
           colormap,
           supportsColormap,
           scalarDataRange: colormapScalarRange,
+          colorDataRange,
+          scalarWindow: usesColormap(node),
           lodGroupChildCount,
           partCount,
           nestedLodGroupPaths,
@@ -550,6 +681,44 @@ export class LayerStateManager {
     const layer = this.layers.get(path);
     if (!layer) return;
     layer.colormap = colormap;
+    this.notify();
+  }
+
+  /**
+   * Re-default the display window after the layer's colormap was toggled.
+   *
+   * The window maps the RENDERED VALUE to [0, 1], and toggling a colormap
+   * changes what that value is — so the sensible default changes with it:
+   *
+   * * colormap ON  → the value is the scalar (gsplat amplitude / per-element
+   *   scalar), whose useful window is its data range. Keeping the direct-colour
+   *   identity here would push `updateScalarRange(0, 1)` onto amplitudes that
+   *   live in ~[1e-4, 0.02] and render near-black (the #522 failure).
+   * * colormap OFF → the value is authored RGB, whose range IS [0, 1].
+   *
+   * A window carried over from the other mode is meaningless, so this
+   * deliberately overwrites a user-set one.
+   *
+   * The slider BOUNDS follow the mode too, landing on exactly what a natively
+   * authored layer of that mode gets at init. Merely widening them instead
+   * would leave the useful window as an unusable sliver of the track — a
+   * gsplat amplitude window of [1e-4, 0.02] inside [0, 1] bounds is 2% of it.
+   */
+  setColormapWindow(path: string, colormapOn: boolean): void {
+    const layer = this.layers.get(path);
+    if (!layer) return;
+    layer.scalarWindow = colormapOn;
+    const [min, max] = colormapOn ? (layer.scalarDataRange ?? [0, 1]) : [0, 1];
+    layer.displayMin = min;
+    layer.displayMax = max;
+    // colormap ON  -> the scalar range (what a colormapped layer inits to)
+    // colormap OFF -> [0, 1] widened to the authored RGB spread (what a
+    //                 direct-colour layer inits to; keeps HDR colours > 1 in reach)
+    const [boundMin, boundMax] = colormapOn
+      ? [min, max]
+      : [Math.min(0, layer.colorDataRange?.[0] ?? 0), Math.max(1, layer.colorDataRange?.[1] ?? 1)];
+    layer.dataMin = Math.min(boundMin, min);
+    layer.dataMax = Math.max(boundMax, max);
     this.notify();
   }
 

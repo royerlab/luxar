@@ -132,17 +132,14 @@ def graft_gsplat_node(
     parent_node = parent or group
     wrapper_attrs = {k: v for k, v in attrs.items() if k in COMPOSITING_ATTRS}
     child_attrs = {k: v for k, v in attrs.items() if k not in COMPOSITING_ATTRS}
-    # `blending_mode` also propagates to EVERY grafted child, not just the
-    # wrapper. Unlike transform/opacity/gamma — hierarchically combined at render
-    # time, so wrapper-only is correct and duplicating would double them —
-    # blending_mode is nearest-setter-wins, and stamping it explicitly on each
-    # part keeps the parts self-consistent even when later flattened or
-    # re-exported outside the scene graph (belt-and-suspenders: the viewer's
-    # ancestor inheritance would also resolve a wrapper-only mode now that the
-    # leaf writers no longer stamp a shadowing "additive" default).
-    # Recurses via `child_attrs`.
-    if "blending_mode" in wrapper_attrs:
-        child_attrs["blending_mode"] = wrapper_attrs["blending_mode"]
+    # `blending_mode` stays on the WRAPPER ONLY, like every other compositing
+    # attr. It is nearest-setter-wins, so re-stamping it on each grafted part
+    # (a former "belt-and-suspenders" duplication) made the parts SHADOW the
+    # wrapper: the layers panel composes root→leaf and the part's own copy won,
+    # so changing Blend on a partition / nested-lod layer changed nothing at all
+    # while flat / stream / levels layers responded normally. The viewer's
+    # ancestor inheritance resolves a wrapper-only mode on its own (the leaf
+    # writers no longer stamp a shadowing "additive" default).
     # A ``coverage_fraction`` passed down by a parent lod-group is THIS node's own
     # selector threshold. For a leaf it is applied via ``add_gsplats_from_data``
     # (the leaf branch above); for a kind=lod / kind=partition WRAPPER it must land
@@ -287,8 +284,6 @@ def add_gsplats_from_volume_impl(
         # Multiplicative compositing attr (identity 1.0): on a partitioned
         # result COMPOSITING_ATTRS routes it to the wrapper only, and the
         # children's stamped 1.0 defaults are no-ops under the product.
-        # (The child duplication that blending_mode gets in
-        # graft_gsplat_node applies to the from-FILE graft path, not here.)
         scene_attrs["absorption"] = absorption
     if blending_mode is not None:
         scene_attrs["blending_mode"] = blending_mode

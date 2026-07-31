@@ -60,7 +60,11 @@ dataset_writers/
   semantic type. Detects SDR vs HDR from the data (`color_mode = "hdr"` when any
   value exceeds 1.0) and forwards it to the encoder. Records
   `group.attrs["color_data_range"]` (min/max of the original data) for the
-  viewer's layer controls, and logs the actual encoding chosen
+  viewer's layer controls — it sets the display-range slider's BOUNDS, not the
+  starting window: a direct-colour layer starts at the identity `[0, 1]` so
+  authored RGB is never silently contrast-stretched (only a colormapped layer
+  windows on a data range, using the scalar/amplitude one). It also logs the
+  actual encoding chosen
   (`broadcasted`, `array_ref`, `lut_uint8`, `lut_uint16`, `rgb_uint8`, `float32`, ...).
 
 ### `scalars.py`
