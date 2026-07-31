@@ -2613,16 +2613,24 @@ check-knip:  ## Report unused viewer files/exports/deps (non-gating)
 	@# But "knip ran and reported a backlog" and "knip never ran" must not look
 	@# the same: the `|| true` below would otherwise swallow a missing pnpm and
 	@# still print the reassuring footer. Guard the toolchain explicitly first.
-	@if ! command -v pnpm >/dev/null 2>&1; then \
+	@# One shell for the whole recipe (same shape as build-viewer-lib): nvm must
+	@# be sourced BEFORE the pnpm probe, or on a Linux box provisioned by
+	@# `make setup-dev` (pnpm only under ~/.nvm) the guard reports "pnpm not
+	@# found" from a non-interactive make shell even though setup-dev succeeded.
+	@export NVM_DIR="$$HOME/.nvm"; \
+	if [ -s "$$NVM_DIR/nvm.sh" ]; then \
+		. "$$NVM_DIR/nvm.sh"; \
+	fi; \
+	if ! command -v pnpm >/dev/null 2>&1; then \
 		echo "❌ pnpm not found — cannot run knip."; \
 		echo "   Run 'make setup-dev' to install Node.js and pnpm."; \
 		exit 1; \
-	fi
-	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
+	fi; \
+	if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
 		echo "📦 Installing TypeScript dependencies first..."; \
-		cd packages/luxar-viewer && pnpm install; \
-	fi
-	@cd packages/luxar-viewer && pnpm run check:knip || true
+		(cd packages/luxar-viewer && pnpm install); \
+	fi; \
+	(cd packages/luxar-viewer && pnpm run check:knip) || true
 	@echo ""
 	@echo "ℹ️  Report only — the enforced subset (files + dependencies) runs in 'make check-all'."
 
