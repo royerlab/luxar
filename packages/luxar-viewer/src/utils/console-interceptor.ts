@@ -166,11 +166,18 @@ class ConsoleInterceptor {
   }
 
   /**
-   * The stack of the first `Error` among `args`, or `undefined`.
+   * The stack of the first real `Error` among `args`, falling back to the first
+   * duck-typed stack carrier, or `undefined`.
    *
    * Scans ALL args rather than just the first: every `log.*` call formats its
    * message into `args[0]` as a STRING and passes the error along behind it, so
    * looking only at `args[0]` could never find one.
+   *
+   * Two passes, and the order matters: a plain object that merely carries a
+   * `stack` string (a context bag such as `{ stack: 'phase: decode' }`) must not
+   * shadow the real `Error` behind it. Real `Error` instances win; the
+   * duck-typed carriers `getErrorStack` also accepts (some Firefox
+   * `DOMException`s, thrown plain objects) are only the fallback.
    *
    * Deliberately does NOT fabricate a stack. This used to synthesize
    * `new Error().stack` whenever a message merely contained the word "error",
@@ -178,6 +185,22 @@ class ConsoleInterceptor {
    * worse than no stack, because someone reading the bug report would follow it.
    */
   private extractStack(args: readonly unknown[]): string | undefined {
+    for (const arg of args) {
+      // Guard `instanceof`: it walks [[GetPrototypeOf]], which throws for a
+      // revoked Proxy. This runs inside the patched console.warn/error BEFORE
+      // the original call, so a throw here would swallow the diagnostic being
+      // logged — the same never-throw contract `getErrorStack` upholds.
+      let isError = false;
+      try {
+        isError = arg instanceof Error;
+      } catch {
+        isError = false;
+      }
+      if (isError) {
+        const stack = getErrorStack(arg);
+        if (stack) return stack;
+      }
+    }
     for (const arg of args) {
       const stack = getErrorStack(arg);
       if (stack) return stack;
