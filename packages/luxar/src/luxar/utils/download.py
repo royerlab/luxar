@@ -547,11 +547,20 @@ def robust_download(
                         headers["If-Range"] = resume_validator
                         sent_if_range = True
 
-                with asection(f"Download Attempt {attempt + 1}/{max_retries + 1}"):
-                    # Make request
-                    response = session.get(
-                        url, headers=headers, stream=True, timeout=timeout
-                    )
+                # Bind the streamed GET in contextlib.closing so its socket is
+                # released deterministically on EVERY exit — success (return),
+                # 416 restart (`continue`), or re-raise — instead of leaking to
+                # the GC. raise_for_status still leaves `e.response` usable
+                # afterward: the headers are already buffered, only the socket is
+                # released (the 416 handler reads headers, never the body).
+                with (
+                    asection(f"Download Attempt {attempt + 1}/{max_retries + 1}"),
+                    contextlib.closing(
+                        session.get(
+                            url, headers=headers, stream=True, timeout=timeout
+                        )
+                    ) as response,
+                ):
                     response.raise_for_status()
 
                     # Check if resume was accepted

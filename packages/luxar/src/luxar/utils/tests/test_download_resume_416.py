@@ -13,8 +13,10 @@ already-complete cached file.
 
 from __future__ import annotations
 
+import gzip
 import hashlib
 import http.server
+import io
 import threading
 from pathlib import Path
 
@@ -321,6 +323,41 @@ class _StarTotalContentRangeHandler(_RangeHTTPHandler):
             f.close()
             return None
         return _LimitedFile(f, size)
+
+
+class _GzipRangeHTTPHandler(_RangeHTTPHandler):
+    """Host that gzip-encodes the body and reports the COMPRESSED Content-Length
+    UNLESS the client asks for ``Accept-Encoding: identity``.
+
+    Mimics a gzip-capable static host. ``robust_download``'s size probe sets
+    ``Accept-Encoding: identity`` so the reported Content-Length is the true
+    DECODED size that matches the on-disk cache; without that guard the probe
+    would (via requests' default ``gzip``) see the smaller COMPRESSED length and
+    mistake a complete cache for one that needs re-downloading. Records
+    ``(command, used_gzip)`` per request in ``self.server.served``.
+    """
+
+    def send_head(self):  # noqa: ANN201 - stdlib override
+        path = Path(self.translate_path(self.path))
+        if not path.is_file():
+            return super().send_head()
+
+        accept = (self.headers.get("Accept-Encoding") or "").lower()
+        use_gzip = "gzip" in accept  # requests' default; the identity guard opts out
+        raw = path.read_bytes()
+        self.server.served.append((self.command, use_gzip))  # type: ignore[attr-defined]
+
+        body = gzip.compress(raw) if use_gzip else raw
+        self.send_response(200)
+        self.send_header("Content-Type", "application/octet-stream")
+        if use_gzip:
+            self.send_header("Content-Encoding", "gzip")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Accept-Ranges", "bytes")
+        self.end_headers()
+        if self.command == "HEAD":
+            return None
+        return _LimitedFile(io.BytesIO(body), len(body))
 
 
 class _LimitedFile:
@@ -1254,3 +1291,55 @@ class TestRobustDownloadResume416:
 
         assert result == out
         assert out.read_bytes() == remote, "body must download despite a star total"
+
+    def test_gzip_probe_uses_identity_and_returns_complete_cache(
+        self, tmp_path: Path
+    ) -> None:
+        """The size probe must send ``Accept-Encoding: identity`` so a gzip host
+        reports the true DECODED size — not the smaller COMPRESSED one.
+
+        On a gzip-capable host the probe's ``Accept-Encoding: identity`` guard
+        makes the reported Content-Length equal the on-disk (decoded) cache size,
+        so a complete cache is recognized and returned untouched from the HEAD
+        alone — no body GET.
+
+        Remove that guard and the probe (via requests' default ``gzip``) sees the
+        smaller COMPRESSED length, decides the complete cache is "incomplete",
+        and re-fetches; with ``verify_size=True`` the decoded body then fails the
+        ``final_size == total_size`` check (total is the compressed length) and
+        the download raises ``ValueError`` — so this test fails against the
+        unguarded code (both on the raised error and the assertions below).
+        """
+        # Highly compressible payload so the COMPRESSED length is far smaller
+        # than the DECODED length — the gap the identity guard must avoid seeing.
+        remote = b"gzip-probe-guard-regression-payload\n" * 8000
+        (tmp_path / "data.bin").write_bytes(remote)
+
+        server, thread = _serve(tmp_path, _GzipRangeHTTPHandler)
+        try:
+            base_url = f"http://127.0.0.1:{server.server_address[1]}"
+            out = tmp_path / "cache" / "data.bin"
+            out.parent.mkdir(parents=True)
+            out.write_bytes(remote)  # complete cache, byte-identical to remote
+
+            result = robust_download(
+                f"{base_url}/data.bin", out, expected_size=None, verify_size=True
+            )
+        finally:
+            server.shutdown()
+            thread.join(timeout=5)
+            server.server_close()
+
+        assert result == out
+        assert out.read_bytes() == remote, "complete cache must be returned untouched"
+        # A HEAD probe that DID send identity must have actually run — otherwise
+        # the two ledger checks below would pass vacuously on an empty log.
+        assert ("HEAD", False) in server.served, "identity size probe must have run"
+        # The identity guard means the probe never negotiated gzip, so the
+        # reported size matched the decoded cache and NO body GET was needed.
+        assert all(
+            not used_gzip for _cmd, used_gzip in server.served
+        ), "size probe must send Accept-Encoding: identity, not gzip"
+        assert not any(
+            cmd == "GET" for cmd, _used_gzip in server.served
+        ), "a complete cache must be confirmed by the HEAD probe, not re-downloaded"
