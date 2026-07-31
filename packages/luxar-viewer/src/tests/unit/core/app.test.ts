@@ -1002,6 +1002,54 @@ describe('LuxarApp', () => {
       expect(replaceStateSpy).toHaveBeenCalledTimes(1);
       replaceStateSpy.mockRestore();
     });
+
+    it('serializes browser selections through the shared dataset-switch guard', async () => {
+      await app.init({ canvas: mockCanvas, src: '' });
+      const browserCall = (DatasetBrowser as any).mock.calls.at(-1);
+      const onSelect = browserCall[0].onDatasetSelect as (url: string) => Promise<void>;
+
+      let release!: () => void;
+      mockSceneManager.loadSceneData.mockImplementationOnce(
+        () => new Promise<void>((resolve) => (release = resolve))
+      );
+
+      const first = onSelect('http://example.com/a.zarr');
+      await expect(onSelect('http://example.com/b.zarr')).rejects.toThrow(/in progress/);
+      expect(mockSceneManager.loadSceneData).toHaveBeenCalledTimes(1);
+      expect(mockSceneManager.loadSceneData).toHaveBeenCalledWith(
+        'http://example.com/a.zarr',
+        undefined
+      );
+
+      release();
+      await first;
+    });
+
+    it('does not reopen the browser shortcut until a selected dataset finishes switching', async () => {
+      await app.init({ canvas: mockCanvas, src: '' });
+      const browserCall = (DatasetBrowser as any).mock.calls.at(-1);
+      const onSelect = browserCall[0].onDatasetSelect as (url: string) => Promise<void>;
+      const onClose = browserCall[0].onClose as () => void;
+      const openBrowser = mockAddEventListener.mock.calls.find(
+        (call) => call[0] === 'open-dataset-browser'
+      )?.[1] as (() => void) | undefined;
+      expect(openBrowser).toBeDefined();
+
+      let release!: () => void;
+      mockSceneManager.loadSceneData.mockImplementationOnce(
+        () => new Promise<void>((resolve) => (release = resolve))
+      );
+
+      const switching = onSelect('http://example.com/a.zarr');
+      onClose(); // DatasetBrowser closes synchronously after firing onDatasetSelect.
+      openBrowser?.();
+      expect(DatasetBrowser).toHaveBeenCalledTimes(1);
+
+      release();
+      await switching;
+      openBrowser?.();
+      expect(DatasetBrowser).toHaveBeenCalledTimes(2);
+    });
   });
 
   describe('debug interface', () => {
