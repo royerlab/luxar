@@ -67,7 +67,7 @@ their own LOCAL channel identity — a red "R" is local channel 0 wherever it
 ends up::
 
   IDENTITY            [0, 1, 2]   every letter lights under its own name
-  SWAP RED<>GREEN     [1, 0, 2]   R lights under GREEN, G lights under RED
+  SWAP RED-GREEN      [1, 0, 2]   R lights under GREEN, G lights under RED
   ROTATE              [2, 0, 1]   R lights under BLUE, G under RED, B under GREEN
 
 ================================================================================
@@ -346,7 +346,14 @@ class FrameRow:
 
     @property
     def name(self) -> str:
-        """First label line, as a zarr-safe node-name fragment."""
+        """First label line, as a zarr-safe node-name fragment.
+
+        Signed numbers have to survive: ``OFFSET +5`` and ``OFFSET -3`` differ
+        only in punctuation, so the sign is transliterated (``p``/``m``) rather
+        than collapsed to ``_``, which would make the two node names collide.
+        The channel rows use the simpler :func:`_channel_node_name` — their
+        labels carry no signed numbers.
+        """
         first = self.label.split("\n")[0]
         return "".join(
             ch if ch.isalnum() else {"+": "p", "-": "m", "*": "x"}.get(ch, "_")
@@ -423,6 +430,18 @@ FRAME_ROWS: List[FrameRow] = [
         note="RUNS BACKWARDS",
     ),
 ]
+
+
+def _channel_node_name(label: str) -> str:
+    """First label line as a zarr-safe node-name fragment, for a channel row.
+
+    Deliberately simpler than :attr:`FrameRow.name`: channel labels contain no
+    signed numbers, so collapsing every non-alphanumeric to ``_`` cannot make
+    two rows collide (the hyphen in ``SWAP RED-GREEN`` is punctuation, not a
+    minus sign, so transliterating it would only make the path uglier).
+    """
+    return "".join(ch if ch.isalnum() else "_" for ch in label.split("\n")[0])
+
 
 # (label, permutation, note) — permutation[local_index] = world_index.
 CHANNEL_ROWS: List[Tuple[str, Optional[List[int]], str]] = [
@@ -730,8 +749,13 @@ def _add_frame_row(scene: Any, row: FrameRow, y: float, counter: List[int]) -> A
     return target
 
 
-def _add_channel_section(scene: Any, y0: float, counter: List[int]) -> None:
-    """Categorical-permutation half of the bench."""
+def _add_channel_section(scene: Any, y0: float, counter: List[int]) -> Dict[str, Any]:
+    """Categorical-permutation half of the bench.
+
+    Returns the marker group of each channel row, keyed by node name, so the
+    caller can assert the written permutations against their declarations.
+    """
+    marker_nodes: Dict[str, Any] = {}
     n_rows = len(CHANNEL_ROWS)
     bottom_y = y0 - (n_rows + 0.6) * ROW_DY
     x_lo = channel_x(0) - CH_TICK * 0.5
@@ -784,7 +808,7 @@ def _add_channel_section(scene: Any, y0: float, counter: List[int]) -> None:
 
     for i, (label, perm, note) in enumerate(CHANNEL_ROWS):
         y = y0 - (i + 1) * ROW_DY
-        name = "".join(ch if ch.isalnum() else "_" for ch in label.split("\n")[0])
+        name = _channel_node_name(label)
 
         furniture = scene.add_group(f"Chan_{name}_Static", blending_mode="normal")
         furniture.add_lines(
@@ -846,6 +870,7 @@ def _add_channel_section(scene: Any, y0: float, counter: List[int]) -> None:
             blending_mode="normal",
             **extra,
         )
+        marker_nodes[name] = markers
         # Each marker keeps its LOCAL identity — letter AND colour. Whichever
         # one lights tells you which local channel the permutation routed to
         # the slot under the cursor.
@@ -866,6 +891,8 @@ def _add_channel_section(scene: Any, y0: float, counter: List[int]) -> None:
                 extend_to_all=["Frame"],
             )
             counter[0] += pos.shape[0]
+
+    return marker_nodes
 
 
 _PANEL_STYLE = (
@@ -1127,7 +1154,7 @@ def generate_demo(output_path: Path) -> int:
                     )
 
             with asection("Channel rows"):
-                _add_channel_section(scene, channel_y0, counter)
+                channel_marker_nodes = _add_channel_section(scene, channel_y0, counter)
 
             _add_overlays(scene)
 
@@ -1148,6 +1175,22 @@ def generate_demo(output_path: Path) -> int:
                             f"declared ({row.scale}, {row.offset})"
                         )
                 aprint("✓ nested *2-then-+1 composes to the flat *2 +2 row")
+
+                # The channel rows' permutations must also survive the write —
+                # the readout's expected values are derived from CHANNEL_ROWS,
+                # so a mismatch here would make the bench lie in the one place
+                # it is supposed to be authoritative.
+                for label, perm, _note in CHANNEL_ROWS:
+                    node_name = _channel_node_name(label)
+                    composed = channel_marker_nodes[node_name].world_nd_transform
+                    got = composed.get("Channel", {}).get("permutation")
+                    expected = perm  # None = identity, written as no entry
+                    if got != expected:
+                        raise AssertionError(
+                            f"{node_name}: composed Channel permutation {got} "
+                            f"!= declared {expected}"
+                        )
+                aprint("✓ channel permutations match their declarations")
 
         aprint(f"Total elements: {counter[0]:,}")
         aprint(f"Written to {output_path}")

@@ -7,6 +7,7 @@ import {
   composeNdTransforms,
   computeWorldNdTransform,
 } from '../../../../data/transforms/nd-transform';
+import type { QueryDimensionInfo } from '../../../../data/transforms/nd-transform';
 import type { NdTransformMap } from '../../../../types/zarr';
 
 /**
@@ -378,7 +379,7 @@ describe('invertNdTransformForQuery — boundary cases (data.md G5)', () => {
 
 describe('invertNdTransformForQuery — the no-preimage rule on discrete dims', () => {
   /** X,Y,Z displayed; Frame a discrete ordinal on the integer grid. */
-  const frameDims = [
+  const frameDims: QueryDimensionInfo[] = [
     { name: 'X' },
     { name: 'Y' },
     { name: 'Z' },
@@ -388,8 +389,12 @@ describe('invertNdTransformForQuery — the no-preimage rule on discrete dims', 
   /** Discrete dims are queried with an exact (zero) tolerance. */
   const exactTol = [1e10, 1e10, 1e10, 0];
 
-  const invert = (world: number, entry: NdTransformMap['Frame'], d = frameDims, tol = exactTol) =>
-    invertNdTransformForQuery([0, 0, 0, world], tol, { Frame: entry }, d, DISPLAYED);
+  const invert = (
+    world: number,
+    entry: NdTransformMap['Frame'],
+    d: QueryDimensionInfo[] = frameDims,
+    tol = exactTol
+  ) => invertNdTransformForQuery([0, 0, 0, world], tol, { Frame: entry }, d, DISPLAYED);
 
   it('reports no preimage when scale=2 lands the query between two categories', () => {
     // world 7 → local 3.5. The half-step membership gate would otherwise admit
@@ -447,6 +452,22 @@ describe('invertNdTransformForQuery — the no-preimage rule on discrete dims', 
     expect(result.noPreimage).toBe(false);
   });
 
+  it('reads the extend sentinel BEFORE rescaling it (large scales)', () => {
+    // Order-of-operations pin: the inverse divides the tolerance by |scale|, so
+    // for scale > 10 the 1e10 sentinel drops BELOW the 1e9 floor. Testing the
+    // rescaled value would lose the exemption and wrongly blank an extended
+    // node. Only a large scale exposes it — scale 2 stays above the floor
+    // either way, so the earlier test cannot catch this regression.
+    const extended = [1e10, 1e10, 1e10, 1e10];
+    const result = invert(7, { scale: 1e4 }, frameDims, extended);
+    // NOTE: the eroded tolerance below is CURRENT behaviour, not desirable
+    // behaviour — downstream `>= 1e9` extend checks also lose the sentinel at
+    // scale > 10. That erosion is a separate pre-existing issue; this test only
+    // pins that the no-preimage rule reads the sentinel before it happens.
+    expect(result.tolerance[3]).toBeLessThan(1e9);
+    expect(result.noPreimage).toBe(false); // ...the exemption still applied
+  });
+
   it('never fires on a categorical permutation (a bijection always has a preimage)', () => {
     const catDims = [
       { name: 'X' },
@@ -480,6 +501,124 @@ describe('invertNdTransformForQuery — the no-preimage rule on discrete dims', 
     const result = invert(70, { scale: 0.1 });
     expect(result.slicePosition[3]).toBeCloseTo(700, 6);
     expect(result.noPreimage).toBe(false);
+    // ...nor for a scale whose inverse is not exactly representable at all.
+    for (const world of [1, 5, 11]) {
+      expect(invert(world, { scale: 1 / 3 }).noPreimage).toBe(false); // local = 3·world
+    }
+  });
+
+  it('tolerates a degenerate step (missing / zero / negative / NaN) by falling back to 1', () => {
+    for (const step of [undefined, 0, -1, NaN]) {
+      const degenerate = [
+        { name: 'X' },
+        { name: 'Y' },
+        { name: 'Z' },
+        { name: 'Frame', discrete: true, step },
+      ];
+      const onGrid = invert(8, { scale: 2 }, degenerate);
+      const offGrid = invert(7, { scale: 2 }, degenerate);
+      expect(Number.isFinite(onGrid.slicePosition[3])).toBe(true);
+      expect(onGrid.noPreimage).toBe(false);
+      expect(offGrid.noPreimage).toBe(true);
+    }
+  });
+
+  it('handles negative local positions and a negative non-unit scale', () => {
+    // offset 5 puts the query below zero for T < 5. Still ON the grid — that
+    // the data has nothing there is the loader's business, not the rule's.
+    expect(invert(0, { offset: 5 }).slicePosition[3]).toBe(-5);
+    expect(invert(0, { offset: 5 }).noPreimage).toBe(false);
+    // scale -2: local = T / -2, so odd T lands on a negative half-integer.
+    expect(invert(7, { scale: -2 }).noPreimage).toBe(true);
+    expect(invert(8, { scale: -2 }).noPreimage).toBe(false);
+    expect(invert(8, { scale: -2 }).slicePosition[3]).toBe(-4);
+  });
+
+  it('stays exact at large indices (no float-error false positives)', () => {
+    for (const world of [1e3, 1e5, 1e7]) {
+      expect(invert(world, { scale: 2 }).noPreimage).toBe(false); // even → integer
+      expect(invert(world + 1, { scale: 2 }).noPreimage).toBe(true); // odd → .5
+    }
+  });
+
+  it('fires on a THREE-level composed chain, not just a single entry', () => {
+    // root {scale 2} ∘ mid {offset 1} ∘ leaf {scale 3} composes (root-first) to
+    // scale 6, offset 2 → local = (T-2)/6. Only T ≡ 2 (mod 6) has a preimage.
+    const composed = composeNdTransforms(
+      { Frame: { scale: 2 } },
+      { Frame: { offset: 1 } },
+      { Frame: { scale: 3 } }
+    );
+    expect(composed.Frame).toEqual({ scale: 6, offset: 2 });
+    for (const world of [2, 8, 14]) {
+      expect(invert(world, composed.Frame).noPreimage).toBe(false);
+    }
+    for (const world of [0, 1, 3, 7, 9, 13]) {
+      expect(invert(world, composed.Frame).noPreimage).toBe(true);
+    }
+  });
+
+  it('still fires when a DIFFERENT dimension is the extended one', () => {
+    // Frame is transformed and sliced; Channel is the extended one. The
+    // exemption is per-dimension, so Frame must not inherit Channel's pass.
+    const twoHidden = [
+      { name: 'X' },
+      { name: 'Y' },
+      { name: 'Z' },
+      { name: 'Frame', discrete: true, step: 1 },
+      { name: 'Channel', discrete: true, step: 1 },
+    ];
+    const result = invertNdTransformForQuery(
+      [0, 0, 0, 7, 1],
+      [1e10, 1e10, 1e10, 0, 1e10], // Channel extended, Frame exact
+      { Frame: { scale: 2 } },
+      twoHidden,
+      [0, 1, 2]
+    );
+    expect(result.noPreimage).toBe(true);
+  });
+
+  it('fires if ANY transformed discrete dim is off-grid (not just the first)', () => {
+    const twoHidden = [
+      { name: 'X' },
+      { name: 'Y' },
+      { name: 'Z' },
+      { name: 'A', discrete: true, step: 1 },
+      { name: 'B', discrete: true, step: 1 },
+    ];
+    // A lands on-grid, B does not.
+    const result = invertNdTransformForQuery(
+      [0, 0, 0, 8, 7],
+      [1e10, 1e10, 1e10, 0, 0],
+      { A: { scale: 2 }, B: { scale: 2 } },
+      twoHidden,
+      [0, 1, 2]
+    );
+    expect(result.slicePosition[3]).toBe(4);
+    expect(result.slicePosition[4]).toBe(3.5);
+    expect(result.noPreimage).toBe(true);
+  });
+
+  it('ignores a transform for a dimension with no metadata entry', () => {
+    // dimensions shorter than slicePosition (a truncated/mismatched scene):
+    // the loop bails on that index instead of throwing.
+    const short = [{ name: 'X' }, { name: 'Y' }, { name: 'Z' }];
+    const result = invertNdTransformForQuery(
+      [0, 0, 0, 7],
+      [1e10, 1e10, 1e10, 0],
+      { Frame: { scale: 2 } },
+      short,
+      [0, 1, 2]
+    );
+    expect(result.slicePosition[3]).toBe(7); // untouched
+    expect(result.noPreimage).toBe(false);
+  });
+
+  it('fails SAFE on a non-finite slice position (renders nothing, not everything)', () => {
+    // NaN can reach a query through a malformed animation state. `|NaN -
+    // round(NaN)| <= eps` is false, so the rule reports no preimage and the
+    // node clears — matching the lines kernel's non-finite policy (#806).
+    expect(invert(NaN, { scale: 2 }).noPreimage).toBe(true);
   });
 });
 

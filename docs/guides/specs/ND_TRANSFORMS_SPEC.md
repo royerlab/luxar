@@ -269,9 +269,11 @@ function invertNdTransformForQuery(
   slicePosition: number[],   // world space
   tolerance: number[],        // world space
   ndTransform: NdTransformMap,
-  dimensionNames: string[],
+  // Per-dimension metadata: `name` matches the ndTransform keys,
+  // `discrete`/`step` drive the no-preimage rule (§9.2.1).
+  dimensions: readonly { name?: string; discrete?: boolean; step?: number }[],
   displayDims: number[]
-): { slicePosition: number[]; tolerance: number[] }
+): { slicePosition: number[]; tolerance: number[]; noPreimage: boolean }
 ```
 
 For each non-displayed dimension with a transform:
@@ -314,19 +316,24 @@ index against a world ruler and cursor.
 
 ### 9.3 Where It's Applied
 
-In `scene-loader.ts`, centralized alongside the existing `extend_to_all` tolerance modification. Applied ONCE per node update, BEFORE passing viewState to the loader:
+In `data/scene-loader/view-state/derive-node-view-state.ts`, centralized alongside the existing `extend_to_all` tolerance modification. Applied ONCE per node update, BEFORE passing viewState to the loader:
 
 ```typescript
-// After extend_to_all tolerance override:
-const ndT = attrs?.nd_transform;
-if (ndT && Object.keys(ndT).length > 0 && viewState.dimensions) {
+// After the extend_to_all tolerance override:
+const worldNdT = computeWorldNdTransform(sceneGraph, path);
+if (hasOwnProperties(worldNdT) && derived.dimensions) {
   const inverted = invertNdTransformForQuery(
-    viewState.slicePosition, viewState.tolerance,
-    ndT, dimNames, viewState.displayDims
+    derived.slicePosition, derived.tolerance,
+    worldNdT, derived.dimensions, derived.displayDims
   );
-  viewState = { ...viewState, ...inverted };
+  // `noPreimage` only rides the derived state when set (§9.2.1); otherwise
+  // just the inverted position + tolerance are folded in.
+  derived = inverted.noPreimage
+    ? { ...derived, ...inverted }
+    : { ...derived, slicePosition: inverted.slicePosition, tolerance: inverted.tolerance };
 }
-// Then pass to loader — no changes needed inside loaders
+// Then pass to loader — the only loader-side change is the noPreimage guard
+// at the top of each geometry's range query.
 ```
 
 ### 9.4 Advantages Over Per-Point Transform
@@ -335,7 +342,7 @@ if (ndT && Object.keys(ndT).length > 0 && viewState.dimensions) {
 |--------|---------------------|---------------------------|
 | Complexity | O(N * D_nd) per frame | O(D_nd) per frame |
 | Data mutation | Modifies position arrays | No data mutation |
-| Code changes | Every loader's internals | Scene-loader only |
+| Code changes | Every loader's internals | Scene-loader, plus a one-line no-preimage early-out per geometry range query (§9.2.1) |
 | Cached data | Must copy before transform | Untouched |
 | WASM | Would need changes | No changes needed |
 

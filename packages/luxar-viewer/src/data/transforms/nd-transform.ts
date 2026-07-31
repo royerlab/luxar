@@ -12,8 +12,15 @@
  * The spatial index stores raw (untransformed) coordinates, so we convert
  * the viewer's world-space query back to local space before querying.
  *
- * This means NO changes are needed in any loader internals (projectTo3D,
- * clipSegmentToSlice, projectLinesTo3D, etc.).
+ * This means no changes are needed in the per-element projection kernels
+ * (projectTo3D, clipSegmentToSlice, projectLinesTo3D, the WASM/TS
+ * effective-radii kernels): they keep comparing raw coordinates against a
+ * query they never know was transformed.
+ *
+ * The one exception is the no-preimage rule below — a world slice that no local
+ * value can occupy is not expressible as a query position, so each geometry's
+ * range query carries a single early-out for it. See
+ * {@link invertNdTransformForQuery}.
  *
  * @module data/nd-transform
  */
