@@ -84,12 +84,16 @@ export function reportLoadOutcome(
   const allRegisteredFailed =
     registeredPaths.length > 0 && registeredPaths.every((p) => failedSet.has(p));
   if (allRegisteredFailed) {
+    // Count the FAILED set, not the registered one: an unregistered lazy-level
+    // failure can ride along in `failedPaths`, and a count that disagrees with
+    // the listed paths reads as a bug. In this branch every listed path failed
+    // and no registered path succeeded, so "all N" stays truthful.
     log.error(
       Modules.SCENE_LOADER,
-      `Scene load FAILED — all ${registeredPaths.length} node(s) failed to load: ${joined}`
+      `Scene load FAILED — all ${failedPaths.length} node(s) failed to load: ${joined}`
     );
     notifier.toast(
-      `Scene failed to load: all ${registeredPaths.length} data node(s) failed. ` +
+      `Scene failed to load: all ${failedPaths.length} data node(s) failed. ` +
         'See the console for details.',
       TOTAL_FAILURE_TOAST_MS
     );

@@ -101,6 +101,11 @@ describe('reportLoadOutcome', () => {
   it('still grades every registered node failing as total even with an extra lazy failure', () => {
     expect(reportLoadOutcome(['/a', '/lazy'], ['/a'])).toBe('total');
     expect(notifierMocks.toast).toHaveBeenCalledTimes(1);
+    // The count matches the listed paths (the failed set), not the registered
+    // subset — "all 1 node(s) failed: /a, /lazy" would read as a bug.
+    expect(logSpy.error).toHaveBeenCalledWith(
+      expect.stringContaining('all 2 node(s) failed to load: /a, /lazy')
+    );
   });
 
   it('reports partial rather than total when the attempted count is unknown', () => {

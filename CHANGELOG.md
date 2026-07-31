@@ -64,12 +64,12 @@ answered "does this axis have extent?" by scene scale: a splat with σ = 1e-7
 verbatim, but a 2D scene — or any nD scene with hidden dims — always goes through
 the marginal.
 
-The floor is now anchored to the largest diagonal of Σ*S
+The floor is now anchored to the largest diagonal of `Σ_S`
 (`CHOLESKY_RELATIVE_EPSILON = 1e-12`), making it a pure condition-number check
 that behaves identically at every scene scale, with the absolute constant kept as
 a backstop for a genuinely scaleless (all-zero) covariance. Same
 scale-free-conditioning reasoning as the shader's trace-normalized covariance
-inverse. Rank-deficient axes are still regularized, now as a fixed \_fraction* of
+inverse. Rank-deficient axes are still regularized, now as a fixed _fraction_ of
 the real axis.
 
 #### Fixed — errors logged as trailing arguments rendered as `{}` in the in-app console
