@@ -298,7 +298,11 @@ ifeq ($(OS),macos)
 	@# but does NOT symlink it into the prefix, so `node` stays missing/old and
 	@# this target would report success while leaving nothing usable on PATH.
 	@# `brew link --force` is what actually puts it there.
-	brew install node@22
+	@# The upgrade fallback: modern Homebrew (>= 3.3) upgrades an outdated keg
+	@# on `brew install`, but older brews and HOMEBREW_NO_INSTALL_UPGRADE setups
+	@# refuse with "run `brew upgrade node@22`" and a non-zero exit, which would
+	@# abort this recipe before the link/diagnosis below ever runs.
+	brew install node@22 || brew upgrade node@22
 	@# Only link when the requirement is NOT already met. A machine can legally
 	@# have node@22 installed-but-unlinked while a NEWER linked node (say 26)
 	@# already satisfies $(MIN_NODE_MAJOR).$(MIN_NODE_MINOR)+ — running
@@ -1254,7 +1258,7 @@ setup-dev:  ## Complete development setup (auto-installs missing dependencies)
 				echo "📥 Installing Homebrew first..."; \
 				/bin/bash -c "$$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"; \
 			fi; \
-			brew install node@22; \
+			brew install node@22 || brew upgrade node@22; \
 			brew link --force node@22 || true; \
 			NEW_OK=0; \
 			if command -v node >/dev/null 2>&1; then \
