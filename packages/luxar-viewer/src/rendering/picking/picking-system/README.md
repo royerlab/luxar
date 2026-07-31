@@ -58,9 +58,9 @@ O(N) only when the ray genuinely misses every node.
 ## Brightness-weighted majority vote
 
 `voteWinner` reads a 5×5 block from the float32 pick target where each
-pixel encodes `(nodeId, elementId, brightness, _)`. Background pixels
+pixel encodes `(nodeId, elementId-low16, brightness, elementId-high16)`. Background pixels
 (`r < 0.5`) are skipped; the rest are tallied into the caller-supplied
-`votesScratch` map keyed by `nodeId * 2^24 + elementId` (lossless for
+`votesScratch` map keyed by `nodeId * 2^32 + elementId` (lossless for
 24-bit IDs), accumulating brightness as the vote weight. The brightest
 total wins. The 5×5 footprint is deliberate: it gives a tiny amount of
 slack so a single-pixel-wide point or line edge still picks reliably,

@@ -141,7 +141,18 @@ export function pointPickWebGPUFactory(
   // Phase-1 identity ordering, and stays the id the rest of the
   // pipeline addresses points by once the sort worker permutes draw
   // order (Phase 2+). Mirrors the GLSL pick shader.
-  const vElementId: TSLNode = varying(float(aSortedIndex));
+  // Storage index split into two 16-bit halves — the TSL twin of
+  // `luxarElementIdParts` in glsl-lib.ts. The pick pass carries the index
+  // through an RGBA32F buffer and float32 has a 24-bit mantissa, so one
+  // channel cannot represent consecutive indices past 16,777,216 while a
+  // node's capacity reaches 2^25 on a 32768-texel device. Split in INT
+  // space — a float split would already have lost the bit it preserves —
+  // and both halves are <= 65535, hence exact. Integer div/sub rather than
+  // bit ops so the graph lowers the same way on both backends.
+  const elementIdInt: TSLNode = int(aSortedIndex);
+  const elementIdHi: TSLNode = elementIdInt.div(int(65536));
+  const elementIdLo: TSLNode = elementIdInt.sub(elementIdHi.mul(int(65536)));
+  const vElementId: TSLNode = varying(vec2(float(elementIdLo), float(elementIdHi)));
 
   const vertexBody = Fn(() => {
     // === Point-texture fetch prologue (visual-factory parity) ===
@@ -259,7 +270,7 @@ export function pointPickWebGPUFactory(
     Discard(r2.greaterThan(0.25));
     Discard(brightness.lessThan(1e-4));
 
-    return vec4(vNodeId, vElementId, brightness, 1.0);
+    return vec4(vNodeId, vElementId.x, brightness, vElementId.y);
   });
 
   // Depth = 1.0 - brightness (the brightest hit takes precedence).

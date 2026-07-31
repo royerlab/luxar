@@ -17,7 +17,11 @@ function buildPixels(): Float32Array {
   return new Float32Array(PICK_SIZE * PICK_SIZE * 4);
 }
 
-/** Write (r, g, b, a) into pixel slot (x, y) of a `pickSize × pickSize` RGBA buffer. */
+/**
+ * Write raw (r, g, b, a) into pixel slot (x, y). `a` defaults to 0 because
+ * it carries the element-id HIGH half — a stray 1.0 there would decode as
+ * elementId + 65536. Prefer {@link setHit} for id-based cases.
+ */
 function setPixel(
   pixels: Float32Array,
   x: number,
@@ -25,7 +29,7 @@ function setPixel(
   r: number,
   g: number,
   b: number,
-  a: number = 1.0
+  a: number = 0.0
 ): void {
   const i = (y * PICK_SIZE + x) * 4;
   pixels[i] = r;
@@ -33,6 +37,26 @@ function setPixel(
   pixels[i + 2] = b;
   pixels[i + 3] = a;
 }
+
+/**
+ * Write a hit the way the pick shaders do: element index split into two
+ * 16-bit halves, LOW in `g` and HIGH in `a` (see `luxarElementIdParts`).
+ */
+function setHit(
+  pixels: Float32Array,
+  x: number,
+  y: number,
+  nodeId: number,
+  elementId: number,
+  brightness: number
+): void {
+  const hi = Math.floor(elementId / 65536);
+  const lo = elementId - hi * 65536;
+  setPixel(pixels, x, y, nodeId, lo, brightness, hi);
+}
+
+/** The key `voteWinner` uses internally, for scratch-map assertions. */
+const voteKey = (nodeId: number, elementId: number): number => nodeId * 4294967296 + elementId;
 
 describe('voteWinner', () => {
   let scratch: Map<number, VoteEntry>;
@@ -68,7 +92,7 @@ describe('voteWinner', () => {
 
   it('a single hit wins with that pixel as the winner', () => {
     const pixels = buildPixels();
-    setPixel(pixels, 2, 2, 7, 42, 0.8);
+    setHit(pixels, 2, 2, 7, 42, 0.8);
     const winner = voteWinner(pixels, PICK_SIZE, scratch);
     expect(winner!.nodeId).toBe(7);
     expect(winner!.elementId).toBe(42);
@@ -78,9 +102,9 @@ describe('voteWinner', () => {
 
   it('sums brightness weights across pixels with the same (nodeId, elementId)', () => {
     const pixels = buildPixels();
-    setPixel(pixels, 0, 0, 3, 9, 0.4);
-    setPixel(pixels, 1, 0, 3, 9, 0.3);
-    setPixel(pixels, 2, 0, 3, 9, 0.2);
+    setHit(pixels, 0, 0, 3, 9, 0.4);
+    setHit(pixels, 1, 0, 3, 9, 0.3);
+    setHit(pixels, 2, 0, 3, 9, 0.2);
     const winner = voteWinner(pixels, PICK_SIZE, scratch);
     expect(winner!.nodeId).toBe(3);
     expect(winner!.elementId).toBe(9);
@@ -90,13 +114,13 @@ describe('voteWinner', () => {
   it('picks the highest summed-brightness ID when multiple IDs are present', () => {
     const pixels = buildPixels();
     // ID (1, 1) gets two pixels totaling 0.5
-    setPixel(pixels, 0, 0, 1, 1, 0.3);
-    setPixel(pixels, 1, 0, 1, 1, 0.2);
+    setHit(pixels, 0, 0, 1, 1, 0.3);
+    setHit(pixels, 1, 0, 1, 1, 0.2);
     // ID (2, 2) gets one pixel of 0.7 → wins
-    setPixel(pixels, 0, 1, 2, 2, 0.7);
+    setHit(pixels, 0, 1, 2, 2, 0.7);
     // ID (3, 3) gets two pixels totaling 0.4
-    setPixel(pixels, 0, 2, 3, 3, 0.25);
-    setPixel(pixels, 1, 2, 3, 3, 0.15);
+    setHit(pixels, 0, 2, 3, 3, 0.25);
+    setHit(pixels, 1, 2, 3, 3, 0.15);
 
     const winner = voteWinner(pixels, PICK_SIZE, scratch);
     expect(winner!.nodeId).toBe(2);
@@ -106,8 +130,8 @@ describe('voteWinner', () => {
 
   it('disambiguates by (nodeId, elementId) — same nodeId, different elementId are distinct entries', () => {
     const pixels = buildPixels();
-    setPixel(pixels, 0, 0, 5, 100, 0.6);
-    setPixel(pixels, 1, 0, 5, 101, 0.4);
+    setHit(pixels, 0, 0, 5, 100, 0.6);
+    setHit(pixels, 1, 0, 5, 101, 0.4);
     const winner = voteWinner(pixels, PICK_SIZE, scratch);
     expect(winner!.nodeId).toBe(5);
     expect(winner!.elementId).toBe(100); // 0.6 > 0.4
@@ -122,7 +146,7 @@ describe('voteWinner', () => {
     expect(scratch.size).toBe(1);
 
     const pixels = buildPixels();
-    setPixel(pixels, 0, 0, 1, 1, 0.5);
+    setHit(pixels, 0, 0, 1, 1, 0.5);
     const winner = voteWinner(pixels, PICK_SIZE, scratch);
 
     // Stale entry MUST be gone; only the fresh (1,1) remains
@@ -131,20 +155,67 @@ describe('voteWinner', () => {
     expect(winner!.nodeId).toBe(1);
   });
 
-  it('encodes the nodeId/elementId composite key losslessly for 24-bit IDs', () => {
+  it('keys distinct (nodeId, elementId) pairs without collision', () => {
     const pixels = buildPixels();
-    // nodeId * 2^24 + elementId must not collide for IDs within [0, 2^24)
-    setPixel(pixels, 0, 0, 1, 0, 0.5);
-    setPixel(pixels, 1, 0, 0, 1, 0.7); // r=0 → background, but g=1 alone shouldn't form a vote
-    // Re-place: keep both as hits — (1, 0) and (2, 0)
-    setPixel(pixels, 1, 0, 2, 0, 0.7);
+    setHit(pixels, 0, 0, 1, 0, 0.5);
+    setHit(pixels, 1, 0, 2, 0, 0.7);
 
     const winner = voteWinner(pixels, PICK_SIZE, scratch);
     expect(scratch.size).toBe(2);
-    // (1, 0) and (2, 0) — different nodeIds, same elementId — should be distinct
-    expect(scratch.has(1 * 16777216 + 0)).toBe(true);
-    expect(scratch.has(2 * 16777216 + 0)).toBe(true);
+    // Same elementId, different nodeId — must stay distinct.
+    expect(scratch.has(voteKey(1, 0))).toBe(true);
+    expect(scratch.has(voteKey(2, 0))).toBe(true);
     expect(winner!.nodeId).toBe(2);
+  });
+
+  it('is byte-for-byte compatible with the old one-channel encoding below 2^16', () => {
+    // The split only engages above 65535: under it the high half is 0, so
+    // `g` still holds the whole index and the decode reduces to
+    // `0 * 65536 + g` — exactly what the single-channel path produced.
+    // This is why the change cannot perturb ordinary scenes, and why a
+    // cross-backend pick difference at small ids would have to come from
+    // rasterization, not from this encoding.
+    for (const elementId of [0, 1, 42, 65_535]) {
+      const pixels = buildPixels();
+      setHit(pixels, 1, 1, 4, elementId, 0.7);
+      // The high channel really is zero — the old decoder read `g` alone.
+      const i = (1 * PICK_SIZE + 1) * 4;
+      expect(pixels[i + 3], `high half should be 0 for ${elementId}`).toBe(0);
+      expect(pixels[i + 1]).toBe(elementId);
+
+      const winner = voteWinner(pixels, PICK_SIZE, new Map());
+      expect(winner!.elementId).toBe(elementId);
+    }
+  });
+
+  it('round-trips an element index ABOVE 2^24 exactly', () => {
+    // REGRESSION GUARD. The index used to ride a single f32 channel, whose
+    // 24-bit mantissa stops representing consecutive integers at
+    // 16,777,216 — yet a node's capacity reaches 2^25 on a 32768-texel
+    // device, so picking there resolved to the wrong element. It is now
+    // split across g (low 16 bits) and a (high 16 bits).
+    for (const elementId of [16_777_216, 16_777_217, 20_000_001, 33_554_431]) {
+      const pixels = buildPixels();
+      setHit(pixels, 3, 3, 6, elementId, 0.9);
+      const winner = voteWinner(pixels, PICK_SIZE, new Map());
+      expect(winner!.nodeId).toBe(6);
+      expect(winner!.elementId, `elementId ${elementId} did not round-trip`).toBe(elementId);
+    }
+  });
+
+  it('does not alias across nodes when the element index exceeds 2^24', () => {
+    // With the old `nodeId * 2^24 + elementId` key, (1, 2^24) and (2, 0)
+    // both hash to 2^25 — two different elements would merge their votes
+    // and the winner could be reported under the wrong node.
+    const pixels = buildPixels();
+    setHit(pixels, 0, 0, 1, 16_777_216, 0.4);
+    setHit(pixels, 1, 0, 2, 0, 0.6);
+
+    const winner = voteWinner(pixels, PICK_SIZE, scratch);
+    expect(scratch.size, 'votes from different elements were merged').toBe(2);
+    expect(winner!.nodeId).toBe(2);
+    expect(winner!.elementId).toBe(0);
+    expect(winner!.weight).toBeCloseTo(0.6, 5);
   });
 
   it('honors pickSize parameter (3×3 block reads only the first 9 RGBA quads)', () => {
