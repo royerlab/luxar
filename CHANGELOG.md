@@ -48,6 +48,30 @@ scene before anything reads bounds, and stale dims are dropped when a scene
 carries no dimension metadata so a 3D scene loaded after an nD one cannot
 inherit its axes.
 
+#### Fixed — overlay HTML sanitizer: attribute allowlist + reverse-tabnabbing (#767)
+
+`OverlayManager.sanitizeHtml` allowlisted tags but only denylisted attributes,
+so everything the earlier pass did not explicitly name survived — `id`/`name`
+(DOM clobbering), `data-*`, `ping`, `srcset`, `download`, and the `vbscript:`,
+`data:` and `style: url(javascript:...)` vectors the #720 note had flagged as
+still uncovered. The scrub is now an attribute **allowlist**: only `style`,
+`href`, `src`, `alt`, `class`, `target`, `title`, `rel` and the inert
+presentational `colspan`/`rowspan`/`width`/`height` survive, and every
+other attribute (including `on*` handlers) is dropped. The value-bearing
+survivors then face a per-attribute guard: `href`/`src` block the
+`javascript:`, `vbscript:` and `data:` schemes; `style` is dropped if it carries
+`javascript:`, `vbscript:` or `expression(` (which also catches
+`url(javascript:...)` after whitespace/C0 normalization), or any CSS escape
+(`\`) or comment opener (`/*`) — a substring check cannot see through CSS
+tokenization (`\6a avascript:` decodes to `javascript:`), so escape/comment
+syntax is rejected wholesale rather than parsed. Reverse tabnabbing is
+neutralized on both fronts: `rel` is dropped when it carries a bare `opener`
+token, and `target` is restricted to `_blank`/`_self` so a named target can no
+longer open a top-level window with a live `window.opener` able to
+cross-origin-navigate the viewer tab. Over-blocking is the deliberate
+preference: this sanitizer is the only XSS control on the `?src=<url>` path,
+where a hand-crafted zarr never meets the Python compiler.
+
 #### Fixed — warnings now display through arbol instead of raw stderr lines
 
 Python's default warning display wrote `path/to/file.py:299: UserWarning: ...`

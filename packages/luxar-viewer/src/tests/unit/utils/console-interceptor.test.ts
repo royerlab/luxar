@@ -8,7 +8,7 @@
  */
 
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
-import vm from 'node:vm';
+import { runInNewContext } from 'node:vm';
 import { consoleInterceptor } from '../../../utils/console-interceptor';
 
 describe('ConsoleInterceptor ring buffer', () => {
@@ -185,27 +185,37 @@ describe('ConsoleInterceptor stack capture', () => {
   });
 
   it('prefers a real Error over an earlier duck-typed stack carrier', () => {
-    // A plain object carrying a `stack` string (a context bag) precedes the real
-    // Error; the Error's own stack must win, not the context string — otherwise
-    // the bug-report trace points at the log site's metadata, not the fault.
-    const err = new Error('boom');
-    console.error('failed', { stack: 'context: decoding' }, err);
+    // A plain `{ stack }` object satisfies getErrorStack, so a single-pass scan
+    // would record the context string ahead of the real Error's trace.
+    const realError = new Error('the real failure');
+    console.error('failed', { stack: 'just some context string' }, realError);
 
-    expect(lastMessage().stack).toBe(err.stack);
+    expect(lastMessage().stack).toBe(realError.stack);
   });
 
   it('prefers a CROSS-REALM Error over an earlier duck-typed stack carrier', () => {
-    // An Error created in another realm (window/iframe) has a foreign
-    // Error.prototype, so `instanceof Error` is false — only the
-    // `[object Error]` brand check (the [[ErrorData]] internal slot) sees it.
-    // Without that check the context bag in front would shadow its stack.
-    const foreignErr = vm.runInNewContext('new Error("cross-realm boom")') as Error;
-    expect(foreignErr instanceof Error).toBe(false); // genuinely foreign realm
-    expect(typeof foreignErr.stack).toBe('string');
+    // A cross-realm Error fails `instanceof Error`, so the priority pass must
+    // detect it via the [[Class]] brand (isGenuineError) or the context string
+    // wins again.
+    const crossRealm = runInNewContext('new Error("the real failure")') as Error;
+    expect((crossRealm as unknown) instanceof Error).toBe(false);
+    console.error('failed', { stack: 'just some context string' }, crossRealm);
 
-    console.error('failed', { stack: 'context: decoding' }, foreignErr);
+    expect(lastMessage().stack).toBe(crossRealm.stack);
+  });
 
-    expect(lastMessage().stack).toBe(foreignErr.stack);
+  it('prefers a real Error over an earlier FULL-TRIPLE context object', () => {
+    // A context bag carrying all three of name/message/stack satisfies the
+    // wide isErrorLike (it renders as an Error), but it must NOT satisfy the
+    // stack-precedence pass — only a genuine Error may outrank the real trace.
+    const realError = new Error('the real failure');
+    console.error(
+      'failed',
+      { name: 'Context', message: 'decode phase', stack: 'context stack' },
+      realError
+    );
+
+    expect(lastMessage().stack).toBe(realError.stack);
   });
 
   it('falls back to a duck-typed stack carrier when no real Error is present', () => {
