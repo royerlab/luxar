@@ -447,23 +447,52 @@ describe('attachSplatStorage / writeSplatTexels — fused writer round-trip', ()
     for (let i = 0; i < 10; i++) expect(arr[i]).toBe(i);
   });
 
-  it('writeSortedIndexOrdering clamps to ordering AND attribute lengths', () => {
+  it('writeSortedIndexOrdering REJECTS a truncated ordering, clamps to the attribute', () => {
     const geometry = new THREE.InstancedBufferGeometry();
     attachSplatStorage(geometry, 8);
     const capacity = (geometry.getAttribute('aSortedIndex').array as Uint32Array).length;
-    // ordering shorter than count: writes only ordering.length entries.
-    let n = writeSortedIndexOrdering(geometry, new Uint32Array([3, 1]), 5);
-    expect(n).toBe(2);
-    while (pumpSortedIndexOrderingApply(geometry).more) {
-      /* drain */
-    }
-    const arr = getActiveSortedIndexAttribute(geometry)!.array as Uint32Array;
-    expect(arr[0]).toBe(3);
-    expect(arr[1]).toBe(1);
-    // ordering longer than the attribute: clamps to the attribute.
+
+    // Fewer indices than drawn elements is not a permutation of the drawn
+    // population. Staging it would flip the slot with the tail holding
+    // whatever the inactive buffer contained — zeros here, so [3,1] over
+    // count 5 would draw element 0 three times and elements 2 and 4 never.
+    // Exactly the corruption double-buffering exists to prevent: drop it.
+    expect(writeSortedIndexOrdering(geometry, new Uint32Array([3, 1]), 5)).toBe(0);
+    expect(hasPendingSortedIndexOrderingApply(geometry)).toBe(false);
+    expect(activeSortedIndexSlot(geometry)).toBe(0);
+
+    // Clamping the other way is pure memory safety — capacity is always
+    // >= instanceCount, so a count above it still covers every drawn
+    // element and the ordering is not truncated.
     const long = new Uint32Array(32).fill(7);
-    n = writeSortedIndexOrdering(geometry, long, 32);
-    expect(n).toBe(capacity);
+    expect(writeSortedIndexOrdering(geometry, long, 32)).toBe(capacity);
+  });
+
+  it('writeSortedIndexOrdering REJECTS a malformed ordering pair instead of repairing it', () => {
+    // Repairing here — materialising a missing back buffer, or splitting
+    // an aliased one — is the native-WebGPU black-screen bug: it grows
+    // the attribute set behind a vertex layout three cached at first draw
+    // and never rebuilds. A hand-built geometry must simply never sort.
+    const aliased = new THREE.InstancedBufferGeometry();
+    const shared = new THREE.InstancedBufferAttribute(new Uint32Array(8), 1);
+    aliased.setAttribute('aSortedIndex', shared);
+    aliased.setAttribute('aSortedIndexB', shared);
+    expect(writeSortedIndexOrdering(aliased, new Uint32Array([7, 6, 5, 4, 3, 2, 1, 0]), 8)).toBe(0);
+    expect(aliased.getAttribute('aSortedIndexB')).toBe(shared);
+
+    const missing = new THREE.InstancedBufferGeometry();
+    missing.setAttribute('aSortedIndex', new THREE.InstancedBufferAttribute(new Uint32Array(8), 1));
+    expect(writeSortedIndexOrdering(missing, new Uint32Array([7, 6, 5, 4, 3, 2, 1, 0]), 8)).toBe(0);
+    expect(missing.getAttribute('aSortedIndexB')).toBeUndefined();
+
+    // A SHORTER back buffer would also stall the pump forever: the staged
+    // count is clamped against the active buffer but each slice against
+    // the inactive one, so `cursor` could never reach `count`.
+    const short = new THREE.InstancedBufferGeometry();
+    short.setAttribute('aSortedIndex', new THREE.InstancedBufferAttribute(new Uint32Array(8), 1));
+    short.setAttribute('aSortedIndexB', new THREE.InstancedBufferAttribute(new Uint32Array(4), 1));
+    expect(writeSortedIndexOrdering(short, new Uint32Array([7, 6, 5, 4, 3, 2, 1, 0]), 8)).toBe(0);
+    expect(hasPendingSortedIndexOrderingApply(short)).toBe(false);
   });
 
   it('clamps the attach capacity to the per-node bound (structural safety net)', () => {

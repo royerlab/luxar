@@ -85,11 +85,13 @@ float perspectiveNearFade(int isOrtho, float viewZ, float nearCull) {
  * buffer holds the whole permutation — the attribute being read is
  * therefore always complete.
  *
- * Both attributes are ALWAYS present on the geometry (`attachElementStorage`
- * aliases them onto one buffer until a node first sorts, so a node that
- * never sorts costs no extra memory). That is load-bearing on WebGPU,
- * whose `RenderObject` dereferences a graph-referenced attribute before
- * its undefined guard.
+ * Both attributes are ALWAYS present on the geometry, as two DISTINCT
+ * buffers allocated together by `attachElementStorage` — never aliased
+ * onto one and never materialised later. That is load-bearing on
+ * WebGPU twice over: `RenderObject` dereferences a graph-referenced
+ * attribute before its undefined guard, and the vertex-buffer layout is
+ * cached from the attribute set at first draw and never rebuilt, so a
+ * set that grows afterwards renders the scene black (`element-storage.ts`).
  *
  * `uSortedIndexSlot` is a RUNTIME uniform, never a define: a flip must
  * not recompile the program.

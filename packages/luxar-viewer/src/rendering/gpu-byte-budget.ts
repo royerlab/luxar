@@ -28,14 +28,15 @@
  * vs 52 B/splat in the pre-texture interleaved era (≈ +31% VRAM).
  * A pooled points allocation costs ≈52 B/point: 48 B in the RGBA32F
  * point texture (3 texels × 16 B) + 4 B `aSortedIndex` — vs 32 B/point
- * (36 with scalars) in the interleaved era. A node that DEPTH-SORTS
- * (any `normal`/`volumetric` layer) adds a further 4 B/element for the
- * second ordering buffer the atomic swap needs — ≈72 B/splat, ≈56
- * B/point — charged only on that node's first sort, because the pair
- * is aliased onto one buffer until then (`element-storage.ts`).
+ * (36 with scalars) in the interleaved era. EVERY node adds a further
+ * 4 B/element for the second ordering buffer the atomic swap needs —
+ * ≈72 B/splat, ≈56 B/point — charged from attach whether the node ever
+ * depth-sorts or not: materialising that buffer lazily would change the
+ * attribute set behind a cached native-WebGPU vertex layout and render
+ * the scene black (`element-storage.ts`).
  * `estimateGeometryBytes` counts texture and attributes, deduplicating
- * by attribute identity so the aliased pair is charged once, so
- * eviction pressure reflects the true footprint. The planned RGBA16F
+ * by attribute identity, so eviction pressure reflects the true
+ * footprint. The planned RGBA16F
  * narrowing (spec §8) roughly halves the texture share.
  *
  * @module rendering/gpu-byte-budget

@@ -28,8 +28,6 @@ import {
   getElementTextureWidth,
   elementTextureHeightForCapacity,
 } from './element-texture-layout';
-// Leaf module (imports only THREE), so no cycle back into the pool.
-import { invalidateCachedByteSize } from './gpu-buffer-pool/geometry-bytes';
 
 /**
  * Above this fraction of a texture's rows being dirty, the per-row
@@ -351,47 +349,36 @@ function getInactiveSortedIndexAttribute(
 }
 
 /**
- * Last-resort guarantee that the geometry owns TWO distinct ordering
- * buffers before an ordering streams into one of them.
+ * Whether the geometry's ordering pair can safely receive a new
+ * ordering: both names present, DISTINCT objects, same length and
+ * itemSize.
  *
- * `attachElementStorage` allocates both up front, so on every geometry
- * the viewer builds this is a no-op — deliberately. Materialising the
- * second buffer LATE changes the attribute set, and hence the WebGPU
- * vertex-buffer layout, behind a render pipeline three has already
- * cached and will not rebuild (full reasoning at the allocation site);
- * the result is a silently black scene on the native backend. This
- * function therefore exists only for a geometry assembled by hand
- * outside the chokepoint, which would otherwise have no buffer to
- * stream into and would silently never apply an ordering at all.
+ * This VALIDATES; it never repairs. An earlier revision materialised a
+ * missing/aliased back buffer here instead, and that is precisely the
+ * native-WebGPU black-screen bug documented at the allocation site —
+ * growing the attribute set behind a cached pipeline shifts every later
+ * attribute down a vertex-buffer slot. Repairing here would reintroduce
+ * it for exactly the geometries that reach this path.
  *
- * The new buffer is seeded from the live one rather than left zeroed:
- * every index outside the streamed `[0, count)` span then still reads as
- * the permutation that was on screen, so a later count shrink can never
- * expose an uninitialised tail.
+ * Equal lengths are load-bearing twice over: three derives
+ * `_maxInstanceCount` from the SMALLEST instanced attribute (a short
+ * back buffer would silently clamp the draw), and the chunk pump clamps
+ * each slice against the INACTIVE buffer while the staged count is
+ * clamped against the ACTIVE one — so a short back buffer would leave
+ * `cursor` permanently below `count`, requesting renders forever and
+ * never flipping.
  *
- * Both buffers MUST stay the same length — three derives
- * `_maxInstanceCount` from the smallest instanced attribute, so a short
- * one would silently clamp the draw.
+ * `attachElementStorage` satisfies all of this by construction, so every
+ * geometry the viewer builds passes. A hand-assembled one that does not
+ * simply never sorts, which is the correct failure: a stale-but-whole
+ * ordering on screen beats a corrupt one, or a black frame.
  */
-function ensureSortedIndexBackBuffer(geometry: THREE.InstancedBufferGeometry): void {
+function sortedIndexBuffersUsable(geometry: THREE.InstancedBufferGeometry): boolean {
   const front = getActiveSortedIndexAttribute(geometry);
-  if (!front) return;
-  const other = getInactiveSortedIndexAttribute(geometry);
-  // Materialise when the second name is missing entirely, and ALSO when
-  // the pair happens to be aliased onto one attribute object — either
-  // way there is nowhere safe to stream a new ordering.
-  if (other && other !== front) return;
-
-  const back = new THREE.InstancedBufferAttribute(
-    (front.array as Uint32Array).slice(),
-    front.itemSize
-  );
-  back.setUsage(THREE.DynamicDrawUsage);
-  geometry.setAttribute(SLOT_ATTRIBUTE_NAMES[activeSortedIndexSlot(geometry) === 0 ? 1 : 0], back);
-  // The pool's byte estimate is memoized on userData and nothing else in
-  // production invalidates it, so a lazily-grown attribute would be
-  // invisible to the eviction budget forever.
-  invalidateCachedByteSize(geometry);
+  const back = getInactiveSortedIndexAttribute(geometry);
+  if (!front || !back || front === back) return false;
+  if (front.itemSize !== back.itemSize) return false;
+  return (front.array as Uint32Array).length === (back.array as Uint32Array).length;
 }
 
 /**
@@ -751,17 +738,26 @@ export function writeSortedIndexOrdering(
 ): number {
   const active = getActiveSortedIndexAttribute(geometry);
   if (!active) return 0;
-  const n = Math.min(count, ordering.length, (active.array as Uint32Array).length);
+  // A TRUNCATED ordering is not a permutation of the drawn population,
+  // and staging it would flip the slot with the tail left holding
+  // whatever the inactive buffer happened to contain (zeros on a freshly
+  // attached geometry) — elements drawn several times, others not at
+  // all. That is the exact corruption double-buffering exists to
+  // prevent, so drop it rather than clamp. Matches the coordinator's
+  // apply-invariant, which only ever passes `ordering.length` as `count`.
+  if (ordering.length < count) return 0;
+  // Clamping the other way is pure memory safety: capacity is always
+  // >= instanceCount, so a count above it still covers every drawn
+  // element.
+  const n = Math.min(count, (active.array as Uint32Array).length);
   // An EMPTY ordering stages nothing. Otherwise it would "complete" on its
   // first pump and FLIP — swapping the newest ordering out for the older
   // buffer sitting behind it. (The commit path already returns early on an
   // empty frame, so this guards the writer's own contract rather than a
   // live caller.)
   if (n === 0) return 0;
-
-  // Split the attach-time alias before anything targets the back buffer;
-  // until now a never-sorted node has been paying nothing for it.
-  ensureSortedIndexBackBuffer(geometry);
+  // Malformed pair — never repair it here (see `sortedIndexBuffersUsable`).
+  if (!sortedIndexBuffersUsable(geometry)) return 0;
 
   const inFlight = chunkedApplies.get(geometry);
   if (inFlight) {

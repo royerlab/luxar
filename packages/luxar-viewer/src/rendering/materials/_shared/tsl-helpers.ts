@@ -47,7 +47,10 @@ export type TSLNode = any;
  * attributes, so an unreferenced back buffer would never receive its
  * chunked uploads — and `RenderObject` dereferences a referenced
  * attribute before its undefined guard, so every geometry must carry
- * both (`attachElementStorage` aliases them until a node first sorts).
+ * both. `attachElementStorage` allocates them as two DISTINCT buffers
+ * together — never aliased, never added later, since the WebGPU vertex
+ * layout is cached from the attribute set at first draw and a set that
+ * grows afterwards renders the scene black.
  *
  * `uSortedIndexSlot` must stay a RUNTIME uniform: a compile-time flag
  * would rebuild the graph on every swap. (The lines material treats
