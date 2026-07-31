@@ -12,6 +12,9 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+import zarr
+
+from luxar.gsplats.gsplat_data import GSplatData
 
 pytest.importorskip("scipy")
 
@@ -44,6 +47,51 @@ _save_labels_u8 = _demo._save_labels_u8
 _load_labels = _demo._load_labels
 CLASS_MAP = _demo.CLASS_MAP
 SUPERGROUPS = _demo.SUPERGROUPS
+create_luxar_scene = _demo.create_luxar_scene
+
+
+def _tiny_gsplat_data(n: int, seed: int = 0) -> GSplatData:
+    """A handful of valid splats — no GPU fit, enough to build the scene."""
+    rng = np.random.default_rng(seed)
+    return GSplatData(
+        centers=rng.uniform(-4.0, 4.0, (n, 3)).astype(np.float32),
+        amplitudes=rng.uniform(0.2, 1.0, n).astype(np.float32),
+        cholesky_factors=np.tile([1, 0, 1, 0, 0, 1], (n, 1)).astype(np.float32),
+    )
+
+
+def _gsplat_layers(scene_path: Path) -> list:
+    """Attr dicts of the scene's top-level gsplats layer nodes."""
+    root = zarr.open_group(str(scene_path), mode="r")
+    return [
+        dict(group.attrs)
+        for _name, group in root.groups()
+        if dict(group.attrs).get("type") == "gsplats"
+    ]
+
+
+class TestSceneBlending:
+    def test_scene_bakes_volumetric_blending_on_every_layer(self, tmp_path) -> None:
+        # Every per-tissue toggle layer must composite volumetrically
+        # (emission-absorption) so organs read through one another instead of
+        # summing to additive glow; pin it so a silent revert is caught (the
+        # helper smoke tests never build the scene). Use two tissue groups so
+        # more than one layer is exercised.
+        bone = next(
+            lid for lid, name in CLASS_MAP.items() if tissue_group(name) == "bone"
+        )
+        liver = next(
+            lid
+            for lid, name in CLASS_MAP.items()
+            if tissue_group(name) == "abdominal_organ"
+        )
+        labels = np.array([bone, liver] * 4, dtype=np.int32)
+        fit = _tiny_gsplat_data(len(labels))
+        out = create_luxar_scene(fit, labels, tmp_path / "ct.luxar.zarr")
+        layers = _gsplat_layers(out)
+        assert len(layers) >= 2
+        for attrs in layers:
+            assert attrs.get("blending_mode") == "volumetric"
 
 
 class TestTissueGroup:
