@@ -1029,6 +1029,56 @@ describe('LayersPanel — blend select drives the leaf material', () => {
     expect(stubMat.updateColormapTexture).not.toHaveBeenCalledWith(expect.anything());
   });
 
+  it('keeps a colormap pick when the layer meshes have not streamed in yet', () => {
+    // Partition parts and LOD levels stream in over time, so a layer can have
+    // NO reachable leaf material when the user picks a palette. That is not a
+    // C1 guard suppression: reverting the pick would fight the user mid-load
+    // and desync the panel from the LUT an authored-colormap part renders with
+    // once it arrives (a later slider drag would then push the identity window
+    // into a colormap-active material — the #522 near-black).
+    const rootGroup = new THREE.Group(); // deliberately empty: nothing loaded
+
+    const graph = {
+      name: 'root',
+      path: '/',
+      type: 'group',
+      attrs: {},
+      children: [
+        {
+          name: 'cloud',
+          path: '/cloud',
+          type: 'points',
+          attrs: {
+            layer: true,
+            type: 'points',
+            has_scalars: true,
+            scalar_data_range: [0.0001, 0.02],
+          },
+          children: [],
+        },
+      ],
+    } as unknown as SceneNode;
+
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(rootGroup, graph);
+    panel.show();
+    panel.layerState.select('/cloud', 'single');
+
+    const cmSelect = Array.from(container.querySelectorAll('select')).find((s) =>
+      Array.from(s.options).some((o) => o.value === 'viridis')
+    )!;
+    cmSelect.value = 'viridis';
+    cmSelect.dispatchEvent(new Event('change', { bubbles: true }));
+
+    // The pick sticks — state moves to the scalar window instead of snapping
+    // back to "(direct colors)".
+    const layer = panel.layerState.getLayer('/cloud')!;
+    expect(layer.colormap).toBe('viridis');
+    expect(layer.scalarWindow).toBe(true);
+    expect(layer.displayMin).toBeCloseTo(0.0001, 6);
+    expect(layer.displayMax).toBeCloseTo(0.02, 6);
+  });
+
   /**
    * Stub material whose `updateColormapTexture` emulates the real one: a LUT
    * toggles the `USE_COLORMAP` define, which `applyColorAdjustments` routes

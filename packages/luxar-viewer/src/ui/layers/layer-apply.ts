@@ -295,18 +295,25 @@ export class LayerApplyEngine {
    * (a group layer over scalar-less points still offers the dropdown): the
    * layer then keeps rendering DIRECT COLOUR, so its display window must stay
    * the direct-colour identity rather than move to a scalar range.
+   *
+   * A leaf whose mesh/material is not in the scene yet (partition parts and
+   * LOD levels stream in) is NOT a guard suppression — when no leaf material
+   * was reachable at all, the request is taken at face value so the caller
+   * keeps the user's pick instead of reverting it mid-load.
    */
   applyColormap(layer: LayerInfo): boolean {
     const leaves = this.getAffectedDataLeaves(layer.path);
     if (leaves.length === 0) return false;
 
     let colormapInEffect = false;
+    let anyMaterialReached = false;
     const tex = layer.colormap ? getColormapTexture(layer.colormap) : null;
     for (const leaf of leaves) {
       const obj = this.getMesh(leaf.path);
       if (!obj) continue;
       const mat = this.getLeafMaterial(obj);
       if (!mat || !mat.updateColormapTexture) continue;
+      anyMaterialReached = true;
       if (layer.colormap && tex) {
         // C1 fail-closed guard: enabling USE_COLORMAP requires real
         // scalar data behind the geometry (the `userData.hasScalars`
@@ -353,6 +360,9 @@ export class LayerApplyEngine {
     // particular, restoring the color GOG when a colormap is turned off.
     this.applyComposed(layer);
     this.deps.requestRender();
-    return colormapInEffect;
+    // "No colormap in effect" is only meaningful when at least one leaf
+    // material was actually evaluated; with none reachable (still streaming),
+    // report the requested state so the caller doesn't fight the user.
+    return colormapInEffect || (!anyMaterialReached && !!layer.colormap);
   }
 }
