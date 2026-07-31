@@ -3,14 +3,14 @@
 
 This demo demonstrates:
 - Downloading real Nup107-160 subcomplex structure from PDB
-- Creating C-alpha backbone trace for clean visualization
+- Rendering every atom (or a C-alpha trace with --representation=calpha)
 - Applying PERFECT 8-fold rotational symmetry
-- Color-coding each spoke for beautiful symmetry display
+- CPK element coloring (or one color per spoke with --color=spoke)
 - Van der Waals radii for realistic atomic sizes
 
 Visualization approach:
-- C-alpha trace (backbone only) - reduces visual clutter
-- Each of 8 spokes gets a distinct color
+- All atoms by default; --representation=calpha reduces visual clutter
+- CPK element colors by default; --color=spoke shows the symmetry
 - Shows the beautiful octagonal architecture clearly
 - Central pore is visible!
 
@@ -43,9 +43,9 @@ KEY STRUCTURAL COMPONENTS:
 
 VISUALIZATION STRATEGY:
 - Download ONE Nup107-160 Y-complex (PDB: 3I4R)
-- Extract C-alpha atoms only (protein backbone trace)
+- Extract all atoms (--representation=calpha for a backbone trace)
 - Apply 8-fold rotational symmetry
-- Color each spoke differently to show symmetry
+- Color by element (--color=spoke colors each spoke to show symmetry)
 - Position at correct radius to create ring with central pore
 
 This creates a clean, beautiful visualization similar to textbook illustrations!
@@ -69,14 +69,14 @@ Usage:
 Controls:
     - Rotate to see PERFECT 8-fold symmetry
     - Top-down view: Beautiful octagonal ring with central pore!
-    - Each spoke is a different color
+    - Press L for the Layers panel (blending, opacity, display range)
     - Ctrl+C to stop and cleanup
 """
 
 DEMO_META = {
     "key": "nuclear_pore_complex",
     "title": "Nuclear Pore Complex",
-    "description": "Real Nup107-160 Y-complex (PDB 3I4R) tiled into the NPC's 8-fold symmetric ring (C-alpha trace).",
+    "description": "Real Nup107-160 Y-complex (PDB 3I4R) tiled into the NPC's 8-fold symmetric ring (all atoms, CPK colors).",
     "category": "structural",
     "geometry": "points",
     "requirements": {
@@ -448,8 +448,8 @@ def generate_nuclear_pore_complex(
     pdb_id: str = "3I4R",
     max_atoms: int = 100000,
     n_fold: int = 8,
-    representation: str = "calpha",
-    color_by: str = "spoke",
+    representation: str = "all",
+    color_by: str = "element",
 ) -> int:
     """Generate Nuclear Pore Complex with perfect 8-fold symmetry.
 
@@ -555,11 +555,8 @@ def generate_nuclear_pore_complex(
             vdw_radii_angstrom = element_to_vdw_radius(sym_elements)
             radii = vdw_radii_angstrom * 0.1  # Convert to nm
 
-            # Scale radii for visibility
-            if representation == "calpha":
-                radii *= 0.4  # Larger for C-alpha trace
-            else:
-                radii *= 0.4  # Moderate scaling for all atoms
+            # Scale radii for visibility (VdW ratios, not absolute sizes)
+            radii *= 0.4
 
             aprint("✓ Van der Waals radii applied (different per element):")
             aprint(f"  C: {1.70 * 0.1 * 0.4:.3f} nm")
@@ -582,14 +579,55 @@ def generate_nuclear_pore_complex(
                 # Sharpness for crisp, sharp protein atoms (normalized [0, 1] knob)
                 sharpness = np.full(len(sym_positions), 0.85, dtype=np.float32)
 
+                # `normal` (alpha-over, depth-sorted) rather than the default
+                # additive: an atomic structure is a SURFACE, not an emissive
+                # medium, so the nearest atom should win the pixel. Additive
+                # and volumetric both sum every overlapping atom along the ray
+                # and wash a shell this dense toward pastel white, taking the
+                # CPK colours with them. Measured over 11 regenerated variants
+                # at the opening framing — mean CIELAB chroma over the covered
+                # pixels, which (unlike an HSV-style saturation ratio) scores
+                # both washed-out AND near-black pixels as colourless, so a dim
+                # additive render cannot win on pure-but-dark hues: normal
+                # 13.1, additive-at-intensity-0.125 6.2, and every volumetric
+                # variant 3.9-8.3 across kappa 2-20. The best volumetric
+                # (kappa=20, intensity 0.5) reaches only 8.3 AND sits off the
+                # Layers-panel absorption slider, which stops at 10; the best
+                # panel-legal one (kappa=3, intensity 0.15) reaches 6.7 — a
+                # hair over additive, half of normal. Normal also retires
+                # the intensity=0.125 anti-blowout workaround the additive
+                # default needed: back-to-front alpha-over lets the nearest
+                # atom cover the pixel instead of accumulating into it, so
+                # full intensity is the correct exposure. (opacity >= 0.99
+                # additionally flips on depth writes — normalModeDepthWrite
+                # — which is what occludes any layer BEHIND this one; inside
+                # one depth-sorted node it is inert.)
+                #
+                # `opaque` scores HIGHER chroma still (17.3) — do not "fix" this
+                # to opaque on that number alone. It is the same blend state as
+                # normal-at-opacity-1 except `transparent: false`, which turns
+                # GL blending off entirely: the soft falloff alpha is computed
+                # and then ignored. Zoomed A/B at camDist 11, over the covered
+                # pixels: normal keeps a 0.042 anti-aliased edge band and 0.14%
+                # hard edges, opaque has a 0.000 band and 1.47% (10.5x) hard
+                # edges, plus crescent-clipped atoms where a nearer sprite's
+                # unblended quad punches through a farther one. The chroma win
+                # IS the aliasing — no fringe pixels left to dilute the hue.
+                #
+                # `layer=True` exposes the node in the Layers panel (press L)
+                # so blending, opacity, the display range — and absorption
+                # once you switch to volumetric, which is the only mode whose
+                # slider the panel shows — stay live-adjustable.
                 scene.add_points(
                     "nuclear_pore_complex",
                     positions=sym_positions,
                     colors=colors,
                     radii=radii,
                     sharpness=sharpness,
-                    opacity=0.95,
-                    intensity=0.125,
+                    layer=True,
+                    blending_mode="normal",
+                    opacity=1.0,
+                    intensity=1.0,
                 )
 
                 # Overlay annotations
@@ -666,7 +704,7 @@ def main() -> None:
     aprint("")
     aprint("What makes this beautiful:")
     aprint("  • Octagonal ring structure (top-down view)")
-    aprint("  • Each spoke is a different rainbow color")
+    aprint("  • Eight atom-for-atom identical spokes")
     aprint("  • Central pore clearly visible")
     aprint("  • Perfect 45° rotational symmetry")
     aprint("")
@@ -726,22 +764,23 @@ def main() -> None:
         aprint("")
         aprint("Navigation:")
         aprint("  - Top-down (Z-axis): OCTAGONAL RING with CENTRAL PORE!")
-        aprint("  - Rotate slowly: See 8 distinct colored spokes")
+        aprint("  - Rotate slowly: See the 8 identical spokes")
         aprint("  - Rotate by 45 degrees: Symmetry test - should look identical!")
         aprint("  - Side view: See Y-shaped Nup107-160 complexes")
         aprint("")
         aprint("What to look for:")
-        aprint("  - 8 rainbow-colored spokes arranged in perfect octagon")
+        aprint("  - 8 spokes arranged in perfect octagon")
         aprint("  - Central pore/channel in the middle (molecular highway!)")
         aprint("  - Each spoke is identical (perfect symmetry)")
-        aprint("  - Protein backbone showing 3D architecture")
+        aprint("  - The 3D architecture of each Y-complex")
         aprint("")
-        aprint("Color guide (spoke mode):")
-        aprint(
-            "  Red -> Orange -> Yellow -> Green -> Cyan -> Blue -> Purple -> Magenta"
-        )
-        aprint("  (Each color = one of the 8 identical spokes)")
-        aprint("")
+        if color_by == "spoke":
+            aprint("Color guide (spoke mode):")
+            aprint(
+                "  Red -> Orange -> Yellow -> Green -> Cyan -> Blue -> Purple -> Magenta"
+            )
+            aprint("  (Each color = one of the 8 identical spokes)")
+            aprint("")
         aprint(f"Total atoms: {n_atoms:,}")
         aprint("")
         aprint("=" * 70)

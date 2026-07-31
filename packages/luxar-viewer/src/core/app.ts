@@ -140,8 +140,10 @@ export class LuxarApp {
   private resizeObserver?: ResizeObserver;
 
   /**
-   * In-flight guard for {@link switchDataset}. `loadDataset` does a full
-   * teardown+reload, so overlapping switches would corrupt scene state.
+   * In-flight guard for every post-init dataset switch, whether requested by
+   * the public {@link switchDataset} API or the built-in dataset browser.
+   * `loadDataset` does a full teardown+reload, so overlapping switches would
+   * corrupt scene state.
    */
   private switchInFlight?: Promise<void>;
 
@@ -285,7 +287,11 @@ export class LuxarApp {
    * Show the dataset browser UI
    */
   private showDatasetBrowser(): void {
-    if (this.datasetBrowser) return; // Browser already open
+    // Do not reopen the browser while a selected dataset is still switching.
+    // The modal closes immediately after a selection, so without this guard
+    // the O shortcut / dataset rail item could open a second modal and offer
+    // another overlapping full teardown+reload.
+    if (this.datasetBrowser || this.switchInFlight) return;
     this.datasetBrowser = showDatasetBrowserImpl({
       currentSrc: this.options.src,
       updateBrowserUrl: this.options.updateBrowserUrl === true,
@@ -293,7 +299,13 @@ export class LuxarApp {
       onSrcChange: (src) => {
         this.options = { ...this.options, src };
       },
-      loadDataset: (src) => this.loadDataset(src),
+      // Lets the selection handler skip its URL/src side effects when the
+      // guarded switch below is going to reject the selection anyway.
+      isSwitchInFlight: () => this.switchInFlight !== undefined,
+      // Browser selections must share the same in-flight guard as the public
+      // embedder API. Calling loadDataset() directly here used to allow two
+      // full teardown+reload passes to interleave.
+      loadDataset: (src) => this.switchDataset(src),
       onClose: () => {
         this.datasetBrowser = undefined;
       },

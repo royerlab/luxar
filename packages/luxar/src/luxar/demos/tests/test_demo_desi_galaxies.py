@@ -1,7 +1,10 @@
 """Smoke tests for the pure helpers in demo_desi_galaxies.
 
-Exercises the deterministic array helpers only (no network, no astropy read, no
-scene build). The demo is loaded by file path (see test_demo_ppi_flow_field).
+The bulk exercise the deterministic array helpers only (no network, no astropy
+read). ``TestOrbitCentre`` additionally builds two small synthetic scenes to pin
+the camera-framing behaviour; it is marked ``slow`` so the ``-m 'not slow'`` CI
+job skips the compiler passes. The demo is loaded by file path (see
+test_demo_ppi_flow_field).
 """
 
 from __future__ import annotations
@@ -207,6 +210,52 @@ class TestCatalogDownloadErrors:
         assert message in capsys.readouterr().out
 
 
+class TestWarnIfSceneLacksLadder:
+    """The stale-scene check must inspect BOTH laddered layers.
+
+    Fast synthetic zarr stores (no compiler) — this pins that a missing ladder
+    on either 'By tracer type' or 'By redshift' is reported, per layer.
+    """
+
+    @staticmethod
+    def _write_scene(path: Path, sublods_by_layer: dict[str, int]) -> None:
+        import zarr
+
+        root = zarr.open(str(path), mode="w")
+        for layer, n_sublods in sublods_by_layer.items():
+            finest = root.create_group(layer).create_group("child_3")
+            finest.attrs["n_additive_sublods"] = n_sublods
+
+    def test_silent_when_both_layers_laddered(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        scene = tmp_path / "desi.luxar.zarr"
+        self._write_scene(scene, {"By tracer type": 5, "By redshift": 5})
+        _demo.warn_if_scene_lacks_ladder(scene)
+        assert "⚠" not in capsys.readouterr().out
+
+    def test_warns_only_for_the_unladdered_layer(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        scene = tmp_path / "desi.luxar.zarr"
+        self._write_scene(scene, {"By tracer type": 5, "By redshift": 1})
+        _demo.warn_if_scene_lacks_ladder(scene)
+        out = capsys.readouterr().out
+        assert "'By redshift' finest level has no streaming" in out
+        assert "'By tracer type'" not in out
+
+    def test_missing_layer_is_reported_and_others_still_checked(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        scene = tmp_path / "desi.luxar.zarr"
+        self._write_scene(scene, {"By tracer type": 1})
+        _demo.warn_if_scene_lacks_ladder(scene)
+        out = capsys.readouterr().out
+        assert "'By tracer type' finest level has no streaming" in out
+        assert "Could not inspect" in out and "[By redshift]" in out
+
+
+@pytest.mark.slow
 class TestOrbitCentre:
     """The camera must orbit the OBSERVER (the origin), not a bounding box.
 
