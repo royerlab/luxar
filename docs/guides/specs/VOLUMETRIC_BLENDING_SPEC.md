@@ -560,6 +560,14 @@ and rendering agree.
   A fixed 0–10 track had made the knob a visual no-op on thin geometry: at the
   3D-Hilbert-curve demo's `width = 1.5e-3`, the whole slider spanned
   τ ≤ 0.012 — below one 8-bit level.
+  Granularity: "descendant" means NODE — the recorded stat is each node's
+  per-element MAXIMUM (the format stores no minimum), so within one node the
+  track top makes the thickest element opaque and an element K× thinner tops
+  out at τ = 5/K. Deliberate: a per-element minimum would be hostage to a
+  single taper-to-zero vertex (width-tapered lines are first-class) and would
+  blow the bound to the `ABSORPTION_MAX_LIMIT` ceiling, parking most of the
+  track in saturation. The derived range always contains the legacy 0–10
+  span, so no previously reachable κ regresses.
 - **The current κ is always representable on the track**, or the readout would
   show a value the thumb cannot express and a touch that moves nothing would
   write the clamped end back. Three mechanics enforce that: κ = 0 gets a

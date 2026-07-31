@@ -24,6 +24,16 @@
  * O(1)-calibrated for fitted volumes, so they keep
  * {@link ABSORPTION_DEFAULT_MAX}.
  *
+ * GRANULARITY: "descendant" means NODE. The recorded stat is each node's
+ * per-element MAXIMUM (`np.max(widths)` / max radius — the format records
+ * no minimum), so within one node the top of the track makes its THICKEST
+ * element reach the target τ; an element K× thinner in the same node tops
+ * out at τ/K. That is deliberate: a per-element minimum would be hostage
+ * to a single taper-to-zero vertex (width-tapered lines are a first-class
+ * pattern) and would blow the bound to {@link ABSORPTION_MAX_LIMIT},
+ * parking most of the track in saturation. The derived range always
+ * contains the legacy fixed 0–10 span, so no authored κ regresses.
+ *
  * @module ui/layers/absorption-range
  */
 
@@ -69,6 +79,11 @@ export const ABSORPTION_LOG_DECADES_MAX = 8;
  * Returns `undefined` when the node carries no usable thickness stat
  * (gsplats, groups, or missing / non-positive metadata) so callers can
  * distinguish "no information" from "a derived bound".
+ *
+ * The stat is the node's per-element MAXIMUM (see the module note on
+ * granularity): the bound makes the node's thickest element opaque at the
+ * track top; thinner elements in the same node saturate proportionally
+ * lower.
  */
 function leafAbsorptionMax(node: SceneNode): number | undefined {
   const thickness =
