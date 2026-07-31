@@ -75,13 +75,27 @@ the logo changes.
 
 ## Build dependencies (Linux)
 
-The WebView binding links against `libwebkit2gtk-4.1` (or `4.0` on older
-distros). Install before running `make build-launchers`:
+The WebView binding links against **`webkit2gtk-4.0`** — the pinned
+`webview_go` declares `#cgo linux ... pkg-config: gtk+-3.0 webkit2gtk-4.0`.
+Install the 4.0 dev package before running `make build-launchers`:
 
 ```bash
-sudo apt-get install -y libwebkit2gtk-4.1-dev pkg-config
+sudo apt-get install -y libwebkit2gtk-4.0-dev pkg-config
 ```
 
-End users who run the prebuilt binary need only the runtime library
-(`libwebkit2gtk-4.1` without `-dev`), which is present on every modern
-desktop Linux distribution.
+End users who run the prebuilt binary need only the runtime library, not the
+`-dev` package: the versioned SONAME `libwebkit2gtk-4.0.so.37`, shipped on
+Debian/Ubuntu as **`libwebkit2gtk-4.0-37`** (the unversioned
+`libwebkit2gtk-4.0` is not an installable package name).
+
+On a distro that ships **only** 4.1, the prebuilt launcher does not start at
+all: cgo links WebKit at build time, so the binary carries a hard
+`DT_NEEDED` on `libwebkit2gtk-4.0.so.37` and the dynamic loader aborts before
+`main()` runs. This is the mainstream case, not an edge one — verified on
+Ubuntu 24.04.4 LTS, where apt offers only `libwebkit2gtk-4.1-0` /
+`libwebkit2gtk-4.1-dev` and `libwebkit2gtk-4.0-37` does not exist. `LUXAR_LAUNCHER_NO_WEBVIEW=1` cannot rescue that
+— it is read by Go code that never executes, and webview's own probe only
+chooses between 4.0/4.1 variants that are *already loaded* (`RTLD_NOLOAD`),
+it does not load one. Such a system needs the 4.0 runtime installed, or a
+separately built browser-only launcher. The env var is for when the library
+IS present and you simply don't want a window (headless smoke tests).

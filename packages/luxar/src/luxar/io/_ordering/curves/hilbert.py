@@ -21,8 +21,7 @@ def _get_hilbert_numba_kernel():  # type: ignore[no-untyped-def]
         """Numba-accelerated Hilbert curve encoding.
 
         Implements the same algorithm as the hilbertcurve library
-        (Skilling's "Programming the Hilbert curve") but compiled to
-        native code and parallelised over points.
+        (Skilling's "Programming the Hilbert curve") in compiled native code.
         """
         n_points = coords.shape[0]
         n_dims = coords.shape[1]
@@ -80,7 +79,7 @@ _hilbert_numba_kernel: Any = None
 def hilbert_encode_nd(coords: np.ndarray, bits_per_dim: int = 16) -> np.ndarray:
     """Encode nD integer coordinates to Hilbert curve indices.
 
-    Uses a Numba JIT-compiled kernel for fast parallel encoding.
+    Uses a Numba JIT-compiled kernel to avoid Python-loop overhead.
     Falls back to the hilbertcurve library if Numba is unavailable.
 
     Args:
@@ -94,7 +93,7 @@ def hilbert_encode_nd(coords: np.ndarray, bits_per_dim: int = 16) -> np.ndarray:
 
     n_points, n_dims = coords.shape
 
-    # Try Numba first (compiled, parallel, no memory overhead)
+    # Try Numba first (compiled, no Python-loop overhead)
     if _hilbert_numba_kernel is None:
         try:
             _hilbert_numba_kernel = _get_hilbert_numba_kernel()  # type: ignore[no-untyped-call]

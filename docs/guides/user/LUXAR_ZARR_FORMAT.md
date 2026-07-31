@@ -853,13 +853,20 @@ scene-node attribute `blending_mode` that controls 3D geometry blending.
 }
 ```
 
-Note: the viewer sanitizes `html` against a tag allowlist at render time, so
-hand-authored values are still constrained. A tag outside the allowlist is
-unwrapped — it disappears while its children are kept (the one exception is
-`<template>`, whose payload lives in an inert `.content` fragment the sanitizer
-never walks, so its subtree is dropped rather than kept) — and `on*`
-event-handler attributes plus `javascript:` URLs in `href`/`src` are stripped.
-Author overlay markup with basic formatting, links, lists, tables, and images.
+Note: the viewer sanitizes `html` against both a tag allowlist and an attribute
+allowlist at render time, so hand-authored values are still constrained. A tag
+outside the allowlist is unwrapped — it disappears while its children are kept
+(the one exception is `<template>`, whose payload lives in an inert `.content`
+fragment the sanitizer never walks, so its subtree is dropped rather than kept).
+Only the attributes `style`, `href`, `src`, `alt`, `class`, `target`, `title`,
+`rel`, `colspan`, `rowspan`, `width`, and `height` survive; everything else is
+dropped, including `on*` event handlers, `id`/`name`, `data-*`, `ping`,
+`srcset`, and `download`. On the kept attributes, `href`/`src` values using the
+`javascript:`, `vbscript:`, or `data:` schemes are removed, and a `style` value
+carrying `javascript:`, `vbscript:`, `expression(`, a backslash (CSS escapes
+can smuggle those tokens past a text check), or a `/*` comment opener is
+dropped. Author overlay markup with basic formatting, links, lists, tables,
+and images.
 
 ### Common Attributes
 

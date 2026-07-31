@@ -8,7 +8,7 @@
  * IMPORTANT: This must be imported before any other code that uses console methods.
  */
 
-import { getErrorStack } from './format-error';
+import { getErrorStack, isGenuineError } from './format-error';
 
 export interface BufferedMessage {
   type: 'log' | 'warn' | 'error' | 'info' | 'debug';
@@ -173,13 +173,16 @@ class ConsoleInterceptor {
    * message into `args[0]` as a STRING and passes the error along behind it, so
    * looking only at `args[0]` could never find one.
    *
-   * Two passes, and the order matters: a plain object that merely carries a
-   * `stack` string (a context bag such as `{ stack: 'phase: decode' }`) must not
-   * shadow the real `Error` behind it. Real `Error` instances win — including
-   * cross-realm ones (another window/iframe), caught by the `[object Error]`
-   * brand check where `instanceof` fails; the
-   * duck-typed carriers `getErrorStack` also accepts (some Firefox
-   * `DOMException`s, thrown plain objects) are only the fallback.
+   * Two passes so a real Error always wins over a duck-typed stack carrier:
+   * `getErrorStack` also accepts a plain `{ stack: '…' }` object, so a single
+   * pass would let `console.error('failed', { stack: 'context' }, realError)`
+   * record the context string instead of `realError.stack`. The real Error is
+   * the diagnostic worth keeping. The priority pass uses `isGenuineError`
+   * (instance or realm-proof `[[Class]]` brand — so a cross-realm Error gets
+   * the same precedence as a same-realm one), NOT the wider `isErrorLike`:
+   * its `{ name, message, stack }` triple fallback would let a context bag
+   * carrying all three strings shadow a real Error behind it. Duck-typed
+   * carriers belong in the fallback pass only.
    *
    * Deliberately does NOT fabricate a stack. This used to synthesize
    * `new Error().stack` whenever a message merely contained the word "error",
@@ -188,22 +191,7 @@ class ConsoleInterceptor {
    */
   private extractStack(args: readonly unknown[]): string | undefined {
     for (const arg of args) {
-      // Guard the checks: `instanceof` walks [[GetPrototypeOf]] and the brand
-      // check's Symbol.toStringTag lookup does a [[Get]] — both throw for a
-      // revoked Proxy. This runs inside the patched console.warn/error BEFORE
-      // the original call, so a throw here would swallow the diagnostic being
-      // logged — the same never-throw contract `getErrorStack` upholds.
-      let isError = false;
-      try {
-        // `instanceof` alone is realm-dependent: an Error created in another
-        // window/iframe has a foreign Error.prototype and fails it, letting an
-        // earlier context bag shadow the real stack. The spec brand check sees
-        // the [[ErrorData]] internal slot regardless of realm.
-        isError = arg instanceof Error || Object.prototype.toString.call(arg) === '[object Error]';
-      } catch {
-        isError = false;
-      }
-      if (isError) {
+      if (isGenuineError(arg)) {
         const stack = getErrorStack(arg);
         if (stack) return stack;
       }
