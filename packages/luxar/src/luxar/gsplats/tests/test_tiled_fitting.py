@@ -346,6 +346,76 @@ class TestFitTile:
 
         assert captured.get("norm_range") == global_range
 
+    @pytest.mark.skipif(not HAS_TORCH, reason="fitting requires torch")
+    def test_progressive_respects_output_space_real(self) -> None:
+        """Regression for issue #733: the progressive branch must honour
+        ``output_space='real'`` with an anisotropic ``voxel_size``.
+
+        Previously the progressive path silently returned voxel-space centers
+        and Cholesky factors while the non-progressive path returned physical
+        coordinates — a silent factor-of-``voxel_size`` distortion. Here the
+        volume is anisotropic (5x along axis 0), so a correct conversion makes
+        the real-space axis-0 extent (and the L[0,0] Cholesky scale) ~5x the
+        voxel-space one, and matches the non-progressive real result.
+        """
+        from luxar.gsplats.fit_tiled_gsplats import fit_tile
+
+        voxel_size = (5.0, 1.0, 1.0)
+        volume = np.zeros((16, 16, 16), dtype=np.float32)
+        volume[3:6, 4:8, 4:8] = 1.0
+        volume[10:13, 8:12, 8:12] = 1.0
+
+        # tile_size > volume → single tile isolates fit_tile's own conversion.
+        specs = compute_tile_specs(volume.shape, tile_size=64, overlap=8)
+        assert len(specs) == 1
+
+        def _fit(progressive: bool, output_space: str):
+            return fit_tile(
+                volume,
+                specs[0],
+                voxel_size=voxel_size,
+                output_space=output_space,
+                progressive=progressive,
+                seeds=200,
+                n_iters=100,
+                verbose=False,
+            )
+
+        prog_real = _fit(progressive=True, output_space="real")
+        prog_voxel = _fit(progressive=True, output_space="voxel")
+        nonprog_real = _fit(progressive=False, output_space="real")
+
+        assert prog_real.n_splats > 0
+        assert prog_voxel.n_splats > 0
+        assert nonprog_real.n_splats > 0
+
+        def _extent(res, axis: int) -> float:
+            c = res.centers[:, axis]
+            return float(c.max() - c.min())
+
+        def _axis0_extent(res) -> float:
+            return _extent(res, 0)
+
+        # Real-space axis-0 extent must be ~voxel_size[0]x the voxel-space one
+        # (physical conversion applied), NOT ~1x (silent voxel-space output).
+        assert _axis0_extent(prog_real) == pytest.approx(
+            _axis0_extent(prog_voxel) * voxel_size[0], rel=0.25
+        )
+        # An unscaled axis (voxel_size 1.0) must stay ~1x — a wrong fix applying
+        # the scalar voxel_size[0]=5 to ALL axes would inflate it to ~5x.
+        assert _extent(prog_real, 1) == pytest.approx(
+            _extent(prog_voxel, 1) * voxel_size[1], rel=0.25
+        )
+        # ...and it must match the non-progressive real result (both physical).
+        assert _axis0_extent(prog_real) == pytest.approx(
+            _axis0_extent(nonprog_real), rel=0.3
+        )
+        # The L[0,0] Cholesky entry is scaled by voxel_size[0] too.
+        assert float(prog_real.cholesky_factors[:, 0].mean()) == pytest.approx(
+            float(prog_voxel.cholesky_factors[:, 0].mean()) * voxel_size[0],
+            rel=0.25,
+        )
+
 
 @pytest.mark.skipif(not HAS_TORCH, reason="torch not available")
 class TestFitTiled:
