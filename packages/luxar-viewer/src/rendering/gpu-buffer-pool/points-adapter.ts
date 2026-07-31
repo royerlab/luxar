@@ -477,11 +477,14 @@ export class PointsBufferAdapter {
   }
 
   dispose(): void {
+    // Drain the buckets BEFORE disposing: dispose() fires the pool's
+    // self-invalidation listener, which splices free-bucket arrays —
+    // clearing first keeps it a no-op here (see GPUBufferPool.dispose).
+    const geometries: THREE.BufferGeometry[] = [];
     for (const buffers of this.pointBuffers.values()) {
-      for (const buffer of buffers) {
-        buffer.geometry.dispose();
-      }
+      for (const buffer of buffers) geometries.push(buffer.geometry);
     }
     this.pointBuffers.clear();
+    for (const geometry of geometries) geometry.dispose();
   }
 }

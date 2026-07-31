@@ -339,11 +339,12 @@ export class LinesBufferAdapter {
   }
 
   dispose(): void {
+    // Drain the buckets BEFORE disposing — see the points adapter.
+    const geometries: THREE.BufferGeometry[] = [];
     for (const buffers of this.lineBuffers.values()) {
-      for (const buffer of buffers) {
-        buffer.geometry.dispose();
-      }
+      for (const buffer of buffers) geometries.push(buffer.geometry);
     }
     this.lineBuffers.clear();
+    for (const geometry of geometries) geometry.dispose();
   }
 }

@@ -153,10 +153,12 @@ describe('GPUBufferPool self-invalidation on out-of-band dispose', () => {
         expect(acquire(pool, `/${type}/grow`, 3000)).toBe(newGeom);
       });
 
-      it('free-bucket zombie: a pooled geometry disposed out-of-band is NOT adopted', () => {
-        // Exercises the adoptOrAllocate best-fit skip guard: a released
-        // geometry (now in a free bucket) disposed out-of-band is flagged
-        // invalidated and must not be adopted by a later acquire.
+      it('free-bucket zombie: a pooled geometry disposed out-of-band is dropped, not adopted', () => {
+        // A released geometry (now in a free bucket) disposed out-of-band
+        // must leave the pool entirely: the entry is removed eagerly (no
+        // phantom stats/residency, no held pool slot, no second dispose
+        // from the evictors), and — defense-in-depth — the adoptOrAllocate
+        // best-fit scan skips anything flagged invalidated.
         const zombie = acquire(pool, `/${type}/z1`, 1000);
         // Release through the correct typed helper for this type.
         if (type === 'points') pool.releasePointsGeometry(`/${type}/z1`);
@@ -164,15 +166,31 @@ describe('GPUBufferPool self-invalidation on out-of-band dispose', () => {
         else pool.releaseGSplatsGeometry(`/${type}/z1`);
         expect(pool.getStats().pooledBuffers).toBe(1);
 
+        let zombieDisposeEvents = 0;
+        zombie.addEventListener('dispose', () => zombieDisposeEvents++);
+
         zombie.dispose(); // out-of-band dispose while pooled
         expect(zombie.userData.luxarInvalidated).toBe(true);
+        expect(zombieDisposeEvents).toBe(1);
 
-        // Same capacity would normally best-fit the pooled buffer; the guard
-        // must skip the invalidated resident and allocate fresh instead.
+        // The free-bucket entry is dropped eagerly: the disposed geometry
+        // no longer counts as pooled or resident.
+        expect(pool.getStats().pooledBuffers).toBe(0);
+        expect(pool.getResidentBytes()).toBe(0);
+
+        // A later acquire allocates fresh — it can never adopt the zombie.
         const adopted = acquire(pool, `/${type}/z2`, 1000);
         expect(adopted).not.toBe(zombie);
         expect(adopted.userData.luxarInvalidated).toBeFalsy();
         expect(hasStorage(adopted)).toBe(true);
+
+        // The eviction sweep finds nothing left of the zombie: no second
+        // dispose, no phantom eviction counted.
+        const evictionsBefore = pool.getStats().evictions;
+        for (let i = 0; i < 305; i++) pool.beginFrame(); // past evictionFrames
+        pool.evictUnused();
+        expect(zombieDisposeEvents).toBe(1);
+        expect(pool.getStats().evictions).toBe(evictionsBefore);
       });
     });
   }
@@ -231,6 +249,29 @@ describe('GPUBufferPool self-invalidation on out-of-band dispose', () => {
     const fresh = pool.acquirePointsGeometry('/points', 400);
     expect(geoms).not.toContain(fresh);
     expect(fresh.userData.luxarInvalidated).toBeUndefined();
+  });
+
+  it('pool.dispose() disposes every pooled geometry (listener never skips bucket siblings)', () => {
+    // Two released buffers land in the SAME free bucket. pool.dispose()
+    // drains the buckets before disposing, so the self-invalidation
+    // listener (which splices free-bucket arrays on out-of-band dispose)
+    // finds empty maps and cannot shift the sibling out from under the
+    // disposal loop — both geometries must receive their dispose event.
+    const a = pool.acquirePointsGeometry('/a', 900);
+    const b = pool.acquirePointsGeometry('/b', 1000);
+    pool.releasePointsGeometry('/a');
+    pool.releasePointsGeometry('/b');
+    expect(pool.getStats().pooledBuffers).toBe(2);
+
+    let disposeEvents = 0;
+    a.addEventListener('dispose', () => disposeEvents++);
+    b.addEventListener('dispose', () => disposeEvents++);
+
+    pool.dispose();
+
+    expect(disposeEvents).toBe(2);
+    expect(pool.getStats().pooledBuffers).toBe(0);
+    expect(pool.getResidentBytes()).toBe(0);
   });
 
   it('normal release → evict → dispose path is unchanged (listener does not double-count)', () => {
