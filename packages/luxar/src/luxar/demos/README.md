@@ -319,13 +319,13 @@ Visualizes arXiv papers using pre-computed OpenAI embeddings from the Kaggle "op
 ---
 
 #### demo_protein_embeddings_cafa5.py - Protein Function Landscape (ProtT5 Embeddings)
-Visualizes 142k proteins from the CAFA5 challenge in 3D embedding space, showing how proteins with similar functions cluster together.
+Visualizes 142k proteins from the CAFA5 challenge in 3D embedding space, showing how proteins with similar functions cluster together. The 14 landscape regions carry **derived names** rather than `Cluster 0` ... `Cluster 13`: each is named after the UniProt keyword most over-represented among its members (`Mitochondrion`, `Transit peptide`, `Transducer`, `Cell inner membrane`, ...), and a region with no keyword clearly above background reads `Mixed` instead of being given a name the data does not support. Hovering a point shows its UniProt accession plus its region.
 
 **Run**: `luxar demo run protein_landscape`
 
-**Requires**: Internet access, `umap-learn` package. Uses ProtT5 1024D embeddings reduced to 3D with UMAP.
+**Requires**: Internet access, `umap-learn` package. Uses ProtT5 1024D embeddings reduced to 3D with UMAP. Naming looks ~22k accessions up in the UniProt REST API on the first run (a few minutes, then cached in `~/.cache/luxar/protein_embeddings/uniprot_keywords.json`); if UniProt is unreachable the demo still runs and falls back to generic `Cluster N` labels. Note the Kaggle bundle's own `CAFA1_train_terms.tsv` is *not* usable for annotation — it covers 1,387 PDB-style entries with zero overlap with the 142,246 UniProt accessions in `train_ids.npy`, which is why annotation is fetched rather than read from disk.
 
-**Demonstrates**: Protein language model embeddings (ProtT5), Gene Ontology (GO) functional annotations, UMAP dimensionality reduction, protein function clustering, CAFA5 challenge dataset.
+**Demonstrates**: Protein language model embeddings (ProtT5), UMAP dimensionality reduction, k-means landscape segmentation, enrichment-based cluster naming against the UniProt keyword vocabulary, hover labels, CAFA5 challenge dataset.
 
 ---
 

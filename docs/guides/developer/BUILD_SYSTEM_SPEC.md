@@ -236,7 +236,7 @@ MIN_NODE_MINOR := 19
 | `make build-launchers` | Build native launchers for the host platform (requires Go + CGO) |
 | `make install-viewer-deps` | Install viewer dependencies (node_modules) |
 | `make install-dev` | Install Luxar Python package in editable mode |
-| `make install-demo-deps` | Install every optional dependency the bundled demos need (demos + gsplats + io extras), then report via `luxar demo deps` |
+| `make install-demo-deps` | Install the demo extras (demos + gsplats + io), then report via `luxar demo deps` |
 | `make enable-pre-commit` | Enable and activate pre-commit hooks |
 | `make check-wasm-deps` | Check WASM dev dependencies (Rust, wasm-pack) |
 | `make clean-setup` | Remove ALL dev tools to simulate fresh machine |
@@ -766,6 +766,20 @@ For automated environments (GitHub Actions, etc.):
 ```
 
 **Note**: In CI environments, the shell doesn't reload between steps, so we explicitly add `~/.local/bin` to `$GITHUB_PATH` to ensure pipx-installed tools are available.
+
+### CI fast path for docs-only changes
+
+A pull request whose changed files are **all** Markdown (`*.md`) or under `docs/`
+skips the heavy CI steps: the `changes` job classifies the diff, and the gated
+jobs (`python-tests`, `typescript-tests`, `release-readiness`, `go-launcher`)
+still run but short-circuit their expensive steps, so the required status
+contexts (`python-tests (3.10/3.11/3.12)`, `typescript-tests`,
+`release-readiness`) report an explicit green success in seconds instead of a
+grey "skipped". Any non-doc file — or a push to `main` — runs the full suite,
+and the gate fails safe: if the `changes` job itself fails, the gated jobs fall
+back to the full suite rather than skipping. Rename detection is disabled in
+the classifier (`git diff --no-renames`) so moving code onto a `docs/` or
+`*.md` path never hides a non-doc deletion.
 
 ## Architecture Notes
 

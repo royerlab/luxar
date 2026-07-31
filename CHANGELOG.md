@@ -6,6 +6,21 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Added — `luxar demo deps` and `make install-demo-deps`
+
+Demos deliberately keep heavyweight packages out of the core install, so a fresh
+checkout lists every demo but cannot run them all. `luxar demo deps` reports
+which optional demo dependencies are missing (exit 1 if any are) and, with
+`--install`, installs the Luxar extras that provide them; `--extra
+demos|io|gsplats` narrows the report to one extra. `make install-demo-deps`
+installs all three demo extras in one step. One tabled dependency, `gdown`, is
+deliberately in no extra (it serves only the Google-Drive download path), so
+neither covers it — the report and `--install` both name it for an individual
+`pip install` instead. The report and the runtime `require_module` gate are
+both driven by `luxar.demos._dependencies.INSTALL_SPECS`, so a package cannot
+be advertised without being installable. Newly tabled pins: `pooch`,
+`scikit-learn`, `matplotlib`.
+
 #### Fixed — the volumetric Absorption slider did nothing on thin geometry
 
 κ is a physical coefficient with units of 1/length: the volumetric shaders build
@@ -393,8 +408,9 @@ Supporting changes:
 - Hidden (`visible=false`) layers no longer fetch, decode and commit their LOD
   levels, and no longer escape eviction.
 - `scripts/check_demo_ladders.py` — a structural gate that fails a leaf whose
-  largest level is more than half the data, which is exactly the degeneracy a
-  level count alone cannot see.
+  largest level is more than 60% of the data (the `--max-share` default) or
+  exceeds the `--max-level-elements` absolute per-commit cap, which is exactly
+  the degeneracy a level count alone cannot see.
 
 #### Fixed — every 2D gsplats scene failed to load with a WASM `unreachable` trap
 
