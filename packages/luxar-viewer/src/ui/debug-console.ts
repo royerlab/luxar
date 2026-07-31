@@ -34,7 +34,7 @@
 import { consoleInterceptor, type BufferedMessage } from '../utils/console-interceptor';
 import { config } from '../config';
 import { getViewerContainer } from '../utils/viewer-container';
-import { formatErrorForDisplay } from '../utils/format-error';
+import { formatErrorForDisplay, isErrorLike } from '../utils/format-error';
 import { log, Modules, LogEmoji } from '../utils/log';
 import { EventGroup } from '../utils/cross-layer/event-group';
 import {
@@ -369,8 +369,11 @@ export class DebugConsole {
       messageEl.appendChild(argEl);
     });
 
-    // Add stack trace if present
-    if (message.stack && message.type === 'error') {
+    // Add stack trace if present. Warns capture a stack too (see the
+    // interceptor's console.warn override), and the clipboard export renders it
+    // regardless of type — so include warn here, not just error, or a captured
+    // warn stack would leave via copy but never show in the panel.
+    if (message.stack && (message.type === 'error' || message.type === 'warn')) {
       const stackEl = document.createElement('div');
       stackEl.className = 'luxar-console-message-stack';
       stackEl.textContent = message.stack;
@@ -405,13 +408,14 @@ export class DebugConsole {
     } else if (typeof arg === 'boolean') {
       span.className = 'luxar-console-message-boolean';
       span.textContent = String(arg);
-    } else if (arg instanceof Error) {
+    } else if (isErrorLike(arg)) {
       // Before the object branch: an Error's name/message/stack are
-      // non-enumerable, so JSON.stringify would render it as `{}`. Kept in
-      // lockstep with `debug-console/formatters.ts::formatArgs` — the two must
+      // non-enumerable, so JSON.stringify would render it as `{}`. `isErrorLike`
+      // also catches a cross-realm Error (which fails `instanceof Error`). Kept
+      // in lockstep with `debug-console/formatters.ts::formatArgs` — the two must
       // agree for Errors or the visible row and the copied text disagree.
       span.className = 'luxar-console-message-object';
-      span.textContent = formatErrorForDisplay(arg);
+      span.textContent = formatErrorForDisplay(arg as Error);
     } else if (typeof arg === 'object') {
       span.className = 'luxar-console-message-object';
       try {

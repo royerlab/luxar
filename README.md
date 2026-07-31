@@ -313,7 +313,7 @@ physics, on both the WebGL/GLSL and WebGPU/TSL backends.
 
 ```bash
 luxar gsplat convert fit.gsplats.zarr scene.luxar.zarr \
-    --blending-mode volumetric --absorption 4 --colormap plasma --tone-mapping Neutral
+    --blending-mode volumetric --absorption 4 --colormap plasma --tone-mapping ACES
 ```
 
 The other modes cover the rest of the classical spectrum: `additive`/`luminous`
@@ -861,7 +861,7 @@ See `docs/guides/developer/BUILD_SYSTEM_SPEC.md` for HPC/Slurm build instruction
 
 **White screen in viewer**
 - Check browser console for errors
-- Verify Zarr dataset URL has no trailing slash
+- Prefer the canonical Zarr dataset URL spelling without a trailing slash
 - Ensure CORS headers if serving cross-domain
 
 **ImportError: No module named 'luxar'**

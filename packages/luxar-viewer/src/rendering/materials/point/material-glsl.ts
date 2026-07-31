@@ -140,6 +140,11 @@ export class PointMaterial
 
         // Projection mode
         uIsOrtho: { value: 0 }, // 0 = perspective, 1 = orthographic
+        // Active ordering buffer: 0 = aSortedIndex, 1 = aSortedIndexB.
+        // Flipped by the depth-sort coordinator once the inactive buffer
+        // holds a whole permutation (runtime uniform: never a define — a
+        // flip must not recompile the program).
+        uSortedIndexSlot: { value: 0 },
         uNearCull: { value: 0.1 }, // near-fade start (world units; scene-bounds scaled)
 
         // Physical framebuffer size in pixels (used by the
@@ -499,6 +504,10 @@ export class PointMaterial
     (cloned.uniforms.uResolution.value as THREE.Vector2).copy(
       this.uniforms.uResolution.value as THREE.Vector2
     );
+    // The active ordering slot must ride along: a clone taken while the
+    // geometry draws from slot 1 would otherwise read the stale buffer
+    // until the coordinator's next per-frame re-assert.
+    cloned.uniforms.uSortedIndexSlot.value = this.uniforms.uSortedIndexSlot.value;
     return cloned as this;
   }
 

@@ -54,6 +54,7 @@ interface LineMaterialTSLNodeTable {
   uLineTex: TSLNode;
   uResolution: TSLNode;
   uIsOrtho: TSLNode;
+  uSortedIndexSlot: TSLNode;
   uNearCull: TSLNode;
   uMaxLinePixelWidth: TSLNode;
   uPerspectiveLineScale: TSLNode;
@@ -109,6 +110,7 @@ export class LineTSLMaterial
       uLineTex: texture(getPlaceholderElementTexture()),
       uResolution: uniform(new THREE.Vector2(1, 1)),
       uIsOrtho: uniform(0),
+      uSortedIndexSlot: uniform(0),
       // 0.1 matches the point/gsplat ctor default (pre-first-broadcast only).
       uNearCull: uniform(0.1),
       uMaxLinePixelWidth: uniform(540),
@@ -137,6 +139,7 @@ export class LineTSLMaterial
       uLineTex: proxyIUniform(this.tslNodes.uLineTex),
       uResolution: proxyIUniform(this.tslNodes.uResolution),
       uIsOrtho: proxyIUniform(this.tslNodes.uIsOrtho),
+      uSortedIndexSlot: proxyIUniform(this.tslNodes.uSortedIndexSlot),
       uNearCull: proxyIUniform(this.tslNodes.uNearCull),
       uMaxLinePixelWidth: proxyIUniform(this.tslNodes.uMaxLinePixelWidth),
       uPerspectiveLineScale: proxyIUniform(this.tslNodes.uPerspectiveLineScale),
@@ -544,6 +547,10 @@ export class LineTSLMaterial
     cloned.uniforms.uPerspectiveLineScale.value = this.uniforms.uPerspectiveLineScale.value;
     cloned.uniforms.uOrthoLineScale.value = this.uniforms.uOrthoLineScale.value;
     cloned.uniforms.uInvGamma.value = this.uniforms.uInvGamma.value;
+    // The active ordering slot must ride along: a clone taken while the
+    // geometry draws from slot 1 would otherwise read the stale buffer
+    // until the coordinator's next per-frame re-assert.
+    cloned.uniforms.uSortedIndexSlot.value = this.uniforms.uSortedIndexSlot.value;
     if (sourceIsOrtho) {
       cloned.rebuildGraph();
     }

@@ -11,7 +11,7 @@ The Layers panel exposes scene graph nodes marked with `layer=True` (set in the 
 - **Gamma** correction
 - **Opacity**
 - **Blending mode** (additive, volumetric, normal, max, opaque, luminous)
-- **Absorption** (κ, 0–10) — only shown for volumetric gsplat/points/group layers (lines render the additive fallback until phase 4); κ = 0 looks additive
+- **Absorption** (κ) — only shown when the layer's effective blending mode is `volumetric`; all three geometry types implement the emission–absorption math, and κ = 0 is exactly the additive limit. The track is **logarithmic** with bounds re-derived PER LAYER, because κ has units of 1/length (τ = κ · density · thickness): the top of the track lands near τ = 5 ("opaque") for that layer's own geometry thickness, taken from the `max_width` (lines) / `max_radius` (points) zarr attr. In a mixed-thickness subtree the top is set by the THINNEST descendant (one κ drives them all) and the floor is anchored to the THICKEST, so the fattest geometry can still reach near-transparency instead of being stuck at visible absorption above the zero stop. "Descendant" means node: the stat is each node's per-element maximum (the format records no minimum), so within one node the track top makes its thickest element opaque and an element K× thinner tops out at τ = 5/K — deliberate, since a per-element minimum would be hostage to a single taper-to-zero vertex and would blow the bound to the ceiling. So a 1.5e-3-wide line reaches κ ≈ 4.0e3 while a fitted gsplat volume — whose τ is already O(1)-calibrated — keeps the 0.001–10 span. Position 0 is a dedicated stop for exactly κ = 0 (the geometric span starts one step in, so the floor round-trips), and the floor lowers onto a smaller authored κ so the readout always shows a value the thumb can express. On a log track the component mirrors the readout into `aria-valuetext`, since the input's native value is a position. See `absorption-range.ts`.
 - **Colormap** (for gsplats with scalars/amplitudes, scalar-backed points/lines, and groups that fan out to such descendants)
 - **Active level** (LOD groups, and partitions wrapping LOD groups) — `auto` or lock to a specific level
 
@@ -85,7 +85,8 @@ layer-controls.ts  LayerControls — the controls section (sliders, blend/colorm
 layer-apply.ts     LayerApplyEngine — attr composition + scene/material application
 luxar-material.ts  LuxarMaterial contract + colormap-vs-direct routing helpers
 range-slider.ts    Dual-thumb [min, max] slider (click-to-edit + scroll-adjust bounds)
-labeled-slider.ts  Single-thumb labeled slider (gamma, opacity, absorption)
+labeled-slider.ts  Single-thumb labeled slider (gamma, opacity, absorption); linear or log track
+absorption-range.ts Per-layer κ slider bounds from recorded geometry thickness + κ readout format
 attrs-utils.ts     Pure helpers: clampGamma, blending-state mapping, liveLayerAttrs
 ```
 
@@ -163,15 +164,16 @@ control.
 
 ## Files
 
-| File                                       | Purpose                                                                             |
-| ------------------------------------------ | ----------------------------------------------------------------------------------- |
-| `layer-state.ts`                           | `LayerStateManager`, `computeUniforms` / `computeDisplayRange`, selection logic     |
-| `layers-panel.ts`                          | `LayersPanel` class — panel/list DOM + lifecycle; facade over controls + apply      |
-| `layer-controls.ts`                        | `LayerControls` — controls-section DOM (sliders, selects, live LOD readout)         |
-| `layer-apply.ts`                           | `LayerApplyEngine` — attr composition + material application per data-leaf          |
-| `luxar-material.ts`                        | `LuxarMaterial` interface, `isColormapActive` / `applyColorAdjustments` routing     |
-| `range-slider.ts`                          | `RangeSlider` — dual-thumb input component with editable / scrollable bound labels  |
-| `labeled-slider.ts`                        | `LabeledSlider` — single-thumb labeled input component (gamma, opacity, absorption) |
-| `attrs-utils.ts`                           | `clampGamma`, `getBlendingState`, `liveLayerAttrs` — pure helpers (no DOM)          |
-| `../layers.ts`                             | Public entrypoint — re-exports the layers surface                                   |
-| `../../styles/components/layers-panel.css` | Themed CSS styles                                                                   |
+| File                                       | Purpose                                                                                                             |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------- |
+| `layer-state.ts`                           | `LayerStateManager`, `computeUniforms` / `computeDisplayRange`, selection logic                                     |
+| `layers-panel.ts`                          | `LayersPanel` class — panel/list DOM + lifecycle; facade over controls + apply                                      |
+| `layer-controls.ts`                        | `LayerControls` — controls-section DOM (sliders, selects, live LOD readout)                                         |
+| `layer-apply.ts`                           | `LayerApplyEngine` — attr composition + material application per data-leaf                                          |
+| `luxar-material.ts`                        | `LuxarMaterial` interface, `isColormapActive` / `applyColorAdjustments` routing                                     |
+| `range-slider.ts`                          | `RangeSlider` — dual-thumb input component with editable / scrollable bound labels                                  |
+| `labeled-slider.ts`                        | `LabeledSlider` — single-thumb labeled input component (gamma, opacity, absorption); `linear` or `log` track        |
+| `absorption-range.ts`                      | `absorptionBoundsForNode` / `absorptionSliderRange` / `formatAbsorption` — per-layer κ track bounds (κ is 1/length) |
+| `attrs-utils.ts`                           | `clampGamma`, `getBlendingState`, `liveLayerAttrs` — pure helpers (no DOM)                                          |
+| `../layers.ts`                             | Public entrypoint — re-exports the layers surface                                                                   |
+| `../../styles/components/layers-panel.css` | Themed CSS styles                                                                                                   |

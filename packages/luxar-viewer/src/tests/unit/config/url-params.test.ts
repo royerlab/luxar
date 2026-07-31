@@ -413,7 +413,7 @@ describe('buildDataSourceBrowserUrl', () => {
     expect(url).toBe('/viewer?src=datasets%2Fpicked.zarr');
   });
 
-  it('strips trailing slashes from src so downstream zarr fetches do not 404', () => {
+  it('strips trailing slashes from src for canonical URL storage', () => {
     const url = buildDataSourceBrowserUrl('http://example.com/data.zarr///', {
       pathname: '/viewer',
       search: '',

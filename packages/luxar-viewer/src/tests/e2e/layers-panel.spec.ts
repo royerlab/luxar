@@ -248,20 +248,44 @@ test.describe('Layers Panel', () => {
     );
     await expect(absorptionGroup).toBeVisible();
 
-    // …dragging it reaches the live uAbsorption uniform…
-    await absorptionGroup.locator('input[type="range"]').fill('4');
-    await waitForNextRender(page);
-    const kappa = await page.evaluate(() => {
-      const debug = (window as any).__luxarDebug;
-      let value: number | null = null;
-      debug.scene.traverse((obj: any) => {
-        if (obj.userData?.nodeType === 'gsplats' && obj.material?.uniforms?.uAbsorption) {
-          value = obj.material.uniforms.uAbsorption.value;
-        }
+    // …dragging it reaches the live uAbsorption uniform. The κ track is
+    // LOGARITHMIC with per-layer bounds (ui/layers/absorption-range.ts), so
+    // the input carries a NORMALISED position in [0, 1], not κ itself —
+    // filling it with a κ value would just clamp to the far end. Assert
+    // mapping-agnostically instead: whatever the readout says the κ is, is
+    // what the material got.
+    const slider = absorptionGroup.locator('input[type="range"]');
+    await expect(slider).toHaveAttribute('max', '1');
+    const readKappa = (): Promise<number | null> =>
+      page.evaluate(() => {
+        const debug = (window as any).__luxarDebug;
+        let value: number | null = null;
+        debug.scene.traverse((obj: any) => {
+          if (obj.userData?.nodeType === 'gsplats' && obj.material?.uniforms?.uAbsorption) {
+            value = obj.material.uniforms.uAbsorption.value as number;
+          }
+        });
+        return value as number | null;
       });
-      return value;
-    });
-    expect(kappa).toBe(4);
+    const readout = absorptionGroup.locator('.luxar-layers-panel__control-value');
+
+    await slider.fill('0.75');
+    await waitForNextRender(page);
+    const midKappa = await readKappa();
+    expect(midKappa).not.toBeNull();
+    expect(midKappa!).toBeGreaterThan(0);
+    expect(midKappa!).toBeCloseTo(parseFloat((await readout.textContent()) ?? 'NaN'), 1);
+
+    // The far end of a gsplat layer's track is the default bound (10): gsplats
+    // carry no thickness stat, so their historical span is preserved.
+    await slider.fill('1');
+    await waitForNextRender(page);
+    expect(await readKappa()).toBeCloseTo(10, 6);
+
+    // Position 0 is the dedicated zero stop — exactly κ=0, the additive limit.
+    await slider.fill('0');
+    await waitForNextRender(page);
+    expect(await readKappa()).toBe(0);
 
     // …and switching the mode away hides the slider immediately.
     await blendSelect.selectOption('additive');
