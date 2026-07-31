@@ -68,36 +68,39 @@ export class WorkerUnavailableError extends Error {
 }
 
 /**
- * True only for failures of the worker INFRASTRUCTURE — the pool could not
- * spawn a worker, had none left, or a worker hung past its timeout.
+ * True only for an ESTABLISHED failure of the worker infrastructure — the pool
+ * could not spawn a worker, or had none left. The work never reached a kernel,
+ * so re-running it on the main thread is the only executor left and cannot
+ * reproduce a kernel fault.
  *
- * This is the only class of failure for which re-running the same work on the
- * main thread is meaningful. A rejection that came back *from* a worker means
- * the kernel itself rejected the data, and the in-process dispatchers run the
- * SAME kernel via the same `pickBackend` — so retrying there would fail
- * identically, except on the UI thread, where a WASM trap blocks the frame
- * instead of a background one.
+ * Everything else fails closed and propagates:
+ *
+ * - A rejection that came back *from* a worker means the kernel itself rejected
+ *   the data, and the in-process dispatchers run the SAME kernel via the same
+ *   `pickBackend` — retrying there would fail identically, except on the UI
+ *   thread, where a WASM trap blocks the frame instead of a background one.
+ * - {@link WorkerTimeoutError} is deliberately NOT included. A timeout does not
+ *   establish infrastructure failure: it cannot distinguish a wedged worker
+ *   from a data-dependent kernel hang or a projection genuinely slower than
+ *   `workerProjectionTimeoutMs` — and in the latter two cases re-running on
+ *   the main thread blocks the frame for at least as long again (indefinitely,
+ *   for a hang). Guessing wrong costs exactly the UI freeze this predicate
+ *   exists to prevent. The pool already evicts the timed-out worker
+ *   (`handleWorkerFailure`), so propagating leaves the node failed-but-
+ *   retryable against a fresh worker rather than freezing the frame.
  *
  * Deliberately an allow-list, not a deny-list: the pool's own error types are a
  * closed, greppable set, whereas "every way a kernel can fail" is not. An
  * unrecognized error therefore does NOT qualify — callers fail closed and
  * propagate it.
  *
- * Matched by `instanceof`, not by name: both types are constructed only on the
- * main thread (the timeout wrapper and pool init / `getWorker`) and never cross
- * the Comlink boundary, so their prototypes are intact here. A rejection that
- * came back FROM a worker is reconstructed in this realm and loses its
- * prototype, so it can never match — which is exactly the fail-closed behavior
- * we want for a kernel fault.
- *
- * Known ambiguity in the timeout case, kept deliberately: a timeout can mean
- * either "the worker is wedged" (where the main thread is the only recovery) or
- * "this projection is genuinely slower than `workerProjectionTimeoutMs`" (where
- * re-running it on the main thread blocks the frame for at least as long again).
- * Treating it as infrastructure preserves the pre-existing behavior and the
- * wedged-worker recovery; at a 60s default a projection that trips it is
- * pathological either way. Revisit here, not at the call sites, if that changes.
+ * Matched by `instanceof`, not by name: `WorkerUnavailableError` is constructed
+ * only on the main thread (pool init / worker selection) and never crosses the
+ * Comlink boundary, so its prototype is intact here. A rejection that came back
+ * FROM a worker is reconstructed in this realm and loses its prototype, so it
+ * can never match — which is exactly the fail-closed behavior we want for a
+ * kernel fault.
  */
 export function isWorkerInfrastructureError(error: unknown): boolean {
-  return error instanceof WorkerTimeoutError || error instanceof WorkerUnavailableError;
+  return error instanceof WorkerUnavailableError;
 }

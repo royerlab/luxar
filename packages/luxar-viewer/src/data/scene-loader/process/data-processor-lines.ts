@@ -14,10 +14,11 @@
  *   - per-vertex scalars (colormap mode) ride the worker payload too —
  *     forwarded as a transferable typed-array and interpolated via
  *     `interpolate_scalars_batch` on the worker side,
- *   - the non-worker path and worker-INFRASTRUCTURE failures run the shared
- *     dispatcher in-process (`workers/data-worker/projection/in-process`); a
- *     failure that came back FROM the worker propagates instead, since the
- *     fallback shares the kernel and would only reproduce it on the UI thread,
+ *   - the non-worker path and worker-UNAVAILABLE failures (the pool has no
+ *     worker at all) run the shared dispatcher in-process
+ *     (`workers/data-worker/projection/in-process`); any other failure —
+ *     a rejection from the worker, a timeout — propagates instead, since the
+ *     fallback shares the kernel and would only block the UI thread,
  *   - first-update info logs are gated by `updateVersion <= 1`,
  *   - commits use the GPU buffer pool when enabled, otherwise
  *     `updateInstancedLinesMesh`.
@@ -143,10 +144,15 @@ function toProcessedLines(
 }
 
 /**
- * Project nD lines to a 3D instance-buffer set on a worker thread.
- * Falls back to the in-process dispatcher (the same kernel run on the
- * main thread) on worker failure with a warning log — the user-visible
- * behavior is identical either way; only timing differs.
+ * Project nD lines to a 3D instance-buffer set on a worker thread. Only when
+ * the pool has no worker at all (`WorkerUnavailableError`) does it fall back
+ * to the in-process dispatcher (the same kernel run on the main thread) with
+ * a warning log.
+ *
+ * Every other failure propagates. A rejection that came back FROM the worker
+ * would only reproduce the fault on the UI thread (the fallback shares the
+ * kernel), and a timeout means work the main thread cannot afford either —
+ * see the twin note in `data-processor-gsplats.ts`.
  *
  * `updateVersion` gates the first-update info logs to avoid noisy long
  * sessions.
@@ -196,18 +202,20 @@ export async function projectLinesTo3DUsingWorker(
     if (error instanceof Error && error.name === 'WorkerAbortError') {
       throw error;
     }
-    // Only worker INFRASTRUCTURE failure justifies the in-process retry. The
-    // fallback runs the SAME kernel through the same `pickBackend`, so a
-    // rejection that came back FROM the worker (a WASM trap, a validation throw)
-    // fails identically here — except on the UI thread, where it blocks the
-    // frame. Propagate instead: the caller's `runLoaderUpdates` catch records the
-    // failure and the node stays retryable. Fails closed on an unknown error.
+    // Only worker UNAVAILABILITY justifies the in-process retry. The fallback
+    // runs the SAME kernel through the same `pickBackend`, so a rejection that
+    // came back FROM the worker (a WASM trap, a validation throw) fails
+    // identically here — except on the UI thread, where it blocks the frame —
+    // and a timeout (hung kernel, or work slower than the budget) re-run
+    // in-process blocks the frame at least as long again. Propagate instead:
+    // the caller's `runLoaderUpdates` catch records the failure and the node
+    // stays retryable. Fails closed on an unknown error.
     if (!isWorkerInfrastructureError(error)) {
       throw error;
     }
     log.warning(
       Modules.SCENE_LOADER,
-      'Worker unavailable or timed out, falling back to in-process lines projection:',
+      'No worker available, falling back to in-process lines projection:',
       error
     );
     return toProcessedLines(

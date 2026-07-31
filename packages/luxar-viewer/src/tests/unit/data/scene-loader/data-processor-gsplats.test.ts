@@ -255,18 +255,12 @@ describe('projectGSplatsTo3DUsingWorker', () => {
     expect(Array.from(result.centers3D)).toEqual([1, 2, 3]);
   });
 
-  // Worker INFRASTRUCTURE failure — the pool never got the work to a worker, or
-  // the worker hung. Re-running on the main thread is meaningful here.
-  it.each([
-    ['WorkerTimeoutError', new WorkerTimeoutError('projectGSplatsTo3D', 60000)],
-    [
-      'WorkerUnavailableError',
-      new WorkerUnavailableError('[WorkerPool] No workers available after initialization'),
-    ],
-  ])('falls back to the in-process dispatcher on %s', async (_name, infraError) => {
+  // Worker UNAVAILABILITY — the pool never got the work to a worker at all, so
+  // the in-process dispatcher is the only executor left.
+  it('falls back to the in-process dispatcher on WorkerUnavailableError', async () => {
     mockGetWorkerPool.mockReturnValue({
       runWithTimeout: vi.fn(async () => {
-        throw infraError;
+        throw new WorkerUnavailableError('[WorkerPool] No workers available after initialization');
       }),
     });
     mockProcessGSplats.mockReturnValue(makeDispatcherResult(7));
@@ -274,6 +268,25 @@ describe('projectGSplatsTo3DUsingWorker', () => {
     const result = await projectGSplatsTo3DUsingWorker(makeData(), makeViewState(), 3.0, 1);
     expect(result.splatCount).toBe(7);
     expect(mockProcessGSplats).toHaveBeenCalledTimes(1);
+  });
+
+  // A timeout does NOT establish infrastructure failure: the worker may be hung
+  // inside a data-dependent kernel, or the projection may genuinely exceed the
+  // budget — either way a main-thread rerun blocks the frame at least as long
+  // again. The pool has already evicted the worker, so propagating leaves the
+  // node failed-but-retryable against a fresh one.
+  it('propagates a worker timeout instead of re-running the projection on the main thread', async () => {
+    const timeout = new WorkerTimeoutError('projectGSplatsTo3D', 60000);
+    mockGetWorkerPool.mockReturnValue({
+      runWithTimeout: vi.fn(async () => {
+        throw timeout;
+      }),
+    });
+
+    await expect(projectGSplatsTo3DUsingWorker(makeData(), makeViewState(), 3.0, 1)).rejects.toBe(
+      timeout
+    );
+    expect(mockProcessGSplats).not.toHaveBeenCalled();
   });
 
   // The regression this guards: `projectGSplatsInProcess` runs the SAME kernel
@@ -301,8 +314,8 @@ describe('projectGSplatsTo3DUsingWorker', () => {
   // otherwise the rejected kernel re-runs on the UI thread, the exact fault this
   // guards. `instanceof` is what makes the name insufficient.
   it('does not fall back for a non-instance error that merely spoofs the infra name', async () => {
-    const spoof = new Error('Worker call exceeded timeout');
-    spoof.name = 'WorkerTimeoutError';
+    const spoof = new Error('No workers available');
+    spoof.name = 'WorkerUnavailableError';
     mockGetWorkerPool.mockReturnValue({
       runWithTimeout: vi.fn(async () => {
         throw spoof;

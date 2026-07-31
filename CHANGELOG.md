@@ -50,12 +50,12 @@ answered "does this axis have extent?" by scene scale: a splat with σ = 1e-7
 verbatim, but a 2D scene — or any nD scene with hidden dims — always goes through
 the marginal.
 
-The floor is now anchored to the largest diagonal of Σ_S
+The floor is now anchored to the largest diagonal of Σ*S
 (`CHOLESKY_RELATIVE_EPSILON = 1e-12`), making it a pure condition-number check
 that behaves identically at every scene scale, with the absolute constant kept as
 a backstop for a genuinely scaleless (all-zero) covariance. Same
 scale-free-conditioning reasoning as the shader's trace-normalized covariance
-inverse. Rank-deficient axes are still regularized, now as a fixed _fraction_ of
+inverse. Rank-deficient axes are still regularized, now as a fixed \_fraction* of
 the real axis.
 
 #### Changed — volumetric joins the LOD anti-popping blendable set
@@ -98,14 +98,18 @@ The worst turned a data error into a UI freeze: the gsplats and lines processors
 fell back to the in-process dispatcher on ANY worker rejection except a
 dataset-switch abort. That dispatcher runs the _same_ kernel through the same
 `pickBackend`, so a WASM trap coming back from the worker trapped again on the main
-thread, blocking the frame. Only worker INFRASTRUCTURE failure now falls back, via
-an `isWorkerInfrastructureError` allow-list matching the two pool-internal
-error types (`WorkerTimeoutError`, `WorkerUnavailableError`) by `instanceof` —
-both are constructed on the main thread and never cross the Comlink boundary,
-so their prototypes stay intact. Unknown errors, and any rejection
-reconstructed from a worker (which loses its prototype), fail closed and
-propagate. Points is deliberately not included: its
-projection is main-thread-only, so it has no worker path.
+thread, blocking the frame. Only worker UNAVAILABILITY now falls back, via
+an `isWorkerInfrastructureError` allow-list matching the single pool-internal
+error type (`WorkerUnavailableError`) by `instanceof` — it is constructed on
+the main thread and never crosses the Comlink boundary, so its prototype stays
+intact. A worker timeout propagates too: it cannot distinguish a wedged worker
+from a data-dependent kernel hang or a projection genuinely slower than the
+budget, and re-running those in-process blocks the frame at least as long
+again — the pool evicts the timed-out worker, so the node stays retryable
+against a fresh one. Unknown errors, and any rejection reconstructed from a
+worker (which loses its prototype), fail closed and propagate. Points is
+deliberately not included: its projection is main-thread-only, so it has no
+worker path.
 
 `loadScene` also logged "Scene loaded successfully" unconditionally. Because
 `loadLeafNode` swallows every `LoaderError` so surviving siblings still render,

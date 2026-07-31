@@ -11,10 +11,11 @@
  *   - the projection's 6-stride `choleskyFactors3D` flows straight to the
  *     commit (no split/re-interleave pass),
  *   - worker args derive discreteDims / discreteSteps / extendToAllDims from `viewState.dimensions`,
- *   - the non-worker path and worker-INFRASTRUCTURE failures run the shared
- *     dispatcher in-process (`workers/data-worker/projection/in-process`); a
- *     failure that came back FROM the worker propagates instead, since the
- *     fallback shares the kernel and would only reproduce it on the UI thread,
+ *   - the non-worker path and worker-UNAVAILABLE failures (the pool has no
+ *     worker at all) run the shared dispatcher in-process
+ *     (`workers/data-worker/projection/in-process`); any other failure —
+ *     a rejection from the worker, a timeout — propagates instead, since the
+ *     fallback shares the kernel and would only block the UI thread,
  *   - first-update info logs are gated by `updateVersion <= 1`,
  *   - commits use the GPU buffer pool when enabled, otherwise
  *     `updateInstancedGSplatsMesh`.
@@ -150,14 +151,17 @@ function readTruncate(mesh: THREE.Mesh): number {
 }
 
 /**
- * Project GSplats to 3D on a worker thread. On worker-INFRASTRUCTURE failure
- * (no worker available, or a hung worker past its timeout) it degrades to the
- * in-process dispatcher — the *same* projection kernel run on the main thread —
- * rather than a separate hand-written copy.
+ * Project GSplats to 3D on a worker thread. Only when the pool has no worker
+ * at all (`WorkerUnavailableError`) does it degrade to the in-process
+ * dispatcher — the *same* projection kernel run on the main thread — rather
+ * than a separate hand-written copy.
  *
- * A failure that came back FROM the worker propagates instead. Because the
- * fallback shares the kernel, re-running a rejected input would only reproduce
- * the fault on the UI thread; a WASM trap there blocks the frame.
+ * Every other failure propagates. A rejection that came back FROM the worker
+ * would only reproduce the fault on the UI thread (the fallback shares the
+ * kernel); a WASM trap there blocks the frame. A timeout means work the main
+ * thread cannot afford either — a hung kernel or a genuinely-slow projection
+ * re-run in-process blocks the frame at least as long again, and the pool has
+ * already evicted the wedged worker, so a retry gets a fresh one.
  *
  * `updateVersion` gates the first-update info logs.
  */
@@ -201,18 +205,20 @@ export async function projectGSplatsTo3DUsingWorker(
     if (error instanceof Error && error.name === 'WorkerAbortError') {
       throw error;
     }
-    // Only worker INFRASTRUCTURE failure justifies the in-process retry. The
-    // fallback runs the SAME kernel through the same `pickBackend`, so a
-    // rejection that came back FROM the worker (a WASM trap, a validation throw)
-    // fails identically here — except on the UI thread, where it blocks the
-    // frame. Propagate instead: the caller's `runLoaderUpdates` catch records the
-    // failure and the node stays retryable. Fails closed on an unknown error.
+    // Only worker UNAVAILABILITY justifies the in-process retry. The fallback
+    // runs the SAME kernel through the same `pickBackend`, so a rejection that
+    // came back FROM the worker (a WASM trap, a validation throw) fails
+    // identically here — except on the UI thread, where it blocks the frame —
+    // and a timeout (hung kernel, or work slower than the budget) re-run
+    // in-process blocks the frame at least as long again. Propagate instead:
+    // the caller's `runLoaderUpdates` catch records the failure and the node
+    // stays retryable. Fails closed on an unknown error.
     if (!isWorkerInfrastructureError(error)) {
       throw error;
     }
     log.warning(
       Modules.SCENE_LOADER,
-      'Worker unavailable or timed out, falling back to in-process GSplats projection:',
+      'No worker available, falling back to in-process GSplats projection:',
       error
     );
     return toProcessed(await projectGSplatsInProcess(params), data.colorComponents ?? 3);

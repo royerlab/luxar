@@ -439,17 +439,12 @@ describe('projectLinesTo3DUsingWorker', () => {
       1
     );
 
-  // Worker INFRASTRUCTURE failure — re-running on the main thread is meaningful.
-  it.each([
-    ['WorkerTimeoutError', new WorkerTimeoutError('projectLinesTo3D', 60000)],
-    [
-      'WorkerUnavailableError',
-      new WorkerUnavailableError('[WorkerPool] No workers available after initialization'),
-    ],
-  ])('falls back to the in-process dispatcher on %s', async (_name, infraError) => {
+  // Worker UNAVAILABILITY — the pool never got the work to a worker at all, so
+  // the in-process dispatcher is the only executor left.
+  it('falls back to the in-process dispatcher on WorkerUnavailableError', async () => {
     mockGetWorkerPool.mockReturnValue({
       runWithTimeout: vi.fn(async () => {
-        throw infraError;
+        throw new WorkerUnavailableError('[WorkerPool] No workers available after initialization');
       }),
     });
     mockBuildInstanceBuffers.mockReturnValue(makeDispatcherLinesResult(3));
@@ -457,6 +452,21 @@ describe('projectLinesTo3DUsingWorker', () => {
     const result = await callProjectLines();
     expect(result.segmentCount).toBe(3);
     expect(mockBuildInstanceBuffers).toHaveBeenCalledTimes(1);
+  });
+
+  // A timeout does NOT establish infrastructure failure: a hung kernel or a
+  // genuinely-slow projection re-run on the main thread blocks the frame at
+  // least as long again. Mirrors data-processor-gsplats.
+  it('propagates a worker timeout instead of re-running the projection on the main thread', async () => {
+    const timeout = new WorkerTimeoutError('projectLinesTo3D', 60000);
+    mockGetWorkerPool.mockReturnValue({
+      runWithTimeout: vi.fn(async () => {
+        throw timeout;
+      }),
+    });
+
+    await expect(callProjectLines()).rejects.toBe(timeout);
+    expect(mockBuildInstanceBuffers).not.toHaveBeenCalled();
   });
 
   // Mirrors data-processor-gsplats: the in-process dispatcher runs the SAME
@@ -480,8 +490,8 @@ describe('projectLinesTo3DUsingWorker', () => {
   // otherwise the rejected kernel re-runs on the UI thread, the exact fault this
   // guards. `instanceof` is what makes the name insufficient.
   it('does not fall back for a non-instance error that merely spoofs the infra name', async () => {
-    const spoof = new Error('Worker call exceeded timeout');
-    spoof.name = 'WorkerTimeoutError';
+    const spoof = new Error('No workers available');
+    spoof.name = 'WorkerUnavailableError';
     mockGetWorkerPool.mockReturnValue({
       runWithTimeout: vi.fn(async () => {
         throw spoof;

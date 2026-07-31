@@ -453,8 +453,10 @@ export class WorkerPool {
    *
    * On timeout the responsible worker is evicted via
    * {@link handleWorkerFailure} and the caller receives a
-   * {@link WorkerTimeoutError} that the existing geometry-loader try/catch
-   * blocks already route to the main-thread fallback.
+   * {@link WorkerTimeoutError}. The geometry loaders deliberately do NOT
+   * run the projection in-process on a timeout (see
+   * `isWorkerInfrastructureError`) — the failure is recorded and the node
+   * retried against a fresh worker instead of blocking the UI thread.
    */
   async runWithTimeout<T>(
     op: string,

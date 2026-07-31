@@ -12,11 +12,11 @@ subfolders need to talk to each other and to the pool.
 
 ## Top-level files
 
-| File        | Purpose                                                                                                                                                                                       |
-| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `types.ts`  | The `WorkerInstance` interface — one live `Worker` + its Comlink-wrapped `DataWorkerAPI` + the `activeQueries` counter used for load balancing.                                               |
-| `errors.ts` | `WorkerTimeoutError`, `WorkerAbortError`, `WorkerUnavailableError`, the `isWorkerInfrastructureError` allow-list predicate, and the `TimeoutKind` discriminator (`'projection' \| 'decode'`). |
-| `stats.ts`  | Pure functions over a `WorkerInstance[]`: `computeStats` (full snapshot) and `computeQueueDepth` (cheap sum for live debug overlays).                                                         |
+| File        | Purpose                                                                                                                                                                                                                                                                                  |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `types.ts`  | The `WorkerInstance` interface — one live `Worker` + its Comlink-wrapped `DataWorkerAPI` + the `activeQueries` counter used for load balancing.                                                                                                                                          |
+| `errors.ts` | `WorkerTimeoutError`, `WorkerAbortError`, `WorkerUnavailableError`, the `isWorkerInfrastructureError` allow-list predicate (true only for `WorkerUnavailableError` — a timeout is deliberately not fallback-eligible), and the `TimeoutKind` discriminator (`'projection' \| 'decode'`). |
+| `stats.ts`  | Pure functions over a `WorkerInstance[]`: `computeStats` (full snapshot) and `computeQueueDepth` (cheap sum for live debug overlays).                                                                                                                                                    |
 
 `errors.ts` is the one module re-exported verbatim from
 `worker-pool.ts` — `WorkerTimeoutError`, `WorkerUnavailableError`,
