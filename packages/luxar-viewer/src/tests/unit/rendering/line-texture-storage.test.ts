@@ -55,8 +55,10 @@ function makeSource(count: number, withScalars = false, withAlphas = false): Lin
     startSharpness[i] = 0.1 * i;
     endSharpness[i] = 0.05 * i;
     segmentLengths[i] = 1.5 + i;
-    startCapSuppression[i] = i % 2;
-    endCapSuppression[i] = (i + 1) % 2;
+    // Continuous scalars, deliberately fractional: a writer that accidentally
+    // quantises suppression back to the old boolean contract must fail.
+    startCapSuppression[i] = 0.25 + 0.5 * (i % 2);
+    endCapSuppression[i] = 0.25 + 0.5 * ((i + 1) % 2);
     if (startScalars && endScalars) {
       startScalars[i] = 0.05 * i;
       endScalars[i] = 0.07 * i;
@@ -355,6 +357,24 @@ describe('attachLineStorage / writeLineTexels — fused writer round-trip', () =
     const cap = elementTexelCapacity(texture, LINE_FLOATS_PER_SEGMENT);
     const src = makeSource(cap + 5);
     expect(writeLineTexels(texture, src, cap + 5)).toBe(cap);
+  });
+
+  it('restores a soft cap when capacity truncation splits an adjacent joint pair', () => {
+    configureElementTextureLayout(6); // one 6-texel segment per row
+    const geometry = new THREE.InstancedBufferGeometry();
+    const texture = attachLineStorage(geometry, 1);
+    const src = makeSource(2); // seg0 end == seg1 start; both suppressions are 0.75
+
+    expect(writeLineTexels(texture, src, 2)).toBe(1);
+    const arr = texture.image.data as Float32Array;
+    expect(arr[17]).toBe(src.startCapSuppression[0]);
+    expect(arr[18]).toBe(0.0); // omitted neighbour can no longer fill this end
+
+    // Position mismatch: do not soften an unrelated retained endpoint merely
+    // because both suppression scalars happen to be positive.
+    src.startPositions[3] = 10;
+    writeLineTexels(texture, src, 2);
+    expect(arr[18]).toBe(src.endCapSuppression[0]);
   });
 
   it('clamps the attach capacity to the per-node bound (structural safety net)', () => {

@@ -679,6 +679,57 @@ describe('lines_clipping: compute_cap_suppression', () => {
     expect(outEnd[1]).toBeCloseTo(1, 6);
   });
 
+  it('uses compacted endpoint codes when visibility is non-contiguous', () => {
+    // seg0 and seg2 survive and share v1; the disjoint middle segment is
+    // culled. The position arrays are compacted to the two survivors, so a
+    // regression that keys direction-table codes on source segIdx would read
+    // the wrong row and lose this straight-through joint.
+    const outStart = new Float32Array(2);
+    const outEnd = new Float32Array(2);
+    const count = compute_cap_suppression(
+      new Uint32Array([0, 1, 3, 4, 1, 2]),
+      new Uint8Array([1, 0, 1]),
+      new Float32Array([0, 0, 0]),
+      new Float32Array([1, 1, 1]),
+      3,
+      5,
+      new Float32Array([0, 0, 0, 1, 0, 0]),
+      new Float32Array([1, 0, 0, 2, 0, 0]),
+      outStart,
+      outEnd
+    );
+
+    expect(count).toBe(2);
+    expect(outStart[0]).toBe(0);
+    expect(outEnd[0]).toBeCloseTo(1, 6);
+    expect(outStart[1]).toBeCloseTo(1, 6);
+    expect(outEnd[1]).toBe(0);
+  });
+
+  it('keeps malformed unregistered endpoint codes finite', () => {
+    // The first two starts register degree 2 at v0. The third start has a
+    // NaN t1, so it does NOT register but later queries the same vertex with
+    // myCode=4. codeSum=0+2 then yields partner=-2. JavaScript negative array
+    // indexing returns undefined, which used to poison the dot product and
+    // emit NaN; Rust rejects the out-of-range partner and returns 0.
+    const outStart = new Float32Array(3);
+    compute_cap_suppression(
+      new Uint32Array([0, 1, 0, 2, 0, 3]),
+      new Uint8Array([1, 1, 1]),
+      new Float32Array([0, 0, Number.NaN]),
+      new Float32Array([1, 1, 1]),
+      3,
+      4,
+      new Float32Array([0, 0, 0, 0, 0, 0, 0, 0, 0]),
+      new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]),
+      outStart,
+      new Float32Array(3)
+    );
+
+    expect(outStart[2]).toBe(0);
+    expect(Number.isFinite(outStart[2])).toBe(true);
+  });
+
   it('keeps the cap on a degenerate zero-length neighbour', () => {
     const outEnd = new Float32Array(2);
     compute_cap_suppression(
