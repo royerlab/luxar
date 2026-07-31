@@ -52,6 +52,87 @@ class TestBroadcasting:
             enc = arr.attrs["encoding"]
             assert enc["name"] == "broadcasted"
             assert enc["n_elements"] == 1000
+            # float32 data must stamp original_dtype so restoreOriginalDtype is
+            # a correct no-op in the viewer.
+            assert enc["original_dtype"] == "float32"
+
+    def test_uniform_2d_color_uint8_stamps_original_dtype(self):
+        """Uniform uint8 color array must stamp original_dtype (issue #727).
+
+        Without original_dtype, the viewer decodes broadcast colors to Float32
+        0-255 and never normalizes -> blown-out rendering.
+        """
+        data = np.full((1000, 3), [200, 120, 30], dtype=np.uint8)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(str(tmpdir), mode="w")
+            encoder = ArrayEncoder()
+            encoder.encode(data, group, "test", SemanticType.COLOR, color_mode="sdr")
+
+            arr = group["test"]
+            enc = arr.attrs["encoding"]
+            assert enc["name"] == "broadcasted"
+            assert enc["n_elements"] == 1000
+            assert enc["original_dtype"] == "uint8"
+
+    def test_uniform_2d_color_uint16_stamps_original_dtype(self):
+        """Uniform uint16 color array must stamp original_dtype (issue #727)."""
+        data = np.full((1000, 3), [40000, 20000, 5000], dtype=np.uint16)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(str(tmpdir), mode="w")
+            encoder = ArrayEncoder()
+            encoder.encode(data, group, "test", SemanticType.COLOR, color_mode="sdr")
+
+            arr = group["test"]
+            enc = arr.attrs["encoding"]
+            assert enc["name"] == "broadcasted"
+            assert enc["n_elements"] == 1000
+            assert enc["original_dtype"] == "uint16"
+
+    def test_non_color_scalar_broadcast_omits_original_dtype(self):
+        """Non-color scalar broadcast must NOT carry original_dtype.
+
+        Only COLOR stamps original_dtype; radii/sharpness/amplitudes must decode
+        as Float32 in the viewer, so no dtype is recorded.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(str(tmpdir), mode="w")
+            encoder = ArrayEncoder()
+            encoder.encode(
+                2.5,
+                group,
+                "test",
+                SemanticType.POSITIVE_SCALAR,
+                n_elements=1000,
+            )
+
+            arr = group["test"]
+            enc = arr.attrs["encoding"]
+            assert enc["name"] == "broadcasted"
+            assert enc["n_elements"] == 1000
+            assert "original_dtype" not in enc
+
+    def test_non_color_uint16_array_broadcast_omits_original_dtype(self):
+        """Uniform uint16 POSITIVE_SCALAR array must NOT stamp original_dtype.
+
+        Regression guard (issue #727 fix): a uniform integer radii/sharpness
+        array would otherwise be restored to Uint16Array in the viewer and
+        widened by /65535, making the points vanish. Non-color arrays must
+        decode as Float32.
+        """
+        data = np.full(1000, 3, dtype=np.uint16)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(str(tmpdir), mode="w")
+            encoder = ArrayEncoder()
+            encoder.encode(data, group, "test", SemanticType.POSITIVE_SCALAR)
+
+            arr = group["test"]
+            enc = arr.attrs["encoding"]
+            assert enc["name"] == "broadcasted"
+            assert enc["n_elements"] == 1000
+            assert "original_dtype" not in enc
 
     def test_non_uniform_not_broadcasted(self):
         """Test non-uniform array is not broadcasted."""
