@@ -75,7 +75,10 @@ def atomic_copy_file(src: Path, dst: Path) -> Path:
     full disk, SIGKILL) leaves a truncated file under the final name — which a
     later run may mistake for a complete cache entry, or must quarantine and
     re-fetch. Copying to a sibling temp file and renaming makes ``dst`` appear
-    only once it is complete.
+    only once it is complete. The temp file's contents are flushed with
+    ``os.fsync`` before the rename, so ``dst`` cannot surface with unwritten
+    blocks under a complete-looking name after a crash: ``os.replace`` orders
+    the rename against other renames, not against the preceding writes.
 
     Unlike :func:`atomic_copytree`, an existing ``dst`` IS replaced: every caller
     is refreshing a cache entry and wants overwrite semantics. Metadata is
@@ -102,6 +105,12 @@ def atomic_copy_file(src: Path, dst: Path) -> Path:
 
     try:
         shutil.copy2(src, tmp)
+        # Flush the copied bytes before the rename so dst cannot point at
+        # unwritten blocks after a crash (see docstring). Open read+write, not
+        # read-only: os.fsync maps to FlushFileBuffers on Windows, which needs
+        # a write-access handle.
+        with open(tmp, "rb+") as fh:
+            os.fsync(fh.fileno())
         os.replace(tmp, dst)
     except BaseException:
         tmp.unlink(missing_ok=True)

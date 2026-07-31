@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 from pathlib import Path
 from unittest.mock import patch
@@ -206,3 +207,38 @@ class TestAtomicCopyFile:
         # Only the source remains — no partial temp sibling and no stray file
         # under any prefix (kills mutation a even if it renames).
         assert sorted(p.name for p in tmp_path.iterdir()) == ["src.bin"]
+
+    def test_temp_file_is_fsynced_before_rename(self, tmp_path: Path) -> None:
+        """The copied bytes must be ``fsync``-ed BEFORE the rename, so ``dst``
+        can't surface with unwritten blocks after a crash. Kills a mutation that
+        drops the flush, reorders it after ``os.replace``, or flushes the wrong
+        file (``src`` instead of the temp copy)."""
+        src = tmp_path / "src.bin"
+        src.write_bytes(b"payload")
+        dst = tmp_path / "dst.bin"
+
+        calls: list[str] = []
+        synced_inode: list[int] = []
+        real_fsync, real_replace = os.fsync, os.replace
+
+        def _record_fsync(fd: int) -> None:
+            calls.append("fsync")
+            synced_inode.append(os.fstat(fd).st_ino)
+            real_fsync(fd)
+
+        def _record_replace(a: object, b: object) -> None:
+            calls.append("replace")
+            real_replace(a, b)  # type: ignore[arg-type]
+
+        with (
+            patch("os.fsync", side_effect=_record_fsync),
+            patch("os.replace", side_effect=_record_replace),
+        ):
+            atomic_copy_file(src, dst)
+
+        assert calls == ["fsync", "replace"]
+        assert dst.read_bytes() == b"payload"
+        # The flushed fd must be the temp copy, whose inode the rename carries
+        # onto dst — NOT src, which keeps its own inode.
+        assert synced_inode == [dst.stat().st_ino]
+        assert dst.stat().st_ino != src.stat().st_ino
