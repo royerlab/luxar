@@ -22,7 +22,7 @@
 import * as THREE from 'three';
 import { texture, uniform } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
-import { pointPickWebGPUFactory, type PointPickTSLNodes } from './pick.tsl';
+import { pointPickWebGPUFactory } from './pick.tsl';
 import { getPlaceholderElementTexture } from '../../element-texture-layout';
 import type { CameraAwareMaterial } from '../../materials/_shared/camera-aware-material';
 import {
@@ -44,6 +44,7 @@ export class PointPickingTSLMaterial extends NodeMaterial implements CameraAware
     uNearCull: TSLNode;
     uNodeId: TSLNode;
     uResolution: TSLNode;
+    uSortedIndexSlot: TSLNode;
   };
 
   constructor(config: PointPickingMaterialConfig) {
@@ -64,6 +65,13 @@ export class PointPickingTSLMaterial extends NodeMaterial implements CameraAware
       uNearCull: uniform(0.1),
       uNodeId: uniform(config.nodeId),
       uResolution: uniform(new THREE.Vector2(1920, defaultResolutionY)),
+      // Active ordering buffer: 0 = aSortedIndex, 1 = aSortedIndexB.
+      // The pick pass MUST track the visual one — it emits `vElementId`
+      // from the same index, so reading the other buffer resolves hovers
+      // against a stale permutation. Pushed by the depth-sort
+      // coordinator's `syncSortedIndexSlot`, which finds it through
+      // `uniforms` below.
+      uSortedIndexSlot: uniform(0),
     };
 
     this.uniforms = {
@@ -75,11 +83,12 @@ export class PointPickingTSLMaterial extends NodeMaterial implements CameraAware
       uNearCull: proxyIUniform(this.tslNodes.uNearCull),
       uNodeId: proxyIUniform(this.tslNodes.uNodeId),
       uResolution: proxyIUniform(this.tslNodes.uResolution),
+      uSortedIndexSlot: proxyIUniform(this.tslNodes.uSortedIndexSlot),
     };
 
     this.toneMapped = false;
 
-    pointPickWebGPUFactory(this.tslNodes as PointPickTSLNodes, this);
+    pointPickWebGPUFactory(this.tslNodes, this);
   }
 
   /**
@@ -94,7 +103,7 @@ export class PointPickingTSLMaterial extends NodeMaterial implements CameraAware
     if (current === next) return;
     this.tslNodes.uPointTex = texture(next);
     this.uniforms.uPointTex = proxyIUniform(this.tslNodes.uPointTex);
-    pointPickWebGPUFactory(this.tslNodes as PointPickTSLNodes, this);
+    pointPickWebGPUFactory(this.tslNodes, this);
     this.needsUpdate = true;
   }
 
@@ -118,6 +127,10 @@ export class PointPickingTSLMaterial extends NodeMaterial implements CameraAware
     (cloned.uniforms.uResolution.value as THREE.Vector2).copy(
       this.uniforms.uResolution.value as THREE.Vector2
     );
+    // The active ordering slot must ride along: a clone taken while the
+    // geometry draws from slot 1 would otherwise read the stale buffer
+    // until the coordinator's next per-frame re-assert.
+    cloned.uniforms.uSortedIndexSlot.value = this.uniforms.uSortedIndexSlot.value;
     return cloned as this;
   }
 

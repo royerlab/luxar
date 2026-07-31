@@ -20,6 +20,43 @@ entry points (`LuxarZarrCompiler` write methods, `fit_gaussian_splats`,
 override steps aside whenever a recorder or custom `showwarning` hook owns
 warning display. New module: `luxar.utils.arbol_warnings`.
 
+#### Fixed — depth-sort orderings swap atomically (no more mid-rotation flicker)
+
+Rotating a large `normal`/`volumetric` node drew a **corrupt permutation**:
+some elements twice, an equal number not at all. The chunked ordering apply
+(perf lever L8) streamed slices into the LIVE `aSortedIndex` attribute and
+accepted the intermediate `new[0,cursor) ∪ old[cursor,n)` as bounded transient
+shimmer. The bound was real; the premise that it stays transient was not —
+under a continuous orbit a new sort arrives about as fast as a stream drains,
+so the mix is the steady state. Measured with a browser probe that validates
+the drawn index buffer every sampled frame: **27–33% of frames** on the 1.9M
+`visible_human_head` (27,613 double-drawn) and **70–80%** on the 8M
+`global_rivers_earth` terrain (up to 1,022,162 double-drawn, 12.8% of the
+node). It surfaced now because the bioimaging demos moved to `volumetric`,
+which is order-dependent where `additive` was not.
+
+Orderings now stream into the **inactive** buffer of an `aSortedIndex` /
+`aSortedIndexB` pair and a runtime `uSortedIndexSlot` uniform flips once that
+buffer holds the whole permutation — the A/B design
+`GSPLAT_DEPTH_SORTING_SPEC.md` §2.1 tier 3 specced and deferred. Both buffers
+are allocated at attach, so every node pays +4 B/element whether it sorts or
+not. Materialising the second one lazily (the obvious saving, and how this
+first landed) is unsafe on the **native WebGPU** backend: three keys a
+pipeline's vertex-buffer layout by BufferAttribute identity but rebuilds the
+pipeline only on a name-level cache-key change, so growing the attribute set
+after first render shifted every later attribute down a vertex-buffer slot —
+the quad-corner attribute read the ordering buffer's `u32`s as `vec2<f32>` and
+the scene rendered black, with no validation error and no console warning.
+WebGL binds by program location and never saw it. The per-frame upload bound L8
+bought is unchanged. Sorting and applying now run concurrently (the dispatch
+apply-gate is gone).
+
+Trade, measured on the 10M orbit bench: sort-adjacent frame p99 ~77 → ~92 ms
+(median and p95 unchanged, still far under the 119–563 ms chunking prevents),
+and waiting for a whole ordering instead of showing a partly-applied one costs
+some freshness (8M fast-orbit sort-axis lag 36.5° → 44.3° mean). Both are the
+deliberate price of never drawing a corrupt permutation.
+
 #### Added — spatial partitioning (BSP tiling) now works on 2D data
 
 `luxar gsplat partition`, `lod --recipe tiles|overview|adaptive`, and
@@ -72,6 +109,58 @@ scale-free-conditioning reasoning as the shader's trace-normalized covariance
 inverse. Rank-deficient axes are still regularized, now as a fixed _fraction_ of
 the real axis.
 
+#### Changed — ACES is now the recommended tone mapping, and choosing it explicitly no longer warns
+
+`ACES` is the right tone mapping for almost every scene — its filmic highlight
+rolloff is what keeps bright, dense structure from clipping flat — and it is
+already the viewer's default. The tree was built around the opposite
+assumption: seventeen demos pinned `Neutral`, and the compiler warned authors
+away from ACES.
+
+The LUT tone-mapping warning in `io/_compiler/colormap.py` now fires **only
+when the author set no `tone_mapping` at all**. Its predicate was
+`!= "Neutral"`, so an explicit `"ACES"` tripped it too — nagging about a
+deliberate decision, while the message itself speaks of "the viewer's
+*default*", which is only what you get by saying nothing. Any explicit value,
+`"ACES"` included, now silences it. Fifteen demos move from `Neutral` to an
+explicit `ACES`. Two keep `Neutral` as verified exceptions:
+`demo_gsplats_3d_tribolium_embryo`, whose pairing with `exposure=1.97` was tuned
+deliberately, and `demo_flywire_connectome`, where ACES blew its luminous
+connection glow out into a white wash. The classical-capture interop demos also
+stay on `Neutral`, via the `build_interop_scene` default — their baked per-splat
+RGB is already display-referred, so ACES would distort it. `CLAUDE.md`, the HDR
+guide, the `gsplat convert` CLI help and the `ViewerConfig.tone_mapping`
+docstring all now recommend ACES, keeping `Neutral` for the narrower case where
+a colormap LUT carries an exact scientific colour encoding. Regenerate the demo
+datasets to pick up the new look.
+
+#### Changed — five gsplat demos bake their preferred viewer appearance
+
+The blanket `volumetric` + kappa 1.0 default from the bioimaging demo sweep was
+wrong for scenes whose layers are *superimposed over the same specimen*: there,
+emission-absorption makes whichever layer draws first occlude the other, so
+channel overlap reads as one channel hiding the rest instead of the colours
+mixing. The multi-channel organoid now composites `additive` (a pure sum, no
+attenuation) and the 4D neuromast timelapse drops to absorption 0.05 — the
+absorption slider's smallest non-zero step, which keeps volumetric's bounded
+accumulation without the occlusion. At kappa 1.0 the neuromast rendered as a
+dim blue haze with its hair-cell cluster and membrane filaments lost.
+
+The Tribolium embryo switches to `normal`. That light-sheet volume carries a
+heavy diffuse background, and integrating it along every ray saturates into a
+solid slab with the embryo buried inside; `normal` composites the projected
+2D-Gaussian peak with alpha-over instead, so the background stops accumulating
+and the surface nuclei stay crisp. Because nothing sums any more the scene
+needs `exposure=1.97` to sit at a normal level.
+
+Two appearance tweaks round it out: the Milky Way dust cube moves from
+`additive` to a light `volumetric` (absorption 0.3, so near dust softly
+occludes far dust) under ACES at `exposure=-0.17`, with a `[0, 0.095]` display
+window that holds its faint diffuse filaments just below clipping; and the
+organoid DAPI nuclei demo gains a `plasma` colormap (it previously fell back to
+the implicit grayscale default). Regenerate the demo datasets to pick up the new
+look.
+
 #### Fixed — errors logged as trailing arguments rendered as `{}` in the in-app console
 
 A bug report contained the line `OPFSStore metadata save failed {}` — the cause
@@ -104,7 +193,6 @@ costing a duplicate warning per chunk and up to twice the operation timeout in
 caller stall on a hung handle.
 
 New `utils/format-error.ts` promotes an idiom that was inlined roughly 31 times.
-
 
 #### Changed — volumetric joins the LOD anti-popping blendable set
 

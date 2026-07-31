@@ -42,16 +42,17 @@ layout( std140 ) uniform object {
 	mat4 nodeUniform1;
 	float nodeUniform2;
 	float nodeUniform3;
-	mat3 nodeUniform5;
-	uint nodeUniform6;
-	mat3 nodeUniform7;
-	uint nodeUniform8;
-	float nodeUniform9;
-	float nodeUniform11;
+	float nodeUniform4;
+	mat3 nodeUniform6;
+	uint nodeUniform7;
+	mat3 nodeUniform8;
+	uint nodeUniform9;
+	float nodeUniform10;
 	float nodeUniform12;
 	float nodeUniform13;
 	float nodeUniform14;
-	vec2 nodeUniform15;
+	float nodeUniform15;
+	vec2 nodeUniform16;
 };
 
 
@@ -70,7 +71,7 @@ vec4 DiffuseColor;
 float nodeVar1;
 float nodeVar2;
 vec4 Output;
-vec4 nodeVar3;
+vec4 nodeVar4;
 
 // codes
 
@@ -107,12 +108,12 @@ void main() {
 	}
 
 	DiffuseColor = vec4( nodeVarying5, nodeVarying6, nodeVar2, 1.0 );
-	DiffuseColor.w = ( DiffuseColor.w * nodeUniform3 );
-	nodeVar3 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
-	Output = nodeVar3;
+	DiffuseColor.w = ( DiffuseColor.w * nodeUniform4 );
+	nodeVar4 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
+	Output = nodeVar4;
 	gl_FragDepth = ( 1.0 - clamp( nodeVar2, 0.0, 1.0 ) );
 
 	// result
-	fragColor = nodeVar3;
+	fragColor = nodeVar4;
 
 }

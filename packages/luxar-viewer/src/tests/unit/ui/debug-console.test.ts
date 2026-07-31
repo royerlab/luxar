@@ -172,6 +172,29 @@ describe('DebugConsole - Critical Fixes', () => {
 
       debugConsole.dispose();
     });
+
+    it('renders the stack trace for warn messages, not only errors', () => {
+      // The interceptor captures a stack on the warn path too, and the clipboard
+      // export already emits it, but the panel used to gate stack rendering on
+      // type === 'error' — so a warn's stack was copyable yet invisible in the UI.
+      const debugConsole = new DebugConsole();
+      debugConsole.show();
+
+      const console_any = debugConsole as any;
+      console_any.renderMessage({
+        type: 'warn' as const,
+        timestamp: new Date(),
+        args: ['cache write failed'],
+        formatted: 'cache write failed',
+        stack: 'Error: cache write failed\n    at save (opfs-store.ts:1:1)',
+      });
+
+      const stackEl = document.querySelector('.luxar-console-message-stack');
+      expect(stackEl).toBeTruthy();
+      expect(stackEl?.textContent).toContain('at save');
+
+      debugConsole.dispose();
+    });
   });
 
   describe('Dispose Cleanup', () => {

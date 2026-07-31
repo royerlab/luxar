@@ -41,6 +41,11 @@ export class PointPickingMaterial extends THREE.ShaderMaterial implements Camera
         maxPointSize: { value: defaultResolutionY * 0.5 },
         radiusScale: { value: config.radiusScale ?? 1.0 },
         uIsOrtho: { value: 0 },
+        // Active ordering buffer: 0 = aSortedIndex, 1 = aSortedIndexB.
+        // Flipped by the depth-sort coordinator once the inactive buffer
+        // holds a whole permutation (runtime uniform: never a define — a
+        // flip must not recompile the program).
+        uSortedIndexSlot: { value: 0 },
         uNearCull: { value: 0.1 },
         uNodeId: { value: config.nodeId },
         // Resolution needed for instanced-quad expansion (matches
@@ -77,6 +82,10 @@ export class PointPickingMaterial extends THREE.ShaderMaterial implements Camera
     cloned.uniforms.uIsOrtho.value = this.uniforms.uIsOrtho.value;
     cloned.uniforms.uNearCull.value = this.uniforms.uNearCull.value;
     cloned.uniforms.uResolution.value.copy(this.uniforms.uResolution.value);
+    // The active ordering slot must ride along: a clone taken while the
+    // geometry draws from slot 1 would otherwise read the stale buffer
+    // until the coordinator's next per-frame re-assert.
+    cloned.uniforms.uSortedIndexSlot.value = this.uniforms.uSortedIndexSlot.value;
     return cloned as this;
   }
 

@@ -166,7 +166,8 @@ class ConsoleInterceptor {
   }
 
   /**
-   * The stack of the first `Error` among `args`, or `undefined`.
+   * The stack of the first real `Error` among `args`, falling back to the first
+   * duck-typed stack carrier, or `undefined`.
    *
    * Scans ALL args rather than just the first: every `log.*` call formats its
    * message into `args[0]` as a STRING and passes the error along behind it, so
