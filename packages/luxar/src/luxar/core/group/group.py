@@ -545,10 +545,13 @@ class Group(Node):
             fill_sigma: Standard deviations for unmapped dims in Cholesky embedding
             **attrs: Additional node attributes (same vocabulary as
                 :meth:`add_gsplats`, including ``absorption``). On a nested
-                tree, compositing attributes (e.g. ``absorption``) land on the
-                wrapper node while the rest (e.g. ``colormap``) are copied onto
-                each leaf; ``blending_mode`` is stamped on both, so the parts
-                keep their mode if later flattened or re-exported.
+                tree, compositing attributes (``blending_mode``, ``absorption``,
+                ``opacity``, ...) land on the wrapper node ONLY — the viewer
+                resolves them down the ancestry — while the rest (e.g.
+                ``colormap``) are copied onto each leaf. Stamping
+                ``blending_mode`` on the parts too would SHADOW the wrapper
+                (it is nearest-setter-wins), leaving the layer's Blend control
+                inert.
         """
         from .gsplats_pipeline.from_io import add_gsplats_from_file_impl
 

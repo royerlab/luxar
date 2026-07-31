@@ -788,6 +788,16 @@ an effective opacity of `0.25` for the child's material. Unset values are
 identity (1.0 for multiplicative, 0.0 for additive). The viewer recomposes
 on every slider change so edits to group layers flow into descendants.
 
+**Producers: set `blending_mode` on the layer, never on its internal
+children.** Unlike the multiplicative attrs, it is *nearest-setter-wins*, so a
+copy stamped on a `kind=partition` part or a `kind=lod` child **shadows** the
+layer that contains it. The layers panel exposes one Blend control per layer,
+so a shadowed layer's control silently does nothing. The Python writers route
+it (with the other compositing attrs) onto the wrapper only — see
+`COMPOSITING_ATTRS` in `core/group/compositing.py`. Correspondingly, within a
+layer's own subtree the panel treats the layer's mode as authoritative and
+ignores a mode authored on a non-layer descendant.
+
 ### Edits Are Viewer-Only
 
 Changes made in the panel (range, gamma, opacity, blending, colormap) are

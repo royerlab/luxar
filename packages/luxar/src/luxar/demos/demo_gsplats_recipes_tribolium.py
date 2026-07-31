@@ -114,6 +114,7 @@ from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core import transforms
+from luxar.core.viewer_config import ViewerConfig
 from luxar.encoding import EncodingMode
 from luxar.gsplats.gsplat_data import AdditiveSubLOD, GSplatData
 from luxar.gsplats.io.save_gsplats import write_gsplats_tree
@@ -473,7 +474,14 @@ def create_luxar_scene(
         with LuxarZarrCompiler(
             output_path, encoding_mode=EncodingMode.PRECISION
         ) as compiler:
-            scene = compiler.create_scene(dimensions=dims)
+            scene = compiler.create_scene(
+                dimensions=dims,
+                # Neutral tone-mapping, not the viewer's default ACES. Colour
+                # here IS the encoding (hue = which part, shade = which LOD
+                # level), and ACES lifts highlights and shifts hue — which
+                # would blur exactly the distinction the gallery is making.
+                viewer_config=ViewerConfig(tone_mapping="Neutral"),
+            )
             scene.attrs["title"] = "GSplats: lod --recipe gallery — Tribolium Embryo"
             scene.attrs["description"] = """
 GSplats LOD recipe gallery — Tribolium castaneum embryo (Light-Sheet)
@@ -616,7 +624,11 @@ def main() -> None:
     # Center at the intensity-weighted centroid + dim amplitudes (matches the
     # other gsplat demos) so each column sits at the origin before placement.
     base = base.translate(-base.centers.T @ base.amplitudes / base.amplitudes.sum())
-    base = base.scale_intensity(0.1)
+    # 0.03 matches the sibling `demo_gsplats_3d_tribolium_embryo`. In volumetric
+    # mode the amplitude drives BOTH the emission and the optical depth
+    # (tau = kappa*opacity*rayMass), so a hotter scale doesn't just brighten —
+    # it saturates the whole support into an opaque slab.
+    base = base.scale_intensity(0.03)
 
     global EMBRYO_EXTENT
     EMBRYO_EXTENT = float(
