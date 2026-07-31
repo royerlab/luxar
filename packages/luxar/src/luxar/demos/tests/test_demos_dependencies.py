@@ -226,11 +226,20 @@ class TestSpecsMatchPyproject:
                 "3.0",
                 "3.0.0",
                 "3.5.0",
+                # Between the nibabel floors: the demos extra pins >=5.0.0, so
+                # without a sample in [4.0, 5.0) a spec silently relaxed to
+                # >=4.0.0 would accept the same sample set and pass vacuously.
+                "4.0.0",
                 "5.0.0",
                 "6.0.0",
                 "9.0.0",
                 "10.0",
                 "12.0.0",
+                # A date-versioned sample below the 2023.1.0 floor shared by
+                # tifffile/imagecodecs: without one in [12.0.0, 2023.1.0) those
+                # rows have a decade-wide blind window where a relaxed pin reads
+                # identical to the current one.
+                "2020.1.1",
                 "2023.1.0",
             )
         ]
@@ -272,7 +281,8 @@ class TestSurvey:
     def test_installed_flag_tracks_importability(self) -> None:
         rows = {r.module: r for r in survey()}
         # scipy is a hard dependency of the test env, numpy-adjacent and always
-        # present; a bogus entry must report the opposite.
+        # present. The missing-module direction is asserted separately in
+        # test_is_installed_is_false_for_a_missing_module.
         assert rows["scipy"].installed is True
 
     def test_is_installed_is_false_for_a_missing_module(self) -> None:
