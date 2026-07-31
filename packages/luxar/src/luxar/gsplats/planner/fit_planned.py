@@ -84,6 +84,24 @@ def _fit_one_box(
     from luxar.gsplats.fit_gsplats import fit_gaussian_splats
     from luxar.gsplats.utils.trils import tril_size
 
+    # The content pipeline is voxel-space end to end: plan boxes, padded
+    # bounds, and the keep-core mask below are all voxel coordinates. A
+    # voxel_size/output_space pair leaking in from a YAML config would make
+    # the inner fit return PHYSICAL centers, which would then get voxel-space
+    # origin offsets added and be mis-filtered by the core mask — so strip
+    # them here and warn (the default warning filter dedups per process).
+    vs = fit_kwargs.pop("voxel_size", None)
+    out_space = fit_kwargs.pop("output_space", None)
+    if vs is not None and out_space != "voxel":
+        import warnings
+
+        warnings.warn(
+            "voxel_size/output_space='real' are not supported with content-"
+            "planned fitting; fitting in voxel space (voxel_size ignored).",
+            UserWarning,
+            stacklevel=2,
+        )
+
     V = np.asarray(volume, dtype=np.float32)
     ndim = V.ndim
     pz0, pz1, py0, py1, px0, px1 = _padded_bounds(box, overlap, V.shape)

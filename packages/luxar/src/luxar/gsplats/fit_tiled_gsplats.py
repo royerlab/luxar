@@ -53,8 +53,9 @@ def fit_tile(
         Tile specification from :func:`compute_tile_specs`. Contains the
         per-face overlap sizes used for cosine window construction.
     voxel_size : float or sequence of float, optional
-        Physical voxel spacing. Passed through to :func:`fit_gaussian_splats`
-        and used for correct center translation when ``output_space="real"``.
+        Physical voxel spacing. Passed through to the per-tile fitter (both
+        :func:`fit_gaussian_splats` and the progressive fitter) and used for
+        correct center translation when ``output_space="real"``.
     output_space : str, default "real"
         Coordinate space for output centers (``"real"`` or ``"voxel"``).
     progressive : bool, default False
