@@ -94,6 +94,7 @@ import { getGpuByteBudget } from '../rendering/gpu-byte-budget';
 import { NodeFactory } from '../rendering/node-factory';
 import { UpdateProfiler, type UpdateSession } from '../profiling/update-profiler';
 import { LoaderRegistry } from './scene-loader/loaders/loader-registry';
+import { warnFailedLoaders } from './scene-loader/loaders/failure-report';
 
 // ============================================================================
 // Staged commit types for atomic geometry updates
@@ -698,7 +699,7 @@ export class SceneLoader {
     return runLoaderUpdatesHelper(loaders, loaderType, updateFn, {
       profiler: this.profiler,
       viewStateQueue: this.viewStateQueue,
-      failedLoaders: this.failedLoaders,
+      registry: this.registry,
     });
   }
 
@@ -900,19 +901,8 @@ export class SceneLoader {
         // Update monitor with total visible segments across all lines nodes
         this.updateVisibleCountsInMonitor();
 
-        // Warn user if any loaders failed
-        if (this.failedLoaders.size > 0) {
-          const failedPaths = Array.from(this.failedLoaders.keys()).join(', ');
-          log.warning(
-            Modules.SCENE_LOADER,
-            `⚠️ ${this.failedLoaders.size} loader(s) failed: ${failedPaths}`
-          );
-          log.warning(
-            Modules.SCENE_LOADER,
-            `Some data could not be loaded. Failed loaders: ${failedPaths}. ` +
-              'Check console output for details. Data may be incomplete.'
-          );
-        }
+        // Warn user if any loaders failed (shared with the end-of-load report).
+        warnFailedLoaders(Array.from(this.failedLoaders.keys()));
       }
     } finally {
       // End profiling update cycle (always, even if errors)
@@ -1435,6 +1425,17 @@ export class SceneLoader {
   }
 
   /**
+   * Whether any failure is worth an AUTOMATIC retry — a transient cause still
+   * under the attempt cap (see `LoaderRegistry.autoRetryablePaths`). The
+   * connectivity-triggered retry gates on this so it neither re-fetches a
+   * deterministically-broken path forever nor announces "Connection restored,
+   * retrying" for a scene it cannot help.
+   */
+  hasAutoRetryableFailures(): boolean {
+    return this.registry.hasAutoRetryableFailures();
+  }
+
+  /**
    * Clear failed loader tracking
    * Useful for retry operations or after user acknowledges errors
    */
@@ -1530,12 +1531,23 @@ export class SceneLoader {
    * console.log(`Recovered: ${result.succeeded.length}, Still failing: ${result.failed.length}`);
    * ```
    */
-  async retryAllFailedLoaders(): Promise<{
+  async retryAllFailedLoaders(
+    opts: {
+      /**
+       * Retry only paths that pass the automatic-retry filter (transient cause,
+       * under the attempt cap). Set by the connectivity-triggered retry. A
+       * manual Retry omits it and forces every failed path.
+       */
+      onlyAutoRetryable?: boolean;
+    } = {}
+  ): Promise<{
     succeeded: string[];
     failed: string[];
     deferred?: boolean;
   }> {
-    const failedPaths = Array.from(this.failedLoaders.keys());
+    const failedPaths = opts.onlyAutoRetryable
+      ? this.registry.autoRetryablePaths()
+      : Array.from(this.failedLoaders.keys());
 
     if (failedPaths.length === 0) {
       log.info(Modules.SCENE_LOADER, 'No failed loaders to retry');
@@ -1562,6 +1574,13 @@ export class SceneLoader {
 
     this._updateInProgress = true;
     try {
+      if (opts.onlyAutoRetryable) {
+        // Charge the automatic-retry budget once per connectivity-triggered
+        // attempt. Ordinary update sweeps and manual retries also record
+        // failures, but must not consume this budget — otherwise a scene that
+        // failed a few slices offline would be past the cap before `online` fires.
+        for (const path of failedPaths) this.registry.markAutoRetryAttempt(path);
+      }
       const { succeeded, failed } = await retryAllFailedLoadersUnlocked(
         failedPaths,
         this.makeRetryCtx()

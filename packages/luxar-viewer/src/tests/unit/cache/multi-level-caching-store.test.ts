@@ -1428,6 +1428,42 @@ describe('MultiLevelCachingStore', () => {
       expect(global.fetch).toHaveBeenCalledTimes(1);
     });
 
+    it('rejects invalidation-aborted coalesced reads instead of reporting missing chunks', async () => {
+      let observedSignal: AbortSignal | undefined;
+      global.fetch = vi.fn((_url: string, init?: RequestInit) => {
+        observedSignal = init?.signal as AbortSignal | undefined;
+        return new Promise<Response>((_resolve, reject) => {
+          if (observedSignal?.aborted) {
+            reject(new DOMException('Aborted', 'AbortError'));
+            return;
+          }
+          observedSignal?.addEventListener(
+            'abort',
+            () => reject(new DOMException('Aborted', 'AbortError')),
+            { once: true }
+          );
+        });
+      }) as unknown as typeof fetch;
+
+      const firstRead = store.get('invalidation-race');
+      const coalescedRead = store.get('invalidation-race');
+      for (let i = 0; i < 20 && observedSignal === undefined; i++) {
+        await Promise.resolve();
+      }
+      expect(observedSignal).toBeDefined();
+      expect(global.fetch).toHaveBeenCalledTimes(1);
+
+      const clear = store.clearAll();
+      const expectedAbort = {
+        name: 'AbortError',
+        message: expect.stringContaining('invalidation-race'),
+      };
+      await expect(firstRead).rejects.toMatchObject(expectedAbort);
+      await expect(coalescedRead).rejects.toMatchObject(expectedAbort);
+      await clear;
+      expect(observedSignal?.aborted).toBe(true);
+    });
+
     it('retry backoff includes jitter (commit 4.3)', async () => {
       // With Math.random() forced to deterministic values we can prove
       // the jittered delay differs from a pure exponential. We don't
@@ -1645,7 +1681,7 @@ describe('MultiLevelCachingStore', () => {
       }
     );
 
-    it('disposed-store getResult returns Aborted synchronously without touching tiers', async () => {
+    it('disposed-store reads unwind quietly without touching tiers', async () => {
       // After dispose, callers must not be able to populate L1/L2 or
       // trigger network. The early-return guards both the Map-poke
       // and the prefetcher.onAccess fan-out.
@@ -1668,7 +1704,9 @@ describe('MultiLevelCachingStore', () => {
       const result = await target.getResult('chunk');
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error.kind).toBe('Aborted');
-      // No L1 mutation, no fetch initiation.
+      await expect(target.get('chunk')).resolves.toBeUndefined();
+      // No L1 mutation, no fetch initiation. The AsyncReadable path stays
+      // quiet because disposal means its owning scene is already discarded.
       expect(target.getStats().l1.chunksCount).toBe(0);
       expect(fetchSpy).not.toHaveBeenCalled();
     });

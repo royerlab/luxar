@@ -8,8 +8,17 @@ import { log, Modules } from '../../../utils/log';
  */
 export interface RetryCapableLoader {
   hasFailures(): boolean;
+  /**
+   * Whether any failure is worth an automatic retry — a transient cause still
+   * under the attempt cap. Connectivity can only fix transient failures, so
+   * gating on this stops a deterministically-broken path (a decode error, a
+   * permanent 404 past the cap) from being re-fetched on every `online` event.
+   */
+  hasAutoRetryableFailures(): boolean;
   /** `deferred: true` ⇒ a main update held the lock and NOTHING was retried. */
-  retryAllFailedLoaders(): Promise<{ succeeded: string[]; failed: string[]; deferred?: boolean }>;
+  retryAllFailedLoaders(opts?: {
+    onlyAutoRetryable?: boolean;
+  }): Promise<{ succeeded: string[]; failed: string[]; deferred?: boolean }>;
 }
 
 /**
@@ -77,14 +86,15 @@ export function installOnlineRetry(ports: OnlineRetryPorts): void {
 
   const attempt = (attemptNumber: number): void => {
     const loader = ports.getLoader();
-    if (!loader?.hasFailures()) {
-      // Failures recovered elsewhere (manual retry, dataset switch) — done.
+    if (!loader?.hasAutoRetryableFailures()) {
+      // Recovered elsewhere (manual retry, dataset switch), or everything left
+      // is deterministic / past the cap — either way, done.
       retryInFlight = false;
       return;
     }
 
     void loader
-      .retryAllFailedLoaders()
+      .retryAllFailedLoaders({ onlyAutoRetryable: true })
       .then(({ succeeded, failed, deferred }) => {
         if (deferred) {
           // Nothing was retried — a main update holds the lock. Re-attempt
@@ -133,7 +143,10 @@ export function installOnlineRetry(ports: OnlineRetryPorts): void {
   ports.events.on(window, 'online', () => {
     if (retryInFlight) return;
     const loader = ports.getLoader();
-    if (!loader?.hasFailures()) return;
+    // Deliberately NOT `hasFailures()`: a scene whose only failures are
+    // deterministic gets no retry and no "Connection restored" toast, since
+    // reconnecting cannot help it.
+    if (!loader?.hasAutoRetryableFailures()) return;
 
     retryInFlight = true;
     log.info(Modules.LUXAR, 'Connection restored - retrying failed loaders');

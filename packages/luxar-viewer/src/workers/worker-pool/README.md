@@ -12,14 +12,15 @@ subfolders need to talk to each other and to the pool.
 
 ## Top-level files
 
-| File        | Purpose                                                                                                                                         |
-| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `types.ts`  | The `WorkerInstance` interface — one live `Worker` + its Comlink-wrapped `DataWorkerAPI` + the `activeQueries` counter used for load balancing. |
-| `errors.ts` | `WorkerTimeoutError`, `WorkerAbortError`, and the `TimeoutKind` discriminator (`'projection' \| 'decode'`).                     |
-| `stats.ts`  | Pure functions over a `WorkerInstance[]`: `computeStats` (full snapshot) and `computeQueueDepth` (cheap sum for live debug overlays).           |
+| File        | Purpose                                                                                                                                                                                                                                                                                  |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `types.ts`  | The `WorkerInstance` interface — one live `Worker` + its Comlink-wrapped `DataWorkerAPI` + the `activeQueries` counter used for load balancing.                                                                                                                                          |
+| `errors.ts` | `WorkerTimeoutError`, `WorkerAbortError`, `WorkerUnavailableError`, the `isWorkerInfrastructureError` allow-list predicate (true only for `WorkerUnavailableError` — a timeout is deliberately not fallback-eligible), and the `TimeoutKind` discriminator (`'projection' \| 'decode'`). |
+| `stats.ts`  | Pure functions over a `WorkerInstance[]`: `computeStats` (full snapshot) and `computeQueueDepth` (cheap sum for live debug overlays).                                                                                                                                                    |
 
 `errors.ts` is the one module re-exported verbatim from
-`worker-pool.ts` — `WorkerTimeoutError` and `TimeoutKind` are part of
+`worker-pool.ts` — `WorkerTimeoutError`, `WorkerUnavailableError`,
+`isWorkerInfrastructureError`, and `TimeoutKind` are part of
 the public API. `types.ts` and `stats.ts` are pool-internal.
 
 ## Layout
@@ -27,7 +28,7 @@ the public API. `types.ts` and `stats.ts` are pool-internal.
 ```
 worker-pool/
 ├── types.ts                    — WorkerInstance interface
-├── errors.ts                   — Timeout / abort errors + TimeoutKind
+├── errors.ts                   — Timeout / abort / unavailable errors + infra predicate + TimeoutKind
 ├── stats.ts                    — computeStats, computeQueueDepth
 ├── lifecycle/                  — spawn, init guard, error handlers, count
 ├── selection/                  — least-busy and round-robin pickers
