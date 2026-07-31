@@ -1,7 +1,8 @@
-"""Smoke tests for the pure image helpers in demo_gsplats_3d_visible_human_head.
+"""Smoke tests for demo_gsplats_3d_visible_human_head.
 
-Only the deterministic array helpers are exercised (no network, no PNG IO, no
-GPU fit). The demo is loaded by file path (see test_demo_ppi_flow_field).
+Covers the deterministic image helpers and the scene builder's authored
+blending — no network, no PNG IO, no GPU fit. The demo is loaded by file path
+(see test_demo_ppi_flow_field).
 """
 
 from __future__ import annotations
@@ -12,6 +13,9 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+import zarr
+
+from luxar.gsplats.gsplat_data import GSplatData
 
 pytest.importorskip("scipy")
 
@@ -32,6 +36,7 @@ def _load_demo_module():
 
 
 _demo = _load_demo_module()
+create_luxar_scene = _demo.create_luxar_scene
 luminance = _demo.luminance
 tissue_mask = _demo.tissue_mask
 mask_background = _demo.mask_background
@@ -107,6 +112,33 @@ class TestCropToContent:
         vol = np.zeros((2, 4, 4, 3), dtype=np.float32)
         cropped, box = crop_to_content(vol)
         assert cropped.shape == vol.shape
+
+
+def _tiny_gsplat_data(n: int = 8, seed: int = 0) -> GSplatData:
+    """A handful of valid splats — no GPU fit, enough to build the scene."""
+    rng = np.random.default_rng(seed)
+    return GSplatData(
+        centers=rng.uniform(-4.0, 4.0, (n, 3)).astype(np.float32),
+        amplitudes=rng.uniform(0.2, 1.0, n).astype(np.float32),
+        cholesky_factors=np.tile([1, 0, 1, 0, 0, 1], (n, 1)).astype(np.float32),
+    )
+
+
+class TestSceneBlending:
+    def test_scene_bakes_volumetric_blending(self, tmp_path) -> None:
+        # The demo exists to render photographic-color anatomy under
+        # volumetric (emission-absorption) compositing; pin the authored mode
+        # so a silent revert to additive glow is caught (the helper smoke
+        # tests never build the scene). See the interop demos' blending test.
+        fit = _tiny_gsplat_data()
+        colors = (
+            np.random.default_rng(1)
+            .uniform(0.1, 0.9, (fit.n_splats, 3))
+            .astype(np.float32)
+        )
+        out = create_luxar_scene(fit, colors, tmp_path / "vh.luxar.zarr")
+        node = zarr.open_group(str(out), mode="r")["visible_human_head"]
+        assert dict(node.attrs).get("blending_mode") == "volumetric"
 
 
 class TestSampleColors:
