@@ -46,7 +46,12 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import cache_computed, cached_download, launch_viewer
+from luxar.demos import (
+    cache_computed,
+    cached_download,
+    launch_viewer,
+    require_module,
+)
 from luxar.utils.paths import get_demos_output_dir
 
 # =============================================================================
@@ -154,23 +159,13 @@ def _tissue_color(tissue: str) -> tuple[float, float, float]:
 
 
 def _ensure_h5py():
-    """Import h5py, auto-installing if necessary."""
-    try:
-        import h5py
+    """Import h5py, or raise with an actionable install hint.
 
-        return h5py
-    except ImportError:
-        import subprocess
-
-        aprint("Installing h5py (one-time, ~10 seconds)...")
-        subprocess.check_call(
-            [sys.executable, "-m", "pip", "install", "-q", "h5py"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        import h5py
-
-        return h5py
+    h5py is tabled in the ``demos`` extra, so gate it through
+    :func:`require_module` like every other optional dependency instead of
+    silently shelling out to an unbounded ``pip install``.
+    """
+    return require_module("h5py")
 
 
 def _read_h5ad_column(h5: Any, column: str) -> list[str]:
