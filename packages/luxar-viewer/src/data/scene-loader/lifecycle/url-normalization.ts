@@ -14,8 +14,8 @@
  *
  * `normalizeURL` ALWAYS returns a URL ending in `/`. This is the inverse
  * of `config/url-params.ts::normalizeDataSourceUrl`, which STRIPS the
- * trailing slash from user input per the CLAUDE.md gotcha ("Data Source
- * URLs Must NOT Have Trailing Slash"). The two layers run in sequence:
+ * trailing slash from user input per the CLAUDE.md gotcha ("Data Source URLs
+ * Normalize Trailing Slashes"). The two layers run in sequence:
  *
  *   user `?src=...`  →  normalizeDataSourceUrl (strip `/`)
  *                    →  scene loader stores raw
