@@ -254,6 +254,25 @@ class TestWarnIfSceneLacksLadder:
         assert "'By tracer type' finest level has no streaming" in out
         assert "Could not inspect" in out and "[By redshift]" in out
 
+    def test_finest_level_found_regardless_of_level_count(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # A ladder built with a different LOD["levels"] names its finest child
+        # something other than child_3; the check must still find it (children
+        # are stored coarsest→finest, so the finest is the highest-numbered).
+        import zarr
+
+        scene = tmp_path / "desi.luxar.zarr"
+        root = zarr.open(str(scene), mode="w")
+        for layer in ("By tracer type", "By redshift"):
+            group = root.create_group(layer)
+            group.create_group("child_0").attrs["n_additive_sublods"] = 5
+            group.create_group("child_2").attrs["n_additive_sublods"] = 1
+        _demo.warn_if_scene_lacks_ladder(scene)
+        out = capsys.readouterr().out
+        assert "'By tracer type' finest level has no streaming" in out
+        assert "'By redshift' finest level has no streaming" in out
+
 
 @pytest.mark.slow
 class TestOrbitCentre:

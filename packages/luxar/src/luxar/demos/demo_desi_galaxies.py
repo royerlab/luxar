@@ -471,7 +471,16 @@ def warn_if_scene_lacks_ladder(scene_path: Path) -> None:
 
     for layer_name in ("By tracer type", "By redshift"):
         try:
-            finest = root[layer_name]["child_3"]
+            layer = root[layer_name]
+            # LOD children are stored coarsest→finest, so the finest level is
+            # the highest-numbered child_N. Don't hardcode a level count: a
+            # change to LOD["levels"] renames the finest child and would
+            # otherwise silently degrade this check to "Could not inspect".
+            child_names = sorted(
+                (k for k in layer.group_keys() if k.startswith("child_")),
+                key=lambda k: int(k.split("_", 1)[1]),
+            )
+            finest = layer[child_names[-1]]
             n_sublods = int(finest.attrs.get("n_additive_sublods", 1))
         except Exception as exc:
             aprint(
