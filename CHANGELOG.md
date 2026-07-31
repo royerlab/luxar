@@ -13,11 +13,13 @@ checkout lists every demo but cannot run them all. `luxar demo deps` reports
 which optional demo dependencies are missing (exit 1 if any are) and, with
 `--install`, installs the Luxar extras that provide them; `--extra
 demos|io|gsplats` narrows the report to one extra. `make install-demo-deps`
-installs all three demo extras in one step. The report and the runtime
-`require_module` gate are both driven by
-`luxar.demos._dependencies.INSTALL_SPECS`, so a package cannot be advertised
-without being installable. Newly tabled pins: `pooch`, `scikit-learn`,
-`matplotlib`.
+installs all three demo extras in one step. One tabled dependency, `gdown`, is
+deliberately in no extra (it serves only the Google-Drive download path), so
+neither covers it — the report and `--install` both name it for an individual
+`pip install` instead. The report and the runtime `require_module` gate are
+both driven by `luxar.demos._dependencies.INSTALL_SPECS`, so a package cannot
+be advertised without being installable. Newly tabled pins: `pooch`,
+`scikit-learn`, `matplotlib`.
 
 #### Fixed — the volumetric Absorption slider did nothing on thin geometry
 
