@@ -355,6 +355,12 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         is_internal_namespace = False
         if isinstance(path, str):
             normalized_path = path.lstrip("/")
+            if normalized_path == "overlays":
+                raise ValueError(
+                    "Top-level node path 'overlays' is reserved for screen-space "
+                    "overlay metadata. Write internal overlays below 'overlays/<name>' "
+                    "or choose a different user node name."
+                )
             is_internal_namespace = path in ("/", "") or normalized_path.startswith(
                 "overlays/"
             )
@@ -895,7 +901,10 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         """
         self._check_not_finalized("create_resizable_dataset")
 
-        path = path.lstrip("/")
+        # Validate every path segment (rejects empty/dot-prefixed names + the
+        # reserved 'overlays' root — the F1/F5 chokepoint) + strip the leading
+        # slash. Returns the stripped path, so the rsplit below is unchanged.
+        path = _validate_node_path(path)
 
         # Parse parent group and dataset name
         parts = path.rsplit("/", 1)
