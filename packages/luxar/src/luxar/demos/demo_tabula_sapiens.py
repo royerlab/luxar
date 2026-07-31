@@ -18,7 +18,7 @@ Usage:
     python -m luxar.demos.demo_tabula_sapiens --sample=50000
 
 Dependencies:
-    pip install luxar[demos]   # includes pandas, umap-learn, scipy
+    pip install luxar[demos]   # includes h5py, pandas, umap-learn, scipy
 """
 
 DEMO_META = {
@@ -47,6 +47,7 @@ from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.demos import (
+    MissingDependencyError,
     cache_computed,
     cached_download,
     launch_viewer,
@@ -275,6 +276,9 @@ def load_tabula_sapiens(
     # --- Path 2: Auto-download tissue h5ad files (fully automated) ---
     try:
         return _load_via_h5ad_download(cache_dir, sample_size, processed_cache)
+    except MissingDependencyError as e:
+        # Actionable and self-explanatory — a traceback would only bury it.
+        aprint(f"Direct h5ad download unavailable: {e}")
     except Exception as e:
         aprint(f"Direct h5ad download failed: {e}")
         import traceback
