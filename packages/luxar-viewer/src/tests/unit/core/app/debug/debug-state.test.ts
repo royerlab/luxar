@@ -29,7 +29,8 @@ function makePointCloud(
 ): THREE.Mesh {
   // Point clouds are THREE.Mesh with instanced quad geometry whose
   // per-point data lives in the point texture (fixed 3-texel layout;
-  // only `aSortedIndex` remains a per-instance attribute).
+  // only the `aSortedIndex`/`aSortedIndexB` ordering pair remains
+  // per-instance).
   // `computeDebugState` selects on `userData.nodeType === 'points'`,
   // counts via `instanceCount`, and reports field presence from the
   // texel writers' `geometry.userData.has*` stamps — attribute probing

@@ -22,6 +22,7 @@ import type { ShaderSource } from '../../materials/_shared/shader-source';
 import {
   GLSL_NEAR_FADE_FUNCTIONS,
   GLSL_SANITIZE_FUNCTIONS,
+  GLSL_SORTED_INDEX,
 } from '../../materials/_shared/glsl-lib';
 import { linePickWebGPUFactory, buildLinePickTSLNodesFromUniforms } from './pick.tsl';
 
@@ -40,7 +41,7 @@ export const LINE_PICK_VERTEX_SHADER = /* glsl */ `
     in vec2 aQuadCorner;
 
     // Draw-slot → storage-slot mapping (visual-shader parity).
-    in uint aSortedIndex;
+    ${GLSL_SORTED_INDEX}
 
     // Line data texture: RGBA32F, 6 texels/segment (see
     // rendering/line-geometry.ts for the texel layout).
@@ -73,7 +74,7 @@ export const LINE_PICK_VERTEX_SHADER = /* glsl */ `
       // Width is a multiple of 6, so a segment's texels share one row.
       // Colors (texels 2/3 .rgb) and scalars (texel 5) are not needed
       // for picking; only the .w sharpness of texels 2/3 is read.
-      int lineBase = int(aSortedIndex) * 6;
+      int lineBase = int(luxarSortedIndex()) * 6;
       int lineTexW = textureSize(uLineTex, 0).x;
       ivec2 texel0 = ivec2(lineBase % lineTexW, lineBase / lineTexW);
       vec4 lineT0 = texelFetch(uLineTex, texel0, 0);
@@ -134,7 +135,7 @@ export const LINE_PICK_VERTEX_SHADER = /* glsl */ `
         vWidthFade = 0.0;
         vViewZ = 0.0;
         vNodeId = uNodeId;
-        vElementId = float(aSortedIndex);
+        vElementId = float(luxarSortedIndex());
         return;
       }
 
@@ -220,7 +221,7 @@ export const LINE_PICK_VERTEX_SHADER = /* glsl */ `
         vWidthFade = 0.0;
         vViewZ = 0.0;
         vNodeId = uNodeId;
-        vElementId = float(aSortedIndex);
+        vElementId = float(luxarSortedIndex());
         return;
       }
       float clampedPixelWidth = clamp(rawPixelWidth, minPixelWidth, maxPW);
@@ -238,7 +239,7 @@ export const LINE_PICK_VERTEX_SHADER = /* glsl */ `
       // Storage slot, NOT gl_InstanceID (the draw slot): identical
       // under identity ordering, and stays correct once the sort
       // worker permutes draw order.
-      vElementId = float(aSortedIndex);
+      vElementId = float(luxarSortedIndex());
     }
 `;
 

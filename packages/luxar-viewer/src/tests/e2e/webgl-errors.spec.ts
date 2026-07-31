@@ -204,9 +204,10 @@ test.describe('WebGL Error Detection - Critical', () => {
           const geom = obj.geometry;
           // Per-point data is texture-backed: an RGBA32F element texture
           // holds 12 floats (3 texels) per point, and the only per-instance
-          // attribute is aSortedIndex. Malformed geometry means a missing
-          // element texture, a texel buffer too small for the visible
-          // instance count, or a missing/under-sized aSortedIndex.
+          // data is the double-buffered ordering pair aSortedIndex /
+          // aSortedIndexB. Malformed geometry means a missing element
+          // texture, a texel buffer too small for the visible instance
+          // count, or a missing/under-sized/mismatched ordering buffer.
           const texData = geom.userData?.elementTexture?.image?.data;
           const instanceCount = geom.instanceCount || 0;
 
@@ -244,6 +245,21 @@ test.describe('WebGL Error Detection - Critical', () => {
                 issue: `aSortedIndex itemSize is ${sortedIndex.itemSize}, expected 1`,
               });
             }
+          }
+
+          // The back buffer must exist and match: every shader references
+          // both names (WebGPU throws on a referenced-but-absent attribute),
+          // and three derives `_maxInstanceCount` from the SMALLEST
+          // instanced attribute, so an under-sized back buffer would
+          // silently clamp the draw.
+          const sortedIndexB = geom.attributes.aSortedIndexB;
+          if (!sortedIndexB) {
+            issues.push({ name: obj.name, issue: 'Missing aSortedIndexB attribute' });
+          } else if (sortedIndex && sortedIndexB.count !== sortedIndex.count) {
+            issues.push({
+              name: obj.name,
+              issue: `aSortedIndexB count (${sortedIndexB.count}) != aSortedIndex count (${sortedIndex.count})`,
+            });
           }
         }
       });
