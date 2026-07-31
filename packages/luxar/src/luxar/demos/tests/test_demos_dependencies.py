@@ -219,6 +219,11 @@ class TestSpecsMatchPyproject:
                 "1.9.0",
                 "1.14.0",
                 "1.15.0",
+                # Straddles the 2.0/2.2 boundary. Without it, sentence-
+                # transformers >=2.2.0 and torch >=2.2 read identically to a
+                # relaxed >=2.0, and scipy's load-bearing <2.0 cap reads
+                # identically to <2.2.
+                "2.1.0",
                 "2.2",
                 "2.2.0",
                 "2.3.0",
