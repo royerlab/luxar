@@ -575,6 +575,17 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
    * Returns a load-all range when no spatial index is available.
    */
   private async queryVisibleSplatRanges(viewState: GSplatsViewState): Promise<SplatRange[]> {
+    // No local preimage for this world slice under the node's nd_transform —
+    // see the identical guard in the points/lines loaders and
+    // `ViewState.noPreimage`.
+    if (viewState.noPreimage) {
+      log.query(
+        Modules.GSPLATS_SPATIAL_INDEX_LOADER,
+        'No preimage for this slice under nd_transform'
+      );
+      return [];
+    }
+
     const attrs = this.node.attrs as unknown as GSplatsMetadata;
     const extendDims: string[] = attrs.extend_to_all || [];
 

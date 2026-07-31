@@ -343,6 +343,22 @@ export interface ViewState {
    * `viewStatesEqual` nor the SliceCache key (`buildSliceViewSig`).
    */
   prefetch?: boolean;
+
+  /**
+   * Set by `deriveNodeViewState` when this node's composed `nd_transform` maps
+   * the current WORLD slice to a position that no local value can occupy — a
+   * DISCRETE dimension whose inverse image falls between grid points (e.g.
+   * `scale: 2` at an odd world frame). The node must then render NOTHING.
+   *
+   * **DERIVED PER-NODE, not global state.** It is computed from the node's own
+   * transform in `invertNdTransformForQuery` (which documents the rule), so it
+   * only ever appears on the derived per-node view state, never on the scene
+   * loader's shared one. Each geometry's range query honours it by returning an
+   * empty range list, whose existing "no visible elements" path clears the
+   * geometry. It must never enter `viewStatesEqual` nor the SliceCache key —
+   * both already vary with `slicePosition`, from which this is a pure function.
+   */
+  noPreimage?: boolean;
 }
 
 /**

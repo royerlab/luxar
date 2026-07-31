@@ -242,12 +242,14 @@ Large-scale 5D data with millions of points: multiple spiral arms evolving over 
 
 ---
 
-#### demo_nd_transforms.py - Multi-Instrument Observatory with nD Transforms
-Three instruments (optical telescope, radio telescope, X-ray satellite) observing the same galaxy cluster, aligned using per-dimension affine transforms.
+#### demo_nd_transforms.py - nD Transform Test Bench
+An instrument, not a picture: a calibrated bench that makes `nd_transform` readable tick by tick. Everything sits against a ruler along X where one tick = one frame index. A cyan cursor column (plain untransformed geometry tagged `Frame = k`) marks the WORLD index on the slider; each row is a group carrying ONE `nd_transform`, and its markers are 3D point-font digits that print their own LOCAL index — so whichever digit lights up IS the local frame the inverse-query resolved to, and the gap between digit and cursor, counted in ruler ticks, IS the transform. Faint always-on ghost digits (`extend_to_all`) mark every slot a row could light, so a dark row reads as "no local frame maps to this T" rather than "the row failed to load". A `visible_range`-gated readout prints the EXPECTED local index for every row at the current slice, computed from the same definitions that placed the data — render vs readout disagreement is the failure signal.
+
+Rows: identity, `offset +5`, `offset -3`, `scale ×2`, `scale ×2 offset +2`, a nested `×2`-then-`+1` pair that must land on the same tick as the flat row above it (a real composition-**order** test — the wrong order lights the opposite parity), and a reversing `scale -1 offset +15`. A second section does categorical permutations with colour-coded letters that carry their own local channel identity.
 
 **Run**: `luxar demo run nd_transforms`
 
-**Demonstrates**: `nd_transform` with affine scale + offset on Time dimension, categorical permutation on Channel dimension, multi-group scenes with per-group nD alignment, coherent multi-instrument view from a single time slider.
+**Demonstrates**: `nd_transform` affine on a discrete ordinal dimension (offset, scale, negative scale, scale+offset), categorical permutation, hierarchical composition through nested groups, a spatial 4x4 `transform` and an `nd_transform` on the same group, `extend_to_all` for static furniture and per-section pinning, `visible_range` overlays as a live expected-value readout. Doubles as the visual regression harness for the viewer's no-preimage rule (see `packages/luxar-viewer/src/data/transforms/README.md`).
 
 ---
 

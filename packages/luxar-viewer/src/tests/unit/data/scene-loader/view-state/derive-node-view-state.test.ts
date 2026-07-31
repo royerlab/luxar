@@ -278,3 +278,84 @@ describe('deriveNodeViewState — combined partial-extend + nd_transform', () =>
     expect(result.viewState.tolerance[1]).toBeCloseTo(0.25, 10);
   });
 });
+
+describe('deriveNodeViewState — nd_transform no-preimage propagation', () => {
+  /** Same 4D layout, but `time` is a discrete ordinal on the integer grid. */
+  function discreteDims(): DimensionMetadata[] {
+    return [
+      { name: 'time', unit: '', scale: 1.0, discrete: true, step: 1 },
+      { name: 'channel', unit: '', scale: 1.0 },
+      { name: 'z', unit: 'um', scale: 1.0 },
+      { name: 'y', unit: 'um', scale: 1.0 },
+    ];
+  }
+
+  const scaledNode = (scale: number) =>
+    node('', {}, [node('points', { nd_transform: { time: { scale } } })]);
+
+  it('flags noPreimage when the inverse query falls between discrete categories', () => {
+    // world time 5, scale 2 → local 2.5: no local category maps to world 5.
+    const base = baseViewState({ dimensions: discreteDims(), tolerance: [0, 0.5, 0, 0] });
+    const result = deriveNodeViewState('points', undefined, base, scaledNode(2), noTransformOpts);
+    if (result.skip !== false) throw new Error('expected non-skip');
+    expect(result.viewState.noPreimage).toBe(true);
+    // The position is still inverted — the flag is what suppresses the render.
+    expect(result.viewState.slicePosition[0]).toBeCloseTo(2.5, 10);
+  });
+
+  it('leaves noPreimage unset when the inverse query lands on a category', () => {
+    const base = baseViewState({
+      dimensions: discreteDims(),
+      slicePosition: [4, 1, 0, 0],
+      tolerance: [0, 0.5, 0, 0],
+    });
+    const result = deriveNodeViewState('points', undefined, base, scaledNode(2), noTransformOpts);
+    if (result.skip !== false) throw new Error('expected non-skip');
+    expect(result.viewState.noPreimage).toBeUndefined();
+    expect(result.viewState.slicePosition[0]).toBeCloseTo(2, 10);
+  });
+
+  it('leaves noPreimage unset for a plain offset transform', () => {
+    const root = node('', {}, [node('points', { nd_transform: { time: { offset: 3 } } })]);
+    const base = baseViewState({ dimensions: discreteDims(), tolerance: [0, 0.5, 0, 0] });
+    const result = deriveNodeViewState('points', undefined, base, root, noTransformOpts);
+    if (result.skip !== false) throw new Error('expected non-skip');
+    expect(result.viewState.noPreimage).toBeUndefined();
+  });
+
+  it('exempts an extended dim on the LINES path, which never sets the sentinel', () => {
+    // Lines derive with applyPartialExtendTolerance: false, so an extended dim
+    // carries its ORDINARY tolerance here — the 1e10 sentinel never appears.
+    // The exemption must therefore come from the extend_to_all NAMES, or a lines
+    // node with a partial extend on a scaled discrete dim goes dark while its
+    // points/gsplats siblings render.
+    const root = node('', {}, [
+      node('lines', { extend_to_all: ['time'], nd_transform: { time: { scale: 2 } } }),
+    ]);
+    const base = baseViewState({ dimensions: discreteDims(), tolerance: [0, 0.5, 0, 0] });
+    const result = deriveNodeViewState(
+      'lines',
+      { extend_to_all: ['time'] },
+      base,
+      root,
+      { applyPartialExtendTolerance: false } // the lines contract
+    );
+    if (result.skip !== false) throw new Error('expected non-skip');
+    expect(result.viewState.tolerance[0]).toBeLessThan(1e9); // no sentinel, as expected
+    expect(result.viewState.noPreimage).toBeUndefined(); // ...but still exempt
+  });
+
+  it('still flags a NON-extended scaled dim on the lines path', () => {
+    // Same lines contract, but the extended dim is a different one — the
+    // exemption is per-dimension, so `time` must still be flagged.
+    const root = node('', {}, [
+      node('lines', { extend_to_all: ['channel'], nd_transform: { time: { scale: 2 } } }),
+    ]);
+    const base = baseViewState({ dimensions: discreteDims(), tolerance: [0, 0.5, 0, 0] });
+    const result = deriveNodeViewState('lines', { extend_to_all: ['channel'] }, base, root, {
+      applyPartialExtendTolerance: false,
+    });
+    if (result.skip !== false) throw new Error('expected non-skip');
+    expect(result.viewState.noPreimage).toBe(true);
+  });
+});
