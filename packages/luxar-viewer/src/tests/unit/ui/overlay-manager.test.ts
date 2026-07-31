@@ -991,6 +991,27 @@ describe('OverlayManager HTML sanitization (issue #720)', () => {
     expect(el.querySelector('div')!.hasAttribute('style')).toBe(false);
   });
 
+  it('drops a style whose javascript: is smuggled via a CSS hex escape', async () => {
+    // CSS decodes `\6a ` (hex escape + terminating space) to `j`, so the CSS
+    // parser sees url(javascript:...) even though the attribute text never
+    // contains the `javascript:` substring. Any backslash drops the value.
+    const el = await renderHtml('<div style="background:url(\'\\6a avascript:alert(1)\')">x</div>');
+    expect(el.querySelector('div')!.hasAttribute('style')).toBe(false);
+  });
+
+  it('drops a style whose expression( is smuggled via a CSS hex escape', async () => {
+    // `\65 ` decodes to `e`, reassembling `expression(` under the CSS parser.
+    const el = await renderHtml('<div style="width:\\65 xpression(alert(1))">x</div>');
+    expect(el.querySelector('div')!.hasAttribute('style')).toBe(false);
+  });
+
+  it('drops a style whose dangerous token is split by a CSS comment', async () => {
+    // Legacy engines strip `/**/` inside a declaration, reassembling the
+    // token; the comment-opener check rejects the value outright.
+    const el = await renderHtml('<div style="width:expr/**/ession(alert(1))">x</div>');
+    expect(el.querySelector('div')!.hasAttribute('style')).toBe(false);
+  });
+
   it('drops a style whose url(javascript:...) is obfuscated with an interior tab', async () => {
     // Pins the normalizeUrlForScheme reuse on the style branch: the parser
     // decodes &Tab; to a literal U+0009 inside the value, and normalization
@@ -1068,6 +1089,21 @@ describe('OverlayManager HTML sanitization (issue #720)', () => {
 
     const el = await renderHtml(payload);
     expect(el.querySelector('a')!.hasAttribute('target')).toBe(false);
+  });
+
+  it('keeps colspan/rowspan on table cells and width/height on images', async () => {
+    // Inert presentational attributes stay allowlisted so the table/image
+    // authoring the format doc advertises keeps working.
+    const el = await renderHtml(
+      '<table><tr><td colspan="2" rowspan="3">x</td></tr></table>' +
+        '<img src="https://example.org/i.png" width="100" height="50">'
+    );
+    const td = el.querySelector('td')!;
+    expect(td.getAttribute('colspan')).toBe('2');
+    expect(td.getAttribute('rowspan')).toBe('3');
+    const img = el.querySelector('img')!;
+    expect(img.getAttribute('width')).toBe('100');
+    expect(img.getAttribute('height')).toBe('50');
   });
 
   it('keeps href/class/title/target on a benign anchor', async () => {

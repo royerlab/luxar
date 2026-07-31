@@ -13,12 +13,16 @@ so everything the earlier pass did not explicitly name survived — `id`/`name`
 (DOM clobbering), `data-*`, `ping`, `srcset`, `download`, and the `vbscript:`,
 `data:` and `style: url(javascript:...)` vectors the #720 note had flagged as
 still uncovered. The scrub is now an attribute **allowlist**: only `style`,
-`href`, `src`, `alt`, `class`, `target`, `title` and `rel` survive, and every
+`href`, `src`, `alt`, `class`, `target`, `title`, `rel` and the inert
+presentational `colspan`/`rowspan`/`width`/`height` survive, and every
 other attribute (including `on*` handlers) is dropped. The value-bearing
 survivors then face a per-attribute guard: `href`/`src` block the
 `javascript:`, `vbscript:` and `data:` schemes; `style` is dropped if it carries
 `javascript:`, `vbscript:` or `expression(` (which also catches
-`url(javascript:...)` after whitespace/C0 normalization). Reverse tabnabbing is
+`url(javascript:...)` after whitespace/C0 normalization), or any CSS escape
+(`\`) or comment opener (`/*`) — a substring check cannot see through CSS
+tokenization (`\6a avascript:` decodes to `javascript:`), so escape/comment
+syntax is rejected wholesale rather than parsed. Reverse tabnabbing is
 neutralized on both fronts: `rel` is dropped when it carries a bare `opener`
 token, and `target` is restricted to `_blank`/`_self` so a named target can no
 longer open a top-level window with a live `window.opener` able to

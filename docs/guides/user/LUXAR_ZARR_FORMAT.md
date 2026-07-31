@@ -859,12 +859,14 @@ outside the allowlist is unwrapped — it disappears while its children are kept
 (the one exception is `<template>`, whose payload lives in an inert `.content`
 fragment the sanitizer never walks, so its subtree is dropped rather than kept).
 Only the attributes `style`, `href`, `src`, `alt`, `class`, `target`, `title`,
-and `rel` survive; everything else is dropped, including `on*` event handlers,
-`id`/`name`, `data-*`, `ping`, `srcset`, and `download`. On the kept attributes,
-`href`/`src` values using the `javascript:`, `vbscript:`, or `data:` schemes are
-removed, and a `style` value carrying `javascript:`, `vbscript:`, or
-`expression(` is dropped. Author overlay markup with basic formatting, links,
-lists, tables, and images.
+`rel`, `colspan`, `rowspan`, `width`, and `height` survive; everything else is
+dropped, including `on*` event handlers, `id`/`name`, `data-*`, `ping`,
+`srcset`, and `download`. On the kept attributes, `href`/`src` values using the
+`javascript:`, `vbscript:`, or `data:` schemes are removed, and a `style` value
+carrying `javascript:`, `vbscript:`, `expression(`, a backslash (CSS escapes
+can smuggle those tokens past a text check), or a `/*` comment opener is
+dropped. Author overlay markup with basic formatting, links, lists, tables,
+and images.
 
 ### Common Attributes
 

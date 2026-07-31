@@ -90,9 +90,24 @@ const ALLOWED_TAGS = new Set([
  * `ping`/`srcset`/`download`, `data-*`, etc. for free — only these survive
  * (and `href`/`src`/`style` values still pass a scheme/content guard, while a
  * `rel` carrying the `opener` token is dropped to preserve the `noopener`
- * default `target="_blank"` implies).
+ * default `target="_blank"` implies). `colspan`/`rowspan`/`width`/`height`
+ * are inert presentational values (no URL or script capability) kept so the
+ * advertised table/image authoring keeps working.
  */
-const ALLOWED_ATTRS = new Set(['style', 'href', 'src', 'alt', 'class', 'target', 'title', 'rel']);
+const ALLOWED_ATTRS = new Set([
+  'style',
+  'href',
+  'src',
+  'alt',
+  'class',
+  'target',
+  'title',
+  'rel',
+  'colspan',
+  'rowspan',
+  'width',
+  'height',
+]);
 
 /** ASCII whitespace + C0 controls — see {@link normalizeUrlForScheme}. */
 // eslint-disable-next-line no-control-regex
@@ -604,10 +619,11 @@ export class OverlayManager {
    * `id`/`name`, `ping`/`srcset`/`download`, `data-*`, etc. The allowlisted
    * value-bearing attributes then pass a per-attribute guard (see below):
    * `href`/`src` block `javascript:`/`vbscript:`/`data:` schemes, `style`
-   * blocks `javascript:`/`vbscript:`/`expression(`, `rel` drops an `opener`
-   * token, and `target` is restricted to `_blank`/`_self` — the last two
-   * neutralize reverse tabnabbing. Pass 2 is a tag allowlist (see
-   * ALLOWED_TAGS).
+   * blocks `javascript:`/`vbscript:`/`expression(` plus the CSS escape and
+   * comment syntax (`\`, `/*`) that could smuggle those tokens past a
+   * substring check, `rel` drops an `opener` token, and `target` is
+   * restricted to `_blank`/`_self` — the last two neutralize reverse
+   * tabnabbing. Pass 2 is a tag allowlist (see ALLOWED_TAGS).
    *
    * A disallowed tag is *unwrapped*, not dropped — its children are lifted
    * into its parent — so every element has to be scrubbed whether or not its
@@ -690,8 +706,15 @@ export class OverlayManager {
         } else if (attrName === 'style') {
           // A `url(javascript:…)` collapses to contain `javascript:` after
           // normalization, so this single check also covers the CSS-url vector.
+          // The substring checks alone are escapable, though: CSS decodes
+          // `\6a ` to `j` and comments can split a token (`expr/**/ession`),
+          // so any backslash or comment-opener drops the whole value — a
+          // substring check cannot see through CSS tokenization, and a benign
+          // inline overlay style needs neither.
           const normalized = normalizeUrlForScheme(attr.value);
           if (
+            normalized.includes('\\') ||
+            normalized.includes('/*') ||
             normalized.includes('javascript:') ||
             normalized.includes('vbscript:') ||
             normalized.includes('expression(')
