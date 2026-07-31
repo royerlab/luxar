@@ -206,11 +206,17 @@ def require_module(module: str, *, pip_name: str | None = None) -> Any:
 
 
 class DependencyStatus(NamedTuple):
-    """One row of :func:`survey`: a spec plus whether it is importable here."""
+    """One row of :func:`survey`: a spec, whether it imports, and whether the
+    installed version meets the spec's bound."""
 
     module: str
     spec: DependencySpec
     installed: bool
+    #: Importable AND the installed version satisfies ``spec``'s bound.
+    #: ``False`` for a missing module OR an out-of-date one (the CLI renders the
+    #: latter as OUTDATED). Best-effort: ``True`` whenever the version cannot be
+    #: decided — see :func:`_version_satisfied`.
+    satisfied: bool
 
 
 def is_installed(module: str) -> bool:
@@ -229,6 +235,53 @@ def is_installed(module: str) -> bool:
         return False
 
 
+def _version_satisfied(spec: str) -> bool:
+    """Whether the INSTALLED distribution's version meets ``spec``'s bound.
+
+    :func:`is_installed` only proves a module imports; a demo can still fail if
+    the installed version sits below the pinned floor. Concretely, the ``demos``
+    extra floors ``scipy>=1.15`` for ``demo_quantum_orbitals`` (it needs
+    ``scipy.special.sph_harm_y``, added in 1.15) while the ``gsplats`` extra only
+    floors it at ``1.9`` — on an env that satisfies just the gsplats floor the
+    demo dies with an ``AttributeError`` the point-of-use gate cannot intercept.
+    Checking the version here surfaces that as an OUTDATED row instead.
+
+    Best-effort by design — a survey must never crash or invent an OUTDATED row
+    it cannot substantiate — so this returns ``True`` (benefit of the doubt)
+    whenever the version cannot be decided: ``packaging`` is not importable, the
+    spec carries no version bound, or the distribution exposes no metadata.
+    """
+    try:
+        from importlib.metadata import PackageNotFoundError
+        from importlib.metadata import version as installed_version
+
+        from packaging.requirements import InvalidRequirement, Requirement
+        from packaging.version import Version
+    except ImportError:
+        return True
+    try:
+        req = Requirement(spec)
+    except InvalidRequirement:
+        return True
+    if not req.specifier:
+        return True
+    try:
+        current = installed_version(req.name)
+        if current is None:
+            # METADATA with no `Version:` field — nothing to compare.
+            return True
+        # Parse explicitly: a bad version makes some `packaging` versions raise
+        # (InvalidVersion) and others silently return False from `contains`.
+        # prereleases=True: a legitimately installed pre-release still counts.
+        return req.specifier.contains(Version(current), prereleases=True)
+    except (PackageNotFoundError, ValueError, OSError):
+        # Can't judge the installed version — not present as a distribution, or
+        # absent/non-UTF-8/non-PEP440 `Version:` metadata (InvalidVersion and
+        # UnicodeDecodeError are both ValueError). Give the benefit of the doubt
+        # rather than crash the report or invent an OUTDATED row.
+        return True
+
+
 def survey(extra: str | None = None) -> list[DependencyStatus]:
     """Report install status for every known optional dependency.
 
@@ -241,13 +294,17 @@ def survey(extra: str | None = None) -> list[DependencyStatus]:
 
     Returns:
         One :class:`DependencyStatus` per spec, sorted case-insensitively by
-        module name so the CLI's output order is stable.
+        module name so the CLI's output order is stable. Each row records both
+        whether the module imports and whether its installed version meets the
+        spec's bound (see :attr:`DependencyStatus.satisfied`).
     """
-    rows = [
-        DependencyStatus(module, spec, is_installed(module))
-        for module, spec in INSTALL_SPECS.items()
-        if extra is None or spec.extra == extra
-    ]
+    rows = []
+    for module, spec in INSTALL_SPECS.items():
+        if extra is not None and spec.extra != extra:
+            continue
+        installed = is_installed(module)
+        satisfied = installed and _version_satisfied(spec.spec)
+        rows.append(DependencyStatus(module, spec, installed, satisfied))
     return sorted(rows, key=lambda r: r.module.lower())
 
 
