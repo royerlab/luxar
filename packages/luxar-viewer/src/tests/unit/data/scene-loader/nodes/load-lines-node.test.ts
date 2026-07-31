@@ -242,6 +242,34 @@ describe('loadLinesNode — processLinesData returns null', () => {
   });
 });
 
+describe('loadLinesNode — failure-record clearing', () => {
+  // A recovered lazy level must drop out of the outcome report and the
+  // auto-retry budget, but only when its commit actually landed.
+  it('clears a prior failure record when the commit lands', async () => {
+    const data = { segmentCount: 4 } as LoadedLinesData;
+    const staged = { path: '/scene/l' } as unknown as StagedLinesCommit;
+    createLinesLoaderMock.mockReturnValue(makeLinesLoader(vi.fn().mockResolvedValue(data)));
+    const ctx = makeCtx();
+    ctx.spies.processLinesData.mockResolvedValue(staged);
+    ctx.registry.recordFailure('/scene/l', new Error('earlier 503'), 'Network');
+
+    await loadLinesNode(makeSceneNode(), new THREE.Group(), {} as never, ctx);
+
+    expect(ctx.registry.failedLoaders.has('/scene/l')).toBe(false);
+  });
+
+  it('keeps the failure record when staged is null (load landed nowhere)', async () => {
+    const data = { segmentCount: 4 } as LoadedLinesData;
+    createLinesLoaderMock.mockReturnValue(makeLinesLoader(vi.fn().mockResolvedValue(data)));
+    const ctx = makeCtx(); // processLinesData resolves null by default
+    ctx.registry.recordFailure('/scene/l', new Error('earlier 503'), 'Network');
+
+    await loadLinesNode(makeSceneNode(), new THREE.Group(), {} as never, ctx);
+
+    expect(ctx.registry.failedLoaders.has('/scene/l')).toBe(true);
+  });
+});
+
 describe('loadLinesNode — segmentCount === 0 path', () => {
   it('still runs processLinesData (placeholder needs the empty commit)', async () => {
     const data = { segmentCount: 0 } as LoadedLinesData;

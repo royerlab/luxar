@@ -171,7 +171,7 @@ sha256.
 **Key Functions:**
 - `ensure_dataset(name, ...)`: Resolve a dataset's files to local paths, cache -> in-repo Git LFS -> Zenodo. The manifest sha256 is authoritative at every step: a copy that fails it is quarantined (`.corrupt`) and never returned, so a stale download can never be resumed onto corrupt bytes
 - `load_dataset_gsplats(name, ...)`: Mirror of `demos.load_precomputed_gsplats` (returns `GSplatData`, `None` on recompute) sourced through `ensure_dataset` — the one-line swap for migrating a demo. Only `zenodo`-bucket datasets are eligible
-- `load_manifest()` / `dataset_spec(name)`: Read the packaged manifest
+- `load_manifest()` / `dataset_spec(name)`: Read the packaged manifest. The parse is memoised but each call returns an independent copy, so mutating the result (or a nested spec) cannot poison later readers; `clear_manifest_cache()` drops the parse after the manifest is rewritten on disk
 - Raises `DatasetNotFound` for an unknown key and `LocalComputeDataset` for data we cannot redistribute (the caller builds it locally)
 
 ### `demos.py`
