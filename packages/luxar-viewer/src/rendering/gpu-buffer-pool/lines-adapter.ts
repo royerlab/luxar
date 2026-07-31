@@ -104,6 +104,7 @@ export interface LinesAdapterHost {
   _lastAcquireRebuilt: boolean;
   getBucket(count: number): number;
   evictUnused(fromAcquire?: boolean): number;
+  registerPooledGeometryInvalidation(geometry: THREE.BufferGeometry): void;
 }
 
 export class LinesBufferAdapter {
@@ -122,7 +123,9 @@ export class LinesBufferAdapter {
     segmentCount = clampLineCapacity(segmentCount);
 
     const active = host.activeBuffers.get(nodeId);
-    if (active && active.type === 'lines') {
+    // See the points adapter: `luxarInvalidated` guards a geometry whose
+    // out-of-band `dispose()` already fired (defense-in-depth).
+    if (active && active.type === 'lines' && !active.geometry.userData.luxarInvalidated) {
       if (active.capacity >= segmentCount) {
         active.lastUsedFrame = host.frameCount;
         host.stats.reuses++;
@@ -168,6 +171,9 @@ export class LinesBufferAdapter {
     for (const pooled of this.lineBuffers.values()) {
       for (let i = pooled.length - 1; i >= 0; i--) {
         const candidate = pooled[i];
+        // Skip a free-bucket resident disposed out-of-band — see the
+        // points adapter's twin comment.
+        if (candidate.geometry.userData.luxarInvalidated) continue;
         if (candidate.capacity >= segmentCount && candidate.capacity < bestCapacity) {
           bestList = pooled;
           bestIndex = i;
@@ -197,6 +203,8 @@ export class LinesBufferAdapter {
     // the chosen capacity too (still >= segmentCount, which was clamped).
     const capacity = clampLineCapacity(chooseCapacity(segmentCount));
     const geometry = createLinesGeometry(capacity);
+    // Self-invalidation — see the points adapter's twin comment.
+    host.registerPooledGeometryInvalidation(geometry);
 
     const newBuffer: PooledBuffer = {
       geometry,
@@ -347,11 +355,12 @@ export class LinesBufferAdapter {
   }
 
   dispose(): void {
+    // Drain the buckets BEFORE disposing — see the points adapter.
+    const geometries: THREE.BufferGeometry[] = [];
     for (const buffers of this.lineBuffers.values()) {
-      for (const buffer of buffers) {
-        buffer.geometry.dispose();
-      }
+      for (const buffer of buffers) geometries.push(buffer.geometry);
     }
     this.lineBuffers.clear();
+    for (const geometry of geometries) geometry.dispose();
   }
 }
