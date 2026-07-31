@@ -941,9 +941,11 @@ describe('depth-sort coordinator', () => {
     // larger, the containment rule fires and draws it first. Which order wins
     // is acceptable because combined transmittance is order-INDEPENDENT
     // (transmittances multiply), so occlusion behind the pair is exact at every
-    // fade weight; emission is order-dependent only to second order in the
-    // levels' local color difference (spec §6). What matters here is that the
-    // order is DETERMINISTIC — no frame-to-frame flicker mid-fade.
+    // fade weight; emission's ordering residual is the product of both alphas
+    // and the levels' local radiance difference—always first order in that
+    // difference, and second order in the alphas only in the thin regime (spec
+    // §6). What matters here is deterministic order—no frame-to-frame flicker
+    // mid-fade.
     const coord = await loadCoordinator();
     coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
 
