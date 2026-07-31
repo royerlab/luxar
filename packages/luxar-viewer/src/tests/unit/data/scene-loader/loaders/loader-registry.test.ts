@@ -7,7 +7,10 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
-import { LoaderRegistry } from '../../../../../data/scene-loader/loaders/loader-registry';
+import {
+  LoaderRegistry,
+  MAX_AUTO_RETRY_ATTEMPTS,
+} from '../../../../../data/scene-loader/loaders/loader-registry';
 import type { DataLoader } from '../../../../../data/data-loader-types';
 import type { LinesDataLoader } from '../../../../../types/lines';
 import type { GSplatsDataLoader } from '../../../../../types/gsplats';
@@ -90,8 +93,78 @@ describe('LoaderRegistry — failure tracking', () => {
     expect(info).toBeDefined();
     expect(info!.error.message).toBe('boom');
     expect(info!.retryCount).toBe(0);
+    expect(info!.autoRetryCount).toBe(0);
     expect(typeof info!.timestamp).toBe('number');
     expect(r.hasFailures()).toBe(true);
+  });
+
+  it('persists the classified error kind alongside the failure', () => {
+    // The kind used to be computed for logging and thrown away, so retry policy
+    // could not tell a transient failure from a deterministic one.
+    const r = new LoaderRegistry();
+    r.recordFailure('/net', new Error('fetch failed: http 503'));
+    r.recordFailure('/bad', new Error('invalid chunk header'));
+
+    expect(r.failedLoaders.get('/net')!.kind).toBe('Network');
+    expect(r.failedLoaders.get('/bad')!.kind).toBe('Decode');
+  });
+
+  it('honors an explicitly supplied kind over the heuristic', () => {
+    const r = new LoaderRegistry();
+    r.recordFailure('/p', new Error('fetch failed'), 'Validation');
+
+    expect(r.failedLoaders.get('/p')!.kind).toBe('Validation');
+  });
+
+  describe('automatic-retry eligibility', () => {
+    it('offers transient failures and withholds deterministic ones', () => {
+      const r = new LoaderRegistry();
+      r.recordFailure('/net', new Error('fetch failed'));
+      r.recordFailure('/bad', new Error('invalid chunk'));
+
+      expect(r.autoRetryablePaths()).toEqual(['/net']);
+      expect(r.hasAutoRetryableFailures()).toBe(true);
+    });
+
+    it('does not drain the automatic-retry budget on ordinary recorded failures', () => {
+      // recordFailure fires on every update sweep and manual retry. If it
+      // charged the automatic budget, a few offline slice scrubs would use it
+      // up before `online` fired. Only markAutoRetryAttempt may charge it.
+      const r = new LoaderRegistry();
+      for (let i = 0; i < MAX_AUTO_RETRY_ATTEMPTS + 5; i++) {
+        r.recordFailure('/net', new Error('http 503'));
+      }
+      expect(r.failedLoaders.get('/net')!.retryCount).toBe(MAX_AUTO_RETRY_ATTEMPTS + 4);
+      expect(r.failedLoaders.get('/net')!.autoRetryCount).toBe(0);
+      expect(r.autoRetryablePaths()).toEqual(['/net']);
+      expect(r.hasAutoRetryableFailures()).toBe(true);
+    });
+
+    it('bounds automatic retries via markAutoRetryAttempt, surviving re-records', () => {
+      const r = new LoaderRegistry();
+      r.recordFailure('/net', new Error('http 404'));
+      for (let i = 0; i < MAX_AUTO_RETRY_ATTEMPTS; i++) {
+        expect(r.autoRetryablePaths()).toEqual(['/net']); // still eligible
+        r.markAutoRetryAttempt('/net'); // connectivity retry attempts it
+        r.recordFailure('/net', new Error('http 404')); // ...and it fails again
+      }
+      // Budget exhausted: autoRetryCount reached the cap and re-records preserved it.
+      expect(r.failedLoaders.get('/net')!.autoRetryCount).toBe(MAX_AUTO_RETRY_ATTEMPTS);
+      expect(r.autoRetryablePaths()).toEqual([]);
+      expect(r.hasAutoRetryableFailures()).toBe(false);
+      // Still a failure — a MANUAL retry ignores both filters.
+      expect(r.hasFailures()).toBe(true);
+    });
+
+    it('markAutoRetryAttempt is a no-op for an unknown path', () => {
+      const r = new LoaderRegistry();
+      expect(() => r.markAutoRetryAttempt('/nope')).not.toThrow();
+      expect(r.hasFailures()).toBe(false);
+    });
+
+    it('reports no auto-retryable failures when there are none at all', () => {
+      expect(new LoaderRegistry().hasAutoRetryableFailures()).toBe(false);
+    });
   });
 
   it('increments retryCount on repeated failures for the same path', () => {
