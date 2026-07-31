@@ -230,9 +230,14 @@ def survey(extra: str | None = None) -> list[DependencyStatus]:
     """Report install status for every known optional dependency.
 
     Args:
-        extra: Restrict to specs provided by this Luxar extra (``"demos"``,
-            ``"io"``, ``"gsplats"``). ``None`` surveys the whole table,
-            including the specs that deliberately belong to no extra.
+        extra: Restrict to specs *attributed* to this Luxar extra (``"demos"``,
+            ``"io"``, ``"gsplats"``) — i.e. the single canonical extra recorded
+            on each :class:`DependencySpec`, not every extra that could install
+            the package. A dependency pinned by more than one extra (e.g.
+            ``tifffile``, in both ``io`` and ``demos``) is attributed to just
+            one, so ``--extra io`` under-reports what ``luxar[io]`` provides.
+            ``None`` surveys the whole table, including the specs that
+            deliberately belong to no extra.
 
     Returns:
         One :class:`DependencyStatus` per spec, sorted case-insensitively by

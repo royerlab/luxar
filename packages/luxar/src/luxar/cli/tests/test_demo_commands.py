@@ -575,6 +575,17 @@ class TestDeps:
         assert loud.exit_code == quiet.exit_code
         assert "imageio" in loud.stdout
 
+    def test_deps_blank_extra_is_treated_as_unset(self, runner) -> None:
+        """``--extra ""``/whitespace must survey the whole table, not the empty
+        string (which matches only the no-extra orphan specs)."""
+        blank = runner.invoke(app, ["demo", "deps", "--extra", "   "])
+        full = runner.invoke(app, ["demo", "deps"])
+        assert blank.exit_code == full.exit_code
+        # A whole-table survey includes packages that belong to real extras;
+        # the empty-string filter would have shown only the orphan specs.
+        assert "imageio" in blank.stdout
+        assert "No known dependencies" not in blank.stdout
+
     def test_deps_dry_run_without_install_says_it_is_inert(self, runner) -> None:
         result = runner.invoke(app, ["demo", "deps", "--dry-run"])
         assert "--dry-run only applies with --install" in result.stdout

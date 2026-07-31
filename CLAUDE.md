@@ -36,7 +36,7 @@ make clean-setup  # Remove ALL dev tools to simulate fresh machine
 # Installs the demos+gsplats+io extras, then reports the result via
 # `luxar demo deps`. NOT part of setup-dev: the extras are heavy (torch,
 # cellxgene-census, esm) and most work needs none of them.
-make install-demo-deps  # Install every optional dependency the bundled demos need
+make install-demo-deps  # Install all demo extras (demos + gsplats + io)
 
 # Quality & Testing
 make test-all     # All tests (Python + TypeScript + WASM + CUDA if available)

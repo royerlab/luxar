@@ -6,6 +6,19 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Added — `luxar demo deps` reports (and installs) missing optional demo dependencies
+
+Demos deliberately keep heavyweight packages (torch, cellxgene-census, esm, …)
+out of the core install, so a fresh checkout can list every demo but cannot run
+them all. `luxar demo deps` now reports which optional dependencies are missing
+(exit 1 if any are), `--install` installs the Luxar extras that provide them,
+and `--extra {demos,io,gsplats}` restricts the survey to one extra. The same
+table (`luxar.demos._dependencies.INSTALL_SPECS`) also drives the runtime
+`require_module` gate, so a package can't be advertised without being
+installable. `make install-demo-deps` installs all three demo extras and then
+reports the result via `luxar demo deps`. The new command surfaces three newly
+published pins: `pooch`, `scikit-learn`, and `matplotlib`.
+
 #### Fixed — warnings now display through arbol instead of raw stderr lines
 
 Python's default warning display wrote `path/to/file.py:299: UserWarning: ...`
