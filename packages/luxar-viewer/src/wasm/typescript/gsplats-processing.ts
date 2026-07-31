@@ -563,12 +563,9 @@ export function project_gsplats_nd_to_3d(
         hiddenCholesky,
         0
       );
-      const mahalDist = mahalanobisDistanceInternal(
-        diff.subarray(0, numContinuous),
-        hiddenCholesky,
-        numContinuous,
-        _fusedY
-      );
+      // Pass `diff` whole — mahalanobisDistanceInternal reads only [0, ndim), so a
+      // `.subarray(0, numContinuous)` view would allocate once PER SPLAT here.
+      const mahalDist = mahalanobisDistanceInternal(diff, hiddenCholesky, numContinuous, _fusedY);
       const rawExp = Math.exp(-0.5 * mahalDist * mahalDist);
       attenuation = Math.max(0.0, invOneMinusC * (rawExp - shiftC));
     }
