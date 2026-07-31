@@ -214,6 +214,31 @@ class TestAddPointsAdditiveLod:
                     additive_lod=dict(n_lods=3, method="random"),
                 )
 
+    def test_image_labels_suppress_ladder_and_are_kept(self, tmp_path) -> None:
+        # Regression: the plain additive multi-LOD writer has no image_labels
+        # channel, so an explicit ladder used to SILENTLY DROP the labels. It
+        # must instead refuse the ladder (write a single leaf) and keep the
+        # labels — mirroring the substitutive path's suppress_reason guard.
+        output = tmp_path / "t.luxar.zarr"
+        rng = np.random.RandomState(0)
+        positions = rng.rand(200, 3).astype(np.float32)
+        with LuxarZarrCompiler(output) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_points(
+                "pts",
+                positions,
+                image_labels=[b"x"] * 200,
+                additive_lod=dict(n_lods=3, method="random"),
+            )
+        grp = zarr.open(str(output), mode="r")["pts"]
+        assert grp.attrs["type"] == "points"
+        assert grp.attrs["n_points"] == 200
+        # Ladder suppressed → single leaf, no additive_<i> subgroups.
+        assert "n_additive_sublods" not in grp.attrs
+        assert not [k for k in grp.keys() if k.startswith("additive_")]
+        # Labels survived to the leaf.
+        assert grp.attrs.get("has_image_labels") is True
+
     def test_default_true_writes_4_levels(self, tmp_path) -> None:
         output = tmp_path / "t.luxar.zarr"
         rng = np.random.RandomState(0)

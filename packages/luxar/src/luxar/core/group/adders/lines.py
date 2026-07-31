@@ -283,7 +283,23 @@ def add_lines_impl(
         # Additive-LOD branch — polyline-level multi-LOD write.
         # Fires before the single-shot write so we don't double-
         # validate. Mirrors the points add path.
-        if additive_lod is not None:
+        if (
+            additive_lod is not None
+            and additive_lod is not False
+            and image_labels is not None
+        ):
+            # The multi-LOD writer has no image_labels channel, so laddering
+            # would silently drop them. Refuse the ladder, not the labels: fall
+            # through to the single-leaf write below (which forwards
+            # image_labels). Mirrors the substitutive path's suppress_reason
+            # guard in compose_additive_under_substitutive (which likewise
+            # treats the explicit ``additive_lod=False`` opt-out as "no ladder
+            # requested", so it stays silent — no spurious skip notice).
+            aprint(
+                f"  ℹ️  '{name}': streaming ladder skipped (image_labels is set); "
+                "levels will load all-at-once."
+            )
+        elif additive_lod is not None:
             from ..lod.lines import (
                 make_additive_lod_lines,
                 resolve_additive_axis_lines,
