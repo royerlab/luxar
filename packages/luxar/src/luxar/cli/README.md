@@ -65,10 +65,13 @@ luxar demo deps                   # Which optional demo deps are missing?
 luxar demo deps --install         # Install the extras that provide them
 luxar demo deps --extra io        # Restrict to one extra (demos / io / gsplats)
 ```
-`deps` exits 1 when anything is missing, so it doubles as a CI/setup gate. It
-reports the *constrained* requirement from `luxar.demos.INSTALL_SPECS` — the same
-table the runtime `require_module` gate uses — and surveys with `find_spec`, so
-it never imports `torch` just to tell you `torch` is present.
+`deps` exits 1 when anything is missing or out of date, so it doubles as a
+CI/setup gate. It reports the *constrained* requirement from
+`luxar.demos.INSTALL_SPECS` — the same table the runtime `require_module` gate
+uses — and surveys with `find_spec`, so it never imports `torch` just to tell you
+`torch` is present. A package that imports but whose version is below its pinned
+floor is flagged `OUTDATED` rather than `ok` (the version check is best-effort:
+it needs `packaging`, and gives the benefit of the doubt when it cannot decide).
 
 ### `luxar serve`
 Serve zarr datasets or directories via HTTP.

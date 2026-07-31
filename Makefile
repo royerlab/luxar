@@ -510,7 +510,7 @@ help:  ## Show this help message
 	@echo "  luxar demo             - List the bundled demos"
 	@echo "  luxar demo run <key>   - Run one demo (generates + serves + opens browser)"
 	@echo "  make install-demo-deps - Install the demo extras (demos + gsplats + io)"
-	@echo "  luxar demo deps        - Report which demo dependencies are missing"
+	@echo "  luxar demo deps        - Report missing or outdated demo dependencies"
 	@echo ""
 	@echo "Optional accelerators:"
 	@echo "  make install-rust     - Install Rust/WASM for viewer builds"
