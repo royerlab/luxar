@@ -215,6 +215,9 @@ def robust_download(
         expected_size: Expected file size in bytes (optional, for validation)
         extra_headers: Extra HTTP headers to send on every request (e.g. an
             API key: ``{"api-key": "..."}``). Merged with the Range header.
+            Unless it already contains an ``Accept-Encoding`` (any casing),
+            requests default to ``Accept-Encoding: identity`` so size
+            verification and ``.part`` resume see the raw byte stream.
 
     Returns:
         Path to downloaded file
