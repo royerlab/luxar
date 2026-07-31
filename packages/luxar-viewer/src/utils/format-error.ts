@@ -57,6 +57,64 @@ export function formatErrorForDisplay(error: Error): string {
 }
 
 /**
+ * Whether a value is a genuine `Error` — a same-realm instance, or an object
+ * whose `[[Class]]` brand reports `Error` (which a cross-realm Error does
+ * regardless of its foreign prototype chain).
+ *
+ * Deliberately NARROWER than {@link isErrorLike}: the duck-typed
+ * `name`+`message`+`stack` triple does not qualify. The console interceptor's
+ * stack-precedence pass depends on exactly this distinction — a context bag
+ * that happens to carry the full triple must not outrank a real Error's stack.
+ *
+ * `instanceof Error` comes first because the brand check can miss real Errors:
+ * a Firefox `DOMException` is `instanceof Error` (WebIDL) but tags as
+ * `[object DOMException]`.
+ *
+ * Never throws — `instanceof` walks [[GetPrototypeOf]] and the brand check's
+ * Symbol.toStringTag lookup does a [[Get]], both of which throw for a revoked
+ * Proxy, and this runs inside the patched console methods.
+ */
+export function isGenuineError(value: unknown): boolean {
+  try {
+    return value instanceof Error || Object.prototype.toString.call(value) === '[object Error]';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Whether an unknown value should be rendered as an Error rather than JSON.
+ *
+ * A same-realm `instanceof Error` misses an Error created in another realm
+ * (iframe / jsdom test env / worker error surface — the same class of object
+ * `data/loaders/abort-error.ts` duck-types by name). Such an object stringifies
+ * to `{}` because `name`/`message`/`stack` are non-enumerable, so the console
+ * renderers drop its message unless they detect it structurally.
+ *
+ * Two realm-proof signals, neither of which fires on an ordinary
+ * `{ name, message }` data object:
+ *   - a genuine Error ({@link isGenuineError}: instance or `[[Class]]` brand,
+ *     covering cross-realm `Error` and its subclasses);
+ *   - failing that, the full string `name` + `message` + `stack` triple, which
+ *     a plain data object almost never carries (covers a structured-clone /
+ *     `postMessage` surface that is not an `Error` instance at all).
+ *
+ * Never throws — same rationale as the other helpers here.
+ */
+export function isErrorLike(value: unknown): boolean {
+  try {
+    if (typeof value !== 'object' || value === null) return false;
+    if (isGenuineError(value)) return true;
+    const v = value as { name?: unknown; message?: unknown; stack?: unknown };
+    return (
+      typeof v.name === 'string' && typeof v.message === 'string' && typeof v.stack === 'string'
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
  * The stack from an unknown thrown value, or `undefined` when there isn't one.
  *
  * The duck-typed branch is deliberate: some Firefox `DOMException`s carry a
