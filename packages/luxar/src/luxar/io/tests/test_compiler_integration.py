@@ -371,6 +371,165 @@ class TestCompilerIntegration:
         for leaf in ("bad_pts", "bad_lns", "bad_gs", "bad_grp", "bad_ml", "bad_mll"):
             assert leaf not in store, f"partial node {leaf} left on disk"
 
+    def test_nan_transform_rejected_before_write(self, tmp_path) -> None:
+        """A non-finite transform fails BEFORE any group lands on disk.
+
+        The raw compiler APIs write_group / write_points_multi_lod /
+        write_lines_multi_lod must route transforms through
+        prepare_transform_attrs in their fail-fast gate (issue #678), so a
+        NaN-filled matrix raises before require_group and leaves no partial
+        node — matching write_points / write_lines / write_gsplats.
+        """
+        output_path = tmp_path / "test.luxar.zarr"
+
+        positions = np.zeros((2, 3), dtype=np.float32)
+        vertices = np.zeros((2, 3), dtype=np.float32)
+        widths = np.ones(2, dtype=np.float32)
+        nan_transform = [float("nan")] * 16
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            compiler.create_scene(dimensions=Dimensions.default_3d())
+
+            with pytest.raises(ValueError, match="Transform contains NaN"):
+                compiler.write_group("bad_grp", transform=nan_transform)
+            with pytest.raises(ValueError, match="Transform contains NaN"):
+                compiler.write_points_multi_lod(
+                    "bad_ml",
+                    [{"positions": positions}],
+                    transform=nan_transform,
+                )
+            with pytest.raises(ValueError, match="Transform contains NaN"):
+                compiler.write_lines_multi_lod(
+                    "bad_mll",
+                    [{"vertices": vertices, "widths": widths}],
+                    transform=nan_transform,
+                )
+
+        store = zarr.open_group(output_path, mode="r")
+        for leaf in ("bad_grp", "bad_ml", "bad_mll"):
+            assert leaf not in store, f"partial node {leaf} left on disk"
+
+    def test_write_group_transposes_row_major_transform(self, tmp_path) -> None:
+        """write_group stores a row-major NumPy transform as column-major.
+
+        A row-major translation (NumPy indices [0,3]=5, [1,3]=6, [2,3]=7) must
+        be transposed to THREE.js column-major on disk, landing at flat indices
+        [12, 13, 14] — the transpose the raw write_group used to skip (#678).
+        """
+        output_path = tmp_path / "test.luxar.zarr"
+
+        row_major = np.eye(4, dtype=np.float32)
+        row_major[0, 3] = 5.0
+        row_major[1, 3] = 6.0
+        row_major[2, 3] = 7.0
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            compiler.create_scene(dimensions=Dimensions.default_3d())
+            compiler.write_group("grp", transform=row_major)
+
+        store = zarr.open_group(output_path, mode="r")
+        stored = list(store["grp"].attrs["transform"])
+        assert len(stored) == 16
+        assert stored[12] == 5.0
+        assert stored[13] == 6.0
+        assert stored[14] == 7.0
+        # Row-major translation slots must be zeroed after transpose.
+        assert stored[3] == 0.0
+        assert stored[7] == 0.0
+        assert stored[11] == 0.0
+
+    def test_multi_lod_transposes_row_major_transform(self, tmp_path) -> None:
+        """write_points_multi_lod stores a row-major transform column-major.
+
+        Same transpose contract as write_group, on the multi-LOD parent group.
+        """
+        output_path = tmp_path / "test.luxar.zarr"
+
+        row_major = np.eye(4, dtype=np.float32)
+        row_major[0, 3] = 5.0
+        row_major[1, 3] = 6.0
+        row_major[2, 3] = 7.0
+        positions = np.zeros((2, 3), dtype=np.float32)
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            compiler.create_scene(dimensions=Dimensions.default_3d())
+            compiler.write_points_multi_lod(
+                "ml", [{"positions": positions}], transform=row_major
+            )
+
+        store = zarr.open_group(output_path, mode="r")
+        stored = list(store["ml"].attrs["transform"])
+        assert len(stored) == 16
+        assert stored[12] == 5.0
+        assert stored[13] == 6.0
+        assert stored[14] == 7.0
+        assert stored[3] == 0.0
+        assert stored[7] == 0.0
+        assert stored[11] == 0.0
+
+    def test_write_group_transposes_row_major_list_transform(self, tmp_path) -> None:
+        """write_group transposes a 16-element row-major LIST transform.
+
+        The silent-corruption case of #678: a raw flattened NumPy row-major
+        matrix passed as a plain Python list. Pre-fix this was written to zarr
+        unchanged (no transpose), so the translation stayed at the row-major
+        slots [3, 7, 11] and rendered in the wrong place. The list form is the
+        one that corrupted silently — the NumPy-array form instead failed with
+        a JSON-serialization TypeError, so it never exercised this path.
+        """
+        output_path = tmp_path / "test.luxar.zarr"
+
+        # Row-major translation (5, 6, 7) at flat indices [3, 7, 11].
+        row_major_list = [1, 0, 0, 5, 0, 1, 0, 6, 0, 0, 1, 7, 0, 0, 0, 1]
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            compiler.create_scene(dimensions=Dimensions.default_3d())
+            compiler.write_group("grp", transform=row_major_list)
+
+        store = zarr.open_group(output_path, mode="r")
+        stored = list(store["grp"].attrs["transform"])
+        assert len(stored) == 16
+        assert stored[12] == 5.0
+        assert stored[13] == 6.0
+        assert stored[14] == 7.0
+        # Row-major translation slots must be zeroed after transpose.
+        assert stored[3] == 0.0
+        assert stored[7] == 0.0
+        assert stored[11] == 0.0
+
+    def test_lines_multi_lod_transposes_row_major_transform(self, tmp_path) -> None:
+        """write_lines_multi_lod stores a row-major transform column-major.
+
+        Same transpose contract as write_points_multi_lod, on the lines
+        multi-LOD parent group — the lines path was untested for transpose.
+        """
+        output_path = tmp_path / "test.luxar.zarr"
+
+        row_major = np.eye(4, dtype=np.float32)
+        row_major[0, 3] = 5.0
+        row_major[1, 3] = 6.0
+        row_major[2, 3] = 7.0
+        vertices = np.zeros((2, 3), dtype=np.float32)
+        widths = np.ones(2, dtype=np.float32)
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            compiler.create_scene(dimensions=Dimensions.default_3d())
+            compiler.write_lines_multi_lod(
+                "mll",
+                [{"vertices": vertices, "widths": widths}],
+                transform=row_major,
+            )
+
+        store = zarr.open_group(output_path, mode="r")
+        stored = list(store["mll"].attrs["transform"])
+        assert len(stored) == 16
+        assert stored[12] == 5.0
+        assert stored[13] == 6.0
+        assert stored[14] == 7.0
+        assert stored[3] == 0.0
+        assert stored[7] == 0.0
+        assert stored[11] == 0.0
+
     def test_memory_efficiency(self, tmp_path) -> None:
         """Test that large data doesn't accumulate in memory."""
         output_path = tmp_path / "test.luxar.zarr"

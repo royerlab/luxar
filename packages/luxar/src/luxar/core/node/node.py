@@ -146,8 +146,12 @@ class Node:
 
             # Store attributes
             if self._writer is not None:
-                # Write via writer interface and cache
-                self._writer.write_group(self.path, **attrs)
+                # Write via writer interface and cache. ``transform`` /
+                # ``nd_transform`` were already normalized above (the cache must
+                # hold the column-major form for the ``transform`` getter), so
+                # flag the write to keep write_group from transposing them a
+                # second time (prepare_transform_attrs is not idempotent).
+                self._writer.write_group(self.path, _transform_normalized=True, **attrs)
                 self._attrs_cache.update(attrs)
             else:
                 # Metadata-only mode (no writer available)
@@ -200,7 +204,10 @@ class Node:
                 stacklevel=3,
             )
             return
-        self._writer.write_group(self.path, **{key: value})
+        # ``transform`` / ``nd_transform`` values reaching this method are
+        # already normalized/validated by the setters; flag the write so
+        # write_group does not re-transpose them (no-op for other keys).
+        self._writer.write_group(self.path, _transform_normalized=True, **{key: value})
 
     # --------------------------------------------------------------- hierarchy
     def _ensure_no_duplicate_child(self, name: str) -> None:
