@@ -69,6 +69,21 @@ describe('formatArgs', () => {
     expect(formatArgs([new Error()])).toBe('Error');
   });
 
+  it('renders a cross-realm Error as name: message, not {}', () => {
+    // An Error from another realm fails a same-realm `instanceof Error` but
+    // still stringifies to {}. `isErrorLike` catches it structurally.
+    const crossRealm = { [Symbol.toStringTag]: 'Error', name: 'TypeError', message: 'boom' };
+    expect(crossRealm instanceof Error).toBe(false);
+    expect(formatArgs([crossRealm])).toBe('TypeError: boom');
+  });
+
+  it('still renders an ordinary {name, message} object as JSON', () => {
+    // Guard against isErrorLike false-positiving on legitimate data payloads.
+    const out = formatArgs([{ name: 'Widget', message: 'hello' }]);
+    expect(out).toContain('"name": "Widget"');
+    expect(out).toContain('"message": "hello"');
+  });
+
   it('falls back to String() when JSON.stringify throws (circular ref)', () => {
     const obj: { self?: object } = {};
     obj.self = obj;

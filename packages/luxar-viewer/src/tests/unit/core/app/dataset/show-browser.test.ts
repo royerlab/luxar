@@ -83,6 +83,7 @@ function makePorts() {
     updateBrowserUrl: true,
     inputHandler: inputHandler as unknown as InputHandler & MockInputHandler,
     onSrcChange: vi.fn(),
+    isSwitchInFlight: vi.fn().mockReturnValue(false),
     loadDataset: vi.fn().mockResolvedValue(undefined),
     onClose: vi.fn(),
   };
@@ -169,6 +170,26 @@ describe('showDatasetBrowser', () => {
       // …but onSrcChange + loadDataset still run.
       expect(ports.onSrcChange).toHaveBeenCalled();
       expect(ports.loadDataset).toHaveBeenCalled();
+    });
+
+    it('skips the URL/src side effects (but still dispatches) when a switch is in flight', async () => {
+      const ports = makePorts();
+      ports.updateBrowserUrl = true;
+      ports.isSwitchInFlight.mockReturnValue(true);
+      ports.loadDataset.mockRejectedValue(new Error('a dataset switch is already in progress'));
+      showDatasetBrowser(ports);
+      const opts = mocks.DatasetBrowserCtor.mock.calls[0][0] as CapturedOpts;
+
+      await expect(opts.onDatasetSelect('http://example.com/stale.zarr')).rejects.toThrow(
+        /in progress/
+      );
+
+      // The rejected selection must not leave the host URL or the src
+      // snapshot pointing at a dataset that never loaded.
+      expect(mocks.replaceBrowserDataSourceUrl).not.toHaveBeenCalled();
+      expect(ports.onSrcChange).not.toHaveBeenCalled();
+      // The guarded dispatch still runs so the caller observes the rejection.
+      expect(ports.loadDataset).toHaveBeenCalledWith('http://example.com/stale.zarr');
     });
 
     it('calls onSrcChange BEFORE loadDataset (so a follow-on browser open lands in the right dir)', async () => {

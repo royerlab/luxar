@@ -19,6 +19,72 @@ installs all three demo extras in one step. The report and the runtime
 without being installable. Newly tabled pins: `pooch`, `scikit-learn`,
 `matplotlib`.
 
+#### Fixed — the volumetric Absorption slider did nothing on thin geometry
+
+κ is a physical coefficient with units of 1/length: the volumetric shaders build
+optical depth as `τ = κ · density · through-thickness`, where the thickness is
+the geometry's own world size (`width · √(π/ln 100)` for lines, `radius · …` for
+points, the ray integral through Σ for gsplats). The layers panel offered a fixed
+**0–10** track, so on the 3D-Hilbert-curve demo's 1.5e-3-wide lines the WHOLE
+slider spanned τ ≤ 0.012 — a sub-1/255 change, i.e. a knob that visibly did
+nothing. (Switching to `max` mode appeared to "make absorption work"; that was
+the mode change itself — κ is not read in `max` at all.)
+
+The track is now **logarithmic with bounds re-derived per layer** from the
+thickness the writer already records (`max_width` / `max_radius`; the thinnest
+descendant sets the top, since one κ drives the whole subtree, and the thickest
+anchors the floor so a mixed-thickness group can still reach near-transparency
+for its fattest geometry), so its top lands near
+τ = 5 — opaque — whatever the scene's units. That 1.5e-3-wide line now reaches
+κ ≈ 4.0e3; sweeping the track moves mean luminance 53 → 21 where it used to move
+one 8-bit level. Gsplats carry no comparable thickness stat and their
+`τ = κ·opacity·rayMass` is already O(1)-calibrated for fitted volumes, so they
+keep the historical 0.001–10 span — also the floor of every derived bound, so an
+authored κ ≤ 10 stays reachable. Position 0 is a dedicated stop for exactly
+κ = 0, the additive limit, and the floor lowers onto a smaller authored κ so the
+value the readout shows is always the value the thumb represents.
+
+#### Fixed — nD scenes were framed around a non-displayed axis on load
+
+Auto-framing, scene scale, clipping planes and the near-cull margin all project
+the nD `position_bounds` through `sceneDimsManager`'s displayed dims, which fall
+back to `[0, 1, 2]` when it is uninitialised — and the dimension-navigation UI
+only initialised it *after* the scene load resolved. So any scene whose displayed
+dims are not the first three (a leading non-displayed time / channel / order
+axis — the common nD shape) was framed around the wrong axes: that axis' extent
+landed on world X, putting the look-at target off to one side of the geometry and
+inflating the fit distance by its range. The Hilbert demo opened at target
+`(2.50, 0, 0)` with diagonal 5.19 instead of `(0, 0, 0)` and 1.73 — off-centre at
+3× over-zoom, which pressing `F` then "fixed" (that path measures loaded
+geometry instead of metadata). The dims are now resolved from the freshly loaded
+scene before anything reads bounds, and stale dims are dropped when a scene
+carries no dimension metadata so a 3D scene loaded after an nD one cannot
+inherit its axes.
+
+#### Fixed — overlay HTML sanitizer: attribute allowlist + reverse-tabnabbing (#767)
+
+`OverlayManager.sanitizeHtml` allowlisted tags but only denylisted attributes,
+so everything the earlier pass did not explicitly name survived — `id`/`name`
+(DOM clobbering), `data-*`, `ping`, `srcset`, `download`, and the `vbscript:`,
+`data:` and `style: url(javascript:...)` vectors the #720 note had flagged as
+still uncovered. The scrub is now an attribute **allowlist**: only `style`,
+`href`, `src`, `alt`, `class`, `target`, `title`, `rel` and the inert
+presentational `colspan`/`rowspan`/`width`/`height` survive, and every
+other attribute (including `on*` handlers) is dropped. The value-bearing
+survivors then face a per-attribute guard: `href`/`src` block the
+`javascript:`, `vbscript:` and `data:` schemes; `style` is dropped if it carries
+`javascript:`, `vbscript:` or `expression(` (which also catches
+`url(javascript:...)` after whitespace/C0 normalization), or any CSS escape
+(`\`) or comment opener (`/*`) — a substring check cannot see through CSS
+tokenization (`\6a avascript:` decodes to `javascript:`), so escape/comment
+syntax is rejected wholesale rather than parsed. Reverse tabnabbing is
+neutralized on both fronts: `rel` is dropped when it carries a bare `opener`
+token, and `target` is restricted to `_blank`/`_self` so a named target can no
+longer open a top-level window with a live `window.opener` able to
+cross-origin-navigate the viewer tab. Over-blocking is the deliberate
+preference: this sanitizer is the only XSS control on the `?src=<url>` path,
+where a hand-crafted zarr never meets the Python compiler.
+
 #### Fixed — warnings now display through arbol instead of raw stderr lines
 
 Python's default warning display wrote `path/to/file.py:299: UserWarning: ...`
@@ -32,6 +98,43 @@ entry points (`LuxarZarrCompiler` write methods, `fit_gaussian_splats`,
 (filters, `-W error`, `catch_warnings`, `pytest.warns`) are unchanged, and the
 override steps aside whenever a recorder or custom `showwarning` hook owns
 warning display. New module: `luxar.utils.arbol_warnings`.
+
+#### Fixed — depth-sort orderings swap atomically (no more mid-rotation flicker)
+
+Rotating a large `normal`/`volumetric` node drew a **corrupt permutation**:
+some elements twice, an equal number not at all. The chunked ordering apply
+(perf lever L8) streamed slices into the LIVE `aSortedIndex` attribute and
+accepted the intermediate `new[0,cursor) ∪ old[cursor,n)` as bounded transient
+shimmer. The bound was real; the premise that it stays transient was not —
+under a continuous orbit a new sort arrives about as fast as a stream drains,
+so the mix is the steady state. Measured with a browser probe that validates
+the drawn index buffer every sampled frame: **27–33% of frames** on the 1.9M
+`visible_human_head` (27,613 double-drawn) and **70–80%** on the 8M
+`global_rivers_earth` terrain (up to 1,022,162 double-drawn, 12.8% of the
+node). It surfaced now because the bioimaging demos moved to `volumetric`,
+which is order-dependent where `additive` was not.
+
+Orderings now stream into the **inactive** buffer of an `aSortedIndex` /
+`aSortedIndexB` pair and a runtime `uSortedIndexSlot` uniform flips once that
+buffer holds the whole permutation — the A/B design
+`GSPLAT_DEPTH_SORTING_SPEC.md` §2.1 tier 3 specced and deferred. Both buffers
+are allocated at attach, so every node pays +4 B/element whether it sorts or
+not. Materialising the second one lazily (the obvious saving, and how this
+first landed) is unsafe on the **native WebGPU** backend: three keys a
+pipeline's vertex-buffer layout by BufferAttribute identity but rebuilds the
+pipeline only on a name-level cache-key change, so growing the attribute set
+after first render shifted every later attribute down a vertex-buffer slot —
+the quad-corner attribute read the ordering buffer's `u32`s as `vec2<f32>` and
+the scene rendered black, with no validation error and no console warning.
+WebGL binds by program location and never saw it. The per-frame upload bound L8
+bought is unchanged. Sorting and applying now run concurrently (the dispatch
+apply-gate is gone).
+
+Trade, measured on the 10M orbit bench: sort-adjacent frame p99 ~77 → ~92 ms
+(median and p95 unchanged, still far under the 119–563 ms chunking prevents),
+and waiting for a whole ordering instead of showing a partly-applied one costs
+some freshness (8M fast-orbit sort-axis lag 36.5° → 44.3° mean). Both are the
+deliberate price of never drawing a corrupt permutation.
 
 #### Added — spatial partitioning (BSP tiling) now works on 2D data
 

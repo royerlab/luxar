@@ -78,6 +78,11 @@ export class GSplatPickingMaterial
         uShiftC: { value: shiftC },
         uInvOneMinusC: { value: invOneMinusC },
         uIsOrtho: { value: 0 },
+        // Active ordering buffer: 0 = aSortedIndex, 1 = aSortedIndexB.
+        // Flipped by the depth-sort coordinator once the inactive buffer
+        // holds a whole permutation (runtime uniform: never a define — a
+        // flip must not recompile the program).
+        uSortedIndexSlot: { value: 0 },
         uNearCull: { value: 0.1 },
         uMaxExtentFactor: { value: 0.33 },
         uCov2DDilation: { value: GSPLAT_COV2D_DILATION_DEFAULT },
@@ -135,6 +140,10 @@ export class GSplatPickingMaterial
     cloned.uniforms.uMaxExtentFactor.value = this.uniforms.uMaxExtentFactor.value;
     cloned.uniforms.uCov2DDilation.value = this.uniforms.uCov2DDilation.value;
     cloned.uniforms.uSurfaceDepth.value = this.uniforms.uSurfaceDepth.value;
+    // The active ordering slot must ride along: a clone taken while the
+    // geometry draws from slot 1 would otherwise read the stale buffer
+    // until the coordinator's next per-frame re-assert.
+    cloned.uniforms.uSortedIndexSlot.value = this.uniforms.uSortedIndexSlot.value;
     return cloned as this;
   }
 

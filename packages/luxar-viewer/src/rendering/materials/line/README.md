@@ -163,7 +163,8 @@ Lines use `THREE.Mesh` with `InstancedBufferGeometry` — **not**
 **line texture** (`uLineTex`, 6 texels/segment — layout authority in
 `../../element-texture-layout.ts`; per-texel map in
 `../../line-geometry.ts`), fetched in the vertex stage via `texelFetch`
-and indexed by the sole per-instance attribute `aSortedIndex` (Uint32,
+and indexed by the double-buffered ordering pair `aSortedIndex` /
+`aSortedIndexB` (Uint32,
 the draw-slot → storage-slot mapping the depth-sort worker permutes).
 The texel fetch prologue reconstructs the historical local names
 (`aStartPos`, `aEndWidth`, …), so the expansion math below is unchanged
