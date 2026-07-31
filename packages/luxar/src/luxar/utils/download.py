@@ -918,6 +918,7 @@ def verify_file_checksum(
     file_path: Path,
     expected_md5: Optional[str] = None,
     expected_sha256: Optional[str] = None,
+    verbose: bool = True,
 ) -> bool:
     """Verify file integrity using checksums.
 
@@ -925,6 +926,15 @@ def verify_file_checksum(
         file_path: Path to file to verify
         expected_md5: Expected MD5 hash (optional)
         expected_sha256: Expected SHA256 hash (optional)
+        verbose: Emit the "Verifying…/Computing…/verified" progress lines. Set
+            False for a quiet check — ``ensure_dataset(verbose=False)`` re-hashes
+            every warm cache hit, and the header/line-per-file noise is pure spam
+            for a caller that asked for silence. False silences the MISMATCH
+            report too, not just the progress lines, so a caller that asks for
+            silence owns surfacing the False return. Both in-tree callers
+            quarantine the rejected file, which leaves it discoverable as a
+            ``.corrupt`` sibling (``warn_if_quarantined`` / ``luxar demo cache
+            list``) even when nothing was printed here.
 
     Returns:
         True if file matches expected checksum(s), False otherwise
@@ -939,9 +949,12 @@ def verify_file_checksum(
     if not file_path.exists():
         return False
 
-    with asection(f"Verifying {file_path.name}"):
+    with (
+        asection(f"Verifying {file_path.name}") if verbose else contextlib.nullcontext()
+    ):
         if expected_md5:
-            aprint("Computing MD5...")
+            if verbose:
+                aprint("Computing MD5...")
             # Integrity check of a downloaded artifact, not a security control:
             # usedforsecurity=False documents intent and clears bandit B324.
             md5_hash = hashlib.md5(usedforsecurity=False)
@@ -951,15 +964,18 @@ def verify_file_checksum(
             actual_md5 = md5_hash.hexdigest()
 
             if actual_md5 == expected_md5:
-                aprint(f"✓ MD5 verified: {actual_md5}")
+                if verbose:
+                    aprint(f"✓ MD5 verified: {actual_md5}")
             else:
-                aprint("❌ MD5 mismatch!")
-                aprint(f"   Expected: {expected_md5}")
-                aprint(f"   Actual:   {actual_md5}")
+                if verbose:
+                    aprint("❌ MD5 mismatch!")
+                    aprint(f"   Expected: {expected_md5}")
+                    aprint(f"   Actual:   {actual_md5}")
                 return False
 
         if expected_sha256:
-            aprint("Computing SHA256...")
+            if verbose:
+                aprint("Computing SHA256...")
             sha256_hash = hashlib.sha256()
             with open(file_path, "rb") as f:
                 for chunk in iter(lambda: f.read(8192 * 128), b""):
@@ -967,11 +983,13 @@ def verify_file_checksum(
             actual_sha256 = sha256_hash.hexdigest()
 
             if actual_sha256 == expected_sha256:
-                aprint(f"✓ SHA256 verified: {actual_sha256}")
+                if verbose:
+                    aprint(f"✓ SHA256 verified: {actual_sha256}")
             else:
-                aprint("❌ SHA256 mismatch!")
-                aprint(f"   Expected: {expected_sha256}")
-                aprint(f"   Actual:   {actual_sha256}")
+                if verbose:
+                    aprint("❌ SHA256 mismatch!")
+                    aprint(f"   Expected: {expected_sha256}")
+                    aprint(f"   Actual:   {actual_sha256}")
                 return False
 
     return True
