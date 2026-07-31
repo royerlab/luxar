@@ -6,6 +6,48 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Fixed — the volumetric Absorption slider did nothing on thin geometry
+
+κ is a physical coefficient with units of 1/length: the volumetric shaders build
+optical depth as `τ = κ · density · through-thickness`, where the thickness is
+the geometry's own world size (`width · √(π/ln 100)` for lines, `radius · …` for
+points, the ray integral through Σ for gsplats). The layers panel offered a fixed
+**0–10** track, so on the 3D-Hilbert-curve demo's 1.5e-3-wide lines the WHOLE
+slider spanned τ ≤ 0.012 — a sub-1/255 change, i.e. a knob that visibly did
+nothing. (Switching to `max` mode appeared to "make absorption work"; that was
+the mode change itself — κ is not read in `max` at all.)
+
+The track is now **logarithmic with bounds re-derived per layer** from the
+thickness the writer already records (`max_width` / `max_radius`; the thinnest
+descendant sets the top, since one κ drives the whole subtree, and the thickest
+anchors the floor so a mixed-thickness group can still reach near-transparency
+for its fattest geometry), so its top lands near
+τ = 5 — opaque — whatever the scene's units. That 1.5e-3-wide line now reaches
+κ ≈ 4.0e3; sweeping the track moves mean luminance 53 → 21 where it used to move
+one 8-bit level. Gsplats carry no comparable thickness stat and their
+`τ = κ·opacity·rayMass` is already O(1)-calibrated for fitted volumes, so they
+keep the historical 0.001–10 span — also the floor of every derived bound, so an
+authored κ ≤ 10 stays reachable. Position 0 is a dedicated stop for exactly
+κ = 0, the additive limit, and the floor lowers onto a smaller authored κ so the
+value the readout shows is always the value the thumb represents.
+
+#### Fixed — nD scenes were framed around a non-displayed axis on load
+
+Auto-framing, scene scale, clipping planes and the near-cull margin all project
+the nD `position_bounds` through `sceneDimsManager`'s displayed dims, which fall
+back to `[0, 1, 2]` when it is uninitialised — and the dimension-navigation UI
+only initialised it *after* the scene load resolved. So any scene whose displayed
+dims are not the first three (a leading non-displayed time / channel / order
+axis — the common nD shape) was framed around the wrong axes: that axis' extent
+landed on world X, putting the look-at target off to one side of the geometry and
+inflating the fit distance by its range. The Hilbert demo opened at target
+`(2.50, 0, 0)` with diagonal 5.19 instead of `(0, 0, 0)` and 1.73 — off-centre at
+3× over-zoom, which pressing `F` then "fixed" (that path measures loaded
+geometry instead of metadata). The dims are now resolved from the freshly loaded
+scene before anything reads bounds, and stale dims are dropped when a scene
+carries no dimension metadata so a 3D scene loaded after an nD one cannot
+inherit its axes.
+
 #### Fixed — overlay HTML sanitizer: attribute allowlist + reverse-tabnabbing (#767)
 
 `OverlayManager.sanitizeHtml` allowlisted tags but only denylisted attributes,
