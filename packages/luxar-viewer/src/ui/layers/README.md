@@ -117,13 +117,31 @@ what that value is (`layer-state.ts::initialDisplayRange`):
 **slider bounds** for direct-colour layers, so stretching authored colours stays
 a one-drag operation.
 
-Toggling the colormap select re-defaults the window to the new mode
-(`setColormapWindow`): a window carried over from the other mode is meaningless.
-
 Bounds are the union of the starting window, the recovered authored
 `intensity`/`offset` window, and (direct colour only) `color_data_range` —
 `[min(dataMin, displayMin), max(dataMax, displayMax)]` — so the `<input>` never
 silently clamps the thumb on first render.
+
+#### Toggling the colormap
+
+`setColormapWindow` re-defaults the window AND the bounds to the new mode — a
+window carried over from the other mode is meaningless, and merely widening the
+bounds would leave the useful window as an unusable sliver (an amplitude window
+of `[1e-4, 0.02]` inside `[0, 1]` bounds is 2% of the track). Both land exactly
+where a natively authored layer of that mode inits, which is why `LayerInfo`
+keeps `colorDataRange` alongside `scalarDataRange`.
+
+Two things the select handler must do that are easy to miss:
+
+- **Re-render.** It runs with `controlsInteracting = true`, which suppresses the
+  state-change re-render, and `RangeSlider` emits values parsed from its own
+  `<input>` elements. Without an explicit `render()` the thumbs keep the old
+  window and the first drag writes it back, reverting the re-default.
+- **Honour the fail-closed guard.** `applyColormap` returns whether any leaf
+  actually took the LUT. The C1 guard suppresses it on leaves with no scalar
+  data bound (a group layer over scalar-less points still offers the dropdown);
+  such a layer keeps rendering direct colour, so the handler puts the identity
+  window back rather than applying a scalar range as a colour gain.
 
 ### Blending mode inside a layer's subtree
 

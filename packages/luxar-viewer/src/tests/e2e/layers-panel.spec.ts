@@ -304,7 +304,8 @@ test.describe('Layers Panel', () => {
       const debug = (window as any).__luxarDebug;
       const out: string[] = [];
       debug.scene.traverse((obj: any) => {
-        if (obj.userData?.nodeType === 'gsplats' && obj.material && obj.name?.startsWith(path)) {
+        const inLayer = obj.name === path || obj.name?.startsWith(`${path}/`);
+        if (obj.userData?.nodeType === 'gsplats' && obj.material && inLayer) {
           out.push(obj.material.userData?.blendingMode);
         }
       });

@@ -121,12 +121,13 @@ export class LayerApplyEngine {
    * multiplicative attrs still compose and `offset` still sums, so a part's
    * authored opacity/gamma/κ is preserved.
    */
-  private composeEffective(leafPath: string, layerPath?: string): EffectiveAttrs | null {
+  private composeEffective(leafPath: string, layerPath: string): EffectiveAttrs | null {
     const sceneGraph = this.deps.getSceneGraph();
     if (!sceneGraph) return null;
     const ancestors = collectAncestorNodes(sceneGraph, leafPath);
-    const layerDepth =
-      layerPath === undefined ? -1 : ancestors.findIndex((n) => n.path === layerPath);
+    // Required, not optional: an omitted `layerPath` would silently disable the
+    // subtree rule below and re-open the inert-Blend-control bug.
+    const layerDepth = ancestors.findIndex((n) => n.path === layerPath);
     const chain: ComposableAttrs[] = ancestors.map((node, i) => {
       const layerInfo = this.deps.state.getLayer(node.path);
       if (layerInfo) return this.liveLayerAttrs(layerInfo);
@@ -257,11 +258,20 @@ export class LayerApplyEngine {
   /**
    * Colormap applies per-leaf (not composed). For a group-layer we push
    * the selected colormap to every data descendant that accepts one.
+   *
+   * Returns whether the layer now actually renders through a colormap — i.e.
+   * at least one leaf accepted the LUT. Clearing a colormap always "takes", so
+   * that returns `false` (no colormap in effect). The caller needs this because
+   * the C1 fail-closed guard below can suppress the colormap on every leaf
+   * (a group layer over scalar-less points still offers the dropdown): the
+   * layer then keeps rendering DIRECT COLOUR, so its display window must stay
+   * the direct-colour identity rather than move to a scalar range.
    */
-  applyColormap(layer: LayerInfo): void {
+  applyColormap(layer: LayerInfo): boolean {
     const leaves = this.getAffectedDataLeaves(layer.path);
-    if (leaves.length === 0) return;
+    if (leaves.length === 0) return false;
 
+    let colormapInEffect = false;
     const tex = layer.colormap ? getColormapTexture(layer.colormap) : null;
     for (const leaf of leaves) {
       const obj = this.getMesh(leaf.path);
@@ -283,6 +293,7 @@ export class LayerApplyEngine {
           continue;
         }
         mat.updateColormapTexture(tex);
+        colormapInEffect = true;
         // The scalar window (value→LUT mapping) is driven by the display
         // range, not a static attr — recover it from the composed
         // gain/offset so it matches what `applyComposed` will push. Falls
@@ -313,5 +324,6 @@ export class LayerApplyEngine {
     // particular, restoring the color GOG when a colormap is turned off.
     this.applyComposed(layer);
     this.deps.requestRender();
+    return colormapInEffect;
   }
 }

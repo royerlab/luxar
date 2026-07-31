@@ -96,10 +96,7 @@ def test_grafted_partition_keeps_blending_mode_on_the_wrapper_only() -> None:
         assert wrapper.attrs["blending_mode"] == "volumetric"
         assert wrapper.attrs["layer"] is True
 
-        parts = [k for k in wrapper.array_keys()] + [
-            k for k in wrapper.group_keys() if str(k).startswith("part_")
-        ]
-        part_names = [k for k in parts if str(k).startswith("part_")]
+        part_names = [k for k in wrapper.group_keys() if str(k).startswith("part_")]
         assert len(part_names) >= 2, "expected a real BSP split"
         for name in part_names:
             part_attrs = dict(wrapper[name].attrs)

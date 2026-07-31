@@ -257,6 +257,57 @@ describe('LayerStateManager', () => {
     expect(mgr.getLayer(path)!.displayMax).toBeCloseTo(1, 5);
   });
 
+  it('a colormap toggle moves the slider BOUNDS to the mode, not just widens them', () => {
+    // Merely widening leaves the useful window as an unusable sliver: an
+    // amplitude window of [1e-4, 0.02] inside [0, 1] bounds is 2% of the track.
+    // Bounds must land where a natively-authored layer of that mode inits.
+    mgr.initFromSceneGraph(
+      makeSceneGraph([
+        {
+          has_scalars: true,
+          scalar_data_range: [0.0001, 0.02] as [number, number],
+          color_data_range: [0.2, 0.6] as [number, number],
+        },
+      ])
+    );
+    const path = mgr.getLayers()[0].path;
+    mgr.setColormapWindow(path, true);
+    const on = mgr.getLayer(path)!;
+    expect(on.dataMin).toBeCloseTo(0.0001, 6);
+    expect(on.dataMax).toBeCloseTo(0.02, 6);
+    expect((on.displayMax - on.displayMin) / (on.dataMax - on.dataMin)).toBeGreaterThan(0.5);
+  });
+
+  it('HDR colour bounds survive a colormap ON→OFF round trip', () => {
+    mgr.initFromSceneGraph(
+      makeSceneGraph([
+        {
+          has_scalars: true,
+          scalar_data_range: [0, 0.02] as [number, number],
+          color_data_range: [0, 3.5] as [number, number],
+        },
+      ])
+    );
+    const path = mgr.getLayers()[0].path;
+    expect(mgr.getLayer(path)!.dataMax).toBeCloseTo(3.5, 6);
+    mgr.setColormapWindow(path, true);
+    mgr.setColormapWindow(path, false);
+    // Back to the direct-colour bounds — an HDR colour is still reachable.
+    expect(mgr.getLayer(path)!.dataMax).toBeCloseTo(3.5, 6);
+  });
+
+  it("recognises colormap 'custom' and a colormap on a DESCENDANT, but not an empty string", () => {
+    mgr.initFromSceneGraph(
+      makeSceneGraph([{ colormap: 'custom', amplitude_data_range: [0, 0.03] as [number, number] }])
+    );
+    expect(mgr.getLayers()[0].displayMax).toBeCloseTo(0.03, 6);
+
+    mgr.initFromSceneGraph(
+      makeSceneGraph([{ colormap: '', amplitude_data_range: [0, 0.03] as [number, number] }])
+    );
+    expect(mgr.getLayers()[0].displayMax).toBe(1);
+  });
+
   it('defaults data range to [0, 1] when absent', () => {
     mgr.initFromSceneGraph(makeSceneGraph([{}]));
     const layer = mgr.getLayers()[0];

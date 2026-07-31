@@ -6,6 +6,35 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Fixed — authored colours are no longer contrast-stretched at load
+
+The layers panel pushed an automatic display window into every layer material on
+load, derived from `scalar_data_range || color_data_range || amplitude_data_range`.
+For a **direct-colour** layer that windowed the authored RGB by its own spread —
+a contrast stretch nobody asked for. A uniform grey `(0.72, 0.74, 0.78)` has
+`color_data_range` `[0.72, 0.78]`, which maps to gain 16.7 / offset −12 and
+renders as **saturated blue**. A sweep of a generated demo corpus found the
+stretch on 104 direct-colour layers (asteroid planets 8.3×,
+`collision/detector_geometry` 10×) and on no colormapped layer.
+
+The window maps the *rendered value*, so it now follows what that value is: a
+colormapped layer still windows on its scalar range (a linear `[0, 1]` window on
+right-skewed gsplat amplitudes renders near-black), while a direct-colour layer
+starts at the identity. `color_data_range` still sets the slider bounds, so
+stretching authored colours remains one drag away, and toggling the colormap
+re-defaults both window and bounds to the new mode.
+
+#### Fixed — the Blend control now reaches every part of a partitioned layer
+
+`add_gsplats_from_file` re-stamped `blending_mode` onto every child when grafting
+a nested (`kind=partition` / `kind=lod`) `.gsplats.zarr`. The attr is
+nearest-setter-wins, so each part shadowed the layer wrapper and the layers
+panel's single Blend control did nothing — `tiles`, `overview` and `adaptive`
+layers ignored it while flat/stream/levels layers responded. Compositing attrs
+now ride on the wrapper only, matching every other writer, and within a layer's
+subtree the panel treats the layer's mode as authoritative so scenes already on
+disk are fixed too.
+
 #### Fixed — warnings now display through arbol instead of raw stderr lines
 
 Python's default warning display wrote `path/to/file.py:299: UserWarning: ...`

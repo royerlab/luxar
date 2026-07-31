@@ -174,6 +174,12 @@ export interface LayerInfo {
   /** Scalar data range for colormap normalization */
   scalarDataRange?: [number, number];
   /**
+   * Authored RGB spread (`color_data_range`). Never the starting window — see
+   * {@link LayerInfo.dataMin} — but kept so a colormap toggle can restore the
+   * direct-colour slider bounds, symmetric with {@link LayerInfo.scalarDataRange}.
+   */
+  colorDataRange?: [number, number];
+  /**
    * For ``kind === 'lod'`` layers: number of child levels. Drives the
    * "Active level" dropdown's option count and the "N LODs" badge.
    * Absent for non-LOD layers.
@@ -362,8 +368,11 @@ export class LayerStateManager {
         // to the slider-implied one and causing a sudden brightness jump.
         // A direct-colour layer no longer STARTS at its colour range, but the
         // slider must still reach it so "stretch these colours" stays a
-        // one-drag operation.
-        const colorRange = usesColormap(node) ? undefined : deriveColorRangeFromDescendants(node);
+        // one-drag operation. Kept on the layer either way (even when a
+        // colormap currently wins) so `setColormapWindow` can restore these
+        // bounds when the colormap is switched off.
+        const colorDataRange = deriveColorRangeFromDescendants(node);
+        const colorRange = usesColormap(node) ? undefined : colorDataRange;
         const dataMin = Math.min(dataRange[0], displayMin, colorRange?.[0] ?? Infinity);
         const dataMax = Math.max(dataRange[1], displayMax, colorRange?.[1] ?? -Infinity);
 
@@ -449,6 +458,7 @@ export class LayerStateManager {
           colormap,
           supportsColormap,
           scalarDataRange: colormapScalarRange,
+          colorDataRange,
           lodGroupChildCount,
           partCount,
           nestedLodGroupPaths,
@@ -602,8 +612,12 @@ export class LayerStateManager {
    * * colormap OFF → the value is authored RGB, whose range IS [0, 1].
    *
    * A window carried over from the other mode is meaningless, so this
-   * deliberately overwrites a user-set one; the slider bounds are widened to
-   * cover the new window so the `<input type="range">` can't clamp the thumb.
+   * deliberately overwrites a user-set one.
+   *
+   * The slider BOUNDS follow the mode too, landing on exactly what a natively
+   * authored layer of that mode gets at init. Merely widening them instead
+   * would leave the useful window as an unusable sliver of the track — a
+   * gsplat amplitude window of [1e-4, 0.02] inside [0, 1] bounds is 2% of it.
    */
   setColormapWindow(path: string, colormapOn: boolean): void {
     const layer = this.layers.get(path);
@@ -611,8 +625,14 @@ export class LayerStateManager {
     const [min, max] = colormapOn ? (layer.scalarDataRange ?? [0, 1]) : [0, 1];
     layer.displayMin = min;
     layer.displayMax = max;
-    layer.dataMin = Math.min(layer.dataMin, min);
-    layer.dataMax = Math.max(layer.dataMax, max);
+    // colormap ON  -> the scalar range (what a colormapped layer inits to)
+    // colormap OFF -> [0, 1] widened to the authored RGB spread (what a
+    //                 direct-colour layer inits to; keeps HDR colours > 1 in reach)
+    const [boundMin, boundMax] = colormapOn
+      ? [min, max]
+      : [Math.min(0, layer.colorDataRange?.[0] ?? 0), Math.max(1, layer.colorDataRange?.[1] ?? 1)];
+    layer.dataMin = Math.min(boundMin, min);
+    layer.dataMax = Math.max(boundMax, max);
     this.notify();
   }
 
