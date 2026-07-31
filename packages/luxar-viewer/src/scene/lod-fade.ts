@@ -79,6 +79,13 @@ function isFadeable(mat: THREE.Material): mat is FadeableMaterial {
  *   floor is the obvious knob if a thick-splat scene ever shows transient
  *   dark blobs while streaming.
  *
+ * A subtree mixing additive/luminous leaves with volumetric leaves is accepted
+ * for compatibility because every leaf still has continuous, endpoint-exact
+ * opacity control. That is a tolerated authoring edge case, not a shared
+ * conservation proof: its mid-band result follows neither one summed-energy
+ * model nor one optical-depth model. Authors should keep a LOD subtree within a
+ * single compositing family whenever possible.
+ *
  * `max` (a max, not a sum), `normal` (nonlinear alpha-over with opacity-gated
  * depthWrite), and `opaque` are excluded from both mechanisms.
  */
@@ -99,8 +106,10 @@ export const ENERGY_FLOOR = 0.1;
  * Whether every fadeable leaf material under ``root`` uses a blend mode that
  * cross-fades correctly ({@link BLENDABLE_MODES} — additive / luminous /
  * volumetric, where opacity is a linear knob on summed energy or on optical
- * depth). A group subtree (overview partition branch) must be uniformly
- * blendable. No fadeable material at all ⇒ not blendable (nothing to fade —
+ * depth). A group subtree (overview partition branch) must contain only
+ * individually blendable leaves; mixing their compositing families is tolerated
+ * for compatibility but has no common mid-fade conservation model. No fadeable
+ * material at all ⇒ not blendable (nothing to fade —
  * e.g. a not-yet-loaded placeholder, or a `max`/`normal`/`opaque` layer which
  * keeps the hard swap).
  */
