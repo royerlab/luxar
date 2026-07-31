@@ -406,6 +406,14 @@ export function noteDepthSortCommit(
   }
   state.generation = ++nextGeneration;
 
+  // Push the geometry's (possibly just-normalised) slot to the materials
+  // NOW, not only on the next per-frame pump: the commit's writers may
+  // have re-homed the geometry on slot 0 (identity write) or handed the
+  // mesh a different geometry entirely (pool acquire), and a render that
+  // does not go through the frame loop — the settle-scheduled pick pass —
+  // can fire before the pump's per-frame re-assert runs. Idempotent.
+  syncSortedIndexSlot(mesh);
+
   const mode = liveBlendingMode(mesh);
   if (!depthSortEnabled || !isLiveOrderDependent(mode) || count === 0) {
     // Depth sorting disabled (identity ordering pinned), commutative

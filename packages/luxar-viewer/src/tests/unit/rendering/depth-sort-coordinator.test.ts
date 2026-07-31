@@ -2322,6 +2322,38 @@ describe('depth-sort coordinator — chunked ordering apply (perf lever L8)', ()
     expect(uniform.value).toBe(1);
   });
 
+  it('the commit itself pushes the slot to the materials — no frame needed', async () => {
+    // A commit's writers can re-home the geometry on slot 0 (full identity
+    // write) or hand the mesh a different geometry (pool acquire), and a
+    // render that bypasses the frame loop — the settle-scheduled pick
+    // pass — can fire before the pump's per-frame re-assert runs. So the
+    // sync must ride the commit itself, not only the pump.
+    const { coord, storage } = await loadWithTinyChunks();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+
+    const mesh = makeGSplatsMesh(12, 'normal');
+    const uniform = { value: 0 };
+    (mesh.material as THREE.Material & { uniforms: unknown }).uniforms = {
+      uSortedIndexSlot: uniform,
+    };
+    coord.noteDepthSortCommit(mesh, new Float32Array(36), 12);
+    await flush();
+    sortResolvers[0]({
+      generation: mockApi.sort.mock.calls[0][0].generation as number,
+      ordering: reversed(12),
+    });
+    await flush();
+    for (let i = 0; i < 4; i++) coord.evaluateDepthSortPerFrame();
+    expect(uniform.value).toBe(1);
+
+    // A count-changing recommit: the writers run BEFORE noteDepthSortCommit
+    // and re-home the geometry on slot 0. The commit call must push that
+    // slot to the material immediately, without a pump frame in between.
+    storage.writeSortedIndexIdentity(mesh.geometry as THREE.InstancedBufferGeometry, 12);
+    coord.noteDepthSortCommit(mesh, new Float32Array(36), 12);
+    expect(uniform.value).toBe(0);
+  });
+
   it('camera motion past the threshold dispatches WHILE a stream runs (no apply-gate)', async () => {
     // The inverse of the old apply-gate test. A stream writes into the
     // inactive buffer, so what renders stays a whole permutation the
