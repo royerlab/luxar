@@ -1,7 +1,10 @@
 """Smoke tests for the pure helpers in demo_desi_galaxies.
 
-Exercises the deterministic array helpers only (no network, no astropy read, no
-scene build). The demo is loaded by file path (see test_demo_ppi_flow_field).
+The bulk exercise the deterministic array helpers only (no network, no astropy
+read). ``TestOrbitCentre`` additionally builds two small synthetic scenes to pin
+the camera-framing behaviour; it is marked ``slow`` so the ``-m 'not slow'`` CI
+job skips the compiler passes. The demo is loaded by file path (see
+test_demo_ppi_flow_field).
 """
 
 from __future__ import annotations
@@ -207,6 +210,7 @@ class TestCatalogDownloadErrors:
         assert message in capsys.readouterr().out
 
 
+@pytest.mark.slow
 class TestOrbitCentre:
     """The camera must orbit the OBSERVER (the origin), not a bounding box.
 
