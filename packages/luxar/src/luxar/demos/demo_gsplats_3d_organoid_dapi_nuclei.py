@@ -157,6 +157,7 @@ import zarr
 from arbol import Arbol, aprint, asection
 
 from luxar import Dimensions, LuxarZarrCompiler
+from luxar.core.viewer_config import ViewerConfig
 from luxar.encoding import EncodingMode
 from luxar.gsplats import fit_gaussian_splats
 from luxar.gsplats.gsplat_data import GSplatData
@@ -350,8 +351,11 @@ def create_luxar_scene(gsplats_data, output_path: Path | None = None):
         with LuxarZarrCompiler(
             output_path, encoding_mode=EncodingMode.PRECISION
         ) as compiler:
+            # ACES, set explicitly (the house default). It shifts the plasma
+            # LUT's hues slightly, accepted for its highlight rolloff.
             scene = compiler.create_scene(
                 dimensions=Dimensions.default_3d(),
+                viewer_config=ViewerConfig(tone_mapping="ACES"),
             )
 
             # Add scene metadata
@@ -390,6 +394,7 @@ Controls:
                 opacity=1.0,
                 absorption=1.0,
                 blending_mode="volumetric",
+                colormap="plasma",
                 layer=True,
             )
 
