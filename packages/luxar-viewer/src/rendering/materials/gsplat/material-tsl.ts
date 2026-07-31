@@ -99,6 +99,7 @@ export class GSplatTSLMaterial
     uIntensity: TSLNode;
     uOffset: TSLNode;
     uIsOrtho: TSLNode;
+    uSortedIndexSlot: TSLNode;
     uNearCull: TSLNode;
     uMaxExtentFactor: TSLNode;
     uCov2DDilation: TSLNode;
@@ -159,6 +160,7 @@ export class GSplatTSLMaterial
       uIntensity: uniform(materialConfig.intensity ?? 1.0),
       uOffset: uniform(materialConfig.offset ?? 0.0),
       uIsOrtho: uniform(0),
+      uSortedIndexSlot: uniform(0),
       uNearCull: uniform(0.1),
       uMaxExtentFactor: uniform(materialConfig.maxExtentFactor ?? 0.33),
       uCov2DDilation: uniform(materialConfig.cov2DDilation ?? GSPLAT_COV2D_DILATION_DEFAULT),
@@ -260,6 +262,7 @@ export class GSplatTSLMaterial
       uIntensity: proxyIUniform(this.tslNodes.uIntensity),
       uOffset: proxyIUniform(this.tslNodes.uOffset),
       uIsOrtho: proxyIUniform(this.tslNodes.uIsOrtho),
+      uSortedIndexSlot: proxyIUniform(this.tslNodes.uSortedIndexSlot),
       uNearCull: proxyIUniform(this.tslNodes.uNearCull),
       uMaxExtentFactor: proxyIUniform(this.tslNodes.uMaxExtentFactor),
       uCov2DDilation: proxyIUniform(this.tslNodes.uCov2DDilation),
@@ -603,6 +606,10 @@ export class GSplatTSLMaterial
     cloned.uniforms.uNearCull.value = this.uniforms.uNearCull.value;
     cloned.uniforms.uProjectionMode.value = this.uniforms.uProjectionMode.value;
     cloned.uniforms.uInvGamma.value = this.uniforms.uInvGamma.value;
+    // The active ordering slot must ride along: a clone taken while the
+    // geometry draws from slot 1 would otherwise read the stale buffer
+    // until the coordinator's next per-frame re-assert.
+    cloned.uniforms.uSortedIndexSlot.value = this.uniforms.uSortedIndexSlot.value;
 
     return cloned as this;
   }
