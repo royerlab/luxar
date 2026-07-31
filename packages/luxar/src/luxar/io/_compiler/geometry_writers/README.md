@@ -71,6 +71,7 @@ The pipelines are stateless: they read only the narrow config in the `Ctx` datac
    - `validate_positions_for_writing(vertices)` → `(n_vertices, n_dims)`
    - Validate `line_type` in `("segments", "polyline", "loop", "indexed")`
    - Type-specific vertex count checks (segments: even, polyline: ≥2, loop: ≥3, indexed: requires `indices`)
+   - Indexed `indices` are normalized with `np.asarray` and accepted only as a flat even-element `(2E,)` array or an `(E, 2)` pair array; the element count, integer dtype, and `[0, n_vertices)` bounds are validated before conversion
    - `validate_widths_for_writing(widths, n_vertices)` — arrays AND broadcast scalars
    - `validate_colors_for_writing(colors, n_vertices, channels=(3,4))` — if colors is an array
    - `validate_broadcast_color(colors, "colors")` — if colors is a tuple/list
@@ -79,7 +80,7 @@ The pipelines are stateless: they read only the narrow config in the `Ctx` datac
    - `validate_labels_for_writing(labels, n_vertices)` — if `labels is not None` (labels are per-vertex)
    - `prepare_transform_attrs(attrs, ctx.store)`
 
-2. **Setup**: `ctx.store.require_group(path)`
+2. **Setup**: `ctx.store.require_group(path)` and print the named write header. For `segments` input with at least 16 vertices, a warn-only authoring lint fires when more than 90% of consecutive edges form a forward coordinate chain (immediate `(a,b),(b,a)` reversals are excluded). The warning names the logical node and fires once across partition leaves; it recommends shared-index `polyline`/`indexed` authoring for joint continuity.
 
 3. **Convert to indexed representation**:
    - `convert_to_indexed(n_vertices, line_type, indices)` → a single `(S, 2)` uint32 `segments` array (the first arg is the vertex COUNT, not the vertices array); `n_segments = segments.shape[0]`
@@ -169,6 +170,7 @@ Writes an in-memory `GSplatLeaf` (a single splat set or an additive ladder) into
 - `compressor: CompressorLike` — scene default compressor (used by the ordering + label writers)
 - `update_scene_bounds: Callable[[Dict[str, List[float]]], None]` — scene-bounds accumulator hook
 - `write_colormap_lut: Callable[[zarr.Group, Dict[str, Any]], None]` — custom-colormap LUT writer hook
+- `claim_line_authoring_warning: Callable[[str], bool]` — warn-once registry for logical Lines nodes (partition leaves share their parent key)
 
 **`GSplatsWriteCtx`** (GSplats):
 - `store: zarr.Group`
@@ -191,7 +193,7 @@ Both are frozen dataclasses built by the orchestrator and passed in by value.
 
 4. **Reserved attrs**: Each geometry has a set of reserved attr names that the writer stamps authoritatively (`POINTS_RESERVED_ATTRS`, `LINES_RESERVED_ATTRS`, `GSPLATS_RESERVED_ATTRS`). User-provided attrs with these names are rejected at the gate.
 
-5. **Lines dual indexing**: Lines are stored as a dual-indexed representation — `vertices` (D-space positions) and `segments` (2×D-space vertex-pair indices). The `line_type` parameter controls how the input `vertices` are interpreted (`"segments"`, `"polyline"`, `"loop"`, `"indexed"`); `convert_to_indexed` normalizes all types to the canonical indexed form. Both `vertices` and `segments` are written with `deduplicate=False` so the viewer's raw chunked-zarr reader never sees an `array_ref`.
+5. **Lines dual indexing**: Lines are stored as a dual-indexed representation — `vertices` (D-space positions) and `segments` (2×D-space vertex-pair indices). The `line_type` parameter controls how the input `vertices` are interpreted (`"segments"`, `"polyline"`, `"loop"`, `"indexed"`); `convert_to_indexed` normalizes all types to the canonical indexed form. Connectivity is index-based: equal endpoint coordinates in distinct vertex rows do not form a joint. Both `vertices` and `segments` are written with `deduplicate=False` so the viewer's raw chunked-zarr reader never sees an `array_ref`.
 
 6. **Rendering defaults**: Points and Lines stamp the same rendering defaults (`opacity`, `absorption`, `gamma`, `intensity`, `offset`) via `apply_default_render_attrs`. GSplats stamp the same set plus `truncation_radius` via `apply_gsplat_group_attrs` (NOT `apply_default_render_attrs`). `blending_mode` is deliberately never stamped (it has no identity value).
 
@@ -201,6 +203,7 @@ The geometry writers are NOT unit-tested in isolation (they have no standalone A
 
 - **test_compiler_integration.py** / **test_compiler_improvements.py** / **test_compiler_colormap.py** / **test_compiler_nd_bounds.py** — End-to-end scene creation, colormap/LUT handling, and nD bounds
 - **test_ordering_points.py** / **test_ordering_lines.py** / **test_ordering_gsplats.py** — Spatial ordering integration
+- **tests/_compiler/test_lines_authoring_lint.py** — indexed-layout boundaries and the warn-only exploded-chain heuristic (including graph false positives and partition warn-once behavior)
 - **gsplats/io/tests/test_save_load.py** and **gsplats/tests/test_gsplat_data_io.py** — GSplat leaf/ladder save-load round trips
 
 ## See Also

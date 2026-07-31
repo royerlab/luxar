@@ -147,7 +147,10 @@ class LSystem:
         branches emanating from a branch point share the same vertex index
         with no position hashing or float comparisons. Shared indices let
         the viewer suppress joint caps, so thick trunks render as smooth
-        tubes instead of bead chains.
+        tubes instead of bead chains. The shipped grammars draw ``F`` before
+        opening a branch, giving exact ``V = E + 1`` tree deduplication; a
+        custom grammar that pushes ``[`` before its first ``F`` can re-emit
+        the root after a pop because the saved state still has no vertex index.
 
         Returns:
             Tuple of (vertices, edges, edge_depths, vertex_depths):

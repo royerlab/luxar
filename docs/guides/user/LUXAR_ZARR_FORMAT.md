@@ -620,6 +620,11 @@ Lines nodes contain polyline/segment data. All four user-facing line types
 pairs — so the on-disk layout is identical for every type; the user's original
 choice is recorded in `original_line_type`.
 
+Joint continuity is defined by shared **indices**, not equal coordinates. Two
+segment endpoints stored as separate vertex rows remain independent even when
+their coordinates match, so connected thick curves should use `polyline` or
+`indexed` authoring with every joint referenced through one shared vertex row.
+
 **Attributes (.zattrs):**
 ```javascript
 {
