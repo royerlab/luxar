@@ -5,9 +5,9 @@ Top-level test suite for the `luxar` package.
 ## Scope
 
 This directory contains package-level tests (e.g., import/export sanity, version
-checks) plus tests for repository-level maintenance scripts that exercise the
-installed package. Subpackage-specific tests are colocated with each subpackage
-in their own `tests/` directories.
+checks, and the custom Hatch build-hook contract) plus tests for repository-level
+maintenance scripts that exercise the installed package. Subpackage-specific tests
+are colocated with each subpackage in their own `tests/` directories.
 
 ## Running Tests
 
