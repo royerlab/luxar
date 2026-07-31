@@ -26,6 +26,17 @@ def _validated_output_dir(output_dir: str) -> str:
     return output_dir
 
 
+def _slurm_log_path(output_dir: str, log_name: str) -> str:
+    """Quote one ``--output``/``--error`` directive value.
+
+    Quoting alone is not enough here: Slurm expands filename-pattern tokens
+    (``%j``, ``%A``, ``%a``, ...) in these directives after tokenization, so a
+    percent sign in the user's directory must be doubled to stay literal.
+    ``log_name`` is appended verbatim, keeping its intentional ``%a``.
+    """
+    return shlex.quote(f"{output_dir.replace('%', '%%')}/logs/{log_name}")
+
+
 def generate_fit_sbatch(
     manifest: BatchManifest,
     env_preamble: str,
@@ -72,8 +83,8 @@ def generate_fit_sbatch(
         f"#SBATCH --cpus-per-task={manifest.slurm_cpus}",
         f"#SBATCH --mem={manifest.slurm_mem_gb}G",
         f"#SBATCH --time={manifest.slurm_time_limit}",
-        f"#SBATCH --output={shlex.quote(f'{output_dir}/logs/{log_stem}_%a.out')}",
-        f"#SBATCH --error={shlex.quote(f'{output_dir}/logs/{log_stem}_%a.err')}",
+        f"#SBATCH --output={_slurm_log_path(output_dir, f'{log_stem}_%a.out')}",
+        f"#SBATCH --error={_slurm_log_path(output_dir, f'{log_stem}_%a.err')}",
     ]
 
     if manifest.slurm_account:
@@ -412,8 +423,8 @@ def generate_calibrate_sbatch(manifest: BatchManifest, env_preamble: str) -> str
         "#SBATCH --cpus-per-task=4",
         f"#SBATCH --mem={manifest.slurm_mem_gb}G",
         "#SBATCH --time=01:00:00",  # Large zarr.zip archives need I/O time
-        f"#SBATCH --output={shlex.quote(f'{output_dir}/logs/calibrate.out')}",
-        f"#SBATCH --error={shlex.quote(f'{output_dir}/logs/calibrate.err')}",
+        f"#SBATCH --output={_slurm_log_path(output_dir, 'calibrate.out')}",
+        f"#SBATCH --error={_slurm_log_path(output_dir, 'calibrate.err')}",
     ]
 
     if manifest.slurm_account:
@@ -460,8 +471,8 @@ def generate_denoise_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
         "#SBATCH --cpus-per-task=4",
         f"#SBATCH --mem={max(manifest.slurm_mem_gb, 64)}G",  # NLM + volume loading headroom
         "#SBATCH --time=01:00:00",
-        f"#SBATCH --output={shlex.quote(f'{output_dir}/logs/denoise_%a.out')}",
-        f"#SBATCH --error={shlex.quote(f'{output_dir}/logs/denoise_%a.err')}",
+        f"#SBATCH --output={_slurm_log_path(output_dir, 'denoise_%a.out')}",
+        f"#SBATCH --error={_slurm_log_path(output_dir, 'denoise_%a.err')}",
     ]
 
     if manifest.slurm_account:
@@ -504,8 +515,8 @@ def generate_merge_sbatch(manifest: BatchManifest, env_preamble: str) -> str:
         "#SBATCH --cpus-per-task=8",
         f"#SBATCH --mem={max(manifest.slurm_mem_gb, 64)}G",
         "#SBATCH --time=04:00:00",
-        f"#SBATCH --output={shlex.quote(f'{output_dir}/logs/merge.out')}",
-        f"#SBATCH --error={shlex.quote(f'{output_dir}/logs/merge.err')}",
+        f"#SBATCH --output={_slurm_log_path(output_dir, 'merge.out')}",
+        f"#SBATCH --error={_slurm_log_path(output_dir, 'merge.err')}",
     ]
 
     if manifest.slurm_account:

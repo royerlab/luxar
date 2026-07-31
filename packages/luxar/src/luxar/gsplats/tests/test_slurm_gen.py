@@ -132,10 +132,14 @@ def test_sequential_packing_succeeds_when_every_task_succeeds() -> None:
 def test_all_sbatch_log_paths_quote_the_output_directory() -> None:
     output_dir = (
         "/scratch/output dir 'single' \"double\" "
-        "$(touch injected) `touch injected-backtick` # hash"
+        "$(touch injected) `touch injected-backtick` run%j 50% # hash"
     )
     manifest = _packed_manifest(1)
     manifest.output_dir = output_dir
+    # Slurm expands %-patterns in --output/--error after tokenization, so the
+    # directive must carry the directory's percent signs doubled; the trailing
+    # %a array token stays single so per-task logs still split.
+    directive_dir = output_dir.replace("%", "%%")
 
     scripts = [
         (generate_fit_sbatch(manifest, ""), "fit_%a.out", "fit_%a.err"),
@@ -145,14 +149,18 @@ def test_all_sbatch_log_paths_quote_the_output_directory() -> None:
     ]
 
     for script, stdout_name, stderr_name in scripts:
-        assert _directive_value(script, "output") == f"{output_dir}/logs/{stdout_name}"
-        assert _directive_value(script, "error") == f"{output_dir}/logs/{stderr_name}"
+        assert (
+            _directive_value(script, "output") == f"{directive_dir}/logs/{stdout_name}"
+        )
+        assert (
+            _directive_value(script, "error") == f"{directive_dir}/logs/{stderr_name}"
+        )
 
 
 def test_fit_script_keeps_output_dir_and_preset_literal(tmp_path: Path) -> None:
     output_dir = tmp_path / (
         "output $(touch output-injected) `touch output-backtick` "
-        "\"double\" 'single' # hash"
+        "\"double\" 'single' 50% # hash"
     )
     preset = (
         "standard $(touch preset-injected) `touch preset-backtick` \"quoted\" 'single'"

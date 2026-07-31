@@ -146,7 +146,7 @@ hatch run pytest --cov=luxar.gsplats packages/luxar/src/luxar/gsplats/ --cov-rep
 **`test_slurm_gen.py`**:
 - Generated sequential task-packing exit behavior
 - Failure retention across later successes and padded-tail breaks
-- Literal Slurm log/output paths and preset arguments with spaces, quotes, and shell metacharacters
+- Literal Slurm log/output paths and preset arguments with spaces, quotes, shell metacharacters, and percent signs (Slurm filename patterns)
 - Rejection of output-directory line terminators that could split an sbatch directive
 
 **`test_cholesky_dim_ops.py`** (requires torch):
