@@ -3,9 +3,16 @@
  *
  * `loadPoints` / `loadLines` / `loadGSplats` may throw `LoaderError`
  * with a `kind` from { Network, Decode, Validation, Unexpected }.
- * `loadLeafNode` catches the LoaderError, logs+toasts according to the
- * kind, and returns `null` so the failing leaf doesn't take down the
- * scene — its siblings still render.
+ * `loadLeafNode` catches the LoaderError, logs according to the kind, and
+ * returns `null` so the failing leaf doesn't take down the scene — its
+ * siblings still render.
+ *
+ * User-facing notification is deliberately NOT done here: it belongs to the
+ * end-of-load aggregate (`loaders/failure-report.ts`). Per-node toasts could not
+ * work — leaves load sequentially and the toast surface holds one message at a
+ * time, so N failures showed a single toast naming the LAST path, the least
+ * useful one, while `Network`-kind failures never toasted at all. The aggregate
+ * names every failed path once and covers every kind.
  *
  * Validation skips (missing attr, ndim mismatch, etc.) `return null`
  * from the loader without throwing; only genuine errors throw
@@ -15,7 +22,6 @@
 
 import type * as THREE from 'three';
 import { log, Modules } from '../../../utils/log';
-import { notifier } from '../../../utils/cross-layer/notifier';
 
 export type LoaderErrorKind = 'Network' | 'Decode' | 'Validation' | 'Unexpected';
 
@@ -90,7 +96,6 @@ export async function loadLeafNode<T extends THREE.Object3D>(
       case 'Unexpected':
         log.error(Modules.SCENE_LOADER, `Failed to load ${path}: ${error.message}`);
         if (causeStack) log.error(Modules.SCENE_LOADER, `Stack trace for ${path}`, causeStack);
-        notifier.toast(`Failed to load ${path}: ${error.kind.toLowerCase()} error`, 5000);
         break;
     }
     return null;

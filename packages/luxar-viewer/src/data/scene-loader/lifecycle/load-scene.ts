@@ -53,6 +53,7 @@ import { wireMonitorAfterLoad } from '../monitor/monitor-wiring';
 import { loadOverlayConfigs } from '../../loaders';
 import { buildSceneGraph } from '../nodes/build-scene-graph';
 import { loadSceneNodes } from '../nodes/load-scene-nodes';
+import { reportLoadOutcome } from '../loaders/failure-report';
 import type { NodeBuildCtx } from '../nodes/build-ctx';
 
 /**
@@ -379,7 +380,16 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
     },
   });
 
-  log.success(Modules.SCENE_LOADER, 'Scene loaded successfully');
+  // Report what ACTUALLY happened. `loadScene` cannot throw on a failed node
+  // (loadLeafNode swallows LoaderError so the rest of the scene still builds), so
+  // without this a scene whose every node failed logged success over an empty
+  // viewport. Totality is graded against the registered path set — a failed lazy
+  // LOD level records a failure without registering, so a count would over-report.
+  reportLoadOutcome(ctx.getFailedLoaderPaths(), [
+    ...ctx.loaders.keys(),
+    ...ctx.linesLoaders.keys(),
+    ...ctx.gsplatLoaders.keys(),
+  ]);
 
   // Schedule progressive LOD refinement after initial load.
   // Each per-type loader maps may include progressive loaders that
