@@ -41,7 +41,7 @@ jobs:
             exit 0
           fi
           git fetch -q origin "$base" 2>/dev/null || true
-          changed="$(git diff --name-only "$base"...HEAD)"
+          changed="$(git diff --no-renames --name-only "$base"...HEAD)"
           echo "--- changed files ---"; printf '%s\n' "$changed"
           # docs_only iff there IS at least one change and EVERY changed path is a
           # top-level/nested *.md or lives under docs/. A single non-doc file
