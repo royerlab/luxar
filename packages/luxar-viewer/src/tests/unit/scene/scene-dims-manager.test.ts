@@ -50,6 +50,42 @@ describe('SceneDimsManager', () => {
       expect(initialized).toBe(false);
     });
 
+    it('fails closed (no throw) on a non-list `dimensions` from hand-edited zarr', () => {
+      // A truthy-but-not-array `dimensions` used to pass the guard and throw
+      // a TypeError at the metadata `.map`. That call now runs inside
+      // `loadSceneData`'s try block, where a throw would fail the entire
+      // scene load instead of merely degrading the dimension UI.
+      for (const bad of [{}, 5, 'xyz', true, { 0: 'x' }]) {
+        const scene = new THREE.Scene();
+        scene.userData.sceneDimensions = { dimensions: bad };
+        expect(() => manager.initFromScene(scene)).not.toThrow();
+        expect(manager.initFromScene(scene)).toBe(false);
+        expect(manager.getDims()).toBeNull();
+      }
+    });
+
+    it('drops the PREVIOUS scene dims when the next scene carries no metadata', () => {
+      // Regression: this is a singleton, and bounds projection / auto-framing
+      // read `displayed` from it (falling back to [0, 1, 2] when null). A
+      // 3D-only scene loaded after an nD one used to inherit the old scene's
+      // axes, so its bounds were projected through the wrong dimensions.
+      const nd = new THREE.Scene();
+      nd.userData.sceneDimensions = {
+        dimensions: [
+          { name: 'order', unit: '', range: [0, 5], display: false },
+          { name: 'x', unit: '', range: [-1, 1], display: true },
+          { name: 'y', unit: '', range: [-1, 1], display: true },
+          { name: 'z', unit: '', range: [-1, 1], display: true },
+        ],
+      };
+      expect(manager.initFromScene(nd)).toBe(true);
+      expect(manager.getDims()!.displayed).toEqual([1, 2, 3]);
+
+      expect(manager.initFromScene(new THREE.Scene())).toBe(false);
+      expect(manager.getDims()).toBeNull();
+      expect(manager.getDimensionRanges()).toBeNull();
+    });
+
     it('should set displayed dimensions correctly', () => {
       manager.initFromScene(mockScene);
       const dims = manager.getDims();

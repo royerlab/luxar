@@ -11,7 +11,7 @@ The Layers panel exposes scene graph nodes marked with `layer=True` (set in the 
 - **Gamma** correction
 - **Opacity**
 - **Blending mode** (additive, volumetric, normal, max, opaque, luminous)
-- **Absorption** (κ) — only shown when the layer's effective blending mode is `volumetric`; all three geometry types implement the emission–absorption math, and κ = 0 is exactly the additive limit. The track is **logarithmic** with bounds re-derived PER LAYER, because κ has units of 1/length (τ = κ · density · thickness): the top of the track lands near τ = 5 ("opaque") for that layer's own geometry thickness, taken from the `max_width` (lines) / `max_radius` (points) zarr attr. So a 1.5e-3-wide line reaches κ ≈ 2.9e3 while a fitted gsplat volume — whose τ is already O(1)-calibrated — keeps the 0.001–10 span. See `absorption-range.ts`.
+- **Absorption** (κ) — only shown when the layer's effective blending mode is `volumetric`; all three geometry types implement the emission–absorption math, and κ = 0 is exactly the additive limit. The track is **logarithmic** with bounds re-derived PER LAYER, because κ has units of 1/length (τ = κ · density · thickness): the top of the track lands near τ = 5 ("opaque") for that layer's own geometry thickness, taken from the `max_width` (lines) / `max_radius` (points) zarr attr. So a 1.5e-3-wide line reaches κ ≈ 4.0e3 while a fitted gsplat volume — whose τ is already O(1)-calibrated — keeps the 0.001–10 span. See `absorption-range.ts`.
 - **Colormap** (for gsplats with scalars/amplitudes, scalar-backed points/lines, and groups that fan out to such descendants)
 - **Active level** (LOD groups, and partitions wrapping LOD groups) — `auto` or lock to a specific level
 

@@ -419,8 +419,11 @@ export class LayerControls {
     this.opacitySlider?.setValue(primary.opacity);
     // Re-scale the κ track to THIS layer before seating the thumb: the
     // reachable κ depends on the layer's geometry thickness (a 1.5e-3-wide
-    // line needs κ ≈ 10³ for the same optical depth a 1-voxel gsplat gets
+    // line needs κ ≈ 4×10³ for the same optical depth a 1-voxel gsplat gets
     // at κ ≈ 1). setRange keeps the value put.
+    // Multi-selection: the track is the PRIMARY layer's, and onChange fans
+    // that one κ out to every selected layer (same as opacity / gamma) — a
+    // co-selected thicker layer just saturates earlier along the track.
     if (this.absorptionSlider) {
       const { min, max } = absorptionSliderRange(primary.absorptionMax, primary.absorption);
       this.absorptionSlider.setRange(min, max);

@@ -13,6 +13,7 @@ import type { SceneNode } from '../../../../data/data-loader-types';
 import {
   ABSORPTION_DEFAULT_MAX,
   ABSORPTION_LOG_DECADES,
+  ABSORPTION_LOG_DECADES_MAX,
   ABSORPTION_MAX_LIMIT,
   ABSORPTION_TAU_TARGET,
   absorptionMaxForNode,
@@ -99,6 +100,27 @@ describe('absorptionSliderRange', () => {
   it('widens to keep an authored κ above the derived bound on the track', () => {
     const { max } = absorptionSliderRange(ABSORPTION_DEFAULT_MAX, 250);
     expect(max).toBe(250);
+  });
+
+  it('LOWERS the floor to keep a κ below the nominal minimum on the track', () => {
+    // Regression: very thin geometry derives a large max, whose nominal
+    // 4-decade floor can sit ABOVE the authored default κ = 1. The readout
+    // would then show 1.00 while the thumb could not represent it, and the
+    // first drag would silently jump κ up to the floor.
+    const thin = absorptionMaxForNode(node('lines', { max_width: 6e-4 }));
+    expect(thin / Math.pow(10, ABSORPTION_LOG_DECADES)).toBeGreaterThan(1); // nominal floor > κ=1
+    const { min, max } = absorptionSliderRange(thin, 1);
+    expect(min).toBe(1); // floor lowered exactly onto the current κ
+    expect(max).toBe(thin); // top of the track still the opaque point
+  });
+
+  it('bounds how far the floor is lowered for a κ that is already ~zero', () => {
+    const { min, max } = absorptionSliderRange(4035.77, 1e-30);
+    expect(min).toBeCloseTo(max / Math.pow(10, ABSORPTION_LOG_DECADES_MAX), 12);
+  });
+
+  it('caps the widening at the hard ceiling so an absurd authored κ keeps a usable track', () => {
+    expect(absorptionSliderRange(ABSORPTION_DEFAULT_MAX, 1e30).max).toBe(ABSORPTION_MAX_LIMIT);
   });
 
   it('floors at the default bound', () => {

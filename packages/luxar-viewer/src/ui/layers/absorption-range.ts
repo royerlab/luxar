@@ -54,6 +54,14 @@ export const ABSORPTION_MAX_LIMIT = 1e6;
 export const ABSORPTION_LOG_DECADES = 4;
 
 /**
+ * Hard cap on the track's span in decades, used when the CURRENT κ sits
+ * below the nominal floor and the floor has to be lowered to include it.
+ * Bounds how compressed the useful region can get for a κ that is already
+ * visually indistinguishable from 0.
+ */
+export const ABSORPTION_LOG_DECADES_MAX = 8;
+
+/**
  * Upper κ bound for one leaf node, from its recorded geometry thickness.
  * Returns `undefined` when the node carries no usable thickness stat
  * (gsplats, groups, or missing / non-positive metadata) so callers can
@@ -101,27 +109,47 @@ export function absorptionMaxForNode(node: SceneNode): number {
 /**
  * Log-track bounds for a layer's absorption slider.
  *
- * `max` is the layer's derived bound, widened when needed so the CURRENT
- * κ stays on the track (an author may set κ far above the derived
- * "opaque" point). `min` sits {@link ABSORPTION_LOG_DECADES} decades
- * below — κ = 0 remains reachable as the track's zero stop
+ * The CURRENT κ must always land ON the track, or the readout would show a
+ * value the thumb cannot represent and the first drag would silently jump
+ * it. Both ends move to guarantee that:
+ *
+ *   - `max` is the layer's derived bound, RAISED to the current κ when an
+ *     author set it above the derived "opaque" point, and capped at
+ *     {@link ABSORPTION_MAX_LIMIT} so an absurd κ cannot push the whole
+ *     useful region off the left edge.
+ *   - `min` sits {@link ABSORPTION_LOG_DECADES} decades below `max`, but is
+ *     LOWERED to the current κ when that falls beneath it. Very thin
+ *     geometry derives a large `max` (a 6e-4-wide line gives ≈ 1.0e4), which
+ *     would otherwise put the floor above the authored default κ = 1. The
+ *     lowering is bounded by {@link ABSORPTION_LOG_DECADES_MAX} decades.
+ *
+ * κ = 0 needs no room: it is the track's dedicated zero stop
  * (`LabeledSlider`, `scale: 'log'`).
  */
 export function absorptionSliderRange(
   layerMax: number,
   currentValue: number
 ): { min: number; max: number } {
-  const max = Math.max(
-    ABSORPTION_DEFAULT_MAX,
-    Number.isFinite(layerMax) ? layerMax : ABSORPTION_DEFAULT_MAX,
-    Number.isFinite(currentValue) ? currentValue : 0
+  const current = Number.isFinite(currentValue) ? currentValue : 0;
+  const max = Math.min(
+    ABSORPTION_MAX_LIMIT,
+    Math.max(
+      ABSORPTION_DEFAULT_MAX,
+      Number.isFinite(layerMax) ? layerMax : ABSORPTION_DEFAULT_MAX,
+      current
+    )
   );
-  return { min: max / Math.pow(10, ABSORPTION_LOG_DECADES), max };
+  const nominalMin = max / Math.pow(10, ABSORPTION_LOG_DECADES);
+  const min = Math.max(
+    max / Math.pow(10, ABSORPTION_LOG_DECADES_MAX),
+    current > 0 ? Math.min(nominalMin, current) : nominalMin
+  );
+  return { min, max };
 }
 
 /**
  * Readout text for a κ value. κ now ranges over decades, so a fixed
- * `toFixed(2)` would print "2858.55" for a thin-line scene and "0.00"
+ * `toFixed(2)` would print "4035.77" for a thin-line scene and "0.00"
  * for everything below 0.005. Significant-digit formatting keeps the
  * readout short and informative across the whole track.
  */

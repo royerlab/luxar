@@ -25,6 +25,18 @@ export type SliderScale = 'linear' | 'log';
 /** Number of `input` steps across a `log`-scale track. */
 const LOG_STEPS = 1000;
 
+/**
+ * Position of the `log` track's DEDICATED zero stop, one step below the
+ * geometric range: position 0 is exactly 0, and `[LOG_ZERO_GAP, 1]` maps
+ * geometrically onto `[min, max]`.
+ *
+ * The zero stop must not be shared with `min`. Overloading position 0 for
+ * both made a value AT the track floor round (via the input's step
+ * snapping) onto the zero stop, so merely touching the slider collapsed
+ * that value to 0 instead of leaving it put.
+ */
+const LOG_ZERO_GAP = 1 / LOG_STEPS;
+
 export interface LabeledSliderOptions {
   container: HTMLElement;
   label: string;
@@ -117,16 +129,18 @@ export class LabeledSlider {
     if (this.scale !== 'log') return value;
     if (!(value > 0) || !(this.min > 0) || !(this.max > this.min)) return 0;
     const t = Math.log(value / this.min) / Math.log(this.max / this.min);
-    return Math.min(1, Math.max(0, t));
+    return LOG_ZERO_GAP + Math.min(1, Math.max(0, t)) * (1 - LOG_ZERO_GAP);
   }
 
   /** Value for a thumb position (DOM input space). */
   private toValue(position: number): number {
     if (this.scale !== 'log') return position;
-    // Position 0 is the exact-zero stop, not `min` — κ=0 must stay
-    // reachable (it is the additive limit of the volumetric mode).
-    if (!(position > 0) || !(this.min > 0) || !(this.max > this.min)) return 0;
-    return this.min * Math.pow(this.max / this.min, Math.min(1, position));
+    // Below the gap is the exact-zero stop — κ=0 must stay reachable (it is
+    // the additive limit of the volumetric mode). `min` itself lives at
+    // LOG_ZERO_GAP, one step in, so no in-range value shares this stop.
+    if (!(position >= LOG_ZERO_GAP) || !(this.min > 0) || !(this.max > this.min)) return 0;
+    const t = (Math.min(1, position) - LOG_ZERO_GAP) / (1 - LOG_ZERO_GAP);
+    return this.min * Math.pow(this.max / this.min, t);
   }
 
   private formatValue(v: number): string {

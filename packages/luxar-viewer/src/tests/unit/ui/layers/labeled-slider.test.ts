@@ -167,31 +167,38 @@ describe('LabeledSlider', () => {
       return { slider, onChange };
     }
 
+    /**
+     * Track geometry: position 0 is the dedicated zero stop, and
+     * `[GAP, 1]` maps geometrically onto `[min, max]` (GAP = one step).
+     */
+    const GAP = 0.001;
+    const pos = (t: number) => GAP + t * (1 - GAP);
+
     it('drives the DOM input in normalised position space', () => {
       makeLog();
       const input = findInput();
       expect(input.min).toBe('0');
       expect(input.max).toBe('1');
-      // κ=1 on a 0.001–10 track sits at ln(1/0.001)/ln(10/0.001) = 3/4.
-      expect(parseFloat(input.value)).toBeCloseTo(0.75, 6);
+      // κ=1 on a 0.001–10 track sits 3/4 along the geometric span.
+      expect(parseFloat(input.value)).toBeCloseTo(pos(0.75), 6);
     });
 
     it('maps positions geometrically and round-trips through setValue', () => {
       const { slider, onChange } = makeLog();
       const input = findInput();
 
-      for (const [position, expected] of [
+      for (const [t, expected] of [
         [0.25, 0.01],
         [0.5, 0.1],
         [1, 10],
       ] as const) {
-        input.value = String(position);
+        input.value = String(pos(t));
         input.dispatchEvent(new Event('input'));
         expect(onChange).toHaveBeenLastCalledWith(expect.closeTo(expected, 6));
       }
 
       slider.setValue(0.1);
-      expect(parseFloat(input.value)).toBeCloseTo(0.5, 6);
+      expect(parseFloat(input.value)).toBeCloseTo(pos(0.5), 6);
     });
 
     it('reserves position 0 for an exact zero (the additive limit), not `min`', () => {
@@ -205,6 +212,20 @@ describe('LabeledSlider', () => {
       expect(findReadout().textContent).toBe('0.00');
     });
 
+    it('a value AT the track floor survives being touched (does not collapse to 0)', () => {
+      // Regression: with the zero stop shared with `min`, `setValue(min)`
+      // parked the thumb at position 0, so the next `input` event — even a
+      // click that moves nothing — pushed 0 instead of `min`.
+      const { slider, onChange } = makeLog();
+      const input = findInput();
+
+      slider.setValue(0.001); // exactly the track minimum
+      expect(parseFloat(input.value)).toBeCloseTo(GAP, 9);
+
+      input.dispatchEvent(new Event('input'));
+      expect(onChange).toHaveBeenLastCalledWith(expect.closeTo(0.001, 12));
+    });
+
     it('setRange re-scales the track without moving the value', () => {
       const { slider, onChange } = makeLog();
       const input = findInput();
@@ -214,8 +235,9 @@ describe('LabeledSlider', () => {
       slider.setRange(1, 10000);
 
       expect(slider.getRange()).toEqual([1, 10000]);
-      // κ=1 is now the LEFT end of the track, and still κ=1.
-      expect(parseFloat(input.value)).toBeCloseTo(0, 6);
+      // κ=1 is now the LEFT end of the geometric span (one step in from the
+      // zero stop), and still κ=1.
+      expect(parseFloat(input.value)).toBeCloseTo(GAP, 9);
       expect(findReadout().textContent).toBe('1.00');
       expect(onChange).not.toHaveBeenCalled();
 

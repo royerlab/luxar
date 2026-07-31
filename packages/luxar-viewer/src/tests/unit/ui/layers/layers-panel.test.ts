@@ -87,10 +87,13 @@ import { LINE_CHORD_SCALE } from '../../../../rendering/materials/line/math';
 
 /**
  * Normalised thumb position for a κ value on a log track — the inverse of
- * `LabeledSlider`'s own mapping, so tests can drive the real input.
+ * `LabeledSlider`'s own mapping, so tests can drive the real input. Position
+ * 0 is the dedicated zero stop, so the geometric span starts one step in.
  */
+const LOG_TRACK_GAP = 0.001;
 function logPosition(value: number, range: { min: number; max: number }): number {
-  return Math.log(value / range.min) / Math.log(range.max / range.min);
+  const t = Math.log(value / range.min) / Math.log(range.max / range.min);
+  return LOG_TRACK_GAP + t * (1 - LOG_TRACK_GAP);
 }
 
 /**
@@ -984,6 +987,54 @@ describe('LayersPanel — blend select drives the leaf material', () => {
     expect(pushed * width * LINE_CHORD_SCALE).toBeCloseTo(ABSORPTION_TAU_TARGET, 4);
     // Sanity: that is two orders of magnitude past the old fixed ceiling.
     expect(pushed).toBeGreaterThan(100 * ABSORPTION_DEFAULT_MAX);
+  });
+
+  it('absorption slider: a very thin layer keeps the authored κ ON the track (no silent jump on first touch)', () => {
+    // Regression: `max_width` ≲ 6e-4 derives a κ_max ≳ 1e4, whose nominal
+    // 4-decade floor lands ABOVE the authored default κ = 1. The readout then
+    // showed 1.00 while the thumb could not represent it, and the first input
+    // event silently jumped κ to the floor (≥ 100× on thinner geometry).
+    const width = 6e-4;
+    const updateAbsorption = vi.fn();
+    const stubMat: Record<string, unknown> = {
+      userData: { blendingMode: 'volumetric' },
+      uniforms: { uOpacity: { value: 1.0 } },
+      defines: {},
+      updateIntensity: vi.fn(),
+      updateOffset: vi.fn(),
+      updateGamma: vi.fn(),
+      updateOpacity: vi.fn(),
+      updateAbsorption,
+      applyBlendingMode: vi.fn(),
+    };
+    stubMat.clone = vi.fn(() => stubMat);
+
+    const mesh = new THREE.Mesh(new THREE.BufferGeometry(), stubMat as unknown as THREE.Material);
+    mesh.name = '/cloud';
+    const rootGroup = new THREE.Group();
+    rootGroup.add(mesh);
+
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(
+      rootGroup,
+      makeLayeredSceneGraph('lines', { max_width: width, blending_mode: 'volumetric' })
+    );
+    panel.show();
+    panel.layerState.select('/cloud', 'single');
+
+    expect(panel.layerState.getLayer('/cloud')!.absorption).toBe(1); // authored default
+
+    const group = findAbsorptionGroup(container)!;
+    const input = group.querySelector('input[type="range"]') as HTMLInputElement;
+    // The thumb must be at or above the geometric span's first stop — never
+    // pinned to the zero stop or clipped below the floor.
+    expect(parseFloat(input.value)).toBeGreaterThanOrEqual(LOG_TRACK_GAP - 1e-12);
+
+    // Touching the slider without moving it must leave κ where it was.
+    updateAbsorption.mockClear();
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(updateAbsorption).toHaveBeenLastCalledWith(expect.closeTo(1, 6));
+    expect(panel.layerState.getLayer('/cloud')!.absorption).toBeCloseTo(1, 6);
   });
 
   it('composeEffective preserves an authored κ on a NON-layer leaf under a layer group', () => {
