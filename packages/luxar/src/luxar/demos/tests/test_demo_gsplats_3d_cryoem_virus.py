@@ -1,7 +1,8 @@
-"""Smoke tests for the pure helper in demo_gsplats_3d_cryoem_virus.
+"""Smoke tests for demo_gsplats_3d_cryoem_virus.
 
-Only ``normalize_map_volume`` is exercised (no network, no mrcfile IO, no GPU).
-The demo is loaded by file path (see test_demo_ppi_flow_field for the rationale).
+Covers ``normalize_map_volume`` and the scene builder's authored blending — no
+network, no mrcfile IO, no GPU fit. The demo is loaded by file path (see
+test_demo_ppi_flow_field for the rationale).
 """
 
 from __future__ import annotations

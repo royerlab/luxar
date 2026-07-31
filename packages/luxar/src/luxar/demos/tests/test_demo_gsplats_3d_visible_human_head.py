@@ -1,7 +1,8 @@
-"""Smoke tests for the pure image helpers in demo_gsplats_3d_visible_human_head.
+"""Smoke tests for demo_gsplats_3d_visible_human_head.
 
-Only the deterministic array helpers are exercised (no network, no PNG IO, no
-GPU fit). The demo is loaded by file path (see test_demo_ppi_flow_field).
+Covers the deterministic image helpers and the scene builder's authored
+blending — no network, no PNG IO, no GPU fit. The demo is loaded by file path
+(see test_demo_ppi_flow_field).
 """
 
 from __future__ import annotations
@@ -130,7 +131,11 @@ class TestSceneBlending:
         # so a silent revert to additive glow is caught (the helper smoke
         # tests never build the scene). See the interop demos' blending test.
         fit = _tiny_gsplat_data()
-        colors = np.random.default_rng(1).uniform(0.1, 0.9, (8, 3)).astype(np.float32)
+        colors = (
+            np.random.default_rng(1)
+            .uniform(0.1, 0.9, (fit.n_splats, 3))
+            .astype(np.float32)
+        )
         out = create_luxar_scene(fit, colors, tmp_path / "vh.luxar.zarr")
         node = zarr.open_group(str(out), mode="r")["visible_human_head"]
         assert dict(node.attrs).get("blending_mode") == "volumetric"

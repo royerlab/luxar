@@ -1,7 +1,8 @@
-"""Smoke tests for the pure helpers in demo_gsplats_3d_ct_totalsegmentator.
+"""Smoke tests for demo_gsplats_3d_ct_totalsegmentator.
 
-Only deterministic array helpers are exercised (no network, no nibabel IO, no
-GPU fit). The demo is loaded by file path (see test_demo_ppi_flow_field).
+Covers the deterministic array helpers and the scene builder's authored
+blending — no network, no nibabel IO, no GPU fit. The demo is loaded by file
+path (see test_demo_ppi_flow_field).
 """
 
 from __future__ import annotations
@@ -75,21 +76,22 @@ class TestSceneBlending:
         # Every per-tissue toggle layer must composite volumetrically
         # (emission-absorption) so organs read through one another instead of
         # summing to additive glow; pin it so a silent revert is caught (the
-        # helper smoke tests never build the scene). Use two tissue groups so
-        # more than one layer is exercised.
-        bone = next(
-            lid for lid, name in CLASS_MAP.items() if tissue_group(name) == "bone"
-        )
-        liver = next(
-            lid
-            for lid, name in CLASS_MAP.items()
-            if tissue_group(name) == "abdominal_organ"
-        )
-        labels = np.array([bone, liver] * 4, dtype=np.int32)
+        # helper smoke tests never build the scene). Seed one label per
+        # supergroup so the scene really carries every layer — a layer that is
+        # never built could not be checked.
+        all_ids = np.array(sorted(CLASS_MAP), dtype=np.int32)
+        super_idx = splat_layer_indices(all_ids)
+        labels = []
+        for i, (layer_name, *_rest) in enumerate(SUPERGROUPS):
+            members = all_ids[super_idx == i]
+            assert members.size, f"no CLASS_MAP label lands in layer {layer_name!r}"
+            labels.append(int(members[0]))
         fit = _tiny_gsplat_data(len(labels))
-        out = create_luxar_scene(fit, labels, tmp_path / "ct.luxar.zarr")
+        out = create_luxar_scene(
+            fit, np.array(labels, dtype=np.int32), tmp_path / "ct.luxar.zarr"
+        )
         layers = _gsplat_layers(out)
-        assert len(layers) >= 2
+        assert len(layers) == len(SUPERGROUPS)
         for attrs in layers:
             assert attrs.get("blending_mode") == "volumetric"
 
