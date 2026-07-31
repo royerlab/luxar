@@ -89,7 +89,9 @@ deliberate decision, while the message itself speaks of "the viewer's
 explicit `ACES`. Two keep `Neutral` as verified exceptions:
 `demo_gsplats_3d_tribolium_embryo`, whose pairing with `exposure=1.97` was tuned
 deliberately, and `demo_flywire_connectome`, where ACES blew its luminous
-connection glow out into a white wash. `CLAUDE.md`, the HDR
+connection glow out into a white wash. The classical-capture interop demos also
+stay on `Neutral`, via the `build_interop_scene` default — their baked per-splat
+RGB is already display-referred, so ACES would distort it. `CLAUDE.md`, the HDR
 guide, the `gsplat convert` CLI help and the `ViewerConfig.tone_mapping`
 docstring all now recommend ACES, keeping `Neutral` for the narrower case where
 a colormap LUT carries an exact scientific colour encoding. Regenerate the demo
