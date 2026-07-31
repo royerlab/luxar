@@ -610,6 +610,31 @@ describe('pool adapter — growth, dispose, byte accounting', () => {
     expect(nonTexture).toBeLessThanOrEqual(capacity * 8 + 256);
   });
 
+  it('releasing a geometry to the pool cancels its in-flight ordering apply', () => {
+    // `chunkedApplies` keys its state by GEOMETRY in a strong Map, so an
+    // apply left running on a released buffer pins both the geometry and
+    // its ordering (4 B/element — ~32 MB for an 8M node) on the free list
+    // until it is re-acquired or evicted. Dispose already cancels through
+    // the geometry's own listener; release is the other exit from "in
+    // use" and needs the same treatment.
+    setSortedIndexChunkElementsForTests(2);
+    configureSortedIndexChunkedApply(true);
+    const geom = pool.acquireGSplatsGeometry('tenant', 32);
+    writeSortedIndexIdentity(geom, 16);
+    const rev16 = Uint32Array.from({ length: 16 }, (_, i) => 15 - i);
+    writeSortedIndexOrdering(geom, rev16, 16);
+    pumpSortedIndexOrderingApply(geom); // mid-stream, several slices to go
+    expect(hasPendingSortedIndexOrderingApply(geom)).toBe(true);
+
+    pool.releaseGSplatsGeometry('tenant');
+    expect(hasPendingSortedIndexOrderingApply(geom)).toBe(false);
+    // The DRAWN buffer is untouched by the cancel — an abandoned stream
+    // only ever wrote into the inactive one.
+    expect(activeSortedIndexSlot(geom)).toBe(0);
+    const drawn = getActiveSortedIndexAttribute(geom)!.array as Uint32Array;
+    expect(Array.from(drawn.subarray(0, 16))).toEqual([...Array(16).keys()]);
+  });
+
   it('charges BOTH ordering buffers from attach, and sorting adds nothing', () => {
     const geom = pool.acquireGSplatsGeometry('node', 1000);
     const capacity = (geom.getAttribute('aSortedIndex').array as Uint32Array).length;

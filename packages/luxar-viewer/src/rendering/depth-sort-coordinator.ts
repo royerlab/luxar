@@ -304,10 +304,22 @@ function ensureWorker(): Promise<void> {
  * expose a plain `IUniform`, and the TSL materials expose a
  * `proxyIUniform` that writes straight through to the node — neither
  * rebuilds or recompiles on a value change.
+ *
+ * `slot` is `0 | 1`, not `number`, and that is load-bearing: this is the
+ * ONLY path by which a value reaches `uSortedIndexSlot`, and the two
+ * backends do not agree outside that domain. GLSL selects with
+ * `slot == 1 ? back : front`, so anything else reads the FRONT buffer;
+ * the TSL twin is branchless (`a·(1-slot) + b·slot`, forced by
+ * `.select()` being a statement — see `sortedIndexNode`), so a slot of 2
+ * would evaluate to `2b - a`: garbage indices, not a fallback. Rather
+ * than clamp on every vertex for a state nothing can produce, the type
+ * keeps it unrepresentable at the one entry point. Widening this
+ * signature — or adding a third ordering buffer — means giving the two
+ * shaders a shared, tested selection rule first.
  */
 function applySortedIndexSlotToMaterial(
   material: THREE.Material | THREE.Material[] | undefined,
-  slot: number
+  slot: 0 | 1
 ): void {
   if (!material) return;
   // Scalar and array handled without a temporary wrapper array: this runs
@@ -321,7 +333,7 @@ function applySortedIndexSlotToMaterial(
 }
 
 /** Write one material's `uSortedIndexSlot`, if it has one. */
-function setSortedIndexSlotUniform(material: THREE.Material, slot: number): void {
+function setSortedIndexSlotUniform(material: THREE.Material, slot: 0 | 1): void {
   const uniform = (material as THREE.ShaderMaterial | undefined)?.uniforms?.uSortedIndexSlot;
   if (uniform) uniform.value = slot;
 }

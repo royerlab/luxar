@@ -33,7 +33,11 @@ import {
   writePointTexels,
   type PointTexelSource,
 } from '../point-geometry';
-import { writeSortedIndexIdentity, writeSortedIndexIdentityRange } from '../element-storage';
+import {
+  cancelSortedIndexOrderingApply,
+  writeSortedIndexIdentity,
+  writeSortedIndexIdentityRange,
+} from '../element-storage';
 import { clampPointCapacity } from '../element-texture-layout';
 import type { LoadedPointsData } from '../../data/data-loader-types';
 import type { PooledBuffer } from './pool-stats';
@@ -309,6 +313,15 @@ export class PointsBufferAdapter {
 
     host.activeBuffers.delete(nodeId);
     buffer.inUse = false;
+    // A released buffer is no longer drawn, so an ordering still
+    // streaming into it is dead work — and `chunkedApplies` keys its
+    // state by GEOMETRY in a strong Map, so leaving it would pin this
+    // geometry AND its ordering (4 B/element — ~32 MB for an 8M node)
+    // on the free list until the buffer is re-acquired or evicted.
+    // Dispose already cancels via the geometry's own listener; release
+    // is the other exit from "in use" and needs the same treatment.
+    cancelSortedIndexOrderingApply(buffer.geometry as THREE.InstancedBufferGeometry);
+
     // Stamp the release frame so acquire-triggered byte sweeps later in
     // this same frame grace the buffer (see EvictorCtx.graceFrame) — a
     // released buffer otherwise carries the frame of its last ACQUIRE
