@@ -6,9 +6,9 @@ These benchmarks measure **real-world performance** of critical hot-path operati
 
 ## Modules
 
-| File                 | Status         | Description                                                                                                                                          |
-| -------------------- | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `wasm-benchmark.ts`  | **Complete**   | WASM vs TypeScript comparison across six kernel categories: effective radii, depth sort, decode, projection, lines clipping, gsplats processing.     |
+| File                | Status       | Description                                                                                                                                      |
+| ------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `wasm-benchmark.ts` | **Complete** | WASM vs TypeScript comparison across six kernel categories: effective radii, depth sort, decode, projection, lines clipping, gsplats processing. |
 
 ## WASM Benchmark
 
@@ -28,14 +28,14 @@ make benchmark-wasm
 
 ### Categories
 
-| Category              | Operations                                                                                                                                                      | Notes                                                                                                                                                                     |
-| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **EFFECTIVE RADII**   | `calculate_effective_radii` — nD → 3D hypersphere projection for points visibility.                                                                             | Core hot path for 4D+ datasets.                                                                                                                                           |
-| **DEPTH SORT**        | `sort_splats_by_depth` — back-to-front ordering for correct alpha blending.                                                                                     | Budget: ≥ 50 M splats/s (enforced by `perf-budget.test.ts` in the opt-in perf suite, not the default unit tests). Reports absolute throughput.                             |
-| **DECODE**            | Nine tasks: `decode_quantized_u8`, `decode_quantized_u16`, `decode_log_scalar_u8`, `decode_log_scalar_u16`, `decode_lut_scalar_u8`, `decode_lut_scalar_u16`, `decode_lut_row_u8`, `decode_lut_row_u16`, `decode_broadcasted`. | Decodes compressed Python `luxar.encoding` arrays → Float32.                                                                                                              |
-| **PROJECTION**        | `extract_3d_positions`, `calculate_bounds_3d`, `compact_by_mask`, `count_visible`, `radii_to_visibility_mask`.                                                 | nD → 3D projection helpers.                                                                                                                                                |
-| **LINES CLIPPING**    | `clip_segments_batch`, `interpolate_clipped_positions`, `interpolate_scalars_batch`, `interpolate_colors_batch`, `calculate_segment_lengths`, `mark_clipped_endpoints`, plus utilities.  | Batch nD → 3D clipping + attribute interpolation. Per-call utilities (`clip_segment_single`, `lerp`, `lerp_vec3`, `distance_3d`) marked `utility: true` (not hot paths). |
-| **GSPLATS PROCESSING**| `compute_gsplats_attenuation`, `extract_visible_cholesky_3d`, `compact_attenuated_amplitudes`, plus utilities.                                                 | nD → 3D gsplat visibility + Cholesky submatrix extraction. Per-call utilities (`mahalanobis_distance`, `extract_cholesky_submatrix`) marked `utility: true`.             |
+| Category               | Operations                                                                                                                                                                                                                    | Notes                                                                                                                                                                    |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **EFFECTIVE RADII**    | `calculate_effective_radii` — nD → 3D hypersphere projection for points visibility.                                                                                                                                           | Core hot path for 4D+ datasets.                                                                                                                                          |
+| **DEPTH SORT**         | `sort_splats_by_depth` — back-to-front ordering for correct alpha blending.                                                                                                                                                   | Budget: ≥ 50 M splats/s (enforced by `perf-budget.test.ts` in the opt-in perf suite, not the default unit tests). Reports absolute throughput.                           |
+| **DECODE**             | Nine tasks: `decode_quantized_u8`, `decode_quantized_u16`, `decode_log_scalar_u8`, `decode_log_scalar_u16`, `decode_lut_scalar_u8`, `decode_lut_scalar_u16`, `decode_lut_row_u8`, `decode_lut_row_u16`, `decode_broadcasted`. | Decodes compressed Python `luxar.encoding` arrays → Float32.                                                                                                             |
+| **PROJECTION**         | `extract_3d_positions`, `calculate_bounds_3d`, `compact_by_mask`, `count_visible`, `radii_to_visibility_mask`.                                                                                                                | nD → 3D projection helpers.                                                                                                                                              |
+| **LINES CLIPPING**     | `clip_segments_batch`, `interpolate_clipped_positions`, `interpolate_scalars_batch`, `interpolate_colors_batch`, `calculate_segment_lengths`, `compute_cap_suppression`, plus utilities.                                      | Batch nD → 3D clipping + attribute interpolation. Per-call utilities (`clip_segment_single`, `lerp`, `lerp_vec3`, `distance_3d`) marked `utility: true` (not hot paths). |
+| **GSPLATS PROCESSING** | `compute_gsplats_attenuation`, `extract_visible_cholesky_3d`, `compact_attenuated_amplitudes`, plus utilities.                                                                                                                | nD → 3D gsplat visibility + Cholesky submatrix extraction. Per-call utilities (`mahalanobis_distance`, `extract_cholesky_submatrix`) marked `utility: true`.             |
 
 ### Output
 
@@ -90,11 +90,11 @@ The benchmark separates **batch** (production hot paths) from **utility** (API c
 
 ```typescript
 const CONFIG = {
-  iterations: 5,        // Timing runs per benchmark
-  warmupIterations: 2,  // Warmup runs before timing
+  iterations: 5, // Timing runs per benchmark
+  warmupIterations: 2, // Warmup runs before timing
   sizes: {
     small: 1_000,
-    medium: 100_000,    // Default
+    medium: 100_000, // Default
     large: 1_000_000,
   },
 };

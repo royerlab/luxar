@@ -33,8 +33,8 @@ Then open `http://localhost:5173/?src=http://127.0.0.1:8000` in a browser,
 pointing `src` at a running Luxar data server. Port `8000` is the default for
 `luxar serve`; use your configured `--port` value if you changed it.
 
-**Important:** Data source URLs must NOT end with a trailing slash. A trailing
-slash causes the Zarr loader to produce 404 errors.
+Both trailing-slash forms are accepted. Prefer data source URLs without a
+trailing slash as the canonical spelling used in examples and logs.
 
 ---
 
@@ -415,7 +415,7 @@ valid ranges.
 **Viewer shows a blank scene or zero points**
 - For nD datasets, the initial slice position may be empty. Press **N** to open
   dimension sliders and navigate to a populated region.
-- Verify the data URL has no trailing slash.
+- Verify that `src` points at the dataset root rather than its parent listing.
 
 **Performance is poor with large datasets**
 - Press **P** to check FPS and identify bottlenecks.
@@ -439,5 +439,5 @@ valid ranges.
 
 **Data fails to load (404 errors)**
 - Check that `luxar serve` is running and the port matches the `src` URL.
-- Remove any trailing slash from the data URL.
+- Verify that the dataset metadata files are reachable from the `src` URL.
 - Verify the Zarr archive is complete (`luxar info <path>` can help).

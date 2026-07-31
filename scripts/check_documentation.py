@@ -6,7 +6,7 @@ Validates documentation completeness and quality across the Luxar project.
 Run this script before commits or in CI/CD to ensure documentation standards.
 
 Usage:
-    python scripts/check_documentation.py [--fix] [--verbose]
+    python scripts/check_documentation.py [--verbose]
 """
 
 import argparse
@@ -277,9 +277,6 @@ class DocumentationChecker:
 
 def main():
     parser = argparse.ArgumentParser(description="Check documentation quality")
-    parser.add_argument(
-        "--fix", action="store_true", help="Attempt to fix issues automatically"
-    )
     parser.add_argument(
         "--verbose", action="store_true", help="Show all checks including passed"
     )

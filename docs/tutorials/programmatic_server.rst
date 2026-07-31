@@ -237,11 +237,11 @@ common parent and pass that parent to ``create_server_app()``.
 
 .. note::
 
-   When connecting the Luxar viewer to a dataset served this way, remember
-   that the URL must **not** end with a trailing slash. For example, use
-   ``http://127.0.0.1:8000/neurons.luxar.zarr`` rather than
-   ``http://127.0.0.1:8000/neurons.luxar.zarr/``. A trailing slash causes the
-   Zarr loader to misinterpret path components, resulting in 404 errors.
+   When connecting the Luxar viewer to a dataset served this way, prefer the
+   canonical URL without a trailing slash, for example
+   ``http://127.0.0.1:8000/neurons.luxar.zarr``. The viewer accepts the form
+   ending in ``/`` too, but normalizing examples and logs to one spelling
+   avoids duplicate-looking URLs.
 
 
 Embedding in a Larger Application
