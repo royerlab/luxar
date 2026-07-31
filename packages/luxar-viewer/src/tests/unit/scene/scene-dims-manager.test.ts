@@ -55,7 +55,18 @@ describe('SceneDimsManager', () => {
       // a TypeError at the metadata `.map`. That call now runs inside
       // `loadSceneData`'s try block, where a throw would fail the entire
       // scene load instead of merely degrading the dimension UI.
-      for (const bad of [{}, 5, 'xyz', true, { 0: 'x' }]) {
+      for (const bad of [
+        {},
+        5,
+        'xyz',
+        true,
+        { 0: 'x' },
+        // Malformed ENTRIES inside a valid array — `Array.isArray` alone let
+        // these through and the metadata `.map` threw on `dim.name`.
+        [null],
+        [undefined],
+        [{ name: 'x', display: true }, null],
+      ]) {
         const scene = new THREE.Scene();
         scene.userData.sceneDimensions = { dimensions: bad };
         expect(() => manager.initFromScene(scene)).not.toThrow();

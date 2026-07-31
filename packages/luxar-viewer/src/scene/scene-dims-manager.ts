@@ -33,6 +33,21 @@ import { clamp } from '../utils/clamp';
  *
  * @class SceneDimsManager
  */
+/**
+ * True when `value` is a usable `sceneDimensions.dimensions` list: an array
+ * whose every entry is a non-null object with properties to read.
+ *
+ * Deliberately structural rather than a full schema check — every individual
+ * field already has a defaulting fallback in the parse below. This guards
+ * only the failure mode that THROWS (property access on `null`/`undefined`),
+ * which callers cannot recover from.
+ */
+function isValidDimensionList(value: unknown): value is Array<Record<string, unknown>> {
+  return (
+    Array.isArray(value) && value.every((entry) => typeof entry === 'object' && entry !== null)
+  );
+}
+
 export class SceneDimsManager {
   /** The shared dimension state for the entire scene */
   private dims: SimpleDims | null = null;
@@ -89,15 +104,17 @@ export class SceneDimsManager {
       }
     }
 
-    // Validation: Ensure we found valid dimension metadata. The check is
-    // `Array.isArray`, not truthiness: hand-edited / third-party zarr can
-    // carry a non-list `dimensions` (an object, a scalar), which passed a
-    // truthy guard and then threw a TypeError at the `.map` below. That
-    // throw is now inside `SceneManager.loadSceneData`'s try block, where it
-    // would fail the WHOLE scene load rather than just degrade the dimension
-    // UI — so it fails closed here instead (same shape as the
-    // `Array.isArray` guard in `findPositionBoundsInScene`).
-    if (!Array.isArray(sceneDimensions?.dimensions)) {
+    // Validation: the container must be an array AND every entry must be a
+    // non-null object, because the `.map` below reads properties off each
+    // entry (`dim.name`, `dim.range`, …). A truthiness check alone let a
+    // non-list `dimensions` through, and an `Array.isArray` check alone let
+    // `dimensions: [null]` through — both then threw a TypeError at the map.
+    // That throw is now inside `SceneManager.loadSceneData`'s try block,
+    // where it would fail the WHOLE scene load (with a misleading "check the
+    // path" error) on a scene whose geometry is perfectly loadable — so both
+    // levels fail closed here instead, leaving only the dimension UI
+    // disabled. Same fail-closed shape as `findPositionBoundsInScene`.
+    if (!isValidDimensionList(sceneDimensions?.dimensions)) {
       // Only log error if it's expected (not all scenes have dimensions)
       // For 3D-only scenes, this is normal behavior
       // This is normal for 3D-only scenes, no need to log as error

@@ -127,6 +127,35 @@ describe('absorptionSliderRange', () => {
     expect(absorptionSliderRange(0.5, 0).max).toBe(ABSORPTION_DEFAULT_MAX);
     expect(absorptionSliderRange(NaN, NaN).max).toBe(ABSORPTION_DEFAULT_MAX);
   });
+
+  describe('at the clamped extremes', () => {
+    /**
+     * Outside the two deliberate clamps the thumb seats at the clamped end
+     * while the readout shows the true κ, so a touch writes the clamp back.
+     * These pin that documented trade-off — and the reason it is acceptable:
+     * the swapped states are visually identical. τ = κ · thickness · chord
+     * for the Hilbert-demo line (thickness 1.5e-3, chord √(π/ln 100)).
+     */
+    const TAU = (k: number) => k * 0.0015 * Math.sqrt(Math.PI / Math.log(100));
+
+    it('below the span cap: both κ are ≥ 7 decades below visible absorption', () => {
+      const { min, max } = absorptionSliderRange(4035.77, 1e-30);
+      expect(min).toBeCloseTo(max / Math.pow(10, ABSORPTION_LOG_DECADES_MAX), 12);
+      expect(1e-30).toBeLessThan(min); // off-track: a touch would write `min`
+      // The value the touch would write is still optically nothing.
+      expect(TAU(min)).toBeLessThan(1e-7);
+      expect(TAU(1e-30)).toBeLessThan(1e-7);
+    });
+
+    it('above the ceiling: both κ are far past opaque', () => {
+      const { max } = absorptionSliderRange(ABSORPTION_DEFAULT_MAX, 1e30);
+      expect(max).toBe(ABSORPTION_MAX_LIMIT);
+      expect(1e30).toBeGreaterThan(max); // off-track: a touch would write `max`
+      // 1 − e^(−τ) is 1.0 to double precision on both sides of the clamp.
+      expect(1 - Math.exp(-TAU(max))).toBe(1);
+      expect(1 - Math.exp(-TAU(1e30))).toBe(1);
+    });
+  });
 });
 
 describe('formatAbsorption', () => {

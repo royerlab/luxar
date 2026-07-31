@@ -851,6 +851,33 @@ describe('SceneManager', () => {
       expect(target.z).toBeCloseTo(0, 6);
     });
 
+    it('malformed dimension metadata degrades the dimension UI, it does NOT fail the scene load', async () => {
+      // Regression: resolving the dims inside loadSceneData put the metadata
+      // parse on the scene-load critical path. `dimensions: [null]` is valid
+      // JSON and one producer bug away; it used to throw at the metadata map,
+      // and inside this try block that throw would surface as "Failed to load
+      // scene … check the path" for a scene whose geometry is perfectly fine.
+      (mockLoadScene as any).mockImplementationOnce(async () => {
+        const T = await import('three');
+        const group = new T.Group();
+        group.name = 'LuxarScene';
+        group.userData = {
+          sceneDimensions: { dimensions: [null] },
+          positionBounds: { min: [-1, -1, -1], max: [1, 1, 1] },
+        };
+        return group;
+      });
+
+      await expect(
+        sceneManager.loadSceneData('http://example.com/data.zarr')
+      ).resolves.toBeUndefined();
+
+      // The scene is on screen, and dimension navigation is simply off.
+      expect(sceneManager.scene.getObjectByName('LuxarScene')).toBeTruthy();
+      expect(sceneDimsManager.getDims()).toBeNull();
+      expect(mockShowError).not.toHaveBeenCalled();
+    });
+
     it('error path: skips autoFrame/autoAdjust + reports through notifier + rethrows', async () => {
       const spies = installSpies();
       const error = new Error('synthetic load failure');

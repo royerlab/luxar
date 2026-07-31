@@ -109,19 +109,28 @@ export function absorptionMaxForNode(node: SceneNode): number {
 /**
  * Log-track bounds for a layer's absorption slider.
  *
- * The CURRENT κ must always land ON the track, or the readout would show a
- * value the thumb cannot represent and the first drag would silently jump
- * it. Both ends move to guarantee that:
+ * Both ends move so that the CURRENT κ lands ON the track over the whole
+ * range a scene can meaningfully use — otherwise the readout would show a
+ * value the thumb cannot represent, and a touch that moves nothing would
+ * write the clamped end back:
  *
  *   - `max` is the layer's derived bound, RAISED to the current κ when an
- *     author set it above the derived "opaque" point, and capped at
- *     {@link ABSORPTION_MAX_LIMIT} so an absurd κ cannot push the whole
- *     useful region off the left edge.
+ *     author set it above the derived "opaque" point.
  *   - `min` sits {@link ABSORPTION_LOG_DECADES} decades below `max`, but is
  *     LOWERED to the current κ when that falls beneath it. Very thin
  *     geometry derives a large `max` (a 6e-4-wide line gives ≈ 1.0e4), which
- *     would otherwise put the floor above the authored default κ = 1. The
- *     lowering is bounded by {@link ABSORPTION_LOG_DECADES_MAX} decades.
+ *     would otherwise put the floor above the authored default κ = 1.
+ *
+ * TWO DELIBERATE CLAMPS bound that accommodation, because a pathological
+ * authored κ would otherwise compress the useful region off the track and
+ * recreate the original "the knob does nothing" bug: `max` stops at
+ * {@link ABSORPTION_MAX_LIMIT}, and the downward lowering stops at
+ * {@link ABSORPTION_LOG_DECADES_MAX} decades of span. Outside those bounds
+ * the thumb seats at the clamped end while the readout still shows the true
+ * κ, so touching the slider writes the clamp back. That is accepted: past
+ * the ceiling both κ are far beyond opaque, and below the floor both are
+ * ≥ 7 decades below visible absorption — the states being swapped are
+ * visually identical (see the `at the clamped extremes` tests).
  *
  * κ = 0 needs no room: it is the track's dedicated zero stop
  * (`LabeledSlider`, `scale: 'log'`).
