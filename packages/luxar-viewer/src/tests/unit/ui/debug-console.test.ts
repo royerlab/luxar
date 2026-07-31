@@ -304,5 +304,53 @@ describe('DebugConsole - Critical Fixes', () => {
 
       debugConsole.dispose();
     });
+
+    it('renders a cross-realm Error in the DOM, not {}', () => {
+      const debugConsole = new DebugConsole();
+      const console_any = debugConsole as unknown as {
+        formatArgAsDOMElement: (arg: unknown) => HTMLElement;
+      };
+
+      const crossRealm = { [Symbol.toStringTag]: 'Error', name: 'TypeError', message: 'boom' };
+      const el = console_any.formatArgAsDOMElement(crossRealm);
+      expect(el.textContent).toBe('TypeError: boom');
+
+      debugConsole.dispose();
+    });
+  });
+
+  describe('Stack Trace Rendering', () => {
+    const renderAndFindStack = (type: 'error' | 'warn' | 'log') => {
+      const debugConsole = new DebugConsole();
+      debugConsole.show();
+      const console_any = debugConsole as unknown as {
+        renderMessage: (m: unknown) => void;
+      };
+      console_any.renderMessage({
+        type,
+        timestamp: new Date(),
+        args: ['something happened'],
+        formatted: 'something happened',
+        stack: 'Error: boom\n    at somewhere',
+      });
+      const stackEl = document.querySelector('.luxar-console-message-stack');
+      const text = stackEl?.textContent ?? null;
+      debugConsole.dispose();
+      return text;
+    };
+
+    it('renders the stack of an error row', () => {
+      expect(renderAndFindStack('error')).toContain('at somewhere');
+    });
+
+    it('renders the stack of a warn row too', () => {
+      // Warns capture a stack (interceptor) and export it to the clipboard, so
+      // the panel must show it as well or the two disagree.
+      expect(renderAndFindStack('warn')).toContain('at somewhere');
+    });
+
+    it('does not render a stack for non-error/warn rows', () => {
+      expect(renderAndFindStack('log')).toBeNull();
+    });
   });
 });
