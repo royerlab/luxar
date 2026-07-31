@@ -612,6 +612,56 @@ export class GPUBufferPool {
   }
 
   /**
+   * Register a one-time self-invalidation `dispose` listener on a freshly
+   * created pooled geometry. Called by the per-type adapters at fresh
+   * allocation — the single choke point every pooled geometry passes
+   * through exactly once (adopted/reused geometries were registered at
+   * their original creation).
+   *
+   * The scene-graph disposal helpers (`scene-disposal.ts`) are pure over a
+   * THREE.Scene with NO pool reference, so on a dataset switch / teardown
+   * they call `geometry.dispose()` directly on meshes that still hold
+   * pool-owned geometries. Without this guard the pool keeps the disposed
+   * geometry recorded in `activeBuffers`, and a later `acquire*Geometry`
+   * for the same nodeId hands it back as reusable — a use-after-dispose
+   * that also over-counts resident bytes.
+   *
+   * When `dispose` fires this:
+   *  - flags the geometry `userData.luxarInvalidated` (the acquire fast
+   *    paths treat a flagged active entry as a miss — defense-in-depth
+   *    against an ordering where the entry is somehow still present);
+   *  - drops any `activeBuffers` entry that still references THIS geometry.
+   *    Matching by identity is inherently safe — a geometry appears in
+   *    `activeBuffers` at most once, so a newer entry that replaced it (a
+   *    grow moves the old geometry to the free list first) is never
+   *    clobbered (the guard the issue asks for).
+   *
+   * Resident-byte / stats accounting is DERIVED from `activeBuffers` +
+   * free-bucket membership (see {@link getStats} / {@link getResidentBytes}),
+   * so removing the entry is the entire correction — there is no persistent
+   * counter to decrement. On the normal release/evict/dispose paths the
+   * entry (or its free-bucket slot) is already gone before `dispose()`
+   * runs, so this listener finds nothing and is a safe no-op there — it
+   * never double-counts eviction stats. It never calls `dispose()` again
+   * (no re-entrancy) and removes itself on first fire (idempotent).
+   *
+   * @internal — called by the per-type adapters via their host interface.
+   */
+  registerPooledGeometryInvalidation(geometry: THREE.BufferGeometry): void {
+    const onDispose = (): void => {
+      geometry.removeEventListener('dispose', onDispose);
+      geometry.userData.luxarInvalidated = true;
+      for (const [nodeId, buffer] of this.activeBuffers) {
+        if (buffer.geometry === geometry) {
+          this.activeBuffers.delete(nodeId);
+          break;
+        }
+      }
+    };
+    geometry.addEventListener('dispose', onDispose);
+  }
+
+  /**
    * Dispose all pooled geometries (for cleanup or context loss).
    */
   dispose(): void {

@@ -89,6 +89,7 @@ export interface GSplatsAdapterHost {
   _lastAcquireRebuilt: boolean;
   getBucket(count: number): number;
   evictUnused(fromAcquire?: boolean): number;
+  registerPooledGeometryInvalidation(geometry: THREE.BufferGeometry): void;
 }
 
 export class GSplatsBufferAdapter {
@@ -107,7 +108,9 @@ export class GSplatsBufferAdapter {
     splatCount = clampSplatCapacity(splatCount);
 
     const active = host.activeBuffers.get(nodeId);
-    if (active && active.type === 'gsplats') {
+    // See the points adapter: `luxarInvalidated` guards a geometry whose
+    // out-of-band `dispose()` already fired (defense-in-depth).
+    if (active && active.type === 'gsplats' && !active.geometry.userData.luxarInvalidated) {
       if (active.capacity >= splatCount) {
         active.lastUsedFrame = host.frameCount;
         host.stats.reuses++;
@@ -153,6 +156,9 @@ export class GSplatsBufferAdapter {
     for (const pooled of this.gsplatBuffers.values()) {
       for (let i = pooled.length - 1; i >= 0; i--) {
         const candidate = pooled[i];
+        // Skip a free-bucket resident disposed out-of-band — see the
+        // points adapter's twin comment.
+        if (candidate.geometry.userData.luxarInvalidated) continue;
         if (candidate.capacity >= splatCount && candidate.capacity < bestCapacity) {
           bestList = pooled;
           bestIndex = i;
@@ -180,6 +186,8 @@ export class GSplatsBufferAdapter {
     // the chosen capacity too (still >= splatCount, which was clamped).
     const capacity = clampSplatCapacity(chooseCapacity(splatCount));
     const geometry = createGSplatsGeometry(capacity);
+    // Self-invalidation — see the points adapter's twin comment.
+    host.registerPooledGeometryInvalidation(geometry);
 
     const newBuffer: PooledBuffer = {
       geometry,
