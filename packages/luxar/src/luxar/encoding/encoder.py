@@ -176,7 +176,7 @@ class ArrayEncoder(
 
             # Directly encode as broadcasted (skip uniformity check)
             self._encode_broadcasted_scalar(
-                zarr_group, name, data, n_elements, chunks, compressor
+                zarr_group, name, data, n_elements, chunks, compressor, semantic_type
             )
             return
 
@@ -216,7 +216,13 @@ class ArrayEncoder(
                 n_elements if n_elements is not None else data.shape[0]
             )
             self._encode_broadcasted(
-                zarr_group, name, data, broadcast_n_elements, chunks, compressor
+                zarr_group,
+                name,
+                data,
+                broadcast_n_elements,
+                chunks,
+                compressor,
+                semantic_type,
             )
             return
 
