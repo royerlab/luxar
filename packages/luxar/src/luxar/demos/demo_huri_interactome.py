@@ -105,7 +105,6 @@ DEMO_META = {
 }
 
 import hashlib
-import io
 import sys
 import tempfile
 import zipfile
@@ -155,6 +154,16 @@ UMAP_MIN_DIST = 0.3
 # Visual caps
 DEFAULT_MAX_EDGES = 60_000
 
+# Download safety ceilings for the CORUM fallback. These third-party CORUM
+# URLs shift across releases and are NOT controlled Luxar assets, so we bound
+# both the compressed archive we stream to disk and the extracted (uncompressed)
+# member — the latter guards against a decompression bomb. CORUM's real zip is
+# only a few MB, so these are generous but hard caps, not tight limits. The
+# archive cap also curbs the worst-case RAM the eager ZipFile central-directory
+# parse can allocate on a hostile many-entry archive.
+_CORUM_MAX_ARCHIVE_BYTES = 64 * 1024 * 1024  # 64 MiB compressed archive cap
+_CORUM_MAX_MEMBER_BYTES = 512 * 1024 * 1024  # 512 MiB extracted member cap
+
 CROSS_COMMUNITY_COLOR: tuple[float, float, float] = (0.30, 0.30, 0.32)
 
 
@@ -199,7 +208,7 @@ def _download(url: str, dest: Path, description: str) -> None:
     aprint(f"  ✓ Saved {dest.name} ({size_mb:.1f} MB)")
 
 
-def _download_zip_member(
+def _download_corum_zip_member(
     urls: tuple[str, ...], member_suffix: str, dest: Path, description: str
 ) -> bool:
     """Try each URL until one works; extract the matching member to ``dest``.
@@ -213,27 +222,94 @@ def _download_zip_member(
         return True
 
     dest.parent.mkdir(parents=True, exist_ok=True)
+    archive_tmp = dest.with_name(dest.name + ".zip.part")
+    part = dest.with_name(dest.name + ".part")
     for url in urls:
         try:
             aprint(f"  Trying {description}")
             aprint(f"    URL: {url}")
-            with requests.get(url, stream=True, timeout=60) as r:
+            # Stream the (untrusted) archive to disk under a hard size cap so we
+            # never buffer the whole compressed body in RAM. Force identity
+            # encoding so Content-Length matches the decoded byte stream (house
+            # convention — see utils/download._force_identity_encoding).
+            with requests.get(
+                url,
+                stream=True,
+                timeout=60,
+                headers={"Accept-Encoding": "identity"},
+            ) as r:
                 r.raise_for_status()
-                blob = r.content
-            with zipfile.ZipFile(io.BytesIO(blob)) as zf:
+                # A malformed/duplicated Content-Length ("abc", "123, 123")
+                # would raise on parse; treat any parse failure as unknown size
+                # so the streaming running-total guard still bounds the body.
+                try:
+                    declared = int(r.headers.get("content-length", 0) or 0)
+                except (TypeError, ValueError):
+                    declared = 0
+                if declared > _CORUM_MAX_ARCHIVE_BYTES:
+                    raise ValueError(
+                        f"archive too large: Content-Length {declared} bytes "
+                        f"exceeds cap {_CORUM_MAX_ARCHIVE_BYTES}"
+                    )
+                written = 0
+                with open(archive_tmp, "wb") as f:
+                    for chunk in r.iter_content(chunk_size=1 << 20):
+                        if not chunk:
+                            continue
+                        written += len(chunk)
+                        if written > _CORUM_MAX_ARCHIVE_BYTES:
+                            raise ValueError(
+                                f"archive too large: exceeded cap "
+                                f"{_CORUM_MAX_ARCHIVE_BYTES} bytes while streaming"
+                            )
+                        f.write(chunk)
+
+            # Open the zip from the on-disk temp file (disk-backed, not in RAM).
+            with zipfile.ZipFile(archive_tmp) as zf:
                 names = zf.namelist()
                 target = next((n for n in names if n.endswith(member_suffix)), None)
                 if target is None:
-                    aprint(f"    ⚠ {member_suffix} not in zip ({names})")
+                    shown = names[:20]
+                    aprint(
+                        f"    ⚠ {member_suffix} not in zip "
+                        f"({len(names)} entries; first {len(shown)}: {shown})"
+                    )
                     continue
-                with zf.open(target) as src, open(dest, "wb") as dst:
-                    dst.write(src.read())
+                # CPython's ZipExtFile clamps decompressed output to the declared
+                # file_size (and fails CRC), so this up-front declared-size check
+                # is the effective decompression-bomb guard; the running-total
+                # raise below is an unreachable defensive backstop.
+                declared_member = zf.getinfo(target).file_size
+                if declared_member > _CORUM_MAX_MEMBER_BYTES:
+                    raise ValueError(
+                        f"member too large: declared {declared_member} bytes "
+                        f"exceeds cap {_CORUM_MAX_MEMBER_BYTES}"
+                    )
+                extracted = 0
+                with zf.open(target) as src, open(part, "wb") as dst:
+                    while True:
+                        buf = src.read(1 << 20)
+                        if not buf:
+                            break
+                        extracted += len(buf)
+                        if extracted > _CORUM_MAX_MEMBER_BYTES:
+                            raise ValueError(
+                                f"member too large: exceeded cap "
+                                f"{_CORUM_MAX_MEMBER_BYTES} bytes while extracting"
+                            )
+                        dst.write(buf)
+            if extracted == 0:
+                raise ValueError(f"member {target} is empty (0 bytes)")
+            part.replace(dest)
             size_mb = dest.stat().st_size / (1024 * 1024)
             aprint(f"  ✓ Saved {dest.name} ({size_mb:.1f} MB)")
             return True
         except Exception as exc:  # noqa: BLE001
             aprint(f"    ⚠ Failed: {exc}")
             continue
+        finally:
+            archive_tmp.unlink(missing_ok=True)
+            part.unlink(missing_ok=True)
     return False
 
 
@@ -246,7 +322,7 @@ def ensure_data(cache_dir: Path) -> tuple[Path, Path, Path | None]:
     with asection("Fetching data"):
         _download(HURI_URL, huri_path, "HuRI network (~2 MB)")
         _download(HGNC_URL, hgnc_path, "HGNC complete set (~30 MB)")
-        ok = _download_zip_member(
+        ok = _download_corum_zip_member(
             CORUM_URLS,
             CORUM_FILENAME,
             corum_path,
