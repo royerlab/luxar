@@ -76,8 +76,12 @@ deliberately in no extra (it serves only the Google-Drive download path), so
 neither covers it — the report and `--install` both name it for an individual
 `pip install` instead. The report and the runtime `require_module` gate are
 both driven by `luxar.demos._dependencies.INSTALL_SPECS`, so a package cannot
-be advertised without being installable. Newly tabled pins: `pooch`,
-`scikit-learn`, `matplotlib`.
+be advertised without being installable. The report is version-aware: an
+installed package whose version is below its pinned floor is flagged `OUTDATED`
+(not `ok`) and counted toward the exit-1 gate, so `deps` no longer passes an
+environment that would still crash a demo (e.g. `scipy` old enough to lack
+`scipy.special.sph_harm_y`). Newly tabled pins: `pooch`, `scikit-learn`,
+`matplotlib`.
 
 #### Fixed — the volumetric Absorption slider did nothing on thin geometry
 

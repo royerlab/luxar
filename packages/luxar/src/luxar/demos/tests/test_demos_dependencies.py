@@ -24,6 +24,7 @@ import pytest
 from luxar.demos import INSTALL_SPECS, MissingDependencyError, require_module
 from luxar.demos._dependencies import (
     DependencySpec,
+    _version_satisfied,
     extras_for,
     is_installed,
     survey,
@@ -296,6 +297,96 @@ class TestSurvey:
     def test_is_installed_does_not_raise_on_a_missing_parent(self) -> None:
         """find_spec raises ModuleNotFoundError for a submodule of a missing pkg."""
         assert is_installed("no_such_package_xyz.submodule") is False
+
+
+class TestVersionAwareness:
+    """``survey`` must not report ``ok`` for a package below its pinned floor.
+
+    The concrete bug: the ``demos`` extra floors ``scipy>=1.15`` (for
+    ``demo_quantum_orbitals``) while ``gsplats`` floors it at ``1.9``. On an env
+    satisfying only the gsplats floor, an import-only survey said ``ok`` and the
+    demo then died with an ``AttributeError``. scipy is a hard dependency of the
+    test env, so we drive the check by monkeypatching the reported version.
+    """
+
+    def test_below_pin_is_not_satisfied(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        pytest.importorskip("packaging")
+        import importlib.metadata as md
+
+        real = md.version
+        monkeypatch.setattr(
+            md, "version", lambda n: "1.9.0" if n == "scipy" else real(n)
+        )
+        row = {r.module: r for r in survey()}["scipy"]
+        # scipy still imports (installed), but 1.9.0 < the demos floor 1.15.0.
+        assert row.installed is True
+        assert row.satisfied is False
+
+    def test_meeting_the_pin_is_satisfied(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        pytest.importorskip("packaging")
+        import importlib.metadata as md
+
+        real = md.version
+        monkeypatch.setattr(
+            md, "version", lambda n: "1.15.3" if n == "scipy" else real(n)
+        )
+        assert {r.module: r for r in survey()}["scipy"].satisfied is True
+
+    def test_missing_metadata_gets_the_benefit_of_the_doubt(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Importable but no distribution metadata: never a false OUTDATED."""
+        pytest.importorskip("packaging")
+        import importlib.metadata as md
+
+        real = md.version
+
+        def fake(name: str) -> str:
+            if name == "scipy":
+                raise md.PackageNotFoundError(name)
+            return real(name)
+
+        monkeypatch.setattr(md, "version", fake)
+        assert {r.module: r for r in survey()}["scipy"].satisfied is True
+
+    def test_spec_without_a_version_bound_is_satisfied(self) -> None:
+        """A bare requirement has nothing to check, so it is always satisfied."""
+        assert _version_satisfied("some_pkg") is True
+
+    @pytest.mark.parametrize("bad", [None, "1.4.3-1ubuntu2"])
+    def test_malformed_version_metadata_never_crashes(
+        self, monkeypatch: pytest.MonkeyPatch, bad: object
+    ) -> None:
+        """A report must never crash: absent `Version:` (None → TypeError) or a
+        non-PEP440 distro-patched version (InvalidVersion) → benefit of the doubt.
+        """
+        pytest.importorskip("packaging")
+        import importlib.metadata as md
+
+        real = md.version
+        monkeypatch.setattr(md, "version", lambda n: bad if n == "scipy" else real(n))
+        # No exception, and the un-judgeable row is not flagged OUTDATED.
+        assert {r.module: r for r in survey()}["scipy"].satisfied is True
+
+    def test_unreadable_metadata_never_crashes(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A corrupt (non-UTF-8) METADATA makes ``version()`` raise; the report
+        must survive it (``UnicodeDecodeError`` is a ``ValueError``)."""
+        pytest.importorskip("packaging")
+        import importlib.metadata as md
+
+        real = md.version
+
+        def boom(name: str) -> str:
+            if name == "scipy":
+                raise UnicodeDecodeError("utf-8", b"", 0, 1, "bad metadata")
+            return real(name)
+
+        monkeypatch.setattr(md, "version", boom)
+        assert {r.module: r for r in survey()}["scipy"].satisfied is True
 
 
 class TestExtrasFor:
