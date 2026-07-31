@@ -16,7 +16,57 @@ permissions:
   contents: read
 
 jobs:
+  # Change detection: decide whether this ref's changes are DOCS/MARKDOWN-ONLY.
+  # When they are, the heavy jobs below skip their expensive steps but STILL RUN
+  # (checkout + this gate), so every check context (`python-tests (…)`,
+  # `typescript-tests`, `release-readiness`) reports an explicit green success
+  # instead of a grey "skipped" (which GitHub also counts as passing, but is
+  # easy to misread and fragile if those contexts ever become required).
+  # Any non-doc file (or a push to main, which has no PR base) => full CI.
+  #
+  # FAIL-SAFE: every dependent job carries `if: ${{ !cancelled() }}`. Without
+  # it, a failure of THIS job (flaky checkout, runner outage) would skip the
+  # dependents, and skipped checks count as passing — i.e. the gate would fail
+  # OPEN with no CI at all. With the guard the dependents still run, the
+  # `docs_only` output is empty, and every `!= 'true'` step condition selects
+  # the full suite.
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      docs_only: ${{ steps.filter.outputs.docs_only }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - id: filter
+        name: Detect docs/markdown-only change
+        run: |
+          base='${{ github.event.pull_request.base.sha }}'
+          if [ -z "$base" ]; then
+            echo "push event (no PR base) -> full CI"
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git fetch -q origin "$base" 2>/dev/null || true
+          changed="$(git diff --no-renames --name-only "$base"...HEAD)"
+          echo "--- changed files ---"; printf '%s\n' "$changed"
+          # docs_only iff there IS at least one change and EVERY changed path is a
+          # top-level/nested *.md or lives under docs/. A single non-doc file
+          # (code, config, tests, lockfiles, workflows) forces the full suite.
+          if [ -z "$changed" ] || printf '%s\n' "$changed" | grep -qvE '(\.md$|^docs/)'; then
+            echo "-> non-doc changes present: FULL CI"
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "-> docs/markdown only: heavy steps will be skipped (checks still report)"
+            echo "docs_only=true" >> "$GITHUB_OUTPUT"
+          fi
+
   python-tests:
+    needs: changes
+    # Fail-safe fallback to full CI if `changes` fails — see the note on the
+    # `changes` job.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     # `hatch run test-cov` runs `pytest -m 'not slow'` — the heavy CPU-fitting
     # tests (content-fit CLI, tiled/progressive fitting) are marked `slow` and
@@ -47,12 +97,14 @@ jobs:
 
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         id: setup-python
+        if: needs.changes.outputs.docs_only != 'true'
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
           cache-dependency-path: pyproject.toml
 
       - name: Install Hatch
+        if: needs.changes.outputs.docs_only != 'true'
         # Install Hatch ON the matrix interpreter. Hatch builds an environment
         # that declares no `python` with whatever interpreter Hatch ITSELF runs
         # under ("Prefer the Python version Hatch is currently using",
@@ -62,9 +114,11 @@ jobs:
         run: pipx install --python "${{ steps.setup-python.outputs.python-path }}" hatch
 
       - name: Create viewer dist placeholder
+        if: needs.changes.outputs.docs_only != 'true'
         run: mkdir -p packages/luxar-viewer/dist
 
       - name: Assert hatch uses the matrix interpreter
+        if: needs.changes.outputs.docs_only != 'true'
         # The guard that #839 was missing. It must compare for EQUALITY: the
         # pre-existing floor check (`>= 3.10`, scripts/test_hpc_setup.py) passed
         # happily while every leg ran 3.12, which is how the matrix stayed
@@ -83,6 +137,7 @@ jobs:
           fi
 
       - name: Audit Python dependencies
+        if: needs.changes.outputs.docs_only != 'true'
         run: |
           hatch run python -m pip install pip-audit
           hatch run python -m pip_audit --desc --skip-editable
@@ -92,30 +147,30 @@ jobs:
       # py310, mypy python_version 3.10), so they run once — on the 3.12 leg —
       # while staying under the required `python-tests (3.12)` context.
       - name: Lint (ruff)
-        if: matrix.python-version == '3.12'
+        if: matrix.python-version == '3.12' && needs.changes.outputs.docs_only != 'true'
         run: hatch run python -m ruff check packages/luxar/src/luxar/
 
       - name: Type check (mypy)
-        if: matrix.python-version == '3.12'
+        if: matrix.python-version == '3.12' && needs.changes.outputs.docs_only != 'true'
         run: hatch run mypy packages/luxar/src/luxar/
 
       - name: Layer check (import-linter)
-        if: matrix.python-version == '3.12'
+        if: matrix.python-version == '3.12' && needs.changes.outputs.docs_only != 'true'
         # Domain layers (gsplats/io/core/encoding) must not import luxar.cli.
         run: hatch run lint-imports
 
       - name: Version consistency (Python == viewer)
-        if: matrix.python-version == '3.12'
+        if: matrix.python-version == '3.12' && needs.changes.outputs.docs_only != 'true'
         run: hatch run python scripts/check_version_consistency.py
 
       - name: Format contract drift (Python <-> TypeScript)
-        if: matrix.python-version == '3.12'
+        if: matrix.python-version == '3.12' && needs.changes.outputs.docs_only != 'true'
         # The generated typing_utils/_format_contract.py + viewer
         # types/format-contract.ts must match format-contract/contract.yaml.
         run: hatch run check-contract
 
       - name: Demo data manifest drift
-        if: matrix.python-version == '3.12'
+        if: matrix.python-version == '3.12' && needs.changes.outputs.docs_only != 'true'
         # demos/data_manifest.json must match the demos/data tree. Safe without
         # `git lfs pull`: the generator reads each file's sha256 + size from its
         # LFS *pointer* when the payload is not materialized, so this needs
@@ -124,15 +179,20 @@ jobs:
         run: hatch run check-data-manifest
 
       - name: Security (bandit)
-        if: matrix.python-version == '3.12'
+        if: matrix.python-version == '3.12' && needs.changes.outputs.docs_only != 'true'
         # Gates on unwaived medium/high findings. Low findings (subprocess
         # usage, etc.) and demos are out of scope; see [tool.bandit].
         run: hatch run security
 
       - name: Test with coverage
+        if: needs.changes.outputs.docs_only != 'true'
         run: hatch run test-cov
 
   typescript-tests:
+    needs: changes
+    # Fail-safe fallback to full CI if `changes` fails — see the note on the
+    # `changes` job.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     defaults:
@@ -148,16 +208,19 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        if: needs.changes.outputs.docs_only != 'true'
         with:
           version: 10
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        if: needs.changes.outputs.docs_only != 'true'
         with:
           node-version: 22
           cache: pnpm
           cache-dependency-path: packages/luxar-viewer/pnpm-lock.yaml
 
       - name: Install Rust toolchain
+        if: needs.changes.outputs.docs_only != 'true'
         # Pinned to a SHA, so the toolchain channel must be given explicitly
         # (matches rust-toolchain.toml in packages/luxar-viewer/src/wasm/rust).
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
@@ -166,11 +229,13 @@ jobs:
           targets: wasm32-unknown-unknown
 
       - name: Cache cargo build
+        if: needs.changes.outputs.docs_only != 'true'
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: packages/luxar-viewer/src/wasm/rust
 
       - name: Install wasm-pack
+        if: needs.changes.outputs.docs_only != 'true'
         uses: jetli/wasm-pack-action@0d096b08b4e5a7de8c28de67e11e945404e9eefa # v0.4.0
         with:
           # jetli downloads the GitHub release binary, whose tag/asset use a
@@ -179,8 +244,10 @@ jobs:
           version: 'v0.14.0'
 
       - run: pnpm install --frozen-lockfile
+        if: needs.changes.outputs.docs_only != 'true'
 
       - name: Audit TypeScript dependencies
+        if: needs.changes.outputs.docs_only != 'true'
         run: pnpm audit --audit-level=high
         continue-on-error: true
 
@@ -189,9 +256,11 @@ jobs:
       # parity harness was dormant in CI). Combined with
       # LUXAR_REQUIRE_WASM_TESTS=1 above, a missing artefact now hard-fails.
       - name: Build WASM module
+        if: needs.changes.outputs.docs_only != 'true'
         run: pnpm run build:wasm
 
       - name: Rust unit tests (cargo test)
+        if: needs.changes.outputs.docs_only != 'true'
         # The WASM kernels have 73 native Rust unit tests + the TS-parity
         # harness; run them on the host target (not wasm32) so they gate PRs.
         working-directory: packages/luxar-viewer/src/wasm/rust
@@ -199,23 +268,28 @@ jobs:
 
       # Generate test fixtures (requires Python)
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        if: needs.changes.outputs.docs_only != 'true'
         with:
           python-version: '3.12'
           cache: pip
           cache-dependency-path: pyproject.toml
 
       - name: Install Hatch
+        if: needs.changes.outputs.docs_only != 'true'
         run: pipx install hatch
 
       - name: Create viewer dist placeholder
+        if: needs.changes.outputs.docs_only != 'true'
         working-directory: .
         run: mkdir -p packages/luxar-viewer/dist
 
       - name: Generate test fixtures
+        if: needs.changes.outputs.docs_only != 'true'
         working-directory: .
         run: hatch run python packages/luxar-viewer/tests/fixtures/generate_test_data.py
 
       - name: Check (typecheck + lint + layers + knip + coverage)
+        if: needs.changes.outputs.docs_only != 'true'
         # `pnpm run check:ci` runs in this order:
         #   typecheck → lint → check:layers (dependency-cruiser)
         #   → check:knip:ci (dead-file + unlisted-dependency gate)
@@ -226,6 +300,10 @@ jobs:
         run: pnpm run check:ci
 
   release-readiness:
+    needs: changes
+    # Fail-safe fallback to full CI if `changes` fails — see the note on the
+    # `changes` job.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     defaults:
@@ -235,27 +313,32 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        if: needs.changes.outputs.docs_only != 'true'
         with:
           version: 10
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        if: needs.changes.outputs.docs_only != 'true'
         with:
           node-version: 22
           cache: pnpm
           cache-dependency-path: packages/luxar-viewer/pnpm-lock.yaml
 
       - name: Install Rust toolchain
+        if: needs.changes.outputs.docs_only != 'true'
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
           toolchain: 1.92.0
           targets: wasm32-unknown-unknown
 
       - name: Cache cargo build
+        if: needs.changes.outputs.docs_only != 'true'
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: packages/luxar-viewer/src/wasm/rust
 
       - name: Install wasm-pack
+        if: needs.changes.outputs.docs_only != 'true'
         uses: jetli/wasm-pack-action@0d096b08b4e5a7de8c28de67e11e945404e9eefa # v0.4.0
         with:
           # jetli downloads the GitHub release binary, whose tag/asset use a
@@ -264,14 +347,18 @@ jobs:
           version: 'v0.14.0'
 
       - run: pnpm install --frozen-lockfile
+        if: needs.changes.outputs.docs_only != 'true'
 
       - name: Build library bundle (with WASM)
+        if: needs.changes.outputs.docs_only != 'true'
         run: pnpm run ci:release
 
       - name: Generate tarball manifest (npm pack --dry-run)
+        if: needs.changes.outputs.docs_only != 'true'
         run: npm pack --dry-run --json | tee /tmp/pack.json
 
       - name: Verify tarball contents
+        if: needs.changes.outputs.docs_only != 'true'
         # The tarball must contain:
         #   - LICENSE at the package root
         #   - dist/lib/luxar-viewer.js (the publishable barrel)
@@ -290,6 +377,10 @@ jobs:
           echo "All release-readiness assertions passed."
 
   go-launcher:
+    needs: changes
+    # Fail-safe fallback to full CI if `changes` fails — see the note on the
+    # `changes` job.
+    if: ${{ !cancelled() }}
     # Pinned to 22.04: the launcher's webview_go (latest available) links
     # webkit2gtk-4.0 via pkg-config, and ubuntu-24.04 (ubuntu-latest) ships only
     # the 4.1 dev package. 22.04 provides libwebkit2gtk-4.0-dev.
@@ -302,23 +393,28 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        if: needs.changes.outputs.docs_only != 'true'
         with:
           go-version: '1.22'
           cache-dependency-path: packages/luxar-launcher/go.sum
 
       - name: Install WebView build deps (cgo)
+        if: needs.changes.outputs.docs_only != 'true'
         # The launcher binds github.com/webview/webview_go, which is cgo over
         # WebKitGTK; go vet/build/test must compile the C bindings. webview_go
         # links webkit2gtk-4.0, so install the 4.0 dev package (present on 22.04).
         run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.0-dev pkg-config
 
       - name: go vet
+        if: needs.changes.outputs.docs_only != 'true'
         run: go vet ./...
 
       - name: go build
+        if: needs.changes.outputs.docs_only != 'true'
         run: go build ./...
 
       - name: go test
+        if: needs.changes.outputs.docs_only != 'true'
         run: go test ./...
 
   # E2E tests disabled — software WebGL on standard ubuntu-latest runners is
