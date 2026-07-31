@@ -458,27 +458,39 @@ def warn_if_scene_lacks_ladder(scene_path: Path) -> None:
     user who built this demo before the finest level was laddered would keep
     getting the old all-or-nothing scene forever — the multi-minute load looks
     like the fix simply did not work. Warn loudly, name both remedies, and carry
-    on: the old scene still renders, just slowly.
+    on: the old scene still renders, just slowly. Both laddered layers ("By
+    tracer type" and "By redshift") are checked, since they share the same LOD.
     """
     import zarr
 
     try:
         root = zarr.open(str(scene_path), mode="r")
-        finest = root["By tracer type"]["child_3"]
-        n_sublods = int(finest.attrs.get("n_additive_sublods", 1))
     except Exception as exc:  # pragma: no cover - diagnostics only
         aprint(f"  ⚠ Could not inspect {scene_path} for a streaming ladder: {exc}")
         return
 
-    if n_sublods < SCENE_MIN_SUBLODS:
-        aprint(
-            f"  ⚠ This scene's finest level has no streaming ladder "
-            f"(n_additive_sublods={n_sublods}), so it will load all-at-once and "
-            "may freeze the browser for a long time. Rebuild it with:\n"
-            "      luxar demo run desi_galaxies -- --recompute\n"
-            "    or delete the scene and re-run to unpack a current shipped asset:\n"
-            f"      rm -rf {scene_path}"
-        )
+    for layer_name in ("By tracer type", "By redshift"):
+        try:
+            finest = root[layer_name]["child_3"]
+            n_sublods = int(finest.attrs.get("n_additive_sublods", 1))
+        except Exception as exc:
+            aprint(
+                f"  ⚠ Could not inspect {scene_path} [{layer_name}] for a "
+                f"streaming ladder: {exc}"
+            )
+            continue
+
+        if n_sublods < SCENE_MIN_SUBLODS:
+            aprint(
+                f"  ⚠ This scene's '{layer_name}' finest level has no streaming "
+                f"ladder (n_additive_sublods={n_sublods}), so it will load "
+                "all-at-once and may freeze the browser for a long time. Rebuild "
+                "it with:\n"
+                "      luxar demo run desi_galaxies -- --recompute\n"
+                "    or delete the scene and re-run to unpack a current shipped "
+                "asset:\n"
+                f"      rm -rf {scene_path}"
+            )
 
 
 # =============================================================================
