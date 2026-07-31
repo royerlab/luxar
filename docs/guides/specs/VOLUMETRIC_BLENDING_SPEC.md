@@ -541,12 +541,23 @@ and rendering agree.
 ### 5.5 Layers-panel UI
 
 - κ slider cloned from the opacity-slider block
-  (`ui/layers/layer-controls.ts:179-197`): `LabeledSlider`, range 0–10 with
-  step 0.05 (log-feeling coverage of the useful range; the attr itself is
-  unbounded), `layer.absorption` state field, `applyAbsorption` on
-  `LayerApplyEngine` (`ui/layers/layer-apply.ts`, beside `applyOpacity` L208),
-  `updateAbsorption` on the `LuxarMaterial` interface
-  (`ui/layers/luxar-material.ts:24`).
+  (`ui/layers/layer-controls.ts`): `LabeledSlider`, `layer.absorption` state
+  field, `applyAbsorption` on `LayerApplyEngine`
+  (`ui/layers/layer-apply.ts`, beside `applyOpacity`), `updateAbsorption` on the
+  `LuxarMaterial` interface (`ui/layers/luxar-material.ts`).
+- **The track is logarithmic with PER-LAYER bounds** (`ui/layers/absorption-range.ts`),
+  not a fixed 0–10: κ has units of 1/length, so the κ that produces a given τ
+  scales as 1/thickness. `absorptionMaxForNode` derives the top of the track
+  from the thickness the writer records for the layer's subtree (`max_width` for
+  lines, `max_radius` for points; the thinnest descendant wins because one κ
+  drives them all) so it lands near τ = 5 — "opaque". Gsplats have no
+  comparable stat and their `τ = κ·opacity·rayMass` is already O(1)-calibrated
+  for fitted volumes, so they keep the historical 0.001–10 span, which is also
+  the floor for every derived bound (an authored κ ≤ 10 must stay reachable).
+  Position 0 on the log track is an exact κ = 0 (the additive limit).
+  A fixed 0–10 track had made the knob a visual no-op on thin geometry: at the
+  3D-Hilbert-curve demo's `width = 1.5e-3`, the whole slider spanned
+  τ ≤ 0.012 — below one 8-bit level.
 - Visibility: the slider is shown/enabled **only when the selected layer's
   effective mode is `volumetric`** — κ is inert elsewhere and the UI should say
   so. Sync with the existing dropdown-change handler

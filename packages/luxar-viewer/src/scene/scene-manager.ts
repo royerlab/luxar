@@ -54,6 +54,7 @@ import {
   type CameraModeCtx,
   setControlType as cameraModeSetControlType,
 } from './scene-manager/camera/camera-mode';
+import { sceneDimsManager } from './scene-dims-manager';
 import { WebGLContextRecovery } from './scene-manager/render-pipeline/webgl-context-recovery';
 import { reduceGpuByteBudgetForContextLoss } from '../rendering/gpu-byte-budget';
 import {
@@ -633,6 +634,21 @@ export class SceneManager extends THREE.EventDispatcher<{
       notifier.hideLoading();
       this.scene.add(root);
       this.invalidateBoundsCache();
+
+      // Resolve the scene's DISPLAYED dimensions before anything below reads
+      // bounds. Every metadata-bounds consumer in this method (scene scale,
+      // auto-frame, clipping planes, near-cull) projects the nD
+      // `position_bounds` through `sceneDimsManager.getDims().displayed`, and
+      // falls back to [0, 1, 2] when the manager is uninitialised. The
+      // dimension-navigation UI initialises it too, but only AFTER this method
+      // resolves — so a scene whose displayed dims are not the first three
+      // (e.g. a leading non-displayed time / order / channel axis) used to be
+      // framed around the WRONG axes: the non-displayed axis' extent landed on
+      // world X, putting the look-at target off to one side of the geometry and
+      // inflating the fit distance by that axis' range. `initFromScene` is a
+      // pure metadata read (no listeners fire, no camera touched), and the
+      // later UI call re-runs it identically.
+      sceneDimsManager.initFromScene(this.scene);
 
       // NOTE: Material parameters were already updated BEFORE loadScene() above
       // Materials created during loading already have correct FOV/resolution

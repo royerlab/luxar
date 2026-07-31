@@ -35,6 +35,7 @@ function makeLayer(overrides: Partial<LayerInfo> = {}): LayerInfo {
     visible: true,
     opacity: 1,
     absorption: 1,
+    absorptionMax: 10,
     displayMin: 0,
     displayMax: 1,
     dataMin: 0,

@@ -393,6 +393,10 @@ vi.mock('../../../scene/scene-manager/render-pipeline/renderer-setup', async () 
 import { SceneManager } from '../../../scene/scene-manager';
 import { loadScene as mockLoadScene } from '../../../data';
 import { createWebGPURenderer as mockedCreateWebGPURenderer } from '../../../scene/scene-manager/render-pipeline/renderer-setup';
+import {
+  sceneDimsManager,
+  __resetSceneDimsManagerForTests,
+} from '../../../scene/scene-dims-manager';
 const mockShowLoadingIndicator = mockShowLoading;
 const mockHideLoadingIndicator = mockHideLoading;
 
@@ -401,6 +405,11 @@ describe('SceneManager', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // `sceneDimsManager` is a module singleton and `loadSceneData` now
+    // initialises it from the loaded scene, so leaving it populated would
+    // let one case's DISPLAYED dims decide how the next case's nD bounds
+    // are projected (the default is [0, 1, 2] when uninitialised).
+    __resetSceneDimsManagerForTests();
     // Pin the unit tests to the WebGL path. This is the production
     // default — these tests exercise scene composition / disposal /
     // position bounds and are renderer-agnostic in intent. Stubbing
@@ -787,6 +796,59 @@ describe('SceneManager', () => {
       expect(setSceneScale.mock.invocationCallOrder[0]).toBeLessThan(
         spies.applyZarrViewerConfig.mock.invocationCallOrder[0]
       );
+    });
+
+    it('frames through the DISPLAYED dims when the first dimension is not displayed (regression: a leading order/time axis hijacked world X)', async () => {
+      // A 4D scene whose FIRST dim is not displayed (an `order` / `time` /
+      // `channel` axis — the common nD shape). The displayed geometry is a
+      // unit cube centred at the origin; the non-displayed axis spans 0..5.
+      (mockLoadScene as any).mockImplementationOnce(async () => {
+        const T = await import('three');
+        const group = new T.Group();
+        group.name = 'LuxarScene';
+        group.userData = {
+          sceneDimensions: {
+            dimensions: [
+              { name: 'order', unit: '', range: [0, 5], display: false },
+              { name: 'x', unit: '', range: [-0.5, 0.5], display: true },
+              { name: 'y', unit: '', range: [-0.5, 0.5], display: true },
+              { name: 'z', unit: '', range: [-0.5, 0.5], display: true },
+            ],
+          },
+          positionBounds: { min: [0, -0.5, -0.5, -0.5], max: [5, 0.5, 0.5, 0.5] },
+        };
+        return group;
+      });
+      const controls = (
+        sceneManager as unknown as {
+          controls: {
+            setSceneScale: ReturnType<typeof vi.fn>;
+            setTarget: ReturnType<typeof vi.fn>;
+          };
+        }
+      ).controls;
+      controls.setSceneScale.mockClear();
+      controls.setTarget.mockClear();
+
+      // NOTE: no autoFrameCamera spy here — the production framing path must
+      // run for its look-at target to be observable.
+      await sceneManager.loadSceneData('http://example.com/data.zarr');
+
+      // The dims manager must be resolved by the time bounds are read.
+      expect(sceneDimsManager.getDims()?.displayed).toEqual([1, 2, 3]);
+      // Displayed box = the unit cube → diagonal √3 ≈ 1.73, look-at at the
+      // origin. Reading the bounds through the [0, 1, 2] fallback instead
+      // would project the ORDER axis onto world X: diagonal √(5² + 1 + 1)
+      // ≈ 5.20 (a 3× over-zoom) and a look-at target at x = 2.5 — the
+      // geometry framed off to one side of the viewport.
+      for (const call of controls.setSceneScale.mock.calls) {
+        expect(call[0]).toBeCloseTo(Math.sqrt(3), 3);
+      }
+      expect(controls.setTarget).toHaveBeenCalled();
+      const target = controls.setTarget.mock.calls[0][0] as THREE.Vector3;
+      expect(target.x).toBeCloseTo(0, 6);
+      expect(target.y).toBeCloseTo(0, 6);
+      expect(target.z).toBeCloseTo(0, 6);
     });
 
     it('error path: skips autoFrame/autoAdjust + reports through notifier + rethrows', async () => {

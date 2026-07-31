@@ -10,6 +10,7 @@ import { getEffectiveAttrs } from '../../data/attrs-composer';
 import type { BlendingMode } from '../../types/blending';
 import type { NodeKind } from '../../types/format-contract';
 import { log, Modules } from '../../utils/log';
+import { absorptionMaxForNode } from './absorption-range';
 
 /**
  * Geometry type of a layer.
@@ -96,6 +97,13 @@ export interface LayerInfo {
   opacity: number;
   /** Absorption coefficient κ (≥ 0; only meaningful in volumetric mode) */
   absorption: number;
+  /**
+   * Upper κ bound for this layer's Absorption slider, derived from the
+   * geometry thickness recorded in the subtree's zarr metadata — κ's useful
+   * magnitude goes as 1/thickness, so the track has to be per-layer. See
+   * `absorption-range.ts`.
+   */
+  absorptionMax: number;
   /** Current display-range minimum (maps to intensity+offset in shader) */
   displayMin: number;
   /** Current display-range maximum */
@@ -378,6 +386,7 @@ export class LayerStateManager {
           // each layer's live values per ancestry node, so a composed
           // init would multiply ancestor κ in twice.
           absorption: (node.attrs.absorption as number) ?? 1.0,
+          absorptionMax: absorptionMaxForNode(node),
           displayMin,
           displayMax,
           dataMin,

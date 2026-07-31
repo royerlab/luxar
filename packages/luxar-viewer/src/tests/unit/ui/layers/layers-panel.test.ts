@@ -78,6 +78,20 @@ import {
   applyColorAdjustments,
   type LuxarMaterial,
 } from '../../../../ui/layers/layers-panel';
+import {
+  ABSORPTION_DEFAULT_MAX,
+  ABSORPTION_TAU_TARGET,
+  absorptionSliderRange,
+} from '../../../../ui/layers/absorption-range';
+import { LINE_CHORD_SCALE } from '../../../../rendering/materials/line/math';
+
+/**
+ * Normalised thumb position for a κ value on a log track — the inverse of
+ * `LabeledSlider`'s own mapping, so tests can drive the real input.
+ */
+function logPosition(value: number, range: { min: number; max: number }): number {
+  return Math.log(value / range.min) / Math.log(range.max / range.min);
+}
 
 /**
  * AnimationController stub. Captures per-frame callbacks into a map so
@@ -136,7 +150,10 @@ function makeEmptySceneGraph(): SceneNode {
   } as unknown as SceneNode;
 }
 
-function makeLayeredSceneGraph(leafType: 'points' | 'gsplats' = 'points'): SceneNode {
+function makeLayeredSceneGraph(
+  leafType: 'points' | 'gsplats' | 'lines' = 'points',
+  extraLeafAttrs: Record<string, unknown> = {}
+): SceneNode {
   // Single layered data node — mirrors what the Python API emits
   // when `layer=True`.
   return {
@@ -149,7 +166,7 @@ function makeLayeredSceneGraph(leafType: 'points' | 'gsplats' = 'points'): Scene
         name: 'cloud',
         path: '/cloud',
         type: leafType,
-        attrs: { layer: true, type: leafType },
+        attrs: { layer: true, type: leafType, ...extraLeafAttrs },
         children: [],
       },
     ],
@@ -902,18 +919,71 @@ describe('LayersPanel — blend select drives the leaf material', () => {
     expect(group!.style.display).not.toBe('none');
 
     // Dragging the slider reaches the material's updateAbsorption with
-    // the COMPOSED κ via the real applyComposed path.
+    // the COMPOSED κ via the real applyComposed path. The track is LOG
+    // (κ spans decades — absorption-range.ts), so the input carries a
+    // NORMALISED position: κ = min·(max/min)^t.
     updateAbsorption.mockClear();
     const input = group!.querySelector('input[type="range"]') as HTMLInputElement;
-    input.value = '2.5';
+    input.value = String(logPosition(2.5, absorptionSliderRange(ABSORPTION_DEFAULT_MAX, 1)));
     input.dispatchEvent(new Event('input', { bubbles: true }));
-    expect(updateAbsorption).toHaveBeenCalledWith(2.5);
-    expect(panel.layerState.getLayer('/cloud')!.absorption).toBe(2.5);
+    expect(updateAbsorption).toHaveBeenCalledWith(expect.closeTo(2.5, 6));
+    expect(panel.layerState.getLayer('/cloud')!.absorption).toBeCloseTo(2.5, 6);
 
     // Switching away hides it again.
     select!.value = 'additive';
     select!.dispatchEvent(new Event('change', { bubbles: true }));
     expect(group!.style.display).toBe('none');
+  });
+
+  it('absorption slider: the κ track is re-scaled per layer so a THIN-geometry layer can reach a visible optical depth', () => {
+    // Regression: the track was a fixed linear 0–10. τ = κ·α·width·chord,
+    // so on this demo-realistic 1.5e-3-wide line the whole track topped
+    // out at τ ≈ 0.012 — a sub-1/255 change, i.e. dragging Absorption in
+    // volumetric mode did visibly nothing.
+    const width = 0.0015;
+    const updateAbsorption = vi.fn();
+    const stubMat: Record<string, unknown> = {
+      userData: { blendingMode: 'volumetric' },
+      uniforms: { uOpacity: { value: 1.0 } },
+      defines: {},
+      updateIntensity: vi.fn(),
+      updateOffset: vi.fn(),
+      updateGamma: vi.fn(),
+      updateOpacity: vi.fn(),
+      updateAbsorption,
+      applyBlendingMode: vi.fn(),
+    };
+    stubMat.clone = vi.fn(() => stubMat);
+
+    const mesh = new THREE.Mesh(new THREE.BufferGeometry(), stubMat as unknown as THREE.Material);
+    mesh.name = '/cloud';
+    const rootGroup = new THREE.Group();
+    rootGroup.add(mesh);
+
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(
+      rootGroup,
+      makeLayeredSceneGraph('lines', { max_width: width, blending_mode: 'volumetric' })
+    );
+    panel.show();
+    panel.layerState.select('/cloud', 'single');
+
+    const layer = panel.layerState.getLayer('/cloud')!;
+    expect(layer.absorptionMax * width * LINE_CHORD_SCALE).toBeCloseTo(ABSORPTION_TAU_TARGET, 6);
+
+    // Drive the track to its far end through the real UI path.
+    updateAbsorption.mockClear();
+    const group = findAbsorptionGroup(container)!;
+    const input = group.querySelector('input[type="range"]') as HTMLInputElement;
+    input.value = '1';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+
+    const pushed = updateAbsorption.mock.calls.at(-1)![0] as number;
+    // The κ that actually reaches the material must produce the opaque
+    // target optical depth for THIS layer's width.
+    expect(pushed * width * LINE_CHORD_SCALE).toBeCloseTo(ABSORPTION_TAU_TARGET, 4);
+    // Sanity: that is two orders of magnitude past the old fixed ceiling.
+    expect(pushed).toBeGreaterThan(100 * ABSORPTION_DEFAULT_MAX);
   });
 
   it('composeEffective preserves an authored κ on a NON-layer leaf under a layer group', () => {

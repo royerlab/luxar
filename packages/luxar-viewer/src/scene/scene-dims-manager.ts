@@ -95,6 +95,14 @@ export class SceneDimsManager {
       // For 3D-only scenes, this is normal behavior
       // This is normal for 3D-only scenes, no need to log as error
       // The calling code will handle the false return appropriately
+      //
+      // Drop any PREVIOUS scene's dims: this is a singleton, so leaving them
+      // in place would let a 3D-only scene loaded after an nD one be read
+      // through the old scene's `displayed` axes (bounds projection,
+      // auto-framing). Listeners are deliberately kept — they are owned by
+      // the input handler across scene switches, unlike `reset()`.
+      this.dims = null;
+      this.dimensionRanges = null;
       return false;
     }
 
