@@ -57,6 +57,7 @@ import {
   perspectiveNearFadeTSL,
   sanitizeNonNegative,
   type TSLNode,
+  sortedIndexNode,
 } from '../../materials/_shared/tsl-helpers';
 import { getPlaceholderElementTexture } from '../../element-texture-layout';
 
@@ -84,6 +85,8 @@ export interface PointPickTSLNodes {
   readonly maxPointSize: TSLNode;
   readonly radiusScale: TSLNode;
   readonly uIsOrtho: TSLNode;
+  /** Active ordering buffer: 0 = aSortedIndex, 1 = aSortedIndexB. */
+  readonly uSortedIndexSlot: TSLNode;
   readonly uNearCull: TSLNode;
   readonly uNodeId: TSLNode;
   readonly uResolution: TSLNode;
@@ -103,7 +106,7 @@ export function pointPickWebGPUFactory(
   const aQuadCorner: TSLNode = attribute<'vec2'>('aQuadCorner', 'vec2');
   // Draw-slot -> storage-slot mapping; point data comes from the point
   // texture (visual-factory parity, shader-tsl.ts).
-  const aSortedIndex: TSLNode = attribute<'uint'>('aSortedIndex', 'uint');
+  const aSortedIndex: TSLNode = sortedIndexNode(nodes.uSortedIndexSlot);
 
   const uPointTex = nodes.uPointTex;
   const uPointSizeFactor = nodes.pointSizeFactor;
@@ -297,6 +300,7 @@ export function buildPointPickTSLNodesFromUniforms(
     maxPointSize: uniform((uniforms.maxPointSize?.value as number) ?? 1.0),
     radiusScale: uniform((uniforms.radiusScale?.value as number) ?? 1.0),
     uIsOrtho: uniform((uniforms.uIsOrtho?.value as number) ?? 0),
+    uSortedIndexSlot: uniform((uniforms.uSortedIndexSlot?.value as number) ?? 0),
     uNearCull: uniform((uniforms.uNearCull?.value as number) ?? 0.1),
     uNodeId: uniform((uniforms.uNodeId?.value as number) ?? 0),
     uResolution: uniform(
