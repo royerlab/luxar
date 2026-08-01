@@ -9,12 +9,14 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import * as THREE from 'three';
 import { WindowEventHandler } from '../../../../../input/input-handler/window-events/window-event-handler';
 import type { SceneManager } from '../../../../../scene/scene-manager';
 import type { AnimationController } from '../../../../../scene/animation/animation-controller';
 import type { RenderingControls } from '../../../../../ui/rendering-controls';
+import type { LuxarCamera } from '../../../../../utils/camera-utils';
 
-function makeSceneManager(): {
+function makeSceneManager(camera?: LuxarCamera): {
   sceneManager: SceneManager;
   updateSize: ReturnType<typeof vi.fn>;
   updateFOV: ReturnType<typeof vi.fn>;
@@ -23,12 +25,15 @@ function makeSceneManager(): {
   const canvas = document.createElement('canvas');
   document.body.appendChild(canvas);
   const updateSize = vi.fn();
-  // Returns true like the real perspective-camera path; ortho tests
-  // override with mockReturnValue(false).
+  // Returns true like the real perspective-camera path.
   const updateFOV = vi.fn(() => true);
+  // The onWheel FOV path is gated on a perspective camera; default to one so
+  // the modifier-wheel tests exercise the FOV branch. Ortho tests pass an
+  // OrthographicCamera to hit the early return.
   const sceneManager = {
     updateSize,
     updateFOV,
+    camera: camera ?? new THREE.PerspectiveCamera(),
     renderer: { domElement: canvas },
   } as unknown as SceneManager;
   return { sceneManager, updateSize, updateFOV, canvas };
@@ -190,12 +195,48 @@ describe('WindowEventHandler', () => {
       expect(syncCurrentState).toHaveBeenCalledTimes(1);
     });
 
-    it('Ctrl+wheel with an ortho camera (updateFOV no-op): preset stays untouched', () => {
-      // updateFOV returns false for orthographic cameras — stamping
-      // "Custom" for a no-op would desync the rendering-controls panel
-      // from the actual (unchanged) FOV.
-      const { sceneManager, updateFOV } = makeSceneManager();
-      updateFOV.mockReturnValue(false);
+    it('#774 Ctrl+wheel with an ortho camera: FOV path is gated, updateFOV NOT called', () => {
+      // updateFOV now PERSISTS the perspective FOV stash even in ortho (for
+      // deliberate reset/zarr/panel applies). The interactive wheel must be
+      // gated to a perspective camera at the call site — otherwise a
+      // pinch/ctrl-wheel zoom (browsers synthesize pinch as ctrlKey wheel)
+      // in ortho would drag the stash and flip the preset to "Custom".
+      const ortho = new THREE.OrthographicCamera(-10, 10, 5, -5, 0.1, 1000);
+      const { sceneManager, updateFOV } = makeSceneManager(ortho);
+      const { animationController } = makeAnimationController();
+      const settings = { fovPreset: '60° Standard' };
+      const syncCurrentState = vi.fn();
+      const handler = new WindowEventHandler(sceneManager, animationController);
+      handler.setRenderingControls({ settings, syncCurrentState } as unknown as RenderingControls);
+      handler.attach([]);
+
+      window.dispatchEvent(new WheelEvent('wheel', { deltaY: 1, ctrlKey: true }));
+      // Gate short-circuits BEFORE updateFOV — stash cannot be corrupted.
+      expect(updateFOV).not.toHaveBeenCalled();
+      expect(settings.fovPreset).toBe('60° Standard');
+      expect(syncCurrentState).not.toHaveBeenCalled();
+    });
+
+    it('#774 Meta+wheel (trackpad pinch) with an ortho camera: also gated, updateFOV NOT called', () => {
+      // Symmetric macOS path: Cmd/Meta+wheel and trackpad pinch must not
+      // reach updateFOV in ortho either.
+      const ortho = new THREE.OrthographicCamera(-10, 10, 5, -5, 0.1, 1000);
+      const { sceneManager, updateFOV } = makeSceneManager(ortho);
+      const { animationController, startAnimation } = makeAnimationController();
+      const handler = new WindowEventHandler(sceneManager, animationController);
+      handler.attach([]);
+
+      window.dispatchEvent(new WheelEvent('wheel', { deltaY: -20, metaKey: true }));
+      // Animation loop still kicked (unconditional), but no FOV mutation.
+      expect(startAnimation).toHaveBeenCalledTimes(1);
+      expect(updateFOV).not.toHaveBeenCalled();
+    });
+
+    it('#774 perspective camera still runs the FOV path (control for the ortho gate)', () => {
+      // The reciprocal of the ortho gate: with a perspective camera the wheel
+      // path fires updateFOV and stamps the preset, so the gate is specific
+      // to ortho — a mutant that gated ALL cameras would fail this.
+      const { sceneManager, updateFOV } = makeSceneManager(); // perspective default
       const { animationController } = makeAnimationController();
       const settings = { fovPreset: '60° Standard' };
       const syncCurrentState = vi.fn();
@@ -205,8 +246,8 @@ describe('WindowEventHandler', () => {
 
       window.dispatchEvent(new WheelEvent('wheel', { deltaY: 1, ctrlKey: true }));
       expect(updateFOV).toHaveBeenCalledTimes(1);
-      expect(settings.fovPreset).toBe('60° Standard');
-      expect(syncCurrentState).not.toHaveBeenCalled();
+      expect(settings.fovPreset).toBe('Custom');
+      expect(syncCurrentState).toHaveBeenCalledTimes(1);
     });
 
     it('[input.md G15] Ctrl+wheel without setRenderingControls: updateFOV fires but the if-guard prevents preset/sync', () => {

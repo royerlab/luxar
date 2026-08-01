@@ -142,7 +142,7 @@ Orthographic projection with 2D pan+zoom. Uses `LuxarOrbitControls` with rotatio
 | Scroll         | Zoom in/out                    |
 | Shift + scroll | Roll (rotate around view axis) |
 
-When switching to ortho, the camera resets to a clean front view (looking along -Z, up = Y).
+When switching to ortho, the camera pose is preserved verbatim (position, orientation and up); only the projection changes to orthographic, sized to match the perspective frustum at the pivot depth.
 
 ---
 
@@ -150,7 +150,7 @@ When switching to ortho, the camera resets to a clean front view (looking along 
 
 Press **V** to cycle: **Orbit → Fly → Ortho → Orbit**
 
-Camera state (position, target) is preserved across switches. The ortho mode resets to a front view for clean 2D viewing.
+Camera state (position, target, orientation and FOV) is preserved across switches. A full round trip with no interaction lands the camera back at its exact starting pose: the perspective↔orthographic swaps are pose-preserving inverses (ortho copies the perspective pose and stashes its FOV; the return swap restores that FOV and dollies to match apparent size at the pivot).
 
 ---
 
