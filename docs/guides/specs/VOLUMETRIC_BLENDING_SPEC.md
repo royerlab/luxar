@@ -1,5 +1,34 @@
 # Volumetric Blending Mode — Emission–Absorption Compositing
 
+> **Status**: **RAY-MASS CONVENTION UNIFIED** (2026-08-02) — supersedes the
+> per-family chord factors described in the Phase 3 / Phase 4 blocks below.
+>
+> **τ = κ × the same ray mass that geometry's ADDITIVE branch emits**, for all
+> three types. Gsplats already did this (`tau = κ·uOpacity·intensity`); points
+> and lines additionally multiplied by a world thickness
+> (`vRadius·POINT_CHORD_SCALE` / `vWidthAtT·LINE_CHORD_SCALE`). Both chord
+> constants and their `materials/{point,line}/math.ts` modules are DELETED.
+>
+> Why: a point's `opacity` is a peak SCREEN ALPHA — already an integrated
+> quantity — so the extra length read it as a volume density in volumetric and
+> as a peak alpha in the other five modes. A Points node and its
+> `lift_points_to_gsplats` twin therefore disagreed by exactly one path length
+> (24× at R = 0.05, measured). The lift cannot fix that: `a·σ·uRIF = opacity`
+> (additive) and `a·σ·uRIF = opacity·R·chord` (volumetric) share a left-hand
+> side. Making every mode a functional of the ONE quantity the lift and
+> `coarse_substitutive_levels` already conserve (`render_light = Σ a·σ³`) turns
+> LOD consistency from a per-mode calibration into a structural property.
+>
+> Consequences: κ is now dimensionless and comparable across points, lines,
+> gsplats, scene scales and zoom levels — κ = 1 means "peak rendered alpha ≈ the
+> authored per-element alpha" everywhere, so the per-layer κ slider track
+> (`absorptionBoundsForNode`) is gone and one fixed 0.001–10 span serves every
+> scene. Existing volumetric points/lines scenes need κ scaled DOWN by roughly
+> `1/(thickness·0.826)`.
+>
+> Shipped alongside an energy-preserving 2D dilation for gsplats (§3.1) — an
+> independent defect that affected plain additive too.
+>
 > **Status**: **Phase 4 IMPLEMENTED** (2026-07-24) — the plan is COMPLETE: all
 > three geometry types render the real emission–absorption math on both
 > shader backends. Lines compute the TRANSVERSE chord through the
@@ -497,9 +526,10 @@ so the two decouple emission from opacity):
 
 The volumetric mapping makes per-element alpha compose as OPTICAL DEPTH; the
 "peak rendered alpha = aᵢ" reproduction is exact when the remaining τ factor
-equals 1 (the normalized 3DGS-import case for gsplats; for points/lines the
-factor also carries the world-unit size × chord scale, so the reproduction is
-up to that normalization) and emission self-screens to ≈ c·aᵢ in that case. Dilute limit: `w ≈ a` as
+equals 1 — which is now the SAME condition for all three geometry types
+(κ = 1 with a peak-normalised ray mass), since points and lines no longer carry
+a world-unit size × chord scale in τ (see the 2026-08-02 status block) — and
+emission self-screens to ≈ c·aᵢ in that case. Dilute limit: `w ≈ a` as
 a → 0, so volumetric and additive agree there (the same κ→0 coherence carried to
 per-splat alpha); at large a volumetric is intentionally denser
 (optical-depth semantics). Mid-alpha renders therefore differ between modes —
@@ -553,38 +583,29 @@ and rendering agree.
   field, `applyAbsorption` on `LayerApplyEngine`
   (`ui/layers/layer-apply.ts`, beside `applyOpacity`), `updateAbsorption` on the
   `LuxarMaterial` interface (`ui/layers/luxar-material.ts`).
-- **The track is logarithmic with PER-LAYER bounds** (`ui/layers/absorption-range.ts`),
-  not a fixed 0–10: κ has units of 1/length, so the κ that produces a given τ
-  scales as 1/thickness. `absorptionBoundsForNode` derives the track from the
-  thickness the writer records for the layer's subtree (`max_width` for lines,
-  `max_radius` for points): the TOP from the thinnest descendant (one κ drives
-  them all) so it lands near τ = 5 — "opaque" — and the FLOOR anchored to the
-  thickest descendant, so a mixed-thickness group can also reach
-  near-transparency for its fattest geometry instead of stalling at visible
-  absorption above the zero stop. Gsplats have no
-  comparable stat and their `τ = κ·opacity·rayMass` is already O(1)-calibrated
-  for fitted volumes, so they keep the historical 0.001–10 span, which is also
-  the floor for every derived bound (an authored κ ≤ 10 must stay reachable).
-  A fixed 0–10 track had made the knob a visual no-op on thin geometry: at the
-  3D-Hilbert-curve demo's `width = 1.5e-3`, the whole slider spanned
-  τ ≤ 0.012 — below one 8-bit level.
-  Granularity: "descendant" means NODE — the recorded stat is each node's
-  per-element MAXIMUM (the format stores no minimum), so within one node the
-  track top makes the thickest element opaque and an element K× thinner tops
-  out at τ = 5/K. Deliberate: a per-element minimum would be hostage to a
-  single taper-to-zero vertex (width-tapered lines are first-class) and would
-  blow the bound to the `ABSORPTION_MAX_LIMIT` ceiling, parking most of the
-  track in saturation. The derived range always contains the legacy 0–10
-  span, so no previously reachable κ regresses.
+- **The track is logarithmic with FIXED bounds** (`ui/layers/absorption-range.ts`):
+  one 0.001–10 span for every layer and every geometry type. Since the
+  2026-08-02 convention unification, τ = κ · rayMass uses the same
+  peak-normalised ray mass in all three families, so κ ≈ 1 is the useful anchor
+  everywhere and κ = 10 is already far past opaque.
+  HISTORY — do not reintroduce: the track used to be DERIVED per layer as
+  `ABSORPTION_TAU_TARGET / (thickness · chord)` from `max_width` / `max_radius`,
+  because points and lines multiplied τ by a world thickness gsplats had no
+  counterpart for (gsplats returned no stat at all). That made κ a
+  per-unit-length coefficient for two families and dimensionless for the third,
+  so the stretch was a units conversion smuggled into the UI — and it could
+  never serve a MIXED subtree, since a `lift_points_to_gsplats` LOD ladder
+  composes ONE κ over both families. Removing the chord factor from the shaders
+  removed the need for it. If a per-layer bound is ever needed again, the shader
+  conventions have drifted apart.
 - **The current κ is always representable on the track**, or the readout would
   show a value the thumb cannot express and a touch that moves nothing would
   write the clamped end back. Three mechanics enforce that: κ = 0 gets a
   DEDICATED stop at position 0 (the geometric span starts one DOM step in, so
   `min` itself round-trips and cannot collapse to zero); `max` is raised to an
-  authored κ above the derived opaque point; and `min` is LOWERED onto a
-  positive authored κ beneath the nominal floor (very thin geometry derives a
-  large `max`, whose 4-decade floor would otherwise sit above the default
-  κ = 1). Two clamps bound that accommodation — `ABSORPTION_MAX_LIMIT` and
+  authored κ above the nominal maximum; and `min` is LOWERED onto a
+  positive authored κ beneath the nominal floor. Two clamps bound that
+  accommodation — `ABSORPTION_MAX_LIMIT` and
   `ABSORPTION_LOG_DECADES_MAX` — because unbounded accommodation would compress
   the useful region off the track and recreate the original bug. Outside them
   the thumb seats at the clamped end: accepted, because past the ceiling both κ
@@ -726,18 +747,8 @@ accumulation removes that workaround and adds real depth cueing to the surface.
 subdivision if ever needed) — the lazy midpoint provider the lines
 depth-sort integration already registered, now engaged via
 `needsDepthSort(mode)` with zero coordinator change since the
-`effectiveGeometryMode` downgrade helper was deleted. The ray integral is
-the TRANSVERSE chord through the Gaussian-profile ribbon: locally the line
-is a Gaussian tube, so a ray crossing at normalized perpendicular offset p
-integrates the depth direction to `perpFalloff(p) · width · √(π/K)` —
-rayMass = perpFalloff · vWidthAtT · `LINE_CHORD_SCALE` (= √(π/ln 100);
-derivation comment in `rendering/materials/line/math.ts`; identical value
-to `POINT_CHORD_SCALE`, keeping the point/line/gsplat κ scales aligned;
-non-Gaussian β reshapes fold into the user's κ). Both line shader backends
-gained the `LUXAR_VOLUMETRIC` output branch (τ = κ·alpha·vWidthAtT·
-`LINE_CHORD_SCALE` with alpha = the additive-mode screen density — the
-full intensity chain, which carries perpFalloff once, × uOpacity × the
-w(a) map; shared S(τ) series, output
+`effectiveGeometryMode` downgrade helper was deleted. Both line shader
+backends gained the `LUXAR_VOLUMETRIC` output branch (shared S(τ) series, output
 alpha 1 − e^(−τ), color-discard bypassed while τ is significant). Lines
 RGBA colors land the per-endpoint alphas in line-texture texel5.zw (the
 slots the texture migration reserved), read through `sanitizeAlpha` and
@@ -829,6 +840,25 @@ Invariant and behavior tests:
 
 ## 10. Changelog
 
+- **2026-08-02** — **Ray-mass convention unified.** τ = κ × the same ray mass
+  the geometry's additive branch emits, for all three types; the point/line
+  world-thickness factors and both chord constants
+  (`materials/{point,line}/math.ts`) are deleted. Root cause: a point's
+  `opacity` is a peak screen alpha, so the extra length read it as a volume
+  density in volumetric only — making a Points node and its
+  `lift_points_to_gsplats` twin disagree by one path length, unfixable in the
+  lift (two constraints, one left-hand side). Shipped with an energy-preserving
+  2D dilation for gsplats (Mip-Splatting `√(detΣ/detΣ')`), an INDEPENDENT defect
+  that inflated sub-pixel splats in every sum mode including additive, by a
+  factor that grew as the camera pulled back. Measured on a 4-radius
+  Points-vs-lifted-twin parity scene: gsplat/points brightness ratio
+  3.75/1.45/1.07/1.02 → 1.04/1.02/1.02/1.02, and the whole κ-response curve now
+  overlays row-for-row (κ* ratio 0.97/1.02/1.02/1.00, was 208/34.6/8.5/3.1).
+  The per-layer κ slider track (`absorptionBoundsForNode`) retires with it — it
+  was a units conversion for exactly this factor and could never serve a mixed
+  points→gsplat LOD ladder. NOT addressed: peak-projection modes
+  (max/normal/opaque), where the lift's sum-only calibration leaves a separate
+  `1/(uRIF·σ)` mismatch (12–39× measured).
 - **2026-07-24 (later)** — Phase 4 (lines) implemented — the plan is
   complete: transverse chord-integral rayMass through the Gaussian-profile
   ribbon (`LINE_CHORD_SCALE = √(π/ln 100)`,

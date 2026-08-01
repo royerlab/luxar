@@ -293,8 +293,16 @@ def generate_mandelbulb_volumetric(
                 radii=radii,
                 sharpness=sharpnesses,
                 opacity=0.9,
-                blending_mode="volumetric",
-                absorption=8.0,
+                # Rescaled for the 2026-08-02 ray-mass unification: tau is now
+                # kappa * (the ray mass additive emits) with no world-radius
+                # factor, so the authored look transfers as
+                # kappa_new = 8.0 * r_mean * chord with r_mean the midpoint of
+                # the [0.005, 0.02] radii above and chord = sqrt(pi/ln 100).
+                # Radii vary per point, so the previous per-point weighting
+                # (bigger points absorbed proportionally more) is not
+                # reproducible by any single kappa — that weighting WAS the
+                # bug. Overall optical depth is preserved.
+                absorption=8.0 * 0.0125 * float(np.sqrt(np.pi / np.log(100.0))),
                 intensity=0.025,
             )
 

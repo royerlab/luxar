@@ -314,6 +314,15 @@ def load_and_convert_gaia_data(data_zarr_path: Path, output_path: Path) -> int:
             # bound), so it needs a hotter intensity than the old additive
             # 0.031 — 0.075 = a 0–13.4 display range over the 0–32.3 data
             # range in the Layers panel.
+            # kappa is DELIBERATELY unchanged by the 2026-08-02 ray-mass
+            # unification. This is a MIXED ladder: the coarse levels are lifted
+            # gsplats, whose tau = kappa*rayMass never carried the point
+            # shader's world-radius factor, so 1.3 still renders them exactly as
+            # before. What changes is the finest (Points) level, which used to
+            # be ~35x more transparent than the coarse levels it replaces
+            # (radius 0.035 * chord 0.826) and now matches them — the whole
+            # point of the fix. Rescaling kappa here would break the coarse
+            # levels instead.
             scene.add_points(
                 "Stars",
                 positions,
@@ -338,6 +347,13 @@ def load_and_convert_gaia_data(data_zarr_path: Path, output_path: Path) -> int:
             typical_star_radius = (0.001 + 0.01 * 0.5**2) * SCALE  # Mid-brightness star
             marker_radius = typical_star_radius * 10
 
+            # The markers are PLAIN points (no substitutive LOD), so unlike the
+            # "Stars" node above they need kappa rescaled to survive the
+            # 2026-08-02 ray-mass unification: tau dropped its world-radius
+            # factor, so the old 1.3 would now absorb ~35x harder. Preserving
+            # the authored look is exactly kappa * radius * chord.
+            MARKER_ABSORPTION = 1.3 * marker_radius * float(np.sqrt(np.pi / np.log(100.0)))
+
             # Sun marker at the Sun's Galactocentric position
             r0_kpc = 8.122  # Sun-GC distance
             sun_position = np.array([[-r0_kpc * SCALE, 0.0, 0.0]], dtype=np.float32)
@@ -350,7 +366,7 @@ def load_and_convert_gaia_data(data_zarr_path: Path, output_path: Path) -> int:
                 radii=marker_radius,
                 opacity=1.0,
                 blending_mode="volumetric",
-                absorption=1.3,
+                absorption=MARKER_ABSORPTION,
                 layer=True,
             )
             aprint(f"  ✓ Sun at ({-r0_kpc * SCALE:.1f}, 0, 0)")
@@ -369,7 +385,7 @@ def load_and_convert_gaia_data(data_zarr_path: Path, output_path: Path) -> int:
                 radii=marker_radius,
                 opacity=1.0,
                 blending_mode="volumetric",
-                absorption=1.3,
+                absorption=MARKER_ABSORPTION,
                 layer=True,
             )
             aprint("  ✓ Betelgeuse (red supergiant, 168 pc)")
@@ -388,7 +404,7 @@ def load_and_convert_gaia_data(data_zarr_path: Path, output_path: Path) -> int:
                 radii=marker_radius,
                 opacity=1.0,
                 blending_mode="volumetric",
-                absorption=1.3,
+                absorption=MARKER_ABSORPTION,
                 layer=True,
             )
             aprint("  ✓ Rigel (blue supergiant, 265 pc)")

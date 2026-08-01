@@ -517,10 +517,7 @@ export function gsplatWebGPUFactory(
       // the 2D low-pass (derivation at its definition). Sum projection only —
       // this branch's quantity IS that integral. The peak branch reports a
       // peak, not an integral, and is left alone.
-      vAmplitude2DVal = aAmplitude
-        .mul(rayIntegrationBoost)
-        .mul(nearFade)
-        .mul(dilationCompensation);
+      vAmplitude2DVal = aAmplitude.mul(rayIntegrationBoost).mul(nearFade).mul(dilationCompensation);
     } else {
       vAmplitude2DVal = aAmplitude.mul(nearFade);
     }
