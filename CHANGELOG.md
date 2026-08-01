@@ -6,6 +6,21 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Fixed — bound the HuRI demo's CORUM download and extraction
+
+The HuRI demo's optional CORUM fallback fetched a remote ZIP with `stream=True`
+but then buffered the whole compressed body via `r.content` and the whole
+extracted member via `src.read()` — neither bounded. Since these third-party
+CORUM URLs shift across releases (they are not controlled Luxar assets), an
+unexpectedly large response or a highly-compressed member could exhaust memory.
+The archive now streams to a temp file under a hard compressed-byte cap and the
+member is extracted in bounded chunks under an uncompressed cap (the declared
+size is the effective decompression-bomb guard, CPython clamps extraction to it),
+staging both through a private per-invocation directory beside the destination
+— so concurrent demo runs sharing the cache cannot clobber each other — and
+atomically renaming the member into place only on success, so a failed attempt
+can never leave a partial file behind (#684).
+
 #### Fixed — clearing a node transform after finalize no longer desyncs metadata (#677)
 
 Setting `Node.transform` / `Node.nd_transform` to `None` after the
