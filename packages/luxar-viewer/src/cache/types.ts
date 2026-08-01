@@ -73,7 +73,11 @@ export interface OPFSMetadata {
    * next visit; persisted alongside `lastValidatedAt`.
    */
   validationMode?: CacheValidationMode;
-  /** Wall-clock millis at last successful validation. */
+  /**
+   * Wall-clock millis at last successful validation (hash modes), or the
+   * first-seen baseline under `ttl`/`none` — seeded once when unset and NOT
+   * advanced by later no-token checks, so the TTL age grows monotonically.
+   */
   lastValidatedAt?: number;
 }
 
