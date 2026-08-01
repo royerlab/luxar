@@ -1,10 +1,10 @@
 # Viewer Build & Quality Scripts
 
 Developer scripts that sit outside `src/` — invoked by `pnpm` commands, CI,
-and humans pasting perf tables into commit bodies. Four files, four jobs:
+and humans pasting perf tables into commit bodies. Five files, five jobs:
 compile the Rust→WASM module, sanity-check the embeddable library bundle,
-audit JSDoc coverage on the TS source, and diff two perf-bench JSON
-captures into a Markdown table.
+audit JSDoc coverage on the TS source, keep the pnpm security pins
+single-sourced, and diff two perf-bench JSON captures into a Markdown table.
 
 ## Contents
 
@@ -13,6 +13,7 @@ scripts/
 ├── build-wasm.sh             # Rust → WASM build via wasm-pack (pnpm build:wasm[:dev])
 ├── check-lib-exports.mjs     # Post-build sanity check on dist/lib/ (pnpm build:lib:check)
 ├── check-jsdoc-coverage.ts   # JSDoc coverage report over src/*.ts
+├── check-overrides.mjs       # pnpm overrides single-source guard (pnpm check:overrides)
 └── perf-diff.mjs             # Markdown delta table from two perf-bench JSON files
 ```
 
@@ -76,6 +77,32 @@ Flags:
 
 - `--threshold=<N>` — minimum overall coverage % to pass (default `70`).
 - `--verbose` — also list the top 10 fully-documented files.
+
+### `check-overrides.mjs`
+
+Keeps the pnpm security-advisory pins single-sourced. They may legally live
+in `pnpm-workspace.yaml` **or** in `package.json`'s `pnpm.overrides`, and
+when both exist the two silently disagree, because their consumers read
+different files: pnpm (any version that can read `pnpm-workspace.yaml` at
+all, i.e. ≥10.6) prefers `package.json`, while Dependabot's updater reads
+`pnpm-workspace.yaml`. The result is a lockfile that fails every
+`pnpm install --frozen-lockfile` with `ERR_PNPM_LOCKFILE_CONFIG_MISMATCH`,
+plus one pin set that is not actually applied. Checks:
+
+1. `package.json` declares no `pnpm.overrides` — `pnpm-workspace.yaml` owns them.
+2. `pnpm-lock.yaml`'s recorded `overrides` match `pnpm-workspace.yaml`'s,
+   printing both blocks side by side rather than pnpm's opaque error code.
+3. At least one pin exists, so the block cannot vanish unnoticed (checks 1
+   and 2 both hold trivially at zero, and `pnpm audit` is
+   `continue-on-error` in CI, so nothing else would catch it).
+
+Exits non-zero on any failure. Reads only the three files — no
+`node_modules` — so CI runs it _before_ `pnpm install --frozen-lockfile`,
+which would otherwise abort first and hide the explanation.
+
+```bash
+pnpm check:overrides   # → node scripts/check-overrides.mjs   (also inside pnpm check:ci)
+```
 
 ### `perf-diff.mjs`
 

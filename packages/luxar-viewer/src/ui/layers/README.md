@@ -79,7 +79,7 @@ Press **L** to toggle the Layers panel (Escape closes when focus is inside the p
 ## Architecture
 
 ```
-layer-state.ts     Pure data model, min/max ↔ intensity/offset math, selection logic
+layer-state.ts     Pure data model, selection logic (re-exports the min/max ↔ intensity/offset math from rendering/display-range.ts)
 layers-panel.ts    DOM panel (list + lifecycle), event handling; facade over the two below
 layer-controls.ts  LayerControls — the controls section (sliders, blend/colormap/LOD selects, LOD readout)
 layer-apply.ts     LayerApplyEngine — attr composition + scene/material application
@@ -172,7 +172,7 @@ control.
 
 | File                                       | Purpose                                                                                                             |
 | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------- |
-| `layer-state.ts`                           | `LayerStateManager`, `computeUniforms` / `computeDisplayRange`, selection logic                                     |
+| `layer-state.ts`                           | `LayerStateManager`, selection logic; re-exports `computeUniforms` / `computeDisplayRange` (now in `rendering/display-range.ts`) |
 | `layers-panel.ts`                          | `LayersPanel` class — panel/list DOM + lifecycle; facade over controls + apply                                      |
 | `layer-controls.ts`                        | `LayerControls` — controls-section DOM (sliders, selects, live LOD readout)                                         |
 | `layer-apply.ts`                           | `LayerApplyEngine` — attr composition + material application per data-leaf                                          |

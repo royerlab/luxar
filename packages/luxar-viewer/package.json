@@ -33,18 +33,7 @@
   "type": "module",
   "engines": {
     "node": ">=20.19.0",
-    "pnpm": ">=9.0.0"
-  },
-  "pnpm": {
-    "overrides": {
-      "ws@>=8.0.0 <8.20.1": ">=8.20.1",
-      "brace-expansion@>=5.0.0 <5.0.6": ">=5.0.6",
-      "esbuild@>=0.17.0 <0.28.1": ">=0.28.1",
-      "form-data@>=4.0.0 <4.0.6": ">=4.0.6",
-      "linkify-it@<=5.0.0": ">=5.0.1",
-      "markdown-it@<=14.1.1": ">=14.2.0",
-      "js-yaml@>=4.0.0 <=4.1.1": ">=4.2.0 <5.0.0"
-    }
+    "pnpm": ">=10.6.0"
   },
   "main": "./dist/lib/luxar-viewer.js",
   "module": "./dist/lib/luxar-viewer.js",
@@ -104,11 +93,12 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint src --ext .ts,.tsx",
     "check:layers": "depcruise src --config .dependency-cruiser.cjs",
+    "check:overrides": "node scripts/check-overrides.mjs",
     "check:knip": "knip --no-progress --no-config-hints",
     "check:knip:ci": "knip --no-progress --no-config-hints --include files,dependencies",
     "format": "prettier --write src",
     "check": "pnpm run typecheck && pnpm run lint && pnpm test --run",
-    "check:ci": "pnpm run typecheck && pnpm run lint && pnpm run check:layers && pnpm run check:knip:ci && pnpm run test:coverage",
+    "check:ci": "pnpm run check:overrides && pnpm run typecheck && pnpm run lint && pnpm run check:layers && pnpm run check:knip:ci && pnpm run test:coverage",
     "ci:release": "pnpm run build:lib && pnpm run build:lib:check"
   },
   "dependencies": {
@@ -120,7 +110,7 @@
   "devDependencies": {
     "@eslint/js": "^9.39.4",
     "@playwright/test": "^1.61.1",
-    "@types/node": "^26.1.1",
+    "@types/node": "^26.1.2",
     "@types/three": "~0.185.1",
     "@typescript-eslint/eslint-plugin": "^8.61.0",
     "@typescript-eslint/parser": "^8.62.1",
@@ -133,7 +123,7 @@
     "globals": "^17.7.0",
     "jsdom": "^29.1.1",
     "knip": "^6.27.0",
-    "prettier": "^3.8.3",
+    "prettier": "^3.9.6",
     "tsx": "^4.23.1",
     "typedoc": "^0.28.20",
     "typescript": "~5.9.3",
