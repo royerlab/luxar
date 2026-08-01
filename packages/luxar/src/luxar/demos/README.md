@@ -474,6 +474,17 @@ A topographic ETOPO globe (Points) plus every HydroRIVERS reach (Lines) in geogr
 
 ---
 
+#### demo_ocean_currents_earth.py - Ocean Currents of Earth
+HYCOM surface-current streamlines (220k connected ribbons, coloured by speed) draped over a jittered-Fibonacci NASA Blue Marble globe — a "Perpetual Ocean"-style visualization of the Gulf Stream, Kuroshio, and Antarctic Circumpolar Current.
+
+**Run**: `luxar demo run ocean_currents_earth`
+
+**Requires**: Internet access on first run (~72 MB: HYCOM GLBy0.08 surface u/v + Blue Marble texture; cached under `~/.cache/luxar/ocean_currents_earth/`).
+
+**Demonstrates**: Mixed Points+Lines geometry, fixed-arc-length RK4 streamline advection with along-segment land masking, per-vertex RGBA comet-tail fading, indexed Lines topology under the viewer's per-node vertex ceiling, `stream:` additive LOD for fast first paint on an 8M-point globe.
+
+---
+
 #### demo_gaia_milky_way_3m.py - Milky Way Stars (Gaia DR3, 3M Stars)
 Real Milky Way stars from Gaia DR3: top 3M brightest stars with real photometric colors (BP-RP index), galactocentric coordinates, and reference markers (Sun, Betelgeuse, Rigel).
 
