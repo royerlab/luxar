@@ -27,11 +27,12 @@ pnpm run test:coverage
 
 # Quality gates
 pnpm run check                # Fast dev-loop: typecheck + lint + unit tests
-pnpm run check:ci             # Merge gate: typecheck + lint + layers + knip + coverage thresholds
+pnpm run check:ci             # Merge gate: overrides + typecheck + lint + layers + knip + coverage thresholds
 ```
 
 `check` keeps the iteration fast. `check:ci` is what `make check-all`
-runs and what should run in CI — it adds the dependency-cruiser
+runs and what should run in CI — it adds the `check:overrides` pnpm
+security-pin guard, the dependency-cruiser
 layer rule check, the `check:knip:ci` unused-export/unused-file gate,
 and enforces the ratcheted coverage thresholds
 declared in `vitest.config.ts`. A PR can pass `check` while

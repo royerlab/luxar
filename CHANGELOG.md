@@ -6,6 +6,61 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
+#### Fixed — pnpm security pins single-sourced in `pnpm-workspace.yaml` (#1030)
+
+`packages/luxar-viewer/` declared pnpm `overrides` in two places at once:
+`package.json` carried the current advisory pins (`ws`, `brace-expansion` 5.x,
+`esbuild`, `form-data`, `linkify-it`, `markdown-it`, `js-yaml`), while
+`pnpm-workspace.yaml` still carried the set they replaced back in June
+(`postcss`, `rollup`, `minimatch` ×2, `brace-expansion` 1.x/2.x, `picomatch`,
+`flatted`, `ajv`, `diff`). pnpm silently prefers `package.json`, so the
+workspace block had been inert on `main` for two months and nothing looked
+wrong — but Dependabot's updater reads `pnpm-workspace.yaml`, so every viewer
+bump it opened regenerated the lockfile around the *stale* set and then failed
+`typescript-tests` and `release-readiness` at the first
+`pnpm install --frozen-lockfile` with `ERR_PNPM_LOCKFILE_CONFIG_MISMATCH`. That
+took out #1024, #1025, #1026, #1027 and #1028 together, and would have taken out
+every future one.
+
+The pins now live only in `pnpm-workspace.yaml`, which is the file both
+consumers agree on. The move is resolution-neutral: `pnpm install
+--frozen-lockfile` passes against the existing lockfile with zero churn, because
+the applied override set never changes. The ten stale entries are dropped rather
+than merged — none of them binds anything in the current graph (`postcss`
+8.5.23, `picomatch` 4.0.4/4.0.5, `flatted` 3.4.2/3.4.3, `ajv` 6.15.0,
+`minimatch` 10.2.5, `brace-expansion` 5.0.8 all sit outside the advisory ranges,
+and `rollup` and `diff` left the graph entirely with the rolldown-vite
+migration), so removing them changes no resolved version.
+
+A new `pnpm run check:overrides` gate fails the build if `package.json` ever
+regains a `pnpm.overrides` block, if the lockfile's recorded overrides drift
+from `pnpm-workspace.yaml`, or if the pin block vanishes entirely — the second
+reporting both blocks side by side instead of pnpm's opaque mismatch code, and
+the third closing a hole the first two leave open (both hold trivially at zero
+pins, and `pnpm audit` is `continue-on-error`, so a total pin loss had no gate
+at all). It runs inside `check:ci` and, in `ci.yml`, as its own step *before*
+`pnpm install --frozen-lockfile` in both `typescript-tests` and
+`release-readiness` — otherwise the frozen install aborts first and the PRs that
+need the explanation never see it.
+
+Because the pins now live in `pnpm-workspace.yaml`, the pnpm floor became
+load-bearing. Measured against that file: 9 and ≤10.4 abort with "packages field
+missing or empty" (it has no `packages:` key), 10.5.0/10.5.1 install *silently
+without the pins* — the lockfile records zero overrides — and 10.5.2+ read them
+correctly. So ≥10.6 is a conservative floor, chosen because the 10.5.0 window is
+the one mode that drops the pins without saying so; `engines.pnpm` closes it,
+since pnpm enforces that field itself (`ERR_PNPM_UNSUPPORTED_ENGINE`, no
+`engine-strict` required) and so it is a real gate rather than documentation.
+Three places disagreed with the floor and were
+corrected — `publish.yml` and `publish-npm.yml` pinned pnpm **9** (they have
+never run, being tag-triggered pre-launch, so this was a red job waiting to
+happen rather than a silently unpinned release), `engines.pnpm` said
+`>=9.0.0`, and the Makefile's `MIN_PNPM_MAJOR`,
+which documents itself as mirroring `engines.pnpm`, still said `9`. The Makefile
+check now compares major *and* minor, matching the existing Node check, since a
+major-only test cannot express the 10.6 boundary. The now-obsolete half of the
+pnpm-pinning rationale in `docs.yml` was rewritten to match.
+
 #### Fixed — Ctrl-C now stops batch/tiled fitting instead of draining the queue (#736)
 
 The three parallel subprocess pools — `batch-fit run` (local multi-GPU) and

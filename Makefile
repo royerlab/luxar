@@ -81,8 +81,12 @@ endif
 # `engines.node` in packages/luxar-viewer/package.json.
 MIN_NODE_MAJOR := 20
 MIN_NODE_MINOR := 19
-# Mirrors `engines.pnpm` in packages/luxar-viewer/package.json.
-MIN_PNPM_MAJOR := 9
+# Mirrors `engines.pnpm` in packages/luxar-viewer/package.json. 10.6 is the
+# floor at which pnpm reads `overrides` from pnpm-workspace.yaml, where the
+# security-advisory pins live; 10.4 and older reject that file outright
+# ("packages field missing or empty").
+MIN_PNPM_MAJOR := 10
+MIN_PNPM_MINOR := 6
 
 # ============================================================================
 # Dependency Checking and Installation Helpers
@@ -186,10 +190,12 @@ check-deps:  ## Check all development dependencies and their versions
 	if command -v pnpm >/dev/null 2>&1; then \
 		PNPM_VERSION=$$(pnpm --version); \
 		PNPM_MAJOR=$$(echo $$PNPM_VERSION | cut -d. -f1); \
-		if ! echo "$$PNPM_MAJOR" | grep -qE '^[0-9]+$$'; then \
-			echo "⚠️  pnpm $$PNPM_VERSION - cannot parse a major version (need $(MIN_PNPM_MAJOR)+)"; \
-		elif [ "$$PNPM_MAJOR" -lt $(MIN_PNPM_MAJOR) ]; then \
-			echo "⚠️  pnpm $$PNPM_VERSION - UPGRADE NEEDED: package.json requires $(MIN_PNPM_MAJOR)+"; \
+		PNPM_MINOR=$$(echo $$PNPM_VERSION | cut -d. -f2); \
+		if ! echo "$$PNPM_MAJOR" | grep -qE '^[0-9]+$$' || ! echo "$$PNPM_MINOR" | grep -qE '^[0-9]+$$'; then \
+			echo "⚠️  pnpm $$PNPM_VERSION - cannot parse a version (need $(MIN_PNPM_MAJOR).$(MIN_PNPM_MINOR)+)"; \
+		elif [ "$$PNPM_MAJOR" -lt $(MIN_PNPM_MAJOR) ] || \
+		     ([ "$$PNPM_MAJOR" -eq $(MIN_PNPM_MAJOR) ] && [ "$$PNPM_MINOR" -lt $(MIN_PNPM_MINOR) ]); then \
+			echo "⚠️  pnpm $$PNPM_VERSION - UPGRADE NEEDED: package.json requires $(MIN_PNPM_MAJOR).$(MIN_PNPM_MINOR)+"; \
 		else \
 			echo "✅ pnpm: $$PNPM_VERSION"; \
 		fi; \
