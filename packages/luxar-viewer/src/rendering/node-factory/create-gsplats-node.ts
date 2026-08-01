@@ -13,7 +13,7 @@ import { syncGSplatMaterialWithGeometry } from '../material-sync-helpers';
 import type { GSplatsMetadata, GSplatsUserData, GSplatsDataLoader } from '../../types/gsplats';
 import type { PickingSystem } from '../picking/picking-system';
 import { applyTransform } from './transforms';
-import { computeDisplayRange, computeUniforms } from '../../ui/layers/layer-state';
+import { computeDisplayRange, computeUniforms } from '../display-range';
 
 /** Build a GSplats mesh + optional picking shadow node. */
 export function createGSplatsNode(
@@ -72,8 +72,8 @@ export function createGSplatsNode(
     // Scalar window == the display window the panel would recover from the
     // authored gain/offset (layer-state.ts). The identity-vs-window decision
     // follows the RAW LEAF gain (`attrs.intensity/offset`), mirroring the
-    // panel (layer-state.ts ~L423-437 starts from the data range whenever the
-    // LEAF gain is identity) — NOT the composed value, which would treat an
+    // panel (layer-state.ts `initialDisplayRange` starts from the data range
+    // whenever the LEAF gain is identity) — NOT the composed value, which would treat an
     // ancestor-only gain as an authored window and discard
     // `amplitude_data_range`. When the leaf DID author a window, the COMPOSED
     // gain IS the panel's effective gain (intensity multiplies, offset adds —
