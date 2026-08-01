@@ -129,7 +129,7 @@ RADIUS: Final = 100.0  # globe radius in scene units
 N_GLOBE: Final = 8_000_000  # jittered Fibonacci-sphere surface points
 GLOBE_RADII: Final = 0.098  # ~1.4x mean point spacing -> a sealed shell
 N_SEEDS: Final = 220_000  # streamlines
-N_STEPS: Final = 52  # vertices per streamline
+N_STEPS: Final = 52  # advection steps per streamline (-> N_STEPS + 1 vertices)
 STEP_KM: Final = 14.0  # arc-length step -> ~730 km ribbons
 FIELD_STRIDE: Final = 2  # subsample the 1/12 deg grid for advection
 FLOW_LIFT: Final = 0.0015  # lift ribbons just clear of the globe shell
@@ -141,11 +141,15 @@ MIN_SEED_SPEED: Final = 0.04  # skip near-still water when seeding
 STALL_SPEED: Final = 0.02  # freeze a ribbon that runs out of current
 LAT_LIMIT: Final = 79.9  # HYCOM's grid stops at +/-80
 
-# A single Lines node cannot exceed 16,777,216 vertices: the viewer's lines
-# loader collects unique vertex indices into a JS Set, and V8 caps Set at 2**24
-# (royerlab/luxar#1049). Above it the node renders NOTHING, with only a console
-# error — so this is a hard authoring budget, not a soft guideline.
-MAX_LINE_VERTICES: Final = 16_777_216
+# The viewer stores per-segment line data in an element texture at 6 texels
+# per segment, capped at ELEMENT_TEXTURE_MAX_WIDTH=4096 texels wide, so a
+# single Lines node holds at most 682 * maxTextureSize segments — 2,793,472
+# on a 4096-class GPU (the conservative floor). Exceeding it silently clamps
+# the tail (no error), so we partition the ribbons across nodes and keep each
+# part's vertex count below that bound. `partition=` caps VERTICES per part;
+# segments (V-1 per chain) are always fewer, so this stays under the segment
+# cap with margin.
+MAX_LINE_VERTICES_PER_NODE: Final = 2_500_000
 
 FLAGS = parse_demo_flags()
 NO_SERVE = FLAGS["no_serve"]
@@ -564,11 +568,6 @@ def build_scene(hycom_path: Path, marble_path: Path, output_path: Path) -> Path:
     with asection("Assembling ribbons"):
         n_paths, n_vertices = path_lon.shape
         total = n_paths * n_vertices
-        if total > MAX_LINE_VERTICES:
-            raise ValueError(
-                f"{total:,} line vertices exceeds the viewer's {MAX_LINE_VERTICES:,} "
-                "per-node ceiling (royerlab/luxar#1049); lower N_SEEDS or N_STEPS"
-            )
         vertices = lonlat_to_xyz(
             path_lon.ravel(),
             path_lat.ravel(),
@@ -630,6 +629,13 @@ def build_scene(hycom_path: Path, marble_path: Path, output_path: Path) -> Path:
                 opacity=LINE_OPACITY,
                 intensity=LINE_INTENSITY,
                 layer=True,
+                # 11.66M vertices / 11.44M segments blow past a single Lines
+                # node's element-texture cap (682 * maxTextureSize segments;
+                # 2,793,472 on a 4096-class GPU), which clamps the tail silently.
+                # Auto-partition the ribbons (polyline-centroid BSP, each ribbon
+                # atomic) so every part stays under the bound; the wrapper is one
+                # `kind=partition` "currents" node in the Layers panel.
+                partition=dict(max_elements=MAX_LINE_VERTICES_PER_NODE),
             )
             scene.add_text(
                 "Ocean Currents of Earth",
