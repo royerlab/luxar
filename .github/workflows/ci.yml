@@ -66,6 +66,11 @@ jobs:
   # GitHub-hosted. MUST run on ubuntu-latest — a router that needs obsidian to be
   # up could never route around obsidian being down.
   #
+  # The MACHINE side of this — the ephemeral-container runners, the heartbeat that
+  # publishes LUXAR_CI_HEARTBEAT, and the units named in the comments below —
+  # lives in royerlab/luxar-ci, whose README records why each piece is shaped the
+  # way it is. Nothing in this file works without that kit deployed.
+  #
   # obsidian publishes the repo variable LUXAR_CI_HEARTBEAT (epoch seconds) once a
   # minute via its `luxar-ci-heartbeat.timer`. It publishes a live timestamp only
   # when GitHub can see an online runner AND obsidian can see a container backing
