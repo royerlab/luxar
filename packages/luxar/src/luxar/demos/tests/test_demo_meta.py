@@ -10,7 +10,6 @@ import json
 import subprocess
 import sys
 import textwrap
-import time
 from pathlib import Path
 
 import pytest
@@ -105,8 +104,8 @@ def test_get_demo_suggests_close_matches() -> None:
         get_demo("99999")
 
 
-def test_iter_demos_is_fast() -> None:
-    """The table must render quickly — AST extraction, no module imports.
+def test_iter_demos_does_not_import_demo_modules() -> None:
+    """The demo table must come from AST extraction, never module imports.
 
     Asserts the MECHANISM, not a stopwatch. Importing the demo modules is the
     thing that would actually make the table slow, and ``sys.modules`` detects
@@ -117,8 +116,11 @@ def test_iter_demos_is_fast() -> None:
     at 1.01s — the latter by 10ms). CPU time is *less* load-sensitive but not
     immune: the identical work cost 0.13s on an idle box and 1.14s under 16
     competing workers, because cache and memory-bandwidth contention inflate the
-    cycle count. The generous ceiling below is only a catastrophic-regression
-    backstop, in the spirit of the 60s bounds in test_substitutive.py.
+    cycle count. (A parent-side ``time.process_time()`` bound was also tried,
+    and was worse than useless: it excludes the child, where all the work
+    happens.) The only remaining time bound is the subprocess timeout below — a
+    catastrophic-regression backstop in the spirit of the 60s bounds in
+    test_substitutive.py.
 
     A SUBPROCESS, because an in-process ``sys.modules`` diff passes vacuously:
     ``test_all_demos_import.py`` collects earlier in a serial run and imports
@@ -135,11 +137,9 @@ def test_iter_demos_is_fast() -> None:
                               if m.startswith("luxar.demos.demo_"))))
         """
     )
-    start = time.process_time()
     proc = subprocess.run(
         [sys.executable, "-c", probe], capture_output=True, text=True, timeout=300
     )
-    cold = time.process_time() - start
     assert proc.returncode == 0, f"probe failed: {proc.stderr[-2000:]}"
 
     imported = [m for m in proc.stdout.strip().split(",") if m]
@@ -147,9 +147,6 @@ def test_iter_demos_is_fast() -> None:
         f"iter_demos imported {len(imported)} demo module(s); the table must "
         f"come from AST extraction: {imported[:5]}"
     )
-    # Parent-side CPU time excludes the child, so this only bounds our own
-    # overhead; the child's cost is bounded by the subprocess timeout above.
-    assert cold < 30.0, f"probe overhead {cold:.2f}s CPU (backstop 30s)"
 
 
 def test_cache_root_matches_utils_demos() -> None:
