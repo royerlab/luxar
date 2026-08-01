@@ -123,7 +123,8 @@ jobs:
     # covered by fast unit tests). The FULL suite (incl. slow) is the local
     # pre-push gate (`hatch run test`).
     #
-    # The suite now runs under pytest-xdist (`-n 4`, see pyproject). The old note
+    # The suite runs under pytest-xdist ON THE SELF-HOSTED BOX ONLY (see
+    # PYTEST_ADDOPTS below; hosted runners stay serial). The old note
     # here said xdist "doesn't help on the 1-core runner" — true of a 2-core
     # GitHub VM, and false on the 16-core self-hosted box, where it cut each leg
     # from ~45 min to ~16. Combined with the thread pinning below; neither works
@@ -152,7 +153,7 @@ jobs:
       # contends, because each matrix leg gets its own machine).
       #
       # Pinning frees ~13 of 16 cores, which `-n 4` (pytest-xdist, see
-      # pyproject) then spends on real parallelism: 45.5/44.0/47.5 min ->
+      # PYTEST_ADDOPTS below) then spends on real parallelism: 45.5/44.0/47.5 min ->
       # 15.8/16.6/16.9, i.e. faster than the 21.3/23.8/23.4 GitHub baseline.
       # Same 6261 passed / 288 skipped and the same 86.44% coverage either way.
       #
@@ -168,6 +169,18 @@ jobs:
       OPENBLAS_NUM_THREADS: '1'
       MKL_NUM_THREADS: '1'
       NUMEXPR_NUM_THREADS: '1'
+      # Worker count must match the MACHINE, not be uniform across machines.
+      # `-n 4` on a GitHub-hosted VM killed all three legs at 97-98% complete
+      # with exit 143 + "the runner has received a shutdown signal" -- four
+      # workers each importing torch/napari/scipy exhaust a 2-core hosted VM and
+      # the OOM killer takes the runner agent with them. That would have broken
+      # the fallback path, i.e. exactly the safety net obsidian relies on.
+      #
+      # Both endpoints here are empirically green: serial on hosted
+      # (21.3/23.8/23.4 min) and -n 4 on the 16-core box (15.8/16.6/16.9).
+      # PYTEST_ADDOPTS is read by pytest itself, so the shared `test-cov` script
+      # stays machine-agnostic for local use.
+      PYTEST_ADDOPTS: ${{ needs.pick-runner.outputs.label == 'obsidian' && '-n 4' || '' }}
     steps:
       # LFS intentionally disabled — `hatch run test-cov` covers
       # packages/luxar/src/luxar and none of its unit tests open the

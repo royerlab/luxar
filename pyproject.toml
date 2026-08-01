@@ -273,7 +273,7 @@ dependencies = [
 # code stays covered by fast unit tests (coverage holds at ~85% ≥ the 80% gate).
 [tool.hatch.envs.default.scripts]
 test = "pytest {args:packages/luxar/src/luxar}"
-test-cov = "mkdir -p coverage/python && pytest -m 'not slow' -n 4 --cov=luxar --cov-report=term-missing --cov-report=html {args:packages/luxar/src/luxar}"
+test-cov = "mkdir -p coverage/python && pytest -m 'not slow' --cov=luxar --cov-report=term-missing --cov-report=html {args:packages/luxar/src/luxar}"
 test-cov-all = "mkdir -p coverage/python && pytest --cov=luxar --cov-report=term-missing --cov-report=html {args:packages/luxar/src/luxar}"
 format = [
     "ruff format packages/luxar/src",
