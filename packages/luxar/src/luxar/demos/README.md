@@ -534,7 +534,7 @@ The large-scale structure of the Universe as a point cloud from the Dark Energy 
 ---
 
 #### demo_asteroids_solar_system.py - The Solar System (~1.5M Real Asteroids, JPL SBDB)
-Every catalogued minor planet placed in real 3D space by propagating its measured Keplerian orbit to a common epoch: ~1.5M asteroids as Points colored by semi-major axis, plus the eight planets, the Sun, and the planets' orbit ellipses (Lines). The main belt, Kirkwood gaps, Hilda triangle, and Jupiter Trojan clouds all emerge from the real orbital-element distribution. The opening camera orbits the Sun and frames the outer planets instead of fitting sparse distant-object outliers.
+Every catalogued minor planet placed in real 3D space by propagating its measured Keplerian orbit to a common epoch: ~1.5M asteroids as Points colored by semi-major axis, plus the eight planets, the Sun, and the planets' orbit ellipses (Lines). The main belt, Kirkwood gaps, Hilda triangle, and Jupiter Trojan clouds all emerge from the real orbital-element distribution. The asteroid `intensity` is reserved for the colormap's `[0, ~11 AU]` scalar window, while density-compensated opacity keeps aggregate additive weight stable across full, `--max-asteroids`, and animated builds. The opening camera orbits the Sun and frames the outer planets instead of fitting sparse distant-object outliers.
 
 **Run**: `luxar demo run asteroids_solar_system [-- --animate] [-- --max-asteroids N]`
 

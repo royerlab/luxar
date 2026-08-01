@@ -6,6 +6,38 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
+#### Fixed — colormapped Points/Lines apply authored intensity once; solar-system demo re-tuned (#1082)
+
+`#1081` stopped a colormapped node applying an authored `intensity`/`offset`
+twice (once as the scalar LUT window, once as a post-LUT color gain), but only
+the **gsplats** node factory was updated. Its layers-panel half
+(`applyColorAdjustments` / `LayerApplyEngine`) is node-kind agnostic, so Points
+and Lines were left meaning two different things depending on the `layer` flag:
+with `layer=true` the panel reset the gain and windowed the value, while with
+`layer=false` the factory kept it as a gain and left the window at the bare data
+range.
+
+The Points and Lines factories now match gsplats: identity color GOG when a
+colormap takes over, with the authored value re-expressed as the scalar window.
+All three factories use the shared
+`rendering/display-range.ts::resolveColormapWindow`; the gsplat inline copy was
+folded into it without changing behavior. The identity-vs-window decision keys
+on the raw leaf gain so an ancestor-only gain still folds onto the data range
+rather than replacing it. Points therefore threads optional `leafAttrs`
+alongside composed `attrs`, as Lines and gsplats already do.
+
+The semantics correction also exposed a demo tuning dependency:
+`asteroids_solar_system` authored `intensity=0.09` on its 1.55M-point
+colormapped asteroid node. The full catalog's scalar range is approximately
+`[0.46, 14510]` AU, so replacing that authored window with the identity range
+would collapse the main belt and Trojan clouds into the first tiny fraction of
+the LUT. The demo keeps `0.09` as the `[0, ~11 AU]` scientific display window
+and moves brightness to `opacity`. Because additive blending accumulates,
+`asteroid_opacity(n_visible)` holds `opacity × N` constant across the full
+catalog, `--max-asteroids` subsets, animated per-frame subsamples, and future
+catalog growth. The independently dim orbit ellipses are also brightened to
+read as continuous reference lines.
+
 #### Fixed — pnpm security pins single-sourced in `pnpm-workspace.yaml` (#1030)
 
 `packages/luxar-viewer/` declared pnpm `overrides` in two places at once:
