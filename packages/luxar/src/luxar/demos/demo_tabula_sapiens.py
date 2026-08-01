@@ -622,7 +622,7 @@ def generate_tabula_sapiens(
     if pca is not None:
 
         def _compute_umap3d() -> np.ndarray:
-            from umap import UMAP
+            UMAP = require_module("umap").UMAP
 
             with asection(
                 f"Computing 3D UMAP from {pca.shape[1]}D embeddings ({n_cells:,} cells)"
