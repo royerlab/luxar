@@ -37,10 +37,23 @@
  * `null` — forcing `getVertexBuffers()` to call `getAttributes()` and
  * pick up the current `InterleavedBuffer`.
  *
- * Dispatching `dispose` on the material does NOT actually free the
- * material's GPU resources or recompile its shader — Three.js only
- * frees those when `material.dispose()` is called. The event fires
- * regardless of `dispose()` being invoked, but Luxar's MaterialManager
+ * **This RenderObject eviction is WebGPU-only.** The `chainMap`
+ * `vertexBuffers` staleness it fixes exists only in Three's WebGPU
+ * `RenderObjects` cache; the classic `WebGLRenderer` (Luxar's
+ * production default) has no such cache and re-reads geometry
+ * attributes every draw. Worse, on the classic backend the SAME
+ * `dispose` event is caught by `WebGLRenderer`'s own
+ * `onMaterialDispose`, which deallocates the material's compiled GL
+ * program — forcing a full GLSL recompile on the very next frame
+ * (multi-10ms hitches on every progressive / additive-ladder commit).
+ * So the dispatch is not merely unnecessary on classic WebGL, it is
+ * actively harmful, and is gated behind
+ * {@link configureRenderObjectEviction} (renderer-setup enables it
+ * only when the backend is WebGPU). On classic WebGL — and in
+ * headless/unit contexts with no renderer — the dispose dispatch is
+ * skipped entirely, so no compiled program is ever destroyed.
+ *
+ * When the eviction IS dispatched (WebGPU), Luxar's MaterialManager
  * also listens for `'dispose'` to unregister the material from its
  * global-update set / caches. To prevent that side effect while still
  * triggering Three's `RenderObject` eviction, we set a transient
@@ -57,10 +70,44 @@ import type * as THREE from 'three';
 import { SOFT_DISPOSE_FLAG } from '../../../rendering/material-manager';
 
 /**
+ * Session backend gate (renderer-setup, the
+ * `configureSortedIndexChunkedApply` pattern): `true` on the WebGPU
+ * backend, where a stale `RenderObject.vertexBuffers` cache must be
+ * flushed after a pool rebuild; `false` on the classic WebGL backend,
+ * where the `dispose` dispatch has no cache to flush and instead
+ * destroys the compiled GL program (a costly per-commit shader
+ * recompile — see the module note). Defaults to `false`: classic
+ * WebGL is the production default and headless/unit contexts have no
+ * renderer, so the harmful dispatch stays OFF until WebGPU opts in
+ * explicitly at renderer setup.
+ */
+let renderObjectEvictionEnabled = false;
+
+/**
+ * Configure whether {@link invalidateRenderObjectFor} dispatches the
+ * `dispose`-based RenderObject eviction (WebGPU only). Called once at
+ * renderer setup with `apiSurface === 'webgpu'`.
+ */
+export function configureRenderObjectEviction(enabled: boolean): void {
+  renderObjectEvictionEnabled = enabled;
+}
+
+/**
  * Discard Three's cached `RenderObject` for the given mesh's material
  * combination. Safe to call every commit cycle when the GPU buffer
- * pool reports a rebuild; cheap (just fires an event); no-op when
- * the renderer holds no cached state for the material yet.
+ * pool reports a rebuild.
+ *
+ * The dispose-based RenderObject eviction is **WebGPU-only** and a
+ * **no-op on the classic WebGL backend** (the production default),
+ * where dispatching `dispose` would otherwise destroy the material's
+ * compiled GL program and force a per-commit shader recompile — see
+ * the module note and {@link configureRenderObjectEviction}. When
+ * eviction is disabled no `dispose` is dispatched on either the main
+ * or the pick material.
+ *
+ * The pick-mesh geometry re-point below is UNCONDITIONAL on both
+ * backends — it is a pure reference update needed for pick
+ * correctness, not a RenderObject eviction.
  *
  * The mesh's `material` is the receiver; if the mesh uses an array
  * of materials (Luxar doesn't today, but be defensive), every entry
@@ -78,18 +125,28 @@ export function invalidateRenderObjectFor(mesh: THREE.Mesh): void {
   // reference update.
   const pickNode = (mesh.userData as { pickNode?: THREE.Mesh } | undefined)?.pickNode;
   if (pickNode?.isMesh) {
+    // UNCONDITIONAL, both backends: a pure reference update keeping the
+    // pick mesh pointing at the current geometry (pick correctness).
     pickNode.geometry = mesh.geometry;
-    // The pick mesh has its OWN cached RenderObject (chainMap keyed by
-    // [pickMesh, pickMaterial, …]) with the same stale `vertexBuffers`
-    // problem: the pick pass binds whatever that cache holds, so after a
-    // pool grow/swap a pick render on the WebGPU backend would bind the
-    // old (smaller/disposed) GPU buffer — "Instance range requires a
-    // larger buffer" validation errors or silent mis-picks. Evict it via
-    // the same soft-dispose mechanism as the main material below.
-    softDisposeAll(pickNode.material);
+    if (renderObjectEvictionEnabled) {
+      // WebGPU only: the pick mesh has its OWN cached RenderObject
+      // (chainMap keyed by [pickMesh, pickMaterial, …]) with the same
+      // stale `vertexBuffers` problem: the pick pass binds whatever that
+      // cache holds, so after a pool grow/swap a pick render on the
+      // WebGPU backend would bind the old (smaller/disposed) GPU buffer —
+      // "Instance range requires a larger buffer" validation errors or
+      // silent mis-picks. Evict it via the same soft-dispose mechanism as
+      // the main material below.
+      softDisposeAll(pickNode.material);
+    }
   }
 
-  softDisposeAll(mesh.material);
+  // WebGPU only: flush the main mesh's stale `vertexBuffers` cache. On the
+  // classic WebGL backend this dispatch would destroy the compiled GL
+  // program and force a per-commit shader recompile, so it stays gated.
+  if (renderObjectEvictionEnabled) {
+    softDisposeAll(mesh.material);
+  }
 }
 
 /** Soft-dispose a mesh's material, handling the `Material[]` case. */
