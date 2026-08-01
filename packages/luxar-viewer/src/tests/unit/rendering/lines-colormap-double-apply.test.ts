@@ -27,7 +27,7 @@ import { __resetMaterialManagerForTests } from '../../../rendering/material-mana
 import { LineMaterial } from '../../../rendering/materials/line/material-glsl';
 import { getColormapTexture } from '../../../rendering/colormap-textures';
 import { applyColorAdjustments } from '../../../ui/layers/luxar-material';
-import { computeDisplayRange } from '../../../rendering/display-range';
+import { computeDisplayRange, computeUniforms } from '../../../rendering/display-range';
 import type { LinesMetadata, LinesDataLoader } from '../../../types/lines';
 
 /** createEmptyLinesNode only stashes the loader in userData — never calls it. */
@@ -117,6 +117,45 @@ describe('#1082 colormapped lines authored intensity is a window, not a double g
       // Data-range window with the ancestor 0.5 folded in: [0, 200].
       expect(mat.uniforms.uScalarMin.value).toBeCloseTo(0, 5);
       expect(mat.uniforms.uScalarScale.value).toBeCloseTo(1 / 200, 5);
+    });
+
+    it('ancestor gain over a NON-zero-min data range: window matches the panel (additive-offset spec)', () => {
+      // scalar_data_range [10, 110] → window uniforms w = (0.01, -0.1). An
+      // ancestor gain (0.5, 0.2) composes per the attrs-composer spec —
+      // intensity MULTIPLIES, offset ADDS (deliberately NOT nested-affine
+      // `O_parent·I_child + O_child`; see attrs-composer.ts) — so the panel
+      // pushes computeDisplayRange(0.5·0.01, 0.2 + (-0.1)) = [-20, 180].
+      // Locks the fold to the panel's composition for windows with a
+      // non-zero w.offset, where the two models diverge.
+      const factory = new NodeFactory();
+      const mesh = factory.createEmptyLinesNode(
+        '/lines',
+        {
+          colormap: 'viridis',
+          has_scalars: true,
+          intensity: 0.5,
+          offset: 0.2,
+          scalar_data_range: [10, 110],
+        },
+        emptyLeaf, // raw leaf: no gain → identity
+        makeLoader()
+      );
+
+      const mat = mesh.material as LineMaterial;
+      expect('USE_COLORMAP' in mat.defines).toBe(true);
+      expect(mat.uniforms.uIntensity.value).toBe(1.0);
+      expect(mat.uniforms.uOffset.value).toBe(0.0);
+      const w = computeUniforms(10, 110);
+      const expected = computeDisplayRange(0.5 * w.intensity, 0.2 + w.offset);
+      expect(expected.min).toBeCloseTo(-20, 5);
+      expect(expected.max).toBeCloseTo(180, 5);
+      expect(mat.uniforms.uScalarMin.value).toBeCloseTo(expected.min, 5);
+      expect(mat.uniforms.uScalarScale.value).toBeCloseTo(1 / (expected.max - expected.min), 5);
+      // First panel interaction pushes the SAME composed gain through
+      // applyColorAdjustments — the window must not flip.
+      applyColorAdjustments(mat, 1.0, 0.5 * w.intensity, 0.2 + w.offset);
+      expect(mat.uniforms.uScalarMin.value).toBeCloseTo(expected.min, 5);
+      expect(mat.uniforms.uScalarScale.value).toBeCloseTo(1 / (expected.max - expected.min), 5);
     });
 
     it('direct-color node (no colormap) still receives the authored gain', () => {
