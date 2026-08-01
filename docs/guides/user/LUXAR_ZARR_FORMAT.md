@@ -726,9 +726,12 @@ declared through three attrs on the data node (next to `type`,
 gain.** When a colormap is active, an authored `intensity`/`offset` defines
 the scalar display *window* (the value→LUT mapping) exactly as the Layers
 panel's range control does — the post-LUT color gain stays at identity, so
-the value is never applied twice. A leaf-authored `intensity`/`offset`
-therefore *replaces* `scalar_data_range` as the window
-(`window = [-offset/intensity, (1 - offset)/intensity]`); an ancestor-only
+the value is never applied twice. A *non-identity* leaf-authored
+`intensity`/`offset` pair therefore *replaces* `scalar_data_range` as the
+window (`window = [-offset/intensity, (1 - offset)/intensity]`). The
+decision is by value, matching the Layers panel: an explicitly authored
+identity pair (`intensity: 1.0`, `offset: 0.0`) behaves exactly like an
+unauthored one and keeps the `scalar_data_range` window. An ancestor-only
 gain is instead folded onto the declared `scalar_data_range`. This keeps the
 load-time render identical to the post-interaction (Layers-panel) render, and
 mirrors how gsplat nodes treat their `amplitude_data_range`. A direct-color
