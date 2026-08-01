@@ -345,14 +345,7 @@ def filter_to_lcc(
         edges: relationships within the LCC (unchanged direction for rel=-1)
         tier1: boolean array aligned with nodes
     """
-    try:
-        import networkx as nx  # noqa: F401
-    except ImportError:
-        aprint("❌ Missing dependency: networkx (>=3.0)")
-        aprint("   Install with: pip install 'networkx>=3.0'")
-        raise
-
-    import networkx as nx
+    nx = require_module("networkx")
 
     with asection("Filtering to LCC + detecting tier-1s"):
         g = nx.Graph()
@@ -527,7 +520,7 @@ def compute_layout(
 
 def compute_communities(nodes: list[str], edges: pd.DataFrame) -> np.ndarray:
     """Louvain communities on the undirected projection of the AS graph."""
-    import networkx as nx
+    nx = require_module("networkx")
 
     with asection("Detecting communities (Louvain)"):
         g = nx.Graph()

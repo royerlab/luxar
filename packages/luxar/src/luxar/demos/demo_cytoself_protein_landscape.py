@@ -28,7 +28,7 @@ Usage:
     python -m luxar.demos.demo_cytoself_protein_landscape --recompute
 
 Dependencies:
-    pip install umap-learn pandas requests
+    pip install 'luxar[demos]'   # includes umap-learn, pandas, Pillow
 """
 
 DEMO_META = {

@@ -18,6 +18,19 @@ sending someone after the whole heavyweight extra to draw a diagnostic plot —
 and the wording comes from `INSTALL_SPECS` instead of being hand-copied into a
 dozen-plus files.
 
+The networkx guards in the CAIDA, HuRI and PPI demos went the same way — they
+were hand-copying `networkx>=3.0` next to a duplicated import, and two of the
+Louvain paths had no gate at all and died with a bare `ModuleNotFoundError`.
+The two napari hints kept their `pip install` form (napari is a soft optional
+outside every demo extra) but gained the `>=0.4.18,<0.8` cap, without which the
+suggested command resolves napari 0.8 and drags `zarr>=3` past Luxar's pin.
+
+A new guard in `test_demos_dependencies.py` scans every demo source — runtime
+messages and docstrings alike — for a `pip install` naming a package the table
+bounds, and fails if the bound is missing. It reports 23 offenders against the
+tree before this change and none after, so the class cannot quietly grow back
+the way the eleven matplotlib copies did.
+
 #### Fixed — bound the HuRI demo's CORUM download and extraction
 
 The HuRI demo's optional CORUM fallback fetched a remote ZIP with `stream=True`

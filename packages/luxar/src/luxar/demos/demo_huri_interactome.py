@@ -425,14 +425,7 @@ def filter_to_lcc(
     edges: pd.DataFrame, hgnc: pd.DataFrame
 ) -> tuple[list[str], pd.DataFrame, pd.DataFrame]:
     """Restrict to the largest connected component and attach chromosome info."""
-    try:
-        import networkx as nx  # noqa: F401
-    except ImportError:
-        aprint("❌ Missing dependency: networkx (>=3.0 for louvain_communities)")
-        aprint("   Install with: pip install 'networkx>=3.0'")
-        raise
-
-    import networkx as nx
+    nx = require_module("networkx")
 
     with asection("Filtering to largest connected component"):
         g = nx.Graph()
@@ -570,7 +563,7 @@ def compute_layout(
 
 def compute_communities(nodes: list[str], edges: pd.DataFrame) -> np.ndarray:
     """Louvain community assignment per node. Communities sorted by size desc."""
-    import networkx as nx
+    nx = require_module("networkx")
 
     with asection("Detecting communities (Louvain)"):
         g = nx.Graph()
