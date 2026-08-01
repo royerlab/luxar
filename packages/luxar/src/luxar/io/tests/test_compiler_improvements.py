@@ -980,6 +980,18 @@ class TestFinalizeGuards:
             with pytest.raises(RuntimeError, match="finalized"):
                 compiler.write_group("/group", attr="value")
 
+    def test_delete_group_attr_after_finalize_raises(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path = Path(tmpdir) / "test.luxar.zarr"
+
+            compiler = LuxarZarrCompiler(zarr_path)
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_points("pts", np.random.randn(5, 3).astype(np.float32))
+            compiler.finalize()
+
+            with pytest.raises(RuntimeError, match="finalized"):
+                compiler.delete_group_attr("pts", "transform")
+
     def test_writes_inside_context_still_work(self) -> None:
         """Sanity check: the guard only fires after finalize, not at context entry."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -990,6 +1002,89 @@ class TestFinalizeGuards:
                 scene.add_points("a", np.random.randn(5, 3).astype(np.float32))
                 # No exception expected here.
                 scene.add_points("b", np.random.randn(5, 3).astype(np.float32))
+
+
+class TestPostFinalizeAttrDeletion:
+    """Issue #677: clearing ``transform`` / ``nd_transform`` after finalize()
+    must warn and leave raw ``.zattrs`` and consolidated ``.zmetadata`` in
+    agreement rather than silently desynchronizing them."""
+
+    def test_transform_delete_after_finalize_warns_and_stays_consistent(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path = Path(tmpdir) / "test.luxar.zarr"
+
+            compiler = LuxarZarrCompiler(zarr_path)
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            pts = scene.add_points("pts", np.random.randn(5, 3).astype(np.float32))
+            pts.transform = np.eye(4, dtype=np.float32)
+            compiler.finalize()
+
+            with pytest.warns(UserWarning, match="finalized") as record:
+                pts.transform = None
+
+            assert len(record) == 1
+            # In-memory cache reflects the removal.
+            assert pts.transform is None
+
+            # Raw and consolidated views must AGREE: disk untouched, so both
+            # still contain "transform".
+            consolidated = zarr.open_consolidated(zarr_path, mode="r")
+            raw = zarr.open_group(zarr_path, mode="r")
+            assert ("transform" in consolidated["pts"].attrs) == (
+                "transform" in raw["pts"].attrs
+            )
+            assert "transform" in raw["pts"].attrs
+
+    def test_nd_transform_delete_after_finalize_warns_and_stays_consistent(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path = Path(tmpdir) / "test.luxar.zarr"
+
+            compiler = LuxarZarrCompiler(zarr_path)
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            pts = scene.add_points("pts", np.random.randn(5, 3).astype(np.float32))
+            pts.nd_transform = {"dim0": {"scale": 1.0, "offset": 0.0}}
+            compiler.finalize()
+
+            with pytest.warns(UserWarning, match="finalized") as record:
+                pts.nd_transform = None
+
+            assert len(record) == 1
+            assert pts.nd_transform is None
+
+            consolidated = zarr.open_consolidated(zarr_path, mode="r")
+            raw = zarr.open_group(zarr_path, mode="r")
+            assert ("nd_transform" in consolidated["pts"].attrs) == (
+                "nd_transform" in raw["pts"].attrs
+            )
+            assert "nd_transform" in raw["pts"].attrs
+
+    def test_transform_delete_before_finalize_removes_from_disk_no_warning(
+        self,
+    ) -> None:
+        """Pre-finalize behavior is preserved: clearing removes the attr from
+        disk with no warning."""
+        import warnings
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path = Path(tmpdir) / "test.luxar.zarr"
+
+            with LuxarZarrCompiler(zarr_path) as compiler:
+                scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+                pts = scene.add_points("pts", np.random.randn(5, 3).astype(np.float32))
+                pts.transform = np.eye(4, dtype=np.float32)
+
+                with warnings.catch_warnings(record=True) as record:
+                    warnings.simplefilter("always")
+                    pts.transform = None
+                assert len(record) == 0
+                assert pts.transform is None
+
+            store = zarr.open_group(zarr_path, mode="r")
+            assert "transform" not in store["pts"].attrs
 
 
 class TestWriterFuzzRegressions:

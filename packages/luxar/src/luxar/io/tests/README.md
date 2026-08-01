@@ -13,7 +13,7 @@ Tests for the Luxar I/O package (compiler, reader, ordering).
 - `test_ordering_points.py` - Tests for Morton/Hilbert ordering of points
 - `test_ordering_lines.py` - Tests for line segment ordering
 - `test_zarr_nd_chunking.py` - Tests for nD-aware chunk size calculation
-- `test_progressive_writing.py` - Tests for progressive (streaming) writing
+- `test_progressive_writing.py` - Tests for progressive (streaming) writing and deterministic cleanup of compiler-owned temporary scenes on successful or failed finalization
 - `test_writer_parent_parameter.py` - Tests for parent parameter in writer
 - `test_io_metadata.py` - Tests for metadata consolidation and storage
 

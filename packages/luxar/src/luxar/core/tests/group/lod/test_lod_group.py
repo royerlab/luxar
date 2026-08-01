@@ -30,6 +30,7 @@ import zarr
 from luxar.core.dimensions import Dimension, Dimensions
 from luxar.core.group import Group
 from luxar.core.group.lod.group import (
+    compose_additive_under_substitutive,
     compute_lod_display_type,
     coverage_fractions,
     resolve_display_type,
@@ -552,3 +553,59 @@ class TestResolveCoarsenDimsResolver:
 
         with pytest.raises(ValueError, match="out of range"):
             resolve_coarsen_dims(self._scene(_dims_4d()), 4, [9])
+
+
+class TestComposeAdditiveUnderSubstitutive:
+    """The additive-ladder resolver for substitutive levels: a suppressed
+    ladder is quiet when it was only the default, but warns when the caller
+    explicitly asked for one that cannot be honoured."""
+
+    @staticmethod
+    def _resolve(spec):
+        # Trivial resolver: echo the spec (a dict) back, None otherwise.
+        return spec if isinstance(spec, dict) else None
+
+    def test_default_suppression_is_quiet(self):
+        import warnings
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")  # any UserWarning would fail
+            result = compose_additive_under_substitutive(
+                None,
+                resolve=self._resolve,
+                name="node",
+                suppress_reason="image_labels is set",
+            )
+        assert result is None
+
+    def test_explicit_dict_suppression_warns(self):
+        with pytest.warns(UserWarning, match="cannot be honoured"):
+            result = compose_additive_under_substitutive(
+                {"method": "random"},
+                resolve=self._resolve,
+                name="node",
+                suppress_reason="image_labels is set",
+            )
+        assert result is None
+
+    def test_explicit_true_suppression_warns(self):
+        with pytest.warns(UserWarning, match="cannot be honoured"):
+            compose_additive_under_substitutive(
+                True,
+                resolve=self._resolve,
+                name="node",
+                suppress_reason="line_type='indexed' edges are not preserved",
+            )
+
+    def test_opt_out_returns_none_without_warning(self):
+        import warnings
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            result = compose_additive_under_substitutive(
+                False,
+                resolve=self._resolve,
+                name="node",
+                suppress_reason="image_labels is set",
+            )
+        assert result is None
