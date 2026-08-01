@@ -26,6 +26,10 @@ export const FORMAT_TYPE_GSPLATS = 'gsplats_zarr';
 export const NODE_TYPES: readonly string[] = ['scene', 'group', 'points', 'lines', 'gsplats'];
 export type NodeTypeName = 'scene' | 'group' | 'points' | 'lines' | 'gsplats';
 
+// --- leaf geometry types (the element-bearing subset of NODE_TYPES) ---
+export const GEOMETRY_TYPES: readonly string[] = ['points', 'lines', 'gsplats'];
+export type GeometryTypeName = 'points' | 'lines' | 'gsplats';
+
 // --- specialized-group kinds ---
 export const NODE_KINDS: readonly string[] = ['lod', 'partition'];
 export type NodeKind = 'lod' | 'partition';
