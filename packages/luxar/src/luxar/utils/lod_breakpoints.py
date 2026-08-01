@@ -78,6 +78,38 @@ def parse_stream_chunk(spec: str) -> int:
     return c
 
 
+def validate_element_breakpoints(spec: BreakpointSpec) -> None:
+    """Size-independent validation of a Points/Lines ``counts``/``breakpoints``
+    value, meant for RESOLVE time — before any group is written to disk.
+
+    Checks exactly the properties that doom the spec for EVERY element count
+    ``n`` (the write path still validates against the actual ``n``): the string
+    vocabulary (``stream:<c>`` / ``energy:<fractions>``), the stream first-chunk
+    size, the energy fractions parsing and non-emptiness, and list
+    non-emptiness. Raises :class:`ValueError`, reusing the write path's messages
+    where it has one, so failing earlier never changes what a caller must catch.
+    """
+    if isinstance(spec, str):
+        if spec.startswith("stream:"):
+            parse_stream_chunk(spec)
+            return
+        if not spec.startswith("energy:"):
+            raise ValueError(
+                f"unrecognized breakpoints string {spec!r}; expected "
+                "'energy:<fractions>' (e.g. 'energy:0.5,0.9,1.0') or "
+                "'stream:<c>' (e.g. 'stream:40000')"
+            )
+        try:
+            fracs = [float(s) for s in spec[len("energy:") :].split(",") if s.strip()]
+        except ValueError as e:
+            raise ValueError(f"energy: fractions must be numbers; got {spec!r}") from e
+        if not fracs:
+            raise ValueError("energy: fractions must be non-empty")
+        return
+    if len(spec) == 0:
+        raise ValueError("counts must be a non-empty list of integers")
+
+
 def stream_cuts(
     n: int, chunk: int, max_levels: int = DEFAULT_STREAM_MAX_LEVELS
 ) -> List[int]:
