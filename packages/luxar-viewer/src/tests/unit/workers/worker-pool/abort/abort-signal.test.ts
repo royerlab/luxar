@@ -16,6 +16,7 @@
  * than extracted to a shared module; both files are slim and the
  * shape is unlikely to change.
  */
+import { getEventListeners } from 'node:events';
 import { describe, it, expect, vi } from 'vitest';
 import { WorkerPool } from '../../../../../workers/worker-pool';
 
@@ -38,6 +39,15 @@ function makeFakeWorker(label: string, activeQueries = 0): FakeWorkerInstance {
     worker: { terminate: vi.fn() },
     api: { handle: vi.fn().mockResolvedValue(label) },
     activeQueries,
+  };
+}
+
+function forceAbortSignalAnyFallback(): () => void {
+  const descriptor = Object.getOwnPropertyDescriptor(AbortSignal, 'any');
+  Object.defineProperty(AbortSignal, 'any', { configurable: true, value: undefined });
+  return () => {
+    if (descriptor) Object.defineProperty(AbortSignal, 'any', descriptor);
+    else delete (AbortSignal as unknown as { any?: unknown }).any;
   };
 }
 
@@ -76,6 +86,30 @@ describe('WorkerPool — AbortSignal', () => {
     await Promise.resolve();
     controller.abort();
     await expect(promise).rejects.toMatchObject({ name: 'WorkerAbortError' });
+  });
+
+  it('releases fallback listeners after a completed call with pool and caller signals', async () => {
+    const restore = forceAbortSignalAnyFallback();
+    try {
+      const pool = makePool([makeFakeWorker('A')]);
+      const poolController = new AbortController();
+      const callerController = new AbortController();
+      pool.setAbortSignal(poolController.signal);
+      const listenersBefore = getEventListeners(poolController.signal, 'abort').length;
+
+      const result = await (pool as any).runWithTimeout(
+        'fallback-cleanup',
+        'projection',
+        (api: any) => api.handle(),
+        callerController.signal
+      );
+
+      expect(result).toBe('A');
+      expect(getEventListeners(poolController.signal, 'abort')).toHaveLength(listenersBefore);
+      expect(getEventListeners(callerController.signal, 'abort')).toHaveLength(0);
+    } finally {
+      restore();
+    }
   });
 
   it('pool-wide setAbortSignal applies to every subsequent runWithTimeout', async () => {

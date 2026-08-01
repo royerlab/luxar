@@ -139,26 +139,33 @@ export async function getRemoteContentHash(
   options: { signal?: AbortSignal; timeoutMsOverride?: number }
 ): Promise<RemoteValidationToken | null> {
   try {
-    const response = await fetchWithRetry(buildUrl(baseUrl, '.zattrs'), {
+    const fetched = await fetchWithRetry(buildUrl(baseUrl, '.zattrs'), {
       timeoutMsOverride: options.timeoutMsOverride,
       signal: options.signal,
     });
-    if (!response?.ok) return null;
+    if (!fetched) return null;
 
-    const data = await response.arrayBuffer();
-    const attrs = JSON.parse(new TextDecoder().decode(data));
-    const stamped = attrs?.content_hash;
-    if (typeof stamped === 'string' && stamped.length > 0) {
-      return { hash: stamped, mode: 'content-hash' };
+    try {
+      const { response } = fetched;
+      if (!response.ok) return null;
+
+      const data = await response.arrayBuffer();
+      const attrs = JSON.parse(new TextDecoder().decode(data));
+      const stamped = attrs?.content_hash;
+      if (typeof stamped === 'string' && stamped.length > 0) {
+        return { hash: stamped, mode: 'content-hash' };
+      }
+
+      // Implicit token: hash the exact bytes served. Any rewrite of the root
+      // attrs (Luxar writers always bump `timestamp`) changes the token.
+      // Digest a Uint8Array view rather than the raw ArrayBuffer: `instanceof
+      // ArrayBuffer` checks fail across realms (jsdom/worker), and a view
+      // carries explicit byteOffset/byteLength either way.
+      const digest = await sha256Hex(new Uint8Array(data));
+      return { hash: `zattrs:${digest}`, mode: 'zattrs-hash' };
+    } finally {
+      fetched.dispose();
     }
-
-    // Implicit token: hash the exact bytes served. Any rewrite of the root
-    // attrs (Luxar writers always bump `timestamp`) changes the token.
-    // Digest a Uint8Array view rather than the raw ArrayBuffer: `instanceof
-    // ArrayBuffer` checks fail across realms (jsdom/worker), and a view
-    // carries explicit byteOffset/byteLength either way.
-    const digest = await sha256Hex(new Uint8Array(data));
-    return { hash: `zattrs:${digest}`, mode: 'zattrs-hash' };
   } catch {
     return null;
   }
