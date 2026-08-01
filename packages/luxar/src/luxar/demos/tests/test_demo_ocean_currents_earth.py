@@ -12,7 +12,9 @@ import numpy as np
 import pytest
 
 from luxar.demos.demo_ocean_currents_earth import (
+    MAX_GLOBE_POINTS_PER_NODE,
     MAX_LINE_VERTICES_PER_NODE,
+    N_GLOBE,
     N_SEEDS,
     N_STEPS,
     RADIUS,
@@ -335,6 +337,21 @@ def test_per_node_budget_stays_under_the_segment_texture_bound() -> None:
     """
     assert MAX_LINE_VERTICES_PER_NODE <= 682 * 4096  # 2,793,472 segment floor
     assert N_SEEDS * (N_STEPS + 1) > MAX_LINE_VERTICES_PER_NODE  # partitioning engages
+
+
+def test_per_node_globe_budget_stays_under_the_point_texture_bound() -> None:
+    """The per-part point budget must stay under one Points node's cap.
+
+    Points pack at 3 texels each into the same element texture, so a single
+    Points node holds at most floor(4096/3) * maxTextureSize = 1365 *
+    maxTextureSize points — 5,591,040 on the conservative 4096-class GPU. The
+    8M-point globe exceeds that (the silently clamped tail is the Fibonacci
+    lattice's southern cap), so the demo partitions it; the per-part budget
+    must sit under the floor, and the total must exceed the budget or
+    partitioning would never engage.
+    """
+    assert MAX_GLOBE_POINTS_PER_NODE <= 1365 * 4096  # 5,591,040 point floor
+    assert N_GLOBE > MAX_GLOBE_POINTS_PER_NODE  # partitioning engages
 
 
 # --------------------------------------------------------------------- seeding

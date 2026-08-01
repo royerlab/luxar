@@ -151,6 +151,14 @@ LAT_LIMIT: Final = 79.9  # HYCOM's grid stops at +/-80
 # cap with margin.
 MAX_LINE_VERTICES_PER_NODE: Final = 2_500_000
 
+# Points share the element texture at 3 texels per point, so a single Points
+# node holds at most floor(4096/3) * maxTextureSize = 1365 * maxTextureSize
+# points — 5,591,040 on the same 4096-class floor. The 8M-point globe exceeds
+# that (the clamped tail is the Fibonacci lattice's southern cap), so it gets
+# the same treatment: partition into parts under the bound, each part keeping
+# its own stream ladder.
+MAX_GLOBE_POINTS_PER_NODE: Final = 4_000_000
+
 FLAGS = parse_demo_flags()
 NO_SERVE = FLAGS["no_serve"]
 SERVE_ONLY = FLAGS["serve_only"]
@@ -615,6 +623,12 @@ def build_scene(hycom_path: Path, marble_path: Path, output_path: Path) -> Path:
                 # A geometric `stream:` ladder gives a fast first paint where a
                 # stratified sampler would dump ~all 8M into one final commit.
                 additive_lod=dict(counts="stream:20000", method="random", seed=0),
+                # 8M points exceed a single Points node's element-texture cap
+                # (1365 * maxTextureSize points; 5,591,040 on a 4096-class GPU)
+                # just as the ribbons exceed the segment cap, and the clamp is
+                # equally silent. Partition to stay under the bound; each part
+                # carries its own stream ladder.
+                partition=dict(max_elements=MAX_GLOBE_POINTS_PER_NODE),
             )
             scene.add_lines(
                 "currents",
