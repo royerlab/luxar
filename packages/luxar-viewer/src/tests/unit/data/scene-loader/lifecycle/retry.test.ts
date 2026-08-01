@@ -248,8 +248,8 @@ describe('retryFailedLoaderUnlocked — GSplats loader extend_to_all skip fallba
     const ok = await retryFailedLoaderUnlocked(PATH, ctx);
 
     expect(ok).toBe(true);
-    // The 4-field spread fallback (NOT the derived viewState) — same shape
-    // loadGSplats() initial-load uses. Verify by checking what loader.updateView received.
+    // The base view state (NOT the derived one) — same shape loadGSplats()
+    // initial-load uses. Verify by checking what loader.updateView received.
     expect(updateView).toHaveBeenCalledTimes(1);
     const passedViewState = updateView.mock.calls[0][0];
     expect(passedViewState).toEqual({
@@ -264,6 +264,44 @@ describe('retryFailedLoaderUnlocked — GSplats loader extend_to_all skip fallba
       { extend_to_all: ['t', 'c'] },
       { applyPartialExtendTolerance: true }
     );
+  });
+});
+
+describe('retryFailedLoaderUnlocked — derived view state reaches the loader intact', () => {
+  // `deriveNodeViewState` sets `noPreimage` when a node's discrete
+  // `nd_transform` maps the current world slice between grid points; each
+  // spatial-index loader honours it by returning no ranges, so the node
+  // renders nothing. A retry arm that rebuilds the view state field-by-field
+  // drops the flag and commits geometry at a position that must stay empty —
+  // and `verifyAndClear` then blesses that result.
+
+  // `Promise<null>` is assignable to every loader's `Promise<LoadedX | null>`,
+  // so one signature serves all three makers.
+  type StubUpdateView = (vs: ViewState) => Promise<null>;
+  const registerFor: Record<
+    string,
+    (registry: LoaderRegistry, updateView: StubUpdateView) => void
+  > = {
+    points: (registry, updateView) =>
+      registry.registerPointsLoader(PATH, makePointsLoader(updateView)),
+    lines: (registry, updateView) =>
+      registry.registerLinesLoader(PATH, makeLinesLoader(updateView)),
+    gsplats: (registry, updateView) =>
+      registry.registerGSplatsLoader(PATH, makeGSplatsLoader(updateView)),
+  };
+
+  it.each(['points', 'lines', 'gsplats'])('forwards noPreimage for %s', async (kind) => {
+    const updateView = vi.fn().mockResolvedValue(null);
+    const ctx = makeRetryCtx({ rootGroup: makeRootGroupWith(PATH) });
+    const derivedViewState: ViewState = { ...makeViewState(), noPreimage: true };
+    ctx.spies.deriveNodeViewState.mockReturnValue({ skip: false, viewState: derivedViewState });
+    registerFor[kind](ctx.registry, updateView);
+    ctx.registry.recordFailure(PATH, new Error('initial failure'));
+
+    await retryFailedLoaderUnlocked(PATH, ctx);
+
+    expect(updateView).toHaveBeenCalledTimes(1);
+    expect(updateView.mock.calls[0][0].noPreimage).toBe(true);
   });
 });
 

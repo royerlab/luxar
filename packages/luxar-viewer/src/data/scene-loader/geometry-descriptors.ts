@@ -85,20 +85,6 @@ export interface GeometryDescriptor {
   ): Promise<AnyDataLoader>;
 }
 
-/**
- * GSplats' view state is structurally the same as the base `ViewState` but is
- * spelled as an explicit object at every construction site, matching the shape
- * `loadGSplatsNode` builds on the initial-load path.
- */
-function toGSplatsViewState(viewState: ViewState): GSplatsViewState {
-  return {
-    displayDims: viewState.displayDims,
-    slicePosition: viewState.slicePosition,
-    tolerance: viewState.tolerance,
-    dimensions: viewState.dimensions,
-  };
-}
-
 export const GEOMETRY_DESCRIPTORS: Record<GeometryKind, GeometryDescriptor> = {
   points: {
     loadNode: loadPointsNode,
@@ -130,7 +116,13 @@ export const GEOMETRY_DESCRIPTORS: Record<GeometryKind, GeometryDescriptor> = {
     loadNode: loadGSplatsNode,
     applyPartialExtendTolerance: true,
     async retryCommit(ctx, path, loader, viewState) {
-      const gsplatsViewState = toGSplatsViewState(viewState);
+      // Pass the derived state through whole, exactly as the lines arm does.
+      // Rebuilding it field-by-field drops `noPreimage`, which
+      // `deriveNodeViewState` sets when a discrete `nd_transform` maps the
+      // world slice between grid points and which the loader honours by
+      // returning no ranges — so a retry there would commit splats at a
+      // position that must render nothing.
+      const gsplatsViewState = viewState as GSplatsViewState;
       const data = await (loader as GSplatsDataLoader).updateView(gsplatsViewState);
       if (data) {
         const staged = await ctx.processGSplatsData(path, data, gsplatsViewState);
