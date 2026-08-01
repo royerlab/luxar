@@ -208,6 +208,34 @@ class TestQuarantineEnrichesDependencyErrors:
         assert corrupt.name in message, "quarantine notice missing from torch error"
         assert "torch" in message, "original dependency message was lost"
 
+    def test_dependency_remedy_names_the_destination_and_the_install_route(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """The remedy must be actionable on its OWN, unlike the no-CUDA one.
+
+        The no-CUDA RuntimeError lists the destination `.npy` in a bullet above
+        the notice, so it can say "that path". A dependency error has no such
+        surrounding text: a bare "that path" points at the `.corrupt` file the
+        notice just listed. It must also offer the install route — with the
+        package missing, deleting the quarantined copy does not let you proceed.
+        """
+        corrupt = tmp_path / f"embeddings_esmc_300m.npy{QUARANTINE_SUFFIX}"
+        corrupt.write_bytes(b"x" * 1234)
+        destination = tmp_path / "embeddings_esmc_300m.npy"
+
+        monkeypatch.setitem(sys.modules, "torch", None)
+
+        with pytest.raises(MissingDependencyError) as excinfo:
+            _compute_esm3_embeddings(SEQUENCES, tmp_path, model_name="esmc-300m")
+
+        remedy = str(excinfo.value).rsplit("To proceed you must", 1)[-1]
+        assert f"{destination} " in remedy, (
+            f"remedy does not name the destination .npy: {remedy}"
+        )
+        assert "install the missing dependency" in remedy, (
+            f"remedy omits the install route: {remedy}"
+        )
+
     def test_already_reported_does_not_repeat_the_notice(
         self, tmp_path, monkeypatch
     ) -> None:

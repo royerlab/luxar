@@ -369,16 +369,29 @@ def _parse_swissprot_fasta(
 # =============================================================================
 
 # Remedies embedded in a quarantine notice, per failure site. The no-CUDA branch
-# is fixable only by supplying a cache or moving to a CUDA box; the torch/esm
-# dependency gates already carry a `pip install` remedy, and the esm gate is only
-# reached when CUDA IS available — so "rerun on a CUDA machine" would be wrong there.
+# is fixable only by supplying a cache or moving to a CUDA box, and its message
+# names the destination `.npy` in a bullet right above the notice, so "that path"
+# resolves there.
 _CUDA_ACTION = (
     "re-download the complete file to that path, or delete the "
     "quarantined copy and rerun on a CUDA machine"
 )
-_DEP_ACTION = (
-    "re-download the complete file to that path, or delete the quarantined copy"
-)
+
+
+def _dep_action(embeddings_cache: Path) -> str:
+    """Remedy for a torch/esm gate failure, for the quarantine notice.
+
+    Deliberately not `_CUDA_ACTION`: installing the package is a second way
+    forward here (and "rerun on a CUDA machine" is wrong for the esm gate, which
+    is only reached when CUDA IS available). It also has to spell the
+    destination out — a dependency error carries no surrounding text naming it,
+    so a bare "that path" would point at the `.corrupt` file the notice lists.
+    """
+    return (
+        "install the missing dependency above and rerun, or supply a complete "
+        f"file at {embeddings_cache} — a complete cache skips the dependency "
+        "entirely, and the quarantined copy is never reused"
+    )
 
 
 def _compute_esm3_embeddings(
@@ -439,12 +452,13 @@ def _compute_esm3_embeddings(
     quarantined = warn_if_quarantined(embeddings_cache, verbose=False)
 
     # `main()` may already have printed a notice for some of these paths up
-    # front; embed ONLY the ones it did not, so the notice is shown exactly once
-    # per file. The check is per-PATH (not a dir-wide flag): a file freshly
-    # quarantined during THIS run — e.g. under a different --model than the one
-    # `main()` saw — is not in `already_reported_quarantine` and so is still
-    # named here. An empty `unreported` is the single guard for both "nothing
-    # quarantined" and "main already reported everything".
+    # front; embed ONLY the ones it did not, so this notice is emitted once per
+    # file. The check is per-PATH (not a dir-wide flag): `main()`'s scan is
+    # dir-wide, so it may well have reported some OTHER model's leftover, but a
+    # file quarantined during THIS run (by the block above) is not in
+    # `already_reported_quarantine` and so is still named here. An empty
+    # `unreported` is the single guard for both "nothing quarantined" and "main
+    # already reported everything".
     unreported = [p for p in quarantined if p not in already_reported_quarantine]
 
     def _quarantine_note(action: str) -> str:
@@ -462,7 +476,7 @@ def _compute_esm3_embeddings(
     try:
         torch = require_module("torch")
     except MissingDependencyError as exc:
-        note = _quarantine_note(_DEP_ACTION)
+        note = _quarantine_note(_dep_action(embeddings_cache))
         if note:
             raise MissingDependencyError(f"{exc}\n{note}") from exc
         raise
@@ -493,7 +507,7 @@ def _compute_esm3_embeddings(
     try:
         require_module("esm")
     except MissingDependencyError as exc:
-        note = _quarantine_note(_DEP_ACTION)
+        note = _quarantine_note(_dep_action(embeddings_cache))
         if note:
             raise MissingDependencyError(f"{exc}\n{note}") from exc
         raise
@@ -921,9 +935,10 @@ def main() -> None:
     # user learns about it even when a dependency gate below also trips.
     quarantined = find_quarantined_files(cache_dir)
     # The SET of paths reported here, threaded into the compute path so it embeds
-    # the notice only for paths we did NOT report (e.g. a file freshly
-    # quarantined during compute, possibly under a different --model) — each
-    # quarantined file is named exactly once per run.
+    # the notice only for paths we did NOT report — so this leftover notice is
+    # emitted once per file. It covers only what was on disk BEFORE the run: a
+    # cache rejected DURING the run announces itself through `quarantine_file`,
+    # and the compute path then names it in the error it raises.
     if quarantined:
         aprint(
             format_quarantine_notice(
