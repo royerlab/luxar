@@ -195,9 +195,18 @@ export class NodeFactory {
     attrs: PointsMetadata,
     data: LoadedPointsData,
     loader: DataLoader,
-    isPlaceholder: boolean = false
+    isPlaceholder: boolean = false,
+    rawAttrs: PointsMetadata = attrs
   ): THREE.Mesh {
-    return createPointsNodeImpl(path, attrs, data, loader, this.pickingSystem, isPlaceholder);
+    return createPointsNodeImpl(
+      path,
+      attrs,
+      data,
+      loader,
+      this.pickingSystem,
+      isPlaceholder,
+      rawAttrs
+    );
   }
 
   createLinesNode(
@@ -245,8 +254,13 @@ export class NodeFactory {
    * Create a `THREE.Mesh` (instanced points) placeholder with an empty
    * geometry.
    */
-  createEmptyPointsNode(path: string, attrs: PointsMetadata, loader: DataLoader): THREE.Mesh {
-    return createEmptyPointsNodeImpl(path, attrs, loader, this.pickingSystem);
+  createEmptyPointsNode(
+    path: string,
+    attrs: PointsMetadata,
+    loader: DataLoader,
+    rawAttrs: PointsMetadata = attrs
+  ): THREE.Mesh {
+    return createEmptyPointsNodeImpl(path, attrs, loader, this.pickingSystem, rawAttrs);
   }
 
   /**
@@ -318,8 +332,9 @@ export class NodeFactory {
     attrs: Partial<PointsMetadata>,
     radiusScale: number = 1.0,
     geometry?: THREE.BufferGeometry,
-    path?: string
+    path?: string,
+    rawAttrs: Partial<PointsMetadata> = attrs
   ): LuxarPointMaterial {
-    return createPointsMaterialImpl(attrs, radiusScale, geometry, path);
+    return createPointsMaterialImpl(attrs, radiusScale, geometry, path, rawAttrs);
   }
 }

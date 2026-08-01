@@ -65,6 +65,21 @@ NodeFactory (class in rendering/node-factory.ts)
   clone — the cached original stays registered and cached (the historical
   detach-before-clone step was removed: its disposeAll-vs-cache rationale
   never held, and detaching starved later cache hits of camera updates).
+- **Colormapped node = intensity is a WINDOW, not a color gain (#1082).**
+  When a colormap is actually applied (colormap attr + bound scalars +
+  a resolvable texture), all three factories leave the post-LUT color
+  GOG at IDENTITY and instead push the authored gain/offset as the
+  scalar display window via `updateScalarRange` — the shader always
+  multiplies `vColor * uIntensity + uOffset` post-LUT, so stamping the
+  gain AND inverting it into the window would double-apply it. The
+  identity-vs-window decision keys on the RAW LEAF gain (an ancestor-only
+  gain folds onto the `scalar_data_range` window instead), matching the
+  layers panel's `applyColorAdjustments` so `layer=false` (load) renders
+  identically to `layer=true` (post-interaction). Because the points
+  factory receives only the COMPOSED effective attrs, the raw leaf attrs
+  are threaded in as a separate `rawAttrs` param (lines already gets both
+  as `nodeAttrs`/`attrs`; gsplats as `nodeAttrs`/`attrs`). Direct-color
+  nodes (no colormap) still receive the authored gain unchanged.
 - **Scalar-attribute guard (points / lines).** Points consults
   `supportsScalarColormap('points', geometry)` when a geometry is
   supplied; lines checks for `startScalars`/`endScalars` on the

@@ -674,6 +674,14 @@ def build_static_scene(output_path: Path, cat: dict) -> int:
                 dimensions=dims, viewer_config=_solar_system_viewer_config()
             )
 
+            # Additive brightness lives in `opacity`: ~1.5M points summed
+            # additively would saturate to white, so the cloud is dimmed via
+            # opacity (0.0765 = the old opacity 0.85 x the old 0.09; the two
+            # linear multipliers collapse into one under additive blending).
+            # Since #1082 `intensity` on a COLORMAPPED node is the scalar
+            # display WINDOW, not a post-LUT brightness gain, so the identity
+            # default (1.0) lets turbo span the full semi-major-axis data range
+            # — matching the caption "color = semi-major axis (AU)".
             scene.add_points(
                 "Asteroids",
                 pos,
@@ -681,9 +689,8 @@ def build_static_scene(output_path: Path, cat: dict) -> int:
                 colormap="turbo",
                 radii=0.012,
                 labels=labels,
-                opacity=0.85,
+                opacity=0.0765,
                 blending_mode="additive",
-                intensity=0.09,
                 layer=True,
             )
             _add_static_bodies(scene, planet_state(J2000_JD))
@@ -751,15 +758,19 @@ def build_animated_scene(output_path: Path, cat: dict) -> int:
                 all_pos[sl, :3] = xyz
                 all_pos[sl, 3] = float(f)
                 all_scalars[sl] = semi_major
+            # Additive brightness lives in `opacity` (see the static build):
+            # 0.0765 = the old opacity 0.85 x the old 0.09 gain. Since #1082
+            # `intensity` on a colormapped node is the scalar display WINDOW,
+            # not a brightness gain, so the identity default lets turbo span
+            # the full semi-major-axis data range.
             scene.add_points(
                 "Asteroids",
                 all_pos,
                 scalars=all_scalars,
                 colormap="turbo",
                 radii=0.012,
-                opacity=0.85,
+                opacity=0.0765,
                 blending_mode="additive",
-                intensity=0.09,
                 layer=True,
             )
 

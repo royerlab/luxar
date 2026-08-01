@@ -112,7 +112,12 @@ export async function loadPointsNodeCheap(
   // branch in commitPointsGeometry. retryFailedLoader() reads the
   // placeholder's `userData.attrs` to derive the retry view state.
   const attrs = ctx.applyEffectiveAttrs(node) as unknown as PointsMetadata;
-  const placeholder = ctx.nodeFactory.createEmptyPointsNode(node.path, attrs, loader);
+  // Pass the RAW LEAF attrs alongside the COMPOSED effective attrs so the
+  // material factory can decide identity-vs-window for a colormapped node
+  // exactly as the layers panel does (#1082 — mirrors the lines loader's
+  // `(applyEffectiveAttrs(node), node.attrs)` split).
+  const rawAttrs = node.attrs as unknown as PointsMetadata;
+  const placeholder = ctx.nodeFactory.createEmptyPointsNode(node.path, attrs, loader, rawAttrs);
   parentThree.add(placeholder);
 
   return { placeholder, loader };

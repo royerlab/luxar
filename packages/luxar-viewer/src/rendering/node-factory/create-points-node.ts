@@ -36,6 +36,7 @@ import { log, Modules } from '../../utils/log';
 import type { PickingSystem } from '../picking/picking-system';
 import { applyTransform } from './transforms';
 import { validateLoadedPointsData, validateColorMode } from './validation';
+import { computeDisplayRange, computeUniforms } from '../display-range';
 
 /**
  * Build a Points InstancedBufferGeometry from loaded data.
@@ -191,12 +192,20 @@ export function createPointsGeometry(
  * `uPointTex`), so the colormap applies directly to the node-owned
  * material — the historical clone-on-divergence dance is gone (mirrors
  * `createGSplatsNode`).
+ *
+ * `attrs` are the COMPOSED effective attrs (the rendering attrs the scene
+ * loader passes in); `rawAttrs` are the RAW LEAF attrs (`node.attrs`),
+ * used ONLY to decide identity-vs-window for a colormapped node — see the
+ * colormap block below and `createGSplatsNode` (#1082). Defaults to
+ * `attrs` so a caller with no ancestor gain (composed == leaf) still
+ * behaves correctly.
  */
 export function createPointsMaterial(
   attrs: Partial<PointsMetadata>,
   radiusScale: number = 1.0,
   geometry?: THREE.BufferGeometry,
-  path?: string
+  path?: string,
+  rawAttrs: Partial<PointsMetadata> = attrs
 ): LuxarPointMaterial {
   const material = materialManager.getPointMaterial({
     opacity: attrs.opacity ?? 1.0,
@@ -226,7 +235,48 @@ export function createPointsMaterial(
       const ptColormapTex = getColormapTexture(ptColormapName, ptLutBytes);
       if (ptColormapTex) {
         material.updateColormapTexture(ptColormapTex);
-        const ptScalarRange = attrs.scalar_data_range ?? [0, 1];
+        // On a colormapped node the authored intensity/offset define the
+        // scalar WINDOW (value→LUT mapping), NOT a post-LUT color gain —
+        // the shader always multiplies `vColor * uIntensity + uOffset`
+        // post-LUT, so leaving the authored gain stamped while ALSO
+        // inverting it into the window double-applies it (#1082). Reset the
+        // color GOG to identity and push the window, mirroring
+        // `create-gsplats-node.ts` and the layers panel
+        // (`applyColorAdjustments`) so `layer=false` matches `layer=true`.
+        material.updateIntensity(1.0);
+        material.updateOffset(0.0);
+        // The identity-vs-window decision keys on the RAW LEAF gain
+        // (`rawAttrs.intensity/offset`), mirroring the panel
+        // (`layer-state.ts initialDisplayRange` starts from the data range
+        // whenever the LEAF gain is identity) — NOT the composed value,
+        // which would treat an ancestor-only gain as an authored window and
+        // discard `scalar_data_range`. When the leaf DID author a window,
+        // the COMPOSED gain IS the panel's effective gain (intensity
+        // multiplies, offset adds), so it is used directly. When the leaf is
+        // identity, any ancestor gain is folded onto the data-range window
+        // exactly as the panel composes it.
+        const leafIntensity = rawAttrs.intensity ?? 1.0;
+        const leafOffset = rawAttrs.offset ?? 0.0;
+        const composedIntensity = attrs.intensity ?? 1.0;
+        const composedOffset = attrs.offset ?? 0.0;
+        let ptScalarRange: [number, number];
+        if (leafIntensity === 1.0 && leafOffset === 0.0) {
+          const dataRange = attrs.scalar_data_range ?? [0, 1];
+          if (composedIntensity === 1.0 && composedOffset === 0.0) {
+            ptScalarRange = dataRange;
+          } else {
+            // Ancestor-only gain (leaf identity ⇒ composed == ancestor product).
+            const w = computeUniforms(dataRange[0], dataRange[1]);
+            const { min, max } = computeDisplayRange(
+              composedIntensity * w.intensity,
+              composedOffset + w.offset
+            );
+            ptScalarRange = [min, max];
+          }
+        } else {
+          const { min, max } = computeDisplayRange(composedIntensity, composedOffset);
+          ptScalarRange = [min, max];
+        }
         material.updateScalarRange(ptScalarRange[0], ptScalarRange[1]);
       }
     }
@@ -252,13 +302,14 @@ export function createPointsNode(
   data: LoadedPointsData,
   loader: DataLoader,
   pickingSystem: PickingSystem | null,
-  isPlaceholder: boolean = false
+  isPlaceholder: boolean = false,
+  rawAttrs: PointsMetadata = attrs
 ): THREE.Mesh {
   const maxRadius = attrs.max_radius ?? 1.0;
   const geometry = createPointsGeometry(data, maxRadius, isPlaceholder);
 
   const radiusScale = geometry.userData.radiusScale ?? 1.0;
-  const material = createPointsMaterial(attrs, radiusScale, geometry, path);
+  const material = createPointsMaterial(attrs, radiusScale, geometry, path, rawAttrs);
 
   const points = new THREE.Mesh(geometry, material);
   points.name = path;
@@ -331,7 +382,8 @@ export function createEmptyPointsNode(
   path: string,
   attrs: PointsMetadata,
   loader: DataLoader,
-  pickingSystem: PickingSystem | null
+  pickingSystem: PickingSystem | null,
+  rawAttrs: PointsMetadata = attrs
 ): THREE.Mesh {
   const emptyData: LoadedPointsData = {
     positions: new Float32Array(0) as LoadedPointsData['positions'],
@@ -355,5 +407,13 @@ export function createEmptyPointsNode(
   if (attrs.has_scalars && attrs.colormap) {
     emptyData.scalars = new Float32Array(0) as LoadedPointsData['scalars'];
   }
-  return createPointsNode(path, attrs, emptyData, loader, pickingSystem, /* isPlaceholder */ true);
+  return createPointsNode(
+    path,
+    attrs,
+    emptyData,
+    loader,
+    pickingSystem,
+    /* isPlaceholder */ true,
+    rawAttrs
+  );
 }
