@@ -1,14 +1,21 @@
 onlyBuiltDependencies:
   - esbuild
 
+# Security-advisory pins. THIS FILE IS THE ONLY HOME FOR `overrides` — do not
+# add a `pnpm.overrides` block to package.json. Every pnpm that can read this
+# file (>=10.6; 10.4 and older reject it with "packages field missing or
+# empty") silently PREFERS package.json when both exist, while Dependabot's
+# updater reads THIS file. A second copy therefore makes the two disagree, and
+# every Dependabot PR lands a lockfile that fails `pnpm install
+# --frozen-lockfile` with ERR_PNPM_LOCKFILE_CONFIG_MISMATCH. Because the pins
+# live here, pnpm <10.6 would install without them — hence `engines.pnpm`,
+# MIN_PNPM_MAJOR/MINOR in the Makefile, and every workflow's pnpm pin.
+# `pnpm run check:overrides` enforces the single-source rule.
 overrides:
-  postcss@<8.5.10: '>=8.5.10'
-  rollup@>=4.0.0 <4.59.0: '>=4.59.0'
-  minimatch@<3.1.4: '>=3.1.4 <4.0.0'
-  minimatch@>=9.0.0 <9.0.7: '>=9.0.7 <10.0.0'
-  brace-expansion@<1.1.13: '>=1.1.13 <2.0.0'
-  brace-expansion@>=2.0.0 <2.0.3: '>=2.0.3 <3.0.0'
-  picomatch@>=4.0.0 <4.0.4: '>=4.0.4 <5.0.0'
-  flatted@<3.4.2: '>=3.4.2 <4.0.0'
-  ajv@<6.14.0: '>=6.14.0 <7.0.0'
-  diff@>=4.0.0 <4.0.4: '>=4.0.4 <5.0.0'
+  ws@>=8.0.0 <8.20.1: '>=8.20.1'
+  brace-expansion@>=5.0.0 <5.0.6: '>=5.0.6'
+  esbuild@>=0.17.0 <0.28.1: '>=0.28.1'
+  form-data@>=4.0.0 <4.0.6: '>=4.0.6'
+  linkify-it@<=5.0.0: '>=5.0.1'
+  markdown-it@<=14.1.1: '>=14.2.0'
+  js-yaml@>=4.0.0 <=4.1.1: '>=4.2.0 <5.0.0'

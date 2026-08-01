@@ -243,6 +243,16 @@ jobs:
           # verbatim, so it MUST include the 'v' or the download 404s.
           version: 'v0.14.0'
 
+      # Runs BEFORE the install, deliberately. The failure this guards against
+      # (overrides split between package.json and pnpm-workspace.yaml, so
+      # Dependabot's lockfile disagrees with what pnpm computes) surfaces as
+      # ERR_PNPM_LOCKFILE_CONFIG_MISMATCH from the frozen install itself, which
+      # names neither file. Checking first means the PR that needs the
+      # explanation is the one that gets it. Pure stdlib node, no node_modules.
+      - name: Check pnpm overrides are single-sourced
+        if: needs.changes.outputs.docs_only != 'true'
+        run: node scripts/check-overrides.mjs
+
       - run: pnpm install --frozen-lockfile
         if: needs.changes.outputs.docs_only != 'true'
 
@@ -288,10 +298,11 @@ jobs:
         working-directory: .
         run: hatch run python packages/luxar-viewer/tests/fixtures/generate_test_data.py
 
-      - name: Check (typecheck + lint + layers + knip + coverage)
+      - name: Check (overrides + typecheck + lint + layers + knip + coverage)
         if: needs.changes.outputs.docs_only != 'true'
         # `pnpm run check:ci` runs in this order:
-        #   typecheck → lint → check:layers (dependency-cruiser)
+        #   check:overrides (security pins single-sourced in pnpm-workspace.yaml)
+        #   → typecheck → lint → check:layers (dependency-cruiser)
         #   → check:knip:ci (dead-file + unlisted-dependency gate)
         #   → test:coverage (vitest with thresholds)
         # knip:ci runs with --include files,dependencies so policy-level
@@ -345,6 +356,13 @@ jobs:
           # 'v' prefix (wasm-pack-v0.14.0-...). The version string is used
           # verbatim, so it MUST include the 'v' or the download 404s.
           version: 'v0.14.0'
+
+      # Same pre-install guard as typescript-tests — this job's frozen install
+      # fails identically on an overrides mismatch, so it gets the same legible
+      # message instead of a bare ERR_PNPM_LOCKFILE_CONFIG_MISMATCH.
+      - name: Check pnpm overrides are single-sourced
+        if: needs.changes.outputs.docs_only != 'true'
+        run: node scripts/check-overrides.mjs
 
       - run: pnpm install --frozen-lockfile
         if: needs.changes.outputs.docs_only != 'true'
