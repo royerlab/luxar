@@ -221,16 +221,18 @@ describe('InputHandler Utilities', () => {
       // of `discrete && wrapAround` was untested. Cyclic frame indices that
       // round-then-wrap is a real use case (animated time dimensions).
       it('[G2] discrete + wrap: fractional input rounds first, then wraps', () => {
-        // newPos = 9 + 3.4 = 12.4 → round → 12 → wrap to 2.
+        // newPos = 9 + 3.4 = 12.4 → round → 12 → wrap.
+        // `[0, 10]` discrete with step 1 is ELEVEN positions (0..10), so the
+        // period is 11, not 10: 0 + (12 % 11) = 1.
         const result = calculateNextPosition(9, 1, 3.4, [0, 10], true, true);
-        expect(result).toBe(2);
+        expect(result).toBe(1);
       });
 
       it('[G2] discrete + wrap backward: rounds then wraps correctly', () => {
         // newPos = 0 + (-1) * 2.4 = -2.4 → round → -2 → wrap.
-        // range[0] - newPos = 0 - (-2) = 2. 2 % 10 = 2. range[1] - 2 = 8.
+        // Period 11 (eleven inclusive positions): 0 + mod(-2, 11) = 9.
         const result = calculateNextPosition(0, -1, 2.4, [0, 10], true, true);
-        expect(result).toBe(8);
+        expect(result).toBe(9);
       });
 
       it('[G2] discrete + wrap: rounding pushes value JUST past the range, wraps to start', () => {
@@ -238,6 +240,60 @@ describe('InputHandler Utilities', () => {
         // Test that the rounding happens before clamp.
         const result = calculateNextPosition(9.7, 1, 0.5, [0, 10], true, true);
         expect(result).toBe(10);
+      });
+    });
+
+    describe('inclusive discrete period: every category stays reachable', () => {
+      // A discrete `[min, max]` is an INCLUSIVE set of positions, so its cyclic
+      // period is `(max - min) + step` — NOT the continuous `max - min`. Using
+      // the continuous period skipped one position at each wrap, which made the
+      // first and last CATEGORIES unreachable by keyboard. `[0, 7]` with step 1
+      // is exactly what `Dimension.__post_init__` derives for an 8-category
+      // dim, so this is the shape every categorical dataset ships.
+      const CATEGORICAL: [number, number] = [0, 7];
+
+      it('wraps backward from the first category to the LAST, not last-minus-one', () => {
+        expect(calculateNextPosition(0, -1, 1, CATEGORICAL, true, true, 1)).toBe(7);
+      });
+
+      it('wraps forward from the last category to the FIRST, not first-plus-one', () => {
+        expect(calculateNextPosition(7, 1, 1, CATEGORICAL, true, true, 1)).toBe(0);
+      });
+
+      it('a full cycle of forward steps visits all 8 categories exactly once', () => {
+        const seen: number[] = [];
+        let pos = 0;
+        for (let i = 0; i < 8; i++) {
+          seen.push(pos);
+          pos = calculateNextPosition(pos, 1, 1, CATEGORICAL, true, true, 1);
+        }
+        expect(seen).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
+        expect(pos).toBe(0); // and closes the loop
+      });
+
+      it('overshoot of several cycles still lands on a valid position', () => {
+        // 8 positions, period 8: +19 from 0 is 19 % 8 = 3.
+        expect(calculateNextPosition(0, 1, 19, CATEGORICAL, true, true, 1)).toBe(3);
+        // -19 backward: mod(-19, 8) = 5.
+        expect(calculateNextPosition(0, -1, 19, CATEGORICAL, true, true, 1)).toBe(5);
+      });
+
+      it('honours a fractional declared step', () => {
+        // range [0, 1] with step 0.25 = five positions; period 1.25.
+        expect(calculateNextPosition(0, -1, 0.25, [0, 1], true, true, 0.25)).toBeCloseTo(1, 10);
+        expect(calculateNextPosition(1, 1, 0.25, [0, 1], true, true, 0.25)).toBeCloseTo(0, 10);
+      });
+
+      it('a single-position discrete dim stays put instead of producing NaN', () => {
+        expect(calculateNextPosition(5, 1, 1, [5, 5], true, true, 1)).toBe(5);
+        expect(calculateNextPosition(5, -1, 1, [5, 5], true, true, 1)).toBe(5);
+      });
+
+      it('CONTINUOUS cyclic dims keep the max-min period (max ≡ min)', () => {
+        // Regression guard: an angle in [0, 360] must still wrap with period
+        // 360, not 361 — the discrete +step must not leak into this path.
+        expect(calculateNextPosition(0, -1, 5, [0, 360], false, true)).toBe(355);
+        expect(calculateNextPosition(360, 1, 5, [0, 360], false, true)).toBe(5);
       });
     });
   });

@@ -99,7 +99,10 @@ export function calculateStepSize(
  * @param direction - Navigation direction: 1 for forward (]), -1 for backward ([)
  * @param stepSize - Step size to apply (from calculateStepSize)
  * @param range - Valid [min, max] bounds for this dimension
- * @param discrete - If true, rounds to the declared grid (`snapStep`)
+ * @param discrete - If true, rounds to the declared grid (`snapStep`) and
+ *                   treats `range` as an inclusive set of positions, so the
+ *                   cyclic period is `(max - min) + snapStep` rather than the
+ *                   continuous `max - min`
  * @param wrapAround - If true, wraps at boundaries; if false, clamps to range
  * @param snapStep - Grid the position snaps to for discrete dims (the dim's
  *                   declared step; default 1 = classic integer frame indices).
@@ -127,14 +130,40 @@ export function calculateNextPosition(
 
   // Handle boundaries
   if (wrapAround) {
-    const rangeSize = range[1] - range[0];
-    if (rangeSize <= 0) {
-      return range[0]; // Degenerate or invalid range
-    }
-    if (newPos < range[0]) {
-      newPos = range[1] - ((range[0] - newPos) % rangeSize);
-    } else if (newPos > range[1]) {
-      newPos = range[0] + ((newPos - range[1]) % rangeSize);
+    // The cyclic PERIOD is not the same as the range width for a discrete dim.
+    // `[min, max]` is INCLUSIVE, so a discrete axis holds
+    // `(max - min) / step + 1` distinct positions and its period is
+    // `(max - min) + step`. A continuous cyclic axis (an angle in [0, 360])
+    // really does have period `max - min`, because there `max ≡ min`.
+    //
+    // Using the continuous period for a discrete dim skips one position at
+    // every wrap: an 8-category dim declared `[0, 7]` (exactly what
+    // `Dimension.__post_init__` derives for `categories=[...8...]`) wrapped
+    // 0 -> 6 backward and 7 -> 1 forward, silently making the first and last
+    // categories unreachable by keyboard.
+    if (discrete) {
+      const grid = snapStep > 0 ? snapStep : 1;
+      const period = range[1] - range[0] + grid;
+      if (period <= 0) {
+        return range[0]; // Degenerate or invalid range
+      }
+      if (newPos < range[0] || newPos > range[1]) {
+        // Positive modulo, so arbitrary overshoot in either direction lands on
+        // a valid position rather than only the single-cycle case.
+        newPos = range[0] + ((((newPos - range[0]) % period) + period) % period);
+      }
+    } else {
+      // Continuous path left EXACTLY as it was: `max ≡ min` here, and the
+      // one-full-cycle-backward case is specified to return `max`, not `min`.
+      const rangeSize = range[1] - range[0];
+      if (rangeSize <= 0) {
+        return range[0]; // Degenerate or invalid range
+      }
+      if (newPos < range[0]) {
+        newPos = range[1] - ((range[0] - newPos) % rangeSize);
+      } else if (newPos > range[1]) {
+        newPos = range[0] + ((newPos - range[1]) % rangeSize);
+      }
     }
   } else {
     // Clamp to range
