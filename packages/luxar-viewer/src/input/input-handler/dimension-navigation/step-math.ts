@@ -100,9 +100,9 @@ export function calculateStepSize(
  * @param stepSize - Step size to apply (from calculateStepSize)
  * @param range - Valid [min, max] bounds for this dimension
  * @param discrete - If true, rounds to the declared grid (`snapStep`) and
- *                   treats `range` as an inclusive set of positions, so the
- *                   cyclic period is `(max - min) + snapStep` rather than the
- *                   continuous `max - min`
+ *                   treats `range` as an inclusive set of on-grid positions,
+ *                   so the cyclic period spans the `k·snapStep` multiples
+ *                   inside the range rather than the continuous `max - min`
  * @param wrapAround - If true, wraps at boundaries; if false, clamps to range
  * @param snapStep - Grid the position snaps to for discrete dims (the dim's
  *                   declared step; default 1 = classic integer frame indices).
@@ -143,29 +143,37 @@ export function calculateNextPosition(
     // categories unreachable by keyboard.
     if (discrete) {
       const grid = snapStep > 0 ? snapStep : 1;
-      // Derive the period from the COUNT of on-grid positions rather than from
-      // `(max - min) + step`. The two agree whenever the range divides evenly
-      // by the step (every categorical dim does), but when it doesn't — say
-      // `[0, 1]` with step 0.3, whose last reachable position is 0.9 — the
-      // naive form yields period 1.3 and leaves an overshoot of 1.2 unwrapped,
-      // returning a position ABOVE max and breaking this function's documented
-      // "guaranteed to be within range". The epsilon absorbs float error in the
-      // division — `0.7 / 0.1` is 6.999999999999999, which would otherwise
-      // floor to 6 and make the position at 0.7 unreachable.
-      const positions = Math.floor((range[1] - range[0]) / grid + 1e-9) + 1;
-      const period = positions * grid;
-      if (period <= 0) {
-        return range[0]; // Degenerate or invalid range
+      // Wrap over the ON-GRID positions — the `k·grid` multiples inside the
+      // range. The snap above (and SceneDimsManager's own setDimensionValue /
+      // defaultPosition) rounds to the ZERO-anchored grid, so the reachable
+      // positions of `[0.15, 0.75]` with step 0.2 are 0.2, 0.4, 0.6 —
+      // `range[0]` itself is not one of them (defaultPosition explicitly
+      // supports an off-grid min: 1.3 with step 1 starts at 2). Anchoring the
+      // period at `range[0]` instead wrapped a forward step off 0.6 to 0.8,
+      // which the clamp turned into the off-grid 0.75. The count/wrap
+      // arithmetic runs in integer grid indices, which are exact — no float
+      // modulo to drift an ulp off the grid. The epsilon absorbs float error
+      // in the index division — `0.7 / 0.1` is 6.999999999999999, which would
+      // otherwise floor to 6 and make the position at 0.7 unreachable.
+      const firstK = Math.ceil(range[0] / grid - 1e-9);
+      const lastK = Math.floor(range[1] / grid + 1e-9);
+      if (lastK < firstK) {
+        // No on-grid position inside the range at all (degenerate, inverted,
+        // or narrower-than-one-step range) — nothing to wrap onto.
+        return range[0];
       }
-      if (newPos < range[0] || newPos > range[1]) {
+      const k = Math.round(newPos / grid); // exact: newPos was snapped above
+      if (k < firstK || k > lastK) {
+        const positions = lastK - firstK + 1;
         // Positive modulo, so arbitrary overshoot in either direction lands on
         // a valid position rather than only the single-cycle case.
-        newPos = range[0] + ((((newPos - range[0]) % period) + period) % period);
+        const wrappedK = firstK + ((((k - firstK) % positions) + positions) % positions);
+        newPos = wrappedK * grid;
       }
-      // Defence in depth. With the period above and an on-grid input the
-      // wrapped value is always a reachable position, so no current caller can
-      // trigger this clamp — it exists so the documented range guarantee stays
-      // true if the snapping above is ever changed or bypassed.
+      // Defence in depth. Every wrapped index is inside [firstK, lastK], so no
+      // current caller can trigger this clamp — it exists so the documented
+      // range guarantee stays true if the snapping above is ever changed or
+      // bypassed.
       return clamp(newPos, range[0], range[1]);
     } else {
       // Continuous path left EXACTLY as it was: `max ≡ min` here, and the
