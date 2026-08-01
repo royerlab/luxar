@@ -389,8 +389,12 @@ describe('OPFSStore correctness (#1 write serialization, #3 orphan reads, #1073 
       await store.delete('race');
       // Capture the still-in-flight real delete so we can await it after release.
       const inflight = (
-        store as unknown as { pendingDeletes: Map<string, Set<Promise<void>>> }
-      ).pendingDeletes.get('race')!;
+        OPFSStore as unknown as {
+          pendingDeletesByDataset: Map<string, Map<string, Set<Promise<void>>>>;
+        }
+      ).pendingDeletesByDataset
+        .get('degrade')!
+        .get('race')!;
 
       // Same-key write: its barrier waits on the hung delete, times out, and the
       // write is DROPPED — resolving (never rejecting) and incrementing the
@@ -459,6 +463,97 @@ describe('OPFSStore correctness (#1 write serialization, #3 orphan reads, #1073 
     } finally {
       config.cache.opfsOperationTimeoutMs = originalTimeout;
       releaseRemove();
+    }
+  });
+
+  it('#1073 delete() during an in-flight first write of the key serializes behind it (no silent no-op)', async () => {
+    // A delete arriving while the key's write is still in flight — index not
+    // yet updated — must chain behind that write and remove it. An early
+    // return keyed on the index alone would silently skip the delete and let
+    // the write survive an operation that arrived after it.
+    const { getRemoveOverlappedWrite } = mockOPFS();
+    const store = new OPFSStore('inflight-del', 'https://example.com', 10 * 1024 * 1024);
+
+    try {
+      await store.init();
+
+      // First write of the key: set() installs the pending write and suspends
+      // inside doSet() before the index is updated.
+      const setPromise = store.set('fresh', new Uint8Array([1, 2, 3]));
+      // The key is not indexed yet, but the write is pending — the delete must
+      // still take effect (sequenced after the write).
+      const deletePromise = store.delete('fresh');
+      await Promise.all([setPromise, deletePromise]);
+
+      expect(await store.get('fresh')).toBeUndefined();
+      expect(store.getStats()).toMatchObject({ count: 0, size: 0 });
+      expect(getRemoveOverlappedWrite()).toBe(false);
+    } finally {
+      await store.dispose();
+    }
+  });
+
+  it('#1073 a predecessor delete that outlives dispose() still gates a successor store same-key write', async () => {
+    // dispose()'s delete-drain is bounded, so a removeEntry can outlive the
+    // instance. The pending-delete registry is class-level and keyed by
+    // datasetId precisely so a successor same-URL store (same datasetId, same
+    // shared OPFS directory) barriers on the predecessor's straggling delete
+    // instead of writing a replacement that the old removeEntry then clobbers.
+    let gated = false;
+    let releaseRemove!: () => void;
+    const removeGate = new Promise<void>((resolve) => {
+      releaseRemove = resolve;
+    });
+    const { getRemoveOverlappedWrite } = mockOPFS({
+      onRemoveEntry: async (name) => {
+        // Gate only data files: the successor's init() write-probe cleanup
+        // must stay un-gated or init itself would hang on the gate.
+        if (gated && name !== '.opfs-write-probe') await removeGate;
+      },
+    });
+
+    const { config } = await import('../../../config');
+    const originalTimeout = config.cache.opfsOperationTimeoutMs;
+    const predecessor = new OPFSStore('xinstance', 'https://example.com', 10 * 1024 * 1024);
+    let successor: OPFSStore | null = null;
+
+    try {
+      config.cache.opfsOperationTimeoutMs = 30;
+      await predecessor.init();
+      gated = true;
+
+      await predecessor.set('k', new Uint8Array([1]));
+      // Caller returns on the 30ms timeout; the real removeEntry stays in flight.
+      await predecessor.delete('k');
+      // The bounded dispose drain times out too — the removeEntry OUTLIVES the
+      // instance.
+      await predecessor.dispose();
+
+      config.cache.opfsOperationTimeoutMs = 10_000;
+      successor = new OPFSStore('xinstance', 'https://example.com', 10 * 1024 * 1024);
+      await successor.init();
+
+      // The successor's replacement write must be HELD by the predecessor's
+      // still-outstanding delete, not land and then be clobbered by it.
+      const setPromise = successor.set('k', new Uint8Array([2, 2]));
+      let setDone = false;
+      void setPromise.then(() => {
+        setDone = true;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(setDone).toBe(false);
+
+      // Release the straggler: it settles first, THEN the successor writes.
+      releaseRemove();
+      await setPromise;
+
+      expect(await successor.get('k')).toEqual(new Uint8Array([2, 2]));
+      expect(getRemoveOverlappedWrite()).toBe(false);
+    } finally {
+      config.cache.opfsOperationTimeoutMs = originalTimeout;
+      releaseRemove();
+      await predecessor.dispose();
+      if (successor) await successor.dispose();
     }
   });
 });

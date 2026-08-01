@@ -114,21 +114,31 @@ export class OPFSStore {
   // Serialize concurrent writes to the same key to prevent race conditions
   private pendingWrites = new Map<string, Promise<void>>();
 
-  // In-flight REAL (un-timed-out) deletes per key (#1073). `delete()`'s caller
-  // await is bounded by opfsOperationTimeoutMs (preserving #991), but
-  // removeEntry is NOT cancellable — when the timeout wins, the caller returns
-  // while removeEntry keeps running. A same-key replacement write must NOT
-  // start (and therefore cannot complete and then be clobbered) while that
-  // straggling removeEntry is still in flight, so a set() waits for every
-  // outstanding real delete of its key to actually settle before writing. The
-  // link stored here is the ACTUAL op settlement (not the caller's early
+  // In-flight REAL (un-timed-out) deletes, keyed by datasetId → key (#1073).
+  // `delete()`'s caller await is bounded by opfsOperationTimeoutMs (preserving
+  // #991), but removeEntry is NOT cancellable — when the timeout wins, the
+  // caller returns while removeEntry keeps running. A same-key replacement
+  // write must NOT start (and therefore cannot complete and then be clobbered)
+  // while that straggling removeEntry is still in flight, so a set() waits for
+  // every outstanding real delete of its key to actually settle before writing.
+  // The link stored here is the ACTUAL op settlement (not the caller's early
   // timeout return). Deletes deliberately do NOT wait on each other: they are
   // idempotent (a second removeEntry of an absent file is NotFound), so a fresh
   // delete can retry even if an earlier one hangs — that earlier op's caller
   // already gave up. If a delete genuinely never settles the set() barrier
   // times out and the write is DROPPED (degrade-safe: the key stays a miss)
   // rather than risk a clobber or stall dispose's pending-write drain.
-  private pendingDeletes = new Map<string, Set<Promise<void>>>();
+  //
+  // STATIC (class-level) so the barrier survives instance teardown: dispose()'s
+  // delete-drain is bounded, so a removeEntry that outlives that deadline can
+  // still be in flight when a successor same-URL store — which shares the
+  // datasetId (SHA-256 of the base URL) and therefore the OPFS directory —
+  // takes over. Keying the registry by datasetId lets the successor's set()
+  // barrier see the predecessor's straggling deletes and gate on them exactly
+  // like its own; an instance-level map would let the old removeEntry clobber
+  // the successor's replacement. Entries self-clean on settlement, so the
+  // registry only ever holds genuinely-outstanding operations.
+  private static pendingDeletesByDataset = new Map<string, Map<string, Set<Promise<void>>>>();
 
   // Generation token: every clear() bumps this. doSet() captures the
   // generation when it begins and discards its index/metadata mutation
@@ -443,7 +453,8 @@ export class OPFSStore {
     // sequenced behind it (`real = thisWrite.then(doDelete)`), so it must NOT
     // be in the barrier — waiting on it would deadlock/self-stall (the barrier
     // would burn the full timeout on a `real` chained behind this very write).
-    const deleteBarrier = this.pendingDeletes.has(key) ? [...this.pendingDeletes.get(key)!] : null;
+    const inflightDeletes = OPFSStore.pendingDeletesByDataset.get(this.datasetId)?.get(key);
+    const deleteBarrier = inflightDeletes && inflightDeletes.size > 0 ? [...inflightDeletes] : null;
     const run = async (): Promise<void> => {
       // Before touching the file, wait for the deletes captured above to
       // actually settle. Timeout-bounded so a genuinely hung delete cannot
@@ -662,7 +673,7 @@ export class OPFSStore {
    * delete() runs inside doSet()'s eviction loops and get()'s corrupted-entry
    * path, none of which may stall). The chain LINK a later same-key write waits
    * on, however, is the REAL (un-timed-out) removeEntry settlement (`doDelete`),
-   * registered in `pendingDeletes`: when the caller returns on timeout the
+   * registered in `pendingDeletesByDataset`: when the caller returns on timeout the
    * non-cancellable removeEntry keeps running, and a replacement write must not
    * start until it has ACTUALLY settled (#1073 clobber invariant). Index/size
    * are reconciled off that real settlement, never off the early timeout return.
@@ -674,7 +685,13 @@ export class OPFSStore {
     // now own (nor schedule a post-dispose metadata save below).
     if (this.disposed || !this.opfsRoot) return;
 
-    if (!this.index.has(key)) return;
+    // A key that is neither indexed nor mid-write is a genuine no-op. The
+    // pendingWrites check matters: a delete arriving while the key's write is
+    // still in flight (index not yet updated — e.g. a first write, or a
+    // replacement whose predecessor delete already reconciled) must still
+    // chain behind that write and remove it, not silently return and let the
+    // write survive the later-arriving delete.
+    if (!this.index.has(key) && !this.pendingWrites.has(key)) return;
 
     // Chain the real removeEntry behind any in-flight WRITE for this key so
     // removeEntry never overlaps a createWritable on the same file. It does NOT
@@ -686,14 +703,26 @@ export class OPFSStore {
     const real = prevWrite ? prevWrite.then(run, run) : run();
 
     // Register the real settlement so a later same-key set() waits for it even
-    // after this caller returns on timeout (see pendingDeletes).
-    const inflight = this.pendingDeletes.get(key) ?? new Set<Promise<void>>();
-    if (!this.pendingDeletes.has(key)) this.pendingDeletes.set(key, inflight);
+    // after this caller returns on timeout (see pendingDeletesByDataset).
+    const datasetDeletes =
+      OPFSStore.pendingDeletesByDataset.get(this.datasetId) ??
+      new Map<string, Set<Promise<void>>>();
+    if (!OPFSStore.pendingDeletesByDataset.has(this.datasetId)) {
+      OPFSStore.pendingDeletesByDataset.set(this.datasetId, datasetDeletes);
+    }
+    const inflight = datasetDeletes.get(key) ?? new Set<Promise<void>>();
+    if (!datasetDeletes.has(key)) datasetDeletes.set(key, inflight);
     inflight.add(real);
     void real.finally(() => {
       inflight.delete(real);
-      if (inflight.size === 0 && this.pendingDeletes.get(key) === inflight) {
-        this.pendingDeletes.delete(key);
+      if (inflight.size === 0 && datasetDeletes.get(key) === inflight) {
+        datasetDeletes.delete(key);
+        if (
+          datasetDeletes.size === 0 &&
+          OPFSStore.pendingDeletesByDataset.get(this.datasetId) === datasetDeletes
+        ) {
+          OPFSStore.pendingDeletesByDataset.delete(this.datasetId);
+        }
       }
     });
 
@@ -720,7 +749,10 @@ export class OPFSStore {
   private async doDelete(key: string): Promise<void> {
     if (!this.opfsRoot) return;
     const entry = this.index.get(key);
-    if (!entry) return; // already reconciled by a concurrent retry-delete
+    // Nothing indexed: either a concurrent retry-delete already reconciled, or
+    // the in-flight write this delete chained behind was dropped/failed and
+    // never indexed — no file to remove in either case.
+    if (!entry) return;
 
     try {
       // [cache OOS] Order matters: file removal must succeed BEFORE we update
@@ -1054,10 +1086,12 @@ export class OPFSStore {
    *    this store started may still be outstanding at that point.
    * 5. Drain pendingWrites so file I/O for in-flight set() calls finishes
    *    and the index reflects settled state before we snapshot it.
-   * 5b. Drain in-flight real deletes (pendingDeletes): doDelete chains behind
-   *    pendingWrites, so a timed-out delete's non-cancellable removeEntry +
-   *    reconcile can still be outstanding — it must finish before we snapshot
-   *    and hand the directory to a successor (#1073). Bounded by the op timeout.
+   * 5b. Drain in-flight real deletes (pendingDeletesByDataset): doDelete
+   *    chains behind pendingWrites, so a timed-out delete's non-cancellable
+   *    removeEntry + reconcile can still be outstanding — draining lets it
+   *    finish before we snapshot (#1073). Bounded by the op timeout; a delete
+   *    that outlives the drain stays in the static registry, which is what
+   *    actually protects a successor same-URL store's writes.
    * 6. Await any metadata save already mid-write so the final save wins
    *    on disk (last writer), then write the latest snapshot. The flush is
    *    unconditional (not gated on hasPendingSave) because read-driven LRU
@@ -1091,17 +1125,23 @@ export class OPFSStore {
     // Drain in-flight REAL deletes (#1073). doDelete now chains behind
     // pendingWrites, so a delete whose caller returned on a timeout can still
     // have its non-cancellable removeEntry + index/size reconcile OUTSTANDING
-    // here. If we resolved dispose without waiting, that deferred removeEntry
-    // could fire after a successor same-URL store took over the shared
-    // directory (clobbering its file) and the reconcile would land after
-    // metadataSnapshot() (persisting a stale snapshot). Draining lets the
-    // removeEntry complete and the index settle BEFORE we snapshot. Bounded by
-    // the op timeout so a genuinely hung removeEntry cannot stall dispose (we
-    // deliberately do NOT early-return inside doDelete on `disposed` — that
-    // would leave the file orphaned; the drain is the correct mechanism).
-    if (this.pendingDeletes.size > 0) {
+    // here. Draining lets the removeEntry complete and the index settle BEFORE
+    // metadataSnapshot(), so the persisted snapshot doesn't list a key whose
+    // file is mid-removal. Bounded by the op timeout so a genuinely hung
+    // removeEntry cannot stall dispose (we deliberately do NOT early-return
+    // inside doDelete on `disposed` — that would leave the file orphaned).
+    // NOTE the drain is best-effort, NOT the cross-instance clobber guard: a
+    // removeEntry that outlives this deadline stays registered in the STATIC
+    // pendingDeletesByDataset (keyed by datasetId), so a successor same-URL
+    // store's set() barrier still gates on it — that registry, not this drain,
+    // is what stops a straggling delete from clobbering the successor's
+    // replacement write. The cost of an out-drained delete is only a stale
+    // final snapshot (a phantom index entry the next session self-heals as a
+    // miss / NotFound reconcile), never a clobber.
+    const datasetDeletes = OPFSStore.pendingDeletesByDataset.get(this.datasetId);
+    if (datasetDeletes && datasetDeletes.size > 0) {
       const deletes: Promise<void>[] = [];
-      for (const inflight of this.pendingDeletes.values()) deletes.push(...inflight);
+      for (const inflight of datasetDeletes.values()) deletes.push(...inflight);
       try {
         await withTimeout(
           Promise.allSettled(deletes),
