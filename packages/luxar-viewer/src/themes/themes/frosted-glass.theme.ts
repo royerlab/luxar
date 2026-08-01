@@ -1,8 +1,8 @@
 /**
- * Frosted Glass Theme - Modern Glassmorphism Design
+ * Frosted Glass Theme - Default Luxar Theme
  *
- * Features translucent panels with heavy blur for an elegant frosted
- * glass effect. Works beautifully on any background.
+ * Modern glassmorphism design: translucent panels with heavy blur for an
+ * elegant frosted glass effect. Works beautifully on any background.
  *
  * Key characteristics:
  * - Heavy blur for authentic frosted glass effect

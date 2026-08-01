@@ -1,5 +1,5 @@
 /**
- * Dark Theme - Default Luxar Theme
+ * Dark Theme - Classic High-Contrast Theme
  *
  * The classic dark theme optimized for scientific visualization.
  * High contrast, easy on the eyes, and excellent for extended use.
