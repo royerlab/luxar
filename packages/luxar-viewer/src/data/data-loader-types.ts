@@ -24,6 +24,7 @@ export type {
 } from '../types/points';
 
 import type { PointRange } from '../types/points';
+import type { GeometryTypeName } from '../types/format-contract';
 
 /**
  * Configuration for data loader behavior
@@ -165,8 +166,13 @@ export interface LoaderStats {
 }
 
 /**
- * Tag identifying which of the three first-class geometry kinds a node
- * or handler operates on. Used by the per-type registry that replaces
- * switch/case dispatch on `geometry_type` strings in scene-loader.
+ * Tag identifying which first-class geometry kind a node or handler
+ * operates on. Used by the per-type registry that replaces switch/case
+ * dispatch on `geometry_type` strings in scene-loader.
+ *
+ * Single-sourced from the cross-language format contract
+ * (`format-contract/contract.yaml` → `geometry_types`), which the generator
+ * checks is a subset of `node_types`. Declaring the members here by hand
+ * would let the viewer's dispatch vocabulary drift from the on-disk one.
  */
-export type GeometryKind = 'points' | 'lines' | 'gsplats';
+export type GeometryKind = GeometryTypeName;
