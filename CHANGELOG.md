@@ -94,8 +94,9 @@ The inverse query rescaled every tolerance by `1 / |scale|`, including the 1e10
 which every downstream extend check uses (`effective-radius-calculator`'s
 `isExtendToAll`, `calculateSpatialQueryTolerance`, `fallbackQueryTolerance`), so a
 dimension the node had extended silently went back to being sliced — under
-exactly the unit-conversion scales (`{"scale": 0.001}`) the spec advertises as
-the flagship use case. An infinite tolerance now passes through unscaled; only
+ordinary unit-conversion scales (`{"scale": 1000}`, s → ms; the spec's flagship
+ms → s example is the same conversion run the other way). An infinite tolerance
+now passes through unscaled; only
 finite tolerances carry a meaningful world→local conversion.
 
 #### Changed — the `nd_transforms` demo is now a calibrated test bench
