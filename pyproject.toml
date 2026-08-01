@@ -82,6 +82,9 @@ test = [
     "luxar[gsplats]",
     "pytest>=7.4.0",
     "pytest-cov>=4.1.0",
+    # SPIKE: parallel test execution, to measure whether obsidian's 16 cores
+    # can beat GitHub's per-leg VMs on the python matrix.
+    "pytest-xdist>=3.5.0",
     # Exercise the custom root-level hatch_build.py hook directly in tests.
     "hatchling>=1.27",
     "hypothesis>=6.0"
