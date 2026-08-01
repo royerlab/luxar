@@ -127,8 +127,16 @@ jobs:
     # here said xdist "doesn't help on the 1-core runner" — true of a 2-core
     # GitHub VM, and false on the 16-core self-hosted box, where it cut each leg
     # from ~45 min to ~16. Combined with the thread pinning below; neither works
-    # without the other. 60 min still leaves headroom.
-    timeout-minutes: 60
+    # without the other.
+    #
+    # 120, not 60, because the self-hosted runners are deliberately SCHED_IDLE
+    # (see luxar-ci-slot@.service): CI only gets CPU nobody else on that box
+    # wants, so a sustained burst from the other workloads there can stretch a
+    # leg arbitrarily. That is starvation, not a hang, and the heartbeat cannot
+    # detect it — an idle-priority job is perfectly healthy, just slow. A
+    # timeout here would be a self-inflicted red. Measured: 16.9 min under xdist,
+    # 47.5 min in the pre-xdist serial worst case.
+    timeout-minutes: 120
     strategy:
       # Report every interpreter's verdict in one run: fail-fast would cancel the
       # siblings on the first red leg, losing precisely the per-version information
@@ -271,7 +279,11 @@ jobs:
     # `changes` job.
     if: ${{ !cancelled() }}
     runs-on: ${{ needs.pick-runner.outputs.label || 'ubuntu-latest' }}
-    timeout-minutes: 30
+    # 60, not 30: same SCHED_IDLE starvation argument as python-tests. Measured
+    # at 15.5 min alongside the xdist matrix, so 30 left under 2x — the thinnest
+    # margin of any obsidian-routed job. (release-readiness keeps 30: it runs in
+    # ~1.1 min, so it already has ~27x headroom.)
+    timeout-minutes: 60
     defaults:
       run:
         working-directory: packages/luxar-viewer
