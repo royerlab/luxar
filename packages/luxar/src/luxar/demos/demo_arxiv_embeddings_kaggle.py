@@ -65,7 +65,7 @@ Usage:
     --use-cache      Use cached UMAP coordinates (RECOMMENDED!)
 
 Requirements:
-    - Install: pip install umap-learn
+    - Install: pip install 'luxar[demos]'   # includes umap-learn
 
 NO AUTHENTICATION NEEDED!
     Downloads directly from Kaggle API (no login required).

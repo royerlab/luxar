@@ -120,6 +120,7 @@ from arbol import Arbol, aprint, asection
 
 from luxar import Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
+from luxar.demos import MissingDependencyError, require_module
 from luxar.encoding import EncodingMode
 from luxar.gsplats import fit_gaussian_splats
 from luxar.gsplats.gsplat_data import GSplatData
@@ -343,7 +344,9 @@ def view_with_napari(volumes, gsplats_list, channel_configs):
         import napari
     except ImportError:
         aprint("napari not installed, skipping napari view")
-        aprint("Install with: pip install napari[all]")
+        # Keep the <0.8 cap: napari 0.8 requires zarr>=3, which is unsatisfiable
+        # against Luxar's zarr<3.0 pin (see the note in pyproject.toml).
+        aprint("Install with: pip install 'napari[all]>=0.4.18,<0.8'")
         return
 
     def _colormap_for_channel(idx, name):
@@ -507,11 +510,9 @@ def show_roundtrip_comparison(
 ) -> None:
     """Show original vs round-trip reconstructed volumes side by side."""
     try:
-        import matplotlib.pyplot as plt
-    except ImportError:
-        aprint(
-            "matplotlib is required for --show-roundtrip. Install with: pip install matplotlib"
-        )
+        plt = require_module("matplotlib.pyplot")
+    except MissingDependencyError as exc:
+        aprint(f"Skipping --show-roundtrip: {exc}")
         return
 
     n_channels = len(volumes)

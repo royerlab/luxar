@@ -116,7 +116,7 @@ from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import UIConfig, ViewerConfig
-from luxar.demos import require_module
+from luxar.demos import MissingDependencyError, require_module
 from luxar.encoding import EncodingMode
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.utils.demos import (
@@ -606,11 +606,9 @@ def show_roundtrip_comparison(
     Reloads a subset of channels from disk to avoid keeping all 12 in memory.
     """
     try:
-        import matplotlib.pyplot as plt
-    except ImportError:
-        aprint(
-            "matplotlib is required for --show-roundtrip. Install with: pip install matplotlib"
-        )
+        plt = require_module("matplotlib.pyplot")
+    except MissingDependencyError as exc:
+        aprint(f"Skipping --show-roundtrip: {exc}")
         return
 
     n_show = min(_ROUNDTRIP_MAX_CHANNELS, len(gsplats_list))

@@ -82,7 +82,7 @@ Usage:
     --no-serve       Generate dataset without launching viewer
 
 Requirements:
-    - pip install umap-learn
+    - pip install 'luxar[demos]'   # includes umap-learn, scikit-learn
     - Internet access for the UniProt lookup used to name the clusters
       (~22k accessions, a few minutes on the first run, then cached in
       ~/.cache/luxar/protein_embeddings/uniprot_keywords.json)

@@ -28,7 +28,7 @@ Usage:
     hatch run python packages/luxar/src/luxar/demos/demo_ppi_flow_field.py --recompute-field
 
 Requirements:
-    pip install 'luxar[demos]' networkx umap-learn scipy pandas requests
+    pip install 'luxar[demos]'   # includes networkx, umap-learn, scipy, pandas
 
 Notes:
     - The default full preset uses the requested 256^3 grid and caches a large
@@ -69,7 +69,7 @@ from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import CameraConfig, UIConfig, ViewerConfig
-from luxar.demos import launch_viewer
+from luxar.demos import launch_viewer, require_module
 from luxar.utils._umap_utils import get_categorical_color
 from luxar.utils.fields import (
     FlowField,
@@ -318,14 +318,7 @@ def filter_to_lcc(
     edges: pd.DataFrame, hgnc: pd.DataFrame
 ) -> tuple[list[str], pd.DataFrame, pd.DataFrame]:
     """Restrict the network to its largest connected component."""
-    try:
-        import networkx as nx  # noqa: F401
-    except ImportError:
-        aprint("❌ Missing dependency: networkx>=3.0")
-        aprint("   Install with: pip install 'networkx>=3.0'")
-        raise
-
-    import networkx as nx
+    nx = require_module("networkx")
 
     with asection("Filtering to largest connected component"):
         graph = nx.Graph()
@@ -408,12 +401,7 @@ def compute_pagerank(
                 aprint(f"  Loaded PageRank for {len(pagerank):,} proteins")
                 return pagerank
 
-    try:
-        import networkx as nx
-    except ImportError:
-        aprint("❌ Missing dependency: networkx>=3.0")
-        aprint("   Install with: pip install 'networkx>=3.0'")
-        raise
+    nx = require_module("networkx")
 
     with asection("Computing PageRank centrality"):
         graph = nx.Graph()
@@ -459,12 +447,7 @@ def compute_communities(
                 aprint(f"  Loaded {int(communities.max()) + 1:,} communities")
                 return communities
 
-    try:
-        import networkx as nx
-    except ImportError:
-        aprint("❌ Missing dependency: networkx>=3.0")
-        aprint("   Install with: pip install 'networkx>=3.0'")
-        raise
+    nx = require_module("networkx")
 
     with asection("Detecting communities (Louvain)"):
         graph = nx.Graph()
@@ -587,12 +570,7 @@ def compute_signed_flow_layout(
                 aprint(f"  Loaded {len(coords):,} coordinates from {cache_path.name}")
                 return coords
 
-    try:
-        from umap import UMAP
-    except ImportError:
-        aprint("❌ Missing dependency: umap-learn")
-        aprint("   Install with: pip install umap-learn")
-        raise
+    UMAP = require_module("umap").UMAP
 
     with asection("Computing signed-flow adjacency UMAP"):
         features = build_signed_flow_adjacency(len(nodes), oriented)

@@ -109,7 +109,7 @@ import numpy as np
 from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import require_module
+from luxar.demos import MissingDependencyError, require_module
 from luxar.encoding import EncodingMode
 from luxar.gsplats import fit_gaussian_splats
 from luxar.gsplats.clahe import apply_clahe
@@ -1027,11 +1027,9 @@ def show_roundtrip_comparison(
     Loads preprocessed volumes from cache for comparison.
     """
     try:
-        import matplotlib.pyplot as plt
-    except ImportError:
-        aprint(
-            "matplotlib is required for --show-roundtrip. Install with: pip install matplotlib"
-        )
+        plt = require_module("matplotlib.pyplot")
+    except MissingDependencyError as exc:
+        aprint(f"Skipping --show-roundtrip: {exc}")
         return
 
     # Pick first, middle, last
