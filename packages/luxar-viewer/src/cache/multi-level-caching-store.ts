@@ -694,6 +694,24 @@ export class MultiLevelCachingStore implements AsyncReadable {
         // stale data indefinitely. Tracked as `validationMode: ttl`
         // (or `none` when no TTL is configured).
         const ttlMs = config.cache.externalDatasetTtlMs;
+        // A cached content_hash means the dataset is hash-tracked, not a
+        // headerless/unvalidatable one. Offline we can't re-compare it, but the
+        // cached bytes are exactly what the last online visit confirmed, so the
+        // external TTL — which by contract applies only to datasets WITHOUT a
+        // content_hash — must not wipe it here. Leave its recorded
+        // mode/timestamp untouched until the next online visit can re-validate.
+        //
+        // Note: `getRemoteContentHash` returns null for both a genuine network
+        // failure AND a reachable-but-headerless server (root `.zattrs` 404), so
+        // a URL repurposed in place from a hashed dataset to a headerless one
+        // keeps serving the old cached bytes until manually cleared. Accepted
+        // tradeoff: this is no worse than the default
+        // (`externalDatasetTtlMs: null`) behavior, and protecting the common
+        // offline case for a legitimately hash-validated dataset matters more
+        // than expiring this rare in-place-repurpose case.
+        if (this.l2Store?.getContentHash() != null) {
+          return;
+        }
         const state = this.l2Store?.getValidationState();
         if (ttlMs != null && state?.lastValidatedAt != null) {
           const age = Date.now() - state.lastValidatedAt;
@@ -706,7 +724,9 @@ export class MultiLevelCachingStore implements AsyncReadable {
           this.log('Validation aborted (caller disposed)');
           return;
         }
-        this.l2Store?.setValidationMode(ttlMs != null ? 'ttl' : 'none');
+        this.l2Store?.setValidationMode(ttlMs != null ? 'ttl' : 'none', {
+          validated: false,
+        });
         return;
       }
 
