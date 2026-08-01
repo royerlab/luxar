@@ -62,12 +62,54 @@ jobs:
             echo "docs_only=true" >> "$GITHUB_OUTPUT"
           fi
 
+  # Runner routing: prefer the self-hosted `obsidian` box, fall back to
+  # GitHub-hosted. MUST run on ubuntu-latest — a router that needs obsidian to be
+  # up could never route around obsidian being down.
+  #
+  # obsidian publishes the repo variable LUXAR_CI_HEARTBEAT (epoch seconds) once a
+  # minute via its `luxar-ci-heartbeat.timer`, and zeroes it when its runners stop
+  # or its disk runs low. We route to obsidian only while that value is FRESH, so
+  # every way the box can go away — clean stop, hard crash, power loss, network
+  # partition — degrades to GitHub-hosted on its own.
+  #
+  # Freshness matters more than it looks: a job dispatched to a registered-but-
+  # offline self-hosted runner does not fail, it QUEUES — for up to 24 hours. So
+  # the failure mode this guards against is not a red CI, it is a CI that hangs.
+  pick-runner:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      label: ${{ steps.pick.outputs.label }}
+    steps:
+      - id: pick
+        name: Pick runner (obsidian if its heartbeat is fresh, else GitHub-hosted)
+        env:
+          # Empty until obsidian has published at least once; `${x:-0}` below
+          # turns that into an immediate GitHub-hosted verdict.
+          HEARTBEAT: ${{ vars.LUXAR_CI_HEARTBEAT }}
+        run: |
+          now=$(date +%s)
+          hb=${HEARTBEAT:-0}
+          age=$(( now - hb ))
+          # 180s = three missed 60s beats. Long enough to ride out a slow beat or
+          # a GitHub API blip, short enough that a dead box costs one CI run.
+          if [ "$hb" -gt 0 ] && [ "$age" -lt 180 ]; then
+            echo "obsidian heartbeat is ${age}s old -> routing to obsidian"
+            echo "label=obsidian" >> "$GITHUB_OUTPUT"
+          else
+            echo "obsidian heartbeat is ${age}s old (hb=$hb) -> routing to ubuntu-latest"
+            echo "label=ubuntu-latest" >> "$GITHUB_OUTPUT"
+          fi
+
   python-tests:
-    needs: changes
+    needs: [changes, pick-runner]
     # Fail-safe fallback to full CI if `changes` fails — see the note on the
     # `changes` job.
     if: ${{ !cancelled() }}
-    runs-on: ubuntu-latest
+    # `|| 'ubuntu-latest'` keeps the same fail-open posture as the `changes` gate:
+    # if pick-runner itself dies the output is empty, and an empty `runs-on` is a
+    # workflow-level error rather than a fallback.
+    runs-on: ${{ needs.pick-runner.outputs.label || 'ubuntu-latest' }}
     # `hatch run test-cov` runs `pytest -m 'not slow'` — the heavy CPU-fitting
     # tests (content-fit CLI, tiled/progressive fitting) are marked `slow` and
     # excluded here, cutting the serial 1-core run from >60 min to ~15 min while
@@ -189,11 +231,11 @@ jobs:
         run: hatch run test-cov
 
   typescript-tests:
-    needs: changes
+    needs: [changes, pick-runner]
     # Fail-safe fallback to full CI if `changes` fails — see the note on the
     # `changes` job.
     if: ${{ !cancelled() }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ needs.pick-runner.outputs.label || 'ubuntu-latest' }}
     timeout-minutes: 30
     defaults:
       run:
@@ -300,11 +342,11 @@ jobs:
         run: pnpm run check:ci
 
   release-readiness:
-    needs: changes
+    needs: [changes, pick-runner]
     # Fail-safe fallback to full CI if `changes` fails — see the note on the
     # `changes` job.
     if: ${{ !cancelled() }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ needs.pick-runner.outputs.label || 'ubuntu-latest' }}
     timeout-minutes: 30
     defaults:
       run:
