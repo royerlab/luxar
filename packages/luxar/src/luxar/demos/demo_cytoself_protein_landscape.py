@@ -56,7 +56,12 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import cache_computed, launch_viewer, require_module
+from luxar.demos import (
+    MissingDependencyError,
+    cache_computed,
+    launch_viewer,
+    require_module,
+)
 from luxar.utils._umap_utils import (
     attribute_to_color,
     build_legend_html,
@@ -895,12 +900,10 @@ def main() -> None:
     image_labels: list[bytes] | None = None
     if not without_images:
         try:
-            from PIL import Image as _PILImage  # noqa: F401
-
+            require_module("PIL.Image")
             image_labels = load_cytoself_images()
-        except ImportError:
-            aprint("WARNING: Pillow not installed — skipping image labels.")
-            aprint("  Install with: pip install Pillow")
+        except MissingDependencyError as exc:
+            aprint(f"WARNING: skipping image labels — {exc}")
         except Exception as e:
             aprint(f"WARNING: Failed to load images — skipping: {e}")
     else:

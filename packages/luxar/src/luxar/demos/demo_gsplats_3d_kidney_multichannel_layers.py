@@ -148,7 +148,7 @@ from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import ViewerConfig
-from luxar.demos import require_module
+from luxar.demos import MissingDependencyError, require_module
 from luxar.encoding import EncodingMode
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.utils.demos import (
@@ -501,11 +501,9 @@ def show_roundtrip_comparison(
 ) -> None:
     """Show original vs round-trip reconstructed volumes side by side."""
     try:
-        import matplotlib.pyplot as plt
-    except ImportError:
-        aprint(
-            "matplotlib is required for --show-roundtrip. Install with: pip install 'luxar[demos]'"
-        )
+        plt = require_module("matplotlib.pyplot")
+    except MissingDependencyError as exc:
+        aprint(f"Skipping --show-roundtrip: {exc}")
         return
 
     n_channels = len(volumes)

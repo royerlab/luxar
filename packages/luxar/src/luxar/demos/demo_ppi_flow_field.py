@@ -69,7 +69,7 @@ from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import CameraConfig, UIConfig, ViewerConfig
-from luxar.demos import launch_viewer
+from luxar.demos import launch_viewer, require_module
 from luxar.utils._umap_utils import get_categorical_color
 from luxar.utils.fields import (
     FlowField,
@@ -587,12 +587,7 @@ def compute_signed_flow_layout(
                 aprint(f"  Loaded {len(coords):,} coordinates from {cache_path.name}")
                 return coords
 
-    try:
-        from umap import UMAP
-    except ImportError:
-        aprint("❌ Missing dependency: umap-learn")
-        aprint("   Install with: pip install 'luxar[demos]'")
-        raise
+    UMAP = require_module("umap").UMAP
 
     with asection("Computing signed-flow adjacency UMAP"):
         features = build_signed_flow_adjacency(len(nodes), oriented)

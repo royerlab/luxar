@@ -117,7 +117,7 @@ import requests
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import launch_viewer
+from luxar.demos import launch_viewer, require_module
 from luxar.utils._umap_utils import build_legend_html, get_categorical_color
 from luxar.utils.paths import get_demos_output_dir
 
@@ -536,12 +536,7 @@ def compute_layout(
         features = features / np.maximum(norms, 1e-10)
         aprint(f"  Spectral features: {features.shape}")
 
-        try:
-            from umap import UMAP
-        except ImportError:
-            aprint("❌ Missing dependency: umap-learn")
-            aprint("   Install with: pip install 'luxar[demos]'")
-            raise
+        UMAP = require_module("umap").UMAP
 
         reducer = UMAP(
             n_components=3,

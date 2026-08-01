@@ -6,6 +6,18 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Fixed — demo install hints now name the constrained requirement (#915)
+
+The `--show-roundtrip` matplotlib guards in the eleven gsplat demos, the
+`from umap import UMAP` guards in the network demos, and the CytoSelf demo's
+Pillow thumbnail guard printed a bare `pip install <pkg>` — the unbounded form
+`demos/README.md` forbids. All of them now go through `require_module`, so the
+message names the pinned requirement (`matplotlib>=3.5.0`, `umap-learn>=0.5.0`,
+`Pillow>=9.0.0`) with `luxar[demos]` offered as the alternative — rather than
+sending someone after the whole heavyweight extra to draw a diagnostic plot —
+and the wording comes from `INSTALL_SPECS` instead of being hand-copied into a
+dozen-plus files.
+
 #### Fixed — bound the HuRI demo's CORUM download and extraction
 
 The HuRI demo's optional CORUM fallback fetched a remote ZIP with `stream=True`
