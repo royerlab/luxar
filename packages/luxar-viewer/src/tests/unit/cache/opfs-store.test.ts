@@ -1402,6 +1402,33 @@ describe('OPFSStore', () => {
       expect(store.getValidationState().mode).toBe('ttl');
     });
 
+    it('setValidationMode(mode, { validated: false }) does not slide lastValidatedAt forward (issue #749)', async () => {
+      // A genuine validation stamps the clock.
+      store.setValidationMode('ttl');
+      const firstStamp = store.getValidationState().lastValidatedAt;
+      expect(firstStamp).not.toBeNull();
+
+      // An unvalidated (no-token/offline) revisit must NOT restamp — otherwise
+      // a cache visited more often than the TTL never ages out.
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      store.setValidationMode('ttl', { validated: false });
+      expect(store.getValidationState().lastValidatedAt).toBe(firstStamp);
+
+      // But a genuine validation still advances the clock.
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      store.setValidationMode('ttl');
+      expect(store.getValidationState().lastValidatedAt!).toBeGreaterThan(firstStamp!);
+    });
+
+    it('setValidationMode(mode, { validated: false }) establishes the baseline when lastValidatedAt is unset (issue #749)', async () => {
+      // A fresh store has never validated: the first unvalidated call must
+      // still seed lastValidatedAt so a headerless-server cache can age out.
+      expect(store.getValidationState().lastValidatedAt).toBeNull();
+
+      store.setValidationMode('ttl', { validated: false });
+      expect(store.getValidationState().lastValidatedAt).not.toBeNull();
+    });
+
     it('disposed is observable synchronously at dispose() entry, while dispose is still pending', async () => {
       expect(store.getValidationState().mode).toBe('none');
 
