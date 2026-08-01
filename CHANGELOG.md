@@ -16,8 +16,10 @@ unexpectedly large response or a highly-compressed member could exhaust memory.
 The archive now streams to a temp file under a hard compressed-byte cap and the
 member is extracted in bounded chunks under an uncompressed cap (the declared
 size is the effective decompression-bomb guard, CPython clamps extraction to it),
-writing to a `.part` file that is atomically renamed only on success so a failed
-attempt can never leave a partial file behind (#684).
+staging both through a private per-invocation directory beside the destination
+— so concurrent demo runs sharing the cache cannot clobber each other — and
+atomically renaming the member into place only on success, so a failed attempt
+can never leave a partial file behind (#684).
 
 #### Fixed — clearing a node transform after finalize no longer desyncs metadata (#677)
 

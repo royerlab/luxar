@@ -4,7 +4,7 @@ These tests exercise ``_download_corum_zip_member`` with a fake ``requests.get``
 so nothing touches the network. They verify the happy path, the two hard size
 ceilings (compressed archive cap and extracted-member / decompression-bomb cap),
 the zero-byte-member guard, and the multi-URL fallback contract — and that no
-partial ``dest`` / ``.part`` / ``.zip.part`` files are left behind.
+partial files or staging directories are left behind in the cache dir.
 """
 
 from __future__ import annotations
@@ -95,10 +95,13 @@ def _patch_get_per_url(
     monkeypatch.setattr(demo.requests, "get", fake_get)
 
 
-def _no_temp_files_left(dest) -> bool:
-    archive_tmp = dest.with_name(dest.name + ".zip.part")
-    part = dest.with_name(dest.name + ".part")
-    return not archive_tmp.exists() and not part.exists()
+def _leftovers(dest) -> set[str]:
+    """Everything in the cache dir other than ``dest`` itself.
+
+    Scans the directory rather than probing fixed temp names, so the staging
+    files stay covered whatever they are called.
+    """
+    return {p.name for p in dest.parent.iterdir()} - {dest.name}
 
 
 def test_happy_path_extracts_member(tmp_path, monkeypatch) -> None:
@@ -117,7 +120,7 @@ def test_happy_path_extracts_member(tmp_path, monkeypatch) -> None:
     assert ok is True
     assert dest.exists()
     assert dest.read_bytes() == member_data
-    assert _no_temp_files_left(dest)
+    assert _leftovers(dest) == set()
 
 
 def test_archive_ceiling_rejects_large_declared_body(tmp_path, monkeypatch) -> None:
@@ -137,7 +140,7 @@ def test_archive_ceiling_rejects_large_declared_body(tmp_path, monkeypatch) -> N
 
     assert ok is False
     assert not dest.exists()
-    assert _no_temp_files_left(dest)
+    assert _leftovers(dest) == set()
 
 
 def test_archive_ceiling_streaming_without_content_length(
@@ -159,7 +162,7 @@ def test_archive_ceiling_streaming_without_content_length(
 
     assert ok is False
     assert not dest.exists()
-    assert _no_temp_files_left(dest)
+    assert _leftovers(dest) == set()
 
 
 def test_member_ceiling_guards_decompression_bomb(tmp_path, monkeypatch) -> None:
@@ -180,7 +183,7 @@ def test_member_ceiling_guards_decompression_bomb(tmp_path, monkeypatch) -> None
 
     assert ok is False
     assert not dest.exists()
-    assert _no_temp_files_left(dest)
+    assert _leftovers(dest) == set()
 
 
 def test_zero_byte_member_is_rejected(tmp_path, monkeypatch) -> None:
@@ -197,7 +200,7 @@ def test_zero_byte_member_is_rejected(tmp_path, monkeypatch) -> None:
 
     assert ok is False
     assert not dest.exists()
-    assert _no_temp_files_left(dest)
+    assert _leftovers(dest) == set()
 
 
 def test_missing_member_falls_through_to_next_url(tmp_path, monkeypatch) -> None:
@@ -225,7 +228,7 @@ def test_missing_member_falls_through_to_next_url(tmp_path, monkeypatch) -> None
 
     assert ok is True
     assert dest.read_bytes() == member_data
-    assert _no_temp_files_left(dest)
+    assert _leftovers(dest) == set()
 
 
 def test_missing_member_everywhere_returns_false(tmp_path, monkeypatch) -> None:
@@ -242,7 +245,31 @@ def test_missing_member_everywhere_returns_false(tmp_path, monkeypatch) -> None:
 
     assert ok is False
     assert not dest.exists()
-    assert _no_temp_files_left(dest)
+    assert _leftovers(dest) == set()
+
+
+def test_staging_does_not_touch_another_runs_files(tmp_path, monkeypatch) -> None:
+    # A concurrent run of the same demo stages its own files in the shared
+    # cache dir. Ours must neither write over them nor delete them on the way
+    # out — hence the private per-invocation staging directory.
+    member_data = b"complex_id\tname\n1\tribosome\n"
+    _patch_get(monkeypatch, _make_zip_bytes("allComplexes.txt", member_data))
+
+    dest = tmp_path / "allComplexes.txt"
+    foreign = tmp_path / "allComplexes.txt.zip.part"
+    foreign.write_bytes(b"another run's in-flight archive")
+
+    ok = demo._download_corum_zip_member(
+        ("http://example.invalid/corum.zip",),
+        "allComplexes.txt",
+        dest,
+        "CORUM (test)",
+    )
+
+    assert ok is True
+    assert dest.read_bytes() == member_data
+    assert foreign.read_bytes() == b"another run's in-flight archive"
+    assert _leftovers(dest) == {foreign.name}
 
 
 def test_multi_url_fallback_second_succeeds(tmp_path, monkeypatch) -> None:
@@ -266,4 +293,4 @@ def test_multi_url_fallback_second_succeeds(tmp_path, monkeypatch) -> None:
     assert ok is True
     assert dest.exists()
     assert dest.read_bytes() == member_data
-    assert _no_temp_files_left(dest)
+    assert _leftovers(dest) == set()

@@ -105,6 +105,7 @@ DEMO_META = {
 }
 
 import hashlib
+import shutil
 import sys
 import tempfile
 import zipfile
@@ -158,13 +159,14 @@ DEFAULT_MAX_EDGES = 60_000
 # URLs shift across releases and are NOT controlled Luxar assets, so we bound
 # both the compressed archive we stream to disk and the extracted (uncompressed)
 # member — the latter guards against a decompression bomb. CORUM's real zip is
-# only a few MB, so these are generous but hard caps, not tight limits. The
-# archive cap is also what bounds the eager ZipFile central-directory parse: a
-# zip entry costs at least ~76 bytes on disk (central + local header), so 64 MiB
-# admits at most ~0.8M entries, i.e. a few hundred MB of transient ZipInfo
-# objects in the pathological case — well under this demo's own working set, and
-# a tighter bound than an entry-count preflight would add on top.
-_CORUM_MAX_ARCHIVE_BYTES = 64 * 1024 * 1024  # 64 MiB compressed archive cap
+# only a couple of MB, so these are generous but hard caps, not tight limits.
+# The archive cap is also what bounds the eager ZipFile central-directory parse.
+# Entries may share a local-header offset, so the only guaranteed per-entry cost
+# is the 46-byte central-directory record: 16 MiB admits at most ~0.36M entries,
+# i.e. a transient ZipInfo table on the order of a hundred MB in the
+# pathological case — well under this demo's own working set, and a tighter
+# bound than an entry-count preflight would add on top.
+_CORUM_MAX_ARCHIVE_BYTES = 16 * 1024 * 1024  # 16 MiB compressed archive cap
 _CORUM_MAX_MEMBER_BYTES = 512 * 1024 * 1024  # 512 MiB extracted member cap
 
 CROSS_COMMUNITY_COLOR: tuple[float, float, float] = (0.30, 0.30, 0.32)
@@ -225,95 +227,107 @@ def _download_corum_zip_member(
         return True
 
     dest.parent.mkdir(parents=True, exist_ok=True)
-    archive_tmp = dest.with_name(dest.name + ".zip.part")
-    part = dest.with_name(dest.name + ".part")
-    for url in urls:
-        try:
-            aprint(f"  Trying {description}")
-            aprint(f"    URL: {url}")
-            # Stream the (untrusted) archive to disk under a hard size cap so we
-            # never buffer the whole compressed body in RAM. Force identity
-            # encoding so Content-Length matches the decoded byte stream (house
-            # convention — see utils/download._force_identity_encoding).
-            with requests.get(
-                url,
-                stream=True,
-                timeout=60,
-                headers={"Accept-Encoding": "identity"},
-            ) as r:
-                r.raise_for_status()
-                # A malformed/duplicated Content-Length ("abc", "123, 123")
-                # would raise on parse; treat any parse failure as unknown size
-                # so the streaming running-total guard still bounds the body.
-                try:
-                    declared = int(r.headers.get("content-length", 0) or 0)
-                except (TypeError, ValueError):
-                    declared = 0
-                if declared > _CORUM_MAX_ARCHIVE_BYTES:
-                    raise ValueError(
-                        f"archive too large: Content-Length {declared} bytes "
-                        f"exceeds cap {_CORUM_MAX_ARCHIVE_BYTES}"
-                    )
-                written = 0
-                with open(archive_tmp, "wb") as f:
-                    for chunk in r.iter_content(chunk_size=1 << 20):
-                        if not chunk:
-                            continue
-                        written += len(chunk)
-                        if written > _CORUM_MAX_ARCHIVE_BYTES:
-                            raise ValueError(
-                                f"archive too large: exceeded cap "
-                                f"{_CORUM_MAX_ARCHIVE_BYTES} bytes while streaming"
-                            )
-                        f.write(chunk)
+    # Stage into a private per-invocation directory beside ``dest`` rather than
+    # fixed ``<dest>.part`` names: two demo runs sharing this cache would
+    # otherwise truncate and unlink each other's in-flight files. It sits inside
+    # ``dest.parent``, so promoting the member stays a same-filesystem rename.
+    staging = Path(tempfile.mkdtemp(dir=dest.parent, prefix=f".{dest.name}."))
+    archive_tmp = staging / "archive.zip"
+    part = staging / "member"
+    try:
+        for url in urls:
+            try:
+                aprint(f"  Trying {description}")
+                aprint(f"    URL: {url}")
+                # Stream the (untrusted) archive to disk under a hard size cap
+                # so we never buffer the whole compressed body in RAM. Force
+                # identity encoding so Content-Length matches the decoded byte
+                # stream (house convention — see
+                # utils/download._force_identity_encoding).
+                with requests.get(
+                    url,
+                    stream=True,
+                    timeout=60,
+                    headers={"Accept-Encoding": "identity"},
+                ) as r:
+                    r.raise_for_status()
+                    # A malformed/duplicated Content-Length ("abc", "123, 123")
+                    # would raise on parse; treat any parse failure as unknown
+                    # size so the streaming running-total guard still bounds it.
+                    try:
+                        declared = int(r.headers.get("content-length", 0) or 0)
+                    except (TypeError, ValueError):
+                        declared = 0
+                    if declared > _CORUM_MAX_ARCHIVE_BYTES:
+                        raise ValueError(
+                            f"archive too large: Content-Length {declared} bytes "
+                            f"exceeds cap {_CORUM_MAX_ARCHIVE_BYTES}"
+                        )
+                    written = 0
+                    with open(archive_tmp, "wb") as f:
+                        for chunk in r.iter_content(chunk_size=1 << 20):
+                            if not chunk:
+                                continue
+                            written += len(chunk)
+                            if written > _CORUM_MAX_ARCHIVE_BYTES:
+                                raise ValueError(
+                                    f"archive too large: exceeded cap "
+                                    f"{_CORUM_MAX_ARCHIVE_BYTES} bytes while "
+                                    f"streaming"
+                                )
+                            f.write(chunk)
 
-            # Open the zip from the on-disk temp file (disk-backed, not in RAM).
-            with zipfile.ZipFile(archive_tmp) as zf:
-                names = zf.namelist()
-                target = next((n for n in names if n.endswith(member_suffix)), None)
-                if target is None:
-                    shown = names[:20]
-                    aprint(
-                        f"    ⚠ {member_suffix} not in zip "
-                        f"({len(names)} entries; first {len(shown)}: {shown})"
-                    )
-                    continue
-                # CPython's ZipExtFile clamps decompressed output to the declared
-                # file_size (and fails CRC), so this up-front declared-size check
-                # is the effective decompression-bomb guard; the running-total
-                # raise below is an unreachable defensive backstop.
-                declared_member = zf.getinfo(target).file_size
-                if declared_member > _CORUM_MAX_MEMBER_BYTES:
-                    raise ValueError(
-                        f"member too large: declared {declared_member} bytes "
-                        f"exceeds cap {_CORUM_MAX_MEMBER_BYTES}"
-                    )
-                extracted = 0
-                with zf.open(target) as src, open(part, "wb") as dst:
-                    while True:
-                        buf = src.read(1 << 20)
-                        if not buf:
-                            break
-                        extracted += len(buf)
-                        if extracted > _CORUM_MAX_MEMBER_BYTES:
-                            raise ValueError(
-                                f"member too large: exceeded cap "
-                                f"{_CORUM_MAX_MEMBER_BYTES} bytes while extracting"
-                            )
-                        dst.write(buf)
-            if extracted == 0:
-                raise ValueError(f"member {target} is empty (0 bytes)")
-            part.replace(dest)
-            size_mb = dest.stat().st_size / (1024 * 1024)
-            aprint(f"  ✓ Saved {dest.name} ({size_mb:.1f} MB)")
-            return True
-        except Exception as exc:  # noqa: BLE001
-            aprint(f"    ⚠ Failed: {exc}")
-            continue
-        finally:
-            archive_tmp.unlink(missing_ok=True)
-            part.unlink(missing_ok=True)
-    return False
+                # Open the zip from the on-disk temp file (not in RAM).
+                with zipfile.ZipFile(archive_tmp) as zf:
+                    names = zf.namelist()
+                    target = next((n for n in names if n.endswith(member_suffix)), None)
+                    if target is None:
+                        shown = names[:20]
+                        aprint(
+                            f"    ⚠ {member_suffix} not in zip "
+                            f"({len(names)} entries; first {len(shown)}: {shown})"
+                        )
+                        continue
+                    # CPython's ZipExtFile clamps decompressed output to the
+                    # declared file_size (and fails CRC), so this up-front
+                    # declared-size check is the effective decompression-bomb
+                    # guard; the running-total raise below is an unreachable
+                    # defensive backstop.
+                    declared_member = zf.getinfo(target).file_size
+                    if declared_member > _CORUM_MAX_MEMBER_BYTES:
+                        raise ValueError(
+                            f"member too large: declared {declared_member} bytes "
+                            f"exceeds cap {_CORUM_MAX_MEMBER_BYTES}"
+                        )
+                    extracted = 0
+                    with zf.open(target) as src, open(part, "wb") as dst:
+                        while True:
+                            buf = src.read(1 << 20)
+                            if not buf:
+                                break
+                            extracted += len(buf)
+                            if extracted > _CORUM_MAX_MEMBER_BYTES:
+                                raise ValueError(
+                                    f"member too large: exceeded cap "
+                                    f"{_CORUM_MAX_MEMBER_BYTES} bytes while "
+                                    f"extracting"
+                                )
+                            dst.write(buf)
+                if extracted == 0:
+                    raise ValueError(f"member {target} is empty (0 bytes)")
+                part.replace(dest)
+                size_mb = dest.stat().st_size / (1024 * 1024)
+                aprint(f"  ✓ Saved {dest.name} ({size_mb:.1f} MB)")
+                return True
+            except Exception as exc:  # noqa: BLE001
+                aprint(f"    ⚠ Failed: {exc}")
+                continue
+            finally:
+                archive_tmp.unlink(missing_ok=True)
+                part.unlink(missing_ok=True)
+        return False
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
 
 
 def ensure_data(cache_dir: Path) -> tuple[Path, Path, Path | None]:
