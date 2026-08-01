@@ -21,9 +21,12 @@ its subclass ``ModuleNotFoundError``, or :class:`~luxar.demos.MissingDependencyE
 ``except (ImportError, ValueError):`` and an attribute form
 ``except builtins.ImportError:``, and that (c) exits the process (``sys.exit``,
 ``os._exit``, ``exit``/``quit``, or ``raise SystemExit``). The entry points are
-``main()``, the module-local helpers it calls, the module's executable
-top-level statements, and the ``if __name__ == "__main__":`` block (demos run
-as ``python -m ...``) together with the helpers *it* calls.
+``main()``, the module's executable top-level statements, and the
+``if __name__ == "__main__":`` block (demos run as ``python -m ...``) — plus,
+transitively, every module-local helper any of them calls by bare name. Nested
+``def``s inside a reachable function are scanned too, conservatively, whether
+or not the closure is provably called: skipping them would reopen the bypass
+of hiding the preflight in an immediately-invoked local closure.
 
 Not covered on purpose:
 
@@ -222,12 +225,12 @@ def _entry_reachable(tree: ast.Module) -> list[ast.AST]:
     executable top-level statements run at entry — every statement that is not
     a ``def``/``async def``/``class`` becomes a root (this covers a top-level
     ``try``). A ``__name__`` guard is special-cased by direction: the positive
-    ``if __name__ == "__main__":`` block runs as a script (scanned, and the
-    helpers it calls by bare name are seeded alongside ``main()``); the negated
-    / other-operator forms run on *import* and are skipped. Bare-name calls to
-    module-level defs are followed transitively, with a visited set to break
-    cycles — so a preflight moved into a helper (called from ``main()`` or only
-    from the guard) is still scanned.
+    ``if __name__ == "__main__":`` block runs as a script (scanned); the
+    negated / other-operator forms do not run under ``python -m`` and are
+    skipped. Bare-name calls to module-level defs — from ``main()``, the
+    guard, or any ordinary top-level statement — are followed transitively,
+    with a visited set to break cycles, so a preflight moved into a helper
+    is still scanned no matter which entry point calls it.
     """
     defs = _module_defs(tree)
     roots: list[ast.AST] = []
@@ -241,6 +244,7 @@ def _entry_reachable(tree: ast.Module) -> list[ast.AST]:
                 seed_names |= _local_callees(node, defs)
             continue  # negated / other-operator guard runs on import — skip
         roots.append(node)  # ordinary top-level statement runs on `python -m ...`
+        seed_names |= _local_callees(node, defs)
     scanned: dict[str, ast.AST] = {}
     stack = list(seed_names)
     while stack:
@@ -447,6 +451,46 @@ def test_the_guard_scans_the_dunder_main_block(tmp_path: Path) -> None:
         "    main()\n"
     )
     assert _preflights(offender) == ["demo_dunder_main.py:3"]
+
+
+def test_the_guard_follows_top_level_helper_call(tmp_path: Path) -> None:
+    """A helper invoked from a module top-level statement runs at entry too."""
+    offender = tmp_path / "demo_top_call.py"
+    offender.write_text(
+        "import sys\n"
+        "def _preflight():\n"
+        "    try:\n"
+        "        import umap\n"
+        "    except ImportError:\n"
+        "        sys.exit(1)\n"
+        "def main():\n"
+        "    pass\n"
+        "_preflight()\n"
+    )
+    assert _preflights(offender) == ["demo_top_call.py:3"]
+
+
+def test_the_guard_detects_immediately_invoked_nested_preflight(
+    tmp_path: Path,
+) -> None:
+    """A preflight hidden in a local closure main() calls is still the defect.
+
+    This pins the conservative walk into nested ``def`` bodies of reachable
+    functions — restricting the scan to same-scope statements would let this
+    shape through.
+    """
+    offender = tmp_path / "demo_nested_closure.py"
+    offender.write_text(
+        "import sys\n"
+        "def main():\n"
+        "    def _pf():\n"
+        "        try:\n"
+        "            import umap\n"
+        "        except ImportError:\n"
+        "            sys.exit(1)\n"
+        "    _pf()\n"
+    )
+    assert _preflights(offender) == ["demo_nested_closure.py:4"]
 
 
 def test_the_guard_detects_missing_dependency_error(tmp_path: Path) -> None:
