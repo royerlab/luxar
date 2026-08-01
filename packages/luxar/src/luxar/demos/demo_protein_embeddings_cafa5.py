@@ -180,6 +180,17 @@ UNIPROT_BACKOFF_SECONDS = 5.0
 #: Page cap for the keyword vocabulary (~1,200 entries at 500 per page).
 KEYWORD_VOCABULARY_MAX_PAGES = 20
 
+#: Keyword cache filename, VERSIONED. v1 stored an empty list for an accession
+#: UniProt did not resolve *and* for one that resolved carrying no keywords, so
+#: the two are indistinguishable in it. Naming now needs that distinction (an
+#: unresolved accession must leave the cluster's denominator rather than count as
+#: "annotated, no keywords"), and a cached accession is never re-requested — so a
+#: v1 file on disk would keep diluting enrichment forever. Reading a new filename
+#: retires that data instead of trusting or migrating it; the one-off re-fetch is
+#: a few minutes. A stale v1 file is harmless and `luxar demo cache clear` removes
+#: it with the rest of the demo's cache.
+KEYWORD_CACHE_FILENAME = "uniprot_keywords_v2.json"
+
 #: Proteins sampled per cluster and looked up in UniProt to name the cluster —
 #: far cheaper than annotating all 142k, and enough to rank keywords reliably.
 #: Not smaller: correlated keywords ("Nucleus" / "Transcription" / "DNA-binding"
@@ -609,8 +620,11 @@ def fetch_uniprot_keywords(
     only that batch. A batch that fails every attempt is *skipped* rather than
     raised: naming reads whatever resolved, and 18k of 22k annotated proteins
     name the landscape just as well as all of them (see :func:`name_clusters`,
-    which drops unresolved accessions from the sample rather than counting them
-    as unannotated).
+    which drops both unmapped and unrequested accessions from the sample rather
+    than counting them as unannotated).
+
+    The cache file is versioned (:data:`KEYWORD_CACHE_FILENAME`) because that
+    unmapped-vs-unannotated distinction did not exist in the first format.
 
     Args:
         accessions: UniProt accessions to look up.
@@ -622,7 +636,7 @@ def fetch_uniprot_keywords(
         ``None`` for an accession UniProt did not resolve. Accessions whose
         batch failed outright are absent from the mapping altogether.
     """
-    cache_path = cache_dir / "uniprot_keywords.json"
+    cache_path = cache_dir / KEYWORD_CACHE_FILENAME
     keywords: dict[str, list[str] | None] = _read_json_cache(cache_path) or {}
 
     missing = sorted({a for a in accessions if a not in keywords})

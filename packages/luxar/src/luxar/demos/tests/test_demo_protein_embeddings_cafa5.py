@@ -373,7 +373,7 @@ class TestKeywordCacheDurability:
     def test_truncated_cache_is_discarded_and_refetched(
         self, tmp_path: Path, monkeypatch
     ) -> None:
-        cache = tmp_path / "uniprot_keywords.json"
+        cache = tmp_path / demo.KEYWORD_CACHE_FILENAME
         cache.write_text('{"P1": ["Hydrolase"], "P2": ["Nu')
         monkeypatch.setattr(
             demo, "_uniprot_keyword_batch", lambda batch: {a: ["Signal"] for a in batch}
@@ -499,29 +499,50 @@ class TestKeywordVocabulary:
         assert keywords["P2"] == ["Signal"]
         assert calls.count(1) == demo.UNIPROT_MAX_ATTEMPTS + 1
 
-    def test_unresolved_accessions_are_dropped_from_the_sample(
-        self, tmp_path: Path, monkeypatch
-    ) -> None:
-        """An accession that never resolved is absence of evidence.
 
-        Counting it as "no keywords" would dilute the frequency of every cluster
-        it landed in, dragging real enrichment below the lift threshold.
-        """
-        monkeypatch.setattr(demo, "fetch_keyword_categories", lambda _dir: CATEGORIES)
-        # Only the first cluster's members resolve.
-        resolved = {f"A{i}": ["Hydrolase"] for i in range(30)}
-        monkeypatch.setattr(
-            demo, "fetch_uniprot_keywords", lambda _acc, _dir: dict(resolved)
+class TestLegacyKeywordCache:
+    """A v1 cache must not be consulted, because it cannot answer the question.
+
+    v1 wrote ``[]`` both for an accession UniProt did not resolve and for one that
+    resolved carrying no keywords. Naming now has to tell those apart — the first
+    must leave the cluster's denominator, the second is real evidence — and a
+    cached accession is never re-requested, so trusting a v1 file would keep
+    diluting enrichment on every machine that ran the demo before the fix.
+    """
+
+    def test_v1_cache_file_is_ignored(self, tmp_path: Path, monkeypatch) -> None:
+        legacy = tmp_path / "uniprot_keywords.json"
+        legacy.write_text(json.dumps({"P1": [], "P2": []}))
+        requested: list[list[str]] = []
+
+        def _batch(batch):
+            requested.append(sorted(batch))
+            return {"P1": None, "P2": []}
+
+        monkeypatch.setattr(demo, "_uniprot_keyword_batch", _batch)
+
+        keywords = demo.fetch_uniprot_keywords(["P1", "P2"], tmp_path)
+
+        # Both accessions were re-requested despite being present in the v1 file,
+        # and the ambiguity is resolved: P1 unmapped (None), P2 annotated-but-bare.
+        assert requested == [["P1", "P2"]]
+        assert keywords == {"P1": None, "P2": []}
+        assert legacy.read_text() == json.dumps({"P1": [], "P2": []})
+
+    def test_versioned_cache_is_reused(self, tmp_path: Path, monkeypatch) -> None:
+        (tmp_path / demo.KEYWORD_CACHE_FILENAME).write_text(
+            json.dumps({"P1": ["Hydrolase"], "P2": None})
         )
-        cluster_ids = np.array([0] * 30 + [1] * 30)
-        protein_ids = [f"A{i}" for i in range(30)] + [f"B{i}" for i in range(30)]
 
-        names = demo.name_clusters(cluster_ids, protein_ids, tmp_path)
+        def _never(_batch):  # pragma: no cover - must not be reached
+            raise AssertionError("cached accessions must not be re-requested")
 
-        # Cluster 1 contributed nothing, so cluster 0 is not measured against a
-        # diluted background and Hydrolase cannot be "enriched" versus itself.
-        assert names[1] == UNNAMED_CLUSTER_LABEL
-        assert len(names) == 2
+        monkeypatch.setattr(demo, "_uniprot_keyword_batch", _never)
+
+        assert demo.fetch_uniprot_keywords(["P1", "P2"], tmp_path) == {
+            "P1": ["Hydrolase"],
+            "P2": None,
+        }
 
 
 class TestUnmappedAccessions:
@@ -602,7 +623,7 @@ class TestUnmappedAccessions:
 
         assert names[0] == "Hydrolase"
         # The unmapped ids are cached as null, so a later run does not re-ask.
-        cached = json.loads((tmp_path / "uniprot_keywords.json").read_text())
+        cached = json.loads((tmp_path / demo.KEYWORD_CACHE_FILENAME).read_text())
         assert cached["X0"] is None
 
     def test_a_wholly_unmapped_sample_falls_back_to_generic_labels(
