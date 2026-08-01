@@ -195,7 +195,7 @@ def search_papers_by_field(
                     # Filter by citations and abstract availability
                     if (
                         paper.get("abstract")
-                        and paper.get("citationCount", 0) >= min_citations
+                        and (paper.get("citationCount") or 0) >= min_citations
                     ):
                         papers.append(paper)
 
