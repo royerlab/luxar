@@ -423,19 +423,36 @@ class TestDeps:
 
         fake = [
             DependencyStatus(
-                "phony_xyz", DependencySpec("phony-xyz>=1", "demos"), False
+                "phony_xyz", DependencySpec("phony-xyz>=1", "demos"), False, False
             )
         ]
         with patch("luxar.demos.survey", return_value=fake):
             result = runner.invoke(app, ["demo", "deps"])
         assert result.exit_code == 1
-        assert "1 missing: phony_xyz" in result.stdout
+        assert "1 missing or outdated: phony_xyz" in result.stdout
+
+    def test_deps_flags_an_installed_but_outdated_package(self, runner) -> None:
+        """Importable but below its pin: OUTDATED, and it fails the exit gate."""
+        from luxar.demos._dependencies import DependencyStatus
+
+        fake = [
+            DependencyStatus(
+                "phony_xyz", DependencySpec("phony-xyz>=2", "demos"), True, False
+            )
+        ]
+        with patch("luxar.demos.survey", return_value=fake):
+            result = runner.invoke(app, ["demo", "deps"])
+        assert result.exit_code == 1
+        assert "OUTDATED" in result.stdout
+        assert "1 missing or outdated: phony_xyz" in result.stdout
 
     def test_deps_exits_zero_when_all_present(self, runner) -> None:
         from luxar.demos._dependencies import DependencyStatus
 
         fake = [
-            DependencyStatus("phony_xyz", DependencySpec("phony-xyz>=1", "demos"), True)
+            DependencyStatus(
+                "phony_xyz", DependencySpec("phony-xyz>=1", "demos"), True, True
+            )
         ]
         with patch("luxar.demos.survey", return_value=fake):
             result = runner.invoke(app, ["demo", "deps"])
@@ -448,7 +465,7 @@ class TestDeps:
 
         from luxar.demos._dependencies import DependencyStatus
 
-        fake = [DependencyStatus("ab", DependencySpec("ab>=1", "demos"), True)]
+        fake = [DependencyStatus("ab", DependencySpec("ab>=1", "demos"), True, True)]
         with patch("luxar.demos.survey", return_value=fake):
             result = runner.invoke(app, ["demo", "deps"])
         plain = [re.sub(r"\x1b\[[0-9;]*m", "", ln) for ln in result.stdout.splitlines()]
@@ -469,7 +486,7 @@ class TestDeps:
 
         fake = [
             DependencyStatus(
-                "phony_xyz", DependencySpec("phony-xyz>=1", "demos"), False
+                "phony_xyz", DependencySpec("phony-xyz>=1", "demos"), False, False
             )
         ]
         with patch("luxar.demos.survey", return_value=fake):
@@ -484,7 +501,7 @@ class TestDeps:
 
         fake = [
             DependencyStatus(
-                "phony_xyz", DependencySpec("phony-xyz>=1", "gsplats"), False
+                "phony_xyz", DependencySpec("phony-xyz>=1", "gsplats"), False, False
             )
         ]
         with patch("luxar.demos.survey", return_value=fake):
@@ -554,7 +571,7 @@ class TestDeps:
         """gdown is installable only by name, so --install can't cover it."""
         from luxar.demos._dependencies import DependencyStatus
 
-        fake = [DependencyStatus("gdown", DependencySpec("gdown", ""), False)]
+        fake = [DependencyStatus("gdown", DependencySpec("gdown", ""), False, False)]
         with patch("luxar.demos.survey", return_value=fake):
             result = runner.invoke(app, ["demo", "deps"])
         assert result.exit_code == 1
@@ -600,9 +617,15 @@ class TestDeps:
         """
         from luxar.demos._dependencies import DependencyStatus
 
-        orphan = DependencyStatus("gdown", DependencySpec("gdown", ""), False)
-        before = [orphan, DependencyStatus("m", DependencySpec("m>=1", "demos"), False)]
-        after = [orphan, DependencyStatus("m", DependencySpec("m>=1", "demos"), True)]
+        orphan = DependencyStatus("gdown", DependencySpec("gdown", ""), False, False)
+        before = [
+            orphan,
+            DependencyStatus("m", DependencySpec("m>=1", "demos"), False, False),
+        ]
+        after = [
+            orphan,
+            DependencyStatus("m", DependencySpec("m>=1", "demos"), True, True),
+        ]
         calls = {"n": 0}
 
         def fake_survey(extra=None):
@@ -614,7 +637,7 @@ class TestDeps:
                 result = runner.invoke(app, ["demo", "deps", "--install"])
 
         assert result.exit_code == 0, "the extra installed fine; must not exit 1"
-        assert "Still missing after install" not in result.stdout
+        assert "Still missing or outdated after install" not in result.stdout
         # ...but it must not claim completeness either.
         assert "Still to install by hand" in result.stdout
         assert "gdown" in result.stdout

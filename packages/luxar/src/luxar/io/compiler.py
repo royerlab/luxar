@@ -415,6 +415,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             path: Path for the group within the store
             key: Attribute key to remove
         """
+        self._check_not_finalized("delete_group_attr")
         if path == "/" or path == "":
             group = self.store
         else:

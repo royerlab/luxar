@@ -17,6 +17,7 @@ from __future__ import annotations
 import math
 import os
 import shutil
+import socket
 from pathlib import Path
 from typing import Any, List, Optional, Tuple
 
@@ -73,23 +74,103 @@ def build_device_assignment(
     return {tid: slots[i % len(slots)] for i, tid in enumerate(task_ids)}
 
 
-def _finalize_output(out: Path) -> Tuple[bool, bool]:
-    """Promote a worker's ``{out}.tmp`` to its final path.
+def _staging_path(out: Path, token: str | int) -> Path:
+    """Per-attempt staging directory for a task's fit output.
 
-    Mirrors the Slurm ``run_task`` finalization: a sibling ``{out}.tmp.empty``
-    marker (0-splat box) becomes ``{out}.empty``; otherwise the ``.tmp`` store is
-    atomically renamed to ``out``. Returns ``(ok, empty)``. ``ok`` is False when
-    the worker exited 0 but left nothing usable.
+    Isolated by ``token`` (host + pid of the runner) so two concurrent
+    ``run_batch_local`` processes targeting the same ``output_dir`` never share a
+    ``.tmp`` store: they can neither delete each other's in-progress staging nor
+    interleave chunk/metadata writes. The host prefix keeps the token unique even
+    when two invocations on different machines share an NFS ``output_dir`` and
+    happen to hold equal pids. Only the atomic claim of the final ``out`` races
+    between attempts.
     """
-    tmp = Path(str(out) + ".tmp")
-    tmp_empty = Path(str(out) + ".tmp.empty")
-    if tmp_empty.exists():
-        tmp_empty.unlink(missing_ok=True)
-        shutil.rmtree(tmp, ignore_errors=True)
-        Path(str(out) + ".empty").touch()
+    return Path(str(out) + f".tmp.{token}")
+
+
+def _finalize_output(
+    out: Path, staging: Path, *, overwrite: bool = False
+) -> Tuple[bool, bool]:
+    """Promote a worker's per-attempt ``staging`` store to its final path.
+
+    Mirrors the Slurm ``run_task`` finalization: a sibling ``{staging}.empty``
+    marker (0-splat box) becomes ``{out}.empty``; otherwise the staging store is
+    atomically renamed to ``out``. If ``out`` already exists (another attempt won
+    the race), the duplicate staging is dropped instead of clobbering it (mirror
+    of the Slurm loser path). With ``overwrite`` (a ``--no-resume`` refit) a
+    pre-existing ``out`` is a stale prior result, not a winner: it is moved
+    aside and replaced — but only here, after the refit fully succeeded, and
+    restored if the promotion itself fails — so a failed refit never destroys
+    the previous valid tile. Returns ``(ok, empty)``. ``ok`` is False when the
+    worker exited 0 but left nothing usable.
+    """
+    out_empty = Path(str(out) + ".empty")
+    staging_empty = Path(str(staging) + ".empty")
+    if staging_empty.exists():
+        staging_empty.unlink(missing_ok=True)
+        shutil.rmtree(staging, ignore_errors=True)
+        if overwrite:
+            # The refit legitimately produced 0 splats; the stale real store
+            # from the prior run goes with it.
+            shutil.rmtree(out, ignore_errors=True)
+            out_empty.touch()
+            return True, True
+        # Claim the marker FIRST, then recheck. A racing real attempt removes
+        # the marker after its rename, so whichever way the two interleave, a
+        # real store and the marker never both survive. (Checking before
+        # touching leaves a window — the recheck passes, the real attempt
+        # promotes and clears, then the touch lands — that would strand both
+        # terminal representations behind: if the store were later removed, a
+        # lingering marker would make resume/status/merge treat the slot as
+        # legitimately empty.)
+        out_empty.touch()
+        if out.exists():
+            # A concurrent attempt already promoted a real store — it wins.
+            out_empty.unlink(missing_ok=True)
         return True, True
-    if tmp.exists():
-        os.replace(tmp, out)  # atomic within the same filesystem
+    if staging.exists():
+        moved_aside: Path | None = None
+        try:
+            if overwrite:
+                # Replace the stale prior output only now that the refit
+                # succeeded — and move it ASIDE rather than deleting it, so no
+                # moment exists where the old tile is gone and the new one is
+                # not yet in place. A stale empty marker from the prior run
+                # goes with it.
+                out_empty.unlink(missing_ok=True)
+                if out.exists():
+                    moved_aside = Path(str(staging) + ".old")
+                    shutil.rmtree(moved_aside, ignore_errors=True)
+                    os.replace(out, moved_aside)
+            elif out.exists():
+                shutil.rmtree(staging, ignore_errors=True)
+                return True, False
+            os.replace(staging, out)  # atomic within the same filesystem
+        except OSError:
+            if not overwrite and out.exists():
+                # TOCTOU: another attempt claimed `out` between the check above
+                # and this rename (os.replace refuses to overwrite a non-empty
+                # dir). Drop our duplicate, completed-by-other (Slurm mv -T loser).
+                shutil.rmtree(staging, ignore_errors=True)
+                return True, False
+            if moved_aside is not None and not out.exists():
+                # The promotion failed after the prior tile was set aside — put
+                # it back, so a failed refit never leaves the slot with nothing.
+                try:
+                    os.replace(moved_aside, out)
+                except OSError:
+                    pass  # the aside copy stays on disk for manual recovery
+            # Genuine failure (staging vanished — e.g. a concurrent
+            # `validate --fix` glob-deleted it — or EACCES/EIO). Keep staging on
+            # disk for inspection and report not-ok (mirrors the Slurm
+            # "mv failed and output missing" → rc 1 branch).
+            return False, False
+        if moved_aside is not None:
+            shutil.rmtree(moved_aside, ignore_errors=True)
+        # A real store now stands at `out` — drop any stale empty marker (e.g.
+        # from a lost-race empty attempt) so the two terminal representations
+        # never coexist.
+        out_empty.unlink(missing_ok=True)
         return True, False
     return False, False
 
@@ -149,6 +230,13 @@ def run_batch_local(
 
     job_by_id = {j.task_id: j for j in manifest.jobs}
 
+    # Per-invocation staging token: host + pid. Two concurrent run_batch_local()
+    # processes never share a token (distinct pids on one host; the host prefix
+    # disambiguates equal pids on different machines over a shared NFS
+    # output_dir), so their staging dirs never collide. Resume/skip still keys
+    # off the final out.
+    staging_token = f"{socket.gethostname()}-{os.getpid()}"
+
     def _out_path(job: BatchJob) -> Path:
         return tiles_dir / job.output_filename
 
@@ -169,11 +257,16 @@ def run_batch_local(
     def _argv(task_id: int) -> list[str]:
         job = job_by_id[task_id]
         out = _out_path(job)
-        tmp = Path(str(out) + ".tmp")
-        # Clear a stale .tmp from an interrupted run so fit writes cleanly.
-        shutil.rmtree(tmp, ignore_errors=True)
-        Path(str(out) + ".tmp.empty").unlink(missing_ok=True)
-        return build_task_fit_argv(manifest, job, tmp, denoise_h=_denoise_h(job))
+        staging = _staging_path(out, staging_token)
+        # Clear a stale staging from a crashed run of THIS invocation so fit
+        # writes cleanly. Never touch another process's staging (different token).
+        # With resume disabled a stale final output may also exist; it is kept
+        # until finalize replaces it (overwrite=True) AFTER the refit succeeded —
+        # deleting it here would destroy the previous valid tile minutes before
+        # its replacement exists, and a failed refit would then leave nothing.
+        shutil.rmtree(staging, ignore_errors=True)
+        Path(str(staging) + ".empty").unlink(missing_ok=True)
+        return build_task_fit_argv(manifest, job, staging, denoise_h=_denoise_h(job))
 
     def _env(task_id: int) -> dict[str, str]:
         gpu = assignment.get(task_id, -1)
@@ -210,8 +303,9 @@ def run_batch_local(
             verbose=verbose,
         )
 
-    # Promote successful .tmp outputs; collect failures (curated like the
-    # parallel tiled path — name failing (t,c,k) + stderr tails, keep .tmp).
+    # Promote each successful per-attempt staging store; collect failures
+    # (curated like the parallel tiled path — name failing (t,c,k) + stderr
+    # tails, keep the staging store on disk for inspection).
     failures: list[tuple[int, str]] = []
     for res in results:
         if res.skipped:
@@ -222,10 +316,16 @@ def run_batch_local(
             tail = "\n".join(res.output.strip().splitlines()[-20:])
             failures.append((res.key, tail))
             continue
-        ok, _empty = _finalize_output(out)
+        ok, _empty = _finalize_output(
+            out, _staging_path(out, staging_token), overwrite=not resume
+        )
         if not ok:
             failures.append(
-                (res.key, "worker exited 0 but wrote no output (.tmp missing)")
+                (
+                    res.key,
+                    "worker exited 0 but its output could not be promoted "
+                    "(staging missing, or the rename to the final path failed)",
+                )
             )
 
     if failures:
@@ -244,11 +344,14 @@ def run_batch_local(
         )
 
     with asection(f"Merging {len(task_ids)} results → partition"):
+        # resume=False means the user asked to refit every tile, so the merge
+        # must be rebuilt over the fresh tiles — otherwise it short-circuits on a
+        # pre-existing merged/final.gsplats.zarr and serves the STALE artifact.
         return merge_batch_results(
             manifest=manifest,
             output_dir=output_dir,
             channel_colors=channel_colors,
-            force=force_merge,
+            force=force_merge or not resume,
             recipe=recipe if recipe is not None else manifest.merge_recipe,
             recipe_params=recipe_params,
             verbose=verbose,

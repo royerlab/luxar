@@ -182,6 +182,36 @@ class TestResolveAdditiveAxisPoints:
         with pytest.raises(TypeError, match="must be None, bool, or dict"):
             resolve_additive_axis_points("auto")  # type: ignore[arg-type]
 
+    def test_valid_stream_counts_resolves(self) -> None:
+        spec = resolve_additive_axis_points({"counts": "stream:1000"})
+        assert spec is not None
+        assert spec["counts"] == "stream:1000"
+
+    def test_malformed_stream_counts_raise_at_resolve(self) -> None:
+        # A ``stream:<c>`` with c < 1 must fail at resolve time, before any
+        # kind=lod wrapper group is written under a substitutive ladder.
+        with pytest.raises(ValueError, match="stream first-chunk size must be >= 1"):
+            resolve_additive_axis_points({"counts": "stream:0"})
+        with pytest.raises(ValueError, match="stream"):
+            resolve_additive_axis_points({"counts": "stream:-5"})
+
+    def test_valid_energy_counts_resolves(self) -> None:
+        spec = resolve_additive_axis_points({"counts": "energy:0.5,0.9,1.0"})
+        assert spec is not None
+        assert spec["counts"] == "energy:0.5,0.9,1.0"
+
+    def test_other_doomed_counts_raise_at_resolve(self) -> None:
+        # Same partial-group trap as stream:0 — any counts value the write
+        # path is guaranteed to reject must fail at resolve time too.
+        with pytest.raises(ValueError, match="unrecognized breakpoints string"):
+            resolve_additive_axis_points({"counts": "equal-count"})
+        with pytest.raises(ValueError, match="energy: fractions must be numbers"):
+            resolve_additive_axis_points({"counts": "energy:abc"})
+        with pytest.raises(ValueError, match="energy: fractions must be non-empty"):
+            resolve_additive_axis_points({"counts": "energy:"})
+        with pytest.raises(ValueError, match="non-empty"):
+            resolve_additive_axis_points({"counts": []})
+
 
 # ────────────────────────────────────────────────────────────────────────
 # End-to-end: ``add_points(additive_lod=...)``
@@ -218,18 +248,20 @@ class TestAddPointsAdditiveLod:
         # Regression: the plain additive multi-LOD writer has no image_labels
         # channel, so an explicit ladder used to SILENTLY DROP the labels. It
         # must instead refuse the ladder (write a single leaf) and keep the
-        # labels — mirroring the substitutive path's suppress_reason guard.
+        # labels — mirroring the substitutive path's suppress_reason guard —
+        # and warn, since the explicit request cannot be honoured.
         output = tmp_path / "t.luxar.zarr"
         rng = np.random.RandomState(0)
         positions = rng.rand(200, 3).astype(np.float32)
         with LuxarZarrCompiler(output) as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-            scene.add_points(
-                "pts",
-                positions,
-                image_labels=[b"x"] * 200,
-                additive_lod=dict(n_lods=3, method="random"),
-            )
+            with pytest.warns(UserWarning, match="cannot be honoured"):
+                scene.add_points(
+                    "pts",
+                    positions,
+                    image_labels=[b"x"] * 200,
+                    additive_lod=dict(n_lods=3, method="random"),
+                )
         grp = zarr.open(str(output), mode="r")["pts"]
         assert grp.attrs["type"] == "points"
         assert grp.attrs["n_points"] == 200

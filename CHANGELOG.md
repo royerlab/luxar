@@ -6,6 +6,15 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Fixed — clearing a node transform after finalize no longer desyncs metadata (#677)
+
+Setting `Node.transform` / `Node.nd_transform` to `None` after the
+`LuxarZarrCompiler` context exited (or after `Scene.to_zarr`) edited the raw
+`.zattrs` while the consolidated `.zmetadata` stayed stale, leaving two
+conflicting views. Post-finalize clears now warn and leave the sealed store
+untouched — matching the assignment path — so raw and consolidated metadata
+stay in agreement.
+
 #### Fixed — authored colours are no longer contrast-stretched at load
 
 The layers panel pushed an automatic display window into every layer material on
@@ -117,8 +126,12 @@ deliberately in no extra (it serves only the Google-Drive download path), so
 neither covers it — the report and `--install` both name it for an individual
 `pip install` instead. The report and the runtime `require_module` gate are
 both driven by `luxar.demos._dependencies.INSTALL_SPECS`, so a package cannot
-be advertised without being installable. Newly tabled pins: `pooch`,
-`scikit-learn`, `matplotlib`.
+be advertised without being installable. The report is version-aware: an
+installed package whose version is below its pinned floor is flagged `OUTDATED`
+(not `ok`) and counted toward the exit-1 gate, so `deps` no longer passes an
+environment that would still crash a demo (e.g. `scipy` old enough to lack
+`scipy.special.sph_harm_y`). Newly tabled pins: `pooch`, `scikit-learn`,
+`matplotlib`.
 
 #### Fixed — the volumetric Absorption slider did nothing on thin geometry
 

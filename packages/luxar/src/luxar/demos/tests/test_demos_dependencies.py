@@ -15,6 +15,7 @@ Two things are guarded here:
 
 from __future__ import annotations
 
+import ast
 import re
 import sys
 from pathlib import Path
@@ -24,6 +25,7 @@ import pytest
 from luxar.demos import INSTALL_SPECS, MissingDependencyError, require_module
 from luxar.demos._dependencies import (
     DependencySpec,
+    _version_satisfied,
     extras_for,
     is_installed,
     survey,
@@ -298,6 +300,96 @@ class TestSurvey:
         assert is_installed("no_such_package_xyz.submodule") is False
 
 
+class TestVersionAwareness:
+    """``survey`` must not report ``ok`` for a package below its pinned floor.
+
+    The concrete bug: the ``demos`` extra floors ``scipy>=1.15`` (for
+    ``demo_quantum_orbitals``) while ``gsplats`` floors it at ``1.9``. On an env
+    satisfying only the gsplats floor, an import-only survey said ``ok`` and the
+    demo then died with an ``AttributeError``. scipy is a hard dependency of the
+    test env, so we drive the check by monkeypatching the reported version.
+    """
+
+    def test_below_pin_is_not_satisfied(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        pytest.importorskip("packaging")
+        import importlib.metadata as md
+
+        real = md.version
+        monkeypatch.setattr(
+            md, "version", lambda n: "1.9.0" if n == "scipy" else real(n)
+        )
+        row = {r.module: r for r in survey()}["scipy"]
+        # scipy still imports (installed), but 1.9.0 < the demos floor 1.15.0.
+        assert row.installed is True
+        assert row.satisfied is False
+
+    def test_meeting_the_pin_is_satisfied(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        pytest.importorskip("packaging")
+        import importlib.metadata as md
+
+        real = md.version
+        monkeypatch.setattr(
+            md, "version", lambda n: "1.15.3" if n == "scipy" else real(n)
+        )
+        assert {r.module: r for r in survey()}["scipy"].satisfied is True
+
+    def test_missing_metadata_gets_the_benefit_of_the_doubt(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Importable but no distribution metadata: never a false OUTDATED."""
+        pytest.importorskip("packaging")
+        import importlib.metadata as md
+
+        real = md.version
+
+        def fake(name: str) -> str:
+            if name == "scipy":
+                raise md.PackageNotFoundError(name)
+            return real(name)
+
+        monkeypatch.setattr(md, "version", fake)
+        assert {r.module: r for r in survey()}["scipy"].satisfied is True
+
+    def test_spec_without_a_version_bound_is_satisfied(self) -> None:
+        """A bare requirement has nothing to check, so it is always satisfied."""
+        assert _version_satisfied("some_pkg") is True
+
+    @pytest.mark.parametrize("bad", [None, "1.4.3-1ubuntu2"])
+    def test_malformed_version_metadata_never_crashes(
+        self, monkeypatch: pytest.MonkeyPatch, bad: object
+    ) -> None:
+        """A report must never crash: absent `Version:` (None → TypeError) or a
+        non-PEP440 distro-patched version (InvalidVersion) → benefit of the doubt.
+        """
+        pytest.importorskip("packaging")
+        import importlib.metadata as md
+
+        real = md.version
+        monkeypatch.setattr(md, "version", lambda n: bad if n == "scipy" else real(n))
+        # No exception, and the un-judgeable row is not flagged OUTDATED.
+        assert {r.module: r for r in survey()}["scipy"].satisfied is True
+
+    def test_unreadable_metadata_never_crashes(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A corrupt (non-UTF-8) METADATA makes ``version()`` raise; the report
+        must survive it (``UnicodeDecodeError`` is a ``ValueError``)."""
+        pytest.importorskip("packaging")
+        import importlib.metadata as md
+
+        real = md.version
+
+        def boom(name: str) -> str:
+            if name == "scipy":
+                raise UnicodeDecodeError("utf-8", b"", 0, 1, "bad metadata")
+            return real(name)
+
+        monkeypatch.setattr(md, "version", boom)
+        assert {r.module: r for r in survey()}["scipy"].satisfied is True
+
+
 class TestExtrasFor:
     def test_it_dedupes_and_sorts(self) -> None:
         rows = survey()
@@ -330,6 +422,126 @@ class TestEveryGatedModuleIsInTheTable:
         assert not unknown, (
             "require_module() called with modules missing from INSTALL_SPECS: "
             + "; ".join(f"{m} ({', '.join(sorted(f))})" for m, f in unknown.items())
+        )
+
+
+class TestNoRuntimePipInstall:
+    """No demo may install packages behind the user's back.
+
+    Two demos shipped the same shape — a swallowed ImportError that shelled out
+    to ``pip install -q <pkg>`` with stdout/stderr sent to DEVNULL
+    (``demo_zebrahub_velocity_streamlines``, then ``demo_tabula_sapiens``).
+    It mutates the environment without consent, is hostile on a shared HPC node
+    or in CI, pulls an UNBOUNDED requirement that can walk zarr past Luxar's
+    pin, and hides the failure it is papering over. `require_module` is the
+    sanctioned reaction to a missing dependency; installing is the user's call,
+    via the explicit `luxar demo deps --install` (which is why this scans only
+    the demo modules, not the CLI that command lives in).
+
+    KNOWN BLIND SPOT: this is a source-literal check. An argv assembled from
+    computed pieces (``["pip", verb]``) would slip through. It closes the shape
+    that actually shipped twice, not every conceivable spelling.
+    """
+
+    #: An argv token that means "the pip executable".
+    _PIP_TOKENS = {"pip", "pip3"}
+    #: A shell/command string that runs an install, e.g. "pip install foo".
+    _SHELL_PIP_INSTALL = re.compile(r"\bpip3?\b[^\n]*\binstall\b")
+    #: Substrings of the method names that hand a command to the OS.
+    _EXEC_NAMES = ("run", "call", "output", "system", "popen", "spawn", "exec")
+
+    @classmethod
+    def _is_pip_token(cls, value: str) -> bool:
+        tail = value.rsplit("/", 1)[-1]
+        return tail in cls._PIP_TOKENS or value.strip() == "-m pip"
+
+    @classmethod
+    def _offending_nodes(cls, tree: ast.AST) -> list[int]:
+        """Line numbers of literal argv lists / shell strings that run pip."""
+        found: list[int] = []
+        for node in ast.walk(tree):
+            # `[sys.executable, "-m", "pip", "install", "-q", "h5py"]` — the
+            # shape that shipped. Flagged wherever it is written, so hoisting it
+            # into a variable before the subprocess call does not evade it.
+            if isinstance(node, (ast.List, ast.Tuple)):
+                tokens = [
+                    e.value
+                    for e in node.elts
+                    if isinstance(e, ast.Constant) and isinstance(e.value, str)
+                ]
+                if any(cls._is_pip_token(t) for t in tokens) and "install" in tokens:
+                    found.append(node.lineno)
+                continue
+            # `subprocess.run("pip install foo", shell=True)` / os.system(...).
+            if isinstance(node, ast.Call):
+                func = node.func
+                if not isinstance(func, ast.Attribute):
+                    continue
+                name = func.attr.lower()
+                if not any(part in name for part in cls._EXEC_NAMES):
+                    continue
+                for arg in ast.walk(node):
+                    if (
+                        isinstance(arg, ast.Constant)
+                        and isinstance(arg.value, str)
+                        and cls._SHELL_PIP_INSTALL.search(arg.value)
+                    ):
+                        found.append(node.lineno)
+                        break
+        return sorted(found)
+
+    def _scan(self, source: str) -> list[int]:
+        return self._offending_nodes(ast.parse(source))
+
+    def test_no_demo_installs_packages_at_runtime(self) -> None:
+        demos_dir = Path(__file__).resolve().parents[1]
+        files = sorted(demos_dir.glob("demo_*.py"))
+        assert files, "no demo files found — the glob or layout changed"
+        offenders = {
+            path.name: lines
+            for path in files
+            if (lines := self._scan(path.read_text(encoding="utf-8")))
+        }
+        assert not offenders, (
+            "demo modules run pip at runtime: "
+            + "; ".join(
+                f"{name}:{','.join(str(n) for n in lines)}"
+                for name, lines in sorted(offenders.items())
+            )
+            + ". Raise via `require_module` instead and let the user install."
+        )
+
+    def test_the_guard_itself_detects_the_shape(self) -> None:
+        """A guard that cannot fail is worth nothing — this is what shipped."""
+        assert self._scan(
+            "import subprocess, sys\n"
+            "def _ensure():\n"
+            "    subprocess.check_call(\n"
+            '        [sys.executable, "-m", "pip", "install", "-q", "h5py"],\n'
+            "        stdout=subprocess.DEVNULL,\n"
+            "    )\n"
+        ) == [4]
+
+    def test_the_guard_detects_a_hoisted_argv(self) -> None:
+        assert self._scan(
+            'cmd = ["pip", "install", "h5py"]\nsubprocess.check_call(cmd)\n'
+        ) == [1]
+
+    def test_the_guard_detects_a_shell_string(self) -> None:
+        assert self._scan('subprocess.run("pip install h5py", shell=True)\n') == [1]
+
+    def test_the_guard_ignores_an_install_hint(self) -> None:
+        """Telling the user what to run is the sanctioned behaviour."""
+        assert self._scan('aprint("Install with: pip install matplotlib")\n') == []
+
+    def test_the_guard_ignores_a_non_pip_subprocess(self) -> None:
+        """Demos legitimately shell out to curl for a resumable download."""
+        assert (
+            self._scan(
+                'cmd = ["curl", "-L", "-o", str(dest), url]\n'
+                "subprocess.run(cmd, check=True)\n"
+            )
+            == []
         )
 
 
@@ -388,8 +600,6 @@ class TestNoUnpinnedThirdPartyImports:
         }
 
     def test_every_third_party_demo_import_is_pinned_and_tabled(self) -> None:
-        import ast
-
         demos_dir = Path(__file__).resolve().parents[1]
         allowed = (
             set(sys.stdlib_module_names)
