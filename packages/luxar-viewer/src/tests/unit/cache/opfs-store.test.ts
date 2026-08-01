@@ -1402,6 +1402,22 @@ describe('OPFSStore', () => {
       expect(store.getValidationState().mode).toBe('ttl');
     });
 
+    it('disposed is observable synchronously at dispose() entry, while dispose is still pending', async () => {
+      expect(store.getValidationState().mode).toBe('none');
+
+      // Do NOT await yet: dispose() suspends internally (pending-write drain,
+      // metadata awaitInFlight), and every guard must already see the flag
+      // during that pending window. Goes red if `disposed = true` moves back
+      // below dispose()'s first await — the setter would then still mutate.
+      const disposing = store.dispose();
+      store.setValidationMode('content-hash');
+      expect(store.getValidationState().mode).toBe('none');
+      expect(store.getStats().available).toBe(false);
+
+      await disposing;
+      expect(store.getValidationState().mode).toBe('none');
+    });
+
     it('dispose() nulls opfsRoot so scheduleMetadataSave cannot write and getStats reports unavailable', async () => {
       await store.dispose();
 
@@ -1500,21 +1516,36 @@ describe('OPFSStore', () => {
       const probeGate = new Promise<void>((resolve) => {
         releaseProbe = resolve;
       });
+      // Record post-release probe activity: a dispose that landed while the
+      // probe was suspended must prevent the resumed probe from writing to —
+      // or removing the fixed-name probe file from — the shared directory.
+      let probeWrites = 0;
+      let probeRemoves = 0;
       const dir = mockFS.mockDirHandle;
       const origGetFileHandle = dir.getFileHandle.bind(dir);
+      const origRemoveEntry = dir.removeEntry.bind(dir);
       dir.getFileHandle = async (name: string, opts?: { create?: boolean }) => {
         if (name === '.opfs-write-probe') {
           return {
             async createWritable() {
               await probeGate; // suspend init() mid-probe
               return {
-                async write() {},
+                async write() {
+                  probeWrites++;
+                },
                 async close() {},
               };
             },
           };
         }
         return origGetFileHandle(name, opts);
+      };
+      dir.removeEntry = async (name: string) => {
+        if (name === '.opfs-write-probe') {
+          probeRemoves++;
+          return;
+        }
+        return origRemoveEntry(name);
       };
 
       const racing = new OPFSStore(
@@ -1544,6 +1575,12 @@ describe('OPFSStore', () => {
       expect(mockFS.metaFiles.get('_cache_meta.json')).toBe(goodMeta);
       expect(racing.getStats().available).toBe(false);
       expect((racing as unknown as { opfsRoot: unknown }).opfsRoot).toBeNull();
+      // The resumed probe saw `disposed` and bailed: it neither wrote the
+      // probe file nor removed the fixed-name probe entry (which a newer
+      // same-URL store could be probing with concurrently). Goes RED if the
+      // in-probe disposed re-checks are removed.
+      expect(probeWrites).toBe(0);
+      expect(probeRemoves).toBe(0);
     });
   });
 });
