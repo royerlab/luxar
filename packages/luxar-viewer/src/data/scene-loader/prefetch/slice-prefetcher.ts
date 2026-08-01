@@ -56,9 +56,7 @@
 import * as zarr from '../../zarr';
 import { log, Modules } from '../../../utils/log';
 import type { SceneNode, ViewState, DataLoader, GeometryKind } from '../../data-loader-types';
-import type { LinesDataLoader } from '../../../types/lines';
-import type { GSplatsDataLoader } from '../../../types/gsplats';
-import type { LoaderRegistry } from '../loaders/loader-registry';
+import type { AnyDataLoader, LoaderRegistry } from '../loaders/loader-registry';
 import type { LoaderFactoryDeps } from '../loaders/loader-factory';
 import { GEOMETRY_DESCRIPTORS } from '../geometry-descriptors';
 import { deriveNodeViewState } from '../view-state/derive-node-view-state';
@@ -76,7 +74,12 @@ export interface SlicePrefetcherCtx {
   applyEffectiveAttrs(node: SceneNode): SceneNode['attrs'];
 }
 
-type AnyShadowLoader = DataLoader | LinesDataLoader | GSplatsDataLoader;
+/**
+ * A shadow loader is just a foreground loader of some geometry kind, so this
+ * tracks {@link AnyDataLoader} rather than re-listing the three interfaces —
+ * a hand-written union here would silently stay 3-wide as the vocabulary grows.
+ */
+type AnyShadowLoader = AnyDataLoader;
 
 /** Depth-first exact-path lookup in the scene graph. */
 function findNodeByPath(root: SceneNode | null, path: string): SceneNode | null {
@@ -238,10 +241,11 @@ export class SlicePrefetcher {
     const node = findNodeByPath(graph, path);
     if (!node) return Promise.resolve();
 
-    // Same derivation the handlers apply (extend_to_all + nd_transform);
-    // lines skip the partial-extend tolerance override, like its handler.
+    // Same derivation the handlers apply (extend_to_all + nd_transform),
+    // reading the per-kind partial-extend rule from the descriptor table so
+    // this cannot drift from the initial-load and retry paths.
     const derived = deriveNodeViewState(path, node.attrs, viewState, graph, {
-      applyPartialExtendTolerance: kind !== 'lines',
+      applyPartialExtendTolerance: GEOMETRY_DESCRIPTORS[kind].applyPartialExtendTolerance,
     });
     if (derived.skip) return Promise.resolve();
     if (!hasHiddenDims(derived.viewState)) return Promise.resolve(); // S-cache would skip it anyway

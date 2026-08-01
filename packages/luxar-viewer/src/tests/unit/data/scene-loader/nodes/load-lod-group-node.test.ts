@@ -217,7 +217,6 @@ function makeCtx(registry?: LODGroupRegistry): NodeBuildCtx {
     applyEffectiveAttrs: (n) => n.attrs,
     deriveNodeViewState: vi.fn() as never,
     connectLoaderToMonitor: vi.fn(),
-    updatePointsGeometry: vi.fn(),
     processLinesData: vi.fn() as never,
     commitLinesGeometry: vi.fn(),
     processGSplatsData: vi.fn() as never,

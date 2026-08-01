@@ -4,8 +4,8 @@
  * Builds the spatial-index loader, registers it in the loader registry,
  * attaches an empty placeholder mesh so commit / retry / update can find
  * a target even when the initial fetch fails, then routes the data fetch
- * through the same `deriveNodeViewState` + `updatePointsGeometry` path
- * the main update loop and retry path use.
+ * through the same `deriveNodeViewState` + `processPointsData` /
+ * `commitPointsGeometry` path the main update loop and retry path use.
  *
  * Sibling of `data/points/handler.ts`, which handles the *update* path
  * (`loadAndStage` + `label`). This file is for the *initial* load.
@@ -172,15 +172,15 @@ export async function loadPointsNodeExpensive(
 
     // Commit data into the placeholder via the same path future
     // updateView() / retry calls use.
-    ctx.updatePointsGeometry(node.path, data, undefined, loadedViewVersion);
+    ctx.commitPointsGeometry(ctx.processPointsData(node.path, data), undefined, loadedViewVersion);
 
     // A settled successful (re)load clears any prior failure record so a
     // recovered lazy level stops counting against the outcome report and the
     // auto-retry budget. No-op on a first successful load. Symmetric with the
     // catch's recordFailure. Unconditional (unlike the lines/gsplats twins,
-    // which clear only when their `staged` commit landed): updatePointsGeometry
-    // commits internally and exposes no landed signal, matching the sweep
-    // handler's markPathHealthy.
+    // which clear only when their `staged` commit landed): staging points
+    // always yields a commit, so there is no landed signal to gate on —
+    // matching the sweep handler's markPathHealthy.
     ctx.registry.clearFailure(node.path);
     log.success(Modules.SCENE_LOADER, `Loaded ${data.pointCount} points for ${node.path}`);
   } catch (error) {

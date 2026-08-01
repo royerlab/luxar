@@ -133,3 +133,19 @@ export const GEOMETRY_DESCRIPTORS: Record<GeometryKind, GeometryDescriptor> = {
     createProgressiveLoader: createProgressiveGSplatsLoader,
   },
 };
+
+/**
+ * Look up the descriptor for a node type that came from the store.
+ *
+ * `SceneNode.type` is an unvalidated string (`build-scene-graph.ts` takes
+ * `attrs.type` verbatim), so a plain `GEOMETRY_DESCRIPTORS[type]` would reach
+ * `Object.prototype` for values like `constructor` or `toString` and return a
+ * truthy non-descriptor. `Object.hasOwn` keeps the lookup to the table's own
+ * keys. Callers holding a `GeometryKind` from a trusted source (the loader
+ * registry, a literal) can index the table directly.
+ */
+export function geometryDescriptorFor(type: string): GeometryDescriptor | undefined {
+  return Object.hasOwn(GEOMETRY_DESCRIPTORS, type)
+    ? GEOMETRY_DESCRIPTORS[type as GeometryKind]
+    : undefined;
+}

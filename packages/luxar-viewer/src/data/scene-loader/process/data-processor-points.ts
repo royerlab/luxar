@@ -8,10 +8,12 @@
  * therefore loads and stages in one step, and owns the
  * {@link StagedPointsCommit} shape.
  *
- * This module exists only to expose the *staging half* of that on its own, so
- * callers that already hold loader output — `lifecycle/retry.ts`, which runs
- * its own `updateView` — can stage it through the same `process` → `commit`
- * pair that lines and gsplats use, instead of a points-only one-shot callback.
+ * This module exposes the *staging half* of that on its own, so callers that
+ * already hold loader output — `nodes/load-points-node.ts` and
+ * `lifecycle/retry.ts`, which each run their own `updateView` — can stage it
+ * through the same `process` → `commit` pair that lines and gsplats use. That
+ * is what lets `NodeBuildCtx` carry one uniform pair per geometry kind rather
+ * than a points-only one-shot alongside two pairs.
  *
  * The staged type is deliberately re-exported from the handler rather than
  * redeclared here: a second same-named type with a different field would type

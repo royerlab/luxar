@@ -117,7 +117,6 @@ function makeCtx(overrides: Partial<NodeBuildCtx> = {}): NodeBuildCtx & {
     applyEffectiveAttrs,
     deriveNodeViewState,
     connectLoaderToMonitor,
-    updatePointsGeometry: vi.fn(),
     processLinesData: vi.fn(),
     commitLinesGeometry: vi.fn(),
     processGSplatsData,

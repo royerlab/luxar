@@ -125,21 +125,10 @@ export interface NodeBuildCtx {
    */
   releaseLazyLines(path: string): void;
 
-  // Per-type commit callbacks — each leaf only uses the one for its type.
-  // ``loadedViewVersion`` stamps the committed mesh for the LOD freshness check;
-  // omit it to default to the live ``_updateVersion`` (correct for the sweep),
-  // or pass the derive-time version from a deferred reload.
-  updatePointsGeometry(
-    path: string,
-    data: LoadedPointsData,
-    session?: UpdateSession,
-    loadedViewVersion?: number
-  ): void;
-  /**
-   * The `process`/`commit` pair for points, matching the lines and gsplats
-   * pairs below. `updatePointsGeometry` above is the equivalent one-shot form
-   * kept for the call sites that do not need the two stages separated.
-   */
+  // Per-type `process`/`commit` pairs — each leaf only uses the one for its
+  // type. ``loadedViewVersion`` stamps the committed mesh for the LOD freshness
+  // check; omit it to default to the live ``_updateVersion`` (correct for the
+  // sweep), or pass the derive-time version from a deferred reload.
   processPointsData(path: string, data: LoadedPointsData): StagedPointsCommit;
   commitPointsGeometry(
     staged: StagedPointsCommit,

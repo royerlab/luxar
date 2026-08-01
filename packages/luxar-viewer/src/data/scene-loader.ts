@@ -1305,12 +1305,10 @@ export class SceneLoader {
       getViewVersion: () => this._updateVersion,
       getLiveViewState: () => this.viewState,
       // Commit callbacks forward an explicit loadedViewVersion so the lazy /
-      // reload path can stamp its DERIVE-time version (see updatePointsGeometry).
+      // reload path can stamp its DERIVE-time version (see commitPointsGeometry).
       processPointsData: (path, data) => this.processPointsData(path, data),
       commitPointsGeometry: (staged, session, loadedViewVersion) =>
         this.commitPointsGeometry(staged, session, loadedViewVersion),
-      updatePointsGeometry: (path, data, session, loadedViewVersion) =>
-        this.updatePointsGeometry(path, data, session, loadedViewVersion),
       processLinesData: (path, data, viewState, session) =>
         this.processLinesData(path, data, viewState, session),
       commitLinesGeometry: (staged, session, loadedViewVersion) =>
