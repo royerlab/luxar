@@ -131,6 +131,50 @@ class TestRobustDownloadChokepoint:
         assert "2.00 KB" in out
         assert "QUARANTINED" in out
 
+    def test_quarantine_notice_is_neutral_about_resume(self, tmp_path, capsys) -> None:
+        """Pins the fix for #716: contradictory fresh-vs-resume guidance.
+
+        When a quarantined `.corrupt` sibling AND a partial `.part` staging
+        file coexist, `robust_download` resumes the partial (HTTP Range) rather
+        than fetching from scratch. The pre-download quarantine notice fires
+        BEFORE resume state is known, so it must not assert "from scratch" —
+        which would contradict the later "Attempting to resume..." message.
+        The action text must stay neutral ("fetching a replacement").
+        """
+        dest = tmp_path / "huge.npy"
+        corrupt = tmp_path / f"huge.npy{QUARANTINE_SUFFIX}"
+        corrupt.write_bytes(b"x" * 2048)
+        # A partial staging file makes this a resume, not a from-scratch fetch.
+        part = tmp_path / "huge.npy.part"
+        part.write_bytes(b"y" * 1024)
+
+        # No network: the connection is refused, so no real remote size
+        # resolves and the download itself fails — but the test still captures
+        # BOTH the pre-download quarantine notice AND the resume message, since
+        # the `.part` staging file drives the resume branch before the fetch.
+        try:
+            robust_download(
+                "http://127.0.0.1:9/never-served",
+                dest,
+                max_retries=0,
+                timeout=1,
+            )
+        except Exception:  # noqa: BLE001 - the failure itself is not under test
+            pass
+
+        out = capsys.readouterr().out
+        # The quarantine notice is still emitted...
+        assert str(corrupt) in out
+        assert "QUARANTINED" in out
+        # ...alongside the resume notice — the two messages COEXIST, which is
+        # exactly the #716 scenario (a quarantined sibling + a partial staging
+        # file in the same run)...
+        assert "Attempting to resume" in out
+        # ...and the guidance is NON-CONTRADICTORY: neutral wording, never
+        # "from scratch" (which would clash with the resume).
+        assert "fetching a replacement" in out
+        assert "from scratch" not in out
+
 
 class TestQuarantineFile:
     """The producer side of the ``.corrupt`` convention."""
