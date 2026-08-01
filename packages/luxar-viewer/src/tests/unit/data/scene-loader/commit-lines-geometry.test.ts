@@ -37,6 +37,7 @@ import {
 } from '../../../../rendering/element-texture-layout';
 import { getPrefixParent, setPrefixParent } from '../../../../types/prefix-lineage';
 import { SOFT_DISPOSE_FLAG } from '../../../../rendering/material-manager';
+import { configureRenderObjectEviction } from '../../../../data/scene-loader/commit/invalidate-render-object';
 import type { StagedLinesCommit } from '../../../../data/scene-loader/process/data-processor-lines';
 import type { ProcessedLinesData } from '../../../../types/lines';
 
@@ -545,6 +546,13 @@ describe('commitLinesGeometry — RenderObject invalidation on non-pool rebuild'
   // SOFT_DISPOSE-flagged material event so Three's cached RenderObject
   // (stale `vertexBuffers` on the WebGPU backend) is evicted — the same
   // contract the pool branch honors via didLastAcquireRebuildAttributes.
+  // That eviction is WebGPU-only and OFF by default (classic WebGL is the
+  // production default), so opt this block into the WebGPU state; the
+  // negative test then meaningfully pins that an in-place update makes no
+  // dispatch even WITH eviction enabled.
+  beforeEach(() => configureRenderObjectEviction(true));
+  afterEach(() => configureRenderObjectEviction(false));
+
   const softDisposeSeen = (mesh: THREE.Mesh): (() => boolean) => {
     let seen = false;
     (mesh.material as THREE.Material).addEventListener('dispose', () => {

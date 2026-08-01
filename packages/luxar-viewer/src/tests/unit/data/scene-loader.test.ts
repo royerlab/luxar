@@ -61,9 +61,11 @@ vi.mock('../../../rendering/material-manager', () => ({
       updateCameraParams: vi.fn(),
     }),
   },
-  // `invalidate-render-object.ts` imports this symbol to tag soft-
-  // dispose events; supply a unique Symbol so the import resolves
-  // in jsdom even though MaterialManager itself is mocked away.
+  // The barrel re-exports the soft-dispose sentinel; supply a stand-in
+  // Symbol so any barrel consumer resolves the import in jsdom even
+  // though MaterialManager itself is mocked away. (The dispatcher in
+  // `invalidate-render-object.ts` now imports the flag from its leaf
+  // module, `material-manager/soft-dispose-flag.ts`, not this barrel.)
   SOFT_DISPOSE_FLAG: Symbol.for('luxar.material.softDispose.test-mock'),
 }));
 

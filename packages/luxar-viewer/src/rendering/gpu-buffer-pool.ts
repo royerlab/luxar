@@ -185,11 +185,12 @@ export class GPUBufferPool {
    *
    * Callers that hold a `THREE.Mesh` pointing at the previously-active
    * geometry should call `invalidateRenderObjectFor(mesh)` (in
-   * `data/scene-loader/invalidate-render-object.ts`) when this returns
-   * `true`. That forces Three's WebGPURenderer to discard the cached
-   * `RenderObject.vertexBuffers` set; without it, WebGPU binds the old
-   * GPU buffer next draw and validation fails with "Instance range …
-   * requires a larger buffer than the bound buffer size".
+   * `data/scene-loader/commit/invalidate-render-object.ts`) when this
+   * returns `true`. That forces Three's WebGPURenderer to discard the
+   * cached `RenderObject.vertexBuffers` set (a no-op on the classic
+   * WebGL backend, which has no such cache); without it, WebGPU binds
+   * the old GPU buffer next draw and validation fails with "Instance
+   * range … requires a larger buffer than the bound buffer size".
    *
    * The flag is overwritten on every acquire call, so consume it
    * immediately after `acquirePointsGeometry` / `acquireLinesGeometry`
