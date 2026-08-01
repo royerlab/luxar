@@ -1098,6 +1098,140 @@ describe('PointsSpatialIndexLoader', () => {
       expect(result.colors![4]).toBeCloseTo(1.8, 5);
     });
 
+    // Regression: issue #751 — a Float16Array / Uint16Array sharpness source
+    // was silently zeroed on the accumulator load path. The accumulator pins
+    // any non-uint8 sharpness buffer to Float32Array, and the copy block used
+    // to gate on the SOURCE dtype (Uint8→Uint8 or Float32→Float32 only), so a
+    // Float16/Uint16 source matched NO branch → the copy was skipped →
+    // getData() returned an all-zeros buffer. `Float32Array.set()` converts.
+    it('converts float16 sharpness into the Float32 accumulator buffer (issue #751)', async () => {
+      // Skip on engines without a Float16Array global (older Node / JSDOM).
+      const F16 = (globalThis as unknown as { Float16Array?: Float16ArrayConstructor })
+        .Float16Array;
+      if (typeof F16 === 'undefined') return;
+
+      mockExecute.mockResolvedValueOnce([{ start: 0, end: 2 }]);
+      mockArrays.sharpness.dtype = 'float16';
+
+      (zarr.get as any).mockImplementation((array: any) => {
+        if (array === mockArrays.positions) {
+          // 2 points on the dim-3 slice (=5) so both survive projection.
+          return Promise.resolve({ data: new Float32Array([1, 2, 3, 5, 4, 5, 6, 5]) });
+        }
+        if (array === mockArrays.sharpness) {
+          // 0.5 and 0.75 are exactly representable in fp16.
+          return Promise.resolve({ data: new F16([0.5, 0.75]) });
+        }
+        return Promise.resolve({ data: new Float32Array(array === mockArrays.colors ? 6 : 2) });
+      });
+
+      const viewState: ViewState = {
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 5],
+        tolerance: [0, 0, 0, 0.1],
+      };
+
+      const result = await loader.loadPoints(viewState);
+
+      // The accumulator pins non-uint8 sharpness to Float32Array; the values
+      // must be the converted fp16 source, NOT zeros.
+      expect(result.sharpness).toBeInstanceOf(Float32Array);
+      expect(result.sharpness!.length).toBe(2);
+      expect(result.sharpness![0]).toBeCloseTo(0.5, 5);
+      expect(result.sharpness![1]).toBeCloseTo(0.75, 5);
+    });
+
+    it('preserves uint16 sharpness natively into the accumulator (issue #751)', async () => {
+      // Uint16 sharpness must be kept dtype-preserving (like colors) — the
+      // accumulator keeps a native Uint16Array and the GPU upload site
+      // normalizes (÷65535). Widening to Float32 here (the first-round fix)
+      // would render at 65535× (every point clamps to beta=16). Pre-fix the
+      // copy skipped the source entirely → an all-zeros buffer.
+      mockExecute.mockResolvedValueOnce([{ start: 0, end: 2 }]);
+      mockArrays.sharpness.dtype = 'uint16';
+
+      (zarr.get as any).mockImplementation((array: any) => {
+        if (array === mockArrays.positions) {
+          return Promise.resolve({ data: new Float32Array([1, 2, 3, 5, 4, 5, 6, 5]) });
+        }
+        if (array === mockArrays.sharpness) {
+          return Promise.resolve({ data: new Uint16Array([100, 200]) });
+        }
+        return Promise.resolve({ data: new Float32Array(array === mockArrays.colors ? 6 : 2) });
+      });
+
+      const viewState: ViewState = {
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 5],
+        tolerance: [0, 0, 0, 0.1],
+      };
+
+      const result = await loader.loadPoints(viewState);
+
+      // Native Uint16Array with RAW values (not zeros, not widened floats).
+      expect(result.sharpness).toBeInstanceOf(Uint16Array);
+      expect(result.sharpness!.length).toBe(2);
+      expect(result.sharpness![0]).toBe(100);
+      expect(result.sharpness![1]).toBe(200);
+      // dtype self-report must say uint16 so the upload site divides by 65535.
+      expect(result.metadata.dtypes?.sharpness).toBe('uint16');
+    });
+
+    it('preserves uint16 scalars natively into the accumulator (issue #751)', async () => {
+      // The scalars copy had the same source-dtype gate as sharpness; a uint16
+      // source was silently zeroed. Uint16 scalars stay native (upload ÷65535).
+      const scalarsNode: SceneNode = {
+        ...mockNode,
+        attrs: { ...mockNode.attrs, has_scalars: true },
+      };
+      loader.dispose();
+      loader = new PointsSpatialIndexLoader(mockZarrLocation, scalarsNode);
+
+      mockExecute.mockResolvedValueOnce([{ start: 0, end: 2 }]);
+      const scalarsArray = { shape: [10000], dtype: 'uint16', attrs: {} };
+      const chunkBoundsArray = { shape: [100, 4, 2], dtype: 'float32', attrs: {} };
+
+      (zarr.open as any).mockImplementation((_location: any) => {
+        const path = _location.toString();
+        if (path.includes('chunk_bounds')) return Promise.resolve(chunkBoundsArray);
+        if (path.includes('positions')) return Promise.resolve(mockArrays.positions);
+        if (path.includes('colors')) return Promise.resolve(mockArrays.colors);
+        if (path.includes('radii')) return Promise.resolve(mockArrays.radii);
+        if (path.includes('sharpness')) return Promise.resolve(mockArrays.sharpness);
+        if (path.includes('scalars')) return Promise.resolve(scalarsArray);
+        return Promise.reject(new Error(`Unknown array: ${path}`));
+      });
+
+      (zarr.get as any).mockImplementation((array: any) => {
+        if (array === chunkBoundsArray) {
+          return Promise.resolve({ data: new Float32Array(100 * 4 * 2) });
+        }
+        if (array === mockArrays.positions) {
+          return Promise.resolve({ data: new Float32Array([1, 2, 3, 5, 4, 5, 6, 5]) });
+        }
+        if (array === scalarsArray) {
+          return Promise.resolve({ data: new Uint16Array([300, 400]) });
+        }
+        return Promise.resolve({ data: new Float32Array(array === mockArrays.colors ? 6 : 2) });
+      });
+
+      const viewState: ViewState = {
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 5],
+        tolerance: [0, 0, 0, 0.1],
+      };
+
+      const result = await loader.loadPoints(viewState);
+
+      expect(result.scalars).toBeInstanceOf(Uint16Array);
+      expect(result.scalars!.length).toBe(2);
+      // Assert BOTH indices — index 0 (readIdx===writeIdx, no shuffle) AND
+      // index 1 (would be zero if the copy were skipped).
+      expect(result.scalars![0]).toBe(300);
+      expect(result.scalars![1]).toBe(400);
+      expect(result.metadata.dtypes?.scalars).toBe('uint16');
+    });
+
     it('should restore original_dtype for encoded arrays', async () => {
       // Mock encoded colors with original_dtype=uint8.
       // Use a known semantic quantized encoding; plain dtype names are direct storage.

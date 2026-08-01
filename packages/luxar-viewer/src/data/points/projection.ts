@@ -35,6 +35,7 @@ import type {
   PositionArray,
   ColorArray,
   ScalarArray,
+  PointScalarArray,
 } from '../data-loader-types';
 import { LoadedPointsDataAccumulator } from '../accumulators/points';
 import type { PointsMetadata } from '../../types/points';
@@ -47,10 +48,13 @@ export interface ProjectionTargetBuffers {
   positions3D: Float32Array;
   colors: ColorArray;
   radii: ScalarArray;
-  sharpness: ScalarArray;
+  // sharpness/scalars are kept in their native dtype through the accumulator
+  // (like colors) so the GPU upload site can normalize uint8/uint16 (÷255 /
+  // ÷65535); PointScalarArray adds the native Uint16Array variant.
+  sharpness: PointScalarArray;
   /** optional scalar target — present when the accumulator's
    *  hasScalars flag is true so the projection can write through. */
-  scalars?: ScalarArray;
+  scalars?: PointScalarArray;
 }
 
 /**
@@ -472,41 +476,23 @@ export function projectPointsTo3D(
               }
             }
 
-            // Compact sharpness (type-preserving)
+            // Compact sharpness (type-preserving). The shuffle only touches
+            // the accumulator target buffer, so the SOURCE dtype is irrelevant
+            // — gating on `sharpness instanceof ...` here would skip the move
+            // for a Float16/Uint16 source and corrupt compaction. Uint8Array,
+            // Uint16Array, and Float32Array all support numeric index assignment.
             if (sharpness && targetBuffers.sharpness) {
-              if (
-                sharpness instanceof Uint8Array &&
-                targetBuffers.sharpness instanceof Uint8Array
-              ) {
-                (targetBuffers.sharpness as Uint8Array)[writeIdx] = (
-                  targetBuffers.sharpness as Uint8Array
-                )[readIdx];
-              } else if (
-                sharpness instanceof Float32Array &&
-                targetBuffers.sharpness instanceof Float32Array
-              ) {
-                (targetBuffers.sharpness as Float32Array)[writeIdx] = (
-                  targetBuffers.sharpness as Float32Array
-                )[readIdx];
-              }
+              const sb = targetBuffers.sharpness as Uint8Array | Uint16Array | Float32Array;
+              sb[writeIdx] = sb[readIdx];
             }
 
             // compact scalars (type-preserving) — symmetric with the
             // colors / sharpness paths above. The accumulator owns the
-            // target buffer; we just shuffle indices in place.
+            // target buffer; we just shuffle indices in place regardless of
+            // the source dtype.
             if (scalars && targetBuffers.scalars) {
-              if (scalars instanceof Uint8Array && targetBuffers.scalars instanceof Uint8Array) {
-                (targetBuffers.scalars as Uint8Array)[writeIdx] = (
-                  targetBuffers.scalars as Uint8Array
-                )[readIdx];
-              } else if (
-                scalars instanceof Float32Array &&
-                targetBuffers.scalars instanceof Float32Array
-              ) {
-                (targetBuffers.scalars as Float32Array)[writeIdx] = (
-                  targetBuffers.scalars as Float32Array
-                )[readIdx];
-              }
+              const sb = targetBuffers.scalars as Uint8Array | Uint16Array | Float32Array;
+              sb[writeIdx] = sb[readIdx];
             }
           }
 
@@ -541,6 +527,13 @@ export function projectPointsTo3D(
             filteredSharpness = new Uint8Array(filteredCount);
           } else if (sharpness instanceof Uint16Array) {
             filteredSharpness = new Uint16Array(filteredCount);
+          } else {
+            // Float16Array (or any other) source → widen value-preserving to
+            // Float32. Without this else the array stayed undefined, the copy
+            // loop was skipped, and `sharpness = filteredSharpness || sharpness`
+            // kept the ORIGINAL full-length array while numPoints=filteredCount
+            // → misaligned attributes (issue #751, Finding 2).
+            filteredSharpness = new Float32Array(filteredCount);
           }
         }
 
@@ -553,6 +546,10 @@ export function projectPointsTo3D(
             filteredScalars = new Uint8Array(filteredCount);
           } else if (scalars instanceof Uint16Array) {
             filteredScalars = new Uint16Array(filteredCount);
+          } else {
+            // Float16Array source → widen value-preserving to Float32 (same
+            // misaligned-attribute hazard as sharpness above).
+            filteredScalars = new Float32Array(filteredCount);
           }
         }
 
@@ -636,10 +633,10 @@ export function projectPointsTo3D(
     colors: colors as ColorArray | undefined,
     colorComponents: colors ? colorComponents : undefined,
     radii: finalRadii as ScalarArray | undefined,
-    sharpness: sharpness as ScalarArray | undefined,
+    sharpness: sharpness as PointScalarArray | undefined,
     // pass scalars through. They are already type-compacted above
     // (or unchanged when no filtering occurred).
-    scalars: (scalars as ScalarArray | null | undefined) ?? undefined,
+    scalars: (scalars as PointScalarArray | null | undefined) ?? undefined,
     pointCount: numPoints,
     ndim,
     metadata: {
