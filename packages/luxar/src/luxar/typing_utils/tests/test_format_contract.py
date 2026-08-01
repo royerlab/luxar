@@ -127,3 +127,86 @@ def test_drift_gate_detects_stale_projection(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setattr(sys, "argv", [str(GEN_SCRIPT), "--check"])
 
     assert mod.main() == 1, "drift gate should return non-zero on a stale projection"
+
+
+def test_geometry_types_are_a_subset_of_node_types() -> None:
+    """``geometry_types`` names the LEAF subset of ``node_types``.
+
+    A geometry type that is not also a node type would be unrepresentable on
+    disk (the writer stamps ``type`` from this vocabulary), so the containment
+    is an invariant of the contract itself, not a convention.
+    """
+    assert set(fc.GEOMETRY_TYPES) <= set(fc.NODE_TYPES)
+    assert fc.GEOMETRY_TYPES, "geometry sequence must not be empty"
+    assert len(fc.GEOMETRY_TYPES) == len(set(fc.GEOMETRY_TYPES))
+
+
+def test_geometry_types_exclude_containers() -> None:
+    """The container node types are deliberately NOT geometry types."""
+    assert "scene" not in fc.GEOMETRY_TYPES
+    assert "group" not in fc.GEOMETRY_TYPES
+
+
+@pytest.mark.skipif(
+    not GEN_SCRIPT.exists(),
+    reason="generator script not present (packaged install without repo scripts/)",
+)
+def test_generator_rejects_geometry_type_missing_from_node_types(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The containment invariant is ENFORCED by codegen, not just asserted here.
+
+    Without the check in ``_geometry_types`` a contract naming a geometry type
+    absent from ``node_types`` would generate happily and only break far away,
+    at write time.
+    """
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("gen_format_contract", GEN_SCRIPT)
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    good = mod.load_contract()
+    tampered = {**good, "geometry_types": [*good["geometry_types"], "not_a_node_type"]}
+
+    with pytest.raises(SystemExit) as exc:
+        mod._geometry_types(tampered)
+    assert "not_a_node_type" in str(exc.value)
+
+
+@pytest.mark.skipif(
+    not GEN_SCRIPT.exists(),
+    reason="generator script not present (packaged install without repo scripts/)",
+)
+@pytest.mark.parametrize(
+    ("geometry_types", "expected"),
+    [
+        pytest.param([], "must not be empty", id="empty"),
+        pytest.param(["points", "group"], "container node types", id="container-group"),
+        pytest.param(["points", "scene"], "container node types", id="container-scene"),
+        pytest.param(["points", "points"], "duplicate", id="duplicates"),
+    ],
+)
+def test_generator_rejects_malformed_geometry_types(
+    geometry_types: list, expected: str
+) -> None:
+    """Each rule the ``_geometry_types`` docstring claims is actually enforced.
+
+    Without these the generator emits broken or misleading projections rather
+    than failing: an empty list renders ``Literal[]`` / ``export type X = ;``
+    (syntax errors in both languages), a container type reaches per-geometry
+    dispatch with no loader behind it, and a duplicate widens the tuple while
+    leaving the union unchanged.
+    """
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("gen_format_contract", GEN_SCRIPT)
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    tampered = {**mod.load_contract(), "geometry_types": geometry_types}
+    with pytest.raises(SystemExit) as exc:
+        mod._geometry_types(tampered)
+    assert expected in str(exc.value)

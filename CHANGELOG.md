@@ -61,6 +61,19 @@ check now compares major *and* minor, matching the existing Node check, since a
 major-only test cannot express the 10.6 boundary. The now-obsolete half of the
 pnpm-pinning rationale in `docs.yml` was rewritten to match.
 
+#### Fixed — finalize no longer mistakes a zarr array for a child node (#1079)
+
+`lod_backfill`'s display-type resolver returned early only for the leaf `type`
+values it hardcoded; anything else fell through to "recurse into the finest
+child". A zarr group's `keys()` lists its **arrays** as well as its sub-groups,
+so a node reaching that branch while holding datasets could pick a `zarr.Array`
+as its finest child. Two failure modes, both reproducible against the previous
+release: an untyped array crashed the compiler with a bare
+`AttributeError: 'Array' object has no attribute 'keys'`, and — quieter, and
+worse — an array carrying a recognised `type` attr resolved *early* and wrote
+the wrong `display_type` to the wrapper with no error at all. All four
+child-iteration sites in the module now use `group_keys()`.
+
 #### Fixed — Ctrl-C now stops batch/tiled fitting instead of draining the queue (#736)
 
 The three parallel subprocess pools — `batch-fit run` (local multi-GPU) and
