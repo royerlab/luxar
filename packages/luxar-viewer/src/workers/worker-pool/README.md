@@ -55,7 +55,8 @@ worker-pool/
   `config.dataLoading.performance`; `combine-signals.ts` merges the
   caller's `AbortSignal` with the pool-wide one set via
   `setAbortSignal()` (using `AbortSignal.any` when available, falling
-  back to a hand-rolled forwarder).
+  back to a hand-rolled forwarder whose scope is disposed when the
+  call settles so listeners never accumulate on the pool signal).
 
 ## Relationship to `worker-pool.ts`
 
