@@ -153,7 +153,15 @@ jobs:
         # hatch/env/virtual.py), so a plain `pipx install hatch` pins every env
         # to the runner's default Python and the matrix value never reaches the
         # tests — all three legs silently ran 3.12. See #839.
-        run: pipx install --python "${{ steps.setup-python.outputs.python-path }}" hatch
+        #
+        # `--force` is what makes that hold on a SELF-HOSTED runner. Hosted
+        # runners are freshly imaged, so the install always happens; a
+        # self-hosted runner has a persistent HOME, so pipx finds hatch already
+        # present, prints "Not modifying existing installation", exits 0, and
+        # the leg silently runs whatever interpreter the previous build pinned
+        # — reintroducing #839 through the back door. The runners each carry
+        # their own PIPX_HOME, so this re-pin is local to one runner.
+        run: pipx install --force --python "${{ steps.setup-python.outputs.python-path }}" hatch
 
       - name: Create viewer dist placeholder
         if: needs.changes.outputs.docs_only != 'true'
