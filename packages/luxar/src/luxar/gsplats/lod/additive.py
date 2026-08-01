@@ -701,7 +701,12 @@ def make_additive_lod(
         - list[int]: explicit cumulative splat counts per level.
         - list[float] in $(0, 1]$: cumulative energy fractions; the
           smallest $k$ at which the cumulative-utility curve crosses
-          each fraction is used as the cutpoint.
+          each fraction is used as the cutpoint. For ``greedy`` / spectral
+          orderings that build a Gram matrix the curve is the residual-energy
+          curve; for score-ordered methods (``self_energy`` / ``mass`` /
+          ``amplitude`` / ``random``) it is the O(N) self-energy cumulative,
+          so cuts land where the viewer's own $e(k)$ quality stamp reads the
+          requested fraction.
     truncation_sigmas : float
         $\\sigma$ multiplier for sparse-Gram pruning.  Default 3.0.
     max_n_dense : int
