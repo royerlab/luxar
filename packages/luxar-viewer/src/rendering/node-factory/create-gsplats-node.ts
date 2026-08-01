@@ -13,7 +13,7 @@ import { syncGSplatMaterialWithGeometry } from '../material-sync-helpers';
 import type { GSplatsMetadata, GSplatsUserData, GSplatsDataLoader } from '../../types/gsplats';
 import type { PickingSystem } from '../picking/picking-system';
 import { applyTransform } from './transforms';
-import { computeDisplayRange } from '../../ui/layers/layer-state';
+import { computeDisplayRange, computeUniforms } from '../../ui/layers/layer-state';
 
 /** Build a GSplats mesh + optional picking shadow node. */
 export function createGSplatsNode(
@@ -73,21 +73,31 @@ export function createGSplatsNode(
     // authored gain/offset (layer-state.ts). The identity-vs-window decision
     // follows the RAW LEAF gain (`attrs.intensity/offset`), mirroring the
     // panel (layer-state.ts ~L423-437 starts from the data range whenever the
-    // LEAF gain is identity and folds ancestor gains separately) — NOT the
-    // composed value, which would treat an ancestor-only gain as an authored
-    // window and discard `amplitude_data_range`. When the leaf DID author a
-    // window, use the COMPOSED gain for its VALUE so any ancestor gain folds
-    // onto the leaf window (composed == the panel's effective gain there).
-    // Note the acknowledged narrow gap: for an ancestor-only gain above a
-    // non-windowed colormapped leaf, only the layer=true panel path composes
-    // that into the window — the layer=false load-time window here keeps the
-    // data range (tracked separately).
+    // LEAF gain is identity) — NOT the composed value, which would treat an
+    // ancestor-only gain as an authored window and discard
+    // `amplitude_data_range`. When the leaf DID author a window, the COMPOSED
+    // gain IS the panel's effective gain (intensity multiplies, offset adds —
+    // attrs-composer.ts), so it is used directly. When the leaf is identity,
+    // any ancestor gain is folded onto the data-range window the same way the
+    // panel composes it: data range → window uniforms → × ancestor gain →
+    // back to a window.
     const leafRaw = attrs as unknown as Record<string, unknown>;
     const leafIntensity = (leafRaw.intensity as number | undefined) ?? 1.0;
     const leafOffset = (leafRaw.offset as number | undefined) ?? 0.0;
     let gsScalarRange: [number, number];
     if (leafIntensity === 1.0 && leafOffset === 0.0) {
-      gsScalarRange = (nodeAttrs.amplitude_data_range as [number, number] | undefined) ?? [0, 1];
+      const ampRange = (nodeAttrs.amplitude_data_range as [number, number] | undefined) ?? [0, 1];
+      if (composedIntensity === 1.0 && composedOffset === 0.0) {
+        gsScalarRange = ampRange;
+      } else {
+        // Ancestor-only gain (leaf identity ⇒ composed == ancestor product).
+        const w = computeUniforms(ampRange[0], ampRange[1]);
+        const { min, max } = computeDisplayRange(
+          composedIntensity * w.intensity,
+          composedOffset + w.offset
+        );
+        gsScalarRange = [min, max];
+      }
     } else {
       const { min, max } = computeDisplayRange(composedIntensity, composedOffset);
       gsScalarRange = [min, max];

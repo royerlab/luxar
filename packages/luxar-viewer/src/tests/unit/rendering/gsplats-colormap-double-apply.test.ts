@@ -119,15 +119,18 @@ describe('#936 colormapped gsplat authored intensity is a window, not a double g
       expect(mat.uniforms.uOffset.value).toBeCloseTo(0.02, 6);
     });
 
-    it('ancestor-only gain (composed != 1, raw leaf identity): window is the DATA RANGE, not [0,2]', () => {
+    it('ancestor-only gain (composed != 1, raw leaf identity): gain folds onto the data-range window', () => {
       // Simulate a colormapped leaf with NO own intensity sitting under an
       // ancestor group with intensity=0.5: the loader passes the COMPOSED
       // 0.5 as `nodeAttrs.intensity`, but the RAW leaf `attrs` has no gain.
-      // The identity decision must follow the RAW leaf gain (identity) →
-      // window falls back to `amplitude_data_range`, NOT computeDisplayRange(
-      // 0.5)=[0,2] (which would saturate the LUT). Guards FIX 1 (#936);
-      // fails on the pre-fix code, which keyed the decision on the composed
-      // value.
+      // The identity decision follows the RAW leaf gain (identity), so the
+      // window STARTS from `amplitude_data_range` — NOT computeDisplayRange(
+      // 0.5)=[0,2], which would saturate the LUT. But the ancestor gain must
+      // still act (the panel composes it onto the window): data range
+      // [0,100] → window uniforms (0.01, 0) → × ancestor 0.5 → (0.005, 0) →
+      // window [0, 200]. Fails on code that keys the decision on the
+      // composed value ([0,2]) AND on code that drops the ancestor gain
+      // entirely ([0,100]).
       const factory = new NodeFactory();
       const mesh = factory.createGSplatsNode(
         '/splats',
@@ -142,9 +145,9 @@ describe('#936 colormapped gsplat authored intensity is a window, not a double g
       // Color GOG identity (colormap active).
       expect(mat.uniforms.uIntensity.value).toBe(1.0);
       expect(mat.uniforms.uOffset.value).toBe(0.0);
-      // Window is the data range [0, 100], NOT computeDisplayRange(0.5)=[0,2].
+      // Data-range window with the ancestor 0.5 folded in: [0, 200].
       expect(mat.uniforms.uScalarMin.value).toBeCloseTo(0, 5);
-      expect(mat.uniforms.uScalarScale.value).toBeCloseTo(1 / 100, 5);
+      expect(mat.uniforms.uScalarScale.value).toBeCloseTo(1 / 200, 5);
     });
 
     it('colormapped node with offset != 0 (raw non-identity): window = computeDisplayRange(1, 0.5)', () => {
