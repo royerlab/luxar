@@ -140,11 +140,18 @@ both `record()` and `rate()` amortized O(1). Feeds the
 `ValidationQueue` is a per-`datasetId` (= `hashUrl(baseUrl)`) FIFO that
 serializes cache-validation runs across MultiLevelCachingStore
 instances pointed at the same URL. Without it, a slower older
-validation could overwrite a newer content-hash. Each queue entry
-carries an `AbortController` so the owning instance's `dispose()` can
-both cancel the in-flight HTTP fetch and remove the queue entry — the
-task is skipped entirely if abort fires while still waiting in line,
-preventing a closure that captured a now-disposed `this` from running
+validation could overwrite a newer content-hash. `serialize()` hands
+each caller its own `QueueEntry` (via an `onStart` callback fired
+synchronously, before the first `await`); each entry carries an
+`AbortController`. Cancellation is identity-scoped: the owning
+instance's `dispose()` aborts ITS OWN entry — it does NOT remove the
+entry from the map. This is deliberate — an older store must never
+cancel a newer same-URL store's validation, and map cleanup is left to
+`serialize`'s `finally` head-guard, which evicts an entry only when it
+is still the current head (so an aborted waiting entry keeps its
+successors FIFO-chained until its predecessor settles). The task is
+skipped entirely if abort fires while still waiting in line, preventing
+a closure that captured a now-disposed `this` from running
 `setContentHash()` against a disposed L2 store. The queue only
 serializes; it does not emit invalidation events (that stays at the
 caller).

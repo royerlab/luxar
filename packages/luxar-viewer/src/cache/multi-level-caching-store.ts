@@ -12,6 +12,7 @@ import {
 import {
   ValidationQueue,
   getRemoteContentHash,
+  type QueueEntry,
 } from './multi-level-caching-store/validation-queue';
 import type { ChunkPrefetcher } from './chunk-prefetcher';
 import { OpfsWriteQueue } from './multi-level-caching-store/opfs-write-queue';
@@ -77,8 +78,11 @@ export class MultiLevelCachingStore implements AsyncReadable {
 
   private static readonly DEFAULT_L1_SIZE = config.cache.l1MaxSizeMB * 1024 * 1024;
   private static readonly DEFAULT_L2_SIZE = config.cache.l2MaxSizeMB * 1024 * 1024;
-  // Captured during init() so dispose() can find this instance's queue entry.
-  private datasetId?: string;
+  // This instance's own validation queue entry, captured synchronously when
+  // validateCache() enters the shared queue. dispose() aborts THIS entry
+  // directly — never "whatever is the current head" — so an older store can
+  // never cancel a newer same-URL store's validation (see ValidationQueue).
+  private validationEntry: QueueEntry | null = null;
 
   // Lifecycle: set by dispose(). Synchronously short-circuits getResult and
   // gets propagated to fetchWithRetry via dataAbort below so any in-flight
@@ -257,7 +261,6 @@ export class MultiLevelCachingStore implements AsyncReadable {
 
     // Generate dataset ID from URL and create L2 store
     const datasetId = await hashUrl(this.baseUrl);
-    this.datasetId = datasetId;
     this.l2Store = new OPFSStore(datasetId, this.baseUrl, this.l2MaxSize);
 
     await this.l2Store.init();
@@ -647,7 +650,20 @@ export class MultiLevelCachingStore implements AsyncReadable {
    * captured `this`.
    */
   private async validateCache(datasetId: string): Promise<void> {
-    await ValidationQueue.serialize(datasetId, (signal) => this.doValidateCache(signal));
+    // dispose() may land while init() is still awaiting hashUrl/l2Store.init()
+    // — before we ever enter the queue, so validationEntry is still null and
+    // nothing would be aborted. Bail here so a disposed store never enqueues a
+    // validation that writes into its torn-down L2 tier.
+    if (this.disposed) return;
+    await ValidationQueue.serialize(
+      datasetId,
+      (signal) => this.doValidateCache(signal),
+      // Capture our own entry synchronously so dispose() aborts exactly this
+      // validation even after a newer same-URL store becomes the queue head.
+      (entry) => {
+        this.validationEntry = entry;
+      }
+    );
   }
 
   private async doValidateCache(signal: AbortSignal): Promise<void> {
@@ -677,6 +693,10 @@ export class MultiLevelCachingStore implements AsyncReadable {
             await this.invalidateAllTiers();
           }
         }
+        if (signal.aborted) {
+          this.log('Validation aborted (caller disposed)');
+          return;
+        }
         this.l2Store?.setValidationMode(ttlMs != null ? 'ttl' : 'none');
         return;
       }
@@ -698,6 +718,14 @@ export class MultiLevelCachingStore implements AsyncReadable {
         // future call paths that might revalidate against a populated
         // L1 (e.g. content-hash refresh during a long session).
         await this.invalidateAllTiers();
+      }
+
+      // A dispose() during the awaited invalidateAllTiers() above must not
+      // fall through to writing content-hash/validation state into the
+      // torn-down L2 store.
+      if (signal.aborted) {
+        this.log('Validation aborted (caller disposed)');
+        return;
       }
 
       this.l2Store?.setContentHash(remoteHash);
@@ -848,9 +876,11 @@ export class MultiLevelCachingStore implements AsyncReadable {
   }
 
   /**
-   * Dispose the cache store. Flushes pending writes, cancels any in-flight
-   * cache-validation fetch, removes the dataset from the static validation
-   * queue, and clears L1.
+   * Dispose the cache store. Flushes pending writes, aborts this instance's
+   * own in-flight cache-validation entry (identity-scoped — it does NOT
+   * remove the entry from the static queue; the entry leaves the map only
+   * when its validation settles and it is still the head, so a newer
+   * same-URL store's head is left intact), and clears L1.
    *
    * The validation cancellation matters because two stores against the same
    * URL share the static queue; without it, a closure that captured `this`
@@ -870,9 +900,12 @@ export class MultiLevelCachingStore implements AsyncReadable {
     this.prefetcher?.dispose();
     this.prefetcher = null;
 
-    // Cancel any in-flight or queued validation belonging to this instance.
-    if (this.datasetId !== undefined) {
-      ValidationQueue.cancel(this.datasetId);
+    // Cancel this instance's OWN in-flight or queued validation. Aborting
+    // our captured entry (not the current queue head) guarantees we never
+    // cancel a newer same-URL store's validation.
+    if (this.validationEntry !== null) {
+      ValidationQueue.cancel(this.validationEntry);
+      this.validationEntry = null;
     }
 
     // Drop not-yet-started background L2 writes (best-effort tier; keeps
