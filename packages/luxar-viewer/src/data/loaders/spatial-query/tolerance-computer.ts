@@ -30,8 +30,7 @@
  * @module data/tolerance-computer
  */
 
-/** Geometry types supported by the tolerance computer. */
-export type GeometryType = 'points' | 'lines' | 'gsplats';
+import type { GeometryKind } from '../../data-loader-types';
 
 /** Per-dimension metadata needed for tolerance computation. */
 export interface DimensionInfo {
@@ -165,7 +164,7 @@ export function discreteDimMembershipTolerance(dimInfo: DimensionInfo | undefine
  * @returns Tolerance array of length ndim.
  */
 export function computeTolerance(
-  geometryType: GeometryType,
+  geometryType: GeometryKind,
   displayDims: readonly number[],
   ndim: number,
   dimensions?: DimensionInfo[],
@@ -188,7 +187,7 @@ export function computeTolerance(
  * Compute tolerance for a single hidden (non-displayed) dimension.
  */
 function computeHiddenDimTolerance(
-  geometryType: GeometryType,
+  geometryType: GeometryKind,
   dimIndex: number,
   dimInfo: DimensionInfo | undefined,
   options: ToleranceOptions

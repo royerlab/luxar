@@ -48,6 +48,24 @@ _EDIT_HINT = (
 )
 
 
+def _geometry_types(c: Dict[str, Any]) -> List[str]:
+    """Return ``geometry_types``, enforcing that it is a subset of ``node_types``.
+
+    The two lists are separate keys so the contract can name the leaf-geometry
+    vocabulary directly, but a geometry type that is not also a node type would
+    be unrepresentable on disk — so the containment is checked here rather than
+    left to reviewers.
+    """
+    geometry_types = list(c["geometry_types"])
+    stray = [t for t in geometry_types if t not in c["node_types"]]
+    if stray:
+        raise SystemExit(
+            f"contract.yaml: geometry_types entries {stray} are missing from "
+            f"node_types; every geometry type must also be a node type."
+        )
+    return geometry_types
+
+
 # --------------------------------------------------------------------------- #
 # Python projection
 # --------------------------------------------------------------------------- #
@@ -82,6 +100,7 @@ def render_python(c: Dict[str, Any]) -> str:
     gsplats = c["gsplats_format"]
     node_types = list(c["node_types"])
     node_kinds = list(c["node_kinds"])
+    geometry_types = _geometry_types(c)
     encodings = list(c["encodings"])
     attr_keys = list(c["attr_keys"])
     array_names = list(c["array_names"])
@@ -126,6 +145,12 @@ def render_python(c: Dict[str, Any]) -> str:
         "# --- scene-graph node types ---\n"
         f"{_py_literal_type('NodeTypeName', node_types)}\n"
         f"{_py_tuple('NODE_TYPES', 'NodeTypeName', node_types)}\n"
+    )
+
+    parts.append(
+        "# --- leaf geometry types (the element-bearing subset of NODE_TYPES) ---\n"
+        f"{_py_literal_type('GeometryTypeName', geometry_types)}\n"
+        f"{_py_tuple('GEOMETRY_TYPES', 'GeometryTypeName', geometry_types)}\n"
     )
 
     parts.append(
@@ -207,6 +232,7 @@ def render_typescript(c: Dict[str, Any]) -> str:
     gsplats = c["gsplats_format"]
     node_types = list(c["node_types"])
     node_kinds = list(c["node_kinds"])
+    geometry_types = _geometry_types(c)
     encodings = list(c["encodings"])
     attr_keys = list(c["attr_keys"])
     array_names = list(c["array_names"])
@@ -238,6 +264,9 @@ def render_typescript(c: Dict[str, Any]) -> str:
         "// --- scene-graph node types ---\n"
         f"{_ts_const('NODE_TYPES', node_types)}\n"
         f"{_ts_union('NodeTypeName', node_types)}",
+        "// --- leaf geometry types (the element-bearing subset of NODE_TYPES) ---\n"
+        f"{_ts_const('GEOMETRY_TYPES', geometry_types)}\n"
+        f"{_ts_union('GeometryTypeName', geometry_types)}",
         "// --- specialized-group kinds ---\n"
         f"{_ts_const('NODE_KINDS', node_kinds)}\n"
         f"{_ts_union('NodeKind', node_kinds)}",

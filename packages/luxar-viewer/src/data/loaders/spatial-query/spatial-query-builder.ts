@@ -21,7 +21,8 @@
  */
 
 import { log, Modules } from '../../../utils/log';
-import { computeTolerance, type GeometryType, type ToleranceOptions } from './tolerance-computer';
+import { computeTolerance, type ToleranceOptions } from './tolerance-computer';
+import type { GeometryKind } from '../../data-loader-types';
 import type { BaseViewState, LoadRange } from '../base-types';
 
 // ============================================================================
@@ -220,7 +221,7 @@ export type SpatialQueryOptions = {
 } & (
   | {
       /** Geometry-aware tolerance via `computeTolerance(geometryType, …)`. */
-      geometryType: GeometryType;
+      geometryType: GeometryKind;
       /** Optional tuning passed to `computeTolerance`. */
       toleranceOptions?: ToleranceOptions;
       tolerance?: never;
