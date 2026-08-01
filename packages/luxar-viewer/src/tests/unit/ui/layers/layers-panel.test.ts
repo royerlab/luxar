@@ -1784,11 +1784,13 @@ describe('LayersPanel — blend select drives the leaf material', () => {
 // Display-range / gamma routing: colormap (LUT) vs direct-color.
 //
 // Regression guard for the gamma-on-value fix. When a leaf renders through
-// a colormap LUT, the display range must drive the scalar window
-// (`updateScalarRange`) and the color GOG (`updateIntensity`/`updateOffset`)
-// must be bypassed — gamma is applied to the value pre-LUT in the shader.
-// In direct-color mode the GOG drives intensity/offset as before. Gamma is
-// pushed in both modes.
+// a colormap LUT, the display range (from the authored intensity/offset)
+// drives the scalar window (`updateScalarRange`), and the color GOG
+// (`updateIntensity`/`updateOffset`) is actively RESET to identity so the
+// authored gain does not double-apply — shaping the LUT window AND tinting
+// the post-LUT color (#936). Gamma is applied to the value pre-LUT in the
+// shader. In direct-color mode the GOG drives intensity/offset as before.
+// Gamma is pushed in both modes.
 // ---------------------------------------------------------------------------
 
 /** A LuxarMaterial stub that records the update calls + carries `defines`. */
@@ -1829,7 +1831,7 @@ describe('isColormapActive', () => {
 });
 
 describe('applyColorAdjustments — colormap vs direct routing', () => {
-  it('colormap mode: display range drives the scalar window; color GOG is bypassed', () => {
+  it('colormap mode: display range drives the scalar window; color GOG reset to identity', () => {
     const { mat, calls } = makeRecordingMaterial({ USE_COLORMAP: '' });
     // intensity/offset encode display range [0.5, 2.5]:
     //   computeDisplayRange(0.5, -0.25) → { min: 0.5, max: 2.5 }
@@ -1837,9 +1839,12 @@ describe('applyColorAdjustments — colormap vs direct routing', () => {
 
     expect(calls.gamma).toEqual([2.2]); // gamma still pushed (applied pre-LUT)
     expect(calls.scalarRange).toEqual([[0.5, 2.5]]);
-    // Color GOG NOT touched in colormap mode.
-    expect(calls.intensity).toEqual([]);
-    expect(calls.offset).toEqual([]);
+    // The shader always multiplies vColor by uIntensity post-LUT, so the
+    // color GOG is actively reset to identity (NOT left stale) — otherwise
+    // the authored gain would double-apply, shaping the LUT window AND
+    // tinting the mapped color (#936).
+    expect(calls.intensity).toEqual([1]);
+    expect(calls.offset).toEqual([0]);
   });
 
   it('direct-color mode: GOG drives intensity/offset; scalar range untouched', () => {
