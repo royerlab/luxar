@@ -70,15 +70,39 @@ if (existsSync(jsPath)) {
     fail(`Failed to dynamically import the bundle: ${err.message}`);
   }
 
-  // 4. `three` should be external. Heuristic: the JS bundle should not
-  // contain the THREE.WebGLRenderer source (a large, recognizable string).
-  // A real check would parse imports, but this is a fast sanity check.
+  // 4. `three` (and all `three/*` subpaths) should be external. Heuristic: the
+  // JS bundle should not contain THREE source. `class WebGLRenderer` catches an
+  // inlined `three.module.js`, but the real failure mode is a duplicated THREE
+  // *core* (`three.core.js`), inlined when the `three/webgpu` / `three/tsl`
+  // subpaths the TSL materials import are not externalized — and core carries
+  // no `WebGLRenderer`. So we also scan for markers unique to THREE's core
+  // source that the viewer's own code never produces. A real check would parse
+  // imports, but this is a fast sanity check.
   const bundleText = readFileSync(jsPath, 'utf8');
   const bundleSizeKB = statSync(jsPath).size / 1024;
-  if (bundleText.includes('class WebGLRenderer')) {
+  // Markers that appear only if THREE source was inlined into the bundle.
+  // The lib build runs unminified through rolldown (Vite 8), which rewrites
+  // `class Foo {` → `var Foo = class {` and `const X = '…'` → `var X = "…"`,
+  // so match the class/assignment forms (covering classic Rollup too) rather
+  // than the verbatim source text. `\b` before each name avoids matching a
+  // longer identifier that merely ends in the name (e.g. MockEventDispatcher):
+  //  - EventDispatcher — THREE's root base class (three.core.js), dragged in
+  //    by ANY inlined core, including via three/webgpu and three/tsl
+  //  - WebGLRenderer   — the full renderer (three.module.js)
+  //  - REVISION        — the version constant (three.core.js), version-agnostic
+  const threeSourceMarkers = [
+    /\bclass EventDispatcher\b|\bEventDispatcher\s*=\s*class\b/,
+    /\bclass WebGLRenderer\b|\bWebGLRenderer\s*=\s*class\b/,
+    /\bREVISION\s*=\s*['"]/,
+  ];
+  const foundMarker = threeSourceMarkers.find((re) => re.test(bundleText));
+  if (foundMarker) {
     fail(
-      `Bundle appears to contain THREE source (size: ${bundleSizeKB.toFixed(0)}KB). ` +
-        'three must be externalized as a peer dependency.'
+      `Bundle appears to contain an inlined THREE core / duplicate runtime ` +
+        `(matched ${foundMarker}, size: ${bundleSizeKB.toFixed(0)}KB). ` +
+        'three is a peer dependency: `three` and ALL `three/*` subpaths ' +
+        '(three/webgpu, three/tsl, …) must be externalized so the host page ' +
+        'supplies a single THREE runtime.'
     );
   }
 
