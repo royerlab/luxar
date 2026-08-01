@@ -257,6 +257,36 @@ class TestResolveAdditiveAxisLines:
         with pytest.raises(TypeError, match="must be None, bool, or dict"):
             resolve_additive_axis_lines("auto")  # type: ignore[arg-type]
 
+    def test_valid_stream_counts_resolves(self) -> None:
+        spec = resolve_additive_axis_lines({"counts": "stream:1000"})
+        assert spec is not None
+        assert spec["counts"] == "stream:1000"
+
+    def test_malformed_stream_counts_raise_at_resolve(self) -> None:
+        # A ``stream:<c>`` with c < 1 must fail at resolve time, before any
+        # kind=lod wrapper group is written under a substitutive ladder.
+        with pytest.raises(ValueError, match="stream first-chunk size must be >= 1"):
+            resolve_additive_axis_lines({"counts": "stream:0"})
+        with pytest.raises(ValueError, match="stream"):
+            resolve_additive_axis_lines({"counts": "stream:-5"})
+
+    def test_valid_energy_counts_resolves(self) -> None:
+        spec = resolve_additive_axis_lines({"counts": "energy:0.5,0.9,1.0"})
+        assert spec is not None
+        assert spec["counts"] == "energy:0.5,0.9,1.0"
+
+    def test_other_doomed_counts_raise_at_resolve(self) -> None:
+        # Same partial-group trap as stream:0 — any counts value the write
+        # path is guaranteed to reject must fail at resolve time too.
+        with pytest.raises(ValueError, match="unrecognized breakpoints string"):
+            resolve_additive_axis_lines({"counts": "equal-count"})
+        with pytest.raises(ValueError, match="energy: fractions must be numbers"):
+            resolve_additive_axis_lines({"counts": "energy:abc"})
+        with pytest.raises(ValueError, match="energy: fractions must be non-empty"):
+            resolve_additive_axis_lines({"counts": "energy:"})
+        with pytest.raises(ValueError, match="non-empty"):
+            resolve_additive_axis_lines({"counts": []})
+
     def test_breakpoints_pass_through(self) -> None:
         spec = resolve_additive_axis_lines({"breakpoints": [2, 4]})
         assert spec is not None
@@ -332,6 +362,60 @@ class TestAddLinesAdditiveLod:
         assert grp.attrs["n_additive_sublods"] == 4
         subgroups = sorted(k for k in grp.keys() if k.startswith("additive_"))
         assert len(subgroups) == 4
+
+    def test_image_labels_suppress_ladder_and_are_kept(self, tmp_path) -> None:
+        # Regression: the plain additive multi-LOD writer has no image_labels
+        # channel, so an explicit ladder used to SILENTLY DROP the labels. It
+        # must instead refuse the ladder (write a single leaf) and keep the
+        # labels — mirroring the substitutive path's suppress_reason guard —
+        # and warn, since the explicit request cannot be honoured.
+        output = tmp_path / "t.luxar.zarr"
+        rng = np.random.RandomState(0)
+        vertices = rng.rand(40, 3).astype(np.float32)
+        widths = np.ones(40, dtype=np.float32) * 0.1
+
+        with LuxarZarrCompiler(output) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            with pytest.warns(UserWarning, match="cannot be honoured"):
+                scene.add_lines(
+                    "ln",
+                    vertices,
+                    widths=widths,
+                    line_type="segments",
+                    image_labels=[b"x"] * 40,
+                    additive_lod=dict(n_lods=4, method="random"),
+                )
+
+        grp = zarr.open(str(output), mode="r")["ln"]
+        assert grp.attrs["type"] == "lines"
+        assert grp.attrs["n_vertices"] == 40
+        # Ladder suppressed → single leaf, no additive_<i> subgroups.
+        assert "n_additive_sublods" not in grp.attrs
+        assert not [k for k in grp.keys() if k.startswith("additive_")]
+        # Labels survived to the leaf.
+        assert grp.attrs.get("has_image_labels") is True
+
+    def test_invalid_additive_spec_raises_even_with_image_labels(
+        self, tmp_path
+    ) -> None:
+        # The image_labels guard refuses the ladder but must still validate
+        # the spec — a malformed additive_lod= fails fast on every path.
+        output = tmp_path / "t.luxar.zarr"
+        rng = np.random.RandomState(0)
+        vertices = rng.rand(40, 3).astype(np.float32)
+        widths = np.ones(40, dtype=np.float32) * 0.1
+
+        with LuxarZarrCompiler(output) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            with pytest.raises(ValueError, match="method must be"):
+                scene.add_lines(
+                    "ln",
+                    vertices,
+                    widths=widths,
+                    line_type="segments",
+                    image_labels=[b"x"] * 40,
+                    additive_lod=dict(method="bogus"),
+                )
 
     def test_explicit_n_lods_is_honored(self, tmp_path) -> None:
         """B8-G2/[P8]: symmetric with ``test_points.py::
@@ -414,14 +498,18 @@ class TestLinesStreamBreakpoints:
         # becomes 100 polylines in the first level.
         verts = self._segments(500)
 
-        levels = make_additive_lod_lines(verts, line_type="segments", counts="stream:200")
+        levels = make_additive_lod_lines(
+            verts, line_type="segments", counts="stream:200"
+        )
 
         assert len(levels[0]) == 100
 
     def test_every_level_holds_whole_polylines(self) -> None:
         verts = self._segments(500, seed=1)
 
-        levels = make_additive_lod_lines(verts, line_type="segments", counts="stream:200")
+        levels = make_additive_lod_lines(
+            verts, line_type="segments", counts="stream:200"
+        )
 
         for level in levels:
             for member in level:
@@ -432,7 +520,9 @@ class TestLinesStreamBreakpoints:
     def test_levels_partition_the_polylines_exactly(self) -> None:
         verts = self._segments(400, seed=2)
 
-        levels = make_additive_lod_lines(verts, line_type="segments", counts="stream:100")
+        levels = make_additive_lod_lines(
+            verts, line_type="segments", counts="stream:100"
+        )
 
         joined = np.concatenate([m for level in levels for m in level])
         assert joined.size == 800

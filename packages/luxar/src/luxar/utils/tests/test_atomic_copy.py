@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 from pathlib import Path
 from unittest.mock import patch
@@ -12,7 +13,7 @@ from luxar.utils.atomic_copy import atomic_copy_file, atomic_copytree
 
 
 def _partial_then_fail(_src: object, dst_arg: object) -> None:
-    """Stand-in for ``shutil.copy2`` that writes PARTIAL bytes to whatever
+    """Stand-in for ``shutil.copyfile`` that writes PARTIAL bytes to whatever
     destination path it is handed (the temp sibling under correct code, the
     canonical dst under mutation), then raises — modelling a real mid-write
     interruption (disk full, SIGKILL)."""
@@ -167,7 +168,7 @@ class TestAtomicCopyFile:
         """A copy that fails AFTER writing partial bytes must leave a
         pre-existing ``dst`` untouched and leak no ``.tmp_*`` sibling.
 
-        The patched ``copy2`` writes partial bytes to whatever path it is
+        The patched ``copyfile`` writes partial bytes to whatever path it is
         handed (the temp sibling under correct code, or the canonical ``dst``
         under a mutation that skips the temp+rename), then raises. This pins
         the atomicity property: it kills both (a) dropping the temp cleanup
@@ -179,7 +180,7 @@ class TestAtomicCopyFile:
         dst = tmp_path / "dst.bin"
         dst.write_bytes(b"previous")
 
-        with patch("shutil.copy2", side_effect=_partial_then_fail):
+        with patch("shutil.copyfile", side_effect=_partial_then_fail):
             with pytest.raises(OSError, match="disk full mid-write"):
                 atomic_copy_file(src, dst)
 
@@ -197,7 +198,7 @@ class TestAtomicCopyFile:
         src.write_bytes(b"payload")
         dst = tmp_path / "dst.bin"  # does NOT exist
 
-        with patch("shutil.copy2", side_effect=_partial_then_fail):
+        with patch("shutil.copyfile", side_effect=_partial_then_fail):
             with pytest.raises(OSError, match="disk full mid-write"):
                 atomic_copy_file(src, dst)
 
@@ -206,3 +207,67 @@ class TestAtomicCopyFile:
         # Only the source remains — no partial temp sibling and no stray file
         # under any prefix (kills mutation a even if it renames).
         assert sorted(p.name for p in tmp_path.iterdir()) == ["src.bin"]
+
+    def test_temp_file_is_fsynced_before_rename(self, tmp_path: Path) -> None:
+        """The copied bytes must be ``fsync``-ed BEFORE the rename, so ``dst``
+        can't surface with unwritten blocks after a crash. Kills a mutation that
+        drops the flush, reorders it after ``os.replace``, or flushes the wrong
+        file (``src`` instead of the temp copy)."""
+        src = tmp_path / "src.bin"
+        src.write_bytes(b"payload")
+        dst = tmp_path / "dst.bin"
+
+        calls: list[str] = []
+        synced_inode: list[int] = []
+        real_fsync, real_replace = os.fsync, os.replace
+
+        def _record_fsync(fd: int) -> None:
+            calls.append("fsync")
+            synced_inode.append(os.fstat(fd).st_ino)
+            real_fsync(fd)
+
+        def _record_replace(a: object, b: object) -> None:
+            calls.append("replace")
+            real_replace(a, b)  # type: ignore[arg-type]
+
+        with (
+            patch("os.fsync", side_effect=_record_fsync),
+            patch("os.replace", side_effect=_record_replace),
+        ):
+            atomic_copy_file(src, dst)
+
+        assert calls == ["fsync", "replace"]
+        assert dst.read_bytes() == b"payload"
+        # The flushed fd must be the temp copy, whose inode the rename carries
+        # onto dst — NOT src, which keeps its own inode.
+        assert synced_inode == [dst.stat().st_ino]
+        assert dst.stat().st_ino != src.stat().st_ino
+
+    def test_read_only_source_copies_and_keeps_its_mode(self, tmp_path: Path) -> None:
+        """A read-only source must still copy: the flush happens while the temp
+        file has default (writable) permissions, BEFORE ``copystat`` applies the
+        source's ``0444`` mode. Kills a mutation that flushes after the metadata
+        copy (reopening a read-only file for write raises ``PermissionError``)."""
+        src = tmp_path / "src.bin"
+        src.write_bytes(b"payload")
+        os.chmod(src, 0o444)
+        dst = tmp_path / "dst.bin"
+
+        try:
+            result = atomic_copy_file(src, dst)
+
+            assert result == dst
+            assert dst.read_bytes() == b"payload"
+            # copy2 semantics: the source's read-only mode reaches dst.
+            assert dst.stat().st_mode & 0o777 == 0o444
+            # No temp sibling left behind.
+            assert sorted(p.name for p in tmp_path.iterdir()) == [
+                "dst.bin",
+                "src.bin",
+            ]
+        finally:
+            # Restore write bits so tmp_path cleanup never trips on platforms
+            # that refuse to unlink read-only files (Windows).
+            for p in (src, dst):
+                if p.exists():
+                    os.chmod(p, 0o644)

@@ -7,6 +7,7 @@ in ``core/group/group.py``.
 
 from __future__ import annotations
 
+import warnings
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -233,7 +234,32 @@ def add_points_impl(
         # 1-part-partition fall-through so a user can pass both
         # ``partition=`` and ``additive_lod=`` and get the inner LOD
         # ladder when partition doesn't fire.
-        if additive_lod is not None:
+        if (
+            additive_lod is not None
+            and additive_lod is not False
+            and image_labels is not None
+        ):
+            from ..lod.points import resolve_additive_axis_points
+
+            # The multi-LOD writer has no image_labels channel, so laddering
+            # would silently drop them. Refuse the ladder, not the labels: fall
+            # through to the single-leaf write below (which forwards
+            # image_labels). This branch only fires for an EXPLICIT
+            # ``additive_lod`` (the guard excludes ``None``/``False``), so warn
+            # — the caller asked for something that cannot be honoured. Mirrors
+            # the substitutive path's suppress_reason guard in
+            # compose_additive_under_substitutive, which warns on the same
+            # explicit-request condition. Still validate (and discard) the spec
+            # so a malformed additive_lod= fails fast here exactly as it would
+            # without image_labels.
+            resolve_additive_axis_points(additive_lod)
+            warnings.warn(
+                f"'{name}': the requested streaming ladder cannot be honoured "
+                "(image_labels is set); levels will load all-at-once.",
+                UserWarning,
+                stacklevel=2,
+            )
+        elif additive_lod is not None:
             from ..lod.points import (
                 make_additive_lod_points,
                 resolve_additive_axis_points,

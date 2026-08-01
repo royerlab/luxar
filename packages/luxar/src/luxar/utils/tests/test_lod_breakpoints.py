@@ -17,6 +17,7 @@ from luxar.utils.lod_breakpoints import (
     sibling_aware_stream_breakpoints,
     stream_cuts,
     streaming_chunk_splats,
+    validate_element_breakpoints,
 )
 
 
@@ -62,6 +63,37 @@ class TestParseStreamChunk:
     def test_rejects_non_integer_body(self) -> None:
         with pytest.raises(ValueError, match="stream:<c>"):
             parse_stream_chunk("stream:lots")
+
+
+class TestValidateElementBreakpoints:
+    def test_valid_specs_pass(self) -> None:
+        validate_element_breakpoints("stream:14000")
+        validate_element_breakpoints("energy:0.5,0.9,1.0")
+        validate_element_breakpoints([100, 200, 400])
+
+    def test_rejects_bad_stream_chunk(self) -> None:
+        with pytest.raises(ValueError, match="must be >= 1"):
+            validate_element_breakpoints("stream:0")
+        with pytest.raises(ValueError, match="stream:<c>"):
+            validate_element_breakpoints("stream:lots")
+
+    def test_rejects_unknown_string(self) -> None:
+        # 'equal-count' belongs to the GSplats vocabulary only; Points/Lines
+        # express it via n_lods.
+        with pytest.raises(ValueError, match="unrecognized breakpoints string"):
+            validate_element_breakpoints("equal-count")
+
+    def test_rejects_bad_energy_fractions(self) -> None:
+        with pytest.raises(ValueError, match="must be numbers"):
+            validate_element_breakpoints("energy:0.5,abc")
+        with pytest.raises(ValueError, match="must be non-empty"):
+            validate_element_breakpoints("energy:")
+        with pytest.raises(ValueError, match="must be non-empty"):
+            validate_element_breakpoints("energy: , ,")
+
+    def test_rejects_empty_list(self) -> None:
+        with pytest.raises(ValueError, match="non-empty"):
+            validate_element_breakpoints([])
 
 
 class TestStreamingChunkSplats:

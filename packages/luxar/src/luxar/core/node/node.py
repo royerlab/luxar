@@ -146,8 +146,12 @@ class Node:
 
             # Store attributes
             if self._writer is not None:
-                # Write via writer interface and cache
-                self._writer.write_group(self.path, **attrs)
+                # Write via writer interface and cache. ``transform`` /
+                # ``nd_transform`` were already normalized above (the cache must
+                # hold the column-major form for the ``transform`` getter), so
+                # flag the write to keep write_group from transposing them a
+                # second time (prepare_transform_attrs is not idempotent).
+                self._writer.write_group(self.path, _transform_normalized=True, **attrs)
                 self._attrs_cache.update(attrs)
             else:
                 # Metadata-only mode (no writer available)
@@ -200,7 +204,51 @@ class Node:
                 stacklevel=3,
             )
             return
-        self._writer.write_group(self.path, **{key: value})
+        # ``transform`` / ``nd_transform`` values reaching this method are
+        # already normalized/validated by the setters; flag the write so
+        # write_group does not re-transpose them (no-op for other keys).
+        self._writer.write_group(self.path, _transform_normalized=True, **{key: value})
+
+    def _delete_attr(self, key: str) -> None:
+        """Remove an attribute from both the cache and the zarr store.
+
+        The deletion counterpart of :meth:`_persist_attr`. After the writer
+        has been finalized (context exit or ``Scene.to_zarr``), the on-disk
+        attribute can no longer be removed through this writer — the
+        consolidated metadata is sealed and editing only the raw ``.zattrs``
+        would desynchronize it from the consolidated ``.zmetadata``. The
+        in-memory cache is still updated so getters reflect the removal on the
+        live Node, but a warning surfaces the silent persistence gap instead
+        of letting the raw and consolidated views drift apart unnoticed.
+        Callers that need to clear on-disk attrs after finalize should re-open
+        the zarr through a fresh writer/loader.
+
+        Args:
+            key: Attribute key to remove
+        """
+        if key not in self._attrs_cache:
+            return
+        del self._attrs_cache[key]
+        if self._writer is None:
+            return
+        # Inspect the writer's finalization state without coupling to its
+        # concrete class, mirroring ``_persist_attr``. Sniffing the flag lets
+        # us emit a clear warning instead of touching the sealed store.
+        is_finalized = bool(getattr(self._writer, "_is_finalized", False))
+        if is_finalized:
+            import warnings
+
+            warnings.warn(
+                f"Clearing Node attribute {key!r} after the writer has been "
+                "finalized. The in-memory cache is updated, but the on-disk "
+                "zarr attribute is unchanged. Clear attributes inside the "
+                "LuxarZarrCompiler context (or before Scene.to_zarr) for "
+                "persistence.",
+                UserWarning,
+                stacklevel=3,
+            )
+            return
+        self._writer.delete_group_attr(self.path, key)
 
     # --------------------------------------------------------------- hierarchy
     def _ensure_no_duplicate_child(self, name: str) -> None:
@@ -411,10 +459,7 @@ class Node:
         """
         if matrix is None:
             # Remove transform from cache and zarr store
-            if "transform" in self._attrs_cache:
-                del self._attrs_cache["transform"]
-                if self._writer is not None:
-                    self._writer.delete_group_attr(self.path, "transform")
+            self._delete_attr("transform")
         else:
             from ..transforms import prepare_transform_for_zarr
 
@@ -469,10 +514,7 @@ class Node:
             ValueError: If nd_transform is invalid
         """
         if value is None:
-            if "nd_transform" in self._attrs_cache:
-                del self._attrs_cache["nd_transform"]
-                if self._writer is not None:
-                    self._writer.delete_group_attr(self.path, "nd_transform")
+            self._delete_attr("nd_transform")
         else:
             from ...validation.nd_transforms import validate_nd_transform
 

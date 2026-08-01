@@ -344,7 +344,9 @@ def demo_deps(
         help="Only consider one extra (demos / io / gsplats). Default: all.",
     ),
     install: bool = typer.Option(
-        False, "--install", help="Install the extras that have missing packages."
+        False,
+        "--install",
+        help="Install the extras for missing or out-of-date packages.",
     ),
     dry_run: bool = typer.Option(
         False, "--dry-run", help="With --install, print the pip command only."
@@ -354,8 +356,8 @@ def demo_deps(
 
     Demos deliberately keep heavyweight packages out of the core install, so a
     fresh checkout can run `luxar demo list` but not every demo. This reports
-    exactly what is missing and, with ``--install``, installs the Luxar extras
-    that provide it.
+    what is missing or out of date and, with ``--install``, installs the Luxar
+    extras that provide it.
     """
     from ..demos import extras_for, survey
 
@@ -378,7 +380,9 @@ def demo_deps(
         )
         raise typer.Exit(1)
 
-    missing = [r for r in rows if not r.installed]
+    # "Unmet" = missing OR installed-but-below-its-pin (OUTDATED). Both need the
+    # extra (re)installed, so both drive the same action set and exit code.
+    unmet = [r for r in rows if not r.satisfied]
     # Never let a column be narrower than its own header — a one-row report
     # (e.g. `--extra gsplats`) would otherwise print a ragged table.
     mw = max(max(len(r.module) for r in rows), len("MODULE"))
@@ -392,23 +396,26 @@ def demo_deps(
     # (the old `mw + sw + 20` overshot by one and left a dangling glyph).
     aprint("  " + "─" * (len(header) - 2))
     for r in rows:
+        # Three-way: satisfied → ok; importable but below its pin → OUTDATED;
+        # not importable → MISSING.
+        status = "ok" if r.satisfied else ("OUTDATED" if r.installed else "MISSING")
         aprint(
             f"  {r.module:<{mw}}  {r.spec.spec:<{sw}}  "
-            f"{(r.spec.extra or '—'):<8} {'ok' if r.installed else 'MISSING'}"
+            f"{(r.spec.extra or '—'):<8} {status}"
         )
     aprint("")
 
-    if not missing:
+    if not unmet:
         # Phrased to avoid subject-verb agreement on the count ("1 dependency
         # are installed"), which a plural-noun-only fix leaves behind.
         aprint(f"✅ Nothing missing — all {len(rows)} optional {plural} installed.")
         raise typer.Exit(0)
 
-    aprint(f"⚠️  {len(missing)} missing: {', '.join(r.module for r in missing)}")
+    aprint(f"⚠️  {len(unmet)} missing or outdated: {', '.join(r.module for r in unmet)}")
 
     # Specs outside every extra can't be installed via luxar[…]; name them.
-    orphans = [r for r in missing if not r.spec.extra]
-    extras = extras_for(missing)
+    orphans = [r for r in unmet if not r.spec.extra]
+    extras = extras_for(unmet)
     if orphans:
         aprint(
             "   Not in any extra (install individually): "
@@ -440,13 +447,16 @@ def demo_deps(
     # pip wrote into site-packages after our finders cached its contents, so a
     # re-survey without this reports everything still missing.
     importlib.invalidate_caches()
-    left = [r for r in survey(extra) if not r.installed]
+    left = [r for r in survey(extra) if not r.satisfied]
     # Judge the install ONLY on what it was asked to provide. An orphan spec
     # (no extra) was never in the pip command, so listing it as "still missing
     # after install" blames the install for something it never attempted.
     still = [r for r in left if r.spec.extra in extras]
     if still:
-        aprint(f"⚠️  Still missing after install: {', '.join(r.module for r in still)}")
+        aprint(
+            "⚠️  Still missing or outdated after install: "
+            f"{', '.join(r.module for r in still)}"
+        )
         raise typer.Exit(1)
     aprint(f"✅ Installed: {', '.join(f'luxar[{e}]' for e in extras)}.")
     # Don't claim completeness while an orphan is still absent — the install

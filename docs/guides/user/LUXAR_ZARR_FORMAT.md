@@ -788,6 +788,16 @@ an effective opacity of `0.25` for the child's material. Unset values are
 identity (1.0 for multiplicative, 0.0 for additive). The viewer recomposes
 on every slider change so edits to group layers flow into descendants.
 
+**Producers: set `blending_mode` on the layer, never on its internal
+children.** Unlike the multiplicative attrs, it is *nearest-setter-wins*, so a
+copy stamped on a `kind=partition` part or a `kind=lod` child **shadows** the
+layer that contains it. The layers panel exposes one Blend control per layer,
+so a shadowed layer's control silently does nothing. The Python writers route
+it (with the other compositing attrs) onto the wrapper only — see
+`COMPOSITING_ATTRS` in `core/group/compositing.py`. Correspondingly, within a
+layer's own subtree the panel treats the layer's mode as authoritative and
+ignores a mode authored on a non-layer descendant.
+
 ### Edits Are Viewer-Only
 
 Changes made in the panel (range, gamma, opacity, blending, colormap) are
@@ -1327,7 +1337,11 @@ per-array above (`linear_perchannel_u16`, `rgb_uint8`,
 
 - **`broadcasted`** — all elements share one value: the array is stored with
   shape `(1,)` / `(1, d)` and `encoding.n_elements` records the logical count
-  N. Readers expand on load.
+  N. For **color** arrays, `encoding.original_dtype` records the numpy dtype
+  string of the stored value (e.g. `uint8`, `uint16`) so readers restore the
+  native integer color dtype and normalize it — rather than reading raw 0-255
+  floats. Non-color arrays (radii/sharpness/amplitudes) omit it and decode as
+  float32. Readers expand on load.
 - **`array_ref`** — content-deduplication: a byte-identical duplicate of
   another array in the same store is stored as an **empty** array (physical
   shape `(0,)` / `(0, D)`) whose `encoding` carries `target` (path of the

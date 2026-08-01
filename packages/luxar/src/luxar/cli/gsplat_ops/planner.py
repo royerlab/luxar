@@ -17,8 +17,33 @@ import numpy as np
 import typer
 from arbol import aprint, asection
 
+from .fitting_fit_utils import _invocation_token
+
 if TYPE_CHECKING:
     from luxar.gsplats.calibration import SplatDensity
+
+
+def _parallel_staging_dir(output: Path, token: str) -> Path:
+    """Per-invocation staging dir for the parallel content-box fit.
+
+    ``fit_planned_parallel`` clean-slates (``rmtree`` + ``mkdir``) whatever
+    ``tmp_dir`` it is handed, so a directory derived only from the output
+    path would let two concurrent ``fit -j`` runs to the SAME output delete
+    each other's in-progress boxes. Appending a unique per-invocation
+    ``token`` gives each invocation its own dir, so it only ever cleans its
+    OWN boxes.
+    """
+    return output.parent / f".{output.name}.boxes.{token}"
+
+
+def _internal_plan_json(output: Path, token: str) -> Path:
+    """Per-invocation path for the internal plan JSON the workers re-read.
+
+    Tokenized so concurrent content fits to the SAME output never overwrite
+    or unlink each other's plan mid-launch (the plan is written, re-read by
+    every box worker, then unlinked on completion).
+    """
+    return output.parent / f".{output.name}.plan.{token}.json"
 
 
 def _save_fit_result(
@@ -182,6 +207,10 @@ def run_content_fit(
 
     # ── obtain a plan: load --plan, or scan + plan ──
     created_plan = False
+    # One unique per-invocation token shared by the internal plan JSON and
+    # the parallel staging dir, so concurrent content fits to the SAME output
+    # can't clobber each other's plan or in-progress boxes (issue #1040).
+    token = _invocation_token()
     if plan is not None:
         fitplan = FitPlan.from_json(plan)
         plan_json_path: Path = Path(plan)
@@ -243,8 +272,8 @@ def run_content_fit(
             return
         if output is None:
             raise typer.BadParameter("content fit requires --output/-o")
-        # internal plan JSON the parallel workers re-read
-        plan_json_path = output.parent / f".{output.name}.plan.json"
+        # internal plan JSON the parallel workers re-read (per-invocation)
+        plan_json_path = _internal_plan_json(output, token)
         plan_json_path.parent.mkdir(parents=True, exist_ok=True)
         fitplan.to_json(plan_json_path)
         created_plan = True
@@ -290,7 +319,10 @@ def run_content_fit(
             array_key=array_key,
             axes=axes,
         )
-        tmp_dir = output.parent / f".{output.name}.boxes"
+        # Per-invocation staging (reusing the shared unique token): so
+        # concurrent `fit -j` runs targeting one output can't clobber each
+        # other's in-progress boxes — the helper clean-slates only its OWN dir.
+        tmp_dir = _parallel_staging_dir(output, token)
         with asection(f"Fitting {fitplan.n_boxes} boxes ({n_jobs} concurrent)"):
             result = fit_planned_parallel(
                 fitplan,
@@ -329,6 +361,10 @@ def run_content_fit(
     )
     if created_plan and not keep_boxes:
         Path(plan_json_path).unlink(missing_ok=True)
+    elif created_plan:
+        # --keep-boxes retains the internal plan too; its token-suffixed name
+        # is no longer predictable from the output path, so point at it.
+        aprint(f"Kept plan at {plan_json_path}")
 
 
 def _resolve_density(

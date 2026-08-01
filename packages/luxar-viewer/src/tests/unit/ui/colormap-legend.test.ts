@@ -46,6 +46,7 @@ function makeLayer(overrides: Partial<LayerInfo> = {}): LayerInfo {
     selected: false,
     colormap: 'viridis',
     supportsColormap: true,
+    scalarWindow: true,
     ...overrides,
   };
 }
@@ -72,12 +73,13 @@ function toSceneGraph(layers: LayerInfo[]): SceneNode {
         opacity: l.opacity,
         gamma: l.gamma,
         blending_mode: l.blendingMode,
-        // The real LayerStateManager derives displayMin/Max from
-        // color_data_range when intensity=1 and offset=0 (defaults).
-        // Tests override displayMin/Max directly, so feed the desired
-        // range in as color_data_range so the derived LayerInfo fields
-        // come out matching the test's expectation.
-        color_data_range: [l.displayMin, l.displayMax],
+        // The real LayerStateManager derives displayMin/Max from the SCALAR
+        // range when the layer is colormapped and intensity=1 / offset=0
+        // (defaults) — a direct-colour layer instead starts at the identity
+        // [0, 1]. The legend only ever renders colormapped layers, so feed the
+        // desired range in as scalar_data_range and the derived LayerInfo
+        // fields come out matching the test's expectation.
+        scalar_data_range: [l.displayMin, l.displayMax],
         colormap: l.colormap,
         has_scalars: l.supportsColormap,
       },
