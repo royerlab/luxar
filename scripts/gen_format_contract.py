@@ -48,21 +48,58 @@ _EDIT_HINT = (
 )
 
 
+#: Node types that are containers, not element-bearing geometry leaves. These
+#: are the members of ``node_types`` that must NOT appear in ``geometry_types``.
+_CONTAINER_NODE_TYPES = ("scene", "group")
+
+
 def _geometry_types(c: Dict[str, Any]) -> List[str]:
-    """Return ``geometry_types``, enforcing that it is a subset of ``node_types``.
+    """Return ``geometry_types``, validated as the leaf subset of ``node_types``.
 
     The two lists are separate keys so the contract can name the leaf-geometry
-    vocabulary directly, but a geometry type that is not also a node type would
-    be unrepresentable on disk — so the containment is checked here rather than
-    left to reviewers.
+    vocabulary directly, but that freedom needs guarding — each rule below
+    corresponds to a way the generated projections would otherwise be wrong
+    rather than merely odd:
+
+    * **non-empty** — an empty list renders ``Literal[]`` (a Python syntax
+      error) and ``export type GeometryTypeName = ;`` (a TypeScript one), so
+      codegen would emit files that cannot be imported.
+    * **subset of node_types** — a geometry type that is not a node type is
+      unrepresentable on disk, since the writer stamps ``type`` from that
+      vocabulary.
+    * **no containers** — ``scene`` / ``group`` pass the subset rule but are not
+      element-bearing, and admitting one would hand the viewer's per-geometry
+      dispatch a kind that has no loader.
+    * **no duplicates** — a repeat silently widens ``GEOMETRY_TYPES`` while
+      leaving the union unchanged, desynchronising the two projections of the
+      same key.
     """
     geometry_types = list(c["geometry_types"])
+
+    def fail(problem: str) -> None:
+        raise SystemExit(f"contract.yaml: geometry_types {problem}")
+
+    if not geometry_types:
+        fail("must not be empty (codegen would emit an empty Literal/union)")
+
     stray = [t for t in geometry_types if t not in c["node_types"]]
     if stray:
-        raise SystemExit(
-            f"contract.yaml: geometry_types entries {stray} are missing from "
-            f"node_types; every geometry type must also be a node type."
+        fail(
+            f"entries {stray} are missing from node_types; "
+            "every geometry type must also be a node type"
         )
+
+    containers = [t for t in geometry_types if t in _CONTAINER_NODE_TYPES]
+    if containers:
+        fail(
+            f"entries {containers} are container node types, not element-bearing "
+            "geometry leaves; remove them"
+        )
+
+    duplicates = sorted({t for t in geometry_types if geometry_types.count(t) > 1})
+    if duplicates:
+        fail(f"contains duplicate entries {duplicates}")
+
     return geometry_types
 
 

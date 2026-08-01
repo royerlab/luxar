@@ -21,9 +21,6 @@ import type { GSplatsDataLoader } from '../../../types/gsplats';
 import { log, Modules } from '../../../utils/log';
 import { classifyLoaderError, type LoaderErrorKind } from '../nodes/load-leaf-error-dispatch';
 
-/** Any geometry loader. */
-export type AnyDataLoader = DataLoader | LinesDataLoader | GSplatsDataLoader;
-
 /**
  * Which loader interface belongs to which geometry kind.
  *
@@ -31,6 +28,17 @@ export type AnyDataLoader = DataLoader | LinesDataLoader | GSplatsDataLoader;
  * what keeps the kind-keyed store honest: `register`/`loadersOf` are generic in
  * `K`, so `register('points', path, someLinesLoader)` is a compile error rather
  * than a silent mis-route through the wrong update path.
+ *
+ * Every {@link GeometryKind} must appear here. That is enforced — not merely
+ * asked for — by {@link AnyDataLoader} indexing this type with the full
+ * `GeometryKind` union: a kind added to `contract.yaml` without a loader entry
+ * above fails to compile with `Type '<kind>' cannot be used to index type
+ * 'LoaderByKind'`.
+ *
+ * Note the enforcement can NOT be written as `interface LoaderByKind extends
+ * Record<GeometryKind, …>` — an interface *inherits* members it does not
+ * redeclare, so a new kind would silently pick up the permissive base type
+ * instead of erroring.
  */
 export type LoaderByKind = {
   points: DataLoader;
@@ -39,18 +47,10 @@ export type LoaderByKind = {
 };
 
 /**
- * Compile-time guard: every {@link GeometryKind} must have an entry in
- * {@link LoaderByKind}. A geometry kind added to `contract.yaml` without a
- * loader type above fails to compile here, with `Exclude<…>` naming the
- * missing kind.
- *
- * Note this cannot be expressed as `interface LoaderByKind extends
- * Record<GeometryKind, AnyDataLoader>` — an interface *inherits* members it
- * does not redeclare, so a new kind would silently pick up the permissive
- * `AnyDataLoader` instead of erroring.
+ * Any geometry loader — derived from {@link LoaderByKind} rather than listing
+ * the three interfaces again, so the two cannot drift apart.
  */
-type AssertNever<T extends never> = T;
-export type EveryKindHasALoaderType = AssertNever<Exclude<GeometryKind, keyof LoaderByKind>>;
+export type AnyDataLoader = LoaderByKind[GeometryKind];
 
 /**
  * Error information tracked for failed loaders.

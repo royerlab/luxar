@@ -41,8 +41,10 @@ node_types: ["scene", "group", "points", "lines", "gsplats"]
 # element data (as opposed to the `scene` / `group` containers). This is the
 # vocabulary that keys per-geometry dispatch in the viewer: loader registration,
 # leaf-node loading, retry, prefetch, and tolerance computation.
+#   Python: io/_compiler/finalize/lod_backfill.py
 #   TS: data/data-loader-types.ts::GeometryKind
-# Every entry MUST also appear in `node_types` (the generator enforces this).
+# The generator enforces that this is non-empty, a subset of `node_types`, free
+# of the container types, and duplicate-free.
 geometry_types: ["points", "lines", "gsplats"]
 
 # Specialized-group kinds written by the compiler.

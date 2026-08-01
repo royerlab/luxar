@@ -173,3 +173,40 @@ def test_generator_rejects_geometry_type_missing_from_node_types(
     with pytest.raises(SystemExit) as exc:
         mod._geometry_types(tampered)
     assert "not_a_node_type" in str(exc.value)
+
+
+@pytest.mark.skipif(
+    not GEN_SCRIPT.exists(),
+    reason="generator script not present (packaged install without repo scripts/)",
+)
+@pytest.mark.parametrize(
+    ("geometry_types", "expected"),
+    [
+        pytest.param([], "must not be empty", id="empty"),
+        pytest.param(["points", "group"], "container node types", id="container-group"),
+        pytest.param(["points", "scene"], "container node types", id="container-scene"),
+        pytest.param(["points", "points"], "duplicate", id="duplicates"),
+    ],
+)
+def test_generator_rejects_malformed_geometry_types(
+    geometry_types: list, expected: str
+) -> None:
+    """Each rule the ``_geometry_types`` docstring claims is actually enforced.
+
+    Without these the generator emits broken or misleading projections rather
+    than failing: an empty list renders ``Literal[]`` / ``export type X = ;``
+    (syntax errors in both languages), a container type reaches per-geometry
+    dispatch with no loader behind it, and a duplicate widens the tuple while
+    leaving the union unchanged.
+    """
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("gen_format_contract", GEN_SCRIPT)
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    tampered = {**mod.load_contract(), "geometry_types": geometry_types}
+    with pytest.raises(SystemExit) as exc:
+        mod._geometry_types(tampered)
+    assert expected in str(exc.value)

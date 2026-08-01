@@ -128,7 +128,7 @@ def finalize_lod_display_types(store: zarr.Group) -> None:
         #
         # Consider child GROUPS only. ``keys()`` lists a group's arrays too, so
         # a node that reaches this branch while holding datasets — any leaf
-        # whose ``type`` is not in the tuple above, or a wrapper that mixes
+        # whose ``type`` is outside ``GEOMETRY_TYPES``, or a wrapper that mixes
         # arrays with sub-groups — would otherwise pick a ``zarr.Array`` as its
         # "finest child" and recurse into it, raising a bare AttributeError on
         # ``Array.keys()``. Every child-iteration site in this module uses

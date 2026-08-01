@@ -340,3 +340,52 @@ def test_display_type_backfill_resolves_every_contract_geometry_type() -> None:
         finalize_lod_display_types(root)
 
         assert dict(root["lodgrp"].attrs).get("display_type") == geometry_type
+
+
+def test_display_type_backfill_ignores_a_typed_array_sibling() -> None:
+    """A zarr ARRAY carrying a ``type`` attr must never win finest-child.
+
+    The nastier sibling of the crash case: arrays can hold attrs, so an array
+    named after the real child and stamped with a recognised geometry ``type``
+    used to be picked as the finest child and resolve EARLY — no exception,
+    just the wrong ``display_type`` written to the wrapper.
+    """
+    root = zarr.group()
+    lod = root.create_group("lodgrp")
+    lod.attrs["kind"] = "lod"
+    leaf = lod.create_group("aaa_real_child")
+    leaf.attrs["type"] = "lines"
+    stray = lod.create_dataset("zzz_array", data=np.zeros((2, 2), dtype=np.float32))
+    stray.attrs["type"] = "gsplats"
+
+    finalize_lod_display_types(root)
+
+    assert dict(root["lodgrp"].attrs).get("display_type") == "lines"
+
+
+def test_position_bounds_backfill_ignores_array_siblings() -> None:
+    """The bounds pass must also walk/resolve child GROUPS only.
+
+    Sibling of the display-type guard: both passes recurse through the tree, and
+    a stray array beside real children would be descended into — ``resolve``
+    looking for its ``position_bounds`` and ``walk`` looking for its ``kind`` —
+    dying on ``Array.keys()`` either way.
+    """
+    root = zarr.group()
+    lod = root.create_group("lodgrp")
+    lod.attrs["kind"] = "lod"
+    lod.create_dataset("stray", data=np.zeros((2, 2), dtype=np.float32))
+    for name, bounds in (
+        ("a", {"min": [0.0, 0.0, 0.0], "max": [1.0, 1.0, 1.0]}),
+        ("b", {"min": [-1.0, 0.0, 0.0], "max": [1.0, 2.0, 1.0]}),
+    ):
+        child = lod.create_group(name)
+        child.attrs["type"] = "points"
+        child.attrs["position_bounds"] = bounds
+
+    finalize_lod_position_bounds(root)
+
+    assert dict(root["lodgrp"].attrs)["position_bounds"] == {
+        "min": [-1.0, 0.0, 0.0],
+        "max": [1.0, 2.0, 1.0],
+    }
