@@ -238,8 +238,22 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
         // sub-pixel spike. Applied before the Cholesky + eigen extent below so
         // the fragment footprint and the quad stay consistent. Diagonal only —
         // adding to the off-diagonal would rotate/shear the ellipse.
+        //
+        // ENERGY COMPENSATION (Mip-Splatting): widening the footprint without
+        // touching the peak CREATES light — a 2D Gaussian's screen-integrated
+        // brightness is 2*pi*peak*sqrt(det Sigma2D), so the inflation is
+        // sqrt(detRaw/detDilated), i.e. (sigma_px^2 + d)/sigma_px^2 for an
+        // isotropic splat. That diverges as the splat shrinks on screen
+        // (measured 1.43x at 0.84 px, 3.75x at 0.33 px), so a scene silently
+        // brightened as the camera pulled back, and a lifted points->gsplat LOD
+        // ladder could not match its Points level in ANY mode. Points already
+        // compensate their own sub-pixel widening (the sizeScale^2 term in
+        // materials/point/shader-glsl.ts); gsplats now do too.
+        float detRaw2D = Sigma2D[0][0] * Sigma2D[1][1] - Sigma2D[0][1] * Sigma2D[1][0];
         Sigma2D[0][0] += uCov2DDilation;
         Sigma2D[1][1] += uCov2DDilation;
+        float detDilated2D = Sigma2D[0][0] * Sigma2D[1][1] - Sigma2D[0][1] * Sigma2D[1][0];
+        float dilationCompensation = sqrt(max(detRaw2D, 0.0) / max(detDilated2D, 1e-12));
 
         if (invalidCov2D(Sigma2D) || invalidFloat(aAmplitude)) {
             gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
@@ -311,7 +325,12 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
             // Shifted Gaussian ray integral: sqrt(2π)·erf(T/√2) - 2·T·exp(-0.5·T²)
             // Precomputed in TypeScript as uRayIntegralFactor (≈2.433 for T=3)
             float rayIntegrationBoost = sigmaRay * uRayIntegralFactor;  // voxelSpacing = 1.0
-            vAmplitude2D = aAmplitude * rayIntegrationBoost * nearFade;
+            // dilationCompensation keeps the screen-integrated light invariant
+            // under the 2D low-pass above (see its derivation there). Sum
+            // projection only: this branch's quantity IS that integral, so
+            // conserving it is exactly right. The peak branch below reports a
+            // peak, not an integral, and is left alone.
+            vAmplitude2D = aAmplitude * rayIntegrationBoost * nearFade * dilationCompensation;
         } else {
             // Max projection: no boost needed
             vAmplitude2D = aAmplitude * nearFade;

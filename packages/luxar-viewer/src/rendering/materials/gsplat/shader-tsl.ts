@@ -417,8 +417,17 @@ export function gsplatWebGPUFactory(
     // of a razor-thin sub-pixel spike. Applied to the shared `.toVar()`s before
     // the Cholesky + eigen extent below so footprint and quad stay consistent.
     // Diagonal only — the off-diagonal would rotate/shear the ellipse.
+    //
+    // ENERGY COMPENSATION (Mip-Splatting) — GLSL twin carries the derivation:
+    // widening without touching the peak creates light, by
+    // sqrt(detRaw/detDilated). Consumed by the SUM branch's amplitude below.
+    const detRaw2D: TSLNode = Sigma2D00.mul(Sigma2D11).sub(Sigma2D10.mul(Sigma2D10)).toVar();
     Sigma2D00.addAssign(uCov2DDilation);
     Sigma2D11.addAssign(uCov2DDilation);
+    const detDilated2D: TSLNode = Sigma2D00.mul(Sigma2D11).sub(Sigma2D10.mul(Sigma2D10)).toVar();
+    const dilationCompensation: TSLNode = sqrt(
+      max(detRaw2D, float(0.0)).div(max(detDilated2D, float(1e-12)))
+    ).toVar();
 
     // 2D Cholesky factorisation: [invL00, L10, invL11] for fragment-side
     // MUL-instead-of-DIV.
@@ -504,7 +513,14 @@ export function gsplatWebGPUFactory(
       );
       const sigmaRay: TSLNode = sqrt(sTrace).div(sqrt(quad));
       const rayIntegrationBoost: TSLNode = sigmaRay.mul(uRayIntegralFactor);
-      vAmplitude2DVal = aAmplitude.mul(rayIntegrationBoost).mul(nearFade);
+      // dilationCompensation keeps the screen-integrated light invariant under
+      // the 2D low-pass (derivation at its definition). Sum projection only —
+      // this branch's quantity IS that integral. The peak branch reports a
+      // peak, not an integral, and is left alone.
+      vAmplitude2DVal = aAmplitude
+        .mul(rayIntegrationBoost)
+        .mul(nearFade)
+        .mul(dilationCompensation);
     } else {
       vAmplitude2DVal = aAmplitude.mul(nearFade);
     }

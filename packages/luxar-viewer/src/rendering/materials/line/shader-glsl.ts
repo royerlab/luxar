@@ -43,9 +43,9 @@
  *     looks "stranded" — every visible fragment paints at full
  *     intensity regardless of opacity, intensity, or fade.
  *   - `LUXAR_VOLUMETRIC` — fragment-side emission–absorption output
- *     branch (Max 1995): τ = κ·density·chord through the
- *     Gaussian-profile ribbon (materials/line/math.ts), self-screened
- *     emission over the One/OneMinusSrcAlpha state. Set by
+ *     branch (Max 1995): τ = κ × the same ray mass every other mode
+ *     emits, self-screened emission over the
+ *     One/OneMinusSrcAlpha state. Set by
  *     `LineMaterial.applyBlendingMode('volumetric')` (volumetric
  *     phase 4 — VOLUMETRIC_BLENDING_SPEC.md §7).
  */
@@ -61,7 +61,6 @@ import {
   VOLUMETRIC_SERIES_TAU_THRESHOLD,
   VOLUMETRIC_TAU_EPS,
 } from '../_shared/volumetric';
-import { LINE_CHORD_SCALE } from './math';
 import { lineWebGPUFactory, buildLineTSLNodesFromUniforms } from './shader-tsl';
 import type { ShaderSource } from '../_shared/shader-source';
 
@@ -422,8 +421,8 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
  * cross-section (beta = 2^(6s - 2), beta=2 is a truncated Gaussian) plus
  * fragment-side cap factor so the segment body reaches the documented
  * full intensity. Under `LUXAR_VOLUMETRIC` the output switches to the
- * emission–absorption branch (transverse chord integral through the
- * width profile — materials/line/math.ts). The picking system uses a
+ * emission–absorption branch (τ = κ × the same ray mass every other mode
+ * emits). The picking system uses a
  * different fragment shader (see picking/line-picking-material.ts).
  */
 export const LINE_FRAGMENT_SHADER = /* glsl */ `
@@ -574,11 +573,17 @@ export const LINE_FRAGMENT_SHADER = /* glsl */ `
       // NOT map to w ≈ 6.24.
       float alpha = intensity * uOpacity;
       alpha *= mix(1.0, -log(1.0 - min(vAlpha, ${ALPHA_CLAMP})), uHasElementAlpha);
-      // 'volumetric' optical depth: the TRANSVERSE special case of the
-      // gsplat ray integral (VOLUMETRIC_BLENDING_SPEC.md §3.1 / §7) —
-      // rayMass = density × through-thickness of the Gaussian-profile
-      // ribbon (width·√(π/K), see materials/line/math.ts).
-      float tau = uAbsorption * alpha * vWidthAtT * ${LINE_CHORD_SCALE};
+      // 'volumetric' optical depth: kappa x the SAME ray mass every other
+      // mode emits (VOLUMETRIC_BLENDING_SPEC.md §3.1 / §7). The alpha above
+      // is already the complete ray mass — the intensity chain carries every
+      // "how much of this line is there" factor and opacity is a peak SCREEN
+      // ALPHA, an integrated quantity. It used to be multiplied by a world
+      // thickness (width * sqrt(pi/K)) as though opacity were a volume
+      // density still awaiting integration; that read it as a density in
+      // this one mode and as a peak alpha in the other five. Mirrors the
+      // point twin (materials/point/shader-glsl.ts, full rationale there)
+      // and the gsplat rule tau = kappa * opacity * intensity.
+      float tau = uAbsorption * alpha;
       // Discard only when color AND τ are both negligible — a black
       // line still absorbs (a pure-ink occluder keeps its optical depth).
       if (max(adjusted.r, max(adjusted.g, adjusted.b)) < 1e-4 && tau < 1e-4) discard;

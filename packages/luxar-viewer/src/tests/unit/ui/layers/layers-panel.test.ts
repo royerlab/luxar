@@ -87,10 +87,8 @@ import {
 } from '../../../../ui/layers/layers-panel';
 import {
   ABSORPTION_DEFAULT_MAX,
-  ABSORPTION_TAU_TARGET,
   absorptionSliderRange,
 } from '../../../../ui/layers/absorption-range';
-import { LINE_CHORD_SCALE } from '../../../../rendering/materials/line/math';
 
 /**
  * Normalised thumb position for a κ value on a log track — the inverse of
@@ -1463,7 +1461,7 @@ describe('LayersPanel — blend select drives the leaf material', () => {
     // NORMALISED position: κ = min·(max/min)^t.
     updateAbsorption.mockClear();
     const input = group!.querySelector('input[type="range"]') as HTMLInputElement;
-    input.value = String(logPosition(2.5, absorptionSliderRange(ABSORPTION_DEFAULT_MAX, 1)));
+    input.value = String(logPosition(2.5, absorptionSliderRange(1)));
     input.dispatchEvent(new Event('input', { bubbles: true }));
     expect(updateAbsorption).toHaveBeenCalledWith(expect.closeTo(2.5, 6));
     expect(panel.layerState.getLayer('/cloud')!.absorption).toBeCloseTo(2.5, 6);
@@ -1474,11 +1472,18 @@ describe('LayersPanel — blend select drives the leaf material', () => {
     expect(group!.style.display).toBe('none');
   });
 
-  it('absorption slider: the κ track is re-scaled per layer so a THIN-geometry layer can reach a visible optical depth', () => {
-    // Regression: the track was a fixed linear 0–10. τ = κ·α·width·chord,
-    // so on this demo-realistic 1.5e-3-wide line the whole track topped
-    // out at τ ≈ 0.012 — a sub-1/255 change, i.e. dragging Absorption in
-    // volumetric mode did visibly nothing.
+  it('absorption slider: the κ track does NOT depend on geometry thickness', () => {
+    // τ = κ · rayMass in every geometry family now, from the same normalised
+    // ray mass the additive branch emits, so κ ≈ 1 is the anchor everywhere
+    // and one fixed track serves every scene.
+    //
+    // What this guards: the track used to be derived per layer as
+    // ABSORPTION_TAU_TARGET/(thickness·chord), because the point and line
+    // shaders multiplied τ by a world thickness the gsplat shader had no
+    // counterpart for. That is a units conversion, and it could never serve a
+    // mixed points→gsplat LOD ladder composing ONE κ over both families. A
+    // demo-realistic 1.5e-3-wide line must now get the SAME track as anything
+    // else — if it doesn't, the shader convention has drifted apart again.
     const width = 0.0015;
     const updateAbsorption = vi.fn();
     const stubMat: Record<string, unknown> = {
@@ -1507,9 +1512,6 @@ describe('LayersPanel — blend select drives the leaf material', () => {
     panel.show();
     panel.layerState.select('/cloud', 'single');
 
-    const layer = panel.layerState.getLayer('/cloud')!;
-    expect(layer.absorptionMax * width * LINE_CHORD_SCALE).toBeCloseTo(ABSORPTION_TAU_TARGET, 6);
-
     // Drive the track to its far end through the real UI path.
     updateAbsorption.mockClear();
     const group = findAbsorptionGroup(container)!;
@@ -1517,19 +1519,20 @@ describe('LayersPanel — blend select drives the leaf material', () => {
     input.value = '1';
     input.dispatchEvent(new Event('input', { bubbles: true }));
 
+    // The far end is the nominal maximum — NOT a width-derived bound
+    // (which for 1.5e-3 would have been ~4×10³).
     const pushed = updateAbsorption.mock.calls.at(-1)![0] as number;
-    // The κ that actually reaches the material must produce the opaque
-    // target optical depth for THIS layer's width.
-    expect(pushed * width * LINE_CHORD_SCALE).toBeCloseTo(ABSORPTION_TAU_TARGET, 4);
-    // Sanity: that is two orders of magnitude past the old fixed ceiling.
-    expect(pushed).toBeGreaterThan(100 * ABSORPTION_DEFAULT_MAX);
+    expect(pushed).toBeCloseTo(ABSORPTION_DEFAULT_MAX, 6);
+    expect(pushed).toBe(absorptionSliderRange(panel.layerState.getLayer('/cloud')!.absorption).max);
   });
 
-  it('absorption slider: a very thin layer keeps the authored κ ON the track (no silent jump on first touch)', () => {
-    // Regression: `max_width` ≲ 6e-4 derives a κ_max ≳ 1e4, whose nominal
-    // 4-decade floor lands ABOVE the authored default κ = 1. The readout then
-    // showed 1.00 while the thumb could not represent it, and the first input
-    // event silently jumped κ to the floor (≥ 100× on thinner geometry).
+  it('absorption slider: an authored κ BELOW the nominal floor stays on the track (no silent jump on first touch)', () => {
+    // The track's floor sits ABSORPTION_LOG_DECADES below its top, so an
+    // authored κ beneath that would show its true value in the readout while
+    // the thumb could not represent it — and the first input event would
+    // silently jump κ up to the floor. absorptionSliderRange lowers the floor
+    // onto the live κ to prevent that; this pins the behaviour end to end.
+    const authoredKappa = 1e-5; // two decades below the nominal 1e-3 floor
     const width = 6e-4;
     const updateAbsorption = vi.fn();
     const stubMat: Record<string, unknown> = {
@@ -1553,12 +1556,16 @@ describe('LayersPanel — blend select drives the leaf material', () => {
     const panel = new LayersPanel(container, animationController);
     panel.initFromScene(
       rootGroup,
-      makeLayeredSceneGraph('lines', { max_width: width, blending_mode: 'volumetric' })
+      makeLayeredSceneGraph('lines', {
+        max_width: width,
+        blending_mode: 'volumetric',
+        absorption: authoredKappa,
+      })
     );
     panel.show();
     panel.layerState.select('/cloud', 'single');
 
-    expect(panel.layerState.getLayer('/cloud')!.absorption).toBe(1); // authored default
+    expect(panel.layerState.getLayer('/cloud')!.absorption).toBe(authoredKappa);
 
     const group = findAbsorptionGroup(container)!;
     const input = group.querySelector('input[type="range"]') as HTMLInputElement;
@@ -1569,8 +1576,8 @@ describe('LayersPanel — blend select drives the leaf material', () => {
     // Touching the slider without moving it must leave κ where it was.
     updateAbsorption.mockClear();
     input.dispatchEvent(new Event('input', { bubbles: true }));
-    expect(updateAbsorption).toHaveBeenLastCalledWith(expect.closeTo(1, 6));
-    expect(panel.layerState.getLayer('/cloud')!.absorption).toBeCloseTo(1, 6);
+    expect(updateAbsorption).toHaveBeenLastCalledWith(expect.closeTo(authoredKappa, 12));
+    expect(panel.layerState.getLayer('/cloud')!.absorption).toBeCloseTo(authoredKappa, 12);
   });
 
   it('composeEffective preserves an authored κ on a NON-layer leaf under a layer group', () => {

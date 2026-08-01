@@ -28,8 +28,8 @@
  * the endpoint's continuous cap-suppression scalar — the full soft cap at a
  * free end or sharp bend, lifted to full intensity (cap suppressed) at a
  * straight-through interior joint). `blendingMode: 'volumetric'` selects
- * the emission–absorption output branch at graph build time (transverse
- * chord integral through the width profile — materials/line/math.ts).
+ * the emission–absorption output branch at graph build time (τ = κ × the
+ * same ray mass every other mode emits).
  *
  * @module rendering/materials/line/shader-tsl
  */
@@ -76,7 +76,6 @@ import {
   VOLUMETRIC_SERIES_TAU_THRESHOLD,
   VOLUMETRIC_TAU_EPS,
 } from '../_shared/volumetric';
-import { LINE_CHORD_SCALE } from './math';
 import {
   applyBlendingStateToMaterial,
   getCompleteBlendingState,
@@ -655,12 +654,12 @@ export function lineWebGPUFactory(
         : alphaBase.mul(vAlpha)
     ).toVar();
 
-    // Volumetric optical depth: the TRANSVERSE special case of the
-    // gsplat ray integral — rayMass = density × through-thickness of
-    // the Gaussian-profile ribbon (width·√(π/K), materials/line/math.ts).
-    const tau: TSLNode | null = volumetricGraph
-      ? uAbsorption.mul(alpha).mul(vWidthAtT).mul(float(LINE_CHORD_SCALE)).toVar()
-      : null;
+    // Volumetric optical depth: κ × the SAME ray mass every other mode
+    // emits (GLSL twin in shader-glsl.ts, which carries the full rationale).
+    // `alpha` is already the complete ray mass; the world-thickness factor
+    // that used to be multiplied in here read `opacity` as a volume density
+    // in this one mode and as a peak screen alpha in the other five.
+    const tau: TSLNode | null = volumetricGraph ? uAbsorption.mul(alpha).toVar() : null;
     if (volumetricGraph && tau) {
       // Discard only when color AND τ are both negligible — a black
       // line still absorbs (pure-ink occluders keep their optical depth).
