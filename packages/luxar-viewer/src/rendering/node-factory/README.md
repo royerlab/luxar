@@ -65,6 +65,18 @@ NodeFactory (class in rendering/node-factory.ts)
   clone — the cached original stays registered and cached (the historical
   detach-before-clone step was removed: its disposeAll-vs-cache rationale
   never held, and detaching starved later cache hits of camera updates).
+- **Authored gain on a colormapped node is a WINDOW, not a gain.** All
+  three factories agree (#936/#1081/#1082): when a colormap actually takes
+  over, the post-LUT color GOG is left/reset at identity and the
+  authored `intensity`/`offset` is re-expressed as the scalar LUT window
+  via the shared `rendering/display-range.ts::resolveColormapWindow`.
+  Applying it as both would double-apply, and would make the same
+  attribute mean two different things depending on the `layer` flag
+  (the layers panel already windows it). The identity-vs-window decision
+  keys on the RAW LEAF gain so an ancestor-only gain folds onto the data
+  range instead of replacing it — which is why points threads a
+  `leafAttrs` param alongside its composed `attrs` (lines and gsplats
+  already receive both). Direct-color nodes still get the gain.
 - **Scalar-attribute guard (points / lines).** Points consults
   `supportsScalarColormap('points', geometry)` when a geometry is
   supplied; lines checks for `startScalars`/`endScalars` on the

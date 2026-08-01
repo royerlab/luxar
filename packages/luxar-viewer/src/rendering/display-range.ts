@@ -59,3 +59,51 @@ export function computeDisplayRange(
     max: (1 - offset) / intensity,
   };
 }
+
+/**
+ * Resolve the scalar LUT window for a COLORMAPPED node at load time.
+ *
+ * On a colormapped node an authored `intensity`/`offset` is the scalar
+ * WINDOW (value→LUT mapping), NOT a post-LUT color gain — applying it as
+ * both double-applies (#936). Callers therefore push identity to the color
+ * GOG and this window to `updateScalarRange`.
+ *
+ * The identity-vs-window decision follows the RAW LEAF gain, mirroring the
+ * layers panel (`layer-state.ts` `initialDisplayRange` starts from the data
+ * range whenever the LEAF gain is identity) — NOT the composed value, which
+ * would treat an ancestor-only gain as an authored window and discard the
+ * node's own data range. When the leaf DID author a window, the COMPOSED
+ * gain IS the panel's effective gain (intensity multiplies, offset adds —
+ * `attrs-composer.ts`), so it is used directly. When the leaf is identity,
+ * any ancestor gain is folded onto the data-range window exactly the way the
+ * panel composes it: data range → window uniforms → × ancestor gain → back
+ * to a window.
+ *
+ * Shared by the points, lines, and gsplats node factories so all three
+ * geometry types agree (the three-geometry symmetry rule).
+ *
+ * @param dataRange   The node's own scalar/amplitude data range.
+ * @param leaf        Raw leaf-authored gain/offset (uncomposed).
+ * @param composed    Effective gain/offset after ancestor composition.
+ */
+export function resolveColormapWindow(
+  dataRange: readonly [number, number],
+  leaf: DisplayUniforms,
+  composed: DisplayUniforms
+): [number, number] {
+  const leafIsIdentity = leaf.intensity === 1.0 && leaf.offset === 0.0;
+  if (!leafIsIdentity) {
+    const { min, max } = computeDisplayRange(composed.intensity, composed.offset);
+    return [min, max];
+  }
+  if (composed.intensity === 1.0 && composed.offset === 0.0) {
+    return [dataRange[0], dataRange[1]];
+  }
+  // Ancestor-only gain (leaf identity ⇒ composed == ancestor product).
+  const w = computeUniforms(dataRange[0], dataRange[1]);
+  const { min, max } = computeDisplayRange(
+    composed.intensity * w.intensity,
+    composed.offset + w.offset
+  );
+  return [min, max];
+}

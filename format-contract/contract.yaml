@@ -37,6 +37,16 @@ format_type_gsplats: "gsplats_zarr"
 #  the viewer extends this base union locally.)
 node_types: ["scene", "group", "points", "lines", "gsplats"]
 
+# The LEAF subset of `node_types` — the first-class geometry types that carry
+# element data (as opposed to the `scene` / `group` containers). This is the
+# vocabulary that keys per-geometry dispatch in the viewer: loader registration,
+# leaf-node loading, retry, prefetch, and tolerance computation.
+#   Python: io/_compiler/finalize/lod_backfill.py
+#   TS: data/data-loader-types.ts::GeometryKind
+# The generator enforces that this is non-empty, a subset of `node_types`, free
+# of the container types, and duplicate-free.
+geometry_types: ["points", "lines", "gsplats"]
+
 # Specialized-group kinds written by the compiler.
 #   Python: io/_compiler/gsplat_tree.py   TS: types/data-monitor-types.ts
 node_kinds: ["lod", "partition"]
