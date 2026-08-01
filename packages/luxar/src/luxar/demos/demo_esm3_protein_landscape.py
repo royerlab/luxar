@@ -60,7 +60,12 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import launch_viewer, require_module, stack_colorings
+from luxar.demos import (
+    MissingDependencyError,
+    launch_viewer,
+    require_module,
+    stack_colorings,
+)
 from luxar.utils.download import (
     QUARANTINE_SUFFIX,
     find_quarantined_files,
@@ -363,12 +368,26 @@ def _parse_swissprot_fasta(
 # ESM Embedding Computation
 # =============================================================================
 
+# Remedies embedded in a quarantine notice, per failure site. The no-CUDA branch
+# is fixable only by supplying a cache or moving to a CUDA box; the torch/esm
+# dependency gates already carry a `pip install` remedy, and the esm gate is only
+# reached when CUDA IS available — so "rerun on a CUDA machine" would be wrong there.
+_CUDA_ACTION = (
+    "re-download the complete file to that path, or delete the "
+    "quarantined copy and rerun on a CUDA machine"
+)
+_DEP_ACTION = (
+    "re-download the complete file to that path, or delete the quarantined copy"
+)
+
 
 def _compute_esm3_embeddings(
     sequences: list[str],
     cache_dir: Path,
     model_name: str = "esm3-open",
     max_length: int = 1024,
+    *,
+    already_reported_quarantine: frozenset[Path] = frozenset(),
 ) -> np.ndarray:
     """Compute ESM-3 mean-pooled embeddings with checkpointing.
 
@@ -414,32 +433,47 @@ def _compute_esm3_embeddings(
     # before anything expensive starts, so printing again here would show the
     # user two near-identical warnings about the SAME file three lines apart —
     # which reads like two separate corrupt artifacts. Collect the paths silently
-    # and let them enrich the RuntimeError below instead, which is where a
-    # caller that bypassed `main()` still needs them.
+    # and let them enrich the errors below — the no-CUDA RuntimeError AND the
+    # torch/esm dependency errors — so a caller that bypassed `main()` still sees
+    # them.
     quarantined = warn_if_quarantined(embeddings_cache, verbose=False)
+
+    # `main()` may already have printed a notice for some of these paths up
+    # front; embed ONLY the ones it did not, so the notice is shown exactly once
+    # per file. The check is per-PATH (not a dir-wide flag): a file freshly
+    # quarantined during THIS run — e.g. under a different --model than the one
+    # `main()` saw — is not in `already_reported_quarantine` and so is still
+    # named here. An empty `unreported` is the single guard for both "nothing
+    # quarantined" and "main already reported everything".
+    unreported = [p for p in quarantined if p not in already_reported_quarantine]
+
+    def _quarantine_note(action: str) -> str:
+        return format_quarantine_notice(unreported, indent="  ", action=action)
 
     # Past the cache check, so the compute path is genuinely being taken: this
     # is where torch becomes mandatory (the CUDA probe below needs it). `esm` is
     # demanded later, just before the model load — on a machine without CUDA the
     # "supply a complete cache" message below is the actionable one, and it
     # carries the quarantine notice, so it must not be pre-empted by a
-    # missing-esm error the user cannot act on anyway.
-    torch = require_module("torch")
+    # missing-esm error the user cannot act on anyway. When a rejected copy is
+    # sitting in the cache and `main()` did not already report it, append the
+    # quarantine notice so a direct/programmatic caller learns about the
+    # multi-GB artifact instead of it being silently invisible.
+    try:
+        torch = require_module("torch")
+    except MissingDependencyError as exc:
+        note = _quarantine_note(_DEP_ACTION)
+        if note:
+            raise MissingDependencyError(f"{exc}\n{note}") from exc
+        raise
 
     # Computing ESM embeddings for ~572K proteins is only practical on a CUDA
     # GPU. If no usable cache is present and no CUDA device is available, fail
     # fast with an actionable message rather than downloading the model and then
     # crashing on `.to("cuda")` (or grinding for many hours on CPU/MPS).
     if not torch.cuda.is_available():
-        notice = format_quarantine_notice(
-            quarantined,
-            indent="  ",
-            action=(
-                "re-download the complete file to that path, or delete the "
-                "quarantined copy and rerun on a CUDA machine"
-            ),
-        )
-        quarantine_note = f"{notice}\n" if notice else ""
+        note = _quarantine_note(_CUDA_ACTION)
+        note_line = f"{note}\n" if note else ""
         raise RuntimeError(
             "No usable cached embeddings were found and CUDA is not available, "
             "so ESM embeddings cannot be (re)computed on this machine.\n"
@@ -448,13 +482,21 @@ def _compute_esm3_embeddings(
             "  • Supply a complete precomputed embeddings file at:\n"
             f"      {embeddings_cache}\n"
             f"    (expected shape: {expected_shape}, float32).\n"
-            f"{quarantine_note}"
+            f"{note_line}"
             "  • Or run this demo on a CUDA GPU machine to compute it from "
             "scratch."
         )
 
-    # Load model — the one place `esm` itself is genuinely needed.
-    require_module("esm")
+    # Load model — the one place `esm` itself is genuinely needed. As with the
+    # torch gate, enrich a missing-esm error with the quarantine notice for a
+    # direct caller that has not already been told about the rejected copy.
+    try:
+        require_module("esm")
+    except MissingDependencyError as exc:
+        note = _quarantine_note(_DEP_ACTION)
+        if note:
+            raise MissingDependencyError(f"{exc}\n{note}") from exc
+        raise
     with asection(f"Loading ESM model: {model_name}"):
         if model_name == "esmc-300m":
             from esm.models.esmc import ESMC
@@ -598,6 +640,7 @@ def generate_esm3_landscape(
     sample_size: int = DEFAULT_SAMPLE_SIZE,
     model_name: str = "esm3-open",
     cache_dir: Path | None = None,
+    already_reported_quarantine: frozenset[Path] = frozenset(),
 ) -> int:
     """Generate 3D ESM-3 protein embedding landscape."""
     if cache_dir is None:
@@ -664,7 +707,12 @@ def generate_esm3_landscape(
         )
 
         # --- Step 3: Compute ESM embeddings ---
-        embeddings = _compute_esm3_embeddings(sequences, cache_dir, model_name)
+        embeddings = _compute_esm3_embeddings(
+            sequences,
+            cache_dir,
+            model_name,
+            already_reported_quarantine=already_reported_quarantine,
+        )
 
         # Sequences are already subsampled (and the cache is shape-validated
         # against len(sequences)), so embeddings line up 1:1 with the rng.choice
@@ -872,6 +920,10 @@ def main() -> None:
     # the difference between "instant run" and "multi-GB re-download", so the
     # user learns about it even when a dependency gate below also trips.
     quarantined = find_quarantined_files(cache_dir)
+    # The SET of paths reported here, threaded into the compute path so it embeds
+    # the notice only for paths we did NOT report (e.g. a file freshly
+    # quarantined during compute, possibly under a different --model) — each
+    # quarantined file is named exactly once per run.
     if quarantined:
         aprint(
             format_quarantine_notice(
@@ -901,6 +953,7 @@ def main() -> None:
                 sample_size=sample_size,
                 model_name=model_name,
                 cache_dir=cache_dir,
+                already_reported_quarantine=frozenset(quarantined),
             )
             if n == 0:
                 return
@@ -923,6 +976,7 @@ def main() -> None:
                 sample_size=sample_size,
                 model_name=model_name,
                 cache_dir=cache_dir,
+                already_reported_quarantine=frozenset(quarantined),
             )
             if n == 0:
                 return
