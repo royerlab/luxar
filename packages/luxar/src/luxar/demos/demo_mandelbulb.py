@@ -264,15 +264,28 @@ def generate_mandelbulb_volumetric(
             # Volumetric emission–absorption (VOLUMETRIC_BLENDING_SPEC.md
             # phase 3): the dense fractal shell self-occludes instead of
             # blowing out, so the historical additive anti-blowout
-            # workarounds (colors ×= 0.1 AND intensity = 0.0625, a
-            # combined ×0.00625) are gone — real depth cueing at 80×
-            # the old brightness. (κ, intensity) = (8, 0.5) was picked by
-            # live A/B at the demo's full resolution: the saturated
-            # radiance of a deep ray is ≈ c·intensity/(κ·radius·chord),
-            # so intensity 0.5 keeps the dense core just under white
-            # while κ = 8 (inside the panel slider range) leaves the
-            # surface glowing; higher κ over-self-screens toward a dim
-            # solid, intensity 1.0 saturates the core flat white.
+            # workarounds (colors ×= 0.1 AND intensity = 0.0625) are gone
+            # — real depth cueing rather than a flat-clipped glow.
+            #
+            # κ = 8 (inside the panel slider range) is what leaves the
+            # surface glowing: higher κ over-self-screens toward a dim
+            # solid, lower κ loses the depth cue.
+            #
+            # intensity = 0.025 is the EXPOSURE-NEUTRAL authoring: the
+            # scene reads correctly at the viewer's default exposure of
+            # 0 EV, so no one has to dial the HDR exposure down to see
+            # it. The earlier 0.5 needed −4.32 EV in the panel (the
+            # comment's "just under white" claim did not survive
+            # measurement — a deep ray saturates ≈ 20× over white at
+            # this density), and 0.5 × 2**−4.32 = 0.025. The mapping is
+            # exact, not a guess: emitted radiance is linear in
+            # intensity (the point shader multiplies the colour by
+            # uIntensity; optical depth τ depends only on κ, opacity and
+            # radius) while exposure multiplies the composited frame by
+            # 2**EV, so this is the SAME image the −4.32 EV panel gave.
+            # Authoring it here instead of leaving it to the exposure
+            # slider also puts the bloom threshold and the detector-noise
+            # sigmas back in their intended range relative to white.
             scene.add_points(
                 "Mandelbulb",
                 positions,
@@ -282,7 +295,7 @@ def generate_mandelbulb_volumetric(
                 opacity=0.9,
                 blending_mode="volumetric",
                 absorption=8.0,
-                intensity=0.5,
+                intensity=0.025,
             )
 
             # Overlay annotations
@@ -311,7 +324,7 @@ def generate_mandelbulb_volumetric(
 def main() -> None:
     """Main demo entry point."""
     # Parse command line arguments
-    resolution = 256  # Default: 256^3 = 16.8M samples → ~200-400k surface points
+    resolution = 256  # Default: 256^3 = 16.8M samples → ~1.2M surface points
     power = 8  # Classic Mandelbulb
 
     if len(sys.argv) > 1:
