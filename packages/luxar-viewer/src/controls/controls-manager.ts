@@ -462,10 +462,21 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
     if (this.currentControls instanceof LuxarOrbitControls) {
       return this.currentControls.target.clone();
     } else {
-      // For fly controls, return a point in front of the camera
+      // For fly controls, reuse the last saved pivot's depth along the current
+      // view ray, but only while the camera still faces it (within a ~60° cone,
+      // cos60=0.5). Scale-free, so a no-movement round-trip returns the old
+      // target exactly on tiny- and huge-unit scenes alike; the reused depth is
+      // floored at a small fraction of scene scale so the pivot can't collapse
+      // onto the camera. Outside the cone, fall back to a scene-scale point.
+      const scale = this.sceneScale || 10;
       const forward = new THREE.Vector3();
       this.camera.getWorldDirection(forward);
-      return this.camera.position.clone().add(forward.multiplyScalar(this.sceneScale || 10));
+      const pos = this.camera.position;
+      const toOld = this.savedTarget.clone().sub(pos);
+      const dist = toOld.length();
+      const d = toOld.dot(forward);
+      const depth = dist > 0 && d > 0.5 * dist ? Math.max(d, scale * 1e-3) : scale;
+      return pos.clone().add(forward.multiplyScalar(depth));
     }
   }
 
