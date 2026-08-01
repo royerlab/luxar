@@ -257,6 +257,36 @@ class TestResolveAdditiveAxisLines:
         with pytest.raises(TypeError, match="must be None, bool, or dict"):
             resolve_additive_axis_lines("auto")  # type: ignore[arg-type]
 
+    def test_valid_stream_counts_resolves(self) -> None:
+        spec = resolve_additive_axis_lines({"counts": "stream:1000"})
+        assert spec is not None
+        assert spec["counts"] == "stream:1000"
+
+    def test_malformed_stream_counts_raise_at_resolve(self) -> None:
+        # A ``stream:<c>`` with c < 1 must fail at resolve time, before any
+        # kind=lod wrapper group is written under a substitutive ladder.
+        with pytest.raises(ValueError, match="stream first-chunk size must be >= 1"):
+            resolve_additive_axis_lines({"counts": "stream:0"})
+        with pytest.raises(ValueError, match="stream"):
+            resolve_additive_axis_lines({"counts": "stream:-5"})
+
+    def test_valid_energy_counts_resolves(self) -> None:
+        spec = resolve_additive_axis_lines({"counts": "energy:0.5,0.9,1.0"})
+        assert spec is not None
+        assert spec["counts"] == "energy:0.5,0.9,1.0"
+
+    def test_other_doomed_counts_raise_at_resolve(self) -> None:
+        # Same partial-group trap as stream:0 — any counts value the write
+        # path is guaranteed to reject must fail at resolve time too.
+        with pytest.raises(ValueError, match="unrecognized breakpoints string"):
+            resolve_additive_axis_lines({"counts": "equal-count"})
+        with pytest.raises(ValueError, match="energy: fractions must be numbers"):
+            resolve_additive_axis_lines({"counts": "energy:abc"})
+        with pytest.raises(ValueError, match="energy: fractions must be non-empty"):
+            resolve_additive_axis_lines({"counts": "energy:"})
+        with pytest.raises(ValueError, match="non-empty"):
+            resolve_additive_axis_lines({"counts": []})
+
     def test_breakpoints_pass_through(self) -> None:
         spec = resolve_additive_axis_lines({"breakpoints": [2, 4]})
         assert spec is not None
