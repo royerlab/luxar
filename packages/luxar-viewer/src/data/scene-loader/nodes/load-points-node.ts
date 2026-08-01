@@ -112,7 +112,16 @@ export async function loadPointsNodeCheap(
   // branch in commitPointsGeometry. retryFailedLoader() reads the
   // placeholder's `userData.attrs` to derive the retry view state.
   const attrs = ctx.applyEffectiveAttrs(node) as unknown as PointsMetadata;
-  const placeholder = ctx.nodeFactory.createEmptyPointsNode(node.path, attrs, loader);
+  // Pass the RAW uncomposed attrs alongside the composed ones: on a
+  // colormapped node the authored gain is the scalar window, and telling a
+  // leaf-authored window apart from an inherited ancestor gain needs both
+  // (see `resolveColormapWindow`).
+  const placeholder = ctx.nodeFactory.createEmptyPointsNode(
+    node.path,
+    attrs,
+    loader,
+    node.attrs as unknown as Partial<PointsMetadata>
+  );
   parentThree.add(placeholder);
 
   return { placeholder, loader };
