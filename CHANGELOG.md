@@ -60,6 +60,7 @@ which documents itself as mirroring `engines.pnpm`, still said `9`. The Makefile
 check now compares major *and* minor, matching the existing Node check, since a
 major-only test cannot express the 10.6 boundary. The now-obsolete half of the
 pnpm-pinning rationale in `docs.yml` was rewritten to match.
+
 #### Fixed — finalize no longer mistakes a zarr array for a child node (#1079)
 
 `lod_backfill`'s display-type resolver returned early only for the leaf `type`
