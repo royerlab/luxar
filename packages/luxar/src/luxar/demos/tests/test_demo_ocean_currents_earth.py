@@ -148,6 +148,17 @@ def test_sample_equirect_wraps_longitude() -> None:
     assert np.allclose(a, b)
 
 
+def test_sample_equirect_float_texture_is_not_rescaled() -> None:
+    """A float texture is already in [0, 1]; dividing by 255 would render ~black."""
+    tex8 = np.random.default_rng(1).integers(0, 256, (8, 16, 3), dtype=np.uint8)
+    texf = tex8.astype(np.float32) / 255.0
+    lon = np.array([-120.0, 0.0, 45.5])
+    lat = np.array([10.0, -33.3, 71.2])
+    assert np.allclose(
+        sample_equirect(tex8, lon, lat), sample_equirect(texf, lon, lat), atol=1e-6
+    )
+
+
 def test_sample_equirect_output_is_normalized() -> None:
     tex = np.full((4, 4, 3), 255, dtype=np.uint8)
     out = sample_equirect(tex, np.array([0.0, 45.0]), np.array([0.0, 10.0]))

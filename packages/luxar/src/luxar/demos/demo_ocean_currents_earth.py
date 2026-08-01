@@ -221,7 +221,9 @@ def sample_equirect(tex: np.ndarray, lon: np.ndarray, lat: np.ndarray) -> np.nda
     latitude clamps.
 
     Args:
-        tex: ``(h, w, 3)`` uint8 or float texture; row 0 is +90 deg latitude.
+        tex: ``(h, w, 3)`` texture; row 0 is +90 deg latitude. Integer dtypes
+            are treated as 0..255 and rescaled; float dtypes are assumed to be
+            already normalized to [0, 1].
         lon: Longitudes in degrees (any range; wrapped).
         lat: Latitudes in degrees, -90..+90.
 
@@ -238,9 +240,11 @@ def sample_equirect(tex: np.ndarray, lon: np.ndarray, lat: np.ndarray) -> np.nda
     wx = (x - x0)[:, None].astype(np.float32)
     wy = (y - y0)[:, None].astype(np.float32)
     t = tex.astype(np.float32)
+    if np.issubdtype(tex.dtype, np.integer):
+        t /= 255.0
     c0 = t[y0, x0] * (1.0 - wx) + t[y0, x1] * wx
     c1 = t[y1, x0] * (1.0 - wx) + t[y1, x1] * wx
-    return np.clip((c0 * (1.0 - wy) + c1 * wy) / 255.0, 0.0, 1.0).astype(np.float32)
+    return np.clip(c0 * (1.0 - wy) + c1 * wy, 0.0, 1.0).astype(np.float32)
 
 
 def build_lut(stops: list) -> np.ndarray:
