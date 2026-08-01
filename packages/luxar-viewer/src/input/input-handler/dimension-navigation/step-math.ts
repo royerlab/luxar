@@ -149,9 +149,9 @@ export function calculateNextPosition(
       // `[0, 1]` with step 0.3, whose last reachable position is 0.9 — the
       // naive form yields period 1.3 and leaves an overshoot of 1.2 unwrapped,
       // returning a position ABOVE max and breaking this function's documented
-      // "guaranteed to be within range". The epsilon absorbs the float error in
-      // e.g. 0.9 / 0.3 = 2.9999999999999996, which would otherwise drop a
-      // position.
+      // "guaranteed to be within range". The epsilon absorbs float error in the
+      // division — `0.7 / 0.1` is 6.999999999999999, which would otherwise
+      // floor to 6 and make the position at 0.7 unreachable.
       const positions = Math.floor((range[1] - range[0]) / grid + 1e-9) + 1;
       const period = positions * grid;
       if (period <= 0) {
@@ -162,9 +162,10 @@ export function calculateNextPosition(
         // a valid position rather than only the single-cycle case.
         newPos = range[0] + ((((newPos - range[0]) % period) + period) % period);
       }
-      // Belt and braces: a range whose width is not a whole number of steps has
-      // its top position strictly below `max`, so clamp to keep the contract
-      // true unconditionally rather than only for divisible ranges.
+      // Defence in depth. With the period above and an on-grid input the
+      // wrapped value is always a reachable position, so no current caller can
+      // trigger this clamp — it exists so the documented range guarantee stays
+      // true if the snapping above is ever changed or bypassed.
       return clamp(newPos, range[0], range[1]);
     } else {
       // Continuous path left EXACTLY as it was: `max ≡ min` here, and the

@@ -323,14 +323,14 @@ describe('InputHandler Utilities', () => {
           expect(calculateNextPosition(0, -1, 0.3, [0, 1], true, true, 0.3)).toBeCloseTo(0.9, 10);
         });
 
-        it('float error in count derivation does not drop a position', () => {
-          // 0.9 / 0.3 === 2.9999999999999996; without the epsilon this range
-          // would be treated as 3 positions and 0.9 would become unreachable.
-          expect(calculateNextPosition(0.6, 1, 0.3, [0, 0.9], true, true, 0.3)).toBeCloseTo(
-            0.9,
-            10
-          );
-          expect(calculateNextPosition(0.9, 1, 0.3, [0, 0.9], true, true, 0.3)).toBeCloseTo(0, 10);
+        it('float error in count derivation does not drop the last position', () => {
+          // `0.7 / 0.1` is 6.999999999999999, so without the epsilon the count
+          // floors to 7 positions instead of 8: the period becomes 0.7, and
+          // stepping off the end lands on 0.1 instead of wrapping to 0.
+          // (`0.9 / 0.3` is exactly 3 in IEEE doubles and does NOT show this —
+          // an earlier version of this test used it and was blind to the bug.)
+          expect(calculateNextPosition(0.7, 1, 0.1, [0, 0.7], true, true, 0.1)).toBeCloseTo(0, 10);
+          expect(calculateNextPosition(0, -1, 0.1, [0, 0.7], true, true, 0.1)).toBeCloseTo(0.7, 10);
         });
       });
     });
