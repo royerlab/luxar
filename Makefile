@@ -78,11 +78,13 @@ else
 endif
 
 # Minimum Node.js version. jsdom 30 (dev/test only) declares engines
-# `^22.22.2`; its undici 8 dependency destructures `markAsUncloneable` from
-# node:worker_threads (added in Node 22.16) and throws on anything older, so
-# the whole unit suite is unrunnable below that. Vite 8.x only needs 20.19+, so
-# jsdom is the binding constraint. Keep in sync with `engines.node` in
-# packages/luxar-viewer/package.json (>=22.22.2).
+# `^22.22.2 || ^24.15.0 || >=26.0.0`; its undici 8 dependency destructures
+# `markAsUncloneable` from node:worker_threads (added in Node 22.16) and throws
+# on anything older, so the whole unit suite is unrunnable below that. Vite 8.x
+# only needs 20.19+, so jsdom is the binding constraint. This make check is
+# deliberately a coarse too-old floor (major.minor only); the exact per-line
+# range lives in `engines.node` in packages/luxar-viewer/package.json (kept
+# identical to jsdom's), which pnpm surfaces on install.
 MIN_NODE_MAJOR := 22
 MIN_NODE_MINOR := 22
 # Mirrors `engines.pnpm` in packages/luxar-viewer/package.json. 10.6 is the
