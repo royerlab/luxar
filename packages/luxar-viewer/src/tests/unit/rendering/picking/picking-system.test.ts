@@ -23,6 +23,7 @@ import {
   MAX_PICK_BUFFER_DIM,
   type PickResult,
 } from '../../../../rendering/picking/picking-system';
+import { MAX_PICK_NODE_ID } from '../../../../rendering/picking/picking-system/pick-render';
 
 /** A promise plus its external `resolve` — lets a test gate when the readback completes. */
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
@@ -168,6 +169,27 @@ describe('PickingSystem — registration', () => {
     expect(system.allocatePickId()).toBe(1);
     expect(system.allocatePickId()).toBe(2);
     expect(system.allocatePickId()).toBe(3);
+  });
+
+  it('allocatePickId reports crossing the id ceiling the pick buffer can resolve', () => {
+    // The vote key (`nodeId * VOTE_KEY_STRIDE`) and the nodeMap lookup both
+    // rest on nodeId staying inside f32's consecutive-integer range. Past
+    // it, two nodes read back as the same id — silently, unless we say so.
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const counter = system as unknown as { nextPickId: number };
+      counter.nextPickId = MAX_PICK_NODE_ID;
+      expect(system.allocatePickId()).toBe(MAX_PICK_NODE_ID);
+      expect(err, 'the last resolvable id must not warn').not.toHaveBeenCalled();
+
+      expect(system.allocatePickId()).toBe(MAX_PICK_NODE_ID + 1);
+      expect(err).toHaveBeenCalledTimes(1);
+      // Once per session, not once per allocation.
+      system.allocatePickId();
+      expect(err).toHaveBeenCalledTimes(1);
+    } finally {
+      err.mockRestore();
+    }
   });
 
   it('registerNode increments registeredNodeCount', () => {
