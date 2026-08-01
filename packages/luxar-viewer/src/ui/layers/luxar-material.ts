@@ -65,8 +65,11 @@ export function isColormapActive(mat: LuxarMaterial): boolean {
  *   mapped into the LUT (`uScalarMin`/`uScalarScale`) and gamma warps that
  *   value before the lookup — both operate on the scalar, not the color.
  *   The composed display window is recovered from the gain/offset pair and
- *   pushed via `updateScalarRange`; the color GOG is bypassed in-shader, so
- *   `intensity`/`offset` are intentionally NOT pushed.
+ *   pushed via `updateScalarRange`. The shader does NOT bypass the color
+ *   GOG (it always multiplies `vColor * uIntensity + uOffset` post-LUT), so
+ *   we actively RESET it to identity (`updateIntensity(1)`/`updateOffset(0)`)
+ *   here — otherwise the authored gain would double-apply, both shaping the
+ *   LUT window and multiplying the mapped color (#936).
  * - **Direct-color mode**: GOG operates on the color (`intensity`/`offset`).
  *
  * Gamma is pushed in both modes (the shader applies it pre-LUT in colormap
@@ -85,6 +88,10 @@ export function applyColorAdjustments(
   if (isColormapActive(mat) && mat.updateScalarRange) {
     const { min, max } = computeDisplayRange(intensity, offset);
     mat.updateScalarRange(min, max);
+    // The window now lives in the LUT lookup; clear any previously-stamped
+    // post-LUT color gain so it does not double-apply (#936).
+    mat.updateIntensity(1);
+    mat.updateOffset(0);
   } else {
     mat.updateIntensity(intensity);
     mat.updateOffset(offset);
