@@ -729,10 +729,10 @@ export function validationModeTooltip(
       );
     case 'none':
       return (
-        'No validation: the dataset has no content_hash fingerprint (it was not produced by the ' +
-        'Luxar compiler — e.g. a plain external zarr) and no cache TTL is configured. Cached ' +
-        'chunks are served indefinitely, so if the file changes on the server you will keep ' +
-        'seeing the old data until you press Clear All to force a fresh download.'
+        'No validation: the dataset root metadata could not be fetched (offline or a store with ' +
+        'no root .zattrs), no cache TTL is configured, and no cached hash was available to fall ' +
+        'back on. Cached chunks are served indefinitely, so if the file changes on the server you ' +
+        'will keep seeing the old data until you press Clear All to force a fresh download.'
       );
     default:
       return (
@@ -743,17 +743,20 @@ export function validationModeTooltip(
 }
 
 /**
- * Didactic hover explanation for the "Last Validated" timestamp,
- * mode-aware because the timestamp means different things: under
- * content-hash it is a real confirmation; under `none` it only records
- * that the check ran and found nothing to compare.
+ * Didactic hover explanation for the "Last Validated" / "Cached Since"
+ * timestamp, mode-aware because the timestamp means different things:
+ * under the hash modes it is a real confirmation that updates on each
+ * successful online check, while under ttl/none it is a fixed known-good
+ * baseline (when the cache was established) that does NOT advance on
+ * repeat offline checks.
  */
 export function lastValidatedTooltip(
   mode: 'content-hash' | 'zattrs-hash' | 'ttl' | 'none' | undefined
 ): string {
   const base =
-    'When the viewer last ran its freshness check (it re-fetches the dataset root metadata ' +
-    'from the server at load time). ';
+    'The viewer re-fetches the dataset root metadata from the server at load time. For the ' +
+    'content-hash and .zattrs-hash modes this timestamp updates on each successful check; for ' +
+    'ttl/none it is a fixed baseline that does not advance on repeat checks. ';
   switch (mode) {
     case 'content-hash':
       return (
@@ -772,16 +775,18 @@ export function lastValidatedTooltip(
     case 'ttl':
       return (
         base +
-        'This timestamp starts the TTL countdown: once the cache is older than the configured ' +
-        'maximum age it is discarded and re-downloaded. "Never" = no check has completed yet, ' +
-        'e.g. offline.'
+        'This timestamp marks when the cache baseline was established and starts the TTL ' +
+        'countdown: once the cache is older than the configured maximum age it is discarded ' +
+        'and re-downloaded. Repeat offline checks do NOT push it forward. "Never" = no check ' +
+        'has completed yet, e.g. offline.'
       );
     case 'none':
       return (
         base +
-        'Careful: with validation "None" this is only when the check last RAN — it found no ' +
-        'content_hash to compare, so it does NOT confirm the cached data matches the server. ' +
-        '"Never" = no check has completed yet, e.g. offline.'
+        'Careful: with validation "None" this marks when the cache baseline was established — ' +
+        'it found no content_hash to compare, so it does NOT confirm the cached data matches ' +
+        'the server and does NOT advance on repeat checks. "Never" = no check has completed ' +
+        'yet, e.g. offline.'
       );
     default:
       return base + '"Never" = no check has completed yet, e.g. offline.';
@@ -790,17 +795,17 @@ export function lastValidatedTooltip(
 
 /**
  * Row label for the freshness timestamp, mode-aware to match the
- * timestamp's actual meaning: only content-hash mode truly VALIDATES
- * the cache against the server; under ttl/none the check merely ran
- * (found no fingerprint to compare), so "Last Validated" would
- * overstate what happened — "Last Checked" is the honest label.
+ * timestamp's actual meaning: only the hash modes truly VALIDATE the
+ * cache against the server on each check ("Last Validated"). Under
+ * ttl/none the timestamp is a fixed baseline marking when the cache was
+ * established, not a per-check event, so "Cached Since" is the honest label.
  */
 export function lastValidatedLabel(
   mode: 'content-hash' | 'zattrs-hash' | 'ttl' | 'none' | undefined
 ): string {
-  // Both hash modes genuinely VALIDATE the cache against the server;
-  // ttl/none merely record that the check ran.
-  return mode === 'content-hash' || mode === 'zattrs-hash' ? 'Last Validated' : 'Last Checked';
+  // Both hash modes genuinely VALIDATE the cache against the server on each
+  // successful check; ttl/none record a fixed baseline that does not advance.
+  return mode === 'content-hash' || mode === 'zattrs-hash' ? 'Last Validated' : 'Cached Since';
 }
 
 /**
@@ -1157,7 +1162,7 @@ export function renderCacheContent(
           </span>
         </div>
         <div class="luxar-cache-health__row">
-          <span class="luxar-cache-health__label" data-field="cache-health-validated-label" title="Timestamp of the most recent freshness check against the server — hover the value for what that means under the current validation mode">${lastValidatedLabel(cacheMetrics.health?.validationMode)}</span>
+          <span class="luxar-cache-health__label" data-field="cache-health-validated-label" title="When the cache's freshness was last established — for hash-validated datasets the last successful server check, for TTL/none the known-good baseline; hover the value for details under the current mode">${lastValidatedLabel(cacheMetrics.health?.validationMode)}</span>
           <span class="luxar-cache-health__value" data-field="cache-health-validated" title="${escapeHtml(lastValidatedTooltip(cacheMetrics.health?.validationMode))}">
             ${formatLastValidated(cacheMetrics.health?.lastValidatedAt)}
           </span>
