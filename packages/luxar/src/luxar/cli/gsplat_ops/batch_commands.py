@@ -68,8 +68,9 @@ def batch_validate_cmd(
     Checks each tile for completeness (metadata, arrays, shapes).
     Reports OK, MISSING, CORRUPT, and STALE_TMP counts.
 
-    Use --fix to delete corrupt tiles and leftover .tmp directories,
-    so they get re-fitted on the next submit.
+    Use --fix to delete corrupt tiles and orphaned per-attempt staging
+    leftovers, so they get re-fitted on the next submit. Staging that belongs
+    to a still-running (or unverifiable) attempt is detected and kept.
 
     Examples:
         luxar gsplat batch-fit validate output_dir/

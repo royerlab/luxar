@@ -418,9 +418,10 @@ class TestSlurmGen:
         assert "--tile-size" not in script
         # outputs use the box label, not tile
         assert "_box$(printf" in script
-        # a legitimately-empty box (.tmp.empty marker) is a clean exit-0, not a
-        # failed task — the script records a ${OUTPUT}.empty marker for the merge.
-        assert "${OUTPUT}.tmp.empty" in script
+        # a legitimately-empty box (per-attempt ${STAGING}.empty marker) is a
+        # clean exit-0, not a failed task — the script records a ${OUTPUT}.empty
+        # marker for the merge.
+        assert "${STAGING}.empty" in script
         assert 'touch "${OUTPUT}.empty"' in script
 
     def test_merge_script(self) -> None:
