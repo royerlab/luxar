@@ -67,9 +67,9 @@ Pure utility functions extracted for testability — no external dependencies be
 
 `CinematicModeController` owns the Cinematic-Mode preset (C-key toggle):
 
-- **Enable** snapshots the affected `RenderingSettings` keys (tone mapping, detector noise, vignette, chromatic lens distortion, FOV, FOV preset) and applies cinematic values: ACES tone mapping, low detector noise (readout/photon/FPN), vignette on, the `35mm` lens-distortion preset, and 35 mm FOV.
-- **Disable** restores from the snapshot, dirty-checked per key (a key is only restored if it still holds the cinematic value — user edits are preserved). If no snapshot exists (panel loaded with cinematic already on), falls back to `50mm Normal` defaults.
-- **`updateCheckbox()`** uses a majority-vote over the four signal effects (`detectorNoiseEnabled`, `vignetteEnabled`, `chromaticLensDistortionEnabled`, `toneMapping === 'ACES'`) to drive the checkbox's display state.
+- **Enable** snapshots the affected `RenderingSettings` keys (tone mapping, bloom, detector noise, vignette, chromatic lens distortion, FOV, FOV preset) and applies cinematic values: ACES tone mapping, bloom on as a subtle wide glow (threshold `0.01`, strength `0.05`, radius `1.0`, 8 mipmap levels), low detector noise (readout/photon/FPN), vignette on, the `35mm` lens-distortion preset, and 35 mm FOV.
+- **Disable** restores from the snapshot, dirty-checked per key (a key is only restored if it still holds the cinematic value — user edits are preserved). If no snapshot exists (panel loaded with cinematic already on), falls back to `50mm Normal` defaults and the default bloom settings.
+- **`updateCheckbox()`** uses a majority-vote over the four signal effects (`detectorNoiseEnabled`, `vignetteEnabled`, `chromaticLensDistortionEnabled`, `toneMapping === 'ACES'`) to drive the checkbox's display state. Bloom is applied by the preset but excluded from the vote — it is commonly enabled on its own for HDR data, so counting it would flip the checkbox on non-cinematic scenes.
 - **`clearSnapshot()`** is called from `resetToDefaults`/`loadSettings` so the next toggle starts fresh.
 
 The post-processing batch goes through `postProcessing.withDeferredRebuild(...)` so the depth counter unwinds even if a sub-setter throws. `TONE_MAPPING_MAP` (string → `THREE.ToneMapping` enum) is exported and reused by `apply-settings.ts`.

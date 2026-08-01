@@ -2,8 +2,9 @@
  * Cinematic Mode preset for the rendering-controls panel.
  *
  * Encapsulates the C-key toggle that flips a film-look preset:
- * ACES tone mapping, detector noise, vignette, chromatic lens distortion,
- * and a 35 mm wide-angle FOV. On enable, all affected settings are
+ * ACES tone mapping, a subtle wide bloom, detector noise, vignette,
+ * chromatic lens distortion, and a 35 mm wide-angle FOV.
+ * On enable, all affected settings are
  * snapshot. On disable, each setting is restored from the snapshot
  * unless the user manually changed it (dirty-check).
  *
@@ -34,6 +35,11 @@ export const TONE_MAPPING_MAP: Record<string, THREE.ToneMapping> = {
 /** Keys of RenderingSettings that cinematic mode touches. */
 export type CinematicSnapshotKeys =
   | 'toneMapping'
+  | 'bloomEnabled'
+  | 'bloomThreshold'
+  | 'bloomStrength'
+  | 'bloomRadius'
+  | 'bloomLevels'
   | 'detectorNoiseEnabled'
   | 'detectorNoiseReadoutSigma'
   | 'detectorNoisePhotonGain'
@@ -55,6 +61,11 @@ export type CinematicSnapshot = Pick<RenderingSettings, CinematicSnapshotKeys>;
 
 const CINEMATIC_SNAPSHOT_KEYS: CinematicSnapshotKeys[] = [
   'toneMapping',
+  'bloomEnabled',
+  'bloomThreshold',
+  'bloomStrength',
+  'bloomRadius',
+  'bloomLevels',
   'detectorNoiseEnabled',
   'detectorNoiseReadoutSigma',
   'detectorNoisePhotonGain',
@@ -78,6 +89,14 @@ export function buildCinematicValues(): CinematicSnapshot {
   const lens35 = config.camera.lensDistortionPresets['35mm'];
   return {
     toneMapping: 'ACES',
+    // Subtle, wide glow: a near-zero threshold so mid-tones contribute, a
+    // gentle strength so the halo reads as lens veiling rather than a bloom
+    // effect, and the full mipmap ladder for a smooth spread.
+    bloomEnabled: true,
+    bloomThreshold: 0.01,
+    bloomStrength: 0.05,
+    bloomRadius: 1.0,
+    bloomLevels: 8,
     detectorNoiseEnabled: true,
     detectorNoiseReadoutSigma: 0.002,
     detectorNoisePhotonGain: 0.002,
@@ -126,6 +145,10 @@ export class CinematicModeController {
   /**
    * Recompute the cinematic-mode checkbox from the current effects state
    * (majority vote over the four signal effects, including ACES tone mapping).
+   *
+   * Bloom is applied by the preset but deliberately kept OUT of the vote: it
+   * is commonly enabled on its own for HDR data, so counting it would flip the
+   * checkbox on scenes that are not cinematic at all.
    */
   updateCheckbox(): void {
     const { settings, controllers } = this.context;
@@ -186,7 +209,13 @@ export class CinematicModeController {
     } else {
       // No snapshot (e.g. loaded from localStorage with cinematic on).
       // Fall back to non-cinematic defaults.
-      settings.toneMapping = config.renderingControls.defaults.toneMapping;
+      const defaults = config.renderingControls.defaults;
+      settings.toneMapping = defaults.toneMapping;
+      settings.bloomEnabled = defaults.bloomEnabled;
+      settings.bloomThreshold = defaults.bloomThreshold;
+      settings.bloomStrength = defaults.bloomStrength;
+      settings.bloomRadius = defaults.bloomRadius;
+      settings.bloomLevels = defaults.bloomLevels;
       settings.detectorNoiseEnabled = false;
       settings.vignetteEnabled = false;
       settings.chromaticLensDistortionEnabled = false;
@@ -207,6 +236,14 @@ export class CinematicModeController {
     // depth counter unwinds even when a sub-setter throws.
     postProcessing.withDeferredRebuild(() => {
       postProcessing.setToneMapping(TONE_MAPPING_MAP[settings.toneMapping]);
+
+      postProcessing.setBloomEnabled(
+        settings.bloomEnabled,
+        settings.bloomStrength,
+        settings.bloomRadius,
+        settings.bloomThreshold
+      );
+      postProcessing.setBloomLevels(settings.bloomLevels);
 
       postProcessing.setDetectorNoiseEnabled(
         settings.detectorNoiseEnabled,
@@ -257,6 +294,7 @@ export class CinematicModeController {
     log.info(
       Modules.RENDERER,
       `Cinematic mode ${modeText}: tone=${settings.toneMapping}, ` +
+        `bloom=${settings.bloomEnabled}, ` +
         `noise=${settings.detectorNoiseEnabled}, vignette=${settings.vignetteEnabled}, ` +
         `lens=${settings.chromaticLensDistortionEnabled}, FOV=${settings.fovPreset}`
     );
