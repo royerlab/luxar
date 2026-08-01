@@ -17,6 +17,7 @@ import pytest
 
 from luxar.demos import demo_esm3_protein_landscape as demo
 from luxar.demos import require_module
+from luxar.demos._dependencies import MissingDependencyError
 from luxar.demos.demo_esm3_protein_landscape import _compute_esm3_embeddings
 from luxar.utils.download import QUARANTINE_SUFFIX
 
@@ -180,6 +181,149 @@ class TestDependencyGatesAreDeferred:
         )
 
 
+class TestQuarantineEnrichesDependencyErrors:
+    """A missing torch/esm on the compute path must still name a quarantined copy.
+
+    A direct/programmatic caller (bypassing ``main()``) that hits a MISSING
+    ``torch`` used to get a plain ``MissingDependencyError`` with no mention of a
+    multi-gigabyte rejected cache sitting on disk. The dependency error now
+    carries the quarantine notice — but only for paths ``main()`` has not already
+    reported (``already_reported_quarantine``), so the CLI never double-reports
+    while a file freshly quarantined THIS run is still named.
+    """
+
+    def test_direct_caller_sees_quarantine_when_torch_missing(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        corrupt = tmp_path / f"embeddings_esmc_300m.npy{QUARANTINE_SUFFIX}"
+        corrupt.write_bytes(b"x" * 1234)
+
+        # Make `import torch` fail, so the compute path's require_module raises.
+        monkeypatch.setitem(sys.modules, "torch", None)
+
+        with pytest.raises(MissingDependencyError) as excinfo:
+            _compute_esm3_embeddings(SEQUENCES, tmp_path, model_name="esmc-300m")
+
+        message = str(excinfo.value)
+        assert corrupt.name in message, "quarantine notice missing from torch error"
+        assert "torch" in message, "original dependency message was lost"
+
+    def test_dependency_remedy_names_the_destination_and_the_install_route(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """The remedy must be actionable on its OWN, unlike the no-CUDA one.
+
+        The no-CUDA RuntimeError lists the destination `.npy` in a bullet above
+        the notice, so it can say "that path". A dependency error has no such
+        surrounding text: a bare "that path" points at the `.corrupt` file the
+        notice just listed. It must also offer the install route — with the
+        package missing, deleting the quarantined copy does not let you proceed.
+        """
+        corrupt = tmp_path / f"embeddings_esmc_300m.npy{QUARANTINE_SUFFIX}"
+        corrupt.write_bytes(b"x" * 1234)
+        destination = tmp_path / "embeddings_esmc_300m.npy"
+
+        monkeypatch.setitem(sys.modules, "torch", None)
+
+        with pytest.raises(MissingDependencyError) as excinfo:
+            _compute_esm3_embeddings(SEQUENCES, tmp_path, model_name="esmc-300m")
+
+        remedy = str(excinfo.value).rsplit("To proceed you must", 1)[-1]
+        assert f"{destination} " in remedy, (
+            f"remedy does not name the destination .npy: {remedy}"
+        )
+        assert "install the missing dependency" in remedy, (
+            f"remedy omits the install route: {remedy}"
+        )
+
+    def test_already_reported_does_not_repeat_the_notice(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        corrupt = tmp_path / f"embeddings_esmc_300m.npy{QUARANTINE_SUFFIX}"
+        corrupt.write_bytes(b"x" * 1234)
+
+        monkeypatch.setitem(sys.modules, "torch", None)
+
+        with pytest.raises(MissingDependencyError) as excinfo:
+            _compute_esm3_embeddings(
+                SEQUENCES,
+                tmp_path,
+                model_name="esmc-300m",
+                already_reported_quarantine=frozenset({corrupt}),
+            )
+
+        message = str(excinfo.value)
+        assert corrupt.name not in message, "notice repeated after main() reported it"
+        assert "torch" in message, "original dependency message was lost"
+
+    def test_freshly_quarantined_file_is_reported_even_if_another_was_reported(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """Defect-1 regression: the set is per-PATH, not a dir-wide flag.
+
+        `main()` may have reported an UNRELATED leftover (a different --model),
+        but a file quarantined THIS run must still be named — otherwise the
+        multi-GB copy rejected this run is invisible, worse than the baseline.
+        """
+        other = tmp_path / f"embeddings_esm3_open.npy{QUARANTINE_SUFFIX}"
+        other.write_bytes(b"x" * 1234)
+        current = tmp_path / f"embeddings_esmc_300m.npy{QUARANTINE_SUFFIX}"
+        current.write_bytes(b"x" * 1234)
+
+        monkeypatch.setitem(sys.modules, "torch", None)
+
+        with pytest.raises(MissingDependencyError) as excinfo:
+            _compute_esm3_embeddings(
+                SEQUENCES,
+                tmp_path,
+                model_name="esmc-300m",
+                already_reported_quarantine=frozenset({other}),
+            )
+
+        message = str(excinfo.value)
+        assert current.name in message, "freshly quarantined file was suppressed"
+
+    def test_direct_caller_sees_quarantine_when_esm_missing(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """The esm gate (reached only when CUDA is available) enriches too."""
+        torch = pytest.importorskip("torch")
+        monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+        monkeypatch.setitem(sys.modules, "esm", None)
+
+        corrupt = tmp_path / f"embeddings_esmc_300m.npy{QUARANTINE_SUFFIX}"
+        corrupt.write_bytes(b"x" * 1234)
+
+        with pytest.raises(MissingDependencyError) as excinfo:
+            _compute_esm3_embeddings(SEQUENCES, tmp_path, model_name="esmc-300m")
+
+        message = str(excinfo.value)
+        assert corrupt.name in message, "quarantine notice missing from esm error"
+
+    def test_compute_path_stays_silent_on_the_console(
+        self, tmp_path, monkeypatch, capsys
+    ) -> None:
+        """The compute layer must NOT print the notice — `main()` owns the console.
+
+        Mutation guard: the notice reaches a direct caller via the raised
+        exception, never stdout. Hermetic (torch-less) so it runs on a GPU box
+        too, unlike the CUDA-skipped `test_pre_existing_quarantine_is_reported`.
+        Flipping `warn_if_quarantined(..., verbose=False)` to `verbose=True`
+        prints here and fails this test.
+        """
+        corrupt = tmp_path / f"embeddings_esmc_300m.npy{QUARANTINE_SUFFIX}"
+        corrupt.write_bytes(b"x" * 1234)
+
+        monkeypatch.setitem(sys.modules, "torch", None)
+
+        with pytest.raises(MissingDependencyError):
+            _compute_esm3_embeddings(SEQUENCES, tmp_path, model_name="esmc-300m")
+
+        out = capsys.readouterr().out
+        assert corrupt.name not in out, "compute path printed the notice to stdout"
+        assert "QUARANTINED" not in out, "compute path printed the notice to stdout"
+
+
 class TestMainReportsQuarantine:
     """`main()` owns the CONSOLE report — exactly once, before anything costly.
 
@@ -197,7 +341,16 @@ class TestMainReportsQuarantine:
         corrupt = cache_dir / f"embeddings_esmc_300m.npy{QUARANTINE_SUFFIX}"
         corrupt.write_bytes(b"x" * 2048)
 
-        monkeypatch.setattr(demo, "generate_esm3_landscape", lambda output_path, **k: 0)
+        # Record the kwargs main() forwards, so the exactly-once contract is
+        # protected end to end: main() must tell the compute path which paths it
+        # already reported, or a regression to the call sites passes silently.
+        recorded_kwargs: list[dict] = []
+
+        def fake_generate(output_path, **kwargs):
+            recorded_kwargs.append(kwargs)
+            return 0
+
+        monkeypatch.setattr(demo, "generate_esm3_landscape", fake_generate)
         monkeypatch.setattr(demo, "get_demos_output_dir", lambda: tmp_path)
         monkeypatch.setattr(demo.sys, "argv", ["demo", "--no-serve"])
 
@@ -209,3 +362,41 @@ class TestMainReportsQuarantine:
             f"quarantine notice printed {out.count('QUARANTINED')} times; "
             "exactly one report per run is the contract"
         )
+        assert recorded_kwargs, "main() did not reach the generator"
+        reported = recorded_kwargs[0]["already_reported_quarantine"]
+        assert isinstance(reported, frozenset)
+        assert corrupt in reported, "main() did not forward the reported path set"
+
+    def test_serve_path_forwards_the_reported_set(
+        self, tmp_path, monkeypatch, capsys
+    ) -> None:
+        """The DEFAULT (serve) call site must forward the set too, not just --no-serve.
+
+        The other tests hardcode `--no-serve`, covering only that call site; a
+        regression that blanked `already_reported_quarantine` on the serve-path
+        call would pass silently. The fake returns 0, so `main()` hits
+        `if n == 0: return` before `launch_viewer` — no viewer stub needed.
+        """
+        monkeypatch.setenv("HOME", str(tmp_path))
+        cache_dir = tmp_path / ".cache" / "luxar" / "esm3_swissprot"
+        cache_dir.mkdir(parents=True)
+        corrupt = cache_dir / f"embeddings_esmc_300m.npy{QUARANTINE_SUFFIX}"
+        corrupt.write_bytes(b"x" * 2048)
+
+        recorded_kwargs: list[dict] = []
+
+        def fake_generate(output_path, **kwargs):
+            recorded_kwargs.append(kwargs)
+            return 0
+
+        monkeypatch.setattr(demo, "generate_esm3_landscape", fake_generate)
+        monkeypatch.setattr(demo, "get_demos_output_dir", lambda: tmp_path)
+        monkeypatch.setattr(demo.sys, "argv", ["demo"])  # serve path (no --no-serve)
+
+        demo.main()
+
+        capsys.readouterr()  # drain
+        assert recorded_kwargs, "main() did not reach the generator"
+        reported = recorded_kwargs[0]["already_reported_quarantine"]
+        assert isinstance(reported, frozenset)
+        assert corrupt in reported, "serve-path call did not forward the reported set"
