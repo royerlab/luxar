@@ -555,11 +555,17 @@ describe('SceneLoader.retryFailedLoader — derived.skip fallback', () => {
 
     expect(ok).toBe(true);
     expect(commitSpy).toHaveBeenCalledTimes(1);
-    // Path + data only: retry now routes through processPointsData →
-    // commitPointsGeometry, which passes `session`/`loadedViewVersion`
-    // explicitly instead of letting them default. Both resolve to the same
-    // `_updateVersion`, so the call arity changed, not the behaviour.
-    expect(commitSpy.mock.calls[0]?.slice(0, 2)).toEqual(['/p', fakeData]);
+    // Retry routes through processPointsData → commitPointsGeometry, which
+    // resolves `session`/`loadedViewVersion` and forwards them explicitly
+    // rather than letting this method default them. Pin all four arguments:
+    // the version must still be the live `_updateVersion`, which is what the
+    // old one-shot call defaulted to.
+    expect(commitSpy).toHaveBeenCalledWith(
+      '/p',
+      fakeData,
+      undefined,
+      (internals as unknown as { _updateVersion: number })._updateVersion
+    );
     expect(placeholder.userData.visiblePointCount).toBe(3);
     expect(internals.registry.failedLoaders.has('/p')).toBe(false);
   });
