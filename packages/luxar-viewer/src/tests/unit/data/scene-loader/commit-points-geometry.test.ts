@@ -23,6 +23,7 @@ import { createPointsGeometry } from '../../../../rendering/node-factory/create-
 import { getPointTexture } from '../../../../rendering/point-geometry';
 import { getPrefixParent, setPrefixParent } from '../../../../types/prefix-lineage';
 import { SOFT_DISPOSE_FLAG } from '../../../../rendering/material-manager';
+import { configureRenderObjectEviction } from '../../../../data/scene-loader/commit/invalidate-render-object';
 import type { LoadedPointsData } from '../../../../data/data-loader-types';
 import type { NodeFactory } from '../../../../rendering/node-factory';
 
@@ -277,6 +278,12 @@ describe('commitPointsGeometry — non-pool path against REAL factory geometry',
   // interleaved buffer (undefined) and threw on the SECOND same-count
   // commit — the routine case while scrubbing a dimension whose visible
   // count is constant.
+
+  // The soft-dispose assertion below is the WebGPU-only RenderObject
+  // eviction, OFF by default (classic WebGL is the production default).
+  // Opt into the WebGPU state for this block and reset afterward.
+  beforeEach(() => configureRenderObjectEviction(true));
+  afterEach(() => configureRenderObjectEviction(false));
 
   it('a second same-count commit does not throw and uploads the new positions', () => {
     const root = new THREE.Group();

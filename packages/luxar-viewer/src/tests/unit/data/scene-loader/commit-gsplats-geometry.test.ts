@@ -7,7 +7,7 @@
  * orchestration (rootGroup / mesh guards + visibleSplatCount write).
  */
 
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as THREE from 'three';
 import {
   configureElementTextureLayout,
@@ -34,6 +34,7 @@ vi.mock('../../../../rendering/gsplat-geometry', () => ({
 
 import { commitGSplatsGeometry } from '../../../../data/scene-loader/commit/commit-gsplats-geometry';
 import { SOFT_DISPOSE_FLAG } from '../../../../rendering/material-manager';
+import { configureRenderObjectEviction } from '../../../../data/scene-loader/commit/invalidate-render-object';
 import type { StagedGSplatsCommit } from '../../../../data/scene-loader/process/data-processor-gsplats';
 import { getPrefixParent, setPrefixParent } from '../../../../types/prefix-lineage';
 
@@ -706,6 +707,13 @@ describe('commitGSplatsGeometry — RenderObject invalidation on non-pool rebuil
   // SOFT_DISPOSE-flagged material event so Three's cached RenderObject
   // (stale `vertexBuffers` on the WebGPU backend) is evicted — the same
   // contract the pool branch honors via didLastAcquireRebuildAttributes.
+  // That eviction is WebGPU-only and OFF by default (classic WebGL is the
+  // production default), so opt this block into the WebGPU state; the
+  // negative test then meaningfully pins that an in-place update makes no
+  // dispatch even WITH eviction enabled.
+  beforeEach(() => configureRenderObjectEviction(true));
+  afterEach(() => configureRenderObjectEviction(false));
+
   const softDisposeSeen = (mesh: THREE.Mesh): (() => boolean) => {
     let seen = false;
     (mesh.material as THREE.Material).addEventListener('dispose', () => {

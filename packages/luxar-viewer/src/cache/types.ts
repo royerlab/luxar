@@ -34,8 +34,11 @@ export interface CacheStats {
  *   re-stamp a per-save `timestamp` attr, so a dataset regenerated in
  *   place at the same URL still invalidates. Weaker than `content-hash`
  *   only for producers that rewrite data without touching root metadata.
- * - `ttl`: root `.zattrs` unreachable (offline / headerless store); we
- *   trust the cache for `cache.externalDatasetTtlMs` and revalidate after.
+ * - `ttl`: root `.zattrs` unreachable (offline / headerless store) AND no
+ *   cached content hash to fall back on; we trust the cache for
+ *   `cache.externalDatasetTtlMs` and revalidate after. (A dataset that was
+ *   hash-validated online keeps its hash mode offline and is never
+ *   TTL-expired.)
  * - `none`: `.zattrs` unreachable and no TTL configured — cache may be
  *   stale indefinitely until manually cleared. Surfaced in the UI as a
  *   warning badge so the user knows what they're getting.
@@ -70,7 +73,11 @@ export interface OPFSMetadata {
    * next visit; persisted alongside `lastValidatedAt`.
    */
   validationMode?: CacheValidationMode;
-  /** Wall-clock millis at last successful validation. */
+  /**
+   * Wall-clock millis at last successful validation (hash modes), or the
+   * first-seen baseline under `ttl`/`none` — seeded once when unset and NOT
+   * advanced by later no-token checks, so the TTL age grows monotonically.
+   */
   lastValidatedAt?: number;
 }
 
