@@ -1490,8 +1490,19 @@ describe('OPFSStore', () => {
       }
       expect(getDirEntered).toBe(true);
 
-      await racing.dispose();
+      // dispose() must not resolve while init() is still suspended at an
+      // OPFS await — an already-initiated operation cannot be cancelled, so
+      // dispose() awaits the in-flight init before declaring the directory
+      // safe for a newer same-URL store to take over.
+      let disposeSettled = false;
+      const disposePromise = racing.dispose().then(() => {
+        disposeSettled = true;
+      });
+      for (let i = 0; i < 20; i++) await Promise.resolve();
+      expect(disposeSettled).toBe(false);
+
       releaseDir();
+      await disposePromise;
       await initPromise;
 
       // init check #1 returned before opening the directory handle.
@@ -1521,6 +1532,7 @@ describe('OPFSStore', () => {
       // or removing the fixed-name probe file from — the shared directory.
       let probeWrites = 0;
       let probeRemoves = 0;
+      let probeGateEntered = false;
       const dir = mockFS.mockDirHandle;
       const origGetFileHandle = dir.getFileHandle.bind(dir);
       const origRemoveEntry = dir.removeEntry.bind(dir);
@@ -1528,6 +1540,7 @@ describe('OPFSStore', () => {
         if (name === '.opfs-write-probe') {
           return {
             async createWritable() {
+              probeGateEntered = true;
               await probeGate; // suspend init() mid-probe
               return {
                 async write() {
@@ -1555,19 +1568,27 @@ describe('OPFSStore', () => {
       );
       const initPromise = racing.init();
 
-      // Wait (microtask-only, no timers) until opfsRoot is assigned — i.e.
-      // init() is suspended inside the probe with the handle already open.
-      for (
-        let i = 0;
-        i < 1000 && (racing as unknown as { opfsRoot: unknown }).opfsRoot === null;
-        i++
-      ) {
+      // Wait (microtask-only, no timers) until init() is genuinely suspended
+      // AT the probe gate (opfsRoot alone isn't enough: init() could still be
+      // a microtask short of createWritable, and a dispose landing there
+      // unwinds init at the pre-writable disposed check — legitimately fast).
+      for (let i = 0; i < 1000 && !probeGateEntered; i++) {
         await Promise.resolve();
       }
+      expect(probeGateEntered).toBe(true);
       expect((racing as unknown as { opfsRoot: unknown }).opfsRoot).not.toBeNull();
 
-      await racing.dispose();
+      // dispose() awaits the in-flight init (suspended inside the probe), so
+      // it must still be pending until the probe gate is released.
+      let disposeSettled = false;
+      const disposePromise = racing.dispose().then(() => {
+        disposeSettled = true;
+      });
+      for (let i = 0; i < 20; i++) await Promise.resolve();
+      expect(disposeSettled).toBe(false);
+
       releaseProbe();
+      await disposePromise;
       await initPromise;
 
       // The good on-disk metadata is byte-for-byte intact (string equality =
@@ -1581,6 +1602,85 @@ describe('OPFSStore', () => {
       // in-probe disposed re-checks are removed.
       expect(probeWrites).toBe(0);
       expect(probeRemoves).toBe(0);
+    });
+
+    it('dispose() awaits an in-flight clear(), and the disposed clear skips the directory wipe', async () => {
+      await store.set('a/0', new Uint8Array([1, 2, 3]));
+      const filesBefore = mockFS.files.size;
+      expect(filesBefore).toBeGreaterThan(0);
+
+      // Gate clear()'s own getDirectory() call so it suspends mid-clear,
+      // AFTER its entry disposed-check but BEFORE the destructive
+      // removeEntry(datasetId) — the window where a racing dispose used to
+      // let the wipe land after dispose() had already resolved.
+      let releaseDir!: () => void;
+      const dirGate = new Promise<void>((resolve) => {
+        releaseDir = resolve;
+      });
+      let rootRemoveEntryCalls = 0;
+      vi.stubGlobal('navigator', {
+        storage: {
+          async getDirectory() {
+            await dirGate;
+            return {
+              async getDirectoryHandle(_id: string, _opts?: unknown) {
+                return mockFS.mockDirHandle;
+              },
+              async removeEntry(_name: string, _opts?: unknown) {
+                rootRemoveEntryCalls++;
+                mockFS.files.clear();
+                mockFS.metaFiles.clear();
+              },
+            };
+          },
+          async estimate() {
+            return { quota: 10e9, usage: 1e9 };
+          },
+        },
+      });
+
+      const clearPromise = store.clear();
+      // Let clear() run up to the gated getDirectory() (microtask-only).
+      for (let i = 0; i < 20; i++) await Promise.resolve();
+
+      // dispose() must not resolve while the clear is still suspended — its
+      // removeEntry cannot be cancelled once initiated, so dispose() awaits
+      // the in-flight clear before a newer same-URL store may take over.
+      let disposeSettled = false;
+      const disposePromise = store.dispose().then(() => {
+        disposeSettled = true;
+      });
+      for (let i = 0; i < 20; i++) await Promise.resolve();
+      expect(disposeSettled).toBe(false);
+
+      releaseDir();
+      await clearPromise;
+      await disposePromise;
+
+      // The resumed clear saw `disposed` and bailed before removeEntry: the
+      // shared directory was neither wiped nor recreated, and the data file
+      // is untouched. Goes RED if the post-getDirectory disposed check (or
+      // dispose()'s pendingClear await) is removed.
+      expect(rootRemoveEntryCalls).toBe(0);
+      expect(mockFS.files.size).toBe(filesBefore);
+      expect(store.getStats().available).toBe(false);
+    });
+
+    it('delete() is a no-op once dispose() has been entered (while dispose is still pending)', async () => {
+      await store.set('key1', new Uint8Array([1, 2, 3]));
+      const filesBefore = mockFS.files.size;
+      expect(store.getStats().count).toBe(1);
+
+      // Do NOT await: dispose() sets `disposed` synchronously but only nulls
+      // opfsRoot at the end, so this exercises the window where delete()'s
+      // own disposed guard (not the !opfsRoot check) must do the work — e.g.
+      // an in-flight get() hitting its corrupted-entry path mid-dispose.
+      const disposing = store.dispose();
+      await store.delete('key1');
+
+      expect(mockFS.files.size).toBe(filesBefore);
+      expect(store.getStats().count).toBe(1);
+      await disposing;
     });
   });
 });

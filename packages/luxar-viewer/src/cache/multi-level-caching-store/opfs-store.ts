@@ -131,6 +131,15 @@ export class OPFSStore {
   // an empty (not-yet-loaded) snapshot.
   private initialized = false;
 
+  // In-flight init()/clear() promises. dispose() awaits them: the disposed
+  // guards stop FURTHER mutations, but an OPFS operation already initiated at
+  // an await cannot be cancelled — so dispose() must not resolve while one is
+  // still outstanding. A newer same-URL store may take over the shared
+  // per-datasetId directory the moment dispose() resolves, and a straggling
+  // removeEntry/recreate from this store would clobber it.
+  private pendingInit: Promise<void> | null = null;
+  private pendingClear: Promise<void> | null = null;
+
   constructor(datasetId: string, baseUrl: string, maxSize: number) {
     this.datasetId = datasetId;
     this.baseUrl = baseUrl;
@@ -176,6 +185,17 @@ export class OPFSStore {
    * Initialize OPFS directory, prove writability, and load metadata.
    */
   async init(): Promise<void> {
+    // Track the in-flight run so dispose() can await it (see pendingInit).
+    const run = this.doInit();
+    this.pendingInit = run;
+    try {
+      await run;
+    } finally {
+      if (this.pendingInit === run) this.pendingInit = null;
+    }
+  }
+
+  private async doInit(): Promise<void> {
     try {
       const root = await navigator.storage.getDirectory();
       // dispose() may land during any of these awaits. Re-check after each so
@@ -558,7 +578,11 @@ export class OPFSStore {
    * Delete a file from OPFS.
    */
   async delete(key: string): Promise<void> {
-    if (!this.opfsRoot) return;
+    // The disposed guard matters for the in-flight-get() race: a get() that
+    // entered before dispose() can hit its corrupted-entry path afterwards
+    // and must not removeEntry from a directory a newer same-URL store may
+    // now own (nor schedule a post-dispose metadata save below).
+    if (this.disposed || !this.opfsRoot) return;
 
     const entry = this.index.get(key);
     if (!entry) return;
@@ -619,6 +643,22 @@ export class OPFSStore {
     // A disposed store must not recreate/wipe the shared per-datasetId OPFS
     // directory — that could clobber a newer same-URL store.
     if (this.disposed) return;
+    // Chain concurrent clears (mirroring set()'s per-key chaining) so
+    // pendingClear is always the TAIL of every in-flight clear — dispose()
+    // awaits that single promise and is covered no matter how many clears
+    // were racing.
+    const prev = this.pendingClear;
+    const start = (): Promise<void> => this.doClear();
+    const run = prev ? prev.then(start, start) : start();
+    this.pendingClear = run;
+    try {
+      await run;
+    } finally {
+      if (this.pendingClear === run) this.pendingClear = null;
+    }
+  }
+
+  private async doClear(): Promise<void> {
     // Bump generation FIRST so any in-flight doSet() that completes
     // after this point sees the mismatch and skips its index update.
     this.generation++;
@@ -630,6 +670,12 @@ export class OPFSStore {
     if (this.pendingWrites.size > 0) {
       await Promise.allSettled([...this.pendingWrites.values()]);
     }
+
+    // dispose() may have landed during the drain above. Bail BEFORE the
+    // in-memory reset and the directory wipe: dispose() awaits this clear,
+    // and skipping the reset keeps the final dispose-time metadata snapshot
+    // consistent with the (un-wiped) files still on disk.
+    if (this.disposed) return;
 
     // Clear all in-memory state first — ensures no stale handles are used
     // even if the filesystem operations below fail
@@ -657,6 +703,13 @@ export class OPFSStore {
         // This is more robust than iterating entries, which can fail if a
         // previous page context still holds open file handles on bucket dirs.
         const root = await navigator.storage.getDirectory();
+        // dispose() may have landed while we awaited getDirectory(). Null the
+        // root and bail before the destructive removeEntry — a newer same-URL
+        // store may be about to take over this directory.
+        if (this.disposed) {
+          this.opfsRoot = null;
+          return;
+        }
         await root.removeEntry(this.datasetId, { recursive: true });
         this.opfsRoot = await root.getDirectoryHandle(this.datasetId, { create: true });
       } catch (error) {
@@ -670,6 +723,8 @@ export class OPFSStore {
           if (this.opfsRoot) {
             const iterableRoot = this.opfsRoot as IterableFileSystemDirectoryHandle;
             for await (const name of iterableRoot.keys()) {
+              // Stop deleting the moment dispose() lands mid-crawl.
+              if (this.disposed) break;
               try {
                 await this.opfsRoot.removeEntry(name, { recursive: true });
               } catch {
@@ -845,9 +900,14 @@ export class OPFSStore {
    * 2. Bump generation so any in-flight doSet that resolves afterwards
    *    detects the mismatch and skips its index update.
    * 3. Cancel the debounced timer (we flush directly below).
-   * 4. Drain pendingWrites so file I/O for in-flight set() calls finishes
+   * 4. Await any in-flight init() or clear(). Their disposed guards stop
+   *    FURTHER mutations, but an OPFS operation already initiated at an
+   *    await cannot be cancelled — dispose() resolving is the signal that a
+   *    newer same-URL store may take over the shared directory, so nothing
+   *    this store started may still be outstanding at that point.
+   * 5. Drain pendingWrites so file I/O for in-flight set() calls finishes
    *    and the index reflects settled state before we snapshot it.
-   * 5. Await any metadata save already mid-write so the final save wins
+   * 6. Await any metadata save already mid-write so the final save wins
    *    on disk (last writer), then write the latest snapshot. The flush is
    *    unconditional (not gated on hasPendingSave) because read-driven LRU
    *    order no longer schedules its own save (see touch()); dispose is
@@ -859,6 +919,11 @@ export class OPFSStore {
     this.generation++;
 
     this.metadata.cancelPendingSave();
+
+    // Neither doInit() nor doClear() can reject (both swallow their own
+    // errors), but keep dispose() unable to throw regardless.
+    if (this.pendingInit) await this.pendingInit.catch(() => {});
+    if (this.pendingClear) await this.pendingClear.catch(() => {});
 
     if (this.pendingWrites.size > 0) {
       await Promise.allSettled([...this.pendingWrites.values()]);
@@ -882,7 +947,11 @@ export class OPFSStore {
   // ========== Private Methods ==========
 
   private scheduleMetadataSave(): void {
-    if (!this.opfsRoot) return;
+    // The disposed check closes a re-arm hole: dispose() cancels the pending
+    // timer at ENTRY, so a mutation that slips in during dispose()'s awaits
+    // (opfsRoot is only nulled at the end) could otherwise arm a fresh timer
+    // whose captured root writes `_cache_meta.json` after dispose() resolved.
+    if (this.disposed || !this.opfsRoot) return;
     this.metadata.scheduleSave({
       root: this.opfsRoot,
       getSnapshot: () => this.metadataSnapshot(),

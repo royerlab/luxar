@@ -16,7 +16,12 @@ good `_cache_meta.json` with an empty snapshot. `disposed` is now set
 synchronously at `dispose()` entry and re-checked across every init await
 (including inside the write probe and the orphan-cleanup crawl), the final
 dispose-time metadata save is gated on a fully-completed init, and
-`clear()`/validation setters are no-ops on a disposed store.
+`clear()`/`delete()`/validation setters are no-ops on a disposed store.
+`dispose()` additionally awaits any in-flight `init()`/`clear()` before
+resolving (an already-initiated OPFS operation cannot be cancelled), and
+`clear()` re-checks `disposed` at each resumption point, so once `dispose()`
+resolves no straggling wipe or write from the old store can touch a
+directory a newer same-URL store has taken over.
 
 ### July 2026
 
