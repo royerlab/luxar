@@ -883,3 +883,188 @@ describe('projectPointsTo3D — RGBA color compaction (colorComponents=4, fallba
     }
   });
 });
+
+// ════════════════════════════════════════════════════════════════════════════
+// Regression: issue #751 — in-place sharpness/scalars compaction gated on the
+// SOURCE dtype. The shuffle only touches the accumulator TARGET buffer (already
+// Float32-pinned for any non-uint8 attribute), so a Float16/Uint16 source
+// matched NO `instanceof` branch and the `[writeIdx] = [readIdx]` move was
+// skipped — leaving stale values at the survivor slots. The fix gates only on
+// the target buffer existing.
+// ════════════════════════════════════════════════════════════════════════════
+
+describe('projectPointsTo3D — sharpness/scalars compaction with a non-Float32 source (issue #751)', () => {
+  // 3 points × 4 dims: points 0 and 2 sit ON the slice (dim3 = 0, kept);
+  // point 1 is far in the hidden dim (dim3 = 100 ≫ R=1 → R_eff 0, filtered).
+  // Survivors [0, 2] compact to slots [0, 1]: slot 1 must receive point 2's
+  // value (readIdx 2), NOT keep point 1's stale value.
+  const positions = new Float32Array([0, 0, 0, 0, 1, 1, 1, 100, 2, 2, 2, 0]);
+  const erConfig: EffectiveRadiusConfig = {
+    spatialExtendDims: [true, true, true, true],
+    maxRadius: 1.0,
+  };
+  const fillPositions = new Float32Array([0, 0, 0, 1, 1, 1, 2, 2, 2]);
+
+  function makeTargetBuffers(accumulator: LoadedPointsDataAccumulator): ProjectionTargetBuffers {
+    return {
+      positions3D: accumulator.getPositionBuffer(),
+      colors: accumulator.getColorBuffer(),
+      radii: accumulator.getRadiiBuffer(),
+      sharpness: accumulator.getSharpnessBuffer(),
+      scalars: accumulator.getScalarBuffer(),
+    };
+  }
+
+  it('compacts a NATIVE Uint16 sharpness/scalars buffer (dtype preserved, not zeroed)', () => {
+    // Native Uint16 accumulator buffers pre-populated with distinct per-point
+    // values. The in-place shuffle must move survivor 2 into slot 1 while
+    // keeping the buffers Uint16 (the upload site normalizes ÷65535). Pre-fix
+    // the source-dtype `instanceof` gate skipped the move → slot 1 kept 20 / 2.
+    const accumulator = new LoadedPointsDataAccumulator(8, 4, 3);
+    accumulator.fill(0, {
+      positions: fillPositions,
+      radii: new Float32Array([1, 1, 1]),
+      sharpness: new Uint16Array([10, 20, 30]),
+      scalars: new Uint16Array([1, 2, 3]),
+    });
+    const targetBuffers = makeTargetBuffers(accumulator);
+    expect(accumulator.getSharpnessBuffer()).toBeInstanceOf(Uint16Array);
+    expect(accumulator.getScalarBuffer()).toBeInstanceOf(Uint16Array);
+
+    const result = projectPointsTo3D(
+      wasm,
+      positions,
+      null,
+      new Float32Array([1, 1, 1]),
+      new Uint16Array([0, 0, 0]),
+      makeViewState({
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 0],
+        tolerance: [0, 0, 0, 0],
+      }),
+      [{ start: 0, end: 3 }] as PointRange[],
+      makeCtx({ effectiveRadiusConfig: erConfig, accumulator }),
+      targetBuffers,
+      new Uint16Array([0, 0, 0])
+    );
+
+    expect(result.pointCount).toBe(2);
+    // Native dtype preserved (RAW values, upload normalizes later).
+    expect(result.sharpness).toBeInstanceOf(Uint16Array);
+    expect(result.scalars).toBeInstanceOf(Uint16Array);
+    // Survivor slot 1 must hold point 2's value (30 / 3), not point 1's (20 / 2).
+    expect(Array.from(result.sharpness!)).toEqual([10, 30]);
+    expect(Array.from(result.scalars!)).toEqual([1, 3]);
+  });
+
+  it('compacts a Float16Array source into the Float32 accumulator buffer', () => {
+    // Skip on engines without a Float16Array global (older Node / JSDOM).
+    const F16 = (globalThis as unknown as { Float16Array?: Float16ArrayConstructor }).Float16Array;
+    if (typeof F16 === 'undefined') return;
+
+    // Float16 sources pin the accumulator to Float32 (value-preserving).
+    const accumulator = new LoadedPointsDataAccumulator(8, 4, 3);
+    accumulator.fill(0, {
+      positions: fillPositions,
+      radii: new Float32Array([1, 1, 1]),
+      sharpness: new F16([10, 20, 30]),
+      scalars: new F16([1, 2, 3]),
+    });
+    const targetBuffers = makeTargetBuffers(accumulator);
+    expect(accumulator.getSharpnessBuffer()).toBeInstanceOf(Float32Array);
+
+    const result = projectPointsTo3D(
+      wasm,
+      positions,
+      null,
+      new Float32Array([1, 1, 1]),
+      new F16([0, 0, 0]),
+      makeViewState({
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 0],
+        tolerance: [0, 0, 0, 0],
+      }),
+      [{ start: 0, end: 3 }] as PointRange[],
+      makeCtx({ effectiveRadiusConfig: erConfig, accumulator }),
+      targetBuffers,
+      new F16([0, 0, 0])
+    );
+
+    expect(result.pointCount).toBe(2);
+    expect(Array.from(result.sharpness!)).toEqual([10, 30]);
+    expect(Array.from(result.scalars!)).toEqual([1, 3]);
+  });
+
+  it('fallback path (no accumulator) aligns a Float16 sharpness/scalars source (Finding 2)', () => {
+    // Skip on engines without a Float16Array global (older Node / JSDOM).
+    const F16 = (globalThis as unknown as { Float16Array?: Float16ArrayConstructor }).Float16Array;
+    if (typeof F16 === 'undefined') return;
+
+    // No targetBuffers → the allocating fallback. A Float16 source matched no
+    // `filteredX` allocation branch, so the copy loop was skipped and the
+    // ORIGINAL full-length array survived while pointCount=filteredCount →
+    // misaligned attributes. The fix widens Float16 to Float32(filteredCount).
+    const result = projectPointsTo3D(
+      wasm,
+      positions,
+      null,
+      new Float32Array([1, 1, 1]),
+      new F16([10, 20, 30]),
+      makeViewState({
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 0],
+        tolerance: [0, 0, 0, 0],
+      }),
+      [{ start: 0, end: 3 }] as PointRange[],
+      makeCtx({ effectiveRadiusConfig: erConfig }),
+      null, // no accumulator → fallback allocating path
+      new F16([1, 2, 3])
+    );
+
+    expect(result.pointCount).toBe(2);
+    // Length MUST match the filtered count (2), not the original 3, and the
+    // survivor values must be points 0 and 2 (not the stale mid point).
+    expect(result.sharpness!.length).toBe(2);
+    expect(result.scalars!.length).toBe(2);
+    expect(Array.from(result.sharpness!)).toEqual([10, 30]);
+    expect(Array.from(result.scalars!)).toEqual([1, 3]);
+  });
+
+  it('fallback path (no accumulator) aligns a Float64 sharpness/scalars source (Finding 2, else-branch)', () => {
+    // Covers the SAME else-branch as the Float16 test above, but with a
+    // Float64Array source so it needs NO Float16 global and runs in CI on
+    // every engine. Float64 is neither Float32/Uint8/Uint16, so it falls
+    // into the else → widens value-preserving to Float32(filteredCount).
+    // Pre-fix (no else) it left `filteredSharpness` undefined → copy loop
+    // skipped → the ORIGINAL length-3 array survived → length assertion fails.
+    const result = projectPointsTo3D(
+      wasm,
+      positions,
+      null,
+      new Float32Array([1, 1, 1]),
+      // Float64Array is not in the param union; the cast is honest — the test
+      // verifies the else-branch's "any other source → widen to Float32".
+      new Float64Array([10, 20, 30]) as unknown as Float32Array,
+      makeViewState({
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 0],
+        tolerance: [0, 0, 0, 0],
+      }),
+      [{ start: 0, end: 3 }] as PointRange[],
+      makeCtx({ effectiveRadiusConfig: erConfig }),
+      null, // no accumulator → fallback allocating path
+      new Float64Array([1, 2, 3]) as unknown as Float32Array
+    );
+
+    expect(result.pointCount).toBe(2);
+    // Length MUST match the filtered count (2), not the original 3, and the
+    // survivor values must be points 0 and 2 (not the stale mid point).
+    expect(result.sharpness!.length).toBe(2);
+    expect(result.scalars!.length).toBe(2);
+    expect(Array.from(result.sharpness!)).toEqual([10, 30]);
+    expect(Array.from(result.scalars!)).toEqual([1, 3]);
+    // The else-branch widened the "any other" source to Float32.
+    expect(result.sharpness).toBeInstanceOf(Float32Array);
+    expect(result.scalars).toBeInstanceOf(Float32Array);
+  });
+});
