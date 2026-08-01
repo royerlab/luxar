@@ -143,7 +143,17 @@ export function calculateNextPosition(
     // categories unreachable by keyboard.
     if (discrete) {
       const grid = snapStep > 0 ? snapStep : 1;
-      const period = range[1] - range[0] + grid;
+      // Derive the period from the COUNT of on-grid positions rather than from
+      // `(max - min) + step`. The two agree whenever the range divides evenly
+      // by the step (every categorical dim does), but when it doesn't — say
+      // `[0, 1]` with step 0.3, whose last reachable position is 0.9 — the
+      // naive form yields period 1.3 and leaves an overshoot of 1.2 unwrapped,
+      // returning a position ABOVE max and breaking this function's documented
+      // "guaranteed to be within range". The epsilon absorbs the float error in
+      // e.g. 0.9 / 0.3 = 2.9999999999999996, which would otherwise drop a
+      // position.
+      const positions = Math.floor((range[1] - range[0]) / grid + 1e-9) + 1;
+      const period = positions * grid;
       if (period <= 0) {
         return range[0]; // Degenerate or invalid range
       }
@@ -152,6 +162,10 @@ export function calculateNextPosition(
         // a valid position rather than only the single-cycle case.
         newPos = range[0] + ((((newPos - range[0]) % period) + period) % period);
       }
+      // Belt and braces: a range whose width is not a whole number of steps has
+      // its top position strictly below `max`, so clamp to keep the contract
+      // true unconditionally rather than only for divisible ranges.
+      return clamp(newPos, range[0], range[1]);
     } else {
       // Continuous path left EXACTLY as it was: `max ≡ min` here, and the
       // one-full-cycle-backward case is specified to return `max`, not `min`.

@@ -295,6 +295,44 @@ describe('InputHandler Utilities', () => {
         expect(calculateNextPosition(0, -1, 5, [0, 360], false, true)).toBe(355);
         expect(calculateNextPosition(360, 1, 5, [0, 360], false, true)).toBe(5);
       });
+
+      describe('range width that is NOT a whole number of steps', () => {
+        // `[0, 1]` with step 0.3 has its last on-grid position at 0.9, so the
+        // period is 4 * 0.3 = 1.2, not (1 - 0) + 0.3 = 1.3. Deriving the period
+        // from `(max - min) + step` left an overshoot of 1.2 unwrapped and
+        // returned a position ABOVE max, breaking the documented "guaranteed to
+        // be within range".
+        it('never returns a position outside the declared range', () => {
+          for (const [from, dir] of [
+            [0.9, 1],
+            [0, -1],
+            [0.6, 1],
+            [0.3, -1],
+          ] as Array<[number, 1 | -1]>) {
+            const r = calculateNextPosition(from, dir, 0.3, [0, 1], true, true, 0.3);
+            expect(r).toBeGreaterThanOrEqual(0);
+            expect(r).toBeLessThanOrEqual(1);
+          }
+        });
+
+        it('wraps forward off the last on-grid position back to the first', () => {
+          expect(calculateNextPosition(0.9, 1, 0.3, [0, 1], true, true, 0.3)).toBeCloseTo(0, 10);
+        });
+
+        it('wraps backward off the first position to the last ON-GRID one (0.9, not 1)', () => {
+          expect(calculateNextPosition(0, -1, 0.3, [0, 1], true, true, 0.3)).toBeCloseTo(0.9, 10);
+        });
+
+        it('float error in count derivation does not drop a position', () => {
+          // 0.9 / 0.3 === 2.9999999999999996; without the epsilon this range
+          // would be treated as 3 positions and 0.9 would become unreachable.
+          expect(calculateNextPosition(0.6, 1, 0.3, [0, 0.9], true, true, 0.3)).toBeCloseTo(
+            0.9,
+            10
+          );
+          expect(calculateNextPosition(0.9, 1, 0.3, [0, 0.9], true, true, 0.3)).toBeCloseTo(0, 10);
+        });
+      });
     });
   });
 

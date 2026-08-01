@@ -41,7 +41,7 @@ radial_containment_radius = _demo.radial_containment_radius
 orbital_wavefunction_volume = _demo.orbital_wavefunction_volume
 normalize_density = _demo.normalize_density
 phase_colors = _demo.phase_colors
-orbitals_digest = _demo.orbitals_digest
+recipe_digest = _demo.recipe_digest
 cache_path = _demo.cache_path
 camera_distance_for_radius = _demo.camera_distance_for_radius
 fit_orbitals = _demo.fit_orbitals
@@ -328,43 +328,43 @@ def test_orbital_labels_are_unique() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_orbitals_digest_is_stable_hex() -> None:
-    digest = orbitals_digest()
+def test_recipe_digest_is_stable_hex() -> None:
+    digest = recipe_digest()
     assert len(digest) == 8
     assert all(c in "0123456789abcdef" for c in digest)
-    assert digest == orbitals_digest(), "digest must not vary between calls"
+    assert digest == recipe_digest(), "digest must not vary between calls"
 
 
-def test_orbitals_digest_tracks_table_identity_and_order(monkeypatch) -> None:
+def test_recipe_digest_tracks_table_identity_and_order(monkeypatch) -> None:
     """Editing OR reordering the table must change the digest.
 
     The reorder case is the dangerous one: it keeps every count identical, so
     without the digest a reordered table silently reuses the old fit and every
     on-screen label points at the wrong splats.
     """
-    baseline = orbitals_digest()
+    baseline = recipe_digest()
 
     monkeypatch.setattr(_demo, "ORBITALS", ORBITALS[:-1])
-    assert orbitals_digest() != baseline, "dropping a state must change the digest"
+    assert recipe_digest() != baseline, "dropping a state must change the digest"
 
     reordered = list(ORBITALS)
     reordered[2], reordered[3] = reordered[3], reordered[2]
     monkeypatch.setattr(_demo, "ORBITALS", reordered)
-    assert orbitals_digest() != baseline, "reordering must change the digest"
+    assert recipe_digest() != baseline, "reordering must change the digest"
 
     monkeypatch.setattr(_demo, "ORBITALS", list(ORBITALS))
-    assert orbitals_digest() == baseline, "an identical table must reuse the cache"
+    assert recipe_digest() == baseline, "an identical table must reuse the cache"
 
 
-def test_orbitals_digest_ignores_description_edits(monkeypatch) -> None:
+def test_recipe_digest_ignores_description_edits(monkeypatch) -> None:
     """Prose-only edits must NOT force a multi-minute refit."""
-    baseline = orbitals_digest()
+    baseline = recipe_digest()
     reworded = [(*o[:5], o[5] + " (reworded)") for o in ORBITALS]
     monkeypatch.setattr(_demo, "ORBITALS", reworded)
-    assert orbitals_digest() == baseline
+    assert recipe_digest() == baseline
 
 
-def test_orbitals_digest_covers_labels(monkeypatch) -> None:
+def test_recipe_digest_covers_labels(monkeypatch) -> None:
     """A label rename changes the digest — the documented, conservative choice.
 
     Labels do not affect the fitted geometry, so hashing them can force a
@@ -373,21 +373,47 @@ def test_orbitals_digest_covers_labels(monkeypatch) -> None:
     with a semantic change, and a spurious refit is far cheaper than silently
     serving splats under the wrong name.
     """
-    baseline = orbitals_digest()
+    baseline = recipe_digest()
     renamed = [(*ORBITALS[0][:3], "1s_renamed", *ORBITALS[0][4:]), *ORBITALS[1:]]
     monkeypatch.setattr(_demo, "ORBITALS", renamed)
-    assert orbitals_digest() != baseline
+    assert recipe_digest() != baseline
+
+
+@pytest.mark.parametrize(
+    "attr,value",
+    [
+        ("RADIAL_CONTAINMENT", 0.99),
+        ("NORM_PERCENTILE", 99.5),
+        ("CULL_RETENTION", 0.95),
+        ("PHASE_POSITIVE", (0.9, 0.4, 0.2)),
+        ("PHASE_NEGATIVE", (0.2, 0.5, 0.9)),
+        ("FIT_RECIPE_VERSION", 2),
+    ],
+)
+def test_recipe_digest_covers_everything_baked_into_the_cache(
+    monkeypatch, attr, value
+) -> None:
+    """Constants that change the cached splats must change the cache key.
+
+    None of these are CLI flags, so editing one in-source leaves
+    ``--grid``/``--seeds``/``--iters`` untouched. The phase tints are the
+    starkest case: they are stored inside the cached ``GSplatData`` colors, so a
+    tint edit with an unchanged key would serve the previous colors forever.
+    """
+    baseline = recipe_digest()
+    monkeypatch.setattr(_demo, attr, value)
+    assert recipe_digest() != baseline, f"{attr} must participate in the cache key"
 
 
 def test_cache_path_actually_embeds_the_digest(monkeypatch) -> None:
     """Tie the digest to the PATH, not just to its own function.
 
-    Without this, deleting ``orbitals_digest()`` from the filename template
+    Without this, deleting ``recipe_digest()`` from the filename template
     leaves every other cache test green while restoring the silent-stale-reuse
     bug the digest exists to prevent.
     """
     baseline = cache_path(96, 25000, 1500)
-    assert orbitals_digest() in baseline.name
+    assert recipe_digest() in baseline.name
 
     monkeypatch.setattr(_demo, "ORBITALS", ORBITALS[:-1])
     assert cache_path(96, 25000, 1500) != baseline, (

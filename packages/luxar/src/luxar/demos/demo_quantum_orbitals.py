@@ -57,11 +57,12 @@ CACHING
 The fit runs once (~2 min for all eight orbitals at the default 96³ / 25k
 seeds / 1500 iters, measured end to end on Apple-silicon MPS) and is cached to
 ``~/.cache/luxar/quantum_orbitals/``; later runs are instant. The cache file is
-keyed by ``--grid`` / ``--seeds`` / ``--iters`` and a digest of the orbital
-table, so changing a fit parameter — or editing/reordering ``ORBITALS`` —
-refits instead of silently reusing the old fit, while switching back to a
-previously-fitted combination is still instant. ``--recompute`` forces a refit
-of the current parameter set.
+keyed by ``--grid`` / ``--seeds`` / ``--iters`` plus a digest of the whole fit
+recipe — the orbital table, the tuning constants baked into the splats (box
+size, normalization, culling, phase tints) and ``FIT_RECIPE_VERSION``. Changing
+any of them refits instead of silently reusing the old fit, while switching back
+to a previously-fitted combination is still instant. ``--recompute`` forces a
+refit of the current parameter set.
 
 Usage:
     python demo_quantum_orbitals.py [--grid N] [--seeds K] [--iters N]
@@ -134,6 +135,13 @@ ORBITALS = [
     (3, 2, -2, "3dxy", "n=3, l=2, m=-2", "Cloverleaf in the xy plane"),
 ]
 
+#: Bump when the GENERATING LOGIC changes (wavefunction, fitter call, stacking)
+#: in a way that alters the cached splats but leaves every tuning constant
+#: below untouched — a value digest cannot see that, so this is the manual half
+#: of the cache key. Mirrors the ``version=`` parameter of
+#: :func:`luxar.utils.demos.cache_computed`.
+FIT_RECIPE_VERSION = 1
+
 #: Fraction of the radial probability each generation box must contain.
 RADIAL_CONTAINMENT = 0.995
 
@@ -180,22 +188,43 @@ ITERS = parse_int_arg("iters", 1_500)
 Arbol.max_depth = 4
 
 
-def orbitals_digest() -> str:
-    """Short digest of the :data:`ORBITALS` table's identity and order.
+def recipe_digest() -> str:
+    """Short digest of everything baked into the cached splats.
 
-    Part of the cache key. Editing the table changes the fit's *contents* while
-    leaving ``--grid`` / ``--seeds`` / ``--iters`` untouched, and the failure is
-    silent: dropping a state leaves ``Dimensions`` declaring fewer categories
-    than the cached data carries, and merely REORDERING two states keeps every
-    count identical while pointing every on-screen label at the wrong splats.
-    Only the quantum numbers and labels are hashed — editing a description
-    string changes nothing about the fit, so it must not force a refit.
+    Part of the cache key, alongside ``--grid`` / ``--seeds`` / ``--iters``.
+    Two distinct hazards:
+
+    * The :data:`ORBITALS` table. Dropping a state leaves ``Dimensions``
+      declaring fewer categories than the cached data carries, and merely
+      REORDERING two states keeps every count identical while pointing every
+      on-screen label at the wrong splats. Only quantum numbers and labels are
+      hashed — a description edit changes nothing about the fit.
+    * The tuning constants. ``RADIAL_CONTAINMENT`` sets the box, and hence every
+      coordinate; ``NORM_PERCENTILE`` sets the fit target; ``CULL_RETENTION``
+      sets how many splats survive; the phase tints are literally stored in the
+      cached colors. Editing any of them in-source leaves the CLI flags
+      untouched, so without them here the demo would silently serve geometry or
+      colors from the previous recipe until someone remembered ``--recompute``.
+
+    :data:`FIT_RECIPE_VERSION` covers what a value digest cannot: a change to
+    the generating *logic* (the wavefunction, the fitter call, the stacking).
+    Bump it when you change how the splats are produced.
 
     Returns:
-        First 8 hex characters of a SHA-256 over the table.
+        First 8 hex characters of a SHA-256 over the recipe.
     """
-    payload = ";".join(
+    table = ";".join(
         f"{n},{l_quantum},{m},{label}" for n, l_quantum, m, label, _q, _d in ORBITALS
+    )
+    payload = "|".join(
+        [
+            f"v{FIT_RECIPE_VERSION}",
+            table,
+            f"containment={RADIAL_CONTAINMENT!r}",
+            f"norm={NORM_PERCENTILE!r}",
+            f"cull={CULL_RETENTION!r}",
+            f"tints={PHASE_POSITIVE!r}{PHASE_NEGATIVE!r}",
+        ]
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:8]
 
@@ -220,12 +249,14 @@ def camera_distance_for_radius(radius: float) -> float:
 def cache_path(grid_size: int, seeds: int, iters: int) -> Path:
     """Cache file for one fit parameter set.
 
-    Everything that changes the fit is in the filename, not just the directory:
-    the ``--grid`` / ``--seeds`` / ``--iters`` knobs and a digest of the
-    :data:`ORBITALS` table (see :func:`orbitals_digest`). A run with new values
-    must never silently load an old one — the convention
-    :func:`luxar.utils.demos.cache_computed` documents. Each parameter set keeps
-    its own cache, so switching back and forth stays instant.
+    The fit inputs live in the filename, not just the directory: the
+    ``--grid`` / ``--seeds`` / ``--iters`` knobs plus :func:`recipe_digest`,
+    which covers the orbital table, the tuning constants that are baked into
+    the cached splats, and :data:`FIT_RECIPE_VERSION` for logic changes a value
+    digest cannot see. A run with new values must never silently load an old
+    one — the convention :func:`luxar.utils.demos.cache_computed` documents.
+    Each parameter set keeps its own cache, so switching back and forth stays
+    instant.
 
     Args:
         grid_size: Voxels per axis used to generate each orbital volume.
@@ -235,7 +266,7 @@ def cache_path(grid_size: int, seeds: int, iters: int) -> Path:
     Returns:
         Path under :data:`CACHE_DIR`.
     """
-    stem = f"orbitals_g{grid_size}_k{seeds}_i{iters}_{orbitals_digest()}"
+    stem = f"orbitals_g{grid_size}_k{seeds}_i{iters}_{recipe_digest()}"
     return CACHE_DIR / f"{stem}.gsplats.zarr.zip"
 
 
