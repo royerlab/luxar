@@ -5,9 +5,10 @@
  * Same 3D→2D covariance projection pipeline as `gsplat.tsl`, but the
  * fragment outputs picking data:
  *   - R: nodeId (uniform)
- *   - G: elementId (instance index)
+ *   - G: elementId (instance index) LOW 16 bits
  *   - B: brightness clamped to [0, 1]
- *   - A: 1.0
+ *   - A: the same elementId's HIGH 16 bits (one f32 channel cannot
+ *     carry the whole index exactly — see `luxarElementIdParts`)
  * Depth = 1.0 - brightness (brightness-as-depth tie-breaking) — or the
  * real fragment depth when `uSurfaceDepth == 1` (surface/'normal' mode:
  * front-most wins, matching the depth-sorted occluding surface).

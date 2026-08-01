@@ -6,6 +6,7 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
+  MAX_PICK_NODE_ID,
   VOTE_KEY_STRIDE,
   voteWinner,
   type VoteEntry,
@@ -250,8 +251,9 @@ describe('voteWinner', () => {
         VOTE_KEY_STRIDE
       );
 
-      // nodeId rides an f32 channel of the pick buffer, so 2^24 is its ceiling.
-      const worstKey = (2 ** 24 - 1) * VOTE_KEY_STRIDE + maxElementId;
+      // nodeId rides an f32 channel of the pick buffer, so MAX_PICK_NODE_ID
+      // (2^24 - 1) is its ceiling — enforced in `allocatePickId`.
+      const worstKey = MAX_PICK_NODE_ID * VOTE_KEY_STRIDE + maxElementId;
       expect(worstKey, 'worst-case key must stay exactly representable').toBeLessThan(
         Number.MAX_SAFE_INTEGER
       );
@@ -264,7 +266,7 @@ describe('voteWinner', () => {
   it('does not merge adjacent elements at the nodeId ceiling', () => {
     // The 2^32 stride this replaced broke exactly here: at nodeId 2^21 the
     // key crosses 2^53 and elementId 0 vs 1 round onto the same number.
-    for (const nodeId of [2 ** 21, 2 ** 24 - 1]) {
+    for (const nodeId of [2 ** 21, MAX_PICK_NODE_ID]) {
       const pixels = buildPixels();
       setHit(pixels, 0, 0, nodeId, 0, 0.4);
       setHit(pixels, 1, 0, nodeId, 1, 0.6);

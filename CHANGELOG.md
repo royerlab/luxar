@@ -76,8 +76,9 @@ alone is not sufficient, though: THREE's NodeMaterial appends
 `DiffuseColor.w *= material.opacity` inside the fragment body, which would
 scale the high half on the TSL path (the hand-written GLSL twins have no such
 tail). The pick factories therefore pin `.opacity = 1` so that multiply is
-provably identity. Both halves are ≤ 65535 and therefore exact, making the
-round-trip exact across the whole `uint32` range. The vote key stride moves
+provably identity. Both halves are ≤ 65535 and therefore exact, so the
+round-trip is exact for every index a node can hold (the element-texture
+layout caps a node at 44,728,320 elements). The vote key stride moves
 from 2^24 to 2^27 to match: with the old multiplier, `(nodeId 1, element
 2^24)` and `(nodeId 2, element 0)` hashed to the same bucket and merged their
 votes. 2^27 clears the largest reachable element index (44,728,319, for points

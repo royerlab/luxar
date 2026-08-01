@@ -4,12 +4,13 @@
  *
  * Renders one tight sprite per point with output:
  *   - R: nodeId (set as uniform)
- *   - G: elementId (= `aSortedIndex`, the STORAGE slot — identical to
- *     the draw slot under Phase-1 identity ordering, and stays the id
- *     the rest of the pipeline addresses points by once the sort
- *     worker permutes draw order in Phase 2+)
+ *   - G: elementId LOW 16 bits (= `aSortedIndex`, the STORAGE slot —
+ *     identical to the draw slot under Phase-1 identity ordering, and
+ *     stays the id the rest of the pipeline addresses points by once
+ *     the sort worker permutes draw order in Phase 2+)
  *   - B: brightness (super-Gaussian falloff at the fragment position)
- *   - A: 1.0
+ *   - A: the same elementId's HIGH 16 bits (one f32 channel cannot
+ *     carry the whole index exactly — see `luxarElementIdParts`)
  *
  * Per-point data comes from the RGBA32F point texture (`uPointTex`,
  * 3 texels/point; picking needs texels 0-1 only — center/radius/

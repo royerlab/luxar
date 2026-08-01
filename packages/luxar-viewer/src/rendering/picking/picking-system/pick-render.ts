@@ -16,6 +16,18 @@ export interface VoteEntry {
 }
 
 /**
+ * Largest node id the pick buffer can resolve.
+ *
+ * `nodeId` rides the f32 `r` channel, and f32 stops holding consecutive
+ * integers past 2^24 — two nodes allocated above that read back as the
+ * same id, so the `nodeMap` lookup lands on the wrong node. The ceiling
+ * is also what keeps {@link VOTE_KEY_STRIDE} exact, so it is CHECKED at
+ * allocation (`PickingSystem.allocatePickId`) rather than assumed: an f32
+ * happily carries larger values, just not adjacent ones.
+ */
+export const MAX_PICK_NODE_ID = 16777215; // 2^24 - 1
+
+/**
  * Multiplier packing `(nodeId, elementId)` into one numeric vote key.
  *
  * Two conditions must hold simultaneously, and 2^27 is the value that
@@ -30,9 +42,9 @@ export interface VoteEntry {
  *    2^27 = 134,217,728 clears that ~3x over, so even a future
  *    `maxTextureSize` of 65536 (~89M) still fits.
  * 2. **Exactly representable** — `nodeId * stride + elementId` must stay
- *    under 2^53 or adjacent keys round onto each other. `nodeId` rides an
- *    f32 channel of the pick buffer, so it cannot exceed 2^24; the worst
- *    case is `(2^24 - 1) * 2^27 + 44,728,319` ~ 2.25e15, comfortably
+ *    under 2^53 or adjacent keys round onto each other. `nodeId` is bounded
+ *    by {@link MAX_PICK_NODE_ID} (2^24 - 1, enforced at allocation), so the
+ *    worst case is `(2^24 - 1) * 2^27 + 44,728,319` ~ 2.25e15, comfortably
  *    inside 9.007e15.
  *
  * A stride of 2^32 would satisfy (1) but violate (2) past `nodeId` 2^21 —

@@ -5,11 +5,12 @@
  * Mirrors the visual factory's sprite-expansion math, but the fragment
  * outputs:
  *   - R: nodeId (set via uniform)
- *   - G: elementId (= `aSortedIndex`, the STORAGE slot — identical to
- *     the draw slot under identity ordering, and stays correct once
- *     the sort worker permutes draw order)
+ *   - G: elementId LOW 16 bits (= `aSortedIndex`, the STORAGE slot —
+ *     identical to the draw slot under identity ordering, and stays
+ *     correct once the sort worker permutes draw order)
  *   - B: brightness (perpendicular falloff × cap × widthScale × widthFade)
- *   - A: 1.0
+ *   - A: the same elementId's HIGH 16 bits (one f32 channel cannot
+ *     carry the whole index exactly — see `luxarElementIdParts`)
  *
  * Per-segment data comes from the RGBA32F line texture (`uLineTex`,
  * 6 texels/segment — layout in `rendering/line-geometry.ts`), fetched
