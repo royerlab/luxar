@@ -72,6 +72,7 @@ export {
 
 export {
   computeTolerance,
+  type GeometryType,
   type DimensionInfo,
   type ToleranceOptions,
 } from './spatial-query/tolerance-computer';
