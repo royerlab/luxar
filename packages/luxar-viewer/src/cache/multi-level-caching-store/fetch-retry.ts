@@ -5,30 +5,71 @@ import { sha256Hex } from './sha256';
 
 const INITIAL_RETRY_DELAY_MS = 50;
 const MAX_RETRY_DELAY_MS = 500;
+const NOOP_DISPOSE = (): void => {};
+
+/** A merged abort signal plus the cleanup for fallback source listeners. */
+export interface AbortSignalScope {
+  signal: AbortSignal;
+  dispose: () => void;
+}
+
+/** A fetch response whose abort-listener scope must cover body consumption.
+ *  `dispose()` also cancels a body the caller never read, so an ignored
+ *  non-OK response stops streaming instead of holding the connection. */
+export interface FetchResponseScope {
+  response: Response;
+  dispose: () => void;
+}
+
+/**
+ * Cancel a response body the caller chose not to read (retryable 429/5xx,
+ * terminal non-OK, or a post-fetch abort). Without the cancel the server can
+ * keep streaming the ignored body, consuming bandwidth and holding the
+ * connection until GC. Consumed or locked bodies are left alone.
+ */
+function releaseUnconsumedBody(response: Response): void {
+  const body = response.body;
+  if (!body || response.bodyUsed || body.locked) return;
+  void body.cancel().catch(() => {});
+}
 
 /**
  * Merge two AbortSignals into one that fires when either source aborts.
  *
- * Uses native `AbortSignal.any` when available (Node 22+, modern browsers);
- * falls back to a hand-rolled relay otherwise.
+ * Uses native `AbortSignal.any` when available (Node 22+, modern browsers).
+ * The fallback registers listeners on both sources, so callers must invoke
+ * `dispose()` when the operation using `signal` settles. An abort disposes
+ * both source listeners immediately before relaying the cancellation.
  */
-export function mergeAbortSignals(primary: AbortSignal, caller?: AbortSignal): AbortSignal {
-  if (!caller) return primary;
+export function mergeAbortSignals(primary: AbortSignal, caller?: AbortSignal): AbortSignalScope {
+  if (!caller) return { signal: primary, dispose: NOOP_DISPOSE };
   type StaticAny = { any?: (signals: AbortSignal[]) => AbortSignal };
   const anyImpl = (AbortSignal as unknown as StaticAny).any;
   if (typeof anyImpl === 'function') {
-    return anyImpl([primary, caller]);
+    return { signal: anyImpl([primary, caller]), dispose: NOOP_DISPOSE };
   }
-  // Fallback: relay aborts onto a fresh controller.
+
   const relay = new AbortController();
-  const onAbort = (): void => relay.abort();
+  let listening = false;
+  const dispose = (): void => {
+    if (!listening) return;
+    listening = false;
+    primary.removeEventListener('abort', onAbort);
+    caller.removeEventListener('abort', onAbort);
+  };
+  const onAbort = (): void => {
+    dispose();
+    relay.abort();
+  };
+
   if (primary.aborted || caller.aborted) {
     relay.abort();
   } else {
+    listening = true;
     primary.addEventListener('abort', onAbort, { once: true });
     caller.addEventListener('abort', onAbort, { once: true });
   }
-  return relay.signal;
+  return { signal: relay.signal, dispose };
 }
 
 function sleep(delayMs: number): Promise<void> {
@@ -74,11 +115,17 @@ export async function hashUrl(url: string): Promise<string> {
  *   merged with the per-attempt timeout signal so either abort source
  *   wins immediately. A caller-aborted call exits without consuming
  *   retry budget.
+ * @returns A terminal response and an idempotent `dispose()` callback. The
+ *   caller must keep the scope through response-body consumption, then dispose
+ *   it so fallback source listeners cannot accumulate; dispose also cancels
+ *   a body the caller never read (e.g. a terminal non-OK response) so the
+ *   server stops streaming it. Returns `undefined` after abort or retry
+ *   exhaustion.
  */
 export async function fetchWithRetry(
   url: string,
   options?: { timeoutMsOverride?: number; signal?: AbortSignal }
-): Promise<Response | undefined> {
+): Promise<FetchResponseScope | undefined> {
   const maxAttempts = Math.max(1, config.dataLoading.network.retryAttempts + 1);
   const totalTimeoutMs = options?.timeoutMsOverride ?? config.dataLoading.network.timeoutMs;
   const timeoutPerAttemptMs = Math.max(1, Math.ceil(totalTimeoutMs / maxAttempts));
@@ -102,19 +149,31 @@ export async function fetchWithRetry(
       // the fetch budget. A large LOD selection can queue thousands of chunks;
       // charging that wait to the timeout would spuriously abort the tail of
       // the queue and, at scale, exhaust the retry budget into dropped chunks.
-      const response = await withFetchGate(async () => {
+      const fetched = await withFetchGate(async (): Promise<FetchResponseScope> => {
         const timeoutController = new AbortController();
         const timeoutId = setTimeout(() => timeoutController.abort(), timeoutPerAttemptMs);
-        const signal = mergeAbortSignals(timeoutController.signal, options?.signal);
+        const abortScope = mergeAbortSignals(timeoutController.signal, options?.signal);
         try {
-          return await fetch(url, { signal });
+          const response = await fetch(url, { signal: abortScope.signal });
+          return {
+            response,
+            dispose: (): void => {
+              releaseUnconsumedBody(response);
+              abortScope.dispose();
+            },
+          };
+        } catch (error) {
+          abortScope.dispose();
+          throw error;
         } finally {
           clearTimeout(timeoutId);
         }
       });
+      const { response } = fetched;
       if (response.ok || (response.status < 500 && response.status !== 429)) {
-        return response;
+        return fetched;
       }
+      fetched.dispose();
       lastError = new Error(`HTTP ${response.status} for ${url}`);
     } catch (error) {
       lastError = error;

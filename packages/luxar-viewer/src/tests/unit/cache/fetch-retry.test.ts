@@ -1,7 +1,8 @@
+import { getEventListeners } from 'node:events';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   buildUrl,
-  fetchWithRetry,
+  fetchWithRetry as fetchWithRetryScoped,
   hashUrl,
   mergeAbortSignals,
 } from '../../../cache/multi-level-caching-store/fetch-retry';
@@ -17,34 +18,146 @@ function mockResponse(status: number, body: ArrayBuffer | string = ''): Response
   } as unknown as Response;
 }
 
+/** Response-like with a live ReadableStream body whose cancellation is
+ *  observable — models a server still streaming an error/ignored body. */
+function mockStreamingResponse(status: number): {
+  response: Response;
+  wasCancelled: () => boolean;
+} {
+  let cancelled = false;
+  let used = false;
+  const body = new ReadableStream<Uint8Array>({
+    cancel() {
+      cancelled = true;
+    },
+  });
+  const response = {
+    ok: status >= 200 && status < 300,
+    status,
+    body,
+    get bodyUsed() {
+      return used;
+    },
+    async arrayBuffer() {
+      used = true;
+      return new ArrayBuffer(0);
+    },
+  } as unknown as Response;
+  return { response, wasCancelled: () => cancelled };
+}
+
+// Existing retry tests only inspect terminal status; dispose their scope
+// immediately. Body-lifetime tests call fetchWithRetryScoped directly.
+async function fetchWithRetry(
+  url: string,
+  options?: { timeoutMsOverride?: number; signal?: AbortSignal }
+): Promise<Response | undefined> {
+  const fetched = await fetchWithRetryScoped(url, options);
+  if (!fetched) return undefined;
+  fetched.dispose();
+  return fetched.response;
+}
+
+function forceAbortSignalAnyFallback(): () => void {
+  const descriptor = Object.getOwnPropertyDescriptor(AbortSignal, 'any');
+  Object.defineProperty(AbortSignal, 'any', { configurable: true, value: undefined });
+  return () => {
+    if (descriptor) Object.defineProperty(AbortSignal, 'any', descriptor);
+    else delete (AbortSignal as unknown as { any?: unknown }).any;
+  };
+}
+
 describe('mergeAbortSignals', () => {
-  it('returns the primary signal verbatim when no caller signal is provided', () => {
+  it('returns the primary signal in a no-op scope when no caller is provided', () => {
     const primary = new AbortController().signal;
-    expect(mergeAbortSignals(primary)).toBe(primary);
+    const merged = mergeAbortSignals(primary);
+    expect(merged.signal).toBe(primary);
+    expect(() => merged.dispose()).not.toThrow();
   });
 
-  it('aborts when the primary signal aborts', () => {
-    const primary = new AbortController();
-    const caller = new AbortController();
-    const merged = mergeAbortSignals(primary.signal, caller.signal);
-    primary.abort();
-    expect(merged.aborted).toBe(true);
+  it('keeps the native AbortSignal.any path unchanged', () => {
+    const descriptor = Object.getOwnPropertyDescriptor(AbortSignal, 'any');
+    const nativeSignal = new AbortController().signal;
+    const any = vi.fn(() => nativeSignal);
+    Object.defineProperty(AbortSignal, 'any', { configurable: true, value: any });
+    try {
+      const primary = new AbortController().signal;
+      const caller = new AbortController().signal;
+      const merged = mergeAbortSignals(primary, caller);
+      expect(any).toHaveBeenCalledWith([primary, caller]);
+      expect(merged.signal).toBe(nativeSignal);
+      expect(() => merged.dispose()).not.toThrow();
+    } finally {
+      if (descriptor) Object.defineProperty(AbortSignal, 'any', descriptor);
+      else delete (AbortSignal as unknown as { any?: unknown }).any;
+    }
   });
 
-  it('aborts when the caller signal aborts', () => {
-    const primary = new AbortController();
-    const caller = new AbortController();
-    const merged = mergeAbortSignals(primary.signal, caller.signal);
-    caller.abort();
-    expect(merged.aborted).toBe(true);
+  it('fallback abort from primary relays immediately and removes both listeners', () => {
+    const restore = forceAbortSignalAnyFallback();
+    try {
+      const primary = new AbortController();
+      const caller = new AbortController();
+      const merged = mergeAbortSignals(primary.signal, caller.signal);
+      expect(getEventListeners(primary.signal, 'abort')).toHaveLength(1);
+      expect(getEventListeners(caller.signal, 'abort')).toHaveLength(1);
+
+      primary.abort();
+
+      expect(merged.signal.aborted).toBe(true);
+      expect(getEventListeners(primary.signal, 'abort')).toHaveLength(0);
+      expect(getEventListeners(caller.signal, 'abort')).toHaveLength(0);
+    } finally {
+      restore();
+    }
   });
 
-  it('returns an already-aborted signal when either source is pre-aborted', () => {
-    const primary = new AbortController();
-    primary.abort();
-    const caller = new AbortController();
-    const merged = mergeAbortSignals(primary.signal, caller.signal);
-    expect(merged.aborted).toBe(true);
+  it('fallback abort from caller relays immediately and removes both listeners', () => {
+    const restore = forceAbortSignalAnyFallback();
+    try {
+      const primary = new AbortController();
+      const caller = new AbortController();
+      const merged = mergeAbortSignals(primary.signal, caller.signal);
+
+      caller.abort();
+
+      expect(merged.signal.aborted).toBe(true);
+      expect(getEventListeners(primary.signal, 'abort')).toHaveLength(0);
+      expect(getEventListeners(caller.signal, 'abort')).toHaveLength(0);
+    } finally {
+      restore();
+    }
+  });
+
+  it('fallback dispose is idempotent and prevents completed merges from accumulating', () => {
+    const restore = forceAbortSignalAnyFallback();
+    try {
+      const primary = new AbortController();
+      for (let i = 0; i < 100; i++) {
+        const caller = new AbortController();
+        const merged = mergeAbortSignals(primary.signal, caller.signal);
+        merged.dispose();
+        merged.dispose();
+      }
+      expect(getEventListeners(primary.signal, 'abort')).toHaveLength(0);
+    } finally {
+      restore();
+    }
+  });
+
+  it('fallback returns an already-aborted scope without registering listeners', () => {
+    const restore = forceAbortSignalAnyFallback();
+    try {
+      const primary = new AbortController();
+      primary.abort();
+      const caller = new AbortController();
+      const merged = mergeAbortSignals(primary.signal, caller.signal);
+      expect(merged.signal.aborted).toBe(true);
+      expect(getEventListeners(primary.signal, 'abort')).toHaveLength(0);
+      expect(getEventListeners(caller.signal, 'abort')).toHaveLength(0);
+    } finally {
+      restore();
+    }
   });
 });
 
@@ -112,6 +225,26 @@ describe('fetchWithRetry', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps fallback cancellation live through the body, then releases it', async () => {
+    const restore = forceAbortSignalAnyFallback();
+    const caller = new AbortController();
+    let fetched: Awaited<ReturnType<typeof fetchWithRetryScoped>> = undefined;
+    try {
+      global.fetch = vi.fn(async () => mockResponse(200, 'hello')) as unknown as typeof fetch;
+      fetched = await fetchWithRetryScoped('https://example.com/x', { signal: caller.signal });
+      expect(fetched).toBeDefined();
+      expect(getEventListeners(caller.signal, 'abort')).toHaveLength(1);
+
+      await fetched?.response.arrayBuffer();
+      fetched?.dispose();
+
+      expect(getEventListeners(caller.signal, 'abort')).toHaveLength(0);
+    } finally {
+      fetched?.dispose();
+      restore();
+    }
+  });
+
   it('returns a 4xx response immediately without retrying', async () => {
     const fetchMock = vi.fn(async () => mockResponse(404));
     global.fetch = fetchMock as unknown as typeof fetch;
@@ -134,6 +267,68 @@ describe('fetchWithRetry', () => {
     // 5xx is retried; after the budget, returns undefined.
     expect(response).toBeUndefined();
     expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  it('fallback retry exhaustion releases every per-attempt caller listener', async () => {
+    vi.useFakeTimers();
+    const restore = forceAbortSignalAnyFallback();
+    const caller = new AbortController();
+    try {
+      global.fetch = vi.fn(async () => mockResponse(500)) as unknown as typeof fetch;
+
+      const promise = fetchWithRetryScoped('https://example.com/x', {
+        timeoutMsOverride: 10_000,
+        signal: caller.signal,
+      });
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      expect(await promise).toBeUndefined();
+      expect(getEventListeners(caller.signal, 'abort')).toHaveLength(0);
+    } finally {
+      restore();
+    }
+  });
+
+  it('cancels the unread body of every retried 5xx response', async () => {
+    vi.useFakeTimers();
+    const cancelFlags: Array<() => boolean> = [];
+    const fetchMock = vi.fn(async () => {
+      const { response, wasCancelled } = mockStreamingResponse(503);
+      cancelFlags.push(wasCancelled);
+      return response;
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const promise = fetchWithRetryScoped('https://example.com/x', { timeoutMsOverride: 10_000 });
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    expect(await promise).toBeUndefined();
+    // Every retried response's still-streaming body was cancelled so the
+    // server stops sending; otherwise up to maxAttempts bodies stream on.
+    expect(cancelFlags).toHaveLength(4);
+    for (const wasCancelled of cancelFlags) expect(wasCancelled()).toBe(true);
+  });
+
+  it('dispose() cancels a terminal response body the caller never read', async () => {
+    const { response, wasCancelled } = mockStreamingResponse(404);
+    global.fetch = vi.fn(async () => response) as unknown as typeof fetch;
+
+    const fetched = await fetchWithRetryScoped('https://example.com/x');
+    expect(fetched?.response.status).toBe(404);
+    // Body stays live until the caller settles (it may still choose to read).
+    expect(wasCancelled()).toBe(false);
+    fetched?.dispose();
+    expect(wasCancelled()).toBe(true);
+  });
+
+  it('dispose() leaves a consumed body alone', async () => {
+    const { response, wasCancelled } = mockStreamingResponse(200);
+    global.fetch = vi.fn(async () => response) as unknown as typeof fetch;
+
+    const fetched = await fetchWithRetryScoped('https://example.com/x');
+    await fetched?.response.arrayBuffer();
+    fetched?.dispose();
+    expect(wasCancelled()).toBe(false);
   });
 
   it('retries on 429 (rate-limited)', async () => {
