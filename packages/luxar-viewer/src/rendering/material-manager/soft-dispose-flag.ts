@@ -1,10 +1,11 @@
 /**
  * The soft-dispose sentinel, isolated in a leaf module.
  *
- * `invalidateRenderObjectFor` dispatches a `dispose` event on a mesh's
- * material to evict Three's cached WebGPU `RenderObject`; the
- * `MaterialManager` lifecycle listener tags that event with this flag so
- * it skips its own registry teardown (the material is being kept alive).
+ * `invalidateRenderObjectFor` tags a mesh's material with this flag and
+ * then dispatches a `dispose` event on it to evict Three's cached WebGPU
+ * `RenderObject`; the `MaterialManager` lifecycle listener checks for the
+ * flag and skips its own registry teardown (the material is being kept
+ * alive).
  * Dispatcher (`data/scene-loader/commit/invalidate-render-object`) and
  * listener (`material-manager/lifecycle`) stay name-coupled through this
  * single definition.
