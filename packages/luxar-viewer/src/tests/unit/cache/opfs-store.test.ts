@@ -1514,6 +1514,71 @@ describe('OPFSStore', () => {
       expect(mockFS.metaFiles.get('_cache_meta.json')).toBe(goodMeta);
     });
 
+    it('concurrent dispose() callers share one completion (second call must not resolve early)', async () => {
+      // Gate getDirectory() so init() suspends at its very first await —
+      // dispose() then has an in-flight init to drain, holding it pending.
+      let releaseDir!: () => void;
+      const dirGate = new Promise<void>((resolve) => {
+        releaseDir = resolve;
+      });
+      let getDirEntered = false;
+      vi.stubGlobal('navigator', {
+        storage: {
+          async getDirectory() {
+            getDirEntered = true;
+            await dirGate;
+            return {
+              async getDirectoryHandle(_id: string, _opts?: unknown) {
+                return mockFS.mockDirHandle;
+              },
+              async removeEntry() {},
+            };
+          },
+          async estimate() {
+            return { quota: 10e9, usage: 1e9 };
+          },
+        },
+      });
+
+      const racing = new OPFSStore(
+        'test-dataset-id',
+        'https://example.com/data.zarr',
+        100 * 1024 * 1024
+      );
+      const initPromise = racing.init();
+      for (let i = 0; i < 1000 && !getDirEntered; i++) {
+        await Promise.resolve();
+      }
+      expect(getDirEntered).toBe(true);
+
+      // First dispose() starts draining the gated init. A second dispose()
+      // arriving in that window used to early-return on the disposed flag and
+      // resolve immediately — telling ITS caller the shared directory was safe
+      // to hand to a newer same-URL store while this store's init was still
+      // mid-OPFS-operation. Both callers must share the one real completion.
+      let firstSettled = false;
+      let secondSettled = false;
+      const first = racing.dispose().then(() => {
+        firstSettled = true;
+      });
+      const second = racing.dispose().then(() => {
+        secondSettled = true;
+      });
+      for (let i = 0; i < 20; i++) await Promise.resolve();
+      expect(firstSettled).toBe(false);
+      expect(secondSettled).toBe(false);
+
+      releaseDir();
+      await Promise.all([first, second]);
+      await initPromise;
+      expect(firstSettled).toBe(true);
+      expect(secondSettled).toBe(true);
+
+      // After completion, a repeat dispose() resolves immediately (idempotent).
+      await racing.dispose();
+      expect(racing.getStats().available).toBe(false);
+    });
+
     it('dispose while init() is inside probeWritability() must not overwrite good metadata (dispose save-gate: && initialized)', async () => {
       const goodMeta = seedGoodMeta();
 

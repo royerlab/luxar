@@ -140,6 +140,13 @@ export class OPFSStore {
   private pendingInit: Promise<void> | null = null;
   private pendingClear: Promise<void> | null = null;
 
+  // The one teardown run, shared by every dispose() caller. A second caller
+  // arriving while the first is still draining must receive the SAME
+  // completion — resolving early on the disposed flag would tell that caller
+  // the directory is safe to hand to a newer same-URL store while this
+  // store's init/clear/write operations are still outstanding.
+  private pendingDispose: Promise<void> | null = null;
+
   constructor(datasetId: string, baseUrl: string, maxSize: number) {
     this.datasetId = datasetId;
     this.baseUrl = baseUrl;
@@ -888,6 +895,11 @@ export class OPFSStore {
    * awaits any in-flight metadata save, then flushes a final snapshot so
    * a read-only session's LRU order still gets persisted.
    *
+   * Every caller shares ONE completion (pendingDispose): dispose() resolving
+   * is the take-over signal for a newer same-URL store, so a concurrent or
+   * repeat caller must wait for the same drain rather than resolve early on
+   * the disposed flag.
+   *
    * Order matters:
    * 1. Set disposed = true SYNCHRONOUSLY, before the first await. dispose()
    *    itself suspends below (drain + awaitInFlight), and every `disposed`
@@ -914,7 +926,15 @@ export class OPFSStore {
    *    where a read-only session's order gets persisted.
    */
   async dispose(): Promise<void> {
-    if (this.disposed) return;
+    if (this.pendingDispose) return this.pendingDispose;
+    this.pendingDispose = this.doDispose();
+    return this.pendingDispose;
+  }
+
+  // doDispose() is invoked synchronously from dispose(), and an async body
+  // runs synchronously up to its first await — so `disposed = true` below is
+  // still observable the moment dispose() is called.
+  private async doDispose(): Promise<void> {
     this.disposed = true;
     this.generation++;
 
