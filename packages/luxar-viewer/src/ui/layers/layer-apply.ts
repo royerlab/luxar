@@ -342,6 +342,13 @@ export class LayerApplyEngine {
           } else if (layer.scalarDataRange) {
             mat.updateScalarRange(layer.scalarDataRange[0], layer.scalarDataRange[1]);
           }
+          // The composed window drives the LUT lookup; reset the post-LUT
+          // color GOG to identity so a previously-stamped gain never
+          // double-applies once the colormap takes over (#936). Only on the
+          // colormap-active path — the direct-color branch below leaves the
+          // GOG to `applyComposed`.
+          mat.updateIntensity(1);
+          mat.updateOffset(0);
         }
       } else {
         mat.updateColormapTexture(null);

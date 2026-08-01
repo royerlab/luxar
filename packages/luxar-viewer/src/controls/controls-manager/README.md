@@ -74,10 +74,18 @@ ControlsManager (class)
   is what makes the new instance re-derive orbit radius and spherical
   coordinates from the live camera pose against the _correct_ pivot.
 - **Fly target derivation.** `saveCameraState` reads `target` directly
-  off `LuxarOrbitControls`, but for fly mode it synthesises a target
-  by walking `sceneScale` (or `10` if scale is unset) along the
-  camera's forward vector. This gives the next swap into orbit/ortho a
-  sensible pivot instead of a stale value from before fly mode.
+  off `LuxarOrbitControls`, but for fly mode it reuses the PREVIOUS saved
+  pivot's depth along the current view ray — but only while the camera still
+  faces it (within a ~60° cone, `cos60 = 0.5`). This is scale-free, so with no
+  fly movement it returns the old target exactly on both sub-micro-unit and
+  huge-unit scenes, and a control-mode round trip (orbit → fly → ortho →
+  orbit) preserves the pivot. The reused depth is floored at `minPivotDepth()`
+  — the orbit system's own minimum camera-to-pivot distance (auto-frame's min
+  distance limit when set, capped at `sceneScale·1e-3`) — so flying right up
+  to the pivot can't collapse it onto the camera, while every depth reachable
+  through orbit interaction survives the floor untouched; outside the cone it
+  falls back to walking `sceneScale` (or `10` if scale is unset) along the
+  forward vector. `ControlsManager.getFocusTarget` uses the same derivation.
 - **Event dispatch stays on the orchestrator.**
   `attachControlEventForwarders` only owns the listener
   attach/detach. The `dispatch` callback it invokes is the
