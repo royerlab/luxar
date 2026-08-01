@@ -2,11 +2,12 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   ValidationQueue,
   getRemoteContentHash,
+  type QueueEntry,
 } from '../../../cache/multi-level-caching-store/validation-queue';
 
 /**
  * The static `queues` map is global state — every test cancels the
- * datasetIds it used in afterEach to keep tests independent.
+ * entries it created in afterEach to keep tests independent.
  */
 
 function mockResponse(status: number, body: ArrayBuffer | string = ''): Response {
@@ -39,26 +40,60 @@ async function flush() {
 }
 
 describe('ValidationQueue.serialize', () => {
-  const activeIds = new Set<string>();
+  // Cancellation is identity-scoped: we track every entry serialize() hands
+  // us (via onStart) and cancel them all in afterEach to keep the static
+  // `queues` map clean between tests.
+  const activeEntries = new Set<QueueEntry>();
+  let idCounter = 0;
   function freshId(label: string) {
-    const id = `${label}-${Math.random().toString(36).slice(2)}`;
-    activeIds.add(id);
-    return id;
+    return `${label}-${idCounter++}-${Math.random().toString(36).slice(2)}`;
+  }
+
+  /**
+   * serialize() wrapper that captures the created entry synchronously so the
+   * test (and afterEach) can cancel exactly that entry.
+   */
+  function serialize(
+    id: string,
+    task: (signal: AbortSignal) => Promise<void>
+  ): { promise: Promise<void>; entry: QueueEntry } {
+    let entry!: QueueEntry;
+    const promise = ValidationQueue.serialize(id, task, (e) => {
+      entry = e;
+      activeEntries.add(e);
+    });
+    return { promise, entry };
   }
 
   afterEach(() => {
-    for (const id of activeIds) ValidationQueue.cancel(id);
-    activeIds.clear();
+    for (const e of activeEntries) ValidationQueue.cancel(e);
+    activeEntries.clear();
   });
 
   it('invokes the task with an AbortSignal', async () => {
     const id = freshId('a');
     let receivedSignal: AbortSignal | null = null;
-    await ValidationQueue.serialize(id, async (signal) => {
+    await serialize(id, async (signal) => {
       receivedSignal = signal;
-    });
+    }).promise;
     expect(receivedSignal).not.toBeNull();
     expect(receivedSignal!.aborted).toBe(false);
+  });
+
+  it('onStart receives the entry synchronously, before the first await', () => {
+    const id = freshId('sync');
+    let entry: QueueEntry | null = null;
+    // Do NOT await — the entry must be available the instant serialize returns.
+    void ValidationQueue.serialize(
+      id,
+      async () => {},
+      (e) => {
+        entry = e;
+        activeEntries.add(e);
+      }
+    );
+    expect(entry).not.toBeNull();
+    expect(entry!.abort.signal.aborted).toBe(false);
   });
 
   it('serializes sequential calls for the same datasetId', async () => {
@@ -67,16 +102,16 @@ describe('ValidationQueue.serialize', () => {
     const d1 = deferred<void>();
     const d2 = deferred<void>();
 
-    const p1 = ValidationQueue.serialize(id, async () => {
+    const p1 = serialize(id, async () => {
       order.push(1);
       await d1.promise;
       order.push(2);
-    });
-    const p2 = ValidationQueue.serialize(id, async () => {
+    }).promise;
+    const p2 = serialize(id, async () => {
       order.push(3);
       await d2.promise;
       order.push(4);
-    });
+    }).promise;
 
     // Let p1 begin.
     await flush();
@@ -97,16 +132,16 @@ describe('ValidationQueue.serialize', () => {
     const dA = deferred<void>();
     const dB = deferred<void>();
 
-    const pA = ValidationQueue.serialize(a, async () => {
+    const pA = serialize(a, async () => {
       order.push('a-start');
       await dA.promise;
       order.push('a-end');
-    });
-    const pB = ValidationQueue.serialize(b, async () => {
+    }).promise;
+    const pB = serialize(b, async () => {
       order.push('b-start');
       await dB.promise;
       order.push('b-end');
-    });
+    }).promise;
 
     await flush();
     // Both should have started independently.
@@ -124,12 +159,14 @@ describe('ValidationQueue.serialize', () => {
     expect(order).toContain('a-end');
   });
 
-  it('cancel(datasetId) fires the AbortSignal mid-task', async () => {
+  it('cancel(entry) fires the AbortSignal mid-task (owner dispose)', async () => {
+    // Models the owning store's dispose(): aborting ITS OWN in-flight entry
+    // must unwind the running task promptly.
     const id = freshId('cancel-mid');
     let sawAbort = false;
     const taskGate = deferred<void>();
 
-    const p = ValidationQueue.serialize(id, async (signal) => {
+    const { promise, entry } = serialize(id, async (signal) => {
       signal.addEventListener('abort', () => {
         sawAbort = true;
         taskGate.resolve();
@@ -139,118 +176,198 @@ describe('ValidationQueue.serialize', () => {
 
     // Let the task subscribe to the signal.
     await flush();
-    ValidationQueue.cancel(id);
-    await p;
+    ValidationQueue.cancel(entry);
+    await promise;
     expect(sawAbort).toBe(true);
   });
 
-  it('cancel(datasetId) removes the queue entry', async () => {
-    const id = freshId('cancel-rm');
-    const taskGate = deferred<void>();
-    const p = ValidationQueue.serialize(id, async () => {
-      await taskGate.promise;
+  it('cancel(entry) is abort-only: map cleanup happens on settle, not in cancel', async () => {
+    const id = freshId('cancel-settle');
+    const gate = deferred<void>();
+    // Running head that ignores its abort signal — it settles only when the
+    // gate resolves, so we can observe the map still holding it post-cancel.
+    const { promise, entry } = serialize(id, async () => {
+      await gate.promise;
     });
     await flush();
-    ValidationQueue.cancel(id);
-    // After cancel, a fresh serialize() should not queue behind the old one —
-    // it should start immediately (no prior entry).
-    let secondStartedImmediately = false;
-    const p2 = ValidationQueue.serialize(id, async () => {
-      secondStartedImmediately = true;
-    });
-    await flush();
-    expect(secondStartedImmediately).toBe(true);
+    ValidationQueue.cancel(entry);
 
-    taskGate.resolve();
-    await p;
+    // cancel does NOT remove the entry: it is still the head, so a fresh
+    // serialize() must queue BEHIND it rather than start immediately.
+    let secondStarted = false;
+    const p2 = serialize(id, async () => {
+      secondStarted = true;
+    }).promise;
+    await flush();
+    expect(secondStarted).toBe(false);
+
+    // Once the head settles, serialize's `finally` head-guard evicts it and
+    // the queued successor runs.
+    gate.resolve();
+    await promise;
     await p2;
+    expect(secondStarted).toBe(true);
   });
 
-  it('skips the task when abort fires while still waiting in line', async () => {
+  it('cancel(entry) on a waiting head skips it AND keeps the FIFO chain intact', async () => {
     const id = freshId('skip-while-waiting');
     const d1 = deferred<void>();
     let task2Ran = false;
+    let task3Started = false;
 
-    // Task 1 holds the queue.
-    const p1 = ValidationQueue.serialize(id, async () => {
+    // Task 1: running head, blocked on d1.
+    const p1 = serialize(id, async () => {
       await d1.promise;
-    });
+    }).promise;
 
-    // Task 2 enqueued behind task 1. By the time of registration, queues[id]
-    // points at task 2's entry (last-writer wins on the map.set).
-    const p2 = ValidationQueue.serialize(id, async () => {
+    // Task 2: queued behind task 1; it becomes the map head.
+    const { promise: p2, entry: entry2 } = serialize(id, async () => {
       task2Ran = true;
     });
 
-    // Cancel fires task 2's abort controller (queues[id] is now task 2's
-    // entry). When task 1 finishes, task 2's chain runs the
-    // `if (abort.signal.aborted) return` guard and skips the task body.
     await flush();
-    ValidationQueue.cancel(id);
+    // Cancel the WAITING head (task 2's own entry). abort-only cancel leaves it
+    // in the map, so successors stay chained behind it.
+    ValidationQueue.cancel(entry2);
+
+    // Task 3 enqueued AFTER the cancel. If cancel had DELETED task 2's (head)
+    // entry, task 3 would see `previous === undefined` and run CONCURRENTLY
+    // with the still-running task 1 — severing FIFO. It must instead stay
+    // chained behind the running task 1.
+    const p3 = serialize(id, async () => {
+      task3Started = true;
+    }).promise;
+    await flush();
+    expect(task3Started).toBe(false); // still chained behind the running task 1
+
+    // Release task 1: task 2's chain hits the `if (abort.signal.aborted)
+    // return` guard and is skipped; task 3 then runs.
     d1.resolve();
     await p1;
     await p2;
-    expect(task2Ran).toBe(false);
+    await p3;
+    expect(task2Ran).toBe(false); // aborted waiting head skipped
+    expect(task3Started).toBe(true); // ran only after task 1 released
   });
 
-  it('delete-only-if-still-head: a newer entry is not removed by an older one finishing', async () => {
+  it('delete-only-if-still-head: an older entry finishing does not remove the newer head', async () => {
     const id = freshId('not-head');
     const d1 = deferred<void>();
-    const p1 = ValidationQueue.serialize(id, async () => {
+    const p1 = serialize(id, async () => {
       await d1.promise;
-    });
+    }).promise;
 
-    // p2 replaces p1 in the queues map (last-writer-wins on the set()
-    // call inside serialize).
+    // p2 replaces p1 as the map head (last-writer-wins on set()).
     const d2 = deferred<void>();
-    const p2 = ValidationQueue.serialize(id, async () => {
+    const p2 = serialize(id, async () => {
       await d2.promise;
-    });
+    }).promise;
 
-    // Now resolve p1. Its finally block should NOT delete p2's entry.
+    // Resolve p1. Its finally block must NOT delete p2's (still-head) entry.
     d1.resolve();
     await p1;
-    // If p2's entry was clobbered, cancel(id) would be a no-op; instead
-    // we can observe it via the side-effect of cancel still firing p2's
-    // abort.
-    let cancelled = false;
-    const dCancel = deferred<void>();
-    const p3probe = ValidationQueue.serialize(id, async () => {
-      // never runs — p2 still holds the queue.
-    }).then(() => {
-      cancelled = true;
-      dCancel.resolve();
-    });
+
+    // If p2's entry survived as head, a fresh serialize() must queue BEHIND it
+    // (not start immediately).
+    let p3Started = false;
+    const p3 = serialize(id, async () => {
+      p3Started = true;
+    }).promise;
     await flush();
-    // p2 is still in flight (its abort is the head's abort).
-    ValidationQueue.cancel(id);
+    expect(p3Started).toBe(false); // p2 still holds the queue
+
     d2.resolve();
     await p2;
-    await dCancel.promise;
-    await p3probe;
-    expect(cancelled).toBe(true);
+    await p3;
+    expect(p3Started).toBe(true); // p3 ran only after p2 released
   });
 
-  // workers.md O3 / cache.md G11 [P5]: audit-id moved to comment per Phase E53.
-  it('cancel(unknownId) is a safe no-op', async () => {
-    // [cache.md/G11][P5] cancel on an id with no entry must not throw and
-    // must not perturb any unrelated queue. The comment in the source
-    // implies safety but no test pinned it.
-    const id = freshId('unrelated');
+  it('two owners: an older owner cancelling cannot skip a newer owner (issue #682)', async () => {
+    // Reproduces the report's interleaving:
+    //   1. Store A serializes taskA -> entryA becomes head, taskA starts.
+    //   2. Store B serializes taskB -> entryB replaces entryA as head; taskB
+    //      waits for taskA to finish.
+    //   3. Store A disposes -> cancel(entryA). Identity-scoped, so it aborts
+    //      ONLY entryA (already replaced as head) and must NOT touch entryB.
+    //   4. A is released -> taskB must still run (newer validation preserved),
+    //      while taskA observes its own abort.
+    const id = freshId('two-owner');
+    const aGate = deferred<void>();
+    const bGate = deferred<void>();
+    let aSawAbort = false;
+    let bRan = false;
+    let cStarted = false;
+
+    // Owner A: running head, blocks on aGate.
+    const { promise: pA, entry: entryA } = serialize(id, async (signal) => {
+      await aGate.promise;
+      aSawAbort = signal.aborted;
+    });
+
+    // Owner B: queued behind A, becomes the map head. Gated so we can observe
+    // a later entry queue behind it.
+    const { promise: pB, entry: entryB } = serialize(id, async (signal) => {
+      // B's own signal must be clean — the older owner's cancel is not ours.
+      expect(signal.aborted).toBe(false);
+      bRan = true;
+      await bGate.promise;
+    });
+
+    // Let A start and B enqueue.
+    await flush();
+    expect(entryA).not.toBe(entryB);
+
+    // Older owner A disposes: aborts entryA only.
+    ValidationQueue.cancel(entryA);
+    // entryB is still the head; cancel of the stale entryA must not evict it.
+    expect(entryB.abort.signal.aborted).toBe(false);
+
+    // Owner C enqueues after the cancel. entryB must still be the head, so C
+    // chains behind B (it would run immediately if cancel had evicted B).
+    const pC = serialize(id, async () => {
+      cStarted = true;
+    }).promise;
+
+    // Release A; B's chain now runs and blocks on bGate. C stays queued.
+    aGate.resolve();
+    await pA;
+    await flush();
+    expect(bRan).toBe(true); // newer validation NOT skipped
+    expect(aSawAbort).toBe(true); // older owner's own task was aborted
+    expect(cStarted).toBe(false); // C is chained behind the surviving head B
+
+    // Release B; only now may C run.
+    bGate.resolve();
+    await pB;
+    await pC;
+    expect(cStarted).toBe(true);
+  });
+
+  it('cancel(entry) on an already-settled entry is a safe no-op', async () => {
+    // The owner's dispose() may fire after its validation already completed —
+    // cancelling a settled (map-evicted) entry must not throw and must not
+    // perturb an unrelated live queue.
+    const doneId = freshId('settled');
+    const { promise: donePromise, entry: settled } = serialize(doneId, async () => {});
+    await donePromise; // settles and self-evicts from the map
+
+    const liveId = freshId('live');
     const taskGate = deferred<void>();
-    const p = ValidationQueue.serialize(id, async () => {
+    const { promise: live, entry: liveEntry } = serialize(liveId, async () => {
       await taskGate.promise;
     });
     await flush();
 
-    // Cancel a totally separate, never-registered id — must not throw.
-    expect(() => ValidationQueue.cancel('never-registered-id')).not.toThrow();
-    expect(() => ValidationQueue.cancel('')).not.toThrow();
+    // Cancel the already-settled entry twice — must not throw and must not
+    // touch the unrelated live queue.
+    expect(() => ValidationQueue.cancel(settled)).not.toThrow();
+    expect(() => ValidationQueue.cancel(settled)).not.toThrow();
 
-    // Unrelated cancels do not interfere with the live queue: the original
-    // task is still pending and resolves normally when we release it.
+    // The unrelated live entry's signal is untouched by the settled cancels.
+    expect(liveEntry.abort.signal.aborted).toBe(false);
+
     taskGate.resolve();
-    await p; // No timeout — would hang if the unrelated cancel had aborted it.
+    await live; // Would hang/reject if the settled cancel had aborted it.
   });
 });
 
