@@ -18,11 +18,13 @@
  * how the path is normalized — same shape as the points equivalent
  * in `points/chunk-index-loader.ts`.
  *
- * The lines-specific helper `computeVertexRangesFromIndices` (run
- * after a query returns segment indices, to coalesce the unique
- * referenced vertex indices into contiguous runs) lives here too —
- * it operates on per-segment vertex indices, not on chunk bounds, but
- * conceptually belongs to the lines spatial-index path.
+ * The lines-specific vertex-index helpers live here too —
+ * `sortedUniqueVertexIndices`, `computeVertexRangesFromIndices`, and
+ * `remapSegmentIndices` (run after a query returns segment indices, to
+ * coalesce the unique referenced vertex indices into contiguous runs
+ * and remap them to local buffer positions). They operate on
+ * per-segment vertex indices, not on chunk bounds, but conceptually
+ * belong to the lines spatial-index path.
  *
  * @module data/lines/chunk-index-loader
  */
@@ -140,17 +142,45 @@ export function registerLinesArrayBounds(
 }
 
 /**
+ * Sorted, de-duplicated vertex indices from raw per-segment index data.
+ *
+ * Uses a typed-array sort + single-pass dedupe rather than a JS `Set`,
+ * which V8 caps at 2^24 (16,777,216) entries; the next `.add` throws
+ * `RangeError: Set maximum size exceeded`. A lines node referencing more
+ * than 2^24 unique vertex indices therefore silently failed to load
+ * (issue #1049). Numeric ascending; the returned view aliases a fresh
+ * copy, so the caller's `segmentData` is not mutated.
+ */
+export function sortedUniqueVertexIndices(segmentData: Uint32Array): Uint32Array {
+  if (segmentData.length === 0) return new Uint32Array(0);
+  const sorted = segmentData.slice(); // copy; typed-array .sort() is numeric ascending
+  sorted.sort();
+  // In-place dedupe: at step i we compare sorted[i] against sorted[i-1]
+  // BEFORE writing to sorted[n], and n <= i always holds, so we never
+  // clobber an element we have not yet read.
+  let n = 0;
+  for (let i = 0; i < sorted.length; i++) {
+    if (i === 0 || sorted[i] !== sorted[i - 1]) sorted[n++] = sorted[i];
+  }
+  return sorted.subarray(0, n);
+}
+
+/**
  * Compute contiguous vertex ranges from a sorted list of vertex indices.
  *
  * Used after loading segment data: each segment references two vertex
  * indices, and we batch the unique sorted indices into runs of consecutive
  * integers so zarr loading touches the minimum number of chunks.
  *
+ * Accepts any `ArrayLike<number>` (a plain `number[]` or the `Uint32Array`
+ * returned by {@link sortedUniqueVertexIndices}); it only reads `.length`
+ * and integer indices.
+ *
  * This is genuinely lines-specific (operates on per-segment vertex indices,
  * not on chunk bounds) and is therefore not in the canonical
  * `loaders/spatial-query-builder` API.
  */
-export function computeVertexRangesFromIndices(sortedIndices: number[]): SegmentRange[] {
+export function computeVertexRangesFromIndices(sortedIndices: ArrayLike<number>): SegmentRange[] {
   if (sortedIndices.length === 0) return [];
 
   const ranges: SegmentRange[] = [];
@@ -170,4 +200,53 @@ export function computeVertexRangesFromIndices(sortedIndices: number[]): Segment
   ranges.push({ start: rangeStart, end: rangeEnd });
 
   return ranges;
+}
+
+/**
+ * Remap each global vertex index in `segmentData` to its local position in the
+ * concatenated, loaded vertex buffer, writing results into `out` (must have
+ * length >= segmentData.length). `mergedVertexRanges` must be sorted ascending
+ * and pairwise-disjoint, as produced by `mergeRanges(computeVertexRangesFromIndices(...))`.
+ * Returns the total local vertex count (the sum of the range widths).
+ *
+ * Uses a prefix-offset table + binary search over the ranges rather than a
+ * global->local `Map`: V8 caps a `Map` at 2^24 entries and throws, so a lines
+ * node with more than 2^24 unique vertex indices otherwise failed to load at
+ * the remap stage even after the dedupe was fixed (issue #1049). Throws if a
+ * segment references an index outside the loaded ranges.
+ */
+export function remapSegmentIndices(
+  segmentData: Uint32Array,
+  mergedVertexRanges: readonly { start: number; end: number }[],
+  out: Uint32Array
+): number {
+  const nRanges = mergedVertexRanges.length;
+  const offsets = new Array<number>(nRanges);
+  let total = 0;
+  for (let j = 0; j < nRanges; j++) {
+    offsets[j] = total;
+    total += mergedVertexRanges[j].end - mergedVertexRanges[j].start;
+  }
+  for (let i = 0; i < segmentData.length; i++) {
+    const g = segmentData[i];
+    // binary search for the range [start, end) containing g
+    let lo = 0;
+    let hi = nRanges - 1;
+    let found = -1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >>> 1;
+      const r = mergedVertexRanges[mid];
+      if (g < r.start) hi = mid - 1;
+      else if (g >= r.end) lo = mid + 1;
+      else {
+        found = mid;
+        break;
+      }
+    }
+    if (found === -1) {
+      throw new Error(`Vertex index ${g} not found in loaded data`);
+    }
+    out[i] = offsets[found] + (g - mergedVertexRanges[found].start);
+  }
+  return total;
 }
