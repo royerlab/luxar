@@ -102,6 +102,18 @@ Exemptions: categorical permutations (a bijection always has a preimage) and
 the 1e10 tolerance sentinel, since every Lines call site derives with
 `applyPartialExtendTolerance: false` and never carries it.
 
+#### Fixed — `extend_to_all` survives a large `nd_transform` scale
+
+The inverse query rescaled every tolerance by `1 / |scale|`, including the 1e10
+`extend_to_all` sentinel. Past `|scale| > 10` that lands under the `>= 1e9` floor
+which every downstream extend check uses (`effective-radius-calculator`'s
+`isExtendToAll`, `calculateSpatialQueryTolerance`, `fallbackQueryTolerance`), so a
+dimension the node had extended silently went back to being sliced — under
+ordinary unit-conversion scales (`{"scale": 1000}`, s → ms; the spec's flagship
+ms → s example is the same conversion run the other way). An infinite tolerance
+now passes through unscaled; only
+finite tolerances carry a meaningful world→local conversion.
+
 #### Changed — the `nd_transforms` demo is now a calibrated test bench
 
 `demo_nd_transforms.py` was a "Multi-Instrument Observatory": three jittered
