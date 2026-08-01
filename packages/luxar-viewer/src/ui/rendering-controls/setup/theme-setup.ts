@@ -55,9 +55,9 @@ export function setupThemeControls(context: ThemeSetupContext): void {
   themeControl.domElement.setAttribute(
     'title',
     'Switch between visual themes\n' +
-      '• Dark: Default scientific visualization theme\n' +
+      '• Dark: Classic high-contrast scientific visualization theme\n' +
       '• Light: Bright theme for well-lit environments\n' +
-      '• Frosted Glass: Subtle translucent glassmorphism\n' +
+      '• Frosted Glass: Default theme with subtle translucent glassmorphism\n' +
       '• Liquid Glass: True glass effect with inner glow and tint'
   );
 

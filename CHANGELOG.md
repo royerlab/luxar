@@ -6,6 +6,22 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
+#### Fixed — npm library build no longer inlines a second THREE runtime (#743)
+
+The publishable library build externalized only the exact module id `three`,
+but the entry graph statically imports the `three/webgpu` and `three/tsl`
+subpaths (TSL materials, WebGPU renderer). Array externals match ids exactly,
+so those subpaths — and the `three.core.js` they pull in — were inlined into
+`dist/lib/luxar-viewer.js`, shipping a duplicate THREE core next to the host's
+peer `three` and breaking the single-runtime contract (`instanceof` checks,
+texture interop), at ~2.5 MB of unminified bloat. The build now externalizes
+`three` and every `three/*` subpath (all subpath exports of the peer package),
+and the release-readiness guard (`scripts/check-lib-exports.mjs`) — which
+previously grepped for `class WebGLRenderer`, a marker absent from the
+webgpu/tsl/core bundles — now scans for markers that actually appear when
+THREE source is inlined (`EventDispatcher`/`WebGLRenderer` class definitions,
+the `REVISION` constant), in both classic Rollup and rolldown codegen forms.
+
 #### Fixed — cache stores no longer mutate the shared OPFS directory when disposed mid-init (#1058)
 
 A dispose that raced `MultiLevelCachingStore.init()` / `OPFSStore.init()`
