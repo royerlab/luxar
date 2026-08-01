@@ -44,7 +44,7 @@ the storage or LOD layers, and pretending otherwise would produce a worse design
 | Scene adder (`add_mesh`) | ✅ Yes | Mirror of `add_lines` |
 | Zarr writer, encoders, shared dataset helpers | ✅ Yes | Reuses `write_colors` / `write_scalars` / `SemanticType.{COORDINATE,INDEX}` |
 | Render attrs (opacity/gamma/intensity/offset/blending/colormap/transform/nd_transform) | ✅ Yes | Reuses `apply_default_render_attrs`, `prepare_transform_attrs` |
-| nD slicing | ⚠️ Partial | Reuses the slab semantics, **not** the clipping algorithm — see §5 |
+| nD slicing | ⚠️ Partial | Reuses the slab *semantics*, **not** the clipping algorithm, and needs **its own tolerance strategy** (the Lines one is derived from segment interpolation and would render nothing) — see §5, §5.2.1 |
 | GPU storage | ❌ No | Indexed triangles, not instanced quads — see §2.1 |
 | Per-element extent | ❌ No | A mesh has no `radii`/`widths`/`amplitudes` analog — see §2.2 |
 | Depth sorting | ⚠️ Deferred | Per-triangle, not per-instance — see §6.3 |
@@ -105,7 +105,7 @@ becomes plain `NodeTypeName`.
 |---|---|---|---|---|---|
 | `vertices` | float32 | `(V, D)` | **yes** | `COORDINATE` | nD, exactly like `Lines.vertices` |
 | `faces` | uint32 | `(F, 3)` | **yes** | `INDEX` | Triangle vertex indices |
-| `normals` | float32 | `(V, D')` | no | `COORDINATE` | Per-vertex, over the 3 display dims only — see §3.4 |
+| `normals` | float32 | `(V, 3)` | no | `COORDINATE` | Per-vertex; paired with a required `normal_dims` attr — see §3.4 |
 | `colors` | uint8/uint16/float32 | `(V, 3\|4)` | no | color helpers | RGB or RGBA (alpha = per-vertex opacity) |
 | `scalars` | float32/float16/uint8 | `(V,)` | no | scalar helpers | Colormap lookup |
 | `label_offsets`/`label_bytes` | — | CSR | no | — | Per-vertex hover tooltips |
@@ -130,6 +130,7 @@ n_vertices: int
 n_faces: int
 ndim: int
 has_normals: bool
+normal_dims: [int, int, int]  # required iff has_normals; see 3.4
 has_colors: bool
 has_scalars: bool
 has_labels: bool
@@ -144,7 +145,20 @@ plus the standard render attrs already handled by `apply_default_render_attrs` a
 `prepare_transform_attrs` (`opacity`, `gamma`, `intensity`, `offset`, `absorption`, `blending_mode`,
 `colormap`, `scalar_data_range`, `layer`, `transform`, `nd_transform`, `extend_to_all`).
 
-`MESH_RESERVED_ATTRS` is added to `io/_compiler/node_common.py` alongside the other three frozensets.
+`MESH_RESERVED_ATTRS` is added to `io/_compiler/node_common.py` alongside the other three frozensets:
+
+```python
+MESH_RESERVED_ATTRS = frozenset({
+    "type", "n_vertices", "n_faces", "ndim",
+    "has_normals", "normal_dims", "has_colors", "has_scalars", "has_labels",
+    "shading", "double_sided", "position_bounds",
+})
+```
+
+Note the sibling sets reserve `has_labels` but **not** `has_image_labels`, even though all three
+writers stamp it — so a user-supplied `has_image_labels` attr can currently clobber the writer's
+presence truth on any geometry type. Mesh **mirrors the siblings** (per the symmetry rule) rather than
+unilaterally diverging; the gap is worth a separate four-type fix, and is noted in §9.
 
 ### 3.4 Normals are 3D, positions are nD
 
@@ -152,13 +166,32 @@ Positions live in nD like every other geometry type. Normals are a **display-spa
 only meaningful for the three displayed dimensions, and re-deriving them per slice change is the
 correct behaviour when `displayDims` rotates.
 
-Therefore: `normals` is stored as `(V, 3)` in the order of the node's **first three dimensions**, and is
-treated as valid only while `displayDims == [0, 1, 2]`. For any other `displayDims`, or when `normals`
-is absent, the viewer computes **flat face normals** from the projected triangle via a cross product
-(§6.2). This is a deliberate simplification, documented in the writer's docstring and warned about at
-load time when a non-default `displayDims` is combined with stored normals.
+Therefore `normals` is stored as `(V, 3)`, accompanied by a **required companion attr** recording which
+three dimension indices those components correspond to:
 
-An alternative — storing a full `(V, D, 3)` normal frame — was rejected as over-engineering for v1.
+```
+normals:     (V, 3) float32
+normal_dims: [i, j, k]      # center-column indices, e.g. [0,1,2] or [1,2,3]
+```
+
+Stored normals are used **iff `normal_dims` equals the active `displayDims`**. Otherwise — and whenever
+`normals` is absent — the viewer computes **flat face normals** from the projected triangle via a cross
+product (§6.2), which is exactly why the derivative fallback is not optional.
+
+⚠️ **Do not store normals against an implicit "first three dimensions".** For a `(t, x, y, z)` mesh the
+first three dims are `(t, x, y)` and such a normal is meaningless. This is a bug class the codebase has
+already been burned by and documented: `rendering/depth-sort-coordinator/render-order.ts:79,110` warns
+that the serialized BSP `axis` is a *center-column* index which must be mapped through `displayDims`,
+and that "the two coincide only for `displayDims == [0, 1, 2]`". An explicit index list is also the
+established convention on the Python side (`gsplat transform --spatial-dims`,
+`cli/gsplat_ops/transforms_commands.py:300`).
+
+Making `normal_dims` explicit turns an invisible wrong-orientation render into a cheap, checkable
+equality — and costs one attr.
+
+An alternative — storing a full `(V, D, 3)` normal frame so any `displayDims` has true smooth normals —
+was rejected as over-engineering for v1; the flat-normal fallback covers it correctly, just without
+smoothing.
 
 ### 3.5 Validation
 
@@ -172,6 +205,21 @@ convention (fail-fast, before any zarr group is created):
 - `validate_normals_for_writing(normals, n_vertices)` — shape `(V, 3)`, finite. Zero-length normals are
   **warned**, not rejected (degenerate triangles legitimately produce them), and are renormalized to the
   flat face normal at render time.
+- `normal_dims` (§3.4) — exactly 3 entries, integers, distinct, each `0 <= i < ndim`. Required when
+  `normals` is supplied; rejected when it is not.
+
+**Raise `ValidationError`, not `ValueError`.** Note the precedent cited above is split: the shared
+`validate_*_for_writing` family in `validation/base.py` raises `ValidationError(message, hint)` — a
+two-arg form that gives the user a remediation hint — whereas the Lines indexed-index checks are
+**inline in the writer** and raise bare `ValueError`. Mesh should follow the *shared validator* half of
+that precedent: face/normal validation belongs in `validation/base.py` as reusable, independently
+testable functions, matching `validate_widths_for_writing` / `validate_radii_for_writing`. Only the
+cheap structural gates that need writer context stay inline.
+
+Tests mirror `validation/tests/test_lines_validation.py`, which is already parametrized over
+`(factory, error_pattern, test_id)` triples — reuse that shape so each rejection in this section gets
+its own named case, and **verify each fails before the validator exists** (a test that passes against
+a no-op validator is vacuous).
 
 ### 3.6 Authoring lint
 
@@ -247,11 +295,43 @@ For each non-displayed dimension `d`, with `slice_min = slice_position[d] - tole
   **invisible** — matching the `#806` rule enforced identically in both lines backends
   (`lines_clipping.rs:75-80`, `lines-clipping.ts`);
 - `extend_to_all` dimensions get infinite tolerance via the existing
-  `EXTEND_TO_ALL_TOLERANCE` path, unchanged;
-- tolerance itself comes from the existing `computeTolerance` / `tolerance-computer.ts`, unchanged.
+  `EXTEND_TO_ALL_TOLERANCE` path (`= 1e10`), unchanged.
 
 This is precisely the `p1_in` branch of `clip_segment_single`, applied per vertex and AND-ed across the
 three vertices of a face.
+
+#### 5.2.1 Tolerance — mesh needs its own strategy, and cannot reuse the Lines one
+
+`computeTolerance(geometryType, …)` switches per type, and **each existing strategy is derived from
+that type's per-element extent**:
+
+| Type | Hidden *spatial* dim | Hidden *discrete* dim |
+|---|---|---|
+| Points | `maxRadius` | quarter-cell (`discreteDimTolerance`) |
+| Lines | **`0`** — "bounds already include width" | quarter-cell, or **half-cell** when `discreteRole: 'membership'` |
+| GSplats | `step × 3.0` (3σ) | quarter-cell |
+
+⚠️ **Mesh must NOT copy the Lines row.** Lines can use `0` because segment clipping *interpolates
+through* the slab — a segment crossing the slice yields a clipped intersection even at zero thickness.
+Mesh has whole-triangle cull (no interpolation) and no per-element extent (§2.2), so a spatial
+tolerance of `0` reduces the membership test to **exact float equality with the slice plane** and the
+node renders **nothing**.
+
+Mesh therefore adds a fourth arm to `computeHiddenDimTolerance`:
+
+- **Discrete hidden dims** → `discreteDimMembershipTolerance` (half-cell). Mesh's slab test is a
+  MEMBERSHIP gate, exactly like the lines projection-clipping slab, so it must request
+  `discreteRole: 'membership'`; the default `'query'` role returns the *fetch reach*
+  (deliberately `< 0.5 × step`) and would drop on-grid geometry. **This is the dominant real case** —
+  a mesh's hidden dimensions are almost always time or channel.
+- **Continuous hidden spatial dims** → `step × meshSlabTolerance`, default `1.0` (one cell), exposed
+  via `ToleranceOptions` as the mesh sibling of `gsplatsDefaultTolerance`.
+
+Be honest about what the second bullet means: with per-vertex cull there is no such thing as a true
+cut, so a continuous hidden dimension renders a **thick slab** ("the surface near this slice"), not a
+planar section, and the slab thickness is the only control. Exact nD clipping (§9) is the fix; until
+then a mesh whose hidden dims are continuous and spatial is a poor fit for this node type, and the
+loader should say so once, by name.
 
 ### 5.3 Consequence, stated plainly
 
@@ -280,20 +360,30 @@ pub fn mesh_vertex_visibility_mask(
 ) -> u32;
 
 /// Compact `faces` to those whose three vertices are all visible.
-/// Writes remapped (compacted-vertex-space) indices into `output`.
+/// Writes ORIGINAL (un-remapped) vertex indices into `output`.
 pub fn compact_visible_faces(
-    faces: &[u32], vertex_mask: &[u8], vertex_remap: &[u32],
+    faces: &[u32], vertex_mask: &[u8],
     num_faces: usize, output: &mut [u32],
 ) -> u32;
 ```
 
-`mesh_vertex_visibility_mask` calls `validate_ndim` like its siblings and therefore panics above 16D;
-`pickBackend(ctx, ndim)` in `workers/data-worker/state.ts` routes `ndim > 16` to the TypeScript
-implementation, as it already does for every other kernel. No change to the routing logic is needed —
-only registration of the two new names.
+**No vertex compaction.** Only the *index buffer* is rebuilt; the vertex attribute buffers are uploaded
+once, in full, and left alone. `drawElements` never fetches an unreferenced vertex, so culled vertices
+cost nothing to draw, and the mesh is resident in full anyway (§7). This deliberately avoids:
 
-Vertex compaction reuses the existing `compact_by_mask` (`wasm/rust/src/projection.rs:122`) for the
-per-vertex attribute arrays.
+- `compact_by_mask` (`wasm/rust/src/projection.rs:122`), which is **`&[f32]`-only** and could not
+  compact the `uint8`/`uint16` colors or `float16`/`uint8` scalars §3.2 permits without a widening pass;
+- a `vertex_remap` array and the index remapping that goes with it;
+- re-uploading every attribute buffer on each slice change (the index buffer alone is re-uploaded).
+
+The only cost is VRAM for vertices that are currently invisible — bounded by the mesh size, which is
+already the resident working set.
+
+`mesh_vertex_visibility_mask` calls `validate_ndim` like its siblings and therefore panics above 16D;
+`pickBackend(ctx, ndim)` (`workers/data-worker/state.ts:60`) returns `ctx.tsFallback` — the **whole
+module** — for `ndim > 16`. No change to the routing logic is needed, but because it swaps modules
+wholesale, both new kernels must be declared on the `WasmModule` interface (`wasm/types.ts:7`) and
+implemented by **both** backends, or the TS module will not structurally satisfy the interface.
 
 ### 5.5 Fast path
 
@@ -301,6 +391,9 @@ When `displayDims.length === ndim` (no hidden dimensions — the common 3D case)
 all-ones and the whole cull is skipped: positions are extracted once via the existing
 `extract_3d_positions` and the index buffer is uploaded verbatim. Only a `displayDims` change or a
 non-3D dataset triggers the cull path.
+
+Combined with §5.4's no-compaction rule, this means a plain 3D mesh uploads every buffer exactly once
+and does **zero** per-slice work — `updateView` returns early.
 
 ---
 
@@ -314,11 +407,20 @@ non-3D dataset triggers the cull path.
 |---|---|---|
 | `position` | 3 | `extract_3d_positions(vertices, displayDims)` |
 | `normal` | 3 | stored normals when valid (§3.4), else omitted |
-| `color` | 3 or 4 | `colors`, normalized to float |
+| `color` | 3 or 4 | `colors` — keep the native dtype (§6.1.1) |
 | `aScalar` | 1 | `scalars`, when `has_scalars` |
-| index | — | `compact_visible_faces` output |
+| index | — | `compact_visible_faces` output — **the only buffer rewritten per slice** (§5.4) |
 
 Drawn as `THREE.Mesh` with `side: DoubleSide` when `double_sided`, else `FrontSide`.
+
+#### 6.1.1 Keep color/scalar dtypes native
+
+Bind `uint8`/`uint16` colors with `new THREE.BufferAttribute(u8, 3, /* normalized */ true)` rather than
+widening to `Float32Array`. The GPU normalizes to `[0,1]` for free, and this avoids a 4× memory blow-up
+on the single largest optional attribute. This mirrors the existing loader doctrine — `LoadedLinesData`
+and `LoadedPointsData` both keep `Uint8Array | Uint16Array | Float32Array` colors and pay a single
+widening only where a kernel demands `f32` — and §5.4 removed the one place mesh would have needed
+`f32` (the compaction pass).
 
 ### 6.2 Shading
 
@@ -372,6 +474,29 @@ buffer, which is a natural but separate extension (§9). Until then:
 
 Making `opaque` the mesh default is a deliberate asymmetry — it is the only mode that is unconditionally
 correct without sorting, and it is what a surface should look like.
+
+#### Where the default lives — and where it must NOT
+
+⚠️ The mesh default must be applied **viewer-side only**, in `createMeshNode`:
+
+```ts
+blendingMode: (nodeAttrs.blending_mode as BlendingMode) ?? 'opaque',   // mesh
+// cf. create-{points,lines,gsplats}-node.ts, all `?? 'additive'`
+```
+
+It must **not** be stamped by the writer. `apply_default_render_attrs` deliberately omits
+`blending_mode` from the attrs it defaults, and says why: unlike the identity-valued compositing attrs
+(`opacity`/`gamma`/`intensity`/`offset`/`absorption`, all no-ops under hierarchical composition), a
+stamped `blending_mode` would **override an ancestor's** setting under the viewer's nearest-setter-wins
+rule. Writing `blending_mode="opaque"` into every mesh node would silently break
+`group(blending_mode="additive")` for its mesh children.
+
+So: mesh joins the other three in *not* stamping the attr, and diverges only in the viewer-side `??`
+fallback. Ancestor inheritance is preserved exactly.
+
+`volumetric` rejection belongs in the same place — `createMeshNode`, warn and fall back to `opaque` —
+**not** in the writer, for the same reason: the mode may be inherited from an ancestor the mesh node
+knows nothing about at write time.
 
 ### 6.4 Materials
 
@@ -466,9 +591,27 @@ registry holds three explicit `Map`s and `build-scene-graph` hardcodes the type 
 - [ ] `io/compiler.py` (`write_mesh` facade), `io/reader.py` (`MeshData`/`get_mesh`/`list_meshes`)
 - [ ] `validation/base.py` (`validate_faces_for_writing`, `validate_normals_for_writing`)
 - [ ] `cli/info_command.py`
-- [ ] `core/node/specialized_groups.py:62` — the `display_type` guard currently admits exactly
-      `("points", "lines", "gsplats")`. Leave `mesh` **out** of it, and extend the error message to say
-      why (mesh has no LOD/partition support yet) rather than just listing valid values
+- [ ] **Partition rejection** — `core/node/specialized_groups.py:62`: the `display_type` guard admits
+      exactly `("points", "lines", "gsplats")`. Leave `mesh` **out** of it, and extend the error message
+      to say why (mesh has no LOD/partition support yet) rather than just listing valid values.
+- [ ] **LOD rejection** — `core/group/lod/group.py`: ⚠️ **there is no equivalent whitelist.**
+      `compute_lod_display_type` simply returns `resolve_display_type(children[-1])`, and
+      `resolve_display_type` falls through to `node.attrs.get("type", "group")` for a plain leaf. A mesh
+      child would therefore be **silently accepted** and produce a `kind=lod` group with
+      `display_type="mesh"` that no viewer path can load. An explicit reject must be **added** to
+      `compute_lod_display_type` (or to `Node.add_lod_group`) — this is a new guard, not a
+      leave-mesh-out-of-an-existing-list edit. Cover it with a test asserting the raise.
+- [ ] `io/_compiler/finalize/lod_backfill.py:119` — `resolve()` returns early only for
+      `t in ("points", "lines", "gsplats")`; anything else falls through to "recurse into the finest
+      child". **A mesh leaf would take that branch**, and a leaf group's `keys()` lists its *arrays*
+      (verified: `['faces', 'vertices']` on zarr 2.18.7), so `resolve` would recurse into a zarr
+      `Array` — which has no `.keys()` (`walk` guards with `hasattr(child, "keys")` for exactly this
+      reason) — and raise a bare `AttributeError` during finalize.
+
+      This is the **failure mode of forgetting the LOD guard above**: instead of a clear "mesh is not
+      supported in LOD groups", the user gets an opaque crash deep in the compiler. Add `"mesh"` to the
+      leaf tuple at line 119 as defence in depth even though the guard should make it unreachable —
+      returning `"mesh"` lets the caller's `if resolved:` produce a coherent value rather than crash.
 
 **TypeScript**
 
@@ -479,6 +622,17 @@ registry holds three explicit `Map`s and `build-scene-graph` hardcodes the type 
       `nodes/build-scene-graph.ts` (bare-leaf-root union), `nodes/build-ctx.ts`
 - [ ] `data/scene-loader/monitor/monitor-wiring.ts`, `scene-graph-converter.ts`,
       `data/scene-loader-monitor-port.ts`
+- [ ] `data/scene-loader/lifecycle/retry.ts` — the retry chain dispatches on which loader owns the
+      path (`…else if (gsplatsLoader)`) and ends in `verifyAndClear('<type>')`. Without a mesh arm a
+      **failed mesh load can never be retried**, manually or on reconnect
+- [ ] `data/scene-loader/prefetch/slice-prefetcher.ts` — its `switch (kind)` builds a shadow loader per
+      type. Mesh has no meaningful slice prefetch in v1 (whole-node resident, §7), so mesh must be
+      **excluded explicitly** at the call site rather than left to fall through the switch
+- [ ] `data/loaders/spatial-query/tolerance-computer.ts` — add the `mesh` arm to
+      `computeHiddenDimTolerance` and `meshSlabTolerance` to `ToleranceOptions` (§5.2.1). Callers must
+      pass `discreteRole: 'membership'`. **Do not** default the spatial arm to Lines' `0`
+- [ ] `wasm/types.ts` — declare both new kernels on the `WasmModule` interface (§5.4); `pickBackend`
+      swaps the module wholesale, so a kernel missing from either backend breaks the `>16D` path
 - [ ] `data/attrs-composer.ts`, `data/stats/{aggregator,scene-stats}.ts`
 - [ ] `rendering/mesh-geometry.ts`, `rendering/node-factory.ts`,
       `rendering/node-factory/create-mesh-node.ts`
@@ -489,6 +643,32 @@ registry holds three explicit `Map`s and `build-scene-graph` hardcodes the type 
 - [ ] `ui/layers/{layer-apply,layer-state,layers-panel}.ts`
 - [ ] `ui/data-loading-monitor.ts` + `data-loading-monitor/{templates,advisor}.ts`
 - [ ] `core/app/debug/{debug-interface,debug-state}.ts`
+
+**Verified type-agnostic — no mesh change needed.** Swept for geometry-type literals and found clean,
+so mesh rides these subsystems for free. Recorded so an implementer doesn't re-derive it:
+
+| Subsystem | Evidence |
+|---|---|
+| `cache/` (slice cache, multi-level store, decompressed-chunk cache) | No geometry-type literals; keyed by path + chunk |
+| `rendering/picking/picking-system.ts` core | No type literals; `registerNode(mesh, pickNode, pickId)` is generic (only the *material* is per type, §6.5) |
+| `data/loaders/overlays/` | No type literals |
+| `cli/export.py`, `cli/native_app.py` | No type literals; the offline/native bundlers copy the store wholesale |
+| `encoding/` | `SemanticType.COORDINATE` and `.INDEX` already exist — **no new semantic type**. `COORDINATE` selects per-axis `linear_perchannel_u16`, which quantizes each normal axis over its own `[-1, 1]` range for a free 2× over float32, and correctly **blocks broadcasting** (a normal is always per-vertex) |
+| `colormaps/` | Mesh reuses the scalar→LUT path unchanged (§6.2) |
+
+**Deliberately NOT touched** — each of these enumerates `'points' | 'lines' | 'gsplats'` and must
+**keep** doing so. Adding `mesh` to any of them silently re-enables something §9 excludes, with no
+error to catch it:
+
+| Site | Why mesh stays out |
+|---|---|
+| `types/lod-group.ts:31` — `display_type` union | Mesh is excluded from `kind=lod` (§9) |
+| `types/partition-group.ts:48` — `display_type` union | Mesh is excluded from `kind=partition` (§9) |
+| `rendering/gpu-buffer-pool/pool-stats.ts:22` — `type` union | Mesh doesn't use the buffer pool (§2.1) |
+| `data/loaders/spatial-query/spatial-query-builder.ts` — chunk-query construction | No spatial index in v1 (§7). **Note:** this is the *query builder* only — `tolerance-computer.ts` in the same folder **does** need a mesh arm (§5.2.1); don't let the shared folder mislead you |
+| `ui/layers/absorption-range.ts:90,98` | Mesh rejects `volumetric` blending (§6.3) |
+
+A reviewer should treat a `| 'mesh'` appearing in any of those five as a defect.
 
 **Rust / WASM**
 
@@ -514,7 +694,9 @@ registry holds three explicit `Map`s and `build-scene-graph` hardcodes the type 
 - [ ] Codegen snapshots: 6 new (§6.4)
 - [ ] Fixture: `tests/fixtures/generate_test_data.py` gains a mesh fixture (auto-picked up by
       `vitest.config.ts` globalSetup)
-- [ ] E2E: one `mesh-rendering.spec.ts`
+- [ ] E2E: one `mesh-rendering.spec.ts`, plus extend the existing multi-geometry
+      `tests/e2e/geometry-types.spec.ts` (it asserts `userData.nodeType` per type and already covers
+      lines + gsplats) with a mesh case
 - [ ] One demo exercising the type end to end
 
 > Every test must be verified to **fail before the fix** — mutate the implementation and confirm the
@@ -531,28 +713,128 @@ silently misbehave.
 |---|---|---|
 | **LOD / decimation** | The additive/substitutive ladder machinery assumes independent elements. The mesh analog is QEM decimation — a project, not a line item. | `luxar mesh lod` with QEM levels feeding the existing `kind=lod` group |
 | **`kind=partition`** | Cheap in principle (BSP over face centroids) but needs vertex duplication at part boundaries. | The **first** follow-up — highest value for large meshes |
-| **Exact nD triangle clipping** | ~1500 LOC across two backends. §5 buys 90% of the value for 10% of the cost. | Slot in behind the same `MeshDataLoader.updateView`; the mask kernel becomes the fast pre-pass |
+| **Exact nD triangle clipping** | ~1500 LOC across two backends. §5 covers the dominant real case (hidden dims are discrete — time/channel) for ~10% of the cost, but gives only a **thick slab**, never a true cut, when a hidden dim is continuous and spatial (§5.2.1). | Slot in behind the same `MeshDataLoader.updateView`; the mask kernel becomes the fast pre-pass. **Promote this if continuous hidden spatial dims turn out to be a real use case** |
 | **Per-triangle depth sorting** | Index-buffer permutation, not instance permutation. | Extend the depth-sort coordinator with an index-permutation path |
 | **Spatial index** | See §7. | Mirror the lines dual-index loader over faces |
 | **`volumetric` blending** | No meaning for an opaque surface. | — |
 | **Worker projection** | Measure first (§7). | — |
 | **Mesh import formats** (PLY/OBJ/STL/glTF) | Independent of the node type. | `luxar mesh import`, mirroring `gsplat import` |
 
+**Pre-existing gap noticed during this spec's review, not introduced by mesh:** none of
+`POINTS_/LINES_/GSPLATS_RESERVED_ATTRS` includes `has_image_labels`, though all three writers stamp it —
+so a user attr can clobber the writer's presence truth. Mesh mirrors the existing behavior (§3.3); the
+fix should be a separate four-type change so it isn't buried in the mesh diff.
+
 ---
 
-## 10. Phased delivery
+## 10. Architecture: a fourth hardcoded type, or a geometry registry?
+
+Mesh is the forcing function for a question the codebase has been deferring. It deserves an explicit
+answer rather than a default.
+
+### 10.1 The evidence
+
+**There is no registry — dispatch is hand-written per type.** Measured on the current tree:
+
+| Measure | Count |
+|---|---|
+| Non-test viewer files containing all three of `'points'`, `'lines'`, `'gsplats'` | 36 |
+| Type-switch sites (`case 'lines'` / `=== 'lines'`) | 38 |
+| `LoaderRegistry` per-type members (3 Maps + register/unregister/lookup/dispose triads) | 14 |
+
+`NodeBuildCtx` (`data/scene-loader/nodes/build-ctx.ts`) carries a **per-type method triad** —
+`processLinesData` / `commitLinesGeometry` / `releaseLazyLines`, and the points and gsplats
+equivalents. A fourth type adds a fourth set to the interface and to every implementer.
+
+**But the seam already exists, and its docstring already declares this exact intent.**
+`data/data-loader-types.ts:172`:
+
+```ts
+/**
+ * Tag identifying which of the three first-class geometry kinds a node
+ * or handler operates on. Used by the per-type registry that replaces
+ * switch/case dispatch on `geometry_type` strings in scene-loader.
+ */
+export type GeometryKind = 'points' | 'lines' | 'gsplats';
+```
+
+The registry it describes was only partially built. Three consequences are visible today:
+
+1. **The vocabulary is duplicated.** `data/loaders/spatial-query/tolerance-computer.ts:34` declares
+   `export type GeometryType = 'points' | 'lines' | 'gsplats'` — the same concept under a second name,
+   with its own consumers. A fourth type must be added to **both**, and nothing enforces that.
+2. **Neither is derived from the format contract**, even though `contract.yaml` already single-sources
+   `NODE_TYPES` and `types/data-monitor-types.ts:9` already imports `NodeTypeName` from it. So the
+   geometry vocabulary can drift from the on-disk vocabulary silently.
+3. **`SceneGraphNodeType` had to locally extend the contract** (`NodeTypeName | 'mesh'`, §1.1) —
+   precisely the workaround a contract-derived vocabulary would make unnecessary.
+
+**There is precedent for de-specializing.** When points and lines joined gsplats in depth sorting, the
+coordinator was deliberately made geometry-neutral — `noteGSplatsCommit` → `noteDepthSortCommit`,
+`noteGSplatsBlendingModeSwitch` → `noteDepthSortBlendingModeSwitch` — and order-dependence is now judged
+uniformly via `needsDepthSort(mode)` (`docs/guides/specs/GSPLAT_DEPTH_SORTING_SPEC.md` §237). The
+codebase's own answer, when a third type arrived, was to generalize the *shared machinery* while leaving
+the *genuinely different* parts specialized.
+
+### 10.2 The options
+
+| | Approach | Cost | Risk |
+|---|---|---|---|
+| **A** | Add mesh as a fourth hardcoded type; change nothing else | ~30 mechanical edits | Low now, worse at type 5; ctx grows to 4×N methods |
+| **B** | Build a full geometry-type plugin registry first, port all three, then add mesh | Very large | High — touches three mature, heavily-tested verticals; contradicts "minimum viable solution" and "complete before perfect" |
+| **C** | Consolidate the geometry *vocabulary* and collapse only the **purely mechanical** dispatch; keep genuinely type-specific code specialized | Small, bounded | Low — behavior-preserving and independently testable |
+
+### 10.3 Recommendation: C
+
+Not everything should be unified. Materials, geometry assembly, projection kernels and storage layout
+are genuinely different per type — §2.1 and §6 argue mesh differs from the other three *more* than they
+differ from each other. Forcing those behind one interface would be worse architecture, not better.
+
+What *is* accidental duplication is the dispatch plumbing. Land this as **Phase 0**, before any mesh
+code, so mesh is added to a table rather than to thirty `if`-chains:
+
+1. **Single-source the geometry vocabulary.** Add a `geometry_types` list to `contract.yaml`
+   (the subset of `node_types` that are leaf geometry), generate it, and define
+   `GeometryKind` from it. Delete `GeometryType` and repoint its consumers at `GeometryKind`.
+   Delete the `SceneGraphNodeType` local extension (§1.1). One edit adds a type to all of them.
+2. **Collapse `LoaderRegistry`** from three parallel `Map`s to `Map<GeometryKind, Map<string, AnyLoader>>`.
+   `register` / `unregister` / `getLoaderType` / `totalLoaderCount` / `hasLoaders` / `disposeAll` all
+   become one implementation. This is provably behavior-preserving and directly unit-testable.
+3. **Table-drive the three pure-dispatch switches** — `load-scene-nodes.ts`,
+   `lifecycle/retry.ts`, and `prefetch/slice-prefetcher.ts` — with a
+   `Record<GeometryKind, {load, process, commit, prefetchable}>` descriptor. Mesh then registers one
+   entry, and sets `prefetchable: false` (§7) declaratively instead of via an added `if`.
+
+**Explicitly not in scope for Phase 0:** `NodeBuildCtx`'s per-type methods, the material factories
+(`VISUAL_FACTORIES` is already a table — mesh just adds a row), and the accumulator/geometry/kernel
+layers. Those stay specialized.
+
+The payoff is concrete: step 1 turns "add mesh to two duplicated unions and hope" into one contract
+edit, and step 3 makes the `retry.ts` and `slice-prefetcher.ts` gaps found during review (§8)
+structurally impossible to forget rather than checklist items.
+
+> **If Phase 0 is skipped**, everything in this spec still stands — §8's checklist is written against
+> the current hardcoded structure and is complete as written. Phase 0 is an investment, not a
+> prerequisite.
+
+---
+
+## 11. Phased delivery
 
 | Phase | Contents | Verifiable outcome |
 |---|---|---|
-| **1** | Contract + `NodeType.MESH` + `core/mesh.py` + adder + writer + validators + reader + `info` | `scene.add_mesh(...)` writes a `.luxar.zarr`; `luxar info --stats` reports it; round-trip test green |
+| **0** *(optional, §10.3)* | Single-source `GeometryKind` from the contract; delete the duplicate `GeometryType` and the `SceneGraphNodeType` local extension; collapse `LoaderRegistry`; table-drive the three pure-dispatch switches | **No behavior change.** Full existing suite green; `LoaderRegistry` unit tests pass against the collapsed implementation |
+| **1** | Contract + `NodeType.MESH` + `core/mesh.py` + adder + writer + validators + reader + `info` + the LOD/partition rejections (§8) | `scene.add_mesh(...)` writes a `.luxar.zarr`; `luxar info --stats` reports it; round-trip test green; a mesh child of a lod/partition group **raises** |
 | **2** | Rust + TS cull kernels with parity tests | Kernels green in isolation, no viewer changes |
 | **3** | `types/mesh.ts` + loader + node load + process + commit + `mesh-geometry.ts` + dispatch sweep | Mesh loads and renders **unshaded** (flat vertex color); E2E smoke green |
 | **4** | GLSL + TSL material pair + codegen snapshots + shading model | Shaded surface, both backends pixel-equivalent |
 | **5** | Picking pair, layers panel, monitor, stats, camera framing, debug | Full parity with the other three at the UI level |
 | **6** | Fixture + E2E spec + demo + docs + CHANGELOG | Shippable |
 
-Phases 1–2 are independent and can land in parallel. Phase 3 is the widest diff (the dispatch sweep) but
-the shallowest per-file. Phase 4 is the deepest single piece of work.
+Phase 0 is optional and behavior-preserving; it must land **alone**, with no mesh code, so any
+regression it causes is unambiguous. Phases 1–2 are independent and can land in parallel. Phase 3 is
+the widest diff (the dispatch sweep) but the shallowest per-file — and is materially smaller if Phase 0
+landed. Phase 4 is the deepest single piece of work.
 
-**Estimate:** 5–7 PRs, roughly 4.5–6K LOC including tests — against ~14K LOC for the full Lines
-vertical, the difference being everything in §9.
+**Estimate:** 5–7 PRs, roughly 4.5–6K LOC including tests (plus ~1 PR / ~400 LOC net *reduction* if
+Phase 0 is taken) — against ~14K LOC for the full Lines vertical, the difference being everything in §9.
