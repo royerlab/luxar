@@ -1027,11 +1027,21 @@ export class OPFSStore {
    * Record the validation mode used for this dataset. Persisted to
    * `_cache_meta.json` so a follow-up session can re-evaluate (e.g.
    * a TTL window).
+   *
+   * `validated` (default true) means a genuine validation just succeeded,
+   * which stamps `lastValidatedAt = now`. The no-token/offline branch passes
+   * `validated: false`: it still records the mode, but must NOT slide the TTL
+   * clock forward on every revisit — it only establishes the baseline the
+   * first time (when `lastValidatedAt` is still unset) so a headerless-server
+   * cache can still age out.
    */
-  setValidationMode(mode: CacheValidationMode): void {
+  setValidationMode(mode: CacheValidationMode, options?: { validated?: boolean }): void {
     if (this.disposed) return;
     this.validationMode = mode;
-    this.lastValidatedAt = Date.now();
+    const validated = options?.validated ?? true;
+    if (validated || this.lastValidatedAt == null) {
+      this.lastValidatedAt = Date.now();
+    }
     this.scheduleMetadataSave();
   }
 
