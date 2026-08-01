@@ -31,6 +31,7 @@ import type { SceneManager } from '../../../scene/scene-manager';
 import type { AnimationController } from '../../../scene/animation/animation-controller';
 import type { RenderingControls } from '../../../ui/rendering-controls';
 import { isDocumentFullscreen } from '../../../utils/fullscreen';
+import { isPerspectiveCamera } from '../../../utils/camera-utils';
 
 export class WindowEventHandler {
   private renderingControls?: RenderingControls;
@@ -157,9 +158,13 @@ export class WindowEventHandler {
    *     during continuous wheel input).
    *   - On Ctrl+wheel / Cmd+wheel, intercept the event for FOV
    *     control and `preventDefault` so the page doesn't also try to
-   *     zoom. When the FOV actually changed (perspective camera —
-   *     updateFOV no-ops on ortho), switch the rendering-controls
-   *     preset to "Custom" so the panel value matches the slider.
+   *     zoom. The FOV wheel path is gated to a perspective camera: in
+   *     ortho the orbit controls own modifier-wheel (and trackpad-pinch)
+   *     zoom. `updateFOV` now persists the perspective FOV stash even in
+   *     ortho for DELIBERATE reset/zarr/panel applies, so the interactive
+   *     wheel must be gated here or a pinch would corrupt that stash. When
+   *     the FOV actually changed, switch the rendering-controls preset to
+   *     "Custom" so the panel value matches the slider.
    */
   private onWheel(event: WheelEvent): void {
     this.animationController.startAnimation();
@@ -169,12 +174,17 @@ export class WindowEventHandler {
       // (ortho camera), browser page zoom must stay suppressed over
       // the viewer.
       event.preventDefault();
+
+      // FOV only applies to a perspective camera; in ortho the orbit controls
+      // own modifier-wheel zoom. Gate the interactive wheel path here (the
+      // deliberate reset/zarr/panel-apply paths still persist the stash via
+      // updateFOV) so a pinch/ctrl-wheel zoom in ortho can't corrupt it.
+      if (!isPerspectiveCamera(this.sceneManager.camera)) return;
+
       const fovChanged = this.sceneManager.updateFOV(event.deltaY);
 
-      // Only flip the preset when the FOV actually changed — updateFOV
-      // is a no-op for orthographic cameras (there the orbit controls
-      // keep zoom ownership of modifier wheels), and stamping "Custom"
-      // for a no-op would desync the panel from reality.
+      // Flip the preset when the FOV actually changed so the panel value
+      // matches the slider.
       if (fovChanged && this.renderingControls) {
         this.renderingControls.settings.fovPreset = 'Custom';
         this.renderingControls.syncCurrentState();
