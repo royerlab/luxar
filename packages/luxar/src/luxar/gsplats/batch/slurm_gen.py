@@ -154,14 +154,14 @@ def generate_fit_sbatch(
     slot_label = "box" if is_content else "tile"
     if is_content:
         fit_cmd_parts = [
-            f'luxar gsplat fit {shlex.quote(manifest.input_path)} "${{OUTPUT}}.tmp"',
+            f'luxar gsplat fit {shlex.quote(manifest.input_path)} "${{STAGING}}"',
             "    --tiling content",
             f"    --plan {shlex.quote(manifest.plan_path or '')}",
             "    --plan-box $K",
         ]
     else:
         fit_cmd_parts = [
-            f'luxar gsplat fit {shlex.quote(manifest.input_path)} "${{OUTPUT}}.tmp"',
+            f'luxar gsplat fit {shlex.quote(manifest.input_path)} "${{STAGING}}"',
             f"    --tile $K/{manifest.n_tiles}",
             f"    --tile-size {manifest.tile_size}",
             f"    --overlap {manifest.tile_overlap}",
@@ -211,7 +211,7 @@ def generate_fit_sbatch(
     ):
         # Replace the input path in the command
         fit_cmd_parts[0] = (
-            f'luxar gsplat fit {shlex.quote(manifest.denoised_zarr_path)} "${{OUTPUT}}.tmp"'
+            f'luxar gsplat fit {shlex.quote(manifest.denoised_zarr_path)} "${{STAGING}}"'
         )
         # Replace or add --array-key data to point at the denoised dataset
         array_key_replaced = False
@@ -271,16 +271,25 @@ def generate_fit_sbatch(
             f"t$(printf '%0{t_width}d' $T)_c$(printf '%0{c_width}d' $C)_{slot_label}$(printf '%0{k_width}d' $K)"
             ".gsplats.zarr",
             "",
-            "    # Clean up leftovers from a previous crashed/preempted run.",
-            "    # A stale .tmp.empty marker must go too (the local runner does",
+            "    # Per-attempt staging dir: SLURM_JOB_ID/ARRAY_TASK_ID differ",
+            "    # between the guaranteed and preemptible arrays, and",
+            "    # SLURM_RESTART_COUNT increments on requeue, so every concurrent",
+            "    # attempt owns a unique staging store and can never interleave",
+            "    # chunk/metadata writes with another attempt.",
+            '    local STAGING="${OUTPUT}.tmp.${SLURM_JOB_ID:-0}'
+            '.${SLURM_ARRAY_TASK_ID:-0}.${SLURM_RESTART_COUNT:-0}"',
+            "    # Clean up leftovers from a previous crashed run of THIS attempt.",
+            "    # The staging dir is now per-attempt, so this only ever removes",
+            "    # our own store — the old cross-attempt interleaving hazard is",
+            "    # gone. A stale .empty marker must go too (the local runner does",
             "    # the same): with FIT_RC=0 it would make the finalize step",
-            "    # delete a freshly written real .tmp store and mark the task",
+            "    # delete a freshly written real staging store and mark the task",
             "    # empty — a silent spatial hole the merge skips without error.",
-            '    if [ -d "${OUTPUT}.tmp" ]; then',
-            '        echo "Cleaning up incomplete tile: ${OUTPUT}.tmp"',
-            '        rm -rf "${OUTPUT}.tmp"',
+            '    if [ -d "${STAGING}" ]; then',
+            '        echo "Cleaning up incomplete tile: ${STAGING}"',
+            '        rm -rf "${STAGING}"',
             "    fi",
-            '    rm -f "${OUTPUT}.tmp.empty"',
+            '    rm -f "${STAGING}.empty"',
             "",
             '    if [ -d "$OUTPUT" ]; then',
             '        echo "Already exists, skipping: $OUTPUT"',
@@ -314,33 +323,48 @@ def generate_fit_sbatch(
         ]
     )
     # A task that fits 0 splats (a content box, or a uniform tile wholly below
-    # the run's background floor) writes a sibling `${OUTPUT}.tmp.empty` marker
-    # (the writer rejects empty stores) instead of the `.tmp` store. Treat that
+    # the run's background floor) writes a sibling `${STAGING}.empty` marker
+    # (the writer rejects empty stores) instead of the staging store. Treat that
     # as a clean, legitimately-empty result: leave a `${OUTPUT}.empty` marker
     # the merge skips, and exit 0 (NOT a failed task).
     lines.extend(
         [
-            '    if [ "$FIT_RC" -eq 0 ] && [ -f "${OUTPUT}.tmp.empty" ]; then',
-            f'        echo "Empty {slot_label} (0 splats): ${{OUTPUT}}.empty"',
-            '        rm -f "${OUTPUT}.tmp.empty"',
-            '        rm -rf "${OUTPUT}.tmp"',
+            '    if [ "$FIT_RC" -eq 0 ] && [ -f "${STAGING}.empty" ]; then',
+            '        rm -f "${STAGING}.empty"',
+            '        rm -rf "${STAGING}"',
+            "        # Claim the empty marker FIRST, then recheck: a racing real",
+            "        # attempt removes the marker after its mv -T claim, so in",
+            "        # every interleaving a real store and the marker never both",
+            "        # survive — a real result always wins. (Checking before",
+            "        # touching leaves a window — the check passes, the real",
+            "        # attempt promotes and clears, then the touch lands — that",
+            "        # would strand both terminal representations on disk.)",
             '        touch "${OUTPUT}.empty"',
+            '        if [ -d "$OUTPUT" ]; then',
+            '            echo "Completed by another task, dropping empty result"',
+            '            rm -f "${OUTPUT}.empty"',
+            "        else",
+            f'            echo "Empty {slot_label} (0 splats): ${{OUTPUT}}.empty"',
+            "        fi",
             "        return 0",
             "    fi",
         ]
     )
     lines.extend(
         [
-            '    if [ "$FIT_RC" -ne 0 ] || [ ! -d "${OUTPUT}.tmp" ]; then',
+            '    if [ "$FIT_RC" -ne 0 ] || [ ! -d "${STAGING}" ]; then',
             '        echo "ERROR: fit failed (rc=$FIT_RC), cleaning up"',
-            '        rm -rf "${OUTPUT}.tmp"',
+            '        rm -rf "${STAGING}"',
             "        return 1",
             "    fi",
-            "    # Atomic rename — handles race with parallel preemptible job",
-            '    if ! mv -T "${OUTPUT}.tmp" "$OUTPUT" 2>/dev/null; then',
+            "    # Atomic claim — mv -T of a directory onto an existing non-empty",
+            "    # OUTPUT fails, so a concurrent attempt that already promoted its",
+            "    # own (isolated) staging makes this attempt fall into the loser",
+            "    # branch below instead of clobbering the winner.",
+            '    if ! mv -T "${STAGING}" "$OUTPUT" 2>/dev/null; then',
             '        if [ -d "$OUTPUT" ]; then',
             '            echo "Tile completed by another task, cleaning up duplicate"',
-            '            rm -rf "${OUTPUT}.tmp"',
+            '            rm -rf "${STAGING}"',
             "        else",
             '            echo "ERROR: mv failed and output missing"',
             "            return 1",
@@ -348,6 +372,11 @@ def generate_fit_sbatch(
             "    else",
             '        echo "Tile saved: $OUTPUT"',
             "    fi",
+            "    # A real store now stands at OUTPUT (ours or the winner's) —",
+            "    # drop any stale empty marker from an earlier 0-splat attempt so",
+            "    # resume/status/merge never mistake this slot for legitimately",
+            "    # empty after the store is later removed.",
+            '    rm -f "${OUTPUT}.empty"',
             "}",
             "",
         ]

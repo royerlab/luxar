@@ -161,18 +161,21 @@ def test_uniform_argv_allows_empty_tile() -> None:
     argv = build_task_fit_argv(m, _job(k=2), "out.tmp", argv0=_ARGV0)
     assert "--allow-empty-tile" in argv
     # Slurm parity: the sbatch template carries the flag AND finalizes the
-    # .tmp.empty marker for uniform tiles too (not just content boxes).
+    # empty marker for uniform tiles too (not just content boxes). Staging is
+    # per-attempt now (${STAGING}=${OUTPUT}.tmp.<job>.<task>.<restart>), so the
+    # 0-splat worker writes a sibling ${STAGING}.empty and finalize promotes it
+    # to the terminal ${OUTPUT}.empty marker.
     script = generate_fit_sbatch(m, "# preamble\n")
     assert "--allow-empty-tile" in script
-    assert '"${OUTPUT}.tmp.empty"' in script
+    assert '"${STAGING}.empty"' in script
     assert 'touch "${OUTPUT}.empty"' in script
-    # The pre-fit cleanup must also remove a STALE .tmp.empty marker (from a
-    # killed/preempted run), or the finalize branch would see FIT_RC=0 plus
-    # the stale marker, delete the freshly written real .tmp store, and mark
-    # the task empty — a silent spatial hole the merge skips without error.
-    # Two occurrences: the pre-fit cleanup and the finalize branch itself.
-    assert script.count('rm -f "${OUTPUT}.tmp.empty"') == 2
-    assert script.index('rm -f "${OUTPUT}.tmp.empty"') < script.index("local FIT_RC")
+    # The pre-fit cleanup must also remove a STALE ${STAGING}.empty marker (from
+    # a crashed run of this same attempt), or the finalize branch would see
+    # FIT_RC=0 plus the stale marker, delete the freshly written real staging
+    # store, and mark the task empty — a silent spatial hole the merge skips
+    # without error. Two occurrences: the pre-fit cleanup and the finalize branch.
+    assert script.count('rm -f "${STAGING}.empty"') == 2
+    assert script.index('rm -f "${STAGING}.empty"') < script.index("local FIT_RC")
 
 
 def test_denoise_h_appended_for_on_the_fly_auto() -> None:

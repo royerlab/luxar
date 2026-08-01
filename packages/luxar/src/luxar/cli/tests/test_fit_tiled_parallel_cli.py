@@ -87,8 +87,9 @@ def test_tiled_parallel_cli_end_to_end(tmp_path: Path) -> None:
     data = GSplatData.load(out)
     assert data.n_splats > 0
     assert data.ndim == 2
-    # the parallel temp dir must be cleaned up after a successful merge
-    assert not (tmp_path / ".par.gsplats.zarr.tiles").exists()
+    # the parallel temp dir (now token-suffixed: .tiles.<host>-<pid>-<rand>)
+    # must be cleaned up after a successful merge
+    assert list(tmp_path.glob(".par.gsplats.zarr.tiles*")) == []
 
 
 @pytest.mark.skipif(not HAS_TORCH, reason="fitting requires torch")
