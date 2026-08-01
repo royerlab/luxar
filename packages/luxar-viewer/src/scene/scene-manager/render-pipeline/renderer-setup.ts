@@ -32,6 +32,7 @@ import {
 } from '../../../rendering/renderer-capabilities';
 import { configureElementTextureLayout } from '../../../rendering/element-texture-layout';
 import { configureSortedIndexChunkedApply } from '../../../rendering/element-storage';
+import { configureRenderObjectEviction } from '../../../data/scene-loader/commit/invalidate-render-object';
 import { configureHDRRenderer, logHDRCapabilities } from '../../../utils/hdr/hdr-detection';
 import { log, Modules } from '../../../utils/log';
 import { notifier } from '../../../utils/cross-layer/notifier';
@@ -123,6 +124,9 @@ export async function createWebGLRenderer(canvas: HTMLCanvasElement): Promise<Cr
   // Chunked ordering applies need honored attribute update ranges —
   // classic WebGL only (see element-storage's chunked-apply note).
   configureSortedIndexChunkedApply(capabilities.apiSurface === 'webgl2');
+  // RenderObject eviction (dispose dispatch) is WebGPU-only — on classic
+  // WebGL the same event destroys the compiled program (shader recompile).
+  configureRenderObjectEviction(capabilities.apiSurface === 'webgpu');
 
   log.info(Modules.RENDERER, `Rendering API: ${capabilities.apiSurface}`);
 
@@ -305,6 +309,9 @@ export async function createWebGPURenderer(
   // per needsUpdate) — chunking would multiply the GPU upload, so large
   // orderings keep the single-shot path there.
   configureSortedIndexChunkedApply(capabilities.apiSurface === 'webgl2');
+  // RenderObject eviction (dispose dispatch) is WebGPU-only — it flushes
+  // the stale vertexBuffers chainMap cache that only WebGPU maintains.
+  configureRenderObjectEviction(capabilities.apiSurface === 'webgpu');
   log.info(Modules.RENDERER, `Rendering API: ${capabilities.apiSurface}`);
 
   const hdrCapabilities = capabilities.hdr;

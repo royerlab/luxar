@@ -76,16 +76,19 @@ Every label, value, badge, and table header the monitor paints carries
 a `title` tooltip, and the tooltips are deliberately **didactic**: they
 explain what the metric is, why it matters, and what a good/bad value
 looks like (e.g. hit-rate tooltips note that a low rate right after
-load is normal). Two tooltips are *state-dependent* and therefore
+load is normal). Two tooltips are _state-dependent_ and therefore
 re-patched by `tabs/cache.ts` on every tick alongside their values:
-`validationModeTooltip(mode)` and `lastValidatedTooltip(mode)` — under
-`validationMode: 'none'` the freshness timestamp records only a check
-*attempt* (nothing to compare against), not a confirmation, and the
-tooltip must say so for whichever mode is currently displayed. For the
-same reason the row label itself is mode-aware
-(`lastValidatedLabel(mode)`): "Last Validated" only under
-content-hash, "Last Checked" otherwise. The timing panel's per-operation explanations
-live in the `TOOLTIPS` map in `timing-panel.ts`.
+`validationModeTooltip(mode)` and `lastValidatedTooltip(mode)`. Under
+the hash modes the freshness timestamp updates on each successful online
+check (a real confirmation), but under `validationMode: 'ttl'`/`'none'`
+it is a fixed known-good **baseline** — when the cache was established —
+that does NOT advance on repeat offline checks and does not confirm the
+cached data still matches the server; the tooltip must say so for
+whichever mode is currently displayed. For the same reason the row label
+itself is mode-aware (`lastValidatedLabel(mode)`): "Last Validated" under
+the content-hash/.zattrs-hash modes, "Cached Since" for ttl/none. The
+timing panel's per-operation explanations live in the `TOOLTIPS` map in
+`timing-panel.ts`.
 
 ## Contracts and invariants
 

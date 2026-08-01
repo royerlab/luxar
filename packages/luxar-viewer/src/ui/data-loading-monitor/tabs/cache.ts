@@ -184,8 +184,8 @@ export function updateCacheTab(container: HTMLElement | null, cacheMetrics: Cach
     'cache-health-validated',
     formatLastValidated(cacheMetrics.health?.lastValidatedAt)
   );
-  // The row label is mode-aware too ("Last Validated" only under
-  // content-hash; "Last Checked" otherwise) — see lastValidatedLabel.
+  // The row label is mode-aware too ("Last Validated" under content-hash
+  // AND zattrs-hash; "Cached Since" otherwise) — see lastValidatedLabel.
   patchField(container, 'cache-health-validated-label', lastValidatedLabel(mode));
   const modeEl = container.querySelector('[data-field="cache-health-mode"]');
   if (modeEl) modeEl.setAttribute('title', validationModeTooltip(mode));
