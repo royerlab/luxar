@@ -60,14 +60,18 @@
  * symbol-keyed flag on the material before dispatching;
  * MaterialManager's listener checks for the flag and treats the
  * event as a soft cache-invalidation rather than a real dispose.
- * See `SOFT_DISPOSE_FLAG` in `rendering/material-manager.ts`.
+ * See `SOFT_DISPOSE_FLAG` in `rendering/material-manager/soft-dispose-flag.ts`.
  *
  * @module data/scene-loader/commit/invalidate-render-object
  */
 
 import type * as THREE from 'three';
 
-import { SOFT_DISPOSE_FLAG } from '../../../rendering/material-manager';
+// Import the sentinel from its leaf module rather than the material-manager
+// barrel: this file is reachable from the renderer bootstrap
+// (renderer-setup -> configureRenderObjectEviction), and the barrel pulls in
+// the TSL material factories (which import `three/webgpu`).
+import { SOFT_DISPOSE_FLAG } from '../../../rendering/material-manager/soft-dispose-flag';
 
 /**
  * Session backend gate (renderer-setup, the

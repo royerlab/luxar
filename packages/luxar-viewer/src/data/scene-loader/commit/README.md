@@ -103,8 +103,11 @@ are allowed inside commit — by contract.
 - `../../../rendering/material-sync-helpers.ts` —
   `syncPointMaterialWithGeometry` (re-exported from
   `commit-points-geometry.ts`).
-- `../../../rendering/material-manager.ts` — `SOFT_DISPOSE_FLAG`
-  symbol and the soft-dispose listener that pairs with this
-  folder's `invalidateRenderObjectFor`.
+- `../../../rendering/material-manager/soft-dispose-flag.ts` — the
+  `SOFT_DISPOSE_FLAG` symbol (a zero-import leaf module so this folder
+  can tag events without pulling in the material factories); the
+  soft-dispose listener that pairs with this folder's
+  `invalidateRenderObjectFor` lives in
+  `../../../rendering/material-manager/lifecycle.ts`.
 - `../../../rendering/widen-to-float32.ts` —
   `widenToFloat32` used by the points commit paths.
