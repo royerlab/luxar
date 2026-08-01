@@ -39,11 +39,13 @@ jobs:
         with:
           node-version: '22'
 
-      # Pin pnpm to match ci.yml — version 10 still reads the `pnpm.overrides`
-      # field in package.json. An unpinned `npm install -g pnpm` pulls a newer
-      # pnpm that ignores that field, so `pnpm install --frozen-lockfile` aborts
-      # with ERR_PNPM_LOCKFILE_CONFIG_MISMATCH (the overrides recorded in the
-      # lockfile no longer match the now-unread config).
+      # Pin pnpm to match ci.yml. Still load-bearing, for a different reason
+      # than before: the security pins are single-sourced in
+      # pnpm-workspace.yaml, and reading `overrides` from that file needs pnpm
+      # >=10.6 (10.4 and older reject it with "packages field missing or
+      # empty"). An unpinned `npm install -g pnpm` happens to satisfy that
+      # today, but pinning keeps every workflow resolving the lockfile the
+      # same way. See `pnpm run check:overrides`.
       - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
         with:
           version: 10
