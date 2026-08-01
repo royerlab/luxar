@@ -62,20 +62,181 @@ jobs:
             echo "docs_only=true" >> "$GITHUB_OUTPUT"
           fi
 
+  # Runner routing: prefer the self-hosted `obsidian` box, fall back to
+  # GitHub-hosted. MUST run on ubuntu-latest — a router that needs obsidian to be
+  # up could never route around obsidian being down.
+  #
+  # The MACHINE side of this — the ephemeral-container runners, the heartbeat that
+  # publishes LUXAR_CI_HEARTBEAT, and the units named in the comments below —
+  # lives in royerlab/luxar-ci, whose README records why each piece is shaped the
+  # way it is. Nothing in this file works without that kit deployed.
+  #
+  # obsidian publishes the repo variable LUXAR_CI_HEARTBEAT (epoch seconds) once a
+  # minute via its `luxar-ci-heartbeat.timer`. It publishes a live timestamp only
+  # when GitHub can see an online runner AND obsidian can see a container backing
+  # it AND the disk has headroom; otherwise it publishes 0. Both halves of that
+  # check are load-bearing: a crash-looping slot still reads "active" to systemd,
+  # and a runner that was killed before it could de-register still reads "online"
+  # to GitHub. Either one alone would report healthy while jobs pile up unrun.
+  #
+  # We route to obsidian only while that value is FRESH, so every way the box can
+  # go away — clean stop, hard crash, power loss, network partition — degrades to
+  # GitHub-hosted on its own.
+  #
+  # Freshness matters more than it looks: a job dispatched to a registered-but-
+  # offline self-hosted runner does not fail, it QUEUES — for up to 24 hours. So
+  # the failure mode this guards against is not a red CI, it is a CI that hangs.
+  # This check only covers the moment of routing; the `queue-watchdog` job below
+  # covers the window AFTER it (box dies post-routing, jobs already queued).
+  pick-runner:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      label: ${{ steps.pick.outputs.label }}
+    steps:
+      - id: pick
+        name: Pick runner (obsidian if its heartbeat is fresh, else GitHub-hosted)
+        env:
+          # Empty until obsidian has published at least once; `${x:-0}` below
+          # turns that into an immediate GitHub-hosted verdict.
+          HEARTBEAT: ${{ vars.LUXAR_CI_HEARTBEAT }}
+          # Empty on push events; the `|| github.repository` makes those read
+          # as same-repo, which they are.
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+        run: |
+          # Fork PRs never route to the self-hosted box, whatever the heartbeat
+          # says. Today this is belt-and-braces — the repo is private, so only
+          # collaborators can open PRs at all — but the routing must stay safe
+          # if the repo ever goes public: per GitHub's own hardening guidance,
+          # a self-hosted runner must not execute code from arbitrary forks.
+          if [ "$HEAD_REPO" != "$GITHUB_REPOSITORY" ]; then
+            echo "PR head is a fork ($HEAD_REPO) -> routing to ubuntu-latest"
+            echo "label=ubuntu-latest" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          now=$(date +%s)
+          hb=${HEARTBEAT:-0}
+          age=$(( now - hb ))
+          # 180s = three missed 60s beats. Long enough to ride out a slow beat or
+          # a GitHub API blip, short enough that a dead box costs one CI run.
+          #
+          # The lower bound matters as much as the upper one: a NEGATIVE age
+          # means obsidian's clock is ahead of GitHub's, and `age < 180` alone
+          # would then read a permanently stale heartbeat as permanently fresh —
+          # failing OPEN, in the one direction this gate must never fail. Real
+          # skew measured at 8s, so a few seconds of slop is tolerated and
+          # anything further routes to hosted.
+          if [ "$hb" -gt 0 ] && [ "$age" -ge -30 ] && [ "$age" -lt 180 ]; then
+            echo "obsidian heartbeat is ${age}s old -> routing to obsidian"
+            echo "label=obsidian" >> "$GITHUB_OUTPUT"
+          else
+            echo "obsidian heartbeat is ${age}s old (hb=$hb) -> routing to ubuntu-latest"
+            echo "label=ubuntu-latest" >> "$GITHUB_OUTPUT"
+          fi
+
+  # pick-runner's heartbeat check is a snapshot: it proves obsidian was alive
+  # when the run was ROUTED, not that it survives long enough to pick the jobs
+  # up. GitHub never re-evaluates `runs-on` — a job assigned to the `obsidian`
+  # label whose runners then vanish does not fail or fall back, it sits QUEUED
+  # for up to 24 hours, and job-level `timeout-minutes` only starts counting
+  # once a job is running. This job closes that hole from the hosted side:
+  # while any obsidian-routed job is still queued it re-reads the heartbeat,
+  # and if the heartbeat goes stale it cancels the run — turning a silent
+  # day-long hang into a visible cancellation within ~5 minutes. A re-run then
+  # goes through pick-runner again, sees the same stale heartbeat, and lands on
+  # GitHub-hosted. (Re-run ALL jobs, not just failed ones — "re-run failed"
+  # reuses the previous pick-runner output.)
+  #
+  # On a healthy box the routed jobs are picked up in seconds and this exits
+  # immediately, so its hosted-minutes cost is negligible. Every failure of its
+  # own plumbing (jobs API blip, unreadable heartbeat variable) fails toward
+  # NOT cancelling — the watchdog must never take down a healthy run.
+  queue-watchdog:
+    needs: pick-runner
+    if: needs.pick-runner.outputs.label == 'obsidian'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      # Job-level grant (replaces the workflow's contents:read for this job):
+      # cancelling the run and reading the heartbeat variable both live under
+      # the actions scope. Nothing here checks out code.
+      actions: write
+    steps:
+      - name: Cancel the run if obsidian dies while jobs are still queued
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Self-bounded below the job timeout. If jobs are STILL queued when
+          # the window closes but the heartbeat stayed fresh the whole time,
+          # the box is busy, not dead (4 slots, 5 routed jobs, or another run
+          # draining) — leave the run alone.
+          end=$(( $(date +%s) + 25 * 60 ))
+          while [ "$(date +%s)" -lt "$end" ]; do
+            queued=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/jobs?per_page=100" \
+              --jq '[.jobs[] | select(.status == "queued")
+                            | select(.labels | index("obsidian"))
+                            | .name] | join(", ")') || queued=__api_error__
+            if [ "$queued" = "__api_error__" ]; then
+              echo "jobs API read failed; retrying"
+              sleep 30; continue
+            fi
+            if [ -z "$queued" ]; then
+              echo "every obsidian-routed job has been picked up — done"
+              exit 0
+            fi
+            hb=$(gh api "repos/${GITHUB_REPOSITORY}/actions/variables/LUXAR_CI_HEARTBEAT" \
+              --jq .value 2>/dev/null) || hb=""
+            if ! echo "$hb" | grep -qE '^[0-9]+$'; then
+              echo "heartbeat unreadable ('$hb'); not cancelling on a fluke — retrying"
+              sleep 30; continue
+            fi
+            age=$(( $(date +%s) - hb ))
+            # Same freshness window as pick-runner, for the same reasons.
+            if [ "$hb" -gt 0 ] && [ "$age" -ge -30 ] && [ "$age" -lt 180 ]; then
+              echo "still queued on a live box (heartbeat ${age}s old): $queued"
+            else
+              echo "::error::obsidian heartbeat went stale (age ${age}s, hb=$hb) with jobs still queued ($queued) — cancelling the run; re-run all jobs to route to GitHub-hosted"
+              gh api -X POST "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/cancel"
+              # The cancel sweeps this job too; don't fall through to success
+              # while it lands.
+              sleep 120
+              exit 1
+            fi
+            sleep 30
+          done
+          echo "watchdog window over; jobs still queued but the heartbeat stayed fresh (busy box, not a dead one) — leaving the run alone"
+
   python-tests:
-    needs: changes
+    needs: [changes, pick-runner]
     # Fail-safe fallback to full CI if `changes` fails — see the note on the
     # `changes` job.
     if: ${{ !cancelled() }}
-    runs-on: ubuntu-latest
+    # `|| 'ubuntu-latest'` keeps the same fail-open posture as the `changes` gate:
+    # if pick-runner itself dies the output is empty, and an empty `runs-on` is a
+    # workflow-level error rather than a fallback.
+    runs-on: ${{ needs.pick-runner.outputs.label || 'ubuntu-latest' }}
     # `hatch run test-cov` runs `pytest -m 'not slow'` — the heavy CPU-fitting
     # tests (content-fit CLI, tiled/progressive fitting) are marked `slow` and
     # excluded here, cutting the serial 1-core run from >60 min to ~15 min while
     # coverage stays ~85% (≥ the 80% gate; slow tests' code is redundantly
     # covered by fast unit tests). The FULL suite (incl. slow) is the local
-    # pre-push gate (`hatch run test`). pytest-xdist doesn't help on the 1-core
-    # runner. 60 min leaves generous headroom for the not-slow pass.
-    timeout-minutes: 60
+    # pre-push gate (`hatch run test`).
+    #
+    # The suite runs under pytest-xdist ON THE SELF-HOSTED BOX ONLY (see
+    # PYTEST_ADDOPTS below; hosted runners stay serial). The old note
+    # here said xdist "doesn't help on the 1-core runner" — true of a 2-core
+    # GitHub VM, and false on the 16-core self-hosted box, where it cut each leg
+    # from ~45 min to ~16. Combined with the thread pinning below; neither works
+    # without the other.
+    #
+    # 120, not 60, because the self-hosted runners are deliberately SCHED_IDLE
+    # (see luxar-ci-slot@.service): CI only gets CPU nobody else on that box
+    # wants, so a sustained burst from the other workloads there can stretch a
+    # leg arbitrarily. That is starvation, not a hang, and the heartbeat cannot
+    # detect it — an idle-priority job is perfectly healthy, just slow. A
+    # timeout here would be a self-inflicted red. Measured: 16.9 min under xdist,
+    # 47.5 min in the pre-xdist serial worst case.
+    timeout-minutes: 120
     strategy:
       # Report every interpreter's verdict in one run: fail-fast would cancel the
       # siblings on the first red leg, losing precisely the per-version information
@@ -83,6 +244,42 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ['3.10', '3.11', '3.12']
+    env:
+      # Pin BLAS/OpenMP to one thread per leg. This suite runs SERIALLY, yet each
+      # leg burned ~316% CPU on the self-hosted box -- numpy spawning threads to
+      # fill the core quota. Three legs doing that pinned load at 15/16 and made
+      # every leg ~1.9x SLOWER than the same leg on a GitHub VM (which never
+      # contends, because each matrix leg gets its own machine).
+      #
+      # Pinning frees ~13 of 16 cores, which `-n 4` (pytest-xdist, see
+      # PYTEST_ADDOPTS below) then spends on real parallelism: 45.5/44.0/47.5 min ->
+      # 15.8/16.6/16.9, i.e. faster than the 21.3/23.8/23.4 GitHub baseline.
+      # Same 6261 passed / 288 skipped and the same 86.44% coverage either way.
+      #
+      # Do NOT "improve" `-n 4` to `-n auto`. xdist's auto reads os.cpu_count(),
+      # which inside the runner container reports the HOST's 16 -- not the 4-CPU
+      # cgroup quota (sched_getaffinity says 16 too; only /sys/fs/cgroup/cpu.max
+      # tells the truth). `auto` would start 16 workers per leg against 4 CPUs.
+      #
+      # Set here rather than in the runner image so hosted and self-hosted legs
+      # execute identically -- divergence between the two is what produced the
+      # #839-style "matrix is not real" failure earlier in this branch.
+      OMP_NUM_THREADS: '1'
+      OPENBLAS_NUM_THREADS: '1'
+      MKL_NUM_THREADS: '1'
+      NUMEXPR_NUM_THREADS: '1'
+      # Worker count must match the MACHINE, not be uniform across machines.
+      # `-n 4` on a GitHub-hosted VM killed all three legs at 97-98% complete
+      # with exit 143 + "the runner has received a shutdown signal" -- four
+      # workers each importing torch/napari/scipy exhaust a 2-core hosted VM and
+      # the OOM killer takes the runner agent with them. That would have broken
+      # the fallback path, i.e. exactly the safety net obsidian relies on.
+      #
+      # Both endpoints here are empirically green: serial on hosted
+      # (21.3/23.8/23.4 min) and -n 4 on the 16-core box (15.8/16.6/16.9).
+      # PYTEST_ADDOPTS is read by pytest itself, so the shared `test-cov` script
+      # stays machine-agnostic for local use.
+      PYTEST_ADDOPTS: ${{ needs.pick-runner.outputs.label == 'obsidian' && '-n 4' || '' }}
     steps:
       # LFS intentionally disabled — `hatch run test-cov` covers
       # packages/luxar/src/luxar and none of its unit tests open the
@@ -189,12 +386,16 @@ jobs:
         run: hatch run test-cov
 
   typescript-tests:
-    needs: changes
+    needs: [changes, pick-runner]
     # Fail-safe fallback to full CI if `changes` fails — see the note on the
     # `changes` job.
     if: ${{ !cancelled() }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+    runs-on: ${{ needs.pick-runner.outputs.label || 'ubuntu-latest' }}
+    # 60, not 30: same SCHED_IDLE starvation argument as python-tests. Measured
+    # at 15.5 min alongside the xdist matrix, so 30 left under 2x — the thinnest
+    # margin of any obsidian-routed job. (release-readiness keeps 30: it runs in
+    # ~1.1 min, so it already has ~27x headroom.)
+    timeout-minutes: 60
     defaults:
       run:
         working-directory: packages/luxar-viewer
@@ -311,11 +512,11 @@ jobs:
         run: pnpm run check:ci
 
   release-readiness:
-    needs: changes
+    needs: [changes, pick-runner]
     # Fail-safe fallback to full CI if `changes` fails — see the note on the
     # `changes` job.
     if: ${{ !cancelled() }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ needs.pick-runner.outputs.label || 'ubuntu-latest' }}
     timeout-minutes: 30
     defaults:
       run:

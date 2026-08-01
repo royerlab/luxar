@@ -7,7 +7,9 @@ single durable gate (the block generator that seeded them was a one-off).
 from __future__ import annotations
 
 import json
-import time
+import subprocess
+import sys
+import textwrap
 from pathlib import Path
 
 import pytest
@@ -102,13 +104,49 @@ def test_get_demo_suggests_close_matches() -> None:
         get_demo("99999")
 
 
-def test_iter_demos_is_fast() -> None:
-    """The table must render quickly — AST extraction, no module imports."""
-    iter_demos(refresh=True)  # warm the memo? no — refresh drops it; time cold:
-    start = time.monotonic()
-    iter_demos(refresh=True)
-    cold = time.monotonic() - start
-    assert cold < 1.0, f"cold iter_demos took {cold:.2f}s (budget 1.0s)"
+def test_iter_demos_does_not_import_demo_modules() -> None:
+    """The demo table must come from AST extraction, never module imports.
+
+    Asserts the MECHANISM, not a stopwatch. Importing the demo modules is the
+    thing that would actually make the table slow, and ``sys.modules`` detects
+    that exactly, under any load.
+
+    Both timing proxies were tried and both proved unusable in parallel CI. A
+    wall-clock budget measures the machine, not the work (it failed at 1.48s and
+    at 1.01s — the latter by 10ms). CPU time is *less* load-sensitive but not
+    immune: the identical work cost 0.13s on an idle box and 1.14s under 16
+    competing workers, because cache and memory-bandwidth contention inflate the
+    cycle count. (A parent-side ``time.process_time()`` bound was also tried,
+    and was worse than useless: it excludes the child, where all the work
+    happens.) The only remaining time bound is the subprocess timeout below — a
+    catastrophic-regression backstop in the spirit of the 60s bounds in
+    test_substitutive.py.
+
+    A SUBPROCESS, because an in-process ``sys.modules`` diff passes vacuously:
+    ``test_all_demos_import.py`` collects earlier in a serial run and imports
+    every demo module, so the "before" snapshot already contains everything the
+    regression would import and the difference is empty no matter what
+    ``iter_demos`` does. Only a fresh interpreter guarantees a clean baseline.
+    """
+    probe = textwrap.dedent(
+        """
+        import sys
+        from luxar.demos.registry import iter_demos
+        iter_demos(refresh=True)
+        print(",".join(sorted(m for m in sys.modules
+                              if m.startswith("luxar.demos.demo_"))))
+        """
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", probe], capture_output=True, text=True, timeout=300
+    )
+    assert proc.returncode == 0, f"probe failed: {proc.stderr[-2000:]}"
+
+    imported = [m for m in proc.stdout.strip().split(",") if m]
+    assert not imported, (
+        f"iter_demos imported {len(imported)} demo module(s); the table must "
+        f"come from AST extraction: {imported[:5]}"
+    )
 
 
 def test_cache_root_matches_utils_demos() -> None:
