@@ -196,7 +196,7 @@ export class NodeFactory {
     data: LoadedPointsData,
     loader: DataLoader,
     isPlaceholder: boolean = false,
-    rawAttrs: PointsMetadata = attrs
+    leafAttrs?: Partial<PointsMetadata>
   ): THREE.Mesh {
     return createPointsNodeImpl(
       path,
@@ -205,7 +205,7 @@ export class NodeFactory {
       loader,
       this.pickingSystem,
       isPlaceholder,
-      rawAttrs
+      leafAttrs
     );
   }
 
@@ -258,9 +258,9 @@ export class NodeFactory {
     path: string,
     attrs: PointsMetadata,
     loader: DataLoader,
-    rawAttrs: PointsMetadata = attrs
+    leafAttrs?: Partial<PointsMetadata>
   ): THREE.Mesh {
-    return createEmptyPointsNodeImpl(path, attrs, loader, this.pickingSystem, rawAttrs);
+    return createEmptyPointsNodeImpl(path, attrs, loader, this.pickingSystem, leafAttrs);
   }
 
   /**
@@ -333,8 +333,8 @@ export class NodeFactory {
     radiusScale: number = 1.0,
     geometry?: THREE.BufferGeometry,
     path?: string,
-    rawAttrs: Partial<PointsMetadata> = attrs
+    leafAttrs?: Partial<PointsMetadata>
   ): LuxarPointMaterial {
-    return createPointsMaterialImpl(attrs, radiusScale, geometry, path, rawAttrs);
+    return createPointsMaterialImpl(attrs, radiusScale, geometry, path, leafAttrs);
   }
 }

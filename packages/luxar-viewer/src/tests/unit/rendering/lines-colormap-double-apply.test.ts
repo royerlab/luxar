@@ -28,11 +28,36 @@ import { LineMaterial } from '../../../rendering/materials/line/material-glsl';
 import { getColormapTexture } from '../../../rendering/colormap-textures';
 import { applyColorAdjustments } from '../../../ui/layers/luxar-material';
 import { computeDisplayRange, computeUniforms } from '../../../rendering/display-range';
+import type { InstancedLinesMeshConfig } from '../../../rendering/line-geometry';
 import type { LinesMetadata, LinesDataLoader } from '../../../types/lines';
 
 /** createEmptyLinesNode only stashes the loader in userData — never calls it. */
 function makeLoader(): LinesDataLoader {
   return { dispose: vi.fn() } as unknown as LinesDataLoader;
+}
+
+/** One segment, optionally with per-endpoint scalars for the fail-closed guard. */
+function makeLinesConfig(withScalars: boolean = true): InstancedLinesMeshConfig {
+  const one = () => new Float32Array([1]);
+  const config = {
+    startPositions: new Float32Array([0, 0, 0]),
+    endPositions: new Float32Array([1, 0, 0]),
+    startColors: new Float32Array([1, 1, 1]),
+    endColors: new Float32Array([1, 1, 1]),
+    startWidths: one(),
+    endWidths: one(),
+    startSharpness: new Float32Array([0.5]),
+    endSharpness: new Float32Array([0.5]),
+    segmentLengths: one(),
+    startCapSuppression: one(),
+    endCapSuppression: one(),
+    segmentCount: 1,
+  } as InstancedLinesMeshConfig;
+  if (withScalars) {
+    config.startScalars = new Float32Array([0]);
+    config.endScalars = one();
+  }
+  return config;
 }
 
 /** Only `max_width`/`transform` + the leaf gain are read off `attrs`. */
@@ -158,6 +183,30 @@ describe('#1082 colormapped lines authored intensity is a window, not a double g
       expect(mat.uniforms.uScalarScale.value).toBeCloseTo(1 / (expected.max - expected.min), 5);
     });
 
+    it('leaf-authored window under an ancestor gain uses the composed window', () => {
+      const leafRaw = { intensity: 0.5, offset: 0.0 } as unknown as LinesMetadata;
+      const factory = new NodeFactory();
+      const mesh = factory.createEmptyLinesNode(
+        '/lines',
+        {
+          colormap: 'viridis',
+          has_scalars: true,
+          intensity: 0.25,
+          offset: 0.0,
+          scalar_data_range: [1.16, 45.9],
+        },
+        leafRaw,
+        makeLoader()
+      );
+
+      const mat = mesh.material as LineMaterial;
+      const { min, max } = computeDisplayRange(0.25, 0.0);
+      expect(mat.uniforms.uIntensity.value).toBe(1.0);
+      expect(mat.uniforms.uOffset.value).toBe(0.0);
+      expect(mat.uniforms.uScalarMin.value).toBeCloseTo(min, 5);
+      expect(mat.uniforms.uScalarScale.value).toBeCloseTo(1 / (max - min), 5);
+    });
+
     it('direct-color node (no colormap) still receives the authored gain', () => {
       const factory = new NodeFactory();
       const mesh = factory.createEmptyLinesNode(
@@ -170,6 +219,49 @@ describe('#1082 colormapped lines authored intensity is a window, not a double g
       const mat = mesh.material as LineMaterial;
       expect('USE_COLORMAP' in mat.defines).toBe(false);
       expect(mat.uniforms.uIntensity.value).toBeCloseTo(0.09, 6);
+      expect(mat.uniforms.uOffset.value).toBeCloseTo(0.02, 6);
+    });
+
+    it('unresolvable colormap keeps the authored direct-color GOG', () => {
+      const leafRaw = { intensity: 0.4, offset: 0.02 } as unknown as LinesMetadata;
+      const factory = new NodeFactory();
+      const mesh = factory.createEmptyLinesNode(
+        '/lines',
+        {
+          colormap: 'definitely_not_a_real_colormap',
+          has_scalars: true,
+          intensity: 0.4,
+          offset: 0.02,
+        },
+        leafRaw,
+        makeLoader()
+      );
+
+      const mat = mesh.material as LineMaterial;
+      expect('USE_COLORMAP' in mat.defines).toBe(false);
+      expect(mat.uniforms.uIntensity.value).toBeCloseTo(0.4, 6);
+      expect(mat.uniforms.uOffset.value).toBeCloseTo(0.02, 6);
+    });
+
+    it('declared colormap without bound scalar data keeps the authored direct-color GOG', () => {
+      const leafRaw = { intensity: 0.4, offset: 0.02 } as unknown as LinesMetadata;
+      const factory = new NodeFactory();
+      const mesh = factory.createLinesNode(
+        '/lines',
+        {
+          colormap: 'viridis',
+          has_scalars: true,
+          intensity: 0.4,
+          offset: 0.02,
+        },
+        leafRaw,
+        makeLinesConfig(false),
+        makeLoader()
+      );
+
+      const mat = mesh.material as LineMaterial;
+      expect('USE_COLORMAP' in mat.defines).toBe(false);
+      expect(mat.uniforms.uIntensity.value).toBeCloseTo(0.4, 6);
       expect(mat.uniforms.uOffset.value).toBeCloseTo(0.02, 6);
     });
   });

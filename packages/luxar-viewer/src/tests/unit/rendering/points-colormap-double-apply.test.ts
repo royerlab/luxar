@@ -21,6 +21,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import * as THREE from 'three';
 import { NodeFactory } from '../../../rendering/node-factory';
 import { __resetMaterialManagerForTests } from '../../../rendering/material-manager';
 import { PointMaterial } from '../../../rendering/materials/point/material-glsl';
@@ -28,11 +29,29 @@ import { getColormapTexture } from '../../../rendering/colormap-textures';
 import { applyColorAdjustments } from '../../../ui/layers/luxar-material';
 import { computeDisplayRange, computeUniforms } from '../../../rendering/display-range';
 import type { PointsMetadata } from '../../../types/points';
-import type { DataLoader } from '../../../data/data-loader-types';
+import type { DataLoader, LoadedPointsData } from '../../../data/data-loader-types';
 
 /** createEmptyPointsNode only stashes the loader in userData — never calls it. */
 function makeLoader(): DataLoader {
   return { dispose: vi.fn() } as unknown as DataLoader;
+}
+
+/** One point, optionally with a scalar field for the fail-closed guard. */
+function makePointsData(withScalars: boolean = true): LoadedPointsData {
+  const data: LoadedPointsData = {
+    positions: new Float32Array([0, 0, 0]) as LoadedPointsData['positions'],
+    pointCount: 1,
+    ndim: 3,
+    metadata: {
+      totalPoints: 1,
+      loadedPoints: 1,
+      bounds: new THREE.Box3(new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, 0)),
+      usedSpatialIndex: false,
+      dtypes: {},
+    },
+  };
+  if (withScalars) data.scalars = new Float32Array([1]) as LoadedPointsData['scalars'];
+  return data;
 }
 
 describe('#1082 colormapped points authored intensity is a window, not a double gain', () => {
@@ -150,6 +169,26 @@ describe('#1082 colormapped points authored intensity is a window, not a double 
       expect(mat.uniforms.uScalarScale.value).toBeCloseTo(1 / (expected.max - expected.min), 5);
     });
 
+    it('leaf-authored window under an ancestor gain uses the composed window', () => {
+      const composed = {
+        colormap: 'viridis',
+        has_scalars: true,
+        intensity: 0.25,
+        offset: 0.0,
+        scalar_data_range: [1.16, 45.9],
+      } as unknown as PointsMetadata;
+      const leafRaw = { intensity: 0.5, offset: 0.0 } as unknown as PointsMetadata;
+      const factory = new NodeFactory();
+      const mesh = factory.createEmptyPointsNode('/points', composed, makeLoader(), leafRaw);
+
+      const mat = mesh.material as PointMaterial;
+      const { min, max } = computeDisplayRange(0.25, 0.0);
+      expect(mat.uniforms.uIntensity.value).toBe(1.0);
+      expect(mat.uniforms.uOffset.value).toBe(0.0);
+      expect(mat.uniforms.uScalarMin.value).toBeCloseTo(min, 5);
+      expect(mat.uniforms.uScalarScale.value).toBeCloseTo(1 / (max - min), 5);
+    });
+
     it('direct-color node (no colormap) still receives the authored gain', () => {
       const composed = { intensity: 0.09, offset: 0.02 } as unknown as PointsMetadata;
       const factory = new NodeFactory();
@@ -158,6 +197,45 @@ describe('#1082 colormapped points authored intensity is a window, not a double 
       const mat = mesh.material as PointMaterial;
       expect('USE_COLORMAP' in mat.defines).toBe(false);
       expect(mat.uniforms.uIntensity.value).toBeCloseTo(0.09, 6);
+      expect(mat.uniforms.uOffset.value).toBeCloseTo(0.02, 6);
+    });
+
+    it('unresolvable colormap keeps the authored direct-color GOG', () => {
+      const composed = {
+        colormap: 'definitely_not_a_real_colormap',
+        has_scalars: true,
+        intensity: 0.4,
+        offset: 0.02,
+      } as unknown as PointsMetadata;
+      const factory = new NodeFactory();
+      const mesh = factory.createEmptyPointsNode('/points', composed, makeLoader(), composed);
+
+      const mat = mesh.material as PointMaterial;
+      expect('USE_COLORMAP' in mat.defines).toBe(false);
+      expect(mat.uniforms.uIntensity.value).toBeCloseTo(0.4, 6);
+      expect(mat.uniforms.uOffset.value).toBeCloseTo(0.02, 6);
+    });
+
+    it('declared colormap without bound scalar data keeps the authored direct-color GOG', () => {
+      const composed = {
+        colormap: 'viridis',
+        has_scalars: true,
+        intensity: 0.4,
+        offset: 0.02,
+      } as unknown as PointsMetadata;
+      const factory = new NodeFactory();
+      const mesh = factory.createPointsNode(
+        '/points',
+        composed,
+        makePointsData(false),
+        makeLoader(),
+        false,
+        composed
+      );
+
+      const mat = mesh.material as PointMaterial;
+      expect('USE_COLORMAP' in mat.defines).toBe(false);
+      expect(mat.uniforms.uIntensity.value).toBeCloseTo(0.4, 6);
       expect(mat.uniforms.uOffset.value).toBeCloseTo(0.02, 6);
     });
   });

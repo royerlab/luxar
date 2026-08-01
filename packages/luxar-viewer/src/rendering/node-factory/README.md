@@ -65,21 +65,18 @@ NodeFactory (class in rendering/node-factory.ts)
   clone — the cached original stays registered and cached (the historical
   detach-before-clone step was removed: its disposeAll-vs-cache rationale
   never held, and detaching starved later cache hits of camera updates).
-- **Colormapped node = intensity is a WINDOW, not a color gain (#1082).**
-  When a colormap is actually applied (colormap attr + bound scalars +
-  a resolvable texture), all three factories leave the post-LUT color
-  GOG at IDENTITY and instead push the authored gain/offset as the
-  scalar display window via `updateScalarRange` — the shader always
-  multiplies `vColor * uIntensity + uOffset` post-LUT, so stamping the
-  gain AND inverting it into the window would double-apply it. The
-  identity-vs-window decision keys on the RAW LEAF gain (an ancestor-only
-  gain folds onto the `scalar_data_range` window instead), matching the
-  layers panel's `applyColorAdjustments` so `layer=false` (load) renders
-  identically to `layer=true` (post-interaction). Because the points
-  factory receives only the COMPOSED effective attrs, the raw leaf attrs
-  are threaded in as a separate `rawAttrs` param (lines already gets both
-  as `nodeAttrs`/`attrs`; gsplats as `nodeAttrs`/`attrs`). Direct-color
-  nodes (no colormap) still receive the authored gain unchanged.
+- **Authored gain on a colormapped node is a WINDOW, not a gain.** All
+  three factories agree (#936/#1081/#1082): when a colormap actually takes
+  over, the post-LUT color GOG is left/reset at identity and the
+  authored `intensity`/`offset` is re-expressed as the scalar LUT window
+  via the shared `rendering/display-range.ts::resolveColormapWindow`.
+  Applying it as both would double-apply, and would make the same
+  attribute mean two different things depending on the `layer` flag
+  (the layers panel already windows it). The identity-vs-window decision
+  keys on the RAW LEAF gain so an ancestor-only gain folds onto the data
+  range instead of replacing it — which is why points threads a
+  `leafAttrs` param alongside its composed `attrs` (lines and gsplats
+  already receive both). Direct-color nodes still get the gain.
 - **Scalar-attribute guard (points / lines).** Points consults
   `supportsScalarColormap('points', geometry)` when a geometry is
   supplied; lines checks for `startScalars`/`endScalars` on the
