@@ -540,6 +540,25 @@ describe('ControlsManager', () => {
       // Fallback: (0,0,5) + (0,0,1)*20 = (0,0,25)
       expect(target.z).toBeCloseTo(25, 5);
     });
+
+    it('preserves a pivot depth below sceneScale·1e-3 when auto-frame limits allow it', () => {
+      // Auto-frame can set a min orbit distance below the scale-derived
+      // sceneScale·1e-3 floor (fit distance / ZOOM_IN_FACTOR shrinks with
+      // wide FOVs). A pivot at such a legal depth must round-trip exactly —
+      // a hardcoded sceneScale·1e-3 floor (= 1 here) would push it to depth 1.
+      controlsManager.setSceneScale(1000);
+      controlsManager.setDistanceLimits(0.05, 1e6);
+      controlsManager.setControlType('fly');
+      camera.position.set(0, 0, 0.5); // 0.5 units from the saved origin pivot
+      camera.lookAt(0, 0, 0);
+      camera.updateMatrixWorld();
+
+      const target = controlsManager.getFocusTarget();
+      // Reused depth = 0.5 → the old pivot exactly (not (0,0,-0.5)).
+      expect(target.x).toBeCloseTo(0, 5);
+      expect(target.y).toBeCloseTo(0, 5);
+      expect(target.z).toBeCloseTo(0, 5);
+    });
   });
 
   describe('cleanup', () => {

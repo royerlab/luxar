@@ -18,16 +18,22 @@ import { LuxarFlyControls } from '../../../../controls/luxar-fly-controls';
 
 function makeCtx(overrides: Partial<CameraStateCtx>): CameraStateCtx {
   const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 1000);
-  return {
+  const ctx: CameraStateCtx = {
     camera,
     currentControls: null,
     sceneScale: 0,
+    minPivotDepth: 0,
     savedCameraPosition: new THREE.Vector3(),
     savedCameraRotation: new THREE.Euler(),
     savedCameraUp: new THREE.Vector3(0, 1, 0),
     savedTarget: new THREE.Vector3(),
     ...overrides,
   };
+  // Default mirrors ControlsManager.minPivotDepth() with no auto-frame limits.
+  if (overrides.minPivotDepth === undefined) {
+    ctx.minPivotDepth = (ctx.sceneScale || 10) * 1e-3;
+  }
+  return ctx;
 }
 
 describe('saveCameraState', () => {
@@ -177,6 +183,43 @@ describe('saveCameraState', () => {
     expect(ctx.savedTarget.x).toBeCloseTo(0, 9);
     expect(ctx.savedTarget.y).toBeCloseTo(0, 9);
     expect(ctx.savedTarget.z).toBeCloseTo(0, 9);
+  });
+
+  it('no movement with 0 < depth < sceneScale·1e-3 reuses the old pivot exactly', () => {
+    // Auto-frame distance limits can legitimately put the orbit distance
+    // below the scale-derived sceneScale·1e-3 floor (fit distance /
+    // ZOOM_IN_FACTOR shrinks with wide FOVs). The floor is minPivotDepth —
+    // the actual legal minimum — so such a pivot must round-trip exactly.
+    // A hardcoded sceneScale·1e-3 floor (= 1 here) would push it to depth 1.
+    const camera = new THREE.PerspectiveCamera(60, 1, 1e-4, 1e4);
+    camera.position.set(0, 0, 0.5); // 0.5 units from the pivot; scale = 1000
+    camera.lookAt(0, 0, 0);
+    camera.updateMatrixWorld();
+
+    const ctx = makeCtx({ camera, currentControls: null, sceneScale: 1000, minPivotDepth: 0.05 });
+    ctx.savedTarget.set(0, 0, 0);
+    saveCameraState(ctx);
+
+    expect(ctx.savedTarget.x).toBeCloseTo(0, 6);
+    expect(ctx.savedTarget.y).toBeCloseTo(0, 6);
+    expect(ctx.savedTarget.z).toBeCloseTo(0, 6);
+  });
+
+  it('floors the reused depth at minPivotDepth when flown right up to the pivot', () => {
+    // Camera flown to 1e-4 in front of the old pivot (still aligned): the
+    // reused depth must not collapse below the orbit system's legal minimum,
+    // or the next ortho swap frames a ~0-height frustum.
+    const camera = new THREE.PerspectiveCamera(60, 1, 1e-4, 1e4);
+    camera.position.set(0, 0, 1e-4);
+    camera.lookAt(0, 0, 0);
+    camera.updateMatrixWorld();
+
+    const ctx = makeCtx({ camera, currentControls: null, sceneScale: 1000, minPivotDepth: 1 });
+    ctx.savedTarget.set(0, 0, 0);
+    saveCameraState(ctx);
+
+    // Depth floored to 1 → target = (0,0,1e-4) + (0,0,-1)·1 ≈ (0,0,-1).
+    expect(ctx.savedTarget.z).toBeCloseTo(1e-4 - 1, 6);
   });
 });
 
