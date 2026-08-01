@@ -117,7 +117,7 @@ const HELP_SECTIONS: HelpSection[] = [
       { keys: ['B'], label: 'Scale bar' },
       { keys: ['J'], label: 'Colormap legend' },
       { keys: ['U'], label: 'Overlays' },
-      { keys: ['C'], label: 'Cinematic mode (noise / vignette / lens)' },
+      { keys: ['C'], label: 'Cinematic mode (bloom / noise / vignette / lens)' },
       { keys: ['Ctrl/⌘', 'Wheel'], label: 'Adjust field of view (perspective)' },
       { keys: ['Ctrl', 'L'], label: 'Debug console' },
       { keys: ['Ctrl', '⇧', 'S'], label: 'Export viewer state to clipboard' },
