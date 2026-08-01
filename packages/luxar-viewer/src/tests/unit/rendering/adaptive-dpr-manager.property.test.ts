@@ -216,7 +216,10 @@ describe('AdaptiveDPRManager — property/invariant fuzzing', () => {
       }
       m.dispose();
     }
-  });
+    // 40 seeds × 400 adversarial steps, each replaying frame bursts, is
+    // CPU-bound; it finishes in a few seconds locally but can brush past the
+    // default 15s cap on a heavily loaded CI runner. Give it explicit headroom.
+  }, 60_000);
 
   it('reaches a fixed point (no infinite oscillation) under a steady fps regime', () => {
     // For a matrix of (native, steady fps), after a long warmup the DPR
@@ -261,5 +264,8 @@ describe('AdaptiveDPRManager — property/invariant fuzzing', () => {
         m.dispose();
       }
     }
-  });
+    // Same CPU-bound profile as the sequence fuzzer above (18 regimes ×
+    // ~110s of replayed frames each): fast locally, but give it the same
+    // headroom so a loaded runner can't trip the default 15s cap.
+  }, 60_000);
 });
