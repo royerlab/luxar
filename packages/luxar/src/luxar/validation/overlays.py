@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import io
 import re
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Dict, Optional, Set, Tuple
 
@@ -79,7 +80,20 @@ ALLOWED_TAGS: Set[str] = {
 }
 
 # Allowed HTML attributes per tag
-ALLOWED_ATTRS: Set[str] = {"style", "href", "src", "alt", "class", "target"}
+ALLOWED_ATTRS: Set[str] = {
+    "style",
+    "href",
+    "src",
+    "alt",
+    "class",
+    "target",
+    "title",
+    "rel",
+    "colspan",
+    "rowspan",
+    "width",
+    "height",
+}
 
 # Valid text-align values
 VALID_TEXT_ALIGNS: Set[str] = {"left", "center", "right", "justify"}
@@ -378,52 +392,182 @@ def _numpy_to_bytes(arr: np.ndarray, fmt: str) -> bytes:
     return _pil_to_bytes(pil_img, fmt)
 
 
+# HTML void (self-closing) elements: they never carry content.
+_VOID_TAGS: Set[str] = {
+    "area",
+    "base",
+    "br",
+    "col",
+    "embed",
+    "hr",
+    "img",
+    "input",
+    "link",
+    "meta",
+    "param",
+    "source",
+    "track",
+    "wbr",
+}
+
+# Disallowed tags whose TEXT CONTENT must also be dropped (raw-text or
+# script-like elements). For non-void members we skip everything until the
+# matching end tag; the void members (input, embed) are simply dropped.
+_DROP_CONTENT_TAGS: Set[str] = {
+    "script",
+    "style",
+    "iframe",
+    "object",
+    "embed",
+    "form",
+    "input",
+    "textarea",
+    "button",
+    "select",
+    "template",
+    "noscript",
+    "xmp",
+}
+
+
+def _is_dangerous_url(value: str) -> bool:
+    """Return True if a decoded href/src value uses a dangerous URL scheme.
+
+    The value has already been HTML-entity-decoded by the parser, so
+    ``&#106;avascript:`` arrives as ``javascript:``. Browsers strip ASCII
+    whitespace and control characters from within a scheme, so we collapse
+    those out (matching ``jav&#9;ascript:``) before comparing case-insensitively.
+    """
+    collapsed = re.sub(r"[\x00-\x20]", "", value).lower()
+    if collapsed.startswith(("javascript:", "vbscript:")):
+        return True
+    if collapsed.startswith("data:"):
+        # Only raster image data URIs are safe; svg is scriptable.
+        if not collapsed.startswith("data:image/"):
+            return True
+        if collapsed.startswith("data:image/svg"):
+            return True
+    return False
+
+
+class _HtmlSanitizer(HTMLParser):
+    """Allowlist HTML sanitizer built on the stdlib ``HTMLParser``.
+
+    Only tags in ``ALLOWED_TAGS`` and attributes in ``ALLOWED_ATTRS`` survive;
+    everything else is dropped. Raw-text/script-like tags additionally have
+    their text content removed. ``href``/``src`` values with a dangerous scheme
+    are stripped (the tag is kept).
+    """
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self._out: list[str] = []
+        # Name of the disallowed content-dropping tag we are inside, and its
+        # nesting depth (0 = not currently dropping content).
+        self._skip_tag: Optional[str] = None
+        self._skip_depth: int = 0
+
+    def get_output(self) -> str:
+        return "".join(self._out)
+
+    @staticmethod
+    def _render_attrs(attrs: list[Tuple[str, Optional[str]]]) -> str:
+        parts: list[str] = []
+        for name, value in attrs:
+            if name not in ALLOWED_ATTRS:
+                continue
+            if name in ("href", "src") and value is not None:
+                if _is_dangerous_url(value):
+                    continue
+            if value is None:
+                parts.append(name)
+            else:
+                escaped = (
+                    value.replace("&", "&amp;")
+                    .replace('"', "&quot;")
+                    .replace("<", "&lt;")
+                )
+                parts.append(f'{name}="{escaped}"')
+        return (" " + " ".join(parts)) if parts else ""
+
+    def _emit_start(self, tag: str, attrs: list[Tuple[str, Optional[str]]]) -> None:
+        self._out.append(f"<{tag}{self._render_attrs(attrs)}>")
+
+    def handle_starttag(self, tag: str, attrs: list[Tuple[str, Optional[str]]]) -> None:
+        if self._skip_depth:
+            if tag == self._skip_tag:
+                self._skip_depth += 1
+            return
+        if tag in _DROP_CONTENT_TAGS:
+            # Void raw-text tags (input, embed) have no content to skip.
+            if tag not in _VOID_TAGS:
+                self._skip_tag = tag
+                self._skip_depth = 1
+            return
+        if tag in ALLOWED_TAGS:
+            self._emit_start(tag, attrs)
+        # Disallowed non-raw tag: drop the markup, keep any inner text.
+
+    def handle_startendtag(
+        self, tag: str, attrs: list[Tuple[str, Optional[str]]]
+    ) -> None:
+        if self._skip_depth:
+            return
+        if tag in _DROP_CONTENT_TAGS:
+            return
+        if tag in ALLOWED_TAGS:
+            self._emit_start(tag, attrs)
+
+    def handle_endtag(self, tag: str) -> None:
+        if self._skip_depth:
+            if tag == self._skip_tag:
+                self._skip_depth -= 1
+                if self._skip_depth == 0:
+                    self._skip_tag = None
+            return
+        if tag in ALLOWED_TAGS and tag not in _VOID_TAGS:
+            self._out.append(f"</{tag}>")
+
+    def handle_data(self, data: str) -> None:
+        if not self._skip_depth:
+            self._out.append(
+                data.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            )
+
+    def handle_comment(self, data: str) -> None:
+        # Comments are dropped (may hide conditional or scripted content).
+        return
+
+
 def sanitize_html(html: str) -> str:
     """Sanitize HTML to a safe subset using an allowlist approach.
 
-    Strips disallowed tags and attributes. Allowed tags: basic formatting,
-    links, images, lists, tables. Allowed attributes: style, href, src,
-    alt, class, target.
+    Parses the input with the standard-library ``html.parser.HTMLParser`` and
+    re-emits only tags in ``ALLOWED_TAGS`` with only attributes in
+    ``ALLOWED_ATTRS``. Any other tag is dropped; raw-text/script-like tags
+    (``script``, ``style``, ``iframe``, ``form``, ``template``, ...) have their
+    text content dropped as well. On ``href``/``src`` the value is
+    HTML-entity-decoded and any ``javascript:``/``vbscript:``/``data:`` scheme
+    (except raster ``data:image/...``, not ``svg``) is stripped. Safe markup is
+    preserved as closely as possible (original attribute order); text content is
+    HTML-escaped so ``&``/``<``/``>`` round-trip.
 
-    Script tags, event handlers (onclick, etc.), and dangerous attributes
-    are always removed.
+    This is defense-in-depth, not a hard security boundary: the viewer
+    re-sanitizes overlay HTML client-side before rendering it.
 
     Args:
         html: Raw HTML string
 
     Returns:
         Sanitized HTML string
+
+    Raises:
+        ValueError: If ``html`` is not a string
     """
     if not isinstance(html, str):
         raise ValueError(f"html must be a string, got {type(html).__name__}")
 
-    # Remove script/style tags and their contents
-    html = re.sub(
-        r"<(script|style|iframe|object|embed|form|input|textarea|button|select)"
-        r"[\s>].*?</\1>",
-        "",
-        html,
-        flags=re.DOTALL | re.IGNORECASE,
-    )
-    # Remove self-closing dangerous tags
-    html = re.sub(
-        r"<(script|style|iframe|object|embed|form|input|textarea|button|select)"
-        r"[^>]*/?>",
-        "",
-        html,
-        flags=re.IGNORECASE,
-    )
-
-    # Remove event handler attributes (onclick, onload, onerror, etc.)
-    html = re.sub(r"\s+on\w+\s*=\s*[\"'][^\"']*[\"']", "", html, flags=re.IGNORECASE)
-    html = re.sub(r"\s+on\w+\s*=\s*\S+", "", html, flags=re.IGNORECASE)
-
-    # Remove javascript: URLs
-    html = re.sub(
-        r'(href|src)\s*=\s*["\']?\s*javascript:[^"\'>\s]*["\']?',
-        "",
-        html,
-        flags=re.IGNORECASE,
-    )
-
-    return html
+    sanitizer = _HtmlSanitizer()
+    sanitizer.feed(html)
+    sanitizer.close()
+    return sanitizer.get_output()
