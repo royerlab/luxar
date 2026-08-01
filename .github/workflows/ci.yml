@@ -131,6 +131,16 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ['3.10', '3.11', '3.12']
+    env:
+      # SPIKE. Three legs on one self-hosted box each burned ~316% CPU on a suite
+      # that runs SERIALLY -- that is numpy/OpenMP spawning threads to fill the
+      # container's core quota, not useful work. It pinned load at 15/16 and made
+      # each leg ~1.9x slower than the same leg on a GitHub VM. Pinning to 1
+      # frees the cores for xdist to use as REAL parallelism (-n 4, pyproject).
+      OMP_NUM_THREADS: '1'
+      OPENBLAS_NUM_THREADS: '1'
+      MKL_NUM_THREADS: '1'
+      NUMEXPR_NUM_THREADS: '1'
     steps:
       # LFS intentionally disabled — `hatch run test-cov` covers
       # packages/luxar/src/luxar and none of its unit tests open the

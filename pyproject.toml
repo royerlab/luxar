@@ -82,6 +82,9 @@ test = [
     "luxar[gsplats]",
     "pytest>=7.4.0",
     "pytest-cov>=4.1.0",
+    # SPIKE: parallel test execution, to measure whether obsidian's 16 cores
+    # can beat GitHub's per-leg VMs on the python matrix.
+    "pytest-xdist>=3.5.0",
     # Exercise the custom root-level hatch_build.py hook directly in tests.
     "hatchling>=1.27",
     "hypothesis>=6.0"
@@ -270,7 +273,7 @@ dependencies = [
 # code stays covered by fast unit tests (coverage holds at ~85% ≥ the 80% gate).
 [tool.hatch.envs.default.scripts]
 test = "pytest {args:packages/luxar/src/luxar}"
-test-cov = "mkdir -p coverage/python && pytest -m 'not slow' --cov=luxar --cov-report=term-missing --cov-report=html {args:packages/luxar/src/luxar}"
+test-cov = "mkdir -p coverage/python && pytest -m 'not slow' -n 4 --cov=luxar --cov-report=term-missing --cov-report=html {args:packages/luxar/src/luxar}"
 test-cov-all = "mkdir -p coverage/python && pytest --cov=luxar --cov-report=term-missing --cov-report=html {args:packages/luxar/src/luxar}"
 format = [
     "ruff format packages/luxar/src",
