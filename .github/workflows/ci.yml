@@ -67,10 +67,16 @@ jobs:
   # up could never route around obsidian being down.
   #
   # obsidian publishes the repo variable LUXAR_CI_HEARTBEAT (epoch seconds) once a
-  # minute via its `luxar-ci-heartbeat.timer`, and zeroes it when its runners stop
-  # or its disk runs low. We route to obsidian only while that value is FRESH, so
-  # every way the box can go away — clean stop, hard crash, power loss, network
-  # partition — degrades to GitHub-hosted on its own.
+  # minute via its `luxar-ci-heartbeat.timer`. It publishes a live timestamp only
+  # when GitHub can see an online runner AND obsidian can see a container backing
+  # it AND the disk has headroom; otherwise it publishes 0. Both halves of that
+  # check are load-bearing: a crash-looping slot still reads "active" to systemd,
+  # and a runner that was killed before it could de-register still reads "online"
+  # to GitHub. Either one alone would report healthy while jobs pile up unrun.
+  #
+  # We route to obsidian only while that value is FRESH, so every way the box can
+  # go away — clean stop, hard crash, power loss, network partition — degrades to
+  # GitHub-hosted on its own.
   #
   # Freshness matters more than it looks: a job dispatched to a registered-but-
   # offline self-hosted runner does not fail, it QUEUES — for up to 24 hours. So
