@@ -176,13 +176,17 @@ under "L0 Decompressed Chunk Cache" below.
     root `.zattrs` bytes serves as an implicit validation token. Luxar
     writers re-stamp a per-save `timestamp` attr, so a dataset regenerated
     in place at the same URL still invalidates.
-  - `ttl`: root `.zattrs` unreachable; cache is invalidated after
-    `cache.externalDatasetTtlMs` elapses.
-  - `none`: `.zattrs` unreachable, no TTL configured — cache may be stale
-    indefinitely until manually cleared. The cache tab surfaces this
-    as an `unvalidated-external-dataset` badge.
+  - `ttl`: root `.zattrs` unreachable AND no cached content hash to fall
+    back on; cache is invalidated after `cache.externalDatasetTtlMs`
+    elapses. (A dataset that was hash-validated online keeps its hash
+    mode offline and is never TTL-expired.)
+  - `none`: `.zattrs` unreachable, no cached hash, no TTL configured —
+    cache may be stale indefinitely until manually cleared. The cache tab
+    surfaces this as an `unvalidated-external-dataset` badge.
 - `lastValidatedAt: number | null`: wall-clock millis at last
-  successful validation.
+  successful validation (hash modes), or the fixed known-good baseline
+  under `ttl`/`none` — seeded once and NOT advanced by repeat no-token
+  checks, so the TTL age grows monotonically.
 - `unvalidatedExternalDataset: boolean`: convenience flag.
 
 `OPFSStore.getStats()` exposes health counters:
