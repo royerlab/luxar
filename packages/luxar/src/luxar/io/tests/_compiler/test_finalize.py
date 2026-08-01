@@ -267,3 +267,57 @@ def test_validate_discrete_ranges_within_quarter_step_is_silent() -> None:
     assert not any("range starting at" in str(w.message) for w in caught), (
         f"No warning expected within quarter-step tolerance, got: {[str(w.message) for w in caught]}"
     )
+
+
+def _lod_tree_with_unrecognized_leaf() -> zarr.Group:
+    """kind=lod wrapper (no display_type) over a leaf whose ``type`` is unknown.
+
+    ``resolve()`` early-returns only for the geometry types it hardcodes. Any
+    other leaf falls through to the "recurse into the finest child" branch — and
+    a LEAF group's ``keys()`` lists its ARRAYS, not sub-groups.
+    """
+    root = zarr.group()
+    lod = root.create_group("lodgrp")
+    lod.attrs["kind"] = "lod"
+    leaf = lod.create_group("leaf")
+    leaf.attrs["type"] = "some_future_type"
+    leaf.attrs["child_index"] = 0
+    leaf.create_dataset("vertices", data=np.zeros((3, 3), dtype=np.float32))
+    leaf.create_dataset("faces", data=np.zeros((1, 3), dtype=np.uint32))
+    return root
+
+
+def test_display_type_backfill_survives_unrecognized_leaf_type() -> None:
+    """An unknown leaf ``type`` must not crash the finalize pass.
+
+    Regression guard: ``resolve()`` used to pick the alphabetically-last ARRAY
+    ("vertices") as the "finest child" and recurse into it, then call ``.keys()``
+    on a ``zarr.Array`` — which does not have it — raising a bare AttributeError
+    from deep inside finalize. Resolution should simply yield nothing.
+    """
+    root = _lod_tree_with_unrecognized_leaf()
+
+    finalize_lod_display_types(root)  # must not raise
+
+    # Nothing resolvable ⇒ no display_type is invented for the wrapper.
+    assert "display_type" not in dict(root["lodgrp"].attrs)
+
+
+def test_display_type_backfill_ignores_arrays_when_picking_finest_child() -> None:
+    """Array siblings must never shadow a real child GROUP.
+
+    A plain wrapper holding both arrays and a genuine geometry sub-group must
+    resolve through the sub-group. Sorting by name alone would pick "zz_data".
+    """
+    root = zarr.group()
+    lod = root.create_group("lodgrp")
+    lod.attrs["kind"] = "lod"
+    wrapper = lod.create_group("wrapper")
+    wrapper.attrs["type"] = "group"
+    wrapper.create_dataset("zz_data", data=np.zeros((2, 2), dtype=np.float32))
+    leaf = wrapper.create_group("aa_leaf")
+    leaf.attrs["type"] = "lines"
+
+    finalize_lod_display_types(root)
+
+    assert dict(root["lodgrp"].attrs).get("display_type") == "lines"

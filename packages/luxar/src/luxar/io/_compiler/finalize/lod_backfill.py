@@ -70,11 +70,8 @@ def finalize_lod_position_bounds(store: zarr.Group) -> None:
         # No authored bounds → recurse into children (groups only;
         # zarr arrays don't have descendants).
         acc: Optional[Dict[str, List[float]]] = None
-        for child_name in group.keys():
-            child = group[child_name]
-            if not hasattr(child, "keys"):
-                continue
-            acc = union(acc, resolve(child))
+        for child_name in group.group_keys():
+            acc = union(acc, resolve(group[child_name]))
         return acc
 
     def walk(group: "zarr.Group") -> None:
@@ -88,10 +85,8 @@ def finalize_lod_position_bounds(store: zarr.Group) -> None:
                     f"  📐 Back-filled position_bounds on "
                     f"kind={kind} group {group.path or '/'}"
                 )
-        for child_name in group.keys():
-            child = group[child_name]
-            if hasattr(child, "keys"):
-                walk(child)
+        for child_name in group.group_keys():
+            walk(group[child_name])
 
     walk(store)
 
@@ -128,7 +123,15 @@ def finalize_lod_display_types(store: zarr.Group) -> None:
         # than by name: name-sort puts ``child_10`` before ``child_2``, which
         # would pick the wrong "finest" for a >=10-level ladder. Fall back to
         # name order for any child missing ``child_index`` (legacy data).
-        child_names = list(group.keys())
+        #
+        # Consider child GROUPS only. ``keys()`` lists a group's arrays too, so
+        # a node that reaches this branch while holding datasets — any leaf
+        # whose ``type`` is not in the tuple above, or a wrapper that mixes
+        # arrays with sub-groups — would otherwise pick a ``zarr.Array`` as its
+        # "finest child" and recurse into it, raising a bare AttributeError on
+        # ``Array.keys()``. Every child-iteration site in this module uses
+        # ``group_keys()`` for the same reason.
+        child_names = list(group.group_keys())
         if not child_names:
             return ""  # nothing to resolve
 
@@ -149,10 +152,7 @@ def finalize_lod_display_types(store: zarr.Group) -> None:
                     f"  📐 Back-filled display_type={resolved!r} on "
                     f"kind=lod group {group.path or '/'}"
                 )
-        for child_name in group.keys():
-            child = group[child_name]
-            # Only recurse into groups (not arrays).
-            if hasattr(child, "keys"):
-                walk(child)
+        for child_name in group.group_keys():
+            walk(group[child_name])
 
     walk(store)
