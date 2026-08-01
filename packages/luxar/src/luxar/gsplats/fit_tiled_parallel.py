@@ -18,6 +18,7 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -26,6 +27,7 @@ from typing import Any, Callable, Optional, Sequence
 import numpy as np
 from arbol import aprint, asection
 
+from luxar.gsplats.batch.task_pool import cancel_pool_on_interrupt
 from luxar.gsplats.fit_tiled_gsplats import merge_tile_results
 from luxar.gsplats.gsplat_data import GSplatData
 
@@ -292,8 +294,13 @@ def fit_tiled_parallel(
     t0 = time.perf_counter()
 
     tile_paths = [tmp_dir / f"tile_{i}.gsplats.zarr" for i in range(num_tiles)]
+    stop = threading.Event()
 
     def _run(i: int) -> tuple[int, int, str]:
+        # A worker that dequeued this tile after a Ctrl-C must not spawn a new
+        # fit subprocess (issue #736): bail before launching anything.
+        if stop.is_set():
+            return i, -1, "cancelled before launch"
         try:
             cmd = [str(c) for c in worker_cmd_builder(i, num_tiles, tile_paths[i])]
             proc = subprocess.run(cmd, capture_output=True, text=True)
@@ -310,18 +317,25 @@ def fit_tiled_parallel(
         f"Parallel tiled fitting: {num_tiles} tiles, {jobs} concurrent worker(s)"
     ):
         with ThreadPoolExecutor(max_workers=max(1, jobs)) as ex:
-            futures = [ex.submit(_run, i) for i in range(num_tiles)]
             done = 0
-            for fut in as_completed(futures):
-                i, rc, stream = fut.result()
-                done += 1
-                if rc != 0:
-                    tail = "\n".join(stream.strip().splitlines()[-20:])
-                    failures.append((i, tail))
-                    if verbose:
-                        aprint(f"Tile {i} FAILED (exit {rc}) [{done}/{num_tiles}]")
-                elif verbose:
-                    aprint(f"Tile {i} done [{done}/{num_tiles}]")
+            try:
+                futures = [ex.submit(_run, i) for i in range(num_tiles)]
+                for fut in as_completed(futures):
+                    i, rc, stream = fut.result()
+                    done += 1
+                    if rc != 0:
+                        tail = "\n".join(stream.strip().splitlines()[-20:])
+                        failures.append((i, tail))
+                        if verbose:
+                            aprint(f"Tile {i} FAILED (exit {rc}) [{done}/{num_tiles}]")
+                    elif verbose:
+                        aprint(f"Tile {i} done [{done}/{num_tiles}]")
+            except KeyboardInterrupt:
+                # Cancel queued tiles (and signal in-flight workers) BEFORE the
+                # ``with`` block's __exit__ would otherwise drain them, then
+                # re-raise so the CLI still exits on the interrupt.
+                cancel_pool_on_interrupt(ex, stop)
+                raise
 
     if failures:
         idxs = ", ".join(str(i) for i, _ in failures)
