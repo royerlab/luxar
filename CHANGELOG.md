@@ -565,6 +565,17 @@ Supporting changes:
 - Energy quality stamps (`lod_stats.energy_fraction_cum` per sub-LOD,
   `level_stats.reference_energy` per leaf) so the never-downgrade gate can
   release a swap on committed energy rather than raw element count.
+- On the GSplats additive ladder (shared here via `lod_breakpoints.py`),
+  energy-fraction breakpoints (a `list[float]` of cumulative fractions) now
+  place their cuts on the same O(N) self-energy cumulative the viewer reads
+  back as `lod_stats.energy_fraction_cum`, for every score-ordered method
+  (`self_energy` / `mass` / `amplitude` / `random`, and `method=auto` above
+  N=5000). Cuts land where the on-disk energy stamp reports the requested
+  fraction, and the coarse maximally-overlapping levels skip the O(nnz)
+  sparse-Gram build entirely; only `greedy` / spectral orderings still cut on
+  the residual-energy curve they already build a Gram for. Previously the
+  score-ordered path built a Gram just to cut on a residual curve the viewer
+  never sees.
 - Hidden (`visible=false`) layers no longer fetch, decode and commit their LOD
   levels, and no longer escape eviction.
 - `scripts/check_demo_ladders.py` — a structural gate that fails a leaf whose

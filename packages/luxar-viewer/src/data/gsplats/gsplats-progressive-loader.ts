@@ -27,6 +27,7 @@ import type {
   MonitorEventListener,
   QueryInfo,
 } from '../../types/data-monitor-types';
+import { assertColorLayout } from '../loaders';
 import { ProgressiveMonitorAdapter } from '../loaders/progressive-monitor-adapter';
 import { concatRequiredField } from '../loaders/progressive/concat-helpers';
 import {
@@ -74,6 +75,23 @@ export function concatenateGSplatsData(parts: LoadedGSplatsData[]): LoadedGSplat
           'dataset dimensionality.'
       );
     }
+  }
+  // Per-part color-layout check, distinct from the cross-level mismatch
+  // guarded below: those throws catch LODs that DISAGREE on dtype/layout,
+  // but a single part can carry an RGBA buffer while OMITTING
+  // `colorComponents: 4` (it defaults to 3). That satisfies the downstream
+  // `count·3` minimum yet mis-strides every splat after the first — silent
+  // corruption. Assert each part's raw length against its own declared
+  // layout before allocation so an omitted declaration throws loudly here.
+  // Names the offending level (concat-helpers' convention) so a corrupt
+  // store is diagnosable without a debugger.
+  for (const [levelIdx, part] of parts.entries()) {
+    assertColorLayout(
+      part.colors,
+      part.splatCount,
+      part.colorComponents ?? 3,
+      `concatenateGSplatsData (LOD level ${levelIdx})`
+    );
   }
   const totalSplats = parts.reduce((sum, p) => sum + p.splatCount, 0);
   const cholSize = (ndim * (ndim + 1)) / 2;
