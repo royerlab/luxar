@@ -397,21 +397,21 @@ describe('projectPointsTo3D — fallback path (no accumulator, no targetBuffers)
 });
 
 // ════════════════════════════════════════════════════════════════════════════
-// [P5] BOUNDARY: Uint8 radius normalization (÷255) before effective-radius use.
+// [P5] BOUNDARY: Uint8 radius decode to WORLD units before effective-radius use.
 //
-// Verified against the REAL source: the `/255` normalization (projection.ts
-// ~L241-262) only runs when `finalRadii instanceof Uint8Array`, which in turn
-// only happens on the targetBuffers branch where BOTH the input radii AND the
-// accumulator radii buffer are Uint8Array. The normalized radii are NOT
-// surfaced verbatim in `result.radii` (the Uint8 accumulator buffer is what
-// getData() returns), so we pin the normalization via its observable
-// CONSEQUENCE: with a hidden-dim distance large vs the *normalized* radius the
+// Verified against the REAL source: the uint8 decode (projection.ts) only runs
+// when `finalRadii instanceof Uint8Array`, which in turn only happens on the
+// targetBuffers branch where BOTH the input radii AND the accumulator radii
+// buffer are Uint8Array. The on-disk uint8 is a normalized [0,255] encoding of
+// world-unit radii `(u8/255)·max_radius`, so it is decoded to WORLD units
+// before the kernel (issue #740 revision) — radius and slice distance D must
+// share units (D stays world-unit). We pin the decode via its observable
+// CONSEQUENCE: with a hidden-dim distance large vs the *world* radius the
 // point's effective radius (√(R²−D²)) clamps to 0 and the point is filtered
-// out — which only happens if R was scaled 255→1.0 first. Without the ÷255
-// the un-normalized R=255 would dwarf D=100 and the point would survive.
+// out. Here max_radius=255, so u8=255 → world R=255; a distance > 255 clamps.
 // ════════════════════════════════════════════════════════════════════════════
 
-describe('Uint8 radius normalization (÷255) before effective-radius use', () => {
+describe('Uint8 radius decode to world units before effective-radius use', () => {
   function makeErConfig(overrides: Partial<EffectiveRadiusConfig> = {}): EffectiveRadiusConfig {
     return {
       // dims 0..2 displayed (in-plane); dim 3 is a non-displayed SPATIAL dim
@@ -422,9 +422,11 @@ describe('Uint8 radius normalization (÷255) before effective-radius use', () =>
     };
   }
 
-  it('normalizes Uint8 radius so √(R²−D²) clamps to 0 and the far point is filtered out', () => {
-    // 1 point at dim3 = 100 (far in the hidden spatial dim), Uint8 radius 255.
-    // Normalized radius = 1.0; D = 100 → R_eff = √(1 − 10000) < 0 → 0 → filtered.
+  it('decodes Uint8 radius to world units so √(R²−D²) clamps to 0 and the far point is filtered out', () => {
+    // 1 point at dim3 = 300 (far in the hidden spatial dim), Uint8 radius 255.
+    // World radius = (255/255)·255 = 255; D = 300 → R_eff = √(255² − 300²) < 0
+    // → 0 → filtered. (D must exceed the WORLD radius 255 to clamp — under the
+    // old normalized-scale bug R was 1.0 and any D>1 would clamp.)
     const accumulator = new LoadedPointsDataAccumulator(8, 4, 1);
     // Pin radius buffer type to Uint8 by filling once with a Uint8 radius.
     accumulator.fill(0, {
@@ -442,13 +444,13 @@ describe('Uint8 radius normalization (÷255) before effective-radius use', () =>
 
     const result = projectPointsTo3D(
       wasm,
-      new Float32Array([0, 0, 0, 100]), // 1 point × 4 dims; dim3 = 100
+      new Float32Array([0, 0, 0, 300]), // 1 point × 4 dims; dim3 = 300
       null,
       new Uint8Array([255]),
       null,
       makeViewState({
         displayDims: [0, 1, 2],
-        slicePosition: [0, 0, 0, 0], // slice at dim3 = 0 → distance 100
+        slicePosition: [0, 0, 0, 0], // slice at dim3 = 0 → distance 300
         tolerance: [0, 0, 0, 0],
       }),
       [{ start: 0, end: 1 }] as PointRange[],
@@ -456,15 +458,15 @@ describe('Uint8 radius normalization (÷255) before effective-radius use', () =>
       targetBuffers
     );
 
-    // Normalized R=1.0 ≪ D=100 → effective radius 0 → point filtered out.
+    // World R=255 ≪ D=300 → effective radius 0 → point filtered out.
     // (The all-filtered path returns createEmptyPointsData, whose metadata
     // does not carry usedEffectiveRadius — pointCount 0 is the observable.)
     expect(result.pointCount).toBe(0);
   });
 
-  it('on-slice Uint8 radius (D=0) yields effective radius ≈ normalized R (1.0), point kept', () => {
+  it('on-slice Uint8 radius (D=0) yields effective radius = world R (255), point kept', () => {
     // Same setup but the point sits ON the slice (dim3 = 0). D = 0 →
-    // R_eff = √(R²) = R = 1.0 (the normalized radius). The point survives.
+    // R_eff = √(R²) = R = 255 (the WORLD radius). The point survives.
     const accumulator = new LoadedPointsDataAccumulator(8, 4, 1);
     accumulator.fill(0, {
       positions: new Float32Array([0, 0, 0]),
@@ -1066,5 +1068,186 @@ describe('projectPointsTo3D — sharpness/scalars compaction with a non-Float32 
     // The else-branch widened the "any other" source to Float32.
     expect(result.sharpness).toBeInstanceOf(Float32Array);
     expect(result.scalars).toBeInstanceOf(Float32Array);
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// Regression: issue #740 — effective radii on the UINT8-radii ACCUMULATOR path.
+//
+// When a points node stores radii as native Uint8Array, the projection used to
+// compute the normalized/effective radii into a TEMP Float32Array (the
+// write-back guards only fired for `targetBuffers.radii instanceof
+// Float32Array`). Two consequences on the hot accumulator path:
+//   (1) A partial zero-radius cull compacted positions/colors/sharpness/scalars
+//       in the ACCUMULATOR buffers but radii only in the temp — and getData()
+//       returns the raw UNCOMPACTED uint8 radii, so every survivor after the
+//       first removed point rendered with another point's radius (misalignment).
+//   (2) With NO filtering the slice-attenuated effective radii never reached
+//       the output (the temp was discarded; getData returned raw uint8).
+// The fix decodes uint8 radii to WORLD units for the kernel (so radius and
+// slice distance D share units), then re-encodes the world-unit effective
+// radii back into the uint8 accumulator buffer with the SAME /max_radius·255
+// divisor the renderer inverts (so getData()/compaction operate on the SAME
+// buffer), while the cull decision reads the float (world-unit) effective
+// radii so the threshold semantics stay consistent.
+// ════════════════════════════════════════════════════════════════════════════
+
+describe('projectPointsTo3D — effective radii on the uint8 accumulator path (issue #740)', () => {
+  const erConfig: EffectiveRadiusConfig = {
+    // dims 0..2 displayed; dim 3 is a non-displayed SPATIAL dim so the
+    // Pythagorean effective-radius path runs. maxRadius 255 is the WORLD-unit
+    // max radius: uint8 u decodes to world radius (u/255)·255 = u.
+    spatialExtendDims: [true, true, true, true],
+    maxRadius: 255,
+  };
+
+  function makeTargetBuffers(accumulator: LoadedPointsDataAccumulator): ProjectionTargetBuffers {
+    return {
+      positions3D: accumulator.getPositionBuffer(),
+      colors: accumulator.getColorBuffer(),
+      radii: accumulator.getRadiiBuffer(),
+      sharpness: accumulator.getSharpnessBuffer(),
+    };
+  }
+
+  it('consequence (1): a PARTIAL cull returns each survivor its OWN uint8 radius (aligned)', () => {
+    // 4 points × 4 dims. With maxRadius=255 each uint8 u decodes to world
+    // radius u. Point 0 is far in the hidden dim (dim3 = 100 > its world R=40 →
+    // R_eff 0, filtered); points 1..3 sit ON the slice (dim3 = 0), so on-slice
+    // R_eff == world R → re-encodes back to the same uint8 value. Survivors
+    // [1,2,3] compact to slots [0,1,2].
+    //
+    // This pins alignment: pre-fix, getData() returned the raw uncompacted
+    // uint8 buffer → slots [0,1,2] held points [0,1,2]'s radii [40, 100, 150]
+    // (the removed point's radius leaks in and every survivor is shifted). The
+    // fix returns the compacted survivors' radii [100, 150, 200].
+    const accumulator = new LoadedPointsDataAccumulator(8, 4, 4);
+    accumulator.fill(0, {
+      positions: new Float32Array([0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3]),
+      radii: new Uint8Array([40, 100, 150, 200]),
+    });
+    const targetBuffers = makeTargetBuffers(accumulator);
+    expect(accumulator.getRadiiBuffer()).toBeInstanceOf(Uint8Array);
+
+    const result = projectPointsTo3D(
+      wasm,
+      // point 0 far (dim3=100); points 1..3 on slice (dim3=0)
+      new Float32Array([0, 0, 0, 100, 1, 1, 1, 0, 2, 2, 2, 0, 3, 3, 3, 0]),
+      null,
+      new Uint8Array([40, 100, 150, 200]),
+      null,
+      makeViewState({
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 0],
+        tolerance: [0, 0, 0, 0],
+      }),
+      [{ start: 0, end: 4 }] as PointRange[],
+      makeCtx({ effectiveRadiusConfig: erConfig, accumulator }),
+      targetBuffers
+    );
+
+    expect(result.pointCount).toBe(3);
+    expect(result.radii).toBeInstanceOf(Uint8Array);
+    // Survivors are the SOURCE points 1,2,3 — radii aligned, not shifted.
+    expect(Array.from(result.radii!)).toEqual([100, 150, 200]);
+    // Positions confirm the same survivors in the same order.
+    expect(Array.from(result.positions)).toEqual([1, 1, 1, 2, 2, 2, 3, 3, 3]);
+  });
+
+  it('consequence (2): with NO cull the returned uint8 radii carry the ATTENUATED (effective) values', () => {
+    // 2 points × 4 dims, both survive (non-empty effective radius). Point 0
+    // sits ON the slice (dim3 = 0 → R_eff == world R, unchanged). Point 1 is a
+    // non-trivial hidden-dim distance away (dim3 = 120, comparable to its world
+    // radius 200) so its effective radius is ATTENUATED below its raw value.
+    // Pre-fix the uint8 path discarded the effective radii (getData returned
+    // the raw uint8), so point 1 rendered at full size; the fix re-encodes the
+    // attenuated WORLD-unit radius into the buffer.
+    const maxRadius = 255;
+    const rawRadius = 200;
+    const D = 120;
+    // Attenuation is computed in WORLD units: decode u8 → world R, apply
+    // R_eff = sqrt(R_world² − D²), then re-encode round(R_eff / max · 255).
+    const rWorld = (rawRadius / 255) * maxRadius; // = 200 here
+    const expectedAttenuated = Math.round((Math.sqrt(rWorld * rWorld - D * D) / maxRadius) * 255);
+    expect(expectedAttenuated).toBeLessThan(rawRadius); // attenuation actually happened
+    expect(expectedAttenuated).toBeGreaterThan(0); // …but the point still survives
+
+    const accumulator = new LoadedPointsDataAccumulator(8, 4, 2);
+    accumulator.fill(0, {
+      positions: new Float32Array([0, 0, 0, 1, 1, 1]),
+      radii: new Uint8Array([rawRadius, rawRadius]),
+    });
+    const targetBuffers = makeTargetBuffers(accumulator);
+
+    const result = projectPointsTo3D(
+      wasm,
+      // point 0 on slice (dim3=0); point 1 at dim3=120 (attenuated, kept)
+      new Float32Array([0, 0, 0, 0, 1, 1, 1, D]),
+      null,
+      new Uint8Array([rawRadius, rawRadius]),
+      null,
+      makeViewState({
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 0],
+        tolerance: [0, 0, 0, 0],
+      }),
+      [{ start: 0, end: 2 }] as PointRange[],
+      makeCtx({ effectiveRadiusConfig: erConfig, accumulator }),
+      targetBuffers
+    );
+
+    // No points removed — the effective radii themselves reach the output.
+    expect(result.pointCount).toBe(2);
+    expect(result.radii).toBeInstanceOf(Uint8Array);
+    // Point 0 (D=0) keeps its raw radius; point 1 is attenuated below it.
+    expect(Array.from(result.radii!)).toEqual([rawRadius, expectedAttenuated]);
+  });
+
+  it('combined: a PARTIAL cull where a SURVIVOR is also attenuated (attenuation × compaction)', () => {
+    // 3 points × 4 dims, maxRadius=255 (world R = u8). Point 0 is far in the
+    // hidden dim (dim3 = 200 > world R=100 → R_eff 0, filtered). Point 1 sits
+    // ON the slice (dim3 = 0 → unchanged, u8=200). Point 2 is attenuated
+    // (dim3 = 120, comparable to its world R=200). This pins the interaction
+    // the two isolated tests above miss: the SURVIVING attenuated point (2)
+    // must both (a) carry its attenuated radius AND (b) land in the correct
+    // compacted slot. Survivors [1,2] → slots [0,1].
+    const maxRadius = 255;
+    const D2 = 120;
+    const rWorld2 = 200; // (200/255)·255
+    const expected2 = Math.round((Math.sqrt(rWorld2 * rWorld2 - D2 * D2) / maxRadius) * 255); // 160
+    expect(expected2).toBe(160);
+
+    const accumulator = new LoadedPointsDataAccumulator(8, 4, 3);
+    accumulator.fill(0, {
+      positions: new Float32Array([0, 0, 0, 1, 1, 1, 2, 2, 2]),
+      radii: new Uint8Array([100, 200, 200]),
+    });
+    const targetBuffers = makeTargetBuffers(accumulator);
+    expect(accumulator.getRadiiBuffer()).toBeInstanceOf(Uint8Array);
+
+    const result = projectPointsTo3D(
+      wasm,
+      // point 0 far (dim3=200, filtered); point 1 on slice (dim3=0);
+      // point 2 attenuated (dim3=120, kept)
+      new Float32Array([0, 0, 0, 200, 1, 1, 1, 0, 2, 2, 2, D2]),
+      null,
+      new Uint8Array([100, 200, 200]),
+      null,
+      makeViewState({
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 0],
+        tolerance: [0, 0, 0, 0],
+      }),
+      [{ start: 0, end: 3 }] as PointRange[],
+      makeCtx({ effectiveRadiusConfig: erConfig, accumulator }),
+      targetBuffers
+    );
+
+    expect(result.pointCount).toBe(2);
+    expect(result.radii).toBeInstanceOf(Uint8Array);
+    // Slot 0 = survivor 1 (on-slice, 200); slot 1 = survivor 2 (attenuated 160).
+    expect(Array.from(result.radii!)).toEqual([200, expected2]);
+    // Positions confirm the same survivors in the same order.
+    expect(Array.from(result.positions)).toEqual([1, 1, 1, 2, 2, 2]);
   });
 });

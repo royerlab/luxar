@@ -298,9 +298,23 @@ export function projectPointsTo3D(
   // Calculate effective radii if configuration exists and radii are provided
   let finalRadii: Float32Array | Uint8Array | undefined;
   let usedEffectiveRadius = false;
-  // Scale anchor for the boundary-dust filter below, captured in the SAME
-  // units as the computed effective radii (the local config's maxRadius is
-  // dtype-normalized alongside finalRadii).
+  // Float effective radii in WORLD units, retained for the zero-radius cull
+  // decision below. On the uint8-accumulator path `finalRadii` is re-encoded
+  // to uint8 (so the buffer getData() returns is the one compaction shuffles
+  // — issue #740), but the cull threshold (`radiusThresholdAnchor`) is a
+  // world-unit anchor, so the keep/remove decision must read these floats,
+  // not the re-encoded uint8.
+  let effectiveRadiiFloat: Float32Array | undefined;
+  // World-unit max radius (attrs.max_radius). For uint8 radii the on-disk
+  // value is a normalized [0,255] encoding of `(u8/255)·max_radius` world
+  // units; we keep this to (a) decode radii to WORLD units before the kernel
+  // (so radius and slice distance share units) and (b) re-encode the
+  // world-unit effective radii back to uint8 with the SAME divisor the
+  // renderer multiplies by. Defaults 1.0 (no effectiveRadiusConfig → the
+  // temp is unused; the kernel won't run).
+  let maxRadiusWorld = 1.0;
+  // Scale anchor for the boundary-dust filter below, in WORLD units (equals
+  // effectiveRadiusConfig.maxRadius, the same units as effectiveRadiiFloat).
   let radiusThresholdAnchor = 1.0;
 
   if (radii) {
@@ -324,13 +338,19 @@ export function projectPointsTo3D(
       finalRadii = radii instanceof Float32Array ? radii : new Float32Array(radii);
     }
 
-    // Normalize uint8 radii to world units before effective radius calculation
-    let effectiveRadiusConfig = ctx.effectiveRadiusConfig;
+    // Decode uint8 radii to WORLD units before effective radius calculation.
+    const effectiveRadiusConfig = ctx.effectiveRadiusConfig;
     if (finalRadii instanceof Uint8Array) {
-      // Convert Uint8 to Float32 for effective radius calculation
+      // Uint8 radii are a normalized [0,255] encoding of world-unit radii:
+      // world_radius = (u8/255)·max_radius. Decode to WORLD units (not just
+      // /255) so the effective-radius kernel compares radius and slice
+      // distance in the SAME units — D stays in world/data units. Leaving
+      // radii normalized while D was world-unit mis-scaled the attenuation
+      // whenever max_radius != 1 (issue #740 revision).
+      maxRadiusWorld = effectiveRadiusConfig?.maxRadius ?? 1.0;
       const float32Radii = new Float32Array(finalRadii.length);
       for (let i = 0; i < finalRadii.length; i++) {
-        float32Radii[i] = finalRadii[i] / 255.0;
+        float32Radii[i] = (finalRadii[i] / 255.0) * maxRadiusWorld;
       }
       // Write to target buffer or use temp array
       if (targetBuffers && targetBuffers.radii instanceof Float32Array) {
@@ -339,14 +359,8 @@ export function projectPointsTo3D(
       } else {
         finalRadii = float32Radii;
       }
-
-      // Scale max_radius for effective radius calculation
-      if (effectiveRadiusConfig) {
-        effectiveRadiusConfig = {
-          ...effectiveRadiusConfig,
-          maxRadius: effectiveRadiusConfig.maxRadius / 255.0,
-        };
-      }
+      // effectiveRadiusConfig.maxRadius is intentionally kept in WORLD units
+      // (no /255 rescale) so the kernel sees world-unit radii matching D.
     }
 
     if (effectiveRadiusConfig && finalRadii instanceof Float32Array) {
@@ -385,10 +399,32 @@ export function projectPointsTo3D(
           effectiveRadii
         );
 
+        // Keep the float (WORLD-unit) effective radii for the cull decision
+        // below regardless of the accumulator dtype.
+        effectiveRadiiFloat = effectiveRadii;
+
         // Write result to target buffer (if using) or replace
         if (targetBuffers && targetBuffers.radii instanceof Float32Array) {
           (targetBuffers.radii as Float32Array).set(effectiveRadii);
           finalRadii = targetBuffers.radii as Float32Array;
+        } else if (targetBuffers && targetBuffers.radii instanceof Uint8Array) {
+          // Uint8 accumulator radii (issue #740): keep radii dtype-preserving
+          // as uint8 THROUGH the accumulator so (a) the renderer's
+          // (u8/255)·maxRadius contract stays valid and (b) the buffer
+          // getData() returns is the SAME one the in-place compaction below
+          // shuffles. Pre-fix, effective radii were computed into a temp
+          // Float32 array that getData() never saw, so surviving points
+          // rendered with raw/misaligned uint8 radii. effectiveRadii are in
+          // WORLD units, so re-encode with the SAME divisor the renderer
+          // multiplies by: u8 = round(R_eff_world / max_radius · 255). Since
+          // R_eff_world ≤ R_world ≤ max_radius the ratio is in [0,1].
+          const u8 = targetBuffers.radii as Uint8Array;
+          const invMax = maxRadiusWorld > 0 ? 255 / maxRadiusWorld : 0;
+          for (let i = 0; i < numPoints; i++) {
+            const q = Math.round(effectiveRadii[i] * invMax);
+            u8[i] = q < 0 ? 0 : q > 255 ? 255 : q;
+          }
+          finalRadii = u8;
         } else {
           finalRadii = effectiveRadii;
         }
@@ -411,9 +447,16 @@ export function projectPointsTo3D(
     const threshold = radiusThresholdAnchor * 1e-6;
     const validIndices: number[] = [];
 
+    // Decide kept/removed from the float effective radii (WORLD units,
+    // matching `threshold`), NOT the possibly-re-encoded `finalRadii`: on the
+    // uint8 path finalRadii holds 0..255 values that would compare wrongly
+    // against the tiny world-unit threshold (issue #740). Falls back to
+    // finalRadii for any path that didn't retain the floats.
+    const cullRadii = effectiveRadiiFloat ?? finalRadii;
+
     // Find indices of points with non-zero radius
     for (let i = 0; i < numPoints; i++) {
-      if (finalRadii[i] > threshold) {
+      if (cullRadii[i] > threshold) {
         validIndices.push(i);
       }
     }
