@@ -754,6 +754,49 @@ describe('lazy scalar buffer allocation', () => {
       // The fix surfaces the true on-disk dtype.
       expect(data.metadata.dtypes!.scalars).toBe('float16');
     });
+
+    // Regression: issue #751 — Uint16 sharpness/scalars must be kept NATIVELY
+    // (like colors), not widened to Float32. Widening drops the ÷65535 the GPU
+    // upload site applies, rendering at 65535×. Guards against a regression
+    // back to the `.set()`-widen fix.
+    it("Uint16Array scalars → native Uint16Array + dtypes.scalars === 'uint16'", () => {
+      const acc = new LoadedPointsDataAccumulator(64, 3, 100);
+      acc.fill(0, {
+        positions: new Float32Array([0, 0, 0]),
+        scalars: new Uint16Array([40000]),
+      });
+      const data = acc.getData(1);
+      expect(data.scalars).toBeInstanceOf(Uint16Array);
+      expect(data.scalars![0]).toBe(40000); // RAW value, not widened/normalized
+      expect(data.metadata.dtypes!.scalars).toBe('uint16');
+    });
+
+    it("Uint16Array sharpness → native Uint16Array + dtypes.sharpness === 'uint16'", () => {
+      const acc = new LoadedPointsDataAccumulator(64, 3, 100);
+      acc.fill(0, {
+        positions: new Float32Array([0, 0, 0]),
+        sharpness: new Uint16Array([50000]),
+      });
+      const data = acc.getData(1);
+      expect(data.sharpness).toBeInstanceOf(Uint16Array);
+      expect(data.sharpness![0]).toBe(50000);
+      expect(data.metadata.dtypes!.sharpness).toBe('uint16');
+    });
+
+    it('Uint16 sharpness/scalars survive an ensureCapacity growth (type-preserving)', () => {
+      const acc = new LoadedPointsDataAccumulator(2, 3, 100);
+      acc.fill(0, {
+        positions: new Float32Array([0, 0, 0, 1, 1, 1]),
+        sharpness: new Uint16Array([11, 22]),
+        scalars: new Uint16Array([33, 44]),
+      });
+      acc.ensureCapacity(10); // forces a growth, must preserve Uint16 + values
+      const data = acc.getData(2);
+      expect(data.sharpness).toBeInstanceOf(Uint16Array);
+      expect(data.scalars).toBeInstanceOf(Uint16Array);
+      expect(Array.from(data.sharpness!)).toEqual([11, 22]);
+      expect(Array.from(data.scalars!)).toEqual([33, 44]);
+    });
   });
 
   it('LinesDataAccumulator: scalar buffer stays empty when no scalars fill', () => {

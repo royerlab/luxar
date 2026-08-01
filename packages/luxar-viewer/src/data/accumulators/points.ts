@@ -16,6 +16,7 @@ import type {
   PositionArray,
   ColorArray,
   ScalarArray,
+  PointScalarArray,
 } from '../data-loader-types';
 import { log, Modules } from '../../utils/log';
 import type { DataAccumulator, AccumulatorStats } from './types';
@@ -29,14 +30,15 @@ export interface PointsAccumulatorTypes {
   position: 'Float32Array';
   color: 'Float32Array' | 'Uint8Array' | 'Uint16Array';
   radius: 'Float32Array' | 'Uint8Array';
-  sharpness: 'Float32Array' | 'Uint8Array';
+  sharpness: 'Float32Array' | 'Uint8Array' | 'Uint16Array';
   /**
    * per-point scalar values for colormap lookup. Optional —
    * unset when the first fill carried no `scalars` (most datasets).
-   * Float16Array is tracked separately so the accumulator can keep
-   * native dtype until it's widened at the GPU upload site.
+   * Uint8/Uint16 are kept natively (like colors) so the GPU upload
+   * site can normalize (÷255 / ÷65535); Float16Array is tracked
+   * separately and widened value-preserving to Float32.
    */
-  scalar?: 'Float32Array' | 'Float16Array' | 'Uint8Array';
+  scalar?: 'Float32Array' | 'Float16Array' | 'Uint8Array' | 'Uint16Array';
 }
 
 /**
@@ -56,9 +58,9 @@ export class LoadedPointsDataAccumulator implements DataAccumulator<
   private positionBuffer: Float32Array; // Always Float32
   private colorBuffer: Float32Array | Uint8Array | Uint16Array;
   private radiiBuffer: Float32Array | Uint8Array;
-  private sharpnessBuffer: Float32Array | Uint8Array;
+  private sharpnessBuffer: Float32Array | Uint8Array | Uint16Array;
   /** per-point scalar buffer for colormap lookup. */
-  private scalarBuffer: Float32Array | Uint8Array;
+  private scalarBuffer: Float32Array | Uint8Array | Uint16Array;
 
   // Type tracking
   private types: PointsAccumulatorTypes | null = null;
@@ -239,6 +241,10 @@ export class LoadedPointsDataAccumulator implements DataAccumulator<
       const newSharpness = new Uint8Array(newCapacity);
       newSharpness.set(this.sharpnessBuffer.subarray(0, liveCount));
       this.sharpnessBuffer = newSharpness;
+    } else if (this.sharpnessBuffer instanceof Uint16Array) {
+      const newSharpness = new Uint16Array(newCapacity);
+      newSharpness.set(this.sharpnessBuffer.subarray(0, liveCount));
+      this.sharpnessBuffer = newSharpness;
     } else {
       const newSharpness = new Float32Array(newCapacity);
       newSharpness.set(this.sharpnessBuffer.subarray(0, liveCount));
@@ -251,6 +257,10 @@ export class LoadedPointsDataAccumulator implements DataAccumulator<
     if (this.scalarBuffer.length > 0) {
       if (this.scalarBuffer instanceof Uint8Array) {
         const newScalars = new Uint8Array(newCapacity);
+        newScalars.set(this.scalarBuffer.subarray(0, liveScalar));
+        this.scalarBuffer = newScalars;
+      } else if (this.scalarBuffer instanceof Uint16Array) {
+        const newScalars = new Uint16Array(newCapacity);
         newScalars.set(this.scalarBuffer.subarray(0, liveScalar));
         this.scalarBuffer = newScalars;
       } else {
@@ -324,10 +334,12 @@ export class LoadedPointsDataAccumulator implements DataAccumulator<
       colorComponents: this.colorComponents,
       radii: this.hasRadii ? (this.radiiBuffer.subarray(0, count) as ScalarArray) : undefined,
       sharpness: this.hasSharpness
-        ? (this.sharpnessBuffer.subarray(0, count) as ScalarArray)
+        ? (this.sharpnessBuffer.subarray(0, count) as PointScalarArray)
         : undefined,
       // scalars optional — populated when the source data carried them.
-      scalars: this.hasScalars ? (this.scalarBuffer.subarray(0, count) as ScalarArray) : undefined,
+      scalars: this.hasScalars
+        ? (this.scalarBuffer.subarray(0, count) as PointScalarArray)
+        : undefined,
       pointCount: count,
       ndim: this.ndim,
       metadata: {
@@ -344,18 +356,26 @@ export class LoadedPointsDataAccumulator implements DataAccumulator<
                 ? 'uint16'
                 : 'float32',
           radii: this.types?.radius === 'Uint8Array' ? 'uint8' : 'float32',
-          sharpness: this.types?.sharpness === 'Uint8Array' ? 'uint8' : 'float32',
+          sharpness:
+            this.types?.sharpness === 'Uint8Array'
+              ? 'uint8'
+              : this.types?.sharpness === 'Uint16Array'
+                ? 'uint16'
+                : 'float32',
           // [integration.md OOS4] Float16 scalars must self-report as
           // 'float16' so consumers can branch on the actual on-disk dtype.
           // Pre-fix, every non-Uint8 scalar tagged as 'float32', silently
           // hiding Float16 data even though `PointsAccumulatorTypes.scalar`
-          // explicitly tracks 'Float16Array' separately.
+          // explicitly tracks 'Float16Array' separately. Uint16 is now kept
+          // natively too (like colors) so it can self-report as 'uint16'.
           scalars:
             this.types?.scalar === 'Uint8Array'
               ? 'uint8'
-              : this.types?.scalar === 'Float16Array'
-                ? 'float16'
-                : 'float32',
+              : this.types?.scalar === 'Uint16Array'
+                ? 'uint16'
+                : this.types?.scalar === 'Float16Array'
+                  ? 'float16'
+                  : 'float32',
         },
       },
     };
@@ -370,9 +390,11 @@ export class LoadedPointsDataAccumulator implements DataAccumulator<
     // in which case we lazily allocate the scalar buffer here without
     // disturbing the other type pins.
     if (this.types && this.types.scalar === undefined && data.scalars) {
-      let scalarType: 'Float32Array' | 'Float16Array' | 'Uint8Array';
+      let scalarType: 'Float32Array' | 'Float16Array' | 'Uint8Array' | 'Uint16Array';
       if (data.scalars instanceof Uint8Array) {
         scalarType = 'Uint8Array';
+      } else if (data.scalars instanceof Uint16Array) {
+        scalarType = 'Uint16Array';
       } else if (
         typeof globalThis.Float16Array !== 'undefined' &&
         data.scalars instanceof globalThis.Float16Array
@@ -385,7 +407,9 @@ export class LoadedPointsDataAccumulator implements DataAccumulator<
       this.scalarBuffer =
         scalarType === 'Uint8Array'
           ? new Uint8Array(this.capacity)
-          : new Float32Array(this.capacity);
+          : scalarType === 'Uint16Array'
+            ? new Uint16Array(this.capacity)
+            : new Float32Array(this.capacity);
       return;
     }
     if (this.types) return; // Already initialized
@@ -399,11 +423,18 @@ export class LoadedPointsDataAccumulator implements DataAccumulator<
             ? 'Uint16Array'
             : 'Float32Array',
       radius: data.radii instanceof Uint8Array ? 'Uint8Array' : 'Float32Array',
-      sharpness: data.sharpness instanceof Uint8Array ? 'Uint8Array' : 'Float32Array',
+      sharpness:
+        data.sharpness instanceof Uint8Array
+          ? 'Uint8Array'
+          : data.sharpness instanceof Uint16Array
+            ? 'Uint16Array'
+            : 'Float32Array',
     };
     if (data.scalars) {
       if (data.scalars instanceof Uint8Array) {
         types.scalar = 'Uint8Array';
+      } else if (data.scalars instanceof Uint16Array) {
+        types.scalar = 'Uint16Array';
       } else if (
         typeof globalThis.Float16Array !== 'undefined' &&
         data.scalars instanceof globalThis.Float16Array
@@ -429,6 +460,8 @@ export class LoadedPointsDataAccumulator implements DataAccumulator<
 
     if (types.sharpness === 'Uint8Array') {
       this.sharpnessBuffer = new Uint8Array(this.capacity);
+    } else if (types.sharpness === 'Uint16Array') {
+      this.sharpnessBuffer = new Uint16Array(this.capacity);
     }
 
     // Lazily allocate the scalar buffer on first sight of scalars (sized
@@ -436,6 +469,8 @@ export class LoadedPointsDataAccumulator implements DataAccumulator<
     // stays at length 0.
     if (types.scalar === 'Uint8Array') {
       this.scalarBuffer = new Uint8Array(this.capacity);
+    } else if (types.scalar === 'Uint16Array') {
+      this.scalarBuffer = new Uint16Array(this.capacity);
     } else if (types.scalar) {
       this.scalarBuffer = new Float32Array(this.capacity);
     }
@@ -518,16 +553,24 @@ export class LoadedPointsDataAccumulator implements DataAccumulator<
       this.hasSharpness = true;
       if (data.sharpness instanceof Uint8Array) {
         (this.sharpnessBuffer as Uint8Array).set(data.sharpness, offset);
+      } else if (data.sharpness instanceof Uint16Array) {
+        (this.sharpnessBuffer as Uint16Array).set(data.sharpness, offset);
       } else {
+        // Float16Array / Float32Array source → the (Float32) buffer's
+        // `.set()` widens value-preserving; no divisor is needed on upload.
         (this.sharpnessBuffer as Float32Array).set(data.sharpness as Float32Array, offset);
       }
     }
-    // scalars copied with native type (no conversion).
+    // scalars copied with native type (no conversion for uint8/uint16).
     if (data.scalars) {
       this.hasScalars = true;
       if (data.scalars instanceof Uint8Array) {
         (this.scalarBuffer as Uint8Array).set(data.scalars, offset);
+      } else if (data.scalars instanceof Uint16Array) {
+        (this.scalarBuffer as Uint16Array).set(data.scalars, offset);
       } else {
+        // Float16Array / Float32Array source → Float32 buffer widens
+        // value-preserving.
         (this.scalarBuffer as Float32Array).set(data.scalars as Float32Array, offset);
       }
     }
@@ -617,7 +660,7 @@ export class LoadedPointsDataAccumulator implements DataAccumulator<
     return this.radiiBuffer;
   }
 
-  getSharpnessBuffer(): Float32Array | Uint8Array {
+  getSharpnessBuffer(): Float32Array | Uint8Array | Uint16Array {
     return this.sharpnessBuffer;
   }
 
@@ -630,7 +673,7 @@ export class LoadedPointsDataAccumulator implements DataAccumulator<
    * spatial-index loader's direct-write path (`loadVertexRanges` →
    * `scalarBuffer`) writes into a real buffer.
    */
-  getScalarBuffer(): Float32Array | Uint8Array {
+  getScalarBuffer(): Float32Array | Uint8Array | Uint16Array {
     if (this.scalarBuffer.length === 0 && this.capacity > 0 && !this._disposed) {
       this.scalarBuffer = new Float32Array(this.capacity);
     }

@@ -20,6 +20,7 @@ export type {
   PositionArray,
   ColorArray,
   ScalarArray,
+  PointScalarArray,
 } from '../types/points';
 
 import type { PointRange } from '../types/points';
