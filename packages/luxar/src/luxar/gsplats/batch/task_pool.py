@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Any, Callable, Hashable, Optional, Sequence, TypeVar
@@ -28,6 +29,25 @@ from typing import Any, Callable, Hashable, Optional, Sequence, TypeVar
 # Task keys are any hashable; the generic ``T`` lets callers keep their concrete
 # key type (e.g. int task ids) through the callbacks without casts.
 T = TypeVar("T", bound=Hashable)
+
+
+def cancel_pool_on_interrupt(ex: ThreadPoolExecutor, stop: threading.Event) -> None:
+    """Abort a running subprocess pool on Ctrl-C (shared by the three fan-out sites).
+
+    Sets the shared ``stop`` flag — so a worker that has *already dequeued* its
+    task returns before spawning a subprocess — and shuts the executor down with
+    ``cancel_futures=True`` so still-queued tasks are dropped instead of run to
+    completion.  Call this from the ``except KeyboardInterrupt`` handler wrapping
+    the ``as_completed`` loop, **then re-raise** so the CLI still exits on the
+    interrupt.
+
+    Without this, ``ThreadPoolExecutor.__exit__`` runs ``shutdown(wait=True)``
+    with the default ``cancel_futures=False`` first, so every queued task — each
+    spawning a fresh ``luxar gsplat fit`` subprocess — runs to completion before
+    the ``KeyboardInterrupt`` can propagate (issue #736).
+    """
+    stop.set()
+    ex.shutdown(wait=False, cancel_futures=True)
 
 
 @dataclass
@@ -92,8 +112,13 @@ def run_task_pool(
         One per task, in completion order.  Never raises on a worker failure.
     """
     total = len(tasks)
+    stop = threading.Event()
 
     def _run(key: T) -> TaskResult:
+        # A worker that dequeued this task after a Ctrl-C must not spawn a new
+        # subprocess (issue #736): bail before launching anything.
+        if stop.is_set():
+            return TaskResult(key=key, returncode=-1, output="cancelled before launch")
         if skip_if is not None and skip_if(key):
             return TaskResult(key=key, returncode=0, output="", skipped=True)
         try:
@@ -118,12 +143,18 @@ def run_task_pool(
 
     results: list[TaskResult] = []
     with ThreadPoolExecutor(max_workers=max(1, max_workers)) as ex:
-        futures = [ex.submit(_run, key) for key in tasks]
         done = 0
-        for fut in as_completed(futures):
-            res = fut.result()
-            done += 1
-            results.append(res)
-            if on_done is not None:
-                on_done(res, done, total)
+        try:
+            futures = [ex.submit(_run, key) for key in tasks]
+            for fut in as_completed(futures):
+                res = fut.result()
+                done += 1
+                results.append(res)
+                if on_done is not None:
+                    on_done(res, done, total)
+        except KeyboardInterrupt:
+            # Cancel queued tasks (and signal in-flight workers) BEFORE the
+            # ``with`` block's __exit__ would otherwise drain them, then re-raise.
+            cancel_pool_on_interrupt(ex, stop)
+            raise
     return results

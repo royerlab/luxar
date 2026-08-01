@@ -6,6 +6,21 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
+#### Fixed — Ctrl-C now stops batch/tiled fitting instead of draining the queue (#736)
+
+The three parallel subprocess pools — `batch-fit run` (local multi-GPU) and
+`gsplat fit -j N` for both uniform and content tiling — submitted every task up
+front to a `ThreadPoolExecutor` and iterated `as_completed(...)` inside a bare
+`with` block. On Ctrl-C the `KeyboardInterrupt` could not escape until
+`Executor.__exit__` ran `shutdown(wait=True)` with the default
+`cancel_futures=False`, so every still-queued task ran to completion first,
+each freed worker thread spawning a fresh `luxar gsplat fit` subprocess — a
+single Ctrl-C on a 500-tile run kept fitting for hours. All three sites now
+catch the interrupt around the completion loop, set a stop flag (so a worker
+that already dequeued its task bails before launching), shut the executor down
+with `cancel_futures=True`, and re-raise. In-flight children still die on the
+terminal's process-group SIGINT; the queue just no longer respawns behind them.
+
 #### Fixed — npm library build no longer inlines a second THREE runtime (#743)
 
 The publishable library build externalized only the exact module id `three`,
