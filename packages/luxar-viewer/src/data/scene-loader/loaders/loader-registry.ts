@@ -18,13 +18,39 @@ import { GEOMETRY_TYPES } from '../../../types/format-contract';
 import type { LinesDataLoader } from '../../../types/lines';
 import type { GSplatsDataLoader } from '../../../types/gsplats';
 
-/**
- * Any geometry loader. The per-kind buckets are homogeneous, but the store
- * itself is kind-agnostic — the typed accessors below narrow on the way out.
- */
-export type AnyDataLoader = DataLoader | LinesDataLoader | GSplatsDataLoader;
 import { log, Modules } from '../../../utils/log';
 import { classifyLoaderError, type LoaderErrorKind } from '../nodes/load-leaf-error-dispatch';
+
+/** Any geometry loader. */
+export type AnyDataLoader = DataLoader | LinesDataLoader | GSplatsDataLoader;
+
+/**
+ * Which loader interface belongs to which geometry kind.
+ *
+ * The three loader interfaces are structurally distinct, so this mapping is
+ * what keeps the kind-keyed store honest: `register`/`loadersOf` are generic in
+ * `K`, so `register('points', path, someLinesLoader)` is a compile error rather
+ * than a silent mis-route through the wrong update path.
+ */
+export type LoaderByKind = {
+  points: DataLoader;
+  lines: LinesDataLoader;
+  gsplats: GSplatsDataLoader;
+};
+
+/**
+ * Compile-time guard: every {@link GeometryKind} must have an entry in
+ * {@link LoaderByKind}. A geometry kind added to `contract.yaml` without a
+ * loader type above fails to compile here, with `Exclude<…>` naming the
+ * missing kind.
+ *
+ * Note this cannot be expressed as `interface LoaderByKind extends
+ * Record<GeometryKind, AnyDataLoader>` — an interface *inherits* members it
+ * does not redeclare, so a new kind would silently pick up the permissive
+ * `AnyDataLoader` instead of erroring.
+ */
+type AssertNever<T extends never> = T;
+export type EveryKindHasALoaderType = AssertNever<Exclude<GeometryKind, keyof LoaderByKind>>;
 
 /**
  * Error information tracked for failed loaders.
@@ -84,26 +110,33 @@ export class LoaderRegistry {
     GEOMETRY_TYPES.map((kind) => [kind as GeometryKind, new Map<string, AnyDataLoader>()])
   );
 
-  /** Loaders of one geometry kind, keyed by scene path. */
-  loadersOf(kind: GeometryKind): Map<string, AnyDataLoader> {
+  /**
+   * Loaders of one geometry kind, keyed by scene path, narrowed to that kind's
+   * loader interface via {@link LoaderByKind}.
+   *
+   * The single cast in this class: the heterogeneous store cannot express
+   * "bucket `K` holds `LoaderByKind[K]`" internally, so the invariant is
+   * enforced at this boundary and every caller above it is fully typed.
+   */
+  loadersOf<K extends GeometryKind>(kind: K): Map<string, LoaderByKind[K]> {
     const bucket = this.byKind.get(kind);
     if (!bucket) throw new Error(`LoaderRegistry: unknown geometry kind '${kind}'`);
-    return bucket;
+    return bucket as Map<string, LoaderByKind[K]>;
   }
 
   /** Points loaders indexed by scene path */
   get loaders(): Map<string, DataLoader> {
-    return this.loadersOf('points') as Map<string, DataLoader>;
+    return this.loadersOf('points');
   }
 
   /** Lines loaders indexed by scene path */
   get linesLoaders(): Map<string, LinesDataLoader> {
-    return this.loadersOf('lines') as Map<string, LinesDataLoader>;
+    return this.loadersOf('lines');
   }
 
   /** GSplats loaders indexed by scene path */
   get gsplatLoaders(): Map<string, GSplatsDataLoader> {
-    return this.loadersOf('gsplats') as Map<string, GSplatsDataLoader>;
+    return this.loadersOf('gsplats');
   }
 
   /** Error tracking for failed loaders */
@@ -113,8 +146,11 @@ export class LoaderRegistry {
   // Registration
   // ---------------------------------------------------------------------------
 
-  /** Register a loader of any geometry kind for a given path. */
-  register(kind: GeometryKind, path: string, loader: AnyDataLoader): void {
+  /**
+   * Register a loader for a given path. The loader type must match the kind —
+   * `register('points', p, someLinesLoader)` is a compile error.
+   */
+  register<K extends GeometryKind>(kind: K, path: string, loader: LoaderByKind[K]): void {
     this.loadersOf(kind).set(path, loader);
   }
 
@@ -128,7 +164,7 @@ export class LoaderRegistry {
    * released. The loader object itself stays alive in the lod_group's
    * ``ensureLoaded`` closure for reload.
    */
-  unregister(kind: GeometryKind, path: string): void {
+  unregister<K extends GeometryKind>(kind: K, path: string): void {
     this.loadersOf(kind).delete(path);
   }
 

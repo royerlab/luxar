@@ -316,16 +316,34 @@ describe('LoaderRegistry — kind-keyed surface', () => {
 
   it('disposeAll disposes every kind and empties every bucket', () => {
     const r = new LoaderRegistry();
-    const stubs = GEOMETRY_TYPES.map((kind) => {
-      const stub = makeStub<DataLoader>();
-      r.register(kind as GeometryKind, `/${kind}`, stub);
-      return stub;
-    });
+    // Each kind gets a stub of ITS OWN loader type — `register` is generic in
+    // the kind, so passing the wrong one here would not compile.
+    const points = makeStub<DataLoader>();
+    const lines = makeStub<LinesDataLoader>();
+    const gsplats = makeStub<GSplatsDataLoader>();
+    r.register('points', '/p', points);
+    r.register('lines', '/l', lines);
+    r.register('gsplats', '/g', gsplats);
+    expect(r.totalLoaderCount).toBe(GEOMETRY_TYPES.length);
 
     r.disposeAll();
 
-    for (const stub of stubs) expect(stub.dispose).toHaveBeenCalledTimes(1);
+    for (const stub of [points, lines, gsplats]) {
+      expect(stub.dispose).toHaveBeenCalledTimes(1);
+    }
     expect(r.totalLoaderCount).toBe(0);
     expect(r.hasLoaders).toBe(false);
+  });
+
+  it('rejects a loader whose type does not match its kind (type-level)', () => {
+    const r = new LoaderRegistry();
+    // @ts-expect-error a LinesDataLoader must not be registrable as 'points'
+    r.register('points', '/p', makeStub<LinesDataLoader>());
+    // @ts-expect-error nor a DataLoader as 'gsplats'
+    r.register('gsplats', '/g', makeStub<DataLoader>());
+    // The @ts-expect-error directives above are the assertion: if the generic
+    // signature ever loosens back to `AnyDataLoader`, these stop erroring and
+    // `tsc` fails on the now-unused directives.
+    expect(r.totalLoaderCount).toBe(2);
   });
 });
