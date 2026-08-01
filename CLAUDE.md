@@ -121,7 +121,7 @@ The build system is designed to work on **fresh Linux/macOS machines** with mini
 - **HPC/no-sudo**: no extra prerequisites — the Makefile auto-detects and uses venv fallback
 
 **What `make setup-dev` installs (no sudo needed):**
-- **Node.js 20.19+** (installs the 22 LTS by default): via nvm (Linux) or Homebrew (macOS). 20.19 is the floor required by Vite 8 and matches `engines.node` in `packages/luxar-viewer/package.json`.
+- **Node.js 22.22+** (installs the 22 LTS by default): via nvm (Linux) or Homebrew (macOS). The floor is jsdom 30 (dev/test only), which declares `engines ^22.22.2` and whose undici 8 dependency crashes on Node older than 22.16; Vite 8 alone only needs 20.19. Matches `engines.node` (`>=22.22.2`) in `packages/luxar-viewer/package.json`.
 - **pnpm**: TypeScript package manager (via npm global or `--prefix ~/.local` fallback on HPC)
 - **Hatch**: Python environment manager (via pipx, or venv fallback on HPC)
 - **Pre-commit hooks**: ruff (lint + format), bandit, and mypy — see `.pre-commit-config.yaml`

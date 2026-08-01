@@ -131,7 +131,7 @@ A runnable example with a non-trivial host page lives in
 
 ### Prerequisites
 
-- Node.js 20.19+ (Node.js 22 LTS recommended) and pnpm
+- Node.js 22.22+ (Node.js 22 LTS recommended) and pnpm
 - Modern web browser with WebGL 2.0 support
 - Zarr dataset (see [Data Format](#data-format) section)
 
