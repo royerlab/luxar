@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import io
 import re
+from html import escape as _escape_html
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Dict, Optional, Set, Tuple
@@ -552,6 +553,12 @@ def sanitize_html(html: str) -> str:
     preserved as closely as possible (original attribute order); text content is
     HTML-escaped so ``&``/``<``/``>`` round-trip.
 
+    If the stdlib parser cannot handle the input at all (e.g. it raises
+    ``AssertionError`` on malformed marked sections like ``<![bogus]>`` on
+    CPython builds without the 2025 ``html.parser`` security patch), the whole
+    input is escaped as plain text instead — arbitrary overlay HTML must never
+    abort validation.
+
     This is defense-in-depth, not a hard security boundary: the viewer
     re-sanitizes overlay HTML client-side before rendering it.
 
@@ -568,6 +575,11 @@ def sanitize_html(html: str) -> str:
         raise ValueError(f"html must be a string, got {type(html).__name__}")
 
     sanitizer = _HtmlSanitizer()
-    sanitizer.feed(html)
-    sanitizer.close()
+    try:
+        sanitizer.feed(html)
+        sanitizer.close()
+    except Exception:
+        # Unpatched CPython's HTMLParser raises AssertionError on unknown
+        # marked-section keywords ("<![bogus]>"); fail closed as plain text.
+        return _escape_html(html, quote=False)
     return sanitizer.get_output()

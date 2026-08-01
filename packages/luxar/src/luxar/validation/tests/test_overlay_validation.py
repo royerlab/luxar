@@ -343,3 +343,22 @@ class TestSanitizeHtml:
     def test_preserves_text_entities(self):
         html = "<p>a &amp; b &lt; c</p>"
         assert sanitize_html(html) == html
+
+    def test_malformed_marked_sections_do_not_raise(self):
+        # Unpatched CPython's HTMLParser raises AssertionError on unknown
+        # marked-section keywords; sanitize_html must never propagate that.
+        for bad in ("<![bogus]>", "<![bogus", "<! >", "<!-", "</ x>", "<?php x ?>"):
+            result = sanitize_html(bad)
+            assert "<!" not in result
+            assert "<?" not in result
+
+    def test_parser_failure_falls_back_to_escaped_text(self, monkeypatch):
+        # Simulate the stdlib parser blowing up (as it does on Pythons without
+        # the 2025 html.parser patch): the input must come back fully escaped.
+        from luxar.validation import overlays
+
+        def boom(self, data):
+            raise AssertionError("unknown status keyword 'bogus' in marked section")
+
+        monkeypatch.setattr(overlays._HtmlSanitizer, "feed", boom)
+        assert sanitize_html("<b>x</b> & y") == "&lt;b&gt;x&lt;/b&gt; &amp; y"
