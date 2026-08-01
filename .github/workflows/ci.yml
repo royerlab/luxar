@@ -144,8 +144,14 @@ jobs:
       # contends, because each matrix leg gets its own machine).
       #
       # Pinning frees ~13 of 16 cores, which `-n 4` (pytest-xdist, see
-      # pyproject) then spends on real parallelism: 45.6/44.0/47.5 min ->
-      # 15.8/16.6/17.0, i.e. faster than the 21.3/23.8/23.4 GitHub baseline.
+      # pyproject) then spends on real parallelism: 45.5/44.0/47.5 min ->
+      # 15.8/16.6/16.9, i.e. faster than the 21.3/23.8/23.4 GitHub baseline.
+      # Same 6261 passed / 288 skipped and the same 86.44% coverage either way.
+      #
+      # Do NOT "improve" `-n 4` to `-n auto`. xdist's auto reads os.cpu_count(),
+      # which inside the runner container reports the HOST's 16 -- not the 4-CPU
+      # cgroup quota (sched_getaffinity says 16 too; only /sys/fs/cgroup/cpu.max
+      # tells the truth). `auto` would start 16 workers per leg against 4 CPUs.
       #
       # Set here rather than in the runner image so hosted and self-hosted legs
       # execute identically -- divergence between the two is what produced the
