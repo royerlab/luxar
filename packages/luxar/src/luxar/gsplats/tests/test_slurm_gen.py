@@ -195,11 +195,13 @@ mv() {{
     assert result.returncode == 0, result.stderr
     arguments = capture_path.read_text().splitlines()
     expected_output = output_dir / "tiles/t00_c00_tile000.gsplats.zarr"
+    # Fit now writes into the per-attempt STAGING dir; the harness sets only
+    # SLURM_ARRAY_TASK_ID=0, so JOB_ID/RESTART_COUNT default to 0 -> `.tmp.0.0.0`.
     assert arguments[:4] == [
         "gsplat",
         "fit",
         "/data/test.zarr",
-        f"{expected_output}.tmp",
+        f"{expected_output}.tmp.0.0.0",
     ]
     preset_index = arguments.index("--preset")
     assert arguments[preset_index + 1] == preset
@@ -208,6 +210,87 @@ mv() {{
     assert not (tmp_path / "output-backtick").exists()
     assert not (tmp_path / "preset-injected").exists()
     assert not (tmp_path / "preset-backtick").exists()
+
+
+def test_fit_script_uses_per_attempt_staging_dir() -> None:
+    """Issue #679: each fit attempt owns a unique staging dir, not one .tmp.
+
+    The generated ``run_task()`` must derive ``STAGING`` from the Slurm attempt
+    identifiers (JOB_ID / ARRAY_TASK_ID / RESTART_COUNT) so guaranteed and
+    preemptible arrays — and requeues — never write into the same store. Every
+    former ``${OUTPUT}.tmp`` reference must now go through ``${STAGING}``, and the
+    atomic ``mv -T`` claim must promote ``${STAGING}`` (not ``.tmp``) to OUTPUT.
+    """
+    script = generate_fit_sbatch(_packed_manifest(1), "")
+
+    staging_def = (
+        'local STAGING="${OUTPUT}.tmp.${SLURM_JOB_ID:-0}'
+        '.${SLURM_ARRAY_TASK_ID:-0}.${SLURM_RESTART_COUNT:-0}"'
+    )
+    assert staging_def in script
+
+    # The ONLY line allowed to reference ${OUTPUT}.tmp is the STAGING definition;
+    # everything else (fit output, cleanup, empty check, mv -T) uses ${STAGING}.
+    tmp_lines = [ln for ln in script.splitlines() if "${OUTPUT}.tmp" in ln]
+    assert tmp_lines == [f"    {staging_def}"], tmp_lines
+
+    # Atomic claim promotes the isolated staging store.
+    assert 'mv -T "${STAGING}" "$OUTPUT"' in script
+    # Fit writes into the staging store.
+    assert '"${STAGING}"' in script
+    # Empty-marker handling is per-attempt too.
+    assert '[ -f "${STAGING}.empty" ]' in script
+
+
+def test_fit_script_empty_marker_defers_to_real_output() -> None:
+    """A real store always wins over an empty result — never both on disk.
+
+    The 0-splat branch claims the marker FIRST and then rechecks OUTPUT,
+    dropping the marker if a real store already stands; a successful/lost
+    `mv -T` claim also drops any stale marker. Touch-before-recheck (plus the
+    real path's remove-after-mv) closes every interleaving — checking before
+    touching leaves a window where a racing real promotion lands between the
+    check and the touch and both terminal representations survive, so a later
+    store removal would silently turn the slot 'legitimately empty'.
+    """
+    script = generate_fit_sbatch(_packed_manifest(1), "")
+    lines = script.splitlines()
+
+    # The empty branch touches the marker, THEN rechecks OUTPUT and drops the
+    # marker when a real store already stands.
+    empty_if = next(
+        i for i, ln in enumerate(lines) if '[ -f "${STAGING}.empty" ]' in ln
+    )
+    touch = next(i for i, ln in enumerate(lines) if 'touch "${OUTPUT}.empty"' in ln)
+    guard = next(
+        i
+        for i, ln in enumerate(lines)
+        if i > empty_if and 'if [ -d "$OUTPUT" ]; then' in ln
+    )
+    drop = next(
+        i for i, ln in enumerate(lines) if i > guard and 'rm -f "${OUTPUT}.empty"' in ln
+    )
+    assert empty_if < touch < guard < drop
+
+    # After the atomic claim, a real store stands at OUTPUT: the stale marker
+    # is removed (winner and loser paths both flow through this line).
+    mv = next(i for i, ln in enumerate(lines) if 'mv -T "${STAGING}"' in ln)
+    marker_rm = next(
+        i for i, ln in enumerate(lines) if i > mv and 'rm -f "${OUTPUT}.empty"' in ln
+    )
+    assert marker_rm > mv
+
+
+def test_content_fit_script_uses_staging_dir() -> None:
+    """Content mode (plan-box) fit also writes into ${STAGING}, not .tmp."""
+    manifest = _packed_manifest(1)
+    manifest.mode = "content"
+    manifest.plan_path = "/output/plan.json"
+    script = generate_fit_sbatch(manifest, "")
+    assert "--plan-box" in script
+    tmp_lines = [ln for ln in script.splitlines() if "${OUTPUT}.tmp" in ln]
+    assert all("local STAGING=" in ln for ln in tmp_lines), tmp_lines
+    assert 'mv -T "${STAGING}" "$OUTPUT"' in script
 
 
 @pytest.mark.parametrize("separator", ["\0", "\r", "\n"])
