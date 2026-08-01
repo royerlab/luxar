@@ -4,7 +4,7 @@
  * Mirrors the visual point shader in `rendering/materials/point/shader-glsl.ts`
  * with three picking-specific additions:
  *   - `uNodeId` uniform + `vNodeId` / `vElementId` varyings, written
- *     into the RGBA32F pick buffer as `(nodeId, elementId, brightness, 1)`.
+ *     into the RGBA32F pick buffer as `(nodeId, elementId-low16, brightness, elementId-high16)`.
  *   - 80%-radius truncation so the pick footprint tracks the visible disc
  *     while staying slightly biased toward the bright core.
  *   - Brightness-as-depth so the brightest overlapping fragment wins
@@ -63,7 +63,7 @@ export const POINT_PICK_VERTEX_SHADER = /* glsl */ `
     out mediump float vPickSize;  // RAW pick sprite size (pre-clamp) — sizeScale² parity with the visual shader
     out mediump vec2 vSpriteCoord;
     flat out highp float vNodeId;
-    flat out highp float vElementId;
+    flat out highp vec2 vElementId;
 
     void main() {
       // === Point-texture fetch prologue (visual-shader parity) ===
@@ -132,13 +132,13 @@ export const POINT_PICK_VERTEX_SHADER = /* glsl */ `
       // Storage slot, NOT gl_InstanceID (the draw slot): identical
       // under Phase-1 identity ordering, and stays correct once the
       // sort worker permutes draw order (Phase 2+).
-      vElementId = float(luxarSortedIndex());
+      vElementId = luxarElementIdParts();
     }
 `;
 
 /**
  * Picking fragment shader for points.
- * Outputs vec4(nodeId, elementId, brightness, 1.0) with brightness-as-depth.
+ * Outputs vec4(nodeId, elementId-low16, brightness, elementId-high16) with brightness-as-depth.
  */
 export const POINT_PICK_FRAGMENT_SHADER = /* glsl */ `
     precision highp float;
@@ -149,7 +149,7 @@ export const POINT_PICK_FRAGMENT_SHADER = /* glsl */ `
     in mediump float vPickSize; // raw pick sprite size (sub-pixel compensation)
     in mediump vec2 vSpriteCoord;
     flat in highp float vNodeId;
-    flat in highp float vElementId;
+    flat in highp vec2 vElementId;
 
     out vec4 fragColor;
 
@@ -180,7 +180,7 @@ export const POINT_PICK_FRAGMENT_SHADER = /* glsl */ `
       float brightness = falloff * vNearFade * pickSizeScale * pickSizeScale;
       if (brightness < 1e-4) discard;
 
-      fragColor = vec4(vNodeId, vElementId, brightness, 1.0);
+      fragColor = vec4(vNodeId, vElementId.x, brightness, vElementId.y);
       gl_FragDepth = 1.0 - clamp(brightness, 0.0, 1.0);
     }
 `;

@@ -2,8 +2,8 @@
  * Line Picking Material for GPU object picking.
  *
  * Renders line segments to an RGBA32F pick buffer encoding:
- *   R = nodeId, G = elementId (aSortedIndex — the storage slot),
- *   B = brightness, A = 1.0
+ *   R = nodeId, G = elementId (aSortedIndex — the storage slot) low
+ *   16 bits, B = brightness, A = the same elementId's high 16 bits
  *
  * Shader source-of-truth lives in `./shaders.ts`.
  */

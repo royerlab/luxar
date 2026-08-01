@@ -3,7 +3,7 @@
  *
  * Mirrors the visual gsplat shader with picking-specific adjustments:
  *   - `uNodeId` uniform + `vNodeId` / `vElementId` varyings, written
- *     into the RGBA32F pick buffer as `(nodeId, elementId, brightness, 1)`.
+ *     into the RGBA32F pick buffer as `(nodeId, elementId-low16, brightness, elementId-high16)`.
  *   - Tighter truncation: 1.5σ (vs 3σ for visual) so the pick footprint
  *     is the bright core only.
  *   - Always max-projection (no ray-integral) — picking only needs the
@@ -65,7 +65,7 @@ export const GSPLAT_PICK_VERTEX_SHADER = /* glsl */ `
     flat out highp vec3 vL2D;
     flat out highp vec2 vCenterScreen;
     flat out highp float vNodeId;
-    flat out highp float vElementId;
+    flat out highp vec2 vElementId;
 
     mat3 unpackCholesky3D(vec2 c01, vec2 c23, vec2 c45) {
         return mat3(
@@ -252,13 +252,13 @@ export const GSPLAT_PICK_VERTEX_SHADER = /* glsl */ `
         // Storage slot, NOT gl_InstanceID (the draw slot): identical
         // under Phase-1 identity ordering, and stays correct once the
         // sort worker permutes draw order (Phase 2+).
-        vElementId = float(luxarSortedIndex());
+        vElementId = luxarElementIdParts();
     }
 `;
 
 /**
  * Picking fragment shader for gsplats.
- * Outputs vec4(nodeId, elementId, brightness, 1.0) with brightness-as-depth
+ * Outputs vec4(nodeId, elementId-low16, brightness, elementId-high16) with brightness-as-depth
  * (or real projected depth when `uSurfaceDepth == 1` — surface/'normal' mode).
  * Uses tighter truncation (1.5σ squared = 2.25) for precise picking.
  */
@@ -269,7 +269,7 @@ export const GSPLAT_PICK_FRAGMENT_SHADER = /* glsl */ `
     flat in highp vec3 vL2D;
     flat in highp vec2 vCenterScreen;
     flat in highp float vNodeId;
-    flat in highp float vElementId;
+    flat in highp vec2 vElementId;
 
     uniform highp float uShiftC;
     uniform highp float uInvOneMinusC;
@@ -294,7 +294,7 @@ export const GSPLAT_PICK_FRAGMENT_SHADER = /* glsl */ `
 
         float brightness = clamp(intensity, 0.0, 1.0);
 
-        fragColor = vec4(vNodeId, vElementId, brightness, 1.0);
+        fragColor = vec4(vNodeId, vElementId.x, brightness, vElementId.y);
         // Pick depth convention (synced from the MAIN material's blending
         // mode by PickingSystem.renderPickBuffer):
         //   - surface ('normal') mode: the user sees a depth-sorted
