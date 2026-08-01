@@ -13,6 +13,7 @@ import { syncGSplatMaterialWithGeometry } from '../material-sync-helpers';
 import type { GSplatsMetadata, GSplatsUserData, GSplatsDataLoader } from '../../types/gsplats';
 import type { PickingSystem } from '../picking/picking-system';
 import { applyTransform } from './transforms';
+import { computeDisplayRange } from '../../ui/layers/layer-state';
 
 /** Build a GSplats mesh + optional picking shadow node. */
 export function createGSplatsNode(
@@ -32,32 +33,66 @@ export function createGSplatsNode(
   // values until the first panel interaction, if ever.
   // `truncation_radius` stays on `attrs`: it is a per-leaf geometry
   // property, deliberately NOT composited (see COMPOSITING_ATTRS).
+  //
+  // Resolve the colormap texture UP FRONT so the color-GOG decision below
+  // can mirror the panel: on a colormapped node the authored
+  // intensity/offset define the scalar WINDOW (value→LUT mapping), NOT a
+  // post-LUT color gain — pushing them as both would double-apply (#936).
+  // With colormap='custom', the scene loader has stashed bytes as
+  // `nodeAttrs.customLutBytes`; the texture helper falls back to viridis on
+  // missing/invalid bytes. A `colormap` attr can still fail the texture
+  // lookup, so key the decision on the actual texture (the same condition
+  // that gates `updateColormapTexture`), not just the attr's presence.
+  const composedIntensity = (nodeAttrs.intensity as number | undefined) ?? 1.0;
+  const composedOffset = (nodeAttrs.offset as number | undefined) ?? 0.0;
+  const gsColormapName = nodeAttrs.colormap as string | undefined;
+  const gsColormapTex = gsColormapName
+    ? getColormapTexture(gsColormapName, nodeAttrs.customLutBytes as Uint8Array | undefined)
+    : null;
+  const hasColormap = !!gsColormapTex;
+
   const material: LuxarGSplatMaterial = materialManager.getGSplatMaterial({
     opacity: (nodeAttrs.opacity as number | undefined) ?? 1.0,
     absorption: (nodeAttrs.absorption as number | undefined) ?? 1.0,
     gamma: (nodeAttrs.gamma as number | undefined) ?? 1.0,
-    intensity: (nodeAttrs.intensity as number | undefined) ?? 1.0,
-    offset: (nodeAttrs.offset as number | undefined) ?? 0.0,
+    // Identity color GOG when a colormap will be applied (the window is
+    // pushed via `updateScalarRange` below); the authored gain only tints
+    // direct-color nodes.
+    intensity: hasColormap ? 1.0 : composedIntensity,
+    offset: hasColormap ? 0.0 : composedOffset,
     blendingMode: (nodeAttrs.blending_mode as string | undefined as BlendingMode) ?? 'additive',
     truncationRadius: (attrs.truncation_radius as number | undefined) ?? 3.0,
   });
 
-  // Apply colormap if specified. With colormap='custom', the scene
-  // loader has stashed bytes as `nodeAttrs.customLutBytes`; the
-  // texture helper falls back to viridis on missing/invalid bytes.
-  // GSplat materials are PER NODE (each carries the node's own
-  // `uSplatTex`), so the colormap applies directly to the node-owned
-  // material — the historical clone-on-divergence dance is gone.
-  const gsColormapName = nodeAttrs.colormap as string | undefined;
-  if (gsColormapName) {
-    const gsLutBytes = nodeAttrs.customLutBytes as Uint8Array | undefined;
-    const gsColormapTex = getColormapTexture(gsColormapName, gsLutBytes);
-    if (gsColormapTex) {
-      material.updateColormapTexture(gsColormapTex);
-      const ampRange = nodeAttrs.amplitude_data_range as [number, number] | undefined;
-      const gsScalarRange = ampRange ?? [0, 1];
-      material.updateScalarRange(gsScalarRange[0], gsScalarRange[1]);
+  // Apply the colormap. GSplat materials are PER NODE (each carries the
+  // node's own `uSplatTex`), so the colormap applies directly to the
+  // node-owned material — the historical clone-on-divergence dance is gone.
+  if (gsColormapTex) {
+    material.updateColormapTexture(gsColormapTex);
+    // Scalar window == the display window the panel would recover from the
+    // authored gain/offset (layer-state.ts). The identity-vs-window decision
+    // follows the RAW LEAF gain (`attrs.intensity/offset`), mirroring the
+    // panel (layer-state.ts ~L423-437 starts from the data range whenever the
+    // LEAF gain is identity and folds ancestor gains separately) — NOT the
+    // composed value, which would treat an ancestor-only gain as an authored
+    // window and discard `amplitude_data_range`. When the leaf DID author a
+    // window, use the COMPOSED gain for its VALUE so any ancestor gain folds
+    // onto the leaf window (composed == the panel's effective gain there).
+    // Note the acknowledged narrow gap: for an ancestor-only gain above a
+    // non-windowed colormapped leaf, only the layer=true panel path composes
+    // that into the window — the layer=false load-time window here keeps the
+    // data range (tracked separately).
+    const leafRaw = attrs as unknown as Record<string, unknown>;
+    const leafIntensity = (leafRaw.intensity as number | undefined) ?? 1.0;
+    const leafOffset = (leafRaw.offset as number | undefined) ?? 0.0;
+    let gsScalarRange: [number, number];
+    if (leafIntensity === 1.0 && leafOffset === 0.0) {
+      gsScalarRange = (nodeAttrs.amplitude_data_range as [number, number] | undefined) ?? [0, 1];
+    } else {
+      const { min, max } = computeDisplayRange(composedIntensity, composedOffset);
+      gsScalarRange = [min, max];
     }
+    material.updateScalarRange(gsScalarRange[0], gsScalarRange[1]);
   }
 
   const mesh = createInstancedGSplatsMesh(meshConfig, material);
