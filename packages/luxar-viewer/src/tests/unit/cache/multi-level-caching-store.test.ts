@@ -1570,7 +1570,7 @@ describe('MultiLevelCachingStore', () => {
     });
 
     it(
-      'VC-1: dispose aborts in-flight cache validation and removes the queue entry',
+      'VC-1: dispose aborts in-flight cache validation (entry self-evicts when the aborted validation settles)',
       { timeout: 15_000 },
       async () => {
         // Mock fetch that hangs UNTIL the abort signal fires; abort path
@@ -1619,8 +1619,8 @@ describe('MultiLevelCachingStore', () => {
         // (SHA-256(url)). The first to start init populates the
         // static validationQueues entry; the second waits on it.
         // When the first is disposed mid-validation, its queue entry
-        // is aborted and removed — so the second can install its own
-        // entry and complete cleanly.
+        // is aborted (self-evicting when the aborted validation settles)
+        // — so the second can install its own entry and complete cleanly.
         const url = 'https://example.com/shared-dataset.zarr';
 
         // First fetch hangs forever to keep store-1's validation
