@@ -62,6 +62,8 @@ import {
   loadLinesDualChunkIndex,
   registerLinesArrayBounds,
   computeVertexRangesFromIndices,
+  sortedUniqueVertexIndices,
+  remapSegmentIndices,
 } from './chunk-index-loader';
 import { createEmptyLinesData } from './projection';
 
@@ -453,14 +455,12 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       segmentData = await this.loadSegmentRanges(segmentRanges);
     }
 
-    // Collect unique vertex indices from loaded segments
-    const uniqueVertexIndices = new Set<number>();
-    for (let i = 0; i < segmentData.length; i++) {
-      uniqueVertexIndices.add(segmentData[i]);
-    }
-
-    // Stage 2: Load required vertices
-    const sortedIndices = Array.from(uniqueVertexIndices).sort((a, b) => a - b);
+    // Stage 2: Load required vertices.
+    // Collect the sorted, unique vertex indices referenced by the loaded
+    // segments. A JS `Set` is deliberately NOT used: V8 caps a `Set` at
+    // 2^24 entries and throws on the next `.add`, so a lines node with more
+    // than 2^24 unique vertex indices silently failed to load (issue #1049).
+    const sortedIndices = sortedUniqueVertexIndices(segmentData);
     const vertexRanges = computeVertexRangesFromIndices(sortedIndices);
     const mergedVertexRanges = mergeRanges(vertexRanges);
 
@@ -619,25 +619,13 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       const remapSession = session?.begin('Index Remap');
       let vertexCount: number;
       try {
-        // Build global → local index mapping
-        const vertexIndexMap = new Map<number, number>();
-        let localIdx = 0;
-        for (const range of mergedVertexRanges) {
-          for (let i = range.start; i < range.end; i++) {
-            vertexIndexMap.set(i, localIdx++);
-          }
-        }
-
-        // Remap segment indices directly in accumulator buffer (ZERO allocation!)
-        for (let i = 0; i < segmentData.length; i++) {
-          const localIndex = vertexIndexMap.get(segmentData[i]);
-          if (localIndex === undefined) {
-            throw new Error(`Vertex index ${segmentData[i]} not found in loaded data`);
-          }
-          segmentBuffer[i] = localIndex;
-        }
-
-        vertexCount = vertexIndexMap.size;
+        // Remap segment indices directly into the accumulator buffer (ZERO
+        // allocation). A prefix-offset table + binary search replaces the old
+        // global → local `Map`, which V8 caps at 2^24 entries and would throw
+        // for a node with more than 2^24 unique vertex indices (issue #1049).
+        // The helper both writes `segmentBuffer` and returns the local count,
+        // and throws the same "not found in loaded data" error on a stray index.
+        vertexCount = remapSegmentIndices(segmentData, mergedVertexRanges, segmentBuffer);
       } finally {
         remapSession?.end();
       }
@@ -692,25 +680,14 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     let remappedSegments: Uint32Array;
     let vertexIndexMapSize: number;
     try {
-      // Build global → local index mapping
-      const vertexIndexMap = new Map<number, number>();
-      let localIdx = 0;
-      for (const range of mergedVertexRanges) {
-        for (let i = range.start; i < range.end; i++) {
-          vertexIndexMap.set(i, localIdx++);
-        }
-      }
-
-      // Remap segment indices to local space
+      // Remap segment indices to local space. A prefix-offset table + binary
+      // search replaces the old global → local `Map`, which V8 caps at 2^24
+      // entries and would throw for a node with more than 2^24 unique vertex
+      // indices (issue #1049). The helper writes `remappedSegments` and returns
+      // the local vertex count, throwing the same "not found in loaded data"
+      // error on a stray index.
       remappedSegments = new Uint32Array(segmentData.length);
-      for (let i = 0; i < segmentData.length; i++) {
-        const localIndex = vertexIndexMap.get(segmentData[i]);
-        if (localIndex === undefined) {
-          throw new Error(`Vertex index ${segmentData[i]} not found in loaded data`);
-        }
-        remappedSegments[i] = localIndex;
-      }
-      vertexIndexMapSize = vertexIndexMap.size;
+      vertexIndexMapSize = remapSegmentIndices(segmentData, mergedVertexRanges, remappedSegments);
     } finally {
       remapSession?.end();
     }

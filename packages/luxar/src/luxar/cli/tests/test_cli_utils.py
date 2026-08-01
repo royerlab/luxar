@@ -517,11 +517,25 @@ class TestWaitForServer:
 
     def test_returns_false_on_timeout(self) -> None:
         """Nothing listening and no thread → False after the timeout."""
-        from luxar.cli.utils import find_available_port, wait_for_server
+        import socket
 
-        port = find_available_port(59800)
-        assert port is not None
-        assert wait_for_server("127.0.0.1", port, timeout=0.3) is False
+        from luxar.cli.utils import wait_for_server
+
+        # Hold a bound-but-unlistened socket for the duration of the probe.
+        # A bound socket that never calls listen() refuses connections, and
+        # holding it open reserves the port for the whole probe window. That
+        # closes both flaky paths the old fixed-port find_available_port form
+        # left open: nothing else can bind and start listening on it (a TOCTOU
+        # steal), and the probe's autobound source port can no longer collide
+        # with the destination and complete a loopback self-connect with no
+        # listener. Using an OS-assigned port also avoids the ephemeral range.
+        holder = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        holder.bind(("127.0.0.1", 0))
+        port = holder.getsockname()[1]
+        try:
+            assert wait_for_server("127.0.0.1", port, timeout=0.3) is False
+        finally:
+            holder.close()
 
     def test_all_interfaces_host_probed_via_loopback(self) -> None:
         """0.0.0.0 binds are probed on 127.0.0.1."""
