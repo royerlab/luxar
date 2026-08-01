@@ -49,12 +49,22 @@ function makePostProcessing() {
   };
 }
 
-function makeCtx(initialCamera: THREE.PerspectiveCamera | THREE.OrthographicCamera) {
+function makeCtx(
+  initialCamera: THREE.PerspectiveCamera | THREE.OrthographicCamera,
+  controlsOverride?: ReturnType<typeof makeControls>['controls']
+) {
   let currentCamera: THREE.Camera = initialCamera;
-  const { controls, setCamera: controlsSetCamera, setControlTypeMock } = makeControls();
+  const made = makeControls();
+  const controls = controlsOverride ?? made.controls;
+  const { setCamera: controlsSetCamera, setControlTypeMock } = made;
   const { pp, setCamera: ppSetCamera } = makePostProcessing();
   const updateMaterialsForCurrentCamera = vi.fn();
   const setLastOrthoZoom = vi.fn();
+  // Backing store so the FOV round-trips through the ctx exactly like the host.
+  let lastPerspectiveFov = 47;
+  const setLastPerspectiveFov = vi.fn((fov: number) => {
+    lastPerspectiveFov = fov;
+  });
 
   const ctx: CameraModeCtx = {
     getCamera: () => currentCamera as CameraModeCtx['getCamera'] extends () => infer R ? R : never,
@@ -66,6 +76,8 @@ function makeCtx(initialCamera: THREE.PerspectiveCamera | THREE.OrthographicCame
     postProcessing: pp,
     updateMaterialsForCurrentCamera,
     setLastOrthoZoom,
+    getLastPerspectiveFov: () => lastPerspectiveFov,
+    setLastPerspectiveFov,
   };
 
   return {
@@ -76,6 +88,8 @@ function makeCtx(initialCamera: THREE.PerspectiveCamera | THREE.OrthographicCame
     ppSetCamera,
     updateMaterialsForCurrentCamera,
     setLastOrthoZoom,
+    setLastPerspectiveFov,
+    getLastPerspectiveFov: () => lastPerspectiveFov,
   };
 }
 
@@ -141,40 +155,49 @@ describe('swapToOrthographic', () => {
     expect(ortho.left).toBeCloseTo(-expectedHalfWidth, 3);
   });
 
-  // G4: the swap to ortho deliberately RESETS to a clean front view rather
-  // than preserving the perspective orientation (documented behaviour). Pin
-  // the resulting pose: positioned at focusTarget + (0,0,distance), up = +Y.
-  // Use a tilted perspective camera so a mutant that copied the old
-  // orientation would be caught.
-  it('resets to a clean front view (position = focus + distance·+Z, up = +Y)', () => {
-    const focus = new THREE.Vector3(3, 4, 0); // distance from a tilted camera...
+  // #774: the swap to ortho is POSE-PRESERVING — it copies the perspective
+  // camera's exact position, orientation and up so cycling control modes with
+  // no interaction never shifts or re-frames the view. Use a tilted camera
+  // with a non-default up so a mutant that reset to a front view is caught.
+  it('preserves the perspective pose verbatim (position, quaternion, up)', () => {
+    const focus = new THREE.Vector3(3, 4, 0);
     const persp = new THREE.PerspectiveCamera(60, 1, 0.1, 1000);
-    persp.position.set(3, 4, 25); // 25 units along +Z from focus
+    // OFF-AXIS position: x/y differ from focus so the assertion is NOT
+    // vacuously equal to the old `focus + distance*+Z` front-view reset.
+    persp.position.set(10, -6, 25);
     persp.up.set(1, 0, 0); // deliberately non-default up
     persp.lookAt(focus);
+    persp.updateMatrixWorld();
+    const quatBefore = persp.quaternion.clone();
     const { controls } = makeControls(focus);
-    let currentCamera: THREE.Camera = persp;
-    const ctx = {
-      getCamera: () => currentCamera,
-      setCamera: (cam: THREE.Camera) => {
-        currentCamera = cam;
-      },
-      controls,
-      renderer: makeRenderer(),
-      postProcessing: makePostProcessing().pp,
-      updateMaterialsForCurrentCamera: vi.fn(),
-      setLastOrthoZoom: vi.fn(),
-    } as unknown as CameraModeCtx;
+    const harness = makeCtx(persp, controls);
 
-    swapToOrthographic(ctx);
+    swapToOrthographic(harness.ctx);
 
-    const ortho = currentCamera as THREE.OrthographicCamera;
-    // Positioned along +Z from the focus target at the preserved distance (25).
-    expect(ortho.position.x).toBeCloseTo(3, 6);
-    expect(ortho.position.y).toBeCloseTo(4, 6);
+    const ortho = harness.getCurrentCamera() as THREE.OrthographicCamera;
+    // Position copied verbatim (NOT reset to focus + distance·+Z).
+    expect(ortho.position.x).toBeCloseTo(10, 6);
+    expect(ortho.position.y).toBeCloseTo(-6, 6);
     expect(ortho.position.z).toBeCloseTo(25, 6);
-    // Up reset to +Y regardless of the source camera's up vector.
-    expect(ortho.up.toArray()).toEqual([0, 1, 0]);
+    // Orientation + up copied verbatim (NOT reset to a front view / +Y up).
+    expect(ortho.quaternion.x).toBeCloseTo(quatBefore.x, 6);
+    expect(ortho.quaternion.y).toBeCloseTo(quatBefore.y, 6);
+    expect(ortho.quaternion.z).toBeCloseTo(quatBefore.z, 6);
+    expect(ortho.quaternion.w).toBeCloseTo(quatBefore.w, 6);
+    expect(ortho.up.toArray()).toEqual([1, 0, 0]);
+  });
+
+  // #774: the perspective FOV is stashed at swap-in so the inverse swap can
+  // restore it exactly instead of falling back to the config default.
+  it('stashes the perspective FOV for the inverse swap', () => {
+    const persp = new THREE.PerspectiveCamera(73, 1, 0.1, 1000);
+    persp.position.set(0, 0, 50);
+    const harness = makeCtx(persp);
+
+    swapToOrthographic(harness.ctx);
+
+    expect(harness.setLastPerspectiveFov).toHaveBeenCalledWith(73);
+    expect(harness.getLastPerspectiveFov()).toBe(73);
   });
 });
 
@@ -200,21 +223,114 @@ describe('swapToPerspective', () => {
     expect(harness.ppSetCamera).not.toHaveBeenCalled();
   });
 
-  it('preserves position, quaternion and up vector from the ortho camera', () => {
+  it('preserves quaternion, up and near/far from the ortho camera', () => {
     const ortho = new THREE.OrthographicCamera(-10, 10, 5, -5, 0.1, 1000);
     ortho.position.set(1, 2, 3);
     ortho.up.set(0, 0, 1);
     ortho.quaternion.set(0.1, 0.2, 0.3, 0.9).normalize();
+    ortho.updateMatrixWorld();
     const harness = makeCtx(ortho);
 
     swapToPerspective(harness.ctx);
 
     const persp = harness.getCurrentCamera() as THREE.PerspectiveCamera;
-    expect(persp.position.toArray()).toEqual([1, 2, 3]);
     expect(persp.up.toArray()).toEqual([0, 0, 1]);
     expect(persp.quaternion.x).toBeCloseTo(ortho.quaternion.x, 6);
     expect(persp.near).toBe(0.1);
     expect(persp.far).toBe(1000);
+  });
+
+  it('restores the stashed perspective FOV instead of the config default', () => {
+    const ortho = new THREE.OrthographicCamera(-10, 10, 5, -5, 0.1, 1000);
+    ortho.position.set(0, 0, 50);
+    const harness = makeCtx(ortho);
+    harness.setLastPerspectiveFov(73); // stashed at the earlier persp→ortho swap
+
+    swapToPerspective(harness.ctx);
+
+    const persp = harness.getCurrentCamera() as THREE.PerspectiveCamera;
+    expect(persp.fov).toBe(73);
+  });
+
+  it('dollies to a degenerate-safe position when the ortho frustum is zero (no NaN)', () => {
+    // top == bottom → h == 0 → newDist == 0 → fall back to the ortho position.
+    const ortho = new THREE.OrthographicCamera(-10, 10, 0, 0, 0.1, 1000);
+    ortho.position.set(1, 2, 3);
+    ortho.updateMatrixWorld();
+    const harness = makeCtx(ortho);
+
+    swapToPerspective(harness.ctx);
+
+    const persp = harness.getCurrentCamera() as THREE.PerspectiveCamera;
+    expect(Number.isFinite(persp.position.x)).toBe(true);
+    expect(persp.position.toArray()).toEqual([1, 2, 3]);
+  });
+});
+
+describe('perspective ↔ orthographic round trip (#774)', () => {
+  it('persp → ortho → persp restores an OFF-AXIS pose and NON-default fov (zoom == 1)', () => {
+    // A full swap cycle with no interaction must land the camera back at its
+    // exact starting pose. Deliberately use a NON-default FOV (33) and an
+    // OFF-AXIS tilted pose with a non-(0,1,0) up: the old front-view reset and
+    // the old default-FOV restore each fail this independently.
+    const focus = new THREE.Vector3(2, -1, 4);
+    const persp = new THREE.PerspectiveCamera(33, 1, 0.1, 1000);
+    persp.position.set(30, 20, 15);
+    persp.up.set(0.2, 0.9, 0.1).normalize();
+    persp.lookAt(focus);
+    persp.updateMatrixWorld();
+    const posBefore = persp.position.clone();
+    const quatBefore = persp.quaternion.clone();
+    const upBefore = persp.up.clone();
+
+    const { controls } = makeControls(focus);
+    const harness = makeCtx(persp, controls);
+
+    swapToOrthographic(harness.ctx); // stashes fov = 33, ortho zoom stays 1
+    swapToPerspective(harness.ctx); // restores fov, dollies back
+
+    const persp2 = harness.getCurrentCamera() as THREE.PerspectiveCamera;
+    expect(persp2).toBeInstanceOf(THREE.PerspectiveCamera);
+    expect(persp2.position.x).toBeCloseTo(posBefore.x, 4);
+    expect(persp2.position.y).toBeCloseTo(posBefore.y, 4);
+    expect(persp2.position.z).toBeCloseTo(posBefore.z, 4);
+    expect(persp2.quaternion.x).toBeCloseTo(quatBefore.x, 5);
+    expect(persp2.quaternion.y).toBeCloseTo(quatBefore.y, 5);
+    expect(persp2.quaternion.z).toBeCloseTo(quatBefore.z, 5);
+    expect(persp2.quaternion.w).toBeCloseTo(quatBefore.w, 5);
+    expect(persp2.up.x).toBeCloseTo(upBefore.x, 6);
+    expect(persp2.up.y).toBeCloseTo(upBefore.y, 6);
+    expect(persp2.up.z).toBeCloseTo(upBefore.z, 6);
+    expect(persp2.fov).toBe(33);
+  });
+
+  it('dollies by the ortho zoom on swap-back (zoom == 2 → distance halved)', () => {
+    // The headline new math: newDist = h/(2·tan(fov/2)) with h=(top-bottom)/zoom.
+    // At zoom 2 the effective frustum halves, so the perspective camera must
+    // dolly to HALF the original pivot distance, positioned at pivot - viewDir·newDist.
+    const focus = new THREE.Vector3(0, 0, 0);
+    const persp = new THREE.PerspectiveCamera(47, 1, 0.1, 1000);
+    persp.position.set(0, 0, 60); // distance 60 to the pivot
+    persp.lookAt(focus);
+    persp.updateMatrixWorld();
+
+    const { controls } = makeControls(focus);
+    const harness = makeCtx(persp, controls);
+
+    swapToOrthographic(harness.ctx); // ortho at (0,0,60), zoom 1
+    const ortho = harness.getCurrentCamera() as THREE.OrthographicCamera;
+    ortho.zoom = 2; // user zoomed in 2x in ortho
+    ortho.updateProjectionMatrix();
+
+    swapToPerspective(harness.ctx);
+
+    const persp2 = harness.getCurrentCamera() as THREE.PerspectiveCamera;
+    const newDist = persp2.position.distanceTo(focus);
+    // Original distance 60 → halved to 30 (position - viewDir·30 = (0,0,30)).
+    expect(newDist).toBeCloseTo(30, 3);
+    expect(persp2.position.x).toBeCloseTo(0, 5);
+    expect(persp2.position.y).toBeCloseTo(0, 5);
+    expect(persp2.position.z).toBeCloseTo(30, 3);
   });
 });
 
