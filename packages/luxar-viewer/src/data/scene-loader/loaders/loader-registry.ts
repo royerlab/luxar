@@ -1,18 +1,56 @@
 /**
- * LoaderRegistry - Manages lifecycle of geometry loaders (Points, Lines, GSplats).
+ * LoaderRegistry - Manages lifecycle of geometry loaders.
  *
- * Extracted from SceneLoader to reduce God Object complexity.
- * Holds the 4 loader Maps and provides registration, disposal, iteration,
- * and error tracking methods.
+ * Extracted from SceneLoader to reduce God Object complexity. Holds every
+ * loader bucketed by {@link GeometryKind}, plus failure tracking, and provides
+ * registration, lookup, disposal and retry-budget methods.
+ *
+ * Registration/lookup/disposal are written **once** against the keyed store
+ * rather than repeated per geometry type; the `registerPointsLoader`-style
+ * methods and the `loaders` / `linesLoaders` / `gsplatLoaders` accessors are
+ * typed conveniences over it, preserved so call sites read naturally.
  *
  * @module data/loader-registry
  */
 
-import type { DataLoader } from '../../data-loader-types';
+import type { DataLoader, GeometryKind } from '../../data-loader-types';
+import { GEOMETRY_TYPES } from '../../../types/format-contract';
 import type { LinesDataLoader } from '../../../types/lines';
 import type { GSplatsDataLoader } from '../../../types/gsplats';
+
 import { log, Modules } from '../../../utils/log';
 import { classifyLoaderError, type LoaderErrorKind } from '../nodes/load-leaf-error-dispatch';
+
+/**
+ * Which loader interface belongs to which geometry kind.
+ *
+ * The three loader interfaces are structurally distinct, so this mapping is
+ * what keeps the kind-keyed store honest: `register`/`loadersOf` are generic in
+ * `K`, so `register('points', path, someLinesLoader)` is a compile error rather
+ * than a silent mis-route through the wrong update path.
+ *
+ * Every {@link GeometryKind} must appear here. That is enforced — not merely
+ * asked for — by {@link AnyDataLoader} indexing this type with the full
+ * `GeometryKind` union: a kind added to `contract.yaml` without a loader entry
+ * above fails to compile with `Type '<kind>' cannot be used to index type
+ * 'LoaderByKind'`.
+ *
+ * Note the enforcement can NOT be written as `interface LoaderByKind extends
+ * Record<GeometryKind, …>` — an interface *inherits* members it does not
+ * redeclare, so a new kind would silently pick up the permissive base type
+ * instead of erroring.
+ */
+export type LoaderByKind = {
+  points: DataLoader;
+  lines: LinesDataLoader;
+  gsplats: GSplatsDataLoader;
+};
+
+/**
+ * Any geometry loader — derived from {@link LoaderByKind} rather than listing
+ * the three interfaces again, so the two cannot drift apart.
+ */
+export type AnyDataLoader = LoaderByKind[GeometryKind];
 
 /**
  * Error information tracked for failed loaders.
@@ -59,14 +97,47 @@ export const MAX_AUTO_RETRY_ATTEMPTS = 3;
  * and tracks loading failures for retry/recovery.
  */
 export class LoaderRegistry {
+  /**
+   * Every loader, bucketed by geometry kind, path → loader.
+   *
+   * One bucket per {@link GEOMETRY_TYPES} entry, created up front so
+   * {@link loadersOf} never has to handle a missing bucket. The kind-specific
+   * accessors below are thin views onto these same `Map` objects — callers that
+   * hold `registry.loaders` and mutate it directly are mutating this store, as
+   * they always were.
+   */
+  private readonly byKind: ReadonlyMap<GeometryKind, Map<string, AnyDataLoader>> = new Map(
+    GEOMETRY_TYPES.map((kind) => [kind as GeometryKind, new Map<string, AnyDataLoader>()])
+  );
+
+  /**
+   * Loaders of one geometry kind, keyed by scene path, narrowed to that kind's
+   * loader interface via {@link LoaderByKind}.
+   *
+   * The single cast in this class: the heterogeneous store cannot express
+   * "bucket `K` holds `LoaderByKind[K]`" internally, so the invariant is
+   * enforced at this boundary and every caller above it is fully typed.
+   */
+  loadersOf<K extends GeometryKind>(kind: K): Map<string, LoaderByKind[K]> {
+    const bucket = this.byKind.get(kind);
+    if (!bucket) throw new Error(`LoaderRegistry: unknown geometry kind '${kind}'`);
+    return bucket as Map<string, LoaderByKind[K]>;
+  }
+
   /** Points loaders indexed by scene path */
-  readonly loaders = new Map<string, DataLoader>();
+  get loaders(): Map<string, DataLoader> {
+    return this.loadersOf('points');
+  }
 
   /** Lines loaders indexed by scene path */
-  readonly linesLoaders = new Map<string, LinesDataLoader>();
+  get linesLoaders(): Map<string, LinesDataLoader> {
+    return this.loadersOf('lines');
+  }
 
   /** GSplats loaders indexed by scene path */
-  readonly gsplatLoaders = new Map<string, GSplatsDataLoader>();
+  get gsplatLoaders(): Map<string, GSplatsDataLoader> {
+    return this.loadersOf('gsplats');
+  }
 
   /** Error tracking for failed loaders */
   readonly failedLoaders = new Map<string, FailedLoaderInfo>();
@@ -76,58 +147,61 @@ export class LoaderRegistry {
   // ---------------------------------------------------------------------------
 
   /**
+   * Register a loader for a given path. The loader type must match the kind —
+   * `register('points', p, someLinesLoader)` is a compile error.
+   */
+  register<K extends GeometryKind>(kind: K, path: string, loader: LoaderByKind[K]): void {
+    this.loadersOf(kind).set(path, loader);
+  }
+
+  /**
+   * Drop a single loader so it no longer participates in scene-wide
+   * ``updateView`` sweeps. Defensive: lazy substitutive LOD levels are never
+   * registered in the first place (they stay out of the sweep by design — see
+   * ``load-lod-group-node.ts``; the registry drives their reloads), so on the
+   * lazy-release path this is a no-op. It exists so a future path that DOES
+   * register such a loader cannot leak it into the sweep after its geometry was
+   * released. The loader object itself stays alive in the lod_group's
+   * ``ensureLoaded`` closure for reload.
+   */
+  unregister<K extends GeometryKind>(kind: K, path: string): void {
+    this.loadersOf(kind).delete(path);
+  }
+
+  /**
    * Register a points loader for a given path.
    */
   registerPointsLoader(path: string, loader: DataLoader): void {
-    this.loaders.set(path, loader);
+    this.register('points', path, loader);
   }
 
   /**
    * Register a lines loader for a given path.
    */
   registerLinesLoader(path: string, loader: LinesDataLoader): void {
-    this.linesLoaders.set(path, loader);
+    this.register('lines', path, loader);
   }
 
   /**
    * Register a gsplats loader for a given path.
    */
   registerGSplatsLoader(path: string, loader: GSplatsDataLoader): void {
-    this.gsplatLoaders.set(path, loader);
+    this.register('gsplats', path, loader);
   }
 
-  /**
-   * Drop a single gsplats loader so it no longer participates in
-   * scene-wide ``updateView`` sweeps. Defensive: lazy substitutive LOD
-   * levels are never registered in the first place (they stay out of the
-   * sweep by design — see ``load-lod-group-node.ts``; the registry drives
-   * their reloads), so on the lazy-release path this is a no-op. It exists
-   * so a future path that DOES register such a loader cannot leak it into
-   * the sweep after its geometry was released. The loader object itself
-   * stays alive in the lod_group's ``ensureLoaded`` closure for reload.
-   */
+  /** Peer of {@link unregister}, kept for call-site readability. */
   unregisterGSplatsLoader(path: string): void {
-    this.gsplatLoaders.delete(path);
+    this.unregister('gsplats', path);
   }
 
-  /**
-   * Drop a single points loader so it no longer participates in scene-wide
-   * ``updateView`` sweeps. Peer of :meth:`unregisterGSplatsLoader` — same
-   * defensive semantics (lazy levels are never registered; see that method's
-   * doc).
-   */
+  /** Peer of {@link unregister}, kept for call-site readability. */
   unregisterPointsLoader(path: string): void {
-    this.loaders.delete(path);
+    this.unregister('points', path);
   }
 
-  /**
-   * Drop a single lines loader so it no longer participates in scene-wide
-   * ``updateView`` sweeps. Peer of :meth:`unregisterGSplatsLoader` /
-   * :meth:`unregisterPointsLoader` — same defensive semantics (lazy levels
-   * are never registered; see the gsplats method's doc).
-   */
+  /** Peer of {@link unregister}, kept for call-site readability. */
   unregisterLinesLoader(path: string): void {
-    this.linesLoaders.delete(path);
+    this.unregister('lines', path);
   }
 
   // ---------------------------------------------------------------------------
@@ -136,22 +210,31 @@ export class LoaderRegistry {
 
   /** Total number of loaders across all geometry types. */
   get totalLoaderCount(): number {
-    return this.loaders.size + this.linesLoaders.size + this.gsplatLoaders.size;
+    let total = 0;
+    for (const bucket of this.byKind.values()) total += bucket.size;
+    return total;
   }
 
   /** Whether there are any registered loaders. */
   get hasLoaders(): boolean {
-    return this.loaders.size > 0 || this.linesLoaders.size > 0 || this.gsplatLoaders.size > 0;
+    for (const bucket of this.byKind.values()) if (bucket.size > 0) return true;
+    return false;
   }
 
   /**
-   * Find which loader type owns a given path.
-   * Returns 'points', 'lines', 'gsplats', or null.
+   * Find which geometry kind owns a given path, or null if none does.
+   *
+   * Nothing prevents the same path from being registered under two kinds, so
+   * this has a documented precedence: points > lines > gsplats. That order is
+   * now the **bucket insertion order**, which comes from `GEOMETRY_TYPES` —
+   * i.e. from the order of `geometry_types` in `format-contract/contract.yaml`.
+   * Reordering that list would silently reorder this precedence; the
+   * "checks points first when a path collides" test is the guard.
    */
-  getLoaderType(path: string): 'points' | 'lines' | 'gsplats' | null {
-    if (this.loaders.has(path)) return 'points';
-    if (this.linesLoaders.has(path)) return 'lines';
-    if (this.gsplatLoaders.has(path)) return 'gsplats';
+  getLoaderType(path: string): GeometryKind | null {
+    for (const [kind, bucket] of this.byKind) {
+      if (bucket.has(path)) return kind;
+    }
     return null;
   }
 
@@ -255,19 +338,11 @@ export class LoaderRegistry {
    * Dispose all loaders and clear all maps.
    */
   disposeAll(): void {
-    for (const loader of this.loaders.values()) {
-      loader.dispose();
+    for (const bucket of this.byKind.values()) {
+      for (const loader of bucket.values()) {
+        loader.dispose();
+      }
+      bucket.clear();
     }
-    this.loaders.clear();
-
-    for (const loader of this.linesLoaders.values()) {
-      loader.dispose();
-    }
-    this.linesLoaders.clear();
-
-    for (const loader of this.gsplatLoaders.values()) {
-      loader.dispose();
-    }
-    this.gsplatLoaders.clear();
   }
 }

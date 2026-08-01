@@ -40,6 +40,10 @@ NODE_TYPES: Final[tuple[NodeTypeName, ...]] = (
     "gsplats",
 )
 
+# --- leaf geometry types (the element-bearing subset of NODE_TYPES) ---
+GeometryTypeName = Literal["points", "lines", "gsplats"]
+GEOMETRY_TYPES: Final[tuple[GeometryTypeName, ...]] = ("points", "lines", "gsplats")
+
 # --- specialized-group kinds ---
 NodeKind = Literal["lod", "partition"]
 NODE_KINDS: Final[tuple[NodeKind, ...]] = ("lod", "partition")

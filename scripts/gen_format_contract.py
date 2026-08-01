@@ -48,6 +48,61 @@ _EDIT_HINT = (
 )
 
 
+#: Node types that are containers, not element-bearing geometry leaves. These
+#: are the members of ``node_types`` that must NOT appear in ``geometry_types``.
+_CONTAINER_NODE_TYPES = ("scene", "group")
+
+
+def _geometry_types(c: Dict[str, Any]) -> List[str]:
+    """Return ``geometry_types``, validated as the leaf subset of ``node_types``.
+
+    The two lists are separate keys so the contract can name the leaf-geometry
+    vocabulary directly, but that freedom needs guarding — each rule below
+    corresponds to a way the generated projections would otherwise be wrong
+    rather than merely odd:
+
+    * **non-empty** — an empty list renders ``Literal[]`` (a Python syntax
+      error) and ``export type GeometryTypeName = ;`` (a TypeScript one), so
+      codegen would emit files that cannot be imported.
+    * **subset of node_types** — a geometry type that is not a node type is
+      unrepresentable on disk, since the writer stamps ``type`` from that
+      vocabulary.
+    * **no containers** — ``scene`` / ``group`` pass the subset rule but are not
+      element-bearing, and admitting one would hand the viewer's per-geometry
+      dispatch a kind that has no loader.
+    * **no duplicates** — a repeat silently widens ``GEOMETRY_TYPES`` while
+      leaving the union unchanged, desynchronising the two projections of the
+      same key.
+    """
+    geometry_types = list(c["geometry_types"])
+
+    def fail(problem: str) -> None:
+        raise SystemExit(f"contract.yaml: geometry_types {problem}")
+
+    if not geometry_types:
+        fail("must not be empty (codegen would emit an empty Literal/union)")
+
+    stray = [t for t in geometry_types if t not in c["node_types"]]
+    if stray:
+        fail(
+            f"entries {stray} are missing from node_types; "
+            "every geometry type must also be a node type"
+        )
+
+    containers = [t for t in geometry_types if t in _CONTAINER_NODE_TYPES]
+    if containers:
+        fail(
+            f"entries {containers} are container node types, not element-bearing "
+            "geometry leaves; remove them"
+        )
+
+    duplicates = sorted({t for t in geometry_types if geometry_types.count(t) > 1})
+    if duplicates:
+        fail(f"contains duplicate entries {duplicates}")
+
+    return geometry_types
+
+
 # --------------------------------------------------------------------------- #
 # Python projection
 # --------------------------------------------------------------------------- #
@@ -82,6 +137,7 @@ def render_python(c: Dict[str, Any]) -> str:
     gsplats = c["gsplats_format"]
     node_types = list(c["node_types"])
     node_kinds = list(c["node_kinds"])
+    geometry_types = _geometry_types(c)
     encodings = list(c["encodings"])
     attr_keys = list(c["attr_keys"])
     array_names = list(c["array_names"])
@@ -126,6 +182,12 @@ def render_python(c: Dict[str, Any]) -> str:
         "# --- scene-graph node types ---\n"
         f"{_py_literal_type('NodeTypeName', node_types)}\n"
         f"{_py_tuple('NODE_TYPES', 'NodeTypeName', node_types)}\n"
+    )
+
+    parts.append(
+        "# --- leaf geometry types (the element-bearing subset of NODE_TYPES) ---\n"
+        f"{_py_literal_type('GeometryTypeName', geometry_types)}\n"
+        f"{_py_tuple('GEOMETRY_TYPES', 'GeometryTypeName', geometry_types)}\n"
     )
 
     parts.append(
@@ -207,6 +269,7 @@ def render_typescript(c: Dict[str, Any]) -> str:
     gsplats = c["gsplats_format"]
     node_types = list(c["node_types"])
     node_kinds = list(c["node_kinds"])
+    geometry_types = _geometry_types(c)
     encodings = list(c["encodings"])
     attr_keys = list(c["attr_keys"])
     array_names = list(c["array_names"])
@@ -238,6 +301,9 @@ def render_typescript(c: Dict[str, Any]) -> str:
         "// --- scene-graph node types ---\n"
         f"{_ts_const('NODE_TYPES', node_types)}\n"
         f"{_ts_union('NodeTypeName', node_types)}",
+        "// --- leaf geometry types (the element-bearing subset of NODE_TYPES) ---\n"
+        f"{_ts_const('GEOMETRY_TYPES', geometry_types)}\n"
+        f"{_ts_union('GeometryTypeName', geometry_types)}",
         "// --- specialized-group kinds ---\n"
         f"{_ts_const('NODE_KINDS', node_kinds)}\n"
         f"{_ts_union('NodeKind', node_kinds)}",
