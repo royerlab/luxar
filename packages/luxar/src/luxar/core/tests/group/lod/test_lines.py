@@ -257,6 +257,19 @@ class TestResolveAdditiveAxisLines:
         with pytest.raises(TypeError, match="must be None, bool, or dict"):
             resolve_additive_axis_lines("auto")  # type: ignore[arg-type]
 
+    def test_valid_stream_counts_resolves(self) -> None:
+        spec = resolve_additive_axis_lines({"counts": "stream:1000"})
+        assert spec is not None
+        assert spec["counts"] == "stream:1000"
+
+    def test_malformed_stream_counts_raise_at_resolve(self) -> None:
+        # A ``stream:<c>`` with c < 1 must fail at resolve time, before any
+        # kind=lod wrapper group is written under a substitutive ladder.
+        with pytest.raises(ValueError, match="stream first-chunk size must be >= 1"):
+            resolve_additive_axis_lines({"counts": "stream:0"})
+        with pytest.raises(ValueError, match="stream"):
+            resolve_additive_axis_lines({"counts": "stream:-5"})
+
     def test_breakpoints_pass_through(self) -> None:
         spec = resolve_additive_axis_lines({"breakpoints": [2, 4]})
         assert spec is not None

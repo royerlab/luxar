@@ -529,6 +529,16 @@ def resolve_additive_axis_lines(spec: Any) -> Optional[dict]:
         counts = breakpoints
     if counts is not None and not isinstance(counts, str):
         counts = [int(c) for c in counts]
+    if isinstance(counts, str) and counts.startswith("stream:"):
+        # Validate the first-chunk size here, at resolve time. Under a
+        # substitutive ladder the resolved spec is handed to a kind=lod group
+        # whose wrapper is created BEFORE its children are written, so deferring
+        # this to the coarsest child's write would raise only after that group
+        # exists on disk — leaving a childless partial group (and a
+        # duplicate-name error on retry). ``parse_stream_chunk`` raises for c < 1.
+        from ....utils.lod_breakpoints import parse_stream_chunk
+
+        parse_stream_chunk(counts)
 
     seed = kwargs.pop("seed", None)
     if seed is not None:
