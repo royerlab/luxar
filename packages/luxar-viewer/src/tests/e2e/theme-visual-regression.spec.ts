@@ -5,9 +5,9 @@
  * Ensures consistent appearance and proper theme switching functionality.
  *
  * Tests each component in:
- * - Dark theme (default)
+ * - Dark theme
  * - Light theme
- * - High contrast theme
+ * - Frosted Glass theme (default)
  */
 
 import { test, expect, type Page } from './fixtures';
