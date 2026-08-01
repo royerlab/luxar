@@ -25,7 +25,10 @@ import shlex
 import shutil
 import stat
 import subprocess
+import uuid
 import zipfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from xml.sax.saxutils import escape as xml_escape
 
@@ -118,6 +121,48 @@ def get_launcher_path(platform_name: str) -> Path:
     return binary
 
 
+@contextmanager
+def _staged_bundle(final: Path) -> Iterator[Path]:
+    """Build a bundle in a sibling temp dir, then atomically swap it into place.
+
+    A native bundle is a tree of many files (launcher + viewer + zarr scene). If
+    we wrote straight into ``final`` and the copy failed partway (disk full,
+    permission error, Ctrl-C), a truncated bundle — a Zarr store that *looks*
+    complete — would be left at the final path (issue #687). Instead we build
+    the whole thing inside ``final.parent / f".tmp_{final.name}_<rand>"`` and
+    only ``os.replace`` it onto ``final`` once construction succeeds.
+
+    The staging dir is a sibling of ``final`` (same filesystem) so the rename is
+    atomic. The staging dir is always cleaned up on failure — including
+    ``KeyboardInterrupt`` — and ``final`` is never left as a partial NEW bundle,
+    since the only write to ``final`` is the atomic ``os.replace``. (When
+    overwriting, a pre-existing bundle is removed first; a failure during that
+    removal is the one case that can leave the prior bundle partially deleted.)
+
+    Args:
+        final: The final bundle path the staged dir is renamed onto.
+
+    Yields:
+        The staging directory the caller builds the entire bundle inside.
+    """
+    staging = final.parent / f".tmp_{final.name}_{uuid.uuid4().hex[:8]}"
+    staging.mkdir(parents=True, exist_ok=False)
+    try:
+        yield staging
+        # Success: clear any prior bundle at the final path, then atomically
+        # swap in the freshly built staging dir. Kept inside the try so a
+        # failure during the swap phase (e.g. `final` is a regular file, a
+        # read-only subtree, or Ctrl-C mid-swap) still cleans up staging.
+        if final.is_symlink():
+            final.unlink()
+        elif final.exists():
+            shutil.rmtree(final)
+        os.replace(staging, final)
+    except BaseException:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+
+
 def bundle_macos_app(
     *,
     viewer_dist: Path,
@@ -137,46 +182,61 @@ def bundle_macos_app(
         raise ValueError(
             f"Bundle path {app_path} escapes the output directory {output}"
         )
-    contents = app_path / "Contents"
-    macos_dir = contents / "MacOS"
-    resources = contents / "Resources"
+    # README is dropped next to the .app (a sibling in `output`). Validate its
+    # path up front too, so we fail before writing anything — matching the
+    # app_path guard above.
+    readme_path = output / f"{app_name}-README.txt"
+    if readme_path.resolve().parent != output.resolve():
+        raise ValueError(
+            f"Bundle path {readme_path} escapes the output directory {output}"
+        )
 
     with asection(f"Building macOS .app bundle ({app_name}.app)"):
-        macos_dir.mkdir(parents=True, exist_ok=True)
-        resources.mkdir(parents=True, exist_ok=True)
+        # Build the entire bundle in a sibling staging dir and swap it onto
+        # app_path atomically, so an interrupted copy never leaves a partial
+        # .app at the final path (issue #687).
+        with _staged_bundle(app_path) as staging:
+            contents = staging / "Contents"
+            macos_dir = contents / "MacOS"
+            resources = contents / "Resources"
+            macos_dir.mkdir(parents=True, exist_ok=True)
+            resources.mkdir(parents=True, exist_ok=True)
 
-        bundled_launcher = macos_dir / "launcher"
-        shutil.copy2(launcher, bundled_launcher)
-        bundled_launcher.chmod(
-            bundled_launcher.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH
-        )
-
-        shutil.copytree(viewer_dist, resources / "viewer", dirs_exist_ok=True)
-        shutil.copytree(zarr_data, resources / "data", dirs_exist_ok=True)
-
-        icon_present = LOGO_ICNS.is_file()
-        if icon_present:
-            shutil.copy2(LOGO_ICNS, resources / "AppIcon.icns")
-            aprint(f"Copied icon to {resources / 'AppIcon.icns'}")
-        else:
-            aprint(
-                f"⚠️  {LOGO_ICNS} not found — bundle will use the default app icon. "
-                "Run packages/luxar-launcher/assets/build_icons.sh to regenerate."
+            bundled_launcher = macos_dir / "launcher"
+            shutil.copy2(launcher, bundled_launcher)
+            bundled_launcher.chmod(
+                bundled_launcher.stat().st_mode
+                | stat.S_IEXEC
+                | stat.S_IXGRP
+                | stat.S_IXOTH
             )
 
-        (contents / "Info.plist").write_text(
-            _macos_info_plist(app_name, with_icon=icon_present)
-        )
-        aprint(f"Wrote {contents / 'Info.plist'}")
+            shutil.copytree(viewer_dist, resources / "viewer")
+            shutil.copytree(zarr_data, resources / "data")
+
+            icon_present = LOGO_ICNS.is_file()
+            if icon_present:
+                shutil.copy2(LOGO_ICNS, resources / "AppIcon.icns")
+                aprint(
+                    "Copied icon to "
+                    f"{app_path / 'Contents' / 'Resources' / 'AppIcon.icns'}"
+                )
+            else:
+                aprint(
+                    f"⚠️  {LOGO_ICNS} not found — bundle will use the default app "
+                    "icon. Run packages/luxar-launcher/assets/build_icons.sh to "
+                    "regenerate."
+                )
+
+            (contents / "Info.plist").write_text(
+                _macos_info_plist(app_name, with_icon=icon_present)
+            )
+            aprint(f"Wrote {app_path / 'Contents' / 'Info.plist'}")
 
         # README is dropped next to the .app (NOT inside the bundle, so
-        # Finder shows it as a sibling). Helps users hit the xattr -cr
-        # workaround when Gatekeeper blocks an unsigned download.
-        readme_path = output / f"{app_name}-README.txt"
-        if readme_path.resolve().parent != output.resolve():
-            raise ValueError(
-                f"Bundle path {readme_path} escapes the output directory {output}"
-            )
+        # Finder shows it as a sibling). Written AFTER the bundle is finalized,
+        # directly in `output` (its escape check ran up front). Helps users hit
+        # the xattr -cr workaround when Gatekeeper blocks an unsigned download.
         readme_path.write_text(_macos_readme(app_name))
         aprint(f"Wrote {readme_path}")
 
@@ -204,26 +264,30 @@ def bundle_linux_folder(
         raise ValueError(f"Bundle path {folder} escapes the output directory {output}")
 
     with asection(f"Building Linux folder bundle ({folder.name})"):
-        folder.mkdir(parents=True, exist_ok=True)
+        # Build in a sibling staging dir and swap it onto `folder` atomically,
+        # so an interrupted copy never leaves a partial bundle behind (#687).
+        with _staged_bundle(folder) as staging:
+            bundled_launcher = staging / "luxar-launcher"
+            shutil.copy2(launcher, bundled_launcher)
+            bundled_launcher.chmod(
+                bundled_launcher.stat().st_mode
+                | stat.S_IEXEC
+                | stat.S_IXGRP
+                | stat.S_IXOTH
+            )
 
-        bundled_launcher = folder / "luxar-launcher"
-        shutil.copy2(launcher, bundled_launcher)
-        bundled_launcher.chmod(
-            bundled_launcher.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH
-        )
+            shutil.copytree(viewer_dist, staging / "viewer")
+            shutil.copytree(zarr_data, staging / "data")
 
-        shutil.copytree(viewer_dist, folder / "viewer", dirs_exist_ok=True)
-        shutil.copytree(zarr_data, folder / "data", dirs_exist_ok=True)
+            if LOGO_PNG.is_file():
+                # Standard FreeDesktop convention: ship as `<app>.png` so a
+                # paired `.desktop` file (created by the user if they want a
+                # desktop entry) can reference it via Icon=<absolute path>.
+                shutil.copy2(LOGO_PNG, staging / f"{app_name}.png")
+                aprint(f"Copied icon to {folder / f'{app_name}.png'}")
 
-        if LOGO_PNG.is_file():
-            # Standard FreeDesktop convention: ship as `<app>.png` so a
-            # paired `.desktop` file (created by the user if they want a
-            # desktop entry) can reference it via Icon=<absolute path>.
-            shutil.copy2(LOGO_PNG, folder / f"{app_name}.png")
-            aprint(f"Copied icon to {folder / f'{app_name}.png'}")
-
-        (folder / "README.txt").write_text(_linux_readme(app_name))
-        aprint(f"Wrote {folder / 'README.txt'}")
+            (staging / "README.txt").write_text(_linux_readme(app_name))
+            aprint(f"Wrote {folder / 'README.txt'}")
 
     return folder
 
@@ -351,7 +415,10 @@ def zip_macos_app(app_path: Path) -> Path:
     extraction.
 
     The archive lands at ``<app_path>.zip`` (i.e. ``Foo.app.zip`` next to
-    ``Foo.app``); any existing archive is overwritten.
+    ``Foo.app``). It is built to a sibling temp path and atomically swapped
+    into place (issue #687), so an interrupted zip (Ctrl-C, ENOSPC) never
+    leaves a truncated-but-openable archive, and a prior good ``.zip`` survives
+    until the new one is complete.
 
     Returns the path to the produced ``.zip``.
     """
@@ -361,8 +428,11 @@ def zip_macos_app(app_path: Path) -> Path:
         )
 
     archive_path = app_path.with_suffix(".app.zip")
-    if archive_path.exists():
-        archive_path.unlink()
+    # Build to a sibling temp path; only os.replace onto archive_path on
+    # success so the final .zip is COMPLETE or ABSENT (never truncated).
+    tmp_archive = (
+        archive_path.parent / f".tmp_{archive_path.name}_{uuid.uuid4().hex[:8]}"
+    )
 
     ditto = shutil.which("ditto")
     if ditto and platform.system() == "Darwin":
@@ -375,35 +445,40 @@ def zip_macos_app(app_path: Path) -> Path:
                         "-k",
                         "--keepParent",
                         str(app_path),
-                        str(archive_path),
+                        str(tmp_archive),
                     ],
                     check=True,
                 )
-            except subprocess.CalledProcessError:
+                os.replace(tmp_archive, archive_path)
+            except BaseException:
                 # Clean up any partial archive ditto may have left behind so
                 # the user does not pick up a corrupted zip on the next run.
-                if archive_path.exists():
-                    archive_path.unlink()
+                tmp_archive.unlink(missing_ok=True)
                 raise
             aprint(f"  ✓ {archive_path.name}")
     else:
         with asection(f"Zipping {app_path.name} with zipfile (ditto unavailable)"):
-            with zipfile.ZipFile(
-                archive_path, "w", compression=zipfile.ZIP_DEFLATED
-            ) as zf:
-                for root, _dirs, files in os.walk(app_path):
-                    for fname in files:
-                        full = Path(root) / fname
-                        arcname = full.relative_to(app_path.parent)
-                        # ``ZipInfo.from_file`` carries Unix permissions
-                        # (executable bit on the launcher) over to the
-                        # archive's external_attr field.
-                        info = zipfile.ZipInfo.from_file(full, str(arcname))
-                        info.compress_type = zipfile.ZIP_DEFLATED
-                        # Stream large files instead of loading the whole
-                        # contents into memory. The bundle includes the
-                        # viewer + zarr scene which is easily >100 MB.
-                        with open(full, "rb") as src, zf.open(info, "w") as dst:
-                            shutil.copyfileobj(src, dst)
+            try:
+                with zipfile.ZipFile(
+                    tmp_archive, "w", compression=zipfile.ZIP_DEFLATED
+                ) as zf:
+                    for root, _dirs, files in os.walk(app_path):
+                        for fname in files:
+                            full = Path(root) / fname
+                            arcname = full.relative_to(app_path.parent)
+                            # ``ZipInfo.from_file`` carries Unix permissions
+                            # (executable bit on the launcher) over to the
+                            # archive's external_attr field.
+                            info = zipfile.ZipInfo.from_file(full, str(arcname))
+                            info.compress_type = zipfile.ZIP_DEFLATED
+                            # Stream large files instead of loading the whole
+                            # contents into memory. The bundle includes the
+                            # viewer + zarr scene which is easily >100 MB.
+                            with open(full, "rb") as src, zf.open(info, "w") as dst:
+                                shutil.copyfileobj(src, dst)
+                os.replace(tmp_archive, archive_path)
+            except BaseException:
+                tmp_archive.unlink(missing_ok=True)
+                raise
             aprint(f"  ✓ {archive_path.name}")
     return archive_path
