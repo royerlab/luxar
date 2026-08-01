@@ -19,31 +19,18 @@ import { PointTSLMaterial } from '../materials/point/material-tsl';
 import { LineTSLMaterial } from '../materials/line/material-tsl';
 import { GSplatTSLMaterial } from '../materials/gsplat/material-tsl';
 import type { CameraAwareMaterial } from '../materials/_shared/camera-aware-material';
+import { SOFT_DISPOSE_FLAG } from './soft-dispose-flag';
 
 /** Type alias matching the Manager's three cached unions. */
 type AnyPointMaterial = PointMaterial | PointTSLMaterial;
 type AnyLineMaterial = LineMaterial | LineTSLMaterial;
 type AnyGSplatMaterial = GSplatMaterial | GSplatTSLMaterial;
 
-/**
- * Sentinel symbol that callers set transiently on a material when
- * they dispatch a `'dispose'` event purely to evict Three's cached
- * `RenderObject` — NOT because the material is actually being torn
- * down. `subscribeToDispose`'s listener checks for this flag and
- * skips registry / cache cleanup when it is present, so the material
- * continues to receive global camera updates and stays cached.
- *
- * Used by `data/scene-loader/commit/invalidate-render-object.ts`, which is
- * fired when a commit swaps a mesh's geometry (pool grow / best-fit /
- * non-pool rebuild) and the mesh's cached `RenderObject` needs to drop
- * its stale `vertexBuffers` set. Exported so the
- * dispatcher and the listener stay name-coupled.
- *
- * Symbol-keyed so the flag can't collide with Three's internal
- * properties or with userspace `userData` keys, and so it's invisible
- * to enumeration / serialization.
- */
-export const SOFT_DISPOSE_FLAG = Symbol.for('luxar.invalidateRenderObject.softDispose');
+// The soft-dispose sentinel lives in its own leaf module
+// (`./soft-dispose-flag`) so the dispatcher can import it without
+// dragging in this file's material-factory imports; re-exported here so
+// existing importers of `lifecycle` are unaffected.
+export { SOFT_DISPOSE_FLAG };
 
 /**
  * Registry + cache references the lifecycle helpers operate on.

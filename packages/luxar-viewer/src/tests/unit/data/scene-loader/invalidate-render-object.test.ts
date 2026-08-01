@@ -15,13 +15,23 @@
  * cleared after the dispatch returns (success or exception).
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as THREE from 'three';
 
-import { invalidateRenderObjectFor } from '../../../../data/scene-loader/commit/invalidate-render-object';
+import {
+  invalidateRenderObjectFor,
+  configureRenderObjectEviction,
+} from '../../../../data/scene-loader/commit/invalidate-render-object';
 import { SOFT_DISPOSE_FLAG } from '../../../../rendering/material-manager';
 
 describe('invalidateRenderObjectFor', () => {
+  // The dispose-based eviction is WebGPU-only and defaults to OFF (classic
+  // WebGL is the production default). These blocks assert the dispatch, so
+  // opt in like splat-texture-storage.test.ts does for chunked apply, and
+  // reset to the default so the module flag never leaks across files/blocks.
+  beforeEach(() => configureRenderObjectEviction(true));
+  afterEach(() => configureRenderObjectEviction(false));
+
   it('dispatches a "dispose" event on the mesh material', () => {
     const material = new THREE.MeshBasicMaterial();
     const mesh = new THREE.Mesh(new THREE.BufferGeometry(), material);
@@ -95,6 +105,12 @@ describe('invalidateRenderObjectFor', () => {
 });
 
 describe('pick-mesh geometry resync', () => {
+  // Some tests below assert the WebGPU-only dispose dispatch, so enable
+  // eviction (default is OFF) and reset afterward. The geometry re-point
+  // itself is unconditional, so the resync tests pass either way.
+  beforeEach(() => configureRenderObjectEviction(true));
+  afterEach(() => configureRenderObjectEviction(false));
+
   it('re-points the paired pick mesh at the new geometry (grow-swap pinning guard)', () => {
     // Geometry identity changes on grow-swap / pool swap; the picking
     // system re-syncs only lazily at pick time, so without the eager
@@ -188,6 +204,11 @@ describe('pick-mesh geometry resync', () => {
 });
 
 describe('SOFT_DISPOSE_FLAG <-> MaterialManager contract', () => {
+  // These pin the soft-dispose contract that only runs when the WebGPU
+  // eviction dispatch fires, so enable it (default OFF) and reset after.
+  beforeEach(() => configureRenderObjectEviction(true));
+  afterEach(() => configureRenderObjectEviction(false));
+
   // We can't reach into the private subscribedMaterials directly
   // without spinning up the full manager + a real luxar material. The
   // simpler contract test: a listener registered for dispose that
@@ -225,5 +246,63 @@ describe('SOFT_DISPOSE_FLAG <-> MaterialManager contract', () => {
     material.dispose();
 
     expect(cleanup).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('eviction disabled (classic WebGL default)', () => {
+  // Core regression guard for issue #753: on the classic WebGL backend
+  // (the production default, flag OFF) the `dispose` dispatch would be
+  // caught by WebGLRenderer.onMaterialDispose and destroy the compiled GL
+  // program, forcing a per-commit shader recompile. So with eviction
+  // disabled invalidateRenderObjectFor MUST dispatch NO `dispose` on either
+  // material — yet still re-point the pick mesh geometry (pick correctness).
+  beforeEach(() => configureRenderObjectEviction(false));
+  afterEach(() => configureRenderObjectEviction(false));
+
+  it('dispatches NO "dispose" on the main material', () => {
+    const material = new THREE.MeshBasicMaterial();
+    const mesh = new THREE.Mesh(new THREE.BufferGeometry(), material);
+
+    const listener = vi.fn();
+    material.addEventListener('dispose', listener);
+
+    invalidateRenderObjectFor(mesh);
+
+    expect(listener).not.toHaveBeenCalled();
+  });
+
+  it('dispatches NO "dispose" on the pick material', () => {
+    const pickMaterial = new THREE.MeshBasicMaterial();
+    const mesh = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial());
+    const pick = new THREE.Mesh(new THREE.BufferGeometry(), pickMaterial);
+    mesh.userData.pickNode = pick;
+
+    const mainListener = vi.fn();
+    const pickListener = vi.fn();
+    (mesh.material as THREE.Material).addEventListener('dispose', mainListener);
+    pickMaterial.addEventListener('dispose', pickListener);
+
+    invalidateRenderObjectFor(mesh);
+
+    expect(mainListener).not.toHaveBeenCalled();
+    expect(pickListener).not.toHaveBeenCalled();
+  });
+
+  it('still re-points the paired pick mesh geometry (unconditional pick correctness)', () => {
+    const oldGeom = new THREE.BufferGeometry();
+    const newGeom = new THREE.BufferGeometry();
+    const mesh = new THREE.Mesh(oldGeom, new THREE.MeshBasicMaterial());
+    const pick = new THREE.Mesh(oldGeom, new THREE.MeshBasicMaterial());
+    mesh.userData.pickNode = pick;
+
+    mesh.geometry = newGeom;
+    invalidateRenderObjectFor(mesh);
+
+    expect(pick.geometry).toBe(newGeom);
+  });
+
+  it('is a no-op (no throw) without a registered pick node', () => {
+    const mesh = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial());
+    expect(() => invalidateRenderObjectFor(mesh)).not.toThrow();
   });
 });
