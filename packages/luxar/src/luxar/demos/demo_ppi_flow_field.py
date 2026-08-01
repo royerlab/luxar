@@ -591,7 +591,7 @@ def compute_signed_flow_layout(
         from umap import UMAP
     except ImportError:
         aprint("❌ Missing dependency: umap-learn")
-        aprint("   Install with: pip install umap-learn")
+        aprint("   Install with: pip install 'luxar[demos]'")
         raise
 
     with asection("Computing signed-flow adjacency UMAP"):

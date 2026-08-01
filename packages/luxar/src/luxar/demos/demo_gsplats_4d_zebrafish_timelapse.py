@@ -585,7 +585,7 @@ def show_roundtrip_comparison(
         import matplotlib.pyplot as plt
     except ImportError:
         aprint(
-            "matplotlib is required for --show-roundtrip. Install with: pip install matplotlib"
+            "matplotlib is required for --show-roundtrip. Install with: pip install 'luxar[demos]'"
         )
         return
 
