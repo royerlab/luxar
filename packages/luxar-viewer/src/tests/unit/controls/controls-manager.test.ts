@@ -512,33 +512,52 @@ describe('ControlsManager', () => {
       expect(target.z).toBe(15);
     });
 
-    it('returns camera.position + worldDir * (sceneScale || 10) for fly controls', () => {
-      // W3 strengthening: was `target.z < camera.position.z` only. The
-      // formula in ControlsManager.getFocusTarget is deterministic —
-      // assert the exact computed point.
+    it('reuses the last pivot depth for fly controls (no movement → old target)', () => {
+      // #774: getFocusTarget projects the saved pivot onto the current view
+      // ray. Switching orbit→fly saves the orbit target (0,0,0); with the
+      // camera still looking at it, the returned focus target is that pivot.
       controlsManager.setControlType('fly');
       camera.position.set(0, 0, 5);
-      camera.lookAt(0, 0, 0); // Forward = -Z
+      camera.lookAt(0, 0, 0); // Forward = -Z, still aimed at the old pivot
       camera.updateMatrixWorld();
 
-      // sceneScale defaults to 0 → fallback distance is 10.
       const target = controlsManager.getFocusTarget();
+      // Projected depth = 5 → (0,0,5) + (0,0,-1)*5 = (0,0,0), the old pivot.
       expect(target.x).toBeCloseTo(0, 5);
       expect(target.y).toBeCloseTo(0, 5);
-      expect(target.z).toBeCloseTo(5 - 10, 5); // (0,0,5) + (0,0,-1)*10 = (0,0,-5)
+      expect(target.z).toBeCloseTo(0, 5);
     });
 
-    it('uses sceneScale (not the fallback 10) when set', () => {
-      // Additional coverage on the (sceneScale || 10) branch.
+    it('falls back to sceneScale depth when the camera looks away from the old pivot', () => {
+      // dot(oldPivot - pos, forward) <= 0 → walk sceneScale along the ray.
       controlsManager.setControlType('fly');
       controlsManager.setSceneScale(20);
       camera.position.set(0, 0, 5);
+      camera.lookAt(0, 0, 10); // Forward = +Z, away from the origin pivot
+      camera.updateMatrixWorld();
+
+      const target = controlsManager.getFocusTarget();
+      // Fallback: (0,0,5) + (0,0,1)*20 = (0,0,25)
+      expect(target.z).toBeCloseTo(25, 5);
+    });
+
+    it('preserves a pivot depth below sceneScale·1e-3 when auto-frame limits allow it', () => {
+      // Auto-frame can set a min orbit distance below the scale-derived
+      // sceneScale·1e-3 floor (fit distance / ZOOM_IN_FACTOR shrinks with
+      // wide FOVs). A pivot at such a legal depth must round-trip exactly —
+      // a hardcoded sceneScale·1e-3 floor (= 1 here) would push it to depth 1.
+      controlsManager.setSceneScale(1000);
+      controlsManager.setDistanceLimits(0.05, 1e6);
+      controlsManager.setControlType('fly');
+      camera.position.set(0, 0, 0.5); // 0.5 units from the saved origin pivot
       camera.lookAt(0, 0, 0);
       camera.updateMatrixWorld();
 
       const target = controlsManager.getFocusTarget();
-      // (0,0,5) + (0,0,-1)*20 = (0,0,-15)
-      expect(target.z).toBeCloseTo(-15, 5);
+      // Reused depth = 0.5 → the old pivot exactly (not (0,0,-0.5)).
+      expect(target.x).toBeCloseTo(0, 5);
+      expect(target.y).toBeCloseTo(0, 5);
+      expect(target.z).toBeCloseTo(0, 5);
     });
   });
 

@@ -18,16 +18,22 @@ import { LuxarFlyControls } from '../../../../controls/luxar-fly-controls';
 
 function makeCtx(overrides: Partial<CameraStateCtx>): CameraStateCtx {
   const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 1000);
-  return {
+  const ctx: CameraStateCtx = {
     camera,
     currentControls: null,
     sceneScale: 0,
+    minPivotDepth: 0,
     savedCameraPosition: new THREE.Vector3(),
     savedCameraRotation: new THREE.Euler(),
     savedCameraUp: new THREE.Vector3(0, 1, 0),
     savedTarget: new THREE.Vector3(),
     ...overrides,
   };
+  // Default mirrors ControlsManager.minPivotDepth() with no auto-frame limits.
+  if (overrides.minPivotDepth === undefined) {
+    ctx.minPivotDepth = (ctx.sceneScale || 10) * 1e-3;
+  }
+  return ctx;
 }
 
 describe('saveCameraState', () => {
@@ -67,33 +73,153 @@ describe('saveCameraState', () => {
     orbitControls.dispose();
   });
 
-  it('derives target from camera direction + sceneScale when controls is not orbit (fly fallback)', () => {
+  it('reuses the previous pivot depth: no movement returns the old target exactly (fly)', () => {
+    // #774: with no fly movement the fly derivation projects the PREVIOUS
+    // pivot onto the current view ray, so the saved target is unchanged.
     // currentControls=null mimics first-call or fly mode for the save path.
+    const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 1000);
+    camera.position.set(0, 0, 5);
+    camera.lookAt(0, 0, 0); // forward = -Z, looking straight at the old pivot
+    camera.updateMatrixWorld();
+
+    const ctx = makeCtx({ camera, currentControls: null, sceneScale: 20 });
+    ctx.savedTarget.set(0, 0, 0); // previous pivot at the origin
+    saveCameraState(ctx);
+
+    // Projected depth = 5 → (0,0,5) + (0,0,-1)*5 = (0,0,0), the old target.
+    expect(ctx.savedTarget.x).toBeCloseTo(0, 5);
+    expect(ctx.savedTarget.y).toBeCloseTo(0, 5);
+    expect(ctx.savedTarget.z).toBeCloseTo(0, 5);
+  });
+
+  it('falls back to sceneScale depth when the camera looks away from the old pivot (dot <= 0)', () => {
+    // The old pivot is behind the camera along the view ray, so its depth is
+    // negative → the derivation falls back to walking sceneScale forward.
+    const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 1000);
+    camera.position.set(0, 0, 5);
+    camera.lookAt(0, 0, 10); // forward = +Z, away from the origin pivot
+    camera.updateMatrixWorld();
+
+    const ctx = makeCtx({ camera, currentControls: null, sceneScale: 20 });
+    ctx.savedTarget.set(0, 0, 0); // pivot now behind the camera
+    saveCameraState(ctx);
+
+    // Fallback: position + forward * sceneScale = (0,0,5) + (0,0,1)*20 = (0,0,25).
+    expect(ctx.savedTarget.x).toBeCloseTo(0, 5);
+    expect(ctx.savedTarget.y).toBeCloseTo(0, 5);
+    expect(ctx.savedTarget.z).toBeCloseTo(25, 5);
+  });
+
+  it('uses the 10-unit fallback when sceneScale = 0 and looking away (boundary)', () => {
+    // P5 boundary: sceneScale === 0 → fallback distance is hardcoded to 10.
+    const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 1000);
+    camera.position.set(0, 0, 5);
+    camera.lookAt(0, 0, 10); // forward = +Z, away from origin → fallback path
+    camera.updateMatrixWorld();
+
+    const ctx = makeCtx({ camera, currentControls: null, sceneScale: 0 });
+    ctx.savedTarget.set(0, 0, 0);
+    saveCameraState(ctx);
+
+    // position + forward * 10 = (0,0,5) + (0,0,1)*10 = (0,0,15).
+    expect(ctx.savedTarget.z).toBeCloseTo(15, 5);
+  });
+
+  it('cone rule: reject band 0 < d < 0.5·dist (~76° off) still falls back to sceneScale', () => {
+    // A small POSITIVE depth (old pivot ahead but well outside the ~60° cone)
+    // must be REJECTED — reusing it would collapse the pivot toward the camera.
+    // This kills a mutant that relaxes `d > 0.5*dist` to `d > 0`.
+    const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 1000);
+    camera.position.set(0, 0, 0);
+    camera.lookAt(0, 0, -1); // forward = -Z
+    camera.updateMatrixWorld();
+
+    const ctx = makeCtx({ camera, currentControls: null, sceneScale: 10 });
+    // toOld = (4,0,-1); dist = sqrt(17) ≈ 4.123; d = toOld·(0,0,-1) = 1 (~76°).
+    ctx.savedTarget.set(4, 0, -1);
+    saveCameraState(ctx);
+
+    // Fallback (NOT the reused depth 1, which would give (0,0,-1)):
+    // pos + forward * sceneScale = (0,0,0) + (0,0,-1)*10 = (0,0,-10).
+    expect(ctx.savedTarget.x).toBeCloseTo(0, 5);
+    expect(ctx.savedTarget.y).toBeCloseTo(0, 5);
+    expect(ctx.savedTarget.z).toBeCloseTo(-10, 5);
+  });
+
+  it('cone rule: camera ~90° off the old pivot falls back to sceneScale depth', () => {
+    // The old pivot is perpendicular to the view ray (d == 0, inside neither
+    // the >60° reuse cone nor "behind"). The cone rule rejects it — a small
+    // positive depth must NOT collapse the pivot onto the camera.
     const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 1000);
     camera.position.set(0, 0, 5);
     camera.lookAt(0, 0, 0); // forward = -Z
     camera.updateMatrixWorld();
 
-    const ctx = makeCtx({ camera, currentControls: null, sceneScale: 20 });
+    const ctx = makeCtx({ camera, currentControls: null, sceneScale: 30 });
+    ctx.savedTarget.set(5, 0, 5); // to the side, same depth → d = 0 (perpendicular)
     saveCameraState(ctx);
 
-    // Expected: position + forward * sceneScale = (0,0,5) + (0,0,-1)*20 = (0,0,-15).
+    // Fallback: position + forward * sceneScale = (0,0,5) + (0,0,-1)*30 = (0,0,-25).
     expect(ctx.savedTarget.x).toBeCloseTo(0, 5);
     expect(ctx.savedTarget.y).toBeCloseTo(0, 5);
-    expect(ctx.savedTarget.z).toBeCloseTo(-15, 5);
+    expect(ctx.savedTarget.z).toBeCloseTo(-25, 5);
   });
 
-  it('uses the 10-unit fallback when sceneScale = 0 (boundary)', () => {
-    // P5 boundary: sceneScale === 0 → fallback distance is hardcoded to 10.
-    const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 1000);
-    camera.position.set(0, 0, 5);
+  it('scale-free: tiny sub-micro-unit scene, no movement reuses the exact old pivot', () => {
+    // Absolute-epsilon rules break here (every legit depth is < 1e-6). The
+    // scale-free cone test still reuses the old pivot exactly. With the OLD
+    // `d > 1e-6` rule this depth (5e-7) would be rejected and the pivot pushed
+    // to a sceneScale-ahead point — this test discriminates that regression.
+    const camera = new THREE.PerspectiveCamera(60, 1, 1e-9, 1);
+    camera.position.set(0, 0, 5e-7);
+    camera.lookAt(0, 0, 0); // still facing the old pivot at the origin
+    camera.updateMatrixWorld();
+
+    const ctx = makeCtx({ camera, currentControls: null, sceneScale: 1e-6 });
+    ctx.savedTarget.set(0, 0, 0);
+    saveCameraState(ctx);
+
+    // Reused depth = 5e-7 → target is the origin (the old pivot), exactly.
+    expect(ctx.savedTarget.x).toBeCloseTo(0, 9);
+    expect(ctx.savedTarget.y).toBeCloseTo(0, 9);
+    expect(ctx.savedTarget.z).toBeCloseTo(0, 9);
+  });
+
+  it('no movement with 0 < depth < sceneScale·1e-3 reuses the old pivot exactly', () => {
+    // Auto-frame distance limits can legitimately put the orbit distance
+    // below the scale-derived sceneScale·1e-3 floor (fit distance /
+    // ZOOM_IN_FACTOR shrinks with wide FOVs). The floor is minPivotDepth —
+    // the actual legal minimum — so such a pivot must round-trip exactly.
+    // A hardcoded sceneScale·1e-3 floor (= 1 here) would push it to depth 1.
+    const camera = new THREE.PerspectiveCamera(60, 1, 1e-4, 1e4);
+    camera.position.set(0, 0, 0.5); // 0.5 units from the pivot; scale = 1000
     camera.lookAt(0, 0, 0);
     camera.updateMatrixWorld();
 
-    const ctx = makeCtx({ camera, currentControls: null, sceneScale: 0 });
+    const ctx = makeCtx({ camera, currentControls: null, sceneScale: 1000, minPivotDepth: 0.05 });
+    ctx.savedTarget.set(0, 0, 0);
     saveCameraState(ctx);
 
-    expect(ctx.savedTarget.z).toBeCloseTo(5 - 10, 5);
+    expect(ctx.savedTarget.x).toBeCloseTo(0, 6);
+    expect(ctx.savedTarget.y).toBeCloseTo(0, 6);
+    expect(ctx.savedTarget.z).toBeCloseTo(0, 6);
+  });
+
+  it('floors the reused depth at minPivotDepth when flown right up to the pivot', () => {
+    // Camera flown to 1e-4 in front of the old pivot (still aligned): the
+    // reused depth must not collapse below the orbit system's legal minimum,
+    // or the next ortho swap frames a ~0-height frustum.
+    const camera = new THREE.PerspectiveCamera(60, 1, 1e-4, 1e4);
+    camera.position.set(0, 0, 1e-4);
+    camera.lookAt(0, 0, 0);
+    camera.updateMatrixWorld();
+
+    const ctx = makeCtx({ camera, currentControls: null, sceneScale: 1000, minPivotDepth: 1 });
+    ctx.savedTarget.set(0, 0, 0);
+    saveCameraState(ctx);
+
+    // Depth floored to 1 → target = (0,0,1e-4) + (0,0,-1)·1 ≈ (0,0,-1).
+    expect(ctx.savedTarget.z).toBeCloseTo(1e-4 - 1, 6);
   });
 });
 
@@ -145,21 +271,24 @@ describe('saveCameraState — fly counterpart [controls.md G25]', () => {
   // is false — but the test wiring (with a real fly instance) was missing
   // for symmetry. Pin it explicitly so a future refactor that introduced
   // a dedicated fly branch (or broke the fallback assumption) would surface.
-  it('[G25] with LuxarFlyControls instance, target is derived from camera direction (same as null)', () => {
+  it('[G25] with LuxarFlyControls instance, target is derived like the null branch', () => {
+    // Looking away from the old pivot exercises the sceneScale fallback via a
+    // real fly instance (the LuxarOrbitControls instanceof check is false).
     const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 1000);
     camera.position.set(0, 0, 5);
-    camera.lookAt(0, 0, 0); // forward = -Z
+    camera.lookAt(0, 0, 10); // forward = +Z, away from origin
     camera.updateMatrixWorld();
     const domElement = document.createElement('div');
     const fly = new LuxarFlyControls(camera, domElement);
 
     const ctx = makeCtx({ camera, currentControls: fly, sceneScale: 25 });
+    ctx.savedTarget.set(0, 0, 0);
     saveCameraState(ctx);
 
-    // Expected: position + forward * sceneScale = (0,0,5) + (0,0,-1)*25 = (0,0,-20).
+    // Fallback: position + forward * sceneScale = (0,0,5) + (0,0,1)*25 = (0,0,30).
     expect(ctx.savedTarget.x).toBeCloseTo(0, 5);
     expect(ctx.savedTarget.y).toBeCloseTo(0, 5);
-    expect(ctx.savedTarget.z).toBeCloseTo(-20, 5);
+    expect(ctx.savedTarget.z).toBeCloseTo(30, 5);
 
     fly.dispose();
   });
@@ -169,16 +298,17 @@ describe('saveCameraState — fly counterpart [controls.md G25]', () => {
     // Pin this so a `??` mutation (which would let 0 through) would fail.
     const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 1000);
     camera.position.set(0, 0, 5);
-    camera.lookAt(0, 0, 0);
+    camera.lookAt(0, 0, 10); // forward = +Z, away from origin → fallback path
     camera.updateMatrixWorld();
     const domElement = document.createElement('div');
     const fly = new LuxarFlyControls(camera, domElement);
 
     const ctx = makeCtx({ camera, currentControls: fly, sceneScale: 0 });
+    ctx.savedTarget.set(0, 0, 0);
     saveCameraState(ctx);
 
-    // Expected: position + forward * 10 = (0,0,5) + (0,0,-1)*10 = (0,0,-5).
-    expect(ctx.savedTarget.z).toBeCloseTo(-5, 5);
+    // Expected: position + forward * 10 = (0,0,5) + (0,0,1)*10 = (0,0,15).
+    expect(ctx.savedTarget.z).toBeCloseTo(15, 5);
     fly.dispose();
   });
 });
