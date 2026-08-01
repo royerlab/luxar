@@ -5,11 +5,12 @@
  * Mirrors the visual factory's sprite-expansion math, but the fragment
  * outputs:
  *   - R: nodeId (set via uniform)
- *   - G: elementId (= `aSortedIndex`, the STORAGE slot — identical to
- *     the draw slot under identity ordering, and stays correct once
- *     the sort worker permutes draw order)
+ *   - G: elementId LOW 16 bits (= `aSortedIndex`, the STORAGE slot —
+ *     identical to the draw slot under identity ordering, and stays
+ *     correct once the sort worker permutes draw order)
  *   - B: brightness (perpendicular falloff × cap × widthScale × widthFade)
- *   - A: 1.0
+ *   - A: the same elementId's HIGH 16 bits (one f32 channel cannot
+ *     carry the whole index exactly — see `luxarElementIdParts`)
  *
  * Per-segment data comes from the RGBA32F line texture (`uLineTex`,
  * 6 texels/segment — layout in `rendering/line-geometry.ts`), fetched
@@ -158,7 +159,20 @@ export function linePickWebGPUFactory(
   // Storage slot, NOT instanceIndex (the draw slot): identical under
   // identity ordering, and stays correct once the sort worker permutes
   // draw order.
-  const vElementId: TSLNode = varying(float(aSortedIndex)).setInterpolation('flat');
+  // Storage index split into two 16-bit halves — the TSL twin of
+  // `luxarElementIdParts` in glsl-lib.ts. The pick pass carries the index
+  // through an RGBA32F buffer and float32 has a 24-bit mantissa, so one
+  // channel cannot represent consecutive indices past 16,777,216 while a
+  // node's capacity reaches 2^25 on a 32768-texel device. Split in INT
+  // space — a float split would already have lost the bit it preserves —
+  // and both halves are <= 65535, hence exact. Integer div/sub rather than
+  // bit ops so the graph lowers the same way on both backends.
+  const elementIdInt: TSLNode = int(aSortedIndex);
+  const elementIdHi: TSLNode = elementIdInt.div(int(65536));
+  const elementIdLo: TSLNode = elementIdInt.sub(elementIdHi.mul(int(65536)));
+  const vElementId: TSLNode = varying(
+    vec2(float(elementIdLo), float(elementIdHi))
+  ).setInterpolation('flat');
 
   const vertexBody = Fn(() => {
     // === Line-texture fetch prologue (visual-shader parity) ===
@@ -396,7 +410,7 @@ export function linePickWebGPUFactory(
     const p: TSLNode = vPerpNorm.abs();
     Discard(p.greaterThanEqual(1.0));
     Discard(brightness.lessThan(1e-4));
-    return vec4(vNodeId, vElementId, brightness, 1.0);
+    return vec4(vNodeId, vElementId.x, brightness, vElementId.y);
   });
 
   const depthNode = Fn(() => {
@@ -411,6 +425,15 @@ export function linePickWebGPUFactory(
   material.depthTest = true;
   material.depthWrite = true;
   material.transparent = false;
+  // The element index's HIGH half rides in alpha, and THREE's NodeMaterial
+  // appends `DiffuseColor.w *= material.opacity` to every generated fragment
+  // (see the codegen snapshots, and `tsl-opacity-tail.test.ts` for the same
+  // tail on the visual materials). NoBlending does not suppress that
+  // shader-side multiply, so any opacity other than exactly 1 would scale the
+  // high half and decode a WRONG element id — on the TSL path only, since the
+  // GLSL twins have no such tail. Pin it so the multiply is provably identity,
+  // including when a caller injects `outMaterial`.
+  material.opacity = 1;
   // Picking output is an opaque ID buffer; any blending would smear
   // nodeId / elementId across overlapping picks. Matches the GLSL
   // picking material.

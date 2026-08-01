@@ -226,7 +226,7 @@ computable (just per-point spheres in world space).
 
 ## Out of scope for this decision
 
-- The pick buffer encoding (`vec4(nodeId, elementId, brightness, 1)`)
+- The pick buffer encoding (`vec4(nodeId, elementId-low16, brightness, elementId-high16)`)
   stays. The decision is about _async readback_, not encoding.
 - Visual parity of pick / render shaders stays. The current parity
   rules (50 % truncation for points, 1.5σ for splats, full width for

@@ -114,4 +114,17 @@ uniform int uSortedIndexSlot;
 uint luxarSortedIndex() {
   return uSortedIndexSlot == 1 ? aSortedIndexB : aSortedIndex;
 }
+
+// Storage index split into two 16-bit halves, low in .x and high in .y.
+// The pick pass carries the index through an RGBA32F buffer, and float32
+// has a 24-bit mantissa — so a single float channel cannot represent
+// consecutive indices past 16,777,216, while a node's capacity reaches
+// 2^25 on a 32768-texel device. Both halves are <= 65535, hence exact,
+// and the pick decoder recombines them (see picking-system/pick-render.ts).
+// Kept in INT space: doing the split on a float would already have lost
+// the bit it is meant to preserve.
+vec2 luxarElementIdParts() {
+  uint i = luxarSortedIndex();
+  return vec2(float(i & 0xFFFFu), float(i >> 16u));
+}
 `;

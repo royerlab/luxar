@@ -4,12 +4,13 @@
  *
  * Renders one tight sprite per point with output:
  *   - R: nodeId (set as uniform)
- *   - G: elementId (= `aSortedIndex`, the STORAGE slot — identical to
- *     the draw slot under Phase-1 identity ordering, and stays the id
- *     the rest of the pipeline addresses points by once the sort
- *     worker permutes draw order in Phase 2+)
+ *   - G: elementId LOW 16 bits (= `aSortedIndex`, the STORAGE slot —
+ *     identical to the draw slot under Phase-1 identity ordering, and
+ *     stays the id the rest of the pipeline addresses points by once
+ *     the sort worker permutes draw order in Phase 2+)
  *   - B: brightness (super-Gaussian falloff at the fragment position)
- *   - A: 1.0
+ *   - A: the same elementId's HIGH 16 bits (one f32 channel cannot
+ *     carry the whole index exactly — see `luxarElementIdParts`)
  *
  * Per-point data comes from the RGBA32F point texture (`uPointTex`,
  * 3 texels/point; picking needs texels 0-1 only — center/radius/
@@ -141,7 +142,18 @@ export function pointPickWebGPUFactory(
   // Phase-1 identity ordering, and stays the id the rest of the
   // pipeline addresses points by once the sort worker permutes draw
   // order (Phase 2+). Mirrors the GLSL pick shader.
-  const vElementId: TSLNode = varying(float(aSortedIndex));
+  // Storage index split into two 16-bit halves — the TSL twin of
+  // `luxarElementIdParts` in glsl-lib.ts. The pick pass carries the index
+  // through an RGBA32F buffer and float32 has a 24-bit mantissa, so one
+  // channel cannot represent consecutive indices past 16,777,216 while a
+  // node's capacity reaches 2^25 on a 32768-texel device. Split in INT
+  // space — a float split would already have lost the bit it preserves —
+  // and both halves are <= 65535, hence exact. Integer div/sub rather than
+  // bit ops so the graph lowers the same way on both backends.
+  const elementIdInt: TSLNode = int(aSortedIndex);
+  const elementIdHi: TSLNode = elementIdInt.div(int(65536));
+  const elementIdLo: TSLNode = elementIdInt.sub(elementIdHi.mul(int(65536)));
+  const vElementId: TSLNode = varying(vec2(float(elementIdLo), float(elementIdHi)));
 
   const vertexBody = Fn(() => {
     // === Point-texture fetch prologue (visual-factory parity) ===
@@ -259,7 +271,7 @@ export function pointPickWebGPUFactory(
     Discard(r2.greaterThan(0.25));
     Discard(brightness.lessThan(1e-4));
 
-    return vec4(vNodeId, vElementId, brightness, 1.0);
+    return vec4(vNodeId, vElementId.x, brightness, vElementId.y);
   });
 
   // Depth = 1.0 - brightness (the brightest hit takes precedence).
@@ -275,6 +287,15 @@ export function pointPickWebGPUFactory(
   material.depthTest = true;
   material.depthWrite = true;
   material.transparent = false;
+  // The element index's HIGH half rides in alpha, and THREE's NodeMaterial
+  // appends `DiffuseColor.w *= material.opacity` to every generated fragment
+  // (see the codegen snapshots, and `tsl-opacity-tail.test.ts` for the same
+  // tail on the visual materials). NoBlending does not suppress that
+  // shader-side multiply, so any opacity other than exactly 1 would scale the
+  // high half and decode a WRONG element id — on the TSL path only, since the
+  // GLSL twins have no such tail. Pin it so the multiply is provably identity,
+  // including when a caller injects `outMaterial`.
+  material.opacity = 1;
   // Picking output is an opaque ID buffer; any blending would
   // smear nodeId / elementId values across overlapping picks and
   // produce nonsense readbacks. Matches the GLSL picking material.

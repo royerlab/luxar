@@ -17,6 +17,7 @@ import {
   SceneNode,
   type ColorArray,
   type ScalarArray,
+  type PointScalarArray,
 } from '../data-loader-types';
 import {
   calculateSpatialQueryTolerance,
@@ -630,11 +631,11 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
             : undefined,
           radii: radii ? (radii.subarray(0, Math.min(1, radii.length)) as ScalarArray) : undefined,
           sharpness: sharpness
-            ? (sharpness.subarray(0, Math.min(1, sharpness.length)) as ScalarArray)
+            ? (sharpness.subarray(0, Math.min(1, sharpness.length)) as PointScalarArray)
             : undefined,
-          // type-detect scalar buffer on first fill (Float32 vs Uint8).
+          // type-detect scalar buffer on first fill (Float32 / Float16 / Uint8 / Uint16).
           scalars: scalars
-            ? (scalars.subarray(0, Math.min(1, scalars.length)) as ScalarArray)
+            ? (scalars.subarray(0, Math.min(1, scalars.length)) as PointScalarArray)
             : undefined,
         });
       }
@@ -644,11 +645,13 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
         positions3D: this._accumulator.getPositionBuffer(),
         colors: this._accumulator.getColorBuffer() as ColorArray,
         radii: this._accumulator.getRadiiBuffer() as ScalarArray,
-        sharpness: this._accumulator.getSharpnessBuffer() as ScalarArray,
+        // sharpness/scalars keep their native dtype (uint8/uint16/float32) —
+        // ProjectionTargetBuffers widens to include Uint16Array, so no cast.
+        sharpness: this._accumulator.getSharpnessBuffer(),
         // scalar target — only populated when the source has scalars
         // (the projection helper checks both `scalars` and
         // `targetBuffers.scalars` before compacting).
-        scalars: scalars ? (this._accumulator.getScalarBuffer() as ScalarArray) : undefined,
+        scalars: scalars ? this._accumulator.getScalarBuffer() : undefined,
       };
 
       // Copy source colors/sharpness to accumulator buffers (needed for filtering later)
@@ -663,26 +666,34 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
       }
 
       if (sharpness) {
+        // Uint8/Uint16 are kept dtype-preserving (the accumulator normalizes
+        // at the GPU upload site — ÷255 / ÷65535). A Float16/Float32 source
+        // pins the buffer to Float32, and `.set()` widens value-preserving.
+        // The strict Float32→Float32-only branch used to silently zero a
+        // Float16/Uint16 source (issue #751); mirrors the colors copy above.
         if (sharpness instanceof Uint8Array && targetBuffers.sharpness instanceof Uint8Array) {
           (targetBuffers.sharpness as Uint8Array).set(sharpness);
         } else if (
-          sharpness instanceof Float32Array &&
-          targetBuffers.sharpness instanceof Float32Array
+          sharpness instanceof Uint16Array &&
+          targetBuffers.sharpness instanceof Uint16Array
         ) {
-          (targetBuffers.sharpness as Float32Array).set(sharpness as Float32Array);
+          (targetBuffers.sharpness as Uint16Array).set(sharpness);
+        } else if (targetBuffers.sharpness instanceof Float32Array) {
+          (targetBuffers.sharpness as Float32Array).set(sharpness);
         }
       }
 
       // copy source scalars into accumulator buffer so projection's
-      // filter pass has them available for in-place compaction.
+      // filter pass has them available for in-place compaction. Uint8/Uint16
+      // stay dtype-preserving (normalized on upload); Float16/Float32 widen
+      // value-preserving via the Float32 buffer's `.set()`.
       if (scalars && targetBuffers.scalars) {
         if (scalars instanceof Uint8Array && targetBuffers.scalars instanceof Uint8Array) {
           (targetBuffers.scalars as Uint8Array).set(scalars);
-        } else if (
-          scalars instanceof Float32Array &&
-          targetBuffers.scalars instanceof Float32Array
-        ) {
-          (targetBuffers.scalars as Float32Array).set(scalars as Float32Array);
+        } else if (scalars instanceof Uint16Array && targetBuffers.scalars instanceof Uint16Array) {
+          (targetBuffers.scalars as Uint16Array).set(scalars);
+        } else if (targetBuffers.scalars instanceof Float32Array) {
+          (targetBuffers.scalars as Float32Array).set(scalars);
         }
       }
     }

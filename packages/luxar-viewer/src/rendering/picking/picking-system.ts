@@ -19,7 +19,9 @@
  * 5. Readback of a 5×5 region followed by brightness-weighted
  *    majority voting picks the winning (nodeId, elementId).
  *
- * The pick buffer encodes: R=nodeId, G=elementId, B=brightness, A=1.0
+ * The pick buffer encodes: R=nodeId, G=elementId low 16 bits,
+ * B=brightness, A=elementId high 16 bits (split so an index past f32's
+ * 24-bit exact range survives — see picking-system/pick-render.ts)
  * Brightness-as-depth (gl_FragDepth = 1 - brightness) ensures the
  * brightest element at each pixel wins the depth test. Exception:
  * gsplat nodes in surface ('normal') blending mode write real projected
@@ -45,7 +47,7 @@ import {
   type PickNodeEntry,
 } from './picking-system/registration';
 import { rayHitsAnyNode, invalidateBoxCache } from './picking-system/ray-aabb';
-import { voteWinner, type VoteEntry } from './picking-system/pick-render';
+import { MAX_PICK_NODE_ID, voteWinner, type VoteEntry } from './picking-system/pick-render';
 import { SettleScheduler } from './picking-system/settle-scheduler';
 import { applyLensDistortion } from './picking-system/lens-distortion';
 import type { Renderer, RendererCapabilities } from '../renderer-capabilities';
@@ -111,6 +113,7 @@ export class PickingSystem {
   private pickTarget: THREE.WebGLRenderTarget;
   private nodeMap: Map<number, PickNodeEntry> = new Map();
   private nextPickId = 1;
+  private _warnedPickIdCeiling = false;
   private raycaster: THREE.Raycaster;
   private ndcCoord: THREE.Vector2;
 
@@ -215,9 +218,28 @@ export class PickingSystem {
     log.info(Modules.RENDERER, 'PickingSystem initialized (5x5 RGBA32F)');
   }
 
-  /** Allocate the next pick ID (incrementing counter, starts at 1). 0 = background. */
+  /**
+   * Allocate the next pick ID (incrementing counter, starts at 1). 0 = background.
+   *
+   * The counter is checked against {@link MAX_PICK_NODE_ID}: past 2^24 the
+   * f32 `r` channel of the pick buffer stops resolving consecutive ids, so
+   * the readback would silently name the wrong node — and the vote key
+   * (`nodeId * VOTE_KEY_STRIDE`) would leave the exact-integer range.
+   * Unreachable in practice (it needs 16.7M node registrations in one
+   * session), but the vote-key argument rests on this bound, so say so
+   * loudly rather than assume it.
+   */
   allocatePickId(): number {
-    return this.nextPickId++;
+    const pickId = this.nextPickId++;
+    if (pickId > MAX_PICK_NODE_ID && !this._warnedPickIdCeiling) {
+      this._warnedPickIdCeiling = true;
+      log.error(
+        Modules.RENDERER,
+        `Pick id ${pickId} exceeds the ${MAX_PICK_NODE_ID} the pick buffer can resolve — ` +
+          'picking will report the wrong node from here on.'
+      );
+    }
+    return pickId;
   }
 
   /** Register a main scene node and its picking shadow node. */

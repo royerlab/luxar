@@ -762,7 +762,7 @@ export const GSPLAT_SHADERS: Record<string, RegistryEntry> = {
     buildMesh: buildGSplatInstancedMesh,
   },
   // GSplat-pick parity: same covariance projection as `gsplat`
-  // but fragment outputs (nodeId, elementId, brightness, 1.0) and
+  // but fragment outputs (nodeId, elementIdLow16, brightness, elementIdHigh16) and
   // depth = 1 - brightness. No GOG, no ray-integration boost.
   'gsplat-pick': {
     source: GSPLAT_PICK_SOURCE,

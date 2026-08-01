@@ -53,6 +53,15 @@ export type ColorArray = Float32Array | Uint8Array | Uint16Array;
 /** Scalar attribute array variants (radii, sharpness). */
 export type ScalarArray = Float32Array | Float16Array | Uint8Array;
 
+/**
+ * Scalar attribute variants that additionally keep a native Uint16Array.
+ * Points sharpness/scalars are dtype-preserved through the accumulator (like
+ * colors) and normalized at the GPU upload site (÷255 / ÷65535); Float16
+ * widens value-preserving to Float32. Kept distinct from `ScalarArray` so the
+ * Lines path (which has no native-uint16 scalar buffer) is unaffected.
+ */
+export type PointScalarArray = ScalarArray | Uint16Array;
+
 // ============================================================================
 // Loaded / Range Types (post-spatial-index slice, ready for GPU upload)
 // ============================================================================
@@ -82,8 +91,9 @@ export interface LoadedPointsData {
   /** Point radii in world units (size: numPoints, optional) */
   radii?: ScalarArray;
 
-  /** Point sharpness values (size: numPoints, optional) */
-  sharpness?: ScalarArray;
+  /** Point sharpness values (size: numPoints, optional). Native Uint16 is
+   *  kept dtype-preserving (like colors) and normalized on GPU upload. */
+  sharpness?: PointScalarArray;
 
   /**
    * Per-point scalar values for colormap lookup (size: numPoints, optional).
@@ -92,10 +102,10 @@ export interface LoadedPointsData {
    * Point shader's USE_COLORMAP path samples the LUT at
    * `(scalar - uScalarMin) * uScalarScale`. Without scalars, colormap
    * mode falls back to vertex colours. The dtype matches the source
-   * zarr array (Float32 / Float16 / Uint8); the shader reads `radius`-
-   * style normalised attributes when the dtype is integer.
+   * zarr array (Float32 / Float16 / Uint8 / Uint16); the shader reads
+   * `radius`-style normalised attributes when the dtype is integer.
    */
-  scalars?: ScalarArray;
+  scalars?: PointScalarArray;
 
   /**
    * Per-point original (node-global) element IDs (size: numPoints, optional).
