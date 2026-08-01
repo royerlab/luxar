@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -28,6 +29,7 @@ from typing import Any, Callable, Optional
 import numpy as np
 from arbol import aprint, asection
 
+from luxar.gsplats.batch.task_pool import cancel_pool_on_interrupt
 from luxar.gsplats.fit_tiled_parallel import luxar_argv0
 
 from .fit_planned import _padded_bounds
@@ -146,8 +148,13 @@ def fit_planned_parallel(
 
     budgeted = [i for i, b in enumerate(plan.boxes) if b.budget > 0]
     box_paths = {i: tmp_dir / f"box_{i}.gsplats.zarr" for i in budgeted}
+    stop = threading.Event()
 
     def _run(i: int) -> tuple[int, int, str]:
+        # A worker that dequeued this box after a Ctrl-C must not spawn a new
+        # fit subprocess (issue #736): bail before launching anything.
+        if stop.is_set():
+            return i, -1, "cancelled before launch"
         try:
             cmd = [str(c) for c in worker_cmd_builder(i, box_paths[i])]
             proc = subprocess.run(cmd, capture_output=True, text=True)
@@ -159,18 +166,25 @@ def fit_planned_parallel(
     n = len(budgeted)
     with asection(f"Parallel planned fitting: {n} boxes, {jobs} concurrent worker(s)"):
         with ThreadPoolExecutor(max_workers=max(1, jobs)) as ex:
-            futures = [ex.submit(_run, i) for i in budgeted]
             done = 0
-            for fut in as_completed(futures):
-                i, rc, stream = fut.result()
-                done += 1
-                if rc != 0:
-                    tail = "\n".join(stream.strip().splitlines()[-20:])
-                    failures.append((i, tail))
-                    if verbose:
-                        aprint(f"Box {i} FAILED (exit {rc}) [{done}/{n}]")
-                elif verbose:
-                    aprint(f"Box {i} done [{done}/{n}]")
+            try:
+                futures = [ex.submit(_run, i) for i in budgeted]
+                for fut in as_completed(futures):
+                    i, rc, stream = fut.result()
+                    done += 1
+                    if rc != 0:
+                        tail = "\n".join(stream.strip().splitlines()[-20:])
+                        failures.append((i, tail))
+                        if verbose:
+                            aprint(f"Box {i} FAILED (exit {rc}) [{done}/{n}]")
+                    elif verbose:
+                        aprint(f"Box {i} done [{done}/{n}]")
+            except KeyboardInterrupt:
+                # Cancel queued boxes (and signal in-flight workers) BEFORE the
+                # ``with`` block's __exit__ would otherwise drain them, then
+                # re-raise so the CLI still exits on the interrupt.
+                cancel_pool_on_interrupt(ex, stop)
+                raise
 
     if failures:
         idxs = ", ".join(str(i) for i, _ in failures)
