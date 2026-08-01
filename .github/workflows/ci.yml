@@ -104,7 +104,14 @@ jobs:
           age=$(( now - hb ))
           # 180s = three missed 60s beats. Long enough to ride out a slow beat or
           # a GitHub API blip, short enough that a dead box costs one CI run.
-          if [ "$hb" -gt 0 ] && [ "$age" -lt 180 ]; then
+          #
+          # The lower bound matters as much as the upper one: a NEGATIVE age
+          # means obsidian's clock is ahead of GitHub's, and `age < 180` alone
+          # would then read a permanently stale heartbeat as permanently fresh —
+          # failing OPEN, in the one direction this gate must never fail. Real
+          # skew measured at 8s, so a few seconds of slop is tolerated and
+          # anything further routes to hosted.
+          if [ "$hb" -gt 0 ] && [ "$age" -ge -30 ] && [ "$age" -lt 180 ]; then
             echo "obsidian heartbeat is ${age}s old -> routing to obsidian"
             echo "label=obsidian" >> "$GITHUB_OUTPUT"
           else

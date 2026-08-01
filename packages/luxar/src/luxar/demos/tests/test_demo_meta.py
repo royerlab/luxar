@@ -7,7 +7,9 @@ single durable gate (the block generator that seeded them was a one-off).
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
+import textwrap
 import time
 from pathlib import Path
 
@@ -117,19 +119,37 @@ def test_iter_demos_is_fast() -> None:
     competing workers, because cache and memory-bandwidth contention inflate the
     cycle count. The generous ceiling below is only a catastrophic-regression
     backstop, in the spirit of the 60s bounds in test_substitutive.py.
+
+    A SUBPROCESS, because an in-process ``sys.modules`` diff passes vacuously:
+    ``test_all_demos_import.py`` collects earlier in a serial run and imports
+    every demo module, so the "before" snapshot already contains everything the
+    regression would import and the difference is empty no matter what
+    ``iter_demos`` does. Only a fresh interpreter guarantees a clean baseline.
     """
-    before = {m for m in sys.modules if m.startswith("luxar.demos.demo_")}
+    probe = textwrap.dedent(
+        """
+        import sys
+        from luxar.demos.registry import iter_demos
+        iter_demos(refresh=True)
+        print(",".join(sorted(m for m in sys.modules
+                              if m.startswith("luxar.demos.demo_"))))
+        """
+    )
     start = time.process_time()
-    iter_demos(refresh=True)
+    proc = subprocess.run(
+        [sys.executable, "-c", probe], capture_output=True, text=True, timeout=300
+    )
     cold = time.process_time() - start
-    newly_imported = sorted(
-        {m for m in sys.modules if m.startswith("luxar.demos.demo_")} - before
+    assert proc.returncode == 0, f"probe failed: {proc.stderr[-2000:]}"
+
+    imported = [m for m in proc.stdout.strip().split(",") if m]
+    assert not imported, (
+        f"iter_demos imported {len(imported)} demo module(s); the table must "
+        f"come from AST extraction: {imported[:5]}"
     )
-    assert not newly_imported, (
-        f"iter_demos imported {len(newly_imported)} demo module(s); the table "
-        f"must come from AST extraction: {newly_imported[:5]}"
-    )
-    assert cold < 30.0, f"cold iter_demos took {cold:.2f}s CPU (backstop 30s)"
+    # Parent-side CPU time excludes the child, so this only bounds our own
+    # overhead; the child's cost is bounded by the subprocess timeout above.
+    assert cold < 30.0, f"probe overhead {cold:.2f}s CPU (backstop 30s)"
 
 
 def test_cache_root_matches_utils_demos() -> None:
