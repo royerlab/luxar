@@ -44,12 +44,14 @@ at all). It runs inside `check:ci` and, in `ci.yml`, as its own step *before*
 need the explanation never see it.
 
 Because the pins now live in `pnpm-workspace.yaml`, the pnpm floor became
-load-bearing: reading `overrides` from that file needs pnpm ≥10.6. Below that
-the install aborts rather than quietly dropping the pins — 10.5.x on
-`ERR_PNPM_UNSUPPORTED_ENGINE` (pnpm enforces `engines.pnpm` itself, with no
-`engine-strict` needed, so that field is a real gate and not documentation),
-and 9 through 10.4 on "packages field missing or empty" from the
-`packages`-less workspace file. Three places disagreed with the floor and were
+load-bearing. Measured against that file: 9 and ≤10.4 abort with "packages field
+missing or empty" (it has no `packages:` key), 10.5.0/10.5.1 install *silently
+without the pins* — the lockfile records zero overrides — and 10.5.2+ read them
+correctly. So ≥10.6 is a conservative floor, chosen because the 10.5.0 window is
+the one mode that drops the pins without saying so; `engines.pnpm` closes it,
+since pnpm enforces that field itself (`ERR_PNPM_UNSUPPORTED_ENGINE`, no
+`engine-strict` required) and so it is a real gate rather than documentation.
+Three places disagreed with the floor and were
 corrected — `publish.yml` and `publish-npm.yml` pinned pnpm **9** (they have
 never run, being tag-triggered pre-launch, so this was a red job waiting to
 happen rather than a silently unpinned release), `engines.pnpm` said

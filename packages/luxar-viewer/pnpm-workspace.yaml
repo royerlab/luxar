@@ -2,15 +2,22 @@ onlyBuiltDependencies:
   - esbuild
 
 # Security-advisory pins. THIS FILE IS THE ONLY HOME FOR `overrides` — do not
-# add a `pnpm.overrides` block to package.json. Every pnpm that can read this
-# file (>=10.6; 10.4 and older reject it with "packages field missing or
-# empty") silently PREFERS package.json when both exist, while Dependabot's
-# updater reads THIS file. A second copy therefore makes the two disagree, and
-# every Dependabot PR lands a lockfile that fails `pnpm install
-# --frozen-lockfile` with ERR_PNPM_LOCKFILE_CONFIG_MISMATCH. Because the pins
-# live here, pnpm <10.6 would install without them — hence `engines.pnpm`,
-# MIN_PNPM_MAJOR/MINOR in the Makefile, and every workflow's pnpm pin.
-# `pnpm run check:overrides` enforces the single-source rule.
+# add a `pnpm.overrides` block to package.json. Any pnpm that reads this file
+# silently PREFERS package.json when both exist, while Dependabot's updater
+# reads THIS file. A second copy therefore makes the two disagree, and every
+# Dependabot PR lands a lockfile that fails `pnpm install --frozen-lockfile`
+# with ERR_PNPM_LOCKFILE_CONFIG_MISMATCH. `pnpm run check:overrides` enforces
+# the single-source rule.
+#
+# Measured pnpm behaviour against this file, which is why the floor is pinned in
+# `engines.pnpm`, MIN_PNPM_MAJOR/MINOR in the Makefile, and every workflow:
+#   9, <=10.4   abort — "packages field missing or empty" (no `packages:` key)
+#   10.5.0/.1   INSTALL SILENTLY WITHOUT THE PINS (lockfile records 0 overrides)
+#   >=10.5.2    read the pins correctly
+# 10.6 is therefore a conservative floor — real support starts at 10.5.2, but the
+# 10.5.0 window is the one mode that drops the pins without saying so, and
+# `engines.pnpm` closes it (10.5.x aborts on ERR_PNPM_UNSUPPORTED_ENGINE, which
+# pnpm enforces itself with no `engine-strict` needed).
 overrides:
   ws@>=8.0.0 <8.20.1: '>=8.20.1'
   brace-expansion@>=5.0.0 <5.0.6: '>=5.0.6'
