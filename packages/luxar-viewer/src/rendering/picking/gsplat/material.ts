@@ -2,7 +2,8 @@
  * GSplat Picking Material for GPU object picking.
  *
  * Renders Gaussian splats to an RGBA32F pick buffer encoding:
- *   R = nodeId, G = elementId (gl_InstanceID), B = brightness, A = 1.0
+ *   R = nodeId, G = elementId low 16 bits, B = brightness,
+ *   A = elementId high 16 bits
  *
  * Shader source-of-truth lives in `./shaders.ts`.
  */

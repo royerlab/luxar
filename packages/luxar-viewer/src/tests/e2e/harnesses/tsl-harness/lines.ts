@@ -762,7 +762,7 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
     buildMesh: buildLineColormapMesh,
   },
   // Line-pick parity: same quad-expansion math as `line` but
-  // fragment outputs (nodeId, elementId, brightness, 1.0) and
+  // fragment outputs (nodeId, elementIdLow16, brightness, elementIdHigh16) and
   // depth = 1 - brightness. No edgeAA, no GOG.
   'line-pick': {
     source: LINE_PICK_SOURCE,
