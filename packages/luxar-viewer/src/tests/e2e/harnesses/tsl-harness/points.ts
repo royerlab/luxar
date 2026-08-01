@@ -673,7 +673,7 @@ export const POINT_SHADERS: Record<string, RegistryEntry> = {
     buildMesh: buildPointColormapMesh,
   },
   // Point-pick parity: identical sprite layout to `point` but
-  // the fragment outputs (nodeId, elementId, brightness, 1.0) and
+  // the fragment outputs (nodeId, elementIdLow16, brightness, elementIdHigh16) and
   // depth = 1 - brightness. Pick footprint is half-radius (×0.5).
   'point-pick': {
     source: POINT_PICK_SOURCE,

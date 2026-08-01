@@ -60,6 +60,38 @@ now ride on the wrapper only, matching every other writer, and within a layer's
 subtree the panel treats the layer's mode as authoritative so scenes already on
 disk are fixed too.
 
+#### Fixed — picking resolved the wrong element on very large nodes
+
+The pick pass carried the element index through a single `float` channel of
+the RGBA32F pick buffer. float32 has a 24-bit mantissa, so it stops
+representing consecutive integers past 16,777,216 — while a node's capacity
+reaches 2^25 on a device reporting `maxTextureSize` 32768. Hovering such a
+node resolved to a neighbouring element, silently.
+
+The index is now split into two 16-bit halves in INT space
+(`luxarElementIdParts` in `glsl-lib.ts` and its TSL twin), carried in the
+`g` (low) and `a` (high) channels — `a` was an unused constant 1.0, and pick
+materials are `NoBlending`, so the blend stage cannot touch it. `NoBlending`
+alone is not sufficient, though: THREE's NodeMaterial appends
+`DiffuseColor.w *= material.opacity` inside the fragment body, which would
+scale the high half on the TSL path (the hand-written GLSL twins have no such
+tail). The pick factories therefore pin `.opacity = 1` so that multiply is
+provably identity. Both halves are ≤ 65535 and therefore exact, so the
+round-trip is exact for every index a node can hold (the element-texture
+layout caps a node at 44,728,320 elements). The vote key stride moves
+from 2^24 to 2^27 to match: with the old multiplier, `(nodeId 1, element
+2^24)` and `(nodeId 2, element 0)` hashed to the same bucket and merged their
+votes. 2^27 clears the largest reachable element index (44,728,319, for points
+on a 32768-texel device) while keeping every key exactly representable — a
+larger stride such as 2^32 would push keys past 2^53 and start merging
+adjacent elements instead.
+
+Below 65536 the DECODE is unchanged — the high half is 0 and `g` still
+holds the whole index, which is exactly what the old decoder read — so no
+resolved id moves and ordinary scenes are unaffected. (The buffer bytes do
+differ there: alpha went from a constant 1.0 to the zero high half.) Pinned
+by a test.
+
 #### Fixed — a scaling `nd_transform` no longer draws the wrong slice on a discrete dimension
 
 An `nd_transform` with a non-unit `scale` on a discrete non-displayed dimension

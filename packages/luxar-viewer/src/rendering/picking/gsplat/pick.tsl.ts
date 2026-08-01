@@ -5,9 +5,10 @@
  * Same 3D→2D covariance projection pipeline as `gsplat.tsl`, but the
  * fragment outputs picking data:
  *   - R: nodeId (uniform)
- *   - G: elementId (instance index)
+ *   - G: elementId (instance index) LOW 16 bits
  *   - B: brightness clamped to [0, 1]
- *   - A: 1.0
+ *   - A: the same elementId's HIGH 16 bits (one f32 channel cannot
+ *     carry the whole index exactly — see `luxarElementIdParts`)
  * Depth = 1.0 - brightness (brightness-as-depth tie-breaking) — or the
  * real fragment depth when `uSurfaceDepth == 1` (surface/'normal' mode:
  * front-most wins, matching the depth-sorted occluding surface).
@@ -146,7 +147,18 @@ export function gsplatPickWebGPUFactory(
   // Phase-1 identity ordering, and stays the id the rest of the
   // pipeline addresses splats by once the sort worker permutes draw
   // order (Phase 2+). Mirrors the GLSL pick shader.
-  const vElementId: TSLNode = varying(float(aSortedIndex));
+  // Storage index split into two 16-bit halves — the TSL twin of
+  // `luxarElementIdParts` in glsl-lib.ts. The pick pass carries the index
+  // through an RGBA32F buffer and float32 has a 24-bit mantissa, so one
+  // channel cannot represent consecutive indices past 16,777,216 while a
+  // node's capacity reaches 2^25 on a 32768-texel device. Split in INT
+  // space — a float split would already have lost the bit it preserves —
+  // and both halves are <= 65535, hence exact. Integer div/sub rather than
+  // bit ops so the graph lowers the same way on both backends.
+  const elementIdInt: TSLNode = int(aSortedIndex);
+  const elementIdHi: TSLNode = elementIdInt.div(int(65536));
+  const elementIdLo: TSLNode = elementIdInt.sub(elementIdHi.mul(int(65536)));
+  const vElementId: TSLNode = varying(vec2(float(elementIdLo), float(elementIdHi)));
 
   const vertexBody = Fn(() => {
     // === Splat-texture fetch prologue (visual-factory parity) ===
@@ -391,7 +403,7 @@ export function gsplatPickWebGPUFactory(
   const colorNode = Fn(() => {
     Discard(mahalSq.greaterThan(uTruncateSq));
     Discard(intensity.lessThan(1e-4));
-    return vec4(vNodeId, vElementId, brightness, 1.0);
+    return vec4(vNodeId, vElementId.x, brightness, vElementId.y);
   });
 
   // Pick depth convention — mirrors the GLSL fragment (shaders.ts):
@@ -415,6 +427,15 @@ export function gsplatPickWebGPUFactory(
   material.depthTest = true;
   material.depthWrite = true;
   material.transparent = false;
+  // The element index's HIGH half rides in alpha, and THREE's NodeMaterial
+  // appends `DiffuseColor.w *= material.opacity` to every generated fragment
+  // (see the codegen snapshots, and `tsl-opacity-tail.test.ts` for the same
+  // tail on the visual materials). NoBlending does not suppress that
+  // shader-side multiply, so any opacity other than exactly 1 would scale the
+  // high half and decode a WRONG element id — on the TSL path only, since the
+  // GLSL twins have no such tail. Pin it so the multiply is provably identity,
+  // including when a caller injects `outMaterial`.
+  material.opacity = 1;
   // Picking output is an opaque ID buffer; any blending would smear
   // nodeId / elementId across overlapping picks. Matches the GLSL
   // picking material.

@@ -73,7 +73,7 @@ in float nodeVarying7;
 flat  in float nodeVarying8;
 flat  in float nodeVarying9;
 flat  in float nodeVarying10;
-flat  in float nodeVarying11;
+flat  in vec2 nodeVarying11;
 
 
 // vars
@@ -86,7 +86,7 @@ float nodeVar4;
 float nodeVar5;
 float lineBrightness;
 vec4 Output;
-vec4 nodeVar7;
+vec4 nodeVar9;
 
 // codes
 
@@ -100,7 +100,7 @@ void main() {
 	if ( ( abs( nodeVarying1 ) >= 1.0 ) ) {
 
 		discard;
-		
+
 
 	}
 
@@ -145,17 +145,17 @@ void main() {
 	if ( ( lineBrightness < 0.0001 ) ) {
 
 		discard;
-		
+
 
 	}
 
-	DiffuseColor = vec4( nodeVarying10, nodeVarying11, lineBrightness, 1.0 );
+	DiffuseColor = vec4( nodeVarying10, nodeVarying11.x, lineBrightness, nodeVarying11.y );
 	DiffuseColor.w = ( DiffuseColor.w * nodeUniform3 );
-	nodeVar7 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
-	Output = nodeVar7;
+	nodeVar9 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
+	Output = nodeVar9;
 	gl_FragDepth = ( 1.0 - clamp( lineBrightness, 0.0, 1.0 ) );
 
 	// result
-	fragColor = nodeVar7;
+	fragColor = nodeVar9;
 
 }

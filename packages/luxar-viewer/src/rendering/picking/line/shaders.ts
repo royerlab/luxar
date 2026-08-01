@@ -6,7 +6,7 @@
  * in lock-step with the visible footprint. Strips colormap and color
  * varyings (not needed for picking) and adds the `uNodeId` uniform and
  * `vNodeId` / `vElementId` varyings written into the RGBA32F pick
- * buffer as `(nodeId, elementId, brightness, 1)`. Brightness-as-depth
+ * buffer as `(nodeId, elementId-low16, brightness, elementId-high16)`. Brightness-as-depth
  * keeps overlapping segments correctly resolved.
  *
  * Lines use **full** pick width (unlike points / gsplats which truncate
@@ -67,7 +67,7 @@ export const LINE_PICK_VERTEX_SHADER = /* glsl */ `
     flat out float vCapSuppressStart;
     flat out float vCapSuppressEnd;
     flat out highp float vNodeId;
-    flat out highp float vElementId;
+    flat out highp vec2 vElementId;
 
     void main() {
       // === Line-texture fetch prologue (visual-shader parity) ===
@@ -135,7 +135,7 @@ export const LINE_PICK_VERTEX_SHADER = /* glsl */ `
         vWidthFade = 0.0;
         vViewZ = 0.0;
         vNodeId = uNodeId;
-        vElementId = float(luxarSortedIndex());
+        vElementId = luxarElementIdParts();
         return;
       }
 
@@ -221,7 +221,7 @@ export const LINE_PICK_VERTEX_SHADER = /* glsl */ `
         vWidthFade = 0.0;
         vViewZ = 0.0;
         vNodeId = uNodeId;
-        vElementId = float(luxarSortedIndex());
+        vElementId = luxarElementIdParts();
         return;
       }
       float clampedPixelWidth = clamp(rawPixelWidth, minPixelWidth, maxPW);
@@ -239,13 +239,13 @@ export const LINE_PICK_VERTEX_SHADER = /* glsl */ `
       // Storage slot, NOT gl_InstanceID (the draw slot): identical
       // under identity ordering, and stays correct once the sort
       // worker permutes draw order.
-      vElementId = float(luxarSortedIndex());
+      vElementId = luxarElementIdParts();
     }
 `;
 
 /**
  * Picking fragment shader for lines.
- * Outputs vec4(nodeId, elementId, brightness, 1.0) with brightness-as-depth.
+ * Outputs vec4(nodeId, elementId-low16, brightness, elementId-high16) with brightness-as-depth.
  *
  * Lines use FULL width for picking (same as visual) — unlike points/splats,
  * lines are already narrow with a sharp parabolic profile. Tighter truncation
@@ -272,7 +272,7 @@ export const LINE_PICK_FRAGMENT_SHADER = /* glsl */ `
     flat in float vCapSuppressStart;
     flat in float vCapSuppressEnd;
     flat in highp float vNodeId;
-    flat in highp float vElementId;
+    flat in highp vec2 vElementId;
 
     out vec4 fragColor;
 
@@ -317,7 +317,7 @@ export const LINE_PICK_FRAGMENT_SHADER = /* glsl */ `
       float brightness = capFactor * perpFalloff * widthScale * vWidthFade * nearFade;
       if (brightness < 1e-4) discard;
 
-      fragColor = vec4(vNodeId, vElementId, brightness, 1.0);
+      fragColor = vec4(vNodeId, vElementId.x, brightness, vElementId.y);
       gl_FragDepth = 1.0 - clamp(brightness, 0.0, 1.0);
     }
 `;
