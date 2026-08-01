@@ -16,12 +16,12 @@
  */
 
 import * as THREE from 'three';
-import { config } from '../../../config';
 import type { ControlsManager, ControlType } from '../../../controls/controls-manager';
 import type { PostProcessingManager } from '../../../rendering';
 import type { Renderer } from '../../../rendering/renderer-capabilities';
 import {
   type LuxarCamera,
+  getOrthoFrustumHeight,
   isOrthographicCamera,
   isPerspectiveCamera,
 } from '../../../utils/camera-utils';
@@ -43,6 +43,10 @@ export interface CameraModeCtx {
   updateMaterialsForCurrentCamera(): void;
   /** Update the cached ortho zoom on the host after a perspective→ortho swap. */
   setLastOrthoZoom(zoom: number): void;
+  /** Read the perspective FOV to restore on the next ortho→perspective swap. */
+  getLastPerspectiveFov(): number;
+  /** Stash the perspective FOV in effect at a perspective→ortho swap. */
+  setLastPerspectiveFov(fov: number): void;
 }
 
 /**
@@ -75,15 +79,22 @@ export function setControlType(type: ControlType, ctx: CameraModeCtx): { cameraC
 
 /**
  * Swap perspective → orthographic, matching the visible frustum
- * at the current target distance. Resets to a clean front view
- * (down -Z, up = Y) — ortho mode is for 2D viewing, so carrying
- * over a tilted 3D orientation is confusing.
+ * at the current target distance. POSE-PRESERVING: the ortho camera
+ * copies the perspective camera's exact position, orientation and up
+ * vector, changing only the projection — so cycling control modes
+ * (V key) with no interaction never shifts or re-frames the view.
+ *
+ * Also stashes the perspective FOV (via `setLastPerspectiveFov`) so the
+ * inverse `swapToPerspective` can restore it exactly.
  *
  * No-op when the current camera is already orthographic.
  */
 export function swapToOrthographic(ctx: CameraModeCtx): void {
   const camera = ctx.getCamera();
   if (!isPerspectiveCamera(camera)) return;
+
+  // Remember the perspective FOV so the inverse swap restores it exactly.
+  ctx.setLastPerspectiveFov(camera.fov);
 
   const focusTarget = ctx.controls.getFocusTarget();
   // SCENE-RELATIVE floor (mirrors the orbit-controls re-init/reset fix):
@@ -110,9 +121,10 @@ export function swapToOrthographic(ctx: CameraModeCtx): void {
     camera.far
   );
 
-  ortho.position.set(focusTarget.x, focusTarget.y, focusTarget.z + distance);
-  ortho.up.set(0, 1, 0);
-  ortho.lookAt(focusTarget);
+  // Verbatim pose copy: only the projection changes.
+  ortho.position.copy(camera.position);
+  ortho.quaternion.copy(camera.quaternion);
+  ortho.up.copy(camera.up);
   ortho.updateMatrixWorld();
 
   ctx.setCamera(ortho);
@@ -121,9 +133,12 @@ export function swapToOrthographic(ctx: CameraModeCtx): void {
 }
 
 /**
- * Swap orthographic → perspective. Restores the default FOV
- * (from `config.renderingControls.defaults.fov`); preserves
- * position, orientation and up vector from the ortho camera.
+ * Swap orthographic → perspective — the exact inverse of
+ * {@link swapToOrthographic}. Restores the FOV that was in effect at the
+ * last perspective→ortho swap (via `getLastPerspectiveFov`), and dollies
+ * the camera along its view direction so the apparent size at the pivot
+ * depth matches the ortho frustum (compensating for ortho zoom). Preserves
+ * orientation and up vector from the ortho camera.
  *
  * No-op when the current camera is already perspective.
  */
@@ -135,14 +150,25 @@ export function swapToPerspective(ctx: CameraModeCtx): void {
   const aspect =
     (canvas.clientWidth || window.innerWidth) / (canvas.clientHeight || window.innerHeight);
 
-  const persp = new THREE.PerspectiveCamera(
-    config.renderingControls.defaults.fov,
-    aspect,
-    camera.near,
-    camera.far
-  );
+  const fov = ctx.getLastPerspectiveFov();
 
-  persp.position.copy(camera.position);
+  const persp = new THREE.PerspectiveCamera(fov, aspect, camera.near, camera.far);
+
+  // Dolly so the perspective apparent size at the pivot depth equals the
+  // ortho frustum height — inverting the frustum-matching done on the way in.
+  const target = ctx.controls.getFocusTarget(); // pivot in world space
+  const viewDir = new THREE.Vector3();
+  camera.getWorldDirection(viewDir); // ortho cam forward (normalized)
+  const h = getOrthoFrustumHeight(camera); // (top-bottom)/zoom
+  const fovRad = (fov * Math.PI) / 180;
+  const newDist = h / (2 * Math.tan(fovRad / 2));
+
+  if (Number.isFinite(newDist) && newDist > 0) {
+    persp.position.copy(target).addScaledVector(viewDir, -newDist); // target - viewDir*newDist
+  } else {
+    // Degenerate frustum/zoom: keep the ortho position rather than NaN the camera.
+    persp.position.copy(camera.position);
+  }
   persp.quaternion.copy(camera.quaternion);
   persp.up.copy(camera.up);
   persp.updateMatrixWorld();
