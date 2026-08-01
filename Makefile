@@ -77,10 +77,23 @@ else
     PKG_MANAGER := unknown
 endif
 
-# Minimum Node.js version required by Vite 8.x. Keep in sync with
-# `engines.node` in packages/luxar-viewer/package.json.
-MIN_NODE_MAJOR := 20
-MIN_NODE_MINOR := 19
+# Minimum Node.js version. jsdom 30 (dev/test only) declares engines
+# `^22.22.2 || ^24.15.0 || >=26.0.0`; its undici 8 dependency destructures
+# `markAsUncloneable` from node:worker_threads (added in Node 22.16) and throws
+# on anything older, so the whole unit suite is unrunnable below that. Vite 8.x
+# only needs 20.19+, so jsdom is the binding constraint for development. This
+# make check is deliberately a coarse too-old floor (major.minor only): every
+# version it accepts has the 22.16+ API the suite actually needs (verified:
+# the full unit suite passes on 22.22.0, below jsdom's ^22.22.2); enforcing
+# jsdom's exact engines ranges is left to tools that opt into engine checks
+# (pnpm neither fails nor warns on a dependency's engines by default).
+# Deliberately NOT mirrored into `engines.node` in
+# packages/luxar-viewer/package.json: that manifest ships with the published
+# npm package, where it must state the LIBRARY's runtime floor (>=20.19.0,
+# Vite 8.x) — a dev-only jsdom constraint there would break installs for
+# consumers on supported Nodes (yarn enforces engines strictly).
+MIN_NODE_MAJOR := 22
+MIN_NODE_MINOR := 22
 # Mirrors `engines.pnpm` in packages/luxar-viewer/package.json. 10.6 is the
 # floor at which pnpm reads `overrides` from pnpm-workspace.yaml, where the
 # security-advisory pins live; 10.4 and older reject that file outright
@@ -100,7 +113,7 @@ define check_node_version
 		NODE_MINOR=$$(echo $$NODE_VERSION | cut -d. -f2); \
 		if [ "$$NODE_MAJOR" -lt $(MIN_NODE_MAJOR) ] || \
 		   ([ "$$NODE_MAJOR" -eq $(MIN_NODE_MAJOR) ] && [ "$$NODE_MINOR" -lt $(MIN_NODE_MINOR) ]); then \
-			echo "❌ Node.js $$NODE_VERSION is too old. Vite requires Node.js $(MIN_NODE_MAJOR).$(MIN_NODE_MINOR)+"; \
+			echo "❌ Node.js $$NODE_VERSION is too old. The viewer toolchain requires Node.js $(MIN_NODE_MAJOR).$(MIN_NODE_MINOR)+"; \
 			echo "   Please upgrade Node.js:"; \
 			if [ "$(OS)" = "macos" ]; then \
 				echo "   brew install node@22"; \
@@ -1594,7 +1607,7 @@ viewer:  ## Start the web viewer development server
 		NODE_MINOR=$$(echo $$NODE_VERSION | cut -d. -f2); \
 		if [ "$$NODE_MAJOR" -lt $(MIN_NODE_MAJOR) ] || \
 		   ([ "$$NODE_MAJOR" -eq $(MIN_NODE_MAJOR) ] && [ "$$NODE_MINOR" -lt $(MIN_NODE_MINOR) ]); then \
-			echo "❌ Node.js v$$NODE_VERSION is too old. Vite requires $(MIN_NODE_MAJOR).$(MIN_NODE_MINOR)+"; \
+			echo "❌ Node.js v$$NODE_VERSION is too old. The viewer toolchain requires $(MIN_NODE_MAJOR).$(MIN_NODE_MINOR)+"; \
 			echo "   Run 'make install-node' to upgrade, or 'make setup-dev' for full setup."; \
 			exit 1; \
 		fi; \
@@ -1624,7 +1637,7 @@ build-viewer:  ## Build the viewer for production (auto-installs Rust/wasm-pack 
 		NODE_MINOR=$$(echo $$NODE_VERSION | cut -d. -f2); \
 		if [ "$$NODE_MAJOR" -lt $(MIN_NODE_MAJOR) ] || \
 		   ([ "$$NODE_MAJOR" -eq $(MIN_NODE_MAJOR) ] && [ "$$NODE_MINOR" -lt $(MIN_NODE_MINOR) ]); then \
-			echo "❌ Node.js v$$NODE_VERSION is too old. Vite requires $(MIN_NODE_MAJOR).$(MIN_NODE_MINOR)+"; \
+			echo "❌ Node.js v$$NODE_VERSION is too old. The viewer toolchain requires $(MIN_NODE_MAJOR).$(MIN_NODE_MINOR)+"; \
 			echo "   Run 'make install-node' to upgrade, or 'make setup-dev' for full setup."; \
 			exit 1; \
 		fi; \
@@ -1700,7 +1713,7 @@ rebuild-viewer:  ## Complete clean rebuild of viewer (auto-installs dependencies
 		NODE_MINOR=$$(echo $$NODE_VERSION | cut -d. -f2); \
 		if [ "$$NODE_MAJOR" -lt $(MIN_NODE_MAJOR) ] || \
 		   ([ "$$NODE_MAJOR" -eq $(MIN_NODE_MAJOR) ] && [ "$$NODE_MINOR" -lt $(MIN_NODE_MINOR) ]); then \
-			echo "❌ Node.js v$$NODE_VERSION is too old. Vite requires $(MIN_NODE_MAJOR).$(MIN_NODE_MINOR)+"; \
+			echo "❌ Node.js v$$NODE_VERSION is too old. The viewer toolchain requires $(MIN_NODE_MAJOR).$(MIN_NODE_MINOR)+"; \
 			echo "   Run 'make install-node' to upgrade, or 'make setup-dev' for full setup."; \
 			exit 1; \
 		fi; \
