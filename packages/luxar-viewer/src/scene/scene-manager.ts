@@ -19,7 +19,11 @@ import type { PostProcessingManager } from '../rendering/post-processing/post-pr
 import { materialManager } from '../rendering';
 import { disposeColormapTextures } from '../rendering/colormap-textures';
 import type { Renderer, RendererCapabilities } from '../rendering/renderer-capabilities';
-import { BoundingBox, getBoundingBoxDiagonal } from './scene-manager/clipping/bounds-math';
+import {
+  BoundingBox,
+  getBoundingBoxDiagonal,
+  validateFOV,
+} from './scene-manager/clipping/bounds-math';
 import {
   SceneBoundsCache,
   computeBoundsFromMetadata,
@@ -196,6 +200,13 @@ export class SceneManager extends THREE.EventDispatcher<{
   /** Cached ortho zoom level to avoid redundant material updates during panning */
   private lastOrthoZoom: number = 1;
 
+  /**
+   * Perspective FOV in effect at the last perspective→ortho swap, restored on
+   * the inverse ortho→perspective swap so a control-mode round trip preserves
+   * the user's FOV instead of resetting it to the config default.
+   */
+  private lastPerspectiveFov: number = config.renderingControls.defaults.fov;
+
   /** Dynamic clipping planes state */
   private dynamicClippingEnabled: boolean =
     config.renderingControls.defaults.dynamicClippingEnabled;
@@ -232,11 +243,15 @@ export class SceneManager extends THREE.EventDispatcher<{
    */
   private pixelRatioOverride: number | null = null;
 
-  /** Current FOV in degrees (perspective) or the default FOV (orthographic). */
+  /**
+   * Current FOV in degrees. Perspective: the live camera FOV. Orthographic:
+   * the stashed perspective FOV (`lastPerspectiveFov`) — the single source of
+   * truth for the FOV that a future ortho→perspective swap will restore, so a
+   * FOV set while in ortho (Reset-to-Defaults / zarr-authored) is reported and
+   * honored rather than masked by the config default.
+   */
   get currentFov(): number {
-    return isPerspectiveCamera(this.camera)
-      ? this.camera.fov
-      : config.renderingControls.defaults.fov;
+    return isPerspectiveCamera(this.camera) ? this.camera.fov : this.lastPerspectiveFov;
   }
 
   /**
@@ -978,10 +993,24 @@ export class SceneManager extends THREE.EventDispatcher<{
   }
 
   /**
-   * Update perspective camera FOV with bounds checking. Returns true
-   * when applied; false (no-op) for orthographic cameras.
+   * Update perspective camera FOV with bounds checking. Returns true when
+   * applied. In orthographic mode there is no live FOV to change, but the
+   * request is applied to the stashed perspective FOV so a FOV set while in
+   * ortho is honored on the next ortho→perspective swap.
    */
   updateFOV(deltaY: number): boolean {
+    if (!isPerspectiveCamera(this.camera)) {
+      // Ortho renders no FOV, but keep the perspective stash coherent so a
+      // Reset-to-Defaults / zarr-authored FOV applied while in ortho is honored
+      // on the next ortho→perspective swap.
+      const fovChange = deltaY * config.camera.fovSensitivity;
+      this.lastPerspectiveFov = validateFOV(
+        this.lastPerspectiveFov + fovChange,
+        config.camera.fovMin,
+        config.camera.fovMax
+      );
+      return true;
+    }
     return adjustFOV(this.makeCameraMaterialsCtx(), deltaY);
   }
 
@@ -1258,6 +1287,10 @@ export class SceneManager extends THREE.EventDispatcher<{
       updateMaterialsForCurrentCamera: () => this.updateMaterialsForCurrentCamera(),
       setLastOrthoZoom: (zoom) => {
         this.lastOrthoZoom = zoom;
+      },
+      getLastPerspectiveFov: () => this.lastPerspectiveFov,
+      setLastPerspectiveFov: (fov) => {
+        this.lastPerspectiveFov = fov;
       },
     };
   }

@@ -247,11 +247,28 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
       camera: this.camera,
       currentControls: this.currentControls,
       sceneScale: this.sceneScale,
+      minPivotDepth: this.minPivotDepth(),
       savedCameraPosition: this.savedCameraPosition,
       savedCameraRotation: this.savedCameraRotation,
       savedCameraUp: this.savedCameraUp,
       savedTarget: this.savedTarget,
     };
+  }
+
+  /**
+   * Smallest camera-to-pivot distance the orbit system itself allows: the
+   * auto-frame min distance limit when one is set, capped at sceneScale·1e-3
+   * (the scale-derived orbit floor). The fly-mode focus-target derivation
+   * floors the reused pivot depth here — auto-frame limits can legitimately
+   * put the orbit distance below sceneScale·1e-3 (fit distance / ZOOM_IN_FACTOR
+   * shrinks with wide FOVs), and a pivot depth the user could legally reach
+   * must survive a no-interaction mode round trip exactly.
+   */
+  private minPivotDepth(): number {
+    const scaleFloor = (this.sceneScale || 10) * 1e-3;
+    return this.storedDistanceLimits && this.storedDistanceLimits.min > 0
+      ? Math.min(scaleFloor, this.storedDistanceLimits.min)
+      : scaleFloor;
   }
 
   private saveCameraState(): void {
@@ -462,10 +479,21 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
     if (this.currentControls instanceof LuxarOrbitControls) {
       return this.currentControls.target.clone();
     } else {
-      // For fly controls, return a point in front of the camera
+      // For fly controls, reuse the last saved pivot's depth along the current
+      // view ray, but only while the camera still faces it (within a ~60° cone,
+      // cos60=0.5). Scale-free, so a no-movement round-trip returns the old
+      // target exactly on tiny- and huge-unit scenes alike; the reused depth is
+      // floored at `minPivotDepth()` so the pivot can't collapse onto the
+      // camera. Outside the cone, fall back to a scene-scale point.
+      const scale = this.sceneScale || 10;
       const forward = new THREE.Vector3();
       this.camera.getWorldDirection(forward);
-      return this.camera.position.clone().add(forward.multiplyScalar(this.sceneScale || 10));
+      const pos = this.camera.position;
+      const toOld = this.savedTarget.clone().sub(pos);
+      const dist = toOld.length();
+      const d = toOld.dot(forward);
+      const depth = dist > 0 && d > 0.5 * dist ? Math.max(d, this.minPivotDepth()) : scale;
+      return pos.clone().add(forward.multiplyScalar(depth));
     }
   }
 

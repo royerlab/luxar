@@ -71,6 +71,36 @@ async function wheelAtCanvasCenter(page: Page, deltaY: number, count = 1): Promi
   );
 }
 
+/**
+ * Put the (perspective) camera into an OFF-AXIS, non-default pose with a
+ * non-default up and a nudged FOV, then re-derive the orbit state. Required
+ * for the #774 round-trip tests to actually discriminate: the auto-framed pose
+ * is an exact front view (center + (0,0,D), up +Y, default FOV), which the
+ * OLD front-view ortho reset reproduces — so before/after would match even
+ * against the pre-fix code. An off-axis pose + off-default FOV breaks that.
+ */
+async function putCameraOffAxis(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const debug = (window as any).__luxarDebug;
+    const cam = debug.camera;
+    const orbit = debug.controls.getControls(); // active LuxarOrbitControls
+    const c = orbit.target; // content center = current pivot
+    const cx = c.x;
+    const cy = c.y;
+    const cz = c.z;
+    // Distinct offsets on all three axes → genuinely off-axis; non-default up.
+    cam.position.set(cx + 37, cy + 29, cz + 43);
+    cam.up.set(0.1, 0.95, 0.2);
+    cam.lookAt(cx, cy, cz);
+    cam.updateMatrixWorld();
+    orbit.reinitialize();
+    orbit.update();
+    // Nudge FOV off the default so a FOV-restore regression is observable.
+    debug.app.components.sceneManager.updateFOV(40);
+  });
+  await waitForNextRender(page);
+}
+
 test.describe('Orthographic Camera Mode', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto(`/?src=${DATASET}&debug`);
@@ -253,5 +283,104 @@ test.describe('Orthographic Camera Mode', () => {
 
     // Verify no console errors
     await assertNoConsoleErrors(page);
+  });
+
+  // #774: cycling control modes with NO other interaction must be a no-op for
+  // the view. A full orbit → fly → ortho → orbit round trip (three V presses)
+  // must land the camera back at its exact starting pose, FOV and pivot.
+  test('round trip orbit→fly→ortho→orbit preserves camera pose, fov and target', async ({
+    page,
+  }) => {
+    const snapshot = async () =>
+      page.evaluate(() => {
+        const debug = (window as any).__luxarDebug;
+        const cam = debug.camera;
+        cam.updateMatrixWorld();
+        const target = debug.controls.getFocusTarget();
+        return {
+          position: cam.position.toArray(),
+          quaternion: cam.quaternion.toArray(),
+          up: cam.up.toArray(),
+          fov: cam.isPerspectiveCamera ? cam.fov : null,
+          target: [target.x, target.y, target.z],
+          type: debug.controls.getControlType(),
+        };
+      });
+
+    // Off-axis, non-default pose + FOV BEFORE the cycle (see helper docstring):
+    // this is what makes the test fail against the pre-fix front-view reset.
+    await putCameraOffAxis(page);
+
+    const before = await snapshot();
+    expect(before.type).toBe('orbit');
+    expect(before.fov).not.toBeNull();
+
+    // orbit → fly → ortho → orbit (three presses).
+    for (let i = 0; i < 3; i++) {
+      await page.keyboard.press('v');
+      await waitForNextRender(page);
+    }
+
+    const after = await snapshot();
+    expect(after.type).toBe('orbit');
+
+    const EPS = 1e-3;
+    for (let i = 0; i < 3; i++) {
+      expect(Math.abs(after.position[i] - before.position[i])).toBeLessThan(EPS);
+      expect(Math.abs(after.target[i] - before.target[i])).toBeLessThan(EPS);
+      expect(Math.abs(after.up[i] - before.up[i])).toBeLessThan(EPS);
+    }
+    for (let i = 0; i < 4; i++) {
+      expect(Math.abs(after.quaternion[i] - before.quaternion[i])).toBeLessThan(EPS);
+    }
+    expect(after.fov).toBeCloseTo(before.fov as number, 3);
+  });
+
+  // #774: apparent framing must be invariant across the round trip. Project an
+  // OFF-AXIS world point (inside the point cloud, NOT on the view axis) to NDC
+  // before and after cycling modes and assert it lands at the same screen
+  // location — an on-axis point is NDC-invariant under any dolly/zoom/FOV error,
+  // so only an off-axis point can catch a sideways shift or zoom drift.
+  test('round trip keeps an off-axis world point at the same NDC (no shift / zoom drift)', async ({
+    page,
+  }) => {
+    // Project an off-axis point through the live camera: ndc = P * V * worldPoint.
+    const ndcOfPoint = async () =>
+      page.evaluate(() => {
+        const debug = (window as any).__luxarDebug;
+        const cam = debug.camera;
+        cam.updateMatrixWorld();
+        cam.updateProjectionMatrix();
+        const p = cam.projectionMatrix.elements; // column-major
+        const v = cam.matrixWorldInverse.elements; // column-major
+        const mul = (m: number[], x: number[]) => {
+          const o = [0, 0, 0, 0];
+          for (let row = 0; row < 4; row++) {
+            let s = 0;
+            for (let col = 0; col < 4; col++) s += m[col * 4 + row] * x[col];
+            o[row] = s;
+          }
+          return o;
+        };
+        // Off-axis probe point inside the scene extent.
+        const eye = mul(v, [30, 20, 10, 1]);
+        const clip = mul(p, eye);
+        return [clip[0] / clip[3], clip[1] / clip[3]];
+      });
+
+    // Off-axis CAMERA pose too — an off-axis probe alone can't catch the drift
+    // if the camera itself is a front view (the old ortho reset reproduces it).
+    await putCameraOffAxis(page);
+
+    const before = await ndcOfPoint();
+
+    for (let i = 0; i < 3; i++) {
+      await page.keyboard.press('v');
+      await waitForNextRender(page);
+    }
+
+    const after = await ndcOfPoint();
+    expect(Math.abs(after[0] - before[0])).toBeLessThan(2e-3);
+    expect(Math.abs(after[1] - before[1])).toBeLessThan(2e-3);
   });
 });
