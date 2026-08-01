@@ -46,8 +46,14 @@ export default defineConfig({
     rollupOptions: {
       // `three` is a peer dependency — embedders bring their own copy so the
       // viewer and the host page share a single THREE.* runtime (essential
-      // for `instanceof` checks and texture interop).
-      external: ['three'],
+      // for `instanceof` checks and texture interop). Externalize the WHOLE
+      // `three` package, not just the bare id: the TSL materials statically
+      // import the `three/webgpu` and `three/tsl` subpaths, and array
+      // externals match ids EXACTLY, so a plain `['three']` would inline those
+      // subpaths (and the `three.core.js` they pull in) — shipping a second
+      // THREE core. The `/^three(\/.*)?$/` regex externalizes `three` and every
+      // `three/*` subpath, all of which the embedder's peer `three` supplies.
+      external: [/^three(\/.*)?$/],
       output: {
         // Don't fold `three` into the bundle even if it's referenced.
         globals: {
