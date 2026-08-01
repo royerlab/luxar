@@ -205,6 +205,42 @@ class TestProgressiveWriting:
 class TestExitOnException:
     """__exit__ must not finalize a partial store when an exception propagates."""
 
+    def test_owned_tempdir_cleaned_after_finalize_failure(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A failed finalize removes the compiler-owned temporary scene."""
+        compiler = LuxarZarrCompiler(store_path=None, enable_spatial_index=False)
+        assert compiler._tmpdir is not None
+        temp_path = Path(compiler._tmpdir.name)
+        assert temp_path.exists()
+
+        def fail_content_hashes(store: zarr.Group) -> None:
+            raise RuntimeError("forced finalize failure")
+
+        with pytest.raises(ValueError, match="Could not finalize") as exc_info:
+            with compiler:
+                compiler.create_scene(dimensions=Dimensions.default_3d())
+                monkeypatch.setattr(
+                    compiler, "_compute_content_hashes", fail_content_hashes
+                )
+
+        assert isinstance(exc_info.value.__cause__, RuntimeError)
+        assert str(exc_info.value.__cause__) == "forced finalize failure"
+        assert not temp_path.exists()
+
+    def test_owned_tempdir_cleaned_after_success(self) -> None:
+        """A successful context exit still removes its temporary scene."""
+        compiler = LuxarZarrCompiler(store_path=None, enable_spatial_index=False)
+        assert compiler._tmpdir is not None
+        temp_path = Path(compiler._tmpdir.name)
+        assert temp_path.exists()
+
+        with compiler:
+            compiler.create_scene(dimensions=Dimensions.default_3d())
+
+        assert compiler._is_finalized is True
+        assert not temp_path.exists()
+
     def test_exception_leaves_store_incomplete(self) -> None:
         """A raise inside the with block: no finalize, incomplete marker set."""
         with tempfile.TemporaryDirectory() as tmpdir:
