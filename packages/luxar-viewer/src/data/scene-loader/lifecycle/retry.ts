@@ -21,6 +21,7 @@ import { log, Modules } from '../../../utils/log';
 import type { LoaderRegistry } from '../loaders/loader-registry';
 import type { LODGroupRegistry } from '../../../scene/lod-group-registry';
 import type { StagedLinesCommit } from '../process/data-processor-lines';
+import type { StagedPointsCommit } from '../process/data-processor-points';
 import type { StagedGSplatsCommit } from '../process/data-processor-gsplats';
 
 /**
@@ -52,7 +53,8 @@ export interface RetryCtx {
     attrs: { extend_to_all?: string[] } | undefined,
     opts: { applyPartialExtendTolerance: boolean }
   ): DerivedViewState;
-  updatePointsGeometry(path: string, data: LoadedPointsData): void;
+  processPointsData(path: string, data: LoadedPointsData): StagedPointsCommit;
+  commitPointsGeometry(staged: StagedPointsCommit): void;
   processLinesData(
     path: string,
     data: Awaited<ReturnType<LinesDataLoader['updateView']>>,
@@ -130,7 +132,13 @@ export async function retryFailedLoaderUnlocked(path: string, ctx: RetryCtx): Pr
       // placeholder.
       const pointsViewState = derived.skip ? ctx.viewState : derived.viewState;
       const points = await (pointsLoader as DataLoader).updateView(pointsViewState);
-      if (points) ctx.updatePointsGeometry(path, points);
+      if (points) {
+        // No `if (staged)` guard here, unlike the lines/gsplats arms below:
+        // their processors are async and return null when the projection
+        // declines, whereas `processPointsData` is synchronous and always
+        // yields a staged commit.
+        ctx.commitPointsGeometry(ctx.processPointsData(path, points));
+      }
       return verifyAndClear('points');
     } else if (linesLoader) {
       const derived = ctx.deriveNodeViewState(path, attrs, {

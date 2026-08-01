@@ -30,6 +30,10 @@ import {
 } from './scene-loader/process/data-processor-gsplats';
 import type { LoaderFactoryDeps } from './scene-loader/loaders/loader-factory';
 import { commitPointsGeometry as commitPointsGeometryHelper } from './scene-loader/commit/commit-points-geometry';
+import {
+  processPointsData as processPointsDataHelper,
+  type StagedPointsCommit,
+} from './scene-loader/process/data-processor-points';
 import { ViewStateQueue } from './scene-loader/view-state/view-state-queue';
 import { runGSplatsRefinement } from './gsplats/lod-refinement';
 import { runPointsRefinement } from './points/lod-refinement';
@@ -103,7 +107,9 @@ import { warnFailedLoaders } from './scene-loader/loaders/failure-report';
 // to prevent flickering. These types hold processed data between the async
 // load/process stage and the synchronous commit stage.
 
-// StagedPointsCommit is defined in ./points/handler and imported above.
+// StagedPointsCommit is defined in ./points/handler and re-exported by
+// ./scene-loader/process/data-processor-points, which is where it is imported
+// from above.
 // It stays internal to scene-loader + data-processor wiring.
 
 /**
@@ -1300,6 +1306,9 @@ export class SceneLoader {
       getLiveViewState: () => this.viewState,
       // Commit callbacks forward an explicit loadedViewVersion so the lazy /
       // reload path can stamp its DERIVE-time version (see updatePointsGeometry).
+      processPointsData: (path, data) => this.processPointsData(path, data),
+      commitPointsGeometry: (staged, session, loadedViewVersion) =>
+        this.commitPointsGeometry(staged, session, loadedViewVersion),
       updatePointsGeometry: (path, data, session, loadedViewVersion) =>
         this.updatePointsGeometry(path, data, session, loadedViewVersion),
       processLinesData: (path, data, viewState, session) =>
@@ -1365,6 +1374,27 @@ export class SceneLoader {
     // Wake the idle-paused render loop so this commit paints (see
     // _requestRender).
     this._requestRender?.();
+  }
+
+  /**
+   * Stage points data for commit — the Points arm of the shared
+   * `process`/`commit` pair. A pass-through: points arrive display-ready from
+   * their loader (see `data-processor-points.ts`).
+   */
+  private processPointsData(path: string, data: LoadedPointsData): StagedPointsCommit {
+    return processPointsDataHelper(path, data);
+  }
+
+  /**
+   * Commit staged points data. Delegates to {@link updatePointsGeometry} so the
+   * one-shot and two-stage forms cannot diverge.
+   */
+  private commitPointsGeometry(
+    staged: StagedPointsCommit,
+    session?: UpdateSession,
+    loadedViewVersion: number = this._updateVersion
+  ): void {
+    this.updatePointsGeometry(staged.path, staged.data, session, loadedViewVersion);
   }
 
   /**
@@ -1505,7 +1535,8 @@ export class SceneLoader {
       rootGroup: this.rootGroup,
       viewState: this.viewState,
       deriveNodeViewState: (path, attrs, opts) => this.deriveNodeViewState(path, attrs, opts),
-      updatePointsGeometry: (path, data) => this.updatePointsGeometry(path, data),
+      processPointsData: (path, data) => this.processPointsData(path, data),
+      commitPointsGeometry: (staged) => this.commitPointsGeometry(staged),
       processLinesData: (path, data, vs) => this.processLinesData(path, data, vs),
       commitLinesGeometry: (staged) => this.commitLinesGeometry(staged),
       processGSplatsData: (path, data, vs) => this.processGSplatsData(path, data, vs),

@@ -26,6 +26,7 @@ import type {
 import type { UpdateSession } from '../../../profiling/update-profiler';
 import type { DerivedNodeViewState, DeriveOpts } from '../view-state/derive-node-view-state';
 import type { StagedLinesCommit } from '../process/data-processor-lines';
+import type { StagedPointsCommit } from '../process/data-processor-points';
 import type { StagedGSplatsCommit } from '../process/data-processor-gsplats';
 
 export interface NodeBuildCtx {
@@ -131,6 +132,17 @@ export interface NodeBuildCtx {
   updatePointsGeometry(
     path: string,
     data: LoadedPointsData,
+    session?: UpdateSession,
+    loadedViewVersion?: number
+  ): void;
+  /**
+   * The `process`/`commit` pair for points, matching the lines and gsplats
+   * pairs below. `updatePointsGeometry` above is the equivalent one-shot form
+   * kept for the call sites that do not need the two stages separated.
+   */
+  processPointsData(path: string, data: LoadedPointsData): StagedPointsCommit;
+  commitPointsGeometry(
+    staged: StagedPointsCommit,
     session?: UpdateSession,
     loadedViewVersion?: number
   ): void;

@@ -1,0 +1,44 @@
+/**
+ * Points data-processor concern — the Points sibling of
+ * `data-processor-lines.ts` / `data-processor-gsplats.ts`.
+ *
+ * Points differ from the other two in where projection happens: their loader
+ * already returns display-space data, so there is no worker RPC and no
+ * projection output to carry. `data/points/handler.ts::pointsLoadAndStage`
+ * therefore loads and stages in one step, and owns the
+ * {@link StagedPointsCommit} shape.
+ *
+ * This module exists only to expose the *staging half* of that on its own, so
+ * callers that already hold loader output — `lifecycle/retry.ts`, which runs
+ * its own `updateView` — can stage it through the same `process` → `commit`
+ * pair that lines and gsplats use, instead of a points-only one-shot callback.
+ *
+ * The staged type is deliberately re-exported from the handler rather than
+ * redeclared here: a second same-named type with a different field would type
+ * check (the two never meet) while silently diverging.
+ *
+ * Note the no-op fast path stays in `commitPointsGeometry`. `handler.ts`
+ * documents why — lines and gsplats must short-circuit *before* their worker
+ * projection, whereas points has no projection to skip, so its
+ * reference-identity check lives at the commit, where it also covers the
+ * atomic-commit, refinement, retry and lazy paths uniformly.
+ *
+ * @module data/scene-loader/process/data-processor-points
+ */
+
+import type { LoadedPointsData } from '../../data-loader-types';
+import type { StagedPointsCommit } from '../../points/handler';
+
+export type { StagedPointsCommit };
+
+/**
+ * Stage loader-returned points data for commit.
+ *
+ * Synchronous and non-nullable, unlike the lines/gsplats processors: those are
+ * async because they await a worker projection that can decline. Widening this
+ * to match would force callers to `await` and null-check something that can
+ * never be pending or absent.
+ */
+export function processPointsData(path: string, data: LoadedPointsData): StagedPointsCommit {
+  return { path, data };
+}

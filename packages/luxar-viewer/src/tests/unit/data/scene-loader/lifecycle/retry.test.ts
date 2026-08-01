@@ -22,6 +22,7 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
+import { processPointsData } from '../../../../../data/scene-loader/process/data-processor-points';
 import * as THREE from 'three';
 import {
   retryFailedLoaderUnlocked,
@@ -74,7 +75,7 @@ function makeRetryCtx(overrides: Partial<RetryCtx> = {}): RetryCtx & {
   // Surface the spies for easy assertion.
   spies: {
     deriveNodeViewState: ReturnType<typeof vi.fn>;
-    updatePointsGeometry: ReturnType<typeof vi.fn>;
+    commitPointsGeometry: ReturnType<typeof vi.fn>;
     processLinesData: ReturnType<typeof vi.fn>;
     commitLinesGeometry: ReturnType<typeof vi.fn>;
     processGSplatsData: ReturnType<typeof vi.fn>;
@@ -88,7 +89,7 @@ function makeRetryCtx(overrides: Partial<RetryCtx> = {}): RetryCtx & {
       viewState,
     })
   );
-  const updatePointsGeometry = vi.fn();
+  const commitPointsGeometry = vi.fn();
   const processLinesData = vi.fn().mockResolvedValue(null);
   const commitLinesGeometry = vi.fn();
   const processGSplatsData = vi.fn().mockResolvedValue(null);
@@ -99,7 +100,8 @@ function makeRetryCtx(overrides: Partial<RetryCtx> = {}): RetryCtx & {
     rootGroup: null,
     viewState,
     deriveNodeViewState,
-    updatePointsGeometry,
+    processPointsData,
+    commitPointsGeometry,
     processLinesData,
     commitLinesGeometry,
     processGSplatsData,
@@ -109,7 +111,7 @@ function makeRetryCtx(overrides: Partial<RetryCtx> = {}): RetryCtx & {
   return Object.assign(ctx, {
     spies: {
       deriveNodeViewState,
-      updatePointsGeometry,
+      commitPointsGeometry,
       processLinesData,
       commitLinesGeometry,
       processGSplatsData,
@@ -165,7 +167,7 @@ describe('retryFailedLoaderUnlocked — Points loader success path', () => {
 
     expect(ok).toBe(true);
     expect(updateView).toHaveBeenCalledTimes(1);
-    expect(ctx.spies.updatePointsGeometry).toHaveBeenCalledWith(PATH, data);
+    expect(ctx.spies.commitPointsGeometry).toHaveBeenCalledWith({ path: PATH, data });
     expect(ctx.registry.failedLoaders.has(PATH)).toBe(false);
     // Points uses applyPartialExtendTolerance: true (matches initial-load path).
     expect(ctx.spies.deriveNodeViewState).toHaveBeenCalledWith(PATH, undefined, {
@@ -173,7 +175,7 @@ describe('retryFailedLoaderUnlocked — Points loader success path', () => {
     });
   });
 
-  it('does not call updatePointsGeometry when loader.updateView resolves null', async () => {
+  it('does not commit points geometry when loader.updateView resolves null', async () => {
     const updateView = vi.fn().mockResolvedValue(null);
     const ctx = makeRetryCtx({
       rootGroup: makeRootGroupWith(PATH),
@@ -185,7 +187,7 @@ describe('retryFailedLoaderUnlocked — Points loader success path', () => {
 
     // verifyAndClear still runs — fetched (null) data still counts as a successful retry.
     expect(ok).toBe(true);
-    expect(ctx.spies.updatePointsGeometry).not.toHaveBeenCalled();
+    expect(ctx.spies.commitPointsGeometry).not.toHaveBeenCalled();
     expect(ctx.registry.failedLoaders.has(PATH)).toBe(false);
   });
 });
@@ -283,7 +285,7 @@ describe('retryFailedLoaderUnlocked — verifyAndClear stale-scene guard', () =>
     expect(ok).toBe(false);
     // Data was fetched (the fetch is async + completes), commit was attempted...
     expect(updateView).toHaveBeenCalledTimes(1);
-    expect(ctx.spies.updatePointsGeometry).toHaveBeenCalledTimes(1);
+    expect(ctx.spies.commitPointsGeometry).toHaveBeenCalledTimes(1);
     // ...but the failure stays — verifyAndClear refused to clear it.
     expect(ctx.registry.failedLoaders.has(PATH)).toBe(true);
   });
@@ -303,7 +305,7 @@ describe('retryFailedLoaderUnlocked — no loader registered', () => {
     expect(ok).toBe(false);
     expect(ctx.registry.failedLoaders.has(PATH)).toBe(false);
     // None of the per-type paths ran.
-    expect(ctx.spies.updatePointsGeometry).not.toHaveBeenCalled();
+    expect(ctx.spies.commitPointsGeometry).not.toHaveBeenCalled();
     expect(ctx.spies.processLinesData).not.toHaveBeenCalled();
     expect(ctx.spies.processGSplatsData).not.toHaveBeenCalled();
   });

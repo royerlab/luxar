@@ -511,7 +511,7 @@ describe('SceneLoader.retryFailedLoader — derived.skip fallback', () => {
   // valid GPU-ready data shapes — the commit helpers themselves are
   // tested separately under tests/unit/data/scene-loader/.
 
-  it('Points retry threads non-empty data to updatePointsGeometry on success', async () => {
+  it('Points retry threads non-empty data through to the points commit on success', async () => {
     const internals = loader as unknown as LoaderInternals & {
       updatePointsGeometry: (path: string, data: unknown) => void;
     };
@@ -555,7 +555,11 @@ describe('SceneLoader.retryFailedLoader — derived.skip fallback', () => {
 
     expect(ok).toBe(true);
     expect(commitSpy).toHaveBeenCalledTimes(1);
-    expect(commitSpy).toHaveBeenCalledWith('/p', fakeData);
+    // Path + data only: retry now routes through processPointsData →
+    // commitPointsGeometry, which passes `session`/`loadedViewVersion`
+    // explicitly instead of letting them default. Both resolve to the same
+    // `_updateVersion`, so the call arity changed, not the behaviour.
+    expect(commitSpy.mock.calls[0]?.slice(0, 2)).toEqual(['/p', fakeData]);
     expect(placeholder.userData.visiblePointCount).toBe(3);
     expect(internals.registry.failedLoaders.has('/p')).toBe(false);
   });

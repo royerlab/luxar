@@ -16,6 +16,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { processPointsData } from '../../../../../data/scene-loader/process/data-processor-points';
 import * as THREE from 'three';
 
 // vi.mock the loader-factory module so we can capture createPointsLoader
@@ -121,6 +122,8 @@ function makeCtx(overrides: Partial<NodeBuildCtx> = {}): NodeBuildCtx & {
     processLinesData: vi.fn(),
     commitLinesGeometry: vi.fn(),
     processGSplatsData: vi.fn(),
+    processPointsData,
+    commitPointsGeometry: vi.fn(),
     commitGSplatsGeometry: vi.fn(),
     ...overrides,
   };
