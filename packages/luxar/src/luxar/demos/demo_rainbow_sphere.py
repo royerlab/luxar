@@ -162,7 +162,11 @@ def generate_rainbow_sphere(
                 sharpness=sharpness_array,
                 opacity=1.0,
                 blending_mode="additive",
-                intensity=0.5,
+                # 400k points packed one radius apart on a thin shell means
+                # every pixel sums dozens of them, so the authored gain has to
+                # be small for the sphere to sit in range at exposure 0 (a
+                # gain of 0.5 needed the viewer pushed down ~4.4 stops).
+                intensity=0.024,
             )
 
             # Overlay annotations
