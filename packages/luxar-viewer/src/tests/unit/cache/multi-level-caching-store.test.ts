@@ -1,7 +1,7 @@
 import { getEventListeners } from 'node:events';
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { MultiLevelCachingStore } from '../../../cache/multi-level-caching-store';
-import type { OPFSStore } from '../../../cache/multi-level-caching-store/opfs-store';
+import { OPFSStore } from '../../../cache/multi-level-caching-store/opfs-store';
 
 function forceAbortSignalAnyFallback(): () => void {
   const descriptor = Object.getOwnPropertyDescriptor(AbortSignal, 'any');
@@ -2423,6 +2423,127 @@ describe('MultiLevelCachingStore', () => {
       await store.get('chunk.z');
       await expect(store.dispose()).resolves.toBeUndefined();
       expect(store.getStats().l2WriteQueue.depth).toBe(0);
+    });
+  });
+
+  describe('dispose during init() (issue #1058)', () => {
+    // These tests exercise the two dispose-during-init windows in init():
+    // (1) while awaiting hashUrl (before the OPFSStore is constructed) and
+    // (2) while awaiting l2Store.init() (before clearAll/validateCache).
+    // Async ordering is driven by an explicitly-resolvable deferred injected
+    // into the mocked dependency — no real timers — so the tests are
+    // deterministic.
+
+    // Restore the OPFSStore.prototype spies even if an assertion throws, so a
+    // failing test can never leak the prototype spy into sibling tests.
+    afterEach(() => vi.restoreAllMocks());
+
+    it('(a) dispose while suspended at hashUrl: no OPFSStore constructed, no clearAll/validate', async () => {
+      // Gate hashUrl by making crypto.subtle.digest hang until we release it.
+      // hashUrl → sha256Hex → crypto.subtle.digest, so a pending digest
+      // suspends init() exactly at `await hashUrl(...)` — before the
+      // OPFSStore is ever constructed.
+      let releaseDigest!: (buf: ArrayBuffer) => void;
+      const digestGate = new Promise<ArrayBuffer>((resolve) => {
+        releaseDigest = resolve;
+      });
+      vi.stubGlobal('crypto', {
+        subtle: {
+          digest: () => digestGate,
+        },
+      });
+
+      const s = new MultiLevelCachingStore('https://example.com/gate-a.zarr', {
+        l1MaxSize: 20 * 1024 * 1024,
+        l2MaxSize: 4096,
+        clearCache: true, // even with ?clear-cache, clearAll must not run
+      });
+      const opfsInitSpy = vi.spyOn(OPFSStore.prototype, 'init');
+      const clearAllSpy = vi.spyOn(s, 'clearAll');
+
+      // init() suspends synchronously at the pending digest.
+      const initPromise = s.init();
+
+      // Dispose lands while init() is still awaiting hashUrl.
+      await s.dispose();
+
+      // Release the digest so hashUrl resolves and init() resumes.
+      releaseDigest(new Uint8Array(32).buffer);
+      await initPromise;
+
+      // No OPFSStore was constructed on the dead instance, and neither the
+      // clear step nor validation ran.
+      expect((s as unknown as { l2Store: OPFSStore | null }).l2Store).toBeNull();
+      expect(opfsInitSpy).not.toHaveBeenCalled();
+      expect(clearAllSpy).not.toHaveBeenCalled();
+    });
+
+    it('(b) dispose while suspended at l2Store.init(): does not proceed to clearAll/validateCache', async () => {
+      // Gate OPFSStore.init() with a deferred so init() suspends right after
+      // constructing l2Store, at `await this.l2Store.init()`.
+      let releaseL2Init!: () => void;
+      const l2InitGate = new Promise<void>((resolve) => {
+        releaseL2Init = resolve;
+      });
+      const opfsInitSpy = vi.spyOn(OPFSStore.prototype, 'init').mockReturnValue(l2InitGate);
+
+      const s = new MultiLevelCachingStore('https://example.com/gate-b.zarr', {
+        l1MaxSize: 20 * 1024 * 1024,
+        l2MaxSize: 4096,
+      });
+      const clearAllSpy = vi.spyOn(s, 'clearAll');
+      const validateSpy = vi.spyOn(
+        s as unknown as { validateCache: (id: string) => Promise<void> },
+        'validateCache'
+      );
+
+      const initPromise = s.init();
+
+      // Wait (microtask-only, no timers) until init() has entered l2Store.init().
+      for (let i = 0; i < 1000 && opfsInitSpy.mock.calls.length === 0; i++) {
+        await Promise.resolve();
+      }
+      expect(opfsInitSpy).toHaveBeenCalledTimes(1);
+
+      // Dispose lands while init() is still awaiting l2Store.init().
+      await s.dispose();
+
+      // Release l2Store.init() so init() resumes past the await.
+      releaseL2Init();
+      await initPromise;
+
+      // init() bailed on the post-await disposed check — no clear, no validate.
+      expect(clearAllSpy).not.toHaveBeenCalled();
+      expect(validateSpy).not.toHaveBeenCalled();
+    });
+
+    it('(c) ?clear-cache + dispose before the clear step: clearAll does not run on the dead instance', async () => {
+      let releaseL2Init!: () => void;
+      const l2InitGate = new Promise<void>((resolve) => {
+        releaseL2Init = resolve;
+      });
+      const opfsInitSpy = vi.spyOn(OPFSStore.prototype, 'init').mockReturnValue(l2InitGate);
+
+      const s = new MultiLevelCachingStore('https://example.com/gate-c.zarr', {
+        l1MaxSize: 20 * 1024 * 1024,
+        l2MaxSize: 4096,
+        clearCache: true, // ?clear-cache → shouldClearOnInit
+      });
+      const clearAllSpy = vi.spyOn(s, 'clearAll');
+
+      const initPromise = s.init();
+      for (let i = 0; i < 1000 && opfsInitSpy.mock.calls.length === 0; i++) {
+        await Promise.resolve();
+      }
+      expect(opfsInitSpy).toHaveBeenCalledTimes(1);
+
+      await s.dispose();
+      releaseL2Init();
+      await initPromise;
+
+      // The clear step is guarded by the post-await disposed check, so a
+      // disposed ?clear-cache store never wipes the shared OPFS directory.
+      expect(clearAllSpy).not.toHaveBeenCalled();
     });
   });
 });

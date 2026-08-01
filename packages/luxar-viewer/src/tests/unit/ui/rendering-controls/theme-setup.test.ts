@@ -150,4 +150,15 @@ describe('setupThemeControls', () => {
     });
     expect(folder.domElement.getAttribute('title')).toContain('Theme');
   });
+
+  it('identifies Frosted Glass, not Dark, as the default in the picker tooltip', () => {
+    setupThemeControls({
+      gui: gui as unknown as Parameters<typeof setupThemeControls>[0]['gui'],
+      triggerAnimation,
+    });
+
+    const tooltip = folder.controllers[0].domElement.getAttribute('title');
+    expect(tooltip).toContain('Frosted Glass: Default');
+    expect(tooltip).not.toContain('Dark: Default');
+  });
 });

@@ -21,6 +21,41 @@ that already dequeued its task bails before launching), shut the executor down
 with `cancel_futures=True`, and re-raise. In-flight children still die on the
 terminal's process-group SIGINT; the queue just no longer respawns behind them.
 
+#### Fixed — npm library build no longer inlines a second THREE runtime (#743)
+
+The publishable library build externalized only the exact module id `three`,
+but the entry graph statically imports the `three/webgpu` and `three/tsl`
+subpaths (TSL materials, WebGPU renderer). Array externals match ids exactly,
+so those subpaths — and the `three.core.js` they pull in — were inlined into
+`dist/lib/luxar-viewer.js`, shipping a duplicate THREE core next to the host's
+peer `three` and breaking the single-runtime contract (`instanceof` checks,
+texture interop), at ~2.5 MB of unminified bloat. The build now externalizes
+`three` and every `three/*` subpath (all subpath exports of the peer package),
+and the release-readiness guard (`scripts/check-lib-exports.mjs`) — which
+previously grepped for `class WebGLRenderer`, a marker absent from the
+webgpu/tsl/core bundles — now scans for markers that actually appear when
+THREE source is inlined (`EventDispatcher`/`WebGLRenderer` class definitions,
+the `REVISION` constant), in both classic Rollup and rolldown codegen forms.
+
+#### Fixed — cache stores no longer mutate the shared OPFS directory when disposed mid-init (#1058)
+
+A dispose that raced `MultiLevelCachingStore.init()` / `OPFSStore.init()`
+could leak an undisposed OPFS store, run `?clear-cache`'s `clearAll()` on a
+dead instance (wiping a newer same-URL store's directory), probe-write or
+orphan-clean the shared per-dataset directory after teardown, or overwrite
+good `_cache_meta.json` with an empty snapshot. `disposed` is now set
+synchronously at `dispose()` entry and re-checked across every init await
+(including inside the write probe and the orphan-cleanup crawl), the final
+dispose-time metadata save is gated on a fully-completed init, and
+`clear()`/`delete()`/validation setters are no-ops on a disposed store.
+`dispose()` additionally awaits any in-flight `init()`/`clear()` before
+resolving (an already-initiated OPFS operation cannot be cancelled),
+concurrent `dispose()` callers all share that one completion (a second
+caller no longer resolves early while the first is still draining), and
+`clear()` re-checks `disposed` at each resumption point, so once `dispose()`
+resolves no straggling wipe or write from the old store can touch a
+directory a newer same-URL store has taken over.
+
 ### July 2026
 
 #### Fixed — demo install hints now name the constrained requirement (#915)
