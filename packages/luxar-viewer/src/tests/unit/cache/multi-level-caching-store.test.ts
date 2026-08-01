@@ -1,7 +1,7 @@
 import { getEventListeners } from 'node:events';
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { MultiLevelCachingStore } from '../../../cache/multi-level-caching-store';
-import type { OPFSStore } from '../../../cache/multi-level-caching-store/opfs-store';
+import { OPFSStore } from '../../../cache/multi-level-caching-store/opfs-store';
 
 function forceAbortSignalAnyFallback(): () => void {
   const descriptor = Object.getOwnPropertyDescriptor(AbortSignal, 'any');
@@ -430,6 +430,10 @@ describe('MultiLevelCachingStore', () => {
     it('unreachable .zattrs records validationMode=none by default (commit 6.3)', async () => {
       await store.init();
       const l2Store = (store as any).l2Store as OPFSStore;
+      // Headerless dataset: clear the content_hash init() stamped from the
+      // default .zattrs mock so the no-token branch runs (Finding 2 leaves
+      // hash-tracked caches alone offline).
+      l2Store.setContentHash(null);
       const setValidationModeSpy = vi.spyOn(l2Store, 'setValidationMode');
 
       // Stub fetch so getRemoteContentHash returns null (.zattrs 404 —
@@ -447,7 +451,7 @@ describe('MultiLevelCachingStore', () => {
       await (store as any).doValidateCache(ac.signal);
 
       expect(setValidationModeSpy).toHaveBeenCalledTimes(1);
-      expect(setValidationModeSpy).toHaveBeenCalledWith('none');
+      expect(setValidationModeSpy).toHaveBeenCalledWith('none', { validated: false });
     });
 
     it('dataset without content_hash validates via implicit zattrs-hash token', async () => {
@@ -514,6 +518,11 @@ describe('MultiLevelCachingStore', () => {
       try {
         await store.init();
         const l2Store = (store as any).l2Store as OPFSStore;
+        // Headerless dataset: init() stamped a content_hash from the default
+        // .zattrs mock, but the external TTL path is only for datasets WITHOUT
+        // a content_hash (Finding 2 short-circuits otherwise). Clear it so the
+        // no-token TTL branch under test actually runs.
+        l2Store.setContentHash(null);
         // Precondition: existing TTL mode with a recent lastValidatedAt so
         // the TTL-expiry branch in doValidateCache is NOT triggered.
         // setValidationMode also updates lastValidatedAt to Date.now(),
@@ -534,7 +543,7 @@ describe('MultiLevelCachingStore', () => {
         await (store as any).doValidateCache(ac.signal);
 
         expect(setValidationModeSpy).toHaveBeenCalledTimes(1);
-        expect(setValidationModeSpy).toHaveBeenCalledWith('ttl');
+        expect(setValidationModeSpy).toHaveBeenCalledWith('ttl', { validated: false });
         expect(clearSpy).not.toHaveBeenCalled();
       } finally {
         realConfig.cache.externalDatasetTtlMs = original;
@@ -548,6 +557,10 @@ describe('MultiLevelCachingStore', () => {
       try {
         await store.init();
         const l2Store = (store as any).l2Store as OPFSStore;
+        // Headerless dataset: clear the content_hash init() stamped from the
+        // default .zattrs mock so the no-token TTL branch runs (Finding 2
+        // leaves hash-tracked caches alone offline).
+        l2Store.setContentHash(null);
         // Precondition: lastValidatedAt is 5 minutes ago, well past the
         // 1s TTL. The real OPFSStore sets lastValidatedAt to Date.now()
         // when setValidationMode is called; spying on getValidationState
@@ -580,6 +593,104 @@ describe('MultiLevelCachingStore', () => {
       }
     });
 
+    it('external dataset TTL still expires under revisits more frequent than the TTL (issue #749)', async () => {
+      // Regression: the no-token branch used to restamp lastValidatedAt on
+      // EVERY offline revisit, so a cache visited more often than the TTL
+      // never aged out. Here each revisit gap (60ms) is individually shorter
+      // than the 100ms TTL, but the cumulative age crosses it — the fixed code
+      // must expire on the second visit; the buggy code never would.
+      //
+      // Time is driven by a Date.now() spy (NOT real sleeps) so the assertion
+      // is deterministic on a loaded CI runner. setValidationMode('ttl') stamps
+      // at the mocked baseline and the no-token branch reads Date.now() through
+      // the same spy, so we control the exact age at each visit.
+      const realConfig = (await import('../../../config')).config;
+      const original = realConfig.cache.externalDatasetTtlMs;
+      const nowSpy = vi.spyOn(Date, 'now');
+      try {
+        nowSpy.mockReturnValue(1_000_000);
+        await store.init();
+        const l2Store = (store as any).l2Store as OPFSStore;
+        // Headerless dataset: clear the content_hash init() stamped from the
+        // default .zattrs mock, so Finding 2's hash guard does NOT short-circuit
+        // the no-token TTL branch under test.
+        l2Store.setContentHash(null);
+        // Real baseline stamp (NOT a getValidationState mock): the first
+        // genuine stamp is what later no-token visits must be measured against.
+        l2Store.setValidationMode('ttl'); // stamps lastValidatedAt = 1_000_000
+        realConfig.cache.externalDatasetTtlMs = 100; // 100ms TTL
+        const clearSpy = vi.spyOn(l2Store, 'clear');
+
+        // .zattrs unreachable → the no-token TTL branch runs on each visit.
+        global.fetch = vi.fn(async () => ({
+          ok: false,
+          status: 404,
+          async arrayBuffer() {
+            return new ArrayBuffer(0);
+          },
+        })) as unknown as typeof fetch;
+
+        // Visit #1 at +60ms: still within the 100ms TTL, so no expiry — and
+        // the no-token stamp must NOT slide the clock forward (the buggy code
+        // restamped lastValidatedAt to 1_000_060 here, resetting the age).
+        nowSpy.mockReturnValue(1_000_060);
+        await (store as any).doValidateCache(new AbortController().signal);
+        expect(clearSpy).not.toHaveBeenCalled();
+
+        // Visit #2 at +120ms from baseline: because visit #1 did not restamp,
+        // the age (120ms) now exceeds the TTL and the cache expires.
+        nowSpy.mockReturnValue(1_000_120);
+        await (store as any).doValidateCache(new AbortController().signal);
+        expect(clearSpy).toHaveBeenCalled();
+      } finally {
+        nowSpy.mockRestore();
+        realConfig.cache.externalDatasetTtlMs = original;
+      }
+    });
+
+    it('offline no-token revisit leaves a hash-tracked cache alone (issue #749 content-hash contract)', async () => {
+      // Finding 2 regression guard: the external TTL applies ONLY to datasets
+      // WITHOUT a content_hash (per config/sections/cache/README.md and
+      // cache/types.ts). A hash-tracked dataset used offline (.zattrs
+      // unreachable, but a content_hash confirmed at the last online visit)
+      // must NOT be downgraded to ttl and wiped — that would be offline data
+      // loss. The no-token branch must short-circuit when a cached hash exists.
+      const realConfig = (await import('../../../config')).config;
+      const original = realConfig.cache.externalDatasetTtlMs;
+      realConfig.cache.externalDatasetTtlMs = 100; // small TTL that would fire
+      try {
+        await store.init();
+        const l2Store = (store as any).l2Store as OPFSStore;
+        // Hash-tracked dataset with a STALE lastValidatedAt (would expire if
+        // the TTL branch ran) — but the hash guard must skip it entirely.
+        l2Store.setContentHash('deadbeefdeadbeefdeadbeefdeadbeef');
+        vi.spyOn(l2Store, 'getValidationState').mockReturnValue({
+          mode: 'content-hash',
+          lastValidatedAt: Date.now() - 5 * 60 * 1000, // stale
+        });
+        const clearSpy = vi.spyOn(l2Store, 'clear');
+        const setValidationModeSpy = vi.spyOn(l2Store, 'setValidationMode');
+
+        // .zattrs unreachable (offline) — no token to compare.
+        global.fetch = vi.fn(async () => ({
+          ok: false,
+          status: 404,
+          async arrayBuffer() {
+            return new ArrayBuffer(0);
+          },
+        })) as unknown as typeof fetch;
+
+        await (store as any).doValidateCache(new AbortController().signal);
+
+        // The cached bytes (and their recorded mode/timestamp) are left
+        // untouched until the next online visit can re-validate.
+        expect(clearSpy).not.toHaveBeenCalled();
+        expect(setValidationModeSpy).not.toHaveBeenCalled();
+      } finally {
+        realConfig.cache.externalDatasetTtlMs = original;
+      }
+    });
+
     it('CRIT-5: TTL expiry cancels in-flight gets so they cannot repopulate post-clear', async () => {
       // Parity with the content-hash CRIT-5 test below: a TTL-triggered clear
       // must also abort in-flight coalesced gets, or a fetch racing the clear
@@ -591,6 +702,10 @@ describe('MultiLevelCachingStore', () => {
       try {
         await store.init();
         const l2Store = (store as any).l2Store as OPFSStore;
+        // Headerless dataset: clear the content_hash init() stamped from the
+        // default .zattrs mock so the no-token TTL branch runs (Finding 2
+        // leaves hash-tracked caches alone offline).
+        l2Store.setContentHash(null);
         vi.spyOn(l2Store, 'getValidationState').mockReturnValue({
           mode: 'ttl',
           lastValidatedAt: Date.now() - 5 * 60 * 1000, // stale → TTL expired
@@ -2423,6 +2538,127 @@ describe('MultiLevelCachingStore', () => {
       await store.get('chunk.z');
       await expect(store.dispose()).resolves.toBeUndefined();
       expect(store.getStats().l2WriteQueue.depth).toBe(0);
+    });
+  });
+
+  describe('dispose during init() (issue #1058)', () => {
+    // These tests exercise the two dispose-during-init windows in init():
+    // (1) while awaiting hashUrl (before the OPFSStore is constructed) and
+    // (2) while awaiting l2Store.init() (before clearAll/validateCache).
+    // Async ordering is driven by an explicitly-resolvable deferred injected
+    // into the mocked dependency — no real timers — so the tests are
+    // deterministic.
+
+    // Restore the OPFSStore.prototype spies even if an assertion throws, so a
+    // failing test can never leak the prototype spy into sibling tests.
+    afterEach(() => vi.restoreAllMocks());
+
+    it('(a) dispose while suspended at hashUrl: no OPFSStore constructed, no clearAll/validate', async () => {
+      // Gate hashUrl by making crypto.subtle.digest hang until we release it.
+      // hashUrl → sha256Hex → crypto.subtle.digest, so a pending digest
+      // suspends init() exactly at `await hashUrl(...)` — before the
+      // OPFSStore is ever constructed.
+      let releaseDigest!: (buf: ArrayBuffer) => void;
+      const digestGate = new Promise<ArrayBuffer>((resolve) => {
+        releaseDigest = resolve;
+      });
+      vi.stubGlobal('crypto', {
+        subtle: {
+          digest: () => digestGate,
+        },
+      });
+
+      const s = new MultiLevelCachingStore('https://example.com/gate-a.zarr', {
+        l1MaxSize: 20 * 1024 * 1024,
+        l2MaxSize: 4096,
+        clearCache: true, // even with ?clear-cache, clearAll must not run
+      });
+      const opfsInitSpy = vi.spyOn(OPFSStore.prototype, 'init');
+      const clearAllSpy = vi.spyOn(s, 'clearAll');
+
+      // init() suspends synchronously at the pending digest.
+      const initPromise = s.init();
+
+      // Dispose lands while init() is still awaiting hashUrl.
+      await s.dispose();
+
+      // Release the digest so hashUrl resolves and init() resumes.
+      releaseDigest(new Uint8Array(32).buffer);
+      await initPromise;
+
+      // No OPFSStore was constructed on the dead instance, and neither the
+      // clear step nor validation ran.
+      expect((s as unknown as { l2Store: OPFSStore | null }).l2Store).toBeNull();
+      expect(opfsInitSpy).not.toHaveBeenCalled();
+      expect(clearAllSpy).not.toHaveBeenCalled();
+    });
+
+    it('(b) dispose while suspended at l2Store.init(): does not proceed to clearAll/validateCache', async () => {
+      // Gate OPFSStore.init() with a deferred so init() suspends right after
+      // constructing l2Store, at `await this.l2Store.init()`.
+      let releaseL2Init!: () => void;
+      const l2InitGate = new Promise<void>((resolve) => {
+        releaseL2Init = resolve;
+      });
+      const opfsInitSpy = vi.spyOn(OPFSStore.prototype, 'init').mockReturnValue(l2InitGate);
+
+      const s = new MultiLevelCachingStore('https://example.com/gate-b.zarr', {
+        l1MaxSize: 20 * 1024 * 1024,
+        l2MaxSize: 4096,
+      });
+      const clearAllSpy = vi.spyOn(s, 'clearAll');
+      const validateSpy = vi.spyOn(
+        s as unknown as { validateCache: (id: string) => Promise<void> },
+        'validateCache'
+      );
+
+      const initPromise = s.init();
+
+      // Wait (microtask-only, no timers) until init() has entered l2Store.init().
+      for (let i = 0; i < 1000 && opfsInitSpy.mock.calls.length === 0; i++) {
+        await Promise.resolve();
+      }
+      expect(opfsInitSpy).toHaveBeenCalledTimes(1);
+
+      // Dispose lands while init() is still awaiting l2Store.init().
+      await s.dispose();
+
+      // Release l2Store.init() so init() resumes past the await.
+      releaseL2Init();
+      await initPromise;
+
+      // init() bailed on the post-await disposed check — no clear, no validate.
+      expect(clearAllSpy).not.toHaveBeenCalled();
+      expect(validateSpy).not.toHaveBeenCalled();
+    });
+
+    it('(c) ?clear-cache + dispose before the clear step: clearAll does not run on the dead instance', async () => {
+      let releaseL2Init!: () => void;
+      const l2InitGate = new Promise<void>((resolve) => {
+        releaseL2Init = resolve;
+      });
+      const opfsInitSpy = vi.spyOn(OPFSStore.prototype, 'init').mockReturnValue(l2InitGate);
+
+      const s = new MultiLevelCachingStore('https://example.com/gate-c.zarr', {
+        l1MaxSize: 20 * 1024 * 1024,
+        l2MaxSize: 4096,
+        clearCache: true, // ?clear-cache → shouldClearOnInit
+      });
+      const clearAllSpy = vi.spyOn(s, 'clearAll');
+
+      const initPromise = s.init();
+      for (let i = 0; i < 1000 && opfsInitSpy.mock.calls.length === 0; i++) {
+        await Promise.resolve();
+      }
+      expect(opfsInitSpy).toHaveBeenCalledTimes(1);
+
+      await s.dispose();
+      releaseL2Init();
+      await initPromise;
+
+      // The clear step is guarded by the post-await disposed check, so a
+      // disposed ?clear-cache store never wipes the shared OPFS directory.
+      expect(clearAllSpy).not.toHaveBeenCalled();
     });
   });
 });

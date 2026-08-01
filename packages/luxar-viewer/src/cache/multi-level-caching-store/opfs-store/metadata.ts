@@ -240,19 +240,27 @@ export class OPFSMetadataManager {
    * rebuilds itself in seconds and orphans are bounded by quota).
    *
    * Increments `orphansRemoved` per file actually deleted.
+   *
+   * `shouldStop` is re-polled across the crawl's awaits; when it turns true
+   * (the owning store was disposed) the crawl halts before its next delete,
+   * so a stale expected-set can never keep reclaiming files a newer same-URL
+   * store is concurrently writing.
    */
   async cleanupOrphans(
     root: FileSystemDirectoryHandle,
-    expectedFileNames: Set<string>
+    expectedFileNames: Set<string>,
+    shouldStop?: () => boolean
   ): Promise<void> {
     const iterableRoot = root as IterableFileSystemDirectoryHandle;
     for await (const bucketName of iterableRoot.keys()) {
+      if (shouldStop?.()) return;
       // Only iterate hex-buckets (00-ff); skip _cache_meta.json itself.
       if (!/^[0-9a-f]{2}$/.test(bucketName)) continue;
       try {
         const bucketHandle = await root.getDirectoryHandle(bucketName);
         const iterableBucket = bucketHandle as IterableFileSystemDirectoryHandle;
         for await (const fileName of iterableBucket.keys()) {
+          if (shouldStop?.()) return;
           if (expectedFileNames.has(fileName)) continue;
           try {
             await bucketHandle.removeEntry(fileName);
