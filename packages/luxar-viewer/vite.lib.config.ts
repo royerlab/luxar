@@ -54,12 +54,12 @@ export default defineConfig({
       // THREE core. The `/^three(\/.*)?$/` regex externalizes `three` and every
       // `three/*` subpath, all of which the embedder's peer `three` supplies.
       external: [/^three(\/.*)?$/],
-      output: {
-        // Don't fold `three` into the bundle even if it's referenced.
-        globals: {
-          three: 'THREE',
-        },
-      },
+      // No `output.globals`: this build emits ES modules only (see
+      // `formats: ['es']` above), where externals stay as plain `import`
+      // statements. Globals apply only to umd/iife output; if such a format
+      // is ever added, every externalized specifier (three, three/webgpu,
+      // three/tsl, …) would need a mapping — the subpaths have no standard
+      // browser global, so they'd likely have to be bundled instead.
     },
 
     // Workers loaded via `new Worker(new URL(...))` are emitted as separate
