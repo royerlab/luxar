@@ -9,6 +9,7 @@ viewer/zarr inputs.
 
 from __future__ import annotations
 
+import os
 import plistlib
 import shlex
 import shutil
@@ -379,8 +380,8 @@ class TestBundlerAtomicStaging:
         tmp_path: Path,
     ) -> None:
         """A pre-existing regular FILE at the final bundle path makes the swap
-        phase fail (rmtree on a file raises). The staging dir must still be
-        cleaned up — the failure is caught INSIDE the try (finding #1)."""
+        phase fail (os.replace of a directory onto a file raises). The staging
+        dir must still be cleaned up, and the file must survive untouched."""
         output = tmp_path / "out"
         output.mkdir()
         (output / "MyScene-linux-amd64").write_text("x")
@@ -452,15 +453,130 @@ class TestBundlerAtomicStaging:
                 app_name="MyScene",
             )
         archive_path = app_path.with_suffix(".app.zip")
-        # On this Linux host ditto is unavailable, so the zipfile fallback runs
-        # and streams via shutil.copyfileobj — patch it to fail partway.
-        with patch(
-            "luxar.cli.native_app.shutil.copyfileobj",
-            side_effect=OSError("simulated ENOSPC"),
+        # Force the zipfile fallback (a macOS host would otherwise pick the
+        # ditto branch, which never calls copyfileobj) and make the stream
+        # fail partway.
+        with (
+            patch("luxar.cli.native_app.shutil.which", return_value=None),
+            patch(
+                "luxar.cli.native_app.shutil.copyfileobj",
+                side_effect=OSError("simulated ENOSPC"),
+            ),
         ):
             with pytest.raises(OSError, match="simulated ENOSPC"):
                 zip_macos_app(app_path)
         assert not archive_path.exists(), "partial .app.zip left behind"
+        assert not list(output.glob(".tmp_*.app.zip*")), "temp archive left behind"
+
+    def test_overwrite_replaces_prior_bundle(
+        self,
+        sample_scene: Path,
+        fake_viewer_dist: Path,
+        fake_launchers_dir: Path,
+        tmp_path: Path,
+    ) -> None:
+        """Rebuilding onto an existing bundle replaces it wholesale (no merge
+        of stale files) and leaves no staging or backup dirs behind."""
+        output = tmp_path / "out"
+        output.mkdir()
+        with _patch_launchers(fake_launchers_dir):
+            folder = bundle_linux_folder(
+                arch="amd64",
+                viewer_dist=fake_viewer_dist,
+                zarr_data=sample_scene,
+                output=output,
+                app_name="MyScene",
+            )
+            (folder / "stale.txt").write_text("from the previous export")
+            bundle_linux_folder(
+                arch="amd64",
+                viewer_dist=fake_viewer_dist,
+                zarr_data=sample_scene,
+                output=output,
+                app_name="MyScene",
+            )
+        assert (folder / "luxar-launcher").is_file()
+        assert not (folder / "stale.txt").exists(), (
+            "old bundle was merged, not replaced"
+        )
+        assert not list(output.glob(".tmp_*")), "staging/backup dir left behind"
+
+    def test_swap_phase_failure_restores_prior_bundle(
+        self,
+        sample_scene: Path,
+        fake_viewer_dist: Path,
+        fake_launchers_dir: Path,
+        tmp_path: Path,
+    ) -> None:
+        """If the final swap fails while overwriting, the prior bundle is
+        moved back into place — an overwrite never loses the old bundle."""
+        output = tmp_path / "out"
+        output.mkdir()
+        with _patch_launchers(fake_launchers_dir):
+            folder = bundle_linux_folder(
+                arch="amd64",
+                viewer_dist=fake_viewer_dist,
+                zarr_data=sample_scene,
+                output=output,
+                app_name="MyScene",
+            )
+            (folder / "marker.txt").write_text("prior bundle")
+
+            real_replace = os.replace
+            state = {"failed": False}
+
+            def flaky_replace(src, dst, *args, **kwargs):
+                # Fail exactly once, on the swap ONTO the final path (the
+                # backup rename and the restore both target other paths).
+                if not state["failed"] and Path(dst) == folder:
+                    state["failed"] = True
+                    raise OSError("simulated failure during swap")
+                return real_replace(src, dst, *args, **kwargs)
+
+            with patch("luxar.cli.native_app.os.replace", side_effect=flaky_replace):
+                with pytest.raises(OSError, match="simulated failure during swap"):
+                    bundle_linux_folder(
+                        arch="amd64",
+                        viewer_dist=fake_viewer_dist,
+                        zarr_data=sample_scene,
+                        output=output,
+                        app_name="MyScene",
+                    )
+        # The prior bundle is back, complete, at the final path.
+        assert (folder / "marker.txt").read_text() == "prior bundle"
+        assert (folder / "luxar-launcher").is_file()
+        assert not list(output.glob(".tmp_*")), "staging/backup dir left behind"
+
+    @pytest.mark.skipif(
+        os.geteuid() == 0, reason="permission bits are not enforced for root"
+    )
+    def test_zip_fallback_raises_on_unreadable_subdir(
+        self,
+        sample_scene: Path,
+        fake_viewer_dist: Path,
+        fake_launchers_dir: Path,
+        tmp_path: Path,
+    ) -> None:
+        """An unreadable subdirectory must fail the zip loudly — os.walk's
+        default is to skip it silently, publishing a truncated archive."""
+        output = tmp_path / "out"
+        output.mkdir()
+        with _patch_launchers(fake_launchers_dir):
+            app_path = bundle_macos_app(
+                viewer_dist=fake_viewer_dist,
+                zarr_data=sample_scene,
+                output=output,
+                app_name="MyScene",
+            )
+        locked = app_path / "Contents" / "Resources" / "viewer" / "assets"
+        locked.chmod(0)
+        try:
+            with patch("luxar.cli.native_app.shutil.which", return_value=None):
+                with pytest.raises(OSError):
+                    zip_macos_app(app_path)
+        finally:
+            locked.chmod(0o755)
+        assert not app_path.with_suffix(".app.zip").exists()
         assert not list(output.glob(".tmp_*.app.zip*")), "temp archive left behind"
 
     def test_zip_macos_app_happy_path_leaves_no_temp(

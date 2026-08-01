@@ -28,7 +28,7 @@ import subprocess
 import uuid
 import zipfile
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from xml.sax.saxutils import escape as xml_escape
 
@@ -135,9 +135,11 @@ def _staged_bundle(final: Path) -> Iterator[Path]:
     The staging dir is a sibling of ``final`` (same filesystem) so the rename is
     atomic. The staging dir is always cleaned up on failure — including
     ``KeyboardInterrupt`` — and ``final`` is never left as a partial NEW bundle,
-    since the only write to ``final`` is the atomic ``os.replace``. (When
-    overwriting, a pre-existing bundle is removed first; a failure during that
-    removal is the one case that can leave the prior bundle partially deleted.)
+    since the only write to ``final`` is the atomic ``os.replace``. When
+    overwriting, a pre-existing bundle is never deleted in place (an interrupted
+    delete would leave it partially removed at the public path): it is moved
+    aside with an atomic rename, dropped only after the swap lands, and restored
+    if the swap fails.
 
     Args:
         final: The final bundle path the staged dir is renamed onto.
@@ -147,20 +149,33 @@ def _staged_bundle(final: Path) -> Iterator[Path]:
     """
     staging = final.parent / f".tmp_{final.name}_{uuid.uuid4().hex[:8]}"
     staging.mkdir(parents=True, exist_ok=False)
+    backup: Path | None = None
     try:
         yield staging
-        # Success: clear any prior bundle at the final path, then atomically
-        # swap in the freshly built staging dir. Kept inside the try so a
-        # failure during the swap phase (e.g. `final` is a regular file, a
-        # read-only subtree, or Ctrl-C mid-swap) still cleans up staging.
+        # Success: move any prior bundle ASIDE with an atomic rename (never
+        # delete it in place — an interrupted rmtree would leave a partially
+        # deleted bundle at the public path), then atomically swap in the
+        # freshly built staging dir. Kept inside the try so a failure during
+        # the swap phase (e.g. `final` is a regular file, a read-only parent,
+        # or Ctrl-C mid-swap) still cleans up staging.
         if final.is_symlink():
             final.unlink()
-        elif final.exists():
-            shutil.rmtree(final)
+        elif final.is_dir():
+            backup = final.parent / f".tmp_{final.name}_{uuid.uuid4().hex[:8]}"
+            os.replace(final, backup)
         os.replace(staging, final)
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)
+        if backup is not None and not final.exists():
+            # The prior bundle was moved aside but the swap never landed —
+            # put it back so a failed overwrite never loses the old bundle.
+            with suppress(OSError):
+                os.replace(backup, final)
         raise
+    else:
+        # The new bundle is in place; only now drop the old one.
+        if backup is not None:
+            shutil.rmtree(backup, ignore_errors=True)
 
 
 def bundle_macos_app(
@@ -458,11 +473,18 @@ def zip_macos_app(app_path: Path) -> Path:
             aprint(f"  ✓ {archive_path.name}")
     else:
         with asection(f"Zipping {app_path.name} with zipfile (ditto unavailable)"):
+
+            def _reraise(err: OSError) -> None:
+                # os.walk swallows traversal errors by default, silently
+                # omitting an unreadable subdirectory and publishing a
+                # truncated archive as a success — fail loudly instead.
+                raise err
+
             try:
                 with zipfile.ZipFile(
                     tmp_archive, "w", compression=zipfile.ZIP_DEFLATED
                 ) as zf:
-                    for root, _dirs, files in os.walk(app_path):
+                    for root, _dirs, files in os.walk(app_path, onerror=_reraise):
                         for fname in files:
                             full = Path(root) / fname
                             arcname = full.relative_to(app_path.parent)
