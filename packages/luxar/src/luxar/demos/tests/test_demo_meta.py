@@ -7,6 +7,7 @@ single durable gate (the block generator that seeded them was a one-off).
 from __future__ import annotations
 
 import json
+import sys
 import time
 from pathlib import Path
 
@@ -105,18 +106,30 @@ def test_get_demo_suggests_close_matches() -> None:
 def test_iter_demos_is_fast() -> None:
     """The table must render quickly — AST extraction, no module imports.
 
-    CPU time, not wall time: the claim being guarded is about WORK DONE (parse
-    the ASTs, import nothing), and a wall-clock budget measures the machine's
-    load instead. Under parallel test execution this failed at 1.48s and 1.01s
-    — the latter by 10ms — while the actual work was unchanged. The two clocks
-    agree to 1.00 on an idle box, so this measures the same thing and only
-    stops counting time spent waiting for a busy scheduler.
+    Asserts the MECHANISM, not a stopwatch. Importing the demo modules is the
+    thing that would actually make the table slow, and ``sys.modules`` detects
+    that exactly, under any load.
+
+    Both timing proxies were tried and both proved unusable in parallel CI. A
+    wall-clock budget measures the machine, not the work (it failed at 1.48s and
+    at 1.01s — the latter by 10ms). CPU time is *less* load-sensitive but not
+    immune: the identical work cost 0.13s on an idle box and 1.14s under 16
+    competing workers, because cache and memory-bandwidth contention inflate the
+    cycle count. The generous ceiling below is only a catastrophic-regression
+    backstop, in the spirit of the 60s bounds in test_substitutive.py.
     """
-    iter_demos(refresh=True)  # warm the memo? no — refresh drops it; time cold:
+    before = {m for m in sys.modules if m.startswith("luxar.demos.demo_")}
     start = time.process_time()
     iter_demos(refresh=True)
     cold = time.process_time() - start
-    assert cold < 1.0, f"cold iter_demos took {cold:.2f}s CPU (budget 1.0s)"
+    newly_imported = sorted(
+        {m for m in sys.modules if m.startswith("luxar.demos.demo_")} - before
+    )
+    assert not newly_imported, (
+        f"iter_demos imported {len(newly_imported)} demo module(s); the table "
+        f"must come from AST extraction: {newly_imported[:5]}"
+    )
+    assert cold < 30.0, f"cold iter_demos took {cold:.2f}s CPU (backstop 30s)"
 
 
 def test_cache_root_matches_utils_demos() -> None:
