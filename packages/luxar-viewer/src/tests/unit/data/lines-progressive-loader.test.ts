@@ -1202,7 +1202,7 @@ describe('LinesProgressiveLoader — RGBA color layout (colorK stride, volumetri
       '/lines'
     );
     await expect(loader.loadLines(baseViewState)).rejects.toThrow(
-      /colors length 8 does not match count 2/
+      /LOD level 0\): colors length 8 does not match count 2/
     );
   });
 

@@ -1142,7 +1142,7 @@ describe('concatenateGSplatsData — RGBA color layout (per-element opacity)', (
     };
     expect(() =>
       concatenateGSplatsData([rgbaUndeclared, makeLodData(2, 3, { color: 'float32' })])
-    ).toThrow(/colors length 8 does not match count 2/);
+    ).toThrow(/LOD level 0\): colors length 8 does not match count 2/);
   });
 
   it('accepts a correctly-declared RGBA part (colorComponents: 4, no false positive)', () => {

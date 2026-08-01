@@ -81,12 +81,14 @@ function concatenateLinesData(parts: LoadedLinesData[]): LoadedLinesData {
   // `count·3` minimum yet mis-strides every vertex after the first — silent
   // corruption. Assert each part's raw length against its own declared
   // layout before allocation so an omitted declaration throws loudly here.
-  for (const part of parts) {
+  // Names the offending level (concat-helpers' convention) so a corrupt
+  // store is diagnosable without a debugger.
+  for (const [levelIdx, part] of parts.entries()) {
     assertColorLayout(
       part.colors,
       part.vertexCount,
       part.colorComponents ?? 3,
-      'concatenateLinesData'
+      `concatenateLinesData (LOD level ${levelIdx})`
     );
   }
   const totalVertices = parts.reduce((s, p) => s + p.vertexCount, 0);

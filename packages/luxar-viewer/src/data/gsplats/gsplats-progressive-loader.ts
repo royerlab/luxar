@@ -83,12 +83,14 @@ export function concatenateGSplatsData(parts: LoadedGSplatsData[]): LoadedGSplat
   // `count·3` minimum yet mis-strides every splat after the first — silent
   // corruption. Assert each part's raw length against its own declared
   // layout before allocation so an omitted declaration throws loudly here.
-  for (const part of parts) {
+  // Names the offending level (concat-helpers' convention) so a corrupt
+  // store is diagnosable without a debugger.
+  for (const [levelIdx, part] of parts.entries()) {
     assertColorLayout(
       part.colors,
       part.splatCount,
       part.colorComponents ?? 3,
-      'concatenateGSplatsData'
+      `concatenateGSplatsData (LOD level ${levelIdx})`
     );
   }
   const totalSplats = parts.reduce((sum, p) => sum + p.splatCount, 0);
