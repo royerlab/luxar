@@ -7,6 +7,8 @@ from typing import Dict, List, Optional
 import zarr
 from arbol import aprint
 
+from ....typing_utils._format_contract import GEOMETRY_TYPES
+
 
 def finalize_lod_position_bounds(store: zarr.Group) -> None:
     """Back-fill missing ``position_bounds`` on kind=lod / kind=partition wrappers.
@@ -111,7 +113,7 @@ def finalize_lod_display_types(store: zarr.Group) -> None:
         """Return the display_type of a group (leaf or wrapper)."""
         attrs = dict(group.attrs)
         t = attrs.get("type")
-        if t in ("points", "lines", "gsplats"):
+        if t in GEOMETRY_TYPES:
             return str(t)  # leaf
         kind = attrs.get("kind")
         if kind in ("lod", "partition") and "display_type" in attrs:

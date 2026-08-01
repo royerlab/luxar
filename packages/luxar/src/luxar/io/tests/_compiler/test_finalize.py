@@ -11,6 +11,7 @@ from luxar.io._compiler.finalize.lod_backfill import (
     finalize_lod_position_bounds,
 )
 from luxar.io._compiler.finalize.validation import validate_discrete_dimension_ranges
+from luxar.typing_utils._format_contract import GEOMETRY_TYPES
 
 
 def _lod_tree() -> zarr.Group:
@@ -321,3 +322,21 @@ def test_display_type_backfill_ignores_arrays_when_picking_finest_child() -> Non
     finalize_lod_display_types(root)
 
     assert dict(root["lodgrp"].attrs).get("display_type") == "lines"
+
+
+def test_display_type_backfill_resolves_every_contract_geometry_type() -> None:
+    """Leaf resolution is driven by the contract, not a local literal.
+
+    Pins the single-sourcing: a geometry type added to ``contract.yaml`` is
+    resolvable here without editing this module.
+    """
+    for geometry_type in GEOMETRY_TYPES:
+        root = zarr.group()
+        lod = root.create_group("lodgrp")
+        lod.attrs["kind"] = "lod"
+        leaf = lod.create_group("leaf")
+        leaf.attrs["type"] = geometry_type
+
+        finalize_lod_display_types(root)
+
+        assert dict(root["lodgrp"].attrs).get("display_type") == geometry_type
