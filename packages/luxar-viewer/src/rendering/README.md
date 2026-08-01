@@ -33,6 +33,8 @@ rendering/
 ├── blending-state.ts                   # THREE blending state for every Luxar mode
 ├── material-colormap-helpers.ts        # Shared scalar-colormap guards and uniform helpers
 ├── material-sync-helpers.ts            # Geometry-commit material sync helpers
+├── display-range.ts                    # Pure display-window ↔ shader intensity/offset math
+
 ├── line-geometry.ts                    # Line quad base + 6-texel layout/texel writer + mesh create/update
 ├── gsplat-geometry.ts                  # Instanced GSplat mesh creation/update helpers
 ├── element-texture-layout.ts           # RGBA32F element-texture layout authority (gsplat + point + line bindings)
