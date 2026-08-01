@@ -153,7 +153,7 @@ Orthographic projection for 2D viewing. The camera looks straight down one axis.
 
 | Key | Action |
 |-----|--------|
-| C | Toggle cinematic mode (detector noise, vignette, chromatic lens distortion) |
+| C | Toggle cinematic mode (bloom, detector noise, vignette, chromatic lens distortion) |
 | I | Toggle inertial mode (fly controls momentum) |
 
 ### nD Dimension Navigation
@@ -208,7 +208,7 @@ Adjust visual parameters in real time:
 
 - **Tone mapping** -- algorithm and exposure
 - **Bloom** -- glow effect strength, radius, and threshold
-- **Cinematic effects** -- vignette, detector noise, and chromatic lens distortion
+- **Cinematic effects** -- bloom, vignette, detector noise, and chromatic lens distortion
 - **Anti-aliasing** -- FXAA, MSAA, or SSAA
 - **Detector noise** -- physics-based Poisson + Gaussian + FPN simulation
 
