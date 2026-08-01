@@ -16,27 +16,6 @@ export interface VoteEntry {
 }
 
 /**
- * Tally votes from a 5×5 pixel block of the pick buffer and return the
- * winning (nodeId, elementId, accumulated brightness). Pixels with
- * `r < 0.5` are skipped (background = no hit).
- *
- * **Channel layout** (RGBA32F): `r` = nodeId, `g` = element index LOW
- * 16 bits, `b` = brightness, `a` = element index HIGH 16 bits. The
- * element index is split because float32 carries a 24-bit mantissa, so a
- * single channel stops representing consecutive integers at 16,777,216 —
- * while a node's capacity reaches 2^25 on a 32768-texel device, where a
- * one-channel id silently resolved to the wrong element. The shaders
- * split it in int space (`luxarElementIdParts` / its TSL twin); both
- * halves are <= 65535 and exact, so the recombination below is exact for
- * the whole uint32 range.
- *
- * `votesScratch` is reused across calls (cleared here) to keep the
- * hot path allocation-free — which is why the key stays a NUMBER rather
- * than a string or a nested map.
- *
- * See {@link VOTE_KEY_STRIDE} for why that is safe.
- */
-/**
  * Multiplier packing `(nodeId, elementId)` into one numeric vote key.
  *
  * Two conditions must hold simultaneously, and 2^27 is the value that
@@ -57,13 +36,34 @@ export interface VoteEntry {
  *    inside 9.007e15.
  *
  * A stride of 2^32 would satisfy (1) but violate (2) past `nodeId` 2^21 —
- * an unenforced bound is not a bound, hence 2^27. `assertVoteKeyHeadroom`
- * in the unit tests pins both conditions against the live layout maxima,
- * so a capacity increase that outgrows this stride fails there rather
- * than silently merging votes.
+ * an unenforced bound is not a bound, hence 2^27. The headroom test in
+ * `pick-render.test.ts` pins both conditions against the live layout
+ * maxima, so a capacity increase that outgrows this stride fails there
+ * rather than silently merging votes.
  */
 export const VOTE_KEY_STRIDE = 134217728; // 2^27
 
+/**
+ * Tally votes from a 5×5 pixel block of the pick buffer and return the
+ * winning (nodeId, elementId, accumulated brightness). Pixels with
+ * `r < 0.5` are skipped (background = no hit).
+ *
+ * **Channel layout** (RGBA32F): `r` = nodeId, `g` = element index LOW
+ * 16 bits, `b` = brightness, `a` = element index HIGH 16 bits. The
+ * element index is split because float32 carries a 24-bit mantissa, so a
+ * single channel stops representing consecutive integers at 16,777,216 —
+ * while a node's capacity reaches 2^25 on a 32768-texel device, where a
+ * one-channel id silently resolved to the wrong element. The shaders
+ * split it in int space (`luxarElementIdParts` / its TSL twin); both
+ * halves are <= 65535 and exact, so the recombination below is exact for
+ * the whole uint32 range.
+ *
+ * `votesScratch` is reused across calls (cleared here) to keep the
+ * hot path allocation-free — which is why the key stays a NUMBER rather
+ * than a string or a nested map.
+ *
+ * See {@link VOTE_KEY_STRIDE} for why that is safe.
+ */
 export function voteWinner(
   pixels: Float32Array,
   pickSize: number,
