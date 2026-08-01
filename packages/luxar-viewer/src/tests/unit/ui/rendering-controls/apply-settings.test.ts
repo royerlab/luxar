@@ -10,7 +10,7 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { applyRenderingSettings } from '../../../../ui/rendering-controls/apply-settings';
-import { TONE_MAPPING_MAP } from '../../../../ui/rendering-controls/cinematic-mode';
+import { TONE_MAPPING_BY_NAME } from '../../../../rendering/post-processing/tone-mapping';
 import { config, type RenderingSettings } from '../../../../config';
 
 function makeStubs() {
@@ -113,7 +113,7 @@ describe('applyRenderingSettings — tone mapping', () => {
   it('maps the string tone-mapping name to the THREE constant', () => {
     stubs.settings.toneMapping = 'ACES';
     run();
-    expect(stubs.postProcessing.setToneMapping).toHaveBeenCalledWith(TONE_MAPPING_MAP['ACES']);
+    expect(stubs.postProcessing.setToneMapping).toHaveBeenCalledWith(TONE_MAPPING_BY_NAME['ACES']);
   });
 });
 
