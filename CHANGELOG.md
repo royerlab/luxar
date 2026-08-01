@@ -4,6 +4,27 @@ All notable changes to Luxar are documented in this file.
 
 ## [Unreleased]
 
+### August 2026
+
+#### Fixed — cache stores no longer mutate the shared OPFS directory when disposed mid-init (#1058)
+
+A dispose that raced `MultiLevelCachingStore.init()` / `OPFSStore.init()`
+could leak an undisposed OPFS store, run `?clear-cache`'s `clearAll()` on a
+dead instance (wiping a newer same-URL store's directory), probe-write or
+orphan-clean the shared per-dataset directory after teardown, or overwrite
+good `_cache_meta.json` with an empty snapshot. `disposed` is now set
+synchronously at `dispose()` entry and re-checked across every init await
+(including inside the write probe and the orphan-cleanup crawl), the final
+dispose-time metadata save is gated on a fully-completed init, and
+`clear()`/`delete()`/validation setters are no-ops on a disposed store.
+`dispose()` additionally awaits any in-flight `init()`/`clear()` before
+resolving (an already-initiated OPFS operation cannot be cancelled),
+concurrent `dispose()` callers all share that one completion (a second
+caller no longer resolves early while the first is still draining), and
+`clear()` re-checks `disposed` at each resumption point, so once `dispose()`
+resolves no straggling wipe or write from the old store can touch a
+directory a newer same-URL store has taken over.
+
 ### July 2026
 
 #### Fixed — demo install hints now name the constrained requirement (#915)

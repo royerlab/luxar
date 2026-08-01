@@ -378,5 +378,27 @@ describe('OPFSMetadataManager', () => {
       expect(rootFiles.has('_cache_meta.json')).toBe(true);
       expect(buckets.get('00')!.has('orphan')).toBe(false);
     });
+
+    it('halts before the next delete once shouldStop turns true (dispose mid-crawl)', async () => {
+      const { root, buckets } = mockRoot();
+      buckets.set(
+        'aa',
+        new Map([
+          ['drop1', ''],
+          ['drop2', ''],
+        ])
+      );
+      buckets.set('bb', new Map([['drop3', '']]));
+
+      // Flip to "stopped" after the first successful delete — the crawl must
+      // bail before removing anything else, leaving the later orphans intact.
+      // (The mock iterates in insertion order, so drop1 goes first.)
+      await mgr.cleanupOrphans(root, new Set(), () => mgr.orphansRemoved >= 1);
+
+      expect(mgr.orphansRemoved).toBe(1);
+      expect(buckets.get('aa')!.has('drop1')).toBe(false);
+      expect(buckets.get('aa')!.has('drop2')).toBe(true);
+      expect(buckets.get('bb')!.has('drop3')).toBe(true);
+    });
   });
 });

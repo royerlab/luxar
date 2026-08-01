@@ -261,9 +261,18 @@ export class MultiLevelCachingStore implements AsyncReadable {
 
     // Generate dataset ID from URL and create L2 store
     const datasetId = await hashUrl(this.baseUrl);
+    // dispose() may have landed while we awaited hashUrl above. At that point
+    // this.l2Store is still null, so dispose() tore nothing down; bail before
+    // constructing an OPFSStore that nobody would ever dispose (leak + its
+    // orphan-cleanup deletes would run after dispose).
+    if (this.disposed) return;
     this.l2Store = new OPFSStore(datasetId, this.baseUrl, this.l2MaxSize);
 
     await this.l2Store.init();
+    // dispose() may have landed while we awaited l2Store.init(); dispose()
+    // already tore down this.l2Store, so do not proceed to clearAll/validate
+    // on a store that has been marked disposed.
+    if (this.disposed) return;
 
     // Clear cache if requested
     if (this.shouldClearOnInit) {
