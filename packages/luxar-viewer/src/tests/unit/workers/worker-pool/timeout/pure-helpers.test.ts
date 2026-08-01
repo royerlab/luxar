@@ -10,6 +10,7 @@
  * and pin the behaviour of these pure helpers without any class hoisting.
  */
 
+import { getEventListeners } from 'node:events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import fc from 'fast-check';
 import { withTimeout } from '../../../../../workers/worker-pool/timeout/with-timeout';
@@ -155,20 +156,24 @@ describe('combineSignals — pure helper (G7)', () => {
     expect(combineSignals(undefined, undefined)).toBeUndefined();
   });
 
-  it('returns a directly when b is undefined (identity)', () => {
+  it('returns a directly in a no-op scope when b is undefined (identity)', () => {
     const a = new AbortController().signal;
-    expect(combineSignals(a, undefined)).toBe(a);
+    const scope = combineSignals(a, undefined)!;
+    expect(scope.signal).toBe(a);
+    expect(() => scope.dispose()).not.toThrow();
   });
 
-  it('returns b directly when a is undefined (identity)', () => {
+  it('returns b directly in a no-op scope when a is undefined (identity)', () => {
     const b = new AbortController().signal;
-    expect(combineSignals(undefined, b)).toBe(b);
+    const scope = combineSignals(undefined, b)!;
+    expect(scope.signal).toBe(b);
+    expect(() => scope.dispose()).not.toThrow();
   });
 
   it('returns a combined signal that aborts when either source aborts (a first)', () => {
     const ca = new AbortController();
     const cb = new AbortController();
-    const combined = combineSignals(ca.signal, cb.signal)!;
+    const combined = combineSignals(ca.signal, cb.signal)!.signal;
     expect(combined.aborted).toBe(false);
     ca.abort();
     expect(combined.aborted).toBe(true);
@@ -177,7 +182,7 @@ describe('combineSignals — pure helper (G7)', () => {
   it('returns a combined signal that aborts when either source aborts (b first)', () => {
     const ca = new AbortController();
     const cb = new AbortController();
-    const combined = combineSignals(ca.signal, cb.signal)!;
+    const combined = combineSignals(ca.signal, cb.signal)!.signal;
     cb.abort();
     expect(combined.aborted).toBe(true);
   });
@@ -186,7 +191,7 @@ describe('combineSignals — pure helper (G7)', () => {
     const ca = new AbortController();
     const cb = new AbortController();
     ca.abort();
-    const combined = combineSignals(ca.signal, cb.signal)!;
+    const combined = combineSignals(ca.signal, cb.signal)!.signal;
     expect(combined.aborted).toBe(true);
   });
 
@@ -197,7 +202,7 @@ describe('combineSignals — pure helper (G7)', () => {
       (AbortSignal as unknown as { any?: unknown }).any = undefined;
       const ca = new AbortController();
       const cb = new AbortController();
-      const combined = combineSignals(ca.signal, cb.signal)!;
+      const combined = combineSignals(ca.signal, cb.signal)!.signal;
       expect(combined.aborted).toBe(false);
       ca.abort();
       expect(combined.aborted).toBe(true);
@@ -206,15 +211,53 @@ describe('combineSignals — pure helper (G7)', () => {
     }
   });
 
-  it('fallback path: pre-aborted a → combined.aborted is true at creation', () => {
+  it('fallback path: pre-aborted a → combined.aborted is true at creation, no listeners registered', () => {
     const orig = (AbortSignal as unknown as { any?: unknown }).any;
     try {
       (AbortSignal as unknown as { any?: unknown }).any = undefined;
       const ca = new AbortController();
       ca.abort();
       const cb = new AbortController();
-      const combined = combineSignals(ca.signal, cb.signal)!;
-      expect(combined.aborted).toBe(true);
+      const scope = combineSignals(ca.signal, cb.signal)!;
+      expect(scope.signal.aborted).toBe(true);
+      expect(getEventListeners(cb.signal, 'abort')).toHaveLength(0);
+    } finally {
+      (AbortSignal as unknown as { any?: unknown }).any = orig;
+    }
+  });
+
+  it('fallback dispose removes both source listeners; repeated settled combines do not accumulate', () => {
+    const orig = (AbortSignal as unknown as { any?: unknown }).any;
+    try {
+      (AbortSignal as unknown as { any?: unknown }).any = undefined;
+      // The pool-wide signal lives for a whole dataset session; every
+      // settled worker call must release its relay listener from it.
+      const pool = new AbortController();
+      for (let i = 0; i < 100; i++) {
+        const caller = new AbortController();
+        const scope = combineSignals(pool.signal, caller.signal)!;
+        expect(getEventListeners(pool.signal, 'abort')).toHaveLength(1);
+        scope.dispose();
+        scope.dispose(); // idempotent
+        expect(getEventListeners(caller.signal, 'abort')).toHaveLength(0);
+      }
+      expect(getEventListeners(pool.signal, 'abort')).toHaveLength(0);
+    } finally {
+      (AbortSignal as unknown as { any?: unknown }).any = orig;
+    }
+  });
+
+  it('fallback abort removes the peer listener immediately and still relays', () => {
+    const orig = (AbortSignal as unknown as { any?: unknown }).any;
+    try {
+      (AbortSignal as unknown as { any?: unknown }).any = undefined;
+      const pool = new AbortController();
+      const caller = new AbortController();
+      const scope = combineSignals(pool.signal, caller.signal)!;
+      caller.abort();
+      expect(scope.signal.aborted).toBe(true);
+      expect(getEventListeners(pool.signal, 'abort')).toHaveLength(0);
+      expect(getEventListeners(caller.signal, 'abort')).toHaveLength(0);
     } finally {
       (AbortSignal as unknown as { any?: unknown }).any = orig;
     }

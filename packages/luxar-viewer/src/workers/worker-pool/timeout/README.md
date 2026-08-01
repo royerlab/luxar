@@ -43,18 +43,21 @@ timeout/
 
 ### `combine-signals.ts` — AbortSignal combinator
 
-- **`combineSignals(a, b)`** — Returns a single `AbortSignal` that
-  fires when either input does, or `undefined` if both inputs are
-  `undefined`. Used by `runWithTimeout` to fold the pool-level
-  `setAbortSignal` source together with the per-call signal.
+- **`combineSignals(a, b)`** — Returns a scoped `{ signal, dispose }`
+  whose signal fires when either input does, or `undefined` if both
+  inputs are `undefined`. Used by `runWithTimeout` to fold the
+  pool-level `setAbortSignal` source together with the per-call signal;
+  the caller disposes the scope when the call settles so the fallback's
+  relay listeners do not accumulate on the session-lived pool signal.
   - Uses native `AbortSignal.any([a, b])` when available (modern
-    browsers, Node 20+).
+    browsers, Node 20+); `dispose()` is a no-op there.
   - Falls back to a `new AbortController()` plus manual
     `addEventListener('abort', ..., { once: true })` wiring on
-    each input.
+    each input. An abort removes the peer listener immediately;
+    `dispose()` is idempotent and removes both.
   - Synchronously aborts the controller if either input is already
-    aborted on entry, so the caller's "already cancelled" guard
-    trips on the first read.
+    aborted on entry (registering no listeners), so the caller's
+    "already cancelled" guard trips on the first read.
 
 ## Invariants
 

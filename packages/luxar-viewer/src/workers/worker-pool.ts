@@ -24,7 +24,7 @@ import {
 } from './worker-pool/errors';
 
 import { withTimeout } from './worker-pool/timeout/with-timeout';
-import { combineSignals } from './worker-pool/timeout/combine-signals';
+import { combineSignals, type CombinedSignalScope } from './worker-pool/timeout/combine-signals';
 import { pickTimeoutMs } from './worker-pool/timeout/pick-timeout-ms';
 import { getConfiguredWorkerCount } from './worker-pool/lifecycle/worker-count';
 import { initializeWithGuard } from './worker-pool/lifecycle/init-with-guard';
@@ -466,56 +466,62 @@ export class WorkerPool {
   ): Promise<T> {
     // Resolve the effective signal: pool-wide one OR caller's. If both
     // are present, race them together so either can settle the call.
-    const effectiveSignal = this.combineSignals(this.poolAbortSignal, signal);
-
-    // Pre-check: signal already aborted? Bail before dispatching any work.
-    if (effectiveSignal?.aborted) {
-      throw new WorkerAbortError(op);
-    }
-
-    // Route through getWorkerWithTracking so a stalled worker (one
-    // whose activeQueries has grown past the others) stops being
-    // selected. The previous round-robin via nextWorkerInstance had
-    // no load awareness, so a slow worker received every Nth call
-    // until each call timed out individually — head-of-line blocking.
-    const tracked = await this.getWorkerWithTracking();
-
-    // Second-chance abort check: the await above may have yielded long
-    // enough for the caller's dataset-switch to fire. Don't even start.
-    if (effectiveSignal?.aborted) {
-      throw new WorkerAbortError(op);
-    }
-
-    tracked.markQueryStart();
+    // The scope is disposed when this call settles so the fallback
+    // relay does not retain a listener on the session-lived pool signal.
+    const abortScope = this.combineSignals(this.poolAbortSignal, signal);
+    const effectiveSignal = abortScope?.signal;
     try {
-      // Race the worker call against the timeout AND the abort signal.
-      // The abort cannot kill the WASM task, but it can settle the
-      // promise immediately so the caller proceeds with whatever the
-      // dataset-switch wants to do next.
-      const workerPromise = this.withTimeout(
-        op,
-        fn(tracked.api),
-        this.pickTimeoutMs(kind),
-        tracked.worker
-      );
-
-      if (!effectiveSignal) {
-        return await workerPromise;
+      // Pre-check: signal already aborted? Bail before dispatching any work.
+      if (effectiveSignal?.aborted) {
+        throw new WorkerAbortError(op);
       }
 
-      let onAbort: (() => void) | undefined;
-      const abortPromise = new Promise<never>((_, reject) => {
-        onAbort = (): void => reject(new WorkerAbortError(op));
-        effectiveSignal.addEventListener('abort', onAbort, { once: true });
-      });
+      // Route through getWorkerWithTracking so a stalled worker (one
+      // whose activeQueries has grown past the others) stops being
+      // selected. The previous round-robin via nextWorkerInstance had
+      // no load awareness, so a slow worker received every Nth call
+      // until each call timed out individually — head-of-line blocking.
+      const tracked = await this.getWorkerWithTracking();
 
+      // Second-chance abort check: the await above may have yielded long
+      // enough for the caller's dataset-switch to fire. Don't even start.
+      if (effectiveSignal?.aborted) {
+        throw new WorkerAbortError(op);
+      }
+
+      tracked.markQueryStart();
       try {
-        return await Promise.race([workerPromise, abortPromise]);
+        // Race the worker call against the timeout AND the abort signal.
+        // The abort cannot kill the WASM task, but it can settle the
+        // promise immediately so the caller proceeds with whatever the
+        // dataset-switch wants to do next.
+        const workerPromise = this.withTimeout(
+          op,
+          fn(tracked.api),
+          this.pickTimeoutMs(kind),
+          tracked.worker
+        );
+
+        if (!effectiveSignal) {
+          return await workerPromise;
+        }
+
+        let onAbort: (() => void) | undefined;
+        const abortPromise = new Promise<never>((_, reject) => {
+          onAbort = (): void => reject(new WorkerAbortError(op));
+          effectiveSignal.addEventListener('abort', onAbort, { once: true });
+        });
+
+        try {
+          return await Promise.race([workerPromise, abortPromise]);
+        } finally {
+          if (onAbort) effectiveSignal.removeEventListener('abort', onAbort);
+        }
       } finally {
-        if (onAbort) effectiveSignal.removeEventListener('abort', onAbort);
+        tracked.markQueryEnd();
       }
     } finally {
-      tracked.markQueryEnd();
+      abortScope?.dispose();
     }
   }
 
@@ -539,15 +545,16 @@ export class WorkerPool {
 
   /**
    * Combine the pool-wide signal with a caller-supplied signal into
-   * a single abort source. Returns `undefined` when both are absent.
-   * Uses native `AbortSignal.any` when available (modern browsers /
-   * Node 20+) and falls back to the simpler "trip either one" wiring
-   * for older runtimes.
+   * a single scoped abort source. Returns `undefined` when both are
+   * absent. Uses native `AbortSignal.any` when available (modern
+   * browsers / Node 20+) and falls back to the simpler "trip either
+   * one" wiring for older runtimes; the returned scope's `dispose()`
+   * releases the fallback's source listeners once the call settles.
    */
   private combineSignals(
     a: AbortSignal | undefined,
     b: AbortSignal | undefined
-  ): AbortSignal | undefined {
+  ): CombinedSignalScope | undefined {
     return combineSignals(a, b);
   }
 
