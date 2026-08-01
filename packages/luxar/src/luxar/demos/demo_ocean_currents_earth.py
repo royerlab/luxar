@@ -332,7 +332,9 @@ def advect_streamlines(
     gives every streamline the same length; ``speed`` is sampled alongside so the
     caller can colour by it. A ribbon that beaches or runs out of current is
     frozen in place, which collapses its remaining segments to zero length rather
-    than letting it wander onto land.
+    than letting it wander onto land. Wetness is tested ALONG each segment at the
+    mask's resolution (not only at the endpoint), so a step cannot bridge a
+    narrow land feature and resume in open water on the far side.
 
     Args:
         field: The surface-current field.
@@ -345,10 +347,11 @@ def advect_streamlines(
         ``(lon, lat, speed)``, each ``(m, n_steps + 1)`` float32.
 
     Raises:
-        ValueError: any seed sits on land. Only the *next* position is masked
-            each step, so a dry seed would be frozen at its start point and emit
-            a whole ribbon lying on land — a silent, plausible-looking wrong
-            render. Use :func:`seed_ocean_points`, which guarantees wet seeds.
+        ValueError: any seed sits on land. Wetness is only tested on the
+            segments stepped forward from a seed, never on the seed itself, so a
+            dry seed would be frozen at its start point and emit a whole ribbon
+            lying on land — a silent, plausible-looking wrong render. Use
+            :func:`seed_ocean_points`, which guarantees wet seeds.
     """
     dry = ~field.is_wet(seed_lon, seed_lat)
     if dry.any():
@@ -377,6 +380,22 @@ def advect_streamlines(
     la = seed_lat.astype(np.float64).copy()
     alive = np.ones(m, dtype=bool)
 
+    # A single STEP_KM arc is wider than a mask cell (esp. poleward, where
+    # longitude cells narrow with cos(lat)), so an endpoint-only wetness check can
+    # hop clean over a one-cell dry band or a narrow island and resume in open
+    # water — drawing a current across land. Sample each segment at mask resolution
+    # and freeze on the first dry hit.
+    lat_cell_km = abs(field.dlat) * np.radians(1.0) * R_EARTH_KM
+    lon_cell_km = (
+        abs(field.dlon) * np.radians(1.0) * R_EARTH_KM * np.cos(np.radians(LAT_LIMIT))
+    )
+    min_cell_km = max(min(lat_cell_km, lon_cell_km), 1e-3)
+    # +1 keeps the sample spacing strictly under one cell even when an RK4 stage
+    # is evaluated just past the latitude clamp (a slightly wider lon step); the
+    # floor keeps at least the endpoint checked for any step size.
+    n_sub = max(int(np.ceil(step_km / min_cell_km)) + 1, 1)
+    sub_fracs = np.arange(1, n_sub + 1, dtype=np.float64) / n_sub
+
     for k in range(n_steps + 1):
         u, v = field.sample(lo, la)
         out_speed[:, k] = np.hypot(u, v)
@@ -392,9 +411,12 @@ def advect_streamlines(
         next_lat = np.clip(
             la + deg / 6.0 * (d1a + 2.0 * d2a + 2.0 * d3a + d4a), -LAT_LIMIT, LAT_LIMIT
         )
-        alive = (
-            alive & field.is_wet(next_lon, next_lat) & (out_speed[:, k] > STALL_SPEED)
-        )
+        wet_along = np.ones(m, dtype=bool)
+        for frac in sub_fracs:
+            wet_along &= field.is_wet(
+                lo + frac * (next_lon - lo), la + frac * (next_lat - la)
+            )
+        alive = alive & wet_along & (out_speed[:, k] > STALL_SPEED)
         lo = np.where(alive, next_lon, lo)
         la = np.where(alive, next_lat, la)
 
@@ -470,22 +492,26 @@ def load_hycom_surface(path: Path, stride: int = FIELD_STRIDE) -> LonLatField:
 
     ``accept=netcdf`` (classic netCDF3) is requested deliberately so
     ``scipy.io.netcdf_file`` can read it — no netCDF4/h5py/xarray needed. Values
-    are ``int16 * scale_factor`` with land at ``_FillValue``.
+    are ``int16 * scale_factor + add_offset`` with land at ``_FillValue``.
     """
     netcdf_file = require_module("scipy.io").netcdf_file
     data = netcdf_file(str(path), "r", mmap=False)
     var_u = data.variables["water_u"]
     var_v = data.variables["water_v"]
-    scale = float(getattr(var_u, "scale_factor", 1.0))
     fill = getattr(var_u, "_FillValue", None)
 
-    raw_u = var_u.data[0, 0, ::stride, ::stride]
-    raw_v = var_v.data[0, 0, ::stride, ::stride]
+    def unpack(var: object) -> np.ndarray:
+        """CF-unpack ``raw * scale_factor + add_offset``, land -> NaN."""
+        scale = float(getattr(var, "scale_factor", 1.0))
+        offset = float(getattr(var, "add_offset", 0.0))
+        raw = var.data[0, 0, ::stride, ::stride]  # type: ignore[attr-defined]
+        return np.where(raw == fill, np.nan, raw * scale + offset).astype(np.float32)
+
+    u = unpack(var_u)
+    v = unpack(var_v)
     lat = data.variables["lat"].data[::stride].astype(np.float64)
     lon = data.variables["lon"].data[::stride].astype(np.float64)
 
-    u = np.where(raw_u == fill, np.nan, raw_u * scale).astype(np.float32)
-    v = np.where(raw_v == fill, np.nan, raw_v * scale).astype(np.float32)
     aprint(
         f"HYCOM grid {u.shape[0]}x{u.shape[1]}, "
         f"{np.isfinite(u).mean() * 100:.1f}% ocean"

@@ -48,6 +48,24 @@ def _half_land_field(nlat: int = 41, nlon: int = 80) -> LonLatField:
     return LonLatField(u, v, lon, lat)
 
 
+def _dry_band_field() -> tuple[LonLatField, float]:
+    """Fine (~0.08 deg) grid, northward 1 m/s flow, a one-cell dry band at lat 0.
+
+    The band is a SINGLE latitude row — narrower than the 14 km STEP_KM arc — so
+    an endpoint-only wetness check would hop clean over it. Returns the field and
+    the band's centre latitude.
+    """
+    nlat, nlon = 401, 16
+    lat = np.linspace(-16.0, 16.0, nlat)  # dlat = 0.08 deg
+    lon = np.linspace(0.0, 360.0 - 360.0 / nlon, nlon)
+    u = np.zeros((nlat, nlon), dtype=np.float32)
+    v = np.ones((nlat, nlon), dtype=np.float32)  # due north
+    j0 = int(np.argmin(np.abs(lat)))
+    u[j0, :] = np.nan
+    v[j0, :] = np.nan
+    return LonLatField(u, v, lon, lat), float(lat[j0])
+
+
 # --------------------------------------------------------------------- geometry
 
 
@@ -239,6 +257,27 @@ def test_dry_seeds_raise_instead_of_emitting_land_ribbons() -> None:
     field = _half_land_field()
     with pytest.raises(ValueError, match="on land"):
         advect_streamlines(field, np.array([10.0, 300.0]), np.zeros(2), 5, 20.0)
+
+
+def test_streamlines_do_not_hop_over_a_narrow_dry_band() -> None:
+    """A one-cell dry band must stop a ribbon, not be jumped over.
+
+    With STEP_KM (~14 km / ~0.126 deg) larger than the 0.08 deg cell, an
+    endpoint-only wetness check lands wet-to-wet across the band and draws a
+    current over land. Checking wetness along the segment must freeze the ribbon
+    on the south side instead.
+    """
+    from luxar.demos.demo_ocean_currents_earth import STEP_KM
+
+    field, band_lat = _dry_band_field()
+    # seed exactly one cell south of the band, in wet water
+    seed_lat = np.array([band_lat - 0.08])
+    seed_lon = np.array([100.0])
+    assert field.is_wet(seed_lon, seed_lat).all(), "seed must start wet"
+    lon, lat, _ = advect_streamlines(field, seed_lon, seed_lat, 52, STEP_KM)
+    # every vertex stays wet AND on the south side of the band (never bridged)
+    assert field.is_wet(lon.ravel(), lat.ravel()).all()
+    assert float(np.max(lat)) < band_lat
 
 
 def test_advection_shapes_and_dtypes() -> None:
