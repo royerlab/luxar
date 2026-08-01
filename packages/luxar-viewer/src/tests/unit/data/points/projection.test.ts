@@ -1250,4 +1250,99 @@ describe('projectPointsTo3D — effective radii on the uint8 accumulator path (i
     // Positions confirm the same survivors in the same order.
     expect(Array.from(result.positions)).toEqual([1, 1, 1, 2, 2, 2]);
   });
+
+  it('re-encodes with a non-255 maxRadius (decode and encode scale factors do NOT cancel)', () => {
+    // The maxRadius=255 cases above make world radius == u8 and the encoded
+    // effective radius == its rounded world value, so both scale factors
+    // cancel numerically. maxRadius=10 pins the actual contract: uint8 u
+    // decodes to world radius (u/255)·10 and the world-unit effective radius
+    // re-encodes as round(R_eff/10·255). Point 0 sits ON the slice (u8 204 →
+    // world R 8.0 → unchanged → exact round trip back to 204). Point 1 is at
+    // hidden-dim distance D=6: R_eff = √(8² − 6²) = √28 ≈ 5.2915 →
+    // round(5.2915/10·255) = 135.
+    const maxRadius = 10;
+    const erConfig10: EffectiveRadiusConfig = {
+      spatialExtendDims: [true, true, true, true],
+      maxRadius,
+    };
+    const rawRadius = 204;
+    const D = 6;
+    const rWorld = (rawRadius / 255) * maxRadius; // 8.0
+    const expectedAttenuated = Math.round((Math.sqrt(rWorld * rWorld - D * D) / maxRadius) * 255);
+    expect(expectedAttenuated).toBe(135);
+
+    const accumulator = new LoadedPointsDataAccumulator(8, 4, 2);
+    accumulator.fill(0, {
+      positions: new Float32Array([0, 0, 0, 1, 1, 1]),
+      radii: new Uint8Array([rawRadius, rawRadius]),
+    });
+    const targetBuffers = makeTargetBuffers(accumulator);
+
+    const result = projectPointsTo3D(
+      wasm,
+      // point 0 on slice (dim3=0); point 1 at dim3=6 (attenuated, kept)
+      new Float32Array([0, 0, 0, 0, 1, 1, 1, D]),
+      null,
+      new Uint8Array([rawRadius, rawRadius]),
+      null,
+      makeViewState({
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 0],
+        tolerance: [0, 0, 0, 0],
+      }),
+      [{ start: 0, end: 2 }] as PointRange[],
+      makeCtx({ effectiveRadiusConfig: erConfig10, accumulator }),
+      targetBuffers
+    );
+
+    expect(result.pointCount).toBe(2);
+    expect(result.radii).toBeInstanceOf(Uint8Array);
+    expect(Array.from(result.radii!)).toEqual([rawRadius, expectedAttenuated]);
+  });
+
+  it('culls a point whose positive world-unit effective radius quantizes to u8 = 0', () => {
+    // maxRadius=10 → dust threshold 10·1e-6 = 1e-5 world units, but the
+    // uint8 buffer cannot represent anything below 10/510 ≈ 0.0196 except 0.
+    // Point 0 (u8 51 → world R 2.0) sits at hidden-dim distance D=1.99999:
+    // R_eff = √(4 − D²) ≈ 0.0063 — ABOVE the float threshold yet
+    // round(0.0063/10·255) = 0 at uint8 resolution. An invisible zero-radius
+    // point must not survive the cull (it would occupy pointCount/GPU slots
+    // and defeat the compaction); only the on-slice point 1 remains, shifted
+    // into slot 0.
+    const maxRadius = 10;
+    const erConfig10: EffectiveRadiusConfig = {
+      spatialExtendDims: [true, true, true, true],
+      maxRadius,
+    };
+
+    const accumulator = new LoadedPointsDataAccumulator(8, 4, 2);
+    accumulator.fill(0, {
+      positions: new Float32Array([0, 0, 0, 1, 1, 1]),
+      radii: new Uint8Array([51, 102]),
+    });
+    const targetBuffers = makeTargetBuffers(accumulator);
+
+    const result = projectPointsTo3D(
+      wasm,
+      // point 0 at dim3=1.99999 (positive R_eff that quantizes to 0);
+      // point 1 on slice (dim3=0, u8 102 → world R 4.0, exact round trip)
+      new Float32Array([0, 0, 0, 1.99999, 1, 1, 1, 0]),
+      null,
+      new Uint8Array([51, 102]),
+      null,
+      makeViewState({
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 0],
+        tolerance: [0, 0, 0, 0],
+      }),
+      [{ start: 0, end: 2 }] as PointRange[],
+      makeCtx({ effectiveRadiusConfig: erConfig10, accumulator }),
+      targetBuffers
+    );
+
+    expect(result.pointCount).toBe(1);
+    expect(result.radii).toBeInstanceOf(Uint8Array);
+    expect(Array.from(result.radii!)).toEqual([102]);
+    expect(Array.from(result.positions)).toEqual([1, 1, 1]);
+  });
 });

@@ -453,10 +453,17 @@ export function projectPointsTo3D(
     // against the tiny world-unit threshold (issue #740). Falls back to
     // finalRadii for any path that didn't retain the floats.
     const cullRadii = effectiveRadiiFloat ?? finalRadii;
+    // On the re-encoded uint8 path a world-unit radius can clear the dust
+    // threshold (maxRadius·1e-6) yet still quantize to u8 = 0 — anything
+    // below maxRadius/510. Such a point is invisible at uint8 resolution
+    // but would survive the cull and occupy pointCount/GPU slots, defeating
+    // the compaction at exactly the slice boundary. Require the ENCODED
+    // value to be nonzero too.
+    const encodedU8 = finalRadii instanceof Uint8Array ? finalRadii : null;
 
     // Find indices of points with non-zero radius
     for (let i = 0; i < numPoints; i++) {
-      if (cullRadii[i] > threshold) {
+      if (cullRadii[i] > threshold && (!encodedU8 || encodedU8[i] > 0)) {
         validIndices.push(i);
       }
     }
