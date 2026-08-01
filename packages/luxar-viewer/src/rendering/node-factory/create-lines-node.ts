@@ -21,6 +21,7 @@ import type { LinesMetadata, LinesUserData, LinesDataLoader } from '../../types/
 import { log, Modules } from '../../utils/log';
 import type { PickingSystem } from '../picking/picking-system';
 import { applyTransform } from './transforms';
+import { resolveColormapWindow } from '../display-range';
 
 /** Build a Lines mesh + optional picking shadow node. */
 export function createLinesNode(
@@ -41,12 +42,22 @@ export function createLinesNode(
   // ancestor values until the first panel interaction, if ever.
   // Per-leaf geometry properties (`max_width`, `transform`) stay on
   // `attrs`: they are deliberately NOT composited (see COMPOSITING_ATTRS).
+  //
+  // The authored intensity/offset start life as the post-LUT color GOG (the
+  // direct-color meaning). If the colormap actually takes over below, they
+  // are RESET to identity there and re-expressed as the scalar window
+  // instead — applying them as both double-applies (#936). The reset lives
+  // in that branch because the scalar guard needs `mesh.geometry`, which
+  // does not exist yet.
+  const composedIntensity = (nodeAttrs.intensity as number | undefined) ?? 1.0;
+  const composedOffset = (nodeAttrs.offset as number | undefined) ?? 0.0;
+
   const material = materialManager.getLineMaterial({
     opacity: (nodeAttrs.opacity as number | undefined) ?? 1.0,
     absorption: (nodeAttrs.absorption as number | undefined) ?? 1.0,
     gamma: (nodeAttrs.gamma as number | undefined) ?? 1.0,
-    intensity: (nodeAttrs.intensity as number | undefined) ?? 1.0,
-    offset: (nodeAttrs.offset as number | undefined) ?? 0.0,
+    intensity: composedIntensity,
+    offset: composedOffset,
     blendingMode: (nodeAttrs.blending_mode as string | undefined as BlendingMode) ?? 'additive',
   });
 
@@ -72,8 +83,23 @@ export function createLinesNode(
       const lnColormapTex = getColormapTexture(lnColormapName, lnLutBytes);
       if (lnColormapTex) {
         material.updateColormapTexture(lnColormapTex);
-        const lnScalarRange = (nodeAttrs.scalar_data_range as [number, number]) ?? [0, 1];
+        // Authored gain/offset are the scalar WINDOW here, not a post-LUT
+        // color gain (see `resolveColormapWindow` for the leaf-vs-composed
+        // rule, shared with the points/gsplats factories).
+        const leafRaw = attrs as unknown as Record<string, unknown>;
+        const lnScalarRange = resolveColormapWindow(
+          (nodeAttrs.scalar_data_range as [number, number] | undefined) ?? [0, 1],
+          {
+            intensity: (leafRaw.intensity as number | undefined) ?? 1.0,
+            offset: (leafRaw.offset as number | undefined) ?? 0.0,
+          },
+          { intensity: composedIntensity, offset: composedOffset }
+        );
         material.updateScalarRange(lnScalarRange[0], lnScalarRange[1]);
+        // The window now drives the LUT lookup; clear the post-LUT gain the
+        // material was built with so it does not double-apply (#936).
+        material.updateIntensity(1);
+        material.updateOffset(0);
       }
     }
   }

@@ -194,6 +194,36 @@ describe('loadPointsNode — happy path', () => {
     );
   });
 
+  it('passes both composed attrs and raw leaf attrs to the points placeholder', async () => {
+    const data = { pointCount: 0 } as LoadedPointsData;
+    const loader = makePointsLoader(vi.fn().mockResolvedValue(data));
+    createPointsLoaderMock.mockReturnValue(loader);
+    const rawAttrs = {
+      n_points: 42,
+      colormap: 'viridis',
+      has_scalars: true,
+      intensity: 1.0,
+      offset: 0.0,
+    };
+    const composedAttrs = {
+      ...rawAttrs,
+      intensity: 0.5,
+      offset: 0.1,
+    };
+    const node = makeSceneNode({ attrs: rawAttrs });
+    const ctx = makeCtx();
+    ctx.spies.applyEffectiveAttrs.mockReturnValue(composedAttrs);
+
+    await loadPointsNode(node, new THREE.Group(), {} as never, ctx);
+
+    expect(ctx.spies.createEmptyPointsNode).toHaveBeenCalledWith(
+      '/scene/p',
+      composedAttrs,
+      loader,
+      rawAttrs
+    );
+  });
+
   it('commits via ctx.updatePointsGeometry on success', async () => {
     const data = { pointCount: 5 } as LoadedPointsData;
     createPointsLoaderMock.mockReturnValue(makePointsLoader(vi.fn().mockResolvedValue(data)));

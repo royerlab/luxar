@@ -39,7 +39,11 @@ build_labels = _demo.build_labels
 _take_brightest = _demo._take_brightest
 build_static_scene = _demo.build_static_scene
 build_animated_scene = _demo.build_animated_scene
+asteroid_opacity = _demo.asteroid_opacity
 GAUSS_K = _demo.GAUSS_K
+ASTEROID_OPACITY = _demo.ASTEROID_OPACITY
+ASTEROID_OPACITY_REF_N = _demo.ASTEROID_OPACITY_REF_N
+ASTEROID_SCALAR_GAIN = _demo.ASTEROID_SCALAR_GAIN
 
 
 def _tiny_catalog(n: int = 6) -> dict:
@@ -244,3 +248,50 @@ class TestSceneBuild:
         assert n > 0
         assert out.exists() and any(out.iterdir())
         _assert_sun_centered_opening_camera(out)
+
+
+class TestAsteroidOpacity:
+    """Additive point weight must be density-compensated, and must stay OFF the
+    ``intensity`` attribute.
+
+    On a colormapped node the viewer reads an authored ``intensity`` as the
+    scalar DISPLAY WINDOW, not as a post-LUT gain (#936/#1081). The demo used to
+    lean on that value being applied BOTH ways for an ~11x dimming; when the
+    double application was removed the belt saturated to white and washed out
+    the planets and orbit ellipses. Brightness now rides on ``opacity``.
+    """
+
+    def test_reference_count_returns_the_tuned_opacity(self) -> None:
+        assert asteroid_opacity(ASTEROID_OPACITY_REF_N) == pytest.approx(
+            ASTEROID_OPACITY
+        )
+
+    def test_opacity_times_count_is_invariant(self) -> None:
+        # Holding opacity x N constant keeps aggregate additive point weight
+        # stable whether the scene draws the full catalog or a subsample.
+        for n in (50_000, 200_000, 1_552_890, 4_000_000):
+            assert asteroid_opacity(n) * n == pytest.approx(
+                ASTEROID_OPACITY * ASTEROID_OPACITY_REF_N, rel=1e-6
+            )
+
+    def test_sparse_scene_clamps_to_one(self) -> None:
+        # Compensation must never emit an out-of-range opacity.
+        assert asteroid_opacity(1) == 1.0
+        assert asteroid_opacity(10) == 1.0
+
+    def test_degenerate_count_is_safe(self) -> None:
+        assert asteroid_opacity(0) == ASTEROID_OPACITY
+        assert asteroid_opacity(-5) == ASTEROID_OPACITY
+
+    def test_animated_build_is_brighter_per_point_than_static(self) -> None:
+        # The animated build subsamples, so each point must carry more weight.
+        assert asteroid_opacity(_demo.ANIMATE_MAX_ASTEROIDS) > asteroid_opacity(
+            ASTEROID_OPACITY_REF_N
+        )
+
+    def test_scalar_gain_encodes_the_semi_major_axis_window(self) -> None:
+        # intensity is the display window [0, 1/gain]; the belt (2.1-3.3 AU),
+        # the Hildas (~4 AU) and the Trojans (5.2 AU) must all fall inside it,
+        # otherwise the colormap stops separating them.
+        window_max = 1.0 / ASTEROID_SCALAR_GAIN
+        assert 5.2 < window_max < 30.0
