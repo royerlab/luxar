@@ -123,6 +123,12 @@ export class OPFSStore {
   // browser never gave us a directory.
   private disposed = false;
 
+  // True only once init() has fully opened the directory, probed writability,
+  // and loaded on-disk metadata. Gates the dispose() final save so a dispose
+  // that raced an incomplete init can't overwrite good `_cache_meta.json` with
+  // an empty (not-yet-loaded) snapshot.
+  private initialized = false;
+
   constructor(datasetId: string, baseUrl: string, maxSize: number) {
     this.datasetId = datasetId;
     this.baseUrl = baseUrl;
@@ -170,9 +176,27 @@ export class OPFSStore {
   async init(): Promise<void> {
     try {
       const root = await navigator.storage.getDirectory();
+      // dispose() may land during any of these awaits. Re-check after each so
+      // a disposed store never probe-writes, runs orphan-cleanup deletes, or
+      // resurrects a live opfsRoot handle (which would undo dispose()'s null).
+      if (this.disposed) return;
       this.opfsRoot = await root.getDirectoryHandle(this.datasetId, { create: true });
+      if (this.disposed) {
+        this.opfsRoot = null;
+        return;
+      }
       await this.probeWritability();
+      if (this.disposed) {
+        this.opfsRoot = null;
+        return;
+      }
       await this.applyMetadataOnLoad();
+      if (this.disposed) {
+        this.opfsRoot = null;
+        return;
+      }
+      // Only a fully-initialized store may persist a snapshot on dispose.
+      this.initialized = true;
     } catch (error) {
       log.warning(
         Modules.CACHE,
@@ -561,6 +585,9 @@ export class OPFSStore {
    * (e.g., quick-succession page refreshes with fire-and-forget L2 writes).
    */
   async clear(): Promise<void> {
+    // A disposed store must not recreate/wipe the shared per-datasetId OPFS
+    // directory — that could clobber a newer same-URL store.
+    if (this.disposed) return;
     // Bump generation FIRST so any in-flight doSet() that completes
     // after this point sees the mismatch and skips its index update.
     this.generation++;
@@ -718,6 +745,7 @@ export class OPFSStore {
    * Set content hash for cache invalidation.
    */
   setContentHash(hash: string | null): void {
+    if (this.disposed) return;
     this.contentHash = hash;
     this.scheduleMetadataSave();
   }
@@ -735,6 +763,7 @@ export class OPFSStore {
    * a TTL window).
    */
   setValidationMode(mode: CacheValidationMode): void {
+    if (this.disposed) return;
     this.validationMode = mode;
     this.lastValidatedAt = Date.now();
     this.scheduleMetadataSave();
@@ -791,11 +820,19 @@ export class OPFSStore {
     }
 
     await this.metadata.awaitInFlight();
-    if (this.opfsRoot) {
+    // Gate on `initialized` so a dispose that raced an incomplete init() does
+    // not overwrite good on-disk metadata with an empty (not-yet-loaded)
+    // snapshot. A normally-initialized store has initialized === true, so its
+    // final LRU-order snapshot is still persisted as before.
+    if (this.opfsRoot && this.initialized) {
       await this.metadata.save(this.opfsRoot, this.metadataSnapshot());
     }
 
     this.disposed = true;
+    // Null the root AFTER the final save so a debounced scheduleMetadataSave()
+    // (gated on !this.opfsRoot) becomes a no-op and getStats/clear see the
+    // store as unavailable.
+    this.opfsRoot = null;
   }
 
   // ========== Private Methods ==========

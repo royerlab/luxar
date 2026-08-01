@@ -956,12 +956,22 @@ describe('OPFSStore', () => {
 
     it('set/get/touch after dispose are no-ops', async () => {
       await store.set('keep', new Uint8Array(50));
+      const index = (store as unknown as { index: Map<string, { size: number; order: number }> })
+        .index;
+      const orderBefore = index.get('keep')?.order;
+      expect(orderBefore).toBeDefined();
+
       await store.dispose();
 
       // Should not throw, should not mutate state.
       await store.set('post', new Uint8Array(50));
       const retrieved = await store.get('keep');
       expect(retrieved).toBeUndefined();
+
+      // touch() must not reorder the LRU entry on a disposed store — without
+      // its `disposed` guard it would delete+reinsert at a bumped orderCounter.
+      store.touch('keep');
+      expect(index.get('keep')?.order).toBe(orderBefore);
 
       const stats = store.getStats();
       // The pre-dispose set is still tracked in stats (from before
@@ -1357,6 +1367,183 @@ describe('OPFSStore', () => {
       const stats = recoveredStore.getStats();
       // The store must not return a nonsensical negative size.
       expect(stats.size).toBeGreaterThanOrEqual(0);
+    });
+  });
+
+  describe('post-dispose guards (issue #1058)', () => {
+    it('clear() is a no-op after dispose (in-memory state untouched)', async () => {
+      // clear()'s in-memory wipe (index/totalSize/stats) runs BEFORE the
+      // opfsRoot filesystem branch, so it is what the top-of-method `disposed`
+      // guard actually protects — the fs branch is already skipped once
+      // dispose() nulls opfsRoot. Assert the in-memory state survives clear()
+      // on a disposed store; this goes red if the top-of-clear() disposed
+      // guard is removed.
+      await store.set('keep', new Uint8Array(50));
+      const before = store.getStats();
+      expect(before.count).toBe(1);
+      expect(before.size).toBe(50);
+
+      await store.dispose();
+      await store.clear();
+
+      const after = store.getStats();
+      expect(after.count).toBe(before.count);
+      expect(after.size).toBe(before.size);
+    });
+
+    it('setValidationMode() is a no-op after dispose', async () => {
+      store.setValidationMode('ttl');
+      expect(store.getValidationState().mode).toBe('ttl');
+
+      await store.dispose();
+
+      // The disposed store must not mutate validation state or schedule a save.
+      store.setValidationMode('content-hash');
+      expect(store.getValidationState().mode).toBe('ttl');
+    });
+
+    it('dispose() nulls opfsRoot so scheduleMetadataSave cannot write and getStats reports unavailable', async () => {
+      await store.dispose();
+
+      // getStats reflects the unavailable store (opfsRoot === null && disposed).
+      expect(store.getStats().available).toBe(false);
+
+      // opfsRoot is nulled, so scheduleMetadataSave (gated on !opfsRoot)
+      // early-returns and can never land a debounced write after dispose.
+      expect((store as unknown as { opfsRoot: unknown }).opfsRoot).toBeNull();
+    });
+
+    // A schema-valid, non-empty on-disk snapshot. `entries` is an ARRAY of
+    // [key, entry] pairs (the shape metadata.ts load() expects), so a racing
+    // dispose that failed to skip its final save would be caught overwriting a
+    // GENUINELY loadable file (not an already-invalid one).
+    const seedGoodMeta = () => {
+      const goodMeta = JSON.stringify({
+        baseUrl: 'https://example.com/data.zarr',
+        entries: [['a/0.0', { size: 1234, order: 0 }]],
+        totalSize: 1234,
+        orderCounter: 1,
+        contentHash: 'good-hash',
+        encodingVersion: 2,
+      });
+      mockFS.metaFiles.set('_cache_meta.json', goodMeta);
+      return goodMeta;
+    };
+
+    it('dispose while awaiting navigator.storage.getDirectory() never opens the directory handle (init check #1)', async () => {
+      const goodMeta = seedGoodMeta();
+
+      // Gate getDirectory() itself so init() suspends at its very first await,
+      // before the disposed re-check at the top of init().
+      let releaseDir!: () => void;
+      const dirGate = new Promise<void>((resolve) => {
+        releaseDir = resolve;
+      });
+      let getDirEntered = false;
+      let getDirectoryHandleCalls = 0;
+      vi.stubGlobal('navigator', {
+        storage: {
+          async getDirectory() {
+            getDirEntered = true;
+            await dirGate;
+            return {
+              async getDirectoryHandle(_id: string, _opts?: unknown) {
+                getDirectoryHandleCalls++;
+                return mockFS.mockDirHandle;
+              },
+              async removeEntry() {},
+            };
+          },
+          async estimate() {
+            return { quota: 10e9, usage: 1e9 };
+          },
+        },
+      });
+
+      const racing = new OPFSStore(
+        'test-dataset-id',
+        'https://example.com/data.zarr',
+        100 * 1024 * 1024
+      );
+      const initPromise = racing.init();
+
+      // Wait (microtask-only, no timers) until init() is suspended inside
+      // getDirectory().
+      for (let i = 0; i < 1000 && !getDirEntered; i++) {
+        await Promise.resolve();
+      }
+      expect(getDirEntered).toBe(true);
+
+      await racing.dispose();
+      releaseDir();
+      await initPromise;
+
+      // init check #1 returned before opening the directory handle.
+      expect(getDirectoryHandleCalls).toBe(0);
+      expect(racing.getStats().available).toBe(false);
+      expect((racing as unknown as { opfsRoot: unknown }).opfsRoot).toBeNull();
+      // No probe write, and the good on-disk metadata is untouched.
+      expect(mockFS.files.has('.opfs-write-probe')).toBe(false);
+      expect(mockFS.metaFiles.get('_cache_meta.json')).toBe(goodMeta);
+    });
+
+    it('dispose while init() is inside probeWritability() must not overwrite good metadata (dispose save-gate: && initialized)', async () => {
+      const goodMeta = seedGoodMeta();
+
+      // Gate the write-probe so init() suspends AFTER opfsRoot is assigned
+      // (getDirectoryHandle already returned) but BEFORE init completes — so
+      // `initialized` is still false when dispose lands. This is the ONLY
+      // window that exercises the `&& this.initialized` clause of dispose()'s
+      // final-save gate: opfsRoot is truthy, so removing that clause would let
+      // dispose persist an EMPTY (index-not-yet-loaded) snapshot over goodMeta.
+      let releaseProbe!: () => void;
+      const probeGate = new Promise<void>((resolve) => {
+        releaseProbe = resolve;
+      });
+      const dir = mockFS.mockDirHandle;
+      const origGetFileHandle = dir.getFileHandle.bind(dir);
+      dir.getFileHandle = async (name: string, opts?: { create?: boolean }) => {
+        if (name === '.opfs-write-probe') {
+          return {
+            async createWritable() {
+              await probeGate; // suspend init() mid-probe
+              return {
+                async write() {},
+                async close() {},
+              };
+            },
+          };
+        }
+        return origGetFileHandle(name, opts);
+      };
+
+      const racing = new OPFSStore(
+        'test-dataset-id',
+        'https://example.com/data.zarr',
+        100 * 1024 * 1024
+      );
+      const initPromise = racing.init();
+
+      // Wait (microtask-only, no timers) until opfsRoot is assigned — i.e.
+      // init() is suspended inside the probe with the handle already open.
+      for (
+        let i = 0;
+        i < 1000 && (racing as unknown as { opfsRoot: unknown }).opfsRoot === null;
+        i++
+      ) {
+        await Promise.resolve();
+      }
+      expect((racing as unknown as { opfsRoot: unknown }).opfsRoot).not.toBeNull();
+
+      await racing.dispose();
+      releaseProbe();
+      await initPromise;
+
+      // The good on-disk metadata is byte-for-byte intact (string equality =
+      // byte identity). Goes RED if `&& this.initialized` is removed.
+      expect(mockFS.metaFiles.get('_cache_meta.json')).toBe(goodMeta);
+      expect(racing.getStats().available).toBe(false);
+      expect((racing as unknown as { opfsRoot: unknown }).opfsRoot).toBeNull();
     });
   });
 });
