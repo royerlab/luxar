@@ -90,6 +90,10 @@ export class OPFSStore {
   //   retries.
   // `corruptedEntries`: get() detected a size mismatch between index
   //   and on-disk data and removed the bad file.
+  // `clobberBarrierWriteSkipped`: set() dropped a write because a prior
+  //   same-key delete's non-cancellable removeEntry did not settle within
+  //   the deadline — writing would have risked the eventual removeEntry
+  //   clobbering the replacement (#1073).
   // Counters: `parseFailures` (loadMetadata could not JSON-parse) and
   // `orphansRemoved` (cleanupOrphans reclaim count) live on the
   // metadata manager and are read by getStats().
@@ -98,6 +102,7 @@ export class OPFSStore {
   private evictions = 0;
   private writeFailures = 0;
   private corruptedEntries = 0;
+  private clobberBarrierWriteSkipped = 0;
 
   // Bucket handle cache (256 possible buckets: 00-ff)
   private buckets = new OPFSBucketCache();
@@ -108,6 +113,32 @@ export class OPFSStore {
 
   // Serialize concurrent writes to the same key to prevent race conditions
   private pendingWrites = new Map<string, Promise<void>>();
+
+  // In-flight REAL (un-timed-out) deletes, keyed by datasetId → key (#1073).
+  // `delete()`'s caller await is bounded by opfsOperationTimeoutMs (preserving
+  // #991), but removeEntry is NOT cancellable — when the timeout wins, the
+  // caller returns while removeEntry keeps running. A same-key replacement
+  // write must NOT start (and therefore cannot complete and then be clobbered)
+  // while that straggling removeEntry is still in flight, so a set() waits for
+  // every outstanding real delete of its key to actually settle before writing.
+  // The link stored here is the ACTUAL op settlement (not the caller's early
+  // timeout return). Deletes deliberately do NOT wait on each other: they are
+  // idempotent (a second removeEntry of an absent file is NotFound), so a fresh
+  // delete can retry even if an earlier one hangs — that earlier op's caller
+  // already gave up. If a delete genuinely never settles the set() barrier
+  // times out and the write is DROPPED (degrade-safe: the key stays a miss)
+  // rather than risk a clobber or stall dispose's pending-write drain.
+  //
+  // STATIC (class-level) so the barrier survives instance teardown: dispose()'s
+  // delete-drain is bounded, so a removeEntry that outlives that deadline can
+  // still be in flight when a successor same-URL store — which shares the
+  // datasetId (SHA-256 of the base URL) and therefore the OPFS directory —
+  // takes over. Keying the registry by datasetId lets the successor's set()
+  // barrier see the predecessor's straggling deletes and gate on them exactly
+  // like its own; an instance-level map would let the old removeEntry clobber
+  // the successor's replacement. Entries self-clean on settlement, so the
+  // registry only ever holds genuinely-outstanding operations.
+  private static pendingDeletesByDataset = new Map<string, Map<string, Set<Promise<void>>>>();
 
   // Generation token: every clear() bumps this. doSet() captures the
   // generation when it begins and discards its index/metadata mutation
@@ -412,7 +443,47 @@ export class OPFSStore {
     // its own errors, but stay defensive). The tail-check in `finally`
     // avoids a finishing earlier write deleting a newer writer's entry.
     const prev = this.pendingWrites.get(key);
-    const run = (): Promise<void> => this.doSet(key, data);
+    // Clobber guard (#1073): snapshot the in-flight REAL deletes of this key
+    // SYNCHRONOUSLY, right here at set() entry, in the same block that reads
+    // `prev` and installs this write into the chain. Only a delete registered
+    // BEFORE this write joined the chain can clobber it (its non-cancellable
+    // removeEntry may already be running while its caller returned on a
+    // timeout), so run() must wait for exactly those. A delete registered
+    // AFTER this point sees THIS write as its `prevWrite` tail and is already
+    // sequenced behind it (`real = thisWrite.then(doDelete)`), so it must NOT
+    // be in the barrier — waiting on it would deadlock/self-stall (the barrier
+    // would burn the full timeout on a `real` chained behind this very write).
+    const inflightDeletes = OPFSStore.pendingDeletesByDataset.get(this.datasetId)?.get(key);
+    const deleteBarrier = inflightDeletes && inflightDeletes.size > 0 ? [...inflightDeletes] : null;
+    const run = async (): Promise<void> => {
+      // Before touching the file, wait for the deletes captured above to
+      // actually settle. Timeout-bounded so a genuinely hung delete cannot
+      // stall the write chain (dispose drains pendingWrites) — it instead
+      // DROPS the write (degrade-safe: the key stays a miss until a later
+      // write succeeds).
+      if (deleteBarrier && deleteBarrier.length > 0) {
+        try {
+          await withTimeout(
+            Promise.allSettled(deleteBarrier),
+            config.cache.opfsOperationTimeoutMs,
+            `set(${key}) delete-barrier`
+          );
+        } catch {
+          // A same-key delete is hung past the deadline. Drop this write
+          // rather than risk it being clobbered by the eventual removeEntry.
+          this.clobberBarrierWriteSkipped++;
+          log.warning(
+            Modules.CACHE,
+            `OPFSStore dropped write for ${key}: a prior same-key delete's removeEntry did not settle within the deadline (clobber guard)`
+          );
+          return;
+        }
+      }
+      await this.doSet(key, data);
+    };
+    // Chain behind the prior same-key write so their file I/O never overlaps.
+    // Its links are internally timeout-bounded (doSet's write + the delete
+    // barrier above), so this stays bounded without wrapping the whole chain.
     const writePromise = prev ? prev.then(run, run) : run();
     this.pendingWrites.set(key, writePromise);
     try {
@@ -454,10 +525,22 @@ export class OPFSStore {
     // fails to remove the head entry (transient I/O error) so we never
     // spin forever re-selecting the same undeletable key, and so evictions
     // counts only entries actually removed.
-    while (this.totalSize + size > this.maxSize && this.index.size > 0) {
+    //
+    // Credit the write-key's existing entry against the budget: the overwrite
+    // branch below frees `existingSize` when it re-inserts, so overwriting a
+    // large near-capacity key must not needlessly evict OTHER keys (we already
+    // skip evicting `key` itself via lruHeadExcluding).
+    const existingSize = this.index.get(key)?.size ?? 0;
+    while (this.totalSize - existingSize + size > this.maxSize && this.index.size > 0) {
+      // Never evict the key we are writing (#1073): doSet(key) runs inside
+      // key's own pendingWrites chain, and delete(key) chains behind that same
+      // in-flight write — so evicting `key` here would deadlock (the delete
+      // waits on the write that is awaiting the delete). It is also pointless:
+      // the overwrite branch below already frees this key's old size when it
+      // re-inserts the entry.
+      const lruKey = this.lruHeadExcluding(key);
+      if (lruKey === undefined) break; // only the key being written remains
       const before = this.index.size;
-      const lruKey = this.index.keys().next().value;
-      if (lruKey === undefined) break;
       // Note: delete() already decrements totalSize, don't double-decrement
       await this.delete(lruKey);
       if (this.index.size === before) break; // no progress — avoid spinning on a failing delete
@@ -477,9 +560,11 @@ export class OPFSStore {
     // fails to remove the head entry (transient I/O error) so we never spin.
     let hasQuota = await this.checkQuota(size);
     while (!hasQuota && this.index.size > 0) {
+      // Skip the key being written — same self-deadlock reason as the own-LRU
+      // loop above (#1073).
+      const lruKey = this.lruHeadExcluding(key);
+      if (lruKey === undefined) break; // only the key being written remains
       const before = this.index.size;
-      const lruKey = this.index.keys().next().value;
-      if (lruKey === undefined) break;
       await this.delete(lruKey);
       if (this.index.size === before) break; // no progress — avoid spinning on a failing delete
       this.evictions++;
@@ -583,6 +668,15 @@ export class OPFSStore {
 
   /**
    * Delete a file from OPFS.
+   *
+   * The CALLER await is bounded by opfsOperationTimeoutMs (preserving #991 —
+   * delete() runs inside doSet()'s eviction loops and get()'s corrupted-entry
+   * path, none of which may stall). The chain LINK a later same-key write waits
+   * on, however, is the REAL (un-timed-out) removeEntry settlement (`doDelete`),
+   * registered in `pendingDeletesByDataset`: when the caller returns on timeout the
+   * non-cancellable removeEntry keeps running, and a replacement write must not
+   * start until it has ACTUALLY settled (#1073 clobber invariant). Index/size
+   * are reconciled off that real settlement, never off the early timeout return.
    */
   async delete(key: string): Promise<void> {
     // The disposed guard matters for the in-flight-get() race: a get() that
@@ -591,52 +685,122 @@ export class OPFSStore {
     // now own (nor schedule a post-dispose metadata save below).
     if (this.disposed || !this.opfsRoot) return;
 
+    // A key that is neither indexed nor mid-write is a genuine no-op. The
+    // pendingWrites check matters: a delete arriving while the key's write is
+    // still in flight (index not yet updated — e.g. a first write, or a
+    // replacement whose predecessor delete already reconciled) must still
+    // chain behind that write and remove it, not silently return and let the
+    // write survive the later-arriving delete.
+    if (!this.index.has(key) && !this.pendingWrites.has(key)) return;
+
+    // Chain the real removeEntry behind any in-flight WRITE for this key so
+    // removeEntry never overlaps a createWritable on the same file. It does NOT
+    // chain behind other in-flight deletes: deletes are idempotent, so a fresh
+    // delete can retry (its own working handle) even if an earlier one hangs
+    // forever — that earlier op's caller already gave up on its timeout.
+    const prevWrite = this.pendingWrites.get(key);
+    const run = (): Promise<void> => this.doDelete(key);
+    const real = prevWrite ? prevWrite.then(run, run) : run();
+
+    // Register the real settlement so a later same-key set() waits for it even
+    // after this caller returns on timeout (see pendingDeletesByDataset).
+    const datasetDeletes =
+      OPFSStore.pendingDeletesByDataset.get(this.datasetId) ??
+      new Map<string, Set<Promise<void>>>();
+    if (!OPFSStore.pendingDeletesByDataset.has(this.datasetId)) {
+      OPFSStore.pendingDeletesByDataset.set(this.datasetId, datasetDeletes);
+    }
+    const inflight = datasetDeletes.get(key) ?? new Set<Promise<void>>();
+    if (!datasetDeletes.has(key)) datasetDeletes.set(key, inflight);
+    inflight.add(real);
+    void real.finally(() => {
+      inflight.delete(real);
+      if (inflight.size === 0 && datasetDeletes.get(key) === inflight) {
+        datasetDeletes.delete(key);
+        if (
+          datasetDeletes.size === 0 &&
+          OPFSStore.pendingDeletesByDataset.get(this.datasetId) === datasetDeletes
+        ) {
+          OPFSStore.pendingDeletesByDataset.delete(this.datasetId);
+        }
+      }
+    });
+
+    try {
+      await withTimeout(real, config.cache.opfsOperationTimeoutMs, `delete(${key})`);
+    } catch (error) {
+      // Timeout: the caller unblocks, but `real` stays outstanding in
+      // pendingDeletes and continues to gate any replacement write until the
+      // removeEntry settles. Other errors cannot reach here — doDelete never
+      // rejects.
+      const msg = error instanceof Error ? error.message : String(error);
+      if (msg.startsWith('OPFS timeout')) {
+        log.warning(Modules.CACHE, msg);
+      }
+    }
+  }
+
+  /**
+   * Real (un-timed-out) delete of a single file plus index/size reconcile.
+   * Runs to ACTUAL settlement as a link in the per-key serialization chain so a
+   * later same-key write can never start (and then be clobbered) while this
+   * removeEntry is still in flight (#1073). Never rejects.
+   */
+  private async doDelete(key: string): Promise<void> {
+    if (!this.opfsRoot) return;
     const entry = this.index.get(key);
+    // Nothing indexed: either a concurrent retry-delete already reconciled, or
+    // the in-flight write this delete chained behind was dropped/failed and
+    // never indexed — no file to remove in either case.
     if (!entry) return;
 
     try {
-      // [cache OOS] Order matters: file removal must succeed BEFORE
-      // we update `totalSize` and the index. The previous order
-      // (totalSize decrement → removeEntry → index.delete) left the
-      // accumulator desynchronised when removeEntry threw — totalSize
-      // had already been decremented but the file was still on disk
-      // and the index still had the entry. The next `set()` then made
-      // eviction decisions based on the wrong size. With the new
-      // ordering, a transient removeEntry failure leaves all three
-      // pieces of state unchanged so callers can retry safely.
-      // Timeout-wrapped like get()/set(): delete() runs inside doSet()'s
-      // eviction loops, so a hung removeEntry handle would otherwise stall
-      // every subsequent write indefinitely.
-      await withTimeout(
-        (async () => {
-          const bucket = getBucket(key);
-          const bucketHandle = await this.buckets.getHandle(this.opfsRoot!, bucket, false);
-          if (bucketHandle) {
-            const fileName = keyToFileName(key);
-            await bucketHandle.removeEntry(fileName);
-          }
-        })(),
-        config.cache.opfsOperationTimeoutMs,
-        `delete(${key})`
-      );
+      // [cache OOS] Order matters: file removal must succeed BEFORE we update
+      // `totalSize` and the index. The previous order (totalSize decrement →
+      // removeEntry → index.delete) left the accumulator desynchronised when
+      // removeEntry threw — totalSize had already been decremented but the file
+      // was still on disk and the index still had the entry. The next `set()`
+      // then made eviction decisions based on the wrong size. With this
+      // ordering, a transient removeEntry failure leaves all three pieces of
+      // state unchanged so callers can retry safely.
+      const bucket = getBucket(key);
+      const bucketHandle = await this.buckets.getHandle(this.opfsRoot!, bucket, false);
+      if (bucketHandle) {
+        await bucketHandle.removeEntry(keyToFileName(key));
+      }
     } catch (error) {
       // NotFound means the desired disk state already holds. Reconcile the
       // stale index entry below; retaining it would pin a phantom at the LRU
       // head and make every eviction loop stop for lack of progress. Any other
-      // I/O failure (including a timeout) is potentially transient, so preserve
-      // index/size atomically and let a later caller retry.
+      // I/O failure is potentially transient, so preserve index/size atomically
+      // and let a later caller retry.
       if (!isNotFoundError(error)) {
         const msg = error instanceof Error ? error.message : String(error);
-        if (msg.startsWith('OPFS timeout')) {
-          log.warning(Modules.CACHE, msg);
-        }
+        log.warning(Modules.CACHE, `OPFSStore failed to delete ${key}: ${msg}`);
         return;
       }
     }
 
-    this.totalSize = Math.max(0, this.totalSize - entry.size);
+    // Re-read the entry: a concurrent retry-delete may have reconciled while
+    // our removeEntry was in flight (deletes do not serialize against each
+    // other). Guard against double-subtracting `totalSize`.
+    const current = this.index.get(key);
+    if (!current) return;
+    this.totalSize = Math.max(0, this.totalSize - current.size);
     this.index.delete(key);
     this.scheduleMetadataSave();
+  }
+
+  /**
+   * First key in LRU order (Map insertion order) that is not `exclude`. Used by
+   * doSet()'s eviction loops to skip the key currently being written (#1073) —
+   * see the loop comments for the self-deadlock rationale.
+   */
+  private lruHeadExcluding(exclude: string): string | undefined {
+    for (const key of this.index.keys()) {
+      if (key !== exclude) return key;
+    }
+    return undefined;
   }
 
   /**
@@ -701,6 +865,7 @@ export class OPFSStore {
     this.evictions = 0;
     this.writeFailures = 0;
     this.corruptedEntries = 0;
+    this.clobberBarrierWriteSkipped = 0;
     this.metadata.parseFailures = 0;
     this.metadata.orphansRemoved = 0;
 
@@ -786,6 +951,7 @@ export class OPFSStore {
     evictions: number;
     writeFailures: number;
     corruptedEntries: number;
+    clobberBarrierWriteSkipped: number;
     metadataParseFailures: number;
     orphanedFilesRemoved: number;
     /**
@@ -808,6 +974,7 @@ export class OPFSStore {
       evictions: this.evictions,
       writeFailures: this.writeFailures,
       corruptedEntries: this.corruptedEntries,
+      clobberBarrierWriteSkipped: this.clobberBarrierWriteSkipped,
       metadataParseFailures: this.metadata.parseFailures,
       orphanedFilesRemoved: this.metadata.orphansRemoved,
       available: this.opfsRoot !== null && !this.disposed,
@@ -919,6 +1086,12 @@ export class OPFSStore {
    *    this store started may still be outstanding at that point.
    * 5. Drain pendingWrites so file I/O for in-flight set() calls finishes
    *    and the index reflects settled state before we snapshot it.
+   * 5b. Drain in-flight real deletes (pendingDeletesByDataset): doDelete
+   *    chains behind pendingWrites, so a timed-out delete's non-cancellable
+   *    removeEntry + reconcile can still be outstanding — draining lets it
+   *    finish before we snapshot (#1073). Bounded by the op timeout; a delete
+   *    that outlives the drain stays in the static registry, which is what
+   *    actually protects a successor same-URL store's writes.
    * 6. Await any metadata save already mid-write so the final save wins
    *    on disk (last writer), then write the latest snapshot. The flush is
    *    unconditional (not gated on hasPendingSave) because read-driven LRU
@@ -947,6 +1120,40 @@ export class OPFSStore {
 
     if (this.pendingWrites.size > 0) {
       await Promise.allSettled([...this.pendingWrites.values()]);
+    }
+
+    // Drain in-flight REAL deletes (#1073). doDelete now chains behind
+    // pendingWrites, so a delete whose caller returned on a timeout can still
+    // have its non-cancellable removeEntry + index/size reconcile OUTSTANDING
+    // here. Draining lets the removeEntry complete and the index settle BEFORE
+    // metadataSnapshot(), so the persisted snapshot doesn't list a key whose
+    // file is mid-removal. Bounded by the op timeout so a genuinely hung
+    // removeEntry cannot stall dispose (we deliberately do NOT early-return
+    // inside doDelete on `disposed` — that would leave the file orphaned).
+    // NOTE the drain is best-effort, NOT the cross-instance clobber guard: a
+    // removeEntry that outlives this deadline stays registered in the STATIC
+    // pendingDeletesByDataset (keyed by datasetId), so a successor same-URL
+    // store's set() barrier still gates on it — that registry, not this drain,
+    // is what stops a straggling delete from clobbering the successor's
+    // replacement write. The cost of an out-drained delete is only a stale
+    // final snapshot (a phantom index entry the next session self-heals as a
+    // miss / NotFound reconcile), never a clobber.
+    const datasetDeletes = OPFSStore.pendingDeletesByDataset.get(this.datasetId);
+    if (datasetDeletes && datasetDeletes.size > 0) {
+      const deletes: Promise<void>[] = [];
+      for (const inflight of datasetDeletes.values()) deletes.push(...inflight);
+      try {
+        await withTimeout(
+          Promise.allSettled(deletes),
+          config.cache.opfsOperationTimeoutMs,
+          'dispose delete-drain'
+        );
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        if (msg.startsWith('OPFS timeout')) {
+          log.warning(Modules.CACHE, msg);
+        }
+      }
     }
 
     await this.metadata.awaitInFlight();
