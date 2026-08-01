@@ -120,7 +120,10 @@ Key behaviours:
   terminal response is returned with an idempotent `dispose()` callback;
   consumers hold that scope through body consumption and release it in
   `finally`, preserving body cancellation without retaining fallback
-  listeners for the dataset lifetime.
+  listeners for the dataset lifetime. `dispose()` also cancels a body
+  the consumer never read (retryable 429/5xx, terminal non-OK, or a
+  post-fetch abort), so an ignored response stops streaming instead of
+  holding bandwidth and a connection slot until GC.
 
 ### `bandwidth-window.ts` — sliding-window throughput
 

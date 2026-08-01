@@ -13,10 +13,24 @@ export interface AbortSignalScope {
   dispose: () => void;
 }
 
-/** A fetch response whose abort-listener scope must cover body consumption. */
+/** A fetch response whose abort-listener scope must cover body consumption.
+ *  `dispose()` also cancels a body the caller never read, so an ignored
+ *  non-OK response stops streaming instead of holding the connection. */
 export interface FetchResponseScope {
   response: Response;
   dispose: () => void;
+}
+
+/**
+ * Cancel a response body the caller chose not to read (retryable 429/5xx,
+ * terminal non-OK, or a post-fetch abort). Without the cancel the server can
+ * keep streaming the ignored body, consuming bandwidth and holding the
+ * connection until GC. Consumed or locked bodies are left alone.
+ */
+function releaseUnconsumedBody(response: Response): void {
+  const body = response.body;
+  if (!body || response.bodyUsed || body.locked) return;
+  void body.cancel().catch(() => {});
 }
 
 /**
@@ -103,8 +117,10 @@ export async function hashUrl(url: string): Promise<string> {
  *   retry budget.
  * @returns A terminal response and an idempotent `dispose()` callback. The
  *   caller must keep the scope through response-body consumption, then dispose
- *   it so fallback source listeners cannot accumulate. Returns `undefined`
- *   after abort or retry exhaustion.
+ *   it so fallback source listeners cannot accumulate; dispose also cancels
+ *   a body the caller never read (e.g. a terminal non-OK response) so the
+ *   server stops streaming it. Returns `undefined` after abort or retry
+ *   exhaustion.
  */
 export async function fetchWithRetry(
   url: string,
@@ -139,7 +155,13 @@ export async function fetchWithRetry(
         const abortScope = mergeAbortSignals(timeoutController.signal, options?.signal);
         try {
           const response = await fetch(url, { signal: abortScope.signal });
-          return { response, dispose: abortScope.dispose };
+          return {
+            response,
+            dispose: (): void => {
+              releaseUnconsumedBody(response);
+              abortScope.dispose();
+            },
+          };
         } catch (error) {
           abortScope.dispose();
           throw error;

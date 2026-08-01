@@ -18,6 +18,34 @@ function mockResponse(status: number, body: ArrayBuffer | string = ''): Response
   } as unknown as Response;
 }
 
+/** Response-like with a live ReadableStream body whose cancellation is
+ *  observable — models a server still streaming an error/ignored body. */
+function mockStreamingResponse(status: number): {
+  response: Response;
+  wasCancelled: () => boolean;
+} {
+  let cancelled = false;
+  let used = false;
+  const body = new ReadableStream<Uint8Array>({
+    cancel() {
+      cancelled = true;
+    },
+  });
+  const response = {
+    ok: status >= 200 && status < 300,
+    status,
+    body,
+    get bodyUsed() {
+      return used;
+    },
+    async arrayBuffer() {
+      used = true;
+      return new ArrayBuffer(0);
+    },
+  } as unknown as Response;
+  return { response, wasCancelled: () => cancelled };
+}
+
 // Existing retry tests only inspect terminal status; dispose their scope
 // immediately. Body-lifetime tests call fetchWithRetryScoped directly.
 async function fetchWithRetry(
@@ -259,6 +287,48 @@ describe('fetchWithRetry', () => {
     } finally {
       restore();
     }
+  });
+
+  it('cancels the unread body of every retried 5xx response', async () => {
+    vi.useFakeTimers();
+    const cancelFlags: Array<() => boolean> = [];
+    const fetchMock = vi.fn(async () => {
+      const { response, wasCancelled } = mockStreamingResponse(503);
+      cancelFlags.push(wasCancelled);
+      return response;
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const promise = fetchWithRetryScoped('https://example.com/x', { timeoutMsOverride: 10_000 });
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    expect(await promise).toBeUndefined();
+    // Every retried response's still-streaming body was cancelled so the
+    // server stops sending; otherwise up to maxAttempts bodies stream on.
+    expect(cancelFlags).toHaveLength(4);
+    for (const wasCancelled of cancelFlags) expect(wasCancelled()).toBe(true);
+  });
+
+  it('dispose() cancels a terminal response body the caller never read', async () => {
+    const { response, wasCancelled } = mockStreamingResponse(404);
+    global.fetch = vi.fn(async () => response) as unknown as typeof fetch;
+
+    const fetched = await fetchWithRetryScoped('https://example.com/x');
+    expect(fetched?.response.status).toBe(404);
+    // Body stays live until the caller settles (it may still choose to read).
+    expect(wasCancelled()).toBe(false);
+    fetched?.dispose();
+    expect(wasCancelled()).toBe(true);
+  });
+
+  it('dispose() leaves a consumed body alone', async () => {
+    const { response, wasCancelled } = mockStreamingResponse(200);
+    global.fetch = vi.fn(async () => response) as unknown as typeof fetch;
+
+    const fetched = await fetchWithRetryScoped('https://example.com/x');
+    await fetched?.response.arrayBuffer();
+    fetched?.dispose();
+    expect(wasCancelled()).toBe(false);
   });
 
   it('retries on 429 (rate-limited)', async () => {
