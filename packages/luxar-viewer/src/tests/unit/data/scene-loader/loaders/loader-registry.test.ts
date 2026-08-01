@@ -1,9 +1,9 @@
 /**
  * Unit tests for LoaderRegistry.
  *
- * The registry is a thin wrapper around three Maps and a failure log; we
- * test it with stand-in loader objects that implement only the dispose()
- * method the registry calls. No zarr / DOM / WebGL involved.
+ * The registry is a thin wrapper around a kind-keyed loader store and a
+ * failure log; we test it with stand-in loader objects that implement only the
+ * dispose() method the registry calls. No zarr / DOM / WebGL involved.
  */
 
 import { describe, it, expect, vi } from 'vitest';
@@ -14,6 +14,8 @@ import {
 import type { DataLoader } from '../../../../../data/data-loader-types';
 import type { LinesDataLoader } from '../../../../../types/lines';
 import type { GSplatsDataLoader } from '../../../../../types/gsplats';
+import type { GeometryKind } from '../../../../../data/data-loader-types';
+import { GEOMETRY_TYPES } from '../../../../../types/format-contract';
 
 function makeStub<T>(): T & { dispose: ReturnType<typeof vi.fn> } {
   return { dispose: vi.fn() } as unknown as T & { dispose: ReturnType<typeof vi.fn> };
@@ -264,5 +266,66 @@ describe('LoaderRegistry.disposeAll', () => {
 
     expect(r.totalLoaderCount).toBe(0);
     expect(r.failedLoaders.size).toBe(1);
+  });
+});
+
+describe('LoaderRegistry — kind-keyed surface', () => {
+  it('covers every geometry type in the format contract', () => {
+    const r = new LoaderRegistry();
+    for (const kind of GEOMETRY_TYPES) {
+      expect(() => r.loadersOf(kind as GeometryKind)).not.toThrow();
+      expect(r.loadersOf(kind as GeometryKind).size).toBe(0);
+    }
+  });
+
+  it('throws on an unknown geometry kind rather than silently creating a bucket', () => {
+    const r = new LoaderRegistry();
+    expect(() => r.loadersOf('not_a_kind' as GeometryKind)).toThrow(/unknown geometry kind/);
+  });
+
+  it('the typed accessors are views onto the same buckets, not copies', () => {
+    const r = new LoaderRegistry();
+    r.register('points', '/p', makeStub<DataLoader>());
+    r.register('lines', '/l', makeStub<LinesDataLoader>());
+    r.register('gsplats', '/g', makeStub<GSplatsDataLoader>());
+
+    expect(r.loaders.get('/p')).toBe(r.loadersOf('points').get('/p'));
+    expect(r.linesLoaders.get('/l')).toBe(r.loadersOf('lines').get('/l'));
+    expect(r.gsplatLoaders.get('/g')).toBe(r.loadersOf('gsplats').get('/g'));
+
+    // Mutating through the typed view must be visible through the keyed one:
+    // call sites hold `registry.loaders` directly and mutate it.
+    r.loaders.set('/p2', makeStub<DataLoader>());
+    expect(r.loadersOf('points').has('/p2')).toBe(true);
+    expect(r.totalLoaderCount).toBe(4);
+  });
+
+  it('generic register/unregister match the named per-type methods', () => {
+    const generic = new LoaderRegistry();
+    const named = new LoaderRegistry();
+
+    generic.register('lines', '/x', makeStub<LinesDataLoader>());
+    named.registerLinesLoader('/x', makeStub<LinesDataLoader>());
+    expect(generic.getLoaderType('/x')).toBe(named.getLoaderType('/x'));
+
+    generic.unregister('lines', '/x');
+    named.unregisterLinesLoader('/x');
+    expect(generic.getLoaderType('/x')).toBeNull();
+    expect(named.getLoaderType('/x')).toBeNull();
+  });
+
+  it('disposeAll disposes every kind and empties every bucket', () => {
+    const r = new LoaderRegistry();
+    const stubs = GEOMETRY_TYPES.map((kind) => {
+      const stub = makeStub<DataLoader>();
+      r.register(kind as GeometryKind, `/${kind}`, stub);
+      return stub;
+    });
+
+    r.disposeAll();
+
+    for (const stub of stubs) expect(stub.dispose).toHaveBeenCalledTimes(1);
+    expect(r.totalLoaderCount).toBe(0);
+    expect(r.hasLoaders).toBe(false);
   });
 });
