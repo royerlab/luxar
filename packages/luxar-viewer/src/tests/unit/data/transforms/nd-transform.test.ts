@@ -491,20 +491,21 @@ describe('invertNdTransformForQuery — the no-preimage rule on discrete dims', 
     expect(result.noPreimage).toBe(false);
   });
 
-  it('reads the extend sentinel BEFORE rescaling it (large scales)', () => {
-    // Order-of-operations pin: the inverse divides the tolerance by |scale|, so
-    // for scale > 10 the 1e10 sentinel drops BELOW the 1e9 floor. Testing the
-    // rescaled value would lose the exemption and wrongly blank an extended
-    // node. Only a large scale exposes it — scale 2 stays above the floor
-    // either way, so the earlier test cannot catch this regression.
+  it('keeps an infinite tolerance infinite under a large scale', () => {
+    // The inverse divides tolerance by |scale|, which for |scale| > 10 would
+    // drop the 1e10 extend_to_all sentinel BELOW the 1e9 floor that every
+    // DOWNSTREAM extend check uses (effective-radius-calculator's
+    // isExtendToAll, calculateSpatialQueryTolerance, fallbackQueryTolerance) —
+    // silently un-extending the dimension. An infinite tolerance must survive
+    // the rescale. Only a large scale exposes this: at scale 2 the sentinel
+    // stays above the floor either way.
     const extended = [1e10, 1e10, 1e10, 1e10];
     const result = invert(7, { scale: 1e4 }, frameDims, extended);
-    // NOTE: the eroded tolerance below is CURRENT behaviour, not desirable
-    // behaviour — downstream `>= 1e9` extend checks also lose the sentinel at
-    // scale > 10. That erosion is a separate pre-existing issue; this test only
-    // pins that the no-preimage rule reads the sentinel before it happens.
-    expect(result.tolerance[3]).toBeLessThan(1e9);
-    expect(result.noPreimage).toBe(false); // ...the exemption still applied
+    expect(result.tolerance[3]).toBeGreaterThanOrEqual(1e9);
+    expect(result.noPreimage).toBe(false);
+    // A FINITE tolerance is still rescaled — that conversion is meaningful.
+    const finite = invert(8, { scale: 4 }, frameDims, [1e10, 1e10, 1e10, 8]);
+    expect(finite.tolerance[3]).toBeCloseTo(2, 9);
   });
 
   it('never fires on a categorical permutation (a bijection always has a preimage)', () => {
