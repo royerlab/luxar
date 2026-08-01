@@ -229,6 +229,23 @@ def recipe_digest() -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:8]
 
 
+def css_rgb(tint: tuple[float, float, float]) -> str:
+    """Render a linear-RGB tint constant as a CSS ``rgb()`` string.
+
+    Lets the on-screen phase legend derive its swatches from
+    :data:`PHASE_POSITIVE` / :data:`PHASE_NEGATIVE` instead of repeating the
+    values, so the legend cannot drift from the splats it describes.
+
+    Args:
+        tint: RGB components in [0, 1].
+
+    Returns:
+        e.g. ``"rgb(255, 107, 46)"``.
+    """
+    r, g, b = (int(round(c * 255)) for c in tint)
+    return f"rgb({r}, {g}, {b})"
+
+
 def camera_distance_for_radius(radius: float) -> float:
     """Distance at which a sphere of ``radius`` fills :data:`CAMERA_FOV_FILL`.
 
@@ -668,13 +685,29 @@ def create_luxar_scene(orbitals: GSplatData, output_path: Path) -> Path:
                     transition_duration=0.2,
                 )
 
-            scene.add_text(
-                "█ ψ > 0   █ ψ < 0   •   |ψ|² as volumetric Gaussian splats"
-                "   •   true relative scale",
-                position=(0.5, 0.97),
-                font_size=0.015,
-                anchor="bottom-center",
-                color="rgba(200,200,200,0.6)",
+            # HTML, not add_text: one `color=` paints the whole string, so both
+            # swatches came out the same gray and the legend never actually said
+            # which tint meant which sign — the only on-screen explanation of
+            # this demo's headline feature. Swatch colours are derived from the
+            # tint constants so they cannot drift from the splats they describe.
+            scene.add_html(
+                # nowrap: the overlay box is sized to its anchor, so without it
+                # each line breaks after a word or two into a ragged column.
+                f'<div style="font-size:1.5vh;color:rgba(200,200,200,0.75);'
+                f'white-space:nowrap;text-align:right;line-height:1.5">'
+                f'<span style="color:{css_rgb(PHASE_POSITIVE)}">█</span> ψ &gt; 0'
+                f'&nbsp;&nbsp;<span style="color:{css_rgb(PHASE_NEGATIVE)}">█</span> ψ &lt; 0'
+                f"<br>|ψ|² as volumetric Gaussian splats"
+                f"<br>shown at true relative scale</div>",
+                # Top-right, NOT the conventional bottom-centre: the Dimension
+                # Navigation panel occupies bottom-centre by default and hid
+                # this legend completely (it did in the point-cloud version
+                # too — the text was in the DOM the whole time, painted behind
+                # the panel). Top-right is the one large region no default
+                # chrome claims: the rail is left, title top-left, state label
+                # bottom-left.
+                position=(0.98, 0.02),
+                anchor="top-right",
             )
 
         aprint(f"Scene saved: {output_path}")

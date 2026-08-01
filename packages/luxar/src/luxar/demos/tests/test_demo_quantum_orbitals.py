@@ -44,6 +44,7 @@ phase_colors = _demo.phase_colors
 recipe_digest = _demo.recipe_digest
 cache_path = _demo.cache_path
 camera_distance_for_radius = _demo.camera_distance_for_radius
+css_rgb = _demo.css_rgb
 fit_orbitals = _demo.fit_orbitals
 ORBITALS = _demo.ORBITALS
 
@@ -464,6 +465,31 @@ def test_fit_orbitals_rejects_out_of_range_parameters(
     """Fail fast and legibly — grid=1 used to die on a bare ZeroDivisionError."""
     with pytest.raises(ValueError, match=expected):
         fit_orbitals(grid, seeds, iters)
+
+
+# ---------------------------------------------------------------------------
+# Phase legend
+# ---------------------------------------------------------------------------
+
+
+def test_css_rgb_renders_a_tint_faithfully() -> None:
+    assert css_rgb((0.0, 0.0, 0.0)) == "rgb(0, 0, 0)"
+    assert css_rgb((1.0, 1.0, 1.0)) == "rgb(255, 255, 255)"
+    assert css_rgb((1.0, 0.42, 0.18)) == "rgb(255, 107, 46)"
+
+
+def test_legend_swatches_are_derived_from_the_tints_and_distinguishable() -> None:
+    """The legend must show WHICH tint is which sign.
+
+    It previously used a single-colour ``add_text``, so both swatches rendered
+    identically gray and the legend explained nothing. Deriving from the
+    constants also stops the legend drifting from the actual splat colours.
+    """
+    warm, cool = css_rgb(_demo.PHASE_POSITIVE), css_rgb(_demo.PHASE_NEGATIVE)
+    assert warm != cool
+    # Warm must read warm and cool must read cool, whatever the tints become.
+    assert _demo.PHASE_POSITIVE[0] > _demo.PHASE_POSITIVE[2]
+    assert _demo.PHASE_NEGATIVE[2] > _demo.PHASE_NEGATIVE[0]
 
 
 # ---------------------------------------------------------------------------
