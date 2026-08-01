@@ -25,6 +25,8 @@ function makeStubContext(overrides: Partial<RenderingSettings> = {}): {
   settings: RenderingSettings;
   postProcessing: {
     setToneMapping: ReturnType<typeof vi.fn>;
+    setBloomEnabled: ReturnType<typeof vi.fn>;
+    setBloomLevels: ReturnType<typeof vi.fn>;
     setDetectorNoiseEnabled: ReturnType<typeof vi.fn>;
     setVignetteEnabled: ReturnType<typeof vi.fn>;
     setChromaticLensDistortionEnabled: ReturnType<typeof vi.fn>;
@@ -44,6 +46,8 @@ function makeStubContext(overrides: Partial<RenderingSettings> = {}): {
 
   const postProcessing = {
     setToneMapping: vi.fn(),
+    setBloomEnabled: vi.fn(),
+    setBloomLevels: vi.fn(),
     setDetectorNoiseEnabled: vi.fn(),
     setVignetteEnabled: vi.fn(),
     setChromaticLensDistortionEnabled: vi.fn(),
@@ -113,6 +117,15 @@ describe('buildCinematicValues', () => {
     expect(v.detectorNoiseEnabled).toBe(true);
     expect(v.vignetteEnabled).toBe(true);
     expect(v.chromaticLensDistortionEnabled).toBe(true);
+  });
+
+  it('enables bloom with the subtle wide-glow parameters', () => {
+    const v = buildCinematicValues();
+    expect(v.bloomEnabled).toBe(true);
+    expect(v.bloomThreshold).toBe(0.01);
+    expect(v.bloomStrength).toBe(0.05);
+    expect(v.bloomRadius).toBe(1.0);
+    expect(v.bloomLevels).toBe(8);
   });
 
   it('uses the 35mm FOV preset', () => {
@@ -189,6 +202,18 @@ describe('CinematicModeController.toggle — enable path', () => {
     expect(stub.settings.fovPreset).toBe('35mm');
   });
 
+  it('turns bloom ON with the preset parameters and pushes them to post-processing', () => {
+    cm.toggle();
+    expect(stub.settings.bloomEnabled).toBe(true);
+    expect(stub.settings.bloomThreshold).toBe(0.01);
+    expect(stub.settings.bloomStrength).toBe(0.05);
+    expect(stub.settings.bloomRadius).toBe(1.0);
+    expect(stub.settings.bloomLevels).toBe(8);
+    // setBloomEnabled(enabled, strength, radius, threshold)
+    expect(stub.postProcessing.setBloomEnabled).toHaveBeenCalledWith(true, 0.05, 1.0, 0.01);
+    expect(stub.postProcessing.setBloomLevels).toHaveBeenCalledWith(8);
+  });
+
   it('wraps post-processing changes in startDeferRebuild / endDeferRebuild', () => {
     cm.toggle();
     expect(stub.postProcessing.startDeferRebuild).toHaveBeenCalled();
@@ -222,6 +247,44 @@ describe('CinematicModeController.toggle — disable / restore path', () => {
 
     cm.toggle(); // OFF: dirty-check restore
     expect(stub.settings.toneMapping).toBe('Reinhard');
+  });
+
+  it('restores the pre-cinematic bloom state when toggling back off', () => {
+    const stub = makeStubContext({
+      detectorNoiseEnabled: false,
+      vignetteEnabled: false,
+      chromaticLensDistortionEnabled: false,
+      toneMapping: 'Linear',
+      bloomEnabled: false,
+      bloomStrength: 0.4,
+    });
+    const cm = new CinematicModeController(stub.ctx);
+
+    cm.toggle(); // ON
+    expect(stub.settings.bloomEnabled).toBe(true);
+    expect(stub.settings.bloomStrength).toBe(0.05);
+
+    cm.toggle(); // OFF
+    expect(stub.settings.bloomEnabled).toBe(false);
+    expect(stub.settings.bloomStrength).toBe(0.4);
+  });
+
+  it('keeps a bloom strength the user hand-edited while cinematic was on (dirty check)', () => {
+    const stub = makeStubContext({
+      detectorNoiseEnabled: false,
+      vignetteEnabled: false,
+      chromaticLensDistortionEnabled: false,
+      toneMapping: 'Linear',
+      bloomEnabled: false,
+      bloomStrength: 0.4,
+    });
+    const cm = new CinematicModeController(stub.ctx);
+
+    cm.toggle(); // ON
+    stub.settings.bloomStrength = 0.9; // user dials the glow up
+
+    cm.toggle(); // OFF
+    expect(stub.settings.bloomStrength).toBe(0.9);
   });
 
   it('does NOT restore values the user hand-edited while cinematic was on (dirty check)', () => {
@@ -264,6 +327,27 @@ describe('CinematicModeController.toggle — disable / restore path', () => {
     expect(stub.settings.toneMapping).toBe(config.renderingControls.defaults.toneMapping);
     expect(stub.settings.fovPreset).toBe('50mm Normal');
   });
+
+  it('falls back to the default bloom settings when no snapshot exists', () => {
+    const defaults = config.renderingControls.defaults;
+    const stub = makeStubContext({
+      detectorNoiseEnabled: true,
+      vignetteEnabled: true,
+      chromaticLensDistortionEnabled: true,
+      toneMapping: 'ACES',
+      bloomEnabled: true,
+      bloomStrength: 0.05,
+    });
+    const cm = new CinematicModeController(stub.ctx);
+
+    cm.toggle(); // DISABLE branch, snapshot is null
+
+    expect(stub.settings.bloomEnabled).toBe(defaults.bloomEnabled);
+    expect(stub.settings.bloomThreshold).toBe(defaults.bloomThreshold);
+    expect(stub.settings.bloomStrength).toBe(defaults.bloomStrength);
+    expect(stub.settings.bloomRadius).toBe(defaults.bloomRadius);
+    expect(stub.settings.bloomLevels).toBe(defaults.bloomLevels);
+  });
 });
 
 describe('CinematicModeController.clearSnapshot', () => {
@@ -297,6 +381,11 @@ describe('CinematicSnapshot type — round trip', () => {
     // Smoke check that all expected keys are present.
     const keys: (keyof CinematicSnapshot)[] = [
       'toneMapping',
+      'bloomEnabled',
+      'bloomThreshold',
+      'bloomStrength',
+      'bloomRadius',
+      'bloomLevels',
       'detectorNoiseEnabled',
       'detectorNoiseReadoutSigma',
       'detectorNoisePhotonGain',

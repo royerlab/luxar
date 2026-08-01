@@ -275,14 +275,18 @@ def robust_download(
     # A quarantined `.corrupt` sibling means an earlier copy was rejected as
     # truncated/unreadable. Say so BEFORE re-fetching, so a multi-GB download
     # never starts unexplained. The action differs from the default here: this
-    # call site IS the re-download, so telling the user to re-download would
-    # name the thing already happening — the only thing left for them to do is
-    # reclaim the space the rejected copy is holding.
+    # call site IS the re-fetch, so telling the user to re-download would name
+    # the thing already happening — the only thing left for them to do is
+    # reclaim the space the rejected copy is holding. Keep the wording neutral
+    # about HOW the replacement arrives: whether this run downloads fresh or
+    # resumes a `.part` staging file is only determined later (the `.part` probe
+    # below), so asserting "from scratch" here could contradict the resume
+    # notice ("Attempting to resume...") emitted downstream (#716).
     warn_if_quarantined(
         output_path,
         action=(
             "delete the quarantined copy to reclaim its disk space — this run "
-            "is already re-fetching the file from scratch"
+            "is already fetching a replacement"
         ),
     )
 
