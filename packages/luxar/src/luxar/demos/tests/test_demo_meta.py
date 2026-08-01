@@ -103,12 +103,20 @@ def test_get_demo_suggests_close_matches() -> None:
 
 
 def test_iter_demos_is_fast() -> None:
-    """The table must render quickly — AST extraction, no module imports."""
+    """The table must render quickly — AST extraction, no module imports.
+
+    CPU time, not wall time: the claim being guarded is about WORK DONE (parse
+    the ASTs, import nothing), and a wall-clock budget measures the machine's
+    load instead. Under parallel test execution this failed at 1.48s and 1.01s
+    — the latter by 10ms — while the actual work was unchanged. The two clocks
+    agree to 1.00 on an idle box, so this measures the same thing and only
+    stops counting time spent waiting for a busy scheduler.
+    """
     iter_demos(refresh=True)  # warm the memo? no — refresh drops it; time cold:
-    start = time.monotonic()
+    start = time.process_time()
     iter_demos(refresh=True)
-    cold = time.monotonic() - start
-    assert cold < 1.0, f"cold iter_demos took {cold:.2f}s (budget 1.0s)"
+    cold = time.process_time() - start
+    assert cold < 1.0, f"cold iter_demos took {cold:.2f}s CPU (budget 1.0s)"
 
 
 def test_cache_root_matches_utils_demos() -> None:

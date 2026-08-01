@@ -121,8 +121,13 @@ jobs:
     # excluded here, cutting the serial 1-core run from >60 min to ~15 min while
     # coverage stays ~85% (≥ the 80% gate; slow tests' code is redundantly
     # covered by fast unit tests). The FULL suite (incl. slow) is the local
-    # pre-push gate (`hatch run test`). pytest-xdist doesn't help on the 1-core
-    # runner. 60 min leaves generous headroom for the not-slow pass.
+    # pre-push gate (`hatch run test`).
+    #
+    # The suite now runs under pytest-xdist (`-n 4`, see pyproject). The old note
+    # here said xdist "doesn't help on the 1-core runner" — true of a 2-core
+    # GitHub VM, and false on the 16-core self-hosted box, where it cut each leg
+    # from ~45 min to ~16. Combined with the thread pinning below; neither works
+    # without the other. 60 min still leaves headroom.
     timeout-minutes: 60
     strategy:
       # Report every interpreter's verdict in one run: fail-fast would cancel the
@@ -131,6 +136,24 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ['3.10', '3.11', '3.12']
+    env:
+      # Pin BLAS/OpenMP to one thread per leg. This suite runs SERIALLY, yet each
+      # leg burned ~316% CPU on the self-hosted box -- numpy spawning threads to
+      # fill the core quota. Three legs doing that pinned load at 15/16 and made
+      # every leg ~1.9x SLOWER than the same leg on a GitHub VM (which never
+      # contends, because each matrix leg gets its own machine).
+      #
+      # Pinning frees ~13 of 16 cores, which `-n 4` (pytest-xdist, see
+      # pyproject) then spends on real parallelism: 45.6/44.0/47.5 min ->
+      # 15.8/16.6/17.0, i.e. faster than the 21.3/23.8/23.4 GitHub baseline.
+      #
+      # Set here rather than in the runner image so hosted and self-hosted legs
+      # execute identically -- divergence between the two is what produced the
+      # #839-style "matrix is not real" failure earlier in this branch.
+      OMP_NUM_THREADS: '1'
+      OPENBLAS_NUM_THREADS: '1'
+      MKL_NUM_THREADS: '1'
+      NUMEXPR_NUM_THREADS: '1'
     steps:
       # LFS intentionally disabled — `hatch run test-cov` covers
       # packages/luxar/src/luxar and none of its unit tests open the
