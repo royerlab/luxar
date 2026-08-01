@@ -195,6 +195,23 @@ class TestResolveAdditiveAxisPoints:
         with pytest.raises(ValueError, match="stream"):
             resolve_additive_axis_points({"counts": "stream:-5"})
 
+    def test_valid_energy_counts_resolves(self) -> None:
+        spec = resolve_additive_axis_points({"counts": "energy:0.5,0.9,1.0"})
+        assert spec is not None
+        assert spec["counts"] == "energy:0.5,0.9,1.0"
+
+    def test_other_doomed_counts_raise_at_resolve(self) -> None:
+        # Same partial-group trap as stream:0 — any counts value the write
+        # path is guaranteed to reject must fail at resolve time too.
+        with pytest.raises(ValueError, match="unrecognized breakpoints string"):
+            resolve_additive_axis_points({"counts": "equal-count"})
+        with pytest.raises(ValueError, match="energy: fractions must be numbers"):
+            resolve_additive_axis_points({"counts": "energy:abc"})
+        with pytest.raises(ValueError, match="energy: fractions must be non-empty"):
+            resolve_additive_axis_points({"counts": "energy:"})
+        with pytest.raises(ValueError, match="non-empty"):
+            resolve_additive_axis_points({"counts": []})
+
 
 # ────────────────────────────────────────────────────────────────────────
 # End-to-end: ``add_points(additive_lod=...)``
