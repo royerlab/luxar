@@ -1,3 +1,4 @@
+import { getEventListeners } from 'node:events';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   ValidationQueue,
@@ -17,6 +18,15 @@ function mockResponse(status: number, body: ArrayBuffer | string = ''): Response
       return typeof body === 'string' ? new TextEncoder().encode(body).buffer : body;
     },
   } as unknown as Response;
+}
+
+function forceAbortSignalAnyFallback(): () => void {
+  const descriptor = Object.getOwnPropertyDescriptor(AbortSignal, 'any');
+  Object.defineProperty(AbortSignal, 'any', { configurable: true, value: undefined });
+  return () => {
+    if (descriptor) Object.defineProperty(AbortSignal, 'any', descriptor);
+    else delete (AbortSignal as unknown as { any?: unknown }).any;
+  };
 }
 
 function deferred<T>() {
@@ -273,6 +283,25 @@ describe('getRemoteContentHash', () => {
       hash: 'abc123',
       mode: 'content-hash',
     });
+  });
+
+  it('releases fallback caller listeners after validation consumes the body', async () => {
+    const restore = forceAbortSignalAnyFallback();
+    const caller = new AbortController();
+    try {
+      global.fetch = vi.fn(async () =>
+        mockResponse(200, JSON.stringify({ content_hash: 'abc123' }))
+      ) as unknown as typeof fetch;
+
+      const token = await getRemoteContentHash('https://example.com/d.zarr', {
+        signal: caller.signal,
+      });
+
+      expect(token?.hash).toBe('abc123');
+      expect(getEventListeners(caller.signal, 'abort')).toHaveLength(0);
+    } finally {
+      restore();
+    }
   });
 
   it('falls back to an implicit zattrs-hash token when the attr is absent', async () => {

@@ -7,6 +7,7 @@ import {
   fetchWithRetry,
   hashUrl,
   mergeAbortSignals,
+  type FetchResponseScope,
 } from './multi-level-caching-store/fetch-retry';
 import {
   ValidationQueue,
@@ -548,79 +549,88 @@ export class MultiLevelCachingStore implements AsyncReadable {
     // plumbing its own controller. When the caller passed its own
     // signal (and bypassed coalescing in getResult), forward that too
     // so per-caller cancellation actually aborts the resource.
-    const fetchSignal = mergeAbortSignals(this.dataAbort.signal, callerSignal);
-    let response: Response | undefined;
+    const fetchAbort = mergeAbortSignals(this.dataAbort.signal, callerSignal);
+    let fetched: FetchResponseScope | undefined;
     try {
-      response = await fetchWithRetry(buildUrl(this.baseUrl, key), { signal: fetchSignal });
-    } catch (error) {
-      const cause = error instanceof Error ? error : new Error(String(error));
-      return { result: err({ kind: 'NetworkError', cause }), source: 'network' };
-    }
+      try {
+        fetched = await fetchWithRetry(buildUrl(this.baseUrl, key), {
+          signal: fetchAbort.signal,
+        });
+      } catch (error) {
+        const cause = error instanceof Error ? error : new Error(String(error));
+        return { result: err({ kind: 'NetworkError', cause }), source: 'network' };
+      }
 
-    if (this.disposed || this.dataAbort.signal.aborted || callerSignal?.aborted) {
-      return { result: err({ kind: 'Aborted' }), source: 'network' };
-    }
-    if (!response) {
       if (this.disposed || this.dataAbort.signal.aborted || callerSignal?.aborted) {
         return { result: err({ kind: 'Aborted' }), source: 'network' };
       }
-      return {
-        result: err({
-          kind: 'NetworkError',
-          cause: new Error(`fetch exhausted retries for ${key}`),
-        }),
-        source: 'network',
-      };
-    }
-    if (!response.ok) {
-      return { result: err({ kind: 'Missing' }), source: 'missing' };
-    }
-
-    const data = new Uint8Array(await response.arrayBuffer());
-
-    // Aggregate network counters (one per actual fetch — pendingGets
-    // ensures this body runs at most once per key per concurrent wave).
-    this.networkRequestCount++;
-    this.networkBytesTransferred += data.byteLength;
-    this.bandwidth.record(data.byteLength);
-
-    // CRIT-5: if validateCache aborted this in-flight get between the
-    // arrayBuffer() resolve and now (content-hash mismatch raced an
-    // in-flight fetch), do NOT write stale bytes back into a
-    // just-cleared L1/L2 — that would silently undo the invalidation.
-    if (callerSignal?.aborted || this.disposed || this.dataAbort.signal.aborted) {
-      return { result: err({ kind: 'Aborted' }), source: 'network' };
-    }
-
-    // Populate caches once. L1 synchronously (the caller may read it back
-    // immediately); L2 (OPFS) is DEFERRED to the background write queue so the
-    // durable disk write never blocks this fetch — profiling showed the awaited
-    // OPFS write dominated the cold-load critical path (~6× the network fetch).
-    // The bytes are already in hand + promoted to L1, so a queued write carries
-    // no correctness weight for THIS session; it only persists for the next.
-    if (this.enabled) {
-      this.l1Cache.set(key, data);
-      if (this.l2Store) {
-        const l2Store = this.l2Store;
-        // Capture the epoch NOW; re-check at drain time so a clear/dispose that
-        // interleaves between enqueue and the actual write drops the stale write
-        // (the enqueue→drain window that the inline await used to make atomic).
-        const epoch = this.l2Epoch;
-        this.l2WriteQueue.enqueue(key, async () => {
-          if (this.disposed || this.dataAbort.signal.aborted || this.l2Epoch !== epoch) {
-            return; // superseded by dispose or a cache clear — do not persist
-          }
-          try {
-            await l2Store.set(key, data);
-          } catch (e) {
-            const msg = e instanceof Error ? e.message : String(e);
-            log.warning(Modules.CACHE, `L2 write failed for ${key}: ${msg}`);
-          }
-        });
+      if (!fetched) {
+        if (this.disposed || this.dataAbort.signal.aborted || callerSignal?.aborted) {
+          return { result: err({ kind: 'Aborted' }), source: 'network' };
+        }
+        return {
+          result: err({
+            kind: 'NetworkError',
+            cause: new Error(`fetch exhausted retries for ${key}`),
+          }),
+          source: 'network',
+        };
       }
-    }
 
-    return { result: ok(data), source: 'network' };
+      const { response } = fetched;
+      if (!response.ok) {
+        return { result: err({ kind: 'Missing' }), source: 'missing' };
+      }
+
+      const data = new Uint8Array(await response.arrayBuffer());
+
+      // Aggregate network counters (one per actual fetch — pendingGets
+      // ensures this body runs at most once per key per concurrent wave).
+      this.networkRequestCount++;
+      this.networkBytesTransferred += data.byteLength;
+      this.bandwidth.record(data.byteLength);
+
+      // CRIT-5: if validateCache aborted this in-flight get between the
+      // arrayBuffer() resolve and now (content-hash mismatch raced an
+      // in-flight fetch), do NOT write stale bytes back into a
+      // just-cleared L1/L2 — that would silently undo the invalidation.
+      if (callerSignal?.aborted || this.disposed || this.dataAbort.signal.aborted) {
+        return { result: err({ kind: 'Aborted' }), source: 'network' };
+      }
+
+      // Populate caches once. L1 synchronously (the caller may read it back
+      // immediately); L2 (OPFS) is DEFERRED to the background write queue so the
+      // durable disk write never blocks this fetch — profiling showed the awaited
+      // OPFS write dominated the cold-load critical path (~6× the network fetch).
+      // The bytes are already in hand + promoted to L1, so a queued write carries
+      // no correctness weight for THIS session; it only persists for the next.
+      if (this.enabled) {
+        this.l1Cache.set(key, data);
+        if (this.l2Store) {
+          const l2Store = this.l2Store;
+          // Capture the epoch NOW; re-check at drain time so a clear/dispose that
+          // interleaves between enqueue and the actual write drops the stale write
+          // (the enqueue→drain window that the inline await used to make atomic).
+          const epoch = this.l2Epoch;
+          this.l2WriteQueue.enqueue(key, async () => {
+            if (this.disposed || this.dataAbort.signal.aborted || this.l2Epoch !== epoch) {
+              return; // superseded by dispose or a cache clear — do not persist
+            }
+            try {
+              await l2Store.set(key, data);
+            } catch (e) {
+              const msg = e instanceof Error ? e.message : String(e);
+              log.warning(Modules.CACHE, `L2 write failed for ${key}: ${msg}`);
+            }
+          });
+        }
+      }
+
+      return { result: ok(data), source: 'network' };
+    } finally {
+      fetched?.dispose();
+      fetchAbort.dispose();
+    }
   }
 
   /**

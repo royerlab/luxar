@@ -95,11 +95,12 @@ Key behaviours:
 
 ### `fetch-retry.ts` — network primitives
 
-- **`mergeAbortSignals(primary, caller?)`** — produces a signal that
+- **`mergeAbortSignals(primary, caller?)`** — produces a scoped signal that
   fires when either source aborts. Uses native `AbortSignal.any` when
   available (Node 22+, modern browsers) and falls back to a relay
-  controller otherwise. Lets a per-attempt timeout and a caller-supplied
-  dispose signal both cancel the same fetch.
+  controller otherwise. The fallback scope removes both source listeners
+  immediately on abort or when its idempotent `dispose()` is called, so a
+  long-lived dataset signal does not retain one closure per completed fetch.
 - **`buildUrl(baseUrl, key)`** — joins a base URL and a zarr key while
   stripping trailing slashes on the base and leading slashes on the key
   (defends against the triple-slash bug when a base URL ends in `/`
@@ -115,7 +116,11 @@ Key behaviours:
   total timeout is split across attempts so retries do not multiply
   worst-case load time. A caller-aborted signal exits immediately
   without consuming retry budget. Accepts `timeoutMsOverride` for
-  validation probes that want a shorter budget than data fetches.
+  validation probes that want a shorter budget than data fetches. A
+  terminal response is returned with an idempotent `dispose()` callback;
+  consumers hold that scope through body consumption and release it in
+  `finally`, preserving body cancellation without retaining fallback
+  listeners for the dataset lifetime.
 
 ### `bandwidth-window.ts` — sliding-window throughput
 

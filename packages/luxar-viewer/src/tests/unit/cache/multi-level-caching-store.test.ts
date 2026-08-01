@@ -1,6 +1,16 @@
+import { getEventListeners } from 'node:events';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { MultiLevelCachingStore } from '../../../cache/multi-level-caching-store';
 import type { OPFSStore } from '../../../cache/multi-level-caching-store/opfs-store';
+
+function forceAbortSignalAnyFallback(): () => void {
+  const descriptor = Object.getOwnPropertyDescriptor(AbortSignal, 'any');
+  Object.defineProperty(AbortSignal, 'any', { configurable: true, value: undefined });
+  return () => {
+    if (descriptor) Object.defineProperty(AbortSignal, 'any', descriptor);
+    else delete (AbortSignal as unknown as { any?: unknown }).any;
+  };
+}
 
 // Create comprehensive mocks
 const createMocks = () => {
@@ -1088,6 +1098,21 @@ describe('MultiLevelCachingStore', () => {
       expect(fetchSpy).not.toHaveBeenCalled();
 
       global.fetch = originalFetch;
+    });
+
+    it('releases fallback listeners from the store signal after a completed fetch', async () => {
+      const restore = forceAbortSignalAnyFallback();
+      try {
+        const dataAbort = (store as unknown as { dataAbort: AbortController }).dataAbort;
+        const listenersBefore = getEventListeners(dataAbort.signal, 'abort').length;
+
+        const result = await store.getResult('listener-cleanup', { suppressPrefetch: true });
+
+        expect(result.ok).toBe(true);
+        expect(getEventListeners(dataAbort.signal, 'abort')).toHaveLength(listenersBefore);
+      } finally {
+        restore();
+      }
     });
 
     it('forwards options.signal into fetchWithRetry; aborts surface as a non-ok result', async () => {
