@@ -15,6 +15,7 @@ Two things are guarded here:
 
 from __future__ import annotations
 
+import ast
 import re
 import sys
 from pathlib import Path
@@ -424,6 +425,126 @@ class TestEveryGatedModuleIsInTheTable:
         )
 
 
+class TestNoRuntimePipInstall:
+    """No demo may install packages behind the user's back.
+
+    Two demos shipped the same shape — a swallowed ImportError that shelled out
+    to ``pip install -q <pkg>`` with stdout/stderr sent to DEVNULL
+    (``demo_zebrahub_velocity_streamlines``, then ``demo_tabula_sapiens``).
+    It mutates the environment without consent, is hostile on a shared HPC node
+    or in CI, pulls an UNBOUNDED requirement that can walk zarr past Luxar's
+    pin, and hides the failure it is papering over. `require_module` is the
+    sanctioned reaction to a missing dependency; installing is the user's call,
+    via the explicit `luxar demo deps --install` (which is why this scans only
+    the demo modules, not the CLI that command lives in).
+
+    KNOWN BLIND SPOT: this is a source-literal check. An argv assembled from
+    computed pieces (``["pip", verb]``) would slip through. It closes the shape
+    that actually shipped twice, not every conceivable spelling.
+    """
+
+    #: An argv token that means "the pip executable".
+    _PIP_TOKENS = {"pip", "pip3"}
+    #: A shell/command string that runs an install, e.g. "pip install foo".
+    _SHELL_PIP_INSTALL = re.compile(r"\bpip3?\b[^\n]*\binstall\b")
+    #: Substrings of the method names that hand a command to the OS.
+    _EXEC_NAMES = ("run", "call", "output", "system", "popen", "spawn", "exec")
+
+    @classmethod
+    def _is_pip_token(cls, value: str) -> bool:
+        tail = value.rsplit("/", 1)[-1]
+        return tail in cls._PIP_TOKENS or value.strip() == "-m pip"
+
+    @classmethod
+    def _offending_nodes(cls, tree: ast.AST) -> list[int]:
+        """Line numbers of literal argv lists / shell strings that run pip."""
+        found: list[int] = []
+        for node in ast.walk(tree):
+            # `[sys.executable, "-m", "pip", "install", "-q", "h5py"]` — the
+            # shape that shipped. Flagged wherever it is written, so hoisting it
+            # into a variable before the subprocess call does not evade it.
+            if isinstance(node, (ast.List, ast.Tuple)):
+                tokens = [
+                    e.value
+                    for e in node.elts
+                    if isinstance(e, ast.Constant) and isinstance(e.value, str)
+                ]
+                if any(cls._is_pip_token(t) for t in tokens) and "install" in tokens:
+                    found.append(node.lineno)
+                continue
+            # `subprocess.run("pip install foo", shell=True)` / os.system(...).
+            if isinstance(node, ast.Call):
+                func = node.func
+                if not isinstance(func, ast.Attribute):
+                    continue
+                name = func.attr.lower()
+                if not any(part in name for part in cls._EXEC_NAMES):
+                    continue
+                for arg in ast.walk(node):
+                    if (
+                        isinstance(arg, ast.Constant)
+                        and isinstance(arg.value, str)
+                        and cls._SHELL_PIP_INSTALL.search(arg.value)
+                    ):
+                        found.append(node.lineno)
+                        break
+        return sorted(found)
+
+    def _scan(self, source: str) -> list[int]:
+        return self._offending_nodes(ast.parse(source))
+
+    def test_no_demo_installs_packages_at_runtime(self) -> None:
+        demos_dir = Path(__file__).resolve().parents[1]
+        files = sorted(demos_dir.glob("demo_*.py"))
+        assert files, "no demo files found — the glob or layout changed"
+        offenders = {
+            path.name: lines
+            for path in files
+            if (lines := self._scan(path.read_text(encoding="utf-8")))
+        }
+        assert not offenders, (
+            "demo modules run pip at runtime: "
+            + "; ".join(
+                f"{name}:{','.join(str(n) for n in lines)}"
+                for name, lines in sorted(offenders.items())
+            )
+            + ". Raise via `require_module` instead and let the user install."
+        )
+
+    def test_the_guard_itself_detects_the_shape(self) -> None:
+        """A guard that cannot fail is worth nothing — this is what shipped."""
+        assert self._scan(
+            "import subprocess, sys\n"
+            "def _ensure():\n"
+            "    subprocess.check_call(\n"
+            '        [sys.executable, "-m", "pip", "install", "-q", "h5py"],\n'
+            "        stdout=subprocess.DEVNULL,\n"
+            "    )\n"
+        ) == [4]
+
+    def test_the_guard_detects_a_hoisted_argv(self) -> None:
+        assert self._scan(
+            'cmd = ["pip", "install", "h5py"]\nsubprocess.check_call(cmd)\n'
+        ) == [1]
+
+    def test_the_guard_detects_a_shell_string(self) -> None:
+        assert self._scan('subprocess.run("pip install h5py", shell=True)\n') == [1]
+
+    def test_the_guard_ignores_an_install_hint(self) -> None:
+        """Telling the user what to run is the sanctioned behaviour."""
+        assert self._scan('aprint("Install with: pip install matplotlib")\n') == []
+
+    def test_the_guard_ignores_a_non_pip_subprocess(self) -> None:
+        """Demos legitimately shell out to curl for a resumable download."""
+        assert (
+            self._scan(
+                'cmd = ["curl", "-L", "-o", str(dest), url]\n'
+                "subprocess.run(cmd, check=True)\n"
+            )
+            == []
+        )
+
+
 #: Third-party modules a demo may import WITHOUT an INSTALL_SPECS entry, and why.
 #: Adding a new unlisted third-party import breaks the build until it is either
 #: pinned + tabled or justified here, so an unpinned dependency cannot ship by
@@ -479,8 +600,6 @@ class TestNoUnpinnedThirdPartyImports:
         }
 
     def test_every_third_party_demo_import_is_pinned_and_tabled(self) -> None:
-        import ast
-
         demos_dir = Path(__file__).resolve().parents[1]
         allowed = (
             set(sys.stdlib_module_names)
