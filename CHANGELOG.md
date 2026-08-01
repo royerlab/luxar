@@ -6,6 +6,31 @@ All notable changes to Luxar are documented in this file.
 
 ### July 2026
 
+#### Fixed — demo install hints now name the constrained requirement (#915)
+
+The `--show-roundtrip` matplotlib guards in the eleven gsplat demos, the
+`from umap import UMAP` guards in the network demos, and the CytoSelf demo's
+Pillow thumbnail guard printed a bare `pip install <pkg>` — the unbounded form
+`demos/README.md` forbids. All of them now go through `require_module`, so the
+message names the pinned requirement (`matplotlib>=3.5.0`, `umap-learn>=0.5.0`,
+`Pillow>=9.0.0`) with `luxar[demos]` offered as the alternative — rather than
+sending someone after the whole heavyweight extra to draw a diagnostic plot —
+and the wording comes from `INSTALL_SPECS` instead of being hand-copied into a
+dozen-plus files.
+
+The networkx guards in the CAIDA, HuRI and PPI demos went the same way — they
+were hand-copying `networkx>=3.0` next to a duplicated import, and two of the
+Louvain paths had no gate at all and died with a bare `ModuleNotFoundError`.
+The two napari hints kept their `pip install` form (napari is a soft optional
+outside every demo extra) but gained the `>=0.4.18,<0.8` cap, without which the
+suggested command resolves napari 0.8 and drags `zarr>=3` past Luxar's pin.
+
+A new guard in `test_demos_dependencies.py` scans every demo source — runtime
+messages and docstrings alike — for a `pip install` naming a package the table
+bounds, and fails if the bound is missing. It reports 23 offenders against the
+tree before this change and none after, so the class cannot quietly grow back
+the way the eleven matplotlib copies did.
+
 #### Fixed — bound the HuRI demo's CORUM download and extraction
 
 The HuRI demo's optional CORUM fallback fetched a remote ZIP with `stream=True`

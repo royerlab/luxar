@@ -644,3 +644,140 @@ class TestNoUnpinnedThirdPartyImports:
                 f"{module} is now in INSTALL_SPECS — drop it from "
                 "UNLISTED_IMPORTS_OK so the table stays the single source"
             )
+
+
+class TestNoUnboundedInstallHint:
+    """The other half of rule 2: a demo may not TELL the user to run an
+    unbounded install of a package the table bounds.
+
+    ``TestEveryGatedModuleIsInTheTable`` only enforces the converse — that a
+    gated module is tabled. Nothing stopped a hand-written
+    ``aprint("pip install matplotlib")`` from sitting next to the tabled
+    ``matplotlib>=3.5.0``, which is how eleven of them accumulated. A hint that
+    drops the bound is the same defect as the code doing the install: it walks
+    the user into the resolution the pin exists to prevent (``anndata>=0.13``
+    dragging ``zarr>=3`` past Luxar's ``zarr<3.0``).
+
+    Scanned as text, docstrings included — a "Requirements:" block is advice
+    the user follows just as readily as a runtime message.
+
+    KNOWN BLIND SPOT: only packages the table BOUNDS are checked. A hint for an
+    untabled package (or for ``gdown``, whose spec is deliberately unbounded)
+    has no bound to compare against and passes.
+    """
+
+    #: Everything on a line after this is prose about the command, not part of it.
+    _COMMENT = "#"
+    _HINT = re.compile(r"\bpip3?\s+install\s+(?P<rest>.*)")
+    _TOKEN = re.compile(
+        r"^(?P<name>[A-Za-z0-9][A-Za-z0-9._-]*)(?:\[[^\]]*\])?(?P<rest>.*)$"
+    )
+    _VERSION_OPS = ("==", ">=", "<=", "~=", "!=", "<", ">")
+
+    @staticmethod
+    def _canonical(name: str) -> str:
+        """PEP 503 name normalisation, so ``umap_learn`` == ``umap-learn``."""
+        return re.sub(r"[-_.]+", "-", name).lower()
+
+    @classmethod
+    def _bounded_distributions(cls) -> dict[str, str]:
+        """Canonical distribution name -> the bound the table advertises."""
+        Requirement = pytest.importorskip("packaging.requirements").Requirement
+        bounded = {}
+        for spec in INSTALL_SPECS.values():
+            req = Requirement(spec.spec)
+            if str(req.specifier):
+                bounded[cls._canonical(req.name)] = str(req.specifier)
+        return bounded
+
+    @classmethod
+    def _scan(cls, source: str, bounded: dict[str, str]) -> list[tuple[int, str]]:
+        """(line, package) for every hint that names a bounded dist unbounded."""
+        offenders = []
+        for lineno, line in enumerate(source.splitlines(), 1):
+            match = cls._HINT.search(line.split(cls._COMMENT)[0])
+            if match is None:
+                continue
+            for raw in match.group("rest").split():
+                token = raw.strip("'\"`,.;()")
+                if not token or token.startswith("-"):
+                    continue  # a pip flag such as -q or --index-url
+                parsed = cls._TOKEN.match(token)
+                if parsed is None:
+                    continue
+                name = cls._canonical(parsed.group("name"))
+                if name not in bounded:
+                    continue
+                if not any(op in parsed.group("rest") for op in cls._VERSION_OPS):
+                    offenders.append((lineno, name))
+        return offenders
+
+    def test_no_demo_advertises_an_unbounded_install(self) -> None:
+        bounded = self._bounded_distributions()
+        demos_dir = Path(__file__).resolve().parents[1]
+        files = sorted(demos_dir.glob("demo_*.py"))
+        assert files, "no demo files found — the glob or layout changed"
+
+        offenders = {
+            path.name: hits
+            for path in files
+            if (hits := self._scan(path.read_text(encoding="utf-8"), bounded))
+        }
+        assert not offenders, (
+            "demo modules advertise an unbounded install for a package the "
+            "table bounds: "
+            + "; ".join(
+                f"{name}:" + ",".join(f"{line}({pkg})" for line, pkg in hits)
+                for name, hits in sorted(offenders.items())
+            )
+            + ". Raise via `require_module` (it quotes INSTALL_SPECS) or name "
+            "the bound, e.g. `pip install 'luxar[demos]'`."
+        )
+
+    def test_the_guard_itself_detects_a_bare_hint(self) -> None:
+        """A guard that cannot fail is worth nothing — this is what shipped."""
+        bounded = self._bounded_distributions()
+        assert self._scan(
+            'aprint("Install with: pip install matplotlib")\n', bounded
+        ) == [(1, "matplotlib")]
+
+    def test_the_guard_reads_docstrings_too(self) -> None:
+        assert self._scan(
+            '"""Demo.\n\nRequirements:\n    pip install umap-learn\n"""\n',
+            self._bounded_distributions(),
+        ) == [(4, "umap-learn")]
+
+    def test_the_guard_accepts_a_bounded_hint(self) -> None:
+        bounded = self._bounded_distributions()
+        assert self._scan("pip install 'networkx>=3.0'\n", bounded) == []
+        assert self._scan('pip install "anndata>=0.10,<0.13"\n', bounded) == []
+
+    def test_the_guard_accepts_an_extra(self) -> None:
+        """`luxar[demos]` carries every bound with it — that is the point."""
+        assert (
+            self._scan("pip install 'luxar[demos]'\n", self._bounded_distributions())
+            == []
+        )
+
+    def test_the_guard_ignores_prose_after_a_comment(self) -> None:
+        """`# includes pandas, umap-learn` describes the extra, it is not a command."""
+        assert (
+            self._scan(
+                "pip install 'luxar[demos]'   # includes pandas, umap-learn\n",
+                self._bounded_distributions(),
+            )
+            == []
+        )
+
+    def test_the_guard_ignores_pip_flags(self) -> None:
+        assert (
+            self._scan(
+                "pip install --index-url https://example.invalid 'torch>=2.2,<3.0'\n",
+                self._bounded_distributions(),
+            )
+            == []
+        )
+
+    def test_the_guard_ignores_an_unbounded_spec(self) -> None:
+        """gdown's own spec carries no bound, so there is nothing to demand."""
+        assert self._scan("pip install gdown\n", self._bounded_distributions()) == []

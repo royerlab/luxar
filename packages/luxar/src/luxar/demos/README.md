@@ -53,8 +53,10 @@ Two rules govern the gate, both learned from real bugs:
    past its `zarr<3.0` pin, breaking every store on disk.
 
 `tests/test_demos_dependencies.py` enforces both: every spec must accept exactly
-the versions its `pyproject.toml` pin accepts, and every module passed to
-`require_module` must exist in the table.
+the versions its `pyproject.toml` pin accepts, every module passed to
+`require_module` must exist in the table, and no demo source — runtime message or
+docstring alike — may spell out `pip install <pkg>` for a package the table
+bounds without carrying that bound.
 
 Installing everything:
 
