@@ -1124,6 +1124,34 @@ describe('concatenateGSplatsData — RGBA color layout (per-element opacity)', (
       ])
     ).toThrow(/mixed dimensionality .*ndim 4 vs 3/);
   });
+
+  it('rejects a single part whose RGBA buffer omits colorComponents (layout omission)', () => {
+    // Distinct from the cross-level mismatch above: here every part AGREES on
+    // colorComponents (all default to 3) but one part carries a 4-wide (RGBA)
+    // buffer without declaring it. That satisfies the downstream count·3
+    // minimum yet mis-strides every splat after the first — silently-wrong
+    // colors/alpha. The per-part layout check must throw at concat time.
+    const rgbaUndeclared: LoadedGSplatsData = {
+      positions: new Float32Array(2 * 3).fill(0.5),
+      amplitudes: new Float32Array(2).fill(1),
+      choleskyFactors: new Float32Array(2 * 6).fill(0.1),
+      colors: new Float32Array(2 * 4).fill(0.5), // RGBA length, but…
+      // …colorComponents OMITTED → defaults to 3 → 2×3=6 ≠ 8.
+      splatCount: 2,
+      ndim: 3,
+    };
+    expect(() =>
+      concatenateGSplatsData([rgbaUndeclared, makeLodData(2, 3, { color: 'float32' })])
+    ).toThrow(/LOD level 0\): colors length 8 does not match count 2/);
+  });
+
+  it('accepts a correctly-declared RGBA part (colorComponents: 4, no false positive)', () => {
+    // The per-part check is a no-op when the declared layout matches the
+    // buffer length — a properly-declared RGBA ladder still concatenates.
+    const merged = concatenateGSplatsData([makeRgbaLod(2, 0.9), makeRgbaLod(2, 0.3)]);
+    expect(merged.colorComponents).toBe(4);
+    expect(merged.colors!.length).toBe(4 * 4);
+  });
 });
 
 describe('dispose during an in-flight level (teardown race)', () => {

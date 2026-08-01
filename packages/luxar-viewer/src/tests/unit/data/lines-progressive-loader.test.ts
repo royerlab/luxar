@@ -1176,4 +1176,48 @@ describe('LinesProgressiveLoader — RGBA color layout (colorK stride, volumetri
     expect(result.colors?.[20 * 4]).toBeCloseTo(1.0, 6);
     expect(result.colors?.[20 * 4 + 3]).toBeCloseTo(1.0, 6);
   });
+
+  it('rejects a single part whose RGBA buffer omits colorComponents (layout omission)', async () => {
+    // Distinct from the cross-level mismatch above: here both parts AGREE on
+    // colorComponents (all default to 3) but one carries a 4-wide (RGBA)
+    // buffer without declaring it. That satisfies the downstream count·3
+    // minimum yet mis-strides every vertex after the first — silently-wrong
+    // colors/alpha. The per-part layout check must throw at concat time.
+    const rgbaUndeclared: LoadedLinesData = {
+      positions: new Float32Array(2 * 3).fill(0.5),
+      segments: new Uint32Array([0, 1]),
+      widths: new Float32Array(2).fill(1),
+      colors: new Float32Array(2 * 4).fill(0.5), // RGBA length, but…
+      // …colorComponents OMITTED → defaults to 3 → 2×3=6 ≠ 8.
+      sharpness: null,
+      segmentCount: 1,
+      vertexCount: 2,
+      ndim: 3,
+    };
+    const lodA = makeSubLoader(rgbaUndeclared);
+    const lodB = makeSubLoader(makeLodData(10, 5, 3, { color: 'float32' }));
+    const loader = new LinesProgressiveLoader(
+      [lodA, lodB] as unknown as LinesSpatialIndexLoader[],
+      2,
+      '/lines'
+    );
+    await expect(loader.loadLines(baseViewState)).rejects.toThrow(
+      /LOD level 0\): colors length 8 does not match count 2/
+    );
+  });
+
+  it('accepts a correctly-declared RGBA ladder (colorComponents: 4, no false positive)', async () => {
+    // The per-part check is a no-op when the declared layout matches the
+    // buffer length — a properly-declared RGBA ladder still concatenates.
+    const lodA = makeSubLoader(makeLodData(20, 10, 3, { color: 'float32', rgba: true }));
+    const lodB = makeSubLoader(makeLodData(10, 5, 3, { color: 'float32', rgba: true }));
+    const loader = new LinesProgressiveLoader(
+      [lodA, lodB] as unknown as LinesSpatialIndexLoader[],
+      2,
+      '/lines'
+    );
+    const result = await loader.loadLines(baseViewState);
+    expect(result.colorComponents).toBe(4);
+    expect(result.colors?.length).toBe(30 * 4);
+  });
 });
