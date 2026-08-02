@@ -109,12 +109,13 @@ category, what it needs, and whether you have already built it:
   1  arxiv_papers                           points       embeddings     ⬇20MB                cached
   6  cellxgene_census_umap                  points       embeddings     ⬇12MB LFS
   8  chromatrace_choir_umap_sequence        points       embeddings     📁manual              cached
- 24  gsplats_2d_codex_pancreas              gsplats      microscopy     ⬇5900MB GPU          cached
- 26  gsplats_3d_cells3d_multichannel        gsplats      microscopy     ⬇1MB GPU* LFS        cached
+ 24  gsplats_2d_cmu1_pathology              gsplats      medical        ⬇150MB GPU* LFS      cached
+ 26  gsplats_3d_acto3d_heart                gsplats      microscopy     ⬇13MB GPU* LFS       cached
  ...
 
 Run one:  luxar demo run <key|#>       Details:  luxar demo info <key|#>
 Caches:   luxar demo cache list        Clear:    luxar demo cache clear …
+Deps:     luxar demo deps              Install:  luxar demo deps --install
 ```
 
 **NEEDS** tells you the cost before you commit: `⬇NNMB` for a download, `GPU`
@@ -131,9 +132,9 @@ second pass over the catalogue shows exactly what is already on disk.
 | `luxar demo list -c microscopy` | Filter by category: `synthetic`, `microscopy`, `embeddings`, `photogrammetry`, `astronomy`, `structural`, `networks`, `medical`, `geoscience`, `genomics`, `connectome` |
 | `luxar demo list -g gsplats` | Filter by geometry: `points`, `gsplats`, `lines`, `points+lines`, `mixed` |
 | `luxar demo info <key\|#>` | Requirements, caches, outputs, and how to run one demo |
-| `luxar demo run <key\|#>` | Run by key **or** index — `luxar demo run 1` and `luxar demo run lorenz` are the same demo |
+| `luxar demo run <key\|#>` | Run by key (e.g. `luxar demo run lorenz`) or by the index shown in the table — keys are stable, indices shift as demos are added |
 | `luxar demo run <key> -- ARGS` | Forward arguments to the demo script, e.g. `luxar demo run gsplats_3d_tribolium_embryo -- --recompute --no-serve` |
-| `luxar demo run-all` | Build every demo's dataset unattended; skips GPU-only, manual-data, and >200 MB downloads unless told otherwise |
+| `luxar demo run-all` | Build every eligible demo's dataset unattended. Manual/Kaggle-data demos are always skipped; GPU-required demos, downloads over 200 MB, and already-built outputs are skipped by default (`--include-gpu`, `--max-download-mb 0`, `--force` lift these) |
 | `luxar demo cache list` | Inventory the demo caches under `~/.cache/luxar/`, with sizes and orphans |
 | `luxar demo cache clear <keys>` | Reclaim space — `--all` for everything, `--outputs` to drop generated scenes too, `--dry-run` to preview |
 
@@ -253,7 +254,7 @@ Each tile is a bundled demo — run it by key with the
 ```bash
 luxar demo                          # Find the key for any tile above
 luxar demo run spiral_galaxy_5d     # Build and view one
-luxar demo run-all                  # Build every demo's dataset unattended
+luxar demo run-all                  # Build every eligible demo (skips manual/Kaggle, GPU-required, >200MB, already-built)
 
 make generate-gallery               # Regenerate the stills + orbit videos above
 ```
