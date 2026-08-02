@@ -27,6 +27,19 @@ open stats/project_stats.html      # styled, browser-rendered
 cat stats/PROJECT_STATS.md         # GitHub-friendly markdown summary
 ```
 
+> **Incomplete measurements refuse to publish.** `make stats` now **exits
+> non-zero and does not overwrite the reports** when a *requested* test or
+> coverage measurement times out, cannot start (toolchain missing), fails to
+> run (crash, non-test exit code, or an exit that produced no parseable test
+> summary), or produces no fresh coverage. Publishing a
+> partial number as if it were complete is worse than skipping the update — a
+> timed-out Python coverage run once turned a genuine 84% into a headline 47% —
+> so the existing reports are left untouched. Use `make stats-fast` (or
+> `--no-tests`) as the escape hatch: it skips test execution entirely, so
+> nothing is requested and nothing can be incomplete. Note that the reports it
+> writes carry zeros for the test counts and coverage — don't commit a
+> `stats-fast` report over a full one.
+
 ## Files
 
 - **`generate_stats.py`** — Python script that analyzes the codebase and renders the reports
