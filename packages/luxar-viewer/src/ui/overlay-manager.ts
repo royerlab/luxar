@@ -42,6 +42,24 @@ const ANCHOR_TRANSFORM: Record<string, string> = {
 };
 
 /**
+ * Transform for RIGHT-side anchors when the element is positioned from the
+ * container's RIGHT edge (via `right:` instead of `left:`).
+ *
+ * The horizontal `-100%` of {@link ANCHOR_TRANSFORM} is dropped — anchoring
+ * from the right edge already places the box's right side, so the element's
+ * shrink-to-fit width is measured against the container's LEFT edge and can
+ * grow leftward. The vertical component is preserved. See issue #773: with
+ * `left: 98%` + `translate(-100%, 0)` the browser computes the available
+ * width from the PRE-transform position (~2% of the viewport), collapsing a
+ * wrapping overlay (e.g. the hover tooltip) to one word per line.
+ */
+const RIGHT_ANCHOR_TRANSFORM: Record<string, string> = {
+  'top-right': 'translate(0, 0)',
+  'center-right': 'translate(0, -50%)',
+  'bottom-right': 'translate(0, -100%)',
+};
+
+/**
  * Allowed HTML tags for client-side sanitization (see `sanitizeHtml`).
  *
  * Note: foreign-content tags (`svg`, `math`) and raw-text tags (`style`,
@@ -463,13 +481,29 @@ export class OverlayManager {
   private applyPositionAndStyle(el: HTMLDivElement, config: OverlayConfig): void {
     const [x, y] = config.position;
 
-    // Position using percentages (normalized coords → CSS %)
-    el.style.left = `${x * 100}%`;
-    el.style.top = `${y * 100}%`;
+    // Position using percentages (normalized coords → CSS %). RIGHT-side
+    // anchors are pinned to the container's RIGHT edge (`right:` instead of
+    // `left:`) so the element's shrink-to-fit width is measured against the
+    // LEFT edge and can grow leftward — see RIGHT_ANCHOR_TRANSFORM / #773.
+    // When an element flips between left- and right-anchoring across
+    // re-applies, the unused property is cleared so a stale value can't linger.
+    const isRightAnchor =
+      config.anchor === 'top-right' ||
+      config.anchor === 'center-right' ||
+      config.anchor === 'bottom-right';
 
-    // Anchor offset via transform
-    const transform = ANCHOR_TRANSFORM[config.anchor] ?? 'translate(0, 0)';
-    el.style.transform = transform;
+    if (isRightAnchor) {
+      el.style.right = `${(1 - x) * 100}%`;
+      el.style.left = '';
+      // Transform without the horizontal -100% (the right edge already
+      // places the box); vertical component preserved.
+      el.style.transform = RIGHT_ANCHOR_TRANSFORM[config.anchor] ?? 'translate(0, 0)';
+    } else {
+      el.style.left = `${x * 100}%`;
+      el.style.right = '';
+      el.style.transform = ANCHOR_TRANSFORM[config.anchor] ?? 'translate(0, 0)';
+    }
+    el.style.top = `${y * 100}%`;
 
     // Opacity
     el.style.opacity = String(config.opacity);
@@ -507,15 +541,34 @@ export class OverlayManager {
       el.style.color = config.color;
     }
 
-    // Width (enables word wrapping)
+    // Width (enables word wrapping). Like the anchor positioning above,
+    // each branch clears what the others set so no stale sizing survives a
+    // re-apply with a different config.
     if (config.width) {
+      // Explicit width is the primary sizing; honor it verbatim.
       el.style.width = `${config.width * 100}vw`;
+      el.style.maxWidth = '';
       // Hover overlays use pre-line so \n in labels creates line breaks;
       // regular overlays use normal for standard word wrapping.
       el.style.whiteSpace = config.hover ? 'pre-line' : 'normal';
       el.style.wordWrap = 'break-word';
+    } else if (config.hover) {
+      // Hover tooltips wrap (pre-line). Clamp to a readable measure so a long
+      // label wraps to a couple of lines instead of collapsing to one word per
+      // line against the right-anchored container edge (see issue #773), rather
+      // than the ~2vw the pre-transform container position would otherwise impose.
+      el.style.width = '';
+      el.style.maxWidth = 'min(30vw, 40ch)';
+      el.style.whiteSpace = 'pre-line';
+      el.style.wordWrap = 'break-word';
     } else {
-      el.style.whiteSpace = config.hover ? 'pre-line' : 'nowrap';
+      // No explicit width and not a wrapping overlay: single line, sized to its
+      // content (unchanged behavior — a max-width here would only clip the box
+      // while nowrap text overflows off-screen).
+      el.style.width = '';
+      el.style.maxWidth = '';
+      el.style.whiteSpace = 'nowrap';
+      el.style.wordWrap = '';
     }
 
     // Text alignment
