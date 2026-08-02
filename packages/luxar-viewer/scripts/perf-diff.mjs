@@ -6,42 +6,28 @@
  *   node scripts/perf-diff.mjs <baseline-results.json> <new-results.json>
  *
  * Reads JSON of the shape produced by
- * `src/tests/e2e/line-perf-bench.spec.ts` and writes a Markdown table
+ * `src/tests/e2e/line-perf-bench.spec.ts` or
+ * `src/tests/e2e/gsplat-perf-bench.spec.ts` and writes a Markdown table
  * to stdout suitable for pasting into a commit body. Scenarios that
  * don't appear in BOTH inputs are reported but not deltaed.
+ *
+ * The markdown-building logic lives in the exported pure function
+ * {@link buildPerfDiff} (so it can be unit-tested); all CLI behaviour
+ * (arg parsing, file reads, stdout/stderr) runs inside {@link main},
+ * which only executes when the script is run directly.
  */
 
 import * as fs from 'fs';
 import * as path from 'path';
-
-function usage() {
-  // eslint-disable-next-line no-console
-  console.error('Usage: perf-diff.mjs <baseline.json> <new.json>');
-  process.exit(2);
-}
-
-if (process.argv.length < 4) usage();
-
-const [, , basePath, newPath] = process.argv;
-if (!fs.existsSync(basePath)) {
-  // eslint-disable-next-line no-console
-  console.error(`Baseline not found: ${basePath}`);
-  process.exit(2);
-}
-if (!fs.existsSync(newPath)) {
-  // eslint-disable-next-line no-console
-  console.error(`New results not found: ${newPath}`);
-  process.exit(2);
-}
-
-const base = JSON.parse(fs.readFileSync(basePath, 'utf8'));
-const next = JSON.parse(fs.readFileSync(newPath, 'utf8'));
+import { fileURLToPath } from 'url';
 
 const fmt = (n) => (typeof n === 'number' && Number.isFinite(n) ? n.toFixed(2) : '—');
 
 /**
  * Compute "% change" of newVal vs baseVal where lower is better.
  * Returns a string with sign and percent, e.g. "-7.3% ✅".
+ * Returns "—" for any non-numeric side (missing/null) and for a zero
+ * baseline — never a phantom "0.0%".
  */
 function delta(baseVal, newVal) {
   if (typeof baseVal !== 'number' || typeof newVal !== 'number') return '—';
@@ -58,73 +44,98 @@ function keyOf(scn) {
   return `${scn.scenarioId}/${scn.backend}`;
 }
 
-const baseByKey = new Map((base.scenarios ?? []).map((s) => [keyOf(s), s]));
-const nextByKey = new Map((next.scenarios ?? []).map((s) => [keyOf(s), s]));
-
-const allKeys = new Set([...baseByKey.keys(), ...nextByKey.keys()]);
-const sortedKeys = [...allKeys].sort();
-
-let md = '';
-md += `# Perf diff: \`${base.commit}\` → \`${next.commit}\`\n\n`;
-md += `Baseline captured: ${base.capturedAt}\n`;
-md += `New captured: ${next.capturedAt}\n\n`;
-md += `Sample window: ${next.sampleWindowMs ?? '?'} ms, warmup: ${next.warmupFrames ?? '?'} frames.\n\n`;
-
-md += `## JS frame timing\n\n`;
-md += `| Scenario / backend | API | Segs | base median (ms) | new median (ms) | Δ median | base p95 | new p95 | Δ p95 |\n`;
-md += `|---|---|---:|---:|---:|---|---:|---:|---|\n`;
-
-for (const k of sortedKeys) {
-  const b = baseByKey.get(k);
-  const n = nextByKey.get(k);
-  const ref = n ?? b;
-  if (!ref) continue;
-
-  // Surface the physical-backend flag alongside `apiSurface`. A
-  // WebGPURenderer run that fell back to its internal WebGL2 backend
-  // would otherwise look like a clean "webgpu" row, masking the
-  // distinction the perf-bench JSON deliberately captures.
-  const apiSurface = n?.actualApi ?? b?.actualApi ?? '?';
-  const isWebGLBackend = n?.isWebGLBackend ?? b?.isWebGLBackend ?? false;
-  const api = isWebGLBackend ? `${apiSurface} (webgl-bk)` : apiSurface;
-  const segs = n?.visibleSegments ?? b?.visibleSegments ?? 0;
-
-  if (n?.skipped && b?.skipped) {
-    md += `| ${k} | ${api} | ${segs} | SKIP | SKIP | — | — | — | — |\n`;
-    continue;
-  }
-  if (!b) {
-    const nm = n.frameMs?.median;
-    const np = n.frameMs?.p95;
-    md += `| ${k} | ${api} | ${segs} | — | ${fmt(nm)} | NEW | — | ${fmt(np)} | NEW |\n`;
-    continue;
-  }
-  if (!n) {
-    const bm = b.frameMs?.median;
-    const bp = b.frameMs?.p95;
-    md += `| ${k} | ${api} | ${segs} | ${fmt(bm)} | — | DROPPED | ${fmt(bp)} | — | DROPPED |\n`;
-    continue;
-  }
-
-  const bm = b.frameMs?.median;
-  const nm = n.frameMs?.median;
-  const bp = b.frameMs?.p95;
-  const np = n.frameMs?.p95;
-
-  md += `| ${k} | ${api} | ${segs} | ${fmt(bm)} | ${fmt(nm)} | ${delta(bm, nm)} | ${fmt(bp)} | ${fmt(np)} | ${delta(bp, np)} |\n`;
+/**
+ * API-column text for a scenario pair. Appends ` (webgl-bk)` when a
+ * WebGPURenderer run fell back to its internal WebGL2 backend, and
+ * ` (sw)` when EITHER side ran on a software rasterizer
+ * (`softwareRenderer`, gsplat bench only) — the bench states such
+ * rows' absolute timings are not comparable to a GPU run, so a diff
+ * involving one must be visibly discountable.
+ */
+function apiOf(apiSurface, isWebGLBackend, b, n) {
+  const sw = b?.softwareRenderer === true || n?.softwareRenderer === true;
+  return (isWebGLBackend ? `${apiSurface} (webgl-bk)` : apiSurface) + (sw ? ' (sw)' : '');
 }
 
-// GPU-time section. Only emitted when at least one row has a real
-// `gpu.medianMs` on either side — JS-only runs still show the JS
-// table above.
-const anyGpu = [...allKeys].some((k) => {
-  const b = baseByKey.get(k);
-  const n = nextByKey.get(k);
-  return b?.gpu?.supported || n?.gpu?.supported;
-});
+/**
+ * Build a generic "metric" section: one row per scenario, and for each
+ * field that AT LEAST ONE scenario carries (on either side) three
+ * columns (base / new / Δ). Fields absent everywhere are dropped; a
+ * field missing on one side of a present column renders `—` (via
+ * {@link fmt} / {@link delta}), never a phantom 0.0%. Rows whose
+ * scenario carries none of the present fields are skipped. Lower is
+ * better for every field. Returns '' when nothing is present.
+ *
+ * @param {string} title      section heading
+ * @param {string} unitsNote  one-line note under the heading (units etc.)
+ * @param {string[]} sortedKeys
+ * @param {Map} baseByKey
+ * @param {Map} nextByKey
+ * @param {(scn: any) => any} getObj  extracts the field-holder from a scenario
+ * @param {{label: string, key: string}[]} fields
+ */
+function metricSection(title, unitsNote, sortedKeys, baseByKey, nextByKey, getObj, fields) {
+  const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
+  const present = fields.filter(({ key }) =>
+    sortedKeys.some((k) => {
+      const b = getObj(baseByKey.get(k));
+      const n = getObj(nextByKey.get(k));
+      return isNum(b?.[key]) || isNum(n?.[key]);
+    })
+  );
+  if (present.length === 0) return '';
 
-if (anyGpu) {
-  md += `\n## GPU pass time (timestamp-query)\n\n`;
+  let header = '| Scenario / backend |';
+  let sep = '|---|';
+  for (const { label } of present) {
+    header += ` base ${label} | new ${label} | Δ ${label} |`;
+    sep += '---:|---:|---|';
+  }
+
+  let md = `\n## ${title}\n\n`;
+  md += `${unitsNote}\n\n`;
+  md += `${header}\n`;
+  md += `${sep}\n`;
+
+  for (const k of sortedKeys) {
+    const b = getObj(baseByKey.get(k));
+    const n = getObj(nextByKey.get(k));
+    // Skip scenarios that carry none of the present fields on either
+    // side (e.g. non-10M rows in the L8 sort-tail section).
+    const hasAny = present.some(({ key }) => isNum(b?.[key]) || isNum(n?.[key]));
+    if (!hasAny) continue;
+
+    let row = `| ${k} |`;
+    for (const { key } of present) {
+      row += ` ${fmt(b?.[key])} | ${fmt(n?.[key])} | ${delta(b?.[key], n?.[key])} |`;
+    }
+    md += `${row}\n`;
+  }
+  return md;
+}
+
+/**
+ * Turn two parsed perf-bench result objects into the Markdown delta
+ * report. Pure: no I/O, no process access.
+ *
+ * @param {any} base parsed baseline PerfRunResult
+ * @param {any} next parsed new PerfRunResult
+ * @returns {string} markdown
+ */
+export function buildPerfDiff(base, next) {
+  const baseByKey = new Map((base.scenarios ?? []).map((s) => [keyOf(s), s]));
+  const nextByKey = new Map((next.scenarios ?? []).map((s) => [keyOf(s), s]));
+
+  const allKeys = new Set([...baseByKey.keys(), ...nextByKey.keys()]);
+  const sortedKeys = [...allKeys].sort();
+
+  let md = '';
+  md += `# Perf diff: \`${base.commit}\` → \`${next.commit}\`\n\n`;
+  md += `Baseline captured: ${base.capturedAt}\n`;
+  md += `New captured: ${next.capturedAt}\n\n`;
+  md += `Sample window: ${next.sampleWindowMs ?? '?'} ms, warmup: ${next.warmupFrames ?? '?'} frames.\n\n`;
+
+  md += `## JS frame timing\n\n`;
   md += `| Scenario / backend | API | Segs | base median (ms) | new median (ms) | Δ median | base p95 | new p95 | Δ p95 |\n`;
   md += `|---|---|---:|---:|---:|---|---:|---:|---|\n`;
 
@@ -133,33 +144,185 @@ if (anyGpu) {
     const n = nextByKey.get(k);
     const ref = n ?? b;
     if (!ref) continue;
+
+    // Surface the physical-backend flag alongside `apiSurface`. A
+    // WebGPURenderer run that fell back to its internal WebGL2 backend
+    // would otherwise look like a clean "webgpu" row, masking the
+    // distinction the perf-bench JSON deliberately captures.
     const apiSurface = n?.actualApi ?? b?.actualApi ?? '?';
     const isWebGLBackend = n?.isWebGLBackend ?? b?.isWebGLBackend ?? false;
-    const api = isWebGLBackend ? `${apiSurface} (webgl-bk)` : apiSurface;
+    const api = apiOf(apiSurface, isWebGLBackend, b, n);
     const segs = n?.visibleSegments ?? b?.visibleSegments ?? 0;
 
-    const bSup = b?.gpu?.supported === true;
-    const nSup = n?.gpu?.supported === true;
-    if (!bSup && !nSup) {
-      md += `| ${k} | ${api} | ${segs} | n/a | n/a | — | n/a | n/a | — |\n`;
+    if (n?.skipped && b?.skipped) {
+      md += `| ${k} | ${api} | ${segs} | SKIP | SKIP | — | — | — | — |\n`;
       continue;
     }
-    const bm = bSup ? b.gpu.medianMs : null;
-    const nm = nSup ? n.gpu.medianMs : null;
-    const bp = bSup ? b.gpu.p95Ms : null;
-    const np = nSup ? n.gpu.p95Ms : null;
+    if (!b) {
+      const nm = n.frameMs?.median;
+      const np = n.frameMs?.p95;
+      md += `| ${k} | ${api} | ${segs} | — | ${fmt(nm)} | NEW | — | ${fmt(np)} | NEW |\n`;
+      continue;
+    }
+    if (!n) {
+      const bm = b.frameMs?.median;
+      const bp = b.frameMs?.p95;
+      md += `| ${k} | ${api} | ${segs} | ${fmt(bm)} | — | DROPPED | ${fmt(bp)} | — | DROPPED |\n`;
+      continue;
+    }
+
+    const bm = b.frameMs?.median;
+    const nm = n.frameMs?.median;
+    const bp = b.frameMs?.p95;
+    const np = n.frameMs?.p95;
+
     md += `| ${k} | ${api} | ${segs} | ${fmt(bm)} | ${fmt(nm)} | ${delta(bm, nm)} | ${fmt(bp)} | ${fmt(np)} | ${delta(bp, np)} |\n`;
   }
+
+  // GPU-time section. Only emitted when at least one row has a real
+  // `gpu.medianMs` on either side — JS-only runs still show the JS
+  // table above.
+  const anyGpu = [...allKeys].some((k) => {
+    const b = baseByKey.get(k);
+    const n = nextByKey.get(k);
+    return b?.gpu?.supported || n?.gpu?.supported;
+  });
+
+  if (anyGpu) {
+    md += `\n## GPU pass time (timestamp-query)\n\n`;
+    md += `| Scenario / backend | API | Segs | base median (ms) | new median (ms) | Δ median | base p95 | new p95 | Δ p95 |\n`;
+    md += `|---|---|---:|---:|---:|---|---:|---:|---|\n`;
+
+    for (const k of sortedKeys) {
+      const b = baseByKey.get(k);
+      const n = nextByKey.get(k);
+      const ref = n ?? b;
+      if (!ref) continue;
+      const apiSurface = n?.actualApi ?? b?.actualApi ?? '?';
+      const isWebGLBackend = n?.isWebGLBackend ?? b?.isWebGLBackend ?? false;
+      const api = apiOf(apiSurface, isWebGLBackend, b, n);
+      const segs = n?.visibleSegments ?? b?.visibleSegments ?? 0;
+
+      const bSup = b?.gpu?.supported === true;
+      const nSup = n?.gpu?.supported === true;
+      if (!bSup && !nSup) {
+        md += `| ${k} | ${api} | ${segs} | n/a | n/a | — | n/a | n/a | — |\n`;
+        continue;
+      }
+      const bm = bSup ? b.gpu.medianMs : null;
+      const nm = nSup ? n.gpu.medianMs : null;
+      const bp = bSup ? b.gpu.p95Ms : null;
+      const np = nSup ? n.gpu.p95Ms : null;
+      md += `| ${k} | ${api} | ${segs} | ${fmt(bm)} | ${fmt(nm)} | ${delta(bm, nm)} | ${fmt(bp)} | ${fmt(np)} | ${delta(bp, np)} |\n`;
+    }
+  }
+
+  // Depth-sort worker-stage medians + end-to-end sort latency. Only the
+  // columns some scenario actually carries are shown (worker-stage
+  // breakdown is optional; sort-latency may be null). Lower is better.
+  md += metricSection(
+    'Depth-sort stages',
+    'Per-scenario depth-sort timing (ms, lower is better). Worker-stage medians are optional; sort-latency may be absent.',
+    sortedKeys,
+    baseByKey,
+    nextByKey,
+    (scn) => scn?.depthSort,
+    [
+      { label: 'kernel', key: 'kernelMsMedian' },
+      { label: 'queue', key: 'queueMsMedian' },
+      { label: 'boundary', key: 'boundaryMsMedian' },
+      { label: 'sortLat med', key: 'sortLatencyMedianMs' },
+      { label: 'sortLat p95', key: 'sortLatencyP95Ms' },
+    ]
+  );
+
+  // L8 sort-tail p99s (10M scenario only). Top-level scenario fields.
+  md += metricSection(
+    'L8 sort-tail (p99)',
+    'Sort-tail p99 latencies (ms, lower is better) — present on the 10M scenario only.',
+    sortedKeys,
+    baseByKey,
+    nextByKey,
+    (scn) => scn,
+    [
+      { label: 'sortAdjacent p99', key: 'sortAdjacentP99Ms' },
+      { label: 'idleOrbit p99', key: 'idleOrbitP99Ms' },
+    ]
+  );
+
+  // Ladder-load section (visible-human ladder scenario only). Bespoke
+  // because `observedGrowth: false` makes the wall time a lower bound,
+  // not a measurement — those cells get a `(lb)` marker and no delta.
+  const anyLadder = sortedKeys.some((k) => baseByKey.get(k)?.ladder || nextByKey.get(k)?.ladder);
+  if (anyLadder) {
+    md += `\n## Ladder load\n\n`;
+    md += `Wall time from navigation to ladder-complete (ms, lower is better). \`(lb)\` = lower bound: the ladder finished before polling began (\`observedGrowth: false\`), so no delta is computed.\n\n`;
+    md += `| Scenario / backend | base wallMs | new wallMs | Δ wallMs |\n`;
+    md += `|---|---:|---:|---|\n`;
+    for (const k of sortedKeys) {
+      const b = baseByKey.get(k)?.ladder;
+      const n = nextByKey.get(k)?.ladder;
+      if (!b && !n) continue;
+      const bVal = b?.wallMsToLadderComplete;
+      const nVal = n?.wallMsToLadderComplete;
+      const bGrew = b?.observedGrowth === true;
+      const nGrew = n?.observedGrowth === true;
+      const bCell =
+        typeof bVal === 'number' && Number.isFinite(bVal)
+          ? `${fmt(bVal)}${bGrew ? '' : ' (lb)'}`
+          : '—';
+      const nCell =
+        typeof nVal === 'number' && Number.isFinite(nVal)
+          ? `${fmt(nVal)}${nGrew ? '' : ' (lb)'}`
+          : '—';
+      // Skip the delta whenever either present side is a lower bound —
+      // comparing against a lower bound would mislead.
+      const d = b && n && (!bGrew || !nGrew) ? '—' : delta(bVal, nVal);
+      md += `| ${k} | ${bCell} | ${nCell} | ${d} |\n`;
+    }
+  }
+
+  md += '\n';
+  md += `🟢 = ≥5% faster on this metric · 🔴 = ≥5% slower\n`;
+
+  return md;
 }
 
-md += '\n';
-md += `🟢 = ≥5% faster on this metric · 🔴 = ≥5% slower\n`;
+function usage() {
+  // eslint-disable-next-line no-console
+  console.error('Usage: perf-diff.mjs <baseline.json> <new.json>');
+  process.exit(2);
+}
 
-// eslint-disable-next-line no-console
-console.log(md);
+function main() {
+  if (process.argv.length < 4) usage();
 
-// Resolve any relative paths for the user.
-const baseAbs = path.resolve(basePath);
-const newAbs = path.resolve(newPath);
-// eslint-disable-next-line no-console
-console.error(`baseline: ${baseAbs}\nnew:      ${newAbs}`);
+  const [, , basePath, newPath] = process.argv;
+  if (!fs.existsSync(basePath)) {
+    // eslint-disable-next-line no-console
+    console.error(`Baseline not found: ${basePath}`);
+    process.exit(2);
+  }
+  if (!fs.existsSync(newPath)) {
+    // eslint-disable-next-line no-console
+    console.error(`New results not found: ${newPath}`);
+    process.exit(2);
+  }
+
+  const base = JSON.parse(fs.readFileSync(basePath, 'utf8'));
+  const next = JSON.parse(fs.readFileSync(newPath, 'utf8'));
+
+  const md = buildPerfDiff(base, next);
+
+  // eslint-disable-next-line no-console
+  console.log(md);
+
+  // Resolve any relative paths for the user.
+  const baseAbs = path.resolve(basePath);
+  const newAbs = path.resolve(newPath);
+  // eslint-disable-next-line no-console
+  console.error(`baseline: ${baseAbs}\nnew:      ${newAbs}`);
+}
+
+const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (isMain) main();

@@ -24,6 +24,7 @@ import { defineConfig, devices } from '@playwright/test';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
 import { createE2EServerMetadata, ensureCheckoutIdentity } from './tools/e2e-server-identity';
+import { resolvePerfDataPort } from './src/tests/e2e/perf-data-base';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, '../..');
@@ -33,7 +34,9 @@ const headless = process.env.LUXAR_PERF_HEADLESS === '1';
 // dev servers (`reuseExistingServer` would silently reuse a foreign server —
 // the stale-bundle pitfall). Defaults match the standard dev ports.
 const viewerPort = Number(process.env.LUXAR_PERF_PORT ?? 5173);
-const dataPort = Number(process.env.LUXAR_PERF_DATA_PORT ?? 9000);
+// Shared with the perf-bench specs (src/tests/e2e/perf-data-base.ts) so the
+// port the server boots on and the origin the specs fetch from can't drift.
+const dataPort = resolvePerfDataPort();
 const viewerBaseURL = `http://127.0.0.1:${viewerPort}`;
 const dataBaseURL = `http://127.0.0.1:${dataPort}`;
 const checkoutIdentity = ensureCheckoutIdentity(projectRoot, __dirname);
