@@ -19,6 +19,27 @@
 
 import { describe, expect, it } from 'vitest';
 import { MegaShaderTSLMaterial } from '../../../../rendering/post-processing/mega/material-tsl';
+import { config } from '../../../../config';
+
+describe('MegaShaderTSLMaterial uniform defaults', () => {
+  it('takes every omitted uniform from the shared rendering-controls defaults', () => {
+    // Must mirror the GLSL twin exactly — both read the same config.
+    const material = new MegaShaderTSLMaterial();
+    const d = config.renderingControls.defaults;
+
+    expect(material.uniforms.uExposure.value).toBe(d.exposure);
+    expect(material.uniforms.uGlobalOffset.value).toBe(d.globalOffset);
+    expect(material.uniforms.uGlobalGamma.value).toBe(d.globalGamma);
+    expect(material.uniforms.uReadoutSigma.value).toBe(d.detectorNoiseReadoutSigma);
+    expect(material.uniforms.uPhotonGain.value).toBe(d.detectorNoisePhotonGain);
+    expect(material.uniforms.uFpnSigma.value).toBe(d.detectorNoiseFpnSigma);
+    expect(material.uniforms.uVignetteDarkness.value).toBe(d.vignetteDarkness);
+    expect(material.uniforms.uVignetteOffset.value).toBe(d.vignetteOffset);
+    expect(material.uniforms.uBloomIntensity.value).toBe(d.bloomStrength);
+
+    material.dispose();
+  });
+});
 
 describe('MegaShaderTSLMaterial capture-mode toggles', () => {
   it('toggleRawHdrCapture(true) rebuilds the TSL graph (version bumps)', () => {

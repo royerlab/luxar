@@ -8,8 +8,29 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import { MegaShaderMaterial } from '../../../../rendering/post-processing/mega/material';
+import { config } from '../../../../config';
 
 describe('MegaShaderMaterial', () => {
+  it('takes every omitted uniform from the shared rendering-controls defaults', () => {
+    // Single source of truth: the material must not carry its own copy of
+    // these numbers (a stale local copy once made unconfigured detector
+    // noise 5x stronger than the UI default).
+    const material = new MegaShaderMaterial();
+    const d = config.renderingControls.defaults;
+
+    expect(material.uniforms.uExposure.value).toBe(d.exposure);
+    expect(material.uniforms.uGlobalOffset.value).toBe(d.globalOffset);
+    expect(material.uniforms.uGlobalGamma.value).toBe(d.globalGamma);
+    expect(material.uniforms.uReadoutSigma.value).toBe(d.detectorNoiseReadoutSigma);
+    expect(material.uniforms.uPhotonGain.value).toBe(d.detectorNoisePhotonGain);
+    expect(material.uniforms.uFpnSigma.value).toBe(d.detectorNoiseFpnSigma);
+    expect(material.uniforms.uVignetteDarkness.value).toBe(d.vignetteDarkness);
+    expect(material.uniforms.uVignetteOffset.value).toBe(d.vignetteOffset);
+    expect(material.uniforms.uBloomIntensity.value).toBe(d.bloomStrength);
+
+    material.dispose();
+  });
+
   it('disables renderer tone-mapping injection and starts in ACES mode', () => {
     const material = new MegaShaderMaterial();
 

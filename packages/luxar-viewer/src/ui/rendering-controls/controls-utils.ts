@@ -14,6 +14,7 @@ import type { RenderingSettings as ConfigRenderingSettings } from '../../config/
 export type RenderingSettings = ConfigRenderingSettings;
 
 import { config } from '../../config';
+import { TONE_MAPPING_NAMES } from '../../rendering/post-processing/tone-mapping';
 
 /**
  * Get default rendering settings from main config
@@ -22,8 +23,8 @@ export function getDefaultRenderingSettings(): RenderingSettings {
   return config.renderingControls.defaults;
 }
 
-/** Valid tone mapping options */
-const VALID_TONE_MAPPINGS = ['None', 'Linear', 'Reinhard', 'Cineon', 'ACES', 'AgX', 'Neutral'];
+/** Valid tone mapping options — the shared list, so validation cannot drift. */
+const VALID_TONE_MAPPINGS: readonly string[] = TONE_MAPPING_NAMES;
 
 /** Valid control types */
 const VALID_CONTROL_TYPES = ['orbit', 'fly', 'ortho'];

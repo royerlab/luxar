@@ -32,6 +32,8 @@
 
 import * as THREE from 'three';
 import { NodeMaterial } from 'three/webgpu';
+import { config } from '../../../config';
+import { resolveToneMappingDefault } from '../tone-mapping';
 import { megaWebGPUFactory, type LuxarToneMappingMode } from './shader.tsl';
 import type { MegaShaderConfig } from './material';
 
@@ -106,14 +108,18 @@ export class MegaShaderTSLMaterial extends NodeMaterial {
   constructor(cfg: MegaShaderConfig = {}) {
     super();
 
+    // Single source of truth for every omitted value: the shared
+    // rendering-controls defaults the UI and PostProcessingManager read.
+    const d = config.renderingControls.defaults;
+
     this.uniforms = {
       uHdrScene: { value: null as THREE.Texture | null },
       uResolution: { value: new THREE.Vector2(1, 1) },
 
       // EOG
-      uExposure: { value: cfg.exposure ?? 0.0 },
-      uGlobalOffset: { value: cfg.globalOffset ?? 0.0 },
-      uGlobalGamma: { value: Math.max(0.001, cfg.globalGamma ?? 1.0) },
+      uExposure: { value: cfg.exposure ?? d.exposure },
+      uGlobalOffset: { value: cfg.globalOffset ?? d.globalOffset },
+      uGlobalGamma: { value: Math.max(0.001, cfg.globalGamma ?? d.globalGamma) },
 
       // Tone-mapping carries a host-side `toneMappingExposure` for
       // the GLSL `<tonemapping_pars_fragment>` chunk; the TSL path
@@ -134,20 +140,20 @@ export class MegaShaderTSLMaterial extends NodeMaterial {
 
       // Detector noise
       uTime: { value: 0 },
-      uReadoutSigma: { value: cfg.detectorNoise?.readoutSigma ?? 0.01 },
-      uPhotonGain: { value: cfg.detectorNoise?.photonGain ?? 0.01 },
-      uFpnSigma: { value: cfg.detectorNoise?.fpnSigma ?? 0.005 },
+      uReadoutSigma: { value: cfg.detectorNoise?.readoutSigma ?? d.detectorNoiseReadoutSigma },
+      uPhotonGain: { value: cfg.detectorNoise?.photonGain ?? d.detectorNoisePhotonGain },
+      uFpnSigma: { value: cfg.detectorNoise?.fpnSigma ?? d.detectorNoiseFpnSigma },
 
       // Vignette
-      uVignetteDarkness: { value: cfg.vignette?.darkness ?? 0.5 },
-      uVignetteOffset: { value: cfg.vignette?.offset ?? 0.5 },
+      uVignetteDarkness: { value: cfg.vignette?.darkness ?? d.vignetteDarkness },
+      uVignetteOffset: { value: cfg.vignette?.offset ?? d.vignetteOffset },
 
       // Bloom
       uBloomTexture: { value: null as THREE.Texture | null },
-      uBloomIntensity: { value: cfg.bloom?.intensity ?? 0.25 },
+      uBloomIntensity: { value: cfg.bloom?.intensity ?? d.bloomStrength },
     };
 
-    this.toneMappingMode = toneMappingToMode(cfg.toneMapping ?? THREE.ACESFilmicToneMapping);
+    this.toneMappingMode = toneMappingToMode(cfg.toneMapping ?? resolveToneMappingDefault());
 
     // Initial toggle state from the config — same behaviour as the
     // GLSL wrapper's constructor.
