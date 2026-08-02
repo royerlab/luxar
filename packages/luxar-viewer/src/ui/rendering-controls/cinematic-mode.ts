@@ -13,24 +13,13 @@
  * pair if external code wants to clear it (e.g. resetToDefaults).
  */
 
-import * as THREE from 'three';
 import { config, type RenderingSettings } from '../../config';
+import { toneMappingFromName } from '../../rendering/post-processing/tone-mapping';
 import { log, Modules } from '../../utils/log';
 import type { PostProcessingManager } from '../../rendering';
 import type { SceneManager } from '../../scene/scene-manager';
 import type { AnimationController } from '../../scene/animation/animation-controller';
 import type { RenderingControllers } from './types';
-
-/** String → THREE.ToneMapping map shared between applySettings and the cinematic toggle. */
-export const TONE_MAPPING_MAP: Record<string, THREE.ToneMapping> = {
-  None: THREE.NoToneMapping,
-  Linear: THREE.LinearToneMapping,
-  Reinhard: THREE.ReinhardToneMapping,
-  Cineon: THREE.CineonToneMapping,
-  ACES: THREE.ACESFilmicToneMapping,
-  AgX: THREE.AgXToneMapping,
-  Neutral: THREE.NeutralToneMapping,
-};
 
 /** Keys of RenderingSettings that cinematic mode touches. */
 export type CinematicSnapshotKeys =
@@ -235,7 +224,7 @@ export class CinematicModeController {
     // Batch post-processing changes through `withDeferredRebuild` so the
     // depth counter unwinds even when a sub-setter throws.
     postProcessing.withDeferredRebuild(() => {
-      postProcessing.setToneMapping(TONE_MAPPING_MAP[settings.toneMapping]);
+      postProcessing.setToneMapping(toneMappingFromName(settings.toneMapping));
 
       postProcessing.setBloomEnabled(
         settings.bloomEnabled,

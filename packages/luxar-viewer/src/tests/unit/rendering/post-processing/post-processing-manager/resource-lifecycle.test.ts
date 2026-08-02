@@ -1,7 +1,8 @@
 /**
  * Direct unit tests for the pure helpers in resource-lifecycle.ts.
- * Covers the sizing pair, tone-mapping resolver, and DPR-scaled noise
- * computation.
+ * Covers the sizing pair and DPR-scaled noise computation. (The
+ * tone-mapping resolver now lives in — and is tested with —
+ * `rendering/post-processing/tone-mapping.ts`.)
  *
  * GPU-coupled exports (`buildTransientResources`, `createHdrTarget`,
  * `createLdrTarget`, `buildBloomChain`, `disposeTransientResources`)
@@ -11,11 +12,9 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
-import * as THREE from 'three';
 import {
   computeEffectiveSize,
   getPhysicalSize,
-  resolveToneMappingDefault,
   applyScaledNoiseSettings,
   type SizingInputs,
 } from '../../../../../rendering/post-processing/post-processing-manager/resource-lifecycle';
@@ -126,29 +125,6 @@ describe('getPhysicalSize', () => {
         })
       )
     ).toEqual({ width: 150, height: 150 });
-  });
-});
-
-describe('resolveToneMappingDefault', () => {
-  it('returns a valid THREE.ToneMapping enum value', () => {
-    const value = resolveToneMappingDefault();
-    const validValues = [
-      THREE.NoToneMapping,
-      THREE.LinearToneMapping,
-      THREE.ReinhardToneMapping,
-      THREE.CineonToneMapping,
-      THREE.ACESFilmicToneMapping,
-      THREE.AgXToneMapping,
-      THREE.NeutralToneMapping,
-    ];
-    expect(validValues).toContain(value);
-  });
-
-  it("resolves the current config default ('ACES') to THREE.ACESFilmicToneMapping", () => {
-    // The config default is pinned to 'ACES' in
-    // src/config/sections/rendering-controls/data.ts. If a future commit
-    // changes that default, this test fails so the change becomes deliberate.
-    expect(resolveToneMappingDefault()).toBe(THREE.ACESFilmicToneMapping);
   });
 });
 

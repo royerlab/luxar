@@ -15,6 +15,7 @@ import { BloomChain } from '../bloom/chain';
 import { FxaaPass } from '../fxaa/pass';
 import { FullscreenPass } from '../fullscreen/pass';
 import { computeEffectiveRenderSize } from '../render-target-sizing';
+import { resolveToneMappingDefault } from '../tone-mapping';
 import { materialManager, type LuxarMegaShaderMaterial } from '../../material-manager';
 import { config } from '../../../config';
 import type { Renderer, RendererCapabilities } from '../../renderer-capabilities';
@@ -46,29 +47,6 @@ export function getPhysicalSize(s: SizingInputs): { width: number; height: numbe
     width: Math.max(1, Math.round(width * dpr)),
     height: Math.max(1, Math.round(height * dpr)),
   };
-}
-
-/** Map the `renderingControls.defaults.toneMapping` string into the THREE enum. */
-export function resolveToneMappingDefault(): THREE.ToneMapping {
-  const name = config.renderingControls.defaults.toneMapping;
-  switch (name) {
-    case 'None':
-      return THREE.NoToneMapping;
-    case 'Linear':
-      return THREE.LinearToneMapping;
-    case 'Reinhard':
-      return THREE.ReinhardToneMapping;
-    case 'Cineon':
-      return THREE.CineonToneMapping;
-    case 'ACES':
-      return THREE.ACESFilmicToneMapping;
-    case 'AgX':
-      return THREE.AgXToneMapping;
-    case 'Neutral':
-      return THREE.NeutralToneMapping;
-    default:
-      return THREE.NeutralToneMapping;
-  }
 }
 
 /** Allocate the HDR target the scene renders into. */
