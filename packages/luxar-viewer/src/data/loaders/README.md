@@ -303,10 +303,11 @@ accumulator.adopt(result.outputBuffers);
 Beyond the three top-level abstractions above, this folder also holds the
 narrowly-scoped helpers each spatial-index loader composes:
 
-- **`chunk-bounds-loader.ts`** — `fetchChunkBoundsArray(location, arrayName,
-logModule, notFoundMessage)`: open a `chunk_bounds` / `vertex_chunk_bounds`
-  / `segment_chunk_bounds` zarr array and return `{ data: Float32Array,
-shape }`. Soft-falls-back to `null` on 404 / Not Found (datasets without
+- **`chunk-bounds-loader.ts`** —
+  `fetchChunkBoundsArray(location, arrayName, logModule, notFoundMessage)`:
+  open a `chunk_bounds` / `vertex_chunk_bounds` / `segment_chunk_bounds` zarr
+  array and return `{ data: Float32Array, shape }`.
+  Soft-falls-back to `null` on 404 / Not Found (datasets without
   spatial ordering legitimately omit the array) and on corrupt-zarr / network
   errors after a warning.
 - **`color-loader.ts`** — shared color-range loader with native-dtype
@@ -317,8 +318,8 @@ shape }`. Soft-falls-back to `null` on 404 / Not Found (datasets without
   reads are delegated to `RangeLoader.loadDirectTyped` — the single
   dtype-preserving reader — so `color-loader.ts` keeps only the color-specific
   concerns (RGB layout, `original_dtype` restoration).
-- **`spatial-query/prefetch-ranges.ts`** — `prefetchRangesIntoCache(arrays,
-ranges)`: shared cache-warming read for the three loaders' `prefetchChunks`.
+- **`spatial-query/prefetch-ranges.ts`** — `prefetchRangesIntoCache(arrays, ranges)`:
+  shared cache-warming read for the three loaders' `prefetchChunks`.
   Fires a `get()` per (array × range) and discards the result. Deliberately
   separate from `RangeLoader.loadDirectTyped` — prefetch warms future frames,
   so it allocates no typed output and carries no per-update abort signal.
@@ -340,8 +341,8 @@ ranges)`: shared cache-warming read for the three loaders' `prefetchChunks`.
   enumerates the `overlays/` group and parses each child's `.zattrs` into an
   `OverlayConfig` (text / image / html, with per-type fields). Results are
   z-index-sorted; missing `overlays/` group returns `[]` silently.
-- **`loader-metrics.ts`** — `recordLoadEvent(counters, elements, bytes,
-loadTime)` (rolling-mean update of `loads` / `elementsLoaded` /
+- **`loader-metrics.ts`** — `recordLoadEvent(counters, elements, bytes, loadTime)`
+  (rolling-mean update of `loads` / `elementsLoaded` /
   `bytesLoaded` / `avgLoadTime`), `computeLoadLatency(startMs, nowMs?)`
   (latency, 0 when start is undefined / 0), and
   `finishQueryTracking(activeQueries, metrics, queryId, startTime, status)`
@@ -350,8 +351,9 @@ loadTime)` (rolling-mean update of `loads` / `elementsLoaded` /
   `avgQueryTime` — called by the facades' `loadX` wrappers on BOTH the
   success and error paths so the active-query map never leaks), plus
   `makeInitialLoaderMetrics(type, path)` (the zeroed initial `LoaderMetrics`
-  record every facade starts from), and `buildSpatialIndexMetrics(chunkCount,
-chunkSize, queries, lastQueryCells, elementsLoaded)` (the chunk-index
+  record every facade starts from), and
+  `buildSpatialIndexMetrics(chunkCount, chunkSize, queries, lastQueryCells, elementsLoaded)`
+  (the chunk-index
   telemetry snapshot all three facades attach as `metrics.spatialIndex` for
   the monitor advisor). Pure helpers, unit-tested without a zarr
   store, used by all three geometry facades. `elementsLoaded` is the
@@ -361,8 +363,8 @@ chunkSize, queries, lastQueryCells, elementsLoaded)` (the chunk-index
   references + `this`-bound accessors, built once in each constructor):
   `loadSliceWithCache(ctx, viewState, loadInternal)` (the `loadX` template —
   S-cache restore → internal load → query close-out → S-cache store, with the
-  abort-aware error branch), `recordLoadMetrics(ctx, arrayName, elements,
-output)` (per-array load metrics + 'load' event), and
+  abort-aware error branch), `recordLoadMetrics(ctx, arrayName, elements, output)`
+  (per-array load metrics + 'load' event), and
   `runWithActiveSignal` / `runWithResidencyProbe` (the `updateView` /
   `updateViewWithResidency` bodies: per-update abort-signal publication and
   cache-residency probing). Each used to exist as three byte-identical
