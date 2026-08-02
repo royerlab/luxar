@@ -262,9 +262,10 @@ def create_zebrahub_scene(
             missing = " and ".join(missing_lod_deps)
             aprint(
                 f"⚠️  {missing} not installed — skipping Points LOD coarsening. "
-                "The cell cloud is fully viewable as a flat point cloud; "
-                "install 'luxar[gsplats]' (pip install 'luxar[gsplats]') and "
-                "rerun to rebuild with level-of-detail."
+                "The cell cloud is fully viewable as a flat point cloud; run "
+                "`pip install 'luxar[gsplats]'` (the extra that carries torch "
+                "and scipy at their pinned bounds) and rerun to rebuild with "
+                "level-of-detail."
             )
 
         # Create scene

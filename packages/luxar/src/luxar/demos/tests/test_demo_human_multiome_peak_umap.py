@@ -21,7 +21,11 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from luxar.demos.demo_human_multiome_peak_umap import create_human_scene
+# The demo module imports pandas at module level, and pandas lives in the
+# `demos` extra (not `test`) — skip rather than error out at collection.
+pytest.importorskip("pandas")
+
+from luxar.demos.demo_human_multiome_peak_umap import create_human_scene  # noqa: E402
 
 N_POINTS = 40
 
