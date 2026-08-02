@@ -50,6 +50,37 @@ panel doesn't import `scene/` directly (respecting the data → ui layer
 direction). Locking a level wakes the animation loop (`requestRender`) so the
 new active level paints even when the camera and slice are idle.
 
+### Load-failure badge
+
+When a node's loader throws (corrupt data, network failure, the "Vertex index N
+not found" path), that failure used to surface only in the console and the
+collapsed data monitor, reading as a blank-canvas camera/shader problem. The
+panel now shows a per-row **error badge** (`.luxar-layer-row__error`, a
+warning-triangle SVG with `role="img"` and an `aria-label` naming the reason)
+plus an `--error` row tint (`luxar-layer-row--error`).
+
+- The app injects an equivalent `FailedLoadsProviderPort` over the same live
+  failure set the data monitor reads (each `SceneLoader.getFailedLoadsProvider()`
+  call returns a new object, but all close over the loader's one `failedLoaders`
+  map) via `LayersPanel.setFailedLoadsProvider(provider)`, wired in
+  `core/app/dataset/load-dataset.ts` right AFTER `initFromScene` (whose `clear()`
+  resets any prior provider first). Cleared on dispose.
+- A row is in error if its own path failed OR any descendant leaf failed
+  (`failedPath === layer.path || failedPath.startsWith(layer.path + '/')`), so a
+  failure inside a `kind=lod` / `kind=partition` group lights up the group's row.
+- The tooltip prefers the provider's per-path reason (`getFailedReason`, from the
+  loader's `error.message` / classified kind), falls back to a generic message,
+  and appends `(N parts failed)` when more than one descendant failed.
+- Refresh is signature-gated (mirroring the data monitor's
+  `lastFailedLoadsSignature`): the per-frame `layers-lod-status` callback (gated
+  on panel visibility) only touches the DOM when the failed set — folded with
+  each path's reason — changes. The signature reset sentinel is `null`, so an
+  empty set / `setFailedLoadsProvider(null)` still clears badges. `renderList()`
+  invalidates the signature so a row rebuild (e.g. `resetAllLayers`) re-applies.
+
+This covers per-node LOADER failures only; render-thread texture-capacity
+truncation is a separate follow-up.
+
 ## Usage
 
 ### Python (scene authoring)
@@ -170,16 +201,16 @@ control.
 
 ## Files
 
-| File                                       | Purpose                                                                                                             |
-| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------- |
+| File                                       | Purpose                                                                                                                          |
+| ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
 | `layer-state.ts`                           | `LayerStateManager`, selection logic; re-exports `computeUniforms` / `computeDisplayRange` (now in `rendering/display-range.ts`) |
-| `layers-panel.ts`                          | `LayersPanel` class — panel/list DOM + lifecycle; facade over controls + apply                                      |
-| `layer-controls.ts`                        | `LayerControls` — controls-section DOM (sliders, selects, live LOD readout)                                         |
-| `layer-apply.ts`                           | `LayerApplyEngine` — attr composition + material application per data-leaf                                          |
-| `luxar-material.ts`                        | `LuxarMaterial` interface, `isColormapActive` / `applyColorAdjustments` routing                                     |
-| `range-slider.ts`                          | `RangeSlider` — dual-thumb input component with editable / scrollable bound labels                                  |
-| `labeled-slider.ts`                        | `LabeledSlider` — single-thumb labeled input component (gamma, opacity, absorption); `linear` or `log` track        |
-| `absorption-range.ts`                      | `absorptionBoundsForNode` / `absorptionSliderRange` / `formatAbsorption` — per-layer κ track bounds (κ is 1/length) |
-| `attrs-utils.ts`                           | `clampGamma`, `getBlendingState`, `liveLayerAttrs` — pure helpers (no DOM)                                          |
-| `../layers.ts`                             | Public entrypoint — re-exports the layers surface                                                                   |
-| `../../styles/components/layers-panel.css` | Themed CSS styles                                                                                                   |
+| `layers-panel.ts`                          | `LayersPanel` class — panel/list DOM + lifecycle; facade over controls + apply                                                   |
+| `layer-controls.ts`                        | `LayerControls` — controls-section DOM (sliders, selects, live LOD readout)                                                      |
+| `layer-apply.ts`                           | `LayerApplyEngine` — attr composition + material application per data-leaf                                                       |
+| `luxar-material.ts`                        | `LuxarMaterial` interface, `isColormapActive` / `applyColorAdjustments` routing                                                  |
+| `range-slider.ts`                          | `RangeSlider` — dual-thumb input component with editable / scrollable bound labels                                               |
+| `labeled-slider.ts`                        | `LabeledSlider` — single-thumb labeled input component (gamma, opacity, absorption); `linear` or `log` track                     |
+| `absorption-range.ts`                      | `absorptionBoundsForNode` / `absorptionSliderRange` / `formatAbsorption` — per-layer κ track bounds (κ is 1/length)              |
+| `attrs-utils.ts`                           | `clampGamma`, `getBlendingState`, `liveLayerAttrs` — pure helpers (no DOM)                                                       |
+| `../layers.ts`                             | Public entrypoint — re-exports the layers surface                                                                                |
+| `../../styles/components/layers-panel.css` | Themed CSS styles                                                                                                                |
