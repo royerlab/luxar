@@ -25,7 +25,9 @@ on disk. :data:`INSTALL_SPECS` therefore carries the version bound, and
 
 The gate RAISES and does not print: the demo entry points already report the
 exception, and a helper that printed as well showed the user the same message
-twice.
+twice. :func:`substitutive_lod_or_flat` is the one exception, and deliberately
+so — it gates an OPTIONAL enhancement (LOD coarsening) rather than the demo
+itself, so it degrades to a flat scene and prints what was lost.
 
 :func:`survey` reads the same table WITHOUT importing anything, which is what
 ``luxar demo deps`` reports and installs from. Because both the runtime gate and
@@ -233,6 +235,50 @@ def is_installed(module: str) -> bool:
         # ImportError: a parent package is missing. ValueError: __spec__ is None
         # on some oddly-initialised modules. Both mean "not usable here".
         return False
+
+
+#: Modules the substitutive-LOD write path imports at module load — the
+#: coarsening kernels in ``luxar.gsplats.lod.substitutive`` need ``torch``, and
+#: importing that package pulls in its additive sibling, which does
+#: ``from scipy import sparse``. Neither is a core dependency.
+SUBSTITUTIVE_LOD_MODULES = ("torch", "scipy")
+
+
+def substitutive_lod_or_flat(spec: Any, *, geometry: str = "Points") -> Any:
+    """Return ``spec`` when substitutive LOD can be built here, else ``None``.
+
+    Demos cache their expensive artifacts, so a warm cache is supposed to build
+    a scene on any machine. But requesting ``substitutive_lod=`` imports
+    :mod:`luxar.gsplats.lod` (see :data:`SUBSTITUTIVE_LOD_MODULES`), so a
+    cache-complete machine without torch/scipy died with a ``ModuleNotFoundError``
+    mid-build instead. Route every demo's ``substitutive_lod=`` argument through
+    here: with both modules present the spec passes through unchanged; without
+    them the caller writes a flat leaf, which is fully viewable — it just loses
+    the coarse levels that replace it when zoomed out.
+
+    Unlike :func:`require_module` this DEGRADES rather than raising, so it prints
+    the one notice explaining what the scene lost and how to get it back.
+
+    Args:
+        spec: The ``substitutive_lod`` argument the demo would pass.
+        geometry: ``Points`` or ``Lines`` — names the geometry in the notice.
+
+    Returns:
+        ``spec`` unchanged, or ``None`` when a required module is missing.
+    """
+    missing = [m for m in SUBSTITUTIVE_LOD_MODULES if not is_installed(m)]
+    if not missing:
+        return spec
+
+    from arbol import aprint
+
+    aprint(
+        f"⚠️ {' and '.join(missing)} not installed — skipping {geometry} LOD "
+        f"coarsening and building flat {geometry} instead. The scene is fully "
+        "viewable; run `pip install 'luxar[gsplats]'` (the extra that carries "
+        "torch and scipy at their pinned bounds) to rebuild with level-of-detail."
+    )
+    return None
 
 
 def _version_satisfied(spec: str) -> bool:

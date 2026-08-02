@@ -142,7 +142,7 @@ from luxar import (
     LuxarZarrCompiler,
     ViewerConfig,
 )
-from luxar.demos import launch_viewer
+from luxar.demos import launch_viewer, substitutive_lod_or_flat
 from luxar.utils.paths import get_demos_output_dir
 
 # Find the data file relative to this script
@@ -324,7 +324,9 @@ def load_and_convert_gaia_data(data_zarr_path: Path, output_path: Path) -> int:
                 absorption=1.3,
                 intensity=0.075,
                 layer=True,
-                substitutive_lod=dict(compression_factor=8, levels=3, device="auto"),
+                substitutive_lod=substitutive_lod_or_flat(
+                    dict(compression_factor=8, levels=3, device="auto")
+                ),
             )
 
             # Add reference markers for famous stars

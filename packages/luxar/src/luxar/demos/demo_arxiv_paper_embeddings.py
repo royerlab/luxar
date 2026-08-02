@@ -69,6 +69,9 @@ NOTES:
 - Subsequent runs load cached embeddings automatically
 - Requires internet connection for Semantic Scholar API
 - Required packages: sentence-transformers, umap-learn
+- Optional: install 'luxar[gsplats]' (torch + scipy) to build Points LOD
+  coarsening; without it the scene still builds as a flat (fully viewable)
+  point cloud
 - API rate limits: ~100 requests/second (use delays for large queries)
 
 FOR 1M PAPERS:
@@ -109,6 +112,7 @@ from luxar.demos import (
     launch_viewer,
     require_module,
     stack_colorings,
+    substitutive_lod_or_flat,
 )
 from luxar.utils.paths import get_demos_output_dir
 
@@ -554,7 +558,9 @@ def generate_paper_landscape(
 
             # Substitutive Points LOD for the (potentially large) paper cloud —
             # coarse merged levels when zoomed out (census-style wiring; coarse
-            # splats stay pure per coloring via the `coloring` barrier).
+            # splats stay pure per coloring via the `coloring` barrier). Gated
+            # through substitutive_lod_or_flat so a warm-cache run without
+            # torch/scipy still builds a (flat) viewable scene.
             scene.add_points(
                 "papers",
                 positions=stacked.positions,
@@ -564,7 +570,9 @@ def generate_paper_landscape(
                 opacity=0.9,
                 intensity=0.1,
                 labels=stacked.labels,
-                substitutive_lod=dict(compression_factor=8, levels=3, device="auto"),
+                substitutive_lod=substitutive_lod_or_flat(
+                    dict(compression_factor=8, levels=3, device="auto")
+                ),
             )
 
             # --- Overlays ---
