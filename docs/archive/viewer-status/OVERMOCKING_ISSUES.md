@@ -1,3 +1,5 @@
+> **⚠️ Archived — point-in-time review, not re-verified.** Finding statuses below have **not** been re-verified against current `main`. Treat this as a historical snapshot, not a live task list; verify any finding against current code before acting on it. See [the archive README](../README.md).
+
 # Over-Mocking Issues - Detailed Analysis
 
 ## Summary

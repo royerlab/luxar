@@ -1,5 +1,7 @@
 # Luxar Zarr Format Specification
 
+> For a version-policy and migration summary that distinguishes this scene format from the gsplats format, see [Formats & Migration](./FORMAT_AND_MIGRATION.md).
+
 ## Version: 0.1
 
 **Features in v0.1:**

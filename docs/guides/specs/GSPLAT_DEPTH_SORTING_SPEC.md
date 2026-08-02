@@ -5,7 +5,7 @@
 > **Goal**: Correct order-dependent transparency (`normal` blending mode) for Gaussian splats at 10M+ splats, via texture-backed splat storage + a per-instance ordering attribute + asynchronous worker depth sorting.
 > **Non-goals** (follow-ups, not this plan): WebGPU compute-shader sorting ("Option 3b"), weighted-blended OIT, global cross-node sorting. (Points AND Lines sorting symmetry have since LANDED — see §8; all three geometry types now share the storage + sorting machinery.)
 
-Related reading: `docs/archive/developer-archive/SPARKJS_ANALYSIS.md` (the reference architecture this adapts), `src/rendering/README.md` (the retired `interleaved-attributes.ts` module — whose Float16 narrowing contract this plan superseded — was deleted once the lines migration left it with no consumers).
+Related reading: `docs/archive/developer-archive/SPARKJS_ANALYSIS.md` (historical — the reference architecture this adapts), `src/rendering/README.md` (the retired `interleaved-attributes.ts` module — whose Float16 narrowing contract this plan superseded — was deleted once the lines migration left it with no consumers).
 
 ---
 
