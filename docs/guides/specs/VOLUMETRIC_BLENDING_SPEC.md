@@ -386,10 +386,13 @@ deliberate choice, not an oversight):
   pick shaders never read the per-element alpha (points texel2.y /
   lines texel5.zw / gsplat texel3.y) — pick salience
   (brightness-as-depth) derives from the coverage chain only. An
-  element with alpha ≈ 0 is visually absent
-  (emission scaled to ~0) yet remains fully pickable in every geometry
-  type. Making picking alpha-aware would follow the same τ-threshold
-  follow-up as front-most picking above.
+  element with alpha ≈ 0 is visually absent — emission scales to ~0,
+  and under volumetric its optical depth w(a) = −ln(1 − a) vanishes
+  with it, so it neither emits nor absorbs (the sole visible residue is
+  the Points/Lines `normal`-mode depth-write, third bullet) — yet
+  remains fully pickable in every geometry type. Making picking
+  alpha-aware would follow the same τ-threshold follow-up as front-most
+  picking above.
 - **Visual discard under volumetric (differs by geometry)**: POINTS and
   LINES do NOT discard a zero-alpha element while its color is
   non-black — a black-but-dense occluder keeps its τ, so the
