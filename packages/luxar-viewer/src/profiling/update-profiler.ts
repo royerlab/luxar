@@ -100,6 +100,37 @@ export interface TimingMetadata {
   queueMs?: number;
 }
 
+/**
+ * One depth-sort completion in the dedicated MONOTONIC event stream
+ * (issue #711). A completion is recorded once per APPLIED ordering by the
+ * depth-sort coordinator; unlike the seq-merged 'Depth Sort' profiler root
+ * — whose `count` an out-of-order (late) resolve can DROP via
+ * {@link UpdateProfiler.mergeEntryValues}'s `seq < existing.lastSeq` guard —
+ * this stream never loses or reorders an event. Consumed by the orbit perf
+ * bench, which drains every completion since its previous poll.
+ */
+export interface DepthSortCompletion {
+  /** Monotonic completion index, starting at 1 (independent of `sortSeq`). */
+  seq: number;
+  /** Dispatch→applied round-trip latency, ms. */
+  lastMs: number;
+  /** ms inside the backend `sort_splats_by_depth` call, or null if unknown. */
+  kernelMs: number | null;
+  /** Worker-side overhead around the kernel (workerMs − kernelMs), or null. */
+  boundaryMs: number | null;
+  /** Round-trip minus worker time (Comlink + clone + queueing), or null. */
+  queueMs: number | null;
+  /** Splat count in the applied ordering, or null if unknown. */
+  splats: number | null;
+}
+
+/**
+ * Cap on the bounded depth-sort completion ring (issue #711). Only the most
+ * recent completions are retained for latency sampling; the monotonic
+ * `total` keeps climbing even after events age out.
+ */
+const DEPTH_SORT_COMPLETION_CAP = 512;
+
 /** Numeric metadata fields that SUM when same-name sessions merge within one update. */
 const SUMMED_METADATA_KEYS = [
   'chunks',
@@ -405,11 +436,19 @@ export class UpdateProfiler {
   private passSeq = 0;
   private sortSeq = 0;
 
+  // Dedicated MONOTONIC depth-sort completion accounting (issue #711),
+  // independent of `sortSeq` and the seq-merge policy on the 'Depth Sort'
+  // root: `depthSortCompletionTotal` counts every applied ordering (never
+  // dropped by a late/out-of-order resolve), and the bounded ring holds the
+  // most recent completions for latency sampling.
+  private depthSortCompletionTotal = 0;
+  private depthSortCompletions: DepthSortCompletion[] = [];
+
   // Generation counter, bumped on every reset(). Sessions capture the
   // generation at construction; their end() is a no-op if the profiler's
   // generation has advanced past theirs (the session was "abandoned").
-  // Internal: only the SessionImpl reads this — exposed via the package-
-  // private `_currentGeneration()` accessor below.
+  // Internal: read only via the package-private `_currentGeneration()`
+  // accessor below (SessionImpl and the depth-sort coordinator).
   private generation = 0;
 
   private static makeRoot(name: string): TimingEntry {
@@ -424,8 +463,9 @@ export class UpdateProfiler {
 
   /**
    * Internal: current generation counter. Read by `SessionImpl` to gate
-   * its `end()` merge against being abandoned by a reset() that landed
-   * mid-flight. NOT a public API.
+   * its `end()` merge — and by the depth-sort coordinator to gate its
+   * `recordDepthSortCompletion` call — against being abandoned by a
+   * reset() that landed mid-flight. NOT a public API.
    */
   _currentGeneration(): number {
     return this.generation;
@@ -682,6 +722,47 @@ export class UpdateProfiler {
   }
 
   /**
+   * Record one applied depth-sort completion on the dedicated MONOTONIC
+   * stream (issue #711). Increments the total, tags the event with its
+   * `seq`, and pushes it onto the bounded ring (oldest trimmed at
+   * {@link DEPTH_SORT_COMPLETION_CAP}). Independent of the seq-merge policy
+   * on the 'Depth Sort' root, so a late/out-of-order resolve never drops a
+   * completion here — the exact undercount issue #711 found.
+   */
+  recordDepthSortCompletion(event: {
+    lastMs: number;
+    kernelMs: number | null;
+    boundaryMs: number | null;
+    queueMs: number | null;
+    splats: number | null;
+  }): void {
+    this.depthSortCompletionTotal++;
+    this.depthSortCompletions.push({ seq: this.depthSortCompletionTotal, ...event });
+    if (this.depthSortCompletions.length > DEPTH_SORT_COMPLETION_CAP) {
+      // Trim the oldest so the ring never exceeds the cap; `total` is
+      // unaffected and stays authoritative for the count.
+      this.depthSortCompletions.splice(
+        0,
+        this.depthSortCompletions.length - DEPTH_SORT_COMPLETION_CAP
+      );
+    }
+  }
+
+  /**
+   * Snapshot the depth-sort completion stream (issue #711): the monotonic
+   * `total` (authoritative for the count even if some events aged out of the
+   * bounded ring) plus a COPY of the currently-buffered events (each tagged
+   * with its `seq`, for latency sampling). The event objects are cloned too,
+   * so mutating a returned event cannot corrupt later snapshots.
+   */
+  getDepthSortCompletions(): { total: number; events: DepthSortCompletion[] } {
+    return {
+      total: this.depthSortCompletionTotal,
+      events: this.depthSortCompletions.map((e) => ({ ...e })),
+    };
+  }
+
+  /**
    * Reset all timing data
    *
    * Clears active-session state too: if reset() is called mid-update, any
@@ -700,6 +781,8 @@ export class UpdateProfiler {
     this.updateSeq = 0;
     this.passSeq = 0;
     this.sortSeq = 0;
+    this.depthSortCompletionTotal = 0;
+    this.depthSortCompletions = [];
     this.roots = new Map<string, TimingEntry>([
       [TOTAL_UPDATE_ROOT, UpdateProfiler.makeRoot(TOTAL_UPDATE_ROOT)],
       [REFINEMENT_ROOT, UpdateProfiler.makeRoot(REFINEMENT_ROOT)],
