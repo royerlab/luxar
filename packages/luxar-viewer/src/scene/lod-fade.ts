@@ -167,11 +167,14 @@ export function applyLodFade(
 ): void {
   const coverageWeight = weight ?? 1;
   // Normal mode's depthWrite is opacity-gated (>= 0.99, see
-  // normalModeDepthWrite): after writing a fade opacity, re-derive the
-  // mode state so the gate tracks the live value. Unreachable today
-  // (BLENDABLE_MODES = additive/luminous/volumetric, whose depth state is
-  // opacity-independent — volumetric's depthWrite is unconditionally false)
-  // but preserves the invariant if that set grows.
+  // normalModeDepthWrite) — but that gate is now the LINE gate only: point
+  // materials force depthWrite:false in normal regardless (#1002), so
+  // applyBlendingMode('normal') re-derives false for points. Either way,
+  // after writing a fade opacity, re-derive the mode state so the gate
+  // tracks the live value. Unreachable today (BLENDABLE_MODES =
+  // additive/luminous/volumetric, whose depth state is opacity-independent
+  // — volumetric's depthWrite is unconditionally false) but preserves the
+  // invariant if that set grows.
   const refreshNormalDepthWrite = (m: FadeableMaterial): void => {
     if ((m.userData?.blendingMode as string | undefined) === 'normal') {
       m.applyBlendingMode?.('normal');
