@@ -248,13 +248,17 @@ interface LadderStats {
   observedGrowth: boolean;
   /** True when NO committed gsplat leaf was ever observed (the defensive
    *  path), so completion was estimated from the count plateau rather
-   *  than confirmed by committed-ladder stamps. */
+   *  than confirmed by committed-ladder stamps. Always false on a
+   *  timed-out run — {@link timedOut} takes precedence there, since no
+   *  plateau estimate was established either. */
   usedFallback: boolean;
   /** True when the poll hit LADDER_MAX_MS before completion —
    *  wallMsToLadderComplete is then a last-commit lower bound, not a
    *  confirmed completion. */
   timedOut: boolean;
-  /** Frame stats DURING the progressive-load window (start → last commit). */
+  /** Frame stats DURING the progressive-load window (start → completion:
+   *  the confirmed stamp window on stamped runs, else the last count
+   *  change). */
   loadWindowFrameMs: FrameStats | null;
 }
 
@@ -864,6 +868,10 @@ async function measureZarrLadderScenario(
       // complete" window (0 while any visible leaf is still incomplete).
       sawStamps: false,
       ladderCompleteAt: 0,
+      // Frame count at the tick the current completion window opened —
+      // the stamped-run load-window length (dtsUpToLastChange only covers
+      // the last COUNT change, which a stamp-only final commit can trail).
+      dtsUpToComplete: 0,
     };
     (window as unknown as { __ladderRec: typeof rec }).__ladderRec = rec;
     // Per-tick scan: sum visible splats (drives the count-plateau
@@ -918,9 +926,13 @@ async function measureZarrLadderScenario(
         // (numeric count, no stamp yet) keeps this false.
         const stampedComplete = nodeCount > 0 && stampedCount === nodeCount && !anyIncomplete;
         if (stampedComplete) {
-          if (rec.ladderCompleteAt === 0) rec.ladderCompleteAt = now;
+          if (rec.ladderCompleteAt === 0) {
+            rec.ladderCompleteAt = now;
+            rec.dtsUpToComplete = rec.dts.length;
+          }
         } else {
           rec.ladderCompleteAt = 0;
+          rec.dtsUpToComplete = 0;
         }
       }
       rec.lastT = now;
@@ -954,6 +966,7 @@ async function measureZarrLadderScenario(
             initialCount: number;
             sawStamps: boolean;
             ladderCompleteAt: number;
+            dtsUpToComplete: number;
           };
         }
       ).__ladderRec;
@@ -970,19 +983,28 @@ async function measureZarrLadderScenario(
         timedOut: boolean;
       }>((resolve) => {
         const finish = (timedOut: boolean): void => {
-          const usedFallback = !rec.sawStamps;
-          // performance.now() is relative to navigation start, and the
-          // recorder ran from navigation start — this IS wall ms. In
-          // stamped mode use the confirmed completion timestamp; on a
-          // stamped-mode timeout ladderCompleteAt is 0 (a completed
-          // window would have resolved the loop), so fall back to the
-          // last count change as a lower bound rather than reporting 0ms.
-          const stampWall = rec.ladderCompleteAt > 0 ? rec.ladderCompleteAt : rec.lastChangeAt;
+          // A timed-out run established NO completion of either kind
+          // (the loop checks completion before the cap), so neither
+          // completion label applies: wallMs is the last-commit lower
+          // bound and timedOut takes precedence over usedFallback.
+          const usedFallback = !timedOut && !rec.sawStamps;
+          const stampConfirmed = !timedOut && rec.ladderCompleteAt > 0;
           resolve({
-            wallMsToLadderComplete: usedFallback ? rec.lastChangeAt : stampWall,
+            // performance.now() is relative to navigation start, and the
+            // recorder ran from navigation start — this IS wall ms. A
+            // stamp-confirmed run reports the confirmed completion
+            // timestamp; fallback/timed-out runs report the last count
+            // change (exact plateau estimate / lower bound respectively).
+            wallMsToLadderComplete: stampConfirmed ? rec.ladderCompleteAt : rec.lastChangeAt,
             observedGrowth: rec.observedGrowth,
             usedFallback,
-            loadWindowDtMs: rec.dts.slice(0, Math.max(rec.dtsUpToLastChange, 1)),
+            // Stamped runs window start → confirmed completion; otherwise
+            // start → last count change (a stamp-only final commit can
+            // trail the last count change).
+            loadWindowDtMs: rec.dts.slice(
+              0,
+              Math.max(stampConfirmed ? rec.dtsUpToComplete : rec.dtsUpToLastChange, 1)
+            ),
             finalCount: rec.lastSum,
             initialCount: rec.initialCount,
             timedOut,
@@ -990,10 +1012,9 @@ async function measureZarrLadderScenario(
         };
         const tick = (): void => {
           const now = performance.now();
-          if (now - loopStart > cfg.maxMs) {
-            finish(true);
-            return;
-          }
+          // Completion first, THEN the cap — a completion established
+          // just before LADDER_MAX_MS must not be misreported as a
+          // timeout by a poll tick that fires just after it.
           if (rec.sawStamps) {
             // Authoritative: finish once every visible leaf has committed
             // its FULL ladder (ladderCompleteAt is the start of that window).
@@ -1006,6 +1027,10 @@ async function measureZarrLadderScenario(
             // infer completion from the count plateau (approximate — see
             // usedFallback).
             finish(false);
+            return;
+          }
+          if (now - loopStart > cfg.maxMs) {
+            finish(true);
             return;
           }
           debug.renderOnce();
