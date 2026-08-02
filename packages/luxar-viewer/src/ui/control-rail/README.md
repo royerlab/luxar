@@ -6,7 +6,7 @@
 
 The control rail is a slim, vertical activity rail docked to the left edge of the viewer canvas. Luxar's panels are otherwise entirely keyboard-triggered (H, N, R, L, P, etc.), which means a first-time visitor sees a bare canvas with no hint that controls exist. The rail solves that: one recognizable icon per panel, each with a tooltip showing its keyboard shortcut.
 
-**Design principle: no behavioral drift.** Every rail button fires the *exact same* command its keyboard shortcut triggers (via `InputHandler.getUiActions()`), so the rail never re-implements panel logic. It is purely a **visual discoverability layer** over the existing keyboard-driven architecture.
+**Design principle: no behavioral drift.** Every rail button fires the _exact same_ command its keyboard shortcut triggers (via `InputHandler.getUiActions()`), so the rail never re-implements panel logic. It is purely a **visual discoverability layer** over the existing keyboard-driven architecture.
 
 ## File Map
 
@@ -35,6 +35,7 @@ The main orchestrator. Owns:
 - **Overlay delegation** — opens flyouts/popovers via `RailOverlay` and re-syncs active-state when the overlay changes
 
 **Responsibilities**:
+
 - Construct buttons from `ControlRailItem[]`
 - Reflect live panel open/closed state (via `refresh()`)
 - Manage idle/wake/collapse/fullscreen/hint behaviors
@@ -42,6 +43,7 @@ The main orchestrator. Owns:
 - Reference-count the global `luxar-has-control-rail` body marker class (left-anchored panels offset to clear the rail)
 
 **Does NOT**:
+
 - Own panel logic (delegates to each item's `activate()` callback)
 - Own flyout/popover DOM (delegated to `RailOverlay`)
 
@@ -58,6 +60,7 @@ The flyout + panel-popover lifecycle coordinator. Owns:
 - **Viewport-change sync** — flyout tooltip flip (--up modifier) recalculates on resize/fullscreenchange while open
 
 **Public surface** (used by ControlRail):
+
 - `activeItem` — currently-open item (undefined when none)
 - `toggleFlyout(item, btn)` / `togglePopover(item, btn)` — open/close entry points
 - `close()` — unconditional close
@@ -88,6 +91,7 @@ The flyout + panel-popover lifecycle coordinator. Owns:
 ### Icons (icons.ts)
 
 `RAIL_ICONS: Record<string, string>` — inline SVG map. Every icon:
+
 - 24×24 viewBox
 - `currentColor` stroke (theme-aware)
 - `aria-hidden="true"` (decorative)
@@ -125,6 +129,7 @@ const rail = new ControlRail(items: ControlRailItem[], footer?: HTMLElement);
 **Triggers**: document click, keydown, `luxar-layers-changed`, `luxar-control-mode-changed`, overlay open/close, fullscreen change.
 
 **Flow** (rAF-debounced via `scheduleRefresh()`):
+
 1. For each item:
    - Call `item.render(btn)` (if present) to sync dynamic icon/label (e.g. Navigation mode)
    - Evaluate `item.disabled()` (if present); set native `disabled` attribute when true

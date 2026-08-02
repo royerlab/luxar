@@ -335,8 +335,7 @@ export function getActiveSortedIndexAttribute(
   geometry: THREE.InstancedBufferGeometry
 ): THREE.InstancedBufferAttribute | undefined {
   return geometry.getAttribute(SLOT_ATTRIBUTE_NAMES[activeSortedIndexSlot(geometry)]) as
-    | THREE.InstancedBufferAttribute
-    | undefined;
+    THREE.InstancedBufferAttribute | undefined;
 }
 
 /** The ordering attribute a new ordering streams into (never drawn). */

@@ -170,16 +170,16 @@ control.
 
 ## Files
 
-| File                                       | Purpose                                                                                                             |
-| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------- |
+| File                                       | Purpose                                                                                                                          |
+| ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
 | `layer-state.ts`                           | `LayerStateManager`, selection logic; re-exports `computeUniforms` / `computeDisplayRange` (now in `rendering/display-range.ts`) |
-| `layers-panel.ts`                          | `LayersPanel` class — panel/list DOM + lifecycle; facade over controls + apply                                      |
-| `layer-controls.ts`                        | `LayerControls` — controls-section DOM (sliders, selects, live LOD readout)                                         |
-| `layer-apply.ts`                           | `LayerApplyEngine` — attr composition + material application per data-leaf                                          |
-| `luxar-material.ts`                        | `LuxarMaterial` interface, `isColormapActive` / `applyColorAdjustments` routing                                     |
-| `range-slider.ts`                          | `RangeSlider` — dual-thumb input component with editable / scrollable bound labels                                  |
-| `labeled-slider.ts`                        | `LabeledSlider` — single-thumb labeled input component (gamma, opacity, absorption); `linear` or `log` track        |
-| `absorption-range.ts`                      | `absorptionBoundsForNode` / `absorptionSliderRange` / `formatAbsorption` — per-layer κ track bounds (κ is 1/length) |
-| `attrs-utils.ts`                           | `clampGamma`, `getBlendingState`, `liveLayerAttrs` — pure helpers (no DOM)                                          |
-| `../layers.ts`                             | Public entrypoint — re-exports the layers surface                                                                   |
-| `../../styles/components/layers-panel.css` | Themed CSS styles                                                                                                   |
+| `layers-panel.ts`                          | `LayersPanel` class — panel/list DOM + lifecycle; facade over controls + apply                                                   |
+| `layer-controls.ts`                        | `LayerControls` — controls-section DOM (sliders, selects, live LOD readout)                                                      |
+| `layer-apply.ts`                           | `LayerApplyEngine` — attr composition + material application per data-leaf                                                       |
+| `luxar-material.ts`                        | `LuxarMaterial` interface, `isColormapActive` / `applyColorAdjustments` routing                                                  |
+| `range-slider.ts`                          | `RangeSlider` — dual-thumb input component with editable / scrollable bound labels                                               |
+| `labeled-slider.ts`                        | `LabeledSlider` — single-thumb labeled input component (gamma, opacity, absorption); `linear` or `log` track                     |
+| `absorption-range.ts`                      | `absorptionBoundsForNode` / `absorptionSliderRange` / `formatAbsorption` — per-layer κ track bounds (κ is 1/length)              |
+| `attrs-utils.ts`                           | `clampGamma`, `getBlendingState`, `liveLayerAttrs` — pure helpers (no DOM)                                                       |
+| `../layers.ts`                             | Public entrypoint — re-exports the layers surface                                                                                |
+| `../../styles/components/layers-panel.css` | Themed CSS styles                                                                                                                |

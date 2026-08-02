@@ -1,0 +1,21 @@
+# Generated / build output — never format these.
+# Prettier walks src by default (see the "format"/"check:format" scripts), and
+# without this file it reformats cargo's fingerprint JSON under the Rust target
+# dir, which reappears on every `cargo build`.
+
+# Rust / wasm build artifacts
+src/wasm/rust/target/
+public/wasm/
+
+# Bundler and tooling output
+dist/
+coverage/
+docs/
+
+# Test and Playwright output
+playwright-report/
+test-results/
+test-results-perf/
+
+# Lockfile (pnpm owns its formatting)
+pnpm-lock.yaml

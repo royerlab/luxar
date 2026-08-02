@@ -143,8 +143,7 @@ function synthesizeSceneDimensionsFromNode(
   const a = attrs as Record<string, unknown> | undefined;
   if (!a) return undefined;
   const bounds = (a.position_bounds ?? a.center_bounds) as
-    | { min?: number[]; max?: number[] }
-    | undefined;
+    { min?: number[]; max?: number[] } | undefined;
   const ndim =
     typeof a.ndim === 'number'
       ? a.ndim
@@ -332,8 +331,7 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
   const rootBounds =
     sceneAttrs?.position_bounds ??
     ((sceneAttrs as Record<string, unknown>)?.center_bounds as
-      | typeof sceneAttrs.position_bounds
-      | undefined);
+      typeof sceneAttrs.position_bounds | undefined);
   if (rootBounds) {
     rootGroup.userData.positionBounds = rootBounds;
     log.info(

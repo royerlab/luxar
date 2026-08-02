@@ -245,8 +245,7 @@ function readPositionBounds(childAttrs: SceneNode['attrs']): {
   // equivalent (same shape, same semantics) — accept either so we
   // work for any leaf type.
   const raw = (attrs.position_bounds ?? attrs.center_bounds) as
-    | { min?: unknown; max?: unknown }
-    | undefined;
+    { min?: unknown; max?: unknown } | undefined;
   if (!raw) return EMPTY_BOUNDS;
   const min = raw.min;
   const max = raw.max;

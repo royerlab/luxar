@@ -131,8 +131,7 @@ test('line rendering: compare WebGL vs WebGPU FPS on line-heavy scenes', async (
       const api = dbg?.app?.sceneManager?.capabilities?.apiSurface ?? null;
       let visibleSegments = 0;
       const scene = dbg?.app?.sceneManager?.scene as
-        | { traverse?: (cb: (o: unknown) => void) => void }
-        | undefined;
+        { traverse?: (cb: (o: unknown) => void) => void } | undefined;
       scene?.traverse?.((obj: unknown) => {
         const o = obj as {
           userData?: { nodeType?: string };

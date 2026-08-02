@@ -788,8 +788,7 @@ describe('LayersPanel — LOD active-level dropdown', () => {
     panel.initFromScene(new THREE.Group(), makeLodSceneGraph());
     panel.show();
     const opts = perFrameOptions(animationController).get('layers-lod-status') as
-      | { continuous?: boolean }
-      | undefined;
+      { continuous?: boolean } | undefined;
     // Either no options object, or continuous explicitly falsy — never true.
     expect(opts?.continuous ?? false).toBe(false);
   });

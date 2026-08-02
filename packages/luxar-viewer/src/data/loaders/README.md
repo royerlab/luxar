@@ -351,7 +351,7 @@ loadTime)` (rolling-mean update of `loads` / `elementsLoaded` /
   success and error paths so the active-query map never leaks), plus
   `makeInitialLoaderMetrics(type, path)` (the zeroed initial `LoaderMetrics`
   record every facade starts from), and `buildSpatialIndexMetrics(chunkCount,
-  chunkSize, queries, lastQueryCells, elementsLoaded)` (the chunk-index
+chunkSize, queries, lastQueryCells, elementsLoaded)` (the chunk-index
   telemetry snapshot all three facades attach as `metrics.spatialIndex` for
   the monitor advisor). Pure helpers, unit-tested without a zarr
   store, used by all three geometry facades. `elementsLoaded` is the

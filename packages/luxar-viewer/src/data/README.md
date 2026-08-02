@@ -1063,14 +1063,14 @@ location /data/ {
 
 ### Main API (zarr-loader.ts)
 
-| Function                                                  | Description                                                                        |
-| --------------------------------------------------------- | ---------------------------------------------------------------------------------- |
-| `loadScene(url, config?, loaderId?)`                      | Load complete Zarr dataset with chunk-based indexing                               |
-| `updateView(viewState, loaderId?)`                        | Update all points for new view state                                               |
-| `updateSceneForDimensions(dims, scene, loaderId?, opts?)` | Update scene when navigating dimensions (opts.frameBudgetMs = playback LOD budget) |
+| Function                                                  | Description                                                                                                                                      |
+| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `loadScene(url, config?, loaderId?)`                      | Load complete Zarr dataset with chunk-based indexing                                                                                             |
+| `updateView(viewState, loaderId?)`                        | Update all points for new view state                                                                                                             |
+| `updateSceneForDimensions(dims, scene, loaderId?, opts?)` | Update scene when navigating dimensions (opts.frameBudgetMs = playback LOD budget)                                                               |
 | `prefetchSceneForDimensions(dims, scene, loaderId, opts)` | Fire-and-forget t+1 slice prefetch for a PREDICTED dimension state (playback) — routes to `SceneLoader.prefetchSlice`, never moves the real view |
-| `releasePrefetchResources(loaderId?)`                     | Release the loader's t+1 prefetch resources (shadow loaders) when playback ends    |
-| `dispose(loaderId?)`                                      | Clean up resources (specific or all)                                               |
+| `releasePrefetchResources(loaderId?)`                     | Release the loader's t+1 prefetch resources (shadow loaders) when playback ends                                                                  |
+| `dispose(loaderId?)`                                      | Clean up resources (specific or all)                                                                                                             |
 
 Cache inspection and clearing are not on the `zarr-loader.ts` surface;
 get the loader via `SceneLoaderManager.getDefaultLoader()` (or
@@ -1079,25 +1079,25 @@ get the loader via `SceneLoaderManager.getDefaultLoader()` (or
 
 ### Instance Management (scene-loader-manager.ts)
 
-| Class/Method                               | Description                                                          |
-| ------------------------------------------ | -------------------------------------------------------------------- |
-| `SceneLoaderManager`                       | Singleton manager for SceneLoader instances                          |
-| `getInstance()`                            | Get the singleton manager instance                                   |
-| `createLoader(id, config?, setAsDefault?)` | Create a new loader instance                                         |
+| Class/Method                                    | Description                                                                                    |
+| ----------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `SceneLoaderManager`                            | Singleton manager for SceneLoader instances                                                    |
+| `getInstance()`                                 | Get the singleton manager instance                                                             |
+| `createLoader(id, config?, setAsDefault?)`      | Create a new loader instance                                                                   |
 | `createLoaderAsync(id, config?, setAsDefault?)` | Like `createLoader` but awaits the previous same-ID loader's full disposal (dataset switches). |
-| `getLoader(id)`                            | Get a specific loader by ID                                          |
-| `getDefaultLoader()`                       | Get the default loader instance                                      |
-| `getAllLoaders()`                          | Get all active loader instances                                      |
-| `destroyLoader(id)`                        | Dispose and remove a specific loader (fire-and-forget).              |
-| `destroyLoaderAsync(id)`                   | Like `destroyLoader` but awaits full disposal (dataset switches).    |
-| `destroyAll()`                             | Dispose all loaders and reset manager (fire-and-forget).             |
-| `destroyAllAsync()`                        | Like `destroyAll` but awaits every loader's `dispose()` to settle.   |
-| `hasLoader(id)` / `getLoaderCount()`       | Lookup and count helpers for the loader registry.                    |
-| `setMonitorFactory(factory)`               | Inject a `SceneLoaderMonitorFactory` (called from `core/app.ts`).    |
-| `setLODGroupRegistryFactory(factory)`      | Inject the LOD-group registry factory (app init pipeline owns SceneManager + camera). |
-| `setRequestRender(callback)`               | Inject the render-loop wake-up forwarded to every created loader.    |
-| `getProfiler()`                            | Return the shared `UpdateProfiler` singleton.                        |
-| `disposeInstance()`                        | Dispose the singleton (call from app dispose; preserved for re-init) |
+| `getLoader(id)`                                 | Get a specific loader by ID                                                                    |
+| `getDefaultLoader()`                            | Get the default loader instance                                                                |
+| `getAllLoaders()`                               | Get all active loader instances                                                                |
+| `destroyLoader(id)`                             | Dispose and remove a specific loader (fire-and-forget).                                        |
+| `destroyLoaderAsync(id)`                        | Like `destroyLoader` but awaits full disposal (dataset switches).                              |
+| `destroyAll()`                                  | Dispose all loaders and reset manager (fire-and-forget).                                       |
+| `destroyAllAsync()`                             | Like `destroyAll` but awaits every loader's `dispose()` to settle.                             |
+| `hasLoader(id)` / `getLoaderCount()`            | Lookup and count helpers for the loader registry.                                              |
+| `setMonitorFactory(factory)`                    | Inject a `SceneLoaderMonitorFactory` (called from `core/app.ts`).                              |
+| `setLODGroupRegistryFactory(factory)`           | Inject the LOD-group registry factory (app init pipeline owns SceneManager + camera).          |
+| `setRequestRender(callback)`                    | Inject the render-loop wake-up forwarded to every created loader.                              |
+| `getProfiler()`                                 | Return the shared `UpdateProfiler` singleton.                                                  |
+| `disposeInstance()`                             | Dispose the singleton (call from app dispose; preserved for re-init)                           |
 
 ### Scene Loading (scene-loader.ts)
 

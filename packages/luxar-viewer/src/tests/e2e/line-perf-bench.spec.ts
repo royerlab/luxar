@@ -303,8 +303,7 @@ async function measureScenario(
     const isWebGLBackend = dbg?.renderer?.backend?.isWebGLBackend === true;
     let visibleSegments = 0;
     const scene = dbg?.app?.sceneManager?.scene as
-      | { traverse?: (cb: (o: unknown) => void) => void }
-      | undefined;
+      { traverse?: (cb: (o: unknown) => void) => void } | undefined;
     scene?.traverse?.((obj: unknown) => {
       const o = obj as {
         userData?: { nodeType?: string; synthetic?: boolean };

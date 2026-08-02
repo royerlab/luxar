@@ -62,14 +62,14 @@ range-loader/
 Encoding detection follows the same priority order as the Python encoder
 (`detect-encoding.ts`):
 
-| Encoding      | Loader            | Stored form                              | Decode                                                         |
-| ------------- | ----------------- | ---------------------------------------- | -------------------------------------------------------------- |
-| `broadcasted` | `loadBroadcasted` | single value + repeat count              | Replicate one value across all items (`elementsPerItem` wide). |
-| `array_ref`   | `loadArrayRef`    | reference to another array               | Must be pre-resolved upstream — reaching the loader throws.    |
-| `lut`         | `loadLUT`         | small `uint8`/`uint16` indices + palette | Map each index through the LUT (`row` or `scalar` mode).       |
-| `quantized`   | `loadQuantized`   | `uint8`/`uint16` quantized values        | Dequantize via bounds (linear) or `maxLog` (log-space).        |
+| Encoding      | Loader            | Stored form                              | Decode                                                                                    |
+| ------------- | ----------------- | ---------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `broadcasted` | `loadBroadcasted` | single value + repeat count              | Replicate one value across all items (`elementsPerItem` wide).                            |
+| `array_ref`   | `loadArrayRef`    | reference to another array               | Must be pre-resolved upstream — reaching the loader throws.                               |
+| `lut`         | `loadLUT`         | small `uint8`/`uint16` indices + palette | Map each index through the LUT (`row` or `scalar` mode).                                  |
+| `quantized`   | `loadQuantized`   | `uint8`/`uint16` quantized values        | Dequantize via bounds (linear) or `maxLog` (log-space).                                   |
 | `perchannel`  | `loadPerChannel`  | `*_perchannel_*` uint8/uint16 levels     | Per-column dequant via `col_lo`/`col_hi` (log / signed-log / linear / geolog) to float32. |
-| `direct`      | `loadDirect`      | raw values in any numeric dtype          | Slice the requested ranges, copy preserving the output dtype.  |
+| `direct`      | `loadDirect`      | raw values in any numeric dtype          | Slice the requested ranges, copy preserving the output dtype.                             |
 
 `direct` is also the fallback when an array has no `encoding` metadata.
 
