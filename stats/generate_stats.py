@@ -627,7 +627,25 @@ def _empty_test_section() -> dict[str, Any]:
         "test_passed": 0,
         "test_failed": 0,
         "coverage_percent": 0.0,
+        # Structured failure signal for a REQUESTED-but-incomplete measurement.
+        # `incomplete` is a human-readable reason (or None when complete);
+        # `incomplete_kind` is one of "timeout" / "tool_missing" / "coverage" /
+        # "run_failed" so `validate_measurements` can gate coverage-only
+        # failures on `run_coverage`. See `_mark_incomplete`.
+        "incomplete": None,
+        "incomplete_kind": None,
     }
+
+
+def _mark_incomplete(section: dict[str, Any], kind: str, reason: str) -> None:
+    """Record a failure signal, preserving the root cause.
+
+    The first signal wins: a later coverage check must never overwrite an
+    earlier timeout / tool-missing reason (one reason per section).
+    """
+    if section.get("incomplete") is None:
+        section["incomplete"] = reason
+        section["incomplete_kind"] = kind
 
 
 def collect_test_file_counts(root: Path) -> dict[str, Any]:
@@ -662,7 +680,14 @@ def get_test_statistics(
     test_stats: dict[str, Any] = {
         "python": _empty_test_section(),
         "typescript": _empty_test_section(),
-        "rust": {"test_files": 0, "test_count": 0, "test_passed": 0, "test_failed": 0},
+        "rust": {
+            "test_files": 0,
+            "test_count": 0,
+            "test_passed": 0,
+            "test_failed": 0,
+            "incomplete": None,
+            "incomplete_kind": None,
+        },
         "e2e": {"test_files": 0, "test_count": 0},
         "error": None,
     }
@@ -726,9 +751,13 @@ def _run_python_tests(
                         break
         except FileNotFoundError:
             aprint("hatch not found; skipping Python test collection")
+            _mark_incomplete(test_stats["python"], "tool_missing", "hatch not found")
             return
         except subprocess.TimeoutExpired:
             aprint("Python test collection timed out")
+            _mark_incomplete(
+                test_stats["python"], "timeout", "test collection timed out"
+            )
             return
         except Exception as e:
             aprint(f"Python test collection failed: {e}")
@@ -754,9 +783,13 @@ def _run_python_tests(
         except subprocess.TimeoutExpired:
             aprint("Python test run timed out after 90 minutes")
             test_stats["python"]["timed_out"] = True
+            _mark_incomplete(
+                test_stats["python"], "timeout", "test run timed out after 90 minutes"
+            )
             return
         except FileNotFoundError:
             aprint("hatch not found; skipping Python test run")
+            _mark_incomplete(test_stats["python"], "tool_missing", "hatch not found")
             return
 
         for line in (result.stdout + "\n" + result.stderr).split("\n"):
@@ -775,6 +808,27 @@ def _run_python_tests(
             if m:
                 test_stats["python"]["test_failed"] = int(m.group(1))
 
+        # pytest: 0 = all passed, 1 = tests ran but some failed — both are COMPLETE
+        # measurements. Any other code (2 interrupted, 3 internal error, 4 usage,
+        # 5 no tests collected) means the run produced no trustworthy numbers.
+        if result.returncode not in (0, 1):
+            _mark_incomplete(
+                test_stats["python"],
+                "run_failed",
+                f"test run exited with code {result.returncode} (no measurement produced)",
+            )
+
+        # Coverage was requested but the run produced none (0.0 default): the
+        # weighted headline would silently drop Python. Flag it — but only if
+        # the run otherwise completed (an earlier timeout / tool-missing signal
+        # is the root cause and already recorded).
+        if run_coverage and test_stats["python"]["coverage_percent"] == 0.0:
+            _mark_incomplete(
+                test_stats["python"],
+                "coverage",
+                "coverage requested but none was produced",
+            )
+
 
 def _run_typescript_tests(
     root: Path, test_stats: dict[str, Any], *, run_coverage: bool
@@ -792,6 +846,15 @@ def _run_typescript_tests(
         ]
         if run_coverage:
             cmd.insert(3, "--coverage")
+            # Delete any prior coverage summary first: a crashed run leaves the
+            # OLD file in place, which would then launder as fresh coverage and
+            # pass the freshness check below. Removing it means "no fresh
+            # coverage" is detectable as an absent file.
+            stale_summary = viewer / "coverage" / "coverage-summary.json"
+            try:
+                stale_summary.unlink(missing_ok=True)
+            except OSError as e:
+                aprint(f"Could not remove stale coverage summary: {e}")
         aprint(f"Running: {' '.join(cmd)}")
         try:
             result = subprocess.run(
@@ -803,9 +866,11 @@ def _run_typescript_tests(
             )
         except FileNotFoundError:
             aprint("npx not found; skipping TypeScript test run")
+            _mark_incomplete(test_stats["typescript"], "tool_missing", "npx not found")
             return
         except subprocess.TimeoutExpired:
             aprint("TypeScript test run timed out")
+            _mark_incomplete(test_stats["typescript"], "timeout", "test run timed out")
             return
 
         for line in (result.stdout + "\n" + result.stderr).split("\n"):
@@ -821,6 +886,16 @@ def _run_typescript_tests(
                     test_stats["typescript"]["test_failed"] = int(fm.group(1))
                 break
 
+        # vitest: 0 = pass, 1 = test failures (both complete). Other nonzero = a
+        # crash/config error that produced no fresh numbers — guard it here, before
+        # trusting coverage-summary.json.
+        if result.returncode not in (0, 1):
+            _mark_incomplete(
+                test_stats["typescript"],
+                "run_failed",
+                f"test run exited with code {result.returncode} (no measurement produced)",
+            )
+
         if run_coverage:
             cov_json = viewer / "coverage" / "coverage-summary.json"
             if cov_json.exists():
@@ -832,6 +907,15 @@ def _run_typescript_tests(
                         aprint(f"Coverage (JSON): {pct}%")
                 except (OSError, ValueError) as e:
                     aprint(f"Could not read coverage JSON: {e}")
+
+            # Requested coverage never materialized (0.0 default) — flag it so
+            # the weighted headline can't silently drop TypeScript.
+            if test_stats["typescript"]["coverage_percent"] == 0.0:
+                _mark_incomplete(
+                    test_stats["typescript"],
+                    "coverage",
+                    "coverage requested but none was produced",
+                )
 
 
 def _run_rust_tests(root: Path, test_stats: dict[str, Any]) -> None:
@@ -849,9 +933,11 @@ def _run_rust_tests(root: Path, test_stats: dict[str, Any]) -> None:
             )
         except FileNotFoundError:
             aprint("cargo not found; skipping Rust tests")
+            _mark_incomplete(test_stats["rust"], "tool_missing", "cargo not found")
             return
         except subprocess.TimeoutExpired:
             aprint("Rust test run timed out")
+            _mark_incomplete(test_stats["rust"], "timeout", "test run timed out")
             return
 
         passed = failed = 0
@@ -868,6 +954,56 @@ def _run_rust_tests(root: Path, test_stats: dict[str, Any]) -> None:
         test_stats["rust"]["test_failed"] = failed
         test_stats["rust"]["test_count"] = passed + failed
         aprint(f"Passed: {passed}, Failed: {failed}")
+
+        # cargo test returns 101 for BOTH test failures and compile errors, so the
+        # exit code alone can't tell them apart. A GENUINE failing run always
+        # parses `failed > 0`, so a nonzero exit with ZERO parsed failures
+        # unambiguously means the run crashed/failed to measure (compile error,
+        # segfault, or a later test binary aborting before printing its summary)
+        # rather than a real run whose tests merely failed. `passed + failed == 0`
+        # would miss the partial-crash case where an earlier binary already
+        # reported passes; keying on `failed == 0` catches it.
+        if result.returncode != 0 and failed == 0:
+            _mark_incomplete(
+                test_stats["rust"],
+                "run_failed",
+                f"test run exited with code {result.returncode} and produced no results",
+            )
+
+
+def validate_measurements(
+    test_stats: dict[str, Any], *, run_tests: bool, run_coverage: bool
+) -> list[str]:
+    """List every REQUESTED-but-incomplete test/coverage measurement.
+
+    A partial number published as if it were complete is worse than no update:
+    a timed-out Python coverage run turns a genuine 84% into a headline 47%
+    once `weighted_coverage` drops the language that came back 0.0. This gate
+    lets `main` refuse to overwrite the reports when a requested measurement
+    did not actually complete.
+
+    - `run_tests=False` (`--no-tests`): nothing was requested, so nothing can
+      be incomplete — returns [].
+    - `run_tests=True`: reports any section whose test run timed out or whose
+      toolchain was missing.
+    - Coverage failures (a coverage-bearing language produced no fresh
+      coverage) count only when BOTH `run_tests` and `run_coverage` are True;
+      under `--no-coverage` a 0.0 coverage is legitimate.
+    """
+    if not run_tests:
+        return []
+
+    problems: list[str] = []
+    for lang in ("python", "typescript", "rust"):
+        section = test_stats.get(lang, {})
+        reason = section.get("incomplete")
+        if reason is None:
+            continue
+        # A coverage-only failure is legitimate under --no-coverage.
+        if section.get("incomplete_kind") == "coverage" and not run_coverage:
+            continue
+        problems.append(f"{lang}: {reason}")
+    return problems
 
 
 # ---------------------------------------------------------------------------
@@ -1075,9 +1211,7 @@ def _fmt_size(bytes_count: int) -> str:
     return f"{bytes_count} B"
 
 
-def weighted_coverage(
-    py_cov: float, py_loc: int, ts_cov: float, ts_loc: int
-) -> float:
+def weighted_coverage(py_cov: float, py_loc: int, ts_cov: float, ts_loc: int) -> float:
     """LOC-weighted coverage across Python and TypeScript.
 
     A language whose coverage is 0.0 is treated as UNMEASURED and left out of
@@ -1146,9 +1280,7 @@ def generate_html_report(stats: dict[str, Any], output_file: Path) -> None:
 
     py_cov = tests["python"]["coverage_percent"]
     ts_cov = tests["typescript"]["coverage_percent"]
-    weighted_cov = weighted_coverage(
-        py_cov, py["code_lines"], ts_cov, ts["code_lines"]
-    )
+    weighted_cov = weighted_coverage(py_cov, py["code_lines"], ts_cov, ts["code_lines"])
 
     git = stats["git"]
     extras = stats["extras"]
@@ -2057,6 +2189,28 @@ def main() -> None:
                 project_root,
                 run_tests=not args.no_tests,
                 run_coverage=not args.no_coverage,
+            )
+
+        # A requested test/coverage measurement that timed out, could not start,
+        # or produced no fresh coverage would publish a misleading partial
+        # number as if it were complete (weighted_coverage silently drops a
+        # language that came back 0.0). Fail loudly and leave the existing
+        # reports untouched — a stale report beats a zeroed one.
+        problems = validate_measurements(
+            all_stats["tests"],
+            run_tests=not args.no_tests,
+            run_coverage=not args.no_coverage,
+        )
+        if problems:
+            problem_lines = "\n".join(f"  - {p}" for p in problems)
+            raise SystemExit(
+                "Refusing to write reports: the following requested "
+                "measurements did not complete, so publishing would replace "
+                "real numbers with a misleading partial result:\n"
+                f"{problem_lines}\n"
+                "The existing reports were left untouched (a stale report beats "
+                "a zeroed one). Re-run once the toolchain is available and the "
+                "suites finish within their time budget."
             )
 
         with asection("Git statistics"):
