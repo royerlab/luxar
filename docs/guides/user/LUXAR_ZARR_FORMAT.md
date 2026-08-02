@@ -935,6 +935,7 @@ The spatial index stores metadata in the points group `.zattrs` and chunk bounds
 {
   "type": "points",
   "n_points": 100000,
+  "ndim": 3,                      // dimensionality of `positions`
   "ordering": "hilbert",          // or "morton" - space-filling curve algorithm (default: hilbert)
   "ordering_dims": [0, 1, 2],     // Indices of spatial dimensions (curve-ordered)
   "slice_dims": [3],              // Indices of discrete dimensions (lexicographic)
@@ -945,6 +946,26 @@ The spatial index stores metadata in the points group `.zattrs` and chunk bounds
   "max_radius": 2.5               // Maximum point radius in dataset
 }
 ```
+
+#### Ordering-metadata shape: flat vs namespaced
+
+A geometry type with **one** ordering writes the ordering keys **flat** on the
+group (`ordering`, `ordering_dims`, `slice_dims`, `ordering_min`,
+`ordering_max`, `ordering_bits_per_dim`, `chunk_size`) — Points and GSplats
+both do this, with identical key sets.
+
+A type with **more than one** ordering namespaces each into its own nested
+object instead, keeping a flat top-level `ordering` naming the curve. Lines is
+the only such type today: it indexes vertices in D-space and segments in
+(2×D)-space, so it writes `vertex_ordering` and `segment_ordering`.
+
+Follow the same rule for any new geometry type — flat for a single ordering,
+namespaced objects for several. `ordering` itself always stays flat, so a
+reader can identify the curve without knowing the type's index count.
+
+An **absent** `ordering` attr means the same as `"none"`: the node is
+unordered. Producers may omit it rather than writing `"none"` explicitly, so
+consumers must treat missing and `"none"` identically.
 
 #### chunk_bounds/ Array
 - **Shape:** `(num_chunks, D, 2)` where D = number of dimensions
