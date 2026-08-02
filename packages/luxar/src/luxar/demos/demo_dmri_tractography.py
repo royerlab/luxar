@@ -135,6 +135,7 @@ DEMO_META = {
 
 import gzip
 import io
+import json
 import zipfile
 from pathlib import Path
 from typing import Final
@@ -196,6 +197,11 @@ DEFAULT_POINTS: Final = 28
 #: At 6,000 x 28 a node peaks at 168,000 vertices / 162,000 segments, clearing
 #: both with margin. Only ~16 of the 87 bundles are large enough to be capped.
 DEFAULT_PER_BUNDLE: Final = 6_000
+
+#: The tighter of the two limits above: ``check_demo_ladders`` fails an
+#: un-laddered lines leaf past this, so ``points x per_bundle`` must stay under
+#: it. Exceeded only by an explicit ``--points`` / ``--per-bundle`` override.
+LADDER_GATE_VERTICES: Final = 200_000
 
 #: Deterministic subsample of the over-large bundles, so a rebuild is identical.
 SUBSAMPLE_SEED: Final = 0
@@ -262,12 +268,47 @@ PER_BUNDLE = parse_int_arg("per-bundle", DEFAULT_PER_BUNDLE)
 
 CACHE_DIR: Final = Path.home() / ".cache" / "luxar" / DEMO_NAME
 
+#: What the scene currently on disk was built from. The output stem is fixed
+#: (the registry declares one output per demo), so existence alone cannot tell a
+#: default scene from one built with ``--points`` / ``--per-bundle``.
+SCENE_MARKER: Final = CACHE_DIR / "scene_build.json"
+
 Arbol.max_depth = 4
 
 
 # =============================================================================
 # Pure helpers (unit-tested; no network / no IO)
 # =============================================================================
+
+
+def check_sizing(points: int, per_bundle: int) -> str | None:
+    """Validate the two sizing knobs, up front rather than 588 MB later.
+
+    Args:
+        points: ``--points``, vertices per resampled streamline.
+        per_bundle: ``--per-bundle``, streamlines kept per tract.
+
+    Returns:
+        A warning to print when the pair exceeds the un-laddered leaf gate
+        (still built — the override is deliberate), else ``None``.
+
+    Raises:
+        ValueError: For values that cannot produce geometry at all.
+    """
+    if points < 2:
+        raise ValueError(
+            f"--points must be >= 2 (a segment needs two ends), got {points}"
+        )
+    if per_bundle < 1:
+        raise ValueError(f"--per-bundle must be >= 1, got {per_bundle}")
+    if points * per_bundle > LADDER_GATE_VERTICES:
+        return (
+            f"--points {points} x --per-bundle {per_bundle} = "
+            f"{points * per_bundle:,} vertices in the largest node, over the "
+            f"{LADDER_GATE_VERTICES:,}-vertex un-laddered leaf gate: the scene "
+            "will render but `hatch run check` will fail on it."
+        )
+    return None
 
 
 def resample_polyline(points: np.ndarray, n: int) -> np.ndarray:
@@ -637,14 +678,44 @@ def build_scene(bundles: dict, output_path: Path, *, points: int) -> Path:
     return output_path
 
 
+def scene_marker_matches(marker: Path, *, points: int, per_bundle: int) -> bool:
+    """Whether the scene on disk was built with these sizing knobs.
+
+    A missing, unreadable or stale marker reads as "no", which costs one
+    rebuild — the safe direction. The alternative (existence alone) silently
+    serves ``--points 20`` geometry to a later default run, and vice versa.
+    """
+    try:
+        record = json.loads(marker.read_text())
+    except (OSError, ValueError):
+        return False
+    return record.get("points") == points and record.get("per_bundle") == per_bundle
+
+
 def load_or_build_scene(output_path: Path) -> Path:
-    """Return the built scene path, regenerating on a fresh system."""
-    if output_path.exists() and not RECOMPUTE:
+    """Return the built scene path, regenerating on a fresh system.
+
+    Reuse is keyed on the sizing knobs as well as on the file existing: the
+    scene path is fixed, so nothing else distinguishes a scene built at the
+    defaults from one built with ``--points`` / ``--per-bundle``.
+    """
+    if (
+        output_path.exists()
+        and not RECOMPUTE
+        and scene_marker_matches(
+            SCENE_MARKER, points=POINTS_PER_STREAMLINE, per_bundle=PER_BUNDLE
+        )
+    ):
         aprint(f"Using existing scene: {output_path}")
         return output_path
 
     bundles = load_or_build_bundles(per_bundle=PER_BUNDLE, points=POINTS_PER_STREAMLINE)
-    return build_scene(bundles, output_path, points=POINTS_PER_STREAMLINE)
+    scene_path = build_scene(bundles, output_path, points=POINTS_PER_STREAMLINE)
+    SCENE_MARKER.parent.mkdir(parents=True, exist_ok=True)
+    SCENE_MARKER.write_text(
+        json.dumps({"points": POINTS_PER_STREAMLINE, "per_bundle": PER_BUNDLE})
+    )
+    return scene_path
 
 
 # =============================================================================
@@ -665,6 +736,10 @@ def main() -> None:
         else:
             aprint("No scene found. Run without --serve-only first.")
         return
+
+    warning = check_sizing(POINTS_PER_STREAMLINE, PER_BUNDLE)
+    if warning:
+        aprint(f"WARNING: {warning}")
 
     scene_path = load_or_build_scene(output_path)
 

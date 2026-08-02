@@ -1,9 +1,11 @@
-"""Unit tests for the pure helpers in demo_dmri_tractography.
+"""Unit tests for demo_dmri_tractography.
 
-Exercises only the network-free / IO-free helpers (arc-length resampling,
-direction colouring, the RAS -> scene rotation, the indexed edge builder, and
-the deterministic subsampler). The demo is loaded by file path so importing it
-never triggers the module-level ``parse_demo_flags`` scan of pytest's argv.
+Exercises the network-free helpers (arc-length resampling, direction colouring,
+the RAS -> scene rotation, the indexed edge builder, the deterministic
+subsampler, the sizing/reuse gates) plus the scene authoring itself, on
+synthetic bundles — nothing here downloads the 588 MB atlas. The demo is loaded
+by file path so importing it never triggers the module-level
+``parse_demo_flags`` scan of pytest's argv.
 """
 
 from __future__ import annotations
@@ -14,6 +16,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+import zarr
 
 _DEMO_PATH = Path(__file__).resolve().parents[1] / "demo_dmri_tractography.py"
 
@@ -210,6 +213,60 @@ class TestSubsampleIndices:
         assert not np.array_equal(a, c)
 
 
+class TestCheckSizing:
+    def test_defaults_pass_without_a_warning(self) -> None:
+        assert (
+            _demo.check_sizing(_demo.DEFAULT_POINTS, _demo.DEFAULT_PER_BUNDLE) is None
+        )
+
+    @pytest.mark.parametrize("points,per_bundle", [(1, 6000), (0, 6000), (-3, 6000)])
+    def test_rejects_unusable_point_counts(self, points: int, per_bundle: int) -> None:
+        with pytest.raises(ValueError, match="--points"):
+            _demo.check_sizing(points, per_bundle)
+
+    @pytest.mark.parametrize("per_bundle", [0, -1])
+    def test_rejects_empty_bundles(self, per_bundle: int) -> None:
+        # Without this the empty selection only blows up much later, in the
+        # centroid of a zero-row array — after the 588 MB download.
+        with pytest.raises(ValueError, match="--per-bundle"):
+            _demo.check_sizing(_demo.DEFAULT_POINTS, per_bundle)
+
+    def test_warns_past_the_un_laddered_leaf_gate(self) -> None:
+        warning = _demo.check_sizing(28, 50_000)
+        assert warning is not None
+        assert "1,400,000" in warning
+
+
+class TestSceneMarker:
+    def test_missing_marker_forces_a_rebuild(self, tmp_path: Path) -> None:
+        assert not _demo.scene_marker_matches(
+            tmp_path / "absent.json", points=28, per_bundle=6000
+        )
+
+    def test_matching_marker_allows_reuse(self, tmp_path: Path) -> None:
+        marker = tmp_path / "scene_build.json"
+        marker.write_text('{"points": 28, "per_bundle": 6000}')
+        assert _demo.scene_marker_matches(marker, points=28, per_bundle=6000)
+
+    @pytest.mark.parametrize("points,per_bundle", [(20, 6000), (28, 3000), (20, 3000)])
+    def test_different_sizing_forces_a_rebuild(
+        self,
+        tmp_path: Path,
+        points: int,
+        per_bundle: int,
+    ) -> None:
+        marker = tmp_path / "scene_build.json"
+        marker.write_text('{"points": 28, "per_bundle": 6000}')
+        assert not _demo.scene_marker_matches(
+            marker, points=points, per_bundle=per_bundle
+        )
+
+    def test_corrupt_marker_forces_a_rebuild(self, tmp_path: Path) -> None:
+        marker = tmp_path / "scene_build.json"
+        marker.write_text("{not json")
+        assert not _demo.scene_marker_matches(marker, points=28, per_bundle=6000)
+
+
 class TestNodeBudget:
     """The two viewer limits the sizing constants exist to respect."""
 
@@ -219,6 +276,7 @@ class TestNodeBudget:
     TEXTURE_CAP_SEGMENTS = 682 * 4096
 
     def test_defaults_keep_a_node_under_both_limits(self) -> None:
+        assert _demo.LADDER_GATE_VERTICES == self.LADDER_GATE_VERTICES
         vertices = _demo.DEFAULT_PER_BUNDLE * _demo.DEFAULT_POINTS
         segments = _demo.DEFAULT_PER_BUNDLE * (_demo.DEFAULT_POINTS - 1)
         assert vertices < self.LADDER_GATE_VERTICES
@@ -232,3 +290,73 @@ class TestNodeBudget:
             "cerebellum",
             "cranial nerve",
         }
+
+
+class TestBuildScene:
+    """The authoring path, on synthetic bundles — no atlas download needed.
+
+    Everything above tests the helpers in isolation; this is the only check
+    that what they feed ``add_lines`` actually survives the compiler: a
+    ``kind=lod`` group per tract whose finest child is the indexed Lines node
+    (edges in range, one colour per vertex, no orphans), with the tuned
+    compositing on the group where the Layers panel and attribute composition
+    expect it.
+    """
+
+    POINTS = 6
+    PER_BUNDLE = 4
+
+    def _bundles(self) -> dict:
+        rng = np.random.default_rng(0)
+        bundles: dict = {"names": [], "divisions": [], "positions": [], "colors": []}
+        for i, division in enumerate(_demo.DIVISIONS):
+            paths = np.cumsum(
+                rng.normal(size=(self.PER_BUNDLE, self.POINTS, 3)), axis=1
+            )
+            bundles["names"].append(f"tract_{i}")
+            bundles["divisions"].append(division)
+            bundles["positions"].append(_demo.ras_to_scene(paths).reshape(-1, 3))
+            bundles["colors"].append(_demo.direction_colors(paths).reshape(-1, 3))
+        return bundles
+
+    def test_every_bundle_becomes_an_indexed_node(self, tmp_path: Path) -> None:
+        output = tmp_path / "tractography.luxar.zarr"
+        _demo.build_scene(self._bundles(), output, points=self.POINTS)
+
+        root = zarr.open_group(output, mode="r")
+        for i, division in enumerate(_demo.DIVISIONS):
+            # The group name is the division with its space replaced.
+            tract = root[f"{division.replace(' ', '_')}/tract_{i}"]
+
+            # Compositing rides on the lod wrapper, not the levels: opacity and
+            # intensity multiply root-to-leaf and blending takes the nearest
+            # ancestor, so the authored look reaches every level from here — and
+            # `layer` here is what gives the Layers panel one row per tract.
+            assert tract.attrs["kind"] == "lod"
+            assert tract.attrs["layer"] is True
+            assert tract.attrs["blending_mode"] == "additive"
+            assert tract.attrs["opacity"] == _demo.LINE_OPACITY
+            assert tract.attrs["intensity"] == _demo.LINE_INTENSITY
+
+            leaves = [
+                child
+                for _, child in tract.groups()
+                if "original_line_type" in child.attrs
+            ]
+            assert len(leaves) == 1, "expected exactly one Lines level"
+            node = leaves[0]
+            n_vertices = int(node.attrs["n_vertices"])
+            assert node.attrs["original_line_type"] == "indexed"
+            assert n_vertices == self.PER_BUNDLE * self.POINTS
+            assert node["vertices"].shape[0] == n_vertices
+            assert node["colors"].shape[0] == n_vertices
+
+            edges = np.asarray(node["segments"][:])
+            assert edges.ndim == 2 and edges.shape[1] == 2
+            assert len(edges) == self.PER_BUNDLE * (self.POINTS - 1)
+            assert int(edges.min()) >= 0
+            assert int(edges.max()) < n_vertices
+            degree = np.bincount(edges.reshape(-1), minlength=n_vertices)
+            assert np.all(degree > 0), "orphaned vertex"
+            # Interior joints share an index; only the two ends have degree 1.
+            assert int((degree == 1).sum()) == 2 * self.PER_BUNDLE
