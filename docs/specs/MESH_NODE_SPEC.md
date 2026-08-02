@@ -3,6 +3,19 @@
 **Status:** Proposed
 **Scope:** A fourth first-class geometry type — `mesh` — symmetric to Points, Lines and GSplats.
 **Non-goals:** LOD/decimation, spatial indexing, exact nD triangle clipping. See [§9](#9-explicitly-out-of-scope).
+**Target data:** isosurfaces and segmentation boundaries — 3D geometry whose hidden dimensions are
+discrete (time, channel). This is a deliberate narrowing; it is what makes §5, §7 and §9 defensible.
+
+> ## The groundwork this spec called for has already landed
+>
+> An earlier draft proposed a preparatory track — single-source the geometry vocabulary, collapse the
+> loader registry, table-drive the hand-written dispatch — as a precondition for adding a fourth type
+> cheaply. That work shipped **before** any mesh code, in three PRs: #1079 (vocabulary + registry),
+> #1099 (uniform per-type pipeline + descriptor table) and #1150 (metadata symmetry + dead-code
+> removal).
+>
+> This document is therefore now **only** the mesh node, written against the post-consolidation
+> architecture. §10 records what that consolidation means for a fourth type instead of arguing for it.
 
 ---
 
@@ -88,8 +101,14 @@ radius-scale uniform.
 
 ```yaml
 # format-contract/contract.yaml
-node_types: ["scene", "group", "points", "lines", "gsplats", "mesh"]
+node_types:     ["scene", "group", "points", "lines", "gsplats", "mesh"]
+geometry_types: ["points", "lines", "gsplats", "mesh"]   # the leaf subset
 ```
+
+**Both** lists must be updated. `geometry_types` (added in #1079) is the leaf subset that keys
+per-geometry dispatch, and the generator enforces that it is non-empty, a subset of `node_types`, free
+of the container types, and duplicate-free — so adding `mesh` to only one of the two fails
+`check-contract` with a named error rather than drifting silently.
 
 Then `make gen-contract` regenerates both projections
 (`packages/luxar/src/luxar/typing_utils/_format_contract.py` and
@@ -576,8 +595,9 @@ consistent with the measure-first performance doctrine.
 
 ## 8. Integration checklist
 
-Adding a fourth type means touching every hardcoded dispatch site. There is no plugin registry — the
-registry holds three explicit `Map`s and `build-scene-graph` hardcodes the type union.
+Most of the *dispatch* plumbing is now table-driven (§10), so this list is dominated by genuinely
+new mesh code rather than by edits to existing branches. The items that remain hand-written are
+called out as such.
 
 **Python**
 
@@ -601,33 +621,39 @@ registry holds three explicit `Map`s and `build-scene-graph` hardcodes the type 
       `display_type="mesh"` that no viewer path can load. An explicit reject must be **added** to
       `compute_lod_display_type` (or to `Node.add_lod_group`) — this is a new guard, not a
       leave-mesh-out-of-an-existing-list edit. Cover it with a test asserting the raise.
-- [ ] `io/_compiler/finalize/lod_backfill.py:119` — `resolve()` returns early only for
-      `t in ("points", "lines", "gsplats")`; anything else falls through to "recurse into the finest
-      child". **A mesh leaf would take that branch**, and a leaf group's `keys()` lists its *arrays*
-      (verified: `['faces', 'vertices']` on zarr 2.18.7), so `resolve` would recurse into a zarr
-      `Array` — which has no `.keys()` (`walk` guards with `hasattr(child, "keys")` for exactly this
-      reason) — and raise a bare `AttributeError` during finalize.
-
-      This is the **failure mode of forgetting the LOD guard above**: instead of a clear "mesh is not
-      supported in LOD groups", the user gets an opaque crash deep in the compiler. Add `"mesh"` to the
-      leaf tuple at line 119 as defence in depth even though the guard should make it unreachable —
-      returning `"mesh"` lets the caller's `if resolved:` produce a coherent value rather than crash.
+- [x] `io/_compiler/finalize/lod_backfill.py` — **already handled by #1079.** `resolve()` now tests
+      `t in GEOMETRY_TYPES` instead of a hardcoded tuple, so `mesh` is recognised as a leaf the moment
+      it enters the contract, with no edit here. All four child-iteration sites also moved to
+      `group_keys()`, which removes the failure this spec previously described: a leaf group's
+      `keys()` lists its *arrays* (`['faces', 'vertices']`), so the old code could recurse into a zarr
+      `Array` and raise a bare `AttributeError` mid-finalize.
 
 **TypeScript**
 
 - [ ] `types/mesh.ts`, `types/index.ts`, `types/window.d.ts`, `data/data-loader-types.ts`
 - [ ] `types/data-monitor-types.ts` — **delete** the local `| 'mesh'` extension (now in the contract)
-- [ ] `data/scene-loader/loaders/loader-registry.ts` — 4th map + `getLoaderType` + `disposeAll`
-- [ ] `data/scene-loader/loaders/loader-factory.ts`, `nodes/load-scene-nodes.ts`,
-      `nodes/build-scene-graph.ts` (bare-leaf-root union), `nodes/build-ctx.ts`
+- [ ] `data/scene-loader/loaders/loader-registry.ts` — one line in `LoaderByKind`. The three parallel
+      maps became a single kind-keyed store in #1079; `getLoaderType` / `disposeAll` / the counters are
+      one implementation each. Omitting the entry is a **compile error**
+      (`Type 'mesh' cannot be used to index type 'LoaderByKind'`), not a silent gap
+- [ ] `data/scene-loader/geometry-descriptors.ts` — one row in `GEOMETRY_DESCRIPTORS`, carrying
+      `loadNode`, `applyPartialExtendTolerance`, `retryCommit` and the two loader factories. This is
+      the row that `load-scene-nodes`, `lifecycle/retry` and `prefetch/slice-prefetcher` all read, so
+      those three files need **no mesh edit at all**. A missing row fails the build with
+      `TS2741: Property 'mesh' is missing … required in type 'Record<GeometryTypeName, …>'`
+- [ ] `data/scene-loader/loaders/loader-factory.ts`, `nodes/build-scene-graph.ts`
+      (bare-leaf-root union), `nodes/build-ctx.ts` (the `processMeshData` / `commitMeshGeometry`
+      pair, matching the uniform shape #1099 gave all three existing types)
 - [ ] `data/scene-loader/monitor/monitor-wiring.ts`, `scene-graph-converter.ts`,
       `data/scene-loader-monitor-port.ts`
-- [ ] `data/scene-loader/lifecycle/retry.ts` — the retry chain dispatches on which loader owns the
-      path (`…else if (gsplatsLoader)`) and ends in `verifyAndClear('<type>')`. Without a mesh arm a
-      **failed mesh load can never be retried**, manually or on reconnect
-- [ ] `data/scene-loader/prefetch/slice-prefetcher.ts` — its `switch (kind)` builds a shadow loader per
-      type. Mesh has no meaningful slice prefetch in v1 (whole-node resident, §7), so mesh must be
-      **excluded explicitly** at the call site rather than left to fall through the switch
+- [x] `data/scene-loader/lifecycle/retry.ts` — **no edit needed.** The `else if (gsplatsLoader)` chain
+      became a descriptor lookup in #1099. The hazard this spec flagged — a missing arm meaning a
+      failed mesh load could never be retried, with nothing in the type system to say so — is now a
+      build failure at the descriptor table instead
+- [ ] `data/scene-loader/prefetch/slice-prefetcher.ts` — **no dispatch edit**, but mesh has no
+      meaningful slice prefetch in v1 (whole-node resident, §7). The prefetcher is driven by three
+      hardcoded `prefetchNode(path, 'points'|'lines'|'gsplats', …)` call sites, so mesh is excluded by
+      simply not adding a fourth — confirm that stays true rather than assuming it
 - [ ] `data/loaders/spatial-query/tolerance-computer.ts` — add the `mesh` arm to
       `computeHiddenDimTolerance` and `meshSlabTolerance` to `ToleranceOptions` (§5.2.1). Callers must
       pass `discreteRole: 'membership'`. **Do not** default the spatial arm to Lines' `0`
@@ -727,95 +753,64 @@ fix should be a separate four-type change so it isn't buried in the mesh diff.
 
 ---
 
-## 10. Architecture: a fourth hardcoded type, or a geometry registry?
+## 10. Architecture: what the consolidation changed for mesh
 
-Mesh is the forcing function for a question the codebase has been deferring. It deserves an explicit
-answer rather than a default.
+Mesh was the forcing function for a question the codebase had been deferring — whether a fourth type
+should be added to ~30 hand-written dispatch sites, or whether the dispatch should be table-driven
+first. An earlier draft of this section argued for the second answer. It shipped, before any mesh
+code, so this section now records the result rather than the argument.
 
-### 10.1 The evidence
+### 10.1 What landed
 
-**There is no registry — dispatch is hand-written per type.** Measured on the current tree:
-
-| Measure | Count |
+| PR | Change |
 |---|---|
-| Non-test viewer files containing all three of `'points'`, `'lines'`, `'gsplats'` | 36 |
-| Type-switch sites (`case 'lines'` / `=== 'lines'`) | 38 |
-| `LoaderRegistry` per-type members (3 Maps + register/unregister/lookup/dispose triads) | 14 |
+| #1079 | `geometry_types` added to `contract.yaml` and `GeometryKind` derived from it; the duplicate `GeometryType` union repointed; `LoaderRegistry`'s three parallel maps collapsed to one kind-keyed store; `lod_backfill` moved to `group_keys()` + `GEOMETRY_TYPES` |
+| #1099 | Points given the same `process`/`commit` pair as lines and gsplats, so `NodeBuildCtx` carries one uniform pair per kind; the three hand-written dispatch switches replaced by a single `Record<GeometryKind, GeometryDescriptor>` |
+| #1150 | Points metadata brought level with lines (`ndim`, `ordering`, `max_radius`, `has_spatial_index`); vestigial material caches and unused exports removed |
 
-`NodeBuildCtx` (`data/scene-loader/nodes/build-ctx.ts`) carries a **per-type method triad** —
-`processLinesData` / `commitLinesGeometry` / `releaseLazyLines`, and the points and gsplats
-equivalents. A fourth type adds a fourth set to the interface and to every implementer.
+### 10.2 What that means for a fourth type
 
-**But the seam already exists, and its docstring already declares this exact intent.**
-`data/data-loader-types.ts:172`:
+The vocabulary is now single-sourced from the format contract, so **adding `mesh` to
+`contract.yaml` propagates to every consumer**, and the places that must still be taught about it
+fail the build rather than going quiet:
 
-```ts
-/**
- * Tag identifying which of the three first-class geometry kinds a node
- * or handler operates on. Used by the per-type registry that replaces
- * switch/case dispatch on `geometry_type` strings in scene-loader.
- */
-export type GeometryKind = 'points' | 'lines' | 'gsplats';
-```
+- **Missing loader entry** → `Type 'mesh' cannot be used to index type 'LoaderByKind'`
+- **Missing descriptor row** → `TS2741: Property 'mesh' is missing … required in type
+  'Record<GeometryTypeName, GeometryDescriptor>'`
+- **Missing tolerance arm** → `TS2366: Function lacks ending return statement` in
+  `tolerance-computer.ts`
 
-The registry it describes was only partially built. Three consequences are visible today:
+That last category is the real gain. Before the consolidation, `lifecycle/retry.ts` expressed a
+per-type capability as *the presence of an `if`*: a kind with no arm there was not a compile error,
+it was a load that could never be retried, manually or on reconnect. Nothing in the type system said
+otherwise, and it was found only by reading. It is now a declared field on a row that must exist.
 
-1. **The vocabulary is duplicated.** `data/loaders/spatial-query/tolerance-computer.ts:34` declares
-   `export type GeometryType = 'points' | 'lines' | 'gsplats'` — the same concept under a second name,
-   with its own consumers. A fourth type must be added to **both**, and nothing enforces that.
-2. **Neither is derived from the format contract**, even though `contract.yaml` already single-sources
-   `NODE_TYPES` and `types/data-monitor-types.ts:9` already imports `NodeTypeName` from it. So the
-   geometry vocabulary can drift from the on-disk vocabulary silently.
-3. **`SceneGraphNodeType` had to locally extend the contract** (`NodeTypeName | 'mesh'`, §1.1) —
-   precisely the workaround a contract-derived vocabulary would make unnecessary.
+**Dispatch sites `mesh` therefore does not touch at all:** `load-scene-nodes.ts`, `lifecycle/retry.ts`,
+`prefetch/slice-prefetcher.ts`.
 
-**There is precedent for de-specializing.** When points and lines joined gsplats in depth sorting, the
-coordinator was deliberately made geometry-neutral — `noteGSplatsCommit` → `noteDepthSortCommit`,
-`noteGSplatsBlendingModeSwitch` → `noteDepthSortBlendingModeSwitch` — and order-dependence is now judged
-uniformly via `needsDepthSort(mode)` (`docs/guides/specs/GSPLAT_DEPTH_SORTING_SPEC.md` §237). The
-codebase's own answer, when a third type arrived, was to generalize the *shared machinery* while leaving
-the *genuinely different* parts specialized.
+### 10.3 What deliberately stayed specialized
 
-### 10.2 The options
+Not everything should be unified, and the consolidation did not try. Materials, geometry assembly,
+projection kernels and storage layout are genuinely different per type — §2.1 and §6 argue mesh
+differs from the other three *more* than they differ from each other. Forcing those behind one
+interface would be worse architecture, not better.
 
-| | Approach | Cost | Risk |
-|---|---|---|---|
-| **A** | Add mesh as a fourth hardcoded type; change nothing else | ~30 mechanical edits | Low now, worse at type 5; ctx grows to 4×N methods |
-| **B** | Build a full geometry-type plugin registry first, port all three, then add mesh | Very large | High — touches three mature, heavily-tested verticals; contradicts "minimum viable solution" and "complete before perfect" |
-| **C** | Consolidate the geometry *vocabulary* and collapse only the **purely mechanical** dispatch; keep genuinely type-specific code specialized | Small, bounded | Low — behavior-preserving and independently testable |
+The descriptor table holds only capabilities with a real consumer. It deliberately carries no
+"supports X" flag that every kind currently answers identically, on the grounds that a field no
+branch reads is indistinguishable from a field that is wrong. Mesh should respect that when it adds
+its row: declare `applyPartialExtendTolerance` and the factories because those are read, and express
+"no slice prefetch" (§7) by not registering a prefetch call site, not by adding an unread flag.
 
-### 10.3 Recommendation: C
+### 10.4 One safety rule mesh must follow
 
-Not everything should be unified. Materials, geometry assembly, projection kernels and storage layout
-are genuinely different per type — §2.1 and §6 argue mesh differs from the other three *more* than they
-differ from each other. Forcing those behind one interface would be worse architecture, not better.
+`SceneNode.type` is an unvalidated string — `build-scene-graph.ts` copies `attrs.type` verbatim out of
+the store. A bare `GEOMETRY_DESCRIPTORS[node.type]` therefore resolves through `Object.prototype` for
+values like `constructor` or `toString` and returns a truthy non-descriptor; the resulting `TypeError`
+is not a `LoaderError`, and `loadLeafNode` re-throws anything else, so a single such node sinks the
+whole scene load. This was a real regression caught in review of #1099.
 
-What *is* accidental duplication is the dispatch plumbing. Land this as **Phase 0**, before any mesh
-code, so mesh is added to a table rather than to thirty `if`-chains:
-
-1. **Single-source the geometry vocabulary.** Add a `geometry_types` list to `contract.yaml`
-   (the subset of `node_types` that are leaf geometry), generate it, and define
-   `GeometryKind` from it. Delete `GeometryType` and repoint its consumers at `GeometryKind`.
-   Delete the `SceneGraphNodeType` local extension (§1.1). One edit adds a type to all of them.
-2. **Collapse `LoaderRegistry`** from three parallel `Map`s to `Map<GeometryKind, Map<string, AnyLoader>>`.
-   `register` / `unregister` / `getLoaderType` / `totalLoaderCount` / `hasLoaders` / `disposeAll` all
-   become one implementation. This is provably behavior-preserving and directly unit-testable.
-3. **Table-drive the three pure-dispatch switches** — `load-scene-nodes.ts`,
-   `lifecycle/retry.ts`, and `prefetch/slice-prefetcher.ts` — with a
-   `Record<GeometryKind, {load, process, commit, prefetchable}>` descriptor. Mesh then registers one
-   entry, and sets `prefetchable: false` (§7) declaratively instead of via an added `if`.
-
-**Explicitly not in scope for Phase 0:** `NodeBuildCtx`'s per-type methods, the material factories
-(`VISUAL_FACTORIES` is already a table — mesh just adds a row), and the accumulator/geometry/kernel
-layers. Those stay specialized.
-
-The payoff is concrete: step 1 turns "add mesh to two duplicated unions and hope" into one contract
-edit, and step 3 makes the `retry.ts` and `slice-prefetcher.ts` gaps found during review (§8)
-structurally impossible to forget rather than checklist items.
-
-> **If Phase 0 is skipped**, everything in this spec still stands — §8's checklist is written against
-> the current hardcoded structure and is complete as written. Phase 0 is an investment, not a
-> prerequisite.
+Use `geometryDescriptorFor(node.type)`, which gates the lookup with `Object.hasOwn`. Code holding a
+`GeometryKind` from a trusted source (the loader registry, a literal) may index the table directly.
 
 ---
 
@@ -823,18 +818,19 @@ structurally impossible to forget rather than checklist items.
 
 | Phase | Contents | Verifiable outcome |
 |---|---|---|
-| **0** *(optional, §10.3)* | Single-source `GeometryKind` from the contract; delete the duplicate `GeometryType` and the `SceneGraphNodeType` local extension; collapse `LoaderRegistry`; table-drive the three pure-dispatch switches | **No behavior change.** Full existing suite green; `LoaderRegistry` unit tests pass against the collapsed implementation |
+| **0** ✅ *(done — §10.1)* | Single-source `GeometryKind` from the contract; collapse `LoaderRegistry`; unify the per-type pipeline; table-drive the dispatch switches | Landed as #1079 / #1099 / #1150, all behaviour-preserving. Deleting the `SceneGraphNodeType` local extension is the one piece left, and belongs with Phase 1's contract edit |
 | **1** | Contract + `NodeType.MESH` + `core/mesh.py` + adder + writer + validators + reader + `info` + the LOD/partition rejections (§8) | `scene.add_mesh(...)` writes a `.luxar.zarr`; `luxar info --stats` reports it; round-trip test green; a mesh child of a lod/partition group **raises** |
 | **2** | Rust + TS cull kernels with parity tests | Kernels green in isolation, no viewer changes |
-| **3** | `types/mesh.ts` + loader + node load + process + commit + `mesh-geometry.ts` + dispatch sweep | Mesh loads and renders **unshaded** (flat vertex color); E2E smoke green |
+| **3** | `types/mesh.ts` + loader + node load + `mesh-geometry.ts` + one `LoaderByKind` entry + one `GEOMETRY_DESCRIPTORS` row | Mesh loads and renders **unshaded** (flat vertex color); E2E smoke green |
 | **4** | GLSL + TSL material pair + codegen snapshots + shading model | Shaded surface, both backends pixel-equivalent |
 | **5** | Picking pair, layers panel, monitor, stats, camera framing, debug | Full parity with the other three at the UI level |
 | **6** | Fixture + E2E spec + demo + docs + CHANGELOG | Shippable |
 
-Phase 0 is optional and behavior-preserving; it must land **alone**, with no mesh code, so any
-regression it causes is unambiguous. Phases 1–2 are independent and can land in parallel. Phase 3 is
-the widest diff (the dispatch sweep) but the shallowest per-file — and is materially smaller if Phase 0
-landed. Phase 4 is the deepest single piece of work.
+Phase 0 landed alone, with no mesh code, so any regression it caused would have been unambiguous.
+Phases 1–2 are independent and can land in parallel. Phase 3 used to be the widest diff — a sweep
+across every dispatch site — and is now one of the narrower ones: the three dispatch files need no
+mesh edit, leaving the loader, the geometry builder, and two table entries. Phase 4 is the deepest
+single piece of work.
 
-**Estimate:** 5–7 PRs, roughly 4.5–6K LOC including tests (plus ~1 PR / ~400 LOC net *reduction* if
-Phase 0 is taken) — against ~14K LOC for the full Lines vertical, the difference being everything in §9.
+**Estimate:** 5–6 PRs, roughly 4–5.5K LOC including tests — against ~14K LOC for the full Lines
+vertical, the difference being everything in §9 plus the dispatch work Phase 0 already absorbed.
