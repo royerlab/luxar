@@ -107,11 +107,10 @@ test.describe('Blending Modes', () => {
       expect(state.blendDst, `${state.name}: blendDst`).toBe(expected.blendDst);
       expect(state.depthTest, `${state.name}: depthTest`).toBe(expected.depthTest);
       expect(state.transparent, `${state.name}: transparent`).toBe(expected.transparent);
-      // `normal` depthWrite is opacity-dependent: opacity >= 0.99 writes
-      // depth (normalModeDepthWrite). The rendering_modes dataset mixes
-      // opaque (1.0) and transparent (0.6) normal layers.
-      const expectedDepthWrite =
-        state.blendingMode === 'normal' ? state.opacity >= 0.99 : expected.depthWrite;
+      // Points NEVER depth-write in `normal` — a point sprite stamps a flat
+      // depth plane across the whole disc (fringe included), so sorted
+      // transparency never depth-writes, regardless of opacity (#1002).
+      const expectedDepthWrite = state.blendingMode === 'normal' ? false : expected.depthWrite;
       expect(state.depthWrite, `${state.name}: depthWrite (opacity ${state.opacity})`).toBe(
         expectedDepthWrite
       );
@@ -246,7 +245,11 @@ test.describe('Points blending modes (per-mode material state)', () => {
       expect(state!.blendSrc, `points_${mode}: blendSrc`).toBe(expected.blendSrc);
       expect(state!.blendDst, `points_${mode}: blendDst`).toBe(expected.blendDst);
       expect(state!.depthTest, `points_${mode}: depthTest`).toBe(expected.depthTest);
-      expect(state!.depthWrite, `points_${mode}: depthWrite`).toBe(expected.depthWrite);
+      // Points never depth-write in `normal` (#1002); the EXPECTED_STATE
+      // `normal.depthWrite:true` is the generic/line value.
+      expect(state!.depthWrite, `points_${mode}: depthWrite`).toBe(
+        mode === 'normal' ? false : expected.depthWrite
+      );
       expect(state!.transparent, `points_${mode}: transparent`).toBe(expected.transparent);
     }
   });

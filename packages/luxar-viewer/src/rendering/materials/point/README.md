@@ -13,12 +13,12 @@ the [shared infrastructure README](../_shared/README.md).
 
 ## Module map
 
-| File               | Role                                                                                                                                                                                                                                                                                                                             |
-| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `shader-glsl.ts`   | `POINT_VERTEX_SHADER` + `POINT_FRAGMENT_SHADER` GLSL3 strings, plus the `POINT_SOURCE: ShaderSource` that pairs them with the TSL factory.                                                                                                                                                                                       |
-| `shader-tsl.ts`    | `pointWebGPUFactory(nodes, config, outMaterial?)` — TSL counterpart to the GLSL shaders. Consumes wrapper-owned `PointTSLNodes` (see `buildPointTSLNodesFromUniforms` for the harness/ShaderSource path), builds `vertexNode` + `colorNode`, and wires blending via `getCompleteBlendingState` + `applyBlendingStateToMaterial`. |
-| `material-glsl.ts` | `PointMaterial extends THREE.ShaderMaterial` — the default WebGL2 wrapper. Owns the IUniform table, the `applyBlendingMode` state machine, `clone()`, and the `ColormapAwareMaterial` setters.                                                                                                                                   |
-| `material-tsl.ts`  | `PointTSLMaterial extends NodeMaterial` — the WebGPU counterpart. Same public surface as `PointMaterial`; owns persistent `UniformNode`s exposed as `proxyIUniform` bridges and calls `pointWebGPUFactory(..., this)` to attach the TSL graph in place.                                                                          |
+| File               | Role                                                                                                                                                                                                                                                                                                                          |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `shader-glsl.ts`   | `POINT_VERTEX_SHADER` + `POINT_FRAGMENT_SHADER` GLSL3 strings, plus the `POINT_SOURCE: ShaderSource` that pairs them with the TSL factory.                                                                                                                                                                                    |
+| `shader-tsl.ts`    | `pointWebGPUFactory(nodes, config, outMaterial?)` — TSL counterpart to the GLSL shaders. Consumes wrapper-owned `PointTSLNodes` (see `buildPointTSLNodesFromUniforms` for the harness/ShaderSource path), builds `vertexNode` + `colorNode`, and wires blending via `getPointBlendingState` + `applyBlendingStateToMaterial`. |
+| `material-glsl.ts` | `PointMaterial extends THREE.ShaderMaterial` — the default WebGL2 wrapper. Owns the IUniform table, the `applyBlendingMode` state machine, `clone()`, and the `ColormapAwareMaterial` setters.                                                                                                                                |
+| `material-tsl.ts`  | `PointTSLMaterial extends NodeMaterial` — the WebGPU counterpart. Same public surface as `PointMaterial`; owns persistent `UniformNode`s exposed as `proxyIUniform` bridges and calls `pointWebGPUFactory(..., this)` to attach the TSL graph in place.                                                                       |
 
 `MaterialManager.getPointMaterial` dispatches on `caps.apiSurface` so callers
 (`NodeFactory.createPointsMaterial`, `LayersPanel`, …) never see the
@@ -190,6 +190,13 @@ from `LayersPanel`). The method:
 - Pulls the canonical THREE state from `getCompleteBlendingState` and applies
   it via `applyBlendingStateToMaterial` (`../../blending-state.ts`) — covers
   `blending`, `blendEquation`, `blendSrc`/`blendDst`, `depthTest`, etc.
+- Routes `normal` mode through `getPointBlendingState`, which forces
+  `depthWrite: false` (unlike the generic opacity-gated `normalModeDepthWrite`
+  predicate that lines use): a point sprite stamps a single flat depth plane
+  across the whole billboard disc — transparent fringe included — so sorted
+  transparency never depth-writes (#1002). Trade-off: an opaque `normal` points
+  layer no longer occludes additive layers behind it. All other modes are
+  identical to `getCompleteBlendingState`.
 - Adds/removes the `LUXAR_MAX_RGB_CONTRIBUTION` shader define. In `max` mode
   the framebuffer uses `CustomBlending + MaxEquation + OneFactor/OneFactor`,
   which does **not** multiply source RGB by alpha at composite time. Without

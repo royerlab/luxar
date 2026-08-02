@@ -149,7 +149,7 @@ smoke/ink-like medium (large κ). Together with `max` (MIP) and `normal`/`opaque
 | `luminous` | — (One/One, α ignored) | ray integral | sum | yes | no | never |
 | `max` | — (MaxEquation) | peak value | peak | yes | no | never |
 | **`volumetric`** | **physics: 1 − e^(−τ), τ = κ·∫ρ** | **ray integral × screening** | **sum** | **no** | **yes** | **never** |
-| `normal` | clamped coverage: min(intensity·opacity, 1) | peak value | peak | no | yes | gsplats never; points/lines at opacity ≥ 0.99 |
+| `normal` | clamped coverage: min(intensity·opacity, 1) | peak value | peak | no | yes | gsplats & points never; lines at opacity ≥ 0.99 |
 | `opaque` | — (opaque overwrite) | peak value | peak | no (depth-tested) | no (z-buffer) | always |
 
 `volumetric` deliberately breaks the previous alignment *sum-projection ⇒
@@ -394,13 +394,14 @@ oversights):
   τ-threshold follow-up as front-most picking above.
 - **`normal`-mode depthWrite ignores per-element alpha**:
   `normalModeDepthWrite` keys on NODE opacity alone — the decision never
-  consults per-element alpha (uniform across geometry types). For POINTS
-  and LINES an RGBA node in `normal` mode at node-opacity 1.0 therefore
-  writes depth even for its near-transparent (alpha ≈ 0) elements
-  (gsplat normal mode never depth-writes regardless), which can occlude content
-  behind them. Per-element depthWrite is not expressible in a single
-  draw call; the workaround is the volumetric mode itself (never
-  depth-writes) or lowering node opacity below the 0.99 threshold.
+  consults per-element alpha. Only LINES still use this predicate: an RGBA
+  line node in `normal` mode at node-opacity ≥ 0.99 therefore writes depth
+  even for its near-transparent (alpha ≈ 0) elements, which can occlude
+  content behind them. POINTS now never depth-write in `normal` (like
+  gsplats — `getPointBlendingState` forces it off, #1002), so this hazard
+  applies to LINES only. Per-element depthWrite is not expressible in a
+  single draw call; the workaround for lines is the volumetric mode itself
+  (never depth-writes) or lowering node opacity below the 0.99 threshold.
 
 ### 5.3 Attr composition and the uniform
 
