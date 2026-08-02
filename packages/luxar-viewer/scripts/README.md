@@ -140,6 +140,11 @@ CLI behaviour runs inside `main()`, which only executes when the script
 is invoked directly (standard ESM main-module guard), so the module can
 be imported without side effects.
 
+The `api` column appends ` (sw)` when either side of a row ran on a
+software rasterizer (`softwareRenderer`, gsplat bench only) — the bench
+marks such runs as not comparable to a GPU run, so every delta in that
+row must be discounted.
+
 The `api` column appends ` (webgl-bk)` when a WebGPURenderer run fell
 back to its internal WebGL2 backend — otherwise that fallback would look
 like a clean `webgpu` row.

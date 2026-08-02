@@ -45,6 +45,19 @@ function keyOf(scn) {
 }
 
 /**
+ * API-column text for a scenario pair. Appends ` (webgl-bk)` when a
+ * WebGPURenderer run fell back to its internal WebGL2 backend, and
+ * ` (sw)` when EITHER side ran on a software rasterizer
+ * (`softwareRenderer`, gsplat bench only) — the bench states such
+ * rows' absolute timings are not comparable to a GPU run, so a diff
+ * involving one must be visibly discountable.
+ */
+function apiOf(apiSurface, isWebGLBackend, b, n) {
+  const sw = b?.softwareRenderer === true || n?.softwareRenderer === true;
+  return (isWebGLBackend ? `${apiSurface} (webgl-bk)` : apiSurface) + (sw ? ' (sw)' : '');
+}
+
+/**
  * Build a generic "metric" section: one row per scenario, and for each
  * field that AT LEAST ONE scenario carries (on either side) three
  * columns (base / new / Δ). Fields absent everywhere are dropped; a
@@ -138,7 +151,7 @@ export function buildPerfDiff(base, next) {
     // distinction the perf-bench JSON deliberately captures.
     const apiSurface = n?.actualApi ?? b?.actualApi ?? '?';
     const isWebGLBackend = n?.isWebGLBackend ?? b?.isWebGLBackend ?? false;
-    const api = isWebGLBackend ? `${apiSurface} (webgl-bk)` : apiSurface;
+    const api = apiOf(apiSurface, isWebGLBackend, b, n);
     const segs = n?.visibleSegments ?? b?.visibleSegments ?? 0;
 
     if (n?.skipped && b?.skipped) {
@@ -187,7 +200,7 @@ export function buildPerfDiff(base, next) {
       if (!ref) continue;
       const apiSurface = n?.actualApi ?? b?.actualApi ?? '?';
       const isWebGLBackend = n?.isWebGLBackend ?? b?.isWebGLBackend ?? false;
-      const api = isWebGLBackend ? `${apiSurface} (webgl-bk)` : apiSurface;
+      const api = apiOf(apiSurface, isWebGLBackend, b, n);
       const segs = n?.visibleSegments ?? b?.visibleSegments ?? 0;
 
       const bSup = b?.gpu?.supported === true;

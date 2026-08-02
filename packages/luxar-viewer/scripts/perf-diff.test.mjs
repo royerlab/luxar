@@ -113,6 +113,22 @@ describe('buildPerfDiff — frame timing (baseline behaviour)', () => {
     expect(md).toContain('🟢 = ≥5% faster');
   });
 
+  it('marks the api column (sw) when either side ran on a software rasterizer', () => {
+    const base = run([scn({ softwareRenderer: true })]);
+    const next = run([scn({ softwareRenderer: false })]);
+    const md = buildPerfDiff(base, next);
+    const row = md.split('\n').find((l) => l.startsWith('| s1/webgpu |'));
+    expect(row).toBeDefined();
+    expect(cellsOf(row)[1]).toBe('webgpu (sw)');
+  });
+
+  it('keeps the api column unmarked when softwareRenderer is absent (line bench)', () => {
+    const md = buildPerfDiff(run([lineScn()]), run([lineScn()]));
+    const row = md.split('\n').find((l) => l.startsWith('| line1/webgl |'));
+    expect(row).toBeDefined();
+    expect(cellsOf(row)[1]).toBe('webgl');
+  });
+
   it('omits the new sections for a pure line-bench input', () => {
     const base = run([lineScn()]);
     const next = run([lineScn()]);
