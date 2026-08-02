@@ -55,6 +55,12 @@ import { fileURLToPath } from 'url';
 
 import { test, expect, type Page } from '@playwright/test';
 import { waitForLuxarReady } from './helpers';
+// Origin serving the repo root (the perf config boots
+// `python3 -m http.server 9000` there). Overridable via
+// `LUXAR_PERF_DATA_BASE` for the case where port 9000 is already held
+// by a foreign document root — Playwright's `reuseExistingServer`
+// would otherwise silently reuse it and 404 every dataset.
+import { PERF_DATA_BASE as DATA_BASE } from './perf-data-base';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const VIEWER_ROOT = path.resolve(__dirname, '../../..');
@@ -104,17 +110,6 @@ type ScenarioSpec =
       label: string;
       url: string;
     };
-
-/**
- * Origin serving the repo root (the perf config boots
- * `python3 -m http.server 9000` there). Overridable via
- * `LUXAR_PERF_DATA_BASE` for the case where port 9000 is already held
- * by a foreign document root — Playwright's `reuseExistingServer`
- * would otherwise silently reuse it and 404 every dataset.
- */
-const DATA_BASE =
-  process.env.LUXAR_PERF_DATA_BASE ??
-  `http://localhost:${process.env.LUXAR_PERF_DATA_PORT ?? 9000}`;
 
 const BOOTSTRAP_URL = `${DATA_BASE}/datasets/examples/lines_basic_example.luxar.zarr`;
 

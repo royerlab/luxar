@@ -32,18 +32,15 @@ import { fileURLToPath } from 'url';
 
 import { test, type Page } from '@playwright/test';
 import { waitForLuxarReady } from './helpers';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const VIEWER_ROOT = path.resolve(__dirname, '../../..');
-
-// Dataset-server origin — same derivation as the gsplat bench so both
-// specs honor the port-parameterized perf config (see
+// Dataset-server origin — shared with the gsplat and perf-tracking benches
+// so every spec honors the port-parameterized perf config (see
 // playwright.perf.config.ts: foreign servers squatting :9000 would
 // otherwise skip every scenario as "dataset not reachable", including
 // synthetic ones gated on their bootstrap URL).
-const DATA_BASE =
-  process.env.LUXAR_PERF_DATA_BASE ??
-  `http://localhost:${process.env.LUXAR_PERF_DATA_PORT ?? 9000}`;
+import { PERF_DATA_BASE as DATA_BASE } from './perf-data-base';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const VIEWER_ROOT = path.resolve(__dirname, '../../..');
 
 function currentCommitSha(): string {
   try {
