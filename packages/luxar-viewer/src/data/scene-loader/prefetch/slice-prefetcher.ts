@@ -56,18 +56,9 @@
 import * as zarr from '../../zarr';
 import { log, Modules } from '../../../utils/log';
 import type { SceneNode, ViewState, DataLoader, GeometryKind } from '../../data-loader-types';
-import type { LinesDataLoader } from '../../../types/lines';
-import type { GSplatsDataLoader } from '../../../types/gsplats';
-import type { LoaderRegistry } from '../loaders/loader-registry';
-import {
-  createPointsLoader,
-  createLinesLoader,
-  createGSplatsLoader,
-  createProgressivePointsLoader,
-  createProgressiveLinesLoader,
-  createProgressiveGSplatsLoader,
-  type LoaderFactoryDeps,
-} from '../loaders/loader-factory';
+import type { AnyDataLoader, LoaderRegistry } from '../loaders/loader-registry';
+import type { LoaderFactoryDeps } from '../loaders/loader-factory';
+import { GEOMETRY_DESCRIPTORS } from '../geometry-descriptors';
 import { deriveNodeViewState } from '../view-state/derive-node-view-state';
 import { isAbortError } from '../../loaders';
 
@@ -83,7 +74,12 @@ export interface SlicePrefetcherCtx {
   applyEffectiveAttrs(node: SceneNode): SceneNode['attrs'];
 }
 
-type AnyShadowLoader = DataLoader | LinesDataLoader | GSplatsDataLoader;
+/**
+ * A shadow loader is just a foreground loader of some geometry kind, so this
+ * tracks {@link AnyDataLoader} rather than re-listing the three interfaces —
+ * a hand-written union here would silently stay 3-wide as the vocabulary grows.
+ */
+type AnyShadowLoader = AnyDataLoader;
 
 /** Depth-first exact-path lookup in the scene graph. */
 function findNodeByPath(root: SceneNode | null, path: string): SceneNode | null {
@@ -245,10 +241,11 @@ export class SlicePrefetcher {
     const node = findNodeByPath(graph, path);
     if (!node) return Promise.resolve();
 
-    // Same derivation the handlers apply (extend_to_all + nd_transform);
-    // lines skip the partial-extend tolerance override, like its handler.
+    // Same derivation the handlers apply (extend_to_all + nd_transform),
+    // reading the per-kind partial-extend rule from the descriptor table so
+    // this cannot drift from the initial-load and retry paths.
     const derived = deriveNodeViewState(path, node.attrs, viewState, graph, {
-      applyPartialExtendTolerance: kind !== 'lines',
+      applyPartialExtendTolerance: GEOMETRY_DESCRIPTORS[kind].applyPartialExtendTolerance,
     });
     if (derived.skip) return Promise.resolve();
     if (!hasHiddenDims(derived.viewState)) return Promise.resolve(); // S-cache would skip it anyway
@@ -284,22 +281,11 @@ export class SlicePrefetcher {
     const effectiveAttrs = this.ctx.applyEffectiveAttrs(node);
     const nAdditive = (node.attrs.n_additive_sublods as number | undefined) ?? 0;
 
-    const build = async (): Promise<AnyShadowLoader> => {
-      switch (kind) {
-        case 'points':
-          return nAdditive > 1
-            ? createProgressivePointsLoader(node, nAdditive, effectiveAttrs, deps)
-            : createPointsLoader(node, loc, deps);
-        case 'lines':
-          return nAdditive > 1
-            ? createProgressiveLinesLoader(node, nAdditive, effectiveAttrs, deps)
-            : createLinesLoader(node, loc, deps);
-        case 'gsplats':
-          return nAdditive > 1
-            ? createProgressiveGSplatsLoader(node, nAdditive, effectiveAttrs, deps)
-            : createGSplatsLoader(node, loc, deps);
-      }
-    };
+    const descriptor = GEOMETRY_DESCRIPTORS[kind];
+    const build = async (): Promise<AnyShadowLoader> =>
+      nAdditive > 1
+        ? descriptor.createProgressiveLoader(node, nAdditive, effectiveAttrs, deps)
+        : descriptor.createLoader(node, loc, deps);
 
     const promise = build();
     this.shadows.set(path, promise);

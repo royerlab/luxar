@@ -10,6 +10,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { processPointsData } from '../../../../../data/scene-loader/process/data-processor-points';
 import * as THREE from 'three';
 
 const createLinesLoaderMock = vi.fn();
@@ -100,10 +101,11 @@ function makeCtx(overrides: Partial<NodeBuildCtx> = {}): NodeBuildCtx & {
     applyEffectiveAttrs,
     deriveNodeViewState,
     connectLoaderToMonitor,
-    updatePointsGeometry: vi.fn(),
     processLinesData,
     commitLinesGeometry,
     processGSplatsData: vi.fn(),
+    processPointsData,
+    commitPointsGeometry: vi.fn(),
     commitGSplatsGeometry: vi.fn(),
     ...overrides,
   };

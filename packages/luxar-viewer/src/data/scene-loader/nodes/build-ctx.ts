@@ -26,6 +26,7 @@ import type {
 import type { UpdateSession } from '../../../profiling/update-profiler';
 import type { DerivedNodeViewState, DeriveOpts } from '../view-state/derive-node-view-state';
 import type { StagedLinesCommit } from '../process/data-processor-lines';
+import type { StagedPointsCommit } from '../process/data-processor-points';
 import type { StagedGSplatsCommit } from '../process/data-processor-gsplats';
 
 export interface NodeBuildCtx {
@@ -124,13 +125,13 @@ export interface NodeBuildCtx {
    */
   releaseLazyLines(path: string): void;
 
-  // Per-type commit callbacks — each leaf only uses the one for its type.
-  // ``loadedViewVersion`` stamps the committed mesh for the LOD freshness check;
-  // omit it to default to the live ``_updateVersion`` (correct for the sweep),
-  // or pass the derive-time version from a deferred reload.
-  updatePointsGeometry(
-    path: string,
-    data: LoadedPointsData,
+  // Per-type `process`/`commit` pairs — each leaf only uses the one for its
+  // type. ``loadedViewVersion`` stamps the committed mesh for the LOD freshness
+  // check; omit it to default to the live ``_updateVersion`` (correct for the
+  // sweep), or pass the derive-time version from a deferred reload.
+  processPointsData(path: string, data: LoadedPointsData): StagedPointsCommit;
+  commitPointsGeometry(
+    staged: StagedPointsCommit,
     session?: UpdateSession,
     loadedViewVersion?: number
   ): void;
