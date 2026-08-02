@@ -26,6 +26,39 @@ const DATA_PORT = Number(process.env.GALLERY_DATA_PORT ?? 9899);
 // serve` only streams static zarr files by path, so any working install serves.
 const SERVE = process.env.GALLERY_LUXAR_BIN ?? 'hatch run luxar';
 
+/**
+ * Chromium flags that actually reach the GPU, per platform.
+ *
+ * This matters more than it looks: capture cost is dominated by per-frame
+ * `page.screenshot()`, so falling back to SwiftShader is the difference
+ * between a 55-second run and an hour that never finishes. A single orbit
+ * frame of a heavy additive scene took >10 min in software.
+ *
+ * The previous value here was a flat `--use-gl=egl`, which reached the GPU on
+ * NEITHER platform. Measured `WEBGL_debug_renderer_info.UNMASKED_RENDERER_WEBGL`:
+ *
+ *   flags                          macOS (M4 Max)   headless Linux + NVIDIA
+ *   --use-gl=egl                   SwiftShader      SwiftShader
+ *   --use-angle=vulkan             SwiftShader      NVIDIA RTX 3070
+ *   --use-angle=metal              Apple Metal      n/a
+ *   --use-angle=default / none     Apple Metal      SwiftShader
+ *
+ * No single value works on both, hence the switch. Chromium degrades to
+ * SwiftShader by itself when the requested backend is unavailable (that is
+ * exactly what `--use-angle=vulkan` does on macOS, which has no Vulkan), so a
+ * GPU-less machine still runs — just slowly, as it did before.
+ *
+ * Override with `GALLERY_GL_ARGS` (space-separated, e.g. `GALLERY_GL_ARGS=""`
+ * to let Chromium choose) when a machine disagrees.
+ */
+function gpuBackendArgs(): string[] {
+  const override = process.env.GALLERY_GL_ARGS;
+  if (override !== undefined) return override.split(' ').filter(Boolean);
+  if (process.platform === 'darwin') return ['--use-angle=metal'];
+  if (process.platform === 'linux') return ['--use-angle=vulkan', '--enable-features=Vulkan'];
+  return [];
+}
+
 export default defineConfig({
   testDir: './src/tests/screenshots',
   testMatch: 'generate-gallery.spec.ts',
@@ -54,7 +87,7 @@ export default defineConfig({
     viewport: { width: 1080, height: 1080 },
     launchOptions: {
       args: [
-        '--use-gl=egl',
+        ...gpuBackendArgs(),
         '--ignore-gpu-blocklist',
         '--enable-webgl-developer-extensions',
         '--enable-webgl-draft-extensions',
