@@ -792,11 +792,13 @@ def _run_python_tests(
             _mark_incomplete(test_stats["python"], "tool_missing", "hatch not found")
             return
 
+        coverage_measured = False
         for line in (result.stdout + "\n" + result.stderr).split("\n"):
             if line.strip().startswith("TOTAL") and "%" in line:
                 m = re.search(r"(\d+(?:\.\d+)?)%", line)
                 if m:
                     test_stats["python"]["coverage_percent"] = float(m.group(1))
+                    coverage_measured = True
                     aprint(f"Coverage: {m.group(1)}%")
                     break
 
@@ -817,12 +819,26 @@ def _run_python_tests(
                 "run_failed",
                 f"test run exited with code {result.returncode} (no measurement produced)",
             )
+        elif (
+            test_stats["python"]["test_passed"] == 0
+            and test_stats["python"]["test_failed"] == 0
+        ):
+            # Exit 0/1 with no parseable pass/fail counts. `hatch run` reports
+            # its OWN failures (missing env, dependency resolution) as exit 1,
+            # which is indistinguishable from "tests ran and some failed" by
+            # exit code alone — so require that the run actually produced a
+            # summary before trusting its numbers.
+            _mark_incomplete(
+                test_stats["python"],
+                "run_failed",
+                f"test run exited with code {result.returncode} but produced no "
+                "parseable test results",
+            )
 
-        # Coverage was requested but the run produced none (0.0 default): the
-        # weighted headline would silently drop Python. Flag it — but only if
-        # the run otherwise completed (an earlier timeout / tool-missing signal
-        # is the root cause and already recorded).
-        if run_coverage and test_stats["python"]["coverage_percent"] == 0.0:
+        # Coverage was requested but the run reported none. Key on whether a
+        # TOTAL line was actually parsed, not on the 0.0 default: a genuine 0%
+        # is a valid measurement and must not be rejected forever.
+        if run_coverage and not coverage_measured:
             _mark_incomplete(
                 test_stats["python"],
                 "coverage",
@@ -844,6 +860,9 @@ def _run_typescript_tests(
             "--exclude",
             "**/wasm-performance.test.ts",
         ]
+        # mtime of a pre-existing coverage summary we could NOT delete; used
+        # below to tell "vitest rewrote it" from "the old file is still there".
+        stale_cov_mtime: float | None = None
         if run_coverage:
             cmd.insert(3, "--coverage")
             # Delete any prior coverage summary first: a crashed run leaves the
@@ -855,6 +874,12 @@ def _run_typescript_tests(
                 stale_summary.unlink(missing_ok=True)
             except OSError as e:
                 aprint(f"Could not remove stale coverage summary: {e}")
+                try:
+                    stale_cov_mtime = stale_summary.stat().st_mtime
+                except OSError:
+                    # Can't delete it and can't stat it — the read below will
+                    # fail too, which the no-fresh-coverage guard catches.
+                    stale_cov_mtime = None
         aprint(f"Running: {' '.join(cmd)}")
         try:
             result = subprocess.run(
@@ -873,8 +898,14 @@ def _run_typescript_tests(
             _mark_incomplete(test_stats["typescript"], "timeout", "test run timed out")
             return
 
+        # vitest's summary line is `Tests  2 failed | 148 passed (150)`; an
+        # all-failing run omits the "passed" half, so match on either side.
+        summary_seen = False
         for line in (result.stdout + "\n" + result.stderr).split("\n"):
-            if "Tests" in line and "passed" in line:
+            if line.strip().startswith("Tests") and (
+                "passed" in line or "failed" in line
+            ):
+                summary_seen = True
                 total_m = re.search(r"\((\d+)\)", line)
                 if total_m:
                     test_stats["typescript"]["test_count"] = int(total_m.group(1))
@@ -895,22 +926,44 @@ def _run_typescript_tests(
                 "run_failed",
                 f"test run exited with code {result.returncode} (no measurement produced)",
             )
+        elif not summary_seen:
+            # vitest also exits 1 for startup, config and collection errors, so
+            # exit 1 alone does not prove tests ran. Require the summary line:
+            # without it there is no measurement, only zeros.
+            _mark_incomplete(
+                test_stats["typescript"],
+                "run_failed",
+                f"test run exited with code {result.returncode} but produced no "
+                "parseable test results",
+            )
 
         if run_coverage:
             cov_json = viewer / "coverage" / "coverage-summary.json"
+            coverage_measured = False
             if cov_json.exists():
                 try:
-                    cov = json.loads(cov_json.read_text())
-                    pct = cov.get("total", {}).get("statements", {}).get("pct")
-                    if pct is not None:
-                        test_stats["typescript"]["coverage_percent"] = float(pct)
-                        aprint(f"Coverage (JSON): {pct}%")
-                except (OSError, ValueError) as e:
+                    if (
+                        stale_cov_mtime is not None
+                        and cov_json.stat().st_mtime <= stale_cov_mtime
+                    ):
+                        # The pre-run delete failed and vitest never rewrote the
+                        # file: this is last run's number, not this run's.
+                        aprint("Coverage summary is stale (not rewritten by this run)")
+                    else:
+                        cov = json.loads(cov_json.read_text())
+                        pct = cov.get("total", {}).get("statements", {}).get("pct")
+                        if pct is not None:
+                            test_stats["typescript"]["coverage_percent"] = float(pct)
+                            coverage_measured = True
+                            aprint(f"Coverage (JSON): {pct}%")
+                except (OSError, TypeError, ValueError) as e:
                     aprint(f"Could not read coverage JSON: {e}")
 
-            # Requested coverage never materialized (0.0 default) — flag it so
-            # the weighted headline can't silently drop TypeScript.
-            if test_stats["typescript"]["coverage_percent"] == 0.0:
+            # No FRESH coverage was read — flag it so the weighted headline
+            # can't silently drop TypeScript. Keyed on whether a value was
+            # actually parsed, not on the 0.0 default: a genuine 0% is a valid
+            # measurement.
+            if not coverage_measured:
                 _mark_incomplete(
                     test_stats["typescript"],
                     "coverage",

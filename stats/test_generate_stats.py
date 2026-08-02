@@ -6,6 +6,7 @@ Run explicitly (not part of the default suite):
 
 from __future__ import annotations
 
+import json
 import sys
 import types
 from pathlib import Path
@@ -194,12 +195,112 @@ def test_python_run_failed_recorded(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_python_returncode_1_is_complete(monkeypatch: pytest.MonkeyPatch) -> None:
     # Exit 1 = tests ran but some failed = a COMPLETE measurement. With coverage
-    # off (so the 0.0-coverage rule doesn't apply), nothing must be flagged.
-    monkeypatch.setattr(gs.subprocess, "run", _fake_run(returncode=1))
+    # off (so the coverage rule doesn't apply), nothing must be flagged.
+    stdout = "100 passed, 3 failed in 12.34s\n"
+    monkeypatch.setattr(gs.subprocess, "run", _fake_run(returncode=1, stdout=stdout))
     test_stats = {"python": gs._empty_test_section()}
     gs._run_python_tests(Path("/nonexistent"), test_stats, run_coverage=False)
     assert test_stats["python"]["incomplete"] is None
     assert test_stats["python"]["incomplete_kind"] is None
+
+
+def test_python_exit_1_without_results_is_incomplete(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # `hatch run` reports its own failures (missing env, bad dependency
+    # resolution) as exit 1 too — indistinguishable from "some tests failed"
+    # by exit code. No parseable summary means no measurement.
+    monkeypatch.setattr(gs.subprocess, "run", _fake_run(returncode=1, stdout=""))
+    test_stats = {"python": gs._empty_test_section()}
+    gs._run_python_tests(Path("/nonexistent"), test_stats, run_coverage=False)
+    assert test_stats["python"]["incomplete_kind"] == "run_failed"
+    assert "no parseable test results" in test_stats["python"]["incomplete"]
+
+
+def test_python_zero_percent_coverage_is_a_measurement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A genuine 0% is a valid fresh measurement: keyed on the parsed TOTAL
+    # line, not on the 0.0 default, so it must not be rejected.
+    stdout = "5 passed in 1.00s\nTOTAL   1000   1000    0%\n"
+    monkeypatch.setattr(gs.subprocess, "run", _fake_run(returncode=0, stdout=stdout))
+    test_stats = {"python": gs._empty_test_section()}
+    gs._run_python_tests(Path("/nonexistent"), test_stats, run_coverage=True)
+    assert test_stats["python"]["coverage_percent"] == 0.0
+    assert test_stats["python"]["incomplete"] is None
+
+
+def _ts_root(tmp_path: Path) -> Path:
+    (tmp_path / "packages" / "luxar-viewer" / "coverage").mkdir(parents=True)
+    return tmp_path
+
+
+def _write_cov_summary(root: Path, pct: float) -> Path:
+    cov = root / "packages" / "luxar-viewer" / "coverage" / "coverage-summary.json"
+    cov.write_text(json.dumps({"total": {"statements": {"pct": pct}}}))
+    return cov
+
+
+def test_typescript_exit_1_without_results_is_incomplete(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # vitest exits 1 for startup/config/collection errors as well as for real
+    # test failures, so exit 1 alone is not proof that anything ran.
+    monkeypatch.setattr(gs.subprocess, "run", _fake_run(returncode=1, stdout=""))
+    test_stats = {"typescript": gs._empty_test_section()}
+    gs._run_typescript_tests(_ts_root(tmp_path), test_stats, run_coverage=False)
+    assert test_stats["typescript"]["incomplete_kind"] == "run_failed"
+
+
+def test_typescript_all_failing_run_is_complete(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # An all-failing vitest run omits the "passed" half of the summary; it is
+    # still a real measurement and must not be flagged.
+    stdout = " Test Files  1 failed (1)\n      Tests  4 failed (4)\n"
+    monkeypatch.setattr(gs.subprocess, "run", _fake_run(returncode=1, stdout=stdout))
+    test_stats = {"typescript": gs._empty_test_section()}
+    gs._run_typescript_tests(_ts_root(tmp_path), test_stats, run_coverage=False)
+    assert test_stats["typescript"]["incomplete"] is None
+    assert test_stats["typescript"]["test_failed"] == 4
+    assert test_stats["typescript"]["test_count"] == 4
+
+
+def test_typescript_undeletable_stale_coverage_is_not_laundered(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The pre-run delete fails and the crashed run never rewrites the file:
+    # last week's number must not be published as this run's coverage.
+    root = _ts_root(tmp_path)
+    _write_cov_summary(root, 71.5)
+
+    def _boom(*_a: Any, **_k: Any) -> None:
+        raise OSError("read-only file system")
+
+    monkeypatch.setattr(gs.Path, "unlink", _boom)
+    monkeypatch.setattr(gs.subprocess, "run", _fake_run(returncode=1, stdout=""))
+    test_stats = {"typescript": gs._empty_test_section()}
+    gs._run_typescript_tests(root, test_stats, run_coverage=True)
+    assert test_stats["typescript"]["coverage_percent"] == 0.0
+    # The run-level failure is the root cause and wins over the coverage one.
+    assert test_stats["typescript"]["incomplete_kind"] == "run_failed"
+
+
+def test_typescript_zero_percent_coverage_is_a_measurement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _ts_root(tmp_path)
+    stdout = "      Tests  4 passed (4)\n"
+
+    def _run_and_write(*_a: Any, **_k: Any) -> types.SimpleNamespace:
+        _write_cov_summary(root, 0.0)
+        return types.SimpleNamespace(returncode=0, stdout=stdout, stderr="")
+
+    monkeypatch.setattr(gs.subprocess, "run", _run_and_write)
+    test_stats = {"typescript": gs._empty_test_section()}
+    gs._run_typescript_tests(root, test_stats, run_coverage=True)
+    assert test_stats["typescript"]["coverage_percent"] == 0.0
+    assert test_stats["typescript"]["incomplete"] is None
 
 
 def _rust_stats() -> dict[str, Any]:
