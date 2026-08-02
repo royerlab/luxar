@@ -583,7 +583,38 @@ class TestScalarBroadcastValidation:
         encoder after the vertices were written."""
         from luxar.validation.base import validate_widths_for_writing
 
-        with pytest.raises(ValidationError, match="Expected numpy array or scalar"):
+        with pytest.raises(
+            ValidationError, match="Expected a 1D numpy array or a Python float"
+        ):
             validate_widths_for_writing("wide", 10)
-        with pytest.raises(ValidationError, match="Expected numpy array or scalar"):
+        with pytest.raises(
+            ValidationError, match="Expected a 1D numpy array or a Python float"
+        ):
             validate_widths_for_writing(None, 10)
+
+    def test_radii_numpy_scalar_message_is_actionable(self) -> None:
+        """A numpy scalar radius is rejected with a one-step-fixable hint,
+        not the dead-end np.array(radii) suggestion that fails again on 0D."""
+        with pytest.raises(ValidationError) as exc_info:
+            validate_radii_for_writing(np.float32(0.18), 100)
+        msg = str(exc_info.value)
+        assert "float(" in msg
+        assert "np.array(radii)" not in msg
+
+    def test_sharpness_numpy_scalar_message_is_actionable(self) -> None:
+        """A numpy scalar sharpness is rejected with an actionable hint."""
+        with pytest.raises(ValidationError) as exc_info:
+            validate_sharpness_for_writing(np.float32(0.5), 100)
+        msg = str(exc_info.value)
+        assert "float(" in msg
+        assert "np.array(sharpness)" not in msg
+
+    def test_widths_numpy_scalar_message_is_actionable(self) -> None:
+        """A numpy scalar width is rejected with an actionable hint."""
+        from luxar.validation.base import validate_widths_for_writing
+
+        with pytest.raises(ValidationError) as exc_info:
+            validate_widths_for_writing(np.float32(2.0), 100)
+        msg = str(exc_info.value)
+        assert "float(" in msg
+        assert "np.array(widths)" not in msg
