@@ -26,8 +26,9 @@ Usage:
 Dependencies:
     pip install 'luxar[demos]'   # includes esm>=3.0.0, umap-learn, h5py
     pip install 'torch>=2.2,<3.0'  # CUDA build, to compute embeddings
-    # torch + scipy also decide whether the cached path gets the Points LOD
-    # ladder; without either the scene is written as flat Points instead.
+    pip install 'luxar[gsplats]'   # torch + scipy, pinned; without them the
+                                   # cached path writes flat Points instead of
+                                   # the Points LOD ladder
 
 Cache hygiene:
     A cached artifact that fails validation is quarantined to ``<name>.corrupt``
@@ -822,7 +823,9 @@ def generate_esm3_landscape(
                 aprint(
                     f"⚠️ {missing} not installed — skipping Points LOD coarsening "
                     "and building flat Points instead. The scene is fully viewable; "
-                    f"install {missing} to rebuild with level-of-detail."
+                    "run `pip install 'luxar[gsplats]'` (the extra that carries "
+                    "torch and scipy at their pinned bounds) to rebuild with "
+                    "level-of-detail."
                 )
             scene.add_points(
                 "proteins",
