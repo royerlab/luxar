@@ -488,14 +488,28 @@ export function lineWebGPUFactory(
 
     // Pathological-segment cull (perspective only — ortho width is
     // depth-independent, a depth gate there is meaningless): both
-    // endpoints inside near-cull margin AND rawPixelWidth blows past
+    // endpoints inside near-cull margin AND the pixel width blows past
     // clamp by 2× → degenerate quad.
-    const pathological: TSLNode | null = config.isOrtho
-      ? null
-      : startDepth
-          .lessThan(nearCull.mul(2.0))
-          .and(endDepth.lessThan(nearCull.mul(2.0)))
-          .and(rawPixelWidth.greaterThan(maxPW.mul(2.0)));
+    // The width gate MUST be segment-constant, not per-quad-vertex: the
+    // per-vertex rawPixelWidth term differs between the t=0 and t=1
+    // corners of the shared quad, so only half the vertices could exceed
+    // the clamp — the quad is partially sentinelled and a visible wedge
+    // survives (issue #849). Gate on the MAX of the pixel width at both
+    // clipped endpoints so all four vertices take the same branch.
+    let pathological: TSLNode | null = null;
+    if (!config.isOrtho) {
+      const startPixelWidth: TSLNode = mix(startW, endW, tA)
+        .mul(uPerspectiveLineScale)
+        .div(max(mvStart.z.negate(), nearCull));
+      const endPixelWidth: TSLNode = mix(startW, endW, tB)
+        .mul(uPerspectiveLineScale)
+        .div(max(mvEnd.z.negate(), nearCull));
+      const segMaxPixelWidth: TSLNode = max(startPixelWidth, endPixelWidth).toVar();
+      pathological = startDepth
+        .lessThan(nearCull.mul(2.0))
+        .and(endDepth.lessThan(nearCull.mul(2.0)))
+        .and(segMaxPixelWidth.greaterThan(maxPW.mul(2.0)));
+    }
 
     // Final clip-space position with perpendicular expansion.
     // pixelOffset = perpendicular × aQuadCorner.y × clampedPixelWidth
