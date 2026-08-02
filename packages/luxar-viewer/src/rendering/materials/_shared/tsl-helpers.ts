@@ -1,11 +1,11 @@
 /**
  * Shared TSL helper functions used by the geometry-material factories.
  *
- * The "sanitise" helpers reproduce the GLSL `sanitizePositive` /
- * `sanitizeNonNegative` shape — guard against NaN/Inf produced by
- * upstream data loaders and fall back to a sensible scalar default.
- * They are pure TSL builder calls, so the same body works under any
- * NodeBuilder (WebGL2 or WebGPU).
+ * `sanitizeNonNegative` reproduces the GLSL function of the same name —
+ * guard against NaN/Inf produced by upstream data loaders and fall back to a
+ * sensible scalar default. It is a pure TSL builder call, so the same body
+ * works under any NodeBuilder (WebGL2 or WebGPU). (`glsl-lib.ts` also defines
+ * a `sanitizePositive`; no TSL shader calls it, so there is no TSL mirror.)
  *
  * `proxyIUniform` bridges the THREE `IUniform`-shaped public API
  * (`material.uniforms.uX.value = Y`) directly onto a TSL
@@ -100,8 +100,8 @@ export function sanitizeAlpha(value: TSLNode): TSLNode {
 /**
  * Boolean TSL node: true when `value` is NaN or +/-Inf. Mirrors GLSL
  * `isInvalidFloat`. TSL has no direct `isnan`/`isinf` exposed across
- * backends, so we approximate via the finite-range test that
- * `sanitizePositive` already uses: any value outside (-1e30, 1e30) is
+ * backends, so we approximate via the same finite-range test
+ * `sanitizeNonNegative` uses: any value outside (-1e30, 1e30) is
  * treated as non-finite. The same pattern is used by the visual
  * point/shader-tsl.ts sharpness-compensation guard.
  */

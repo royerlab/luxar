@@ -943,6 +943,7 @@ The spatial index stores metadata in the points group `.zattrs` and chunk bounds
   "ordering_max": [100.0, 100.0, 100.0],     // Bounds for curve normalization
   "ordering_bits_per_dim": 21,    // Bits per dimension (max 21 for uint64)
   "chunk_size": 10000,            // Points per chunk
+  "grid_shape": [8, 8, 8],        // Points-only: chunk grid extent per ordered dim
   "max_radius": 2.5               // Maximum point radius in dataset
 }
 ```
@@ -951,8 +952,8 @@ The spatial index stores metadata in the points group `.zattrs` and chunk bounds
 
 A geometry type with **one** ordering writes the ordering keys **flat** on the
 group (`ordering`, `ordering_dims`, `slice_dims`, `ordering_min`,
-`ordering_max`, `ordering_bits_per_dim`, `chunk_size`) — Points and GSplats
-both do this, with identical key sets.
+`ordering_max`, `ordering_bits_per_dim`, `chunk_size`). Points and GSplats both
+do this and share that set; Points adds `grid_shape` on top of it.
 
 A type with **more than one** ordering namespaces each into its own nested
 object instead, keeping a flat top-level `ordering` naming the curve. Lines is
