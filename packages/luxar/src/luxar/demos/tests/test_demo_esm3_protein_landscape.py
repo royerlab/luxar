@@ -9,6 +9,7 @@ quarantined path, its size, and what to do about it.
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -18,7 +19,10 @@ import pytest
 from luxar.demos import demo_esm3_protein_landscape as demo
 from luxar.demos import require_module
 from luxar.demos._dependencies import MissingDependencyError
-from luxar.demos.demo_esm3_protein_landscape import _compute_esm3_embeddings
+from luxar.demos.demo_esm3_protein_landscape import (
+    _compute_esm3_embeddings,
+    generate_esm3_landscape,
+)
 from luxar.utils.download import QUARANTINE_SUFFIX
 
 SEQUENCES = ["MKV", "MTL", "MGG"]
@@ -400,3 +404,116 @@ class TestMainReportsQuarantine:
         reported = recorded_kwargs[0]["already_reported_quarantine"]
         assert isinstance(reported, frozenset)
         assert corrupt in reported, "serve-path call did not forward the reported set"
+
+
+def _write_instant_cache(cache_dir: Path, n: int = 40) -> int:
+    """Fabricate the two artifacts the instant path reads (sample_size=0/esmc-300m).
+
+    Returns ``n`` so callers can assert the generator's element count.
+    """
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    rng = np.random.default_rng(0)
+    positions = rng.standard_normal((n, 3)).astype(np.float32)
+    np.savez(cache_dir / "umap3d_esmc_300m_all.npz", positions=positions)
+
+    # Realistic kingdoms present in TAXON_COLORS/_DOMAIN_OF, plus an unknown one
+    # ("Slime Mold") to exercise the "Other" fallback.
+    kingdoms = np.array(
+        [
+            ["Human", "Proteobacteria", "Archaea", "Viruses", "Slime Mold"][i % 5]
+            for i in range(n)
+        ],
+        dtype=object,
+    )
+    names = np.array([f"PROT_{i}" for i in range(n)], dtype=object)
+    organisms = np.array([f"Organism {i}" for i in range(n)], dtype=object)
+    np.savez(
+        cache_dir / "metadata_all.npz",
+        names=names,
+        organisms=organisms,
+        kingdoms=kingdoms,
+    )
+    return n
+
+
+class TestCompleteCacheRunsWithoutTorch:
+    """The instant (full-cache) path must build a scene on a torch-free machine.
+
+    The demo documents a "complete cache runs anywhere" contract, but the scene
+    build used to request substitutive Points LOD unconditionally; its coarsening
+    kernels import torch, so scene generation died with a ModuleNotFoundError even
+    when every expensive cache was supplied. The fix gates LOD on torch and falls
+    back to flat Points, so the whole demo runs with torch blocked.
+    """
+
+    def test_full_cache_path_builds_scene_without_torch(
+        self, tmp_path, monkeypatch, capsys
+    ) -> None:
+        cache_dir = tmp_path / "cache"
+        n = _write_instant_cache(cache_dir)
+
+        # Simulate a torch-free machine EXACTLY as the issue's reproduction does:
+        # a None entry makes is_installed("torch") return False AND any accidental
+        # `import torch` raise, so a green result proves torch was never imported.
+        monkeypatch.setitem(sys.modules, "torch", None)
+
+        out_path = tmp_path / "esm3.luxar.zarr"
+        got = generate_esm3_landscape(
+            out_path, sample_size=0, model_name="esmc-300m", cache_dir=cache_dir
+        )
+
+        assert got == n
+        assert out_path.exists(), "scene was not written on the torch-free path"
+
+        # The fallback must ANNOUNCE the degradation (arbol aprint → stdout, which
+        # capsys captures — the same channel the quarantine-notice tests assert on).
+        assert "skipping Points LOD" in capsys.readouterr().out, (
+            "torch-free fallback did not print its degradation notice"
+        )
+
+        # Structural proof of the FALLBACK, independent of import ordering. The
+        # sys.modules["torch"]=None patch only blocks a *fresh* import; a warm
+        # suite where a torch-importing module already ran keeps torch bound in
+        # its namespace, so the old (unconditional-LOD) code would build a
+        # substitutive-LOD group and NOT crash. Assert the on-disk shape instead:
+        # a flat Points leaf writes `proteins/positions` and has no `kind: lod`,
+        # whereas a substitutive-LOD group has `kind == "lod"` and child_0..N
+        # (with no top-level positions) — so this fails against the old code in
+        # both cold and warm orderings.
+        proteins = out_path / "proteins"
+        assert (proteins / "positions").exists(), (
+            "flat Points leaf missing positions — LOD group written instead"
+        )
+        attrs = json.loads((proteins / ".zattrs").read_text())
+        assert attrs.get("kind") != "lod", (
+            f"expected a flat Points leaf, got a substitutive-LOD group: {attrs.get('kind')!r}"
+        )
+
+    def test_full_cache_path_builds_lod_when_torch_present(self, tmp_path) -> None:
+        """Positive branch: with torch installed, the LOD ladder IS built.
+
+        Pins the torch-PRESENT path so a mutant that drops LOD entirely — or a
+        typo like ``is_installed("torchvision")`` — cannot pass silently by only
+        satisfying the torch-free test above. Substitutive-LOD writes a
+        ``kind == "lod"`` group with ``child_0..N`` and NO top-level positions.
+        """
+        pytest.importorskip("torch")
+
+        cache_dir = tmp_path / "cache"
+        n = _write_instant_cache(cache_dir)
+
+        out_path = tmp_path / "esm3.luxar.zarr"
+        got = generate_esm3_landscape(
+            out_path, sample_size=0, model_name="esmc-300m", cache_dir=cache_dir
+        )
+
+        assert got == n
+        proteins = out_path / "proteins"
+        attrs = json.loads((proteins / ".zattrs").read_text())
+        assert attrs.get("kind") == "lod", (
+            f"expected a substitutive-LOD group with torch present: {attrs.get('kind')!r}"
+        )
+        assert (proteins / "child_0").exists(), "LOD group missing child_0"
+        assert not (proteins / "positions").exists(), (
+            "LOD group must not write top-level positions"
+        )

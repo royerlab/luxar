@@ -62,6 +62,7 @@ from arbol import aprint, asection
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.demos import (
     MissingDependencyError,
+    is_installed,
     launch_viewer,
     require_module,
     stack_colorings,
@@ -808,7 +809,16 @@ def generate_esm3_landscape(
             # Substitutive Points LOD: ~572k proteins is a large cloud, so coarse
             # levels replace it with fewer, larger merged splats when zoomed out
             # (census-style wiring; coarse splats stay pure per coloring via the
-            # `coloring` barrier).
+            # `coloring` barrier). The coarsening kernels import torch, so this is
+            # gated on torch being installed — without it we fall back to flat
+            # Points so the "complete cache runs anywhere" contract still holds.
+            torch_available = is_installed("torch")
+            if not torch_available:
+                aprint(
+                    "⚠️ torch is not installed — skipping Points LOD coarsening "
+                    "and building flat Points instead. The scene is fully viewable; "
+                    "install torch to rebuild with level-of-detail."
+                )
             scene.add_points(
                 "proteins",
                 positions=stacked.positions,
@@ -818,7 +828,11 @@ def generate_esm3_landscape(
                 opacity=0.9,
                 intensity=0.12,
                 labels=stacked.labels,
-                substitutive_lod=dict(compression_factor=8, levels=3, device="auto"),
+                substitutive_lod=(
+                    dict(compression_factor=8, levels=3, device="auto")
+                    if torch_available
+                    else None
+                ),
             )
 
             scene.add_text(
@@ -955,10 +969,11 @@ def main() -> None:
         aprint("")
 
     # NO dependency preflight here on purpose. torch / esm / umap-learn are
-    # demanded by `_require_module` at the exact points that need them, so a
+    # demanded by `require_module` at the exact points that need them, so a
     # machine holding complete caches runs the demo without any of them
-    # installed. Gating up front would refuse the cache-only path that the
-    # quarantine notice above tells the user to aim for.
+    # installed — scene generation falls back to flat Points when torch is
+    # absent (Points LOD coarsening needs it). Gating up front would refuse the
+    # cache-only path that the quarantine notice above tells the user to aim for.
 
     if "--no-serve" in sys.argv:
         output_path = get_demos_output_dir() / "esm3_protein_landscape.luxar.zarr"
