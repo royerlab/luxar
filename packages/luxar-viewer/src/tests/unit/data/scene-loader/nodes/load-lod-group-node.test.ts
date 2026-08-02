@@ -13,6 +13,7 @@
  */
 
 import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { processPointsData } from '../../../../../data/scene-loader/process/data-processor-points';
 import * as THREE from 'three';
 
 const loadSceneNodesMock = vi.fn();
@@ -216,10 +217,11 @@ function makeCtx(registry?: LODGroupRegistry): NodeBuildCtx {
     applyEffectiveAttrs: (n) => n.attrs,
     deriveNodeViewState: vi.fn() as never,
     connectLoaderToMonitor: vi.fn(),
-    updatePointsGeometry: vi.fn(),
     processLinesData: vi.fn() as never,
     commitLinesGeometry: vi.fn(),
     processGSplatsData: vi.fn() as never,
+    processPointsData,
+    commitPointsGeometry: vi.fn(),
     commitGSplatsGeometry: vi.fn(),
   };
 }

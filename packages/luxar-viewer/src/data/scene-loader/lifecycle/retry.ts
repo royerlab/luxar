@@ -14,13 +14,15 @@
  */
 
 import type * as THREE from 'three';
-import type { DataLoader, LoadedPointsData, ViewState } from '../../data-loader-types';
+import type { LoadedPointsData, ViewState } from '../../data-loader-types';
 import type { LinesDataLoader, LinesViewState } from '../../../types/lines';
 import type { GSplatsDataLoader, GSplatsViewState } from '../../../types/gsplats';
 import { log, Modules } from '../../../utils/log';
 import type { LoaderRegistry } from '../loaders/loader-registry';
 import type { LODGroupRegistry } from '../../../scene/lod-group-registry';
+import { GEOMETRY_DESCRIPTORS } from '../geometry-descriptors';
 import type { StagedLinesCommit } from '../process/data-processor-lines';
+import type { StagedPointsCommit } from '../process/data-processor-points';
 import type { StagedGSplatsCommit } from '../process/data-processor-gsplats';
 
 /**
@@ -52,7 +54,8 @@ export interface RetryCtx {
     attrs: { extend_to_all?: string[] } | undefined,
     opts: { applyPartialExtendTolerance: boolean }
   ): DerivedViewState;
-  updatePointsGeometry(path: string, data: LoadedPointsData): void;
+  processPointsData(path: string, data: LoadedPointsData): StagedPointsCommit;
+  commitPointsGeometry(staged: StagedPointsCommit): void;
   processLinesData(
     path: string,
     data: Awaited<ReturnType<LinesDataLoader['updateView']>>,
@@ -80,11 +83,6 @@ export async function retryFailedLoaderUnlocked(path: string, ctx: RetryCtx): Pr
   if (!registry.failedLoaders.has(path)) return false;
 
   log.info(Modules.SCENE_LOADER, `Retrying failed loader: ${path}`);
-
-  // Determine which loader type this path belongs to
-  const pointsLoader = registry.loaders.get(path);
-  const linesLoader = registry.linesLoaders.get(path);
-  const gsplatsLoader = registry.gsplatLoaders.get(path);
 
   try {
     // Look up the per-node attrs so retry applies the same
@@ -119,50 +117,19 @@ export async function retryFailedLoaderUnlocked(path: string, ctx: RetryCtx): Pr
       return true;
     };
 
-    if (pointsLoader) {
+    const kind = registry.getLoaderType(path);
+    if (kind) {
+      const descriptor = GEOMETRY_DESCRIPTORS[kind];
       const derived = ctx.deriveNodeViewState(path, attrs, {
-        applyPartialExtendTolerance: true,
+        applyPartialExtendTolerance: descriptor.applyPartialExtendTolerance,
       });
-      // Mirror loadPoints() initial-load fallback. When derived.skip
-      // is true (extend_to_all fully covers), the placeholder still
-      // needs data committed — skipping the load and clearing
-      // failedLoaders would falsely report success against an empty
-      // placeholder.
-      const pointsViewState = derived.skip ? ctx.viewState : derived.viewState;
-      const points = await (pointsLoader as DataLoader).updateView(pointsViewState);
-      if (points) ctx.updatePointsGeometry(path, points);
-      return verifyAndClear('points');
-    } else if (linesLoader) {
-      const derived = ctx.deriveNodeViewState(path, attrs, {
-        applyPartialExtendTolerance: false,
-      });
-      const linesViewState: LinesViewState = derived.skip ? ctx.viewState : derived.viewState;
-      const data = await linesLoader.updateView(linesViewState);
-      if (data) {
-        const staged = await ctx.processLinesData(path, data, linesViewState);
-        if (staged) ctx.commitLinesGeometry(staged);
-      }
-      return verifyAndClear('lines');
-    } else if (gsplatsLoader) {
-      const derived = ctx.deriveNodeViewState(path, attrs, {
-        applyPartialExtendTolerance: true,
-      });
-      // Mirror loadGSplats() initial-load fallback shape (explicit
-      // object spread to match LinesViewState/GSplatsViewState).
-      const gsplatsViewState: GSplatsViewState = derived.skip
-        ? {
-            displayDims: ctx.viewState.displayDims,
-            slicePosition: ctx.viewState.slicePosition,
-            tolerance: ctx.viewState.tolerance,
-            dimensions: ctx.viewState.dimensions,
-          }
-        : derived.viewState;
-      const data = await gsplatsLoader.updateView(gsplatsViewState);
-      if (data) {
-        const staged = await ctx.processGSplatsData(path, data, gsplatsViewState);
-        if (staged) ctx.commitGSplatsGeometry(staged);
-      }
-      return verifyAndClear('gsplats');
+      // Mirror the initial-load fallback: when `derived.skip` is true
+      // (extend_to_all fully covers), the placeholder still needs data
+      // committed — skipping the load and clearing failedLoaders would
+      // falsely report success against an empty placeholder.
+      const viewState = derived.skip ? ctx.viewState : derived.viewState;
+      await descriptor.retryCommit(ctx, path, registry.loadersOf(kind).get(path)!, viewState);
+      return verifyAndClear(kind);
     } else {
       // Not in the sweep maps. Lazy substitutive LOD levels are never
       // registered there (registry-driven lifecycle) but DO record failures;

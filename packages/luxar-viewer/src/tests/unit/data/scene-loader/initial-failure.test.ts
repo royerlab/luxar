@@ -511,7 +511,7 @@ describe('SceneLoader.retryFailedLoader — derived.skip fallback', () => {
   // valid GPU-ready data shapes — the commit helpers themselves are
   // tested separately under tests/unit/data/scene-loader/.
 
-  it('Points retry threads non-empty data to updatePointsGeometry on success', async () => {
+  it('Points retry threads non-empty data through to the points commit on success', async () => {
     const internals = loader as unknown as LoaderInternals & {
       updatePointsGeometry: (path: string, data: unknown) => void;
     };
@@ -555,7 +555,17 @@ describe('SceneLoader.retryFailedLoader — derived.skip fallback', () => {
 
     expect(ok).toBe(true);
     expect(commitSpy).toHaveBeenCalledTimes(1);
-    expect(commitSpy).toHaveBeenCalledWith('/p', fakeData);
+    // Retry routes through processPointsData → commitPointsGeometry, which
+    // resolves `session`/`loadedViewVersion` and forwards them explicitly
+    // rather than letting this method default them. Pin all four arguments:
+    // the version must still be the live `_updateVersion`, which is what the
+    // old one-shot call defaulted to.
+    expect(commitSpy).toHaveBeenCalledWith(
+      '/p',
+      fakeData,
+      undefined,
+      (internals as unknown as { _updateVersion: number })._updateVersion
+    );
     expect(placeholder.userData.visiblePointCount).toBe(3);
     expect(internals.registry.failedLoaders.has('/p')).toBe(false);
   });
