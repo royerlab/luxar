@@ -29,5 +29,4 @@ export function validateWebGL(config: AppConfig, errors: string[], warnings: str
       `Unusual MSAA samples: ${webgl.renderTarget.samples} (typical values: ${validSamples.join(', ')})`
     );
   }
-
 }

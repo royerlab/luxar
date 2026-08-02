@@ -75,9 +75,7 @@ export class LuxarDeltaCodec {
     const bits = config.bits ?? (dataType === 'uint8' ? 8 : 16);
     const expectedBits = dataType === 'uint8' ? 8 : 16;
     if (bits !== expectedBits) {
-      throw new Error(
-        `luxar_delta_v1: config bits=${bits} does not match array dtype ${dataType}`
-      );
+      throw new Error(`luxar_delta_v1: config bits=${bits} does not match array dtype ${dataType}`);
     }
     const cols = config.cols ?? 1;
     // Fail-loud cols/shape cross-check: a corrupted `cols` that still divides

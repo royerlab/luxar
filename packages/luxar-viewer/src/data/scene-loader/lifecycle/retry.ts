@@ -90,10 +90,7 @@ export async function retryFailedLoaderUnlocked(path: string, ctx: RetryCtx): Pr
     // Passing a raw view state here silently renders an incorrect query
     // region for transformed or extended nodes.
     const obj = ctx.rootGroup?.getObjectByName(path) as
-      | THREE.Object3D
-      | THREE.Mesh
-      | THREE.Points
-      | undefined;
+      THREE.Object3D | THREE.Mesh | THREE.Points | undefined;
     const attrs = obj?.userData?.attrs as { extend_to_all?: string[] } | undefined;
 
     // Defensive guard — only clear `failedLoaders` if the named object
