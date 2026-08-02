@@ -11,10 +11,18 @@ null, missing, and explicit ``0`` are all treated as zero citations.
 
 from __future__ import annotations
 
+import json
+import sys
 from typing import Any
 
+import numpy as np
+import pytest
+
 from luxar.demos import demo_arxiv_paper_embeddings as demo
-from luxar.demos.demo_arxiv_paper_embeddings import search_papers_by_field
+from luxar.demos.demo_arxiv_paper_embeddings import (
+    generate_paper_landscape,
+    search_papers_by_field,
+)
 
 
 class _FakeResponse:
@@ -127,3 +135,112 @@ def test_missing_zero_and_real_counts_are_consistent(monkeypatch) -> None:
         p["paperId"] for p in search_papers_by_field("cs", limit=10, min_citations=0)
     }
     assert ids_all == {"p-missing", "p-zero", "p-high"}
+
+
+# =============================================================================
+# Warm-cache scene build without the Points-LOD dependencies (issue #1107)
+# =============================================================================
+#
+# The demo advertises "repeat runs are instant" but used to request substitutive
+# Points LOD unconditionally. Building that LOD imports ``luxar.gsplats.lod``
+# (torch coarsening kernels) whose additive sibling imports ``scipy.sparse`` at
+# module load — so on a torch/scipy-free machine WITH a complete cache the scene
+# build crashed with ``ModuleNotFoundError`` instead of producing a viewable
+# scene. The fix routes the request through
+# ``luxar.demos.substitutive_lod_or_flat``, which falls back to a flat point
+# cloud with a degradation notice when either module is missing.
+
+# Two real field names so FIELD_COLORS lookups resolve during coloring.
+_FIELDS = ["Computer Science", "Physics"]
+
+
+def _fake_bundle(n: int = 40) -> dict:
+    """A valid warm-cache bundle: the exact keys/shapes consumed downstream."""
+    rng = np.random.default_rng(0)
+    embeddings_3d = rng.standard_normal((n, 3)).astype(np.float32)
+    fields = [_FIELDS[i % len(_FIELDS)] for i in range(n)]
+    citations = [int(i) for i in range(n)]
+    papers_clean = [
+        {
+            "title": f"Paper {i}",
+            "field": fields[i],
+            "citations": citations[i],
+            "year": 2015 + (i % 8),
+        }
+        for i in range(n)
+    ]
+    return {
+        "papers_clean": papers_clean,
+        "embeddings_3d": embeddings_3d,
+        "fields": fields,
+        "citations": citations,
+    }
+
+
+def _install_warm_cache(monkeypatch) -> None:
+    """Simulate a complete warm cache: ``cache_computed`` never calls compute_fn.
+
+    Returning a fabricated bundle avoids torch, the network, and ~/.cache — the
+    scene build is exercised in isolation, exactly as a cached repeat run would
+    hit it.
+    """
+
+    def fake_cache_computed(name, key, compute_fn, **kwargs):  # noqa: ANN001
+        return _fake_bundle()
+
+    monkeypatch.setattr(demo, "cache_computed", fake_cache_computed)
+
+
+class TestCompleteCacheRunsWithoutLodDeps:
+    """A warm-cache scene build must succeed with torch/scipy unavailable."""
+
+    @pytest.mark.parametrize("blocked", ["torch", "scipy"])
+    def test_flat_scene_built_when_lod_dep_missing(
+        self, blocked, monkeypatch, capsys, tmp_path
+    ) -> None:
+        _install_warm_cache(monkeypatch)
+        # A None entry makes is_installed() False AND makes a fresh
+        # ``import <blocked>`` raise — the exact issue #1107 repro, even on a
+        # machine where the package IS installed.
+        monkeypatch.setitem(sys.modules, blocked, None)
+
+        out = tmp_path / "arxiv_papers.luxar.zarr"
+        n = generate_paper_landscape(out, fields=_FIELDS, papers_per_field=10)
+
+        # The scene was written (no crash).
+        assert n == 40
+        assert out.exists()
+
+        # The degradation notice named the blocked module.
+        stdout = capsys.readouterr().out
+        assert "skipping Points LOD" in stdout
+        assert blocked in stdout
+
+        # A FLAT Points leaf was written — not an LOD group.
+        assert (out / "papers" / "positions").exists()
+        zattrs = json.loads((out / "papers" / ".zattrs").read_text())
+        assert zattrs.get("kind") != "lod"
+
+    def test_lod_group_built_when_deps_present(
+        self, monkeypatch, capsys, tmp_path
+    ) -> None:
+        pytest.importorskip("torch")
+        pytest.importorskip("scipy")
+        _install_warm_cache(monkeypatch)
+
+        out = tmp_path / "arxiv_papers.luxar.zarr"
+        n = generate_paper_landscape(out, fields=_FIELDS, papers_per_field=10)
+
+        assert n == 40
+        assert out.exists()
+
+        # No degradation notice.
+        stdout = capsys.readouterr().out
+        assert "skipping Points LOD" not in stdout
+
+        # A substitutive-LOD group was written: kind=lod with child_N levels and
+        # NO top-level positions leaf.
+        zattrs = json.loads((out / "papers" / ".zattrs").read_text())
+        assert zattrs.get("kind") == "lod"
+        assert (out / "papers" / "child_0").exists()
+        assert not (out / "papers" / "positions").exists()

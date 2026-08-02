@@ -62,7 +62,12 @@ import numpy as np
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import launch_viewer, parse_demo_flags, require_local_data
+from luxar.demos import (
+    launch_viewer,
+    parse_demo_flags,
+    require_local_data,
+    substitutive_lod_or_flat,
+)
 from luxar.utils._umap_utils import attribute_to_color
 from luxar.utils.paths import get_demos_output_dir
 
@@ -230,10 +235,12 @@ def build_scene(
                 layer=True,
                 # Auto coarsen_dims = coarsen x/y/z, group by the `coloring`
                 # barrier so coarse splats stay pure per colour.
-                substitutive_lod=dict(
-                    compression_factor=compression_factor,
-                    levels=levels,
-                    device=device,
+                substitutive_lod=substitutive_lod_or_flat(
+                    dict(
+                        compression_factor=compression_factor,
+                        levels=levels,
+                        device=device,
+                    )
                 ),
             )
             for idx, (_, label) in enumerate(COLORINGS):

@@ -254,6 +254,29 @@ class TestWarnIfSceneLacksLadder:
         assert "'By tracer type' finest level has no streaming" in out
         assert "Could not inspect" in out and "[By redshift]" in out
 
+    def test_flat_layer_is_read_directly_not_reported_uninspectable(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A scene built without torch/scipy has no LOD children.
+
+        substitutive_lod_or_flat writes the layer as a flat Points leaf then, so
+        the layer itself is the finest level and still carries a ladder. Reading
+        child_N unconditionally reported that scene as uninspectable — a
+        misleading diagnostic on a machine that is fine.
+        """
+        import zarr
+
+        scene = tmp_path / "desi.luxar.zarr"
+        root = zarr.open(str(scene), mode="w")
+        root.create_group("By tracer type").attrs["n_additive_sublods"] = 5
+        root.create_group("By redshift").attrs["n_additive_sublods"] = 1
+
+        _demo.warn_if_scene_lacks_ladder(scene)
+        out = capsys.readouterr().out
+        assert "Could not inspect" not in out
+        assert "'By redshift' finest level has no streaming" in out
+        assert "'By tracer type'" not in out
+
     def test_finest_level_found_regardless_of_level_count(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
