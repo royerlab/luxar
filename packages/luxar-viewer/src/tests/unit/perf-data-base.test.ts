@@ -1,15 +1,26 @@
 /**
- * Unit tests for the perf-bench dataset-origin resolver.
+ * Unit tests for the perf-bench dataset-port/origin resolvers.
  *
- * `resolvePerfDataBase` derives the origin the perf-bench specs fetch
- * datasets from, honoring the same `LUXAR_PERF_DATA_BASE` /
- * `LUXAR_PERF_DATA_PORT` overrides as `playwright.perf.config.ts`. The
- * function is pure and takes an explicit `env`, so these tests pass
+ * `resolvePerfDataPort` is the port `playwright.perf.config.ts` boots
+ * the dataset server on; `resolvePerfDataBase` is the origin the
+ * perf-bench specs fetch datasets from, embedding that same port. The
+ * functions are pure and take an explicit `env`, so these tests pass
  * throwaway env objects rather than mutating `process.env`.
  */
 
 import { describe, it, expect } from 'vitest';
-import { resolvePerfDataBase } from '../e2e/perf-data-base';
+import { resolvePerfDataBase, resolvePerfDataPort } from '../e2e/perf-data-base';
+
+describe('resolvePerfDataPort', () => {
+  it('defaults to 9000 when LUXAR_PERF_DATA_PORT is unset', () => {
+    expect(resolvePerfDataPort({})).toBe(9000);
+  });
+
+  it('coerces LUXAR_PERF_DATA_PORT with Number()', () => {
+    expect(resolvePerfDataPort({ LUXAR_PERF_DATA_PORT: '9100' })).toBe(9100);
+    expect(resolvePerfDataPort({ LUXAR_PERF_DATA_PORT: '09000' })).toBe(9000);
+  });
+});
 
 describe('resolvePerfDataBase', () => {
   it('defaults to http://localhost:9000 when no overrides are set', () => {
@@ -29,11 +40,12 @@ describe('resolvePerfDataBase', () => {
     ).toBe('http://example.test:1234');
   });
 
-  it('interpolates the port string verbatim (no numeric coercion)', () => {
-    // A leading-zero port pins verbatim interpolation: `Number('09000')`
-    // would normalize to 9000, so this fails if the derivation ever
-    // coerces the port instead of splicing the raw string.
-    expect(resolvePerfDataBase({ LUXAR_PERF_DATA_PORT: '09000' })).toBe('http://localhost:09000');
+  it('normalizes the port exactly like the server-side derivation', () => {
+    // The perf config boots the server on `resolvePerfDataPort()`; the
+    // origin must embed that SAME normalized number. A leading-zero port
+    // pins this: verbatim splicing would yield `:09000` — a URL naming a
+    // port the server was never started on.
+    expect(resolvePerfDataBase({ LUXAR_PERF_DATA_PORT: '09000' })).toBe('http://localhost:9000');
   });
 
   it('treats an empty LUXAR_PERF_DATA_BASE as set (?? semantics, not ||)', () => {
