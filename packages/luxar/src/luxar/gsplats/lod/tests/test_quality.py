@@ -56,6 +56,49 @@ class TestTotalSelfEnergy:
         expected = a**2 * math.pi ** (3 / 2) * sigma**3
         assert total_self_energy(data) == pytest.approx(expected, rel=1e-6)
 
+    def test_alpha_effective_amplitude_for_rgba(self) -> None:
+        # Classical-import convention: amplitude ≡ 1, per-splat weight carried
+        # in the color alpha. The self-energy must use the alpha-effective
+        # amplitude A·α, so it equals Σ α² · π^{D/2} · σ^D (NOT the raw Σ 1).
+        sigma = 0.4
+        alpha = np.array([0.25, 1.0, 0.5, 1.0, 0.25, 0.75, 1.0, 0.5], dtype=np.float32)
+        n = alpha.size
+        colors = np.ones((n, 4), dtype=np.float32)
+        colors[:, 3] = alpha
+        tri = np.zeros((n, 6), dtype=np.float32)
+        tri[:, 0] = sigma  # L00
+        tri[:, 2] = sigma  # L11
+        tri[:, 5] = sigma  # L22
+        rng = np.random.default_rng(42)
+        data = GSplatData(
+            centers=rng.random((n, 3)).astype(np.float32),
+            amplitudes=np.ones(n, dtype=np.float32),
+            cholesky_factors=tri,
+            colors=colors,
+        )
+        expected = (
+            float(np.sum(alpha.astype(np.float64) ** 2)) * math.pi ** (3 / 2) * sigma**3
+        )
+        assert total_self_energy(data) == pytest.approx(expected, rel=1e-6)
+        # And it genuinely differs from the raw-amplitude value (Σ 1²·…).
+        raw = float(n) * math.pi ** (3 / 2) * sigma**3
+        assert total_self_energy(data) != pytest.approx(raw, rel=1e-3)
+
+    def test_non_rgba_matches_raw_amplitude(self) -> None:
+        # No RGBA alpha ⇒ effective_amplitudes is a no-op ⇒ the value is the
+        # raw-amplitude self-energy, both with no colors and with 3-col RGB.
+        data = _make_mixture(64, seed=13)  # constant σ = 0.4
+        amps = np.asarray(data.amplitudes, dtype=np.float64)
+        expected = float(np.sum(amps**2)) * math.pi ** (3 / 2) * 0.4**3
+        assert total_self_energy(data) == pytest.approx(expected, rel=1e-6)
+        rgb = GSplatData(
+            centers=np.asarray(data.centers).copy(),
+            amplitudes=np.asarray(data.amplitudes).copy(),
+            cholesky_factors=np.asarray(data.cholesky_factors).copy(),
+            colors=np.full((data.n_splats, 3), 0.5, dtype=np.float32),
+        )
+        assert total_self_energy(rgb) == pytest.approx(expected, rel=1e-6)
+
     def test_additivity_over_splats(self) -> None:
         data = _make_mixture(64, seed=1)
         half_a = total_self_energy(_prefix(data, 32))

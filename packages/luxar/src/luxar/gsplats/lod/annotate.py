@@ -8,8 +8,9 @@ retrofits the stamps **without refitting or re-laddering**:
 
 * ``lod_stats.energy_fraction_cum`` per additive sub-LOD — the cumulative
   self-energy fraction ``e(k)`` of the committed prefix. Cheap: an O(N) pass
-  over ``amplitudes`` + the Cholesky *diagonal* only (the on-disk order **is**
-  the ladder order).
+  over the ALPHA-EFFECTIVE amplitudes (``A·α`` — RGBA color-alpha folded in,
+  matching the build path's ``effective_amplitudes``) + the Cholesky
+  *diagonal* only (the on-disk order **is** the ladder order).
 * ``level_stats.reference_energy`` per leaf — the absolute self-energy weight
   ``w`` used for partition-level quality aggregation.
 * ``level_stats.quality`` per lod-group child (opt-in, ``with_quality=True``) —
@@ -31,7 +32,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import zarr
@@ -51,6 +52,8 @@ class LeafStamp:
     path: str
     n_splats: int
     #: Cumulative energy fraction per additive sub-LOD; last entry is 1.0.
+    #: Empty when a nonempty leaf has zero effective energy (no stamp written,
+    #: matching the build path).
     energy_fraction_cum: List[float]
     #: Absolute self-energy weight ``w`` (``Σ aᵢ²·π^{D/2}·|Σᵢ|^{1/2}``).
     reference_energy: float
@@ -78,7 +81,7 @@ class AnnotateReport:
     levels: List[LevelStamp] = field(default_factory=list)
 
 
-# ── per-chunk self-energy (amplitudes + Cholesky diagonal only) ─────────────
+# ── per-chunk self-energy (alpha-effective amplitudes + Cholesky diagonal) ──
 
 
 def _decode_diag(group: zarr.Group, root: zarr.Group, decoder: Any) -> np.ndarray:
@@ -100,17 +103,44 @@ def _decode_diag(group: zarr.Group, root: zarr.Group, decoder: Any) -> np.ndarra
     return chol[:, idx]
 
 
+def _apply_alpha_effective(
+    amps: np.ndarray, group: zarr.Group, root: zarr.Group, decoder: Any
+) -> np.ndarray:
+    """Fold the per-splat color-alpha opacity into ``amps`` (``A·α``), mirroring
+    :func:`luxar.gsplats.utils.alpha.effective_amplitudes` on the zarr store.
+
+    Only RGBA colors (2-D, ``shape[1] == 4``) with a row count matching ``amps``
+    contribute an alpha factor; anything else (no ``colors`` array, RGB, a shape
+    mismatch) leaves ``amps`` raw — a no-op for fitted (non-RGBA) data.
+    """
+    from luxar.gsplats.utils.alpha import apply_alpha_to_amplitudes
+
+    if "colors" not in group:
+        return amps
+    colors = np.asarray(decoder.decode(group["colors"], root))
+    # Row-count guard the object path never needs: a store could carry a stale
+    # colors array; a mismatch means the alpha is not per-splat, so stay raw.
+    if colors.shape[0] != amps.shape[0]:
+        return amps
+    return apply_alpha_to_amplitudes(amps, colors)
+
+
 def _chunk_self_energy(
     group: zarr.Group, root: zarr.Group, decoder: Any
 ) -> Tuple[float, int, int]:
     """One splat set's raw self-energy sum ``Σ aᵢ²·|Π diagᵢ|`` (no ``π^{D/2}``
     constant — it cancels in fractions and is re-applied for the absolute w).
 
+    ``aᵢ`` is the ALPHA-EFFECTIVE amplitude ``A·α`` (RGBA color-alpha folded in
+    via :func:`_apply_alpha_effective`, matching the build path's
+    ``effective_amplitudes``); equal to the raw amplitude for non-RGBA data.
+
     Returns ``(raw_energy, n_splats, ndim)``.
     """
     amps = np.asarray(decoder.decode(group["amplitudes"], root), dtype=np.float64)
     if amps.size == 0:
         return 0.0, 0, 0
+    amps = _apply_alpha_effective(amps, group, root, decoder)
     diag = np.asarray(_decode_diag(group, root, decoder), dtype=np.float64)
     raw = float(np.sum(amps**2 * np.abs(np.prod(diag, axis=1))))
     return raw, int(amps.size), int(diag.shape[1])
@@ -150,8 +180,9 @@ def _annotate_leaf(
     dry_run: bool,
 ) -> None:
     """Stamp ``energy_fraction_cum`` per sub-LOD + ``reference_energy`` on one
-    leaf. Only ``amplitudes`` + the Cholesky diagonal are decoded, one sub-LOD
-    resident at a time."""
+    leaf. Only ``amplitudes`` (folded to alpha-effective ``A·α`` via any RGBA
+    ``colors``) + the Cholesky diagonal are decoded, one sub-LOD resident at a
+    time."""
     n_additive = int(group.attrs.get("n_additive_sublods", 1))
     sub_groups = (
         [group[f"additive_{i}"] for i in range(n_additive)]
@@ -169,17 +200,41 @@ def _annotate_leaf(
         ndim = max(ndim, d)
 
     total_raw = float(sum(raw_energies))
+    n_total = int(sum(counts))
     if total_raw > 0.0:
         cum = np.cumsum(raw_energies)
-        e_cum = [min(1.0, max(0.0, float(c / total_raw))) for c in cum]
-    else:
-        # Empty / zero-energy leaf: every prefix trivially carries all of the
-        # (zero) energy — mirrors the build-side empty-leaf stamp.
+        # Per sub-LOD cumulative fraction. Mirror the build (additive.py's
+        # `if np.isfinite(e_frac)`): a legacy inf amplitude/Cholesky gives
+        # total_raw=inf and c/total_raw=nan, where the build SKIPS the stamp —
+        # so mark a non-finite fraction with None (no stamp), NOT the 0.0 that
+        # `min(1, max(0, nan))` would fabricate.
+        fracs = [float(c / total_raw) for c in cum]
+        e_cum: List[Optional[float]] | None = [
+            (min(1.0, max(0.0, f)) if np.isfinite(f) else None) for f in fracs
+        ]
+    elif n_total == 0:
+        # Genuinely empty leaf: the build stamps a trivial e(k)=1.0 (additive.py
+        # n==0 branch); mirror it so annotate reproduces the build byte-for-byte.
         e_cum = [1.0] * len(sub_groups)
+    else:
+        # Nonempty but zero effective energy (e.g. a fully transparent RGBA
+        # leaf, α≡0): the build path only writes energy_fraction_cum when
+        # energy_total > 0, so stamp NOTHING here to match it exactly.
+        e_cum = None
     reference_energy = total_raw * math.pi ** (ndim / 2.0) if ndim else 0.0
+    if not math.isfinite(reference_energy):
+        # A legacy store with an inf amplitude/diagonal: the build resets w to
+        # 0.0 (additive.py) so the leaf carries zero weight in aggregation
+        # rather than being left unstamped — mirror it exactly.
+        reference_energy = 0.0
 
-    for sub, e in zip(sub_groups, e_cum):
-        _merge_attr_dict(sub, "lod_stats", {"energy_fraction_cum": e}, dry_run=dry_run)
+    if e_cum is not None:
+        for sub, e in zip(sub_groups, e_cum):
+            if e is None:  # non-finite fraction: skip, matching the build.
+                continue
+            _merge_attr_dict(
+                sub, "lod_stats", {"energy_fraction_cum": e}, dry_run=dry_run
+            )
     # The ladder's own total is the FALLBACK w (setdefault semantics): a lod
     # group's quality pass overwrites its children with the group-consistent
     # finest energy — matching make_additive_lod / make_substitutive_lod.
@@ -195,8 +250,10 @@ def _annotate_leaf(
     report.leaves.append(
         LeafStamp(
             path=str(group.path or "/"),
-            n_splats=int(sum(counts)),
-            energy_fraction_cum=e_cum,
+            n_splats=n_total,
+            energy_fraction_cum=(
+                [e for e in e_cum if e is not None] if e_cum is not None else []
+            ),
             reference_energy=reference_energy,
         )
     )
@@ -210,9 +267,20 @@ def _node_content(node: Any) -> Any:
     * lod group → the content of its FINEST child (the coarser levels are
       *representations* of that content, not additional content).
 
-    Colors are dropped — the L² quality measurement is geometry+amplitude only.
+    Colors are carried through both branches so the alpha-effective amplitude
+    convention (``A·α``) holds uniformly for the quality/energy measurement:
+    the leaf branch keeps its colors and the partition branch merges them
+    through the SAME canonical helper the leaf branch uses
+    (:func:`~luxar.gsplats.gsplat_data._merge_lod_colors`, via
+    ``GSplatData.flattened``). That helper normalizes integer alpha to ``[0, 1]``
+    and widens RGB→opaque RGBA before concatenating, so the partition reference
+    matches a fresh build byte-for-byte — dropping them (or a bespoke
+    ``np.concatenate``) would either score the reference on raw amplitudes (a
+    ~2.8× mixed-convention error on RGBA data) or leak an unnormalized integer
+    alpha (a ~255×/65535× misweight) / silently drop RGBA parts' alpha on a
+    RGB+RGBA width mix.
     """
-    from luxar.gsplats.gsplat_data import GSplatData
+    from luxar.gsplats.gsplat_data import GSplatData, _merge_lod_colors
     from luxar.gsplats.tree import GSplatLodGroup, GSplatPartition
 
     if isinstance(node, GSplatLodGroup):
@@ -222,12 +290,23 @@ def _node_content(node: Any) -> Any:
         parts = [p for p in parts if p.n_splats > 0]
         if not parts:
             raise ValueError("partition has no non-empty parts")
+        # Merge colors with the canonical helper (same as flattened()): it
+        # normalizes integer alpha, widens RGB→opaque RGBA, and white-fills a
+        # colorless part on a mixed presence — so the concatenated reference is
+        # build-identical. Guard a malformed (non-2-D) part-colors array (which
+        # would IndexError on the helper's ``shape[1]``) by degrading to the
+        # colorless path rather than crashing.
+        if any(p.colors is not None and np.asarray(p.colors).ndim != 2 for p in parts):
+            colors = None
+        else:
+            colors = _merge_lod_colors(parts)
         return GSplatData(
             centers=np.concatenate([np.asarray(p.centers) for p in parts]),
             amplitudes=np.concatenate([np.asarray(p.amplitudes) for p in parts]),
             cholesky_factors=np.concatenate(
                 [np.asarray(p.cholesky_factors) for p in parts]
             ),
+            colors=colors,
         )
     return GSplatData.from_tree(node).flattened()
 

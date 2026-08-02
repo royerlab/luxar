@@ -398,10 +398,14 @@ readers treat absence as "unstamped" and fall back to counts.
   group or single-set leaf): cumulative self-energy fraction *e(k)* ∈ (0, 1]
   of the ladder prefix up to and including this sub-LOD
   (`Σ aᵢ²·|Σᵢ|^½` over the prefix ÷ the leaf total; last entry = 1.0).
-  The additive orderer's own ranking criterion — energy-ordered ladders
-  front-load it, so a small prefix carries most of the energy.
+  Here *aᵢ* is the **alpha-effective** amplitude `A·α` (raw amplitude times the
+  per-splat color-alpha opacity for RGBA splats; equal to the raw amplitude
+  when there is no RGBA alpha) — the rendered mass the additive orderer ranks
+  by, so energy-ordered ladders front-load it and a small prefix carries most
+  of the energy.
 - **`level_stats.reference_energy`** (per leaf): the leaf's absolute total
-  self-energy *w* = `Σ aᵢ²·π^{D/2}·|Σᵢ|^½`. Disjoint partition parts sum, so
+  self-energy *w* = `Σ aᵢ²·π^{D/2}·|Σᵢ|^½` (again with the **alpha-effective**
+  amplitude `A·α`). Disjoint partition parts sum, so
   *w* is the weight for aggregating per-leaf qualities across a partition.
   Inside a `kind=lod` group every level carries the **finest** content's
   total (group-consistent — self-energy is quadratic in amplitude, so
