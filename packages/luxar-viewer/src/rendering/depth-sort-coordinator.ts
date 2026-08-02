@@ -62,6 +62,7 @@ import {
   cancelSortedIndexOrderingApply,
   hasPendingSortedIndexOrderingApply,
   pumpSortedIndexOrderingApply,
+  setSortedIndexApplyRequestRender,
   writeSortedIndexOrdering,
 } from './element-storage';
 import { needsDepthSort } from './blending-state';
@@ -209,6 +210,10 @@ export function configureDepthSort(options: {
   isLoadInProgress = options.isLoadInProgress ?? null;
   getProfiler = options.getProfiler ?? null;
   setRenderOrderDisplayDimsAccessor(options.getDisplayDims ?? null);
+  // A consumed slice's upload acknowledgement resumes an idle chunked
+  // stream the instant the mesh is drawn again (issue #715 resume gap —
+  // the pump never requests a render on a stall).
+  setSortedIndexApplyRequestRender(options.requestRender);
 }
 
 /**
@@ -711,10 +716,17 @@ let scratch: EvaluateScratch | null = null;
  *   ABORTS the apply: the remaining slices describe the demoted
  *   commit's population. (The commit path's identity writers cancel
  *   independently; this catches demotions with no follow-up write.)
+ * - A node that is not effectively visible (hidden ancestor/layer,
+ *   `visible=false`, LOD-hidden) is SKIPPED without pumping — it must
+ *   not advance/accumulate a stream while not drawn (issue #715). It
+ *   resumes when shown (the visibility change requests its own render).
  * - While slices remain, request another frame — the pump is the only
  *   thing keeping the on-demand loop alive between slices. The slice
  *   just written rides THIS frame's flush (per-frame callbacks run
- *   before render), so the final slice needs no extra frame.
+ *   before render), so the final slice needs no extra frame. EXCEPT a
+ *   STALLED pump (previous slice unflushed — frustum-culled or otherwise
+ *   not drawn; issue #715): it made no progress, so the loop idles until
+ *   a DRAWN frame consumes the pending slice and the next pump advances.
  * - On COMPLETION, drain a queued re-sort (a commit that landed while a
  *   sort was in flight parked it) — the counterpart of the resolve
  *   path's drain, restoring the natural cadence: sort → apply N frames
@@ -753,7 +765,20 @@ function pumpChunkedOrderingApplies(): void {
       state.resortQueued = false;
       continue;
     }
-    const { more, flipped } = pumpSortedIndexOrderingApply(geometry);
+    // Issue #715: a hidden/off-screen node must not advance its stream —
+    // writing while not drawn would accumulate an unflushed union (the
+    // per-slice bound only holds when each slice is uploaded before the
+    // next). Skip the pump entirely (write nothing while hidden → zero
+    // accumulation) and request no render. This resumes cleanly when the
+    // node is shown: the last slice it wrote while visible was already
+    // consumed, double-buffering keeps the drawn buffer a complete valid
+    // permutation throughout, and the visibility change requests its own
+    // render, which re-runs the pump to resume the drain. (Visibility
+    // gating alone is insufficient for frustum culling — a culled mesh
+    // stays `visible=true` — which is what the pump's back-pressure
+    // covers; this branch handles the hidden case.)
+    if (!isEffectivelyVisible(state.mesh)) continue;
+    const { more, flipped, stalled } = pumpSortedIndexOrderingApply(geometry);
     if (flipped) {
       // The just-completed buffer becomes the drawn one. This runs in a
       // per-frame callback, which the animation controller invokes
@@ -763,7 +788,13 @@ function pumpChunkedOrderingApplies(): void {
       requestRender?.();
     }
     if (more) {
-      requestRender?.();
+      // A STALLED pump made no progress (the previous slice is still
+      // unflushed — the mesh was not drawn since; issue #715). Do NOT
+      // spin the on-demand loop on it: the node resumes one slice per
+      // DRAWN frame, since each drawn frame's render consumes the prior
+      // slice and any subsequent render — camera motion, commit,
+      // visibility change — re-runs the pump, which then advances.
+      if (!stalled) requestRender?.();
     } else if (state.resortQueued) {
       state.resortQueued = false;
       scheduleSort(state.mesh, nodeId);
@@ -1010,6 +1041,9 @@ export function disposeDepthSort(): void {
   // Module-state reset completeness: in-flight chunked applies hold
   // geometry + ordering references in element-storage's map.
   cancelAllSortedIndexOrderingApplies();
+  // Drop the per-slice render-continuation hook so a dispose/re-init does
+  // not keep the old app's requestRender closure alive.
+  setSortedIndexApplyRequestRender(null);
   // Module-state reset completeness: both per-frame containers can hold
   // THREE object references between calls (the rank memo until the next
   // evaluate's clear; the slots only if an evaluate threw mid-collect) —
