@@ -293,6 +293,7 @@ def generate_mandelbulb_volumetric(
                 radii=radii,
                 sharpness=sharpnesses,
                 opacity=0.9,
+                blending_mode="volumetric",
                 # Rescaled for the 2026-08-02 ray-mass unification: tau is now
                 # kappa * (the ray mass additive emits) with no world-radius
                 # factor, so the authored look transfers as
