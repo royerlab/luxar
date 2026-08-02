@@ -16,6 +16,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { processPointsData } from '../../../../../data/scene-loader/process/data-processor-points';
 import * as THREE from 'three';
 
 // vi.mock the loader-factory module so we can capture createPointsLoader
@@ -81,7 +82,7 @@ function makeCtx(overrides: Partial<NodeBuildCtx> = {}): NodeBuildCtx & {
     applyEffectiveAttrs: ReturnType<typeof vi.fn>;
     deriveNodeViewState: ReturnType<typeof vi.fn>;
     connectLoaderToMonitor: ReturnType<typeof vi.fn>;
-    updatePointsGeometry: ReturnType<typeof vi.fn>;
+    commitPointsGeometry: ReturnType<typeof vi.fn>;
     createEmptyPointsNode: ReturnType<typeof vi.fn>;
   };
 } {
@@ -90,7 +91,7 @@ function makeCtx(overrides: Partial<NodeBuildCtx> = {}): NodeBuildCtx & {
   const applyEffectiveAttrs = vi.fn((node: SceneNode) => node.attrs);
   const deriveNodeViewState = vi.fn(() => ({ skip: false as const, viewState }));
   const connectLoaderToMonitor = vi.fn();
-  const updatePointsGeometry = vi.fn();
+  const commitPointsGeometry = vi.fn();
 
   const nodeFactory = {
     createEmptyPointsNode,
@@ -117,10 +118,11 @@ function makeCtx(overrides: Partial<NodeBuildCtx> = {}): NodeBuildCtx & {
     applyEffectiveAttrs,
     deriveNodeViewState,
     connectLoaderToMonitor,
-    updatePointsGeometry,
     processLinesData: vi.fn(),
     commitLinesGeometry: vi.fn(),
     processGSplatsData: vi.fn(),
+    processPointsData,
+    commitPointsGeometry,
     commitGSplatsGeometry: vi.fn(),
     ...overrides,
   };
@@ -129,7 +131,7 @@ function makeCtx(overrides: Partial<NodeBuildCtx> = {}): NodeBuildCtx & {
       applyEffectiveAttrs,
       deriveNodeViewState,
       connectLoaderToMonitor,
-      updatePointsGeometry,
+      commitPointsGeometry,
       createEmptyPointsNode,
     },
   });
@@ -224,7 +226,7 @@ describe('loadPointsNode — happy path', () => {
     );
   });
 
-  it('commits via ctx.updatePointsGeometry on success', async () => {
+  it('commits via the ctx points process/commit pair on success', async () => {
     const data = { pointCount: 5 } as LoadedPointsData;
     createPointsLoaderMock.mockReturnValue(makePointsLoader(vi.fn().mockResolvedValue(data)));
     const ctx = makeCtx();
@@ -232,7 +234,11 @@ describe('loadPointsNode — happy path', () => {
     const result = await loadPointsNode(makeSceneNode(), new THREE.Group(), {} as never, ctx);
 
     expect(result).not.toBeNull();
-    expect(ctx.spies.updatePointsGeometry).toHaveBeenCalledWith('/scene/p', data, undefined, 1);
+    expect(ctx.spies.commitPointsGeometry).toHaveBeenCalledWith(
+      { path: '/scene/p', data },
+      undefined,
+      1
+    );
   });
 
   it('clears a prior failure record on a successful (re)load', async () => {
@@ -276,7 +282,11 @@ describe('loadPointsNode — pointCount === 0 path', () => {
     expect(placeholder!.name).toBe('/scene/p');
     // Future updateView() / retry calls need the empty commit to seed
     // the geometry — so the helper commits even on pointCount=0.
-    expect(ctx.spies.updatePointsGeometry).toHaveBeenCalledWith('/scene/p', data, undefined, 1);
+    expect(ctx.spies.commitPointsGeometry).toHaveBeenCalledWith(
+      { path: '/scene/p', data },
+      undefined,
+      1
+    );
   });
 });
 
@@ -333,7 +343,7 @@ describe('loadPointsNode — error path', () => {
     expect(ctx.registry.failedLoaders.has('/scene/p')).toBe(true);
     expect(ctx.registry.failedLoaders.get('/scene/p')?.error).toBe(cause);
     // No commit on the failure path.
-    expect(ctx.spies.updatePointsGeometry).not.toHaveBeenCalled();
+    expect(ctx.spies.commitPointsGeometry).not.toHaveBeenCalled();
   });
 
   it('classifies network errors as Network kind on the rethrown LoaderError', async () => {
