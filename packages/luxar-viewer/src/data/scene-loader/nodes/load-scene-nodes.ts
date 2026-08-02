@@ -15,9 +15,7 @@ import * as THREE from 'three';
 import * as zarr from '../../zarr';
 import type { SceneNode } from '../../data-loader-types';
 import { loadLeafNode } from './load-leaf-error-dispatch';
-import { loadPointsNode } from './load-points-node';
-import { loadLinesNode } from './load-lines-node';
-import { loadGSplatsNode } from './load-gsplats-node';
+import { geometryDescriptorFor } from '../geometry-descriptors';
 import { loadLodGroupNode } from './load-lod-group-node';
 import { loadPartitionGroupNode } from './load-partition-group-node';
 import type { NodeBuildCtx } from './build-ctx';
@@ -34,16 +32,12 @@ export async function loadSceneNodes(
   parentLoc: zarr.Location<zarr.Readable>,
   ctx: NodeBuildCtx
 ): Promise<void> {
-  if (node.type === 'points') {
-    // loadPointsNode attaches its own placeholder to parentThree before
-    // fetching data; no caller-side `if (points) add(points)` is needed.
-    // The placeholder stays in the scene even on failure so retry can
-    // populate it.
-    await loadLeafNode(() => loadPointsNode(node, parentThree, parentLoc, ctx), node.path);
-  } else if (node.type === 'lines') {
-    await loadLeafNode(() => loadLinesNode(node, parentThree, parentLoc, ctx), node.path);
-  } else if (node.type === 'gsplats') {
-    await loadLeafNode(() => loadGSplatsNode(node, parentThree, parentLoc, ctx), node.path);
+  const descriptor = geometryDescriptorFor(node.type);
+  if (descriptor) {
+    // Each loadXNode attaches its own placeholder to parentThree before
+    // fetching data; no caller-side `if (node) add(node)` is needed. The
+    // placeholder stays in the scene even on failure so retry can populate it.
+    await loadLeafNode(() => descriptor.loadNode(node, parentThree, parentLoc, ctx), node.path);
   } else if (node.type === 'group' && node.attrs.kind === 'lod') {
     // A kind=lod Group is a specialized container that recurses into
     // children itself (it needs to capture each child's THREE node +

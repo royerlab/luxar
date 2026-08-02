@@ -22,6 +22,7 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
+import { processPointsData } from '../../../../../data/scene-loader/process/data-processor-points';
 import * as THREE from 'three';
 import {
   retryFailedLoaderUnlocked,
@@ -74,7 +75,7 @@ function makeRetryCtx(overrides: Partial<RetryCtx> = {}): RetryCtx & {
   // Surface the spies for easy assertion.
   spies: {
     deriveNodeViewState: ReturnType<typeof vi.fn>;
-    updatePointsGeometry: ReturnType<typeof vi.fn>;
+    commitPointsGeometry: ReturnType<typeof vi.fn>;
     processLinesData: ReturnType<typeof vi.fn>;
     commitLinesGeometry: ReturnType<typeof vi.fn>;
     processGSplatsData: ReturnType<typeof vi.fn>;
@@ -88,7 +89,7 @@ function makeRetryCtx(overrides: Partial<RetryCtx> = {}): RetryCtx & {
       viewState,
     })
   );
-  const updatePointsGeometry = vi.fn();
+  const commitPointsGeometry = vi.fn();
   const processLinesData = vi.fn().mockResolvedValue(null);
   const commitLinesGeometry = vi.fn();
   const processGSplatsData = vi.fn().mockResolvedValue(null);
@@ -99,7 +100,8 @@ function makeRetryCtx(overrides: Partial<RetryCtx> = {}): RetryCtx & {
     rootGroup: null,
     viewState,
     deriveNodeViewState,
-    updatePointsGeometry,
+    processPointsData,
+    commitPointsGeometry,
     processLinesData,
     commitLinesGeometry,
     processGSplatsData,
@@ -109,7 +111,7 @@ function makeRetryCtx(overrides: Partial<RetryCtx> = {}): RetryCtx & {
   return Object.assign(ctx, {
     spies: {
       deriveNodeViewState,
-      updatePointsGeometry,
+      commitPointsGeometry,
       processLinesData,
       commitLinesGeometry,
       processGSplatsData,
@@ -165,7 +167,7 @@ describe('retryFailedLoaderUnlocked — Points loader success path', () => {
 
     expect(ok).toBe(true);
     expect(updateView).toHaveBeenCalledTimes(1);
-    expect(ctx.spies.updatePointsGeometry).toHaveBeenCalledWith(PATH, data);
+    expect(ctx.spies.commitPointsGeometry).toHaveBeenCalledWith({ path: PATH, data });
     expect(ctx.registry.failedLoaders.has(PATH)).toBe(false);
     // Points uses applyPartialExtendTolerance: true (matches initial-load path).
     expect(ctx.spies.deriveNodeViewState).toHaveBeenCalledWith(PATH, undefined, {
@@ -173,7 +175,7 @@ describe('retryFailedLoaderUnlocked — Points loader success path', () => {
     });
   });
 
-  it('does not call updatePointsGeometry when loader.updateView resolves null', async () => {
+  it('does not commit points geometry when loader.updateView resolves null', async () => {
     const updateView = vi.fn().mockResolvedValue(null);
     const ctx = makeRetryCtx({
       rootGroup: makeRootGroupWith(PATH),
@@ -185,7 +187,7 @@ describe('retryFailedLoaderUnlocked — Points loader success path', () => {
 
     // verifyAndClear still runs — fetched (null) data still counts as a successful retry.
     expect(ok).toBe(true);
-    expect(ctx.spies.updatePointsGeometry).not.toHaveBeenCalled();
+    expect(ctx.spies.commitPointsGeometry).not.toHaveBeenCalled();
     expect(ctx.registry.failedLoaders.has(PATH)).toBe(false);
   });
 });
@@ -246,8 +248,8 @@ describe('retryFailedLoaderUnlocked — GSplats loader extend_to_all skip fallba
     const ok = await retryFailedLoaderUnlocked(PATH, ctx);
 
     expect(ok).toBe(true);
-    // The 4-field spread fallback (NOT the derived viewState) — same shape
-    // loadGSplats() initial-load uses. Verify by checking what loader.updateView received.
+    // The base view state (NOT the derived one) — same shape loadGSplats()
+    // initial-load uses. Verify by checking what loader.updateView received.
     expect(updateView).toHaveBeenCalledTimes(1);
     const passedViewState = updateView.mock.calls[0][0];
     expect(passedViewState).toEqual({
@@ -262,6 +264,44 @@ describe('retryFailedLoaderUnlocked — GSplats loader extend_to_all skip fallba
       { extend_to_all: ['t', 'c'] },
       { applyPartialExtendTolerance: true }
     );
+  });
+});
+
+describe('retryFailedLoaderUnlocked — derived view state reaches the loader intact', () => {
+  // `deriveNodeViewState` sets `noPreimage` when a node's discrete
+  // `nd_transform` maps the current world slice between grid points; each
+  // spatial-index loader honours it by returning no ranges, so the node
+  // renders nothing. A retry arm that rebuilds the view state field-by-field
+  // drops the flag and commits geometry at a position that must stay empty —
+  // and `verifyAndClear` then blesses that result.
+
+  // `Promise<null>` is assignable to every loader's `Promise<LoadedX | null>`,
+  // so one signature serves all three makers.
+  type StubUpdateView = (vs: ViewState) => Promise<null>;
+  const registerFor: Record<
+    string,
+    (registry: LoaderRegistry, updateView: StubUpdateView) => void
+  > = {
+    points: (registry, updateView) =>
+      registry.registerPointsLoader(PATH, makePointsLoader(updateView)),
+    lines: (registry, updateView) =>
+      registry.registerLinesLoader(PATH, makeLinesLoader(updateView)),
+    gsplats: (registry, updateView) =>
+      registry.registerGSplatsLoader(PATH, makeGSplatsLoader(updateView)),
+  };
+
+  it.each(['points', 'lines', 'gsplats'])('forwards noPreimage for %s', async (kind) => {
+    const updateView = vi.fn().mockResolvedValue(null);
+    const ctx = makeRetryCtx({ rootGroup: makeRootGroupWith(PATH) });
+    const derivedViewState: ViewState = { ...makeViewState(), noPreimage: true };
+    ctx.spies.deriveNodeViewState.mockReturnValue({ skip: false, viewState: derivedViewState });
+    registerFor[kind](ctx.registry, updateView);
+    ctx.registry.recordFailure(PATH, new Error('initial failure'));
+
+    await retryFailedLoaderUnlocked(PATH, ctx);
+
+    expect(updateView).toHaveBeenCalledTimes(1);
+    expect(updateView.mock.calls[0][0].noPreimage).toBe(true);
   });
 });
 
@@ -283,7 +323,7 @@ describe('retryFailedLoaderUnlocked — verifyAndClear stale-scene guard', () =>
     expect(ok).toBe(false);
     // Data was fetched (the fetch is async + completes), commit was attempted...
     expect(updateView).toHaveBeenCalledTimes(1);
-    expect(ctx.spies.updatePointsGeometry).toHaveBeenCalledTimes(1);
+    expect(ctx.spies.commitPointsGeometry).toHaveBeenCalledTimes(1);
     // ...but the failure stays — verifyAndClear refused to clear it.
     expect(ctx.registry.failedLoaders.has(PATH)).toBe(true);
   });
@@ -303,7 +343,7 @@ describe('retryFailedLoaderUnlocked — no loader registered', () => {
     expect(ok).toBe(false);
     expect(ctx.registry.failedLoaders.has(PATH)).toBe(false);
     // None of the per-type paths ran.
-    expect(ctx.spies.updatePointsGeometry).not.toHaveBeenCalled();
+    expect(ctx.spies.commitPointsGeometry).not.toHaveBeenCalled();
     expect(ctx.spies.processLinesData).not.toHaveBeenCalled();
     expect(ctx.spies.processGSplatsData).not.toHaveBeenCalled();
   });
