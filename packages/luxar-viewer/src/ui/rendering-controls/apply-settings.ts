@@ -11,7 +11,7 @@ import type { RenderingSettings } from '../../config';
 import type { PostProcessingManager } from '../../rendering';
 import type { SceneManager } from '../../scene/scene-manager';
 import type { AnimationController } from '../../scene/animation/animation-controller';
-import { TONE_MAPPING_MAP } from './cinematic-mode';
+import { toneMappingFromName } from '../../rendering/post-processing/tone-mapping';
 
 export interface ApplySettingsContext {
   settings: RenderingSettings;
@@ -53,7 +53,7 @@ export function applyRenderingSettings(context: ApplySettingsContext): void {
   postProcessing.setMSAAEnabled(settings.msaaEnabled);
   postProcessing.setMSAASamples(settings.msaaSamples);
 
-  postProcessing.setToneMapping(TONE_MAPPING_MAP[settings.toneMapping]);
+  postProcessing.setToneMapping(toneMappingFromName(settings.toneMapping));
 
   postProcessing.setDetectorNoiseEnabled(
     settings.detectorNoiseEnabled,

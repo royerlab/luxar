@@ -17,6 +17,8 @@
  */
 
 import * as THREE from 'three';
+import { config } from '../../../config';
+import { resolveToneMappingDefault } from '../tone-mapping';
 import { MEGA_VERTEX_SHADER, MEGA_FRAGMENT_SHADER } from './shader.glsl';
 
 /**
@@ -96,6 +98,9 @@ export interface MegaShaderConfig {
  */
 export class MegaShaderMaterial extends THREE.ShaderMaterial {
   constructor(cfg: MegaShaderConfig = {}) {
+    // Single source of truth for every omitted value: the shared
+    // rendering-controls defaults the UI and PostProcessingManager read.
+    const d = config.renderingControls.defaults;
     super({
       vertexShader: MEGA_VERTEX_SHADER,
       fragmentShader: MEGA_FRAGMENT_SHADER,
@@ -115,9 +120,9 @@ export class MegaShaderMaterial extends THREE.ShaderMaterial {
         uResolution: { value: new THREE.Vector2(1, 1) },
 
         // EOG
-        uExposure: { value: cfg.exposure ?? 0.0 },
-        uGlobalOffset: { value: cfg.globalOffset ?? 0.0 },
-        uGlobalGamma: { value: Math.max(0.001, cfg.globalGamma ?? 1.0) },
+        uExposure: { value: cfg.exposure ?? d.exposure },
+        uGlobalOffset: { value: cfg.globalOffset ?? d.globalOffset },
+        uGlobalGamma: { value: Math.max(0.001, cfg.globalGamma ?? d.globalGamma) },
 
         // THREE's tone-mapping chunk reads this; we pin it to 1.0
         // because uExposure already pre-multiplies.
@@ -136,22 +141,24 @@ export class MegaShaderMaterial extends THREE.ShaderMaterial {
 
         // Detector noise
         uTime: { value: 0 },
-        uReadoutSigma: { value: cfg.detectorNoise?.readoutSigma ?? 0.01 },
-        uPhotonGain: { value: cfg.detectorNoise?.photonGain ?? 0.01 },
-        uFpnSigma: { value: cfg.detectorNoise?.fpnSigma ?? 0.005 },
+        uReadoutSigma: {
+          value: cfg.detectorNoise?.readoutSigma ?? d.detectorNoiseReadoutSigma,
+        },
+        uPhotonGain: { value: cfg.detectorNoise?.photonGain ?? d.detectorNoisePhotonGain },
+        uFpnSigma: { value: cfg.detectorNoise?.fpnSigma ?? d.detectorNoiseFpnSigma },
 
         // Vignette
-        uVignetteDarkness: { value: cfg.vignette?.darkness ?? 0.5 },
-        uVignetteOffset: { value: cfg.vignette?.offset ?? 0.5 },
+        uVignetteDarkness: { value: cfg.vignette?.darkness ?? d.vignetteDarkness },
+        uVignetteOffset: { value: cfg.vignette?.offset ?? d.vignetteOffset },
 
         // Bloom
         uBloomTexture: { value: null as THREE.Texture | null },
-        uBloomIntensity: { value: cfg.bloom?.intensity ?? 0.25 },
+        uBloomIntensity: { value: cfg.bloom?.intensity ?? d.bloomStrength },
       },
 
       defines: {
         LUXAR_TONE_MAPPING_MODE: toneMappingModeDefine(
-          cfg.toneMapping ?? THREE.ACESFilmicToneMapping
+          cfg.toneMapping ?? resolveToneMappingDefault()
         ),
       },
     });
