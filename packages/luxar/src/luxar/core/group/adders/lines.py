@@ -15,6 +15,7 @@ from typing import (
     List,
     Optional,
     Sequence,
+    Tuple,
     Union,
     cast,
 )
@@ -420,6 +421,86 @@ def add_lines_impl(
         raise ValueError(f"Could not add lines '{name}': {e}") from e
 
 
+def _collect_partition_vertex_indices(
+    polyline_indices: List[np.ndarray],
+    polyline_parts: List[List[int]],
+) -> List[np.ndarray]:
+    """Concatenate each part's atomic polylines in deterministic order."""
+    part_vertex_indices: List[np.ndarray] = []
+    for polyline_ids in polyline_parts:
+        members = [
+            polyline_indices[p] for p in polyline_ids if polyline_indices[p].size > 0
+        ]
+        part_vertex_indices.append(
+            np.concatenate(members).astype(np.intp, copy=False)
+            if members
+            else np.empty(0, dtype=np.intp)
+        )
+    return part_vertex_indices
+
+
+def _bucket_indexed_edge_indices(
+    indices: np.ndarray,
+    part_vertex_indices: List[np.ndarray],
+    n_vertices: int,
+) -> Tuple[np.ndarray, List[np.ndarray], np.ndarray]:
+    """Group indexed edges by part and build a global-to-local vertex map.
+
+    Returns the global edge array, one stable edge-index view per part, and an
+    ``(n_vertices,)`` map from global vertex index to its part-local index.
+    Stability preserves the original authored edge order within each part. The
+    persistent grouping storage is one permutation rather than millions of
+    Python edge tuples; callers gather and remap one part at a time.
+    """
+    n_parts = len(part_vertex_indices)
+    edges = np.asarray(indices, dtype=np.intp).reshape(-1, 2)
+    vertex_map = np.full(n_vertices, -1, dtype=np.intp)
+
+    for part_i, part_vertices in enumerate(part_vertex_indices):
+        vertex_map[part_vertices] = part_i
+
+    if edges.size == 0:
+        edge_buckets = [np.empty(0, dtype=np.intp) for _ in range(n_parts)]
+    else:
+        edge_parts = vertex_map[edges[:, 0]]
+        valid = (edge_parts >= 0) & (vertex_map[edges[:, 1]] == edge_parts)
+        all_valid = bool(np.all(valid))
+        valid_edge_indices: Optional[np.ndarray] = None
+        if all_valid:
+            valid_edge_parts = edge_parts
+        else:
+            valid_edge_indices = np.flatnonzero(valid).astype(np.intp, copy=False)
+            valid_edge_parts = edge_parts[valid]
+
+        part_order = np.argsort(valid_edge_parts, kind="stable").astype(
+            np.intp, copy=False
+        )
+        if all_valid:
+            edge_order = part_order
+        else:
+            assert valid_edge_indices is not None
+            edge_order = valid_edge_indices[part_order]
+        counts = np.bincount(valid_edge_parts, minlength=n_parts)
+        offsets = np.concatenate(
+            (
+                np.array([0], dtype=np.intp),
+                np.cumsum(counts, dtype=np.intp),
+            )
+        )
+        edge_buckets = [
+            edge_order[int(offsets[i]) : int(offsets[i + 1])] for i in range(n_parts)
+        ]
+
+    # The part-id map is no longer needed. Reuse its buffer for local vertex
+    # indices instead of allocating a second n_vertices-sized array. Callers
+    # consume buckets and part_vertex_indices in this same part order.
+    vertex_to_local = vertex_map
+    for part_vertices in part_vertex_indices:
+        vertex_to_local[part_vertices] = np.arange(part_vertices.size, dtype=np.intp)
+
+    return edges, edge_buckets, vertex_to_local
+
+
 def add_lines_partition_wrapper_impl(
     group: "Group",
     *,
@@ -465,9 +546,10 @@ def add_lines_partition_wrapper_impl(
         **wrapper_attrs,
     )
 
-    part_sizes = [
-        sum(int(polyline_indices[p].size) for p in part) for part in polyline_parts
-    ]
+    part_vertex_indices = _collect_partition_vertex_indices(
+        polyline_indices, polyline_parts
+    )
+    part_sizes = [int(part_vertices.size) for part_vertices in part_vertex_indices]
     aprint(
         f"  ✂️  Partitioned '{name}' into {len(polyline_parts)} parts via "
         f"polyline-centroid BSP "
@@ -475,57 +557,43 @@ def add_lines_partition_wrapper_impl(
     )
 
     # For ``indexed`` inputs, bucket the ORIGINAL edges by part up front.
-    # Each connected component (hence each edge) lands wholly in one part,
-    # so the exact graph topology is preserved by remapping real edges into
-    # part-local indices below — never by re-pairing sorted union-find
-    # members (which fabricated/dropped edges and crashed on odd-sized
-    # components).
-    part_edges: List[List[tuple[int, int]]] = [[] for _ in polyline_parts]
-    if line_type == "indexed" and indices is not None and len(indices) > 0:
-        vertex_to_part = np.full(n_vertices, -1, dtype=np.int64)
-        for part_i, polyline_ids in enumerate(polyline_parts):
-            for p in polyline_ids:
-                vertex_to_part[polyline_indices[p]] = part_i
-        # ``indices`` is the flat (2E,) edge list; view it as (E, 2).
-        for edge in np.asarray(indices, dtype=np.int64).reshape(-1, 2):
-            a, b = int(edge[0]), int(edge[1])
-            pa = int(vertex_to_part[a])
-            if pa >= 0 and int(vertex_to_part[b]) == pa:
-                part_edges[pa].append((a, b))
+    # Each connected component (hence each edge) lands wholly in one part.
+    # The grouping is a stable NumPy permutation, not one Python tuple per
+    # edge; remapping uses one reusable global-to-local array, not per-part
+    # dictionaries. Exact authored topology and edge order are preserved.
+    indexed_edges: Optional[np.ndarray] = None
+    part_edge_indices: List[np.ndarray] = []
+    vertex_to_local: Optional[np.ndarray] = None
+    if line_type == "indexed" and indices is not None:
+        indexed_edges, part_edge_indices, vertex_to_local = (
+            _bucket_indexed_edge_indices(
+                indices,
+                part_vertex_indices,
+                n_vertices,
+            )
+        )
 
     # The new line_type per part is either:
     # - ``polyline`` / ``loop`` with one polyline ⇒ keep as-is.
     # - ``segments`` ⇒ re-emit as ``segments`` (consecutive member pairs).
     # - ``indexed`` ⇒ re-emit as ``indexed`` with the part's real edges
     #   remapped to part-local vertex indices.
-    for i, polyline_ids in enumerate(polyline_parts):
-        # Collect vertices for this part, preserving original order.
-        vertex_index_list: List[np.ndarray] = []
-        new_segments: List[List[int]] = []
-        cursor = 0
-        for p in polyline_ids:
-            members = polyline_indices[p]
-            if members.size == 0:
-                continue
-            vertex_index_list.append(members)
-            # ``segments`` members are stored pairwise, so consecutive
-            # pairs (0,1),(2,3),... ARE the segments. (``indexed`` edges
-            # are remapped from the original edge list below instead.)
-            if line_type == "segments":
-                for k in range(0, members.size - 1, 2):
-                    new_segments.append([cursor + k, cursor + k + 1])
-            cursor += int(members.size)
-
-        if not vertex_index_list:
+    for i, part_vertex_idx in enumerate(part_vertex_indices):
+        if part_vertex_idx.size == 0:
             continue
-        part_vertex_idx = np.concatenate(vertex_index_list)
         part_vertices = vert_arr[part_vertex_idx]
         part_n = int(part_vertex_idx.size)
 
-        # Remap this part's original edges to part-local vertex indices.
+        # Remap this part's original edges to part-local vertex indices. The
+        # gather is bounded by one part; the global edge order and vertex map
+        # remain shared across all parts.
+        part_indices: Optional[np.ndarray] = None
         if line_type == "indexed":
-            local_of = {int(g): loc for loc, g in enumerate(part_vertex_idx)}
-            new_segments = [[local_of[a], local_of[b]] for (a, b) in part_edges[i]]
+            assert indexed_edges is not None
+            assert vertex_to_local is not None
+            edge_ids = part_edge_indices[i]
+            if edge_ids.size > 0:
+                part_indices = vertex_to_local[indexed_edges[edge_ids]].reshape(-1)
 
         # Slice per-vertex parameters into this part.
         part_widths = (
@@ -551,12 +619,6 @@ def add_lines_partition_wrapper_impl(
             part_indices = None
         else:  # indexed
             part_line_type = "indexed"
-            # add_lines expects a flat (2M,) index list for indexed lines.
-            part_indices = (
-                np.asarray(new_segments, dtype=np.intp).reshape(-1)
-                if new_segments
-                else None
-            )
             if part_indices is None:
                 # Single-vertex polylines on indexed → emit as
                 # ``segments`` of zero length (caller asked for

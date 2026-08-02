@@ -41,15 +41,19 @@ adders/
 ### `lines.py`
 
 - `add_lines_impl(group, *, name, vertices, widths, ...)` → `Lines | Group`
+- `_collect_partition_vertex_indices(polyline_indices, polyline_parts)` → per-part vertex arrays
+- `_bucket_indexed_edge_indices(indices, part_vertex_indices, n_vertices)` → stable edge buckets + shared local map
 - `add_lines_partition_wrapper_impl(group, *, name, vert_arr, polyline_indices, polyline_parts, ...)` → `Group`
 - `add_lines_multi_lod_wrapper_impl(group, *, name, vert_arr, polyline_levels, ...)` → `Lines`
 
 Lines partition at **polyline granularity** — the BSP runs over per-polyline
 centroids and whole polylines / connected components are atomic (each lands
-in exactly one part). `indexed` inputs have their original edges bucketed by
-part and remapped to part-local vertex indices, preserving exact graph
-topology; `segments` re-emit consecutive member pairs; `polyline` / `loop`
-inputs are already a single polyline so the BSP yields a single part.
+in exactly one part). `indexed` inputs group their original edges by a stable
+NumPy part permutation and remap them through one reusable global-to-local
+vertex array; this avoids per-edge Python tuples and per-part dictionaries
+while preserving exact graph topology and authored edge order. `segments`
+re-emit consecutive member pairs; `polyline` / `loop` inputs are already a
+single polyline so the BSP yields a single part.
 
 ### `gsplats.py`
 

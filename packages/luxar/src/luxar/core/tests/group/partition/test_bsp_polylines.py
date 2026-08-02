@@ -18,6 +18,10 @@ import zarr
 
 from luxar.core.dimensions import Dimensions
 from luxar.core.group import Group
+from luxar.core.group.adders.lines import (
+    _bucket_indexed_edge_indices,
+    _collect_partition_vertex_indices,
+)
 from luxar.core.group.lod.lines import identify_polylines
 from luxar.core.group.partition import median_bsp_polylines, midpoint_bsp_polylines
 from luxar.io.compiler import LuxarZarrCompiler
@@ -129,6 +133,73 @@ class TestMidpointBspPolylines:
         for part in parts:
             vertex_count = sum(int(ps[p].size) for p in part)
             assert vertex_count <= 40, f"part of {vertex_count} verts exceeds cap 40"
+
+
+# ────────────────────────────────────────────────────────────────────────
+# Vectorized indexed-edge bucketing
+# ────────────────────────────────────────────────────────────────────────
+
+
+class TestIndexedEdgeBucketing:
+    def test_preserves_edge_order_and_remaps_without_dicts(self) -> None:
+        polylines = [
+            np.array([0, 1, 2], dtype=np.intp),
+            np.array([4, 5, 6], dtype=np.intp),
+            np.array([3], dtype=np.intp),
+        ]
+        parts = [[1], [0, 2]]
+        part_vertices = _collect_partition_vertex_indices(polylines, parts)
+        np.testing.assert_array_equal(part_vertices[0], [4, 5, 6])
+        np.testing.assert_array_equal(part_vertices[1], [0, 1, 2, 3])
+
+        # Deliberately interleave the two parts' edges. Stable bucketing must
+        # preserve authored order within each part before local remapping.
+        indices = np.array(
+            [
+                [0, 1],  # part 1
+                [5, 6],  # part 0
+                [1, 2],  # part 1
+                [4, 5],  # part 0
+                [2, 0],  # part 1
+            ],
+            dtype=np.intp,
+        )
+        edges, edge_buckets, vertex_to_local = _bucket_indexed_edge_indices(
+            indices,
+            part_vertices,
+            n_vertices=7,
+        )
+
+        # Buckets are views into one stable edge permutation, not per-edge
+        # Python lists or independently allocated index arrays.
+        shared_order = edge_buckets[0].base
+        assert shared_order is not None
+        assert all(bucket.base is shared_order for bucket in edge_buckets)
+        assert all(not bucket.flags.owndata for bucket in edge_buckets)
+        np.testing.assert_array_equal(edges[edge_buckets[0]], [[5, 6], [4, 5]])
+        np.testing.assert_array_equal(edges[edge_buckets[1]], [[0, 1], [1, 2], [2, 0]])
+        np.testing.assert_array_equal(
+            vertex_to_local[edges[edge_buckets[0]]],
+            [[1, 2], [0, 1]],
+        )
+        np.testing.assert_array_equal(
+            vertex_to_local[edges[edge_buckets[1]]],
+            [[0, 1], [1, 2], [2, 0]],
+        )
+
+    def test_cross_part_edges_are_excluded_defensively(self) -> None:
+        part_vertices = [
+            np.array([0, 1], dtype=np.intp),
+            np.array([2, 3], dtype=np.intp),
+        ]
+        indices = np.array([[0, 1], [1, 2], [2, 3]], dtype=np.intp)
+        edges, edge_buckets, _ = _bucket_indexed_edge_indices(
+            indices,
+            part_vertices,
+            n_vertices=4,
+        )
+        np.testing.assert_array_equal(edges[edge_buckets[0]], [[0, 1]])
+        np.testing.assert_array_equal(edges[edge_buckets[1]], [[2, 3]])
 
 
 # ────────────────────────────────────────────────────────────────────────
