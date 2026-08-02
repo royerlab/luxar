@@ -11,7 +11,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as THREE from 'three';
 import {
   SPLAT_FLOATS_PER_SPLAT,
-  SPLAT_TEXELS_PER_SPLAT,
+  SPLAT_TEXTURE_LAYOUT,
   configureElementTextureLayout,
   resetElementTextureLayoutForTests,
   getSplatTextureWidth,
@@ -72,7 +72,9 @@ afterEach(() => {
 describe('element-texture-layout — texel address math', () => {
   it('defaults to a 4096-wide texture with a 4096² capacity bound', () => {
     expect(getSplatTextureWidth()).toBe(4096);
-    expect(getMaxSplatCapacityPerNode()).toBe((4096 * 4096) / SPLAT_TEXELS_PER_SPLAT);
+    expect(getMaxSplatCapacityPerNode()).toBe(
+      (4096 * 4096) / SPLAT_TEXTURE_LAYOUT.texelsPerElement
+    );
   });
 
   it('caps the width at min(4096, maxTextureSize) and forces a multiple of 4', () => {
@@ -82,7 +84,9 @@ describe('element-texture-layout — texel address math', () => {
     // Non-4096 width: a 2048-class device.
     configureElementTextureLayout(2048);
     expect(getSplatTextureWidth()).toBe(2048);
-    expect(getMaxSplatCapacityPerNode()).toBe((2048 * 2048) / SPLAT_TEXELS_PER_SPLAT);
+    expect(getMaxSplatCapacityPerNode()).toBe(
+      (2048 * 2048) / SPLAT_TEXTURE_LAYOUT.texelsPerElement
+    );
 
     // A pathological non-multiple-of-4 limit is rounded DOWN so a
     // splat's 4 texels can never straddle a row boundary.
