@@ -88,7 +88,7 @@ is the slow exception).
 git clone https://github.com/royerlab/luxar.git
 cd luxar
 make setup-dev          # Auto-installs Node.js, pnpm, Hatch (no sudo)
-luxar demo              # Browse the 76 bundled demos
+luxar demo              # Browse the 77 bundled demos
 luxar demo run lorenz   # Run one — generates the data and opens the viewer
 ```
 
@@ -102,7 +102,7 @@ That last command generates a Lorenz attractor and opens the viewer:
 category, what it needs, and whether you have already built it:
 
 ```
-🎬 [Luxar] 76 demos
+🎬 [Luxar] 77 demos
 
   #  KEY                                    GEOM         CATEGORY       NEEDS                STATUS
 ───────────────────────────────────────────────────────────────────────────────────────────────────
@@ -951,6 +951,7 @@ the full citation.
 **Connectomes, structures & networks**
 - **FlyWire Connectome** — FlyWire whole-brain connectome, public release 783; Dorkenwald et al. (2024) & Schlegel et al. (2024), *Nature*; [annotations](https://github.com/flyconnectome/flywire_annotations), [connectivity (Zenodo)](https://zenodo.org/records/10676866), [Codex](https://codex.flywire.ai/).
 - **Single-Cell 3D Genome** — Dip-C; Tan et al. (2018), *Science* 361:924, [doi:10.1126/science.aat5641](https://doi.org/10.1126/science.aat5641); GEO GSE117876.
+- **Human White-Matter Tractography** — [HCP-1065 population-averaged tractography atlas](https://brain.labsolver.org/hcp_trk_atlas.html); Yeh, F-C. (2022), *Nat. Commun.* 13:4933, [doi:10.1038/s41467-022-32595-4](https://doi.org/10.1038/s41467-022-32595-4) (CC BY-SA 4.0). Derived from the Human Connectome Project, WU-Minn Consortium (PIs David Van Essen & Kamil Ugurbil; 1U54MH091657), funded by the 16 NIH Institutes and Centers supporting the NIH Blueprint for Neuroscience Research, and by the McDonnell Center for Systems Neuroscience at Washington University; used under the [WU-Minn HCP open-access data-use terms](https://www.humanconnectome.org/study/hcp-young-adult/document/wu-minn-hcp-consortium-open-access-data-use-terms).
 - **ATP Synthase** — molecular structure after Zhou et al. (2015), *eLife*, [doi:10.7554/eLife.10180](https://doi.org/10.7554/eLife.10180); RCSB [PDB-101](https://pdb101.rcsb.org/motm/72).
 - **CAIDA AS topology** — [CAIDA](https://asrank.caida.org/) AS-relationships, AS-organizations & AS Rank (UC San Diego / CAIDA).
 - **HuRI interactome** — Luck et al. (2020), *Nature* 580:402, [doi:10.1038/s41586-020-2188-x](https://doi.org/10.1038/s41586-020-2188-x); [Human Reference Interactome](https://interactome-atlas.org/).

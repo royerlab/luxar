@@ -191,6 +191,19 @@
       "readme": true
     },
     {
+      "id": "dmri_tractography",
+      "title": "Human White-Matter Tractography",
+      "geometry": "lines",
+      "category": "medical",
+      "script": "demo_dmri_tractography.py",
+      "dataset": "datasets/demos/dmri_tractography.luxar.zarr",
+      "lodFinest": false,
+      "autoFrame": false,
+      "autoExpose": false,
+      "readme": true,
+      "note": "87 tract bundles, 6.83M segments at the finest level. lodFinest:false so the coverage LOD serves the ~640K-element coarse levels — forcing every element never reaches networkidle inside the 120s goto budget. autoFrame/autoExpose off because both closed loops re-screenshot a scene this heavy until they converge (one run took an hour before timing out in measureLuminance), and because the demo's opening pose and its additive opacity/intensity window are deliberately baked — letting the harness retune them would undo the tuning"
+    },
+    {
       "id": "cellxgene_census_umap",
       "title": "CELLxGENE Census UMAP",
       "geometry": "points",
