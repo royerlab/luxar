@@ -26,9 +26,9 @@ Usage:
 Dependencies:
     pip install 'luxar[demos]'   # includes esm>=3.0.0, umap-learn, h5py
     pip install 'torch>=2.2,<3.0'  # CUDA build, to compute embeddings
-    pip install 'luxar[gsplats]'   # torch + scipy, pinned; without them the
-                                   # cached path writes flat Points instead of
-                                   # the Points LOD ladder
+    pip install 'luxar[gsplats]'   # torch + scipy, pinned; missing either one
+                                   # makes the cached path write flat Points
+                                   # instead of the Points LOD ladder
 
 Cache hygiene:
     A cached artifact that fails validation is quarantined to ``<name>.corrupt``
