@@ -583,6 +583,66 @@ class TestIndexedPartitionTopology:
             if seg.size:
                 assert int(seg.max()) < n_v
 
+    def test_indexed_partition_skips_isolated_only_parts(self, tmp_path):
+        # A 4-vertex chain near the origin plus a far-away cluster of three
+        # isolated vertices. The BSP puts the isolated vertices in their own
+        # part(s), which have no edges and therefore nothing drawable. This
+        # used to fabricate visible segments between distinct isolated
+        # vertices (even counts), desync per-vertex attributes (odd counts),
+        # and crash outright on one-vertex parts (trimmed to an empty write).
+        verts = np.array(
+            [
+                [0, 0, 0],
+                [1, 0, 0],
+                [2, 0, 0],
+                [3, 0, 0],  # chain
+                [100, 0, 0],
+                [101, 0, 0],
+                [102, 0, 0],  # isolated
+            ],
+            dtype=np.float32,
+        )
+        edges = np.array([0, 1, 1, 2, 2, 3], dtype=np.intp)  # flat (2E,)
+        widths = np.linspace(0.1, 0.7, 7).astype(np.float32)
+        with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            node = scene.add_lines(
+                "graph",
+                vertices=verts,
+                widths=widths,
+                indices=edges,
+                line_type="indexed",
+                partition=dict(max_elements=4),
+            )
+            assert node.attrs.get("kind") == "partition"
+
+        leaves = self._collect_leaf_segment_arrays(tmp_path / "t.luxar.zarr")
+        # Exactly the chain's 3 authored segments survive; no leaf carries a
+        # fabricated isolated-pair segment, and no edgeless leaf is written.
+        assert sum(seg.shape[0] for _, seg in leaves) == 3
+        assert all(seg.shape[0] > 0 for _, seg in leaves)
+        assert sum(n_v for n_v, _ in leaves) == 4
+
+    def test_indexed_partition_with_no_edges_raises(self, tmp_path):
+        # All-isolated input: every part would be skipped, so refuse it with
+        # the same error the single-leaf writer raises for edgeless indexed.
+        verts = np.array(
+            [[0, 0, 0], [10, 0, 0], [20, 0, 0], [30, 0, 0], [40, 0, 0]],
+            dtype=np.float32,
+        )
+        widths = np.full(5, 0.05, dtype=np.float32)
+        with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            with pytest.raises(ValueError, match="at least 2 indices"):
+                scene.add_lines(
+                    "graph",
+                    vertices=verts,
+                    widths=widths,
+                    indices=np.empty(0, dtype=np.intp),
+                    line_type="indexed",
+                    partition=dict(max_elements=2),
+                )
+
     def test_indexed_partition_odd_component_does_not_crash(self, tmp_path):
         # The triangle (component C) alone is an odd-sized component; force it
         # into its own part. This used to raise "Indexed requires at least 2

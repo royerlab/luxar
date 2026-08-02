@@ -26,6 +26,14 @@ benchmark the component pass drops from 5.09 s to 0.024 s (212×); the full
 220,000-ribbon component + edge-grouping preparation completes in 0.44 s on the
 same machine, before BSP and zarr writes.
 
+Along the way, a partition part containing only isolated vertices (an
+indexed graph never draws a vertex no segment references) is now skipped
+instead of degraded to ``segments``: the degrade fabricated visible edges
+between distinct isolated vertices, desynced per-vertex attributes on
+odd-sized parts, and crashed outright on one-vertex parts. An indexed
+partition with no edges at all is refused with the same error as the
+single-leaf writer.
+
 #### Fixed — colormapped Points/Lines apply authored intensity once; solar-system demo re-tuned (#1082)
 
 `#1081` stopped a colormapped node applying an authored `intensity`/`offset`

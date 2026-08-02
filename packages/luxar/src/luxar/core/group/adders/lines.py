@@ -530,13 +530,22 @@ def add_lines_partition_wrapper_impl(
     re-emitted as ``indexed`` with the original edges remapped to
     part-local vertex indices, so the exact graph topology is preserved
     (no edge is dropped or fabricated, and odd-sized components no longer
-    crash). For ``polyline`` / ``loop`` types (where the input is a single
+    crash). A part containing only isolated vertices (no edges) has
+    nothing drawable — indexed rendering never references it — and is
+    skipped. For ``polyline`` / ``loop`` types (where the input is a single
     polyline), the BSP only ever produces one part — the user is already at
     the single-polyline granularity and there's nothing to partition. We
     refuse the partition in that case with a clear error.
     """
     wrapper_attrs = {k: v for k, v in attrs.items() if k in COMPOSITING_ATTRS}
     leaf_attrs = {k: v for k, v in attrs.items() if k not in COMPOSITING_ATTRS}
+
+    # An indexed graph with no edges has nothing drawable in ANY part (every
+    # vertex is isolated), so every leaf below would be skipped. Refuse it
+    # up front with the same error the single-leaf writer raises, instead of
+    # silently writing an empty partition group.
+    if line_type == "indexed" and (indices is None or np.asarray(indices).size == 0):
+        raise ValueError("Indexed requires at least 2 indices")
 
     parent_node = parent or group
     wrapper = parent_node.add_partition_group(
@@ -582,7 +591,6 @@ def add_lines_partition_wrapper_impl(
         if part_vertex_idx.size == 0:
             continue
         part_vertices = vert_arr[part_vertex_idx]
-        part_n = int(part_vertex_idx.size)
 
         # Remap this part's original edges to part-local vertex indices. The
         # gather is bounded by one part; the global edge order and vertex map
@@ -609,8 +617,8 @@ def add_lines_partition_wrapper_impl(
         # Choose the per-part line_type. ``polyline`` / ``loop`` with
         # one polyline = one part, so the original type is preserved.
         # ``segments`` emits segments. ``indexed`` emits the part's
-        # remapped real edges (or degrades to empty segments if the part
-        # happens to contain only isolated, edgeless vertices).
+        # remapped real edges (a part with no edges at all — only
+        # isolated vertices — has nothing drawable and is skipped).
         if line_type in ("polyline", "loop"):
             part_line_type = line_type
             part_indices = None
@@ -620,16 +628,14 @@ def add_lines_partition_wrapper_impl(
         else:  # indexed
             part_line_type = "indexed"
             if part_indices is None:
-                # Single-vertex polylines on indexed → emit as
-                # ``segments`` of zero length (caller asked for
-                # indexed but the part has no edges; degrades
-                # gracefully).
-                part_line_type = "segments"
-                if part_n % 2 != 0:
-                    # Round to an even count to satisfy segments
-                    # validation; drop the trailing isolated vertex.
-                    part_vertices = part_vertices[:-1]
-                    part_n -= 1
+                # The part holds only isolated vertices (single-vertex
+                # components) — an indexed graph draws nothing for a vertex
+                # no segment references, so there is no leaf to write.
+                # Degrading to ``segments`` here used to FABRICATE visible
+                # edges between distinct isolated vertices, desync the
+                # per-vertex attributes on odd-sized parts, and crash on
+                # one-vertex parts (trimmed to an empty write).
+                continue
 
         wrapper.add_lines(
             name=f"part_{i}",
