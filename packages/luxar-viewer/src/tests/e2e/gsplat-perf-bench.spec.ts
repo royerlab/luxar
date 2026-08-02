@@ -675,6 +675,14 @@ async function measureSyntheticScenario(
   await page.evaluate(() => {
     document.querySelector<HTMLElement>('.luxar-dataset-browser__close-btn')?.click();
   });
+  // Verify the panel is actually gone (DatasetBrowser.close() removes it
+  // from the DOM). A silently-failed dismissal — say the button's class
+  // changes — would corrupt every synthetic measurement without any
+  // signal, which is the exact failure class this bench must not have;
+  // the throw surfaces as a measurement error and fails the scenario.
+  await page.waitForFunction(() => !document.getElementById('luxar-dataset-browser'), undefined, {
+    timeout: 5_000,
+  });
 
   // Hide any pre-existing geometry nodes BEFORE injection so the
   // synthetic cloud is the only rendered workload. With a no-dataset
