@@ -548,9 +548,55 @@ def _solar_system_viewer_config() -> ViewerConfig:
     )
 
 
+# Appearance constants for the asteroid cloud and the orbit ellipses.
+#
+# ``ASTEROID_SCALAR_GAIN`` is NOT a brightness knob. On a colormapped node an
+# authored ``intensity`` is consumed as the scalar DISPLAY WINDOW —
+# ``[0, 1/gain]`` — so 0.09 maps a ∈ [0, ~11 AU] across the colormap. That is
+# what makes the main belt, the Kirkwood gaps and the Trojan clouds legible;
+# mapping the catalog's full range (up to ~14500 AU, a sparse scattered tail)
+# would crush every real structure into the bottom of the LUT.
+#
+# Brightness for 1.55M additive points therefore rides on ``opacity``, the one
+# knob that linearly scales an additive contribution. These were previously
+# conflated: ``intensity=0.09`` doubled as an 11x dimming because the viewer
+# applied it BOTH as the window and as a post-LUT gain. That double
+# application was removed (#936/#1081), so the dimming is now explicit here.
+# Without it the belt saturates to white and erases the Sun, the planets and
+# the orbit ellipses.
+ASTEROID_SCALAR_GAIN = 0.09  # display window [0, ~11 AU]  (NOT brightness)
+# Opacity tuned by eye at ``ASTEROID_OPACITY_REF_N`` bodies on screen.
+ASTEROID_OPACITY = 0.03
+ASTEROID_OPACITY_REF_N = 1_552_890
+
+# Orbit ellipses are reference geometry: they must stay quiet next to the
+# planets but still read as continuous lines against the belt's glow.
+ORBIT_COLOR_SCALE = 0.7  # per-vertex dimming vs the planet's own color
+ORBIT_OPACITY = 1.0
+ORBIT_INTENSITY = 1.0
+ORBIT_WIDTH = 0.03
+
+
+def asteroid_opacity(n_visible: int) -> float:
+    """Additive-cloud opacity for ``n_visible`` asteroids on screen at once.
+
+    Additive blending accumulates, so total point weight scales with the
+    number of visible points. Holding ``opacity x N`` constant keeps aggregate
+    additive weight stable whether the build shows the whole catalog, a
+    ``--max-asteroids`` subset, or the animated build's per-frame subsample —
+    and as the SBDB catalog grows.
+    """
+    if n_visible <= 0:
+        return ASTEROID_OPACITY
+    return float(min(1.0, ASTEROID_OPACITY * ASTEROID_OPACITY_REF_N / n_visible))
+
+
 def _orbit_colors(p: dict) -> np.ndarray:
     """Dim per-vertex color for a planet's orbit ellipse."""
-    return np.tile(np.array(p["color"], dtype=np.float32) * 0.5, (len(p["orbit"]), 1))
+    return np.tile(
+        np.array(p["color"], dtype=np.float32) * ORBIT_COLOR_SCALE,
+        (len(p["orbit"]), 1),
+    )
 
 
 def _add_static_bodies(scene, planets: list[dict]) -> None:
@@ -579,11 +625,11 @@ def _add_static_bodies(scene, planets: list[dict]) -> None:
         scene.add_lines(
             f"{p['name']} orbit",
             vertices=p["orbit"],
-            widths=0.02,
+            widths=ORBIT_WIDTH,
             colors=_orbit_colors(p),
             line_type="loop",
-            opacity=0.5,
-            intensity=0.4,
+            opacity=ORBIT_OPACITY,
+            intensity=ORBIT_INTENSITY,
             blending_mode="additive",
             layer=True,
         )
@@ -639,11 +685,11 @@ def _add_animated_bodies(
         scene.add_lines(
             f"{p['name']} orbit",
             vertices=p["orbit"],
-            widths=0.02,
+            widths=ORBIT_WIDTH,
             colors=_orbit_colors(p),
             line_type="loop",
-            opacity=0.5,
-            intensity=0.4,
+            opacity=ORBIT_OPACITY,
+            intensity=ORBIT_INTENSITY,
             blending_mode="additive",
             dim_order=["x", "y", "z"],
             extend_to_all=[time_dim],
@@ -681,9 +727,9 @@ def build_static_scene(output_path: Path, cat: dict) -> int:
                 colormap="turbo",
                 radii=0.012,
                 labels=labels,
-                opacity=0.85,
+                opacity=asteroid_opacity(len(pos)),
                 blending_mode="additive",
-                intensity=0.09,
+                intensity=ASTEROID_SCALAR_GAIN,
                 layer=True,
             )
             _add_static_bodies(scene, planet_state(J2000_JD))
@@ -757,9 +803,9 @@ def build_animated_scene(output_path: Path, cat: dict) -> int:
                 scalars=all_scalars,
                 colormap="turbo",
                 radii=0.012,
-                opacity=0.85,
+                opacity=asteroid_opacity(n_ast),
                 blending_mode="additive",
-                intensity=0.09,
+                intensity=ASTEROID_SCALAR_GAIN,
                 layer=True,
             )
 

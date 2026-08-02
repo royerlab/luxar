@@ -139,12 +139,14 @@ Beautiful astronomical simulation of a barred spiral galaxy.
 
 ---
 
-#### demo_quantum_orbitals.py - Quantum Atomic Orbitals
-Hydrogen atom electron probability density visualization showing s, p, d, and f orbitals.
+#### demo_quantum_orbitals.py - Quantum Atomic Orbitals (Gaussian splats)
+Hydrogen-atom electron probability density |ψ|² for eight quantum states. Each orbital is evaluated on a 3D voxel grid and then fitted with oriented Gaussians, so it renders as a translucent volumetric cloud instead of a thresholded point cloud. Splats are tinted by the **sign of ψ** (warm = positive, cool = negative), which is what makes the nodal structure — the radial node of 2s, the plane between the 2p lobes, the alternating 3d cloverleaf lobes — actually visible. All eight states share one frame at true relative scale, so 1s really is several times smaller than 3d.
 
-**Run**: `luxar demo run quantum_orbitals [-- --grid=N]`
+**Run**: `luxar demo run quantum_orbitals` — optionally with one `--` separator followed by all script args, e.g. `luxar demo run quantum_orbitals -- --grid 128 --seeds 40000 --recompute`
 
-**Demonstrates**: Hydrogen wavefunction computation (radial functions and spherical harmonics), categorical navigation between quantum states (n, l, m), probability density coloring, 3D shapes (spheres, dumbbells, cloverleafs).
+**Requires**: No download. The eight fits take ~2 min the first time (measured end to end at the defaults — 96³ voxels, 25k seeds, 1500 iters — on Apple-silicon MPS; a CUDA card is faster, CPU much slower) and are cached under `~/.cache/luxar/quantum_orbitals/`; later runs load instantly. The cache is keyed by `--grid`/`--seeds`/`--iters` **and a digest of the whole fit recipe** (the orbital table, the tuning constants baked into the splats, and a `FIT_RECIPE_VERSION`), so changing any of them refits rather than silently reusing the old result.
+
+**Demonstrates**: Analytic volume → `fit_gaussian_splats` → `volumetric` blending; **real** (tesseral) spherical harmonics, so `2px` is a genuine dumbbell along x rather than the torus a complex `Y₁¹` would give; per-splat phase coloring; stacking independent 3D fits into a navigable categorical axis with `GSplatData.combine_as_new_dimension`; a baked 3/4 opening camera via `ViewerConfig(camera=...)`.
 
 ---
 
@@ -532,7 +534,7 @@ The large-scale structure of the Universe as a point cloud from the Dark Energy 
 ---
 
 #### demo_asteroids_solar_system.py - The Solar System (~1.5M Real Asteroids, JPL SBDB)
-Every catalogued minor planet placed in real 3D space by propagating its measured Keplerian orbit to a common epoch: ~1.5M asteroids as Points colored by semi-major axis, plus the eight planets, the Sun, and the planets' orbit ellipses (Lines). The main belt, Kirkwood gaps, Hilda triangle, and Jupiter Trojan clouds all emerge from the real orbital-element distribution. The opening camera orbits the Sun and frames the outer planets instead of fitting sparse distant-object outliers.
+Every catalogued minor planet placed in real 3D space by propagating its measured Keplerian orbit to a common epoch: ~1.5M asteroids as Points colored by semi-major axis, plus the eight planets, the Sun, and the planets' orbit ellipses (Lines). The main belt, Kirkwood gaps, Hilda triangle, and Jupiter Trojan clouds all emerge from the real orbital-element distribution. The asteroid `intensity` is reserved for the colormap's `[0, ~11 AU]` scalar window, while density-compensated opacity keeps aggregate additive weight stable across full, `--max-asteroids`, and animated builds. The opening camera orbits the Sun and frames the outer planets instead of fitting sparse distant-object outliers.
 
 **Run**: `luxar demo run asteroids_solar_system [-- --animate] [-- --max-asteroids N]`
 
