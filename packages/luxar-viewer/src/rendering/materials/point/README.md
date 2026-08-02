@@ -187,13 +187,14 @@ through `applyBlendingMode(mode)`, which is the **single source of truth** for
 both creation (called from the constructor) and runtime UI transitions (called
 from `LayersPanel`). The method:
 
-- Pulls the canonical THREE state from `getCompleteBlendingState` and applies
+- Pulls the canonical THREE state from `getPointBlendingState` and applies
   it via `applyBlendingStateToMaterial` (`../../blending-state.ts`) — covers
   `blending`, `blendEquation`, `blendSrc`/`blendDst`, `depthTest`, etc.
-- Routes `normal` mode through `getPointBlendingState`, which forces
-  `depthWrite: false` (unlike the generic opacity-gated `normalModeDepthWrite`
-  predicate that lines use): a point sprite stamps a single flat depth plane
-  across the whole billboard disc — transparent fringe included — so sorted
+- `getPointBlendingState` delegates to `getCompleteBlendingState` but, in
+  `normal` mode, forces `depthWrite: false` (unlike the generic opacity-gated
+  `normalModeDepthWrite` predicate that lines use): a point sprite stamps a
+  single flat depth plane across the whole billboard disc — transparent
+  fringe included — so sorted
   transparency never depth-writes (#1002). Trade-off: an opaque `normal` points
   layer no longer occludes additive layers behind it. All other modes are
   identical to `getCompleteBlendingState`.

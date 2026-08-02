@@ -92,7 +92,7 @@ test.describe('Blending Modes', () => {
     expect(blendingStates.length).toBeGreaterThan(0);
 
     // Every points material must carry the EXACT THREE state for its own
-    // `userData.blendingMode` (per getCompleteBlendingState) — not just
+    // `userData.blendingMode` (per getPointBlendingState) — not just
     // membership in the set of plausible blending enums.
     for (const state of blendingStates) {
       expect(
