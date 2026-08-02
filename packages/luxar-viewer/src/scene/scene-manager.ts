@@ -1065,7 +1065,10 @@ export class SceneManager extends THREE.EventDispatcher<{
    *
    * Called each frame by AnimationController. Uses a cached bounding sphere
    * (invalidated on scene load/clear) for smooth near/far values with zero
-   * per-frame scene graph traversal or object allocations.
+   * object allocations and — once the metadata bounds are cached — zero
+   * per-frame scene graph traversal. A metadata-less scene is the exception:
+   * the cache has no negative caching, so the per-frame `ensure()` re-walks
+   * the graph each frame (see `clipping/scene-bounds-cache.ts`).
    */
   updateDynamicClippingPlanes(): void {
     if (!this.dynamicClippingEnabled) return;
