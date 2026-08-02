@@ -21,9 +21,11 @@ luxar gsplat fit --help      # a single command and all its options
 The list of commands on this page is checked against the live Typer application by
 an automated test —
 `packages/luxar/src/luxar/cli/tests/test_docs_command_coverage.py`. The test walks
-the registered command tree and asserts that the exact invocation string for every
-public (non-hidden) command appears in this file. A newly added command must be
-documented here, or the test fails. (Hidden/internal commands are excluded.)
+the registered command tree, extracts every `luxar ...` invocation from the code
+blocks on this page, and compares the two sets in **both directions**: a newly
+added command must be documented here, and a documented command that was removed,
+renamed, or hidden must be pruned — either way the test fails.
+(Hidden/internal commands and groups are excluded.)
 
 ## Top-level commands
 
