@@ -18,6 +18,10 @@ import zarr
 
 from luxar.core.dimensions import Dimensions
 from luxar.core.group import Group
+from luxar.core.group.adders.lines import (
+    _bucket_indexed_edge_indices,
+    _collect_partition_vertex_indices,
+)
 from luxar.core.group.lod.lines import identify_polylines
 from luxar.core.group.partition import median_bsp_polylines, midpoint_bsp_polylines
 from luxar.io.compiler import LuxarZarrCompiler
@@ -129,6 +133,73 @@ class TestMidpointBspPolylines:
         for part in parts:
             vertex_count = sum(int(ps[p].size) for p in part)
             assert vertex_count <= 40, f"part of {vertex_count} verts exceeds cap 40"
+
+
+# ────────────────────────────────────────────────────────────────────────
+# Vectorized indexed-edge bucketing
+# ────────────────────────────────────────────────────────────────────────
+
+
+class TestIndexedEdgeBucketing:
+    def test_preserves_edge_order_and_remaps_without_dicts(self) -> None:
+        polylines = [
+            np.array([0, 1, 2], dtype=np.intp),
+            np.array([4, 5, 6], dtype=np.intp),
+            np.array([3], dtype=np.intp),
+        ]
+        parts = [[1], [0, 2]]
+        part_vertices = _collect_partition_vertex_indices(polylines, parts)
+        np.testing.assert_array_equal(part_vertices[0], [4, 5, 6])
+        np.testing.assert_array_equal(part_vertices[1], [0, 1, 2, 3])
+
+        # Deliberately interleave the two parts' edges. Stable bucketing must
+        # preserve authored order within each part before local remapping.
+        indices = np.array(
+            [
+                [0, 1],  # part 1
+                [5, 6],  # part 0
+                [1, 2],  # part 1
+                [4, 5],  # part 0
+                [2, 0],  # part 1
+            ],
+            dtype=np.intp,
+        )
+        edges, edge_buckets, vertex_to_local = _bucket_indexed_edge_indices(
+            indices,
+            part_vertices,
+            n_vertices=7,
+        )
+
+        # Buckets are views into one stable edge permutation, not per-edge
+        # Python lists or independently allocated index arrays.
+        shared_order = edge_buckets[0].base
+        assert shared_order is not None
+        assert all(bucket.base is shared_order for bucket in edge_buckets)
+        assert all(not bucket.flags.owndata for bucket in edge_buckets)
+        np.testing.assert_array_equal(edges[edge_buckets[0]], [[5, 6], [4, 5]])
+        np.testing.assert_array_equal(edges[edge_buckets[1]], [[0, 1], [1, 2], [2, 0]])
+        np.testing.assert_array_equal(
+            vertex_to_local[edges[edge_buckets[0]]],
+            [[1, 2], [0, 1]],
+        )
+        np.testing.assert_array_equal(
+            vertex_to_local[edges[edge_buckets[1]]],
+            [[0, 1], [1, 2], [2, 0]],
+        )
+
+    def test_cross_part_edges_are_excluded_defensively(self) -> None:
+        part_vertices = [
+            np.array([0, 1], dtype=np.intp),
+            np.array([2, 3], dtype=np.intp),
+        ]
+        indices = np.array([[0, 1], [1, 2], [2, 3]], dtype=np.intp)
+        edges, edge_buckets, _ = _bucket_indexed_edge_indices(
+            indices,
+            part_vertices,
+            n_vertices=4,
+        )
+        np.testing.assert_array_equal(edges[edge_buckets[0]], [[0, 1]])
+        np.testing.assert_array_equal(edges[edge_buckets[1]], [[2, 3]])
 
 
 # ────────────────────────────────────────────────────────────────────────
@@ -511,6 +582,66 @@ class TestIndexedPartitionTopology:
         for n_v, seg in leaves:
             if seg.size:
                 assert int(seg.max()) < n_v
+
+    def test_indexed_partition_skips_isolated_only_parts(self, tmp_path):
+        # A 4-vertex chain near the origin plus a far-away cluster of three
+        # isolated vertices. The BSP puts the isolated vertices in their own
+        # part(s), which have no edges and therefore nothing drawable. This
+        # used to fabricate visible segments between distinct isolated
+        # vertices (even counts), desync per-vertex attributes (odd counts),
+        # and crash outright on one-vertex parts (trimmed to an empty write).
+        verts = np.array(
+            [
+                [0, 0, 0],
+                [1, 0, 0],
+                [2, 0, 0],
+                [3, 0, 0],  # chain
+                [100, 0, 0],
+                [101, 0, 0],
+                [102, 0, 0],  # isolated
+            ],
+            dtype=np.float32,
+        )
+        edges = np.array([0, 1, 1, 2, 2, 3], dtype=np.intp)  # flat (2E,)
+        widths = np.linspace(0.1, 0.7, 7).astype(np.float32)
+        with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            node = scene.add_lines(
+                "graph",
+                vertices=verts,
+                widths=widths,
+                indices=edges,
+                line_type="indexed",
+                partition=dict(max_elements=4),
+            )
+            assert node.attrs.get("kind") == "partition"
+
+        leaves = self._collect_leaf_segment_arrays(tmp_path / "t.luxar.zarr")
+        # Exactly the chain's 3 authored segments survive; no leaf carries a
+        # fabricated isolated-pair segment, and no edgeless leaf is written.
+        assert sum(seg.shape[0] for _, seg in leaves) == 3
+        assert all(seg.shape[0] > 0 for _, seg in leaves)
+        assert sum(n_v for n_v, _ in leaves) == 4
+
+    def test_indexed_partition_with_no_edges_raises(self, tmp_path):
+        # All-isolated input: every part would be skipped, so refuse it with
+        # the same error the single-leaf writer raises for edgeless indexed.
+        verts = np.array(
+            [[0, 0, 0], [10, 0, 0], [20, 0, 0], [30, 0, 0], [40, 0, 0]],
+            dtype=np.float32,
+        )
+        widths = np.full(5, 0.05, dtype=np.float32)
+        with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            with pytest.raises(ValueError, match="at least 2 indices"):
+                scene.add_lines(
+                    "graph",
+                    vertices=verts,
+                    widths=widths,
+                    indices=np.empty(0, dtype=np.intp),
+                    line_type="indexed",
+                    partition=dict(max_elements=2),
+                )
 
     def test_indexed_partition_odd_component_does_not_crash(self, tmp_path):
         # The triangle (component C) alone is an odd-sized component; force it
