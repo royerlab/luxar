@@ -344,23 +344,21 @@ describe('DataLoadingMonitor', () => {
     const spatialLoader = (path: string): LoaderMonitor => ({
       addEventListener: vi.fn(),
       removeEventListener: vi.fn(),
-      getMetrics: vi.fn(
-        (): LoaderMetrics => ({
-          type: 'gsplats-spatial-index',
-          path,
-          queries: 0,
-          loads: 0,
-          evictions: 0,
-          errors: 0,
-          elementsLoaded: 0,
-          bytesLoaded: 0,
-          visibleElements: 0,
-          avgQueryTime: 0,
-          avgLoadTime: 0,
-          memoryUsed: 0,
-          memoryLimit: 0,
-        })
-      ),
+      getMetrics: vi.fn((): LoaderMetrics => ({
+        type: 'gsplats-spatial-index',
+        path,
+        queries: 0,
+        loads: 0,
+        evictions: 0,
+        errors: 0,
+        elementsLoaded: 0,
+        bytesLoaded: 0,
+        visibleElements: 0,
+        avgQueryTime: 0,
+        avgLoadTime: 0,
+        memoryUsed: 0,
+        memoryLimit: 0,
+      })),
       getActiveQueries: vi.fn(() => []),
     });
 
@@ -398,23 +396,21 @@ describe('DataLoadingMonitor', () => {
       const nonSpatialLoader = (path: string): LoaderMonitor => ({
         addEventListener: vi.fn(),
         removeEventListener: vi.fn(),
-        getMetrics: vi.fn(
-          (): LoaderMetrics => ({
-            type: 'gsplats-chunk-index' as unknown as LoaderMetrics['type'],
-            path,
-            queries: 0,
-            loads: 0,
-            evictions: 0,
-            errors: 0,
-            elementsLoaded: 0,
-            bytesLoaded: 0,
-            visibleElements: 0,
-            avgQueryTime: 0,
-            avgLoadTime: 0,
-            memoryUsed: 0,
-            memoryLimit: 0,
-          })
-        ),
+        getMetrics: vi.fn((): LoaderMetrics => ({
+          type: 'gsplats-chunk-index' as unknown as LoaderMetrics['type'],
+          path,
+          queries: 0,
+          loads: 0,
+          evictions: 0,
+          errors: 0,
+          elementsLoaded: 0,
+          bytesLoaded: 0,
+          visibleElements: 0,
+          avgQueryTime: 0,
+          avgLoadTime: 0,
+          memoryUsed: 0,
+          memoryLimit: 0,
+        })),
         getActiveQueries: vi.fn(() => []),
       });
 

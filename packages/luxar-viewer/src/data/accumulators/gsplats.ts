@@ -209,9 +209,7 @@ export class GSplatsDataAccumulator implements DataAccumulator<
       positions: this.centerBuffer.subarray(0, count * this.ndim),
       amplitudes: this.amplitudeBuffer.subarray(0, count),
       choleskyFactors: this.choleskyBuffer.subarray(0, count * this.choleskySize), // CORRECT: camelCase!
-      colors: this.hasColors
-        ? this.colorBuffer.subarray(0, count * this.colorComponents)
-        : null, // Nullable based on data presence
+      colors: this.hasColors ? this.colorBuffer.subarray(0, count * this.colorComponents) : null, // Nullable based on data presence
       colorComponents: this.colorComponents,
       splatCount: count,
       ndim: this.ndim,

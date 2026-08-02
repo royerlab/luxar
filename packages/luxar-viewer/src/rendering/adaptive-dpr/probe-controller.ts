@@ -128,8 +128,7 @@ export class ProbeController {
       quality.sampleCount >= this.config.minSamples ||
       (quality.sampleCount >= 2 &&
         quality.spanMs >= this.config.minSpanMs * REPRESENTATIVE_SPAN_FACTOR);
-    const clean =
-      !quality.suppressed && representative && quality.spanMs >= this.config.minSpanMs;
+    const clean = !quality.suppressed && representative && quality.spanMs >= this.config.minSpanMs;
     if (!clean) {
       if (age < 2 * this.config.windowMs) {
         return { kind: 'pending' }; // keep waiting for a clean sample
