@@ -18,6 +18,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { processPointsData } from '../../../../../data/scene-loader/process/data-processor-points';
 import * as THREE from 'three';
 
 const createGSplatsLoaderMock = vi.fn();
@@ -116,10 +117,11 @@ function makeCtx(overrides: Partial<NodeBuildCtx> = {}): NodeBuildCtx & {
     applyEffectiveAttrs,
     deriveNodeViewState,
     connectLoaderToMonitor,
-    updatePointsGeometry: vi.fn(),
     processLinesData: vi.fn(),
     commitLinesGeometry: vi.fn(),
     processGSplatsData,
+    processPointsData,
+    commitPointsGeometry: vi.fn(),
     commitGSplatsGeometry,
     ...overrides,
   };
