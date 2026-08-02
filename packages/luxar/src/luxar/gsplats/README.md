@@ -25,16 +25,16 @@ pip install "luxar[gsplats]"
 
 - **N-dimensional Support**: Works seamlessly with 2D images, 3D volumes, and 4D+ hypercubes (validated to 4D) with automatic gradient dilution compensation
 - **Efficient Cholesky Parameterization**: Covariance matrices via Cholesky decomposition with batched triangular solve
-- **Device Optimized**: CUDA acceleration with automatic device selection (CPU preferred on Apple Silicon)
+- **Device Optimized**: Automatic device selection (CUDA → MPS → CPU); custom CUDA kernels on NVIDIA and an optional Metal backend on Apple Silicon
 - **Oriented Gaussians**: Full covariance matrices via Cholesky decomposition for arbitrary orientations
-- **Convergence-Driven Dynamic Operations**: Adaptive splat management based on convergence criteria with seeding and pruning
+- **Convergence-Driven Dynamic Operations**: Fixed-pool splat relocation based on convergence criteria (constant splat count — weak splats move to high-residual regions)
 - **Asymmetric Loss Functions**: Configurable penalty for over-prediction (applies to all three losses: L1, MSE, Poisson) addresses additive model constraints
 - **Standard PyTorch Adam**: Fast vectorized optimization with gradient dilution compensation (significantly faster than per-splat alternatives)
 - **Adaptive Thresholds**: Amplitude validation scales with local residual magnitude to prevent optimization plateaus
 - **Automatic Optimization**: Early stopping saves a substantial fraction of iterations without quality loss
 - **GPU Acceleration**: CUDA support with batched operations, improved MPS compatibility
 - **Robust Initialization**: Multiscale candidate detection with DoG and peak finding
-- **Memory Efficient**: Truncated rendering, optional mixed precision, pre-allocated buffers
+- **Memory Efficient**: Truncated rendering and pre-allocated buffers
 - **Tiled Fitting**: Overlapping tiles with Hann cosine apodization for volumes that exceed GPU memory
 - **Quality Metrics**: Built-in PSNR, SSIM, and MSE computation on GPU tensors
 
@@ -119,9 +119,8 @@ The implementation includes several key optimizations that provide significant s
 3. **Adaptive Learning**: Reduces learning rate on plateaus for better convergence
 4. **Device-Aware Selection**: Automatic selection of best available device (CUDA > MPS > CPU)
 5. **Cached Computations**: Reuses grids and strides for repeated operations
-6. **Optional Enhancements**:
-   - Model compilation with `torch.compile` (PyTorch 2.0+, CUDA only)
-   - Mixed precision training (FP16 on CUDA)
+6. **Automatic CUDA Enhancements**:
+   - Loss kernels are compiled with `torch.compile` automatically on CUDA (PyTorch 2.0+), with an eager fallback if compilation is unavailable
    - Pre-allocated buffers for memory efficiency
 
 ## Quick Start
@@ -246,7 +245,7 @@ The `seeds` parameter supports multiple input types for flexible control:
 
 ```python
 # Option 1: Auto-generate (default)
-result = fit_gaussian_splats(image)  # ~1% of voxels
+result = fit_gaussian_splats(image)  # auto seed budget (see "Auto-Seed Generation" below)
 
 # Option 2: Exact count (NEW!)
 result = fit_gaussian_splats(image, seeds=1000)  # Exactly 1000 splats
@@ -264,9 +263,9 @@ result = fit_gaussian_splats(image, seeds=custom_seeds)
 
 ### Auto-Seed Generation Features
 
-- **Universal scales**: (0.5, 1.0, 2.0, 4.0, 8.0, 16.0) detect features from fine details to large structures
-- **Volume-proportional density**: Automatically scales candidate count with image size (~0.2% of pixels)
-- **Inclusive detection**: 70% percentile threshold for comprehensive feature coverage
+- **Edges + grid by default**: `method="auto"` combines edge detection and grid coverage; multiscale decomposition is excluded by default for speed
+- **Decomposition scales**: `[1, 2, 4, 8, 16, 32, 64]` span fine details to large structures (used only when decomposition is requested explicitly)
+- **Volume-proportional density**: the auto seed budget is `max(100, int(total_voxels ** (1 / ndim) / 2))`, capped at 10,000
 - **Dimension-agnostic**: Works seamlessly with 2D images, 3D volumes, and 4D+ hypercubes (validated to 4D)
 
 ### Outlier-Robust Normalization
@@ -547,21 +546,19 @@ from luxar.gsplats.fit_gsplats import GaussianSplatFitter
 
 # Initialize fitter with specific device and options
 fitter = GaussianSplatFitter(
-    device="cuda",              # or "mps", "cpu"
-    compile_model=True,         # torch.compile (CUDA only)
-    use_mixed_precision=True,   # FP16 (CUDA only)
+    device="cuda",              # or "mps", "cpu"; None auto-selects CUDA → MPS → CPU
+    enable_dynamic_ops=True,    # fixed-pool splat relocation during fitting (default)
 )
 
 # Fit with detailed statistics
-    result = fitter.fit(
-        image,
-        seeds=candidates,
-        n_iters=500,
-        early_stopping=True,
-        early_stop_patience=200,
-        sigma_min_diag=[0.5, 0.5],  # Minimum splat size
-        sigma_max_diag=[10.0, 10.0], # Maximum splat size
-    )
+result = fitter.fit(
+    image,
+    seeds=candidates,
+    n_iters=500,
+    early_stop_patience=200,     # iterations without improvement before stopping
+    sigma_min_diag=[0.5, 0.5],   # Minimum splat size
+    sigma_max_diag=[10.0, 10.0], # Maximum splat size
+)
 
 # Access optimization statistics from result.stats
 print(f"Time: {result.stats['time_seconds']:.2f}s")
@@ -950,7 +947,7 @@ Main fitting function with automatic optimizations.
 - `l1_diag`: L1 regularization on diagonal elements (default: 0.01 * lr)
 - `sigma_min_diag`: Minimum Gaussian size per axis
 - `sigma_max_diag`: Maximum Gaussian size per axis
-- `early_stopping`: Enable convergence detection (default: True)
+- `early_stop_patience`: Iterations without improvement before stopping (default: 300)
 - `device`: PyTorch device (auto-detect if None)
 
 **Returns:** `GSplatData` with fields:
@@ -1035,9 +1032,9 @@ The implementation supports multiple PyTorch devices with performance-aware auto
 
 | Device | Auto-Selected | Performance | Notes |
 |--------|---------------|-------------|-------|
-| **CPU** | ✓ (default on Mac) | Baseline | Reliable, well-optimized |
-| **MPS** (Apple Silicon) | Manual only | Slower than CPU | Compatible but has overhead issues |
-| **CUDA** | ✓ (when available) | Significant speedup | Best performance, full features |
+| **CUDA** (NVIDIA) | ✓ (when available) | Significant speedup | Best performance, custom kernels |
+| **MPS** (Apple Silicon) | ✓ (when available, no CUDA) | GPU-accelerated | Metal backend for 3D volumes; PyTorch renderer otherwise |
+| **CPU** | ✓ (fallback) | Baseline | Reliable; fitting warns it can be orders of magnitude slower than GPU |
 
 ### Device Selection Logic:
 ```python
@@ -1052,11 +1049,11 @@ fitter = GaussianSplatFitter(device="cpu")    # Force CPU
 
 ### Apple Silicon Performance Notes:
 
-**PyTorch MPS Issues**: The PyTorch MPS backend has significant overhead for `torch.linalg.solve_triangular` operations, making CPU substantially faster than MPS on Apple Silicon chips.
+**MPS auto-selection**: With no CUDA device present, fitting auto-selects MPS on Apple Silicon (`use_metal=True` by default). For 3D volumes the native Metal backend (below) accelerates rendering; other shapes fall back to the PyTorch MPS path.
+
+**PyTorch MPS caveat**: The pure PyTorch MPS backend has significant overhead for `torch.linalg.solve_triangular`, which is why the Metal compute-shader backend is used for 3D volumes to sidestep it.
 
 **MLX Alternative Investigated**: Apple's MLX framework was evaluated as a potential solution. However, MLX's `solve_triangular` operation is currently CPU-only (not GPU-accelerated) and slower than PyTorch's CPU implementation.
-
-**Current Optimal Strategy**: Auto-select CPU on Apple Silicon, which provides the best performance available. This will automatically benefit from future improvements in either PyTorch MPS or MLX GPU acceleration.
 
 ### Metal Backend (Apple Silicon GPU Acceleration)
 
@@ -1071,6 +1068,7 @@ model = GaussianSplatModelMetal(
     centers0=centers,
     L0=L,
     amps0=amps,
+    sigma_min_diag=[0.5, 0.5, 0.5],  # required: per-axis minimum splat size
     truncate=3.0,
     device='mps'  # Must be MPS
 )
@@ -1303,7 +1301,7 @@ hatch run pytest packages/luxar/src/luxar/gsplats/tests/test_tiled_fitting.py -v
 - Unit tests for all pipeline components (validation, preprocessing, losses, optimization, etc.)
 - 2D/3D/nD reconstruction pipelines
 - Loss functions (MSE, Poisson, L1) with asymmetric penalties
-- Dynamic operations (seeding, pruning, merging, splitting)
+- Dynamic operations (fixed-pool splat relocation)
 - Quality metrics (PSNR, SSIM, MSE) for 2D and 3D data
 - Tiled fitting with cosine apodization and tile merging
 - Device compatibility (CPU, CUDA, MPS)
@@ -1331,11 +1329,10 @@ hatch run pytest packages/luxar/src/luxar/gsplats/tests/test_tiled_fitting.py -v
 **Early Stopping Not Triggering**
 - Simple images may converge late
 - Try reducing `early_stop_patience` for more aggressive stopping
-- Check that `early_stopping=True` is set
+- Note that early stopping is on by default (controlled by `early_stop_patience`, default 300)
 
 **Out of Memory**
 - Reduce `peaks_per_scale` in candidate generation
-- Enable `use_mixed_precision=True` on CUDA
 - Use smaller images or downsample
 - Use `fit_tiled()` to process the volume in overlapping tiles
 
@@ -1355,9 +1352,8 @@ hatch run pytest packages/luxar/src/luxar/gsplats/tests/test_tiled_fitting.py -v
 - Triangular solve avoids explicit matrix inversion
 
 ### Memory Efficiency
-- Truncated rendering (default 3σ radius)
+- Truncated rendering (2.75σ default radius when fitting; 3σ for the standalone model/renderer)
 - Batched operations for GPU parallelism
-- Optional FP16 mixed precision
 - Pre-allocated buffers where possible
 - Amplitude-aware culling for weak splats
 
