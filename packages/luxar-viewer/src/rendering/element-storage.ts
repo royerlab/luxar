@@ -534,6 +534,16 @@ function applyNextSortedIndexChunk(
     sliceUploadPending.add(attr);
     attr.onUpload(() => {
       sliceUploadPending.delete(attr);
+      // Discard the just-consumed ranges. `updateBuffer` already cleared
+      // them, but `createBuffer` does NOT (it uploads the whole array via
+      // `bufferData` and leaves the ranges lingering) — and the very next
+      // slice would union with that stale range, making the following
+      // draw upload TWO slices instead of one, breaking the per-frame
+      // bound on exactly the first-drawn-mid-stream path. Always safe: at
+      // ack time every byte of the array has just reached the GPU (either
+      // path), and three's no-range fallback is a FULL `bufferSubData`,
+      // so a cleared range can never lose data.
+      attr.clearUpdateRanges();
       if (chunkedApplies.has(geometry)) requestSliceRender?.();
     });
   }

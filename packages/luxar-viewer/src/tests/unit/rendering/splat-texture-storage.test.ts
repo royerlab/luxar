@@ -1321,17 +1321,25 @@ describe('double-buffered ordering apply (atomic swap)', () => {
     expect((back.array as Uint32Array)[CHUNK]).toBe(0); // slice 2 untouched
 
     // The FIRST draw goes through createBuffer: it fires onUploadCallback
-    // but leaves updateRanges intact. The stall must clear on this alone.
+    // but does NOT clear updateRanges itself. The stall must clear on this
+    // alone — and the ack must DISCARD the consumed ranges (createBuffer's
+    // `bufferData` uploaded the whole array, so they are already on the
+    // GPU); leaving them would union slice 2 onto the stale slice-1 range
+    // and the next draw would upload two slices at once.
     back.onUploadCallback?.();
-    expect(back.updateRanges.length).toBeGreaterThan(0); // ranges still lingering
+    expect(back.updateRanges.length).toBe(0); // ack discarded the consumed ranges
 
-    // The pump ADVANCES (does not wedge) despite the lingering ranges.
+    // The pump ADVANCES (does not wedge), and the pending upload is
+    // exactly ONE slice wide — the per-frame bound holds across the
+    // createBuffer path too.
     expect(pumpSortedIndexOrderingApply(geometry)).toMatchObject({
       more: true,
       flipped: false,
       stalled: false,
     });
     expect((back.array as Uint32Array)[CHUNK]).toBe(ordering[CHUNK]); // slice 2 written
+    expect(back.updateRanges.length).toBe(1);
+    expect(back.updateRanges[0]).toMatchObject({ start: CHUNK, count: CHUNK });
   });
 
   it('a consumed-slice upload ack drives a continuation render while pending, and is a no-op once cleared (#715 resume hook)', () => {
