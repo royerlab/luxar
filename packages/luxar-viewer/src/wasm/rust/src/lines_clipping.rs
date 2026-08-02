@@ -548,8 +548,21 @@ pub fn calculate_segment_lengths(
 /// preserving the pre-existing behaviour exactly. The overlap area between two
 /// quads grows monotonically with the turn angle, so this interpolates between
 /// the two regimes in the right direction. It is a per-endpoint scalar
-/// approximating a spatially varying ideal, deliberately biased conservative
-/// (never brighter than the previous behaviour at sharp angles).
+/// approximating a spatially varying ideal, biased conservative *for the
+/// data-space angle it measures* (never brighter than the previous behaviour
+/// at a sharp **3D** bend).
+///
+/// That scoping matters: the bend is measured from the segment directions in
+/// display/data space, once per commit, but the quads are expanded
+/// perpendicular to the **projected** (screen-space) direction, so whether two
+/// quads actually tile or overlap is a camera-dependent property this scalar
+/// never tracks. Two consequences: a sharp 3D bend viewed nearly edge-on
+/// projects almost straight and stays notched (the same as the pre-suppression
+/// behaviour — not a regression), while a gentle 3D bend that happens to
+/// project sharp keeps suppression near `1` and can sum to ~2x body brightness
+/// over a width-sized lens that moves as the camera orbits. The line material
+/// README's "Known limitation" note is the authority here; a true fix needs a
+/// per-frame screen-space suppression (tracked separately).
 ///
 /// Only **degree-2** vertices are treated as joints: at a branch point (3+
 /// segments meeting) the quads all overlap near the hub and suppressing would
