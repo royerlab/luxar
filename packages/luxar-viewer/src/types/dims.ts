@@ -225,8 +225,10 @@ export function initializeDims(
  * @param numPoints - Total number of points in the dataset
  * @returns Array of [min, max] tuples for each dimension
  *
- * Used by SceneDimsManager initialization and by the slider, recording, app and
- * input-handler call sites that read the live per-dimension ranges.
+ * @internal — re-exported from types/index.ts; no production call site outside
+ * this module. Note `SceneDimsManager` has a same-named *method* that reads
+ * cached ranges off the manager; the `sceneDimsManager.getDimensionRanges()`
+ * calls in `ui/`, `core/` and `input/` are that method, not this function.
  */
 export function getDimensionRanges(
   positions: Float32Array,

@@ -6,6 +6,27 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
+#### Fixed — points nodes now record `ndim`, and expose their spatial metadata (#1150)
+
+Points was the only geometry type whose writer never stamped `ndim` on the
+group, even though the attr was already reserved against user override — so it
+could be neither written nor supplied. The viewer's points chunk-index loader
+cross-checks `chunk_bounds` dimensionality against it and skips the check when
+absent, so for points that check had never once run. It is now armed;
+dimensionality is verified to agree for 2D through 5D, including compound
+(spatial + discrete) ordering. Scenes written before this change still load —
+the loader's `undefined` guard is unchanged.
+
+`Points` also gains the three metadata properties `Lines` already had:
+`max_radius`, `has_spatial_index` and `ordering`. Adding the last of these
+exposed a second gap — the writer put `ordering` on disk but not in the
+metadata backing the property, so it would have reported `"none"` for a node
+that is hilbert-ordered. The writer now returns it, matching Lines and GSplats.
+
+`docs/guides/user/LUXAR_ZARR_FORMAT.md` records the rule the three types follow:
+one ordering per type means flat keys, several means namespaced objects (Lines
+is the only type with two), and an absent `ordering` attr means `"none"`.
+
 #### Tooling — documentation checker is now a baseline-driven ratchet (#776)
 
 `scripts/check_documentation.py` no longer fails all-or-nothing on pre-existing
