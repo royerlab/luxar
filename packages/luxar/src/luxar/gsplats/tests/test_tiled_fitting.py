@@ -778,6 +778,46 @@ class TestTiledFloorHandling:
         expected = resolve_volume_floor(volume, "auto")
         assert floors[0] == pytest.approx(expected)
 
+    def test_expensive_floor_resolution_happens_exactly_once(self, monkeypatch) -> None:
+        """The string/"auto" floor spec is resolved exactly ONCE per run.
+
+        ``fit_tiled`` resolves the user's floor spec (here ``"auto"``) against
+        the whole volume a single time, then hands each tile the resolved
+        NUMERIC level; every per-tile ``resolve_volume_floor`` call therefore
+        gets a cheap numeric short-circuit, never the expensive "auto"
+        sampling resolution. ``test_one_shared_floor_level_across_tiles`` only
+        asserts the tiles agree on a floor VALUE — it would still pass if a
+        regression re-resolved ``"auto"`` per tile (they'd agree, just
+        expensively) — so it does not pin this. We spy on the ``spec``
+        argument of every ``resolve_volume_floor`` call and require exactly one
+        string spec (``"auto"``), the rest numeric.
+        """
+        import luxar.gsplats.fit_tiled_gsplats as ftg
+
+        records: list = []
+        monkeypatch.setattr(ftg, "fit_gaussian_splats", _recording_stub(records))
+
+        real_resolve = ftg.resolve_volume_floor
+        specs: list = []
+
+        def spy(volume, floor, **kwargs):
+            specs.append(floor)
+            return real_resolve(volume, floor, **kwargs)
+
+        monkeypatch.setattr(ftg, "resolve_volume_floor", spy)
+
+        rng = np.random.RandomState(0)
+        volume = rng.normal(100.0, 1.0, size=(96, 96)).astype(np.float32)
+        volume[40:80, 40:80] += 150.0
+
+        ftg.fit_tiled(volume, tile_size=48, overlap=16, floor="auto", verbose=False)
+
+        # Multiple tiles ran, but the string spec was resolved only once.
+        assert len(records) > 1
+        string_specs = [s for s in specs if isinstance(s, str)]
+        assert len(string_specs) == 1
+        assert string_specs[0] == "auto"
+
     def test_numeric_floor_subtracted_verbatim(self, monkeypatch) -> None:
         """An explicit numeric floor is subtracted exactly as given."""
         import luxar.gsplats.fit_tiled_gsplats as ftg
