@@ -781,8 +781,7 @@ export class SceneManager extends THREE.EventDispatcher<{
     // honour it. Fall back to the bounds fit only when there is no authored
     // camera position.
     const root = this.scene.children.find((c) => c.name === 'LuxarScene') as
-      | THREE.Group
-      | undefined;
+      THREE.Group | undefined;
     const viewerConfig = root?.userData?.viewerConfig as ZarrViewerConfig | undefined;
     if (root && viewerConfig?.camera?.position) {
       // Reset the up vector to the scene up first: orbiting overwrites
@@ -1065,7 +1064,10 @@ export class SceneManager extends THREE.EventDispatcher<{
    *
    * Called each frame by AnimationController. Uses a cached bounding sphere
    * (invalidated on scene load/clear) for smooth near/far values with zero
-   * per-frame scene graph traversal or object allocations.
+   * object allocations and — once the metadata bounds are cached — zero
+   * per-frame scene graph traversal. A metadata-less scene is the exception:
+   * the cache has no negative caching, so the per-frame `ensure()` re-walks
+   * the graph each frame (see `clipping/scene-bounds-cache.ts`).
    */
   updateDynamicClippingPlanes(): void {
     if (!this.dynamicClippingEnabled) return;
