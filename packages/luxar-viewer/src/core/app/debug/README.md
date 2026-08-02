@@ -58,7 +58,7 @@ fills the gap. The captured stats are reachable as
 `injectSyntheticScene`'s body is wrapped in try/catch: on failure it logs via
 `log.error` and surfaces the message through the user-facing error overlay
 (`showError`), then re-throws so callers that `await` still see the rejection.
-This prevents a broken dynamic import / synthetic-line builder from becoming a
+This prevents a broken dynamic import / synthetic-scene builder from becoming a
 silent unhandled promise rejection.
 
 After populating the global, it emits a series of `log.info(Modules.LUXAR, …)`
@@ -140,30 +140,59 @@ load-dataset ports, and `core/app/dataset/load-dataset.ts` calls
 
 Available once `installDebugInterface` runs (after `LuxarApp.init()`):
 
-| Field                                                                                          | Source                                 | Purpose                                                                                                                                                                       |
-| ---------------------------------------------------------------------------------------------- | -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `app`                                                                                          | bootstrap stub, preserved              | `LuxarApp` instance                                                                                                                                                           |
-| `consoleInterceptor`                                                                           | bootstrap stub, preserved              | Captured console buffer                                                                                                                                                       |
-| `version`                                                                                      | bootstrap stub, preserved              | `'1.0.0'`                                                                                                                                                                     |
-| `scene` / `camera` / `renderer` / `controls` / `postProcessing`                                | `sceneManager.*`                       | Live THREE.js refs                                                                                                                                                            |
-| `animationController` / `inputHandler` / `renderingControls` / `recordingPanel`                | ports                                  | Subsystem handles                                                                                                                                                             |
-| `sceneDimsManager`                                                                             | singleton                              | nD dimension state                                                                                                                                                            |
-| `workers.getQueueDepth()` / `workers.getStats()`                                               | `getWorkerPool()`                      | Backpressure diagnostic                                                                                                                                                       |
-| `getState()`                                                                                   | `computeDebugState`                    | JSON-serialisable scene snapshot                                                                                                                                              |
-| `renderOnce()`                                                                                 | `animationController.startAnimation()` | Kick a frame for stable screenshots                                                                                                                                           |
-| `getSceneLoader()`                                                                             | `SceneLoaderManager.getInstance()`     | Cache inspection root                                                                                                                                                         |
-| `getPickingSystem()` / `getOverlayManager()`                                                   | port accessors                         | Live (survive reloads)                                                                                                                                                        |
-| `cache.getStats()` / `listDatasets()` / `clearL0()` / `clearL1()` / `clearL2()` / `clearAll()` | `buildDebugCacheHelpers`               | Cache tier control                                                                                                                                                            |
-| `showError(message)`                                                                           | `ui/error-overlay`                     | Render the error dialog directly (visual-regression hook)                                                                                                                     |
-| `injectSyntheticScene({type, count, bounds?, seed?})`                                          | dynamic import                         | Lines perf-bench injector — builds an `InstancedLinesMeshConfig` and adds it through `materialManager` + `createInstancedLinesMesh`; resolves to `{type, segmentCount, mesh}` |
-| `getLodLoadStats()` / `resetLodLoadStats()`                                                    | `data/scene-loader/lod-load-stats`     | Per-stage timing for lazy LOD level loads (fetch/decode, process, commit, release)                                                                                            |
-| `runtimeReady`                                                                                 | `true`                                 | Sentinel flag for E2E waits                                                                                                                                                   |
+| Field                                                                                          | Source                                 | Purpose                                                                                                                                                                                                                                                                                               |
+| ---------------------------------------------------------------------------------------------- | -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `app`                                                                                          | bootstrap stub, preserved              | `LuxarApp` instance                                                                                                                                                                                                                                                                                   |
+| `consoleInterceptor`                                                                           | bootstrap stub, preserved              | Captured console buffer                                                                                                                                                                                                                                                                               |
+| `version`                                                                                      | bootstrap stub, preserved              | `'1.0.0'`                                                                                                                                                                                                                                                                                             |
+| `scene` / `camera` / `renderer` / `controls` / `postProcessing`                                | `sceneManager.*`                       | Live THREE.js refs                                                                                                                                                                                                                                                                                    |
+| `animationController` / `inputHandler` / `renderingControls` / `recordingPanel`                | ports                                  | Subsystem handles                                                                                                                                                                                                                                                                                     |
+| `sceneDimsManager`                                                                             | singleton                              | nD dimension state                                                                                                                                                                                                                                                                                    |
+| `workers.getQueueDepth()` / `workers.getStats()`                                               | `getWorkerPool()`                      | Backpressure diagnostic                                                                                                                                                                                                                                                                               |
+| `getState()`                                                                                   | `computeDebugState`                    | JSON-serialisable scene snapshot                                                                                                                                                                                                                                                                      |
+| `renderOnce()`                                                                                 | `animationController.startAnimation()` | Kick a frame for stable screenshots                                                                                                                                                                                                                                                                   |
+| `getSceneLoader()`                                                                             | `SceneLoaderManager.getInstance()`     | Cache inspection root                                                                                                                                                                                                                                                                                 |
+| `getPickingSystem()` / `getOverlayManager()`                                                   | port accessors                         | Live (survive reloads)                                                                                                                                                                                                                                                                                |
+| `cache.getStats()` / `listDatasets()` / `clearL0()` / `clearL1()` / `clearL2()` / `clearAll()` | `buildDebugCacheHelpers`               | Cache tier control                                                                                                                                                                                                                                                                                    |
+| `showError(message)`                                                                           | `ui/error-overlay`                     | Render the error dialog directly (visual-regression hook)                                                                                                                                                                                                                                             |
+| `injectSyntheticScene({type, count, bounds?, seed?, clusters?, blending?})`                    | dynamic import                         | Perf-bench injector — builds a Points, Lines, or GSplats payload and wires it through `materialManager` + the node-factory pipeline; resolves to the discriminated union `{type, elementCount, <per-type count>, mesh}` (capacity-clamped `elementCount`; per-type alias carries the requested count) |
+| `getLodLoadStats()` / `resetLodLoadStats()`                                                    | `data/scene-loader/lod-load-stats`     | Per-stage timing for lazy LOD level loads (fetch/decode, process, commit, release)                                                                                                                                                                                                                    |
+| `runtimeReady`                                                                                 | `true`                                 | Sentinel flag for E2E waits                                                                                                                                                                                                                                                                           |
 
 `injectSyntheticScene` dynamically imports `scene/synthetic-scene` so the
-synthetic-line builder stays out of the main chunk;
-`rendering/line-geometry` and `rendering/material-manager` are statically
-imported because they're already part of the main bundle (production
-modules), so dynamic-importing them would save no chunk bytes.
+builders stay out of the main chunk (that chunk is never loaded unless the
+API is invoked under `?debug`); `rendering/line-geometry` and
+`rendering/material-manager` are statically imported because they're already
+part of the main bundle (production modules), so dynamic-importing them would
+save no chunk bytes.
+
+It builds one of three geometry types — Points, Lines, or GSplats. The
+shared options are `count` (elements to draw), `bounds` (half-extent of the
+generation volume, default 100) and `seed` (deterministic PRNG seed, default
+1; same `(type, count, bounds, seed, clusters)` yields a byte-identical
+scene).
+`clusters` (default 256) is the number of gaussian blobs the points/gsplats
+samplers draw from and is ignored by lines. `blending` defaults to
+`additive` for lines (historical bench contract) and `normal` for
+points/gsplats — the latter so the depth-sort subsystem engages — and
+overrides either when set. The resolved `elementCount` is the
+capacity-clamped drawn count (uniform across types); the per-type alias
+(`segmentCount` / `pointCount` / `splatCount`) carries the requested count.
+Points/gsplats injection also emits the production depth-sort commit signals,
+so the SortWorker registers the node and the first ordering lands
+asynchronously a frame or two after the promise resolves.
+
+```js
+// Lines (default additive blending)
+const { elementCount } = await window.__luxarDebug.injectSyntheticScene({
+  type: 'lines',
+  count: 1_000_000,
+});
+// Points — clustered gaussians, default 'normal' (depth-sorted) blending
+await window.__luxarDebug.injectSyntheticScene({ type: 'points', count: 2_000_000, clusters: 512 });
+// GSplats — deterministic given (type, count, bounds, seed, clusters)
+await window.__luxarDebug.injectSyntheticScene({ type: 'gsplats', count: 500_000, seed: 7 });
+```
 
 ## Activation
 
