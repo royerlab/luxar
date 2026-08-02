@@ -409,7 +409,8 @@ class TestMainReportsQuarantine:
 def _write_instant_cache(cache_dir: Path, n: int = 40) -> int:
     """Fabricate the two artifacts the instant path reads (sample_size=0/esmc-300m).
 
-    Returns ``n`` so callers can assert the generator's element count.
+    Returns ``n`` so callers can assert the generator's protein count (the scene
+    itself carries ``2 * n`` rows — one block per coloring).
     """
     cache_dir.mkdir(parents=True, exist_ok=True)
     rng = np.random.default_rng(0)
@@ -436,26 +437,29 @@ def _write_instant_cache(cache_dir: Path, n: int = 40) -> int:
     return n
 
 
-class TestCompleteCacheRunsWithoutTorch:
-    """The instant (full-cache) path must build a scene on a torch-free machine.
+class TestCompleteCacheRunsWithoutLodDeps:
+    """The instant (full-cache) path must build a scene without the LOD deps.
 
     The demo documents a "complete cache runs anywhere" contract, but the scene
-    build used to request substitutive Points LOD unconditionally; its coarsening
-    kernels import torch, so scene generation died with a ModuleNotFoundError even
-    when every expensive cache was supplied. The fix gates LOD on torch and falls
-    back to flat Points, so the whole demo runs with torch blocked.
+    build used to request substitutive Points LOD unconditionally. That path
+    imports ``luxar.gsplats.lod``, which needs torch (coarsening kernels) and
+    scipy (``additive.py`` imports ``scipy.sparse`` at module level) — neither is
+    a core dependency — so scene generation died with a ModuleNotFoundError even
+    when every expensive cache was supplied. The fix gates LOD on both and falls
+    back to flat Points, so the whole demo runs with either one blocked.
     """
 
-    def test_full_cache_path_builds_scene_without_torch(
-        self, tmp_path, monkeypatch, capsys
+    @pytest.mark.parametrize("blocked", ["torch", "scipy"])
+    def test_full_cache_path_builds_scene_without_lod_dep(
+        self, tmp_path, monkeypatch, capsys, blocked
     ) -> None:
         cache_dir = tmp_path / "cache"
         n = _write_instant_cache(cache_dir)
 
-        # Simulate a torch-free machine EXACTLY as the issue's reproduction does:
-        # a None entry makes is_installed("torch") return False AND any accidental
-        # `import torch` raise, so a green result proves torch was never imported.
-        monkeypatch.setitem(sys.modules, "torch", None)
+        # Simulate a machine missing the dependency EXACTLY as the issue's
+        # reproduction does: a None entry makes is_installed() return False AND
+        # makes any `import <blocked>` raise instead of quietly succeeding.
+        monkeypatch.setitem(sys.modules, blocked, None)
 
         out_path = tmp_path / "esm3.luxar.zarr"
         got = generate_esm3_landscape(
@@ -463,18 +467,20 @@ class TestCompleteCacheRunsWithoutTorch:
         )
 
         assert got == n
-        assert out_path.exists(), "scene was not written on the torch-free path"
+        assert out_path.exists(), f"scene was not written with {blocked} blocked"
 
         # The fallback must ANNOUNCE the degradation (arbol aprint → stdout, which
         # capsys captures — the same channel the quarantine-notice tests assert on).
-        assert "skipping Points LOD" in capsys.readouterr().out, (
-            "torch-free fallback did not print its degradation notice"
+        out = capsys.readouterr().out
+        assert "skipping Points LOD" in out, (
+            "fallback did not print its degradation notice"
         )
+        assert blocked in out, f"degradation notice did not name {blocked}"
 
-        # Structural proof of the FALLBACK, independent of import ordering. The
-        # sys.modules["torch"]=None patch only blocks a *fresh* import; a warm
-        # suite where a torch-importing module already ran keeps torch bound in
-        # its namespace, so the old (unconditional-LOD) code would build a
+        # Structural proof of the FALLBACK, independent of import ordering. A
+        # None entry in sys.modules only blocks a *fresh* import; in a warm suite
+        # where a module already imported the real package, its namespace keeps
+        # the binding, so the old (unconditional-LOD) code would build a
         # substitutive-LOD group and NOT crash. Assert the on-disk shape instead:
         # a flat Points leaf writes `proteins/positions` and has no `kind: lod`,
         # whereas a substitutive-LOD group has `kind == "lod"` and child_0..N
@@ -489,15 +495,19 @@ class TestCompleteCacheRunsWithoutTorch:
             f"expected a flat Points leaf, got a substitutive-LOD group: {attrs.get('kind')!r}"
         )
 
-    def test_full_cache_path_builds_lod_when_torch_present(self, tmp_path) -> None:
-        """Positive branch: with torch installed, the LOD ladder IS built.
+    def test_full_cache_path_builds_lod_when_deps_present(
+        self, tmp_path, capsys
+    ) -> None:
+        """Positive branch: with torch and scipy installed, the LOD ladder IS built.
 
-        Pins the torch-PRESENT path so a mutant that drops LOD entirely — or a
+        Pins the deps-PRESENT path so a mutant that drops LOD entirely — or a
         typo like ``is_installed("torchvision")`` — cannot pass silently by only
-        satisfying the torch-free test above. Substitutive-LOD writes a
-        ``kind == "lod"`` group with ``child_0..N`` and NO top-level positions.
+        satisfying the fallback test above. Substitutive-LOD writes a
+        ``kind == "lod"`` group with ``child_0..N`` and NO top-level positions,
+        and the degradation notice must stay quiet.
         """
         pytest.importorskip("torch")
+        pytest.importorskip("scipy")
 
         cache_dir = tmp_path / "cache"
         n = _write_instant_cache(cache_dir)
@@ -508,10 +518,13 @@ class TestCompleteCacheRunsWithoutTorch:
         )
 
         assert got == n
+        assert "skipping Points LOD" not in capsys.readouterr().out, (
+            "degradation notice printed even though torch and scipy are installed"
+        )
         proteins = out_path / "proteins"
         attrs = json.loads((proteins / ".zattrs").read_text())
         assert attrs.get("kind") == "lod", (
-            f"expected a substitutive-LOD group with torch present: {attrs.get('kind')!r}"
+            f"expected a substitutive-LOD group with the deps present: {attrs.get('kind')!r}"
         )
         assert (proteins / "child_0").exists(), "LOD group missing child_0"
         assert not (proteins / "positions").exists(), (
