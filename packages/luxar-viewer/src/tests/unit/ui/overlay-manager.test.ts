@@ -210,6 +210,170 @@ describe('OverlayManager.loadOverlays', () => {
   });
 });
 
+describe('OverlayManager — anchoring (issue #773)', () => {
+  let manager: OverlayManager;
+
+  beforeEach(() => {
+    document.body.innerHTML = '';
+    manager = new OverlayManager();
+  });
+
+  afterEach(() => {
+    manager.dispose();
+  });
+
+  it('anchors a top-right overlay from the right edge (no left, no -100% X)', async () => {
+    // #773: setting `left: 98%` made shrink-to-fit width ~2vw, wrapping the
+    // hover tooltip to one word per line. Anchoring from the right edge
+    // (`right: 2%`, no `left`) lets the box grow leftward.
+    await manager.loadOverlays(
+      [makeTextOverlay({ anchor: 'top-right', position: [0.98, 0.02] })],
+      'http://example.com'
+    );
+    const el = document.querySelector('.luxar-overlay') as HTMLDivElement;
+    // right = (1 - 0.98) * 100 ≈ 2% (0.98 is not float-exact, so assert
+    // numerically rather than on the exact string, matching how the existing
+    // left/top percentages are produced without rounding).
+    expect(el.style.right.endsWith('%')).toBe(true);
+    expect(parseFloat(el.style.right)).toBeCloseTo(2);
+    expect(el.style.left).toBe('');
+    expect(parseFloat(el.style.top)).toBeCloseTo(2);
+    // Transform keeps its vertical part but drops the horizontal -100%.
+    expect(el.style.transform).toBe('translate(0, 0)');
+    expect(el.style.transform).not.toContain('-100%');
+  });
+
+  it('anchors a center-right overlay from the right edge, keeping the -50% Y', async () => {
+    await manager.loadOverlays(
+      [makeTextOverlay({ anchor: 'center-right', position: [0.9, 0.5] })],
+      'http://example.com'
+    );
+    const el = document.querySelector('.luxar-overlay') as HTMLDivElement;
+    expect(parseFloat(el.style.right)).toBeCloseTo(10); // (1 - 0.9) * 100
+    expect(el.style.left).toBe('');
+    expect(el.style.transform).toBe('translate(0, -50%)');
+    expect(el.style.transform).not.toContain('-100%');
+  });
+
+  it('anchors a bottom-right overlay from the right edge, keeping the -100% Y', async () => {
+    await manager.loadOverlays(
+      [makeTextOverlay({ anchor: 'bottom-right', position: [0.98, 0.98] })],
+      'http://example.com'
+    );
+    const el = document.querySelector('.luxar-overlay') as HTMLDivElement;
+    expect(parseFloat(el.style.right)).toBeCloseTo(2);
+    expect(el.style.left).toBe('');
+    // Vertical -100% preserved; horizontal component is 0 (no leading -100%).
+    expect(el.style.transform).toBe('translate(0, -100%)');
+    expect(el.style.transform.startsWith('translate(-100%')).toBe(false);
+  });
+
+  it('leaves left/center anchors on the left edge (right cleared)', async () => {
+    await manager.loadOverlays(
+      [
+        makeTextOverlay({ name: 'left', anchor: 'top-left', position: [0.25, 0.75] }),
+        makeTextOverlay({ name: 'center', anchor: 'center', position: [0.25, 0.75] }),
+        makeTextOverlay({ name: 'cleft', anchor: 'center-left', position: [0.1, 0.2] }),
+      ],
+      'http://example.com'
+    );
+    const left = document.querySelector('[data-overlay-name="left"]') as HTMLDivElement;
+    const center = document.querySelector('[data-overlay-name="center"]') as HTMLDivElement;
+    const cleft = document.querySelector('[data-overlay-name="cleft"]') as HTMLDivElement;
+
+    expect(left.style.left).toBe('25%');
+    expect(left.style.right).toBe('');
+    // Center keeps its -50%/-50% transform and left positioning.
+    expect(center.style.left).toBe('25%');
+    expect(center.style.right).toBe('');
+    expect(center.style.transform).toBe('translate(-50%, -50%)');
+    expect(cleft.style.left).toBe('10%');
+    expect(cleft.style.right).toBe('');
+  });
+
+  it('gives a no-width hover overlay a clamped max-width (readable wrap, not ~2vw)', async () => {
+    // #773: the auto-injected hover text overlay has no explicit width and
+    // uses `pre-line`. Without a max-width its measure collapses to the
+    // right-anchor container edge. A clamped max-width lets it wrap to a
+    // readable box a couple of lines tall.
+    await manager.loadOverlays(
+      [
+        makeTextOverlay({
+          name: 'hover',
+          hover: true,
+          anchor: 'top-right',
+          position: [0.98, 0.02],
+          text: '{hover_label}',
+        }),
+      ],
+      'http://example.com'
+    );
+    const el = document.querySelector('[data-overlay-name="hover"]') as HTMLDivElement;
+    expect(el.style.maxWidth).toBe('min(30vw, 40ch)');
+    // No explicit narrow width was set (that is what produced the ~2vw column).
+    expect(el.style.width).toBe('');
+    // pre-line so \n in labels still breaks, and wrapping is enabled.
+    expect(el.style.whiteSpace).toBe('pre-line');
+    expect(el.style.wordWrap).toBe('break-word');
+  });
+
+  it('honors an explicit config.width and does not clamp it with max-width', async () => {
+    await manager.loadOverlays(
+      [makeTextOverlay({ name: 'wide', width: 0.5, text: 'a caption' })],
+      'http://example.com'
+    );
+    const el = document.querySelector('[data-overlay-name="wide"]') as HTMLDivElement;
+    // Explicit width stays the primary sizing.
+    expect(el.style.width).toBe('50vw');
+    // The clamp is only applied on the no-explicit-width path.
+    expect(el.style.maxWidth).toBe('');
+  });
+
+  it('clears stale sizing styles when text content is re-applied with a different config', async () => {
+    // The sizing branches are mutually exclusive; each must clear what the
+    // others set so a re-apply with a different config leaves no stale
+    // max-width/word-wrap behind (same convention as the left/right clearing
+    // in applyPositionAndStyle).
+    await manager.loadOverlays(
+      [makeTextOverlay({ name: 'morph', hover: true, text: '{hover_label}' })],
+      'http://example.com'
+    );
+    const el = document.querySelector('[data-overlay-name="morph"]') as HTMLDivElement;
+    expect(el.style.maxWidth).toBe('min(30vw, 40ch)');
+
+    // hover/no-width → explicit width: the clamp must not linger.
+    (manager as unknown as { createTextContent(e: HTMLDivElement, c: OverlayConfig): void })[
+      'createTextContent'
+    ](el, makeTextOverlay({ name: 'morph', width: 0.5 }));
+    expect(el.style.width).toBe('50vw');
+    expect(el.style.maxWidth).toBe('');
+
+    // explicit width → plain no-width nowrap: width, clamp and wrap all reset.
+    (manager as unknown as { createTextContent(e: HTMLDivElement, c: OverlayConfig): void })[
+      'createTextContent'
+    ](el, makeTextOverlay({ name: 'morph' }));
+    expect(el.style.width).toBe('');
+    expect(el.style.maxWidth).toBe('');
+    expect(el.style.whiteSpace).toBe('nowrap');
+    expect(el.style.wordWrap).toBe('');
+  });
+
+  it('does not clamp a non-hover no-width overlay (nowrap stays unbounded — issue #773 regression guard)', async () => {
+    // A non-hover text overlay with no explicit width is a single nowrap line
+    // sized to its content. A max-width here would only clip the BOX while the
+    // nowrap text overflows it — under right-anchoring, off-screen. So the
+    // clamp/word-wrap must be reserved for the wrapping (hover) case only.
+    await manager.loadOverlays(
+      [makeTextOverlay({ name: 'credit', anchor: 'bottom-right', position: [0.98, 0.97] })],
+      'http://example.com'
+    );
+    const el = document.querySelector('[data-overlay-name="credit"]') as HTMLDivElement;
+    expect(el.style.maxWidth).toBe('');
+    expect(el.style.whiteSpace).toBe('nowrap');
+    expect(el.style.wordWrap).toBe('');
+  });
+});
+
 describe('OverlayManager.getVisibleOverlays', () => {
   let manager: OverlayManager;
 
