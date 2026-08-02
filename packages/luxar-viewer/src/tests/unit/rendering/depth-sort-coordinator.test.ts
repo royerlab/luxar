@@ -113,10 +113,42 @@ async function applyStagedOrdering(mesh: THREE.Mesh): Promise<Uint32Array> {
   const { pumpSortedIndexOrderingApply, getActiveSortedIndexAttribute } =
     await import('../../../rendering/element-storage');
   const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
-  for (let guard = 0; pumpSortedIndexOrderingApply(geometry).more; guard++) {
+  for (let guard = 0; ; guard++) {
+    const result = pumpSortedIndexOrderingApply(geometry);
+    // Production pumps before rendering; every flip is therefore followed by
+    // THREE's mesh-local onAfterRender acknowledgement in that same frame.
+    if (result.flipped) simulateMeshRender(mesh);
+    if (!result.more) break;
     if (guard > 64) throw new Error('ordering stream did not converge');
   }
   return getActiveSortedIndexAttribute(geometry)!.array as Uint32Array;
+}
+
+/**
+ * Simulate THREE completing a visible mesh draw. The coordinator chains its
+ * acknowledgement onto `onAfterRender`; invoking it explicitly keeps unit
+ * tests honest about the pump-before-render ordering without constructing a
+ * WebGL renderer.
+ */
+function simulateMeshRender(mesh: THREE.Mesh): void {
+  const material = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
+  mesh.onAfterRender(
+    {} as THREE.WebGLRenderer,
+    new THREE.Scene(),
+    makeCamera(),
+    mesh.geometry,
+    material,
+    null as unknown as THREE.Group
+  );
+}
+
+/** Run the coordinator's pre-render work, then acknowledge visible draws. */
+function evaluateAndRender(
+  coord: { evaluateDepthSortPerFrame(): void },
+  ...meshes: THREE.Mesh[]
+): void {
+  coord.evaluateDepthSortPerFrame();
+  for (const mesh of meshes) simulateMeshRender(mesh);
 }
 
 /** The buffer the shaders are reading right now (no pumping). */
@@ -1846,14 +1878,16 @@ describe('depth-sort scheduler (Phase 3)', () => {
     // Fresh module instance to match the coordinator's post-reset module graph.
     const { UpdateProfiler } = await import('../../../profiling/update-profiler');
     const profiler = new UpdateProfiler();
-    await sortedSetup(coord, makeCamera(), { getProfiler: () => profiler });
+    const mesh = await sortedSetup(coord, makeCamera(), { getProfiler: () => profiler });
 
     const root = profiler.getDepthSortTimings();
     // The pass spans dispatch→applied: the worker resolve in sortedSetup only
-    // STAGES the ordering, so the pass is still open — no sample recorded yet
-    // (issue #713). One pump frame flips the applied buffer in and closes it.
+    // STAGES the ordering, so the pass is still open — no sample recorded yet.
+    // The pump selects the buffer; only the following onAfterRender closes it.
     expect(root.count).toBe(0);
     coord.evaluateDepthSortPerFrame();
+    expect(root.count).toBe(0);
+    simulateMeshRender(mesh);
 
     expect(root.count).toBe(1);
     expect(root.metadata?.splats).toBe(2);
@@ -2795,7 +2829,7 @@ describe('depth-sort coordinator — chunked ordering apply (perf lever L8)', ()
 
   // === Profiler lifecycle across the chunked apply (issue #713) ===
 
-  it('keeps the Depth Sort pass open across the multi-frame chunked apply, closing it as uploaded on the flip', async () => {
+  it('keeps the Depth Sort pass open through the flip, closing it only after the rendered upload', async () => {
     const { coord } = await loadWithTinyChunks();
     // Fresh module instance to match the coordinator's post-reset module graph.
     const { UpdateProfiler } = await import('../../../profiling/update-profiler');
@@ -2808,29 +2842,63 @@ describe('depth-sort coordinator — chunked ordering apply (perf lever L8)', ()
     });
 
     // 12 indices over a 4-index chunk = three slices → three pump frames.
-    await resolveLargeOrdering(coord, 12);
+    const { mesh } = await resolveLargeOrdering(coord, 12);
     const root = profiler.getDepthSortTimings();
 
     // Resolve alone must NOT close the pass — the bytes are only staged, not
     // yet uploaded. This is the whole point of the fix.
     expect(root.count).toBe(0);
 
-    // Slices 1-2 stream into the buffer NOT being drawn; the pass stays open.
-    coord.evaluateDepthSortPerFrame();
-    coord.evaluateDepthSortPerFrame();
+    // Slices 1-2 stream into the buffer NOT being drawn; rendering the old
+    // slot cannot acknowledge the new ordering, so the pass stays open.
+    evaluateAndRender(coord, mesh);
+    evaluateAndRender(coord, mesh);
     expect(root.count).toBe(0);
 
-    // Slice 3 completes the back buffer and flips it in — the pass closes
-    // now, spanning the whole dispatch→applied lifecycle.
+    // Slice 3 completes the back buffer and flips it in, but flip-time alone
+    // still is not proof of upload/draw.
     coord.evaluateDepthSortPerFrame();
+    expect(root.count).toBe(0);
+    simulateMeshRender(mesh);
     expect(root.count).toBe(1);
     expect(root.metadata?.splats).toBe(12);
     expect(root.metadata?.info).toMatch(/up$/); // uploaded, not scheduled
     expect(Number.isFinite(root.metadata?.applyMs)).toBe(true);
     expect(root.metadata?.applyMs).toBeGreaterThanOrEqual(0);
 
-    // Steady state: the pass is not closed a second time.
+    // Steady state: another render does not close the pass a second time.
+    evaluateAndRender(coord, mesh);
+    expect(root.count).toBe(1);
+  });
+
+  it('a selected ordering with no completed draw stays scheduled and is abandoned on teardown', async () => {
+    const { coord } = await loadWithTinyChunks();
+    const { UpdateProfiler } = await import('../../../profiling/update-profiler');
+    const profiler = new UpdateProfiler();
+    coord.configureDepthSort({
+      getCamera: () => makeCamera(),
+      requestRender: vi.fn(),
+      getProfiler: () => profiler,
+    });
+
+    const { mesh } = await resolveLargeOrdering(coord, 12);
+    const root = profiler.getDepthSortTimings();
+    // Pump all three slices WITHOUT simulating a draw. The buffer is selected,
+    // but an off-screen/hidden mesh has not made THREE upload or render it.
     coord.evaluateDepthSortPerFrame();
+    coord.evaluateDepthSortPerFrame();
+    coord.evaluateDepthSortPerFrame();
+    expect(root.count).toBe(0);
+    expect(profiler.getDepthSortCompletions().total).toBe(0);
+
+    coord.releaseDepthSortNode(mesh);
+    expect(root.count).toBe(1);
+    expect(root.metadata?.info).toMatch(/sched$/);
+    expect(root.metadata?.applyMs).toBeUndefined();
+    expect(profiler.getDepthSortCompletions().total).toBe(0);
+
+    // A late render callback cannot resurrect the abandoned completion.
+    simulateMeshRender(mesh);
     expect(root.count).toBe(1);
   });
 
@@ -2936,9 +3004,10 @@ describe('depth-sort coordinator — chunked ordering apply (perf lever L8)', ()
     expect(passes[0].ended).toBe(0);
     expect(passes[2].ended).toBe(0);
 
-    // Drain: apply 1 flips (pass 0 uploaded), then apply 3 flips (pass 2
-    // uploaded). Eight frames comfortably covers two 3-slice streams.
-    for (let i = 0; i < 8; i++) coord.evaluateDepthSortPerFrame();
+    // Drain with a real render acknowledgement after every pre-render pump:
+    // pass 0 uploads/draws first, then the promoted pass 2 does likewise.
+    // Eight frames comfortably covers two 3-slice streams.
+    for (let i = 0; i < 8; i++) evaluateAndRender(coord, mesh);
     expect(String(passes[0].meta.info)).toMatch(/up$/);
     expect(String(passes[2].meta.info)).toMatch(/up$/);
     // Every pass closed exactly once — no leak, no double-close.
@@ -2980,7 +3049,7 @@ describe('depth-sort coordinator — chunked ordering apply (perf lever L8)', ()
     await flush();
 
     // Drain: sort 1 applies (up), then the promoted sort 3 applies (up).
-    for (let i = 0; i < 8; i++) coord.evaluateDepthSortPerFrame();
+    for (let i = 0; i < 8; i++) evaluateAndRender(coord, mesh);
 
     const root = profiler.getDepthSortTimings();
     // Three passes recorded: sort 2 (abandoned → scheduled) plus the two
@@ -3018,14 +3087,15 @@ describe('depth-sort coordinator — chunked ordering apply (perf lever L8)', ()
 
     // Resolve stages the ordering, hands off the session, then the bootstrap
     // requestRender() throws → the .then rejects into .catch.
-    await resolveLargeOrdering(coord, 12);
+    const { mesh } = await resolveLargeOrdering(coord, 12);
     const root = profiler.getDepthSortTimings();
     // The pass was already handed off, so .catch left it open — no premature
     // scheduled sample.
     expect(root.count).toBe(0);
 
-    // The chunked apply still completes and closes the pass as uploaded.
-    for (let i = 0; i < 4; i++) coord.evaluateDepthSortPerFrame();
+    // The chunked apply still completes and closes the pass as uploaded,
+    // but only once the selected buffer is actually rendered.
+    for (let i = 0; i < 4; i++) evaluateAndRender(coord, mesh);
     expect(root.count).toBe(1);
     expect(root.metadata?.info).toMatch(/up$/);
   });

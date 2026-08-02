@@ -57,6 +57,7 @@ import { wrap, transfer, type Remote } from 'comlink';
 import SortWorker from '../workers/sort-worker?worker';
 import type { SortWorkerAPI } from '../workers/sort-worker';
 import {
+  acknowledgeSortedIndexOrderingDraw,
   activeSortedIndexSlot,
   cancelAllSortedIndexOrderingApplies,
   cancelSortedIndexOrderingApply,
@@ -354,6 +355,29 @@ function syncSortedIndexSlot(mesh: THREE.Mesh): void {
   if (pickNode) applySortedIndexSlotToMaterial(pickNode.material, slot);
 }
 
+/** Installed post-render acknowledgement hook for each sortable mesh. */
+const drawAcknowledgementHooks = new WeakMap<THREE.Mesh, THREE.Mesh['onAfterRender']>();
+
+/**
+ * Chain a mesh-local post-render hook that acknowledges the selected ordering
+ * only after THREE has consumed its pending attribute ranges and drawn it.
+ * The hook uses the render callback's geometry argument (rather than
+ * `mesh.geometry`) so a pool swap inside another callback cannot acknowledge
+ * the wrong buffer. Existing user callbacks are preserved.
+ */
+function ensureDrawAcknowledgementHook(mesh: THREE.Mesh): void {
+  const installed = drawAcknowledgementHooks.get(mesh);
+  if (installed && mesh.onAfterRender === installed) return;
+
+  const previous = mesh.onAfterRender;
+  const hook: THREE.Mesh['onAfterRender'] = (...args) => {
+    acknowledgeSortedIndexOrderingDraw(args[3] as THREE.InstancedBufferGeometry);
+    previous.apply(mesh, args);
+  };
+  drawAcknowledgementHooks.set(mesh, hook);
+  mesh.onAfterRender = hook;
+}
+
 /** Read the live REQUESTED blending mode stamped by the material wrappers. */
 function liveBlendingMode(mesh: THREE.Mesh): BlendingMode | undefined {
   const material = mesh.material as THREE.Material | THREE.Material[];
@@ -425,6 +449,7 @@ export function noteDepthSortCommit(
     };
     nodeStates.set(nodeId, state);
   }
+  ensureDrawAcknowledgementHook(mesh);
   state.generation = ++nextGeneration;
 
   // Push the geometry's (possibly just-normalised) slot to the materials
@@ -543,7 +568,7 @@ function recordSortPose(state: NodeSortState, modelView: THREE.Matrix4): void {
 /**
  * Format an ordering-upload byte count for the 'Depth Sort' monitor line.
  * `uploaded` distinguishes bytes that have reached the GPU (`up`, after the
- * chunked apply flips its buffer in) from bytes merely STAGED for upload
+ * selected mesh completes a render) from bytes merely STAGED for upload
  * (`sched`, at worker resolve) — issue #713. The panel shows this as the
  * pass's `info` tag.
  */
@@ -667,8 +692,8 @@ function scheduleSort(mesh: THREE.Mesh, nodeId: string): void {
           // These keys are LAST-WRITE on profiler metadata merge (each
           // sort pass has its own seq, so the 'Depth Sort' root always
           // shows the latest sort's split). The byte label starts as
-          // SCHEDULED here and is upgraded to uploaded only when the
-          // chunked apply flips the buffer in (issue #713).
+          // SCHEDULED here and is upgraded to uploaded only after THREE
+          // renders the selected buffer (issue #713).
           session?.setMetadata({
             splats: result.ordering.length,
             kernelMs: result.kernelMs,
@@ -681,8 +706,8 @@ function scheduleSort(mesh: THREE.Mesh, nodeId: string): void {
           // pending state; the per-frame pump in evaluateDepthSortPerFrame
           // streams the slices, one per rendered frame. Hand the profiler
           // session to that lifecycle so the pass spans dispatch→applied:
-          // onApplied (buffer flipped in) ends it as UPLOADED; onAbandoned
-          // (superseded/cancelled/demoted/released/disposed) ends it as
+          // onApplied (post-render acknowledgement) ends it as UPLOADED;
+          // onAbandoned (superseded/cancelled/demoted/released/disposed) ends it as
           // scheduled. writeSortedIndexOrdering invokes neither unless it
           // accepts the ordering (returns > 0) — issue #713.
           const resolvedAt = performance.now();
@@ -795,6 +820,9 @@ let scratch: EvaluateScratch | null = null;
  *   thing keeping the on-demand loop alive between slices. The slice
  *   just written rides THIS frame's flush (per-frame callbacks run
  *   before render), so the final slice needs no extra frame.
+ * - The final slice SELECTS the complete buffer for this frame; the mesh's
+ *   `onAfterRender` hook acknowledges upload/draw and closes its profiler
+ *   lifecycle only after THREE actually renders it.
  * - On COMPLETION, drain a queued re-sort (a commit that landed while a
  *   sort was in flight parked it) — the counterpart of the resolve
  *   path's drain, restoring the natural cadence: sort → apply N frames
@@ -835,10 +863,9 @@ function pumpChunkedOrderingApplies(): void {
     }
     const { more, flipped } = pumpSortedIndexOrderingApply(geometry);
     if (flipped) {
-      // The just-completed buffer becomes the drawn one. This runs in a
-      // per-frame callback, which the animation controller invokes
-      // BEFORE the render, so the final slice's upload and this flip
-      // reach the GPU in the same frame.
+      // The just-completed buffer becomes selected for this frame. This runs
+      // before render; the mesh's onAfterRender hook is the separate proof
+      // that THREE consumed the update ranges and issued a draw with it.
       syncSortedIndexSlot(state.mesh);
       requestRender?.();
     }
