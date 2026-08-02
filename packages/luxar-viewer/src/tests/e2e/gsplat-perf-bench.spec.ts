@@ -235,6 +235,13 @@ interface DepthSortStats {
   kernelMsMedian?: number;
   boundaryMsMedian?: number;
   queueMsMedian?: number;
+  /**
+   * Present (> 0) when completions aged out of the profiler's bounded
+   * ring between two polls, so they are counted in {@link finalCount}
+   * but missing from {@link sortCount} and the latency percentiles —
+   * treat the latency stats of such a window as under-sampled.
+   */
+  droppedCompletions?: number;
 }
 
 interface LadderStats {
@@ -456,6 +463,14 @@ interface OrbitSamplingRaw {
     boundaryMs: number | null;
     queueMs: number | null;
   }>;
+  /**
+   * Completions that aged out of the profiler's bounded (512-event) ring
+   * before this loop could drain them — i.e. a single poll gap saw more
+   * completions than the ring retains. `finalSortCount` stays exact (it
+   * reads the monotonic total), but these events contribute no latency
+   * sample, so median/p95 under-sample when this is > 0.
+   */
+  droppedCompletions: number;
   finalSortCount: number;
   totalMs: number;
 }
@@ -524,6 +539,7 @@ async function runOrbitSamplingLoop(page: Page): Promise<OrbitSamplingRaw> {
       const dts: number[] = [];
       const sortInc: boolean[] = [];
       const sortEvents: OrbitSamplingRaw['sortEvents'] = [];
+      let droppedCompletions = 0;
       let prevCompletionSeq = readCompletions()?.total ?? 0;
       let frames = 0;
       let lastTime = performance.now();
@@ -536,6 +552,7 @@ async function runOrbitSamplingLoop(page: Page): Promise<OrbitSamplingRaw> {
             frameDtMs: dts,
             sortInc,
             sortEvents,
+            droppedCompletions,
             finalSortCount: readCompletions()?.total ?? prevCompletionSeq,
             totalMs: performance.now() - start,
           });
@@ -570,8 +587,10 @@ async function runOrbitSamplingLoop(page: Page): Promise<OrbitSamplingRaw> {
             // Drain EVERY completion since the previous poll — one sortEvents
             // entry per completion (a frame with N completions pushes N).
             if (c) {
+              let drained = 0;
               for (const e of c.events) {
                 if (e.seq > prevCompletionSeq) {
+                  drained++;
                   sortEvents.push({
                     lastMs: e.lastMs,
                     kernelMs: e.kernelMs,
@@ -580,6 +599,12 @@ async function runOrbitSamplingLoop(page: Page): Promise<OrbitSamplingRaw> {
                   });
                 }
               }
+              // Ring overflow: more completions landed since the previous
+              // poll than the profiler's bounded ring retains. `total`
+              // stays exact, but the aged-out events can never contribute
+              // a latency sample — count them so the stats disclose the
+              // gap instead of silently under-sampling.
+              droppedCompletions += Math.max(0, c.total - prevCompletionSeq - drained);
             }
           }
           if (c) prevCompletionSeq = c.total;
@@ -630,6 +655,7 @@ function depthSortStatsOf(raw: OrbitSamplingRaw): DepthSortStats {
   if (kernel !== undefined) stats.kernelMsMedian = kernel;
   if (boundary !== undefined) stats.boundaryMsMedian = boundary;
   if (queue !== undefined) stats.queueMsMedian = queue;
+  if (raw.droppedCompletions > 0) stats.droppedCompletions = raw.droppedCompletions;
   return stats;
 }
 
@@ -1136,6 +1162,13 @@ for (const scn of SCENARIOS) {
     if (result.depthSort !== null && result.depthSort.sortCount === 0) {
       result.notes.push(
         'no depth-sort dispatch observed during the window — orbit may not have crossed the re-sort threshold'
+      );
+    }
+    if (result.depthSort?.droppedCompletions) {
+      result.notes.push(
+        `${result.depthSort.droppedCompletions} depth-sort completions aged out of the bounded ` +
+          'ring between polls — sortCount and the latency percentiles under-sample ' +
+          '(finalCount is still exact)'
       );
     }
 

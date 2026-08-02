@@ -1060,10 +1060,16 @@ describe('UpdateProfiler — depth-sort completion stream', () => {
       queueMs: null,
       splats: null,
     });
+    // Event OBJECTS are cloned too — mutating a returned event's field
+    // must not leak into the buffered ring.
+    first.events[0].lastMs = -42;
+    first.events[0].seq = 777;
 
     const second = profiler.getDepthSortCompletions();
     expect(second.events).toHaveLength(1);
     expect(second.total).toBe(1);
+    expect(second.events[0].lastMs).toBe(1);
+    expect(second.events[0].seq).toBe(1);
   });
 
   it('carries the stage fields through unchanged', () => {

@@ -751,10 +751,14 @@ export class UpdateProfiler {
    * Snapshot the depth-sort completion stream (issue #711): the monotonic
    * `total` (authoritative for the count even if some events aged out of the
    * bounded ring) plus a COPY of the currently-buffered events (each tagged
-   * with its `seq`, for latency sampling).
+   * with its `seq`, for latency sampling). The event objects are cloned too,
+   * so mutating a returned event cannot corrupt later snapshots.
    */
   getDepthSortCompletions(): { total: number; events: DepthSortCompletion[] } {
-    return { total: this.depthSortCompletionTotal, events: this.depthSortCompletions.slice() };
+    return {
+      total: this.depthSortCompletionTotal,
+      events: this.depthSortCompletions.map((e) => ({ ...e })),
+    };
   }
 
   /**
