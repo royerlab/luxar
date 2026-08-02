@@ -65,10 +65,10 @@ from arbol import aprint, asection
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.demos import (
     MissingDependencyError,
-    is_installed,
     launch_viewer,
     require_module,
     stack_colorings,
+    substitutive_lod_or_flat,
 )
 from luxar.utils.download import (
     QUARANTINE_SUFFIX,
@@ -812,21 +812,9 @@ def generate_esm3_landscape(
             # Substitutive Points LOD: ~572k proteins is a large cloud, so coarse
             # levels replace it with fewer, larger merged splats when zoomed out
             # (census-style wiring; coarse splats stay pure per coloring via the
-            # `coloring` barrier). Building it imports `luxar.gsplats.lod`, which
-            # needs torch (the coarsening kernels) AND scipy (its additive sibling
-            # imports `scipy.sparse` at module level). Neither is a core
-            # dependency, so both are gated — without them we fall back to flat
-            # Points so the "complete cache runs anywhere" contract still holds.
-            missing_lod_deps = [m for m in ("torch", "scipy") if not is_installed(m)]
-            if missing_lod_deps:
-                missing = " and ".join(missing_lod_deps)
-                aprint(
-                    f"⚠️ {missing} not installed — skipping Points LOD coarsening "
-                    "and building flat Points instead. The scene is fully viewable; "
-                    "run `pip install 'luxar[gsplats]'` (the extra that carries "
-                    "torch and scipy at their pinned bounds) to rebuild with "
-                    "level-of-detail."
-                )
+            # `coloring` barrier). Gated through substitutive_lod_or_flat: the
+            # write path imports torch+scipy, and the "complete cache runs
+            # anywhere" contract must hold without them (flat Points instead).
             scene.add_points(
                 "proteins",
                 positions=stacked.positions,
@@ -836,10 +824,8 @@ def generate_esm3_landscape(
                 opacity=0.9,
                 intensity=0.12,
                 labels=stacked.labels,
-                substitutive_lod=(
-                    None
-                    if missing_lod_deps
-                    else dict(compression_factor=8, levels=3, device="auto")
+                substitutive_lod=substitutive_lod_or_flat(
+                    dict(compression_factor=8, levels=3, device="auto")
                 ),
             )
 

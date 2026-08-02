@@ -146,8 +146,9 @@ def test_missing_zero_and_real_counts_are_consistent(monkeypatch) -> None:
 # (torch coarsening kernels) whose additive sibling imports ``scipy.sparse`` at
 # module load — so on a torch/scipy-free machine WITH a complete cache the scene
 # build crashed with ``ModuleNotFoundError`` instead of producing a viewable
-# scene. The fix gates the LOD on ``is_installed("torch"/"scipy")`` and falls
-# back to a flat point cloud with a degradation notice.
+# scene. The fix routes the request through
+# ``luxar.demos.substitutive_lod_or_flat``, which falls back to a flat point
+# cloud with a degradation notice when either module is missing.
 
 # Two real field names so FIELD_COLORS lookups resolve during coloring.
 _FIELDS = ["Computer Science", "Physics"]

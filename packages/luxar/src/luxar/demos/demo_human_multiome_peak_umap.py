@@ -51,7 +51,11 @@ import pandas as pd
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import launch_viewer, require_local_data
+from luxar.demos import (
+    launch_viewer,
+    require_local_data,
+    substitutive_lod_or_flat,
+)
 from luxar.utils._umap_utils import (
     attribute_to_color,
     build_legend_html,
@@ -246,7 +250,9 @@ def create_human_scene(
                 opacity=0.8,
                 intensity=0.11,
                 labels=labels,
-                substitutive_lod=dict(compression_factor=8, levels=3, device="auto"),
+                substitutive_lod=substitutive_lod_or_flat(
+                    dict(compression_factor=8, levels=3, device="auto")
+                ),
             )
 
             # --- Overlays ---

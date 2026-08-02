@@ -351,7 +351,7 @@ A very large 3D UMAP of human single cells from the CZ CELLxGENE Census, embedde
 
 **Run**: `luxar demo run cellxgene_census_umap [-- --no-serve]`
 
-**Requires**: nothing extra for the default (ships a 1M-cell coords cache via Git LFS). Regenerating at scale needs a CUDA GPU with `cellxgene-census` + `cuml` (RAPIDS) — see `scripts/gen_census_umap.py` (≈96.6M primary human cells available; ~140s scVI fetch + ~14min cuML UMAP for 10M). Point the demo at a larger cache via `CENSUS_UMAP_CACHE` / `CENSUS_UMAP_MAX_CELLS` / `CENSUS_UMAP_DEVICE`.
+**Requires**: nothing extra for the default (ships a 1M-cell coords cache via Git LFS). Regenerating at scale needs a CUDA GPU with `cellxgene-census` + `cuml` (RAPIDS) — see `scripts/gen_census_umap.py` (≈96.6M primary human cells available; ~140s scVI fetch + ~14min cuML UMAP for 10M). Point the demo at a larger cache via `CENSUS_UMAP_CACHE` / `CENSUS_UMAP_MAX_CELLS` / `CENSUS_UMAP_DEVICE`. Substitutive Points LOD needs `luxar[gsplats]` (torch + scipy); without it the scene builds as a flat, fully viewable point cloud.
 
 **Demonstrates**: precomputed scVI single-cell embeddings, cuML UMAP at 10M scale, substitutive Points LOD (coarse levels as mass-preserving Gaussian splats), the `coarsen_dims` barrier (coarse splats stay pure per coloring), categorical-dimension colour switching, large-scale LOD streaming.
 
@@ -373,7 +373,7 @@ Visualizes integrated single cells from zebrafish with categorical attribute nav
 
 **Run**: `luxar demo run zebrahub_multiome`
 
-**Requires**: Internet access (downloads the integrated 3D-UMAP parquet from the CZ Biohub public store).
+**Requires**: Internet access (downloads the integrated 3D-UMAP parquet from the CZ Biohub public store). Substitutive Points LOD needs `luxar[gsplats]` (torch + scipy); without it the scene builds as a flat, fully viewable point cloud.
 
 **Demonstrates**: Remote data loading, 3D UMAP embedding of single-cell data, categorical dimension navigation (cell type vs timepoint), real scientific dataset from Zebrahub.
 
@@ -395,7 +395,7 @@ Turns the Zebrahub VeloCyto AnnData (spliced/unspliced counts + precomputed 3D R
 
 **Run**: `luxar demo run human_multiome_peak_umap`
 
-**Requires**: Local parquet data file, `pandas` package.
+**Requires**: Local parquet data file, `pandas` package. Substitutive Points LOD needs `luxar[gsplats]` (torch + scipy); without it the scene builds as a flat, fully viewable point cloud.
 
 **Demonstrates**: Large-scale single-cell visualization (~1M points), multiple categorical attributes (cell type, lineage, timepoint, peak type, chromosome), ATAC-seq chromatin accessibility data.
 
@@ -406,7 +406,7 @@ Turns the Zebrahub VeloCyto AnnData (spliced/unspliced counts + precomputed 3D R
 
 **Run**: `luxar demo run mouse_multiome_peak_umap`
 
-**Requires**: Local parquet data file, `pandas` package.
+**Requires**: Local parquet data file, `pandas` package. Substitutive Points LOD needs `luxar[gsplats]` (torch + scipy); without it the scene builds as a flat, fully viewable point cloud.
 
 **Demonstrates**: Single-cell ATAC-seq visualization, embryonic developmental timepoints, multiple categorical attribute navigation, lineage-based coloring.
 
@@ -494,7 +494,7 @@ Real Milky Way stars from Gaia DR3: top 3M brightest stars with real photometric
 
 **Run**: `luxar demo run galaxy`
 
-**Requires**: Internet access (Gaia DR3 TAP query or cached data).
+**Requires**: Internet access (Gaia DR3 TAP query or cached data). Substitutive Points LOD needs `luxar[gsplats]` (torch + scipy); without it the scene builds as a flat, fully viewable point cloud.
 
 **Demonstrates**: Real astronomical data (Gaia space telescope), 3M star dataset, BP-RP photometric color-to-RGB conversion, galactocentric coordinate system, magnitude-dependent point radii.
 
@@ -527,7 +527,7 @@ The large-scale structure of the Universe as a point cloud from the Dark Energy 
 
 **Run**: `luxar demo run desi_galaxies [-- --recompute]`
 
-**Requires**: Nothing extra by default — ships a compact precomputed point cloud (quantized XYZ + redshift + tracer id) via Git LFS. With `--recompute` (or if the LFS asset isn't pulled) it auto-downloads the ~1 GB of DR1 LSS clustering catalogs to `~/.cache/luxar/desi_galaxies/` (resumable), reads them with `astropy`, and converts (RA, Dec, z) → comoving Mpc. Adds `astropy` to the `demos` extra. The built scene (with substitutive LOD) is cached in the demos output dir, so only the first launch pays the LOD-build cost. If the DESI data host is unavailable, check `https://data.desi.lbl.gov/`, run `git lfs pull`, and rerun without `--recompute` to use the shipped scene without downloading the source catalogs.
+**Requires**: Nothing extra by default — ships a compact precomputed point cloud (quantized XYZ + redshift + tracer id) via Git LFS. With `--recompute` (or if the LFS asset isn't pulled) it auto-downloads the ~1 GB of DR1 LSS clustering catalogs to `~/.cache/luxar/desi_galaxies/` (resumable), reads them with `astropy`, and converts (RA, Dec, z) → comoving Mpc. Adds `astropy` to the `demos` extra. The built scene (with substitutive LOD) is cached in the demos output dir, so only the first launch pays the LOD-build cost. If the DESI data host is unavailable, check `https://data.desi.lbl.gov/`, run `git lfs pull`, and rerun without `--recompute` to use the shipped scene without downloading the source catalogs. Substitutive Points LOD needs `luxar[gsplats]` (torch + scipy); without it the scene builds as a flat, fully viewable point cloud.
 
 **Demonstrates**: Real spectroscopic-survey catalogs → a 3D cosmic-web Points cloud, `(RA, Dec, redshift)` → comoving-Mpc conversion via `astropy.cosmology` (DESI fiducial ΛCDM), substitutive Points LOD at ~9.75M points, dual coloring (categorical tracer vs. continuous redshift colormap) via layer toggles, HDR additive rendering, self-contained download → convert → cache-processed bootstrap. Data: [DESI DR1](https://data.desi.lbl.gov/doc/releases/dr1/) (DESI Collaboration 2025, arXiv:2503.14745; CC BY 4.0).
 
@@ -560,7 +560,7 @@ The wiring of the human brain: all 87 named white-matter tracts of the HCP-1065 
 
 **Run**: `luxar demo run dmri_tractography [-- --per-bundle 6000 --points 28]`
 
-**Requires**: Internet access on first run — downloads `hcp1065_avg_tracts_trk.zip` (588 MB) to `~/.cache/luxar/dmri_tractography/` and caches the decoded bundles as an `.npz`. Needs `nibabel` (in the `demos` extra). No GPU. Building the scene takes ~25 min because every node lifts its segments to Gaussian beads for the substitutive LOD; it is a one-time cost, paid again only on `--recompute`.
+**Requires**: Internet access on first run — downloads `hcp1065_avg_tracts_trk.zip` (588 MB) to `~/.cache/luxar/dmri_tractography/` and caches the decoded bundles as an `.npz`. Needs `nibabel` (in the `demos` extra). No GPU. Building the scene takes ~25 min because every node lifts its segments to Gaussian beads for the substitutive LOD; it is a one-time cost, paid again only on `--recompute`. Substitutive Lines LOD needs `luxar[gsplats]` (torch + scipy); without it the bundles are written flat (fully viewable, no coarse levels).
 
 **Demonstrates**: Lines as the *native* geometry for data that is already made of curves — no conversion, unlike every volumetric demo. Arc-length resampling (the source is ~0.4 mm-sampled, ~10x finer than any rendered line width); `line_type="indexed"` with per-streamline contiguous vertices so thick tubes render seamless joints; 87 separate nodes, each sized to stay under both the un-laddered-leaf gate (200K vertices) and the per-node element-texture segment bound; per-node **substitutive LOD** at `compression_factor=256` — thin lines need a far larger K than the default, because the bead lift is driven by arc-length ÷ width rather than by segment count (at K=4 the "coarse" level comes out 5.6x heavier than the fine one, and the scene balloons to 2.1 GB); and `blending_mode="additive"` at low opacity with a display window, which is order-independent and so cannot pop as the camera orbits — unlike `normal`, whose per-object transparent-pass sort flips between overlapping bundles. Data: [Yeh 2022](https://doi.org/10.1038/s41467-022-32595-4), [HCP-1065 atlas](https://brain.labsolver.org/hcp_trk_atlas.html) (CC BY-SA 4.0; WU-Minn HCP data-use terms).
 

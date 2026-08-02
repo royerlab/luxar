@@ -66,6 +66,8 @@ Usage:
 
 Requirements:
     - Install: pip install 'luxar[demos]'   # includes umap-learn
+    - Optional: pip install 'luxar[gsplats]'   # torch + scipy, for Points LOD
+      coarsening; without it the scene is a flat (fully viewable) point cloud
 
 NO AUTHENTICATION NEEDED!
     Downloads directly from Kaggle API (no login required).
@@ -107,10 +109,10 @@ from luxar.demos import (
     cache_computed,
     cached_download,
     hsv_to_rgb,
-    is_installed,
     launch_viewer,
     require_module,
     stack_colorings,
+    substitutive_lod_or_flat,
 )
 from luxar.utils.paths import get_demos_output_dir
 
@@ -660,30 +662,14 @@ def generate_paper_landscape(
             ]
         )
 
-        # Substitutive Points LOD needs torch (coarsening kernels in
-        # luxar.gsplats.lod) AND scipy (imported at module load by the additive
-        # sibling). A warm arxiv_kaggle cache lets the scene build with neither
-        # installed, so gate the LOD on their presence instead of crashing a
-        # cache-only run — the flat point cloud is fully viewable, just without
-        # zoom-out coarsening.
-        missing_lod_deps = [m for m in ("torch", "scipy") if not is_installed(m)]
-        if missing_lod_deps:
-            missing = " and ".join(missing_lod_deps)
-            aprint(
-                f"⚠️  {missing} not installed — skipping Points LOD coarsening. "
-                "The paper cloud is fully viewable as a flat point cloud; "
-                "install 'luxar[gsplats]' (pip install 'luxar[gsplats]') and "
-                "rerun to rebuild with level-of-detail."
-            )
-
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(dimensions=dims)
 
             # Substitutive Points LOD for the large (up to 2M) paper cloud —
             # coarse merged levels when zoomed out (census-style wiring; coarse
-            # splats stay pure per coloring via the `coloring` barrier). Gated on
-            # torch+scipy above so a warm-cache run without them still builds a
-            # (flat) viewable scene.
+            # splats stay pure per coloring via the `coloring` barrier). Gated
+            # through substitutive_lod_or_flat so a warm-cache run without
+            # torch/scipy still builds a (flat) viewable scene.
             scene.add_points(
                 "arxiv_papers",
                 positions=stacked.positions,
@@ -693,10 +679,8 @@ def generate_paper_landscape(
                 opacity=0.9,
                 intensity=0.1,
                 labels=stacked.labels,
-                substitutive_lod=(
-                    None
-                    if missing_lod_deps
-                    else dict(compression_factor=8, levels=3, device="auto")
+                substitutive_lod=substitutive_lod_or_flat(
+                    dict(compression_factor=8, levels=3, device="auto")
                 ),
             )
 

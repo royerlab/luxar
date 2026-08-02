@@ -86,6 +86,7 @@ from luxar import (
     LuxarZarrCompiler,
     ViewerConfig,
 )
+from luxar.demos import substitutive_lod_or_flat
 from luxar.utils.demos import is_lfs_pointer, launch_viewer, parse_demo_flags
 from luxar.utils.paths import get_demos_output_dir
 
@@ -480,7 +481,10 @@ def warn_if_scene_lacks_ladder(scene_path: Path) -> None:
                 (k for k in layer.group_keys() if k.startswith("child_")),
                 key=lambda k: int(k.split("_", 1)[1]),
             )
-            finest = layer[child_names[-1]]
+            # No children means substitutive LOD was skipped (no torch/scipy at
+            # build time — see substitutive_lod_or_flat), so the layer IS the
+            # finest level and still carries its own streaming ladder.
+            finest = layer[child_names[-1]] if child_names else layer
             n_sublods = int(finest.attrs.get("n_additive_sublods", 1))
         except Exception as exc:
             aprint(
@@ -557,6 +561,10 @@ def create_scene(
 
         colors = tracer_colors(tracer_ids)
 
+        # Resolved ONCE for both layers so a torch/scipy-free machine prints one
+        # notice, not one per layer.
+        lod = substitutive_lod_or_flat(LOD)
+
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(
                 dimensions=dims, viewer_config=ViewerConfig(camera=camera)
@@ -573,7 +581,7 @@ def create_scene(
                 blending_mode="additive",
                 intensity=SCENE_INTENSITY,
                 layer=True,
-                substitutive_lod=LOD,
+                substitutive_lod=lod,
                 additive_lod=STREAM_LOD,
             )
 
@@ -591,7 +599,7 @@ def create_scene(
                 intensity=SCENE_INTENSITY,
                 layer=True,
                 visible=False,
-                substitutive_lod=LOD,
+                substitutive_lod=lod,
                 additive_lod=STREAM_LOD,
             )
 
