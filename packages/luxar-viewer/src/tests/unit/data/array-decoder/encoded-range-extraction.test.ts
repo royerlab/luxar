@@ -402,7 +402,7 @@ describe('Encoded Array Range Extraction', () => {
         col_hi: number[];
       };
       expect(enc.name).toBe('linear_perchannel_u16');
-      const rawChunk = await zarr.get(array);
+      const rawChunk = await zarr.readArray(array);
       const rawLevels = rawChunk.data as Uint16Array;
       const levels = (1 << enc.bits) - 1;
       for (const i of [0, 1, 499, 500, 998, 999]) {

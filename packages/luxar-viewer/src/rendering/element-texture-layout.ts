@@ -192,9 +192,6 @@ export const SPLAT_TEXTURE_LAYOUT: ElementTextureLayout = {
     'Repartition the dataset (e.g. `luxar gsplat lod --recipe tiles`) to render every splat.',
 };
 
-/** Texels consumed per splat (16 floats = 64 B in RGBA32F). */
-export const SPLAT_TEXELS_PER_SPLAT = SPLAT_TEXTURE_LAYOUT.texelsPerElement;
-
 /** Floats per splat row in the texture's backing store. */
 export const SPLAT_FLOATS_PER_SPLAT = SPLAT_TEXTURE_LAYOUT.floatsPerElement;
 
@@ -231,9 +228,6 @@ export const POINT_TEXTURE_LAYOUT: ElementTextureLayout = {
   clampHint: 'Split the dataset into multiple nodes to render every point.',
 };
 
-/** Texels consumed per point (12 floats = 48 B in RGBA32F). */
-export const POINT_TEXELS_PER_POINT = POINT_TEXTURE_LAYOUT.texelsPerElement;
-
 /** Floats per point row in the texture's backing store. */
 export const POINT_FLOATS_PER_POINT = POINT_TEXTURE_LAYOUT.floatsPerElement;
 
@@ -269,9 +263,6 @@ export const LINE_TEXTURE_LAYOUT: ElementTextureLayout = {
   label: 'segment',
   clampHint: 'Split the dataset into multiple nodes to render every segment.',
 };
-
-/** Texels consumed per segment (24 floats = 96 B in RGBA32F). */
-export const LINE_TEXELS_PER_SEGMENT = LINE_TEXTURE_LAYOUT.texelsPerElement;
 
 /** Floats per segment row in the texture's backing store. */
 export const LINE_FLOATS_PER_SEGMENT = LINE_TEXTURE_LAYOUT.floatsPerElement;

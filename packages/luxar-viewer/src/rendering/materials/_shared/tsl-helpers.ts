@@ -76,13 +76,6 @@ export function sortedIndexNode(uSortedIndexSlot: TSLNode): TSLNode {
   return a.mul(int(1).sub(slot)).add(b.mul(slot));
 }
 
-/** Sanitise a positive scalar. Mirrors GLSL `sanitizePositive`. */
-export function sanitizePositive(value: TSLNode, fallback: TSLNode): TSLNode {
-  const isFinite = value.lessThan(1e30).and(value.greaterThan(-1e30));
-  const isPositive = value.greaterThan(0.0);
-  return isFinite.and(isPositive).select(value, fallback);
-}
-
 /** Sanitise a non-negative scalar. Mirrors GLSL `sanitizeNonNegative`. */
 export function sanitizeNonNegative(value: TSLNode, fallback: TSLNode): TSLNode {
   const isFinite = value.lessThan(1e30).and(value.greaterThan(-1e30));

@@ -17,7 +17,7 @@
  */
 
 import * as zarr from '../../zarr';
-import { get, slice } from '../../zarr';
+import { readArray, slice } from '../../zarr';
 import { LRUCache } from '../../../cache/lru-cache';
 import { log, Modules } from '../../../utils/log';
 
@@ -167,7 +167,7 @@ export class ImageLabelLoader {
     const cleanPath = nodePath.startsWith('/') ? nodePath.slice(1) : nodePath;
     const offsetsLoc = this.rootLoc.resolve(`${cleanPath}/image_label_offsets`);
     const offsetsArr = await zarr.open(offsetsLoc, { kind: 'array' });
-    const offsetsData = await get(offsetsArr);
+    const offsetsData = await readArray(offsetsArr);
     return offsetsData.data as BigUint64Array;
   }
 
@@ -207,7 +207,7 @@ export class ImageLabelLoader {
       const bytesArr = await this.openBytesArray(nodePath);
 
       // Fetch only the byte range for this image (zarr fetches overlapping chunks)
-      const imageData = await get(bytesArr, [slice(start, end)]);
+      const imageData = await readArray(bytesArr, [slice(start, end)]);
       const imageBytes = imageData.data as Uint8Array;
 
       // Detect MIME type from magic bytes

@@ -1,5 +1,5 @@
 import * as zarr from '../../../zarr';
-import { get, abortOptions } from '../../../zarr';
+import { readArray, abortOptions } from '../../../zarr';
 import { log } from '../../../../utils/log';
 import { config as appConfig } from '../../../../config';
 import { getWorkerPool } from '../../../../workers/worker-pool';
@@ -54,7 +54,7 @@ export async function loadQuantized(
   await Promise.all(
     ranges.map(async (range, i) => {
       const sliceSpec = firstAxisRangeSlice(shape, range);
-      const chunkData = await get(array, sliceSpec, abortOptions(ctx.signal));
+      const chunkData = await readArray(array, sliceSpec, abortOptions(ctx.signal));
       const quantizedData = chunkData.data as Uint8Array | Uint16Array;
 
       let dequantized: Float32Array;

@@ -103,8 +103,8 @@ export class LabelLoader {
       const bytesArr = await zarr.open(bytesLoc, { kind: 'array' });
 
       // Get typed data
-      const offsetsData = await zarr.get(offsetsArr);
-      const bytesData = await zarr.get(bytesArr);
+      const offsetsData = await zarr.readArray(offsetsArr);
+      const bytesData = await zarr.readArray(bytesArr);
 
       // zarrita returns typed arrays; offsets are BigUint64
       const offsets = offsetsData.data as BigUint64Array;

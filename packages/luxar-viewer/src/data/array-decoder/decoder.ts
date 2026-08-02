@@ -11,7 +11,7 @@
  */
 
 import * as zarr from '../zarr';
-import { get } from '../zarr';
+import { readArray } from '../zarr';
 import { log, Modules } from '../../utils/log';
 import { ArrayRefRegistry } from './ref-registry';
 import type { ArrayMetadata, EncodingMetadata } from './types';
@@ -66,7 +66,7 @@ export class ArrayDecoder {
       }
 
       // Load the single value
-      const rawData = await get(zarrArray);
+      const rawData = await readArray(zarrArray);
       const rawArray = rawData.data;
       const data =
         rawArray instanceof Float32Array
@@ -98,7 +98,7 @@ export class ArrayDecoder {
       return this.decodeArrayRef(enc.target!, enc.hash, expectedElements, zarrRootLoc);
     }
 
-    // Zarrita cannot materialize empty arrays with `get()` in Node. Direct
+    // Zarrita cannot materialize empty arrays with `readArray()` in Node. Direct
     // empty arrays are valid Python encoder output, so return the decoded empty
     // buffer before touching chunk indexing. Array refs are handled above even
     // though their physical zarr shape is also empty.
@@ -107,7 +107,7 @@ export class ArrayDecoder {
     }
 
     // Load raw data from zarr (needed for LUT, quantization, dtype)
-    const rawData = await get(zarrArray);
+    const rawData = await readArray(zarrArray);
     const rawArray = rawData.data;
 
     // Convert raw zarr data to Float32Array safely.

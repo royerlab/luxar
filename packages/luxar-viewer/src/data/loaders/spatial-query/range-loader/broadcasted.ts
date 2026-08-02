@@ -1,5 +1,5 @@
 import * as zarr from '../../../zarr';
-import { get, abortOptions } from '../../../zarr';
+import { readArray, abortOptions } from '../../../zarr';
 import { log } from '../../../../utils/log';
 import { config as appConfig } from '../../../../config';
 import { getWorkerPool } from '../../../../workers/worker-pool';
@@ -31,7 +31,7 @@ export async function loadBroadcasted(
     );
   }
 
-  const fullData = await get(array, undefined, abortOptions(ctx.signal));
+  const fullData = await readArray(array, undefined, abortOptions(ctx.signal));
   const broadcastValue = fullData.data as Float32Array | Uint8Array | Uint16Array;
   const valueAsFloat32 =
     broadcastValue instanceof Float32Array ? broadcastValue : new Float32Array(broadcastValue);
