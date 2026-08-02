@@ -8,8 +8,11 @@
  * - Tone mapping selector (None, Linear, Reinhard, Cineon, ACES, AgX, Neutral)
  */
 
-import * as THREE from 'three';
 import type { SetupContext, SetupResult } from '../types';
+import {
+  TONE_MAPPING_NAMES,
+  toneMappingFromName,
+} from '../../../rendering/post-processing/tone-mapping';
 import { FOLDER_ICONS } from '../folder-icons';
 
 /**
@@ -98,29 +101,14 @@ export function setupHDRControls(context: SetupContext): SetupResult {
   );
   controllers.globalGamma = gammaControl;
 
-  // Tone Mapping selector
+  // Tone Mapping selector — options and name→enum resolution both come
+  // from rendering/post-processing/tone-mapping so the dropdown cannot
+  // drift from what the pipeline understands.
   const toneMappingControl = hdrFolder
-    .add(settings, 'toneMapping', [
-      'None',
-      'Linear',
-      'Reinhard',
-      'Cineon',
-      'ACES',
-      'AgX',
-      'Neutral',
-    ])
+    .add(settings, 'toneMapping', [...TONE_MAPPING_NAMES])
     .name('Tone Mapping')
     .onChange((value: string) => {
-      const toneMappingMap: { [key: string]: THREE.ToneMapping } = {
-        None: THREE.NoToneMapping,
-        Linear: THREE.LinearToneMapping,
-        Reinhard: THREE.ReinhardToneMapping,
-        Cineon: THREE.CineonToneMapping,
-        ACES: THREE.ACESFilmicToneMapping,
-        AgX: THREE.AgXToneMapping,
-        Neutral: THREE.NeutralToneMapping,
-      };
-      postProcessing.setToneMapping(toneMappingMap[value]);
+      postProcessing.setToneMapping(toneMappingFromName(value));
       saveSettings();
       triggerAnimation();
     });

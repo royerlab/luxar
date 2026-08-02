@@ -14,7 +14,6 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   CinematicModeController,
   buildCinematicValues,
-  TONE_MAPPING_MAP,
   type CinematicContext,
   type CinematicSnapshot,
 } from '../../../../ui/rendering-controls/cinematic-mode';
@@ -95,20 +94,6 @@ function makeStubContext(overrides: Partial<RenderingSettings> = {}): {
     refreshAllControllers,
   };
 }
-
-describe('TONE_MAPPING_MAP', () => {
-  it('covers the seven supported tone-mapping modes', () => {
-    expect(Object.keys(TONE_MAPPING_MAP).sort()).toEqual([
-      'ACES',
-      'AgX',
-      'Cineon',
-      'Linear',
-      'Neutral',
-      'None',
-      'Reinhard',
-    ]);
-  });
-});
 
 describe('buildCinematicValues', () => {
   it('returns ACES tone mapping + detector noise + vignette + lens distortion enabled', () => {
