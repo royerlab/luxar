@@ -3,6 +3,12 @@ CLI Package
 
 The CLI package provides command-line tools for serving and inspecting Luxar datasets.
 
+.. seealso::
+
+   This page documents the Python CLI **modules** (autodoc). For the
+   authoritative catalog of user-facing ``luxar ...`` commands and the workflow
+   guides that cover them, see the :doc:`/guides/user/CLI_REFERENCE`.
+
 .. automodule:: luxar.cli
    :members:
    :undoc-members:
