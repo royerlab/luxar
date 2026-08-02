@@ -82,7 +82,7 @@ Uint8Array | null`; `interpolate_scalars_batch` (the same WASM
 - `src/rendering/materials/line/material-glsl.ts` and `material-tsl.ts` — GPU-side rendering (WebGL2 + WebGPU dual stack)
 - `src/rendering/line-geometry.ts` — instanced mesh construction +
   update helpers
-- `src/wasm/typescript/lines.ts` and `lines-clipping.ts` —
+- `src/wasm/typescript/lines-clipping.ts` —
   TypeScript fallback that mirrors the Rust WASM kernel
 - `src/data/scene-loader/progressive/refinement.ts` — generic
   multi-LOD refinement loop that `runLinesRefinement` delegates to

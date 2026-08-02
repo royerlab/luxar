@@ -11,6 +11,7 @@ Usage:
 
 import argparse
 import re
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -47,6 +48,9 @@ class DocumentationChecker:
 
         # Check TypeScript packages
         self._check_typescript_packages()
+
+        # Check backticked path references in package READMEs resolve
+        self._check_markdown_path_references()
 
         # Print summary
         self._print_summary()
@@ -246,6 +250,153 @@ class DocumentationChecker:
                         message=f"Low JSDoc coverage ({coverage:.0f}%): {package_name}/{ts_file.name}",
                     )
                 )
+
+    def _check_markdown_path_references(self):
+        """Flag backticked repo-path references in package READMEs that don't resolve."""
+        # Resolve the root once so symlinked checkouts (CI, macOS /tmp, symlinked
+        # home) don't break `.relative_to(root)` against `.resolve()`d targets.
+        root = self.project_root.resolve()
+        # Enumerate markdown files via git (never fall back to a filesystem walk,
+        # which would re-include generated/gitignored dirs and cause false positives).
+        try:
+            proc = subprocess.run(
+                ["git", "ls-files", "-z"],
+                cwd=root,
+                capture_output=True,
+                text=True,
+                errors="replace",
+                check=True,
+            )
+        except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+            self.results.append(
+                CheckResult(
+                    passed=True,
+                    file_path=str(root),
+                    check_name="Markdown path reference",
+                    message="Skipped path-reference check (git unavailable)",
+                )
+            )
+            return
+
+        # `-z` emits NUL-separated, UNQUOTED paths (no octal-escaping of
+        # non-ASCII), so basenames stay intact.
+        tracked = [p for p in proc.stdout.split("\0") if p]
+        by_name: dict[str, list[str]] = {}
+        for path in tracked:
+            by_name.setdefault(Path(path).name, []).append(path)
+
+        readme_targets = [
+            p
+            for p in tracked
+            if p.startswith("packages/") and Path(p).name == "README.md"
+        ]
+
+        backtick_re = re.compile(r"`([^`\n]+)`")
+        clean_re = re.compile(r"[\w./\-]+")
+        source_exts = {
+            ".py",
+            ".ts",
+            ".tsx",
+            ".js",
+            ".jsx",
+            ".mjs",
+            ".cjs",
+            ".rs",
+            ".md",
+            ".rst",
+            ".json",
+            ".jsonc",
+            ".yml",
+            ".yaml",
+            ".toml",
+            ".cfg",
+            ".ini",
+            ".txt",
+            ".sh",
+            ".go",
+            ".css",
+            ".scss",
+            ".html",
+            ".glsl",
+            ".wgsl",
+            ".vert",
+            ".frag",
+        }
+        skip_segments = {
+            "node_modules",
+            "target",
+            "dist",
+            "build",
+            "__pycache__",
+            ".venv",
+        }
+
+        def is_candidate(token: str) -> bool:
+            if "/" not in token or token.startswith("/"):
+                return False
+            if not clean_re.fullmatch(token):
+                return False
+            last_segment = token.rsplit("/", 1)[-1]
+            if "." not in last_segment:
+                return False
+            ext = "." + last_segment.rsplit(".", 1)[-1]
+            if ext not in source_exts:
+                return False
+            if any(seg in skip_segments for seg in token.split("/")):
+                return False
+            return True
+
+        def resolves(token: str, readme_path: str) -> bool:
+            if token.startswith("./") or token.startswith("../"):
+                resolved = (root / Path(readme_path).parent / token).resolve()
+                try:
+                    rel = resolved.relative_to(root).as_posix()
+                except ValueError:
+                    # Falls outside the project root; don't flag.
+                    return True
+                return rel in tracked or (root / rel).is_dir()
+
+            if token in tracked or (root / token).is_dir():
+                return True
+            readme_dir = Path(readme_path).parent.as_posix()
+            cand = token if readme_dir == "." else readme_dir + "/" + token
+            if cand in tracked or (root / cand).is_dir():
+                return True
+            basename = Path(token).name
+            for p in by_name.get(basename, []):
+                if p == token or p.endswith("/" + token):
+                    return True
+            return False
+
+        for readme_path in readme_targets:
+            content = (root / readme_path).read_text(encoding="utf-8", errors="replace")
+            for line_number, line in enumerate(content.splitlines(), start=1):
+                for match in backtick_re.finditer(line):
+                    token = match.group(1)
+                    if not is_candidate(token):
+                        continue
+                    if resolves(token, readme_path):
+                        continue
+                    # False-positive filter: only report NON-relative tokens
+                    # whose basename exists elsewhere in the repo (else it's an
+                    # npm import, served URL, placeholder, or build-output
+                    # description). A `./` or `../` token is an unambiguous path
+                    # claim, so a broken relative ref is flagged even when its
+                    # basename no longer exists anywhere (fully deleted file).
+                    is_relative = token.startswith("./") or token.startswith("../")
+                    if not is_relative and Path(token).name not in by_name:
+                        continue
+                    self.results.append(
+                        CheckResult(
+                            passed=False,
+                            file_path=str(root / readme_path),
+                            check_name="Markdown path reference",
+                            message=(
+                                f"README cites path that does not resolve: `{token}`"
+                            ),
+                            line_number=line_number,
+                        )
+                    )
 
     def _print_summary(self):
         """Print summary of all checks."""
