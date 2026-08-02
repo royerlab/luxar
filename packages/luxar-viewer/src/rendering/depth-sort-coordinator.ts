@@ -602,7 +602,13 @@ function scheduleSort(mesh: THREE.Mesh, nodeId: string): void {
   // so the resolve handler hands the session to writeSortedIndexOrdering's
   // lifecycle callbacks (issue #713). It ends immediately only when no
   // ordering is staged (stale/demoted/rejected) or the RPC fails.
-  const session = getProfiler?.()?.beginDepthSortPass() ?? null;
+  //
+  // Capture the profiler and its generation HERE too, so the dedicated
+  // completion stream records against the same profiler the session merges
+  // into and honors the same reset-isolation contract (issue #711).
+  const profiler = getProfiler?.() ?? null;
+  const session = profiler?.beginDepthSortPass() ?? null;
+  const profilerGeneration = profiler?._currentGeneration() ?? 0;
   // The profiler session does not expose its elapsed time (SessionImpl's
   // startTime is private), so time the dispatch→resolve round-trip locally
   // for the queueMs derivation below.
@@ -687,10 +693,25 @@ function scheduleSort(mesh: THREE.Mesh, nodeId: string): void {
             session
               ? {
                   onApplied: () => {
+                    const appliedAt = performance.now();
                     session.setMetadata({
-                      applyMs: Math.max(0, performance.now() - resolvedAt),
+                      applyMs: Math.max(0, appliedAt - resolvedAt),
                       info: formatOrderingBytes(bytes, true),
                     });
+                    // The dedicated MONOTONIC completion stream records only
+                    // orderings that actually became drawable — not merely
+                    // worker resolves that were staged and later abandoned.
+                    // It uses the dispatch-time profiler/generation, matching
+                    // the session's reset-isolation contract (issue #711).
+                    if (profiler && profiler._currentGeneration() === profilerGeneration) {
+                      profiler.recordDepthSortCompletion({
+                        lastMs: Math.max(0, appliedAt - dispatchedAt),
+                        kernelMs: result.kernelMs,
+                        boundaryMs: Math.max(0, result.workerMs - result.kernelMs),
+                        queueMs: Math.max(0, roundTripMs - result.workerMs),
+                        splats: result.ordering.length,
+                      });
+                    }
                     session.end();
                   },
                   onAbandoned: () => session.end(),
