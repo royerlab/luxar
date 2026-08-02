@@ -112,7 +112,7 @@ This glossary defines standard terminology used throughout the gsplats package s
 - `generate_seeds()`: Unified seeding entry point
 - `append_()`: model method that appends splats (the default dynamic ops use fixed-pool relocation with a constant splat count, not add/remove)
 
-**Rationale**: "Seeding" emphasizes the initialization aspect, "adding" is more general.
+**Rationale**: "Seeding" emphasizes the initialization aspect; "relocation" makes the constant-count behavior explicit — the pool is fixed, splats move rather than being added or removed.
 
 ---
 

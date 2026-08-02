@@ -1352,7 +1352,7 @@ hatch run pytest packages/luxar/src/luxar/gsplats/tests/test_tiled_fitting.py -v
 - Triangular solve avoids explicit matrix inversion
 
 ### Memory Efficiency
-- Truncated rendering (default 3σ radius)
+- Truncated rendering (2.75σ default radius when fitting; 3σ for the standalone model/renderer)
 - Batched operations for GPU parallelism
 - Pre-allocated buffers where possible
 - Amplitude-aware culling for weak splats
