@@ -1201,9 +1201,9 @@ async function measureScenario(page: Page, scn: ScenarioSpec): Promise<ScenarioR
  * test: each scenario appends its row as it finishes, so a `-g`-filtered
  * partial run still produces a valid, additive file.
  *
- * NOTE: the line bench still writes its file wholesale, so running the
- * line bench AFTER this one for the same SHA drops these rows. Run this
- * spec last (or `-g`-filter per bench) when you want a combined file.
+ * NOTE: the line bench merge-writes too (keyed the same way), so the
+ * two benches can run in either order for the same SHA without
+ * clobbering each other's rows.
  */
 function mergeScenarioRow(outPath: string, row: ScenarioResult): void {
   const key = `${row.scenarioId}/${row.backend}`;

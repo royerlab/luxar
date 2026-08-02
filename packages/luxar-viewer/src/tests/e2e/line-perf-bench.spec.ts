@@ -159,6 +159,14 @@ interface ScenarioResult {
    * is skipped.
    */
   postSettleFrameMs: number | null;
+  /** Renderer frame counter sampled just before the post-settle
+   *  measurement — > 0 proves the metric is a warmed post-settle
+   *  frame, not a cold first render (same probe as the gsplat bench).
+   *  Null when the counter is unavailable: `WebGPURenderer` keeps a
+   *  top-level `info.frame` that counts internal animation ticks, not
+   *  completed draws, so only the WebGL surface's monotonic
+   *  `info.render.frame` is honest evidence here. */
+  renderedFramesBefore?: number | null;
   gpu: GpuStats;
   notes: string[];
   skipped: boolean;
@@ -357,12 +365,25 @@ async function measureScenario(
   // for synthetic scenarios, injection) has already uploaded buffers,
   // compiled the material/pipeline, and drawn — so this does NOT
   // capture material-build / pipeline-compile cost.
-  const postSettleFrameMs = await page.evaluate(async () => {
-    const debug = (window as unknown as { __luxarDebug: { renderOnce: () => void } }).__luxarDebug;
+  const postSettle = await page.evaluate(async () => {
+    const debug = (
+      window as unknown as {
+        __luxarDebug: {
+          renderOnce: () => void;
+          renderer?: { info?: { render?: { frame?: number } } };
+        };
+      }
+    ).__luxarDebug;
+    // Frame-counter evidence (issue #706): sample the renderer's frame
+    // counter before the timer starts. Only the WebGL surface exposes
+    // the monotonic `info.render.frame`; on WebGPURenderer this reads
+    // undefined and the probe records null (see the field doc).
+    const framesBefore = debug.renderer?.info?.render?.frame;
+    const renderedFramesBefore = typeof framesBefore === 'number' ? framesBefore : null;
     const t0 = performance.now();
     debug.renderOnce();
     await new Promise<void>((r) => requestAnimationFrame(() => r()));
-    return performance.now() - t0;
+    return { ms: performance.now() - t0, renderedFramesBefore };
   });
 
   // Steady-state frame timing loop. Warmup is the lesser of N frames
@@ -536,7 +557,8 @@ async function measureScenario(
     isWebGLBackend: probe.isWebGLBackend,
     visibleSegments: probe.visibleSegments,
     frameMs,
-    postSettleFrameMs,
+    postSettleFrameMs: postSettle.ms,
+    renderedFramesBefore: postSettle.renderedFramesBefore,
     gpu,
     notes,
     skipped: false,
@@ -690,6 +712,24 @@ test('line perf bench — JS frame timing across backends', async ({ page }) => 
       `perf-bench: ${failedScenarios.length} scenario(s) produced no successful timing on any backend ` +
         `(${failedScenarios.map((s) => s.id).join(', ')}). ` +
         `JSON still written to ${outPath} for inspection. Per-row reasons:\n${skipNotes}`
+    );
+  }
+
+  // Probe (issue #706): `postSettleFrameMs` is a warmed post-settle
+  // metric — where the frame counter is available (WebGL surface),
+  // prove the renderer had already drawn before we sampled it, so the
+  // number can never be silently mislabeled as a cold first render.
+  // Checked after the JSON write so a violation still leaves its
+  // diagnostic row on disk (same ordering as the gsplat bench).
+  const coldProbeRows = scenarios.filter(
+    (s) => !s.skipped && typeof s.renderedFramesBefore === 'number' && s.renderedFramesBefore <= 0
+  );
+  if (coldProbeRows.length > 0) {
+    throw new Error(
+      'perf-bench: post-settle frame measured before any render on ' +
+        coldProbeRows.map((s) => `${s.scenarioId}/${s.backend}`).join(', ') +
+        ' (renderedFramesBefore=0) — the warmed postSettleFrameMs contract is violated. ' +
+        `JSON still written to ${outPath} for inspection.`
     );
   }
 });
