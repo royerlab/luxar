@@ -652,6 +652,21 @@ function scheduleSort(mesh: THREE.Mesh, nodeId: string): void {
                 ? `${(bytes / 1_000_000).toFixed(1)} MB up`
                 : `${Math.round(bytes / 1000)} KB up`,
           });
+          // Record the true per-completion event on the profiler's
+          // dedicated MONOTONIC stream (issue #711). Only this
+          // applied-ordering site fires: a stale-drop / failed / released-
+          // mid-sort completion produces no fresh ordering and no valid
+          // latency, so it is not a recorded completion. This stream is
+          // order-independent, unlike the seq-merged 'Depth Sort' profiler
+          // root whose `count` #711 found undercounts multi-completion
+          // frames and drops late resolves.
+          getProfiler?.()?.recordDepthSortCompletion?.({
+            lastMs: roundTripMs,
+            kernelMs: result.kernelMs,
+            boundaryMs: Math.max(0, result.workerMs - result.kernelMs),
+            queueMs: Math.max(0, roundTripMs - result.workerMs),
+            splats: result.ordering.length,
+          });
           requestRender?.();
         }
       }

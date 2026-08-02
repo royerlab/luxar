@@ -983,3 +983,131 @@ describe('UpdateProfiler — depth-sort passes (beginDepthSortPass)', () => {
     expect(profiler.getDepthSortTimings().count).toBe(0);
   });
 });
+
+// ---------------------------------------------------------------------
+// Depth-sort completion stream (issue #711)
+// ---------------------------------------------------------------------
+
+describe('UpdateProfiler — depth-sort completion stream', () => {
+  const DEPTH_SORT_COMPLETION_CAP = 512;
+
+  type CompletionArg = Parameters<UpdateProfiler['recordDepthSortCompletion']>[0];
+  const completion = (lastMs: number): CompletionArg => ({
+    lastMs,
+    kernelMs: null,
+    boundaryMs: null,
+    queueMs: null,
+    splats: null,
+  });
+
+  it('N in, N out: total === N and events carry monotonic seq 1..N', () => {
+    const profiler = new UpdateProfiler();
+    const N = 20;
+    for (let i = 0; i < N; i++) profiler.recordDepthSortCompletion(completion(i + 1));
+
+    const { total, events } = profiler.getDepthSortCompletions();
+    expect(total).toBe(N);
+    expect(events).toHaveLength(N);
+    expect(events.map((e) => e.seq)).toEqual(Array.from({ length: N }, (_, i) => i + 1));
+    // seq strictly increases and starts at 1.
+    for (let i = 1; i < events.length; i++) {
+      expect(events[i].seq).toBe(events[i - 1].seq + 1);
+    }
+  });
+
+  it('is a plain counter: no completion is ever dropped (unlike the seq-merged root)', () => {
+    // The 'Depth Sort' profiler root drops a merge whose seq < the stored
+    // lastSeq (a late/out-of-order resolve). This stream is independent of
+    // that policy: every recorded completion counts, in any interleaving.
+    const profiler = new UpdateProfiler();
+    // Interleave depth-sort passes (which bump sortSeq) with completions to
+    // simulate out-of-order resolves — the completion total must keep climbing.
+    profiler.beginDepthSortPass().end();
+    profiler.recordDepthSortCompletion(completion(5));
+    profiler.beginDepthSortPass().end();
+    profiler.recordDepthSortCompletion(completion(3));
+    profiler.recordDepthSortCompletion(completion(9));
+
+    const { total, events } = profiler.getDepthSortCompletions();
+    expect(total).toBe(3);
+    expect(events.map((e) => e.lastMs)).toEqual([5, 3, 9]);
+    expect(events.map((e) => e.seq)).toEqual([1, 2, 3]);
+  });
+
+  it('bounded ring caps at the cap while total keeps counting beyond it', () => {
+    const profiler = new UpdateProfiler();
+    const K = 7;
+    const n = DEPTH_SORT_COMPLETION_CAP + K;
+    for (let i = 0; i < n; i++) profiler.recordDepthSortCompletion(completion(i + 1));
+
+    const { total, events } = profiler.getDepthSortCompletions();
+    expect(total).toBe(n);
+    expect(events).toHaveLength(DEPTH_SORT_COMPLETION_CAP);
+    // The retained events are the most recent ones by seq: seq K+1 .. n.
+    expect(events[0].seq).toBe(K + 1);
+    expect(events[events.length - 1].seq).toBe(n);
+  });
+
+  it('getDepthSortCompletions returns a COPY (mutating it does not corrupt state)', () => {
+    const profiler = new UpdateProfiler();
+    profiler.recordDepthSortCompletion(completion(1));
+    const first = profiler.getDepthSortCompletions();
+    first.events.push({
+      seq: 999,
+      lastMs: 0,
+      kernelMs: null,
+      boundaryMs: null,
+      queueMs: null,
+      splats: null,
+    });
+
+    const second = profiler.getDepthSortCompletions();
+    expect(second.events).toHaveLength(1);
+    expect(second.total).toBe(1);
+  });
+
+  it('carries the stage fields through unchanged', () => {
+    const profiler = new UpdateProfiler();
+    profiler.recordDepthSortCompletion({
+      lastMs: 12,
+      kernelMs: 4,
+      boundaryMs: 2,
+      queueMs: 6,
+      splats: 1_000_000,
+    });
+    const { events } = profiler.getDepthSortCompletions();
+    expect(events[0]).toMatchObject({
+      seq: 1,
+      lastMs: 12,
+      kernelMs: 4,
+      boundaryMs: 2,
+      queueMs: 6,
+      splats: 1_000_000,
+    });
+  });
+
+  it('reset clears the completion total and events', () => {
+    const profiler = new UpdateProfiler();
+    profiler.recordDepthSortCompletion(completion(1));
+    profiler.recordDepthSortCompletion(completion(2));
+    expect(profiler.getDepthSortCompletions().total).toBe(2);
+
+    profiler.reset();
+    const { total, events } = profiler.getDepthSortCompletions();
+    expect(total).toBe(0);
+    expect(events).toHaveLength(0);
+  });
+
+  it('is independent of the seq-merged depth-sort root (both advance separately)', () => {
+    const profiler = new UpdateProfiler();
+    profiler.beginDepthSortPass().end();
+    profiler.beginDepthSortPass().end();
+    // Two passes recorded on the root, but no completions on the stream yet.
+    expect(profiler.getDepthSortTimings().count).toBe(2);
+    expect(profiler.getDepthSortCompletions().total).toBe(0);
+
+    profiler.recordDepthSortCompletion(completion(1));
+    expect(profiler.getDepthSortTimings().count).toBe(2);
+    expect(profiler.getDepthSortCompletions().total).toBe(1);
+  });
+});

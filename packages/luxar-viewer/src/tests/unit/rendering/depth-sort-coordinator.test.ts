@@ -319,6 +319,163 @@ describe('depth-sort coordinator', () => {
     expect(Array.from(await applyStagedOrdering(mesh))).toEqual([1, 2, 0]);
   });
 
+  it('records a profiler completion once per APPLIED ordering (issue #711)', async () => {
+    const coord = await loadCoordinator();
+    // Fresh module instance to match the coordinator's post-reset module graph.
+    const { UpdateProfiler } = await import('../../../profiling/update-profiler');
+    const profiler = new UpdateProfiler();
+    const recordSpy = vi.spyOn(profiler, 'recordDepthSortCompletion');
+    coord.configureDepthSort({
+      getCamera: () => makeCamera(),
+      requestRender: vi.fn(),
+      getProfiler: () => profiler,
+    });
+
+    const mesh = makeGSplatsMesh(3, 'normal');
+    coord.noteDepthSortCommit(mesh, new Float32Array([0, 0, -10, 1, 0, -1, 2, 0, -5]), 3);
+    await flush();
+    const generation = mockApi.sort.mock.calls[0][0].generation as number;
+
+    sortResolvers[0]({
+      generation,
+      ordering: new Uint32Array([0, 2, 1]),
+      kernelMs: 4,
+      workerMs: 6,
+    });
+    await flush();
+
+    // Exactly one completion landed on the dedicated monotonic stream.
+    expect(recordSpy).toHaveBeenCalledTimes(1);
+    const { total, events } = profiler.getDepthSortCompletions();
+    expect(total).toBe(1);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ seq: 1, kernelMs: 4, splats: 3 });
+    // boundaryMs = workerMs − kernelMs; queueMs/lastMs are wall-clock, so
+    // just assert boundaryMs and non-negative/finite latencies.
+    expect(events[0].boundaryMs).toBe(2);
+    expect(events[0].queueMs).toBeGreaterThanOrEqual(0);
+    expect(Number.isFinite(events[0].lastMs)).toBe(true);
+  });
+
+  it('does NOT record a profiler completion when a stale ordering is dropped (issue #711)', async () => {
+    const coord = await loadCoordinator();
+    const { UpdateProfiler } = await import('../../../profiling/update-profiler');
+    const profiler = new UpdateProfiler();
+    coord.configureDepthSort({
+      getCamera: () => makeCamera(),
+      requestRender: vi.fn(),
+      getProfiler: () => profiler,
+    });
+
+    const mesh = makeGSplatsMesh(3, 'normal');
+    coord.noteDepthSortCommit(mesh, new Float32Array([0, 0, -10, 1, 0, -1, 2, 0, -5]), 3);
+    await flush();
+    const staleGeneration = mockApi.sort.mock.calls[0][0].generation as number;
+
+    // A newer commit lands while the first sort is in flight (generation bumps).
+    coord.noteDepthSortCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -10, 2, 0, -5]), 3);
+    await flush();
+
+    // The stale ordering resolves — dropped by the generation guard, so no
+    // fresh ordering and no completion recorded.
+    sortResolvers[0]({
+      generation: staleGeneration,
+      ordering: new Uint32Array([2, 1, 0]),
+      kernelMs: 4,
+      workerMs: 6,
+    });
+    await flush();
+    expect(profiler.getDepthSortCompletions().total).toBe(0);
+
+    // The re-issued fresh sort DOES record exactly one completion.
+    const freshGeneration = mockApi.sort.mock.calls[1][0].generation as number;
+    sortResolvers[1]({
+      generation: freshGeneration,
+      ordering: new Uint32Array([1, 2, 0]),
+      kernelMs: 4,
+      workerMs: 6,
+    });
+    await flush();
+    expect(profiler.getDepthSortCompletions().total).toBe(1);
+  });
+
+  it('records both completions when two nodes resolve OUT OF ORDER (issue #711 acceptance criterion 3)', async () => {
+    const coord = await loadCoordinator();
+    const { UpdateProfiler } = await import('../../../profiling/update-profiler');
+    const profiler = new UpdateProfiler();
+    coord.configureDepthSort({
+      getCamera: () => makeCamera(),
+      requestRender: vi.fn(),
+      getProfiler: () => profiler,
+    });
+
+    const meshA = makeGSplatsMesh(3, 'normal');
+    coord.noteDepthSortCommit(meshA, new Float32Array([0, 0, -10, 1, 0, -1, 2, 0, -5]), 3);
+    await flush();
+    const meshB = makeGSplatsMesh(3, 'normal');
+    coord.noteDepthSortCommit(meshB, new Float32Array([0, 0, -1, 1, 0, -10, 2, 0, -5]), 3);
+    await flush();
+    expect(mockApi.sort).toHaveBeenCalledTimes(2);
+
+    // Resolve meshB (dispatch 1) FIRST, then meshA (dispatch 0). On the old
+    // seq-merged 'Depth Sort' root, meshA's late merge would carry a seq below
+    // the stored lastSeq and be DROPPED — the exact undercount issue #711
+    // found. The monotonic completion stream records both regardless of order.
+    sortResolvers[1]({
+      generation: mockApi.sort.mock.calls[1][0].generation as number,
+      ordering: new Uint32Array([2, 0, 1]),
+      kernelMs: 4,
+      workerMs: 6,
+    });
+    await flush();
+    sortResolvers[0]({
+      generation: mockApi.sort.mock.calls[0][0].generation as number,
+      ordering: new Uint32Array([0, 2, 1]),
+      kernelMs: 4,
+      workerMs: 6,
+    });
+    await flush();
+
+    const { total, events } = profiler.getDepthSortCompletions();
+    expect(total).toBe(2);
+    expect(events.map((e) => e.seq)).toEqual([1, 2]);
+  });
+
+  it('does NOT record a completion when the mesh was demoted mid-sort (stillCommitted guard)', async () => {
+    const coord = await loadCoordinator();
+    const { UpdateProfiler } = await import('../../../profiling/update-profiler');
+    const profiler = new UpdateProfiler();
+    coord.configureDepthSort({
+      getCamera: () => makeCamera(),
+      requestRender: vi.fn(),
+      getProfiler: () => profiler,
+    });
+
+    const mesh = makeGSplatsMesh(3, 'normal');
+    coord.noteDepthSortCommit(mesh, new Float32Array([0, 0, -10, 1, 0, -1, 2, 0, -5]), 3);
+    await flush();
+    const generation = mockApi.sort.mock.calls[0][0].generation as number;
+
+    // LOD demotion mid-sort: the geometry returned to the pool, so the
+    // committedData stamp is cleared while the sort is still out.
+    delete mesh.userData.committedData;
+
+    // The ordering resolves with the CURRENT (matching) generation, so the
+    // generation guard passes — but hasCommittedData() is now false, so the
+    // ordering is NOT applied and NO completion is recorded. This pins the
+    // recording inside the `stillCommitted` conjunct, not just the generation
+    // guard.
+    sortResolvers[0]({
+      generation,
+      ordering: new Uint32Array([0, 2, 1]),
+      kernelMs: 4,
+      workerMs: 6,
+    });
+    await flush();
+
+    expect(profiler.getDepthSortCompletions().total).toBe(0);
+  });
+
   it("stale sort from a released node's previous LIFETIME is dropped (demote → re-promote)", async () => {
     // Fuzz-found bug: releaseDepthSortNode deletes the node state, and a
     // per-node counter restarting at 1 on re-promotion let a stale

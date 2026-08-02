@@ -27,16 +27,18 @@
  *     — the SwiftShader guard for remote/CI runs — plus a derived
  *     `softwareRenderer` boolean so a software-rasterized run is
  *     obvious in the JSON instead of looking like a 1000x regression
- *   - Depth-sort dispatch stats sampled per rAF from
- *     `getSceneLoader().getProfiler().getDepthSortTimings()`: final
- *     sort count plus the series of `lastMs` values observed when the
- *     count increments (→ sortCount, sort-latency median/p95).
- *     Metadata MAY also carry numeric `kernelMs`/`boundaryMs`/
- *     `queueMs` (being added by a parallel change) — recorded when
+ *   - Depth-sort completion stats sampled per rAF from
+ *     `getSceneLoader().getProfiler().getDepthSortCompletions()`: the
+ *     monotonic completion total plus the drained per-completion `lastMs`
+ *     series (→ sortCount, sort-latency median/p95). This dedicated stream
+ *     (issue #711) records one event per applied ordering — unlike the
+ *     seq-merged 'Depth Sort' root's `count`, it does not undercount
+ *     multi-completion frames or drop late resolves. Each event MAY also
+ *     carry numeric `kernelMs`/`boundaryMs`/`queueMs` — recorded when
  *     present, absence tolerated.
  *   - L8 GATE PROBE (10M scenario only): every sampled frame is
  *     classified 'sorting-adjacent' (an ordering apply landed within
- *     ±1 frame, detected via a depth-sort count increment) vs
+ *     ±1 frame, detected via a depth-sort completion this frame) vs
  *     'idle-orbit'; the per-class p99s are reported separately as
  *     `sortAdjacentP99Ms` / `idleOrbitP99Ms`. This gate decides a
  *     later optimization lever.
@@ -445,9 +447,9 @@ async function measureFirstRender(page: Page): Promise<number> {
 /** Raw per-frame series returned by the in-page orbit sampling loop. */
 interface OrbitSamplingRaw {
   frameDtMs: number[];
-  /** Per sampled frame: did the profiler depth-sort count increment? */
+  /** Per sampled frame: did any depth-sort completion land this frame? */
   sortInc: boolean[];
-  /** One entry per observed count increment. */
+  /** One entry per drained depth-sort completion (issue #711 stream). */
   sortEvents: Array<{
     lastMs: number;
     kernelMs: number | null;
@@ -478,25 +480,26 @@ async function runOrbitSamplingLoop(page: Page): Promise<OrbitSamplingRaw> {
       // Cast-to-any chain per the debug-API contract: profiler shape is
       // internal and the metadata stage fields are optional/in-flight.
       const profiler = debug.getSceneLoader?.()?.getProfiler?.();
-      const readSort = (): {
-        count: number;
-        lastMs: number;
-        kernelMs: number | null;
-        boundaryMs: number | null;
-        queueMs: number | null;
+      // Drain the profiler's dedicated MONOTONIC depth-sort completion stream
+      // (issue #711) instead of inferring per-sort events from the seq-merged
+      // 'Depth Sort' profiler root's `count`. That root undercounts frames
+      // where several leaves finish at once (an increase of 1 and of 20 both
+      // added exactly one event) and can DROP late/out-of-order resolves; the
+      // completion stream records one event per applied ordering, in order.
+      const readCompletions = (): {
+        total: number;
+        events: Array<{
+          seq: number;
+          lastMs: number;
+          kernelMs: number | null;
+          boundaryMs: number | null;
+          queueMs: number | null;
+        }>;
       } | null => {
         try {
-          const t = profiler?.getDepthSortTimings?.();
-          if (!t || typeof t.count !== 'number') return null;
-          const md = t.metadata ?? {};
-          const num = (v: unknown): number | null => (typeof v === 'number' ? v : null);
-          return {
-            count: t.count,
-            lastMs: typeof t.lastMs === 'number' ? t.lastMs : 0,
-            kernelMs: num(md.kernelMs),
-            boundaryMs: num(md.boundaryMs),
-            queueMs: num(md.queueMs),
-          };
+          const c = profiler?.getDepthSortCompletions?.();
+          if (!c || typeof c.total !== 'number' || !Array.isArray(c.events)) return null;
+          return c;
         } catch {
           return null;
         }
@@ -521,7 +524,7 @@ async function runOrbitSamplingLoop(page: Page): Promise<OrbitSamplingRaw> {
       const dts: number[] = [];
       const sortInc: boolean[] = [];
       const sortEvents: OrbitSamplingRaw['sortEvents'] = [];
-      let prevSortCount = readSort()?.count ?? 0;
+      let prevCompletionSeq = readCompletions()?.total ?? 0;
       let frames = 0;
       let lastTime = performance.now();
       const start = lastTime;
@@ -533,7 +536,7 @@ async function runOrbitSamplingLoop(page: Page): Promise<OrbitSamplingRaw> {
             frameDtMs: dts,
             sortInc,
             sortEvents,
-            finalSortCount: readSort()?.count ?? prevSortCount,
+            finalSortCount: readCompletions()?.total ?? prevCompletionSeq,
             totalMs: performance.now() - start,
           });
         };
@@ -549,28 +552,37 @@ async function runOrbitSamplingLoop(page: Page): Promise<OrbitSamplingRaw> {
           // starts.
           orbit(dt);
 
-          // Read the sort counter on EVERY tick, warmup included:
-          // sorts dispatched during warmup must advance the baseline,
-          // otherwise the first sampled frame inherits their increment
-          // and is misclassified as sorting-adjacent (and contributes a
-          // spurious latency sample).
-          const s = readSort();
-          const inc = s !== null && s.count > prevSortCount;
+          // Drain the completion stream on EVERY tick, warmup included:
+          // sorts that complete during warmup must advance the baseline,
+          // otherwise the first sampled frame inherits their events and is
+          // misclassified as sorting-adjacent (and contributes spurious
+          // latency samples). `inc` = did any completion land this frame;
+          // every completion since the previous poll is drained (a frame
+          // with N completions pushes N events, not one — the multi-
+          // completion undercount issue #711 fixed).
+          const c = readCompletions();
+          const inc = c !== null && c.total > prevCompletionSeq;
 
           if (warmupDone) {
             if (collectingStart === null) collectingStart = now;
             dts.push(dt);
             sortInc.push(inc);
-            if (inc && s) {
-              sortEvents.push({
-                lastMs: s.lastMs,
-                kernelMs: s.kernelMs,
-                boundaryMs: s.boundaryMs,
-                queueMs: s.queueMs,
-              });
+            // Drain EVERY completion since the previous poll — one sortEvents
+            // entry per completion (a frame with N completions pushes N).
+            if (c) {
+              for (const e of c.events) {
+                if (e.seq > prevCompletionSeq) {
+                  sortEvents.push({
+                    lastMs: e.lastMs,
+                    kernelMs: e.kernelMs,
+                    boundaryMs: e.boundaryMs,
+                    queueMs: e.queueMs,
+                  });
+                }
+              }
             }
           }
-          if (s) prevSortCount = s.count;
+          if (c) prevCompletionSeq = c.total;
           lastTime = now;
           frames++;
           const collectingElapsed = collectingStart === null ? 0 : now - collectingStart;
@@ -623,7 +635,7 @@ function depthSortStatsOf(raw: OrbitSamplingRaw): DepthSortStats {
 
 /**
  * L8 gate probe: split frames into 'sorting-adjacent' (a depth-sort
- * count increment within ±1 frame) vs 'idle-orbit' and return each
+ * completion within ±1 frame) vs 'idle-orbit' and return each
  * class's p99. Decides whether ordering applies are what spikes the
  * tail, or the orbit itself.
  */
