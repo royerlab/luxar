@@ -167,10 +167,11 @@ part of the main bundle (production modules), so dynamic-importing them would
 save no chunk bytes.
 
 It builds one of three geometry types — Points, Lines, or GSplats. The
-shared options are `count` (elements to draw), `bounds` (half-extent of the
-generation volume, default 100) and `seed` (deterministic PRNG seed, default
-1; same `(type, count, bounds, seed, clusters)` yields a byte-identical
-scene).
+shared options are `count` (elements to generate), `bounds` (half-extent of
+the generation volume, default 100) and `seed` (deterministic PRNG seed,
+default 1; the same `(type, count, bounds, seed, clusters)` yields
+byte-identical generated geometry — `blending` selects the node's material
+and does not touch the generated buffers).
 `clusters` (default 256) is the number of gaussian blobs the points/gsplats
 samplers draw from and is ignored by lines. `blending` defaults to
 `additive` for lines (historical bench contract) and `normal` for
