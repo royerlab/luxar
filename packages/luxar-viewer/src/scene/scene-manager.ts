@@ -781,8 +781,7 @@ export class SceneManager extends THREE.EventDispatcher<{
     // honour it. Fall back to the bounds fit only when there is no authored
     // camera position.
     const root = this.scene.children.find((c) => c.name === 'LuxarScene') as
-      | THREE.Group
-      | undefined;
+      THREE.Group | undefined;
     const viewerConfig = root?.userData?.viewerConfig as ZarrViewerConfig | undefined;
     if (root && viewerConfig?.camera?.position) {
       // Reset the up vector to the scene up first: orbiting overwrites

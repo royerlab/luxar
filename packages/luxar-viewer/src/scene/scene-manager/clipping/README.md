@@ -43,7 +43,8 @@ so the per-frame `ensure()` re-walks the graph each frame (see the
   `userData.positionBounds` (full dataset extent set by the loader).
   When it is absent, `autoAdjustFromBounds` falls back to
   `THREE.Box3.setFromObject`; the cache has no such fallback — it
-  simply stays empty and its getters return null. Metadata is
+  simply stays empty, `getBounds()` / `getSphere()` return null, and
+  `getNearCull()` keeps its 0.1 default. Metadata is
   available before geometry finishes loading and reflects the full
   nD dataset extent rather than the currently-visible slice.
 - **nD → 3D projection lives in `projectBoundsToDisplayDims`.** The
