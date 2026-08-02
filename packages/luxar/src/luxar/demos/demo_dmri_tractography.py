@@ -44,19 +44,35 @@ Lines geometry applied to data that is natively made of curves. Each of the 87
 bundles becomes its own Lines node with ``layer=True``, so the Layers panel
 (press **L**) gives per-tract visibility, display range, gamma and blending.
 
-RENDERING NOTE — WHY `normal` AND NOT A GLOW MODE
+RENDERING NOTE — `additive`, AND WHY NOT `normal`
 -------------------------------------------------
 A tractogram is a *solid* object: ~6.8M segments packed into a 180 mm skull,
-many hundreds deep along any view ray. Both `additive` and `luminous` composite
-additively, so those hundreds of samples sum past white no matter how low the
-opacity goes — at opacity 0.35 the brain is a featureless white blob, and even
-at 0.05 the core is still blown out while the surface has faded to nothing.
-There is no setting that works, because the failure is the accumulation itself.
+many hundreds deep along any view ray. That makes the choice of blending mode
+the single biggest visual decision in this demo, and it is not the obvious one.
 
-`normal` (alpha-over) with opacity 1.0 turns depthWrite on, so each pixel shows
-the *nearest* fibre instead of the sum of all of them. That is what makes the
-individual streamlines, the direction colours and the near/far hemisphere
-separation legible — and it is what published tractography figures do.
+`normal` (alpha-over) at opacity 1.0 looks right in a still: depthWrite is on,
+so each pixel shows the nearest fibre and the near/far hemispheres separate
+cleanly. But alpha-blended nodes render in the *transparent* pass, which THREE
+sorts back-to-front **per object**, every frame. With 87 mutually-overlapping
+bundles whose centroids interleave, that sort order flips as the camera orbits
+and whole tracts visibly pop in front of each other. The still is fine; the
+interaction is not, and this scene is meant to be orbited.
+
+`additive` has no such failure mode, because addition is commutative: the frame
+is the same whatever order the 87 nodes draw in, so there is nothing to sort and
+nothing to pop. The cost is that it ignores depth, which is why the naive
+settings blow out — the accumulated sum clips to white long before the far side
+of the brain has been drawn.
+
+The fix is to make each sample contribute *little*: opacity 0.24 and a display
+window of [0, 74.976] (a ~75x attenuation on the colour). Hundreds of faint
+samples then integrate into a glowing, X-ray-like volume in which the internal
+architecture — the callosal fan, the arcuate's hook, the cerebellar peduncles —
+is visible *through* the surface fibres rather than hidden behind them.
+
+If you ever do want hard occlusion back without the popping, the mode to reach
+for is `opaque`, not `normal`: it is depth-tested and depth-written but never
+enters the transparent pass, so it is also order-independent.
 
 DATA SOURCE & CITATIONS:
 ========================
@@ -109,7 +125,7 @@ DEMO_META = {
     "geometry": "lines",
     "requirements": {
         "download_mb": 588,
-        "compute": "medium",
+        "compute": "heavy",
         "gpu": "none",
         "local_data": None,
     },
@@ -185,12 +201,56 @@ DEFAULT_PER_BUNDLE: Final = 6_000
 SUBSAMPLE_SEED: Final = 0
 
 LINE_WIDTH: Final = 0.32  # mm; the brain is ~180 mm across
-#: Opaque, depth-written fibres — see the RENDERING NOTE in the module
-#: docstring for the A/B that settled this. Opacity must stay >= 0.99: the
-#: viewer only enables depthWrite for `normal` lines at that threshold, and
-#: without depthWrite the occlusion that makes the tractogram readable is gone.
-LINE_OPACITY: Final = 1.0
-LINE_INTENSITY: Final = 1.0
+LINE_OPACITY: Final = 0.24
+#: Gain on the per-vertex colour, i.e. a display window of ``[0, 74.976]``
+#: (``intensity = 1 / (max - min)``, see the viewer's
+#: ``rendering/display-range.ts``). A ~75x attenuation looks extreme written
+#: down, but it is what additive compositing of a *solid* object needs: with
+#: hundreds of segments along every view ray, each one may contribute only a
+#: percent or so before the sum clips. Tuned in the Layers panel, then baked.
+#:
+#: NOTE: this must not be exactly 1.0. The line material compiles with a
+#: ``LUXAR_NO_GOG`` define when gain/offset/gamma are all identity, which
+#: strips the gain path out of the shader entirely — an authored 1.0 cannot
+#: then be recovered at runtime.
+LINE_INTENSITY: Final = 1.0 / 74.976
+
+#: Substitutive LOD: each level replaces the finer one with fewer, larger
+#: elements, so zooming out costs less instead of drawing every fibre. Coarse
+#: levels are gsplat "beads" lifted off the segments (`luxar.gsplats.lift`);
+#: the original Lines node stays as the finest level.
+#:
+#: ``compression_factor`` has to be MUCH larger than the K=4 default here, and
+#: the reason is specific to thin lines. The lift spaces beads every
+#: ``sigma_perp = 2w/T`` **along arc length**, so the bead count is
+#: ``total_fibre_length / sigma_perp`` — it does not care how many segments the
+#: fibre was cut into. At w=0.32 mm this bundle's 162K segments lift to ~3.8M
+#: beads, so a K=4 "coarse" level is 912K splats: 5.6x *heavier* than the
+#: 162K-segment level it is supposed to replace. Measured on AF_L:
+#:
+#:     K=4,   L=3  ->  65.0 MB   levels 54K / 221K / 912K   (worse than useless)
+#:     K=64,  L=2  ->   5.3 MB   levels 930 / 59,457
+#:     K=256, L=2  ->   3.2 MB   levels 59 / 14,865         <- chosen
+#:
+#: K=256 puts the first coarse level at ~9% of the fine level's element count,
+#: which is what a substitutive level is for. Across all 87 nodes this is the
+#: difference between a 2.1 GB scene and a ~200 MB one.
+SUBSTITUTIVE_LOD: Final = dict(compression_factor=256, levels=2)
+
+# NOTE — no `additive_lod` here, deliberately. An additive ladder composed
+# under a substitutive one is REFUSED for `line_type="indexed"`:
+#
+#   UserWarning: the requested streaming ladder cannot be honoured
+#   (line_type='indexed' edges are not preserved by the ladder);
+#   levels will load all-at-once.
+#
+# The ladder rebuilds each connected component as a plain chain over its
+# members, which for an arbitrary indexed edge list would invent edges that do
+# not exist and drop ones that do (see `adders/lines.py`). Passing it anyway
+# just warns on every build and changes nothing — every level still loads in
+# one commit. It costs us little: each node is under the 200K-vertex threshold
+# at which `check_demo_ladders.py` requires a ladder, and the 87 nodes already
+# stream independently of one another.
 
 FLAGS = parse_demo_flags()
 NO_SERVE = FLAGS["no_serve"]
@@ -546,13 +606,13 @@ def build_scene(bundles: dict, output_path: Path, *, points: int) -> Path:
                     # `indexed`, NOT `segments`: interior joints must share a
                     # vertex index or thick lines render as chains of beads.
                     line_type="indexed",
-                    # `normal`, NOT `luminous`/`additive` — see the module
-                    # docstring's RENDERING NOTE. Both of the glow modes blend
-                    # additively, and 6.8M superimposed segments saturate to a
-                    # white blob whatever the opacity.
-                    blending_mode="normal",
+                    # `additive` — see the module docstring's RENDERING NOTE.
+                    # Order-independent, so 87 mutually-overlapping nodes never
+                    # pop as the camera moves.
+                    blending_mode="additive",
                     opacity=LINE_OPACITY,
                     intensity=LINE_INTENSITY,
+                    substitutive_lod=SUBSTITUTIVE_LOD,
                     layer=True,
                 )
 
