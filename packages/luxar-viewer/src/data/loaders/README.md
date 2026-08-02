@@ -175,7 +175,8 @@ the points/gsplats projection gates:
 | `gsplats` | `step × gsplatsDefaultTolerance` (default 3 σ; or 3.0 fallback) | `0.25 × step` (0.25 fallback) | `step × 0.5` (projection stage) |
 
 The quarter-cell query reach sits deliberately below the half-cell membership
-gates: chunk bounds are epsilon-padded on the write side (`io/ordering.py`),
+gates: chunk bounds are epsilon-padded on the write side
+(`packages/luxar/src/luxar/io/ordering.py`),
 and pad + reach must stay under one step or a single-category query bleeds in
 the whole neighbouring category.
 

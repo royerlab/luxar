@@ -356,15 +356,25 @@ class DocumentationChecker:
                     return True
                 return rel in tracked or (root / rel).is_dir()
 
-            if token in tracked or (root / token).is_dir():
-                return True
-            readme_dir = Path(readme_path).parent.as_posix()
-            cand = token if readme_dir == "." else readme_dir + "/" + token
-            if cand in tracked or (root / cand).is_dir():
-                return True
+            # Anchor a non-relative ref at each ancestor of the README's own
+            # directory (README dir, its parents, up to the repo root). This
+            # covers package-relative and repo-relative spellings.
+            anchor = Path(readme_path).parent
+            while True:
+                cand = (anchor / token).as_posix() if anchor.parts else token
+                if cand in tracked or (root / cand).is_dir():
+                    return True
+                if not anchor.parts:
+                    break
+                anchor = anchor.parent
+            # Shorthand fallback: accept a path-suffix match, but only within
+            # the README's own package (`packages/<name>/`). A file in another
+            # package with the same layout must not validate a broken
+            # reference here — cross-package refs have to be spelled out.
+            package_prefix = "/".join(Path(readme_path).parts[:2]) + "/"
             basename = Path(token).name
             for p in by_name.get(basename, []):
-                if p == token or p.endswith("/" + token):
+                if p.startswith(package_prefix) and p.endswith("/" + token):
                     return True
             return False
 
