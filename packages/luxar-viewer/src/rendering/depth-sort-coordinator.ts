@@ -588,7 +588,14 @@ function scheduleSort(mesh: THREE.Mesh, nodeId: string): void {
 
   // One detached profiler pass per dispatch — its duration is the
   // dispatch→applied round-trip the monitor's 'Depth Sort' line shows.
-  const session = getProfiler?.()?.beginDepthSortPass() ?? null;
+  // The profiler and its generation are captured HERE, at dispatch, so the
+  // resolve below records against the same profiler the session merges into
+  // and honors the same reset-isolation contract: a profiler.reset() (or a
+  // reconfiguration swapping the profiler) while this sort is in flight
+  // abandons the completion instead of contaminating the fresh stream.
+  const profiler = getProfiler?.() ?? null;
+  const session = profiler?.beginDepthSortPass() ?? null;
+  const profilerGeneration = profiler?._currentGeneration() ?? 0;
   // The profiler session does not expose its elapsed time (SessionImpl's
   // startTime is private), so time the dispatch→resolve round-trip locally
   // for the queueMs derivation below.
@@ -657,6 +664,26 @@ function scheduleSort(mesh: THREE.Mesh, nodeId: string): void {
                 ? `${(bytes / 1_000_000).toFixed(1)} MB up`
                 : `${Math.round(bytes / 1000)} KB up`,
           });
+          // Record the true per-completion event on the profiler's
+          // dedicated MONOTONIC stream (issue #711). Only this
+          // applied-ordering site fires: a stale-drop / failed / released-
+          // mid-sort completion produces no fresh ordering and no valid
+          // latency, so it is not a recorded completion. This stream is
+          // order-independent, unlike the seq-merged 'Depth Sort' profiler
+          // root whose `count` #711 found undercounts multi-completion
+          // frames and drops late resolves. Gated on the DISPATCH-TIME
+          // profiler generation (same reset-isolation contract as the
+          // session's end() merge): a reset() while this sort was in
+          // flight abandons the completion.
+          if (profiler && profiler._currentGeneration() === profilerGeneration) {
+            profiler.recordDepthSortCompletion({
+              lastMs: roundTripMs,
+              kernelMs: result.kernelMs,
+              boundaryMs: Math.max(0, result.workerMs - result.kernelMs),
+              queueMs: Math.max(0, roundTripMs - result.workerMs),
+              splats: result.ordering.length,
+            });
+          }
           requestRender?.();
         }
       }
