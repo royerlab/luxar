@@ -34,6 +34,33 @@ def optical_depth_to_alpha(depth: np.ndarray) -> np.ndarray:
     return -np.expm1(-np.asarray(depth, dtype=np.float64)).astype(np.float32)
 
 
+def apply_alpha_to_amplitudes(
+    amps: np.ndarray, colors: np.ndarray | None
+) -> np.ndarray:
+    """Fold the per-splat color-alpha opacity into ``amps`` (``A·α``).
+
+    The single source of truth for the alpha-effective amplitude convention,
+    shared by :func:`effective_amplitudes` (object path) and the annotate
+    retrofit (zarr-store path) so the two can never silently drift.
+
+    Only RGBA colors (2-D, ``shape[1] == 4``) contribute an alpha factor;
+    anything else (``None``, RGB) returns ``amps`` unchanged. Integer alpha is
+    stored at full scale (255 = opaque, a valid SDR form — see
+    ``_merge_lod_colors``); the opacity CONTRACT is ``[0, 1]``, so it is
+    normalized before weighting or every integer-color splat is misranked ~255×.
+    """
+    if colors is None:
+        return amps
+    colors = np.asarray(colors)
+    if colors.ndim != 2 or colors.shape[1] != 4:
+        return amps
+    alpha = colors[:, 3]
+    if np.issubdtype(alpha.dtype, np.integer):
+        alpha = alpha.astype(np.float32) / np.iinfo(alpha.dtype).max
+    weighted: np.ndarray = amps * alpha.astype(amps.dtype, copy=False)
+    return weighted
+
+
 def effective_amplitudes(data: object) -> np.ndarray:
     """Per-splat emission amplitude including the color alpha factor.
 
@@ -50,16 +77,4 @@ def effective_amplitudes(data: object) -> np.ndarray:
     """
     amps: np.ndarray = np.asarray(data.amplitudes)  # type: ignore[attr-defined]
     colors = getattr(data, "colors", None)
-    if colors is not None:
-        colors = np.asarray(colors)
-        if colors.ndim == 2 and colors.shape[1] == 4:
-            alpha = colors[:, 3]
-            if np.issubdtype(alpha.dtype, np.integer):
-                # Integer colors store opacity at full scale (255 = opaque —
-                # a valid SDR storage form, see _merge_lod_colors); the
-                # opacity CONTRACT is [0, 1], so normalize before weighting
-                # or every integer-color splat is misranked ~255×.
-                alpha = alpha.astype(np.float32) / np.iinfo(alpha.dtype).max
-            weighted: np.ndarray = amps * alpha.astype(amps.dtype, copy=False)
-            return weighted
-    return amps
+    return apply_alpha_to_amplitudes(amps, colors)

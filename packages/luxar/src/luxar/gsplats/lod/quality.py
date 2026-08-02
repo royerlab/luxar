@@ -65,6 +65,7 @@ from luxar.gsplats.lod._substitutive.refine import (
     _hash_cell_size,
     _pair_K_sum_chunked,
 )
+from luxar.gsplats.utils.alpha import effective_amplitudes
 from luxar.gsplats.utils.device import resolve_torch_device
 from luxar.gsplats.utils.trils import unpack_tril
 from luxar.utils.spatial_hash import BatchedSpatialHashGrid
@@ -99,13 +100,18 @@ def _sqrt_det(data: GSplatData) -> np.ndarray:
 def total_self_energy(data: GSplatData) -> float:
     """Exact total self-energy ``Σᵢ aᵢ²·π^{D/2}·|Σᵢ|^{1/2}`` (float64, O(N)).
 
+    ``aᵢ`` is the ALPHA-EFFECTIVE amplitude ``A·α`` (raw amplitude times the
+    per-splat color-alpha opacity for RGBA splats; equal to the raw amplitude
+    when there is no RGBA alpha) — the same rendered mass the additive ladder
+    scores by, so build- and annotate-time stamps stay on one convention.
+
     This is the ``reference_energy`` weight ``w`` stamped per leaf: partition
     aggregates combine child qualities as the ``w``-weighted mean (disjoint
     regions ⇒ L² decomposes additively over parts).
     """
     if data.n_splats == 0:
         return 0.0
-    amps = np.asarray(data.amplitudes, dtype=np.float64)
+    amps = np.asarray(effective_amplitudes(data), dtype=np.float64)
     return float(gaussian_self_energy_numpy(amps, _sqrt_det(data), data.ndim).sum())
 
 
@@ -135,8 +141,10 @@ def _pair_view(
 
     Fixed-seed uniform row subsample above ``max_pair_splats`` (see the
     module docstring on why evenly-spaced strides are unsafe). Amplitudes are
-    NOT rescaled here — sums are rescaled by the inverse inclusion fractions
-    at the call sites (the exact diagonals never go through this view).
+    ALPHA-EFFECTIVE (``A·α``, matching ``total_self_energy``'s exact diagonals)
+    but NOT rescaled for the subsample here — sums are rescaled by the inverse
+    inclusion fractions at the call sites (the exact diagonals never go through
+    this view).
     """
     n = data.n_splats
     if n > max_pair_splats:
@@ -147,7 +155,7 @@ def _pair_view(
     centers = np.array(data.centers, dtype=np.float64)[idx]
     tri = np.asarray(data.cholesky_factors, dtype=np.float64)[idx]
     L = unpack_tril(tri, data.ndim)
-    amps = np.array(data.amplitudes, dtype=np.float64)[idx]
+    amps = np.asarray(effective_amplitudes(data), dtype=np.float64)[idx]
     return centers, L, amps, float(idx.size) / float(n)
 
 
