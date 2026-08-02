@@ -476,6 +476,71 @@ describe('depth-sort coordinator', () => {
     expect(profiler.getDepthSortCompletions().total).toBe(0);
   });
 
+  it('does NOT record a completion when the profiler was reset while the sort was in flight', async () => {
+    const coord = await loadCoordinator();
+    const { UpdateProfiler } = await import('../../../profiling/update-profiler');
+    const profiler = new UpdateProfiler();
+    coord.configureDepthSort({
+      getCamera: () => makeCamera(),
+      requestRender: vi.fn(),
+      getProfiler: () => profiler,
+    });
+
+    const mesh = makeGSplatsMesh(3, 'normal');
+    coord.noteDepthSortCommit(mesh, new Float32Array([0, 0, -10, 1, 0, -1, 2, 0, -5]), 3);
+    await flush();
+    const generation = mockApi.sort.mock.calls[0][0].generation as number;
+
+    // reset() bumps the profiler generation, abandoning the in-flight
+    // sort's session — the completion record must honor the same
+    // reset-isolation contract and NOT land in the fresh stream.
+    profiler.reset();
+
+    sortResolvers[0]({
+      generation,
+      ordering: new Uint32Array([0, 2, 1]),
+      kernelMs: 4,
+      workerMs: 6,
+    });
+    await flush();
+
+    expect(profiler.getDepthSortCompletions().total).toBe(0);
+  });
+
+  it('records against the DISPATCH-TIME profiler, not one swapped in mid-sort', async () => {
+    const coord = await loadCoordinator();
+    const { UpdateProfiler } = await import('../../../profiling/update-profiler');
+    const oldProfiler = new UpdateProfiler();
+    let profiler = oldProfiler;
+    coord.configureDepthSort({
+      getCamera: () => makeCamera(),
+      requestRender: vi.fn(),
+      getProfiler: () => profiler,
+    });
+
+    const mesh = makeGSplatsMesh(3, 'normal');
+    coord.noteDepthSortCommit(mesh, new Float32Array([0, 0, -10, 1, 0, -1, 2, 0, -5]), 3);
+    await flush();
+    const generation = mockApi.sort.mock.calls[0][0].generation as number;
+
+    // A replacement profiler installed while the sort is in flight must
+    // start with a clean completion stream; the completion belongs to the
+    // profiler whose session tracked the dispatch.
+    const newProfiler = new UpdateProfiler();
+    profiler = newProfiler;
+
+    sortResolvers[0]({
+      generation,
+      ordering: new Uint32Array([0, 2, 1]),
+      kernelMs: 4,
+      workerMs: 6,
+    });
+    await flush();
+
+    expect(newProfiler.getDepthSortCompletions().total).toBe(0);
+    expect(oldProfiler.getDepthSortCompletions().total).toBe(1);
+  });
+
   it("stale sort from a released node's previous LIFETIME is dropped (demote → re-promote)", async () => {
     // Fuzz-found bug: releaseDepthSortNode deletes the node state, and a
     // per-node counter restarting at 1 on re-promotion let a stale

@@ -447,8 +447,8 @@ export class UpdateProfiler {
   // Generation counter, bumped on every reset(). Sessions capture the
   // generation at construction; their end() is a no-op if the profiler's
   // generation has advanced past theirs (the session was "abandoned").
-  // Internal: only the SessionImpl reads this — exposed via the package-
-  // private `_currentGeneration()` accessor below.
+  // Internal: read only via the package-private `_currentGeneration()`
+  // accessor below (SessionImpl and the depth-sort coordinator).
   private generation = 0;
 
   private static makeRoot(name: string): TimingEntry {
@@ -463,8 +463,9 @@ export class UpdateProfiler {
 
   /**
    * Internal: current generation counter. Read by `SessionImpl` to gate
-   * its `end()` merge against being abandoned by a reset() that landed
-   * mid-flight. NOT a public API.
+   * its `end()` merge — and by the depth-sort coordinator to gate its
+   * `recordDepthSortCompletion` call — against being abandoned by a
+   * reset() that landed mid-flight. NOT a public API.
    */
   _currentGeneration(): number {
     return this.generation;
