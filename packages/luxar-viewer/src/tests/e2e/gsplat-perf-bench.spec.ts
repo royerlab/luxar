@@ -236,11 +236,24 @@ interface DepthSortStats {
 }
 
 interface LadderStats {
-  /** ms from navigation start to the last observed element-count commit. */
+  /** ms from navigation start to ladder completion. Exact
+   *  stamp-confirmed completion time (the first tick of the last
+   *  continuous committedLadderComplete window) UNLESS {@link
+   *  usedFallback} (a count-plateau estimate) or {@link timedOut} (the
+   *  ladder never completed within the cap, so this is a last-commit
+   *  lower bound). */
   wallMsToLadderComplete: number;
-  /** False when the ladder finished before our polling loop started —
-   *  wallMs is then a lower bound, not a measurement. */
+  /** True when the recorder observed the summed splat count grow during
+   *  the run. */
   observedGrowth: boolean;
+  /** True when NO committed gsplat leaf was ever observed (the defensive
+   *  path), so completion was estimated from the count plateau rather
+   *  than confirmed by committed-ladder stamps. */
+  usedFallback: boolean;
+  /** True when the poll hit LADDER_MAX_MS before completion —
+   *  wallMsToLadderComplete is then a last-commit lower bound, not a
+   *  confirmed completion. */
+  timedOut: boolean;
   /** Frame stats DURING the progressive-load window (start → last commit). */
   loadWindowFrameMs: FrameStats | null;
 }
@@ -809,12 +822,19 @@ async function measureZarrOrbitScenario(
 }
 
 /**
- * Progressive-ladder load scenario: poll the summed `visibleSplatCount`
- * each driven frame; the ladder is complete when the sum stops growing
- * for {@link LADDER_STABLE_MS}. Records the wall ms from navigation
- * start to the LAST observed commit plus the frame-time distribution
- * DURING the growth window (`performance.now()` in-page is relative to
- * navigation start, so commit timestamps ARE wall-ms-from-nav).
+ * Progressive-ladder load scenario: poll each visible gsplat leaf's
+ * `userData.committedLadderComplete` stamp every driven frame; the
+ * ladder is complete once every visible leaf reports a committed FULL
+ * ladder (no leaf still stamped `false`). The viewer writes that stamp
+ * whenever a gsplat leaf commits, so the stamped path is the normal
+ * one; only if NO committed leaf is ever observed does the scenario
+ * fall back to the count plateau — the ladder is treated complete when
+ * the summed `visibleSplatCount` stops growing for
+ * {@link LADDER_STABLE_MS} — and the result is flagged `usedFallback`.
+ * Records the wall ms from navigation start to completion plus the
+ * frame-time distribution DURING the growth window (`performance.now()`
+ * in-page is relative to navigation start, so commit timestamps ARE
+ * wall-ms-from-nav).
  */
 async function measureZarrLadderScenario(
   page: Page,
@@ -838,30 +858,69 @@ async function measureZarrLadderScenario(
       dtsUpToLastChange: 0,
       observedGrowth: false,
       initialCount: 0,
+      // Stamp-based completion (the authoritative signal): sticky flag
+      // that any leaf ever carried a committedLadderComplete stamp, plus
+      // the start timestamp of the current continuous "all stamped
+      // complete" window (0 while any visible leaf is still incomplete).
+      sawStamps: false,
+      ladderCompleteAt: 0,
     };
     (window as unknown as { __ladderRec: typeof rec }).__ladderRec = rec;
-    const sumSplats = (): number => {
+    // Per-tick scan: sum visible splats (drives the count-plateau
+    // fallback) AND fold each visible leaf's committedLadderComplete
+    // stamp into the completion signal.
+    const scanScene = (): {
+      sum: number;
+      nodeCount: number;
+      stampedCount: number;
+      anyStamped: boolean;
+      anyIncomplete: boolean;
+    } => {
       const debug = (window as unknown as { __luxarDebug?: any }).__luxarDebug;
-      let total = 0;
-      debug?.scene?.traverse?.((obj: any) => {
+      let sum = 0;
+      let nodeCount = 0;
+      let stampedCount = 0;
+      let anyStamped = false;
+      let anyIncomplete = false;
+      // Use traverseVisible so hidden subtrees — e.g. an abandoned hidden
+      // LOD level stamped `false` — are pruned, matching production's
+      // foldProgress.
+      debug?.scene?.traverseVisible?.((obj: any) => {
         if (
           obj?.userData?.nodeType === 'gsplats' &&
           typeof obj.userData.visibleSplatCount === 'number'
         ) {
-          total += obj.userData.visibleSplatCount;
+          sum += obj.userData.visibleSplatCount;
+          nodeCount += 1;
+          const stamp = obj.userData.committedLadderComplete;
+          if (typeof stamp === 'boolean') {
+            anyStamped = true;
+            stampedCount += 1;
+            if (stamp === false) anyIncomplete = true;
+          }
         }
       });
-      return total;
+      return { sum, nodeCount, stampedCount, anyStamped, anyIncomplete };
     };
     const tick = (now: number): void => {
       if (rec.lastT !== null) {
         rec.dts.push(now - rec.lastT);
-        const sum = sumSplats();
+        const { sum, nodeCount, stampedCount, anyStamped, anyIncomplete } = scanScene();
         if (sum !== rec.lastSum) {
           if (rec.dts.length > 0 && sum > 0) rec.observedGrowth = true;
           rec.lastSum = sum;
           rec.lastChangeAt = now;
           rec.dtsUpToLastChange = rec.dts.length;
+        }
+        if (anyStamped) rec.sawStamps = true;
+        // Complete only when EVERY counted visible leaf carries a stamp
+        // AND none is still incomplete — a created-but-uncommitted leaf
+        // (numeric count, no stamp yet) keeps this false.
+        const stampedComplete = nodeCount > 0 && stampedCount === nodeCount && !anyIncomplete;
+        if (stampedComplete) {
+          if (rec.ladderCompleteAt === 0) rec.ladderCompleteAt = now;
+        } else {
+          rec.ladderCompleteAt = 0;
         }
       }
       rec.lastT = now;
@@ -893,6 +952,8 @@ async function measureZarrLadderScenario(
             dtsUpToLastChange: number;
             observedGrowth: boolean;
             initialCount: number;
+            sawStamps: boolean;
+            ladderCompleteAt: number;
           };
         }
       ).__ladderRec;
@@ -902,17 +963,25 @@ async function measureZarrLadderScenario(
       return new Promise<{
         wallMsToLadderComplete: number;
         observedGrowth: boolean;
+        usedFallback: boolean;
         loadWindowDtMs: number[];
         finalCount: number;
         initialCount: number;
         timedOut: boolean;
       }>((resolve) => {
         const finish = (timedOut: boolean): void => {
+          const usedFallback = !rec.sawStamps;
+          // performance.now() is relative to navigation start, and the
+          // recorder ran from navigation start — this IS wall ms. In
+          // stamped mode use the confirmed completion timestamp; on a
+          // stamped-mode timeout ladderCompleteAt is 0 (a completed
+          // window would have resolved the loop), so fall back to the
+          // last count change as a lower bound rather than reporting 0ms.
+          const stampWall = rec.ladderCompleteAt > 0 ? rec.ladderCompleteAt : rec.lastChangeAt;
           resolve({
-            // performance.now() is relative to navigation start, and the
-            // recorder ran from navigation start — this IS wall ms.
-            wallMsToLadderComplete: rec.lastChangeAt,
+            wallMsToLadderComplete: usedFallback ? rec.lastChangeAt : stampWall,
             observedGrowth: rec.observedGrowth,
+            usedFallback,
             loadWindowDtMs: rec.dts.slice(0, Math.max(rec.dtsUpToLastChange, 1)),
             finalCount: rec.lastSum,
             initialCount: rec.initialCount,
@@ -925,7 +994,17 @@ async function measureZarrLadderScenario(
             finish(true);
             return;
           }
-          if (rec.lastSum > 0 && now - rec.lastChangeAt > cfg.stableMs) {
+          if (rec.sawStamps) {
+            // Authoritative: finish once every visible leaf has committed
+            // its FULL ladder (ladderCompleteAt is the start of that window).
+            if (rec.ladderCompleteAt > 0) {
+              finish(false);
+              return;
+            }
+          } else if (rec.lastSum > 0 && now - rec.lastChangeAt > cfg.stableMs) {
+            // Defensive fallback: no committed leaf was ever observed, so
+            // infer completion from the count plateau (approximate — see
+            // usedFallback).
             finish(false);
             return;
           }
@@ -942,11 +1021,14 @@ async function measureZarrLadderScenario(
   if (ladderRaw.timedOut) {
     notes.push(`ladder polling hit the ${LADDER_MAX_MS}ms cap before stabilizing`);
   }
-  if (!ladderRaw.observedGrowth) {
+  if (ladderRaw.usedFallback) {
     notes.push(
-      'ladder completed before polling began — wallMsToLadderComplete is a lower bound only'
+      `no committed gsplat leaf observed — completion estimated from a ${LADDER_STABLE_MS}ms count plateau (approximate)`
     );
-  } else {
+  } else if (!ladderRaw.timedOut) {
+    notes.push('ladder completion confirmed via committed-ladder stamps');
+  }
+  if (ladderRaw.observedGrowth) {
     notes.push(
       `ladder grew ${ladderRaw.initialCount} → ${ladderRaw.finalCount} splats during polling`
     );
@@ -980,6 +1062,8 @@ async function measureZarrLadderScenario(
     ladder: {
       wallMsToLadderComplete: ladderRaw.wallMsToLadderComplete,
       observedGrowth: ladderRaw.observedGrowth,
+      usedFallback: ladderRaw.usedFallback,
+      timedOut: ladderRaw.timedOut,
       loadWindowFrameMs: statsOf(ladderRaw.loadWindowDtMs),
     },
     notes,
@@ -1056,8 +1140,8 @@ function logScenario(result: ScenarioResult): void {
     : '';
   const ladderSummary = result.ladder
     ? ` ladder=${result.ladder.wallMsToLadderComplete.toFixed(0)}ms${
-        result.ladder.observedGrowth ? '' : ' (lower bound)'
-      }`
+        result.ladder.usedFallback ? ' (fallback est.)' : ''
+      }${result.ladder.timedOut ? ' (lower bound)' : ''}`
     : '';
   const l8Summary =
     result.sortAdjacentP99Ms !== undefined
