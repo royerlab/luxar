@@ -51,7 +51,7 @@ import pandas as pd
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.demos import launch_viewer, require_local_data
+from luxar.demos import is_installed, launch_viewer, require_local_data
 from luxar.utils._umap_utils import (
     attribute_to_color,
     build_legend_html,
@@ -212,6 +212,22 @@ def create_mouse_scene(
             ]
         )
 
+        # Substitutive Points LOD needs torch (coarsening kernels in
+        # luxar.gsplats.lod) AND scipy (imported at module load by the additive
+        # sibling). A complete local parquet dataset lets the scene build with
+        # neither installed, so gate the LOD on their presence instead of
+        # crashing a dependency-free run — the flat point cloud is fully
+        # viewable, just without zoom-out coarsening.
+        missing_lod_deps = [m for m in ("torch", "scipy") if not is_installed(m)]
+        if missing_lod_deps:
+            missing = " and ".join(missing_lod_deps)
+            aprint(
+                f"⚠️  {missing} not installed — skipping Points LOD coarsening. "
+                "The cell cloud is fully viewable as a flat point cloud; "
+                "install 'luxar[gsplats]' (pip install 'luxar[gsplats]') and "
+                "rerun to rebuild with level-of-detail."
+            )
+
         # Create scene
         with LuxarZarrCompiler(output_path) as compiler:
             scene = compiler.create_scene(dimensions=dims)
@@ -243,8 +259,13 @@ def create_mouse_scene(
                 intensity=0.25,
                 labels=labels,
                 # Substitutive Points LOD (coarsen x/y/z, group by the attribute
-                # barrier) — same wiring as the census demo.
-                substitutive_lod=dict(compression_factor=8, levels=3, device="auto"),
+                # barrier) — same wiring as the census demo. Gated on torch+scipy
+                # above; None falls back to flat Points when either is absent.
+                substitutive_lod=(
+                    None
+                    if missing_lod_deps
+                    else dict(compression_factor=8, levels=3, device="auto")
+                ),
             )
 
             # --- Overlays ---

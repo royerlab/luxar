@@ -395,7 +395,7 @@ Turns the Zebrahub VeloCyto AnnData (spliced/unspliced counts + precomputed 3D R
 
 **Run**: `luxar demo run human_multiome_peak_umap`
 
-**Requires**: Local parquet data file, `pandas` package.
+**Requires**: Local parquet data file, `pandas` package. `luxar[gsplats]` (torch + scipy) is optional — without it the scene builds as a flat, fully viewable point cloud instead of the Points LOD ladder.
 
 **Demonstrates**: Large-scale single-cell visualization (~1M points), multiple categorical attributes (cell type, lineage, timepoint, peak type, chromosome), ATAC-seq chromatin accessibility data.
 
@@ -406,7 +406,7 @@ Turns the Zebrahub VeloCyto AnnData (spliced/unspliced counts + precomputed 3D R
 
 **Run**: `luxar demo run mouse_multiome_peak_umap`
 
-**Requires**: Local parquet data file, `pandas` package.
+**Requires**: Local parquet data file, `pandas` package. `luxar[gsplats]` (torch + scipy) is optional — without it the scene builds as a flat, fully viewable point cloud instead of the Points LOD ladder.
 
 **Demonstrates**: Single-cell ATAC-seq visualization, embryonic developmental timepoints, multiple categorical attribute navigation, lineage-based coloring.
 
@@ -417,7 +417,7 @@ Turns the Zebrahub VeloCyto AnnData (spliced/unspliced counts + precomputed 3D R
 
 **Run**: `luxar demo run zebrahub_multiome_peak_umap`
 
-**Requires**: Internet access (downloads from CZ Biohub public zarr store).
+**Requires**: Internet access (downloads from CZ Biohub public zarr store). `luxar[gsplats]` (torch + scipy) is optional — without it the scene builds as a flat, fully viewable point cloud instead of the Points LOD ladder.
 
 **Demonstrates**: Remote zarr data loading, 640k points with 30 cell types, 7 categorical attributes (cell type, chromosome, lineage, peak type, etc.), 6 developmental timepoints.
 
