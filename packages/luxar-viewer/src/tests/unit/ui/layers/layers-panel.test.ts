@@ -2143,6 +2143,49 @@ describe('LayersPanel — per-row load-failure badge', () => {
     expect(label).toContain('reason-A-first');
     expect(label).not.toContain('reason-B-second');
   });
+
+  it('detects a change between failure sets that collide under naive path:reason joining', () => {
+    // Reasons are arbitrary error text, so a signature built by concatenating
+    // `path:reason` and joining with `|` is ambiguous: {'/cloud': 'boom|/pyramid/lod_0:x'}
+    // encodes to the same string as {'/cloud': 'boom', '/pyramid/lod_0': 'x'}.
+    // The JSON tuple signature must tell them apart, or the transition below
+    // early-returns and the pyramid row never gets its badge.
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(new THREE.Group(), makeGroupPlusSiblingScene());
+    panel.show();
+    const { provider, set, setReason } = makeFailedProvider(['/cloud'], {
+      '/cloud': 'boom|/pyramid/lod_0:x',
+    });
+    panel.setFailedLoadsProvider(provider);
+    expect(errorBadge(rowFor(container, 'pyramid'))).toBeNull();
+
+    set(['/cloud', '/pyramid/lod_0']);
+    setReason('/cloud', 'boom');
+    setReason('/pyramid/lod_0', 'x');
+    perFrameCallbacks(animationController).get('layers-lod-status')!();
+
+    expect(errorBadge(rowFor(container, 'pyramid'))).not.toBeNull();
+  });
+
+  it('initFromScene drops the previous provider — fresh rows inherit no stale badges', () => {
+    // The app injects the provider AFTER initFromScene because initFromScene's
+    // clear() resets any prior one. Pin that: re-initializing with a new scene
+    // (before the next provider arrives) must not resurrect the old scene's
+    // failures, neither immediately nor via the per-frame refresh.
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(new THREE.Group(), makeLayeredSceneGraph());
+    const { provider } = makeFailedProvider(['/cloud'], { '/cloud': 'boom' });
+    panel.setFailedLoadsProvider(provider);
+    expect(errorBadge(rowFor(container, 'cloud'))).not.toBeNull();
+
+    panel.initFromScene(new THREE.Group(), makeLayeredSceneGraph());
+    panel.show();
+    perFrameCallbacks(animationController).get('layers-lod-status')!();
+
+    const row = rowFor(container, 'cloud');
+    expect(errorBadge(row)).toBeNull();
+    expect(row?.classList.contains('luxar-layer-row--error')).toBe(false);
+  });
 });
 
 describe('isColormapActive', () => {

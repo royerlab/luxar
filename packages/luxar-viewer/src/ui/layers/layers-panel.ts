@@ -111,8 +111,8 @@ export class LayersPanel {
   private failedLoadsProvider: FailedLoadsProviderPort | null = null;
 
   /**
-   * Cheap change-detector for the failed set (sorted `path:reason` pairs),
-   * mirroring DataMonitor's `lastFailedLoadsSignature`: the per-frame refresh
+   * Cheap change-detector for the failed set (JSON of sorted `[path, reason]`
+   * pairs), mirroring DataMonitor's `lastFailedLoadsSignature`: the per-frame refresh
    * only touches the DOM when the signature changes. `null` is the reset
    * sentinel — no real signature (not even the empty-set `''`) can equal it, so
    * the first comparison after `setFailedLoadsProvider` / `renderList` always
@@ -467,17 +467,17 @@ export class LayersPanel {
    * (`failedPath === layer.path || failedPath.startsWith(layer.path + '/')`), so
    * a failure inside a kind=lod/kind=partition group lights up the group's row.
    * Signature-gated so unchanged frames touch no DOM; the signature folds in
-   * each path's reason (sorted `path:reason`) so a changed reason for a
+   * each path's reason (JSON of sorted `[path, reason]` pairs — unambiguous
+   * even when a reason contains `:` or `|`) so a changed reason for a
    * still-failing path re-triggers the refresh instead of stranding a stale
    * tooltip.
    */
   private updateRowErrorStates(): void {
     const provider = this.failedLoadsProvider;
     const failedPaths = provider?.getFailedPaths() ?? [];
-    const signature = [...failedPaths]
-      .map((p) => `${p}:${provider?.getFailedReason?.(p) ?? ''}`)
-      .sort()
-      .join('|');
+    const signature = JSON.stringify(
+      [...failedPaths].sort().map((p) => [p, provider?.getFailedReason?.(p) ?? ''])
+    );
     if (signature === this.lastFailedLoadsSignature) return;
     this.lastFailedLoadsSignature = signature;
 
