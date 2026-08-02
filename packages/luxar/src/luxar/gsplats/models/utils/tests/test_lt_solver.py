@@ -55,14 +55,20 @@ class TestSolveLowerTriangular:
 
     def test_solve_batched_systems(self) -> None:
         """Test solving batched lower triangular systems."""
+        torch.manual_seed(0)
         batch_size = 4
         d = 3
 
-        # Create batch of lower triangular matrices
+        # Create a batch of distinct, well-conditioned lower triangular
+        # matrices. The diagonal is drawn in [2, 3) so no batch element is ever
+        # near-singular; without this, an unlucky draw near zero makes the
+        # float32 solve residual exceed the tolerance below and the test flakes
+        # (~2% of runs).
         L = torch.zeros(batch_size, d, d, dtype=torch.float32)
         for i in range(batch_size):
-            # Make each matrix different but lower triangular
-            L[i] = torch.tril(torch.randn(d, d) + torch.eye(d))
+            off_diag = torch.tril(torch.randn(d, d), diagonal=-1)
+            diag = torch.diag(2.0 + torch.rand(d))
+            L[i] = off_diag + diag
 
         # Multiple RHS per batch
         b = torch.randn(batch_size, d, 2, dtype=torch.float32)
@@ -256,11 +262,18 @@ class TestCrossVersionCompatibility:
     def test_fallback_behavior(self) -> None:
         """Test fallback behavior across supported PyTorch versions."""
         # This is hard to test directly without mocking, but we can at least
-        # ensure the function works in various scenarios
+        # ensure the function works in various scenarios. Seed and keep the
+        # random case well-conditioned (diagonal in [2, 3)) so the
+        # float32 residual stays inside the tolerance below regardless of the
+        # RNG stream or test ordering.
+        torch.manual_seed(0)
+        rand_L = torch.tril(torch.randn(3, 3), diagonal=-1) + torch.diag(
+            2.0 + torch.rand(3)
+        )
         test_cases = [
             # (L, b) pairs to test
             (torch.eye(2), torch.ones(2, 1)),
-            (torch.tril(torch.randn(3, 3) + torch.eye(3)), torch.randn(3, 2)),
+            (rand_L, torch.randn(3, 2)),
             (
                 torch.tensor([[5.0]], dtype=torch.float32),
                 torch.tensor([[10.0]], dtype=torch.float32),
