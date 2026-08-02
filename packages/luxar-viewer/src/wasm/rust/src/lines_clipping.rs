@@ -562,7 +562,8 @@ pub fn calculate_segment_lengths(
 /// project sharp keeps suppression near `1` and can sum to ~2x body brightness
 /// over a width-sized lens that moves as the camera orbits. The line material
 /// README's "Known limitation" note is the authority here; a true fix needs a
-/// per-frame screen-space suppression (tracked separately).
+/// per-frame screen-space suppression, a design change at odds with the
+/// once-per-commit worker architecture (the trade-off is discussed in #795).
 ///
 /// Only **degree-2** vertices are treated as joints: at a branch point (3+
 /// segments meeting) the quads all overlap near the hub and suppressing would
