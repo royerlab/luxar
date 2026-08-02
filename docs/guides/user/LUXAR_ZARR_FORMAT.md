@@ -242,7 +242,9 @@ Group nodes organize the scene hierarchy and can contain child nodes.
   "opacity": 1.0,           // 0.0-1.0, inherited by children
   "absorption": 1.0,       // volumetric mode's kappa (>= 0, default 1.0; multiplicative)
   "gamma": 1.0,            // 0.1-10.0, per-node gamma correction
-  "intensity": 1.0,        // 0.0-100.0, per-node linear color multiplier (gain)
+  "intensity": 1.0,        // 0.0-100.0, per-node linear color gain — but on a
+                           //   colormapped node this is the scalar display window,
+                           //   not a gain (see Scalar Colormap Attributes)
   "offset": 0.0,           // -10.0-10.0, per-node additive brightness shift (black level)
   "blending_mode": "additive",  // normal, additive, max, opaque, luminous, volumetric — written
                            //   only when explicitly set; unset ⇒ inherited from the
@@ -719,6 +721,22 @@ declared through three attrs on the data node (next to `type`,
 - **`scalar_data_range: [min, max]`** — input range used to normalize
   scalars to `[0, 1]` before the LUT lookup. Required when
   `has_scalars` is true; defaults to `[0, 1]` if omitted.
+
+**`intensity`/`offset` on a colormapped node are the display window, not a
+gain.** When a colormap is active, an authored `intensity`/`offset` defines
+the scalar display *window* (the value→LUT mapping) exactly as the Layers
+panel's range control does — the post-LUT color gain stays at identity, so
+the value is never applied twice. A *non-identity* leaf-authored
+`intensity`/`offset` pair therefore *replaces* `scalar_data_range` as the
+window (`window = [-offset/intensity, (1 - offset)/intensity]`). The
+decision is by value, matching the Layers panel: an explicitly authored
+identity pair (`intensity: 1.0`, `offset: 0.0`) behaves exactly like an
+unauthored one and keeps the `scalar_data_range` window. An ancestor-only
+gain is instead folded onto the declared `scalar_data_range`. This keeps the
+load-time render identical to the post-interaction (Layers-panel) render, and
+mirrors how gsplat nodes treat their `amplitude_data_range`. A direct-color
+node with no colormap still treats `intensity`/`offset` as an ordinary
+post-shading gain.
 - **`colormap: 'viridis' | 'plasma' | ... | 'custom'`** — selects a
   built-in LUT (15+ available) or `'custom'` to enable a user-supplied
   LUT sibling array.

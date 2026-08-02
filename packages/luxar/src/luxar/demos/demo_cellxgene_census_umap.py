@@ -199,8 +199,30 @@ def build_scene(
                 radii=radii,
                 sharpness=np.full(len(positions), 0.6, np.float32),
                 labels=hover_labels,
-                opacity=0.85,
-                intensity=0.2,
+                # Appearance tuned in the viewer's Layers panel and baked back
+                # here. Volumetric emission-absorption is what makes a cloud
+                # this dense readable: its compositing is order-dependent, so
+                # near cells ABSORB the ones behind them and the UMAP lobes
+                # read as depth-ordered structure rather than the flat
+                # order-independent sum that additive (the default)
+                # accumulates. kappa=10 with
+                # POINT_RADIUS=0.05 puts peak per-point optical depth at
+                # tau = kappa * opacity * radius * POINT_CHORD_SCALE ~ 0.16,
+                # so occlusion builds up across overlapping cells instead of
+                # saturating on any single one.
+                # NB volumetric implies back-to-front depth sorting
+                # (`needsDepthSort`), which this ~1M-point level now pays per
+                # camera move; `?depthSort=0` opts out.
+                # `intensity` here is the Layers panel's DISPLAY RANGE control,
+                # which is STORED as intensity/offset (intensity = 1/(max-min),
+                # offset = -min/(max-min)) — so 0.4235 is the window
+                # [0, 2.361]. On this direct-colour node the shader then
+                # applies it as a plain colour gain; it only becomes a
+                # scalar-LUT window on colormapped nodes.
+                opacity=0.39,
+                intensity=0.4235,
+                absorption=10.0,
+                blending_mode="volumetric",
                 # Expose the single cells node in the viewer's Layers panel.
                 # With the substitutive-LOD wrapper this rides onto the
                 # kind=lod group (not the per-level children), so the panel
