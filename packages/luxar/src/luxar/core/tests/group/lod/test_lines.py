@@ -18,6 +18,7 @@ import zarr
 
 from luxar.core.dimensions import Dimensions
 from luxar.core.group.lod.lines import (
+    _indexed_connected_components,
     compute_additive_order_lines,
     identify_polylines,
     make_additive_lod_lines,
@@ -65,6 +66,77 @@ class TestIdentifyPolylines:
         indices = np.array([[0, 1], [2, 3]], dtype=np.uint32)
         polys = identify_polylines(5, "indexed", indices)
         assert len(polys) == 3  # {0,1}, {2,3}, {4}
+
+    def test_indexed_components_are_ordered_by_smallest_vertex(self) -> None:
+        # The edge direction/order used to leave roots at 5 and 2, so sorting
+        # by those incidental union-find roots put {1,2} before {0,5}. Bulk
+        # root hooking defines the deterministic order by component minimum.
+        segments = np.array([[0, 5], [1, 2]], dtype=np.intp)
+        polys = _indexed_connected_components(6, segments)
+        assert [poly.tolist() for poly in polys] == [[0, 5], [1, 2], [3], [4]]
+
+    @pytest.mark.parametrize(
+        ("n_vertices", "segments", "expected"),
+        [
+            (
+                4,
+                np.array([[0, 0], [1, 2], [2, 3]], dtype=np.intp),
+                [[0], [1, 2, 3]],
+            ),
+            (
+                3,
+                np.array([[0, 1], [0, 1], [1, 0], [1, 2]], dtype=np.intp),
+                [[0, 1, 2]],
+            ),
+            (5, np.empty((0, 2), dtype=np.intp), [[0], [1], [2], [3], [4]]),
+        ],
+        ids=["self-loop", "duplicate-and-reversed", "all-isolated"],
+    )
+    def test_indexed_pathological_edges(
+        self,
+        n_vertices: int,
+        segments: np.ndarray,
+        expected: list[list[int]],
+    ) -> None:
+        polys = _indexed_connected_components(n_vertices, segments)
+        assert [poly.tolist() for poly in polys] == expected
+
+    def test_indexed_many_small_components_cover_vertices_once(self) -> None:
+        # Representative ribbon-heavy shape: many short disjoint chains. The
+        # component builder must group in one root-label sort, not rescan all
+        # vertices once per chain.
+        n_components = 50_000
+        vertices_per_component = 3
+        starts = np.arange(n_components, dtype=np.intp) * vertices_per_component
+        segments = np.column_stack(
+            (
+                np.repeat(starts, 2) + np.tile([0, 1], n_components),
+                np.repeat(starts, 2) + np.tile([1, 2], n_components),
+            )
+        )
+        polys = _indexed_connected_components(
+            n_components * vertices_per_component, segments
+        )
+        assert len(polys) == n_components
+        # Every component is a non-overlapping view into one sorted vertex
+        # permutation. Reintroducing one allocation/full scan per component
+        # breaks this invariant even if small functional fixtures still pass.
+        shared_order = polys[0].base
+        assert shared_order is not None
+        assert all(poly.base is shared_order for poly in polys)
+        assert all(not poly.flags.owndata for poly in polys)
+        np.testing.assert_array_equal(polys[0], [0, 1, 2])
+        np.testing.assert_array_equal(
+            polys[-1],
+            [
+                n_components * vertices_per_component - 3,
+                n_components * vertices_per_component - 2,
+                n_components * vertices_per_component - 1,
+            ],
+        )
+        assert sum(int(poly.size) for poly in polys) == (
+            n_components * vertices_per_component
+        )
 
     def test_indexed_requires_indices(self) -> None:
         with pytest.raises(ValueError, match="indices array"):
