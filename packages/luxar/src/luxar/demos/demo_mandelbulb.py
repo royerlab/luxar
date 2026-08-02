@@ -305,6 +305,12 @@ def generate_mandelbulb_volumetric(
                 # bug. Overall optical depth is preserved.
                 absorption=8.0 * 0.0125 * float(np.sqrt(np.pi / np.log(100.0))),
                 intensity=0.025,
+                # Expose the node in the viewer's Layers panel so the
+                # appearance above is live-tunable — in volumetric mode the
+                # panel shows the Absorption (kappa) slider alongside opacity /
+                # display range / gamma / blend, which is how these values were
+                # arrived at in the first place.
+                layer=True,
             )
 
             # Overlay annotations
