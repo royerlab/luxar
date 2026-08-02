@@ -69,8 +69,8 @@ function currentCommitSha(): string {
 
 /**
  * Scenario shapes:
- *  - 'synthetic': bootstrap a tiny zarr, then push a clustered
- *    points/gsplats cloud into the live scene via
+ *  - 'synthetic': boot the viewer with NO dataset, then push a
+ *    clustered points/gsplats cloud into the live scene via
  *    `__luxarDebug.injectSyntheticScene(...)` and orbit-sample.
  *  - 'zarr-orbit': load a real dataset and orbit-sample it.
  *  - 'zarr-ladder': load a real progressive (additive-ladder) dataset
@@ -83,20 +83,28 @@ type ScenarioSpec =
       kind: 'synthetic';
       id: string;
       label: string;
-      /** Lightweight zarr URL used to bootstrap the viewer before injection. */
-      bootstrapUrl: string;
       geometry: 'points' | 'gsplats';
       count: number;
       seed: number;
       blending: string;
       /** Attach the L8 gate probe fields to this scenario's row. */
       l8Probe?: boolean;
+      /**
+       * Gate a hard assertion that at least one depth sort completed during
+       * the orbit window (relaxed on a software rasterizer).
+       */
+      requiresDepthSort?: boolean;
     }
   | {
       kind: 'zarr-orbit';
       id: string;
       label: string;
       url: string;
+      /**
+       * Gate a hard assertion that at least one depth sort completed during
+       * the orbit window (relaxed on a software rasterizer).
+       */
+      requiresDepthSort?: boolean;
     }
   | {
       kind: 'zarr-ladder';
@@ -116,49 +124,47 @@ const DATA_BASE =
   process.env.LUXAR_PERF_DATA_BASE ??
   `http://localhost:${process.env.LUXAR_PERF_DATA_PORT ?? 9000}`;
 
-const BOOTSTRAP_URL = `${DATA_BASE}/datasets/examples/lines_basic_example.luxar.zarr`;
-
 const SCENARIOS: ScenarioSpec[] = [
   {
     kind: 'synthetic',
     id: 'synthetic-gsplats-1M-orbit',
     label: 'synthetic clustered gsplats, 1 M splats, normal blending, 30°/s orbit',
-    bootstrapUrl: BOOTSTRAP_URL,
     geometry: 'gsplats',
     count: 1_000_000,
     seed: 42,
     blending: 'normal',
+    requiresDepthSort: true,
   },
   {
     kind: 'synthetic',
     id: 'synthetic-gsplats-5M-orbit',
     label: 'synthetic clustered gsplats, 5 M splats, normal blending, 30°/s orbit',
-    bootstrapUrl: BOOTSTRAP_URL,
     geometry: 'gsplats',
     count: 5_000_000,
     seed: 42,
     blending: 'normal',
+    requiresDepthSort: true,
   },
   {
     kind: 'synthetic',
     id: 'synthetic-gsplats-10M-orbit',
     label: 'synthetic clustered gsplats, 10 M splats, normal blending, 30°/s orbit (L8 gate probe)',
-    bootstrapUrl: BOOTSTRAP_URL,
     geometry: 'gsplats',
     count: 10_000_000,
     seed: 42,
     blending: 'normal',
     l8Probe: true,
+    requiresDepthSort: true,
   },
   {
     kind: 'synthetic',
     id: 'synthetic-points-5M-orbit',
     label: 'synthetic clustered points, 5 M points, normal blending, 30°/s orbit (symmetry check)',
-    bootstrapUrl: BOOTSTRAP_URL,
     geometry: 'points',
     count: 5_000_000,
     seed: 42,
     blending: 'normal',
+    requiresDepthSort: true,
   },
   {
     kind: 'zarr-ladder',
@@ -171,6 +177,7 @@ const SCENARIOS: ScenarioSpec[] = [
     id: 'matrixcity-orbit',
     label: 'gsplats_interop_sog_matrixcity.luxar.zarr (168-leaf tiles), 30°/s orbit',
     url: `${DATA_BASE}/datasets/demos/gsplats_interop_sog_matrixcity.luxar.zarr`,
+    requiresDepthSort: true,
   },
 ];
 
@@ -645,23 +652,35 @@ function l8Classify(raw: OrbitSamplingRaw): {
 }
 
 /**
- * Synthetic scenario: bootstrap a tiny zarr, hide its geometry, inject
- * the synthetic cloud, settle, place the camera on a deterministic
- * orbit shell, then orbit-sample.
+ * Synthetic scenario: boot the viewer with NO dataset, inject the
+ * synthetic cloud directly via the debug ports (which exist at init
+ * regardless of any loaded dataset), settle, place the camera on a
+ * deterministic orbit shell, then orbit-sample. Self-contained — needs
+ * no external zarr, so it never silently skips on a fresh checkout.
  */
 async function measureSyntheticScenario(
   page: Page,
   scn: Extract<ScenarioSpec, { kind: 'synthetic' }>
 ): Promise<ScenarioResult> {
   const notes: string[] = [];
-  await page.goto(`/?src=${scn.bootstrapUrl}&renderer=${BACKEND}&debug&dpr=1`, {
+  await page.goto(`/?renderer=${BACKEND}&debug&dpr=1`, {
     timeout: 300_000,
   });
   await waitForLuxarReady(page, 120_000);
 
-  // Hide every bootstrap geometry node BEFORE injection so the
-  // synthetic cloud is the only rendered workload (line-bench parity:
-  // hiding, not removing, keeps loader bookkeeping intact).
+  // The no-dataset boot routes an empty `src` to "must-browse" and opens
+  // the DatasetBrowser modal; dismiss it via its own close button so its
+  // backdrop-blurred overlay doesn't composite over the canvas during
+  // sampling and inflate the synthetic frame times.
+  await page.evaluate(() => {
+    document.querySelector<HTMLElement>('.luxar-dataset-browser__close-btn')?.click();
+  });
+
+  // Hide any pre-existing geometry nodes BEFORE injection so the
+  // synthetic cloud is the only rendered workload. With a no-dataset
+  // boot there is normally nothing to hide; kept as a harmless,
+  // future-proof guard (line-bench parity: hiding, not removing, keeps
+  // loader bookkeeping intact).
   const injected = await page.evaluate(
     async (spec: { type: 'points' | 'gsplats'; count: number; seed: number; blending: string }) => {
       const dbg = (window as unknown as { __luxarDebug?: any }).__luxarDebug;
@@ -693,9 +712,10 @@ async function measureSyntheticScenario(
   }
 
   // Deterministic orbit shell: the synthetic cloud is clustered inside
-  // ~[-100, 100]^3 around the origin, but the bootstrap zarr framed the
-  // camera for ITS bounds. Re-aim at the origin from a fixed distance
-  // so every run (and every count) starts the orbit from the same pose.
+  // ~[-100, 100]^3 around the origin, but the no-dataset boot leaves the
+  // camera at its default empty-scene framing. Re-aim at the origin from
+  // a fixed distance so every run (and every count) starts the orbit
+  // from the same pose.
   await page.evaluate(() => {
     const dbg = (window as unknown as { __luxarDebug?: any }).__luxarDebug;
     const pose = dbg.app.getCameraPose();
@@ -1091,14 +1111,17 @@ for (const scn of SCENARIOS) {
     // Skip-if-404: an absent demo dataset is an environment condition,
     // not a regression. Recorded in the JSON as a skipped row so the
     // diff shows the gap instead of silently omitting the scenario.
-    const probeUrl = scn.kind === 'synthetic' ? scn.bootstrapUrl : scn.url;
-    if (!(await urlExists(probeUrl))) {
+    // ONLY zarr scenarios have an external dataset — synthetic scenarios
+    // build their geometry entirely in JS via the debug ports and must
+    // NEVER silently skip on a fresh checkout (that was the whole point
+    // of issue #705), so they bypass this guard.
+    if (scn.kind !== 'synthetic' && !(await urlExists(scn.url))) {
       const row = makeSkippedResult(scn, 'dataset not reachable', [
-        `dataset URL not reachable: ${probeUrl}`,
+        `dataset URL not reachable: ${scn.url}`,
       ]);
       mergeScenarioRow(outPath, row);
       logScenario(row);
-      test.skip(true, `dataset not reachable: ${probeUrl}`);
+      test.skip(true, `dataset not reachable: ${scn.url}`);
       return;
     }
 
@@ -1152,5 +1175,22 @@ for (const scn of SCENARIOS) {
     ).toBeGreaterThanOrEqual(frameFloor);
     expect(result.gpuRenderer, `${scn.id}: empty GPU renderer string`).not.toBe('');
     expect(result.elementCount, `${scn.id}: zero drawn elements`).toBeGreaterThan(0);
+
+    // A scenario that requires depth sorting must complete at least one
+    // sort round-trip during the orbit window. The profiler's sort count
+    // stays 0 when the scheduler never dispatches or the SortWorker never
+    // returns within the window — the "green depth-sort benchmark that
+    // actually measured UNSORTED rendering" failure this guards against.
+    // Relaxed on a software rasterizer for the same reason as the
+    // frame-count floor: one multi-million-element frame can take seconds
+    // there, so the orbit may not cross the re-sort threshold within the
+    // sample window (recorded as a note).
+    const requiresDepthSort = 'requiresDepthSort' in scn && scn.requiresDepthSort === true;
+    if (requiresDepthSort && !result.skipped && !result.softwareRenderer) {
+      expect(
+        result.depthSort?.sortCount ?? 0,
+        `${scn.id}: requires depth sorting but no sort completed during the orbit window`
+      ).toBeGreaterThan(0);
+    }
   });
 }
