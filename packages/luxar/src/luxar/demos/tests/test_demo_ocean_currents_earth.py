@@ -2,8 +2,8 @@
 
 The advection maths and the polyline index construction are where this demo can
 be silently wrong (a ribbon wandering onto land, a segment bridging two
-unrelated ribbons, a Lines node over the viewer's vertex ceiling), so those are
-pinned here. No network and no IO.
+unrelated ribbons, a Lines node overflowing the viewer's per-segment element
+texture), so those are pinned here. No network and no IO.
 """
 
 from __future__ import annotations
@@ -12,7 +12,9 @@ import numpy as np
 import pytest
 
 from luxar.demos.demo_ocean_currents_earth import (
-    MAX_LINE_VERTICES,
+    MAX_GLOBE_POINTS_PER_NODE,
+    MAX_LINE_VERTICES_PER_NODE,
+    N_GLOBE,
     N_SEEDS,
     N_STEPS,
     RADIUS,
@@ -321,13 +323,35 @@ def test_segment_indices_reject_degenerate_paths() -> None:
         polyline_segment_indices(4, 1)
 
 
-def test_configured_budget_respects_the_viewer_vertex_ceiling() -> None:
-    """N_SEEDS x (N_STEPS+1) must stay under the loader's 2**24 Set limit.
+def test_per_node_budget_stays_under_the_segment_texture_bound() -> None:
+    """The per-part vertex budget must stay under one Lines node's segment cap.
 
-    Above it the Lines node renders nothing at all (royerlab/luxar#1049), so this
-    guards the demo's own configuration, not just the helper.
+    The viewer packs per-segment line data into an element texture at 6 texels
+    per segment, with the texture width capped at ELEMENT_TEXTURE_MAX_WIDTH=4096
+    texels (floor(4096/6)*6 = 4092 usable), so a single Lines node holds at most
+    floor(4092 * maxTextureSize / 6) = 682 * maxTextureSize segments — 2,793,472
+    on the conservative 4096-class GPU. Exceeding it clamps the tail silently, so
+    the per-part budget (measured in VERTICES; segments = V-1 per chain are always
+    fewer) must sit under that floor. And the demo's total vertex count has to
+    exceed the budget, or partitioning would never engage.
     """
-    assert N_SEEDS * (N_STEPS + 1) <= MAX_LINE_VERTICES
+    assert MAX_LINE_VERTICES_PER_NODE <= 682 * 4096  # 2,793,472 segment floor
+    assert N_SEEDS * (N_STEPS + 1) > MAX_LINE_VERTICES_PER_NODE  # partitioning engages
+
+
+def test_per_node_globe_budget_stays_under_the_point_texture_bound() -> None:
+    """The per-part point budget must stay under one Points node's cap.
+
+    Points pack at 3 texels each into the same element texture, so a single
+    Points node holds at most floor(4096/3) * maxTextureSize = 1365 *
+    maxTextureSize points — 5,591,040 on the conservative 4096-class GPU. The
+    8M-point globe exceeds that (the silently clamped tail is the Fibonacci
+    lattice's southern cap), so the demo partitions it; the per-part budget
+    must sit under the floor, and the total must exceed the budget or
+    partitioning would never engage.
+    """
+    assert MAX_GLOBE_POINTS_PER_NODE <= 1365 * 4096  # 5,591,040 point floor
+    assert N_GLOBE > MAX_GLOBE_POINTS_PER_NODE  # partitioning engages
 
 
 # --------------------------------------------------------------------- seeding
