@@ -226,6 +226,74 @@ def test_annotate_transparent_leaf_writes_no_energy_stamp(tmp_path: Path) -> Non
     )
 
 
+def test_annotate_rerun_erases_stale_energy_stamp(tmp_path: Path) -> None:
+    """A leaf the build leaves unstamped (zero effective energy) may still
+    carry a stale ``energy_fraction_cum`` from an annotate run under the old
+    raw-amplitude convention. A re-run must ERASE it (keeping the other
+    lod_stats keys) and overwrite the stale ``reference_energy`` — not skip
+    silently and preserve the wrong values."""
+    data = _make_rgba_gsplat(n=200, seed=3)
+    data = GSplatData(
+        centers=data.centers,
+        amplitudes=data.amplitudes,
+        cholesky_factors=data.cholesky_factors,
+        colors=np.concatenate(
+            [np.asarray(data.colors)[:, :3], np.zeros((200, 1), dtype=np.float32)],
+            axis=1,
+        ),
+    )
+    params = RecipeParams(n_lods=4, device="cpu", seed=0)
+    out = tmp_path / "stale.gsplats.zarr"
+    build_recipe(data, "stream", params).save(out)
+
+    # Simulate the old raw-amplitude annotate: a wrong e(k) on a sub-LOD the
+    # build leaves unstamped, and a wrong (raw-convention) leaf w.
+    root = zarr.open_group(str(out), mode="r+")
+    sub = root["additive_0"]
+    sub.attrs["lod_stats"] = {
+        **dict(sub.attrs.get("lod_stats", {})),
+        "energy_fraction_cum": 0.7,
+    }
+    root.attrs["level_stats"] = {
+        **dict(root.attrs.get("level_stats", {})),
+        "reference_energy": 123.0,
+    }
+
+    annotate_quality_store(out, device="cpu")
+
+    root = zarr.open_group(str(out), mode="r")
+    sub_stats = root["additive_0"].attrs["lod_stats"]
+    assert "energy_fraction_cum" not in sub_stats
+    assert "lod_method" in sub_stats  # other keys preserved
+    # The stale w is overwritten with the (zero) alpha-effective total.
+    assert root.attrs["level_stats"]["reference_energy"] == pytest.approx(0.0)
+
+
+def test_annotate_rerun_repairs_stale_reference_energy(tmp_path: Path) -> None:
+    """A standalone leaf's stale ``reference_energy`` (the old raw-amplitude
+    convention, ~3× off on classical RGBA imports) must be REPAIRED by a
+    re-run — the setdefault-only semantics would have preserved it forever."""
+    data = _make_rgba_gsplat(n=200, seed=5)
+    params = RecipeParams(n_lods=4, device="cpu", seed=0)
+    out = tmp_path / "stale_w.gsplats.zarr"
+    build_recipe(data, "stream", params).save(out)
+
+    built = _collect_quality_attrs(out)
+    built_w = built["/"]["level_stats.reference_energy"]
+
+    root = zarr.open_group(str(out), mode="r+")
+    root.attrs["level_stats"] = {
+        **dict(root.attrs["level_stats"]),
+        "reference_energy": built_w * 3.0,
+    }
+
+    annotate_quality_store(out, device="cpu")
+    annotated = _collect_quality_attrs(out)
+    assert annotated["/"]["level_stats.reference_energy"] == pytest.approx(
+        built_w, rel=5e-2
+    )
+
+
 def test_annotate_e_only_skips_quality(levels_store: Path) -> None:
     """Default (cheap) mode stamps e(k)+w but never quality."""
     _strip_quality_attrs(levels_store)

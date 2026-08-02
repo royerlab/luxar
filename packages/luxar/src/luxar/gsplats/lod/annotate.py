@@ -164,6 +164,20 @@ def _merge_attr_dict(
     group.attrs[key] = merged
 
 
+def _remove_attr_key(group: zarr.Group, key: str, name: str, *, dry_run: bool) -> None:
+    """Remove ``name`` from the ``group.attrs[key]`` dict, keeping other keys.
+
+    A re-annotation must ERASE a stale stamp the current data no longer earns
+    (e.g. one written by an older annotate under the raw-amplitude convention
+    on a leaf the build path leaves unstamped) — merging alone would silently
+    preserve the wrong value."""
+    if dry_run:
+        return
+    existing = group.attrs.get(key)
+    if isinstance(existing, dict) and name in existing:
+        group.attrs[key] = {k: v for k, v in existing.items() if k != name}
+
+
 # ── the walk ────────────────────────────────────────────────────────────────
 
 
@@ -177,6 +191,7 @@ def _annotate_leaf(
     decoder: Any,
     report: AnnotateReport,
     *,
+    is_lod_child: bool = False,
     dry_run: bool,
 ) -> None:
     """Stamp ``energy_fraction_cum`` per sub-LOD + ``reference_energy`` on one
@@ -201,6 +216,7 @@ def _annotate_leaf(
 
     total_raw = float(sum(raw_energies))
     n_total = int(sum(counts))
+    e_cum: Optional[List[Optional[float]]]
     if total_raw > 0.0:
         cum = np.cumsum(raw_energies)
         # Per sub-LOD cumulative fraction. Mirror the build (additive.py's
@@ -209,9 +225,7 @@ def _annotate_leaf(
         # so mark a non-finite fraction with None (no stamp), NOT the 0.0 that
         # `min(1, max(0, nan))` would fabricate.
         fracs = [float(c / total_raw) for c in cum]
-        e_cum: List[Optional[float]] | None = [
-            (min(1.0, max(0.0, f)) if np.isfinite(f) else None) for f in fracs
-        ]
+        e_cum = [(min(1.0, max(0.0, f)) if np.isfinite(f) else None) for f in fracs]
     elif n_total == 0:
         # Genuinely empty leaf: the build stamps a trivial e(k)=1.0 (additive.py
         # n==0 branch); mirror it so annotate reproduces the build byte-for-byte.
@@ -228,18 +242,32 @@ def _annotate_leaf(
         # rather than being left unstamped — mirror it exactly.
         reference_energy = 0.0
 
-    if e_cum is not None:
-        for sub, e in zip(sub_groups, e_cum):
-            if e is None:  # non-finite fraction: skip, matching the build.
-                continue
+    for i, sub in enumerate(sub_groups):
+        e = e_cum[i] if e_cum is not None else None
+        if e is None:
+            # The build path leaves this sub-LOD unstamped (zero effective
+            # energy / non-finite fraction) — erase any stale stamp a previous
+            # annotate run wrote (e.g. under the old raw-amplitude convention)
+            # so a re-run repairs the store instead of preserving it.
+            _remove_attr_key(sub, "lod_stats", "energy_fraction_cum", dry_run=dry_run)
+        else:
             _merge_attr_dict(
                 sub, "lod_stats", {"energy_fraction_cum": e}, dry_run=dry_run
             )
-    # The ladder's own total is the FALLBACK w (setdefault semantics): a lod
-    # group's quality pass overwrites its children with the group-consistent
-    # finest energy — matching make_additive_lod / make_substitutive_lod.
-    existing = group.attrs.get("level_stats", {})
-    if not (isinstance(existing, dict) and "reference_energy" in existing):
+    # The ladder's own total IS the build-time w for a standalone leaf or a
+    # partition part, so OVERWRITE it — a re-run must repair a stale value
+    # (e.g. the old raw-amplitude convention, ~3× off on classical RGBA
+    # imports). A DIRECT lod-group child is the one exception: its build-time
+    # w is the group-consistent FINEST energy (make_additive_lod /
+    # make_substitutive_lod), which the e-only pass cannot compute — keep
+    # setdefault semantics there (the with_quality pass overwrites it with
+    # the correct group value).
+    if is_lod_child:
+        existing = group.attrs.get("level_stats", {})
+        write_w = not (isinstance(existing, dict) and "reference_energy" in existing)
+    else:
+        write_w = True
+    if write_w:
         _merge_attr_dict(
             group,
             "level_stats",
@@ -346,6 +374,7 @@ def _annotate_node(
     max_pair_splats: int,
     device: str,
     dry_run: bool,
+    is_lod_child: bool = False,
 ) -> None:
     kind = group.attrs.get("kind")
 
@@ -362,6 +391,7 @@ def _annotate_node(
                 max_pair_splats=max_pair_splats,
                 device=device,
                 dry_run=dry_run,
+                is_lod_child=True,
             )
         if not with_quality or n == 0:
             return
@@ -415,7 +445,9 @@ def _annotate_node(
             )
         return
 
-    _annotate_leaf(group, root, decoder, report, dry_run=dry_run)
+    _annotate_leaf(
+        group, root, decoder, report, is_lod_child=is_lod_child, dry_run=dry_run
+    )
 
 
 def annotate_quality_store(
