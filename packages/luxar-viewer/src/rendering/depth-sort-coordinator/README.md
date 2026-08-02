@@ -23,6 +23,7 @@ The main facade `rendering/depth-sort-coordinator.ts` owns:
 - Single-in-flight-per-node sort rule + queue-exactly-one re-sort
 - Ordering application via `writeSortedIndexOrdering` (element-storage)
 - Per-frame camera-motion re-sort scheduler (angle/translation thresholds)
+- Offline-capture entry point (`resortForCapture` / `isCaptureQuiescent`) — pose-fresh sort + drain to quiescence when the rAF loop is stopped
 - Blending-mode switch hook (TO sorted: reprocess; AWAY: release)
 - Node release (disposal / LOD demotion)
 
@@ -216,6 +217,18 @@ Large orderings (>1M indices = 4 MB) apply **chunked** across frames on the clas
        - Translation: `abs(offset - lastSortOffset) > translationFraction × radius`
      - If moved: `scheduleSort(mesh, nodeId)`
 5. **Assign global renderOrder** — `assignGlobalRenderOrder()` (see render-order.ts below)
+
+### Offline Capture (resortForCapture)
+
+The per-frame scheduler runs ONLY inside the rAF loop. Offline capture (the gallery orbit-video pass) STOPS that loop, moves the camera per frame, and renders synchronously — so the scheduler never fires and every frame would be filmed with the back-to-front permutation frozen at the pre-orbit pose (order-dependent modes: normal / volumetric).
+
+`resortForCapture(maxWaitMs = 3000)` (exposed as `__luxarDebug.resortDepthOrderingForCapture`) drives the ordering by hand for the current pose:
+
+1. FORCE a fresh sort on every eligible node (`isEffectivelyVisible` + `hasCommittedData` + `isLiveOrderDependent`) — offline can afford a full sort per frame, so the ordering is exact for THIS pose, not only when a threshold trips
+2. Run the cross-node renderOrder pass + pump chunked applies via `evaluateDepthSortPerFrame`
+3. Drain worker sorts + chunked applies to quiescence (`isCaptureQuiescent`: no node `inFlight` / `resortQueued` / `hasPendingSortedIndexOrderingApply`), yielding a macrotask (`setTimeout(0)`) per iteration, bounded by `maxWaitMs` so a wedged worker can never hang the capture
+
+It **suppresses the `requestRender` wake** for the duration (depth-counted / reentrancy-safe via `captureSuppressDepth` / `requestRenderBeforeCapture`; only the OUTERMOST call snapshots + restores) so draining can't re-arm the loop the capture deliberately stopped. **No-op** when depth sorting is disabled, no order-dependent node exists, or the worker is unavailable (the pure-main-thread renderOrder pass still runs).
 
 ### Blending-Mode Switch Hook (noteDepthSortBlendingModeSwitch)
 

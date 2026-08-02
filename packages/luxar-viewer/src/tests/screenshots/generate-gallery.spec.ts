@@ -276,7 +276,8 @@ async function positionForOrbitUp(page: any, up: string): Promise<void> {
     if (!cam || !c?.getFocusTarget) return;
     const t = c.getFocusTarget();
     const r = Math.hypot(cam.position.x - t.x, cam.position.y - t.y, cam.position.z - t.z) || 1;
-    const U = u === 'x' ? { x: 1, y: 0, z: 0 } : u === 'z' ? { x: 0, y: 0, z: 1 } : { x: 0, y: 1, z: 0 };
+    const U =
+      u === 'x' ? { x: 1, y: 0, z: 0 } : u === 'z' ? { x: 0, y: 0, z: 1 } : { x: 0, y: 1, z: 0 };
     const B = u === 'z' ? { x: 0, y: 1, z: 0 } : { x: 0, y: 0, z: 1 };
     cam.position.set(t.x - r * B.x, t.y - r * B.y, t.z - r * B.z);
     cam.up.set(U.x, U.y, U.z);
@@ -666,11 +667,7 @@ async function autoExpose(page: any): Promise<number> {
  * render one frame synchronously, and screenshot it — exactly the still-capture
  * path that already works. Returns the number of frames written to `framesDir`.
  */
-async function captureOrbitFrames(
-  page: any,
-  framesDir: string,
-  demo?: DemoEntry
-): Promise<number> {
+async function captureOrbitFrames(page: any, framesDir: string, demo?: DemoEntry): Promise<number> {
   // Timelapse warm-up: for 4D time-series, PLAY the time dim a couple of cycles
   // first so the slice cache is primed (the built-in t+1 prefetch warms the next
   // timepoint), then we step it deterministically during capture. Returns the
@@ -731,7 +728,8 @@ async function captureOrbitFrames(
     // the other two axes (A,B). Default 'y' reproduces the original XZ yaw. For a
     // subject whose long/vertical axis is world-Z (e.g. a supine CT body), 'z'
     // gives a proper turntable instead of an in-plane roll.
-    const U = up === 'x' ? { x: 1, y: 0, z: 0 } : up === 'z' ? { x: 0, y: 0, z: 1 } : { x: 0, y: 1, z: 0 };
+    const U =
+      up === 'x' ? { x: 1, y: 0, z: 0 } : up === 'z' ? { x: 0, y: 0, z: 1 } : { x: 0, y: 1, z: 0 };
     const A = up === 'x' ? { x: 0, y: 1, z: 0 } : { x: 1, y: 0, z: 0 };
     const B = up === 'z' ? { x: 0, y: 1, z: 0 } : { x: 0, y: 0, z: 1 };
     const dot = (p: any, q: any) => p.x * q.x + p.y * q.y + p.z * q.z;
@@ -776,7 +774,7 @@ async function captureOrbitFrames(
       }
     }
     await page.evaluate(
-      ({ idx, n, amp }: { idx: number; n: number; amp: number }) => {
+      async ({ idx, n, amp }: { idx: number; n: number; amp: number }) => {
         const debug = (window as any).__luxarDebug;
         const o = (window as any).__orbit;
         // Guard: a mid-run reload would wipe these; skip the frame rather than
@@ -797,6 +795,12 @@ async function captureOrbitFrames(
         cam.up.set(o.U.x, o.U.y, o.U.z);
         cam.lookAt(o.tx, o.ty, o.tz);
         cam.updateMatrixWorld();
+        // The orbit stopped the rAF loop, so the per-frame depth-sort scheduler
+        // is dead — re-sort depth-ordered nodes for THIS pose before rendering,
+        // or every frame would show the permutation frozen at the pre-orbit pose
+        // (order-dependent modes: normal / volumetric). Offline, so a full sort
+        // per frame is affordable.
+        await debug.resortDepthOrderingForCapture?.();
         debug.postProcessing?.render?.(); // synchronous render with the new camera
       },
       { idx: i, n: ORBIT_FRAMES, amp: ampRad }

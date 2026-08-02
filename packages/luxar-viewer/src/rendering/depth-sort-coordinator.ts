@@ -158,6 +158,15 @@ let getProfiler: (() => UpdateProfiler | null) | null = null;
 let depthSortEnabled = true;
 /** One-shot flag for the SortWorker-unavailable error (see noteDepthSortCommit). */
 let warnedWorkerUnavailable = false;
+/**
+ * Reentrancy guard for {@link resortForCapture}'s frame-request suppression.
+ * The offline capture nulls `requestRender` so draining can't re-arm the rAF
+ * loop it stopped; a depth counter ensures only the OUTERMOST capture call
+ * snapshots and restores it, so an overlapping/nested call can never strand
+ * `requestRender` at null.
+ */
+let captureSuppressDepth = 0;
+let requestRenderBeforeCapture: (() => void) | null = null;
 const nodeStates = new Map<string, NodeSortState>();
 
 /**
@@ -904,6 +913,104 @@ export function evaluateDepthSortPerFrame(): void {
   }
 
   assignGlobalRenderOrder();
+}
+
+/**
+ * True when the depth-sort subsystem has settled: no tracked node has a
+ * sort RPC outstanding (`inFlight`), a re-sort queued behind one
+ * (`resortQueued`), or a chunked ordering apply still streaming into its
+ * inactive buffer (`hasPendingSortedIndexOrderingApply`). This is the
+ * termination condition {@link resortForCapture} drains toward — while
+ * ANY of those hold, the drawn permutation is not yet the pose-fresh one.
+ * Module-private: the drain loop is the only caller.
+ */
+function isCaptureQuiescent(): boolean {
+  for (const state of nodeStates.values()) {
+    if (state.inFlight || state.resortQueued) return false;
+    const geometry = state.mesh.geometry as THREE.InstancedBufferGeometry | undefined;
+    if (geometry && hasPendingSortedIndexOrderingApply(geometry)) return false;
+  }
+  return true;
+}
+
+/**
+ * Produce a fresh, fully-settled depth ordering for the CURRENT camera
+ * pose and return only once it is drawn — the offline-capture entry point.
+ *
+ * WHY this exists: the Phase-3 per-frame scheduler
+ * ({@link evaluateDepthSortPerFrame}) is wired ONLY as an
+ * AnimationController per-frame callback, so it runs exclusively inside
+ * the rAF loop. Offline capture (the gallery orbit-video pass) deliberately
+ * STOPS that loop, then per frame moves the camera and renders
+ * synchronously. With the loop dead the scheduler never fires: across the
+ * whole orbit there are zero re-sorts and zero cross-node renderOrder
+ * updates, so any order-dependent node (`normal` / `volumetric`) is filmed
+ * with the back-to-front permutation frozen at the pre-orbit pose. This
+ * helper drives the scheduler + worker round-trip + chunked apply by hand
+ * so each captured frame is ordered for its own pose.
+ *
+ * It is a NO-OP (returns as soon as it observes quiescence) when depth sort
+ * is disabled, no order-dependent node exists, or nothing is pending. It
+ * also degrades gracefully when the SortWorker is unavailable: the
+ * cross-node renderOrder pass inside `evaluateDepthSortPerFrame` is pure
+ * main-thread and still runs, and `scheduleSort` guards `!api` itself, so
+ * no fresh sort is dispatched but the renderOrder assignment is still
+ * refreshed for the pose.
+ *
+ * `maxWaitMs` bounds the drain so a crashed / wedged worker can never hang
+ * the capture — the loop exits and the frame is captured with whatever
+ * ordering is current.
+ */
+export async function resortForCapture(maxWaitMs = 3000): Promise<void> {
+  // The capture stopped the rAF loop on purpose; `requestRender` is wired
+  // to `animationController.startAnimation()`, and the sort resolve/pump
+  // paths call `requestRender?.()`. Suppress it for the duration so
+  // draining (which we drive ourselves) can't silently re-arm the frozen
+  // loop. Safe offline: there are no concurrent commits to lose a frame
+  // request from. The suppression is depth-counted / reentrancy-safe: this
+  // helper is exposed on `__luxarDebug`, so an overlapping (nested) call
+  // could otherwise snapshot `null` and restore `null` permanently, wedging
+  // the render loop forever. Only the OUTERMOST call snapshots and restores.
+  if (captureSuppressDepth === 0) requestRenderBeforeCapture = requestRender;
+  captureSuppressDepth++;
+  requestRender = null;
+  try {
+    // Cross-node renderOrder pass + pump any pending chunked applies +
+    // per-frame re-sort triggers, all for the current pose.
+    evaluateDepthSortPerFrame();
+
+    // FORCE a fresh sort on every eligible node — offline capture can
+    // afford a full sort per frame, so the ordering is exact for THIS pose
+    // rather than only when a per-frame threshold happens to trip.
+    // scheduleSort already queues a re-sort if one is in flight.
+    if (depthSortEnabled && getCamera?.() && api) {
+      for (const [nodeId, state] of nodeStates) {
+        const mesh = state.mesh;
+        if (!isEffectivelyVisible(mesh)) continue;
+        if (!hasCommittedData(mesh)) continue;
+        if (!isLiveOrderDependent(liveBlendingMode(mesh))) continue;
+        scheduleSort(mesh, nodeId);
+      }
+    }
+
+    // Nothing to wait for (disabled / no order-dependent node / worker
+    // unavailable): return before opening the drain loop.
+    if (isCaptureQuiescent()) return;
+
+    // Drain to quiescence, bounded by maxWaitMs. Each iteration yields a
+    // macrotask (setTimeout(0)) so worker resolutions land, then pumps one
+    // chunked-apply slice and re-asserts renderOrder via
+    // evaluateDepthSortPerFrame.
+    const start = performance.now();
+    while (performance.now() - start < maxWaitMs) {
+      await new Promise<void>((r) => setTimeout(r, 0));
+      evaluateDepthSortPerFrame();
+      if (isCaptureQuiescent()) return;
+    }
+  } finally {
+    captureSuppressDepth--;
+    if (captureSuppressDepth === 0) requestRender = requestRenderBeforeCapture;
+  }
 }
 
 /**
