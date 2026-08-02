@@ -1,10 +1,11 @@
 # Viewer Build & Quality Scripts
 
 Developer scripts that sit outside `src/` — invoked by `pnpm` commands, CI,
-and humans pasting perf tables into commit bodies. Five files, five jobs:
-compile the Rust→WASM module, sanity-check the embeddable library bundle,
-audit JSDoc coverage on the TS source, keep the pnpm security pins
-single-sourced, and diff two perf-bench JSON captures into a Markdown table.
+and humans pasting perf tables into commit bodies. Five jobs across six
+files: compile the Rust→WASM module, sanity-check the embeddable library
+bundle, audit JSDoc coverage on the TS source, keep the pnpm security pins
+single-sourced, and diff two perf-bench JSON captures into a Markdown table
+(the last of which is unit-tested).
 
 ## Contents
 
@@ -14,7 +15,9 @@ scripts/
 ├── check-lib-exports.mjs     # Post-build sanity check on dist/lib/ (pnpm build:lib:check)
 ├── check-jsdoc-coverage.ts   # JSDoc coverage report over src/*.ts
 ├── check-overrides.mjs       # pnpm overrides single-source guard (pnpm check:overrides)
-└── perf-diff.mjs             # Markdown delta table from two perf-bench JSON files
+├── perf-diff.mjs             # Markdown delta table from two perf-bench JSON files
+├── perf-diff.test.mjs        # vitest unit tests for perf-diff's buildPerfDiff()
+└── perf/                     # perf-bench capture fixtures / helpers
 ```
 
 ## Build
@@ -107,11 +110,35 @@ pnpm check:overrides   # → node scripts/check-overrides.mjs   (also inside pnp
 ### `perf-diff.mjs`
 
 Takes two JSON files produced by `src/tests/e2e/line-perf-bench.spec.ts`
-and prints a Markdown delta table suitable for pasting into a commit body
-or PR description. Joins scenarios on `${scenarioId}/${backend}`, marks
-NEW / DROPPED rows when a key only appears on one side, and tags any row
-that moves ≥5% with 🟢 (faster) or 🔴 (slower). Emits a separate GPU-time
-table when at least one scenario has `gpu.supported === true`.
+or `src/tests/e2e/gsplat-perf-bench.spec.ts` and prints a Markdown delta
+table suitable for pasting into a commit body or PR description. Joins
+scenarios on `${scenarioId}/${backend}`, marks NEW / DROPPED rows when a
+key only appears on one side, and tags any row that moves ≥5% with 🟢
+(faster) or 🔴 (slower). Emits a separate GPU-time table when at least
+one scenario has `gpu.supported === true`.
+
+Beyond the JS frame-timing and GPU-time tables, it emits additional
+sections for the gsplat-bench campaign metrics — each shown ONLY when at
+least one scenario (on either side) carries the field (lower is better
+throughout; a missing/null metric renders `—`, never a phantom `0.0%`):
+
+- **Depth-sort stages** — per scenario, the worker-stage medians
+  (`depthSort.kernelMsMedian` / `queueMsMedian` / `boundaryMsMedian`,
+  all optional) and end-to-end sort latency
+  (`depthSort.sortLatencyMedianMs` / `sortLatencyP95Ms`, may be null).
+  Only the columns some scenario actually carries are shown.
+- **L8 sort-tail (p99)** — `sortAdjacentP99Ms` and `idleOrbitP99Ms`
+  (top-level; present on the 10M scenario only, may be null).
+- **Ladder load** — `ladder.wallMsToLadderComplete` (visible-human
+  ladder scenario only). When `ladder.observedGrowth` is `false` the
+  wall time is a lower bound, not a measurement: the cell is marked
+  `(lb)` and no delta is computed for that row.
+
+The markdown-building logic is the exported pure function
+`buildPerfDiff(base, next)` (unit-tested in `perf-diff.test.mjs`); all
+CLI behaviour runs inside `main()`, which only executes when the script
+is invoked directly (standard ESM main-module guard), so the module can
+be imported without side effects.
 
 The `api` column appends ` (webgl-bk)` when a WebGPURenderer run fell
 back to its internal WebGL2 backend — otherwise that fallback would look
