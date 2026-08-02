@@ -99,7 +99,12 @@ def build_scene(scene_key: str = "hornedlizard") -> Path:
     src = cached_download(f"{BASE_URL}/{spec['file']}", DEMO_NAME, spec["file"])
     cache_file = src.with_suffix(".gsplats.zarr")
     # Small scans → a streaming ladder (geometric ~14k → doubling) gives fast
-    # first paint without tiling; the first chunk carries most of the energy.
+    # first paint without tiling. The first ~14k chunk paints coarse structure
+    # carrying only ~34% of the default horned-lizard scan's energy (measured);
+    # later chunks supply most of the detail (cumulative energy reaches ~1.0 by
+    # the ~56k cut, though the ladder continues to all ~786k splats). The 14k
+    # breakpoint is a first-paint budget, not a quality-preserving cut —
+    # re-measure before reusing it on other assets.
     build_gsplats_cache(
         src,
         cache_file,
