@@ -12,6 +12,7 @@ from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.utils.alpha import (
     ALPHA_CLAMP,
     alpha_to_optical_depth,
+    apply_alpha_to_amplitudes,
     effective_amplitudes,
     optical_depth_to_alpha,
 )
@@ -104,3 +105,47 @@ class TestEffectiveAmplitudes:
         colors = np.array([[65535, 0, 0, 65535]], dtype=np.uint16)
         data = self._leaf(amps, colors)
         assert np.allclose(effective_amplitudes(data), [2.0], atol=1e-6)
+
+
+class TestApplyAlphaToAmplitudes:
+    """Direct tests on the shared helper both the object path
+    (``effective_amplitudes``) and the annotate store path delegate to — the
+    single source of truth for the ``A·α`` convention (guards the extracted
+    logic against silent drift)."""
+
+    def test_none_colors_is_identity(self) -> None:
+        amps = np.array([0.5, 2.0, 3.0])
+        assert np.allclose(apply_alpha_to_amplitudes(amps, None), amps)
+
+    def test_rgb_colors_is_identity(self) -> None:
+        amps = np.array([0.5, 2.0, 3.0])
+        colors = np.ones((3, 3), dtype=np.float32)
+        assert np.allclose(apply_alpha_to_amplitudes(amps, colors), amps)
+
+    def test_float_rgba_scales_by_alpha(self) -> None:
+        amps = np.ones(3)
+        colors = np.array(
+            [[1, 1, 1, 0.25], [1, 1, 1, 0.5], [1, 1, 1, 1.0]], dtype=np.float32
+        )
+        assert np.allclose(apply_alpha_to_amplitudes(amps, colors), [0.25, 0.5, 1.0])
+
+    def test_uint8_rgba_alpha_normalized_by_255(self) -> None:
+        # The integer branch no current object-path fixture reaches through the
+        # store: alpha byte 128 → ~0.502 factor, 255 → opaque, 0 → transparent.
+        amps = np.ones(3)
+        colors = np.array(
+            [[255, 255, 255, 255], [255, 255, 255, 128], [255, 255, 255, 0]],
+            dtype=np.uint8,
+        )
+        assert np.allclose(
+            apply_alpha_to_amplitudes(amps, colors),
+            [1.0, 128 / 255, 0.0],
+            atol=1e-6,
+        )
+
+    def test_uint16_rgba_alpha_normalized_by_65535(self) -> None:
+        amps = np.array([2.0, 2.0])
+        colors = np.array([[0, 0, 0, 65535], [0, 0, 0, 0]], dtype=np.uint16)
+        assert np.allclose(
+            apply_alpha_to_amplitudes(amps, colors), [2.0, 0.0], atol=1e-6
+        )

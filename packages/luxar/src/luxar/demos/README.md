@@ -555,6 +555,17 @@ The folded 3D structure of one human cell's genome from Dip-C (Tan et al. 2018, 
 
 ---
 
+#### demo_dmri_tractography.py - Human White-Matter Tractography (HCP-1065)
+The wiring of the human brain: all 87 named white-matter tracts of the HCP-1065 population atlas as 252,978 streamlines (7.08M vertices, 6.83M segments) in ICBM 2009a space, coloured by the standard diffusion-MRI direction convention (red = left-right, green = anterior-posterior, blue = inferior-superior). Each tract is its own Lines node exposed as a **Layers-panel** toggle (press **L**), so any bundle can be isolated — the corticospinal tract, the corpus callosum, the arcuate.
+
+**Run**: `luxar demo run dmri_tractography [-- --per-bundle 6000 --points 28]`
+
+**Requires**: Internet access on first run — downloads `hcp1065_avg_tracts_trk.zip` (588 MB) to `~/.cache/luxar/dmri_tractography/` and caches the decoded bundles as an `.npz`. Needs `nibabel` (in the `demos` extra). No GPU. Building the scene takes ~25 min because every node lifts its segments to Gaussian beads for the substitutive LOD; it is a one-time cost, paid again only on `--recompute`.
+
+**Demonstrates**: Lines as the *native* geometry for data that is already made of curves — no conversion, unlike every volumetric demo. Arc-length resampling (the source is ~0.4 mm-sampled, ~10x finer than any rendered line width); `line_type="indexed"` with per-streamline contiguous vertices so thick tubes render seamless joints; 87 separate nodes, each sized to stay under both the un-laddered-leaf gate (200K vertices) and the per-node element-texture segment bound; per-node **substitutive LOD** at `compression_factor=256` — thin lines need a far larger K than the default, because the bead lift is driven by arc-length ÷ width rather than by segment count (at K=4 the "coarse" level comes out 5.6x heavier than the fine one, and the scene balloons to 2.1 GB); and `blending_mode="additive"` at low opacity with a display window, which is order-independent and so cannot pop as the camera orbits — unlike `normal`, whose per-object transparent-pass sort flips between overlapping bundles. Data: [Yeh 2022](https://doi.org/10.1038/s41467-022-32595-4), [HCP-1065 atlas](https://brain.labsolver.org/hcp_trk_atlas.html) (CC BY-SA 4.0; WU-Minn HCP data-use terms).
+
+---
+
 #### demo_storm_3d_microtubules.py - 3D STORM Super-Resolution Microscopy
 Microtubule cytoskeleton at nanometer resolution using real STORM super-resolution microscopy localizations as Gaussian splats.
 
@@ -1209,6 +1220,7 @@ hatch run python packages/luxar/src/luxar/demos/demo_ppi_flow_field.py
 hatch run python packages/luxar/src/luxar/demos/demo_caida_as_topology.py
 hatch run python packages/luxar/src/luxar/demos/demo_asteroids_solar_system.py
 hatch run python packages/luxar/src/luxar/demos/demo_dipc_3d_genome.py
+hatch run python packages/luxar/src/luxar/demos/demo_dmri_tractography.py
 
 # --- GSplats: 2D ---
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_2d_codex_pancreas.py

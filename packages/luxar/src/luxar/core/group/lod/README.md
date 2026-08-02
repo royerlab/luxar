@@ -171,9 +171,10 @@ during partial loads.
 
 - `identify_polylines(n_vertices, line_type, indices=None)` splits vertices into
   per-polyline index arrays. `segments` → N/2 length-2 polylines; `indexed` →
-  Union-Find connected components; `polyline` / `loop` → one polyline spanning
-  all vertices (a multi-LOD ladder is then a no-op — a warning is logged and a
-  single level emitted).
+  connected components found by vectorized root hooking + pointer jumping,
+  followed by one stable root-label sort (components ordered by their smallest
+  vertex); `polyline` / `loop` → one polyline spanning all vertices (a multi-LOD
+  ladder is then a no-op — a warning is logged and a single level emitted).
 - `compute_additive_order_lines(...)` orders polylines (not vertices); for
   `spatial-uniform` / `poisson-disk` the representative point is each polyline's
   bbox center.
