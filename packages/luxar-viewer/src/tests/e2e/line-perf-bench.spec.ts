@@ -16,7 +16,9 @@
  * Per scenario we record:
  *   - JS frame time stats (median, p95, p99, mean) over a fixed
  *     sample window
- *   - First-render cost (one-shot, measured separately)
+ *   - A warmed post-settle one-shot frame interval (`postSettleFrameMs`,
+ *     measured separately) — NOT a cold first render; see the field's
+ *     doc comment
  *   - Active backend (`apiSurface`) so a silent fallback can't
  *     pollute the comparison
  *   - GPU pass time stats when `timestamp-query` is supported (best
@@ -148,7 +150,15 @@ interface ScenarioResult {
   isWebGLBackend: boolean;
   visibleSegments: number;
   frameMs: FrameStats | null;
-  firstRenderMs: number | null;
+  /**
+   * A WARMED, post-settle one-shot frame interval (ms): `renderOnce()`
+   * to the next animation frame, sampled AFTER navigation/injection has
+   * already rendered and settled (same contract as the gsplat bench).
+   * NOT a cold first render — it does not enclose upload, material/
+   * pipeline compilation, or the initial draw. Null when the scenario
+   * is skipped.
+   */
+  postSettleFrameMs: number | null;
   gpu: GpuStats;
   notes: string[];
   skipped: boolean;
@@ -192,8 +202,8 @@ async function urlExists(url: string): Promise<boolean> {
 
 /**
  * Measure one scenario under one backend. Captures the active API
- * surface, segment count, JS frame-time distribution, first-render
- * cost, and optional GPU timestamps.
+ * surface, segment count, JS frame-time distribution, a warmed
+ * post-settle one-shot frame interval, and optional GPU timestamps.
  */
 async function measureScenario(
   page: Page,
@@ -303,8 +313,7 @@ async function measureScenario(
     const isWebGLBackend = dbg?.renderer?.backend?.isWebGLBackend === true;
     let visibleSegments = 0;
     const scene = dbg?.app?.sceneManager?.scene as
-      | { traverse?: (cb: (o: unknown) => void) => void }
-      | undefined;
+      { traverse?: (cb: (o: unknown) => void) => void } | undefined;
     scene?.traverse?.((obj: unknown) => {
       const o = obj as {
         userData?: { nodeType?: string; synthetic?: boolean };
@@ -335,7 +344,7 @@ async function measureScenario(
       isWebGLBackend: probe.isWebGLBackend,
       visibleSegments: 0,
       frameMs: null,
-      firstRenderMs: null,
+      postSettleFrameMs: null,
       gpu: { supported: false, count: 0, medianMs: null, p95Ms: null },
       notes,
       skipped: true,
@@ -343,9 +352,12 @@ async function measureScenario(
     };
   }
 
-  // One-shot first-render measurement — useful for material-build /
-  // pipeline-compile cost, separate from the steady-state frame loop.
-  const firstRenderMs = await page.evaluate(async () => {
+  // Warmed post-settle one-shot frame measurement, separate from the
+  // steady-state frame loop. NOT a cold first render: navigation (and,
+  // for synthetic scenarios, injection) has already uploaded buffers,
+  // compiled the material/pipeline, and drawn — so this does NOT
+  // capture material-build / pipeline-compile cost.
+  const postSettleFrameMs = await page.evaluate(async () => {
     const debug = (window as unknown as { __luxarDebug: { renderOnce: () => void } }).__luxarDebug;
     const t0 = performance.now();
     debug.renderOnce();
@@ -524,7 +536,7 @@ async function measureScenario(
     isWebGLBackend: probe.isWebGLBackend,
     visibleSegments: probe.visibleSegments,
     frameMs,
-    firstRenderMs,
+    postSettleFrameMs,
     gpu,
     notes,
     skipped: false,
@@ -554,7 +566,7 @@ test('line perf bench — JS frame timing across backends', async ({ page }) => 
           isWebGLBackend: false,
           visibleSegments: 0,
           frameMs: null,
-          firstRenderMs: null,
+          postSettleFrameMs: null,
           gpu: { supported: false, count: 0, medianMs: null, p95Ms: null },
           notes: [`dataset URL not reachable: ${probeUrl}`],
           skipped: true,
@@ -585,7 +597,7 @@ test('line perf bench — JS frame timing across backends', async ({ page }) => 
           isWebGLBackend: false,
           visibleSegments: 0,
           frameMs: null,
-          firstRenderMs: null,
+          postSettleFrameMs: null,
           gpu: { supported: false, count: 0, medianMs: null, p95Ms: null },
           notes: [`measurement threw: ${shortMsg}`],
           skipped: true,
