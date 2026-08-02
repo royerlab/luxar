@@ -307,7 +307,7 @@ Visualizes scientific papers in 3D embedding space. Papers cluster by topic, col
 
 **Run**: `luxar demo run arxiv_papers`
 
-**Requires**: Internet access, `sentence-transformers` and `umap-learn` packages. Embeds abstracts with Sentence-BERT (all-MiniLM-L6-v2) and reduces to 3D with UMAP.
+**Requires**: Internet access, `sentence-transformers` and `umap-learn` packages. Embeds abstracts with Sentence-BERT (all-MiniLM-L6-v2) and reduces to 3D with UMAP. `luxar[gsplats]` (torch + scipy) is optional — without it the scene builds as a flat, fully viewable point cloud instead of the Points LOD ladder.
 
 **Demonstrates**: Semantic embedding of text, UMAP dimensionality reduction (768D to 3D), citation-based sizing, research field clustering, Semantic Scholar API usage.
 
@@ -318,7 +318,7 @@ Visualizes arXiv papers using pre-computed OpenAI embeddings from the Kaggle "op
 
 **Run**: `luxar demo run arxiv_papers_kaggle`
 
-**Requires**: Internet access, Kaggle account (for first download, ~30 GB cached to `~/.cache/mlcroissant/`), `mlcroissant` and `umap-learn` packages. First run takes 8-15 minutes; subsequent runs use cache.
+**Requires**: Internet access, Kaggle account (for first download, ~30 GB cached to `~/.cache/mlcroissant/`), `mlcroissant` and `umap-learn` packages. First run takes 8-15 minutes; subsequent runs use cache. `luxar[gsplats]` (torch + scipy) is optional — without it the scene builds as a flat, fully viewable point cloud instead of the Points LOD ladder.
 
 **Demonstrates**: Large-scale embedding visualization (2M+ papers), pre-computed OpenAI text-embedding-3-large, UMAP reduction, Kaggle dataset integration via mlcroissant.
 
