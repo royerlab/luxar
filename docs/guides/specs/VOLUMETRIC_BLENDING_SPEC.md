@@ -378,29 +378,35 @@ volumetric (it is emissive; the `setSurfacePickDepth(isNormalMode || isOpaqueMod
 front-most rule in `rendering/picking/picking-system.ts` stays as-is).
 Front-most picking beyond a τ threshold is a possible follow-up, not phase 1.
 
-Two deliberate per-element-alpha semantics, uniform across all three
-geometry types (phase-4 double-check review; symmetry-by-design, not
-oversights):
+Per-element alpha: one genuinely-shared rule, then two
+geometry-specific differences (phase-4 double-check review; each is a
+deliberate choice, not an oversight):
 
-- **Invisible-but-pickable**: the pick shaders never read the
-  per-element alpha (points texel2.y / lines texel5.zw / gsplat
-  texel3.y) — their brightness derives from the coverage chain only. An
-  element with alpha ≈ 0 is visually absent (emission scaled to ~0;
-  under volumetric, points and lines do not even discard it when
-  its color is non-black, since a black-but-dense occluder keeps its τ;
-  gsplats DO discard it — their gain-aware intensity discard folds alpha
-  in first, and a ~zero-alpha splat neither emits nor absorbs) yet remains
-  fully pickable. Making picking alpha-aware would follow the same
-  τ-threshold follow-up as front-most picking above.
-- **`normal`-mode depthWrite ignores per-element alpha**:
-  `normalModeDepthWrite` keys on NODE opacity alone — the decision never
-  consults per-element alpha (uniform across geometry types). For POINTS
-  and LINES an RGBA node in `normal` mode at node-opacity 1.0 therefore
-  writes depth even for its near-transparent (alpha ≈ 0) elements
-  (gsplat normal mode never depth-writes regardless), which can occlude content
-  behind them. Per-element depthWrite is not expressible in a single
-  draw call; the workaround is the volumetric mode itself (never
-  depth-writes) or lowering node opacity below the 0.99 threshold.
+- **Invisible-but-pickable (shared across all three geometries)**: the
+  pick shaders never read the per-element alpha (points texel2.y /
+  lines texel5.zw / gsplat texel3.y) — pick salience
+  (brightness-as-depth) derives from the coverage chain only. An
+  element with alpha ≈ 0 is visually absent
+  (emission scaled to ~0) yet remains fully pickable in every geometry
+  type. Making picking alpha-aware would follow the same τ-threshold
+  follow-up as front-most picking above.
+- **Visual discard under volumetric (differs by geometry)**: POINTS and
+  LINES do NOT discard a zero-alpha element while its color is
+  non-black — a black-but-dense occluder keeps its τ, so the
+  zero-color discard fires only when τ is negligible too. GSPLATS DO
+  discard such an element: the gain-aware intensity discard folds alpha
+  in first, so a ~zero-alpha splat neither emits nor absorbs and drops
+  out in every mode.
+- **`normal`-mode depthWrite keys on NODE opacity, never per-element
+  alpha (differs by geometry)**: the `normalModeDepthWrite` predicate
+  reads node opacity alone. For POINTS and LINES an RGBA node in
+  `normal` mode at node-opacity 1.0 therefore writes depth even for its
+  near-transparent (alpha ≈ 0) elements, which can occlude content
+  behind them; GSPLAT `normal` mode never depth-writes, regardless of
+  per-element alpha or node opacity. Per-element depthWrite is not
+  expressible in a single draw call; for Points/Lines the workaround is
+  the volumetric mode itself (never depth-writes) or lowering node
+  opacity below the 0.99 threshold.
 
 ### 5.3 Attr composition and the uniform
 
