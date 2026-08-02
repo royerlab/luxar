@@ -6,6 +6,34 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
+#### Performance — indexed-Lines partitioning scales to ribbon-heavy datasets (#1103)
+
+The shared `add_lines(partition=...)` path identified indexed connected
+components with a Python union-find and then, for every component, scanned the
+full vertex-root array again. That grouping was `O(components × vertices)`:
+the ocean-currents shape of 220,000 ribbons / 11.66M vertices turned scene
+assembly into a minutes-long CPU and transient-memory stall. Edge partitioning
+then compounded it with one Python tuple per edge and a global→local dictionary
+per part.
+
+Indexed components now use vectorized root hooking (`np.minimum.at`) with
+pointer jumping, followed by one stable root-label sort. Components and their
+members have an explicit deterministic order by smallest vertex index. The
+partition writer likewise builds one stable edge permutation and reuses a
+single vertex map for part-local remapping, preserving exact topology and edge
+order without the tuple/dictionary expansion. On a 20,000 × 53-vertex ribbon
+benchmark the component pass drops from 5.09 s to 0.024 s (212×); the full
+220,000-ribbon component + edge-grouping preparation completes in 0.44 s on the
+same machine, before BSP and zarr writes.
+
+Along the way, a partition part containing only isolated vertices (an
+indexed graph never draws a vertex no segment references) is now skipped
+instead of degraded to ``segments``: the degrade fabricated visible edges
+between distinct isolated vertices, desynced per-vertex attributes on
+odd-sized parts, and crashed outright on one-vertex parts. An indexed
+partition with no edges at all is refused with the same error as the
+single-leaf writer.
+
 #### Fixed — colormapped Points/Lines apply authored intensity once; solar-system demo re-tuned (#1082)
 
 `#1081` stopped a colormapped node applying an authored `intensity`/`offset`

@@ -123,38 +123,65 @@ def _indexed_connected_components(
     n_vertices: int,
     segments: NDArray[np.intp],
 ) -> List[NDArray[np.intp]]:
-    """Union-Find connected-components walk on indexed segments.
+    """Return connected components of an indexed graph in vertex order.
 
-    Returns per-component vertex-index arrays. Isolated vertices (with
-    no incident segment) become single-element polylines so every
-    vertex appears in exactly one polyline.
+    The union step hooks component roots in bulk with ``np.minimum.at`` and
+    pointer-jumps all parents between passes. Grouping then stable-sorts the
+    final root labels once and slices that permutation at label boundaries.
+    This avoids both Python work per edge and the former full ``roots == root``
+    scan per component, which was quadratic for ribbon-heavy indexed Lines.
+
+    Components are ordered by their smallest vertex index; members within a
+    component retain ascending vertex order. Isolated vertices become
+    single-element components so every vertex appears exactly once.
     """
-    # Union-Find on vertices.
+    if n_vertices == 0:
+        return []
+
     parent = np.arange(n_vertices, dtype=np.intp)
+    if segments.size > 0:
+        endpoint_a = segments[:, 0]
+        endpoint_b = segments[:, 1]
 
-    def find(x: int) -> int:
-        # Iterative path-halving.
-        while parent[x] != x:
-            parent[x] = parent[parent[x]]
-            x = int(parent[x])
-        return x
+        while True:
+            # Compress every current forest to roots. Pointer jumping halves
+            # path lengths each pass and is vectorized over all vertices.
+            while True:
+                grandparents = parent[parent]
+                if np.array_equal(grandparents, parent):
+                    break
+                parent = grandparents
 
-    def union(a: int, b: int) -> None:
-        ra, rb = find(a), find(b)
-        if ra != rb:
-            parent[ra] = rb
+            root_a = parent[endpoint_a]
+            root_b = parent[endpoint_b]
+            if np.array_equal(root_a, root_b):
+                break
 
-    for a, b in segments:
-        union(int(a), int(b))
+            # Hook every larger root to the smallest adjacent root. Duplicate
+            # writes are reduced by minimum, so edge order cannot change the
+            # result and parent links always decrease (cycles are impossible).
+            # When the roots differ, at least one root strictly decreases;
+            # non-negative parent values therefore guarantee termination.
+            high_roots = np.maximum(root_a, root_b)
+            np.minimum(root_a, root_b, out=root_a)
+            np.minimum.at(parent, high_roots, root_a)
 
-    # Group vertices by root.
-    roots = np.array([find(i) for i in range(n_vertices)], dtype=np.intp)
-    unique_roots = np.unique(roots)
-    components: List[NDArray[np.intp]] = []
-    for root in unique_roots:
-        members = np.nonzero(roots == root)[0].astype(np.intp)
-        components.append(members)
-    return components
+    # ``parent`` is fully compressed on the terminating pass above. A stable
+    # sort groups equal roots while preserving ascending vertex order inside
+    # each component; one boundary scan replaces C full scans of V roots.
+    order = np.argsort(parent, kind="stable").astype(np.intp, copy=False)
+    sorted_roots = parent[order]
+    starts = np.concatenate(
+        (
+            np.array([0], dtype=np.intp),
+            np.flatnonzero(sorted_roots[1:] != sorted_roots[:-1]).astype(
+                np.intp, copy=False
+            )
+            + 1,
+        )
+    )
+    # ``np.split`` returns zero-copy views into the shared permutation.
+    return [chunk for chunk in np.split(order, starts[1:])]
 
 
 # ─────────────────────────────────────────────────────────────────────
