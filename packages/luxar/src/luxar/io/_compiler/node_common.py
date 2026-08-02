@@ -289,9 +289,14 @@ def validate_scalars_preflight(
         return
 
     if not isinstance(scalars, np.ndarray):
+        # Same dead-end as the radii/widths/sharpness validators used to
+        # have (#752): np.array(np.float32(x)) is 0D and fails the next
+        # check, so point at float(...) instead.
         raise ValidationError(
-            f"{context}: Expected numpy array or scalar, got {type(scalars).__name__}",
-            "Convert to numpy array: np.array(scalars)",
+            f"{context}: Expected a 1D numpy array or a Python float, "
+            f"got {type(scalars).__name__}",
+            "Pass a Python float — e.g. float(scalars) — for a single "
+            "broadcast value, or a 1D array with one value per element",
         )
 
     if scalars.ndim != 1 or (scalars.shape[0] != n_elements and scalars.shape[0] != 1):
