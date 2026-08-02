@@ -14,6 +14,10 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import * as THREE from 'three';
+// Type-only (erased at runtime, so no clash with the dynamically imported
+// live profiler module the coordinator holds) — used to type the fake
+// profiler that pins the per-pass session lifecycle (issue #713).
+import type { UpdateProfiler, UpdateSession } from '../../../profiling/update-profiler';
 
 type SortResult = {
   generation: number;
@@ -1600,7 +1604,7 @@ describe('depth-sort scheduler (Phase 3)', () => {
     expect(mockApi.sort).not.toHaveBeenCalled();
   });
 
-  it('records each sort round-trip as a Depth Sort profiler pass with splat count + upload bytes', async () => {
+  it('records each sort round-trip as a Depth Sort profiler pass, closed when the ordering is applied', async () => {
     const coord = await loadCoordinator();
     // Fresh module instance to match the coordinator's post-reset module graph.
     const { UpdateProfiler } = await import('../../../profiling/update-profiler');
@@ -1608,9 +1612,19 @@ describe('depth-sort scheduler (Phase 3)', () => {
     await sortedSetup(coord, makeCamera(), { getProfiler: () => profiler });
 
     const root = profiler.getDepthSortTimings();
+    // The pass spans dispatch→applied: the worker resolve in sortedSetup only
+    // STAGES the ordering, so the pass is still open — no sample recorded yet
+    // (issue #713). One pump frame flips the applied buffer in and closes it.
+    expect(root.count).toBe(0);
+    coord.evaluateDepthSortPerFrame();
+
     expect(root.count).toBe(1);
     expect(root.metadata?.splats).toBe(2);
+    // Uploaded (`up`) now, not merely scheduled — the buffer reached the GPU.
     expect(root.metadata?.info).toMatch(/up$/);
+    // The apply duration is recorded separately from the resolve round-trip.
+    expect(Number.isFinite(root.metadata?.applyMs)).toBe(true);
+    expect(root.metadata?.applyMs).toBeGreaterThanOrEqual(0);
     // Timing split: kernelMs passes through; boundaryMs = workerMs −
     // kernelMs; queueMs = locally-timed round-trip − workerMs. The mock
     // resolves through microtask flushes so the measured round-trip vs
@@ -2540,5 +2554,316 @@ describe('depth-sort coordinator — chunked ordering apply (perf lever L8)', ()
     expect(storage.hasPendingSortedIndexOrderingApply(secondGeometry)).toBe(true);
     coord.disposeDepthSort();
     expect(storage.hasPendingSortedIndexOrderingApply(secondGeometry)).toBe(false);
+  });
+
+  // === Profiler lifecycle across the chunked apply (issue #713) ===
+
+  it('keeps the Depth Sort pass open across the multi-frame chunked apply, closing it as uploaded on the flip', async () => {
+    const { coord } = await loadWithTinyChunks();
+    // Fresh module instance to match the coordinator's post-reset module graph.
+    const { UpdateProfiler } = await import('../../../profiling/update-profiler');
+    const profiler = new UpdateProfiler();
+    const camera = makeCamera();
+    coord.configureDepthSort({
+      getCamera: () => camera,
+      requestRender: vi.fn(),
+      getProfiler: () => profiler,
+    });
+
+    // 12 indices over a 4-index chunk = three slices → three pump frames.
+    await resolveLargeOrdering(coord, 12);
+    const root = profiler.getDepthSortTimings();
+
+    // Resolve alone must NOT close the pass — the bytes are only staged, not
+    // yet uploaded. This is the whole point of the fix.
+    expect(root.count).toBe(0);
+
+    // Slices 1-2 stream into the buffer NOT being drawn; the pass stays open.
+    coord.evaluateDepthSortPerFrame();
+    coord.evaluateDepthSortPerFrame();
+    expect(root.count).toBe(0);
+
+    // Slice 3 completes the back buffer and flips it in — the pass closes
+    // now, spanning the whole dispatch→applied lifecycle.
+    coord.evaluateDepthSortPerFrame();
+    expect(root.count).toBe(1);
+    expect(root.metadata?.splats).toBe(12);
+    expect(root.metadata?.info).toMatch(/up$/); // uploaded, not scheduled
+    expect(Number.isFinite(root.metadata?.applyMs)).toBe(true);
+    expect(root.metadata?.applyMs).toBeGreaterThanOrEqual(0);
+
+    // Steady state: the pass is not closed a second time.
+    coord.evaluateDepthSortPerFrame();
+    expect(root.count).toBe(1);
+  });
+
+  it('a chunked apply aborted by LOD demotion closes the pass exactly once, as scheduled (never uploaded)', async () => {
+    const { coord, storage } = await loadWithTinyChunks();
+    const { UpdateProfiler } = await import('../../../profiling/update-profiler');
+    const profiler = new UpdateProfiler();
+    const camera = makeCamera();
+    coord.configureDepthSort({
+      getCamera: () => camera,
+      requestRender: vi.fn(),
+      getProfiler: () => profiler,
+    });
+
+    const { mesh } = await resolveLargeOrdering(coord, 12);
+    const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
+    const root = profiler.getDepthSortTimings();
+    expect(root.count).toBe(0); // pass open, streaming
+
+    // Stream one slice, then demote: the remaining slices abort.
+    coord.evaluateDepthSortPerFrame();
+    expect(root.count).toBe(0);
+    delete mesh.userData.committedData;
+    coord.evaluateDepthSortPerFrame(); // demotion cancels the apply
+    expect(storage.hasPendingSortedIndexOrderingApply(geometry)).toBe(false);
+
+    // The pass closed once, labeled scheduled — the bytes never reached the
+    // GPU, so they must not be reported as uploaded.
+    expect(root.count).toBe(1);
+    expect(root.metadata?.info).toMatch(/sched$/);
+
+    // Exactly once: further frames must not re-close it.
+    coord.evaluateDepthSortPerFrame();
+    expect(root.count).toBe(1);
+  });
+
+  it('a superseded held ordering closes its pass exactly once as scheduled; the drawn ones close as uploaded', async () => {
+    const { coord } = await loadWithTinyChunks();
+    const camera = makeCamera();
+
+    // A fake profiler records every pass so we can assert exactly-once
+    // per-session (the real profiler's seq-drop merge would mask a
+    // superseded late close). The coordinator only calls
+    // beginDepthSortPass() and setMetadata()/end() on the returned session.
+    const passes: Array<{ meta: Record<string, unknown>; ended: number }> = [];
+    const fakeProfiler = {
+      beginDepthSortPass(): UpdateSession {
+        const pass = { meta: {} as Record<string, unknown>, ended: 0 };
+        passes.push(pass);
+        const session: UpdateSession = {
+          begin: () => session,
+          end: () => {
+            pass.ended++;
+          },
+          setMetadata: (m) => {
+            Object.assign(pass.meta, m);
+          },
+          markSkipped: () => {},
+        };
+        return session;
+      },
+    } as unknown as UpdateProfiler;
+    coord.configureDepthSort({
+      getCamera: () => camera,
+      requestRender: vi.fn(),
+      getProfiler: () => fakeProfiler,
+    });
+
+    // Sort 1 resolves → apply 1 starts streaming (pass 0 = current).
+    const { mesh } = await resolveLargeOrdering(coord, 12);
+
+    // Sort 2 resolves mid-stream → held behind apply 1 (pass 1 = pending).
+    coord.noteDepthSortCommit(mesh, new Float32Array(36), 12);
+    await flush();
+    sortResolvers[1]({
+      generation: mockApi.sort.mock.calls[1][0].generation as number,
+      ordering: reversed(12),
+    });
+    await flush();
+
+    // Sort 3 resolves mid-stream → supersedes the held pending (pass 2).
+    coord.noteDepthSortCommit(mesh, new Float32Array(36), 12);
+    await flush();
+    sortResolvers[2]({
+      generation: mockApi.sort.mock.calls[2][0].generation as number,
+      ordering: reversed(12),
+    });
+    await flush();
+
+    expect(passes).toHaveLength(3);
+    // Pass 1 — the superseded held ordering — closed immediately, exactly
+    // once, labeled scheduled: it never streamed a single slice.
+    expect(passes[1].ended).toBe(1);
+    expect(String(passes[1].meta.info)).toMatch(/sched$/);
+    // Passes 0 (streaming) and 2 (now held) are still open.
+    expect(passes[0].ended).toBe(0);
+    expect(passes[2].ended).toBe(0);
+
+    // Drain: apply 1 flips (pass 0 uploaded), then apply 3 flips (pass 2
+    // uploaded). Eight frames comfortably covers two 3-slice streams.
+    for (let i = 0; i < 8; i++) coord.evaluateDepthSortPerFrame();
+    expect(String(passes[0].meta.info)).toMatch(/up$/);
+    expect(String(passes[2].meta.info)).toMatch(/up$/);
+    // Every pass closed exactly once — no leak, no double-close.
+    expect(passes.map((p) => p.ended)).toEqual([1, 1, 1]);
+  });
+
+  it('records the applied sample of a pass that completes after a superseded sibling (no seq-drop)', async () => {
+    // Regression guard for the real profiler under sort churn: sessions end
+    // at APPLY, out of dispatch order — a held ordering superseded mid-stream
+    // ends BEFORE the currently-streaming pass flips. With a dispatch-time
+    // seq the streaming pass's applied sample would be dropped as "stale" by
+    // the profiler's merge guard, so the dispatch→applied timing this fix
+    // exists to record would vanish. The completion-ordered seq keeps it.
+    const { coord } = await loadWithTinyChunks();
+    const { UpdateProfiler } = await import('../../../profiling/update-profiler');
+    const profiler = new UpdateProfiler();
+    const camera = makeCamera();
+    coord.configureDepthSort({
+      getCamera: () => camera,
+      requestRender: vi.fn(),
+      getProfiler: () => profiler,
+    });
+
+    // Sort 1 streaming; sort 2 held; sort 3 supersedes the held sort 2.
+    const { mesh } = await resolveLargeOrdering(coord, 12);
+    coord.noteDepthSortCommit(mesh, new Float32Array(36), 12);
+    await flush();
+    sortResolvers[1]({
+      generation: mockApi.sort.mock.calls[1][0].generation as number,
+      ordering: reversed(12),
+    });
+    await flush();
+    coord.noteDepthSortCommit(mesh, new Float32Array(36), 12);
+    await flush();
+    sortResolvers[2]({
+      generation: mockApi.sort.mock.calls[2][0].generation as number,
+      ordering: reversed(12),
+    });
+    await flush();
+
+    // Drain: sort 1 applies (up), then the promoted sort 3 applies (up).
+    for (let i = 0; i < 8; i++) coord.evaluateDepthSortPerFrame();
+
+    const root = profiler.getDepthSortTimings();
+    // Three passes recorded: sort 2 (abandoned → scheduled) plus the two
+    // applied ones — the sort-1 applied sample is NOT dropped despite its
+    // lower dispatch order.
+    expect(root.count).toBe(3);
+    // The last-completing pass (sort 3, applied) shows uploaded bytes + an
+    // apply duration — the freshest state, correctly labeled.
+    expect(root.metadata?.info).toMatch(/up$/);
+    expect(Number.isFinite(root.metadata?.applyMs)).toBe(true);
+  });
+
+  it('a post-handoff requestRender throw does not close the pass early (applied sample stays uploaded)', async () => {
+    // Once the ordering is handed to the chunked-apply callbacks, a throw
+    // from the post-handoff requestRender() must NOT route into .catch and
+    // close the pass — the callbacks own its close. Otherwise the pass would
+    // record a premature scheduled sample and the real applied one would be
+    // swallowed by end()'s idempotency (issue #713).
+    const { coord } = await loadWithTinyChunks();
+    const { UpdateProfiler } = await import('../../../profiling/update-profiler');
+    const profiler = new UpdateProfiler();
+    const camera = makeCamera();
+    let throwOnce = true;
+    const requestRender = vi.fn(() => {
+      if (throwOnce) {
+        throwOnce = false;
+        throw new Error('boom');
+      }
+    });
+    coord.configureDepthSort({
+      getCamera: () => camera,
+      requestRender,
+      getProfiler: () => profiler,
+    });
+
+    // Resolve stages the ordering, hands off the session, then the bootstrap
+    // requestRender() throws → the .then rejects into .catch.
+    await resolveLargeOrdering(coord, 12);
+    const root = profiler.getDepthSortTimings();
+    // The pass was already handed off, so .catch left it open — no premature
+    // scheduled sample.
+    expect(root.count).toBe(0);
+
+    // The chunked apply still completes and closes the pass as uploaded.
+    for (let i = 0; i < 4; i++) coord.evaluateDepthSortPerFrame();
+    expect(root.count).toBe(1);
+    expect(root.metadata?.info).toMatch(/up$/);
+  });
+
+  it('an RPC failure closes the pass in .catch exactly once (no leak, no double-close)', async () => {
+    // The .catch's `if (!applyOwnsSession)` guard must still close the pass
+    // when the RPC genuinely fails (nothing was ever staged) — the failure
+    // side of the latch, complementing the post-handoff-throw test above.
+    const { coord } = await loadWithTinyChunks();
+    const { UpdateProfiler } = await import('../../../profiling/update-profiler');
+    const profiler = new UpdateProfiler();
+    coord.configureDepthSort({
+      getCamera: () => makeCamera(),
+      requestRender: vi.fn(),
+      getProfiler: () => profiler,
+    });
+
+    const mesh = makeGSplatsMesh(12, 'normal');
+    coord.noteDepthSortCommit(mesh, new Float32Array(36), 12);
+    await flush();
+    expect(mockApi.sort).toHaveBeenCalledTimes(1);
+
+    // The sort RPC rejects: no ordering staged, so the pass closes here.
+    sortRejectors[0](new Error('worker crashed'));
+    await flush();
+
+    const root = profiler.getDepthSortTimings();
+    expect(root.count).toBe(1);
+    // No later frame re-closes it.
+    coord.evaluateDepthSortPerFrame();
+    expect(root.count).toBe(1);
+  });
+
+  it('releaseAllDepthSortNodes (dataset switch) closes an open streaming pass, as scheduled', async () => {
+    const { coord, storage } = await loadWithTinyChunks();
+    const { UpdateProfiler } = await import('../../../profiling/update-profiler');
+    const profiler = new UpdateProfiler();
+    coord.configureDepthSort({
+      getCamera: () => makeCamera(),
+      requestRender: vi.fn(),
+      getProfiler: () => profiler,
+    });
+
+    const { mesh } = await resolveLargeOrdering(coord, 12);
+    const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
+    const root = profiler.getDepthSortTimings();
+    expect(root.count).toBe(0); // pass open, still streaming
+
+    coord.releaseAllDepthSortNodes(); // dataset-switch teardown sweep
+    expect(storage.hasPendingSortedIndexOrderingApply(geometry)).toBe(false);
+    // The sweep's onAbandoned closed the open pass — recorded once, scheduled
+    // (the bytes never reached the GPU).
+    expect(root.count).toBe(1);
+    expect(root.metadata?.info).toMatch(/sched$/);
+  });
+
+  it('a teardown sweep closes BOTH the streaming and the held-pending pass', async () => {
+    const { coord } = await loadWithTinyChunks();
+    const { UpdateProfiler } = await import('../../../profiling/update-profiler');
+    const profiler = new UpdateProfiler();
+    const camera = makeCamera();
+    coord.configureDepthSort({
+      getCamera: () => camera,
+      requestRender: vi.fn(),
+      getProfiler: () => profiler,
+    });
+
+    // Pass A streaming; pass B resolves mid-stream → held as pending.
+    const { mesh } = await resolveLargeOrdering(coord, 12);
+    coord.noteDepthSortCommit(mesh, new Float32Array(36), 12);
+    await flush();
+    sortResolvers[1]({
+      generation: mockApi.sort.mock.calls[1][0].generation as number,
+      ordering: reversed(12),
+    });
+    await flush();
+    const root = profiler.getDepthSortTimings();
+    expect(root.count).toBe(0); // both open
+
+    // The sweep must abandon BOTH the current and the held ordering.
+    coord.releaseAllDepthSortNodes();
+    expect(root.count).toBe(2);
+    expect(root.metadata?.info).toMatch(/sched$/);
   });
 });

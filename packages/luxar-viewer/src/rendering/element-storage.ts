@@ -269,6 +269,8 @@ interface ChunkedOrderingApply {
   count: number;
   /** Next unwritten index — `[0, cursor)` already holds the new ordering. */
   cursor: number;
+  /** Lifecycle hooks for the currently-streaming ordering (issue #713). */
+  callbacks: SortedIndexApplyCallbacks | null;
   /**
    * At most ONE held newer ordering (latest wins — an even newer arrival
    * replaces it). Started only after the CURRENT stream completes; a
@@ -279,8 +281,14 @@ interface ChunkedOrderingApply {
    * A fully-applied slightly-stale order is strictly better than a
    * never-completing mix. Dropped with the whole entry on every
    * cancellation path (identity write, demotion, release, dispose).
+   * Carries its own lifecycle hooks (issue #713): if this held ordering
+   * is superseded before it ever streams, its `onAbandoned` fires.
    */
-  pending: { ordering: Uint32Array; count: number } | null;
+  pending: {
+    ordering: Uint32Array;
+    count: number;
+    callbacks: SortedIndexApplyCallbacks | null;
+  } | null;
 }
 
 /**
@@ -294,6 +302,22 @@ const chunkedApplies = new Map<THREE.InstancedBufferGeometry, ChunkedOrderingApp
 
 /** Geometries whose dispose listener already cancels chunked applies. */
 const chunkedDisposeHooked = new WeakSet<THREE.InstancedBufferGeometry>();
+
+/**
+ * Lifecycle hooks for one staged ordering (the depth-sort coordinator wires
+ * these to its 'Depth Sort' profiler session so the pass spans the whole
+ * dispatch→applied lifecycle — issue #713). EXACTLY ONE fires per accepted
+ * ordering: `onApplied` when its buffer becomes the drawn one (the atomic
+ * flip), or `onAbandoned` when it is dropped before ever being drawn
+ * (superseded as a held pending, identity-written over, geometry disposed,
+ * node released, dataset switched, app disposed). Never both, never neither.
+ * They fire ONLY when {@link writeSortedIndexOrdering} accepts the ordering
+ * (returns > 0); a rejected write leaves session ownership with the caller.
+ */
+export interface SortedIndexApplyCallbacks {
+  onApplied?: () => void;
+  onAbandoned?: () => void;
+}
 
 /** Outcome of one {@link pumpSortedIndexOrderingApply} call. */
 export interface SortedIndexPumpResult {
@@ -335,8 +359,7 @@ export function getActiveSortedIndexAttribute(
   geometry: THREE.InstancedBufferGeometry
 ): THREE.InstancedBufferAttribute | undefined {
   return geometry.getAttribute(SLOT_ATTRIBUTE_NAMES[activeSortedIndexSlot(geometry)]) as
-    | THREE.InstancedBufferAttribute
-    | undefined;
+    THREE.InstancedBufferAttribute | undefined;
 }
 
 /** The ordering attribute a new ordering streams into (never drawn). */
@@ -401,8 +424,12 @@ function applyNextSortedIndexChunk(
 ): SortedIndexPumpResult {
   const attr = getInactiveSortedIndexAttribute(geometry);
   if (!attr) {
-    // Attribute gone (defensive — release paths cancel first).
+    // Attribute gone (defensive — release paths cancel first). Neither the
+    // streaming ordering nor any held one ever became drawn, so abandon
+    // both (issue #713).
     chunkedApplies.delete(geometry);
+    state.callbacks?.onAbandoned?.();
+    state.pending?.callbacks?.onAbandoned?.();
     return { more: false, flipped: false };
   }
   const arr = attr.array as Uint32Array;
@@ -439,6 +466,11 @@ function applyNextSortedIndexChunk(
   // this slice's upload and the flip land in the same frame.
   setSortedIndexSlot(geometry, activeSortedIndexSlot(geometry) === 0 ? 1 : 0);
 
+  // The ordering that just finished streaming is now the drawn one, so its
+  // `onApplied` must fire (issue #713). Capture it before promotion
+  // overwrites `state.callbacks`, and fire only AFTER the state mutation/
+  // delete so a hook can never observe half-updated state.
+  const appliedCallbacks = state.callbacks;
   if (state.pending) {
     // Start the held newest ordering into what just became the inactive
     // buffer. Held rather than restarted mid-stream on purpose: under a
@@ -448,11 +480,14 @@ function applyNextSortedIndexChunk(
     // order.
     state.ordering = state.pending.ordering;
     state.count = state.pending.count;
+    state.callbacks = state.pending.callbacks;
     state.cursor = 0;
     state.pending = null;
+    appliedCallbacks?.onApplied?.(); // fire after promotion — issue #713
     return { more: true, flipped: true };
   }
   chunkedApplies.delete(geometry);
+  appliedCallbacks?.onApplied?.(); // fire after removal — issue #713
   return { more: false, flipped: true };
 }
 
@@ -502,18 +537,35 @@ export function pumpSortedIndexOrderingApply(
  * new indices.) Callers: both identity writers (the commit path),
  * LOD-demotion detection in the coordinator's pump, node release,
  * geometry dispose.
+ *
+ * Neither the streaming ordering nor any held one ever became drawn, so
+ * both are abandoned (issue #713). The entry is removed BEFORE the hooks
+ * fire so a hook can never observe a half-cancelled map or re-enter.
  */
 export function cancelSortedIndexOrderingApply(geometry: THREE.InstancedBufferGeometry): void {
+  const state = chunkedApplies.get(geometry);
+  if (!state) return;
   chunkedApplies.delete(geometry);
+  state.callbacks?.onAbandoned?.();
+  state.pending?.callbacks?.onAbandoned?.();
 }
 
 /**
  * Abort every in-flight chunked application (dataset-switch teardown /
  * app dispose — the coordinator's `releaseAllDepthSortNodes` /
  * `disposeDepthSort` sweeps).
+ *
+ * Each abandoned ordering's `onAbandoned` fires (issue #713). The map is
+ * snapshotted and cleared BEFORE any hook runs, so a hook can never
+ * observe a half-cleared map or re-enter the sweep.
  */
 export function cancelAllSortedIndexOrderingApplies(): void {
+  const states = [...chunkedApplies.values()];
   chunkedApplies.clear();
+  for (const state of states) {
+    state.callbacks?.onAbandoned?.();
+    state.pending?.callbacks?.onAbandoned?.();
+  }
 }
 
 /**
@@ -730,11 +782,19 @@ export function writeSortedIndexIdentityRange(
  * restarting it: under a continuous orbit a restart-on-arrival never
  * converges. The coordinator's generation guard ensures only
  * current-generation orderings reach this writer.
+ *
+ * The optional `callbacks` bind a lifecycle to this specific ordering
+ * (the coordinator's 'Depth Sort' profiler session — issue #713). They
+ * fire ONLY when the ordering is accepted (this call returns > 0):
+ * exactly one of `onApplied` (its buffer flipped in) or `onAbandoned`
+ * (dropped before ever drawn). A rejected write (returns 0) fires
+ * neither, leaving lifecycle ownership with the caller.
  */
 export function writeSortedIndexOrdering(
   geometry: THREE.InstancedBufferGeometry,
   ordering: Uint32Array,
-  count: number
+  count: number,
+  callbacks?: SortedIndexApplyCallbacks
 ): number {
   const active = getActiveSortedIndexAttribute(geometry);
   if (!active) return 0;
@@ -772,11 +832,24 @@ export function writeSortedIndexOrdering(
 
   const inFlight = chunkedApplies.get(geometry);
   if (inFlight) {
-    inFlight.pending = { ordering, count: n };
+    // A newer ordering supersedes any previously-held one; that held
+    // ordering never became drawn, so abandon it (issue #713). Install the
+    // new pending FIRST, then fire the displaced hook — matching the
+    // remove-before-fire discipline of the cancel paths, so a re-entrant
+    // hook can never observe (or act on) the stale pending.
+    const superseded = inFlight.pending;
+    inFlight.pending = { ordering, count: n, callbacks: callbacks ?? null };
+    superseded?.callbacks?.onAbandoned?.();
     return n;
   }
 
-  const state: ChunkedOrderingApply = { ordering, count: n, cursor: 0, pending: null };
+  const state: ChunkedOrderingApply = {
+    ordering,
+    count: n,
+    cursor: 0,
+    callbacks: callbacks ?? null,
+    pending: null,
+  };
   chunkedApplies.set(geometry, state);
   if (!chunkedDisposeHooked.has(geometry)) {
     chunkedDisposeHooked.add(geometry);

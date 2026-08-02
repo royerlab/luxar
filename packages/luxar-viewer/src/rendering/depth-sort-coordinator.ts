@@ -541,6 +541,20 @@ function recordSortPose(state: NodeSortState, modelView: THREE.Matrix4): void {
 }
 
 /**
+ * Format an ordering-upload byte count for the 'Depth Sort' monitor line.
+ * `uploaded` distinguishes bytes that have reached the GPU (`up`, after the
+ * chunked apply flips its buffer in) from bytes merely STAGED for upload
+ * (`sched`, at worker resolve) — issue #713. The panel shows this as the
+ * pass's `info` tag.
+ */
+function formatOrderingBytes(bytes: number, uploaded: boolean): string {
+  const suffix = uploaded ? 'up' : 'sched';
+  return bytes >= 1_000_000
+    ? `${(bytes / 1_000_000).toFixed(1)} MB ${suffix}`
+    : `${Math.round(bytes / 1000)} KB ${suffix}`;
+}
+
+/**
  * Request one sort for a registered node, respecting the
  * single-in-flight rule. Queues a re-sort if one is already running.
  */
@@ -581,13 +595,25 @@ function scheduleSort(mesh: THREE.Mesh, nodeId: string): void {
   const modelView = viewMatrix.multiply(mesh.matrixWorld);
   recordSortPose(state, modelView);
 
-  // One detached profiler pass per dispatch — its duration is the
-  // dispatch→applied round-trip the monitor's 'Depth Sort' line shows.
+  // One detached profiler pass per dispatch — its duration is the whole
+  // dispatch→applied lifecycle the monitor's 'Depth Sort' line shows. The
+  // session is opened here at dispatch but ended at APPLY completion, not
+  // at RPC resolve: large orderings apply CHUNKED over many later frames,
+  // so the resolve handler hands the session to writeSortedIndexOrdering's
+  // lifecycle callbacks (issue #713). It ends immediately only when no
+  // ordering is staged (stale/demoted/rejected) or the RPC fails.
   const session = getProfiler?.()?.beginDepthSortPass() ?? null;
   // The profiler session does not expose its elapsed time (SessionImpl's
   // startTime is private), so time the dispatch→resolve round-trip locally
   // for the queueMs derivation below.
   const dispatchedAt = performance.now();
+  // Ownership latch shared by the .then/.catch handlers: once the session is
+  // handed to the chunked-apply callbacks (below), NEITHER handler may end
+  // it — the callbacks own its close. Without this, a throw from the
+  // post-handoff `requestRender()` / re-sort drain would reject the .then
+  // and route into .catch's `session?.end()`, closing the pass early and
+  // mislabeling the eventual applied sample as scheduled (issue #713).
+  let applyOwnsSession = false;
 
   // Timeout-raced: a worker that CRASHES mid-session leaves the Comlink
   // RPC pending forever, and a stuck `inFlight` is unrecoverable — the
@@ -608,7 +634,7 @@ function scheduleSort(mesh: THREE.Mesh, nodeId: string): void {
       const current = nodeStates.get(nodeId);
       if (!current) {
         session?.end();
-        return; // released mid-sort
+        return; // released mid-sort — no ordering staged
       }
       current.inFlight = false;
 
@@ -623,13 +649,6 @@ function scheduleSort(mesh: THREE.Mesh, nodeId: string): void {
       if (result && result.generation === current.generation && stillCommitted) {
         const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
         if (geometry?.getAttribute?.('aSortedIndex')) {
-          // Large orderings apply CHUNKED across frames (element-storage
-          // routes internally, perf lever L8): the write below only
-          // records the pending state; the per-frame pump in
-          // evaluateDepthSortPerFrame streams the slices, one per
-          // rendered frame, kept alive by its own requestRender chain
-          // (bootstrapped by the requestRender just under this write).
-          writeSortedIndexOrdering(geometry, result.ordering, result.ordering.length);
           // Ordering upload = 4 bytes/splat through the attribute
           // update-range machinery (the architecture's headline number).
           const bytes = result.ordering.length * 4;
@@ -641,21 +660,57 @@ function scheduleSort(mesh: THREE.Mesh, nodeId: string): void {
           // main-clock is safe; clamped at 0 against timer granularity.
           // These keys are LAST-WRITE on profiler metadata merge (each
           // sort pass has its own seq, so the 'Depth Sort' root always
-          // shows the latest sort's split).
+          // shows the latest sort's split). The byte label starts as
+          // SCHEDULED here and is upgraded to uploaded only when the
+          // chunked apply flips the buffer in (issue #713).
           session?.setMetadata({
             splats: result.ordering.length,
             kernelMs: result.kernelMs,
             boundaryMs: Math.max(0, result.workerMs - result.kernelMs),
             queueMs: Math.max(0, roundTripMs - result.workerMs),
-            info:
-              bytes >= 1_000_000
-                ? `${(bytes / 1_000_000).toFixed(1)} MB up`
-                : `${Math.round(bytes / 1000)} KB up`,
+            info: formatOrderingBytes(bytes, false),
           });
-          requestRender?.();
+          // Large orderings apply CHUNKED across frames (element-storage
+          // routes internally, perf lever L8): this call only STAGES the
+          // pending state; the per-frame pump in evaluateDepthSortPerFrame
+          // streams the slices, one per rendered frame. Hand the profiler
+          // session to that lifecycle so the pass spans dispatch→applied:
+          // onApplied (buffer flipped in) ends it as UPLOADED; onAbandoned
+          // (superseded/cancelled/demoted/released/disposed) ends it as
+          // scheduled. writeSortedIndexOrdering invokes neither unless it
+          // accepts the ordering (returns > 0) — issue #713.
+          const resolvedAt = performance.now();
+          const staged = writeSortedIndexOrdering(
+            geometry,
+            result.ordering,
+            result.ordering.length,
+            session
+              ? {
+                  onApplied: () => {
+                    session.setMetadata({
+                      applyMs: Math.max(0, performance.now() - resolvedAt),
+                      info: formatOrderingBytes(bytes, true),
+                    });
+                    session.end();
+                  },
+                  onAbandoned: () => session.end(),
+                }
+              : undefined
+          );
+          if (staged > 0) {
+            // Handed off BEFORE the throwing `requestRender()` below, so a
+            // throw there can't route into .catch and close the pass early.
+            applyOwnsSession = true;
+            // Bootstrap the pump's requestRender chain (the per-frame pump
+            // keeps the on-demand loop alive between slices).
+            requestRender?.();
+          }
         }
       }
-      session?.end();
+      // No ordering staged (stale generation, demotion, rejected write, or
+      // missing attribute): the pass is just the dispatch→resolve
+      // round-trip — close it now (issue #713).
+      if (!applyOwnsSession) session?.end();
 
       if (current.resortQueued) {
         current.resortQueued = false;
@@ -668,7 +723,11 @@ function scheduleSort(mesh: THREE.Mesh, nodeId: string): void {
       }
     })
     .catch((error) => {
-      session?.end();
+      // Only close the pass here for a genuine RPC failure — NOT when the
+      // ordering was already handed to the chunked-apply callbacks and a
+      // post-handoff step (e.g. requestRender) threw: those callbacks own
+      // the close, and ending here would mislabel the applied sample (#713).
+      if (!applyOwnsSession) session?.end();
       const current = nodeStates.get(nodeId);
       log.error(Modules.WORKER_POOL, `SortWorker sort failed for ${nodeId}`, error);
       if (!current) return;
