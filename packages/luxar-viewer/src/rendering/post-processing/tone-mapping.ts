@@ -53,5 +53,11 @@ export function resolveToneMappingDefault(): THREE.ToneMapping {
  * configured default rather than leaving tone mapping undefined.
  */
 export function toneMappingFromName(name: string): THREE.ToneMapping {
-  return TONE_MAPPING_BY_NAME[name as ToneMappingName] ?? resolveToneMappingDefault();
+  // `Object.hasOwn` guard, not `?? default`: bracket-indexing a plain object
+  // with an untrusted name would return inherited members ('constructor',
+  // 'toString', …) instead of falling back — those keys are truthy, so `??`
+  // wouldn't catch them.
+  return Object.hasOwn(TONE_MAPPING_BY_NAME, name)
+    ? TONE_MAPPING_BY_NAME[name as ToneMappingName]
+    : resolveToneMappingDefault();
 }

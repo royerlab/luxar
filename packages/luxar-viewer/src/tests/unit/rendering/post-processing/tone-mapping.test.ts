@@ -74,4 +74,13 @@ describe('toneMappingFromName', () => {
     expect(toneMappingFromName('Filmic')).toBe(resolveToneMappingDefault());
     expect(toneMappingFromName('')).toBe(resolveToneMappingDefault());
   });
+
+  it('falls back for Object.prototype member names, not the inherited value', () => {
+    // Untrusted input could name a prototype member ('constructor',
+    // 'toString', …); the lookup must treat those as unknown and fall back,
+    // never return the inherited function.
+    for (const name of ['constructor', 'toString', 'hasOwnProperty', 'valueOf']) {
+      expect(toneMappingFromName(name)).toBe(resolveToneMappingDefault());
+    }
+  });
 });
