@@ -852,3 +852,74 @@ class TestNodeColormap:
                 TypeError, match="Colormap property setter only accepts string"
             ):
                 points.colormap = lut
+
+
+class TestGeometryMetadataParity:
+    """Points/Lines/GSplats expose the same metadata surface for what they share.
+
+    Each property must read a value the writer actually produces — a property
+    backed by a metadata key no writer sets silently reports its default, which
+    is worse than not offering the property at all.
+    """
+
+    def test_points_and_lines_expose_the_shared_metadata_properties(
+        self, tmp_path: Path
+    ) -> None:
+        rng = np.random.RandomState(0)
+        n = 40
+        with LuxarZarrCompiler(tmp_path / "parity.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            points = scene.add_points(
+                "pts",
+                rng.rand(n, 3).astype(np.float32),
+                radii=np.full(n, 0.25, dtype=np.float32),
+            )
+            lines = scene.add_lines(
+                "lns",
+                rng.rand(n, 3).astype(np.float32),
+                widths=np.full(n, 0.1, dtype=np.float32),
+            )
+
+            # Shared by both: dimensionality, spatial index, ordering.
+            for node in (points, lines):
+                assert node.ndim == 3
+                assert node.has_spatial_index is True
+                # Not merely "some string" — the real method the writer chose.
+                assert node.ordering in {"morton", "hilbert"}
+
+            # Per-type extent property (Points has no width, Lines no radius).
+            assert points.max_radius == pytest.approx(0.25)
+            assert lines.max_width == pytest.approx(0.1)
+
+    def test_ordering_property_matches_what_was_written_to_disk(
+        self, tmp_path: Path
+    ) -> None:
+        """The property must report the writer's real choice, not its default.
+
+        ``Points.ordering`` reads the metadata the writer returns. When the
+        writer omitted the key the property silently answered "none" for a node
+        that was in fact hilbert-ordered on disk, so pin the two together.
+        """
+        import zarr
+
+        store = tmp_path / "ordering.luxar.zarr"
+        rng = np.random.RandomState(1)
+        n = 40
+        with LuxarZarrCompiler(store) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            nodes = {
+                "pts": scene.add_points("pts", rng.rand(n, 3).astype(np.float32)),
+                "lns": scene.add_lines(
+                    "lns",
+                    rng.rand(n, 3).astype(np.float32),
+                    widths=np.full(n, 0.1, dtype=np.float32),
+                ),
+            }
+            in_memory = {name: node.ordering for name, node in nodes.items()}
+
+        root = zarr.open_group(store, "r")
+        for name, reported in in_memory.items():
+            # Absent on disk is how an unordered node is spelled; the viewer
+            # treats a missing attr as "none" (chunk-index-loader.ts).
+            on_disk = dict(root[name].attrs).get("ordering", "none")
+            assert reported == on_disk, f"{name}: property={reported} disk={on_disk}"

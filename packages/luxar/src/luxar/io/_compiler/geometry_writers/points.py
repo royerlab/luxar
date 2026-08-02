@@ -227,6 +227,7 @@ def write_points(
     group.attrs.update(attrs)
     group.attrs["type"] = "points"
     group.attrs["n_points"] = n_points
+    group.attrs["ndim"] = n_dims
     # Presence flags mirror the Lines writer (has_colors/has_sharpness) so all
     # three geometry types stamp the same attrs the viewer can rely on.
     group.attrs["has_colors"] = metadata["has_colors"]
@@ -253,6 +254,12 @@ def write_points(
     if ordering_data is not None:
         write_points_ordering_to_zarr(group, ordering_data, ctx.compressor)
         metadata["has_spatial_index"] = True
+        # Mirrors the Lines writer: the returned metadata is what backs
+        # ``Points.ordering``, so omitting it would make that property report
+        # "none" for a node that is in fact spatially ordered on disk.
+        metadata["ordering"] = ordering_data["ordering"]
+    else:
+        metadata["ordering"] = "none"
 
     # 11. Write labels if provided (CSR-style: label_offsets + label_bytes)
     if labels is not None:
