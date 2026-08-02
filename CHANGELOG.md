@@ -6,6 +6,16 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
+#### Tests — demo dimension ranges are checked against generated scenes (#799)
+
+Small end-to-end builds now pin the dimension declarations in
+`network_performance` and `particle_collision_animated`. The tests fail on any
+`outside declared range` warning and compare the persisted declarations with
+the stored scene extent, so a fixed-but-too-narrow range and an unnecessarily
+wide range are both caught. The network test protects the data-derived x/y/z
+ranges for its Gaussian clusters; the animated collision test protects frame 0,
+the final frame, and the discrete time step.
+
 #### Performance — indexed-Lines partitioning scales to ribbon-heavy datasets (#1103)
 
 The shared `add_lines(partition=...)` path identified indexed connected
