@@ -541,10 +541,13 @@ export class OverlayManager {
       el.style.color = config.color;
     }
 
-    // Width (enables word wrapping)
+    // Width (enables word wrapping). Like the anchor positioning above,
+    // each branch clears what the others set so no stale sizing survives a
+    // re-apply with a different config.
     if (config.width) {
       // Explicit width is the primary sizing; honor it verbatim.
       el.style.width = `${config.width * 100}vw`;
+      el.style.maxWidth = '';
       // Hover overlays use pre-line so \n in labels creates line breaks;
       // regular overlays use normal for standard word wrapping.
       el.style.whiteSpace = config.hover ? 'pre-line' : 'normal';
@@ -554,6 +557,7 @@ export class OverlayManager {
       // label wraps to a couple of lines instead of collapsing to one word per
       // line against the right-anchored container edge (see issue #773), rather
       // than the ~2vw the pre-transform container position would otherwise impose.
+      el.style.width = '';
       el.style.maxWidth = 'min(30vw, 40ch)';
       el.style.whiteSpace = 'pre-line';
       el.style.wordWrap = 'break-word';
@@ -561,7 +565,10 @@ export class OverlayManager {
       // No explicit width and not a wrapping overlay: single line, sized to its
       // content (unchanged behavior — a max-width here would only clip the box
       // while nowrap text overflows off-screen).
+      el.style.width = '';
+      el.style.maxWidth = '';
       el.style.whiteSpace = 'nowrap';
+      el.style.wordWrap = '';
     }
 
     // Text alignment

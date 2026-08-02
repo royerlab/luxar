@@ -329,6 +329,35 @@ describe('OverlayManager — anchoring (issue #773)', () => {
     expect(el.style.maxWidth).toBe('');
   });
 
+  it('clears stale sizing styles when text content is re-applied with a different config', async () => {
+    // The sizing branches are mutually exclusive; each must clear what the
+    // others set so a re-apply with a different config leaves no stale
+    // max-width/word-wrap behind (same convention as the left/right clearing
+    // in applyPositionAndStyle).
+    await manager.loadOverlays(
+      [makeTextOverlay({ name: 'morph', hover: true, text: '{hover_label}' })],
+      'http://example.com'
+    );
+    const el = document.querySelector('[data-overlay-name="morph"]') as HTMLDivElement;
+    expect(el.style.maxWidth).toBe('min(30vw, 40ch)');
+
+    // hover/no-width → explicit width: the clamp must not linger.
+    (manager as unknown as { createTextContent(e: HTMLDivElement, c: OverlayConfig): void })[
+      'createTextContent'
+    ](el, makeTextOverlay({ name: 'morph', width: 0.5 }));
+    expect(el.style.width).toBe('50vw');
+    expect(el.style.maxWidth).toBe('');
+
+    // explicit width → plain no-width nowrap: width, clamp and wrap all reset.
+    (manager as unknown as { createTextContent(e: HTMLDivElement, c: OverlayConfig): void })[
+      'createTextContent'
+    ](el, makeTextOverlay({ name: 'morph' }));
+    expect(el.style.width).toBe('');
+    expect(el.style.maxWidth).toBe('');
+    expect(el.style.whiteSpace).toBe('nowrap');
+    expect(el.style.wordWrap).toBe('');
+  });
+
   it('does not clamp a non-hover no-width overlay (nowrap stays unbounded — issue #773 regression guard)', async () => {
     // A non-hover text overlay with no explicit width is a single nowrap line
     // sized to its content. A max-width here would only clip the BOX while the
