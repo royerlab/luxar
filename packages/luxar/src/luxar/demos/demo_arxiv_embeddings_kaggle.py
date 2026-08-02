@@ -66,6 +66,8 @@ Usage:
 
 Requirements:
     - Install: pip install 'luxar[demos]'   # includes umap-learn
+    - Optional: pip install 'luxar[gsplats]'   # torch + scipy, for Points LOD
+      coarsening; without it the scene is a flat (fully viewable) point cloud
 
 NO AUTHENTICATION NEEDED!
     Downloads directly from Kaggle API (no login required).
@@ -110,6 +112,7 @@ from luxar.demos import (
     launch_viewer,
     require_module,
     stack_colorings,
+    substitutive_lod_or_flat,
 )
 from luxar.utils.paths import get_demos_output_dir
 
@@ -664,7 +667,9 @@ def generate_paper_landscape(
 
             # Substitutive Points LOD for the large (up to 2M) paper cloud —
             # coarse merged levels when zoomed out (census-style wiring; coarse
-            # splats stay pure per coloring via the `coloring` barrier).
+            # splats stay pure per coloring via the `coloring` barrier). Gated
+            # through substitutive_lod_or_flat so a warm-cache run without
+            # torch/scipy still builds a (flat) viewable scene.
             scene.add_points(
                 "arxiv_papers",
                 positions=stacked.positions,
@@ -674,7 +679,9 @@ def generate_paper_landscape(
                 opacity=0.9,
                 intensity=0.1,
                 labels=stacked.labels,
-                substitutive_lod=dict(compression_factor=8, levels=3, device="auto"),
+                substitutive_lod=substitutive_lod_or_flat(
+                    dict(compression_factor=8, levels=3, device="auto")
+                ),
             )
 
             # --- Overlays ---

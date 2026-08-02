@@ -145,7 +145,7 @@ from arbol import Arbol, aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import CameraConfig, ViewerConfig
-from luxar.demos import require_module
+from luxar.demos import require_module, substitutive_lod_or_flat
 from luxar.encoding import EncodingMode
 from luxar.utils.demos import (
     cached_download,
@@ -634,6 +634,10 @@ def build_scene(bundles: dict, output_path: Path, *, points: int) -> Path:
             groups = {d: scene.add_group(d.replace(" ", "_")) for d in DIVISIONS}
             total_segments = 0
 
+            # Resolved ONCE outside the loop: without torch/scipy the ladder is
+            # dropped for every bundle, and one notice covers all 87 nodes.
+            lod = substitutive_lod_or_flat(SUBSTITUTIVE_LOD, geometry="Lines")
+
             for name, division, xyz, rgb in zip(names, divisions, positions, colors):
                 n_paths = len(xyz) // points
                 indices = polyline_segment_indices(n_paths, points)
@@ -653,7 +657,7 @@ def build_scene(bundles: dict, output_path: Path, *, points: int) -> Path:
                     blending_mode="additive",
                     opacity=LINE_OPACITY,
                     intensity=LINE_INTENSITY,
-                    substitutive_lod=SUBSTITUTIVE_LOD,
+                    substitutive_lod=lod,
                     layer=True,
                 )
 

@@ -24,10 +24,12 @@ import pytest
 
 from luxar.demos import INSTALL_SPECS, MissingDependencyError, require_module
 from luxar.demos._dependencies import (
+    SUBSTITUTIVE_LOD_MODULES,
     DependencySpec,
     _version_satisfied,
     extras_for,
     is_installed,
+    substitutive_lod_or_flat,
     survey,
 )
 
@@ -402,6 +404,47 @@ class TestExtrasFor:
         gdown = [r for r in survey() if r.module == "gdown"]
         assert gdown, "gdown should still be in the table"
         assert extras_for(gdown) == []
+
+
+class TestSubstitutiveLodGate:
+    """The LOD gate DEGRADES instead of raising, and says what was lost.
+
+    Its call sites pass the result straight into ``add_points``/``add_lines``, so
+    the pass-through must be the spec object itself — a copy would silently drop
+    a caller's later mutation, and anything truthy-but-different would change
+    what the writer builds.
+    """
+
+    def test_the_gated_modules_are_installable(self) -> None:
+        """Advice to install them is only actionable if the table carries them."""
+        for module in SUBSTITUTIVE_LOD_MODULES:
+            assert module in INSTALL_SPECS, f"{module} missing from INSTALL_SPECS"
+
+    def test_spec_passes_through_when_both_modules_are_present(self, capsys) -> None:
+        pytest.importorskip("torch")
+        pytest.importorskip("scipy")
+        spec = dict(compression_factor=8, levels=3)
+        assert substitutive_lod_or_flat(spec) is spec
+        assert capsys.readouterr().out == "", "quiet path printed a notice"
+
+    @pytest.mark.parametrize("blocked", SUBSTITUTIVE_LOD_MODULES)
+    def test_missing_module_drops_the_spec_and_names_it(
+        self, blocked, monkeypatch, capsys
+    ) -> None:
+        # A None entry makes is_installed() False without needing the package
+        # to be genuinely absent from the machine running the tests.
+        monkeypatch.setitem(sys.modules, blocked, None)
+        assert substitutive_lod_or_flat(dict(compression_factor=8)) is None
+        out = capsys.readouterr().out
+        assert blocked in out, "notice did not name the missing module"
+        assert "skipping Points LOD" in out
+        assert "luxar[gsplats]" in out, "notice is not actionable"
+
+    def test_geometry_names_the_right_leaf(self, monkeypatch, capsys) -> None:
+        """Lines demos must not be told their Points lost coarsening."""
+        monkeypatch.setitem(sys.modules, "torch", None)
+        assert substitutive_lod_or_flat({}, geometry="Lines") is None
+        assert "skipping Lines LOD" in capsys.readouterr().out
 
 
 class TestEveryGatedModuleIsInTheTable:

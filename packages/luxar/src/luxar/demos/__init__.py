@@ -43,6 +43,7 @@ from ._dependencies import (
     extras_for,
     is_installed,
     require_module,
+    substitutive_lod_or_flat,
     survey,
 )
 
@@ -74,6 +75,7 @@ __all__ = [
     "require_local_data",
     "require_module",
     "stack_colorings",
+    "substitutive_lod_or_flat",
     "survey",
     "warn_if_no_cuda_gpu",
 ]
