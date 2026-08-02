@@ -192,8 +192,13 @@ vi.mock('three', () => ({
   }),
   LinearSRGBColorSpace: 'srgb-linear',
   NoToneMapping: 0,
+  LinearToneMapping: 1,
+  ReinhardToneMapping: 2,
+  CineonToneMapping: 3,
   SRGBColorSpace: 'srgb',
   ACESFilmicToneMapping: 4,
+  AgXToneMapping: 6,
+  NeutralToneMapping: 7,
   PCFShadowMap: 1,
 }));
 
