@@ -452,6 +452,50 @@ describe('depth-sort coordinator', () => {
     expect(requestRender.mock.calls.length).toBeGreaterThan(rrAfterCapture);
   });
 
+  it('resortForCapture dispatches exactly ONE sort per call when the camera moved past the threshold', async () => {
+    // The capture path composes TWO dispatchers: the force loop and the
+    // per-frame pass's camera-motion trigger. When the camera moved past
+    // angleThresholdDeg since the last sort (the first orbit frame after
+    // repositioning), both are eligible for the SAME pose — run in the
+    // wrong order, the second only sets `resortQueued` and a redundant
+    // identical full sort runs serially after the first. Guard the
+    // compose-to-one-sort property.
+    const coord = await loadCoordinator();
+    const camera = makeCamera();
+    coord.configureDepthSort({ getCamera: () => camera, requestRender: vi.fn() });
+
+    const mesh = makeGSplatsMesh(3, 'normal');
+    coord.noteDepthSortCommit(mesh, new Float32Array([0, 0, -10, 1, 0, -1, 2, 0, -5]), 3);
+    await flush();
+    expect(mockApi.sort).toHaveBeenCalledTimes(1);
+    sortResolvers[0]({
+      generation: mockApi.sort.mock.calls[0][0].generation as number,
+      ordering: new Uint32Array([0, 2, 1]),
+    });
+    await flush();
+    await applyStagedOrdering(mesh);
+
+    // Rotate the view axis ~45° about the mesh — far past the 3° default
+    // angle threshold, so the per-frame motion trigger is armed.
+    camera.position.set(10, 0, 10);
+    camera.lookAt(0, 0, -5);
+    camera.updateMatrixWorld();
+
+    const before = mockApi.sort.mock.calls.length;
+    const p = coord.resortForCapture(200);
+    expect(mockApi.sort.mock.calls.length).toBe(before + 1);
+    sortResolvers[sortResolvers.length - 1]({
+      generation: mockApi.sort.mock.calls[before][0].generation as number,
+      ordering: new Uint32Array([2, 0, 1]),
+    });
+    await p;
+
+    // Exactly one sort for the pose — the motion trigger did not queue a
+    // duplicate behind the force loop's dispatch (nor vice versa).
+    expect(mockApi.sort.mock.calls.length).toBe(before + 1);
+    expect(Array.from(drawnOrdering(mesh))).toEqual([2, 0, 1]);
+  });
+
   it('resortForCapture is bounded by maxWaitMs and restores requestRender in finally', async () => {
     // Guards two properties: (a) a wedged/never-resolving worker sort can
     // NEVER hang the offline capture — resortForCapture(maxWaitMs) exits on

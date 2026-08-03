@@ -975,14 +975,18 @@ export async function resortForCapture(maxWaitMs = 3000): Promise<void> {
   captureSuppressDepth++;
   requestRender = null;
   try {
-    // Cross-node renderOrder pass + pump any pending chunked applies +
-    // per-frame re-sort triggers, all for the current pose.
-    evaluateDepthSortPerFrame();
-
     // FORCE a fresh sort on every eligible node — offline capture can
     // afford a full sort per frame, so the ordering is exact for THIS pose
     // rather than only when a per-frame threshold happens to trip.
     // scheduleSort already queues a re-sort if one is in flight.
+    //
+    // Order matters: the force loop runs BEFORE the per-frame pass below.
+    // Its motion trigger dispatches for the same pose whenever the camera
+    // moved past a threshold since the last sort (the first orbit frame
+    // after repositioning, a coarse-threshold config), and a force-call on
+    // a node that pass just put in flight would only set `resortQueued` —
+    // a SECOND, identical full sort run serially after the first. Force-
+    // first, the pass's in-flight skip makes the two compose to one sort.
     if (depthSortEnabled && getCamera?.() && api) {
       for (const [nodeId, state] of nodeStates) {
         const mesh = state.mesh;
@@ -992,6 +996,11 @@ export async function resortForCapture(maxWaitMs = 3000): Promise<void> {
         scheduleSort(mesh, nodeId);
       }
     }
+
+    // Cross-node renderOrder pass + pump any pending chunked applies, all
+    // for the current pose (its re-sort trigger skips the in-flight nodes
+    // the force loop just dispatched).
+    evaluateDepthSortPerFrame();
 
     // Nothing to wait for (disabled / no order-dependent node / worker
     // unavailable): return before opening the drain loop.
