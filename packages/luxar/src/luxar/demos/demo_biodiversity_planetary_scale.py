@@ -158,7 +158,7 @@ measured against the live index, 2026-08):
 * **Aves is 60-62% of all GBIF records** and eBird alone is ~45%, so any
   uniform sample is mostly bird checklists. The always-on layer keeps whatever
   proportion the sampling actually produces rather than reweighting, and the
-  scrubbable ``By taxon & year`` layer caps each group instead, so rare groups
+  scrubbable ``By taxon & period`` layer caps each group instead, so rare groups
   stay explorable.
 
   Note carefully what the resulting number is and is not. Measured on the
@@ -226,7 +226,7 @@ USAGE
 
 Controls:
     Mouse drag rotate, scroll zoom, right-drag pan.
-    '1' selects the taxon dimension, '2' the year dimension; '[' / ']' step.
+    '1' selects the taxon dimension, '2' the period dimension; '[' / ']' step.
 """
 
 from __future__ import annotations
@@ -236,7 +236,7 @@ DEMO_META = {
     "title": "Biodiversity at Planetary Scale",
     "description": (
         "GBIF occurrence records and CC0 animal-migration tracks on a Blue "
-        "Marble globe, sliceable by taxon and year."
+        "Marble globe, sliceable by taxon and period."
     ),
     "category": "geoscience",
     "geometry": "points+lines",
@@ -448,23 +448,25 @@ Arbol.max_depth = 5
 # Taxonomy — the nine display groups
 # =============================================================================
 
-# Exactly NINE groups, deliberately: the viewer renders a categorical dimension
-# with 2 categories as a toggle, 3-9 as a dropdown, and >=10 as a slider
-# (ui/dimension-sliders.ts). Nine keeps it a dropdown, which is far easier to
-# navigate than a slider for an unordered axis.
-#: The "everything at once" slots. A scene with non-displayed dimensions cannot
-#: rely on ``extend_to_all`` to keep a layer visible at every slice: a fully
-#: extended node is skipped from re-querying AND its initial load still applies
-#: the slice, so it loads only what the *default* slice admits and then freezes.
-#: Measured on a 2-layer control scene: the extended layer's arrays were never
-#: fetched at all (only the sliced layer's requests appear), and in an earlier
-#: build of this demo the always-on layer sat frozen at 320,000 of its 15,000,000
-#: points -- surviving year scrubs only because it was never re-queried.
+# NINE display groups: a lay-legible partition of GBIF's kingdoms/phyla/classes,
+# each with a distinct, roughly equal-luminance hue. The viewer renders a
+# categorical dimension with 2 categories as a toggle, 3-9 as a dropdown, and
+# >=10 as a slider (ui/dimension-sliders.ts); with the leading ``All life``
+# summary slot the taxon dimension is 10 categories, so it renders as a slider
+# (see ``TAXON_CATEGORIES`` below).
+#: The "everything at once" slots for the SCRUBBABLE (selection) layers. The
+#: viewer shows the INTERSECTION of the non-displayed slices, so a layer stored
+#: only at real ``(taxon, period)`` pairs occupies just the joint cells -- move a
+#: single slider off "all" and it lands on an empty slot. So "all" is modelled as
+#: a real coordinate: ``taxon`` gets an extra leading category and ``period`` an
+#: extra leading category; the summary layers live there, the per-taxon/per-period
+#: layers live in the real slots, and every node is an ordinary sliced node whose
+#: streaming ladder advances normally.
 #:
-#: So "all" is modelled as a real coordinate instead. ``taxon`` gets an extra
-#: leading category and ``year`` an extra leading step; the summary layers live
-#: there, the per-taxon/per-year layers live in the real slots, and every node is
-#: an ordinary sliced node whose streaming ladder advances normally.
+#: This is a different mechanism from ``extend_to_all`` (used for the persistent
+#: globe -- see the module docstring): that keeps a context layer visible at
+#: *every* slice, and since the #1157 fix (#1167 on main) a fully-extended node
+#: is queried at every slice as intended rather than skipped and frozen.
 ALL_LIFE_SLOT: Final = 0
 PERIOD_ALL_SLOT: Final = 0
 
@@ -472,7 +474,7 @@ PERIOD_ALL_SLOT: Final = 0
 #: "all" slot. Both choices come from the same measurement.
 #:
 #: The viewer shows the INTERSECTION of the non-displayed slices, so a layer
-#: stored at (real taxon, real year) occupies only the *joint* cells. Two things
+#: stored at (real taxon, real period) occupies only the *joint* cells. Two things
 #: went wrong with that:
 #:
 #: 1. Moving ONE slider emptied the scene, because nothing occupied
@@ -982,7 +984,7 @@ def stratified_cap(
 ) -> np.ndarray:
     """Indices keeping at most ``cap`` randomly-chosen members of each label.
 
-    Used for the scrubbable ``By taxon & year`` layer, so a 0.4%-of-GBIF group
+    Used for the scrubbable ``By taxon & period`` layer, so a 0.4%-of-GBIF group
     is as explorable as the 62% one. Returned indices are sorted, which keeps
     downstream spatial ordering deterministic.
     """
@@ -1817,8 +1819,9 @@ def build_tracks() -> TrackSet:
             )
             chains_lon.append(d_lon)
             chains_lat.append(d_lat)
-            # Time is snapped to the WHOLE YEAR of the originating fix -- see
-            # the module docstring for why fractional years were rejected.
+            # Carry the WHOLE YEAR of the originating fix here; it is binned to a
+            # decade `period` slot downstream via `period_slot` (see the module
+            # docstring for why fractional years were rejected).
             chains_year.append(year[srcidx].astype(np.float32))
             species = str(data["species"][sel[0]]) if sel.size else ""
             chains_group.append(_movebank_group(species, int(src["group"])))
@@ -2058,7 +2061,7 @@ def add_lod_tiles(
             levels=levels,
             device="auto",
             # Pin coarsening to the three SPATIAL columns. The default (all
-            # dims) would let coarse Gaussians merge across taxon and year.
+            # dims) would let coarse Gaussians merge across taxon and period.
             coarsen_dims=[0, 1, 2],
             coverage_fractions=list(coverage),
         )
@@ -2187,11 +2190,12 @@ def build_scene(output_path: Path, sample: GbifSample, tracks: TrackSet) -> Path
                     # enough to blur the legend's identity with the globe.
                     tone_mapping="Neutral",
                     camera=globe_camera(10.0, 25.0, distance=2.95),
-                    # Open on (All life, all years) -- the slots the summary
+                    # Open on (All life, All years) -- the slots the summary
                     # layers occupy. Without this the scene would open on
-                    # taxon=All life but year=1899 anyway (both are the range
-                    # minima), but pinning it makes the intent explicit and
-                    # survives any future reordering of the categories.
+                    # taxon=All life and period=All years anyway (both are
+                    # category index 0, the range minima), but pinning it makes
+                    # the intent explicit and survives any future reordering of
+                    # the categories.
                     dimensions=DimensionsConfig(
                         current_step=[
                             0.0,

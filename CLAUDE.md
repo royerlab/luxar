@@ -217,7 +217,7 @@ See `docs/guides/developer/BUILD_SYSTEM_SPEC.md` for complete documentation.
 
 ### Luxar CLI
 ```bash
-luxar demo                       # List the 77 bundled demos (table)
+luxar demo                       # List the 78 bundled demos (table)
 luxar demo run lorenz            # Run a demo by key/index (forwards -- args)
 luxar demo cache list            # Inventory / clear demo caches (cache clear …)
 # Demos keep heavyweight packages OUT of the core install, so a fresh checkout

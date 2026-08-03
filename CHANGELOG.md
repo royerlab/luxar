@@ -41,8 +41,9 @@ is the only type with two), and an absent `ordering` attr means `"none"`.
 New `biodiversity_planetary_scale` demo, and the first one in the ecology
 problem space: a Blue Marble globe carrying a 15M-record sample of GBIF's 3.7
 billion georeferenced species occurrences as Points, plus CC0 Movebank animal
-tracks as Lines, with `taxon` (categorical, 9 groups) and `year` (discrete,
-1900-2026) as non-displayed dimensions. Reads the GBIF AWS Open Data parquet
+tracks as Lines, with `taxon` (categorical, 10 categories: `All life` plus 9
+groups) and `period` (categorical, 14 categories: `All years` plus 13 decades,
+1900s-2020s) as non-displayed dimensions. Reads the GBIF AWS Open Data parquet
 snapshot directly and anonymously (250 random parts, 9 of 50 columns projected —
 97.9M rows scanned, 76.1M kept, in 55 s at 48 threads).
 
@@ -58,9 +59,9 @@ scene and fail silently on a large one — and an A/B showed they render
 identically anyway.
 
 **Context layers use `extend_to_all`; selection layers use real coordinate
-slots.** The globe and the always-on tracks must survive every scrub or the
-selected records are left floating in black — which is what `extend_to_all` is
-for, and it was broken (#1157: a fully-extended node was never queried at all).
+slots.** The globe must survive every scrub or the selected records are left
+floating in black — which is what `extend_to_all` is for, and it was broken
+(#1157: a fully-extended node was never queried at all).
 That defect was found while building this demo, filed with a self-contained
 repro, and **is now fixed**; verified here before the workaround (a 25k globe
 replicated into all 139 slots, 3.5M elements) was removed:
@@ -104,13 +105,13 @@ metric makes the tiles flap, leaving two levels cross-faded and resident at once
 (1.07M instead of 186k) because the selector's hysteresis is 10% and
 downgrade-only.
 
-The demo models "show everything" as a **real coordinate** — a leading `All life`
-taxon category and a leading `1899` year step that the summary layers occupy —
-rather than with `extend_to_all`, which is unusable for this: a fully-extended
-node is never queried at all, so it is sliced away on load, its ladder never
-advances, and its gsplat levels are dropped. Filed as #1157 with a self-contained
-repro and a root cause (`deriveNodeViewState` returns its full-extend `skip`
-before applying the tolerance override that implements the extension).
+On the `extend_to_all` fix itself: #1157 was that a fully-extended context node
+was never queried — `deriveNodeViewState` returned its full-extend `skip` before
+applying the tolerance override that implements the extension — so its arrays
+never loaded and its ladder froze. That is fixed on main (#1167), which is what
+lets the globe be a single extended layer. The scrubbable layers stay on real
+`(taxon, period)` slots for the intersection reason above, not because of this
+bug.
 
 Also worth knowing when reusing the recipe: `partition=` must be *omitted* from
 the per-tile calls (even the documented `partition=False` bypass trips the

@@ -289,7 +289,7 @@
         "key": "1",
         "steps": 3
       },
-      "note": "Blue Marble globe (Points) + a kind=partition of per-tile kind=lod GBIF occurrence ladders (Points) + CC0 Movebank tracks (Lines); lodFinest:false so the per-tile coverage LOD stays coarse enough for a software-GL orbit video (forcing finest would commit all 8 tiles' 1.87M-point levels at once), absolute distance frames the whole globe, dimensionNav steps the 9-category taxon dropdown"
+      "note": "Blue Marble globe (Points) + a kind=partition of per-tile kind=lod GBIF occurrence ladders (Points) + CC0 Movebank tracks (Lines); lodFinest:false so the per-tile coverage LOD stays coarse enough for a software-GL orbit video (forcing finest would commit all 8 tiles' 1.87M-point levels at once), absolute distance frames the whole globe, dimensionNav steps the 10-category taxon slider"
     },
     {
       "id": "nuclear_pore_complex",
