@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { GEOMETRY_TYPES, type GeometryTypeName } from '../../../types/format-contract';
+import { GEOMETRY_TYPES } from '../../../types/format-contract';
 import {
   GEOMETRY_CAPABILITIES,
   isGeometryType,
@@ -15,18 +15,9 @@ import {
  * table itself is a `Record<GeometryTypeName, …>`, so the compiler already
  * forces the new entry to exist; these assert it behaves.
  */
-/**
- * The generated `GEOMETRY_TYPES` is declared `readonly string[]`, so iterating it
- * yields `string` — which cannot index a `Record<GeometryTypeName, …>`. Narrow
- * once here rather than per loop; the first test below asserts every member really
- * is a `GeometryTypeName`, so the narrowing is checked rather than assumed.
- * (#1204 makes the generated arrays literal-typed, after which this is a no-op.)
- */
-const TYPES = GEOMETRY_TYPES as readonly GeometryTypeName[];
-
 describe('geometry capabilities', () => {
   it('classifies every contract geometry type, and nothing else', () => {
-    for (const t of TYPES) {
+    for (const t of GEOMETRY_TYPES) {
       expect(isGeometryType(t), t).toBe(true);
       expect(Object.hasOwn(GEOMETRY_CAPABILITIES, t), t).toBe(true);
     }
@@ -52,7 +43,7 @@ describe('geometry capabilities', () => {
   });
 
   it('every predicate agrees with the table it reads', () => {
-    for (const t of TYPES) {
+    for (const t of GEOMETRY_TYPES) {
       const caps = GEOMETRY_CAPABILITIES[t];
       expect(supportsLod(t), t).toBe(caps.lod);
       expect(supportsPartition(t), t).toBe(caps.partition);
