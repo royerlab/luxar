@@ -50,6 +50,7 @@ import { timeLodStageSync } from '../lod-load-stats';
 import type { SceneNode } from '../../data-loader-types';
 import type { LODGroupChild, LODGroupEntry } from '../../../scene/lod-group-registry';
 import type { LODGroupMetadata, LODGroupSelectorMode } from '../../../types/lod-group';
+import { supportsLod } from '../../../types/geometry-capabilities';
 import type { NodeBuildCtx } from './build-ctx';
 
 /**
@@ -332,16 +333,14 @@ export async function loadLodGroupNode(
     const coverageFraction = coverageFractions[i];
 
     // Defer only when there's a selector to trigger the load AND the child is a
-    // leaf type with a cheap/expensive split (gsplats / points / lines). The
+    // LOD-capable leaf type, i.e. one with a cheap/expensive split. The
     // eager/default child and any other type (e.g. nested groups) load fully
     // now. Deferring the points/lines child matters for the points-/lines-
     // substitutive LOD ladder, whose finest child is the full cloud / line set —
     // without this it would be fetched eagerly on load, defeating progressive
-    // loading.
-    const canDefer =
-      hasRegistry &&
-      i !== eagerIdx &&
-      (child.type === 'gsplats' || child.type === 'points' || child.type === 'lines');
+    // loading. A geometry type with no LOD support (`types/geometry-capabilities`)
+    // can never legitimately be a child here.
+    const canDefer = hasRegistry && i !== eagerIdx && supportsLod(child.type);
 
     if (canDefer) {
       // Cheap-attach: placeholder mesh + loader, no array fetch. The thunk runs

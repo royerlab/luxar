@@ -10,9 +10,9 @@
  * (geometry committed) but stale — a re-slice overwrites geometry in place
  * without flipping readiness, so the registry needs the per-mesh
  * `loadedViewVersion` stamp (written at commit by `stamp-view-version.ts`) to
- * know which level to actually display. Freshness is tracked for the three leaf
- * geometry types (gsplats / points / lines); nested groups carry no per-slice
- * staleness and are always "fresh".
+ * know which level to actually display. Freshness is tracked for the LOD-capable
+ * leaf geometry types; nested groups carry no per-slice staleness and are always
+ * "fresh".
  *
  * **Settle** is the debounce that drives deferred reloads: while the view
  * version changes every frame (active scrub) we want to show only the cheap
@@ -25,6 +25,8 @@
  *
  * @module scene/lod-freshness
  */
+
+import { supportsLod } from '../types/geometry-capabilities';
 
 /** Minimal structural shape this module reads off a registry child. */
 export interface FreshnessChild {
@@ -58,8 +60,16 @@ export interface FreshnessChild {
   };
 }
 
-/** Leaf geometry types whose meshes are stamped with ``loadedViewVersion``. */
-const FRESHNESS_TRACKED_TYPES: ReadonlySet<string> = new Set(['gsplats', 'points', 'lines']);
+/**
+ * Whether a mesh's ``nodeType`` is stamped with ``loadedViewVersion``.
+ *
+ * That stamp exists so the LOD registry can judge a level's per-slice
+ * freshness, so the tracked set is the LOD-capable subset of the geometry
+ * vocabulary — NOT the vocabulary itself. See `types/geometry-capabilities`.
+ */
+function isFreshnessTracked(nodeType: unknown): boolean {
+  return supportsLod(nodeType);
+}
 
 /** A child is renderable iff its geometry is committed. Absent flag ⇒ ready. */
 export function isReady(child: { ready?: boolean }): boolean {
@@ -67,9 +77,8 @@ export function isReady(child: { ready?: boolean }): boolean {
 }
 
 /**
- * Whether a child's own mesh carries one of the freshness-tracked LEAF types
- * (gsplats / points / lines) — i.e. it is a stamped leaf rather than a
- * `group` subtree (a deferred `kind=partition` / nested `lod` LOD child).
+ * Whether a child's own mesh carries a freshness-tracked LEAF type — i.e. it is
+ * a stamped leaf rather than a `group` subtree (a deferred `kind=partition` / nested `lod` LOD child).
  * A leaf's per-slice staleness lives in its `loadedViewVersion` stamp
  * ({@link isFresh}); a group's must be folded from its subtree leaves. This is
  * the correct leaf/group discriminant — a leaf's committed COUNT can be absent
@@ -78,12 +87,12 @@ export function isReady(child: { ready?: boolean }): boolean {
  */
 export function isTrackedLeaf(child: FreshnessChild): boolean {
   const t = child.object.userData?.nodeType;
-  return t != null && FRESHNESS_TRACKED_TYPES.has(t);
+  return isFreshnessTracked(t);
 }
 
 /**
  * Whether `child` is ready AND fresh for view-version `version`. Freshness is
- * tracked only for the three stamped leaf types; a ready non-leaf child (nested
+ * tracked only for the stamped leaf types; a ready non-leaf child (nested
  * group / partition wrapper) has no per-slice staleness and is always fresh —
  * so the slice-aware fallback is a no-op for those. A ready leaf whose stamp is
  * absent/older than `version` is stale (its geometry reflects a previous slice).
@@ -91,7 +100,7 @@ export function isTrackedLeaf(child: FreshnessChild): boolean {
 export function isFresh(child: FreshnessChild | undefined, version: number): boolean {
   if (!child || !isReady(child)) return false;
   const ud = child.object.userData;
-  if (ud && FRESHNESS_TRACKED_TYPES.has(ud.nodeType ?? '')) {
+  if (ud && isFreshnessTracked(ud.nodeType)) {
     return ud.loadedViewVersion === version;
   }
   return true; // nested groups / unstamped leaves: no per-slice staleness
@@ -131,7 +140,7 @@ export function visibleElementCount(child: FreshnessChild): number | null {
  * must not wrap ``ud`` in a throwaway ``{ object: { userData } }`` object.
  */
 export function countFromUserData(ud: FreshnessChild['object']['userData']): number | null {
-  if (!ud || !FRESHNESS_TRACKED_TYPES.has(ud.nodeType ?? '')) return null;
+  if (!ud || !isFreshnessTracked(ud.nodeType)) return null;
   switch (ud.nodeType) {
     case 'points':
       return ud.visiblePointCount ?? null;
