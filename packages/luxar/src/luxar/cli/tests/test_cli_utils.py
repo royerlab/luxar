@@ -704,3 +704,39 @@ class TestExitCodeFrom:
 
         assert exit_code_from(-9) == 137
         assert exit_code_from(-15) == 143
+
+
+def test_info_tree_does_not_label_a_geometry_leaf_as_a_group(capsys) -> None:
+    """``luxar info``'s tree must classify every contract geometry type as a leaf.
+
+    ``_print_tree`` classifies a node by testing its stored ``type`` against the
+    contract vocabulary. It previously tested a literal
+    ``("points", "lines", "gsplats")`` tuple, so a geometry type added to
+    ``geometry_types`` but missed there fell through to ``node_type = "group"``
+    and was rendered with the folder icon.
+
+    Asserting on the folder icon rather than on the type name: child names are
+    deliberately neutral, because a name containing the type string would make
+    the assertion pass regardless of classification.
+    """
+    import zarr
+
+    from luxar.cli.info_command import _print_tree
+    from luxar.typing_utils._format_contract import GEOMETRY_TYPES
+
+    GROUP_ICON = "\U0001f4c1"  # 📁 — what format_tree_node gives a "group"
+
+    for gtype in GEOMETRY_TYPES:
+        store = zarr.group()
+        store.attrs["type"] = "scene"
+        child = store.create_group("child")  # neutral: no type name in it
+        child.attrs["type"] = gtype
+
+        _print_tree(store)
+        out = capsys.readouterr().out
+
+        child_lines = [ln for ln in out.splitlines() if "child" in ln]
+        assert child_lines, f"no line rendered for the {gtype!r} leaf:\n{out}"
+        assert GROUP_ICON not in child_lines[0], (
+            f"{gtype!r} leaf was classified as a group: {child_lines[0]!r}"
+        )

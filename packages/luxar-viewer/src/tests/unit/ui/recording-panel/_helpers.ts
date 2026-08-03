@@ -14,30 +14,6 @@
 import { vi } from 'vitest';
 import { LuxarOrbitControls } from '../../../../controls/luxar-orbit-controls';
 
-/**
- * Polyfill ImageData for jsdom (not available there by default).
- * Each test file calls this once at module scope.
- */
-export function ensureImageDataPolyfill(): void {
-  if (typeof globalThis.ImageData !== 'undefined') return;
-  (globalThis as any).ImageData = class ImageData {
-    data: Uint8ClampedArray;
-    width: number;
-    height: number;
-    constructor(widthOrData: number | Uint8ClampedArray, heightOrWidth: number, height?: number) {
-      if (widthOrData instanceof Uint8ClampedArray) {
-        this.data = widthOrData;
-        this.width = heightOrWidth;
-        this.height = height ?? widthOrData.length / (4 * heightOrWidth);
-      } else {
-        this.width = widthOrData;
-        this.height = heightOrWidth;
-        this.data = new Uint8ClampedArray(this.width * this.height * 4);
-      }
-    }
-  };
-}
-
 // [ui.md/O3][P10] Removed unused exports `canvasToBlobOverride` and
 // `installCanvasMock`: no test file in `recording-panel/` imports them.
 // `screenshot-strategy.test.ts` declares its own local `canvasToBlobOverride`
@@ -100,46 +76,3 @@ export function createMockAnimationController(): any {
 
 // ── GUI module mock factories ──────────────────────────────────
 // Used by each test file's `vi.mock('../../../ui/gui', ...)` call.
-
-export function createMockElement(): any {
-  return {
-    style: {},
-    className: '',
-    classList: { add: vi.fn(), remove: vi.fn() },
-    closest: vi.fn().mockReturnValue({ classList: { add: vi.fn() }, setAttribute: vi.fn() }),
-    appendChild: vi.fn(),
-    addEventListener: vi.fn(),
-    removeEventListener: vi.fn(),
-    querySelector: vi.fn().mockReturnValue({ readOnly: false, style: {}, cursor: '' }),
-  };
-}
-
-export function createMockController(): any {
-  return {
-    name: vi.fn().mockReturnThis(),
-    onChange: vi.fn().mockReturnThis(),
-    show: vi.fn().mockReturnThis(),
-    hide: vi.fn().mockReturnThis(),
-    updateDisplay: vi.fn().mockReturnThis(),
-    domElement: createMockElement(),
-  };
-}
-
-export function createMockFolder(): any {
-  return {
-    add: vi.fn().mockImplementation(() => createMockController()),
-    addFolder: vi.fn().mockImplementation(() => createMockFolder()),
-    close: vi.fn(),
-  };
-}
-
-export function createMockGUI(): any {
-  return {
-    domElement: createMockElement(),
-    add: vi.fn().mockImplementation(() => createMockController()),
-    addFolder: vi.fn().mockImplementation(() => createMockFolder()),
-    show: vi.fn(),
-    hide: vi.fn(),
-    destroy: vi.fn(),
-  };
-}

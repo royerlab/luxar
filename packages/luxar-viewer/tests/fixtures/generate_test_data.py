@@ -67,6 +67,7 @@ FIXTURE_NAMES: list[str] = [
     "test_delta_filter.luxar.zarr",
     "test_encoding_contract_matrix.luxar.zarr",
     "test_encoding_edge_cases.luxar.zarr",
+    "test_extend_to_all_4d.luxar.zarr",
     "test_gsplats.luxar.zarr",
     "test_gsplats_2d.luxar.zarr",
     "test_gsplats_normal_overlap.luxar.zarr",
@@ -1790,6 +1791,154 @@ def generate_lines_categorical_test() -> None:
         aprint("  Scrubbing `sel` must swap the pairs for Lines exactly as for Points")
 
 
+def generate_extend_to_all_test() -> None:
+    """Fully-extended ``extend_to_all`` nodes in a 4D scene.
+
+    Regression fixture for "a node whose ``extend_to_all`` covers ALL
+    non-displayed dims is never queried": such a node was hard-skipped
+    before the per-node tolerance override ran, so it fetched nothing, its
+    additive ladder stayed frozen, and gsplat levels were filtered out
+    during nD->3D projection.
+
+    Two fixture properties do the discriminating work, and both matter:
+
+    1. The extended nodes are authored at ``time=2`` via ``fill``, which is
+       deliberately NOT the scene's initial slice (``time=0``). A layer whose
+       ``fill`` happens to equal the opening slice renders correctly even
+       when fully broken — that coincidence is what hid the bug in the demos.
+    2. ``sliced_pts`` carries a real ``time`` column at ``time=3`` and is the
+       known-good control: it must be EMPTY wherever the extended nodes are
+       full, so an assertion that passes vacuously (everything visible
+       everywhere) cannot survive.
+
+    All three geometry kinds are extended, because they reach the extended
+    query through different code: Points/GSplats take the tolerance override
+    directly, Lines opt out of the PARTIAL override (their segment bounds
+    already encode the extent) and so exercise the full-extend path alone,
+    and GSplats additionally derive their `extendToAllDims` set from the
+    `1e10` tolerance sentinel during projection.
+
+    ``ext_pts`` carries an additive ladder so a frozen ladder (a node that
+    loads its first rung and then never advances) is distinguishable from a
+    converged one: only a node re-queried per sweep reaches all 1200 points.
+    """
+    with asection("Generating extend_to_all (fully-extended) Test"):
+        output = FIXTURES_DIR / "test_extend_to_all_4d.luxar.zarr"
+
+        rng = np.random.default_rng(1157)
+
+        dims = Dimensions(
+            [
+                Dimension("x", unit="units", display=True),
+                Dimension("y", unit="units", display=True),
+                Dimension("z", unit="units", display=True),
+                Dimension(
+                    "time",
+                    unit="frame",
+                    range=(0.0, 4.0),
+                    step=1.0,
+                    discrete=True,
+                    display=False,
+                ),
+            ]
+        )
+
+        n_pts = 1200
+        ext_positions = (rng.normal(0.0, 0.35, (n_pts, 3)) - [0.8, 0.0, 0.0]).astype(
+            np.float32
+        )
+
+        t = np.linspace(0.0, 4 * np.pi, 200)
+        ext_vertices = np.column_stack(
+            [0.8 + 0.25 * np.cos(t), 0.25 * np.sin(t), t / (4 * np.pi) - 0.5]
+        ).astype(np.float32)
+
+        n_splats = 40
+        ext_centers = np.column_stack(
+            [
+                np.linspace(-0.4, 0.4, n_splats),
+                np.full(n_splats, 0.7),
+                np.zeros(n_splats),
+            ]
+        ).astype(np.float32)
+        # Covariance Cholesky factors (L11, L21, L22, L31, L32, L33) — see
+        # generate_gsplats_test on why these are covariance, not precision.
+        # `dim_order=` expands them to the scene's 4D packing.
+        ext_cholesky = np.zeros((n_splats, 6), dtype=np.float32)
+        ext_cholesky[:, 0] = 0.06  # L11
+        ext_cholesky[:, 2] = 0.06  # L22
+        ext_cholesky[:, 5] = 0.06  # L33
+
+        n_control = 400
+        control = np.column_stack(
+            [
+                rng.normal(0.0, 0.25, (n_control, 3)) + [0.0, -0.8, 0.0],
+                np.full(n_control, 3.0),
+            ]
+        ).astype(np.float32)
+
+        with LuxarZarrCompiler(
+            output,
+            encoding_mode=EncodingMode.PRECISION,
+            compressor=None,
+            float16_allowed=False,
+        ) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+
+            # extend_to_all=['time'] is INFERRED from the unmapped `time` dim.
+            scene.add_points(
+                "ext_pts",
+                ext_positions,
+                radii=0.02,
+                colors=np.tile([1.0, 0.5, 0.1], (n_pts, 1)).astype(np.float32),
+                dim_order=["x", "y", "z"],
+                fill={"time": 2.0},
+                additive_lod=dict(counts=[300, 700], method="random", seed=0),
+            )
+
+            scene.add_lines(
+                "ext_lines",
+                vertices=ext_vertices,
+                widths=0.02,
+                colors=np.tile([0.2, 0.9, 0.4], (len(ext_vertices), 1)).astype(
+                    np.float32
+                ),
+                line_type="polyline",
+                dim_order=["x", "y", "z"],
+                fill={"time": 2.0},
+            )
+
+            scene.add_gsplats(
+                "ext_gsplats",
+                ext_centers,
+                amplitudes=np.full(n_splats, 1.0, dtype=np.float32),
+                cholesky_factors=ext_cholesky,
+                colors=np.tile([0.4, 0.6, 1.0], (n_splats, 1)).astype(np.float32),
+                dim_order=["x", "y", "z"],
+                fill={"time": 2.0},
+            )
+
+            # Control: a real `time` column, visible ONLY at time=3.
+            scene.add_points(
+                "sliced_pts",
+                control,
+                radii=0.02,
+                colors=np.tile([0.2, 0.7, 1.0], (n_control, 1)).astype(np.float32),
+                extend_to_all=[],  # intentionally sliced by `time`
+            )
+
+        aprint(f"  Created {output}")
+        aprint(
+            f"  ext_pts ({n_pts} pts, ladder 300/700/{n_pts}), ext_lines "
+            f"({len(ext_vertices)} verts), ext_gsplats ({n_splats} splats): "
+            "extend_to_all=['time'], authored at time=2"
+        )
+        aprint(
+            f"  sliced_pts ({n_control} pts) at time=3 only — the control that "
+            "must be empty where the extended nodes are full"
+        )
+
+
 # ─── Blending-mode E2E fixtures ─────────────────────────────────────────
 #
 # Shared by blending-modes.spec.ts / lines-blending-modes.spec.ts. All
@@ -1945,9 +2094,13 @@ def generate_lift_parity_test() -> None:
             grp = scene.add_group("probe", layer=True)
 
             for i, radius in enumerate(LIFT_PARITY_RADII):
-                pos_p = _lift_parity_blob(rng, LIFT_PARITY_COLUMNS[i], LIFT_PARITY_ROW_Y["points"])
+                pos_p = _lift_parity_blob(
+                    rng, LIFT_PARITY_COLUMNS[i], LIFT_PARITY_ROW_Y["points"]
+                )
                 pos_g = pos_p.copy()
-                pos_g[:, 1] += LIFT_PARITY_ROW_Y["gsplats"] - LIFT_PARITY_ROW_Y["points"]
+                pos_g[:, 1] += (
+                    LIFT_PARITY_ROW_Y["gsplats"] - LIFT_PARITY_ROW_Y["points"]
+                )
 
                 colors = np.full((LIFT_PARITY_N, 3), 255, np.uint8)
                 radii = np.full(LIFT_PARITY_N, radius, np.float32)
@@ -3415,6 +3568,9 @@ def main() -> None:
         aprint("")
 
         generate_lines_categorical_test()
+        aprint("")
+
+        generate_extend_to_all_test()
         aprint("")
 
         generate_points_blending_modes_test()
