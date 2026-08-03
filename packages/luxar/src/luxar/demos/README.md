@@ -22,8 +22,10 @@ luxar demo run lorenz       # run by key or index; forwards -- args
 luxar demo run lorenz -- --no-serve --points=10000
 luxar demo run-all          # generate demo datasets (--no-serve; skips GPU/large-download by default)
 luxar demo cache list       # inventory demo caches under ~/.cache/luxar/
-luxar demo deps             # which optional dependencies are missing?
-luxar demo deps --install   # install the extras that provide them
+luxar demo deps                    # which optional dependencies are missing?
+luxar demo deps --install          # install the extras that provide them
+luxar demo deps --only scipy       # report one import module
+luxar demo deps --only scipy --install  # install only scipy's constrained spec
 ```
 
 ## Optional dependencies
@@ -40,7 +42,7 @@ load-bearing — why. Two consumers read it, which is what keeps them honest:
 | Consumer | Role |
 |---|---|
 | `require_module("x")` | The runtime gate. Raises `MissingDependencyError` naming the *constrained* spec and its extra. |
-| `luxar demo deps` | The installer/report. Surveys the table with `find_spec` (no imports), flags an installed-but-below-pin package `OUTDATED`, and exits 1 if anything is missing or out of date. |
+| `luxar demo deps` | The installer/report. Surveys the table with `find_spec` (no imports), flags an installed-but-below-pin package `OUTDATED`, and in report-only mode exits 1 if anything is missing or out of date. `--only MODULE` narrows the row and installs its exact constrained requirement instead of a whole extra. |
 
 Two rules govern the gate, both learned from real bugs:
 
@@ -61,9 +63,16 @@ bounds without carrying that bound.
 Installing everything:
 
 ```bash
-make install-demo-deps      # hatch env: the demos + gsplats + io extras
-luxar demo deps --install   # same thing from the CLI, any environment
+make install-demo-deps             # hatch env: demos + gsplats + io extras
+luxar demo deps --install          # missing extras, any environment
+luxar demo deps --only scipy --install  # one exact constrained requirement
 ```
+
+Generic `--install` manages Luxar extras. If the only unmet row belongs to no
+extra (currently `gdown`), it reports a successful no-op and points at
+`--only gdown --install`; that targeted form installs and verifies the exact
+tabled requirement. Report-only mode remains the CI/setup gate and exits 1 for
+any unmet row.
 
 Some demos need something a package manager can't supply — a Kaggle credential,
 a manual download, a `git lfs pull`, or a GPU. Those show up in the `NEEDS`
