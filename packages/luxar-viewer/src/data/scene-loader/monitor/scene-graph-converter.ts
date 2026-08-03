@@ -68,9 +68,14 @@ function deriveDisplayType(rawType: string | undefined): GraphNodeType {
  *
  * Deliberately NOT the geometry vocabulary: this gates the `display_type` attr
  * of a `kind=lod` / `kind=partition` group, so it is the set of types that
- * actually support that container — the mirror of the Python-side allowlist in
- * `core/node/specialized_groups.py`. A geometry type with no LOD/partition
- * support must not be admitted just because it is a valid leaf type.
+ * actually support that container. A geometry type with no LOD/partition support
+ * must not be admitted just because it is a valid leaf type.
+ *
+ * The two arms are asymmetric on the writer side, which is why they are asked
+ * separately rather than through one shared set: `add_partition_group_impl`
+ * (`core/node/specialized_groups.py`) rejects a non-allowlisted `display_type`,
+ * but the LOD path only *derives* one from its children and validates nothing —
+ * so for `kind=lod` this predicate is the only gate in the pipeline.
  */
 function canBackSpecializedGroup(kind: 'lod' | 'partition', displayType: unknown): boolean {
   return kind === 'lod' ? supportsLod(displayType) : supportsPartition(displayType);

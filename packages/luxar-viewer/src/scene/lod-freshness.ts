@@ -78,7 +78,8 @@ export function isReady(child: { ready?: boolean }): boolean {
 
 /**
  * Whether a child's own mesh carries a freshness-tracked LEAF type — i.e. it is
- * a stamped leaf rather than a `group` subtree (a deferred `kind=partition` / nested `lod` LOD child).
+ * a stamped leaf rather than a `group` subtree (a deferred `kind=partition` /
+ * nested `lod` LOD child).
  * A leaf's per-slice staleness lives in its `loadedViewVersion` stamp
  * ({@link isFresh}); a group's must be folded from its subtree leaves. This is
  * the correct leaf/group discriminant — a leaf's committed COUNT can be absent
