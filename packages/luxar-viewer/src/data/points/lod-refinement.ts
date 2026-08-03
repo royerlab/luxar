@@ -35,7 +35,7 @@ export interface PointsRefinementCtx {
     path: string,
     attrs: PointsMetadata | undefined,
     opts: { applyPartialExtendTolerance: boolean }
-  ): { skip: 'extend_to_all' } | { skip: false; viewState: ViewState };
+  ): { skip: false; viewState: ViewState };
   /**
    * Points commits directly (no async-project step like lines/gsplats);
    * the helper passes the freshly loaded data straight to
@@ -87,7 +87,9 @@ export async function runPointsRefinement(ctx: PointsRefinementCtx): Promise<voi
         const refined = ctx.deriveNodeViewState(path, nodeAttrs, {
           applyPartialExtendTolerance: true,
         });
-        if (refined.skip) return;
+        // A fully-extended node is a normal node with a slice-invariant query
+        // (deriveNodeViewState), so it refines through this path like any other;
+        // the `hasMoreLODs` gate above already stops a converged one.
         const pointsVS: PointsViewState = refined.viewState;
 
         // Account this step to the 'LOD Refinement' tree (opened only when

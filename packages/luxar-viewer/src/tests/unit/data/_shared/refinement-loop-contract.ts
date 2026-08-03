@@ -272,29 +272,30 @@ export function defineRefinementLoopContract(
       expect(releaseLock).toHaveBeenCalledTimes(1);
     });
 
-    it('skips loaders whose derived view-state is fully-extended', async () => {
-      let calls = 0;
-      const loader: { updateView: ReturnType<typeof vi.fn>; hasMoreLODs?: boolean } = {
-        get hasMoreLODs() {
-          calls += 1;
-          return calls === 1;
-        },
-        updateView: vi.fn(),
+    it('refines a fully-extended node with the derived extended view-state (#1157)', async () => {
+      // A fully-extended node is a normal node with a slice-invariant query
+      // (extend-to-all tolerance + pinned slice); while its ladder still has
+      // rungs it refines through this loop like any other node (the
+      // `hasMoreLODs` gate — not any skip flag — stops a converged one).
+      const extendedViewState: ViewState = {
+        ...baseViewState,
+        tolerance: [1e10, 1e10, 1e10, 1e10],
       };
-      const processSpy: (...args: unknown[]) => unknown = vi.fn();
+      const loader = makeStagedLoader([{ hasMoreLODs: true }, { hasMoreLODs: false }]);
 
       await run({
         loaders: new Map([['/n', loader]]),
         viewStateQueue: new ViewStateQueue(),
-        deriveNodeViewState: () => ({ skip: 'extend_to_all' }),
+        deriveNodeViewState: () => ({ skip: false, viewState: extendedViewState }),
         updateVisibleCountsInMonitor: vi.fn(),
         releaseLock: vi.fn(),
         retriggerUpdate: vi.fn(),
-        processSpy,
+        processSpy: vi.fn(),
       });
 
-      expect(loader.updateView).not.toHaveBeenCalled();
-      expect(processSpy).not.toHaveBeenCalled();
+      expect(loader.updateView).toHaveBeenCalled();
+      // The refinement pass loads with the derived extended-tolerance state.
+      expect(loader.updateView.mock.calls[0][0]).toBe(extendedViewState);
     });
   });
 }

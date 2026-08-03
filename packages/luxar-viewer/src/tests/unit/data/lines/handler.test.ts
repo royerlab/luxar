@@ -20,53 +20,72 @@ function makeSession(): UpdateSession {
   } as unknown as UpdateSession;
 }
 
+// A fully-extended node's derived view state: extend-to-all sentinel on the
+// (single) non-displayed dim + that dim's slicePosition pinned to 0. Present
+// even though lines opt out of the PARTIAL override — `deriveNodeViewState`
+// computes it unconditionally for the full-extend case, so a fully-extended
+// lines node loads a slice-invariant query as a normal node (#1157).
+const extendedViewState = {
+  displayDims: [0, 1, 2],
+  slicePosition: [0, 0, 0, 0],
+  tolerance: [0, 0, 0, 1e10],
+};
+
+/** Root group with a lines mesh stamped as already-committed. */
+function rootWithLinesMesh(path: string): THREE.Group {
+  const root = new THREE.Group();
+  const mesh = new THREE.Mesh();
+  mesh.name = path;
+  mesh.userData = { nodeType: 'lines', attrs: {}, loadedViewVersion: 1 };
+  root.add(mesh);
+  return root;
+}
+
 describe('lines handler', () => {
   it('discriminates as kind="lines" with label="Lines"', () => {
     expect(kind).toBe('lines');
     expect(label).toBe('Lines');
   });
 
-  it('returns null on derived.skip without calling the loader', async () => {
+  it('loads a fully-extended lines node with the derived extended+pinned view state on FIRST paint (#1157)', async () => {
     const loader: LinesDataLoader = {
       loadLines: vi.fn(),
-      updateView: vi.fn(),
+      updateView: vi.fn().mockResolvedValue(null), // empty slice: exits before process
       dispose: vi.fn(),
     } as unknown as LinesDataLoader;
-    const result = await loadAndStage('/l', loader, makeSession(), {
+    const session = makeSession();
+    await loadAndStage('/l', loader, session, {
       rootGroup: new THREE.Group(),
       viewStateQueue: new ViewStateQueue(),
       clearFailure: vi.fn(),
       currentVersion: 1,
       updateVersion: 1,
-      deriveNodeViewState: () => ({ skip: 'extend_to_all' }),
+      // A fully-extended node is a normal node — no skip shortcut.
+      deriveNodeViewState: () => ({ skip: false, viewState: extendedViewState }),
     });
-    expect(result).toBeNull();
-    expect(loader.updateView).not.toHaveBeenCalled();
+    expect(loader.updateView).toHaveBeenCalledTimes(1);
+    expect(loader.updateView).toHaveBeenCalledWith(extendedViewState, expect.anything(), undefined);
+    expect(session.markSkipped).not.toHaveBeenCalled();
   });
 
-  // data.md G2 fix: parallel coverage to points/handler.test.ts. The
-  // three-geometry symmetry rule requires the forget-on-skip and
-  // successful-load paths to be pinned for Lines too (Points had them;
-  // Lines did not).
-  it('forgets the path on skip so the next non-skip update re-baselines', async () => {
+  it('still queries the loader on a later sweep even with a committed mesh (no skip shortcut)', async () => {
+    // Regression guard for the reverted "skip once loaded" design.
     const loader: LinesDataLoader = {
       loadLines: vi.fn(),
-      updateView: vi.fn(),
+      updateView: vi.fn().mockResolvedValue(null),
       dispose: vi.fn(),
     } as unknown as LinesDataLoader;
-    const queue = new ViewStateQueue();
-    const forgetPathSpy = vi.spyOn(queue, 'forgetPath');
-    await loadAndStage('/l', loader, makeSession(), {
-      rootGroup: new THREE.Group(),
-      viewStateQueue: queue,
+    const session = makeSession();
+    await loadAndStage('/l', loader, session, {
+      rootGroup: rootWithLinesMesh('/l'),
+      viewStateQueue: new ViewStateQueue(),
       clearFailure: vi.fn(),
-      currentVersion: 1,
-      updateVersion: 1,
-      deriveNodeViewState: () => ({ skip: 'extend_to_all' }),
+      currentVersion: 2,
+      updateVersion: 2,
+      deriveNodeViewState: () => ({ skip: false, viewState: extendedViewState }),
     });
-    expect(forgetPathSpy).toHaveBeenCalledTimes(1);
-    expect(forgetPathSpy).toHaveBeenCalledWith('/l');
-    expect(loader.updateView).not.toHaveBeenCalled();
+    expect(loader.updateView).toHaveBeenCalledWith(extendedViewState, expect.anything(), undefined);
+    expect(session.markSkipped).not.toHaveBeenCalled();
   });
 
   it('passes the derived viewState through to loader.updateView on the non-skip path', async () => {

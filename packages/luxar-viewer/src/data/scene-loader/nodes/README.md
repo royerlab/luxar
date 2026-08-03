@@ -61,12 +61,14 @@ and retry-after-failure.
   silently load different query regions. Points and GSplats pass
   `applyPartialExtendTolerance: true`; Lines passes `false` (segment
   bounds already encode the equivalent extent).
-- **Initial load never skips.** `deriveNodeViewState` may return
-  `{ skip: 'extend_to_all' }` to mean "leave the existing node
-  alone" — but on initial load we always want to construct the
-  THREE node so future slice changes can populate it. Each leaf
-  handles the skip return by falling back to the orchestrator's
-  base `ctx.viewState`.
+- **A fully-extended node is a normal node.** `deriveNodeViewState`
+  returns a single `{ skip: false; viewState }` shape. When a node's
+  `extend_to_all` covers all non-displayed dims it is derived as a
+  slice-INVARIANT query (the `1e10` extend-to-all tolerance sentinel
+  plus its extended dims' `slicePosition` pinned to `0`), so every
+  path — initial load, update sweep, retry — just loads with
+  `derived.viewState`; per-sweep re-queries hit the loader's
+  same-view memoized no-op. There is no skip branch to special-case.
 - **ViewState snapshot is captured by value.** `NodeBuildCtx` carries
   a snapshot of the orchestrator's viewState at the time
   `loadSceneNodes` is invoked, not a reference. A concurrent

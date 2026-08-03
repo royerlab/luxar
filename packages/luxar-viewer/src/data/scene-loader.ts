@@ -656,9 +656,11 @@ export class SceneLoader {
    * would. The pre-extraction retry skipped both adjustments, which
    * could produce a "successful" retry rendering incorrect data.
    *
-   * Returns `{ skip: 'extend_to_all' }` if the node's `extend_to_all`
-   * dims fully cover all non-displayed dims (the work is a no-op),
-   * otherwise the derived view state.
+   * A fully-extended node (`extend_to_all` covers all non-displayed dims)
+   * is returned as a NORMAL `{ skip: false }` node whose query is made
+   * slice-INVARIANT (extend-to-all tolerance sentinel + extended dims'
+   * slicePosition pinned to 0), so per-sweep re-queries hit the loader's
+   * same-view no-op. No `extend_to_all` skip is produced.
    *
    * @param path  Scene-graph path of the node, used to compose the
    *              world `nd_transform` from this node up to the root.
@@ -680,7 +682,7 @@ export class SceneLoader {
       applyPartialExtendTolerance: boolean;
       extendedToleranceCache?: Map<string, number[]>;
     }
-  ): { skip: 'extend_to_all' } | { skip: false; viewState: ViewState } {
+  ): { skip: false; viewState: ViewState } {
     return deriveNodeViewStateHelper(path, attrs, this.viewState, this._sceneGraph, opts);
   }
 
@@ -881,7 +883,7 @@ export class SceneLoader {
       // branch (Points / Lines / GSplats) and uses the per-node
       // derived view-state computed by deriveNodeViewState. The
       // global dispatch site previously here over-prefetched
-      // extend_to_all-skipped nodes.
+      // fully-extended nodes.
 
       // ================================================================
       // Stage 2: Atomic commit — ALL geometry mutations in one sync block.
@@ -1301,10 +1303,9 @@ export class SceneLoader {
       deriveNodeViewState: (path, attrs, opts) => this.deriveNodeViewState(path, attrs, opts),
       connectLoaderToMonitor: (path, loader) => this.connectLoaderToMonitor(path, loader),
       kickRefinementIfIdle: () => this.kickRefinementIfIdle(),
-      // Live accessors (not the snapshot) so a deferred / registry-driven reload
-      // loads + stamps for the CURRENT slice, not the one captured at ctx-build.
+      // Live version accessor (not the snapshot) so a deferred / registry-driven
+      // reload stamps for the CURRENT slice, not the one captured at ctx-build.
       getViewVersion: () => this._updateVersion,
-      getLiveViewState: () => this.viewState,
       // Commit callbacks forward an explicit loadedViewVersion so the lazy /
       // reload path can stamp its DERIVE-time version (see commitPointsGeometry).
       processPointsData: (path, data) => this.processPointsData(path, data),
@@ -1554,7 +1555,6 @@ export class SceneLoader {
       registry: this.registry,
       lodGroupRegistry: this.lodGroupRegistry,
       rootGroup: this.rootGroup,
-      viewState: this.viewState,
       deriveNodeViewState: (path, attrs, opts) => this.deriveNodeViewState(path, attrs, opts),
       processPointsData: (path, data) => this.processPointsData(path, data),
       commitPointsGeometry: (staged) => this.commitPointsGeometry(staged),

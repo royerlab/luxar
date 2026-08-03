@@ -36,7 +36,7 @@ export interface PointsHandlerCtx {
     path: string,
     attrs: { extend_to_all?: string[] } | undefined,
     opts: { applyPartialExtendTolerance: boolean; extendedToleranceCache?: Map<string, number[]> }
-  ): { skip: 'extend_to_all' } | { skip: false; viewState: ViewState };
+  ): { skip: false; viewState: ViewState };
   extendedToleranceCache: Map<string, number[]>;
   /** Per-update abort signal forwarded to `loader.updateView` (see DataLoader). */
   signal?: AbortSignal;
@@ -78,20 +78,10 @@ export async function loadAndStage(
    */
   const markPathHealthy = (): void => ctx.clearFailure(path);
 
-  if (derived.skip) {
-    log.info(
-      Modules.SCENE_LOADER,
-      `Skipping update for ${path} - all non-displayed dims are extended`
-    );
-    // Deliberately NOT marking healthy here: a skipped node loaded nothing, so a
-    // previously-recorded failure is still unresolved. Clearing it would drop
-    // the node from the retry set and hide a real breakage.
-    session.markSkipped(derived.skip);
-    // S6: drop the path from prev state so the next non-skip update
-    // re-baselines rather than extrapolating from a stale snapshot.
-    ctx.viewStateQueue.forgetPath(path);
-    return null;
-  }
+  // A fully-extended (`extend_to_all` covers all non-displayed dims) node is
+  // derived as a normal node with a slice-INVARIANT query, so it flows through
+  // the standard load path below: the first sweep fetches it and every later
+  // sweep hits the loader's same-view memoized no-op. No skip shortcut.
   // Playback frame budget rides the derived per-node view state (per-pass
   // directive; absent outside animation playback — see ctx.frameBudgetMs).
   const pointsViewState: ViewState =
