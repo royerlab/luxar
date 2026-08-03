@@ -19,7 +19,11 @@
  * Per scenario we record:
  *   - JS frame time stats (median, p95, p99, mean, min, max) over a
  *     fixed sample window with a continuous orbit running
- *   - First-render cost (one-shot, measured separately)
+ *   - A warmed post-settle one-shot frame interval (`postSettleFrameMs`,
+ *     measured separately). This is NOT a cold first render: by the time
+ *     it runs, injection/navigation has already uploaded textures,
+ *     compiled the material/pipeline, and drawn at least one frame, so
+ *     it does NOT include upload / compilation / initial-draw cost.
  *   - `elementCount` — the capacity-CLAMPED drawn count reported by
  *     the injector / summed from `visibleSplatCount` (never the
  *     requested count; maxTextureSize caps a node at ≈16.8M splats)
@@ -291,7 +295,22 @@ interface ScenarioResult {
    */
   softwareRenderer: boolean;
   frameMs: FrameStats | null;
-  firstRenderMs: number | null;
+  /**
+   * A WARMED, post-settle one-shot frame interval (ms): `renderOnce()`
+   * to the next animation frame, sampled AFTER injection/navigation has
+   * already settled. This is NOT a cold first render and does NOT
+   * enclose texture upload, material/pipeline compilation, or the
+   * initial draw — those all happen before this is measured. Null when
+   * the scenario is skipped.
+   */
+  postSettleFrameMs: number | null;
+  /** Renderer frame counter sampled just before the post-settle
+   *  measurement — > 0 proves the metric is a warmed post-settle
+   *  frame, not a cold first render. Null when the renderer's frame
+   *  counter is unavailable (the WebGPU renderer keeps the frame id
+   *  elsewhere; this bench is WebGL-only, so in practice it is a
+   *  number). */
+  renderedFramesBefore?: number | null;
   depthSort: DepthSortStats | null;
   /** L8 gate probe (10M scenario only): p99 of frames within ±1 frame
    *  of an ordering apply. */
@@ -361,7 +380,7 @@ function makeSkippedResult(
     gpuRenderer: '',
     softwareRenderer: false,
     frameMs: null,
-    firstRenderMs: null,
+    postSettleFrameMs: null,
     depthSort: null,
     notes,
     skipped: true,
@@ -452,14 +471,38 @@ async function probeElementCount(page: Page, onlySynthetic: boolean): Promise<nu
   }, onlySynthetic);
 }
 
-/** One-shot first-render measurement (line-bench parity). */
-async function measureFirstRender(page: Page): Promise<number> {
+/**
+ * Warmed, post-settle one-shot frame measurement.
+ *
+ * IMPORTANT — this is NOT a first-render measurement. By the time it
+ * runs, injection/navigation has already uploaded textures, compiled
+ * the material/pipeline, and drawn at least one frame (synthetic
+ * injection kicks a render internally; the orbit/ladder scenarios
+ * render and settle first). It therefore times a warmed one-shot
+ * frame — `renderOnce()` to the next animation frame — and does NOT
+ * enclose upload / compilation / initial-draw cost. The returned
+ * `renderedFramesBefore` is the renderer's frame counter sampled
+ * before the timer starts; a value > 0 pins the "post-settle"
+ * contract (the timer begins after, not before, the first render).
+ */
+async function measurePostSettleFrame(
+  page: Page
+): Promise<{ ms: number; renderedFramesBefore: number | null }> {
   return page.evaluate(async () => {
-    const debug = (window as unknown as { __luxarDebug: { renderOnce: () => void } }).__luxarDebug;
+    const debug = (
+      window as unknown as {
+        __luxarDebug: {
+          renderOnce: () => void;
+          renderer?: { info?: { render?: { frame?: number } } };
+        };
+      }
+    ).__luxarDebug;
+    const framesBefore = debug.renderer?.info?.render?.frame;
+    const renderedFramesBefore = typeof framesBefore === 'number' ? framesBefore : null;
     const t0 = performance.now();
     debug.renderOnce();
     await new Promise<void>((r) => requestAnimationFrame(() => r()));
-    return performance.now() - t0;
+    return { ms: performance.now() - t0, renderedFramesBefore };
   });
 }
 
@@ -763,7 +806,7 @@ async function measureSyntheticScenario(
 
   const apiProbe = await probeApiSurface(page);
   const gpuRenderer = await probeGpuRenderer(page);
-  const firstRenderMs = await measureFirstRender(page);
+  const postSettle = await measurePostSettleFrame(page);
   const raw = await runOrbitSamplingLoop(page);
 
   const result: ScenarioResult = {
@@ -777,7 +820,8 @@ async function measureSyntheticScenario(
     gpuRenderer,
     softwareRenderer: isSoftwareRenderer(gpuRenderer),
     frameMs: statsOf(raw.frameDtMs),
-    firstRenderMs,
+    postSettleFrameMs: postSettle.ms,
+    renderedFramesBefore: postSettle.renderedFramesBefore,
     depthSort: depthSortStatsOf(raw),
     notes,
     skipped: false,
@@ -830,7 +874,7 @@ async function measureZarrOrbitScenario(
 
   const apiProbe = await probeApiSurface(page);
   const gpuRenderer = await probeGpuRenderer(page);
-  const firstRenderMs = await measureFirstRender(page);
+  const postSettle = await measurePostSettleFrame(page);
   const raw = await runOrbitSamplingLoop(page);
   const elementCount = await probeElementCount(page, false);
 
@@ -850,7 +894,8 @@ async function measureZarrOrbitScenario(
     gpuRenderer,
     softwareRenderer: isSoftwareRenderer(gpuRenderer),
     frameMs: statsOf(raw.frameDtMs),
-    firstRenderMs,
+    postSettleFrameMs: postSettle.ms,
+    renderedFramesBefore: postSettle.renderedFramesBefore,
     depthSort: depthSortStatsOf(raw),
     notes,
     skipped: false,
@@ -1093,7 +1138,7 @@ async function measureZarrLadderScenario(
 
   const apiProbe = await probeApiSurface(page);
   const gpuRenderer = await probeGpuRenderer(page);
-  const firstRenderMs = await measureFirstRender(page);
+  const postSettle = await measurePostSettleFrame(page);
   const elementCount = await probeElementCount(page, false);
 
   if (elementCount === 0) {
@@ -1114,7 +1159,8 @@ async function measureZarrLadderScenario(
     // The scenario's headline frame stats ARE the during-load window —
     // that's what this scenario exists to measure.
     frameMs: statsOf(ladderRaw.loadWindowDtMs),
-    firstRenderMs,
+    postSettleFrameMs: postSettle.ms,
+    renderedFramesBefore: postSettle.renderedFramesBefore,
     depthSort: null,
     ladder: {
       wallMsToLadderComplete: ladderRaw.wallMsToLadderComplete,
@@ -1149,9 +1195,9 @@ async function measureScenario(page: Page, scn: ScenarioSpec): Promise<ScenarioR
  * test: each scenario appends its row as it finishes, so a `-g`-filtered
  * partial run still produces a valid, additive file.
  *
- * NOTE: the line bench still writes its file wholesale, so running the
- * line bench AFTER this one for the same SHA drops these rows. Run this
- * spec last (or `-g`-filter per bench) when you want a combined file.
+ * NOTE: the line bench merge-writes too (keyed the same way), so the
+ * two benches can run in either order for the same SHA without
+ * clobbering each other's rows.
  */
 function mergeScenarioRow(outPath: string, row: ScenarioResult): void {
   const key = `${row.scenarioId}/${row.backend}`;
@@ -1300,5 +1346,19 @@ for (const scn of SCENARIOS) {
     ).toBeGreaterThanOrEqual(frameFloor);
     expect(result.gpuRenderer, `${scn.id}: empty GPU renderer string`).not.toBe('');
     expect(result.elementCount, `${scn.id}: zero drawn elements`).toBeGreaterThan(0);
+    // Probe (issue #706): the post-settle frame metric is captured AFTER
+    // injection/navigation already rendered — assert the renderer had
+    // already drawn at least one frame when we sampled, so the number is
+    // honestly a warmed frame and never mislabeled as a cold first render.
+    if (
+      !result.skipped &&
+      result.renderedFramesBefore !== null &&
+      result.renderedFramesBefore !== undefined
+    ) {
+      expect(
+        result.renderedFramesBefore,
+        `${scn.id}: post-settle frame measured before any render (renderedFramesBefore=${result.renderedFramesBefore})`
+      ).toBeGreaterThan(0);
+    }
   });
 }

@@ -1,3 +1,5 @@
+> **⚠️ Archived — superseded snapshot, not maintained.** One of several point-in-time performance-optimization progress reports. The canonical status record is [`PERFORMANCE_OPTIMIZATION_STATUS.md`](PERFORMANCE_OPTIMIZATION_STATUS.md); this file is retained only for history. See [the archive README](../README.md).
+
 # Performance Optimization - FINAL COMPLETE (All 4 Phases)
 
 **Date**: 2025-12-25

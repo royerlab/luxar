@@ -149,7 +149,7 @@ smoke/ink-like medium (large κ). Together with `max` (MIP) and `normal`/`opaque
 | `luminous` | — (One/One, α ignored) | ray integral | sum | yes | no | never |
 | `max` | — (MaxEquation) | peak value | peak | yes | no | never |
 | **`volumetric`** | **physics: 1 − e^(−τ), τ = κ·∫ρ** | **ray integral × screening** | **sum** | **no** | **yes** | **never** |
-| `normal` | clamped coverage: min(intensity·opacity, 1) | peak value | peak | no | yes | gsplats never; points/lines at opacity ≥ 0.99 |
+| `normal` | clamped coverage: min(intensity·opacity, 1) | peak value | peak | no | yes | gsplats & points never; lines at opacity ≥ 0.99 |
 | `opaque` | — (opaque overwrite) | peak value | peak | no (depth-tested) | no (z-buffer) | always |
 
 `volumetric` deliberately breaks the previous alignment *sum-projection ⇒
@@ -389,10 +389,9 @@ deliberate choice, not an oversight):
   element with alpha ≈ 0 is visually absent — emission scales to ~0,
   and under volumetric its optical depth w(a) = −ln(1 − a) vanishes
   with it, so it neither emits nor absorbs (the sole visible residue is
-  the Points/Lines `normal`-mode depth-write, third bullet) — yet
-  remains fully pickable in every geometry type. Making picking
-  alpha-aware would follow the same τ-threshold follow-up as front-most
-  picking above.
+  the Lines `normal`-mode depth-write, third bullet) — yet remains fully
+  pickable in every geometry type. Making picking alpha-aware would
+  follow the same τ-threshold follow-up as front-most picking above.
 - **Visual discard under volumetric (differs by geometry)**: POINTS and
   LINES do NOT discard a zero-alpha element while its color is
   non-black — a black-but-dense occluder keeps its τ, so the
@@ -402,14 +401,14 @@ deliberate choice, not an oversight):
   out in every mode.
 - **`normal`-mode depthWrite keys on NODE opacity, never per-element
   alpha (differs by geometry)**: the `normalModeDepthWrite` predicate
-  reads node opacity alone. For POINTS and LINES an RGBA node in
-  `normal` mode at node-opacity 1.0 therefore writes depth even for its
-  near-transparent (alpha ≈ 0) elements, which can occlude content
-  behind them; GSPLAT `normal` mode never depth-writes, regardless of
-  per-element alpha or node opacity. Per-element depthWrite is not
-  expressible in a single draw call; for Points/Lines the workaround is
-  the volumetric mode itself (never depth-writes) or lowering node
-  opacity below the 0.99 threshold.
+  reads node opacity alone. Only LINES still use this predicate: an RGBA
+  line node in `normal` mode at node-opacity ≥ 0.99 therefore writes depth
+  even for its near-transparent (alpha ≈ 0) elements, which can occlude
+  content behind them. POINTS now never depth-write in `normal` (like
+  GSPLATS — `getPointBlendingState` forces it off, #1002), so this hazard
+  applies to LINES only. Per-element depthWrite is not expressible in a
+  single draw call; the workaround for lines is the volumetric mode itself
+  (never depth-writes) or lowering node opacity below the 0.99 threshold.
 
 ### 5.3 Attr composition and the uniform
 

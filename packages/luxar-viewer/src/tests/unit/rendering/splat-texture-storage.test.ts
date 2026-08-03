@@ -7,7 +7,7 @@
  * `docs/guides/specs/GSPLAT_DEPTH_SORTING_SPEC.md` §4 for the design.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as THREE from 'three';
 import {
   SPLAT_FLOATS_PER_SPLAT,
@@ -32,6 +32,7 @@ import {
   hasPendingSortedIndexOrderingApply,
   pumpSortedIndexOrderingApply,
   registerElementTexelDirtyRange,
+  setSortedIndexApplyRequestRender,
   setSortedIndexChunkElementsForTests,
   writeSortedIndexIdentity,
   writeSortedIndexIdentityRange,
@@ -64,6 +65,37 @@ function makeSource(count: number): SplatTexelSource {
     colors.set([i * 0.01, i * 0.02, i * 0.03], i * 3);
   }
   return { centers, choleskyFactors, amplitudes, colors };
+}
+
+/**
+ * Simulate the classic WebGLRenderer consuming every pending ordering
+ * upload for this geometry (both A/B slots) — i.e. one DRAWN frame's
+ * flush. The chunked pump is back-pressured on an un-acknowledged slice
+ * (issue #715: a written-but-not-uploaded slice means the mesh was not
+ * drawn, and advancing would union the next slice onto it), so a test
+ * that pumps more than once must flush between pumps exactly as a real
+ * drawn frame would.
+ *
+ * The back-pressure keys on the attribute's `onUploadCallback` (three
+ * fires it from BOTH `createBuffer` and `updateBuffer`), so a faithful
+ * flush FIRES that callback — which clears the `sliceUploadPending` flag
+ * — as well as clearing the update ranges as a real upload would.
+ */
+function flushSortedIndexUploads(geometry: THREE.InstancedBufferGeometry): void {
+  for (const name of ['aSortedIndex', 'aSortedIndexB'] as const) {
+    const attr = geometry.getAttribute(name) as THREE.InstancedBufferAttribute | null;
+    attr?.onUploadCallback?.();
+    attr?.clearUpdateRanges();
+  }
+}
+
+/** Pump to completion, flushing between pumps like consecutive drawn frames. */
+function drainSortedIndexApply(geometry: THREE.InstancedBufferGeometry): void {
+  let guard = 0;
+  while (pumpSortedIndexOrderingApply(geometry).more) {
+    flushSortedIndexUploads(geometry);
+    if (++guard > 100_000) throw new Error('sorted-index apply did not converge');
+  }
 }
 
 afterEach(() => {
@@ -730,9 +762,7 @@ describe('pool adapter — growth, dispose, byte accounting', () => {
       4
     );
     writeSortedIndexOrdering(geom, new Uint32Array([3, 2, 1, 0]), 4);
-    while (pumpSortedIndexOrderingApply(geom).more) {
-      /* drain: flips to slot 1 */
-    }
+    drainSortedIndexApply(geom); // flips to slot 1
     expect(activeSortedIndexSlot(geom)).toBe(1);
 
     // A fresh full commit (the !preserveOrdering path every new tenant takes).
@@ -764,9 +794,7 @@ describe('pool adapter — growth, dispose, byte accounting', () => {
     pool.updateGSplatsGeometry(geom, packed(src.amplitudes), 4);
     // The SortWorker landed a depth-sort permutation between commits.
     writeSortedIndexOrdering(geom, new Uint32Array([3, 2, 1, 0]), 4);
-    while (pumpSortedIndexOrderingApply(geom).more) {
-      /* drain: the ordering swaps in on completion */
-    }
+    drainSortedIndexApply(geom); // the ordering swaps in on completion
 
     // Same-count recommit with preserveOrdering: permutation intact,
     // texels + instanceCount + bounds refreshed as usual.
@@ -799,9 +827,7 @@ describe('pool adapter — growth, dispose, byte accounting', () => {
     // Prefix commit of 4 splats, then a real permutation lands on it.
     pool.updateGSplatsGeometry(geom, packed(src6, 4), 4);
     writeSortedIndexOrdering(geom, new Uint32Array([3, 2, 1, 0]), 4);
-    while (pumpSortedIndexOrderingApply(geom).more) {
-      /* drain: the ordering swaps in on completion */
-    }
+    drainSortedIndexApply(geom); // the ordering swaps in on completion
     const texels = getSplatTexture(geom)!.image.data as Float32Array;
     const sentinel = -999;
     texels[0] = sentinel; // splat 0 center.x — must survive the append
@@ -1041,6 +1067,10 @@ describe('double-buffered ordering apply (atomic swap)', () => {
     cancelAllSortedIndexOrderingApplies();
     setSortedIndexChunkElementsForTests(null);
     configureSortedIndexChunkedApply(true);
+    // `requestSliceRender` is module-global and this file never resets
+    // modules, so a spy left wired would fire in later tests that drain
+    // streams (issue #715 resume hook). Always clear it.
+    setSortedIndexApplyRequestRender(null);
   });
 
   function makeGeometry(capacity: number): { geometry: THREE.InstancedBufferGeometry } {
@@ -1064,8 +1094,14 @@ describe('double-buffered ordering apply (atomic swap)', () => {
     return out;
   }
 
-  /** Simulate the classic WebGLRenderer consuming the pending upload. */
+  /**
+   * Simulate the classic WebGLRenderer consuming the pending upload:
+   * three fires the attribute's `onUploadCallback` (which clears the
+   * chunked pump's back-pressure flag, issue #715) and clears its update
+   * ranges. Both are needed for the next pump to advance.
+   */
   function flushAttr(attr: THREE.InstancedBufferAttribute): void {
+    attr.onUploadCallback?.();
     attr.clearUpdateRanges();
   }
 
@@ -1117,9 +1153,7 @@ describe('double-buffered ordering apply (atomic swap)', () => {
     writeSortedIndexIdentity(geometry, 12);
     for (const ordering of [reversed(12), reversed(12)]) {
       writeSortedIndexOrdering(geometry, ordering, 12);
-      while (pumpSortedIndexOrderingApply(geometry).more) {
-        /* drain */
-      }
+      drainSortedIndexApply(geometry);
     }
     expect(activeSortedIndexSlot(geometry)).toBe(0);
     expect(geometry.getAttribute('aSortedIndex')).toBe(a);
@@ -1155,24 +1189,35 @@ describe('double-buffered ordering apply (atomic swap)', () => {
     writeSortedIndexOrdering(geometry, ordering, 12);
 
     // Slices 1 and 2: still streaming, slot unchanged, screen unchanged.
+    // A drawn-frame flush between pumps releases the back-pressure gate
+    // (issue #715) so the next slice advances.
     for (let slice = 1; slice <= 2; slice++) {
       const result = pumpSortedIndexOrderingApply(geometry);
-      expect(result).toEqual({ more: true, flipped: false });
+      expect(result).toEqual({ more: true, flipped: false, stalled: false });
       expect(activeSortedIndexSlot(geometry)).toBe(0);
       expectPermutation(geometry, 12);
       expect(Array.from(activeArr(geometry).subarray(0, 12))).toEqual([
         0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11,
       ]);
+      flushSortedIndexUploads(geometry);
     }
 
     // Slice 3 completes the back buffer → the swap.
-    expect(pumpSortedIndexOrderingApply(geometry)).toEqual({ more: false, flipped: true });
+    expect(pumpSortedIndexOrderingApply(geometry)).toEqual({
+      more: false,
+      flipped: true,
+      stalled: false,
+    });
     expect(activeSortedIndexSlot(geometry)).toBe(1);
     expectPermutation(geometry, 12);
     expect(Array.from(activeArr(geometry).subarray(0, 12))).toEqual(Array.from(ordering));
     expect(hasPendingSortedIndexOrderingApply(geometry)).toBe(false);
     // Idempotent past completion.
-    expect(pumpSortedIndexOrderingApply(geometry)).toEqual({ more: false, flipped: false });
+    expect(pumpSortedIndexOrderingApply(geometry)).toEqual({
+      more: false,
+      flipped: false,
+      stalled: false,
+    });
   });
 
   it('registers per-slice ranges on the buffer being written, not the whole prefix', () => {
@@ -1188,21 +1233,157 @@ describe('double-buffered ordering apply (atomic swap)', () => {
     expect(back.updateRanges[0]).toMatchObject({ start: CHUNK, count: CHUNK });
   });
 
-  it('unflushed slices collapse into ONE contiguous range (WebGPU never-clears discipline)', () => {
+  it('BACK-PRESSURE: an unflushed slice STALLS the pump instead of unioning the next one (#715)', () => {
+    // Regression guard for issue #715. A non-empty `updateRanges` on the
+    // inactive buffer means the previous slice was NOT uploaded — the
+    // mesh was hidden, frustum-culled, or otherwise not drawn since.
+    // Advancing anyway would fold each new slice into that still-pending
+    // range, collapsing every slice into ONE giant upload that lands in a
+    // single frame when the object becomes drawable — the exact hitch
+    // chunking removes. So the pump must STALL until a drawn frame flushes
+    // the range.
     const { geometry } = makeGeometry(16);
-    writeSortedIndexOrdering(geometry, reversed(12), 12);
+    const ordering = reversed(12); // 3 slices of 4
+    writeSortedIndexOrdering(geometry, ordering, 12);
     const back = geometry.getAttribute('aSortedIndexB') as THREE.InstancedBufferAttribute;
-    // No flush between slices (hidden mesh / coalesced frames): ranges
-    // must fold, never accumulate.
-    pumpSortedIndexOrderingApply(geometry);
+
+    // First slice ALWAYS proceeds (cursor === 0 — one slice is within the
+    // per-frame budget, and this also skips any residual start-of-stream
+    // range). It writes exactly [0, CHUNK).
+    expect(pumpSortedIndexOrderingApply(geometry)).toEqual({
+      more: true,
+      flipped: false,
+      stalled: false,
+    });
     expect(back.updateRanges.length).toBe(1);
     expect(back.updateRanges[0]).toMatchObject({ start: 0, count: CHUNK });
-    pumpSortedIndexOrderingApply(geometry);
+    const afterFirstSlice = Array.from((back.array as Uint32Array).subarray(0, 12));
+
+    // Now pump repeatedly WITHOUT flushing (the mesh is not being drawn):
+    // every call must STALL — no progress, no new slice, the pending range
+    // stays exactly one slice wide, and nothing is written past [0, CHUNK).
+    for (let i = 0; i < 5; i++) {
+      expect(pumpSortedIndexOrderingApply(geometry)).toEqual({
+        more: true,
+        flipped: false,
+        stalled: true,
+      });
+      expect(back.updateRanges.length).toBe(1);
+      expect(back.updateRanges[0]).toMatchObject({ start: 0, count: CHUNK });
+      expect(Array.from((back.array as Uint32Array).subarray(0, 12))).toEqual(afterFirstSlice);
+    }
+
+    // A drawn frame acknowledges the slice's upload (fires the attribute's
+    // onUploadCallback, clearing the back-pressure flag) → the next pump
+    // advances one slice.
+    back.onUploadCallback?.();
+    back.clearUpdateRanges();
+    expect(pumpSortedIndexOrderingApply(geometry)).toEqual({
+      more: true,
+      flipped: false,
+      stalled: false,
+    });
+    expect(back.updateRanges[0]).toMatchObject({ start: CHUNK, count: CHUNK });
+
+    // Draining with a flush per frame (as the real driver does) completes
+    // and flips, and the DRAWN buffer is the whole staged permutation.
+    drainSortedIndexApply(geometry);
+    expect(hasPendingSortedIndexOrderingApply(geometry)).toBe(false);
+    expect(Array.from(activeArr(geometry).subarray(0, 12))).toEqual(Array.from(ordering));
+    expectPermutation(geometry, 12);
+  });
+
+  it('BACK-PRESSURE keys on onUpload, not updateRanges — no createBuffer deadlock (#715)', () => {
+    // THE crux of #715. three's `WebGLAttributes.createBuffer` (an
+    // attribute's FIRST-ever upload — e.g. a node committed while
+    // frustum-culled, then first drawn) uploads the whole buffer via
+    // `bufferData`, fires `onUploadCallback`, but does NOT clear
+    // `updateRanges` (only `updateBuffer` does). So an `updateRanges.length`
+    // back-pressure signal would linger forever after that first draw:
+    // every later pump would stall, never bump the version, `updateBuffer`
+    // would never run, the ranges would never clear — a PERMANENT stall
+    // rendering the stale ordering. Keying on `onUploadCallback` (fired by
+    // BOTH upload paths) clears the flag on that first draw, so the pump
+    // resumes. This test simulates createBuffer precisely: fire the
+    // callback WITHOUT clearing the ranges, and assert the pump advances.
+    const { geometry } = makeGeometry(16);
+    const ordering = reversed(12);
+    writeSortedIndexOrdering(geometry, ordering, 12);
+    const back = geometry.getAttribute('aSortedIndexB') as THREE.InstancedBufferAttribute;
+
+    // Slice 1 written (arms the flag).
+    expect(pumpSortedIndexOrderingApply(geometry).stalled).toBe(false);
+    expect((back.array as Uint32Array)[0]).toBe(ordering[0]);
+
+    // Not drawn yet: every pump stalls, writing nothing.
+    for (let i = 0; i < 3; i++) {
+      expect(pumpSortedIndexOrderingApply(geometry).stalled).toBe(true);
+    }
+    expect((back.array as Uint32Array)[CHUNK]).toBe(0); // slice 2 untouched
+
+    // The FIRST draw goes through createBuffer: it fires onUploadCallback
+    // but does NOT clear updateRanges itself. The stall must clear on this
+    // alone — and the ack must DISCARD the consumed ranges (createBuffer's
+    // `bufferData` uploaded the whole array, so they are already on the
+    // GPU); leaving them would union slice 2 onto the stale slice-1 range
+    // and the next draw would upload two slices at once.
+    back.onUploadCallback?.();
+    expect(back.updateRanges.length).toBe(0); // ack discarded the consumed ranges
+
+    // The pump ADVANCES (does not wedge), and the pending upload is
+    // exactly ONE slice wide — the per-frame bound holds across the
+    // createBuffer path too.
+    expect(pumpSortedIndexOrderingApply(geometry)).toMatchObject({
+      more: true,
+      flipped: false,
+      stalled: false,
+    });
+    expect((back.array as Uint32Array)[CHUNK]).toBe(ordering[CHUNK]); // slice 2 written
     expect(back.updateRanges.length).toBe(1);
-    expect(back.updateRanges[0]).toMatchObject({ start: 0, count: 2 * CHUNK });
+    expect(back.updateRanges[0]).toMatchObject({ start: CHUNK, count: CHUNK });
+  });
+
+  it('a consumed-slice upload ack drives a continuation render while pending, and is a no-op once cleared (#715 resume hook)', () => {
+    // The coordinator deliberately does NOT request a render on a stall,
+    // so a stream that drains as the mesh becomes drawable would freeze
+    // mid-way without this hook: a consumed slice's onUpload ack drives the
+    // next frame. Guards both the `requestSliceRender?.()` in the onUpload
+    // callback and the `setSortedIndexApplyRequestRender` wiring.
+    const spy = vi.fn();
+    setSortedIndexApplyRequestRender(spy);
+    const { geometry } = makeGeometry(16);
+    writeSortedIndexOrdering(geometry, reversed(12), 12); // 3 slices of CHUNK
+    const back = geometry.getAttribute('aSortedIndexB') as THREE.InstancedBufferAttribute;
+
+    // Writing a slice arms the flag + wires onUpload, but does NOT itself
+    // call the hook — only the draw's ack does.
     pumpSortedIndexOrderingApply(geometry);
-    expect(back.updateRanges.length).toBe(1);
-    expect(back.updateRanges[0]).toMatchObject({ start: 0, count: 3 * CHUNK });
+    spy.mockClear();
+    back.onUploadCallback();
+    expect(spy).toHaveBeenCalledTimes(1); // fails if requestSliceRender?.() is removed
+
+    // Once the stream completes and leaves chunkedApplies, a later ack must
+    // NOT request a render (guards the `chunkedApplies.has(geometry)` check).
+    drainSortedIndexApply(geometry); // completes + flips
+    expect(hasPendingSortedIndexOrderingApply(geometry)).toBe(false);
+    spy.mockClear();
+    back.onUploadCallback();
+    expect(spy).not.toHaveBeenCalled();
+
+    // A cleared hook is a safe no-op (teardown hygiene: no throw, no stale
+    // closure), even with a pending stream so the ack's `has` check passes
+    // and reaches the now-null `requestSliceRender?.()`.
+    setSortedIndexApplyRequestRender(null);
+    writeSortedIndexOrdering(geometry, reversed(12), 12);
+    pumpSortedIndexOrderingApply(geometry);
+    const active = getActiveSortedIndexAttribute(geometry);
+    const inactive = (
+      geometry.getAttribute('aSortedIndex') === active
+        ? geometry.getAttribute('aSortedIndexB')
+        : geometry.getAttribute('aSortedIndex')
+    ) as THREE.InstancedBufferAttribute;
+    expect(hasPendingSortedIndexOrderingApply(geometry)).toBe(true);
+    expect(() => inactive.onUploadCallback()).not.toThrow();
   });
 
   it('successive orderings ping-pong the slot back to 0', () => {
@@ -1210,16 +1391,12 @@ describe('double-buffered ordering apply (atomic swap)', () => {
     writeSortedIndexIdentity(geometry, 12);
     const a = reversed(12);
     writeSortedIndexOrdering(geometry, a, 12);
-    while (pumpSortedIndexOrderingApply(geometry).more) {
-      /* drain */
-    }
+    drainSortedIndexApply(geometry);
     expect(activeSortedIndexSlot(geometry)).toBe(1);
 
     const b = new Uint32Array([5, 4, 7, 6, 1, 0, 3, 2, 9, 8, 11, 10]);
     writeSortedIndexOrdering(geometry, b, 12);
-    while (pumpSortedIndexOrderingApply(geometry).more) {
-      /* drain */
-    }
+    drainSortedIndexApply(geometry);
     expect(activeSortedIndexSlot(geometry)).toBe(0);
     expect(Array.from(activeArr(geometry).subarray(0, 12))).toEqual(Array.from(b));
     expectPermutation(geometry, 12);
@@ -1234,22 +1411,40 @@ describe('double-buffered ordering apply (atomic swap)', () => {
     const { geometry } = makeGeometry(16);
     const orderingA = reversed(12);
     writeSortedIndexOrdering(geometry, orderingA, 12);
+    // Flush between pumps as drawn frames would (back-pressure, #715).
     pumpSortedIndexOrderingApply(geometry);
+    flushSortedIndexUploads(geometry);
     pumpSortedIndexOrderingApply(geometry); // A written through [0, 8)
+    flushSortedIndexUploads(geometry);
 
     const orderingB = new Uint32Array([5, 4, 7, 6, 1, 0, 3, 2, 9, 8, 11, 10]);
     writeSortedIndexOrdering(geometry, orderingB, 12);
     expect(hasPendingSortedIndexOrderingApply(geometry)).toBe(true);
 
     // A completes and swaps in; B's stream starts into the old front.
-    expect(pumpSortedIndexOrderingApply(geometry)).toEqual({ more: true, flipped: true });
+    expect(pumpSortedIndexOrderingApply(geometry)).toEqual({
+      more: true,
+      flipped: true,
+      stalled: false,
+    });
     expect(Array.from(activeArr(geometry).subarray(0, 12))).toEqual(Array.from(orderingA));
     expectPermutation(geometry, 12);
+    flushSortedIndexUploads(geometry);
 
-    expect(pumpSortedIndexOrderingApply(geometry)).toEqual({ more: true, flipped: false });
+    expect(pumpSortedIndexOrderingApply(geometry)).toEqual({
+      more: true,
+      flipped: false,
+      stalled: false,
+    });
     expectPermutation(geometry, 12); // still showing A while B streams
+    flushSortedIndexUploads(geometry);
     pumpSortedIndexOrderingApply(geometry);
-    expect(pumpSortedIndexOrderingApply(geometry)).toEqual({ more: false, flipped: true });
+    flushSortedIndexUploads(geometry);
+    expect(pumpSortedIndexOrderingApply(geometry)).toEqual({
+      more: false,
+      flipped: true,
+      stalled: false,
+    });
     expect(Array.from(activeArr(geometry).subarray(0, 12))).toEqual(Array.from(orderingB));
     expectPermutation(geometry, 12);
   });
@@ -1258,15 +1453,14 @@ describe('double-buffered ordering apply (atomic swap)', () => {
     const { geometry } = makeGeometry(16);
     writeSortedIndexOrdering(geometry, reversed(12), 12);
     pumpSortedIndexOrderingApply(geometry); // A streaming
+    flushSortedIndexUploads(geometry);
 
     const orderingB = new Uint32Array(12).fill(1);
     const orderingC = new Uint32Array([5, 4, 7, 6, 1, 0, 3, 2, 9, 8, 11, 10]);
     writeSortedIndexOrdering(geometry, orderingB, 12); // held...
     writeSortedIndexOrdering(geometry, orderingC, 12); // ...replaced (B dropped)
 
-    for (let i = 0; i < 8 && pumpSortedIndexOrderingApply(geometry).more; i++) {
-      /* drain A then C */
-    }
+    drainSortedIndexApply(geometry); // drains A then C
     expect(Array.from(activeArr(geometry).subarray(0, 12))).toEqual(Array.from(orderingC));
     expectPermutation(geometry, 12);
   });
@@ -1275,7 +1469,11 @@ describe('double-buffered ordering apply (atomic swap)', () => {
     const { geometry } = makeGeometry(16);
     const n = writeSortedIndexOrdering(geometry, reversed(CHUNK), CHUNK);
     expect(n).toBe(CHUNK);
-    expect(pumpSortedIndexOrderingApply(geometry)).toEqual({ more: false, flipped: true });
+    expect(pumpSortedIndexOrderingApply(geometry)).toEqual({
+      more: false,
+      flipped: true,
+      stalled: false,
+    });
     expect(Array.from(activeArr(geometry).subarray(0, CHUNK))).toEqual([3, 2, 1, 0]);
   });
 
@@ -1290,7 +1488,11 @@ describe('double-buffered ordering apply (atomic swap)', () => {
 
     // The pump copies the final slice and selects the buffer for the next
     // render, but THREE has not consumed the update range or drawn it yet.
-    expect(pumpSortedIndexOrderingApply(geometry)).toEqual({ more: false, flipped: true });
+    expect(pumpSortedIndexOrderingApply(geometry)).toEqual({
+      more: false,
+      flipped: true,
+      stalled: false,
+    });
     expect(applied).toBe(0);
     expect(abandoned).toBe(0);
 
@@ -1344,16 +1546,18 @@ describe('double-buffered ordering apply (atomic swap)', () => {
     writeSortedIndexIdentity(geometry, 8);
     const good = reversed(8);
     writeSortedIndexOrdering(geometry, good, 8);
-    while (pumpSortedIndexOrderingApply(geometry).more) {
-      /* drain */
-    }
+    drainSortedIndexApply(geometry);
     const slot = activeSortedIndexSlot(geometry);
     const shown = Array.from(activeArr(geometry).subarray(0, 8));
     expect(shown).toEqual(Array.from(good));
 
     expect(writeSortedIndexOrdering(geometry, new Uint32Array(0), 0)).toBe(0);
     expect(hasPendingSortedIndexOrderingApply(geometry)).toBe(false);
-    expect(pumpSortedIndexOrderingApply(geometry)).toEqual({ more: false, flipped: false });
+    expect(pumpSortedIndexOrderingApply(geometry)).toEqual({
+      more: false,
+      flipped: false,
+      stalled: false,
+    });
     expect(activeSortedIndexSlot(geometry)).toBe(slot);
     expect(Array.from(activeArr(geometry).subarray(0, 8))).toEqual(shown);
   });
@@ -1373,15 +1577,17 @@ describe('double-buffered ordering apply (atomic swap)', () => {
       writeSortedIndexIdentity(geometry, 8);
       const good = reversed(8);
       writeSortedIndexOrdering(geometry, good, 8);
-      while (pumpSortedIndexOrderingApply(geometry).more) {
-        /* drain */
-      }
+      drainSortedIndexApply(geometry);
       const slot = activeSortedIndexSlot(geometry);
       const shown = Array.from(activeArr(geometry).subarray(0, 8));
 
       expect(writeSortedIndexOrdering(geometry, reversed(8), bad), `count=${bad}`).toBe(0);
       expect(hasPendingSortedIndexOrderingApply(geometry)).toBe(false);
-      expect(pumpSortedIndexOrderingApply(geometry)).toEqual({ more: false, flipped: false });
+      expect(pumpSortedIndexOrderingApply(geometry)).toEqual({
+        more: false,
+        flipped: false,
+        stalled: false,
+      });
       expect(activeSortedIndexSlot(geometry), `count=${bad} flipped the slot`).toBe(slot);
       expect(Array.from(activeArr(geometry).subarray(0, 8))).toEqual(shown);
     }
@@ -1395,7 +1601,11 @@ describe('double-buffered ordering apply (atomic swap)', () => {
     expect(hasPendingSortedIndexOrderingApply(geometry)).toBe(true);
     writeSortedIndexIdentity(geometry, 12);
     expect(hasPendingSortedIndexOrderingApply(geometry)).toBe(false);
-    expect(pumpSortedIndexOrderingApply(geometry)).toEqual({ more: false, flipped: false });
+    expect(pumpSortedIndexOrderingApply(geometry)).toEqual({
+      more: false,
+      flipped: false,
+      stalled: false,
+    });
     // Neither the stale stream nor the held ordering scribbles over the
     // fresh identity, and the slot never moved.
     expect(activeSortedIndexSlot(geometry)).toBe(0);
@@ -1409,15 +1619,17 @@ describe('double-buffered ordering apply (atomic swap)', () => {
     writeSortedIndexOrdering(geometry, reversed(12), 12);
     writeSortedIndexIdentityRange(geometry, 12, 16);
     expect(hasPendingSortedIndexOrderingApply(geometry)).toBe(false);
-    expect(pumpSortedIndexOrderingApply(geometry)).toEqual({ more: false, flipped: false });
+    expect(pumpSortedIndexOrderingApply(geometry)).toEqual({
+      more: false,
+      flipped: false,
+      stalled: false,
+    });
   });
 
   it('identity writers target whichever buffer is live after a flip', () => {
     const { geometry } = makeGeometry(16);
     writeSortedIndexOrdering(geometry, reversed(12), 12);
-    while (pumpSortedIndexOrderingApply(geometry).more) {
-      /* drain */
-    }
+    drainSortedIndexApply(geometry);
     expect(activeSortedIndexSlot(geometry)).toBe(1);
     // A commit landing while slot 1 is live must reset THAT buffer.
     writeSortedIndexIdentity(geometry, 12);
@@ -1460,7 +1672,15 @@ describe('double-buffered ordering apply (atomic swap)', () => {
     const ordering = reversed(12);
     const n = writeSortedIndexOrdering(geometry, ordering, 12);
     expect(n).toBe(12);
-    expect(pumpSortedIndexOrderingApply(geometry)).toEqual({ more: false, flipped: true });
+    // A pre-existing pending range on the inactive buffer must NOT stall
+    // the WebGPU path (back-pressure is chunked-only; issue #715): it
+    // writes the WHOLE ordering and flips on the first pump regardless.
+    (geometry.getAttribute('aSortedIndexB') as THREE.InstancedBufferAttribute).addUpdateRange(0, 4);
+    expect(pumpSortedIndexOrderingApply(geometry)).toEqual({
+      more: false,
+      flipped: true,
+      stalled: false,
+    });
     expect(activeSortedIndexSlot(geometry)).toBe(1);
     expect(Array.from(activeArr(geometry).subarray(0, 12))).toEqual(Array.from(ordering));
     const back = activeAttr(geometry);
@@ -1478,7 +1698,11 @@ describe('double-buffered ordering apply (atomic swap)', () => {
     // instanceCount), so it is dropped whole, keeping the shown order.
     expect(writeSortedIndexOrdering(geometry, reversed(12), 12)).toBe(0);
     expect(hasPendingSortedIndexOrderingApply(geometry)).toBe(false);
-    expect(pumpSortedIndexOrderingApply(geometry)).toEqual({ more: false, flipped: false });
+    expect(pumpSortedIndexOrderingApply(geometry)).toEqual({
+      more: false,
+      flipped: false,
+      stalled: false,
+    });
     expect(activeSortedIndexSlot(geometry)).toBe(0);
     expect(Array.from(activeArr(geometry).subarray(0, 8))).toEqual(shown);
   });
@@ -1531,6 +1755,7 @@ describe('ordering invariant — randomized interleavings', () => {
     configureSortedIndexChunkedApply(true);
     const opTally: Record<string, number> = {};
     let checks = 0;
+    let flips = 0;
 
     for (let seed = 1; seed <= 400; seed++) {
       const r = prng(seed);
@@ -1546,16 +1771,23 @@ describe('ordering invariant — randomized interleavings', () => {
       for (let step = 0; step < 40; step++) {
         const roll = r();
         let op: string;
-        if (roll < 0.3) {
+        if (roll < 0.25) {
           op = 'sort';
           writeSortedIndexOrdering(geometry, shuffled(n, r), n);
-        } else if (roll < 0.7) {
+        } else if (roll < 0.6) {
           op = 'pump';
-          pumpSortedIndexOrderingApply(geometry);
-        } else if (roll < 0.8) {
+          if (pumpSortedIndexOrderingApply(geometry).flipped) flips++;
+        } else if (roll < 0.75) {
+          // Acknowledge slice uploads (a DRAWN frame) so a stream can
+          // advance past slice 1 under the #715 back-pressure — without
+          // this op the pump would stall on the un-acknowledged slice and
+          // no stream would ever flip.
+          op = 'flush';
+          flushSortedIndexUploads(geometry);
+        } else if (roll < 0.82) {
           op = 'cancel';
           cancelSortedIndexOrderingApply(geometry);
-        } else if (roll < 0.9) {
+        } else if (roll < 0.91) {
           op = 'commit-resize';
           n = 1 + Math.floor(r() * 24);
           writeSortedIndexIdentity(geometry, n);
@@ -1580,8 +1812,12 @@ describe('ordering invariant — randomized interleavings', () => {
 
     // Non-vacuity: the run really visited every op class, many times.
     expect(checks).toBe(400 * 40);
-    for (const op of ['sort', 'pump', 'cancel', 'commit-resize', 'append']) {
+    for (const op of ['sort', 'pump', 'flush', 'cancel', 'commit-resize', 'append']) {
       expect(opTally[op] ?? 0, `op '${op}' never exercised`).toBeGreaterThan(50);
     }
+    // And streams actually COMPLETED (flipped): with back-pressure a run
+    // that never acknowledged uploads would stall every stream at slice 1
+    // and never flip — this pins that the flush op unblocks convergence.
+    expect(flips, 'no ordering stream ever completed (flipped)').toBeGreaterThan(0);
   });
 });

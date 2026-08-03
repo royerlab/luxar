@@ -469,9 +469,9 @@ describe('Encoded Array Range Extraction', () => {
           col_hi: enc.col_hi.slice(0, 2),
         },
       } as unknown as ArrayMetadata;
-      await expect(
-        new ArrayDecoder(new ArrayRefRegistry()).decode(array, corrupt)
-      ).rejects.toThrow(/col_lo\/col_hi must each have 3 entries/);
+      await expect(new ArrayDecoder(new ArrayRefRegistry()).decode(array, corrupt)).rejects.toThrow(
+        /col_lo\/col_hi must each have 3 entries/
+      );
     });
 
     it('extracts ranges from decoded 4D per-channel positions correctly', async () => {

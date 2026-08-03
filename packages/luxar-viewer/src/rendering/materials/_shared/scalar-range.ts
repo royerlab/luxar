@@ -39,9 +39,13 @@ export function computeScalarRangeUniforms(min: number, max: number): ScalarRang
  * `uniforms` object literals. A missing range defaults to [0, 1] — the
  * identity mapping the constructors historically used.
  */
-export function scalarRangeUniformEntries(
-  range: readonly [number, number] | undefined
-): { uScalarMin: { value: number }; uScalarScale: { value: number } } {
-  const { scalarMin, scalarScale } = computeScalarRangeUniforms(range?.[0] ?? 0.0, range?.[1] ?? 1.0);
+export function scalarRangeUniformEntries(range: readonly [number, number] | undefined): {
+  uScalarMin: { value: number };
+  uScalarScale: { value: number };
+} {
+  const { scalarMin, scalarScale } = computeScalarRangeUniforms(
+    range?.[0] ?? 0.0,
+    range?.[1] ?? 1.0
+  );
   return { uScalarMin: { value: scalarMin }, uScalarScale: { value: scalarScale } };
 }
