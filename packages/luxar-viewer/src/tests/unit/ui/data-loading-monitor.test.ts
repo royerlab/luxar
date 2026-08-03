@@ -14,11 +14,13 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { DataLoadingMonitor } from '../../../ui/data-loading-monitor';
 import { nodeStatsContent } from '../../../ui/data-loading-monitor/templates';
+import { POOLED_GEOMETRY_TYPES } from '../../../types/data-monitor-types';
 import type {
   MonitorEvent,
   LoaderMonitor,
   LoaderMetrics,
   LODProgressState,
+  MemoryMetrics,
 } from '../../../types/data-monitor-types';
 
 // Mock DOM environment
@@ -1650,5 +1652,57 @@ describe('DataLoadingMonitor', () => {
       expect(() => monitor.clearL2Cache()).not.toThrow();
       expect(() => monitor.clearAllCaches()).not.toThrow();
     });
+  });
+});
+
+describe('DataLoadingMonitor — accumulator provider record', () => {
+  it('exposes one accumulator slot per POOLED_GEOMETRY_TYPES entry', () => {
+    // The provider record, the reset, and the metrics snapshot are all built
+    // from POOLED_GEOMETRY_TYPES rather than a hand-written {points, lines,
+    // gsplats} literal. Pin that every entry survives the round trip: a
+    // key dropped from any of the three would leave a hole here, and nothing
+    // else in the suite reads this record's shape.
+    const container = document.getElementById('test-container')!;
+    const monitor = new DataLoadingMonitor(container);
+
+    for (const [i, type] of POOLED_GEOMETRY_TYPES.entries()) {
+      monitor.setAccumulatorProvider(type, {
+        getStats: () => ({
+          capacity: (i + 1) * 100,
+          allocations: i + 1,
+          growthEvents: 0,
+          memoryMB: 1,
+        }),
+      });
+    }
+
+    const metrics = (
+      monitor as unknown as { getMemoryMetrics(): MemoryMetrics }
+    ).getMemoryMetrics();
+
+    for (const [i, type] of POOLED_GEOMETRY_TYPES.entries()) {
+      expect(metrics.accumulators[type], `missing accumulator for ${type}`).not.toBeNull();
+      expect(metrics.accumulators[type]!.capacity).toBe((i + 1) * 100);
+    }
+    expect(Object.keys(metrics.accumulators).sort()).toEqual([...POOLED_GEOMETRY_TYPES].sort());
+  });
+
+  it('clears every slot on resetSceneProviders', () => {
+    const container = document.getElementById('test-container')!;
+    const monitor = new DataLoadingMonitor(container);
+    for (const type of POOLED_GEOMETRY_TYPES) {
+      monitor.setAccumulatorProvider(type, {
+        getStats: () => ({ capacity: 1, allocations: 1, growthEvents: 0, memoryMB: 1 }),
+      });
+    }
+
+    monitor.resetSceneProviders();
+
+    const metrics = (
+      monitor as unknown as { getMemoryMetrics(): MemoryMetrics }
+    ).getMemoryMetrics();
+    for (const type of POOLED_GEOMETRY_TYPES) {
+      expect(metrics.accumulators[type], `${type} slot survived the reset`).toBeNull();
+    }
   });
 });

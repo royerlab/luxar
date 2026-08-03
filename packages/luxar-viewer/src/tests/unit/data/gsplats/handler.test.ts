@@ -33,52 +33,72 @@ function makeSession(): UpdateSession {
   } as unknown as UpdateSession;
 }
 
+// A fully-extended node's derived view state: extend-to-all sentinel on the
+// (single) non-displayed dim + that dim's slicePosition pinned to 0 — a
+// slice-INVARIANT query flowing through the handler as a normal node (#1157).
+const extendedViewState = {
+  displayDims: [0, 1, 2],
+  slicePosition: [0, 0, 0, 0],
+  tolerance: [0, 0, 0, 1e10],
+};
+
+/** Root group with a gsplats mesh stamped as already-committed. */
+function rootWithGSplatsMesh(path: string): THREE.Group {
+  const root = new THREE.Group();
+  const mesh = new THREE.Mesh();
+  mesh.name = path;
+  mesh.userData = { nodeType: 'gsplats', attrs: {}, loadedViewVersion: 1 };
+  root.add(mesh);
+  return root;
+}
+
 describe('gsplats handler', () => {
   it('discriminates as kind="gsplats" with label="GSplats"', () => {
     expect(kind).toBe('gsplats');
     expect(label).toBe('GSplats');
   });
 
-  it('returns null on derived.skip without calling the loader', async () => {
+  it('loads a fully-extended node with the derived extended+pinned view state on FIRST paint (#1157)', async () => {
     const loader: GSplatsDataLoader = {
       loadGSplats: vi.fn(),
-      updateView: vi.fn(),
+      updateView: vi.fn().mockResolvedValue(null), // empty slice: exits before process
       dispose: vi.fn(),
     } as unknown as GSplatsDataLoader;
-    const result = await loadAndStage('/g', loader, makeSession(), {
+    const session = makeSession();
+    await loadAndStage('/g', loader, session, {
       rootGroup: new THREE.Group(),
       viewStateQueue: new ViewStateQueue(),
       clearFailure: vi.fn(),
       currentVersion: 1,
       updateVersion: 1,
       extendedToleranceCache: new Map(),
-      deriveNodeViewState: () => ({ skip: 'extend_to_all' }),
+      // A fully-extended node is a normal node — no skip shortcut.
+      deriveNodeViewState: () => ({ skip: false, viewState: extendedViewState }),
     });
-    expect(result).toBeNull();
-    expect(loader.updateView).not.toHaveBeenCalled();
+    expect(loader.updateView).toHaveBeenCalledTimes(1);
+    expect(loader.updateView).toHaveBeenCalledWith(extendedViewState, expect.anything(), undefined);
+    expect(session.markSkipped).not.toHaveBeenCalled();
   });
 
-  // data.md G2 fix: parallel coverage to points/handler.test.ts.
-  it('forgets the path on skip so the next non-skip update re-baselines', async () => {
+  it('still queries the loader on a later sweep even with a committed mesh (no skip shortcut)', async () => {
+    // Regression guard for the reverted "skip once loaded" design.
     const loader: GSplatsDataLoader = {
       loadGSplats: vi.fn(),
-      updateView: vi.fn(),
+      updateView: vi.fn().mockResolvedValue(null),
       dispose: vi.fn(),
     } as unknown as GSplatsDataLoader;
-    const queue = new ViewStateQueue();
-    const forgetPathSpy = vi.spyOn(queue, 'forgetPath');
-    await loadAndStage('/g', loader, makeSession(), {
-      rootGroup: new THREE.Group(),
-      viewStateQueue: queue,
+    const session = makeSession();
+    await loadAndStage('/g', loader, session, {
+      rootGroup: rootWithGSplatsMesh('/g'),
+      viewStateQueue: new ViewStateQueue(),
       clearFailure: vi.fn(),
-      currentVersion: 1,
-      updateVersion: 1,
+      currentVersion: 2,
+      updateVersion: 2,
       extendedToleranceCache: new Map(),
-      deriveNodeViewState: () => ({ skip: 'extend_to_all' }),
+      deriveNodeViewState: () => ({ skip: false, viewState: extendedViewState }),
     });
-    expect(forgetPathSpy).toHaveBeenCalledTimes(1);
-    expect(forgetPathSpy).toHaveBeenCalledWith('/g');
-    expect(loader.updateView).not.toHaveBeenCalled();
+    expect(loader.updateView).toHaveBeenCalledWith(extendedViewState, expect.anything(), undefined);
+    expect(session.markSkipped).not.toHaveBeenCalled();
   });
 
   it('passes the derived viewState through to loader.updateView on the non-skip path', async () => {
@@ -317,18 +337,6 @@ describe('gsplats handler — no-op commit skip', () => {
 
       expect(result).toBeNull();
       expect(clearFailure).toHaveBeenCalledWith('/g');
-    });
-
-    it('does NOT clear the failure record on an extend_to_all skip', async () => {
-      // A skipped node loaded nothing, so a recorded failure is still unresolved.
-      const clearFailure = vi.fn();
-
-      await loadAndStage('/g', makeLoaderReturning(data), makeSession(), {
-        ...makeCtx(clearFailure, new THREE.Group()),
-        deriveNodeViewState: () => ({ skip: 'extend_to_all' as const }),
-      });
-
-      expect(clearFailure).not.toHaveBeenCalled();
     });
   });
 });

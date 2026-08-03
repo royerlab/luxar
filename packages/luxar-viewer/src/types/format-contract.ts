@@ -23,19 +23,19 @@ export type GSplatsFormatVersion = '3.0' | '3.1' | '3.2' | '3.3';
 export const FORMAT_TYPE_GSPLATS = 'gsplats_zarr';
 
 // --- scene-graph node types ---
-export const NODE_TYPES: readonly string[] = ['scene', 'group', 'points', 'lines', 'gsplats'];
+export const NODE_TYPES: readonly NodeTypeName[] = ['scene', 'group', 'points', 'lines', 'gsplats'];
 export type NodeTypeName = 'scene' | 'group' | 'points' | 'lines' | 'gsplats';
 
 // --- leaf geometry types (the element-bearing subset of NODE_TYPES) ---
-export const GEOMETRY_TYPES: readonly string[] = ['points', 'lines', 'gsplats'];
+export const GEOMETRY_TYPES: readonly GeometryTypeName[] = ['points', 'lines', 'gsplats'];
 export type GeometryTypeName = 'points' | 'lines' | 'gsplats';
 
 // --- specialized-group kinds ---
-export const NODE_KINDS: readonly string[] = ['lod', 'partition'];
+export const NODE_KINDS: readonly NodeKind[] = ['lod', 'partition'];
 export type NodeKind = 'lod' | 'partition';
 
 // --- on-disk array encoding scheme names ---
-export const ENCODING_NAMES: readonly string[] = [
+export const ENCODING_NAMES: readonly EncodingName[] = [
   'none',
   'broadcasted',
   'array_ref',
@@ -94,7 +94,7 @@ export type EncodingName =
   | 'uint64';
 
 // --- canonical metadata attribute keys ---
-export const ATTR_KEYS: readonly string[] = [
+export const ATTR_KEYS: readonly AttrKey[] = [
   'format_version',
   'format_type',
   'content_hash',
@@ -113,7 +113,7 @@ export type AttrKey =
   | 'kind';
 
 // --- canonical gsplats array names ---
-export const ARRAY_NAMES: readonly string[] = [
+export const ARRAY_NAMES: readonly ArrayName[] = [
   'centers',
   'amplitudes',
   'cholesky_factors',

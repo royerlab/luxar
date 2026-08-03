@@ -8,9 +8,10 @@
  * never touch that lock so retry-from-inside-retry doesn't deadlock.
  *
  * Each retry repeats the same query-shape logic the main update path
- * uses (deriveNodeViewState + the per-type viewState fallback for
- * extend_to_all skip) so retry / update / initial-load are never out
- * of sync.
+ * uses (`deriveNodeViewState`, which returns a single
+ * `{ skip: false; viewState }` — a fully-extended node is derived as a
+ * slice-invariant query, never a skip) so retry / update / initial-load
+ * are never out of sync.
  */
 
 import type * as THREE from 'three';
@@ -26,11 +27,12 @@ import type { StagedPointsCommit } from '../process/data-processor-points';
 import type { StagedGSplatsCommit } from '../process/data-processor-gsplats';
 
 /**
- * Result of `deriveNodeViewState` — `skip` is true when the helper
- * decides the node should fall back to the base view state (e.g. full
- * extend_to_all coverage where deriving would empty the query).
+ * Result of `deriveNodeViewState` — always a `{ skip: false; viewState }`
+ * now. A fully-extended (always-visible) node is derived as a normal node
+ * whose query is slice-invariant (extend-to-all tolerance + pinned slice),
+ * so a retry loads with `viewState` exactly like any other node.
  */
-type DerivedViewState = { skip: 'extend_to_all' } | { skip: false; viewState: ViewState };
+type DerivedViewState = { skip: false; viewState: ViewState };
 
 /**
  * Narrow context the retry helpers need from the orchestrator. Keeps
@@ -48,7 +50,6 @@ export interface RetryCtx {
    */
   lodGroupRegistry?: LODGroupRegistry | null;
   rootGroup: THREE.Group | null;
-  viewState: ViewState;
   deriveNodeViewState(
     path: string,
     attrs: { extend_to_all?: string[] } | undefined,
@@ -120,11 +121,10 @@ export async function retryFailedLoaderUnlocked(path: string, ctx: RetryCtx): Pr
       const derived = ctx.deriveNodeViewState(path, attrs, {
         applyPartialExtendTolerance: descriptor.applyPartialExtendTolerance,
       });
-      // Mirror the initial-load fallback: when `derived.skip` is true
-      // (extend_to_all fully covers), the placeholder still needs data
-      // committed — skipping the load and clearing failedLoaders would
-      // falsely report success against an empty placeholder.
-      const viewState = derived.skip ? ctx.viewState : derived.viewState;
+      // A fully-extended node is derived as a normal node with a
+      // slice-invariant query (extend-to-all tolerance + pinned slice), so the
+      // retry loads with `derived.viewState` exactly like any other node.
+      const viewState = derived.viewState;
       await descriptor.retryCommit(ctx, path, registry.loadersOf(kind).get(path)!, viewState);
       return verifyAndClear(kind);
     } else {

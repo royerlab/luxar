@@ -8,6 +8,8 @@ import numpy as np
 import zarr
 from numpy.typing import NDArray
 
+from ...typing_utils._format_contract import GEOMETRY_TYPES
+
 
 def compute_position_bounds(
     positions: NDArray[np.float32],
@@ -179,7 +181,11 @@ def expand_bounds_with_transforms(
             node_has_matrix = True
 
         node_type = attrs.get("type", None)
-        if node_type in ("points", "lines", "gsplats"):
+        # Every element-bearing leaf contributes its bounds, so this reads the
+        # contract vocabulary rather than a literal tuple: a geometry type added
+        # to ``geometry_types`` but missed here would be skipped silently and
+        # never reach the scene's world bounds (wrong camera framing, no error).
+        if node_type in GEOMETRY_TYPES:
             # Leaf node with geometry
             local_bounds = attrs.get("position_bounds", None)
             if local_bounds:

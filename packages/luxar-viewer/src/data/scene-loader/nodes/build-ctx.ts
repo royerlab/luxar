@@ -47,8 +47,9 @@ export interface NodeBuildCtx {
    * orchestrator's field doesn't corrupt the initial-load query region.
    *
    * NOTE: for a DEFERRED reload (a lazy lod_group level re-fired after the user
-   * scrubbed) this snapshot is stale — use `getLiveViewState()` /
-   * `deriveNodeViewState()` to load for the CURRENT slice.
+   * scrubbed) this snapshot is stale — the reload paths re-run
+   * `deriveNodeViewState()` (from the orchestrator's live view state) to load
+   * for the CURRENT slice.
    */
   viewState: ViewState;
   /**
@@ -58,12 +59,6 @@ export interface NodeBuildCtx {
    * registry's freshness check reflects the slice actually loaded.
    */
   getViewVersion(): number;
-  /**
-   * The orchestrator's CURRENT `viewState` (live, not the build-time snapshot).
-   * Used by the lazy/reload path so a level re-loaded after a scrub queries the
-   * current slice rather than the one captured when the ctx was built.
-   */
-  getLiveViewState(): ViewState;
   /** Factory-deps snapshot for `createX*Loader` helpers. */
   factoryDeps: LoaderFactoryDeps;
   /** Compose effective rendering attrs along the scene-graph ancestry. */

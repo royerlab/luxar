@@ -134,9 +134,12 @@ export async function loadLinesNodeExpensive(
     // Capture the version at DERIVE time (see loadGSplatsNodeExpensive) so a
     // deferred reload is stamped for the slice it actually loaded.
     const loadedViewVersion = ctx.getViewVersion();
-    const linesViewState: LinesViewState = derivedLines.skip
-      ? ctx.getLiveViewState()
-      : derivedLines.viewState;
+    // For a fully-extended node `derivedLines.viewState` carries the
+    // extend-to-all tolerance sentinel (and pinned slice) on every non-displayed
+    // dim — computed unconditionally by `deriveNodeViewState` even though lines
+    // opt out of the PARTIAL-extend override — so a fully-extended lines node
+    // loads its whole extent.
+    const linesViewState: LinesViewState = derivedLines.viewState;
 
     const data = await loader.loadLines(linesViewState);
 
