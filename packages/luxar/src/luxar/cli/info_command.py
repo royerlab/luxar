@@ -16,6 +16,7 @@ import typer
 import zarr
 from arbol import aprint
 
+from ..typing_utils._format_contract import GEOMETRY_TYPES
 from .utils import (
     format_memory_size,
     format_tree_node,
@@ -162,7 +163,9 @@ def _print_tree(
     stored_type = group.attrs.get("type", "")
     if depth == 0:
         node_type = "scene"
-    elif stored_type in ("points", "lines", "gsplats"):
+    # Contract vocabulary, not a literal tuple: a geometry type added to
+    # ``geometry_types`` but missed here would be reported as a plain "group".
+    elif stored_type in GEOMETRY_TYPES:
         node_type = stored_type
     else:
         node_type = "group"
