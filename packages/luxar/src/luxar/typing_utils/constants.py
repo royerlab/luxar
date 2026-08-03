@@ -67,6 +67,23 @@ GB_TO_BYTES: Final[int] = 1024 * 1024 * 1024
 MAX_POINTS_RECOMMENDED: Final[int] = 10_000_000  # 10M points
 MAX_POINTS_WARNING: Final[int] = 100_000_000  # 100M points
 
+# Hard ceiling on a mesh node's vertex count. Unlike the advisory point limits
+# above this is a CORRECTNESS bound, not a performance hint, so it is enforced
+# (see validate_vertices_for_writing) rather than warned about.
+#
+# A mesh's pick elementId is the raw `gl_VertexID` — the one geometry type not
+# bounded by the element-texture capacity — and the viewer's pick vote key is
+# built with a stride of 2^27 per node. Once a vertex ordinal reaches that
+# stride, vote keys alias ACROSS nodes and a pick resolves to the wrong node with
+# no diagnostic. The largest ordinal is `n_vertices - 1`, so `n_vertices <= 2^27`
+# is the exact alias-free bound: every admitted ordinal stays strictly under the
+# stride. See docs/specs/MESH_NODE_SPEC.md §6.5.
+#
+# It also keeps the writer's face-index check sufficient: with vertices capped
+# here, `max(faces) < n_vertices` guarantees every admitted index survives the
+# `.astype(np.uint32)` cast unchanged (2^27 is far below 2^32).
+MAX_MESH_VERTICES: Final[int] = 2**27  # 134,217,728 — pick vote-key stride
+
 # Compression constants
 COMPRESSION_LEVEL_MIN: Final[int] = 0  # No compression
 COMPRESSION_LEVEL_DEFAULT: Final[int] = 3

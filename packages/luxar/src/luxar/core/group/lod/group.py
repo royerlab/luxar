@@ -46,6 +46,8 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
 from arbol import aprint
 
+from ....typing_utils.geometry_capabilities import require_lod_display_type
+
 if TYPE_CHECKING:
     from ...node import Node
 
@@ -86,13 +88,31 @@ def compute_lod_display_type(children: List["Node"]) -> str:
     Convention: children are stored in coarsest→finest order, so the
     finest is the last entry. If that child is itself a kind=lod / kind=partition
     group, recurse through its own ``display_type``.
+
+    Rejects a resolved display type that is a geometry type with **no LOD
+    support**. Note what this does *not* do: it is not a homogeneity check and
+    not an allowlist. A ``kind=lod`` group is intentionally heterogeneous-
+    tolerant (a coarse points level under a fine gsplats level is a supported
+    composition, and ``TestDisplayTypeResolution`` pins that), and
+    ``display_type`` also legitimately carries non-geometry marker strings on
+    nested groups — so both of those keep passing. Only a *known* geometry type
+    whose capability row says ``lod=False`` is refused.
+
+    Without this the failure is silent and deferred: ``resolve_display_type``
+    falls through to ``attrs.get("type", "group")`` for a plain leaf, so a mesh
+    child would be accepted here and produce a ``kind=lod`` group with
+    ``display_type="mesh"`` that no viewer path can load — a broken store written
+    without complaint. The partition sibling has always had its guard
+    (``add_partition_group_impl``); the LOD path only ever *derived* the value.
     """
     if not children:
         raise ValueError(
             "compute_lod_display_type: cannot derive display_type from an "
             "empty children list"
         )
-    return resolve_display_type(children[-1])
+    display_type = resolve_display_type(children[-1])
+    require_lod_display_type(display_type, f"finest child {children[-1].name!r}")
+    return display_type
 
 
 # ────────────────────────────────────────────────────────────────────────

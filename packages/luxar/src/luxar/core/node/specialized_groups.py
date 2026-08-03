@@ -11,6 +11,12 @@ from typing import TYPE_CHECKING, Any
 
 from arbol import aprint
 
+from ...typing_utils.geometry_capabilities import (
+    partition_capable_types,
+    require_lod_display_type,
+    supports_partition,
+)
+
 if TYPE_CHECKING:
     from ..group import Group
     from .node import Node
@@ -32,6 +38,12 @@ def add_lod_group_impl(
         )
     if default_level < 0:
         raise ValueError(f"default_level must be >= 0, got {default_level}")
+    # An explicit display_type= rides in through **attrs (it is an accepted node
+    # attr, so validate_render_attrs passes it through). Gate it here: the
+    # finalize back-fill only ever sees groups that DIDN'T supply one, so
+    # without this the caller-supplied route is the one hole left open.
+    if "display_type" in attrs:
+        require_lod_display_type(attrs["display_type"], f"kind=lod group {name!r}")
     try:
         aprint(f"Adding child kind=lod group '{name}' to node '{node.name}'.")
         child = node.add_group(
@@ -59,13 +71,20 @@ def add_partition_group_impl(
     **attrs: Any,
 ) -> "Group":
     """Body of :meth:`Node.add_partition_group`."""
-    # DO NOT widen to GEOMETRY_TYPES. This is an allowlist of the geometry types
-    # that actually support spatial partitioning, not the full leaf vocabulary —
-    # a new geometry type must opt in explicitly once its partition path exists.
-    if display_type not in ("points", "lines", "gsplats"):
+    # DO NOT widen to GEOMETRY_TYPES. This asks a CAPABILITY question — which
+    # geometry types have a spatial-partition path — not the leaf-vocabulary
+    # question, and the two differ (mesh is writable but unpartitionable, spec
+    # §9). The answer lives in one table so it cannot drift between here and the
+    # LOD guard; a new type opts in by flipping its row, not by editing callers.
+    if not supports_partition(display_type):
+        valid = " / ".join(repr(t) for t in partition_capable_types())
         raise ValueError(
-            "display_type for a partition group must be one of "
-            f"'points' / 'lines' / 'gsplats', got {display_type!r}"
+            f"display_type for a partition group must be one of {valid}, got "
+            f"{display_type!r}. A geometry type is excluded here until it has a "
+            "spatial-partition path: partitioning splits geometry across parts, "
+            "so a type whose elements cannot be divided independently (a mesh's "
+            "faces share vertices across any cut) would be silently corrupted "
+            "rather than merely unsupported."
         )
     if not isinstance(max_elements, int) or max_elements < 1:
         raise ValueError(f"max_elements must be an int >= 1, got {max_elements!r}")
