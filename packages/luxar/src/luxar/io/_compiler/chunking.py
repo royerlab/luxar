@@ -49,8 +49,9 @@ def calculate_intelligent_chunks(
         dtype: NumPy dtype of the array being chunked.
         per_array_bytes: Opt-in (default ``False``). When ``True`` and a
             spatial ``chunk_size`` atom is present, size the first-axis chunk
-            to this array's OWN dtype byte budget, aligned up to a multiple of
-            the atom (floored at 1×), so large points scenes issue far fewer
+            to this array's OWN dtype byte budget, rounded DOWN to a multiple
+            of the atom (never below one atom), so large points scenes issue
+            far fewer
             requests. When ``False`` the result is byte-for-byte identical to
             the historical atom-sized behavior (gsplats/lines keep the atom).
 

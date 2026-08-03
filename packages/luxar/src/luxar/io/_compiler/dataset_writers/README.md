@@ -15,8 +15,9 @@ selection, deduplication, LUT/broadcast detection) lives in `ArrayEncoder`, and
 the chunk layout is computed by `..chunking.calculate_intelligent_chunks` so
 chunk boundaries align with the spatial index when one is present. For a
 **Points** node each per-point array opts into `per_array_bytes=True`, sizing its
-first-axis chunk to its own INPUT (pre-encoding) dtype byte budget aligned up to a
-multiple of the spatial-index `chunk_size` atom — so large scenes issue far fewer
+first-axis chunk to its own INPUT (pre-encoding) dtype byte budget rounded down to
+a multiple of the spatial-index `chunk_size` atom (never below one atom) — so
+large scenes issue far fewer
 requests while chunk boundaries still land on the viewer's row-range query grid.
 Because the budget uses the input dtype (the encoder may quantize to a smaller
 dtype), the realized chunk is a conservative lower bound on the byte target.
