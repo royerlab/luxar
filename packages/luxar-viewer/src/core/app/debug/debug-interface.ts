@@ -19,7 +19,7 @@ import {
 } from '../../../rendering/material-sync-helpers';
 import { materialManager, type BlendingMode } from '../../../rendering/material-manager';
 import { normalizeBlendingMode } from '../../../rendering/blending-state';
-import { noteDepthSortCommit } from '../../../rendering/depth-sort-coordinator';
+import { noteDepthSortCommit, resortForCapture } from '../../../rendering/depth-sort-coordinator';
 import { setCommittedData } from '../../../types/committed-data';
 import type { LoadedPointsData } from '../../../types/points';
 import type { SyntheticInjectionResult, SyntheticSceneSpec } from '../../../scene/synthetic-scene';
@@ -134,6 +134,14 @@ export function installDebugInterface(ports: InstallDebugInterfacePorts): void {
     renderOnce: () => {
       ports.animationController.startAnimation();
     },
+
+    // Force a fresh, quiescent depth ordering for the current camera pose,
+    // awaiting the worker sort + chunked apply. Used by offline capture
+    // (gallery orbit) which stops the rAF loop, leaving the per-frame
+    // depth-sort scheduler dead — without this each frame renders the
+    // permutation frozen at the pre-orbit pose. Resolves when ordering is
+    // settled (or after an internal safety timeout).
+    resortDepthOrderingForCapture: (maxWaitMs?: number) => resortForCapture(maxWaitMs),
 
     // Helper to get scene loader manager (for cache inspection)
     getSceneLoader: () => {
@@ -360,6 +368,10 @@ export function installDebugInterface(ports: InstallDebugInterfacePorts): void {
   log.info(Modules.LUXAR, 'Debug interface ready:');
   log.info(Modules.LUXAR, '  __luxarDebug.getState() - Get current state snapshot');
   log.info(Modules.LUXAR, '  __luxarDebug.renderOnce() - Trigger single frame render');
+  log.info(
+    Modules.LUXAR,
+    '  __luxarDebug.resortDepthOrderingForCapture() - Re-sort depth ordering for the current pose (offline capture)'
+  );
   log.info(Modules.LUXAR, '  __luxarDebug.scene - Access THREE.js scene');
   log.info(Modules.LUXAR, '  __luxarDebug.camera - Access camera');
   log.info(Modules.LUXAR, '  __luxarDebug.app - Access LuxarApp instance');
