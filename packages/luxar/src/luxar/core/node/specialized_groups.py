@@ -59,6 +59,9 @@ def add_partition_group_impl(
     **attrs: Any,
 ) -> "Group":
     """Body of :meth:`Node.add_partition_group`."""
+    # DO NOT widen to GEOMETRY_TYPES. This is an allowlist of the geometry types
+    # that actually support spatial partitioning, not the full leaf vocabulary —
+    # a new geometry type must opt in explicitly once its partition path exists.
     if display_type not in ("points", "lines", "gsplats"):
         raise ValueError(
             "display_type for a partition group must be one of "
