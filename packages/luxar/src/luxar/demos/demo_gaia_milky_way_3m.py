@@ -350,7 +350,8 @@ def load_and_convert_gaia_data(data_zarr_path: Path, output_path: Path) -> int:
             # The markers are PLAIN points (no substitutive LOD), so unlike the
             # "Stars" node above they need kappa rescaled to survive the
             # 2026-08-02 ray-mass unification: tau dropped its world-radius
-            # factor, so the old 1.3 would now absorb ~35x harder. Preserving
+            # factor, so the old 1.3 would now absorb ~3.5x harder
+            # (1 / (0.35 x 0.826)). Preserving
             # the authored look is exactly kappa * radius * chord.
             MARKER_ABSORPTION = 1.3 * marker_radius * float(np.sqrt(np.pi / np.log(100.0)))
 

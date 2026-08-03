@@ -182,7 +182,7 @@ The fragment shader runs in this order:
 ## Blending modes
 
 `PointMaterial`/`PointTSLMaterial` accept the canonical Luxar `BlendingMode`
-(`'additive' | 'volumetric' | 'normal' | 'opaque' | 'luminous' | 'max'`; `volumetric` is the real emission–absorption math since phase 3 — `LUXAR_VOLUMETRIC` output branch, τ = κ·density·chord with the isotropic chord scale from `./math.ts`, over the premultiplied One/OneMinusSrcAlpha state) and route everything
+(`'additive' | 'volumetric' | 'normal' | 'opaque' | 'luminous' | 'max'`; `volumetric` is the real emission–absorption math since phase 3 — `LUXAR_VOLUMETRIC` output branch, τ = κ·alpha, κ times the same ray mass the additive branch emits (2026-08-02 ray-mass unification — the former isotropic chord factor and its `math.ts` module are deleted), over the premultiplied One/OneMinusSrcAlpha state) and route everything
 through `applyBlendingMode(mode)`, which is the **single source of truth** for
 both creation (called from the constructor) and runtime UI transitions (called
 from `LayersPanel`). The method:

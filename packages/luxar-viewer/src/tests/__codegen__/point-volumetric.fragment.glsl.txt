@@ -97,7 +97,7 @@ void main() {
 	if ( ( nodeVarying1 <= 0.0 ) ) {
 
 		discard;
-		
+
 
 	}
 
@@ -106,7 +106,7 @@ void main() {
 	if ( ( nodeVar1 > 0.25 ) ) {
 
 		discard;
-		
+
 
 	}
 
@@ -114,12 +114,12 @@ void main() {
 	nodeVar4 = min( ( nodeVarying4 / 1.5 ), 1.0 );
 	nodeVar5 = ( ( ( ( max( ( exp( ( pow( sqrt( ( nodeVar1 * 4.0 ) ), nodeVarying2 ) * -4.6051702 ) ) - 0.01 ), 0.0 ) * 1.0101010101010102 ) * nodeUniform4 ) * ( nodeVar4 * nodeVar4 ) ) * nodeVarying5 );
 	nodeVar6 = ( nodeVar5 * mix( 1.0, ( - log( ( 1.0 - min( nodeVarying6, 0.998046875 ) ) ) ), nodeUniform5 ) );
-	nodeVar7 = ( ( ( nodeUniform6 * nodeVar6 ) * nodeVarying1 ) * 0.8259468366189925 );
+	nodeVar7 = ( nodeUniform6 * nodeVar6 );
 
 	if ( ( ( max( nodeVar3.x, max( nodeVar3.y, nodeVar3.z ) ) < 0.0001 ) && ( nodeVar7 < 0.0001 ) ) ) {
 
 		discard;
-		
+
 
 	}
 
