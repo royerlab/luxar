@@ -222,18 +222,24 @@ test.describe('Lifted-gsplat / Points parity', () => {
     // ?dpr=1 pins the pixel ratio so the crops land on the same geometry.
     await page.goto(`/?src=${FIXTURE}&debug&dpr=1`);
     await page.waitForFunction(() => !!(window as any).__luxarDebug, null, { timeout: 60000 });
-    // All eight leaves must have materials before anything is measured.
+    // All eight leaves must have materials AND committed geometry before
+    // anything is measured. Waiting only for the material is not enough: a
+    // placeholder mesh exists from the cheap-attach with instanceCount 0, so
+    // the measurement could run against a half-loaded scene and land outside
+    // the parity band. (That produced a real intermittent failure — `luminous`
+    // failed in sequence but passed in isolation.)
     // `__luxarDebug.scene` and `app` attach AFTER the debug object itself, so
     // the predicate has to tolerate a partially-populated handle.
     await page.waitForFunction(
       () => {
         const dbg = (window as any).__luxarDebug;
         if (!dbg?.scene || !dbg?.app?.sceneManager?.camera) return false;
-        let loaded = 0;
+        let committed = 0;
         dbg.scene.traverse((o: any) => {
-          if (o.material && o.name?.includes('_r')) loaded++;
+          if (o.material && o.name?.includes('_r') && (o.geometry?.instanceCount ?? 0) > 0)
+            committed++;
         });
-        return loaded === 8;
+        return committed === 8;
       },
       null,
       { timeout: 60000 }
