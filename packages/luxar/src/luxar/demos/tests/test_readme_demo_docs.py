@@ -82,7 +82,10 @@ def test_sample_table_rows_match_registry() -> None:
 def test_cited_demo_keys_exist() -> None:
     text = _readme_text()
     keys = {r.key for r in iter_demos()}
-    cited = set(re.findall(r"luxar demo (?:run|info) ([a-z][a-z0-9_]+)", text))
+    # Include '-' in the capture so a malformed citation like `run lorenz-bad`
+    # is captured whole and flagged as unknown, rather than matching only its
+    # valid `lorenz` prefix and slipping through.
+    cited = set(re.findall(r"luxar demo (?:run|info) ([a-z][a-z0-9_-]*)", text))
     assert cited, "expected at least one cited demo key in the README"
     unknown = sorted(k for k in cited if k not in keys)
     assert not unknown, f"README cites demo keys absent from the registry: {unknown}"
@@ -114,15 +117,21 @@ def test_run_all_wording_matches_cli() -> None:
         None,
     )
     assert row, "README command table is missing the `luxar demo run-all` row"
-    opt = (
-        inspect.signature(demo_commands.demo_run_all)
-        .parameters["max_download_mb"]
-        .default
-    )
+    sig = inspect.signature(demo_commands.demo_run_all)
+    opt = sig.parameters["max_download_mb"].default
     cap = getattr(opt, "default", opt)
     assert f"{cap} MB" in row, (
         f"run-all row should cite the {cap} MB default download cap"
     )
+    # Any other run-all mention (e.g. the gallery "Reproducing these locally"
+    # block) that hard-codes a MB figure must cite the same default.
+    for ln in text.splitlines():
+        if "run-all" not in ln:
+            continue
+        for mb in re.findall(r"(\d+)\s*MB", ln):
+            assert int(mb) == cap, (
+                f"run-all mention cites {mb} MB but the CLI default is {cap} MB: {ln!r}"
+            )
     # Manual/Kaggle data is the UNCONDITIONAL skip — it must be the class tied to
     # "always skipped" (issue #718: the old wording wrongly implied it was lifted
     # "unless told otherwise", and a later mis-edit could invert the two classes).
@@ -131,6 +140,15 @@ def test_run_all_wording_matches_cli() -> None:
     )
     assert "unless told otherwise" not in row
     # The configurable skips are lifted by these CLI flags — all three must be
-    # documented so the row can't drop a skip class or its override.
+    # documented, and each must still be a real flag on the command (derived
+    # from the Typer declarations, so a CLI rename fails this test instead of
+    # leaving the README stale).
+    cli_flags = {
+        flag
+        for p in sig.parameters.values()
+        for decl in getattr(p.default, "param_decls", ()) or ()
+        for flag in decl.split("/")
+    }
     for flag in ("--include-gpu", "--max-download-mb", "--force"):
+        assert flag in cli_flags, f"{flag} is no longer a run-all CLI flag"
         assert flag in row, f"run-all row should document the {flag} override"
