@@ -77,7 +77,7 @@ function scn(overrides = {}) {
     visibleSegments: 1000,
     elementCount: 1000,
     frameMs: { count: 100, median: 5, p95: 8, p99: 9, mean: 5, min: 4, max: 10 },
-    firstRenderMs: 12,
+    postSettleFrameMs: 12,
     depthSort: null,
     notes: [],
     skipped: false,

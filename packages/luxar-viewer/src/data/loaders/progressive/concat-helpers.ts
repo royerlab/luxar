@@ -59,7 +59,7 @@ export function concatRequiredField<A extends ConcatTypedArray, P>(
         `concatRequiredField: LOD level ${i} carries '${label}' as ` +
           `${(other as { name?: string }).name} but level 0 uses ` +
           `${(ctor as { name?: string }).name} — ladder levels must share each ` +
-          'field\'s dtype (TypedArray.set converts by value, not semantics).'
+          "field's dtype (TypedArray.set converts by value, not semantics)."
       );
     }
   }

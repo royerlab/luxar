@@ -206,14 +206,24 @@ export const LINE_PICK_VERTEX_SHADER = /* glsl */ `
       float minPixelWidth = 1.5;
       float maxPW = max(uMaxLinePixelWidth, minPixelWidth + 1.0);
       // Visual-shader parity: discard pathological near-camera segments
-      // (both endpoints inside near-cull margin AND rawPixelWidth blows
+      // (both endpoints inside near-cull margin AND the pixel width blows
       // past clamp by 2×). Without this, picking still rasterizes the
       // half-viewport quad the visual pass already culled.
+      // Segment-constant, not per-quad-vertex: the per-vertex
+      // rawPixelWidth term differs between the t=0 and t=1 corners, so
+      // gating on it would sentinel only half the quad and leave a
+      // visible wedge (issue #849). Gate on the MAX of the pixel width at
+      // both clipped endpoints so all four vertices take the same branch.
+      float startPixelWidth =
+        mix(startW, endW, tA) * uPerspectiveLineScale / max(-mvStart.z, nearCull);
+      float endPixelWidth =
+        mix(startW, endW, tB) * uPerspectiveLineScale / max(-mvEnd.z, nearCull);
+      float segMaxPixelWidth = max(startPixelWidth, endPixelWidth);
       if (
         uIsOrtho == 0 &&
         startDepth < nearCull * 2.0 &&
         endDepth < nearCull * 2.0 &&
-        rawPixelWidth > maxPW * 2.0
+        segMaxPixelWidth > maxPW * 2.0
       ) {
         gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
         vPerpNorm = 0.0;

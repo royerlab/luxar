@@ -64,8 +64,7 @@ function deriveScalarRangeFromDescendants(node: SceneNode): [number, number] | u
   let bestCount = -1;
   const visit = (n: SceneNode): void => {
     const r = (n.attrs.scalar_data_range || n.attrs.amplitude_data_range) as
-      | [number, number]
-      | undefined;
+      [number, number] | undefined;
     const count = (n.attrs.n_splats as number | undefined) ?? 0;
     if (r && count > bestCount) {
       best = r;
@@ -168,8 +167,7 @@ function deriveColormapFromDescendants(node: SceneNode): string | undefined {
 function initialDisplayRange(node: SceneNode): [number, number] {
   if (!usesColormap(node)) return [0, 1];
   const scalarRange = (node.attrs.scalar_data_range || node.attrs.amplitude_data_range) as
-    | [number, number]
-    | undefined;
+    [number, number] | undefined;
   return scalarRange ?? deriveScalarRangeFromDescendants(node) ?? [0, 1];
 }
 

@@ -548,9 +548,13 @@ a single `broadcasted` value and byte-identical duplicates as an
 Chunking is **byte-based**, not a fixed element count: the first-dimension
 chunk length is derived from the 64 KB target (`TARGET_CHUNK_BYTES` ÷
 bytes-per-row for the array's *input* dtype — computed before encoding, so
-float32 rows even when the stored code is uint8/uint16), or aligned to the spatial
-index's `chunk_size` when spatial ordering is enabled (the default), so a
-chunk-index range maps to exactly one zarr chunk.
+float32 rows even when the stored code is uint8/uint16). When spatial
+ordering is enabled (the default), each Points array's first-axis chunk is
+sized to its own dtype byte budget rounded down to a **multiple** of the
+spatial index's `chunk_size` atom (never below one atom) — so a chunk-index
+range always falls inside a whole zarr chunk, and a large scene issues far
+fewer requests because most arrays pack several index chunks per zarr chunk.
+(Lines and GSplats arrays stay exactly one `chunk_size` atom per zarr chunk.)
 
 #### positions/ (Required)
 - **Shape:** `(N, D)` where N = number of points, D = dimensionality
@@ -1361,9 +1365,9 @@ Optimal chunk sizes balance memory usage and access patterns:
 ### Chunking with Spatial Index
 
 When using spatial indices:
-- **Chunk Alignment**: Zarr chunks are automatically aligned with spatial index chunks
+- **Chunk Alignment**: Zarr chunk boundaries always land on the spatial-index grid. Lines and GSplats arrays use exactly one `chunk_size` atom per zarr chunk; Points arrays size each first-axis chunk to the array's own dtype byte budget, rounded down to a multiple of the atom (never below one atom)
 - **Typical Strategy**: `chunk_size` is computed based on target memory per chunk (~64KB, see `TARGET_CHUNK_BYTES`)
-- **Benefits**: Loading a chunk index range loads exactly that zarr chunk
+- **Benefits**: Every chunk-index row range falls inside a whole zarr chunk, and Points arrays pack several index chunks per zarr chunk — far fewer HTTP requests on large scenes
 - **Morton Ordering**: Points within a chunk are spatially nearby due to Morton ordering
 
 ## Array Encodings

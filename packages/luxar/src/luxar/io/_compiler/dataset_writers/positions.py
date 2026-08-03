@@ -33,6 +33,7 @@ def write_positions(
         positions.shape,
         spatial_index_data=spatial_index_data,
         dtype=positions.dtype,
+        per_array_bytes=True,
     )
 
     # Use ArrayEncoder for positions (COORDINATE semantic type)

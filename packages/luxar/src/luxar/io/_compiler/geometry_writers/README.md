@@ -40,11 +40,13 @@ The pipelines are stateless: they read only the narrow config in the `Ctx` datac
    - Apply `ordering_data["sort_order"]` to `positions` and all non-broadcasted arrays (skip arrays with `shape[0] == 1`)
 
 4. **Write arrays**:
-   - `write_positions(group, positions, ordering_data, ctx.dataset_ctx)`
-   - `write_colors(group, colors, ordering_data, n_points, ctx.dataset_ctx)` — if `colors is not None`
-   - `write_radii(group, radii, ordering_data, n_points, ctx.dataset_ctx)` — if `radii is not None` (returns `max_radius`, which is also stamped as the `max_radius` group attr here)
-   - `write_bounded_scalar(group, sharpness, "sharpnesses", (0.0, SHARPNESS_MAX), ordering_data, n_points, ctx.dataset_ctx, "sharpness")` — if `sharpness is not None` (the written dataset name is `"sharpnesses"`)
-   - `write_scalars(group, scalars, ordering_data, n_points, ctx.dataset_ctx)` — if `scalars is not None`
+   - `write_positions(group, positions, ordering_data, ctx.dataset_ctx)` (opts into `per_array_bytes=True` internally)
+   - `write_colors(group, colors, ordering_data, n_points, ctx.dataset_ctx, per_array_bytes=True)` — if `colors is not None`
+   - `write_radii(group, radii, ordering_data, n_points, ctx.dataset_ctx)` — if `radii is not None` (passes `per_array_bytes=True` through to `write_positive_scalar`; returns `max_radius`, which is also stamped as the `max_radius` group attr here)
+   - `write_bounded_scalar(group, sharpness, "sharpnesses", (0.0, SHARPNESS_MAX), ordering_data, n_points, ctx.dataset_ctx, "sharpness", per_array_bytes=True)` — if `sharpness is not None` (the written dataset name is `"sharpnesses"`)
+   - `write_scalars(group, scalars, ordering_data, n_points, ctx.dataset_ctx, per_array_bytes=True)` — if `scalars is not None`
+
+   Points opt every per-point array into `per_array_bytes=True` (each array's first-axis chunk is sized to its own dtype byte budget, aligned to a multiple of the spatial-index `chunk_size` atom); Lines/GSplats keep the default `False` (plain atom-sized chunks).
    - `ctx.write_colormap_lut(group, attrs)` — writes the `colormap_lut` dataset when `colormap` needs one (a custom array, or a matplotlib/colorcet name, which is then rewritten to `"custom"`); built-in named colormaps write no LUT
 
 5. **Apply rendering defaults** + stamp attrs:

@@ -23,6 +23,7 @@ The main facade `rendering/depth-sort-coordinator.ts` owns:
 - Single-in-flight-per-node sort rule + queue-exactly-one re-sort
 - Ordering application via `writeSortedIndexOrdering` (element-storage)
 - Per-frame camera-motion re-sort scheduler (angle/translation thresholds)
+- Offline-capture entry point (`resortForCapture` / `isCaptureQuiescent`) — pose-fresh sort + drain to quiescence when the rAF loop is stopped
 - Blending-mode switch hook (TO sorted: reprocess; AWAY: release)
 - Node release (disposal / LOD demotion)
 
@@ -151,31 +152,36 @@ Enforces **at most one in-flight sort per node**; a commit landing mid-sort queu
    - **Timeout**: a worker that CRASHES mid-session leaves the Comlink RPC pending forever, and a stuck `inFlight` is unrecoverable — the per-frame scheduler skips in-flight nodes and later commits only set `resortQueued`, which never drains. Routing the timeout through the existing .catch clears `inFlight` and drains the queue (bounded staleness degrade instead of a permanently unsorted node).
 9. On **resolve**:
    - Clear `inFlight`
-   - **Stale-drop**: apply only when `result.generation === current.generation` AND `hasCommittedData(mesh)` (LOD demotion signal)
-   - Write the ordering: `writeSortedIndexOrdering(geometry, result.ordering, count)` — large orderings apply CHUNKED across frames (the write only records the pending state; the per-frame pump streams the slices)
-   - Set profiler metadata: `splats`, `kernelMs`, `boundaryMs` (worker overhead), `queueMs` (round-trip minus worker time), `info` (upload bytes)
-   - Request a frame: `requestRender()`
-   - End the profiler pass
+   - **Stale-drop**: stage only when `result.generation === current.generation` AND `hasCommittedData(mesh)` (LOD demotion signal)
+   - Set profiler metadata: `splats`, `kernelMs`, `boundaryMs` (worker overhead), `queueMs` (round-trip minus worker time), and `info` with ordering bytes labeled `sched`
+   - Stage the ordering with lifecycle callbacks: `writeSortedIndexOrdering(geometry, result.ordering, count, callbacks)`; the per-frame pump streams slices into the inactive buffer
+   - Transfer profiler-session ownership to those callbacks and request the bootstrap frame
    - Drain `resortQueued` if set: `scheduleSort(mesh, nodeId)`
-10. On **reject** (timeout or worker error):
-    - End the profiler pass
+10. On **rendered application**:
+    - The final pump selects the complete buffer but does not yet report it applied
+    - The mesh's chained `onAfterRender` hook acknowledges that THREE consumed the pending attribute ranges and completed a draw with the selected buffer
+    - Upgrade `info` from `sched` to `up`, record `applyMs` (resolve→draw) and the monotonic completion event, then end the profiler pass
+    - If the ordering is superseded, cancelled, demoted, released, or disposed before that draw, end the pass still labeled `sched` and do not record a completion
+11. On **reject** (timeout or worker error):
+    - End the profiler pass (unless ownership was already transferred to an accepted ordering)
     - Log error
     - Clear `inFlight`
     - Drain `resortQueued` even on failure (bounded: only a real commit sets `resortQueued`, so a persistently failing worker cannot loop)
 
 ### Chunked Ordering Apply (Perf Lever L8)
 
-Large orderings (>1M indices = 4 MB) apply **chunked** across frames on the classic WebGL backend:
+Every ordering uses the same staged-apply path; orderings larger than one 1M-index (4 MB) slice span multiple frames on the classic WebGL backend:
 
 - The resolve path only records the pending state (`writeSortedIndexOrdering`)
-- The per-frame pump (`pumpChunkedOrderingApplies`, called from `evaluateDepthSortPerFrame`) streams one slice per rendered frame
-- Each slice rides that frame's flush (per-frame callbacks run before render)
-- While slices remain, request another frame — the pump is the only thing keeping the on-demand loop alive between slices
+- The per-frame pump (`pumpChunkedOrderingApplies`, called from `evaluateDepthSortPerFrame`) writes at most one slice per rendered frame
+- Each written slice arms an upload-pending flag cleared by the attribute's `onUploadCallback`; the next pump stalls until that callback proves the prior slice reached the GPU
+- Hidden nodes are not pumped, and a stalled pump requests no extra frame; the consumed-slice upload callback requests the precise continuation frame when a culled node becomes drawable again
 - Slices land in the INACTIVE buffer of the double-buffered `aSortedIndex` / `aSortedIndexB` pair; the `uSortedIndexSlot` uniform flips only once that buffer holds the whole new permutation, so mid-application frames keep rendering the previous COMPLETE ordering (no old/new mix)
+- The flip only **selects** the new buffer. The ordering becomes applied only after the mesh's `onAfterRender` hook acknowledges a completed draw with that selection
 - A newer ordering arriving mid-stream is HELD and started after the flip (restart-on-arrival never converges under a continuous orbit)
 - On **completion**, drain a queued re-sort (a commit that landed mid-sort parked it)
-- **Abort** when `committedData` stamp is cleared (LOD demotion — the geometry went back to the evictable pool, possibly already serving another node)
-- The WebGPU backends ignore attribute update ranges (full re-upload per flush), so chunking is gated off there (`configureSortedIndexChunkedApply`, wired in renderer-setup)
+- **Abort** when `committedData` is cleared, the node/scene is released, or the geometry is disposed; accepted-but-unrendered profiler sessions close as abandoned rather than uploaded
+- The WebGPU backends ignore attribute update ranges (full re-upload per flush), so chunk slicing/back-pressure is gated off there (`configureSortedIndexChunkedApply`, wired in renderer-setup); double buffering and post-render acknowledgement remain unconditional
 
 **Bounded per node, not globally**: several large nodes resolving simultaneously each add one slice's cost to a frame (simultaneous 10M-scale resolves are already serialized by the per-node single-in-flight sort rule).
 
@@ -201,7 +207,7 @@ Large orderings (>1M indices = 4 MB) apply **chunked** across frames on the clas
 **Flow**:
 
 1. **Clear render-order state FIRST** (before any early-return) — `clearRenderOrderFrameState()` drops the previous frame's partition-wrapper subtree references
-2. **Pump chunked applies** (before any early-return) — stalling them during a load would extend the mixed-ordering window
+2. **Pump chunked applies** (before any early-return) — delaying them during a load would postpone convergence to the newest complete ordering
 3. Early-exit if `!depthSortEnabled` or `nodeStates.size === 0` or no camera or load in progress
 4. For each node in `nodeStates`:
    - Skip if invisible, demoted, or no longer order-dependent
@@ -209,13 +215,25 @@ Large orderings (>1M indices = 4 MB) apply **chunked** across frames on the clas
    - Derive `modelView = inverse(camera.matrixWorld) × mesh.matrixWorld`
    - **Collect cross-mesh order slot** (see render-order.ts below)
    - **Within-mesh re-sort trigger**:
-     - Skip if in-flight or apply-pending
+     - Skip if a sort is in flight; an apply-pending ordering does not block a fresher dispatch because it streams into the inactive buffer
      - If `!lastSortAxis && registered`: first commit raced a null camera; recover with one dispatch now
      - Compare live axis/offset against `lastSortAxis` / `lastSortOffset`:
        - Angle: `axis.dot(lastSortAxis) < cosThreshold`
        - Translation: `abs(offset - lastSortOffset) > translationFraction × radius`
      - If moved: `scheduleSort(mesh, nodeId)`
 5. **Assign global renderOrder** — `assignGlobalRenderOrder()` (see render-order.ts below)
+
+### Offline Capture (resortForCapture)
+
+The per-frame scheduler runs ONLY inside the rAF loop. Offline capture (the gallery orbit-video pass) STOPS that loop, moves the camera per frame, and renders synchronously — so the scheduler never fires and every frame would be filmed with the back-to-front permutation frozen at the pre-orbit pose (order-dependent modes: normal / volumetric).
+
+`resortForCapture(maxWaitMs = 3000)` (exposed as `__luxarDebug.resortDepthOrderingForCapture`) drives the ordering by hand for the current pose:
+
+1. FORCE a fresh sort on every eligible node (`isEffectivelyVisible` + `hasCommittedData` + `isLiveOrderDependent`) — offline can afford a full sort per frame, so the ordering is exact for THIS pose, not only when a threshold trips
+2. Run the cross-node renderOrder pass + pump chunked applies via `evaluateDepthSortPerFrame`
+3. Drain worker sorts + chunked applies to quiescence (`isCaptureQuiescent`: no node `inFlight` / `resortQueued` / `hasPendingSortedIndexOrderingApply`), yielding a macrotask (`setTimeout(0)`) per iteration, bounded by `maxWaitMs` so a wedged worker can never hang the capture. The drain BYPASSES the #715 slice back-pressure (`setSortedIndexApplyBackPressureBypassed`): it never draws, so the upload ack that releases a stall can never fire, and a multi-slice apply (>1M elements) would otherwise wedge every frame until the timeout — offline, the slices fold into one upload on the capture's own render, which is exactly acceptable
+
+It **suppresses the `requestRender` wake** for the duration (depth-counted / reentrancy-safe via `captureSuppressDepth` / `requestRenderBeforeCapture`; only the OUTERMOST call snapshots + restores) so draining can't re-arm the loop the capture deliberately stopped. **No-op** when depth sorting is disabled, no order-dependent node exists, or the worker is unavailable (the pure-main-thread renderOrder pass still runs).
 
 ### Blending-Mode Switch Hook (noteDepthSortBlendingModeSwitch)
 
