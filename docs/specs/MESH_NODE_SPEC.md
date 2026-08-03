@@ -231,6 +231,18 @@ smoothing.
 New shared validators in `luxar/validation/base.py`, following the existing `validate_*_for_writing`
 convention (fail-fast, before any zarr group is created):
 
+- `validate_vertices_for_writing(vertices)` — enforces `n_vertices = vertices.shape[0] <= 2^27`, the
+  **same** alias-free bound as the §6.5 pick vote-key stride and the §3.5 loader gate below. This mirrors
+  the loader gate at write time so the public `add_mesh` path cannot emit a store that Luxar's own loader
+  then rejects — restoring the fail-fast contract this section opens with, and honouring the §6.5 house
+  rule that an unenforced bound is not a bound. It also restores a secondary guarantee: with
+  `n_vertices <= 2^27` pinned at write time, `validate_faces_for_writing`'s `max < n_vertices` check again
+  guarantees every admitted face index (max `< 2^27`, well under `2^32`) survives the `.astype(np.uint32)`
+  cast. Raise `ValidationError(message, hint)` with a remediation hint, matching the shared-validator half
+  of the split below; the cap is a pure function of the `vertices` array and independently testable, so it
+  belongs on the shared-validator side, not among the cheap structural gates that need writer context and
+  stay inline. The validator's sole job is this vertex-count cap; generic coordinate finiteness/shape stays
+  in the shared coordinate-writing path.
 - `validate_faces_for_writing(faces, n_vertices)` — shape `(F, 3)` or flat `(3F,)`; integer dtype
   (reject float, which `.astype(np.uint32)` would silently truncate); `min >= 0`; `max < n_vertices`;
   `F >= 1`. Mirrors the `line_type='indexed'` index gate at `geometry_writers/lines.py:134-170`, which
@@ -251,7 +263,7 @@ convention (fail-fast, before any zarr group is created):
 `validate_*_for_writing` family in `validation/base.py` raises `ValidationError(message, hint)` — a
 two-arg form that gives the user a remediation hint — whereas the Lines indexed-index checks are
 **inline in the writer** and raise bare `ValueError`. Mesh should follow the *shared validator* half of
-that precedent: face/normal validation belongs in `validation/base.py` as reusable, independently
+that precedent: vertex/face/normal validation belongs in `validation/base.py` as reusable, independently
 testable functions, matching `validate_widths_for_writing` / `validate_radii_for_writing`. Only the
 cheap structural gates that need writer context stay inline.
 
@@ -275,7 +287,10 @@ at this gate because mesh's pick `elementId` is `gl_VertexID` (§6.5) — the on
 element-texture capacity — and once a vertex ordinal reaches the pick vote-key stride (`2^27`) the vote
 key silently aliases across nodes (the largest ordinal is `n_vertices - 1`, so `n_vertices <= 2^27` is
 the exact alias-free bound: every admitted ordinal stays strictly under the stride), so the bound must
-be enforced here, not assumed from the §7 whole-load workload.
+be enforced here, not assumed from the §7 whole-load workload. The writer now enforces this same
+`n_vertices <= 2^27` cap at write time (via `validate_vertices_for_writing`, above), so this loader gate
+is the defensive twin for arbitrary — externally produced or corrupted — stores rather than the only
+place the bound lives; it must still fully validate those stores as described.
 The optional arrays get the same structural gate whenever present — `normals` shape `(V, 3)`, `colors`
 shape `(V, 3|4)`, `scalars` length `V`, and the label/image-label CSR offsets monotone and in-bounds
 (§3.2) — because they bind as enabled vertex attributes on an **indexed** draw (§6.1): an undersized
@@ -813,7 +828,9 @@ rule that an unenforced bound is not a bound (the reason `MAX_PICK_NODE_ID` is c
 `rendering/picking/picking-system/pick-render.ts`). Note that `pick-render.test.ts`'s existing headroom
 test only pins the texture-*layout* maxima, so this vertex cap needs its own pin — a dedicated test
 that the vote key stays exact up to the largest admitted vertex ordinal and that a mesh with
-`n_vertices > 2^27` is rejected with a `LoaderError`.
+`n_vertices > 2^27` is rejected with a `LoaderError`. The writer **also** rejects `n_vertices > 2^27` at
+write time (`ValidationError`, via `validate_vertices_for_writing`, §3.5) — the fail-fast twin of this
+loader-side `LoaderError` pin.
 
 **Accepted v1 limitation.** `vElementId` is a `flat` varying, so within a triangle it resolves to that
 triangle's **provoking vertex**, not the cursor's barycentric-nearest vertex. Hovering a triangle
@@ -911,7 +928,7 @@ called out as such.
       other three adders; `faces` is index data and is **not** reordered
 - [ ] `io/_compiler/geometry_writers/mesh.py`, `io/_compiler/node_common.py` (`MESH_RESERVED_ATTRS`)
 - [ ] `io/compiler.py` (`write_mesh` facade), `io/reader.py` (`MeshData`/`get_mesh`/`list_meshes`)
-- [ ] `validation/base.py` (`validate_faces_for_writing`, `validate_normals_for_writing`)
+- [ ] `validation/base.py` (`validate_vertices_for_writing`, `validate_faces_for_writing`, `validate_normals_for_writing`)
 - [ ] `cli/info_command.py`
 - [ ] **Partition rejection** — `core/node/specialized_groups.py:62`: the `display_type` guard admits
       exactly `("points", "lines", "gsplats")`. Leave `mesh` **out** of it, and extend the error message
@@ -1014,8 +1031,11 @@ A reviewer should treat a `| 'mesh'` appearing in any of those five as a defect.
 
 **Tests**
 
-- [ ] Python: writer round-trip, validators (incl. every rejection in §3.5), authoring lint,
-      broadcast color/scalar, `extend_to_all`, reader
+- [ ] Python: writer round-trip, validators (incl. every rejection in §3.5 — among them `n_vertices >
+      2^27` rejected at write time with `ValidationError` via `validate_vertices_for_writing`, the
+      fail-fast twin of the §6.5 loader-side `n_vertices > 2^27 → LoaderError` pin, verified to fail
+      before the validator exists per this section's rule), authoring lint, broadcast color/scalar,
+      `extend_to_all`, reader
 - [ ] Rust: `mesh_vertex_visibility_mask` / `compact_visible_faces` unit tests incl. the non-finite rule
 - [ ] TS unit: loader, geometry assembly, cull correctness, colormap fail-closed guard,
       Rust↔TS kernel parity, corrupt-store rejection (out-of-range face index → `LoaderError`, not a
