@@ -515,7 +515,7 @@ Rendering Performance (WebGL)
    GPU rendering (60 FPS target):
    - 100K points: Vertex shader ~2ms, Fragment ~4ms = ~6ms ✓
    - 1M points: Vertex ~8ms, Fragment ~8ms = ~16ms ✓
-   - 10M points: Vertex ~60ms, Fragment ~60ms = ~120ms (30 FPS) ⚠
+   - 10M points: Vertex ~60ms, Fragment ~60ms = ~120ms (~8 FPS) ⚠
 
    Optimization: Spatial culling reduces points to render by 10-100×
 

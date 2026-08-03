@@ -1,3 +1,5 @@
+> **⚠️ Archived — historical document, not maintained.** Kept for design history; it reflects the project state as of its original date and may not match current code. Do not treat it as current guidance. See [the archive README](../README.md) for status labels and retention policy.
+
 The name **"Hierarchical Tensor-Gaussian Pursuit"** is **not a standard, pre-existing algorithm** in the literature. I coined the term during our discussion to describe the specific pipeline we constructed.
 
 However, the **mathematical components** are well-established, and you are effectively synthesizing a novel "constructive" initialization method from three distinct fields:

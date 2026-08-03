@@ -216,6 +216,8 @@ A cross-section of Luxar's built-in demos — all three geometry types (**Points
 | **FlyWire Connectome**<br>fly-brain neurons | **Single-Cell 3D Genome**<br>Dip-C chromosomes | **C. elegans**<br>4D nuclei-tracking timelapse |
 | [![ATP Synthase — molecular machine](docs/images/readme/gallery/atp_synthase.webp)](docs/images/readme/gallery/atp_synthase.webm) | [![Tabula Sapiens — human cell atlas](docs/images/readme/gallery/tabula_sapiens.webp)](docs/images/readme/gallery/tabula_sapiens.webm) | [![Human Multiome — ATAC-peak UMAP](docs/images/readme/gallery/human_multiome_peak_umap.webp)](docs/images/readme/gallery/human_multiome_peak_umap.webm) |
 | **ATP Synthase**<br>molecular machine | **Tabula Sapiens**<br>human cell atlas | **Human Multiome**<br>ATAC-peak UMAP |
+| [![Human White-Matter Tractography — 87 dMRI tracts](docs/images/readme/gallery/dmri_tractography.webp)](docs/images/readme/gallery/dmri_tractography.webm) | | |
+| **White-Matter Tractography**<br>87 human dMRI tracts | | |
 
 ### Earth & geoscience
 
@@ -619,16 +621,20 @@ scene.luxar.zarr/
 
 Measured on an **NVIDIA RTX 3070 at 1280×720**, adaptive DPR pinned to 1.0 for
 measurement, in interactive orbit at the reference 4-pixel primitive size. Median
-per-frame GPU time through the full HDR composer chain:
+per-frame GPU time, in milliseconds (except where noted), through the full HDR
+composer chain:
 
 | Elements | Lines | Points | Gaussian splats |
 |----------|-------|--------|-----------------|
-| 100K | 0.42 ms | 0.86 ms | 1.34 ms |
-| 1M | 60 FPS | 60 FPS | 60 FPS |
-| 10M | — | 65 ms † | 101 ms † |
+| 100K | 0.42 | 0.86 | 1.34 |
+| 1M | < 16.7 ‡ | < 16.7 ‡ | < 16.7 ‡ |
+| 10M | — | 65 † | 101 † |
 
-† Exceeds the 16.7 ms vsync budget at full resolution, so raw rendering drops to
-half-rate; the viewer's adaptive DPR (on by default, and disabled for these
+‡ Capped by the 60 FPS vsync budget (16.7 ms/frame); GPU time sits below budget
+but was not separately profiled at this element count.
+
+† Above the 16.7 ms vsync budget at full resolution: 65 ms ≈ 15 FPS and
+101 ms ≈ 10 FPS. The viewer's adaptive DPR (on by default, and disabled for these
 measurements) buys back frame rate by downscaling the render buffer.
 
 Frame rate is GPU-, resolution- and geometry-dependent, so treat these as one

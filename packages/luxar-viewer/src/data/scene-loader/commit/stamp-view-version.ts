@@ -83,8 +83,7 @@ export function stampLoadedViewVersion(
 export function stampLadderComplete(userData: LadderStampable | undefined | null): void {
   if (!userData) return;
   const loader = userData.loader as
-    | { hasMoreLODs?: boolean; committedEnergyFraction?: number | null }
-    | undefined;
+    { hasMoreLODs?: boolean; committedEnergyFraction?: number | null } | undefined;
   userData.committedLadderComplete = loader?.hasMoreLODs !== true;
   if (!loader || !('committedEnergyFraction' in loader)) {
     // Non-progressive loader: the committed geometry is the leaf's complete

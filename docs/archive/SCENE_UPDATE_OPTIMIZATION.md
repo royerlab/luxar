@@ -1,3 +1,5 @@
+> **⚠️ Archived — historical document, not maintained.** Kept for design history; it reflects the project state as of its original date and may not match current code. Do not treat it as current guidance. See [the archive README](README.md) for status labels and retention policy.
+
 # Scene Update Optimization Design
 
 This document captures optimization ideas for the THREE.js scene update pipeline and the profiling infrastructure needed to measure them.

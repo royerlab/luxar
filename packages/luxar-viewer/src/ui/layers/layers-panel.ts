@@ -21,6 +21,7 @@
 
 import * as THREE from 'three';
 import type { SceneNode } from '../../data/data-loader-types';
+import type { FailedLoadsProviderPort } from '../../data/scene-loader-monitor-port';
 import { LayerStateManager, type LayerInfo, type SelectionMode } from './layer-state';
 import { config } from '../../config';
 import { log, Modules } from '../../utils/log';
@@ -41,6 +42,15 @@ const EYE_ICON =
   '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>';
 const EYE_OFF_ICON =
   '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l18 18"/><path d="M10.6 5.2A11.3 11.3 0 0 1 12 5c6.5 0 10 7 10 7a17.6 17.6 0 0 1-3 3.9M6.5 6.5C3.6 8.4 2 12 2 12s3.5 7 10 7c1.4 0 2.7-.3 3.9-.7"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>';
+
+/**
+ * Per-row load-failure glyph — a warning triangle in the same stroke SVG
+ * style as the eye toggle (currentColor, round caps), so a node whose loader
+ * threw is visible in the always-open layers panel instead of only in the
+ * collapsed data monitor / console.
+ */
+const ERROR_ICON =
+  '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>';
 
 export class LayersPanel {
   private container: HTMLElement;
@@ -91,6 +101,24 @@ export class LayersPanel {
 
   // Row elements keyed by layer path for targeted DOM updates
   private rowElements = new Map<string, HTMLElement>();
+
+  /**
+   * Failed-load provider (paths + per-path reason), injected by the app after
+   * `initFromScene` (see `core/app/dataset/load-dataset.ts`). The SAME provider
+   * the data monitor uses — reads the loader's live failure set. Null before a
+   * scene loads and after dispose.
+   */
+  private failedLoadsProvider: FailedLoadsProviderPort | null = null;
+
+  /**
+   * Cheap change-detector for the failed set (JSON of sorted `[path, reason]`
+   * pairs), mirroring DataMonitor's `lastFailedLoadsSignature`: the per-frame refresh
+   * only touches the DOM when the signature changes. `null` is the reset
+   * sentinel — no real signature (not even the empty-set `''`) can equal it, so
+   * the first comparison after `setFailedLoadsProvider` / `renderList` always
+   * falls through and re-applies (an empty set then correctly clears badges).
+   */
+  private lastFailedLoadsSignature: string | null = null;
 
   // State change unsubscribe handle
   private unsubscribeState: (() => void) | null = null;
@@ -203,6 +231,7 @@ export class LayersPanel {
     // changed while hidden (or with the loop now idle) is reflected
     // immediately rather than only after the next swap.
     this.controls.refreshLodStatus();
+    this.updateRowErrorStates();
   }
 
   hide(): void {
@@ -230,6 +259,22 @@ export class LayersPanel {
 
   isVisible(): boolean {
     return this.visible;
+  }
+
+  /**
+   * Inject the shared failed-loads provider so per-row error badges can surface
+   * a node whose loader threw (corrupt data / network failure). The app wires
+   * the SAME provider the data monitor uses, after `initFromScene`. Resets the
+   * change signature and applies the current failure set immediately so a scene
+   * that already had failures at load lights up its rows without waiting for a
+   * frame. Passing null (dispose) clears the provider and removes any badges
+   * (the `null` reset sentinel forces the following pass through the gate even
+   * when the resulting failed set is empty).
+   */
+  setFailedLoadsProvider(provider: FailedLoadsProviderPort | null): void {
+    this.failedLoadsProvider = provider;
+    this.lastFailedLoadsSignature = null;
+    this.updateRowErrorStates();
   }
 
   dispose(): void {
@@ -263,6 +308,10 @@ export class LayersPanel {
     if (wasVisible) this.repositionGUI();
     this.controls.dispose();
     this.rowElements.clear();
+    // Drop the failed-loads provider so a disposed panel holds no reference to
+    // the old scene's loader; a subsequent load re-injects a fresh one.
+    this.failedLoadsProvider = null;
+    this.lastFailedLoadsSignature = null;
     this.panelEl?.remove();
     this.panelEl = null;
     this.listEl = null;
@@ -338,9 +387,14 @@ export class LayersPanel {
     // own 'lod-group-selector' callback is registered first, so by the
     // time this runs activeChildIndex is already updated for the frame.
     // Removed (and re-registered fresh) symmetrically in clear().
-    this.animationController.addPerFrameCallback('layers-lod-status', () =>
-      this.controls.refreshLodStatus()
-    );
+    this.animationController.addPerFrameCallback('layers-lod-status', () => {
+      this.controls.refreshLodStatus();
+      // Refresh per-row load-failure badges as the failed set changes. Gated on
+      // visibility (like refreshLodStatus) so a hidden panel doesn't run the
+      // signature build every frame — a real cost when a batch-fit leaves
+      // thousands of failed tile paths. show() refreshes when the panel opens.
+      if (this.visible) this.updateRowErrorStates();
+    });
   }
 
   // ─── Layer List ────────────────────────────────────────
@@ -359,6 +413,13 @@ export class LayersPanel {
       this.rowElements.set(layer.path, row);
       this.listEl.appendChild(row);
     }
+
+    // Rows were rebuilt badge-less. Invalidate the failed-set signature so the
+    // next `updateRowErrorStates()` re-applies badges to the fresh rows instead
+    // of early-returning on an unchanged signature (e.g. after resetAllLayers()
+    // while a failure persists).
+    this.lastFailedLoadsSignature = null;
+    this.updateRowErrorStates();
   }
 
   /** Update selection highlights and visibility classes without rebuilding DOM */
@@ -398,6 +459,80 @@ export class LayersPanel {
       const first = this.rowElements.values().next().value as HTMLElement | undefined;
       if (first) first.tabIndex = 0;
     }
+  }
+
+  /**
+   * Patch each row's load-failure badge from the injected provider's failed set.
+   * A layer is in error if its own path failed OR any descendant leaf failed
+   * (`failedPath === layer.path || failedPath.startsWith(layer.path + '/')`), so
+   * a failure inside a kind=lod/kind=partition group lights up the group's row.
+   * Signature-gated so unchanged frames touch no DOM; the signature folds in
+   * each path's reason (JSON of sorted `[path, reason]` pairs — unambiguous
+   * even when a reason contains `:` or `|`) so a changed reason for a
+   * still-failing path re-triggers the refresh instead of stranding a stale
+   * tooltip.
+   */
+  private updateRowErrorStates(): void {
+    const provider = this.failedLoadsProvider;
+    const failedPaths = provider?.getFailedPaths() ?? [];
+    const signature = JSON.stringify(
+      [...failedPaths].sort().map((p) => [p, provider?.getFailedReason?.(p) ?? ''])
+    );
+    if (signature === this.lastFailedLoadsSignature) return;
+    this.lastFailedLoadsSignature = signature;
+
+    for (const layer of this.state.getLayers()) {
+      const row = this.rowElements.get(layer.path);
+      if (!row) continue;
+      // Sorted so the reported reason (matches[0]) is deterministic rather than
+      // dependent on the provider's Map-insertion order.
+      const matches = failedPaths
+        .filter((fp) => fp === layer.path || fp.startsWith(layer.path + '/'))
+        .sort();
+      this.applyRowError(row, matches);
+    }
+  }
+
+  /**
+   * Add / update / remove a single row's error badge + `--error` class. The
+   * badge is a warning glyph with an accessible label naming the reason; the
+   * row's own aria-label is left untouched so the base "name (type)" reading
+   * is preserved.
+   */
+  private applyRowError(row: HTMLElement, matches: string[]): void {
+    const inError = matches.length > 0;
+    row.classList.toggle('luxar-layer-row--error', inError);
+
+    let badge = row.querySelector('.luxar-layer-row__error') as HTMLElement | null;
+    if (!inError) {
+      badge?.remove();
+      return;
+    }
+
+    const reason = this.describeFailure(matches);
+    if (!badge) {
+      badge = document.createElement('span');
+      badge.className = 'luxar-layer-row__error';
+      badge.setAttribute('role', 'img');
+      badge.innerHTML = ERROR_ICON;
+      row.appendChild(badge);
+    }
+    badge.title = reason;
+    badge.setAttribute('aria-label', reason);
+  }
+
+  /**
+   * Tooltip text for a failing row. Prefers the provider's per-path reason
+   * (loader `error.message` / classified kind); falls back to a clear generic
+   * message. Appends the descendant-failure count when more than one leaf under
+   * the row failed.
+   */
+  private describeFailure(matches: string[]): string {
+    const detail = this.failedLoadsProvider?.getFailedReason?.(matches[0]);
+    const base = detail
+      ? `Failed to load: ${detail}`
+      : 'Failed to load — see the data monitor for details';
+    return matches.length > 1 ? `${base} (${matches.length} parts failed)` : base;
   }
 
   private createLayerRow(layer: LayerInfo): HTMLElement {

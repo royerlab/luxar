@@ -193,6 +193,25 @@ interface ElementStorageUserData {
 // per-frame cost to roughly 1/10th of the 10M stall (~12–56 ms worst
 // case → low-single-digit ms typical) instead of one 119–563 ms hitch.
 //
+// The pump is BACK-PRESSURED so this bound survives when the mesh is not
+// drawn every frame (issue #715). Each written slice arms a per-attribute
+// flag (`sliceUploadPending`) that is cleared by the attribute's
+// `onUploadCallback` — which three fires from BOTH GPU-upload paths
+// (`createBuffer` for the first upload, `updateBuffer` for later ranged
+// ones). While the flag is set the previous slice has not reached the GPU
+// (hidden mesh, frustum-cull, background tab). Writing the next slice
+// anyway would union it onto the still-pending one (see
+// `applyNextSortedIndexChunk`), so ten intended 4 MB slices would collapse
+// into one 40 MB upload the moment the object became drawable — the very
+// hitch chunking removes. Instead the pump STALLS until the upload is
+// acknowledged: it advances at most one slice per DRAWN frame, and the
+// coordinator pauses a hidden node's stream entirely. (An earlier revision
+// keyed on `updateRanges.length`, which DEADLOCKS: `createBuffer` uploads
+// the whole buffer without clearing the ranges, so a node first drawn
+// while its stream was mid-flight would stall forever.) Double-buffering
+// keeps this safe — the drawn buffer is always a complete permutation, so
+// a held stream is never observed.
+//
 // Slices land in the INACTIVE buffer of a double-buffered pair, and the
 // `uSortedIndexSlot` uniform flips only once that buffer holds the whole
 // permutation (depth-sorting spec §2.1 tier 3). So chunking costs
@@ -269,6 +288,8 @@ interface ChunkedOrderingApply {
   count: number;
   /** Next unwritten index — `[0, cursor)` already holds the new ordering. */
   cursor: number;
+  /** Lifecycle hooks for the currently-streaming ordering (issue #713). */
+  callbacks: SortedIndexApplyCallbacks | null;
   /**
    * At most ONE held newer ordering (latest wins — an even newer arrival
    * replaces it). Started only after the CURRENT stream completes; a
@@ -279,8 +300,14 @@ interface ChunkedOrderingApply {
    * A fully-applied slightly-stale order is strictly better than a
    * never-completing mix. Dropped with the whole entry on every
    * cancellation path (identity write, demotion, release, dispose).
+   * Carries its own lifecycle hooks (issue #713): if this held ordering
+   * is superseded before it ever streams, its `onAbandoned` fires.
    */
-  pending: { ordering: Uint32Array; count: number } | null;
+  pending: {
+    ordering: Uint32Array;
+    count: number;
+    callbacks: SortedIndexApplyCallbacks | null;
+  } | null;
 }
 
 /**
@@ -292,8 +319,97 @@ interface ChunkedOrderingApply {
  */
 const chunkedApplies = new Map<THREE.InstancedBufferGeometry, ChunkedOrderingApply>();
 
+/**
+ * Orderings whose slot has flipped but whose geometry has not yet completed a
+ * render with that slot. A flip only SELECTS the buffer; THREE consumes the
+ * pending attribute ranges and issues the draw later in the render pass. The
+ * mesh's `onAfterRender` hook acknowledges that point through
+ * {@link acknowledgeSortedIndexOrderingDraw}.
+ */
+const awaitingDrawAcknowledgement = new Map<
+  THREE.InstancedBufferGeometry,
+  SortedIndexApplyCallbacks
+>();
+
 /** Geometries whose dispose listener already cancels chunked applies. */
 const chunkedDisposeHooked = new WeakSet<THREE.InstancedBufferGeometry>();
+
+/**
+ * Lifecycle hooks for one staged ordering (the depth-sort coordinator wires
+ * these to its 'Depth Sort' profiler session so the pass spans the whole
+ * dispatch→applied lifecycle — issue #713). EXACTLY ONE fires per accepted
+ * ordering: `onApplied` after THREE renders the geometry with its selected
+ * buffer (post-upload/draw acknowledgement), or `onAbandoned` when it is
+ * dropped before that render (superseded as a held pending or selected slot,
+ * identity-written over, geometry disposed, node released, dataset switched,
+ * app disposed). Never both, never neither.
+ * They fire ONLY when {@link writeSortedIndexOrdering} accepts the ordering
+ * (returns > 0); a rejected write leaves session ownership with the caller.
+ */
+export interface SortedIndexApplyCallbacks {
+  onApplied?: () => void;
+  onAbandoned?: () => void;
+}
+
+/**
+ * Ordering attributes whose last-written slice has NOT yet been uploaded
+ * to the GPU — the back-pressure signal for chunked apply (issue #715).
+ *
+ * The mesh may be hidden, frustum-culled, in a background tab, or
+ * otherwise not drawn, in which case the previous slice's `bufferSubData`
+ * never ran; advancing anyway would fold each new slice into the pending
+ * one (see {@link applyNextSortedIndexChunk}), collapsing ten intended
+ * 4 MB slices into one 40 MB upload that hits the GPU in a single frame
+ * when the object becomes drawable — the exact hitch chunking removes.
+ *
+ * The flag is set when a slice is written and CLEARED by the attribute's
+ * `onUploadCallback`, which three invokes from BOTH `WebGLAttributes`
+ * upload paths — `createBuffer` (the attribute's very first upload) AND
+ * `updateBuffer` (every later ranged upload). `updateRanges.length` is
+ * NOT usable for this: `createBuffer` uploads the whole buffer without
+ * clearing the ranges and caches the version, so the first draw of a
+ * node committed while culled would leave the ranges lingering forever —
+ * a permanent stall (three r184, verified). This mirrors the element
+ * texture's `pendingFullUpload` + `texture.onUpdate` acknowledgement.
+ */
+const sliceUploadPending = new WeakSet<THREE.InstancedBufferAttribute>();
+
+/**
+ * Coordinator-supplied "request one more frame" hook, invoked from a
+ * slice's upload acknowledgement so a drained-but-idle stream resumes the
+ * instant the mesh is actually drawn again (issue #715 resume gap: the
+ * coordinator deliberately does NOT request a render on a stall, so a
+ * camera coming to rest exactly as a culled node becomes drawable would
+ * otherwise freeze the stream mid-drain). A consumed slice means the mesh
+ * WAS drawn, so this drives the next pump precisely — no spin while
+ * hidden, because a mesh that is never drawn never fires the callback.
+ */
+let requestSliceRender: (() => void) | null = null;
+
+/** Wire (or clear, with `null`) the per-slice render-continuation hook. */
+export function setSortedIndexApplyRequestRender(fn: (() => void) | null): void {
+  requestSliceRender = fn;
+}
+
+/**
+ * When true, {@link applyNextSortedIndexChunk} advances past the #715
+ * upload-acknowledgement back-pressure. Set by the depth-sort
+ * coordinator's offline-capture drain (`resortForCapture`): that drain
+ * never draws, so the ack that releases the stall can never fire and a
+ * multi-slice stream (>1 slice, e.g. a 3M-element node) would wedge the
+ * drain until its timeout on every captured frame. The stall exists only
+ * to bound the per-DRAWN-frame upload for interactive smoothness;
+ * offline, folding the slices into one upload on the capture's own
+ * render is exactly acceptable, and the range-union discipline keeps the
+ * pending span contiguous and current (a superset upload is correct,
+ * never stale).
+ */
+let backPressureBypassed = false;
+
+/** Toggle the offline-capture back-pressure bypass (see above). */
+export function setSortedIndexApplyBackPressureBypassed(bypassed: boolean): void {
+  backPressureBypassed = bypassed;
+}
 
 /** Outcome of one {@link pumpSortedIndexOrderingApply} call. */
 export interface SortedIndexPumpResult {
@@ -308,6 +424,18 @@ export interface SortedIndexPumpResult {
    * {@link activeSortedIndexSlot} to the node's materials.
    */
   flipped: boolean;
+  /**
+   * This call made NO progress: the previous slice's upload has not been
+   * acknowledged (its `onUploadCallback` has not fired — the mesh was
+   * hidden, frustum-culled, or otherwise not drawn), so advancing would
+   * union the next slice onto the still-pending one and grow the pending
+   * upload without bound (issue #715). `more` stays
+   * `true` and `flipped` stays `false`; the caller must NOT spin the
+   * on-demand loop on a stall (a subsequent DRAWN frame consumes the
+   * pending slice and the next pump advances). Always `false` on the
+   * WebGPU single-slice path, which never stalls.
+   */
+  stalled: boolean;
 }
 
 /** `geometry.userData` slot carrying the active ordering-buffer index. */
@@ -316,8 +444,8 @@ interface SortedIndexSlotUserData {
 }
 
 /**
- * Which ordering attribute is currently DRAWN: 0 = `aSortedIndex`,
- * 1 = `aSortedIndexB`. Lives on `geometry.userData` so it survives the
+ * Which ordering attribute is currently SELECTED for drawing: 0 =
+ * `aSortedIndex`, 1 = `aSortedIndexB`. Lives on `geometry.userData` so it survives the
  * pool's release/re-acquire cycle with the buffers it describes.
  */
 export function activeSortedIndexSlot(geometry: THREE.InstancedBufferGeometry): 0 | 1 {
@@ -330,13 +458,12 @@ function setSortedIndexSlot(geometry: THREE.InstancedBufferGeometry, slot: 0 | 1
 
 const SLOT_ATTRIBUTE_NAMES = ['aSortedIndex', 'aSortedIndexB'] as const;
 
-/** The ordering attribute currently being drawn. */
+/** The ordering attribute currently selected for drawing. */
 export function getActiveSortedIndexAttribute(
   geometry: THREE.InstancedBufferGeometry
 ): THREE.InstancedBufferAttribute | undefined {
   return geometry.getAttribute(SLOT_ATTRIBUTE_NAMES[activeSortedIndexSlot(geometry)]) as
-    | THREE.InstancedBufferAttribute
-    | undefined;
+    THREE.InstancedBufferAttribute | undefined;
 }
 
 /** The ordering attribute a new ordering streams into (never drawn). */
@@ -393,6 +520,23 @@ function sortedIndexBuffersUsable(geometry: THREE.InstancedBufferGeometry): bool
  * contiguous and the array data under it is always current — a
  * superset upload is correct, never stale).
  *
+ * Back-pressure (issue #715): on the chunked (classic WebGL) path, once
+ * at least one slice has been written (`state.cursor > 0`), the previous
+ * slice may not yet have been uploaded — the mesh was hidden,
+ * frustum-culled, or otherwise not drawn since. The signal is
+ * {@link sliceUploadPending} (set on write, cleared by the attribute's
+ * `onUploadCallback` on the NEXT real draw, from both `createBuffer` and
+ * `updateBuffer`); advancing while it is set would fold each new slice
+ * into the still-pending upload (see the union below), collapsing ten
+ * intended 4 MB slices into one 40 MB upload that lands in a single frame
+ * once the object becomes drawable — exactly the hitch chunking exists to
+ * remove. So we STALL instead: write nothing, leave `cursor` untouched,
+ * and let the next DRAWN frame acknowledge the pending slice before
+ * advancing. The first slice of every stream always proceeds (the guard
+ * also avoids blocking on a residual flag from a prior cancelled stream
+ * on this attribute), and the WebGPU single-slice path
+ * (`!chunkedApplyEnabled`) never stalls.
+ *
  * Returns true when more chunks remain after this one.
  */
 function applyNextSortedIndexChunk(
@@ -401,9 +545,23 @@ function applyNextSortedIndexChunk(
 ): SortedIndexPumpResult {
   const attr = getInactiveSortedIndexAttribute(geometry);
   if (!attr) {
-    // Attribute gone (defensive — release paths cancel first).
-    chunkedApplies.delete(geometry);
-    return { more: false, flipped: false };
+    // Attribute gone (defensive — release paths cancel first). Abandon the
+    // streaming/held orderings and any older selected ordering that still
+    // awaited a completed draw (issue #713).
+    cancelSortedIndexOrderingApply(geometry);
+    return { more: false, flipped: false, stalled: false };
+  }
+  // Back-pressure: hold if the previous slice's upload has not been
+  // acknowledged (issue #715). Gated on the chunked backend and on having
+  // written at least one slice, so WebGPU's single-slice path and every
+  // stream's first slice always proceed.
+  if (
+    chunkedApplyEnabled &&
+    !backPressureBypassed &&
+    state.cursor > 0 &&
+    sliceUploadPending.has(attr)
+  ) {
+    return { more: true, flipped: false, stalled: true };
   }
   const arr = attr.array as Uint32Array;
   const start = state.cursor;
@@ -428,17 +586,59 @@ function applyNextSortedIndexChunk(
   attr.addUpdateRange(rangeStart, rangeEnd - rangeStart);
   attr.needsUpdate = true;
 
-  if (state.cursor < state.count) return { more: true, flipped: false };
+  if (chunkedApplyEnabled) {
+    // Arm the back-pressure flag and wire its acknowledgement (issue
+    // #715). `onUpload` sets `attr.onUploadCallback`, which three fires
+    // from BOTH `createBuffer` (first upload) and `updateBuffer` (later
+    // ranged uploads) — so the flag clears on the very first draw too,
+    // which is what defeats the `createBuffer`-never-clears deadlock.
+    // A consumed slice means the mesh was actually drawn, so drive the
+    // next pump precisely: no spin while hidden/culled (no draw → no
+    // callback), and the resume gap is closed when it becomes drawable.
+    sliceUploadPending.add(attr);
+    attr.onUpload(() => {
+      sliceUploadPending.delete(attr);
+      // Discard the just-consumed ranges. `updateBuffer` already cleared
+      // them, but `createBuffer` does NOT (it uploads the whole array via
+      // `bufferData` and leaves the ranges lingering) — and the very next
+      // slice would union with that stale range, making the following
+      // draw upload TWO slices instead of one, breaking the per-frame
+      // bound on exactly the first-drawn-mid-stream path. Always safe: at
+      // ack time every byte of the array has just reached the GPU (either
+      // path), and three's no-range fallback is a FULL `bufferSubData`,
+      // so a cleared range can never lose data.
+      attr.clearUpdateRanges();
+      if (chunkedApplies.has(geometry)) requestSliceRender?.();
+    });
+  }
+
+  if (state.cursor < state.count) return { more: true, flipped: false, stalled: false };
 
   // === The atomic swap ===
   // The inactive buffer now holds the WHOLE new permutation, so it is
   // safe to draw from. Flipping the slot is a single uniform write: no
   // rebind, no recompile, and no frame ever samples a half-written
   // ordering. The caller pushes the new slot to the materials, and the
-  // per-frame callback that drives this pump runs BEFORE the render, so
-  // this slice's upload and the flip land in the same frame.
+  // per-frame callback that drives this pump runs BEFORE render, so a
+  // visible mesh can upload the final slice and draw the new slot in that
+  // frame. `onAfterRender` is the proof that this actually happened.
   setSortedIndexSlot(geometry, activeSortedIndexSlot(geometry) === 0 ? 1 : 0);
 
+  // The ordering that just finished streaming is now SELECTED for the render
+  // about to run, but it is not applied yet: THREE has not consumed this
+  // attribute's update ranges or drawn the mesh. Move its callbacks into the
+  // post-render acknowledgement slot. If an older selected ordering never
+  // rendered (hidden/off-screen mesh) this flip supersedes it, so abandon it.
+  // Mutate the acknowledgement map before firing the displaced hook so
+  // re-entrant cleanup never observes stale ownership.
+  const selectedCallbacks = state.callbacks;
+  const supersededSelected = awaitingDrawAcknowledgement.get(geometry);
+  if (selectedCallbacks) {
+    awaitingDrawAcknowledgement.set(geometry, selectedCallbacks);
+  } else {
+    awaitingDrawAcknowledgement.delete(geometry);
+  }
+  let result: SortedIndexPumpResult;
   if (state.pending) {
     // Start the held newest ordering into what just became the inactive
     // buffer. Held rather than restarted mid-stream on purpose: under a
@@ -448,12 +648,19 @@ function applyNextSortedIndexChunk(
     // order.
     state.ordering = state.pending.ordering;
     state.count = state.pending.count;
+    state.callbacks = state.pending.callbacks;
     state.cursor = 0;
     state.pending = null;
-    return { more: true, flipped: true };
+    result = { more: true, flipped: true, stalled: false };
+  } else {
+    chunkedApplies.delete(geometry);
+    result = { more: false, flipped: true, stalled: false };
   }
-  chunkedApplies.delete(geometry);
-  return { more: false, flipped: true };
+  // Fire only after the chunk state is fully promoted/deleted as well as the
+  // acknowledgement-map swap above. A re-entrant teardown therefore sees one
+  // coherent ownership state and cannot double-close the superseded callback.
+  supersededSelected?.onAbandoned?.();
+  return result;
 }
 
 /**
@@ -487,13 +694,29 @@ export function pumpSortedIndexOrderingApply(
   geometry: THREE.InstancedBufferGeometry
 ): SortedIndexPumpResult {
   const state = chunkedApplies.get(geometry);
-  if (!state) return { more: false, flipped: false };
+  if (!state) return { more: false, flipped: false, stalled: false };
   return applyNextSortedIndexChunk(geometry, state);
 }
 
 /**
- * Abort an in-flight application — the streaming ordering AND any held
- * newest ordering.
+ * Acknowledge that THREE completed a render of `geometry` using its currently
+ * selected ordering buffer. This is the first point at which the final update
+ * ranges have been consumed and the selected slot has participated in a draw,
+ * so only here may the lifecycle report uploaded/applied (issue #713).
+ *
+ * Called from the render mesh's `onAfterRender` hook. Removal happens before
+ * the callback so re-entrant disposal/cancellation cannot double-close it.
+ */
+export function acknowledgeSortedIndexOrderingDraw(geometry: THREE.InstancedBufferGeometry): void {
+  const callbacks = awaitingDrawAcknowledgement.get(geometry);
+  if (!callbacks) return;
+  awaitingDrawAcknowledgement.delete(geometry);
+  callbacks.onApplied?.();
+}
+
+/**
+ * Abort an in-flight application — the streaming ordering, any held newest
+ * ordering, AND a selected ordering still awaiting its first completed draw.
  *
  * Safe by construction now that a stream writes into the INACTIVE
  * buffer: abandoning one mid-slice discards a partially-written buffer
@@ -502,18 +725,41 @@ export function pumpSortedIndexOrderingApply(
  * new indices.) Callers: both identity writers (the commit path),
  * LOD-demotion detection in the coordinator's pump, node release,
  * geometry dispose.
+ *
+ * None of those orderings completed a draw, so all are abandoned (issue
+ * #713). State is removed BEFORE hooks fire so re-entrant cleanup cannot
+ * observe half-cancelled ownership or close a callback twice.
  */
 export function cancelSortedIndexOrderingApply(geometry: THREE.InstancedBufferGeometry): void {
+  const state = chunkedApplies.get(geometry);
+  const selected = awaitingDrawAcknowledgement.get(geometry);
+  if (!state && !selected) return;
   chunkedApplies.delete(geometry);
+  awaitingDrawAcknowledgement.delete(geometry);
+  state?.callbacks?.onAbandoned?.();
+  state?.pending?.callbacks?.onAbandoned?.();
+  selected?.onAbandoned?.();
 }
 
 /**
  * Abort every in-flight chunked application (dataset-switch teardown /
  * app dispose — the coordinator's `releaseAllDepthSortNodes` /
  * `disposeDepthSort` sweeps).
+ *
+ * Each abandoned ordering's `onAbandoned` fires (issue #713). The map is
+ * snapshotted and cleared BEFORE any hook runs, so a hook can never
+ * observe a half-cleared map or re-enter the sweep.
  */
 export function cancelAllSortedIndexOrderingApplies(): void {
+  const states = [...chunkedApplies.values()];
+  const selected = [...awaitingDrawAcknowledgement.values()];
   chunkedApplies.clear();
+  awaitingDrawAcknowledgement.clear();
+  for (const state of states) {
+    state.callbacks?.onAbandoned?.();
+    state.pending?.callbacks?.onAbandoned?.();
+  }
+  for (const callbacks of selected) callbacks.onAbandoned?.();
 }
 
 /**
@@ -730,11 +976,20 @@ export function writeSortedIndexIdentityRange(
  * restarting it: under a continuous orbit a restart-on-arrival never
  * converges. The coordinator's generation guard ensures only
  * current-generation orderings reach this writer.
+ *
+ * The optional `callbacks` bind a lifecycle to this specific ordering
+ * (the coordinator's 'Depth Sort' profiler session — issue #713). They
+ * fire ONLY when the ordering is accepted (this call returns > 0):
+ * exactly one of `onApplied` (post-render acknowledgement after its buffer
+ * flips in) or `onAbandoned` (dropped before that draw). A rejected write
+ * (returns 0) fires
+ * neither, leaving lifecycle ownership with the caller.
  */
 export function writeSortedIndexOrdering(
   geometry: THREE.InstancedBufferGeometry,
   ordering: Uint32Array,
-  count: number
+  count: number,
+  callbacks?: SortedIndexApplyCallbacks
 ): number {
   const active = getActiveSortedIndexAttribute(geometry);
   if (!active) return 0;
@@ -772,11 +1027,24 @@ export function writeSortedIndexOrdering(
 
   const inFlight = chunkedApplies.get(geometry);
   if (inFlight) {
-    inFlight.pending = { ordering, count: n };
+    // A newer ordering supersedes any previously-held one; that held
+    // ordering never became drawn, so abandon it (issue #713). Install the
+    // new pending FIRST, then fire the displaced hook — matching the
+    // remove-before-fire discipline of the cancel paths, so a re-entrant
+    // hook can never observe (or act on) the stale pending.
+    const superseded = inFlight.pending;
+    inFlight.pending = { ordering, count: n, callbacks: callbacks ?? null };
+    superseded?.callbacks?.onAbandoned?.();
     return n;
   }
 
-  const state: ChunkedOrderingApply = { ordering, count: n, cursor: 0, pending: null };
+  const state: ChunkedOrderingApply = {
+    ordering,
+    count: n,
+    cursor: 0,
+    callbacks: callbacks ?? null,
+    pending: null,
+  };
   chunkedApplies.set(geometry, state);
   if (!chunkedDisposeHooked.has(geometry)) {
     chunkedDisposeHooked.add(geometry);

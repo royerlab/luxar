@@ -555,7 +555,7 @@ Notable members on `window.__luxarDebug`:
 - `cache` -- `getStats()`, `listDatasets()`, `clearL0/L1/L2/All()`.
 - `workers` -- `getQueueDepth()`, `getStats()` for worker-pool diagnostics.
 - `lastExportedState` -- last viewer state exported via the keyboard shortcut handler.
-- `injectSyntheticScene(spec)` -- debug/perf-bench-only synthetic line scene injection (not present in production bundles).
+- `injectSyntheticScene(spec)` -- debug/perf-bench-only synthetic Points/Lines/GSplats scene injection (only attached to `__luxarDebug` under `?debug`, and its generator chunk is never loaded otherwise); resolves to the discriminated union `{type, elementCount, <per-type count>, mesh}` (capacity-clamped `elementCount` plus a per-type count alias). The full spec/return signature is documented in and kept in sync with `window.d.ts`.
 - `getLodLoadStats()` / `resetLodLoadStats()` -- per-stage timing snapshot (`lazy:loadGSplats` / `lazy:process` / `lazy:commit` / `lazy:release`) for lazy LOD level loads triggered by the per-frame selector, which the UpdateProfiler does not see. Debug-only.
 
 Return shapes for the helpers are intentionally dynamic and typed as `unknown` so callers must narrow before reading.

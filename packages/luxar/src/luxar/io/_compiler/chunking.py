@@ -14,12 +14,24 @@ import numpy as np
 from ...typing_utils.constants import TARGET_CHUNK_BYTES
 
 
+def _atom_aligned_rows(ideal_rows: int, atom: int, n_rows: int) -> int:
+    """Largest multiple of ``atom`` not exceeding ``ideal_rows`` (at least one
+    atom), clamped to ``n_rows`` and floored at 1 row so an empty array can
+    never yield an invalid 0-row zarr chunk. Keeps a per-array zarr chunk on
+    the spatial-index query grid (viewer row ranges are multiples of ``atom``)
+    while letting each array size its chunk to its own dtype byte budget."""
+    atom = max(1, int(atom))
+    multiple = max(1, int(ideal_rows) // atom)
+    return max(1, min(int(n_rows), multiple * atom))
+
+
 def calculate_intelligent_chunks(
     shape: Tuple[int, ...],
     target_chunk_bytes: int = TARGET_CHUNK_BYTES,
     spatial_index_data: Optional[Dict[str, Any]] = None,
     *,
     dtype: np.dtype,
+    per_array_bytes: bool = False,
 ) -> Tuple[int, ...]:
     """Calculate optimal chunk shape for a dataset.
 
@@ -35,6 +47,13 @@ def calculate_intelligent_chunks(
         target_chunk_bytes: Target chunk payload size in bytes.
         spatial_index_data: Optional ordering data (with chunk_size).
         dtype: NumPy dtype of the array being chunked.
+        per_array_bytes: Opt-in (default ``False``). When ``True`` and a
+            spatial ``chunk_size`` atom is present, size the first-axis chunk
+            to this array's OWN dtype byte budget, rounded DOWN to a multiple
+            of the atom (never below one atom), so large points scenes issue
+            far fewer requests. When ``False`` the result is byte-for-byte
+            identical to the historical atom-sized behavior (gsplats/lines
+            keep the atom).
 
     Returns:
         Optimized chunk shape.
@@ -42,24 +61,31 @@ def calculate_intelligent_chunks(
     element_size = max(1, int(dtype.itemsize))
     target_elements = max(1, int(target_chunk_bytes) // element_size)
 
+    atom = None
+    if spatial_index_data and "chunk_size" in spatial_index_data:
+        atom = int(spatial_index_data["chunk_size"])
+
     if len(shape) == 1:
         # 1D array - use spatial index chunk_size if available for alignment
-        if spatial_index_data and "chunk_size" in spatial_index_data:
-            return (min(shape[0], spatial_index_data["chunk_size"]),)
+        if atom is not None:
+            if per_array_bytes:
+                return (_atom_aligned_rows(target_elements, atom, shape[0]),)
+            return (min(shape[0], atom),)
         return (min(shape[0], target_elements),)
 
     if len(shape) == 2:
         # 2D array (e.g., positions) - chunk along first dimension
         n_points, n_dims = shape
+        ideal = max(1, target_elements // n_dims)
 
         # If ordering data is available, use its chunk_size
-        if spatial_index_data and "chunk_size" in spatial_index_data:
-            chunk_points = spatial_index_data["chunk_size"]
-            return (chunk_points, n_dims)
+        if atom is not None:
+            if per_array_bytes:
+                return (_atom_aligned_rows(ideal, atom, n_points), n_dims)
+            return (atom, n_dims)
 
         # Fallback to standard byte-based chunking
-        chunk_points = min(n_points, max(1, target_elements // n_dims))
-        return (chunk_points, n_dims)
+        return (min(n_points, ideal), n_dims)
 
     # For higher dimensions, use reasonable byte-based defaults
     return tuple(min(s, target_elements) for s in shape)

@@ -65,6 +65,13 @@ declare global {
       // to narrow.
       getState?: () => unknown;
       renderOnce?: () => void;
+      /**
+       * Force a fresh, quiescent depth ordering for the current camera pose,
+       * awaiting the SortWorker round-trip + chunked apply. For offline capture
+       * (gallery orbit) which stops the rAF loop, leaving the per-frame
+       * depth-sort scheduler dead. Resolves when settled or after a safety timeout.
+       */
+      resortDepthOrderingForCapture?: (maxWaitMs?: number) => Promise<void>;
       getSceneLoader?: () => unknown;
 
       /**

@@ -57,11 +57,14 @@ import { wrap, transfer, type Remote } from 'comlink';
 import SortWorker from '../workers/sort-worker?worker';
 import type { SortWorkerAPI } from '../workers/sort-worker';
 import {
+  acknowledgeSortedIndexOrderingDraw,
   activeSortedIndexSlot,
   cancelAllSortedIndexOrderingApplies,
   cancelSortedIndexOrderingApply,
   hasPendingSortedIndexOrderingApply,
   pumpSortedIndexOrderingApply,
+  setSortedIndexApplyBackPressureBypassed,
+  setSortedIndexApplyRequestRender,
   writeSortedIndexOrdering,
 } from './element-storage';
 import { needsDepthSort } from './blending-state';
@@ -158,6 +161,15 @@ let getProfiler: (() => UpdateProfiler | null) | null = null;
 let depthSortEnabled = true;
 /** One-shot flag for the SortWorker-unavailable error (see noteDepthSortCommit). */
 let warnedWorkerUnavailable = false;
+/**
+ * Reentrancy guard for {@link resortForCapture}'s frame-request suppression.
+ * The offline capture nulls `requestRender` so draining can't re-arm the rAF
+ * loop it stopped; a depth counter ensures only the OUTERMOST capture call
+ * snapshots and restores it, so an overlapping/nested call can never strand
+ * `requestRender` at null.
+ */
+let captureSuppressDepth = 0;
+let requestRenderBeforeCapture: (() => void) | null = null;
 const nodeStates = new Map<string, NodeSortState>();
 
 /**
@@ -209,6 +221,10 @@ export function configureDepthSort(options: {
   isLoadInProgress = options.isLoadInProgress ?? null;
   getProfiler = options.getProfiler ?? null;
   setRenderOrderDisplayDimsAccessor(options.getDisplayDims ?? null);
+  // A consumed slice's upload acknowledgement resumes an idle chunked
+  // stream the instant the mesh is drawn again (issue #715 resume gap —
+  // the pump never requests a render on a stall).
+  setSortedIndexApplyRequestRender(options.requestRender);
 }
 
 /**
@@ -354,6 +370,29 @@ function syncSortedIndexSlot(mesh: THREE.Mesh): void {
   if (pickNode) applySortedIndexSlotToMaterial(pickNode.material, slot);
 }
 
+/** Installed post-render acknowledgement hook for each sortable mesh. */
+const drawAcknowledgementHooks = new WeakMap<THREE.Mesh, THREE.Mesh['onAfterRender']>();
+
+/**
+ * Chain a mesh-local post-render hook that acknowledges the selected ordering
+ * only after THREE has consumed its pending attribute ranges and drawn it.
+ * The hook uses the render callback's geometry argument (rather than
+ * `mesh.geometry`) so a pool swap inside another callback cannot acknowledge
+ * the wrong buffer. Existing user callbacks are preserved.
+ */
+function ensureDrawAcknowledgementHook(mesh: THREE.Mesh): void {
+  const installed = drawAcknowledgementHooks.get(mesh);
+  if (installed && mesh.onAfterRender === installed) return;
+
+  const previous = mesh.onAfterRender;
+  const hook: THREE.Mesh['onAfterRender'] = (...args) => {
+    acknowledgeSortedIndexOrderingDraw(args[3] as THREE.InstancedBufferGeometry);
+    previous.apply(mesh, args);
+  };
+  drawAcknowledgementHooks.set(mesh, hook);
+  mesh.onAfterRender = hook;
+}
+
 /** Read the live REQUESTED blending mode stamped by the material wrappers. */
 function liveBlendingMode(mesh: THREE.Mesh): BlendingMode | undefined {
   const material = mesh.material as THREE.Material | THREE.Material[];
@@ -425,6 +464,7 @@ export function noteDepthSortCommit(
     };
     nodeStates.set(nodeId, state);
   }
+  ensureDrawAcknowledgementHook(mesh);
   state.generation = ++nextGeneration;
 
   // Push the geometry's (possibly just-normalised) slot to the materials
@@ -541,6 +581,20 @@ function recordSortPose(state: NodeSortState, modelView: THREE.Matrix4): void {
 }
 
 /**
+ * Format an ordering-upload byte count for the 'Depth Sort' monitor line.
+ * `uploaded` distinguishes bytes that have reached the GPU (`up`, after the
+ * selected mesh completes a render) from bytes merely STAGED for upload
+ * (`sched`, at worker resolve) — issue #713. The panel shows this as the
+ * pass's `info` tag.
+ */
+function formatOrderingBytes(bytes: number, uploaded: boolean): string {
+  const suffix = uploaded ? 'up' : 'sched';
+  return bytes >= 1_000_000
+    ? `${(bytes / 1_000_000).toFixed(1)} MB ${suffix}`
+    : `${Math.round(bytes / 1000)} KB ${suffix}`;
+}
+
+/**
  * Request one sort for a registered node, respecting the
  * single-in-flight rule. Queues a re-sort if one is already running.
  */
@@ -581,13 +635,31 @@ function scheduleSort(mesh: THREE.Mesh, nodeId: string): void {
   const modelView = viewMatrix.multiply(mesh.matrixWorld);
   recordSortPose(state, modelView);
 
-  // One detached profiler pass per dispatch — its duration is the
-  // dispatch→applied round-trip the monitor's 'Depth Sort' line shows.
-  const session = getProfiler?.()?.beginDepthSortPass() ?? null;
+  // One detached profiler pass per dispatch — its duration is the whole
+  // dispatch→applied lifecycle the monitor's 'Depth Sort' line shows. The
+  // session is opened here at dispatch but ended at APPLY completion, not
+  // at RPC resolve: large orderings apply CHUNKED over many later frames,
+  // so the resolve handler hands the session to writeSortedIndexOrdering's
+  // lifecycle callbacks (issue #713). It ends immediately only when no
+  // ordering is staged (stale/demoted/rejected) or the RPC fails.
+  //
+  // Capture the profiler and its generation HERE too, so the dedicated
+  // completion stream records against the same profiler the session merges
+  // into and honors the same reset-isolation contract (issue #711).
+  const profiler = getProfiler?.() ?? null;
+  const session = profiler?.beginDepthSortPass() ?? null;
+  const profilerGeneration = profiler?._currentGeneration() ?? 0;
   // The profiler session does not expose its elapsed time (SessionImpl's
   // startTime is private), so time the dispatch→resolve round-trip locally
   // for the queueMs derivation below.
   const dispatchedAt = performance.now();
+  // Ownership latch shared by the .then/.catch handlers: once the session is
+  // handed to the chunked-apply callbacks (below), NEITHER handler may end
+  // it — the callbacks own its close. Without this, a throw from the
+  // post-handoff `requestRender()` / re-sort drain would reject the .then
+  // and route into .catch's `session?.end()`, closing the pass early and
+  // mislabeling the eventual applied sample as scheduled (issue #713).
+  let applyOwnsSession = false;
 
   // Timeout-raced: a worker that CRASHES mid-session leaves the Comlink
   // RPC pending forever, and a stuck `inFlight` is unrecoverable — the
@@ -608,7 +680,7 @@ function scheduleSort(mesh: THREE.Mesh, nodeId: string): void {
       const current = nodeStates.get(nodeId);
       if (!current) {
         session?.end();
-        return; // released mid-sort
+        return; // released mid-sort — no ordering staged
       }
       current.inFlight = false;
 
@@ -623,13 +695,6 @@ function scheduleSort(mesh: THREE.Mesh, nodeId: string): void {
       if (result && result.generation === current.generation && stillCommitted) {
         const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
         if (geometry?.getAttribute?.('aSortedIndex')) {
-          // Large orderings apply CHUNKED across frames (element-storage
-          // routes internally, perf lever L8): the write below only
-          // records the pending state; the per-frame pump in
-          // evaluateDepthSortPerFrame streams the slices, one per
-          // rendered frame, kept alive by its own requestRender chain
-          // (bootstrapped by the requestRender just under this write).
-          writeSortedIndexOrdering(geometry, result.ordering, result.ordering.length);
           // Ordering upload = 4 bytes/splat through the attribute
           // update-range machinery (the architecture's headline number).
           const bytes = result.ordering.length * 4;
@@ -641,21 +706,72 @@ function scheduleSort(mesh: THREE.Mesh, nodeId: string): void {
           // main-clock is safe; clamped at 0 against timer granularity.
           // These keys are LAST-WRITE on profiler metadata merge (each
           // sort pass has its own seq, so the 'Depth Sort' root always
-          // shows the latest sort's split).
+          // shows the latest sort's split). The byte label starts as
+          // SCHEDULED here and is upgraded to uploaded only after THREE
+          // renders the selected buffer (issue #713).
           session?.setMetadata({
             splats: result.ordering.length,
             kernelMs: result.kernelMs,
             boundaryMs: Math.max(0, result.workerMs - result.kernelMs),
             queueMs: Math.max(0, roundTripMs - result.workerMs),
-            info:
-              bytes >= 1_000_000
-                ? `${(bytes / 1_000_000).toFixed(1)} MB up`
-                : `${Math.round(bytes / 1000)} KB up`,
+            info: formatOrderingBytes(bytes, false),
           });
-          requestRender?.();
+          // Large orderings apply CHUNKED across frames (element-storage
+          // routes internally, perf lever L8): this call only STAGES the
+          // pending state; the per-frame pump in evaluateDepthSortPerFrame
+          // streams the slices, one per rendered frame. Hand the profiler
+          // session to that lifecycle so the pass spans dispatch→applied:
+          // onApplied (post-render acknowledgement) ends it as UPLOADED;
+          // onAbandoned (superseded/cancelled/demoted/released/disposed) ends it as
+          // scheduled. writeSortedIndexOrdering invokes neither unless it
+          // accepts the ordering (returns > 0) — issue #713.
+          const resolvedAt = performance.now();
+          const staged = writeSortedIndexOrdering(
+            geometry,
+            result.ordering,
+            result.ordering.length,
+            session
+              ? {
+                  onApplied: () => {
+                    const appliedAt = performance.now();
+                    session.setMetadata({
+                      applyMs: Math.max(0, appliedAt - resolvedAt),
+                      info: formatOrderingBytes(bytes, true),
+                    });
+                    // The dedicated MONOTONIC completion stream records only
+                    // orderings that actually became drawable — not merely
+                    // worker resolves that were staged and later abandoned.
+                    // It uses the dispatch-time profiler/generation, matching
+                    // the session's reset-isolation contract (issue #711).
+                    if (profiler && profiler._currentGeneration() === profilerGeneration) {
+                      profiler.recordDepthSortCompletion({
+                        lastMs: Math.max(0, appliedAt - dispatchedAt),
+                        kernelMs: result.kernelMs,
+                        boundaryMs: Math.max(0, result.workerMs - result.kernelMs),
+                        queueMs: Math.max(0, roundTripMs - result.workerMs),
+                        splats: result.ordering.length,
+                      });
+                    }
+                    session.end();
+                  },
+                  onAbandoned: () => session.end(),
+                }
+              : undefined
+          );
+          if (staged > 0) {
+            // Handed off BEFORE the throwing `requestRender()` below, so a
+            // throw there can't route into .catch and close the pass early.
+            applyOwnsSession = true;
+            // Bootstrap the pump's requestRender chain (the per-frame pump
+            // keeps the on-demand loop alive between slices).
+            requestRender?.();
+          }
         }
       }
-      session?.end();
+      // No ordering staged (stale generation, demotion, rejected write, or
+      // missing attribute): the pass is just the dispatch→resolve
+      // round-trip — close it now (issue #713).
+      if (!applyOwnsSession) session?.end();
 
       if (current.resortQueued) {
         current.resortQueued = false;
@@ -668,7 +784,11 @@ function scheduleSort(mesh: THREE.Mesh, nodeId: string): void {
       }
     })
     .catch((error) => {
-      session?.end();
+      // Only close the pass here for a genuine RPC failure — NOT when the
+      // ordering was already handed to the chunked-apply callbacks and a
+      // post-handoff step (e.g. requestRender) threw: those callbacks own
+      // the close, and ending here would mislabel the applied sample (#713).
+      if (!applyOwnsSession) session?.end();
       const current = nodeStates.get(nodeId);
       log.error(Modules.WORKER_POOL, `SortWorker sort failed for ${nodeId}`, error);
       if (!current) return;
@@ -711,10 +831,20 @@ let scratch: EvaluateScratch | null = null;
  *   ABORTS the apply: the remaining slices describe the demoted
  *   commit's population. (The commit path's identity writers cancel
  *   independently; this catches demotions with no follow-up write.)
+ * - A node that is not effectively visible (hidden ancestor/layer,
+ *   `visible=false`, LOD-hidden) is SKIPPED without pumping — it must
+ *   not advance/accumulate a stream while not drawn (issue #715). It
+ *   resumes when shown (the visibility change requests its own render).
  * - While slices remain, request another frame — the pump is the only
  *   thing keeping the on-demand loop alive between slices. The slice
  *   just written rides THIS frame's flush (per-frame callbacks run
- *   before render), so the final slice needs no extra frame.
+ *   before render), so the final slice needs no extra frame. EXCEPT a
+ *   STALLED pump (previous slice unflushed — frustum-culled or otherwise
+ *   not drawn; issue #715): it made no progress, so the loop idles until
+ *   a DRAWN frame consumes the pending slice and the next pump advances.
+ * - The final slice SELECTS the complete buffer for this frame; the mesh's
+ *   `onAfterRender` hook acknowledges upload/draw and closes its profiler
+ *   lifecycle only after THREE actually renders it.
  * - On COMPLETION, drain a queued re-sort (a commit that landed while a
  *   sort was in flight parked it) — the counterpart of the resolve
  *   path's drain, restoring the natural cadence: sort → apply N frames
@@ -753,17 +883,35 @@ function pumpChunkedOrderingApplies(): void {
       state.resortQueued = false;
       continue;
     }
-    const { more, flipped } = pumpSortedIndexOrderingApply(geometry);
+    // Issue #715: a hidden/off-screen node must not advance its stream —
+    // writing while not drawn would accumulate an unflushed union (the
+    // per-slice bound only holds when each slice is uploaded before the
+    // next). Skip the pump entirely (write nothing while hidden → zero
+    // accumulation) and request no render. This resumes cleanly when the
+    // node is shown: the last slice it wrote while visible was already
+    // consumed, double-buffering keeps the drawn buffer a complete valid
+    // permutation throughout, and the visibility change requests its own
+    // render, which re-runs the pump to resume the drain. (Visibility
+    // gating alone is insufficient for frustum culling — a culled mesh
+    // stays `visible=true` — which is what the pump's back-pressure
+    // covers; this branch handles the hidden case.)
+    if (!isEffectivelyVisible(state.mesh)) continue;
+    const { more, flipped, stalled } = pumpSortedIndexOrderingApply(geometry);
     if (flipped) {
-      // The just-completed buffer becomes the drawn one. This runs in a
-      // per-frame callback, which the animation controller invokes
-      // BEFORE the render, so the final slice's upload and this flip
-      // reach the GPU in the same frame.
+      // The just-completed buffer becomes selected for this frame. This runs
+      // before render; the mesh's onAfterRender hook is the separate proof
+      // that THREE consumed the update ranges and issued a draw with it.
       syncSortedIndexSlot(state.mesh);
       requestRender?.();
     }
     if (more) {
-      requestRender?.();
+      // A STALLED pump made no progress (the previous slice is still
+      // unflushed — the mesh was not drawn since; issue #715). Do NOT
+      // spin the on-demand loop on it: the node resumes one slice per
+      // DRAWN frame, since each drawn frame's render consumes the prior
+      // slice and any subsequent render — camera motion, commit,
+      // visibility change — re-runs the pump, which then advances.
+      if (!stalled) requestRender?.();
     } else if (state.resortQueued) {
       state.resortQueued = false;
       scheduleSort(state.mesh, nodeId);
@@ -807,8 +955,8 @@ export function evaluateDepthSortPerFrame(): void {
   clearRenderOrderFrameState();
   // Chunked ordering applies advance BEFORE every early-return below:
   // they need neither a camera nor an idle loader (stalling them during
-  // a load would just extend the mixed-ordering window), and a paused
-  // stream must always drain to a valid permutation.
+  // a load would postpone convergence to the newest complete ordering),
+  // and a paused stream must always resume its bounded drain.
   pumpChunkedOrderingApplies();
   // Deliberately NOT gated on `api`: the cross-node renderOrder pass is
   // pure main-thread and must keep ordering meshes back-to-front even
@@ -904,6 +1052,132 @@ export function evaluateDepthSortPerFrame(): void {
   }
 
   assignGlobalRenderOrder();
+}
+
+/**
+ * True when the depth-sort subsystem has settled: no tracked node has a
+ * sort RPC outstanding (`inFlight`), a re-sort queued behind one
+ * (`resortQueued`), or a chunked ordering apply still streaming into its
+ * inactive buffer (`hasPendingSortedIndexOrderingApply`). This is the
+ * termination condition {@link resortForCapture} drains toward — while
+ * ANY of those hold, the drawn permutation is not yet the pose-fresh one.
+ * Module-private: the drain loop is the only caller.
+ */
+function isCaptureQuiescent(): boolean {
+  for (const state of nodeStates.values()) {
+    if (state.inFlight || state.resortQueued) return false;
+    const geometry = state.mesh.geometry as THREE.InstancedBufferGeometry | undefined;
+    if (geometry && hasPendingSortedIndexOrderingApply(geometry)) return false;
+  }
+  return true;
+}
+
+/**
+ * Produce a fresh, fully-settled depth ordering for the CURRENT camera
+ * pose and return only once it is drawn — the offline-capture entry point.
+ *
+ * WHY this exists: the Phase-3 per-frame scheduler
+ * ({@link evaluateDepthSortPerFrame}) is wired ONLY as an
+ * AnimationController per-frame callback, so it runs exclusively inside
+ * the rAF loop. Offline capture (the gallery orbit-video pass) deliberately
+ * STOPS that loop, then per frame moves the camera and renders
+ * synchronously. With the loop dead the scheduler never fires: across the
+ * whole orbit there are zero re-sorts and zero cross-node renderOrder
+ * updates, so any order-dependent node (`normal` / `volumetric`) is filmed
+ * with the back-to-front permutation frozen at the pre-orbit pose. This
+ * helper drives the scheduler + worker round-trip + chunked apply by hand
+ * so each captured frame is ordered for its own pose.
+ *
+ * It is a NO-OP (returns as soon as it observes quiescence) when depth sort
+ * is disabled, no order-dependent node exists, or nothing is pending. It
+ * also degrades gracefully when the SortWorker is unavailable: the
+ * cross-node renderOrder pass inside `evaluateDepthSortPerFrame` is pure
+ * main-thread and still runs, and `scheduleSort` guards `!api` itself, so
+ * no fresh sort is dispatched but the renderOrder assignment is still
+ * refreshed for the pose.
+ *
+ * `maxWaitMs` bounds the drain so a crashed / wedged worker can never hang
+ * the capture — the loop exits and the frame is captured with whatever
+ * ordering is current.
+ */
+export async function resortForCapture(maxWaitMs = 3000): Promise<void> {
+  // The capture stopped the rAF loop on purpose; `requestRender` is wired
+  // to `animationController.startAnimation()`, and the sort resolve/pump
+  // paths call `requestRender?.()`. Suppress it for the duration so
+  // draining (which we drive ourselves) can't silently re-arm the frozen
+  // loop. Safe offline: there are no concurrent commits to lose a frame
+  // request from. The suppression is depth-counted / reentrancy-safe: this
+  // helper is exposed on `__luxarDebug`, so an overlapping (nested) call
+  // could otherwise snapshot `null` and restore `null` permanently, wedging
+  // the render loop forever. Only the OUTERMOST call snapshots and restores.
+  if (captureSuppressDepth === 0) requestRenderBeforeCapture = requestRender;
+  captureSuppressDepth++;
+  requestRender = null;
+  // The drain below never draws, but on the chunked (WebGL) path a
+  // multi-slice apply stalls after its first slice until a DRAW's upload
+  // ack releases the #715 back-pressure — so without this bypass any
+  // order-dependent node past one slice (>1M elements, e.g. the 3M-star
+  // gaia demo) could never reach quiescence: every captured frame would
+  // burn the full maxWaitMs and still film a stale ordering. Offline,
+  // folding the slices into one upload on the capture's own render is
+  // exactly acceptable (the union range stays contiguous and current).
+  setSortedIndexApplyBackPressureBypassed(true);
+  try {
+    // FORCE a fresh sort on every eligible node — offline capture can
+    // afford a full sort per frame, so the ordering is exact for THIS pose
+    // rather than only when a per-frame threshold happens to trip.
+    // scheduleSort already queues a re-sort if one is in flight.
+    //
+    // Order matters: the force loop runs BEFORE the per-frame pass below.
+    // Its motion trigger dispatches for the same pose whenever the camera
+    // moved past a threshold since the last sort (the first orbit frame
+    // after repositioning, a coarse-threshold config), and a force-call on
+    // a node that pass just put in flight would only set `resortQueued` —
+    // a SECOND, identical full sort run serially after the first. Force-
+    // first, the pass's in-flight skip makes the two compose to one sort.
+    if (depthSortEnabled && getCamera?.() && api) {
+      for (const [nodeId, state] of nodeStates) {
+        const mesh = state.mesh;
+        if (!isEffectivelyVisible(mesh)) continue;
+        if (!hasCommittedData(mesh)) continue;
+        if (!isLiveOrderDependent(liveBlendingMode(mesh))) continue;
+        scheduleSort(mesh, nodeId);
+      }
+    }
+
+    // Cross-node renderOrder pass + pump any pending chunked applies, all
+    // for the current pose (its re-sort trigger skips the in-flight nodes
+    // the force loop just dispatched).
+    evaluateDepthSortPerFrame();
+
+    // Nothing to wait for (disabled / no order-dependent node / worker
+    // unavailable): return before opening the drain loop.
+    if (isCaptureQuiescent()) return;
+
+    // Drain to quiescence, bounded by maxWaitMs. Each iteration yields a
+    // macrotask (setTimeout(0)) so worker resolutions land, then pumps one
+    // chunked-apply slice and re-asserts renderOrder via
+    // evaluateDepthSortPerFrame.
+    const start = performance.now();
+    while (performance.now() - start < maxWaitMs) {
+      await new Promise<void>((r) => setTimeout(r, 0));
+      evaluateDepthSortPerFrame();
+      if (isCaptureQuiescent()) return;
+    }
+  } finally {
+    // Clamped, not a bare decrement: disposeDepthSort resets the depth to
+    // 0, and a capture that was in flight across that dispose must not
+    // drive it negative (a later capture would then decrement back to a
+    // non-zero exit and strand `requestRender` at null forever).
+    captureSuppressDepth = Math.max(0, captureSuppressDepth - 1);
+    if (captureSuppressDepth === 0) {
+      requestRender = requestRenderBeforeCapture;
+      // Drop the snapshot so it can't pin the app's closure between
+      // captures (mirrors the dispose-path hygiene below).
+      requestRenderBeforeCapture = null;
+      setSortedIndexApplyBackPressureBypassed(false);
+    }
+  }
 }
 
 /**
@@ -1010,6 +1284,18 @@ export function disposeDepthSort(): void {
   // Module-state reset completeness: in-flight chunked applies hold
   // geometry + ordering references in element-storage's map.
   cancelAllSortedIndexOrderingApplies();
+  // Drop the per-slice render-continuation hook so a dispose/re-init does
+  // not keep the old app's requestRender closure alive.
+  setSortedIndexApplyRequestRender(null);
+  // Same hygiene for the offline-capture suppression state: a capture in
+  // flight across this dispose must not later restore the old app's
+  // requestRender closure from its snapshot (its clamped `finally` then
+  // restores the null set below), and the snapshot itself must not pin
+  // the closure. The back-pressure bypass is module state in
+  // element-storage — reset it too.
+  captureSuppressDepth = 0;
+  requestRenderBeforeCapture = null;
+  setSortedIndexApplyBackPressureBypassed(false);
   // Module-state reset completeness: both per-frame containers can hold
   // THREE object references between calls (the rank memo until the next
   // evaluate's clear; the slots only if an evaluate threw mid-collect) —

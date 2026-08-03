@@ -98,7 +98,45 @@ export interface TimingMetadata {
    * event-loop queueing on both sides). Last-write on merge, see kernelMs.
    */
   queueMs?: number;
+  /**
+   * Depth-sort split: resolve→applied duration — how long the chunked
+   * ordering apply took from worker resolve until its buffer was drawn
+   * (issue #713). The pass's total lastMs is dispatch→applied;
+   * kernelMs+boundaryMs+queueMs cover dispatch→resolve, applyMs the rest.
+   * Last-write on merge, see kernelMs.
+   */
+  applyMs?: number;
 }
+
+/**
+ * One depth-sort completion in the dedicated MONOTONIC event stream
+ * (issue #711). A completion is recorded once per APPLIED ordering by the
+ * depth-sort coordinator. Unlike the aggregate 'Depth Sort' profiler root,
+ * this stream retains an individual event for every application, so several
+ * completions between two consumer polls are sampled separately. Consumed by
+ * the orbit perf bench, which drains every completion since its previous poll.
+ */
+export interface DepthSortCompletion {
+  /** Monotonic completion index, starting at 1 (independent of `sortSeq`). */
+  seq: number;
+  /** Dispatch→applied round-trip latency, ms. */
+  lastMs: number;
+  /** ms inside the backend `sort_splats_by_depth` call, or null if unknown. */
+  kernelMs: number | null;
+  /** Worker-side overhead around the kernel (workerMs − kernelMs), or null. */
+  boundaryMs: number | null;
+  /** Round-trip minus worker time (Comlink + clone + queueing), or null. */
+  queueMs: number | null;
+  /** Splat count in the applied ordering, or null if unknown. */
+  splats: number | null;
+}
+
+/**
+ * Cap on the bounded depth-sort completion ring (issue #711). Only the most
+ * recent completions are retained for latency sampling; the monotonic
+ * `total` keeps climbing even after events age out.
+ */
+const DEPTH_SORT_COMPLETION_CAP = 512;
 
 /** Numeric metadata fields that SUM when same-name sessions merge within one update. */
 const SUMMED_METADATA_KEYS = [
@@ -207,9 +245,20 @@ class SessionImpl implements UpdateSession {
    * Update/pass sequence this session belongs to. Root sessions capture it
    * from the profiler at construction; children INHERIT their parent's seq
    * so a whole session tree always accounts to one update, even if a child
-   * is constructed after a newer update began.
+   * is constructed after a newer update began. When {@link deferSeqUntilEnd}
+   * is set this is a placeholder — the real seq is drawn at end() instead.
    */
   private readonly seq: number;
+  /**
+   * Draw the sequence at end() (in COMPLETION order) rather than at
+   * construction (dispatch order). Used by depth-sort passes, which end
+   * when their ordering is APPLIED — many frames after dispatch and out of
+   * dispatch order relative to superseded/abandoned siblings. A
+   * dispatch-time seq would let a later-completing-but-lower-seq applied
+   * pass be dropped by mergeEntryValues' stale-guard (issue #713). Only
+   * ever set on a root (leaf) session — depth-sort passes have no children.
+   */
+  private readonly deferSeqUntilEnd: boolean;
   // Set by markSkipped() so end() bypasses duration measurement + EMA.
   // Without this flag, skipped entries still record the begin→markSkipped→end
   // overhead because markSkipped() zeroes lastMs/avgMs BEFORE end() runs them.
@@ -226,7 +275,8 @@ class SessionImpl implements UpdateSession {
     parent: SessionImpl | null,
     profiler: UpdateProfiler,
     rootName?: string,
-    seq?: number
+    seq?: number,
+    deferSeqUntilEnd = false
   ) {
     this.entry = {
       name,
@@ -240,6 +290,9 @@ class SessionImpl implements UpdateSession {
     this.profiler = profiler;
     this.rootName = parent ? parent.rootName : (rootName ?? TOTAL_UPDATE_ROOT);
     this.seq = parent ? parent.seq : (seq ?? 0);
+    // Children inherit their parent's seq (one tree = one update); only a
+    // root session may defer.
+    this.deferSeqUntilEnd = parent ? false : deferSeqUntilEnd;
     this.generation = profiler._currentGeneration();
 
     // Add to parent's children if we have a parent
@@ -288,11 +341,15 @@ class SessionImpl implements UpdateSession {
     }
 
     // Stamp the owning update so the persistent-tree merge can decide
-    // between sum-within-update, rollover, and stale-drop.
-    this.entry.lastSeq = this.seq;
+    // between sum-within-update, rollover, and stale-drop. Depth-sort passes
+    // draw their seq HERE (completion order) so a late-completing applied
+    // pass is never dropped as stale by a superseded sibling that ended
+    // first (issue #713); all other sessions use their construction-time seq.
+    const seq = this.deferSeqUntilEnd ? this.profiler._nextSortSeq() : this.seq;
+    this.entry.lastSeq = seq;
 
     // Merge into profiler's persistent state
-    this.profiler._mergeEntry(this.entry, this.parent?.entry.name, this.rootName, this.seq);
+    this.profiler._mergeEntry(this.entry, this.parent?.entry.name, this.rootName, seq);
   }
 
   setMetadata(meta: Partial<TimingMetadata>): void {
@@ -395,21 +452,30 @@ export class UpdateProfiler {
   // Uses AsyncLocalStorage-like pattern: each sync execution path has its own context
   private currentSessionContext: UpdateSession | null = null;
 
-  // Per-update sequence for the 'Total Update' tree (bumped in beginUpdate),
-  // per-pass sequence for the 'LOD Refinement' tree (bumped in beginPass),
-  // and per-sort sequence for the 'Depth Sort' tree (bumped in
-  // beginDepthSortPass). Sessions capture their seq at (root) construction;
-  // the merge uses it to sum same-update siblings, roll over on a new
-  // update, and DROP merges that arrive late from a superseded update.
+  // Per-update sequence for the 'Total Update' tree (bumped in beginUpdate)
+  // and per-pass sequence for the 'LOD Refinement' tree (bumped in
+  // beginPass); those sessions capture their seq at (root) construction. The
+  // 'Depth Sort' tree uses `sortSeq` differently: a pass draws its seq at
+  // end() (COMPLETION order) via _nextSortSeq(), because a pass ends when
+  // its ordering is applied — out of dispatch order (issue #713). The merge
+  // uses the seq to sum same-update siblings, roll over on a new update, and
+  // DROP merges that arrive late from a superseded update.
   private updateSeq = 0;
   private passSeq = 0;
   private sortSeq = 0;
 
+  // Dedicated MONOTONIC depth-sort completion accounting (issue #711),
+  // independent of `sortSeq` and the aggregate 'Depth Sort' root:
+  // `depthSortCompletionTotal` counts every applied ordering, and the bounded
+  // ring retains the most recent per-application events for latency sampling.
+  private depthSortCompletionTotal = 0;
+  private depthSortCompletions: DepthSortCompletion[] = [];
+
   // Generation counter, bumped on every reset(). Sessions capture the
   // generation at construction; their end() is a no-op if the profiler's
   // generation has advanced past theirs (the session was "abandoned").
-  // Internal: only the SessionImpl reads this — exposed via the package-
-  // private `_currentGeneration()` accessor below.
+  // Internal: read only via the package-private `_currentGeneration()`
+  // accessor below (SessionImpl and the depth-sort coordinator).
   private generation = 0;
 
   private static makeRoot(name: string): TimingEntry {
@@ -424,11 +490,22 @@ export class UpdateProfiler {
 
   /**
    * Internal: current generation counter. Read by `SessionImpl` to gate
-   * its `end()` merge against being abandoned by a reset() that landed
-   * mid-flight. NOT a public API.
+   * its `end()` merge — and by the depth-sort coordinator to gate its
+   * `recordDepthSortCompletion` call — against being abandoned by a
+   * reset() that landed mid-flight. NOT a public API.
    */
   _currentGeneration(): number {
     return this.generation;
+  }
+
+  /**
+   * Internal: draw the next depth-sort sequence number. Called by a
+   * deferred-seq `SessionImpl` (a depth-sort pass) at end() so its seq
+   * reflects COMPLETION order, not dispatch order (issue #713). NOT a
+   * public API.
+   */
+  _nextSortSeq(): number {
+    return ++this.sortSeq;
   }
 
   // Listeners for UI updates
@@ -485,14 +562,23 @@ export class UpdateProfiler {
    * mid-update cannot disable the update's own profiling.
    *
    * The depth-sort coordinator opens one per SortWorker dispatch, stamps
-   * `setMetadata({ splats, info, kernelMs, boundaryMs, queueMs })` (splat
-   * count, uploaded ordering bytes, and the worker/boundary/queue timing
-   * split — the latency numbers are last-write on merge), and ends it
-   * when the ordering is applied (or the RPC fails).
+   * `setMetadata({ splats, info, kernelMs, boundaryMs, queueMs, applyMs })`
+   * (splat count, ordering bytes, and the worker/boundary/queue/apply
+   * timing split — the latency numbers are last-write on merge), and ends
+   * it when the ordering is APPLIED — i.e. its buffer is flipped in and
+   * drawn — NOT merely when the SortWorker RPC resolves (large orderings
+   * apply CHUNKED over many later frames; issue #713). The session also
+   * ends if the ordering is abandoned/cancelled before it is ever drawn,
+   * or if the RPC fails. Because the pass now spans the chunked apply, the
+   * `info` byte tag starts SCHEDULED (`sched`, at resolve) and is upgraded
+   * to uploaded (`up`) only once the buffer actually reaches the GPU.
    */
   beginDepthSortPass(): UpdateSession {
-    this.sortSeq++;
-    return new SessionImpl(DEPTH_SORT_ROOT, null, this, DEPTH_SORT_ROOT, this.sortSeq);
+    // Seq is drawn at end() (completion order), NOT here at dispatch: a pass
+    // ends when its ordering is APPLIED, which for a superseded/abandoned
+    // sibling happens out of dispatch order, and a dispatch-time seq would
+    // let the stale-guard drop the genuine applied sample (issue #713).
+    return new SessionImpl(DEPTH_SORT_ROOT, null, this, DEPTH_SORT_ROOT, 0, true);
   }
 
   /**
@@ -682,6 +768,47 @@ export class UpdateProfiler {
   }
 
   /**
+   * Record one applied depth-sort completion on the dedicated MONOTONIC
+   * stream (issue #711). Increments the total, tags the event with its
+   * `seq`, and pushes it onto the bounded ring (oldest trimmed at
+   * {@link DEPTH_SORT_COMPLETION_CAP}). Independent of the aggregate 'Depth
+   * Sort' root, so N applications between two polls remain N latency events —
+   * the exact multi-completion undercount issue #711 found.
+   */
+  recordDepthSortCompletion(event: {
+    lastMs: number;
+    kernelMs: number | null;
+    boundaryMs: number | null;
+    queueMs: number | null;
+    splats: number | null;
+  }): void {
+    this.depthSortCompletionTotal++;
+    this.depthSortCompletions.push({ seq: this.depthSortCompletionTotal, ...event });
+    if (this.depthSortCompletions.length > DEPTH_SORT_COMPLETION_CAP) {
+      // Trim the oldest so the ring never exceeds the cap; `total` is
+      // unaffected and stays authoritative for the count.
+      this.depthSortCompletions.splice(
+        0,
+        this.depthSortCompletions.length - DEPTH_SORT_COMPLETION_CAP
+      );
+    }
+  }
+
+  /**
+   * Snapshot the depth-sort completion stream (issue #711): the monotonic
+   * `total` (authoritative for the count even if some events aged out of the
+   * bounded ring) plus a COPY of the currently-buffered events (each tagged
+   * with its `seq`, for latency sampling). The event objects are cloned too,
+   * so mutating a returned event cannot corrupt later snapshots.
+   */
+  getDepthSortCompletions(): { total: number; events: DepthSortCompletion[] } {
+    return {
+      total: this.depthSortCompletionTotal,
+      events: this.depthSortCompletions.map((e) => ({ ...e })),
+    };
+  }
+
+  /**
    * Reset all timing data
    *
    * Clears active-session state too: if reset() is called mid-update, any
@@ -700,6 +827,8 @@ export class UpdateProfiler {
     this.updateSeq = 0;
     this.passSeq = 0;
     this.sortSeq = 0;
+    this.depthSortCompletionTotal = 0;
+    this.depthSortCompletions = [];
     this.roots = new Map<string, TimingEntry>([
       [TOTAL_UPDATE_ROOT, UpdateProfiler.makeRoot(TOTAL_UPDATE_ROOT)],
       [REFINEMENT_ROOT, UpdateProfiler.makeRoot(REFINEMENT_ROOT)],

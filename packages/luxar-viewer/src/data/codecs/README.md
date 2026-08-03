@@ -6,9 +6,9 @@ This directory holds codec implementations registered with the zarrita codec reg
 
 ## Modules
 
-| File               | Codec ID            | Status       | Description                                                                                                                                       |
-| ------------------ | ------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `luxar-delta.ts`   | `luxar_delta_v1`    | **Internal** | Columnar per-chunk delta + zigzag filter for quantized uint8/uint16 codes. Registered by `../zarr.ts` module-scope initializer.                  |
+| File             | Codec ID         | Status       | Description                                                                                                                     |
+| ---------------- | ---------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------- |
+| `luxar-delta.ts` | `luxar_delta_v1` | **Internal** | Columnar per-chunk delta + zigzag filter for quantized uint8/uint16 codes. Registered by `../zarr.ts` module-scope initializer. |
 
 ## Delta Codec (`luxar_delta_v1`)
 

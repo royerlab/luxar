@@ -34,13 +34,13 @@ Chunk request → L0 (Decompressed) → L1 (Memory) → L2 (OPFS) → Remote HTT
              (no decompress)    (decompress)   (decompress)   (decompress)
 ```
 
-| Level   | Storage | Speed         | Size          | Persistence  | Content               |
-| ------- | ------- | ------------- | ------------- | ------------ | --------------------- |
-| S-cache | Memory  | ~1μs          | heap-aware†   | Session only | Decoded slice ladders |
-| L0      | Memory  | ~1μs          | heap-aware†   | Session only | Decompressed data     |
-| L1      | Memory  | ~1μs + ~2ms\* | heap-aware†   | Session only | Compressed chunks     |
-| L2      | OPFS    | ~1ms + ~2ms\* | 2GB           | Permanent    | Compressed chunks     |
-| L3      | Remote  | ~100ms        | ∞             | N/A          | Compressed chunks     |
+| Level   | Storage | Speed         | Size        | Persistence  | Content               |
+| ------- | ------- | ------------- | ----------- | ------------ | --------------------- |
+| S-cache | Memory  | ~1μs          | heap-aware† | Session only | Decoded slice ladders |
+| L0      | Memory  | ~1μs          | heap-aware† | Session only | Decompressed data     |
+| L1      | Memory  | ~1μs + ~2ms\* | heap-aware† | Session only | Compressed chunks     |
+| L2      | OPFS    | ~1ms + ~2ms\* | 2GB         | Permanent    | Compressed chunks     |
+| L3      | Remote  | ~100ms        | ∞           | N/A          | Compressed chunks     |
 
 \*~2ms is Blosc decompression time per chunk (skipped on L0 hit)
 
@@ -208,16 +208,16 @@ summarising the cache's operational state. Each badge is also exposed
 on `CacheMetrics.status: CacheStatusBadge[]` so programmatic consumers
 (debug snapshots, E2E tests) can assert on the same set.
 
-| Badge                          | Meaning                                                       | Source                                                            |
-| ------------------------------ | ------------------------------------------------------------- | ----------------------------------------------------------------- |
-| `cache-enabled`                | Caching is wired and operational.                             | `telemetryState.kind === 'enabled'`                               |
-| `no-cache`                     | The `?no-cache` URL flag is set; all tiers disabled.          | `telemetryState.kind === 'disabled-no-cache'`                     |
-| `disabled-config`              | App config disabled caching (e.g. `cache.enabled: false`).    | `telemetryState.kind === 'disabled-config'`                       |
+| Badge                          | Meaning                                                       | Source                                                                                                      |
+| ------------------------------ | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `cache-enabled`                | Caching is wired and operational.                             | `telemetryState.kind === 'enabled'`                                                                         |
+| `no-cache`                     | The `?no-cache` URL flag is set; all tiers disabled.          | `telemetryState.kind === 'disabled-no-cache'`                                                               |
+| `disabled-config`              | App config disabled caching (e.g. `cache.enabled: false`).    | `telemetryState.kind === 'disabled-config'`                                                                 |
 | `opfs-unavailable`             | OPFS is absent OR mounts read-only; L2 is disabled.           | OPFS provider absent, or the init write probe failed (WebKit/WKWebView has no main-thread `createWritable`) |
-| `quota-constrained`            | L2 has skipped at least one write because of browser quota.   | `l2.quotaWriteSkipped > 0`                                        |
-| `cache-errors-detected`        | L2 has accumulated I/O / corruption failures.                 | `l2.writeFailures + corruptedEntries + metadataParseFailures > 0` |
-| `unvalidated-external-dataset` | External dataset, no TTL configured — entries may stay stale. | `health.unvalidatedExternalDataset === true`                      |
-| `provider-missing`             | Telemetry says cache is enabled but no provider is attached.  | classifier/provider contradiction                                 |
+| `quota-constrained`            | L2 has skipped at least one write because of browser quota.   | `l2.quotaWriteSkipped > 0`                                                                                  |
+| `cache-errors-detected`        | L2 has accumulated I/O / corruption failures.                 | `l2.writeFailures + corruptedEntries + metadataParseFailures > 0`                                           |
+| `unvalidated-external-dataset` | External dataset, no TTL configured — entries may stay stale. | `health.unvalidatedExternalDataset === true`                                                                |
+| `provider-missing`             | Telemetry says cache is enabled but no provider is attached.  | classifier/provider contradiction                                                                           |
 
 Several badges may coexist — for example, a Luxar dataset on a near-full
 browser disk can show `cache-enabled` + `quota-constrained` simultaneously.

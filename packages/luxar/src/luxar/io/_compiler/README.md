@@ -51,13 +51,17 @@ Built by `_make_*_ctx()` methods on the orchestrator.
 
 ### `chunking.py`
 `calculate_intelligent_chunks(shape, target_chunk_bytes=TARGET_CHUNK_BYTES,
-spatial_index_data=None, *, dtype=float32)` — the single chunk-shape heuristic
-shared by every dataset serializer. When spatial-ordering data is present it
-aligns chunks to the ordering's `chunk_size`; otherwise it picks a chunk that
-hits the byte target given the array's `dtype.itemsize`. The `dtype=`
-keyword is mandatory in spirit (defaults to float32 only for compatibility) so
-non-float32 callers — e.g. a `(N, 3)` uint8 colors array — are chunked
-correctly rather than silently under-chunked.
+spatial_index_data=None, *, dtype, per_array_bytes=False)` — the single
+chunk-shape heuristic shared by every dataset serializer. When spatial-ordering
+data is present it aligns chunks to the ordering's `chunk_size`; otherwise it
+picks a chunk that hits the byte target given the array's `dtype.itemsize`. The
+`dtype=` keyword is mandatory (keyword-only, no default) so non-float32 callers
+— e.g. a `(N, 3)` uint8 colors array — are chunked correctly rather than
+silently under-chunked. `per_array_bytes=True` (opt-in; Points only) sizes the
+first-axis chunk to the array's own dtype byte budget aligned to a *multiple* of
+the `chunk_size` atom, so a large points scene issues far fewer requests while
+its chunk boundaries still land on the viewer's row-range query grid; Lines and
+GSplats keep the plain atom-sized chunks (`per_array_bytes=False`).
 
 ### `colormap.py`
 `write_colormap_lut_if_needed(group, attrs, scene_tone_mapping,

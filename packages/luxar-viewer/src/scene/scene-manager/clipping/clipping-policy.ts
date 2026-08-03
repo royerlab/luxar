@@ -10,8 +10,9 @@
  *     (metadata first, geometry fallback), feed scene scale into
  *     controls, and apply.
  *   - `updateDynamicFromCache` — per-frame near/far from a cached
- *     bounding sphere; zero allocations, zero scene-graph
- *     traversal. Skips updates < 0.1% change for stability.
+ *     bounding sphere; zero allocations, and zero scene-graph
+ *     traversal once the bounds are cached (a metadata-less scene
+ *     re-walks each frame). Skips updates < 0.1% change for stability.
  *
  * The host owns `ClippingState` (enabled flag) and threads it
  * through alongside camera / controls / scene refs. Event dispatch
@@ -145,11 +146,15 @@ export function autoAdjustFromBounds(ctx: ClippingCtx): { near: number; far: num
 /**
  * Per-frame near/far update from the cached bounding sphere.
  *
- * Zero allocations, zero scene-graph traversal. Only updates the
- * camera when values changed more than 0.1% (stability gate to
- * avoid projection-matrix thrash from sub-pixel camera moves).
+ * Zero allocations, and zero scene-graph traversal once the bounds
+ * are cached — the `ensure()` below is O(1) after the first
+ * successful hit. (A metadata-less scene has no negative caching, so
+ * that `ensure()` re-walks the graph each frame — see
+ * `scene-bounds-cache.ts`.) Only updates the camera when values
+ * changed more than 0.1% (stability gate to avoid projection-matrix
+ * thrash from sub-pixel camera moves).
  *
- * Returns false (no-op) when:
+ * No-op (returns early) when:
  *  - the bounds cache is empty (no metadata available);
  *  - the sphere is degenerate (near >= far — e.g. a zero-extent
  *    single-point scene, whose radius-0 sphere yields no valid frustum);
