@@ -850,8 +850,15 @@ Invariant and behavior tests:
   lift (two constraints, one left-hand side). Shipped with an energy-preserving
   2D dilation for gsplats (Mip-Splatting `√(detΣ/detΣ')`), an INDEPENDENT defect
   that inflated sub-pixel splats in every sum mode including additive, by a
-  factor that grew as the camera pulled back. Measured on a 4-radius
-  Points-vs-lifted-twin parity scene: gsplat/points brightness ratio
+  factor that grew as the camera pulled back. Effect B ALSO caused a brightness
+  step at LOD switches in a PURE-gsplat substitutive ladder — measured on a
+  mass-conserving 4-level ladder in plain additive, where every level should
+  paint the same total light: the finest-vs-coarsest step was 1.15× at
+  σ_px = 1.31 and **4.35× at σ_px = 0.33**, against analytic predictions of
+  1.17× and 3.78×; after the compensation, 0.99× and 1.13×. So this is a fix
+  for gsplat LOD popping generally, not only for mixed points→gsplat ladders.
+  Measured on a 4-radius Points-vs-lifted-twin parity scene: gsplat/points
+  brightness ratio
   3.75/1.45/1.07/1.02 → 1.04/1.02/1.02/1.02, and the whole κ-response curve now
   overlays row-for-row (κ* ratio 0.97/1.02/1.02/1.00, was 208/34.6/8.5/3.1).
   The per-layer κ slider track (`absorptionBoundsForNode`) retires with it — it
