@@ -120,6 +120,26 @@ propagates from a `kind=lod` group to its children's materials — `intensity` a
 `gamma` leave the child uniforms at 1, so appearance trims must be baked into the
 per-element colours.
 
+Rendering settings were tuned interactively in the Layers panel and then baked,
+not guessed. Two things generalise beyond this demo. **Absorption and brightness
+are a coupled pair**: raising `absorption` is what makes a point cloud read as an
+opaque material (one that can still be made slightly transparent, which a truly
+opaque mode cannot), but it also drives the layer nearly black — so push
+brightness up in the same move by lowering the display-range max, which raises
+`intensity` (the panel's DISPLAY RANGE is a window, `intensity = 1/(hi-lo)`). And
+**a textured shell cannot survive Gaussian merging**: giving the globe a
+substitutive LOD turned its coarsest level into 46k merged splats per 750k-point
+tile, which under volumetric absorption rendered as huge dark ellipsoids. Coarse
+levels read as *density* — meaningful for the diffuse occurrence cloud, wrong for
+a continuous surface — so the globe is a fixed-resolution backdrop instead.
+
+Also fixed while transcribing: `intensity` is capped at 100 by
+`validate_intensity` (a 250 build fails outright, and costs nothing because both
+saturate); only `opacity` propagates from a `kind=lod` group to its children, so
+compositing attrs ride on the `layer=True` partition wrapper; and deriving that
+wrapper's `position_bounds` from a 3-column array in a 5-D scene dropped a whole
+BSP tile, rendering the globe with a wedge missing.
+
 Data handling is documented too, including why the measured 73.0% bird share of
 the filtered sample is *not* GBIF's ~60% (the filters are not taxon-neutral), the
 per-record `coordinateuncertaintyinmeters` jitter that breaks up

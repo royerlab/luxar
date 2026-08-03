@@ -34,37 +34,44 @@ observation record, national-park boundaries, the hard edge of a country's
 recording effort at its border, and grid lattices where coordinates were rounded.
 
 ================================================================================
-SCALING 15M POINTS: PARTITION-OF-LOD, AND WHY "ALL" IS A COORDINATE
+SCALING: WHERE LOD HELPS, AND WHERE IT MUST NOT BE USED
 ================================================================================
 
 A single Points node holds at most ``floor(4096/3) * maxTextureSize`` points —
 **5,591,040** on a 4096-class GPU — and overflow is a *silent clamp*, not an
-error. So each big layer is split into spatial BSP tiles. But tiling alone does
-not bound cost: a ``kind=partition`` group renders **every** part (the GPU only
-frustum-culls at draw), and a ``stream:`` additive ladder is *progressive*, so it
-converges to 100% of the layer regardless of camera distance. Built that way,
-whole-globe framing held all **18.1M** elements resident.
+error. So every large layer is split into spatial BSP tiles. Tiling alone does
+not bound cost, though: a ``kind=partition`` group renders **every** part (the
+GPU only frustum-culls at draw), and a ``stream:`` additive ladder is
+*progressive*, so it converges to 100% of the layer regardless of camera
+distance. Built that way, whole-globe framing held all **18.1M** elements.
 
-The fix is a ``kind=partition`` wrapper whose every child is a per-tile
-``kind=lod`` ladder — the Points counterpart of the gsplat ``adaptive`` recipe.
-``coverage_fraction`` is evaluated per tile against that tile's own screen size
-and non-default levels are lazily attached, so a tile that is small on screen
-never fetches its fine levels. ``add_points`` refuses ``partition=`` and
-``substitutive_lod=`` together, so ``add_lod_tiles`` hand-builds the wrapper.
+The occurrence cloud therefore uses a ``kind=partition`` wrapper whose every
+child is a per-tile ``kind=lod`` ladder — the Points counterpart of the gsplat
+``adaptive`` recipe. ``coverage_fraction`` is evaluated per tile against that
+tile's own screen size and non-default levels are lazily attached, so a tile that
+is small on screen never fetches its fine levels. Whole-globe framing holds
+~0.2M of its 15M; zooming a tile walks it to the full 1,875,000-point level while
+its neighbours stay coarse.
 
-**The thresholds have to be overridden, and measured.** The default
-``coverage_fraction = sqrt(N_i/N_finest)`` is calibrated for a SINGLE lod group
-that fills the screen. Split into T tiles, each tile's projected diagonal at
+**The globe deliberately gets none of that.** A textured shell cannot survive
+Gaussian merging: at K=4/levels=2 the coarsest level is 46k merged splats per
+750k-point tile, and under the volumetric absorption below those render as huge
+dark ellipsoids — the planet becomes a pile of blobs. Coarse levels are
+meaningful for a diffuse point cloud (they read as *density*, which is exactly
+what the occurrence layer wants) and meaningless for a continuous surface. The
+globe is instead a fixed-resolution backdrop, sized (``N_GLOBE``) so it never
+needs reducing.
+
+**Calibrating the occurrence thresholds** took two measured corrections, both
+worth knowing before reusing the recipe. The default
+``coverage_fraction = sqrt(N_i/N_finest)`` is calibrated for a *single* lod group
+that fills the screen; split into T tiles, each tile's projected diagonal at
 whole-globe framing is only ~0.6 of the viewport diagonal, which against the
-default ladder still selects a mid level (~3.6M total). See
-``OCCURRENCE_COVERAGE`` for the measured metric, the resulting thresholds, and
-the cross-fade flapping that happens if a threshold is placed *on* the metric
-rather than clear of it.
-
-Measured result at the default camera: **~0.5M elements resident** out of ~19.5M
-in the scene, with every tile on its coarsest level; zooming into one tile walks
-that tile up its ladder to the full 1,875,000-point finest level, with no clamp
-warning, while its neighbours stay coarse.
+default ladder still selects a mid level. And a threshold placed *on* that
+measured metric makes the tiles flap: two levels stay simultaneously visible,
+cross-faded, both resident, because the selector's hysteresis is 10% and
+downgrade-only. The metric also varies per tile (nearer tiles project larger), so
+thresholds must clear the *largest* per-tile value, not the mean.
 
 PERSISTENT CONTEXT vs. SLICED SELECTION
 --------------------------------------
@@ -124,6 +131,44 @@ Cell density drove two further choices, both measured rather than assumed:
   cell fills to its own cap. The marginals keep their own uniform-per-taxon and
   uniform-per-period reservoirs -- deriving them from the period-balanced cells
   would over-weight sparse decades and misrepresent the taxon.
+
+================================================================================
+APPEARANCE — TUNED IN THE LAYERS PANEL, THEN BAKED
+================================================================================
+
+The rendering settings were found interactively in the viewer's Layers panel and
+then transcribed, rather than guessed. Reading them back matters because the
+panel's DISPLAY RANGE ``[lo, hi]`` is a **window, not a gain**:
+``intensity = 1/(hi-lo)`` and ``offset = -lo/(hi-lo)``
+(``packages/luxar-viewer/src/rendering/display-range.ts``).
+
+**Absorption and brightness are a coupled pair.** Raising ``absorption`` is what
+turns a cloud of points into something that reads as an opaque *material* — and
+one that can still be made slightly transparent on demand, which a truly opaque
+mode cannot. But absorption also makes a layer very dim, almost black. The fix is
+to push brightness up in the same move by lowering the display-range max, which
+raises ``intensity``. The globe is exactly that pair: ``absorption=10`` with a
+display max of 0.041 (a 24x gain). Either number alone looks wrong.
+
+The occurrence records take the opposite treatment — ``opaque`` (depth-tested,
+and still alpha-blended, so ``opacity`` matters) with a hard brightness push — so
+they read as crisp discrete marks sitting *on* the lit globe. An additive
+selection washes out over a bright surface.
+
+Two things that only show up on a real build:
+
+* ``intensity`` is capped at 100 by ``validate_intensity``; the panel reading of
+  250 fails the build. It costs nothing here, because both saturate — the dimmest
+  taxon colour channel clips to 1.0 by intensity ~8.
+* Only ``opacity`` propagates from a ``kind=lod`` group to its children's
+  materials (``intensity``/``gamma`` leave the child uniforms at 1). Compositing
+  attrs therefore ride on the node marked ``layer=True`` — the partition wrapper —
+  which is the node the Layers panel reads and pushes down to every descendant.
+
+The records also had to be lifted clear of the shell (``OCCURRENCE_LIFT``). With
+``opaque`` blending the depth test makes an intersecting dot wink in and out along
+the terrain, and the globe's rendered footprint is wider than its nominal point
+radius.
 
 ================================================================================
 TIME VARIES ALONG EACH MIGRATION WORLDLINE
@@ -334,8 +379,23 @@ TAXON_LAYER_CAP_PER_GROUP: Final = 160_000
 SAMPLE_SEED: Final = 20260803
 
 # --- Scene / rendering -------------------------------------------------------
-N_GLOBE: Final = 3_000_000
-GLOBE_RADII: Final = 0.16  # ~0.78x mean point spacing -> a sealed shell
+#: The globe carries NO substitutive LOD, and is sized so it does not need one.
+#:
+#: A textured shell cannot survive Gaussian merging. At K=4/levels=2 the coarsest
+#: level is 46k merged splats per 750k-point tile, and with the volumetric
+#: absorption below those render as huge dark ellipsoids -- the planet becomes a
+#: pile of blobs. Coarse levels are meaningful for a diffuse point cloud (they
+#: read as density, which is the `All life` layer's whole point) and meaningless
+#: for a continuous surface.
+#:
+#: So the globe is a fixed-resolution backdrop: partition + a `stream:` ladder for
+#: fast first paint, and no view-dependent reduction at all. 700k keeps it always
+#: resident inside the ~1M whole-globe budget (700k + ~210k occurrences + ~106k
+#: tracks) while still giving 0.24-degree spacing -- about 27 km at Earth scale.
+N_GLOBE: Final = 700_000
+#: ~0.78x the mean point spacing, the ratio that seals the shell without
+#: over-drawing (0.29 spacing at 700k points on a radius-100 globe).
+GLOBE_RADII: Final = 0.23
 #: The Blue Marble texture is multiplied down HARD. It has to be: the globe is a
 #: sealed 3M-point shell, so at full brightness the continents (bright green
 #: Europe, tan Sahara, saturated blue ocean) carry more contrast than the data
@@ -353,15 +413,65 @@ GLOBE_RADII: Final = 0.16  # ~0.78x mean point spacing -> a sealed shell
 GLOBE_DIM: Final = 0.12
 OCCURRENCE_RADII: Final = 0.062
 OCCURRENCE_OPACITY: Final = 0.75
-#: Palette multiplier baked into the per-record colours. A mild trim: with 15M
-#: records over a globe, the densest cells (NW Europe) still stack enough
-#: overlapping points to reach the top of the tone curve, and pulling the palette
-#: back keeps a little headroom so those cells read as structure rather than as a
-#: flat white mask. Baked rather than expressed as ``intensity=`` because
-#: ``intensity`` does not reach the children of a substitutive LOD group (see the
-#: module docstring) — keeping it baked means this stays correct if the LOD
-#: recipe changes.
+#: Baked colour scale for the occurrence records. KEPT at 0.85 even though the
+#: display-range window now supplies the gain: the DISPLAY RANGE values below
+#: were tuned in the Layers panel against a scene whose colours already carried
+#: this scale, so changing it would invalidate them.
 OCCURRENCE_COLOR_SCALE: Final = 0.85
+
+# --- Appearance, transcribed from the Layers panel -------------------------
+# Found interactively in the viewer and then baked, rather than guessed. The
+# panel's DISPLAY RANGE [lo, hi] is a WINDOW, not a gain:
+# `intensity = 1/(hi-lo)`, `offset = -lo/(hi-lo)` (rendering/display-range.ts).
+# Both layers window from 0, so `offset` stays 0 and only `intensity` is needed.
+#
+# THE GENERAL RULE, worth carrying to any volumetric layer: absorption and
+# brightness are a COUPLED PAIR, and pushing absorption alone is a trap.
+# Raising absorption is what turns a cloud of points into a material that reads
+# as an opaque surface (and can still be made slightly transparent on demand) --
+# but it also makes the layer very dim, almost black. The fix is to push
+# brightness up by the same move: LOWER the display-range max, which raises
+# `intensity`. The globe below is exactly that pair -- absorption 10 with a
+# display max of 0.041 (a 24x gain). Either number alone looks wrong.
+#
+# The occurrence records take the opposite treatment: `opaque` (depth-tested,
+# unblended) so they read as crisp dots sitting on the lit globe. An additive
+# selection washes out over a bright surface.
+#: Globe: DISPLAY RANGE 0-0.041 -> 1/0.041.
+GLOBE_INTENSITY: Final = 24.39
+GLOBE_ABSORPTION: Final = 10.0
+GLOBE_BLENDING: Final = "volumetric"
+#: The SCRUBBABLE records layer's own opacity. Separate from
+#: OCCURRENCE_OPACITY (which belongs to the untuned `All life` summary layer):
+#: `opaque` blending still alpha-blends (SrcAlpha / OneMinusSrcAlpha), so 0.75
+#: would leave the dots 25% transparent over the globe. The panel reading was
+#: 1.00.
+RECORDS_OPACITY: Final = 1.0
+#: Occurrences: DISPLAY RANGE 0-0.004 -> 1/0.004 = 250, GAMMA 0.82.
+#:
+#: Written as 100.0, not 250.0, because `validate_intensity` caps the attr at
+#: 100 and a 250 build fails outright. The cap costs nothing here: both values
+#: saturate. The dimmest taxon colour channel is ~0.13 after
+#: OCCURRENCE_COLOR_SCALE, so any intensity above ~8 already clips it to 1.0 —
+#: 100 and 250 produce identical pixels. The intent of the setting is "crisp,
+#: maximally visible dots", and it is met.
+OCCURRENCE_INTENSITY: Final = 100.0
+OCCURRENCE_GAMMA: Final = 0.82
+OCCURRENCE_BLENDING: Final = "opaque"
+
+#: Fractional radial lift for the occurrence layers, i.e. how far the records
+#: float above the globe shell.
+#:
+#: 0.010 (= 1.0 scene unit at RADIUS 100), not the 0.0012 first used. Two things
+#: make a small lift insufficient. The globe's own points are `GLOBE_RADII`
+#: 0.16 wide, and -- more importantly -- its COARSE substitutive levels are
+#: merged Gaussians roughly 4x wider again (~0.64 at K=4/levels=2), so a
+#: 0.12-unit lift left the records buried inside the shell's rendered
+#: footprint. With `opaque` blending the depth test makes that intersection
+#: unmistakable: dots wink in and out along the terrain. 1% of the globe radius
+#: is imperceptible as displacement but clears the shell at every LOD level.
+OCCURRENCE_LIFT: Final = 0.010
+
 TRACK_WIDTH: Final = 0.30
 TRACK_LIFT: Final = 0.006
 TRACK_HIGHWAY_WIDTH: Final = 0.075
@@ -426,8 +536,6 @@ MAX_GLOBE_POINTS_PER_NODE: Final = 1_000_000
 #: intended behaviour: cheap overview, detail on demand.
 OCCURRENCE_LOD_LEVELS: Final = 3
 OCCURRENCE_COVERAGE: Final = (0.0, 0.88, 0.96, 1.0)
-GLOBE_LOD_LEVELS: Final = 2
-GLOBE_COVERAGE: Final = (0.0, 0.95, 1.0)
 
 STREAM_LOD: Final = dict(counts="stream:20000", method="random", seed=0)
 
@@ -1971,7 +2079,7 @@ def jittered_positions(
     unc: np.ndarray,
     rng: np.random.Generator,
     *,
-    relief: float = 0.0012,
+    relief: float = OCCURRENCE_LIFT,
 ) -> np.ndarray:
     """Occurrence lat/lon -> globe xyz, displaced by per-record uncertainty."""
     s_lat, s_lon = jitter_sigma_deg(unc, lat)
@@ -2024,7 +2132,7 @@ def add_lod_tiles(
     levels: int,
     coverage: Sequence[float],
     sharpness: float = 0.55,
-    extend: bool = False,
+    compositing: Optional[Dict[str, Any]] = None,
 ) -> None:
     """Add a ``kind=partition`` wrapper whose children are per-tile LOD ladders.
 
@@ -2048,12 +2156,10 @@ def add_lod_tiles(
       ``partition=`` path.
     """
     assert_tile_budget(max_elements)
-    # `extend` picks between the two ways a layer can span every slice:
-    #   True  -> 3 columns + `fill`, so `extend_to_all` is inferred and the node
-    #            is visible at EVERY (taxon, period) slice from one copy.
-    #   False -> real coordinates in the "all" summary slots, so the layer shows
-    #            at the opening slice and is sliced away when the user scrubs.
-    pos5 = positions3 if extend else summary_positions(positions3)
+    # Real coordinates in the "all" summary slots: the layer shows at the opening
+    # slice and is sliced away when the user scrubs, which is what makes the
+    # scrubbable layers legible.
+    pos5 = summary_positions(positions3)
     parts = median_bsp_partition(pos5, max_elements)
     lod = substitutive_lod_or_flat(
         dict(
@@ -2072,12 +2178,20 @@ def add_lod_tiles(
         f"{max(int(p.size) for p in parts):,}), {levels} coarse levels each, "
         f"coverage={list(coverage)}"
     )
+    # Compositing attrs ride on the WRAPPER, because the wrapper is the node
+    # marked `layer=True` and therefore the one the Layers panel reads to seed
+    # its display range / gamma / blend and then pushes down to every
+    # descendant material. Putting them on the per-tile lod groups instead does
+    # NOT work: of the compositing attrs only `opacity` reaches a lod group's
+    # children (measured in-browser -- `intensity` and `gamma` leave the child
+    # uniforms at 1).
     wrapper = scene.add_partition_group(
         name,
         display_type="points",
         max_elements=max_elements,
         layer=True,
         position_bounds=position_bounds_from_array(pos5),
+        **(compositing or {}),
     )
     for i, idx in enumerate(parts):
         wrapper.add_points(
@@ -2086,12 +2200,6 @@ def add_lod_tiles(
             colors=colors[idx],
             radii=radii,
             sharpness=np.full(idx.size, sharpness, dtype=np.float32),
-            dim_order=["x", "y", "z"] if extend else None,
-            fill=(
-                {"taxon": float(ALL_LIFE_SLOT), "period": float(PERIOD_ALL_SLOT)}
-                if extend
-                else None
-            ),
             blending_mode="normal",
             opacity=opacity,
             substitutive_lod=lod,
@@ -2212,25 +2320,34 @@ def build_scene(output_path: Path, sample: GbifSample, tracks: TrackSet) -> Path
             scene.attrs["gbif_citation"] = sample.citation
             scene.attrs["gbif_datasets"] = len(sample.datasets)
 
-            # `extend=True`: the globe is the scene's persistent geographic
-            # reference and must survive every scrub. Before royerlab/luxar#1157
-            # was fixed this was impossible -- a fully-extended node was never
-            # queried at all -- and the workaround was a 25k-point globe
-            # replicated into all 139 slots (3.5M elements, coarse). With the fix
-            # ONE full-resolution 3M globe covers every slice, and its per-tile
-            # LOD still applies (verified: the coarse gsplat levels survive
-            # projection at every (taxon, period) combination).
-            add_lod_tiles(
-                scene,
+            # The globe: extended over every slice (so it is the persistent
+            # geographic reference), partitioned to stay under the per-node
+            # texture bound, laddered for a fast first paint -- and deliberately
+            # WITHOUT substitutive LOD (see N_GLOBE).
+            #
+            # `extend_to_all` is inferred from the 3-column positions + `fill`.
+            # Before royerlab/luxar#1157 was fixed a fully-extended node was never
+            # queried at all, and this demo carried a 25k globe replicated into
+            # all 139 slots as a workaround; the fix made that unnecessary.
+            scene.add_points(
                 "Earth",
                 globe_xyz,
-                globe_colors,
+                colors=globe_colors,
                 radii=GLOBE_RADII,
+                dim_order=["x", "y", "z"],
+                fill={
+                    "taxon": float(ALL_LIFE_SLOT),
+                    "period": float(PERIOD_ALL_SLOT),
+                },
+                blending_mode=GLOBE_BLENDING,
+                absorption=GLOBE_ABSORPTION,
+                intensity=GLOBE_INTENSITY,
+                offset=0.0,
+                gamma=1.0,
                 opacity=1.0,
-                max_elements=MAX_GLOBE_POINTS_PER_NODE,
-                levels=GLOBE_LOD_LEVELS,
-                coverage=GLOBE_COVERAGE,
-                extend=True,
+                layer=True,
+                partition=dict(max_elements=MAX_GLOBE_POINTS_PER_NODE),
+                additive_lod=STREAM_LOD,
             )
 
             add_lod_tiles(
@@ -2243,6 +2360,14 @@ def build_scene(output_path: Path, sample: GbifSample, tracks: TrackSet) -> Path
                 max_elements=TARGET_TILE_POINTS,
                 levels=OCCURRENCE_LOD_LEVELS,
                 coverage=OCCURRENCE_COVERAGE,
+                # `normal`, with no display-range push. The Layers-panel settings
+                # transcribed below were tuned on `Earth` and on the SCRUBBABLE
+                # records layer; this one was left alone, so it keeps its own
+                # appearance rather than inheriting settings never chosen for it.
+                compositing=dict(
+                    blending_mode="normal",
+                    opacity=OCCURRENCE_OPACITY,
+                ),
             )
 
             scene.add_points(
@@ -2251,8 +2376,11 @@ def build_scene(output_path: Path, sample: GbifSample, tracks: TrackSet) -> Path
                 colors=taxon_colors,
                 radii=OCCURRENCE_RADII * 1.6,
                 sharpness=np.full(taxon_pos.shape[0], 0.55, dtype=np.float32),
-                blending_mode="normal",
-                opacity=1.0,
+                blending_mode=OCCURRENCE_BLENDING,
+                intensity=OCCURRENCE_INTENSITY,
+                offset=0.0,
+                gamma=OCCURRENCE_GAMMA,
+                opacity=RECORDS_OPACITY,
                 layer=True,
                 # VISIBLE, deliberately. These layers occupy the per-taxon and
                 # per-decade slots, so at the opening (All life, All years) slice
