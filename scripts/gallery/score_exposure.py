@@ -32,7 +32,9 @@ from PIL import Image
 REPO_ROOT = Path(__file__).resolve().parents[2]
 GALLERY_DIR = REPO_ROOT / "docs" / "images" / "gallery"
 
-LIT_THRESHOLD = 0.05  # luma below this is background
+# Background cutoff; mirrors generate-gallery.spec.ts LIT_THRESHOLD (the harness
+# that produces these stills), so the scores reflect what it actually optimizes.
+LIT_THRESHOLD = 0.04
 CLIP_LUMA = 0.95  # luma above this counts as "blown" (if also desaturated)
 SAT_MAX = 0.15  # (max-min)/max below this = near-white / desaturated
 # Matches the harness clip-guard (generate-gallery.spec.ts CLIP_FRAC_MAX): a
