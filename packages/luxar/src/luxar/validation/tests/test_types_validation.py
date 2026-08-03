@@ -260,8 +260,9 @@ class TestTruncationRadiusValidation:
         assert validate_truncation_radius(2.75) == 2.75
         assert validate_truncation_radius(3) == 3.0
         assert validate_truncation_radius("1.5") == 1.5
-        # No lower clamp here: the viewer's MIN_TRUNCATION_RADIUS (0.1) is a
-        # read-time GPU-degeneracy guard, not a data constraint.
+        # No 0.1-style lower clamp here: the viewer's MIN_TRUNCATION_RADIUS
+        # bisects the same float32 degeneracy bound, so small-but-valid values
+        # accepted here render unmodified.
         assert validate_truncation_radius(0.01) == 0.01
         assert validate_truncation_radius(1e3) == 1e3
         assert validate_truncation_radius(np.float32(2.75)) == pytest.approx(2.75)

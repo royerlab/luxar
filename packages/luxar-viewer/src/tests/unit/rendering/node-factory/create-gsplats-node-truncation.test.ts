@@ -81,12 +81,16 @@ describe('createGSplatsNode — truncation_radius sanitization', () => {
   it('passes a legitimate value through untouched', () => {
     expect(uTruncateOf(build(2.75))).toBe(2.75);
     expect(uTruncateOf(build(3.0))).toBe(3.0);
+    // Small but float32-valid — the write-side validator accepts these, and
+    // the on-disk chunk bounds are computed from them, so the viewer must
+    // render at the stored value rather than silently raising it.
+    expect(uTruncateOf(build(0.05))).toBe(0.05);
   });
 
   it.each([
     ['zero', 0],
     ['negative', -1],
-    ['sub-minimum', 0.001],
+    ['sub-float32-minimum', 1e-5],
   ])('clamps a %s radius to the minimum', (_label, value) => {
     expect(uTruncateOf(build(value))).toBe(MIN_TRUNCATION_RADIUS);
   });
@@ -94,6 +98,11 @@ describe('createGSplatsNode — truncation_radius sanitization', () => {
   it.each([
     ['NaN', Number.NaN],
     ['Infinity', Number.POSITIVE_INFINITY],
+    // Finite in float64, Infinity once narrowed to the float32 GPU uniform —
+    // the hostile-attr case the write-side validator rejects with
+    // MAX_TRUNCATION_RADIUS_FLOAT32; the read-side clamp mirrors it.
+    ['above-float32-max (3.5e38)', 3.5e38],
+    ['float64-only-finite (1e308)', 1e308],
   ])('falls back to the default for a %s radius', (_label, value) => {
     expect(uTruncateOf(build(value))).toBe(GSPLAT_DEFAULT_TRUNCATION_RADIUS);
   });

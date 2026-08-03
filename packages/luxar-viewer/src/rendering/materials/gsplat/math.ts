@@ -52,29 +52,58 @@ export function computeRayIntegralFactor(truncate: number): number {
 }
 
 /**
- * Minimum truncation radius (in sigmas). Below this the shifted-Gaussian
- * normalization degenerates: `shiftC = exp(-r²/2)` approaches 1 and
- * `uInvOneMinusC = 1/(1 - shiftC)` blows up to Infinity — an invisible
- * layer with an Infinity uniform and zero diagnostics. Dataset attrs
- * pass `truncation_radius` through unvalidated, so both material
- * wrappers clamp at this boundary (mirrors `updateMaxExtentFactor`'s
- * 0.01 floor).
+ * Smallest truncation radius (in sigmas) whose shifted-Gaussian normalization
+ * survives float32. Below it `shiftC = exp(-r²/2)` rounds to exactly 1.0 in
+ * single precision (the GPU uniform's precision), so
+ * `uInvOneMinusC = 1/(1 - shiftC)` blows up — an invisible layer with an
+ * Infinity uniform and zero diagnostics.
+ *
+ * Bisected at module load against real float32 arithmetic (~2.44e-4),
+ * MIRRORING the write-side validator's `MIN_TRUNCATION_RADIUS_FLOAT32` in
+ * `packages/luxar/src/luxar/validation/types.py`. The two must agree: the
+ * writer accepts anything that normalizes in float32, and the on-disk chunk
+ * bounds are computed from the stored radius — a higher read-time floor
+ * (the former 0.1) silently rendered small-but-valid radii wider than their
+ * chunk bounds claim.
  */
-export const MIN_TRUNCATION_RADIUS = 0.1;
+function computeMinTruncationRadiusFloat32(): number {
+  const degenerate = (t: number) => {
+    const t32 = Math.fround(t);
+    const exponent = Math.fround(Math.fround(-0.5 * t32) * t32);
+    return Math.fround(Math.exp(exponent)) >= 1.0;
+  };
+  let lo = 1e-12; // degenerate
+  let hi = 1.0; // fine
+  for (let i = 0; i < 200; i++) {
+    const mid = (lo + hi) / 2;
+    if (degenerate(mid)) {
+      lo = mid;
+    } else {
+      hi = mid;
+    }
+  }
+  return hi;
+}
+
+export const MIN_TRUNCATION_RADIUS = computeMinTruncationRadiusFloat32();
 
 let truncationClampWarned = false;
 
-/** Clamp a truncation radius to the degeneracy floor (warns once). */
+/** Clamp a truncation radius to the float32 degeneracy bounds (warns once). */
 export function clampTruncationRadius(radius: number): number {
-  // NaN/Inf slip past a plain comparison clamp (NaN < x is false) and
-  // would poison uShiftC/uInvOneMinusC — the exact degenerate-uniform
-  // failure this clamp exists to prevent. Fall back to the module default.
-  if (!Number.isFinite(radius)) {
+  // NaN/Inf slip past a plain comparison clamp (NaN < x is false), and a
+  // JS-finite value beyond float32 range (a hostile attr like 1e308, or
+  // 3.5e38) narrows to Infinity the moment it is uploaded as a GPU uniform —
+  // either way uTruncate and the cull box get poisoned. `Math.fround` catches
+  // both, mirroring the write-side `MAX_TRUNCATION_RADIUS_FLOAT32` bound in
+  // `packages/luxar/src/luxar/validation/types.py`. Fall back to the module
+  // default.
+  if (!Number.isFinite(Math.fround(radius))) {
     if (!truncationClampWarned) {
       truncationClampWarned = true;
       log.warning(
         Modules.RENDERER,
-        `truncation_radius ${radius} is not finite — falling back to ${GSPLAT_DEFAULT_TRUNCATION_RADIUS}. Further clamps are silent.`
+        `truncation_radius ${radius} is not finite in float32 — falling back to ${GSPLAT_DEFAULT_TRUNCATION_RADIUS}. Further clamps are silent.`
       );
     }
     return GSPLAT_DEFAULT_TRUNCATION_RADIUS;

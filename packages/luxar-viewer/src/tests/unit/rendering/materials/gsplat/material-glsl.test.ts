@@ -1,7 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
 import * as THREE from 'three';
 import { GSplatMaterial } from '../../../../../rendering/materials/gsplat/material-glsl';
-import { clampTruncationRadius } from '../../../../../rendering/materials/gsplat/math';
+import {
+  clampTruncationRadius,
+  MIN_TRUNCATION_RADIUS,
+} from '../../../../../rendering/materials/gsplat/math';
 import {
   createGSplatQuadGeometry,
   createInstancedGSplatsMesh,
@@ -80,16 +83,38 @@ vi.mock('three', async () => {
   };
 });
 
-describe('clampTruncationRadius NaN guard', () => {
-  it('falls back to the module default for non-finite radii instead of poisoning uniforms', () => {
-    // NaN slips past a plain comparison clamp (NaN < 0.1 is false) and
+describe('clampTruncationRadius guard', () => {
+  it('falls back to the module default for radii that are not finite in float32', () => {
+    // NaN slips past a plain comparison clamp (NaN < min is false) and
     // would make uShiftC/uInvOneMinusC NaN — the exact degenerate-uniform
     // failure the clamp exists to prevent (truncation_radius arrives
     // unvalidated from dataset attrs).
     expect(clampTruncationRadius(Number.NaN)).toBe(GSPLAT_DEFAULT_TRUNCATION_RADIUS);
     expect(clampTruncationRadius(Number.POSITIVE_INFINITY)).toBe(GSPLAT_DEFAULT_TRUNCATION_RADIUS);
-    expect(clampTruncationRadius(0)).toBe(0.1);
+    // Finite in float64, Infinity once narrowed to the float32 GPU uniform —
+    // the hostile-attr mirror image of the tiny-radius degeneracy. The
+    // write-side validator rejects these; the read-side clamp is the layer
+    // that sees unvalidated stores, so it must catch them too.
+    expect(clampTruncationRadius(3.5e38)).toBe(GSPLAT_DEFAULT_TRUNCATION_RADIUS);
+    expect(clampTruncationRadius(1e308)).toBe(GSPLAT_DEFAULT_TRUNCATION_RADIUS);
+    expect(clampTruncationRadius(0)).toBe(MIN_TRUNCATION_RADIUS);
     expect(clampTruncationRadius(2.5)).toBe(2.5);
+  });
+
+  it('clamps at the float32 degeneracy bound, agreeing with the Python writer', () => {
+    // The write-side validator (MIN_TRUNCATION_RADIUS_FLOAT32 in
+    // luxar/validation/types.py) accepts anything that normalizes in
+    // float32, and on-disk chunk bounds are computed from the stored
+    // radius — so the read-side clamp must not silently rewrite those
+    // values (a 0.05 store must render at 0.05, matching its bounds).
+    expect(clampTruncationRadius(0.05)).toBe(0.05);
+    expect(clampTruncationRadius(0.01)).toBe(0.01);
+    // The bound sits where exp(-T²/2) rounds to 1.0 in float32 (~2.44e-4):
+    // well below float64's ~1.5e-8 threshold, well above zero.
+    expect(MIN_TRUNCATION_RADIUS).toBeGreaterThan(1e-4);
+    expect(MIN_TRUNCATION_RADIUS).toBeLessThan(1e-3);
+    expect(Math.fround(Math.exp(-0.5 * MIN_TRUNCATION_RADIUS ** 2))).toBeLessThan(1.0);
+    expect(clampTruncationRadius(1e-5)).toBe(MIN_TRUNCATION_RADIUS);
   });
 });
 

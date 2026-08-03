@@ -414,10 +414,11 @@ def validate_truncation_radius(truncation_radius: Any) -> float:
     very failure this validator exists to prevent. The check is done in
     **float32**, the narrowest consumer (the CUDA and Metal kernels and the GPU
     shaders all evaluate the shift in single precision), which saturates around
-    ``T = 3e-4`` — four orders of magnitude before float64's ~1.5e-8. This deliberately does NOT adopt the viewer's
-    ``MIN_TRUNCATION_RADIUS`` (0.1), which is a GPU-degeneracy clamp applied at
-    read time; enforcing 0.1 here would reject values (e.g. 0.05) that
-    normalize perfectly well.
+    ``T = 3e-4`` — four orders of magnitude before float64's ~1.5e-8. The
+    viewer's read-time clamp (``MIN_TRUNCATION_RADIUS`` in
+    ``rendering/materials/gsplat/math.ts``) bisects this same float32 bound, so
+    a value accepted here (e.g. 0.05) renders unmodified and stays consistent
+    with the chunk bounds computed from it, instead of being silently raised.
 
     Args:
         truncation_radius: Value to validate as a truncation radius (> 0, finite,

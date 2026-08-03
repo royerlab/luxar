@@ -554,7 +554,7 @@ GSplats have ellipsoidal extent (unlike point radii). Chunk bounds include this 
 #   2D: [L00, L10, L11] → cov[0,0]=L00², cov[1,1]=L10²+L11²
 #   3D: [L00, L10, L11, L20, L21, L22] → cov[2,2]=L20²+L21²+L22²
 
-extent[d] = sqrt(covariance[d, d]) * truncation_radius  # default 2.75 (99.4% of mass)
+extent[d] = sqrt(covariance[d, d]) * truncation_radius  # default 2.75 (per-axis support radius, in sigmas)
 
 # Chunk bounds include extent
 chunk_bounds[i, d, 0] = min(centers[chunk_i, d] - extent[chunk_i, d])
