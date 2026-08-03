@@ -154,7 +154,7 @@ has_colors: bool
 has_scalars: bool
 has_labels: bool
 has_image_labels: bool
-shading: "smooth" | "flat"      # default "smooth" when normals present, else "flat"
+shading: "smooth" | "flat"      # default "smooth" when normals present, else "flat"; consumed by §3.4/§6.2
 double_sided: bool              # default true
 position_bounds: [[min...], [max...]]
 ordering: "none"                # v1 always; reserved for a future spatial index
@@ -193,9 +193,12 @@ normals:     (V, 3) float32
 normal_dims: [i, j, k]      # center-column indices, e.g. [0,1,2] or [1,2,3]
 ```
 
-Stored normals are used **iff `normal_dims` equals the active `displayDims`**. Otherwise — and whenever
-`normals` is absent — the viewer computes **flat face normals** from the projected triangle via a cross
-product (§6.2), which is exactly why the derivative fallback is not optional.
+Stored normals are used **iff `shading == "smooth"` and `normal_dims` equals the active `displayDims`**.
+Otherwise — when `shading == "flat"`, whenever `normals` is absent, or whenever `normal_dims` no longer
+matches the active `displayDims` — the viewer computes **flat face normals** from the projected triangle
+via a cross product (§6.2), which is exactly why the derivative fallback is not optional. `shading` is thus
+a first-class input to this decision, not inert metadata: an explicit `"flat"` overrides otherwise-valid
+stored normals to give a faceted surface.
 
 ⚠️ **Do not store normals against an implicit "first three dimensions".** For a `(t, x, y, z)` mesh the
 first three dims are `(t, x, y)` and such a normal is meaningless. This is a bug class the codebase has
@@ -272,6 +275,12 @@ scene.add_mesh(
     **attrs,                                 # opacity, colormap, transform, blending_mode, ...
 ) -> Mesh
 ```
+
+`shading` resolves as: `None` (the default) → `"smooth"` when `normals` is supplied, else `"flat"`; an explicit
+`"smooth"` with no stored `normals` has nothing to smooth — the writer stamps the value as given and the
+viewer's §6.2 rule falls back to the flat derivative normal at render time (no write-time rewrite); an
+explicit `"flat"` is always honored and renders the faceted derivative-normal surface even when `normals`
+is present (§3.4, §6.2).
 
 Placement mirrors the other three exactly:
 
@@ -447,11 +456,22 @@ The other three geometry types are purely emissive and have no lighting whatsoev
 shading is a flat silhouette and effectively unreadable, so mesh is the first type to shade. The v1
 model is deliberately minimal and light-free:
 
-- **Normal source:** the `normal` attribute when present and valid; otherwise a flat normal derived in
-  the fragment shader from screen-space derivatives of the view position
+- **Normal source:** the stored `normal` attribute is used **iff `shading == "smooth"` and the stored
+  normals are valid for the active view** (present and `normal_dims == displayDims`, §3.4); otherwise —
+  an explicit `shading == "flat"`, absent normals, or a `normal_dims`/`displayDims` mismatch — a flat
+  normal is derived in the fragment shader from screen-space derivatives of the view position
   (`normalize(cross(dFdx(vViewPos), dFdy(vViewPos)))`). The derivative fallback means a mesh with no
   stored normals still shades correctly, and it is what makes §3.4's "recompute on non-default
-  displayDims" cheap.
+  displayDims" cheap. Because a declared-but-unbound `normal` reads `(0,0,0,1)` rather than "absent",
+  this stored↔flat choice is a **compile-time shader variant** (§6.4's `mesh.fragment` vs
+  `mesh-flat-normal.fragment`), selected identically by both the GLSL and TSL backends — so `shading`
+  drives the variant, it is not inert metadata. The selection is computed **once** per node (in
+  `createMeshNode`, from `shading` and the active `displayDims`) and handed to both material factories, so
+  the two backends never re-derive it independently. Its two conjuncts differ in stability: `shading` is
+  view-independent, so a `shading == "flat"` node is statically the flat variant and never swaps; the
+  `normal_dims == displayDims` conjunct is view-dependent, so a `shading == "smooth"` node re-evaluates the
+  rule — swapping variant and binding/omitting the `normal` attribute — when a `displayDims` change flips
+  its validity, the same event that re-extracts the display-space `position` (§6.1).
 - **Shade term:** a camera-anchored headlight with a wrap term,
   `shade = mix(uAmbient, 1.0, pow(saturate(dot(N, V) * 0.5 + 0.5), uShadeExponent))`. View-anchored, so
   it needs no light in the scene graph and no scene-graph API change. `uAmbient` and `uShadeExponent`
@@ -717,6 +737,11 @@ A reviewer should treat a `| 'mesh'` appearing in any of those five as a defect.
 - [ ] Rust: `mesh_vertex_visibility_mask` / `compact_visible_faces` unit tests incl. the non-finite rule
 - [ ] TS unit: loader, geometry assembly, cull correctness, colormap fail-closed guard,
       Rust↔TS kernel parity
+- [ ] TS unit: **flat-vs-smooth on the same normal-bearing mesh** — one mesh with valid stored normals
+      (`normal_dims == displayDims`) selects the stored-normal `mesh.fragment` variant under
+      `shading="smooth"`, and the SAME mesh under `shading="flat"` selects `mesh-flat-normal.fragment`
+      and shades from screen-space derivatives (§3.4, §6.2). Verified to differ — a build that ignores
+      `shading` renders both identically and the test goes red
 - [ ] Codegen snapshots: 6 new (§6.4)
 - [ ] Fixture: `tests/fixtures/generate_test_data.py` gains a mesh fixture (auto-picked up by
       `vitest.config.ts` globalSetup)
