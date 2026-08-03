@@ -135,10 +135,15 @@ reason `Lines.segments` does: the loader reads it as raw chunked zarr and does n
 so dedup would silently drop geometry for a byte-identical sibling, and LUT encoding of grid-snapped
 values would decode as garbage topology.
 
-**Winding convention:** faces are wound counter-clockwise as seen with the display axes in ascending
-index order (front-facing under `FrontSide`, §6.1); the viewer restores front-facing winding for any
-other display-axis parity (§5.4/§7). This frame is fixed by ascending display order and is independent
-of `normal_dims` order (§3.4).
+**Winding convention:** faces are wound counter-clockwise as seen with the mesh's authored spatial
+triple in ascending index order (front-facing under `FrontSide`, §6.1). For a 3D mesh that frame is
+trivially `[0,1,2]`; for an nD mesh it is `sorted(normal_dims)` when normals are present — there is no
+other signal for which three axes the author wound against, and no winding can be counter-clockwise
+under *every* 3D projection of an nD mesh (orientation under a different axis triple is per-triangle
+data-dependent). The viewer restores front-facing winding only when the displayed *set* equals that
+frame and its order is an odd permutation of it (§5.4/§7); for any other displayed triple — or an nD
+mesh with no stored normals — `double_sided: false` falls back to `DoubleSide` for the epoch (§5.4).
+The frame depends only on the *set* of `normal_dims`, not its order (§3.4).
 
 **Naming.** `faces` (not `triangles`, not `indices`) — it parallels `segments` as the topology array,
 reads correctly in the mesh domain, and leaves `indices` free for its existing meaning in the Lines
@@ -227,10 +232,14 @@ convention (fail-fast, before any zarr group is created):
   `F >= 1`. Mirrors the `line_type='indexed'` index gate at `geometry_writers/lines.py:134-170`, which
   is the closest precedent and already encodes each of these traps.
 - `validate_normals_for_writing(normals, n_vertices)` — shape `(V, 3)`, finite. Zero-length normals are
-  **warned**, not rejected (degenerate triangles legitimately produce them), and are renormalized to the
-  flat face normal at render time.
+  **warned**, not rejected (degenerate triangles legitimately produce them). They cannot be repaired at
+  write or upload time — an indexed shared vertex has no unique face normal to substitute — so the
+  stored-normal fragment variant (§6.2) must guard for them: when the interpolated normal is near-zero
+  (`dot(N, N) < ε` before normalization), it falls back to the screen-space-derivative normal rather
+  than normalizing a zero vector into NaN shading.
 - `normal_dims` (§3.4) — exactly 3 entries, integers, distinct, each `0 <= i < ndim`. Required when
-  `normals` is supplied; rejected when it is not.
+  `normals` is supplied; rejected when it is not. It is an explicit `add_mesh` parameter (§4) — as
+  writer-reserved metadata (§3.3) it cannot ride in through `**attrs`.
 
 **Raise `ValidationError`, not `ValueError`.** Note the precedent cited above is split: the shared
 `validate_*_for_writing` family in `validation/base.py` raises `ValidationError(message, hint)` — a
@@ -267,6 +276,7 @@ scene.add_mesh(
     vertices: NDArray[np.float32],          # (V, D)
     faces: NDArray[np.uint32],              # (F, 3)
     normals: NDArray[np.float32] | None = None,
+    normal_dims: Sequence[int] | None = None,   # required iff normals is given — §3.4/§3.5
     colors: NDArray | Sequence[float] | None = None,
     scalars: NDArray[np.float32] | float | None = None,
     *,
@@ -408,14 +418,18 @@ mesh is resident in full anyway (§7). This deliberately avoids:
 The only cost is VRAM for vertices that are currently invisible — bounded by the mesh size, which is
 already the resident working set.
 
-**Winding.** `compact_visible_faces` preserves the authored order, so it is winding-agnostic. Whenever
-the index buffer is (re)built for a `displayDims` whose (x,y,z) column order is an **odd permutation** of
-those indices sorted ascending — a reflection of display space — a post-pass swaps two of each
-triangle's three indices to restore front-facing winding. This is keyed to the *current* `displayDims`
-parity, so it runs on **every** index build in an odd-parity epoch (initial load, slice move, and
-`displayDims` change alike), not only at the moment `displayDims` changes. Equivalently, render the
-opposite material `side` for the duration of the odd-parity epoch — a persistent form that needs no
-per-rebuild post-pass.
+**Winding.** `compact_visible_faces` preserves the authored order, so it is winding-agnostic. Parity is
+decidable only against the authored winding frame (§3.2): when the displayed set equals that frame and
+the `displayDims` (x,y,z) column order is an **odd permutation** of it — a reflection of display
+space — a post-pass swaps two of each triangle's three indices to restore front-facing winding. This is
+keyed to the *current* `displayDims` parity, so it runs on **every** index build in an odd-parity epoch
+(initial load, slice move, and `displayDims` change alike), not only at the moment `displayDims`
+changes. Equivalently, render the opposite material `side` for the duration of the odd-parity epoch — a
+persistent form that needs no per-rebuild post-pass. When the displayed set is a **different triple**
+than the frame (e.g. `[0,1,2]` → `[1,2,3]`), or an nD mesh declares no frame (no stored normals),
+projected orientation varies per triangle and no index post-pass can fix it — the viewer renders
+`DoubleSide` for that epoch regardless of `double_sided: false`, and logs a one-time notice naming the
+node.
 
 `mesh_vertex_visibility_mask` calls `validate_ndim` like its siblings and therefore panics above 16D;
 `pickBackend(ctx, ndim)` (`workers/data-worker/state.ts:60`) returns `ctx.tsFallback` — the **whole
@@ -427,7 +441,7 @@ implemented by **both** backends, or the TS module will not structurally satisfy
 
 When `displayDims.length === ndim` (no hidden dimensions — the common 3D case), the mask is trivially
 all-ones and the *cull* is skipped: with `displayDims` unchanged, positions are extracted once via the
-existing `extract_3d_positions` and the index buffer is uploaded as compacted — after the §5.4 parity
+existing `extract_3d_positions` and the index buffer is uploaded verbatim (no compaction) — after the §5.4 parity
 post-pass, which reverses the winding if the initial `displayDims` is odd-parity (nothing restricts the
 opening/restored view to ascending order). Skipping the cull is **not**
 the same as doing no work, though: a `displayDims` change on this fast path still re-extracts positions
@@ -619,10 +633,14 @@ it later with no caller change.
      presence — a declared-but-unbound `normal` reads `(0,0,0,1)`, not "absent" — so flipping the choice
      must switch the material variant through each backend's existing variant path (§6.4), not by
      attaching/detaching the buffer alone;
-  4. recompute the mask and index buffer; the index build applies the current-`displayDims` winding
-     post-pass (§5.4) — an odd-parity selection reflects display space, so without it a
-     `double_sided: false` mesh (§6.1, `FrontSide`) renders **inside-out** (an open surface vanishes).
-     The §6.2 derivative-normal fallback is unaffected — it always faces the camera regardless of winding.
+  4. recompute the mask and index buffer; when the displayed set equals the winding frame (§3.2), the
+     index build applies the current-`displayDims` winding post-pass (§5.4) — an odd-parity selection
+     reflects display space, so without it a `double_sided: false` mesh (§6.1, `FrontSide`) renders
+     **inside-out** (an open surface vanishes). When the new `displayDims` is a **different triple**
+     than the frame, the material instead falls back to `DoubleSide` for the epoch (§5.4) — projected
+     orientation is per-triangle data-dependent there and no post-pass can correct it. The §6.2
+     derivative-normal fallback is unaffected either way — it always faces the camera regardless of
+     winding.
 
   This holds **even on the §5.5 fast path**: a 3D axis permutation leaves the mask all-ones but still
   requires `position`/`normal` re-derivation, bounds recompute, and (for an odd permutation) winding
@@ -773,10 +791,13 @@ A reviewer should treat a `| 'mesh'` appearing in any of those five as a defect.
       re-extracts positions, re-decides the `normal` attribute, recomputes bounds, and reverses the index
       winding so front faces stay visible (goes red without the reversal precisely because `FrontSide`
       culls the flipped triangles) — rebuilds `position`/`normal`/index, not just the index (§7).
-      Separately, on a **`double_sided: false`, ≥4D** mesh with an **odd-parity** `displayDims`, a pure
+      Separately, on a **`double_sided: false`, ≥4D** mesh carrying normals (so `sorted(normal_dims)`
+      declares the winding frame, §3.2) displayed with an **odd-parity** ordering of that frame, a pure
       slicePosition move (unchanged `displayDims`) rebuilds the index only BUT still preserves
       front-facing winding (front faces stay visible), proving the winding post-pass persists across
-      slice moves (§5.4), not just the displayDims-change event
+      slice moves (§5.4), not just the displayDims-change event. And on the same mesh, a `displayDims`
+      change to a **different axis triple** than the frame falls back to `DoubleSide` for the epoch —
+      both orientations render (§5.4/§7)
 - [ ] Codegen snapshots: 6 new (§6.4)
 - [ ] Fixture: `tests/fixtures/generate_test_data.py` gains a mesh fixture (auto-picked up by
       `vitest.config.ts` globalSetup)
