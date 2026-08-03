@@ -207,7 +207,6 @@ function makeCtx(registry?: LODGroupRegistry): NodeBuildCtx {
     nodeFactory,
     viewState: { displayDims: [0, 1, 2], slicePosition: [], tolerance: [] },
     getViewVersion: () => 1,
-    getLiveViewState: () => ({ displayDims: [0, 1, 2], slicePosition: [], tolerance: [] }),
     factoryDeps: {} as never,
     isDatasetLive: () => true,
     releaseLazyGSplats: vi.fn(),

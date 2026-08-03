@@ -11,10 +11,9 @@
  *     checking that `applyEffectiveAttrs(node)` is called before the
  *     progressive helper.
  *
- * The extend_to_all skip fallback for GSplats uses an explicit 4-field
- * spread (rather than the identity that Points uses) — verify by
- * asserting the loader.loadGSplats argument has exactly the four
- * expected fields and is NOT the same object reference as ctx.viewState.
+ * A fully-extended node loads with the DERIVED extended-tolerance +
+ * pinned-slice view state on initial load (#1157) — verify by asserting
+ * loader.loadGSplats receives that derived view state.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -109,7 +108,6 @@ function makeCtx(overrides: Partial<NodeBuildCtx> = {}): NodeBuildCtx & {
     factoryDeps: {} as never,
     isDatasetLive: () => true,
     getViewVersion: () => 1,
-    getLiveViewState: () => viewState,
     releaseLazyGSplats: vi.fn(),
     releaseLazyPoints: vi.fn(),
     releaseLazyLines: vi.fn(),
@@ -253,24 +251,27 @@ describe('loadGSplatsNode — LOD branch', () => {
   });
 });
 
-describe('loadGSplatsNode — extend_to_all skip fallback', () => {
-  it('builds a 4-field spread (not the same identity as ctx.viewState)', async () => {
+describe('loadGSplatsNode — fully-extended node on initial load (#1157)', () => {
+  it('loads with the derived extended-tolerance + pinned-slice view state for a fully-extended node', async () => {
     const loadGSplats = vi.fn().mockResolvedValue({ splatCount: 0 } as LoadedGSplatsData);
     createGSplatsLoaderMock.mockReturnValue(makeGSplatsLoader(loadGSplats));
     const ctx = makeCtx();
-    ctx.spies.deriveNodeViewState.mockReturnValue({ skip: 'extend_to_all' });
+    // The full-extend derivation carries a view state whose tolerance has the
+    // extend-to-all sentinel on every non-displayed dim; the initial load must
+    // use IT so the sentinels flow into the projector's extendToAllDims and the
+    // whole slice-independent node loads on first paint.
+    const extendedViewState: ViewState = {
+      ...makeViewState(),
+      tolerance: [1e10, 1e10, 1e10, 1e10],
+    };
+    ctx.spies.deriveNodeViewState.mockReturnValue({
+      skip: false,
+      viewState: extendedViewState,
+    });
 
     await loadGSplatsNode(makeSceneNode(), new THREE.Group(), {} as never, ctx);
 
-    const passed = loadGSplats.mock.calls[0][0] as GSplatsViewState;
-    // Same field VALUES…
-    expect(passed.displayDims).toBe(ctx.viewState.displayDims);
-    expect(passed.slicePosition).toBe(ctx.viewState.slicePosition);
-    expect(passed.tolerance).toBe(ctx.viewState.tolerance);
-    expect(passed.dimensions).toBe(ctx.viewState.dimensions);
-    // …but a NEW object identity (4-field spread, unlike Points which
-    // returns ctx.viewState by reference).
-    expect(passed).not.toBe(ctx.viewState);
+    expect(loadGSplats.mock.calls[0][0]).toBe(extendedViewState);
   });
 });
 

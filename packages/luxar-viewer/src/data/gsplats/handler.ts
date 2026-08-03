@@ -15,7 +15,6 @@ import type {
   GSplatsViewState,
   LoadedGSplatsData,
 } from '../../types/gsplats';
-import { log, Modules } from '../../utils/log';
 import type { UpdateSession } from '../../profiling/update-profiler';
 import type { ViewStateQueue } from '../scene-loader/view-state/view-state-queue';
 import {
@@ -38,7 +37,7 @@ export interface GSplatsHandlerCtx {
     path: string,
     attrs: { extend_to_all?: string[] } | undefined,
     opts: { applyPartialExtendTolerance: boolean; extendedToleranceCache?: Map<string, number[]> }
-  ): { skip: 'extend_to_all' } | { skip: false; viewState: ViewState };
+  ): { skip: false; viewState: ViewState };
   /** Per-update abort signal forwarded to `loader.updateView` (see DataLoader). */
   signal?: AbortSignal;
   /**
@@ -79,19 +78,9 @@ export async function loadAndStage(
    */
   const markPathHealthy = (): void => ctx.clearFailure(path);
 
-  if (derived.skip) {
-    log.info(
-      Modules.SCENE_LOADER,
-      `Skipping gsplats update for ${path} - all non-displayed dims are extended`
-    );
-    // Deliberately NOT marking healthy here: a skipped node loaded nothing, so a
-    // previously-recorded failure is still unresolved. Clearing it would drop
-    // the node from the retry set and hide a real breakage.
-    session.markSkipped(derived.skip);
-    // S6: see Points handler — drop prev to avoid stale extrap.
-    ctx.viewStateQueue.forgetPath(path);
-    return null;
-  }
+  // A fully-extended node is derived as a normal node with a slice-INVARIANT
+  // query (see deriveNodeViewState), so it flows through the standard load path
+  // below — first sweep fetches, later sweeps hit the same-view no-op. No skip.
   // Playback frame budget rides the derived per-node view state (per-pass
   // directive; absent outside animation playback — see ctx.frameBudgetMs).
   const gsplatsViewState: GSplatsViewState =

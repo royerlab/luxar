@@ -235,6 +235,31 @@ describe('processGSplatsData', () => {
       maxRowNorm: 0.5,
     });
   });
+
+  it('derives extendToAllDims from the 1e10 tolerance sentinel (extend_to_all symptom 3, #1157)', async () => {
+    // A fully-extended node's derived view state carries the 1e10 sentinel on
+    // its non-displayed dim(s). buildGSplatsParams must translate that into
+    // `extendToAllDims`, so the projector skips those dims (`hidden-dims.ts`)
+    // instead of filtering every splat out on the hidden axis. Regression guard
+    // for `isExtendToAll` — with an empty extendToAllDims, gsplat LOD levels of
+    // a fully-extended node vanish.
+    const root = new THREE.Group();
+    root.add(makeMesh('/g'));
+    const viewState: GSplatsViewState = {
+      ...makeViewState(),
+      // 't' (index 3) is the only non-displayed dim; mark it extend-to-all.
+      tolerance: [1, 1, 1, 1e10],
+    };
+    await processGSplatsData('/g', makeData(50), viewState, root, 1);
+    expect(mockProcessGSplats).toHaveBeenCalledTimes(1);
+    const params = mockProcessGSplats.mock.calls[0][0] as {
+      extendToAllDims: number[];
+      discreteDims: number[];
+    };
+    expect(params.extendToAllDims).toEqual([3]);
+    // An extend-to-all dim is NOT also treated as a discrete slice dim.
+    expect(params.discreteDims).not.toContain(3);
+  });
 });
 
 describe('projectGSplatsTo3DUsingWorker', () => {

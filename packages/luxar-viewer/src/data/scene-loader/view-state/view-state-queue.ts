@@ -70,9 +70,9 @@ export class ViewStateQueue {
    * S6: per-loader predictive prefetch. Extrapolates the next-frame
    * view state from the path's previous derived view-state to the
    * current one and fires `prefetchChunks(predicted)` on the loader.
-   * Honors per-node tolerance extension + extend_to_all skip semantics
-   * by accepting the *derived* view-state (caller computes it) — so
-   * extended/skipped nodes don't get over-prefetched.
+   * Honors per-node tolerance extension (incl. a fully-extended node's
+   * slice-invariant query) by accepting the *derived* view-state (caller
+   * computes it) — so extended nodes don't get over-prefetched.
    *
    * Fire-and-forget in a microtask so a slow prefetch cannot delay the
    * commit path.

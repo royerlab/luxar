@@ -93,7 +93,6 @@ function makeCtx(overrides: Partial<NodeBuildCtx> = {}): NodeBuildCtx & {
     factoryDeps: {} as never,
     isDatasetLive: () => true,
     getViewVersion: () => 1,
-    getLiveViewState: () => viewState,
     releaseLazyGSplats: vi.fn(),
     releaseLazyPoints: vi.fn(),
     releaseLazyLines: vi.fn(),
@@ -215,17 +214,27 @@ describe('loadLinesNode — happy path', () => {
   });
 });
 
-describe('loadLinesNode — extend_to_all skip fallback', () => {
-  it('uses ctx.viewState when derive returns skip', async () => {
+describe('loadLinesNode — fully-extended node on initial load (#1157)', () => {
+  it('loads with the derived extended-tolerance + pinned-slice view state for a fully-extended node', async () => {
     const loadLines = vi.fn().mockResolvedValue({ segmentCount: 0 } as LoadedLinesData);
     createLinesLoaderMock.mockReturnValue(makeLinesLoader(loadLines));
     const ctx = makeCtx();
-    ctx.spies.deriveNodeViewState.mockReturnValue({ skip: 'extend_to_all' });
+    // Even though lines opt out of the PARTIAL-extend override,
+    // `deriveNodeViewState` computes the tolerance + slice pin unconditionally
+    // for the full-extend case — so a fully-extended lines node loads its whole
+    // extent instead of only the current-slice subset.
+    const extendedViewState: ViewState = {
+      ...makeViewState(),
+      tolerance: [1e10, 1e10, 1e10, 1e10],
+    };
+    ctx.spies.deriveNodeViewState.mockReturnValue({
+      skip: false,
+      viewState: extendedViewState,
+    });
 
     await loadLinesNode(makeSceneNode(), new THREE.Group(), {} as never, ctx);
 
-    // Identity-check: initial-load falls back to the base viewState reference.
-    expect(loadLines.mock.calls[0][0]).toBe(ctx.viewState);
+    expect(loadLines.mock.calls[0][0]).toBe(extendedViewState);
   });
 });
 
