@@ -62,7 +62,15 @@ function deriveDisplayType(rawType: string | undefined): GraphNodeType {
   return VALID_TYPES.has(rawType as GraphNodeType) ? (rawType as GraphNodeType) : 'scene';
 }
 
-/** Leaf geometry display types a specialized group can resolve to. */
+/**
+ * Leaf geometry display types a specialized group can resolve to.
+ *
+ * DO NOT widen to `GEOMETRY_TYPES`. This gates the `display_type` attr of a
+ * `kind=lod` / `kind=partition` group, so it is the set of geometry types that
+ * actually support those containers — the mirror of the Python-side allowlist in
+ * `core/node/specialized_groups.py`. A geometry type with no LOD/partition
+ * support must not be admitted here just because it is a valid leaf type.
+ */
 const LEAF_DISPLAY_TYPES: ReadonlySet<string> = new Set(['points', 'lines', 'gsplats']);
 
 /**

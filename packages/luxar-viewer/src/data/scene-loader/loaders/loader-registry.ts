@@ -107,7 +107,7 @@ export class LoaderRegistry {
    * they always were.
    */
   private readonly byKind: ReadonlyMap<GeometryKind, Map<string, AnyDataLoader>> = new Map(
-    GEOMETRY_TYPES.map((kind) => [kind as GeometryKind, new Map<string, AnyDataLoader>()])
+    GEOMETRY_TYPES.map((kind) => [kind, new Map<string, AnyDataLoader>()])
   );
 
   /**

@@ -246,8 +246,20 @@ def _ts_str(value: str) -> str:
     return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
 
 
-def _ts_const(name: str, values: List[str]) -> str:
-    lhs = f"export const {name}: readonly string[] = "
+def _ts_const(name: str, values: List[str], elem_type: str = "string") -> str:
+    """Emit ``export const NAME: readonly T[] = [...]``.
+
+    ``elem_type`` mirrors :func:`_py_tuple`'s parameter of the same name. Pass
+    the paired union alias so callers can iterate the array *and* index a
+    record keyed by it — with the default ``string`` they cannot, and every
+    such call site ends up re-declaring the literals locally.
+
+    Left as ``string`` on purpose for the ``SUPPORTED_*_VERSIONS`` allowlists:
+    those are matched against untrusted values read off disk, and
+    ``readonly T[].includes(someString)`` is a type error in TypeScript. Python
+    can narrow the same tuples because ``x in tup`` is not type-checked there.
+    """
+    lhs = f"export const {name}: readonly {elem_type}[] = "
     inline = f'{lhs}[{", ".join(_ts_str(v) for v in values)}];'
     if len(inline) <= TS_WIDTH:
         return inline
@@ -299,22 +311,22 @@ def render_typescript(c: Dict[str, Any]) -> str:
         "// --- root-header format_type identifying a standalone gsplats store ---\n"
         f"export const FORMAT_TYPE_GSPLATS = {_ts_str(c['format_type_gsplats'])};",
         "// --- scene-graph node types ---\n"
-        f"{_ts_const('NODE_TYPES', node_types)}\n"
+        f"{_ts_const('NODE_TYPES', node_types, 'NodeTypeName')}\n"
         f"{_ts_union('NodeTypeName', node_types)}",
         "// --- leaf geometry types (the element-bearing subset of NODE_TYPES) ---\n"
-        f"{_ts_const('GEOMETRY_TYPES', geometry_types)}\n"
+        f"{_ts_const('GEOMETRY_TYPES', geometry_types, 'GeometryTypeName')}\n"
         f"{_ts_union('GeometryTypeName', geometry_types)}",
         "// --- specialized-group kinds ---\n"
-        f"{_ts_const('NODE_KINDS', node_kinds)}\n"
+        f"{_ts_const('NODE_KINDS', node_kinds, 'NodeKind')}\n"
         f"{_ts_union('NodeKind', node_kinds)}",
         "// --- on-disk array encoding scheme names ---\n"
-        f"{_ts_const('ENCODING_NAMES', encodings)}\n"
+        f"{_ts_const('ENCODING_NAMES', encodings, 'EncodingName')}\n"
         f"{_ts_union('EncodingName', encodings)}",
         "// --- canonical metadata attribute keys ---\n"
-        f"{_ts_const('ATTR_KEYS', attr_keys)}\n"
+        f"{_ts_const('ATTR_KEYS', attr_keys, 'AttrKey')}\n"
         f"{_ts_union('AttrKey', attr_keys)}",
         "// --- canonical gsplats array names ---\n"
-        f"{_ts_const('ARRAY_NAMES', array_names)}\n"
+        f"{_ts_const('ARRAY_NAMES', array_names, 'ArrayName')}\n"
         f"{_ts_union('ArrayName', array_names)}",
     ]
 
