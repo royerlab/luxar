@@ -296,6 +296,19 @@ describe('LineMaterial', () => {
       expect(material.vertexShader).toContain('uPerspectiveLineScale');
       expect(material.vertexShader).toContain('uOrthoLineScale');
     });
+
+    it('drives the pathological discard from the per-segment max width (issue #849)', () => {
+      const material = new LineMaterial();
+
+      // The discard must be ONE per-segment decision, not per-quad-vertex:
+      // rawPixelWidth varies between the t=0 and t=1 corners of the shared
+      // quad, so gating on it sentinels only half the quad and leaves a
+      // visible wedge toward screen center during a close fly-by (#849).
+      // The fix gates on segMaxPixelWidth (max over both clipped endpoints).
+      expect(material.vertexShader).toContain('segMaxPixelWidth');
+      expect(material.vertexShader).toContain('segMaxPixelWidth > maxPW * 2.0');
+      expect(material.vertexShader).not.toContain('rawPixelWidth > maxPW * 2.0');
+    });
   });
 
   describe('blending mode depth test configuration', () => {
