@@ -217,6 +217,8 @@ A cross-section of Luxar's built-in demos — all three geometry types (**Points
 | **FlyWire Connectome**<br>fly-brain neurons | **Single-Cell 3D Genome**<br>Dip-C chromosomes | **C. elegans**<br>4D nuclei-tracking timelapse |
 | [![ATP Synthase — molecular machine](docs/images/readme/gallery/atp_synthase.webp)](docs/images/readme/gallery/atp_synthase.webm) | [![Tabula Sapiens — human cell atlas](docs/images/readme/gallery/tabula_sapiens.webp)](docs/images/readme/gallery/tabula_sapiens.webm) | [![Human Multiome — ATAC-peak UMAP](docs/images/readme/gallery/human_multiome_peak_umap.webp)](docs/images/readme/gallery/human_multiome_peak_umap.webm) |
 | **ATP Synthase**<br>molecular machine | **Tabula Sapiens**<br>human cell atlas | **Human Multiome**<br>ATAC-peak UMAP |
+| [![Human White-Matter Tractography — 87 dMRI tracts](docs/images/readme/gallery/dmri_tractography.webp)](docs/images/readme/gallery/dmri_tractography.webm) | | |
+| **White-Matter Tractography**<br>87 human dMRI tracts | | |
 
 ### Earth & geoscience
 
