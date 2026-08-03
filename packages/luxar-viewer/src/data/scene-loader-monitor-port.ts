@@ -26,6 +26,7 @@ import type {
   GPUPoolStats,
   AccumulatorStats,
   LODProgressProvider,
+  PooledGeometryType,
 } from '../types/data-monitor-types';
 import type { UpdateProfiler } from '../profiling/update-profiler';
 
@@ -104,10 +105,7 @@ export interface SceneLoaderMonitorPort {
   setL0CacheProvider(provider: L0CacheProviderPort | null): void;
   setSliceCacheProvider(provider: SliceCacheProviderPort | null): void;
   setGPUBufferPoolProvider(provider: GPUBufferPoolProviderPort | null): void;
-  setAccumulatorProvider(
-    type: 'points' | 'lines' | 'gsplats',
-    provider: AccumulatorProviderPort | null
-  ): void;
+  setAccumulatorProvider(type: PooledGeometryType, provider: AccumulatorProviderPort | null): void;
   setProfiler(profiler: UpdateProfiler | null): void;
   /**
    * Inject the live LOD / progressive-refinement / cache-residency state

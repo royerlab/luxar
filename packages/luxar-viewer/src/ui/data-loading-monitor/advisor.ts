@@ -8,6 +8,7 @@
 import type { MonitorEvent, Recommendation, LoaderMetrics } from '../../types/data-monitor-types';
 import type { MemoryMetrics } from './templates';
 import { config } from '../../config';
+import { POOLED_GEOMETRY_TYPES } from '../../types/data-monitor-types';
 
 const PerformanceThresholds = config.dataLoading.monitor.thresholds;
 const MonitorLimits = config.dataLoading.monitor.limits;
@@ -265,7 +266,7 @@ export class LoadingAdvisor {
       }
 
       // Check per-type reuse rates
-      for (const type of ['points', 'lines', 'gsplats'] as const) {
+      for (const type of POOLED_GEOMETRY_TYPES) {
         const typeStats = byType[type];
         const typeTotal = typeStats.allocations + typeStats.reuses;
         const typeReuseRate = typeTotal > 0 ? typeStats.reuses / typeTotal : 1;
@@ -277,7 +278,7 @@ export class LoadingAdvisor {
     }
 
     // Analyze accumulators
-    for (const type of ['points', 'lines', 'gsplats'] as const) {
+    for (const type of POOLED_GEOMETRY_TYPES) {
       const stats = metrics.accumulators[type];
       if (stats && stats.growthEvents > 5) {
         this.addExcessiveGrowthRecommendation(type, stats.growthEvents);

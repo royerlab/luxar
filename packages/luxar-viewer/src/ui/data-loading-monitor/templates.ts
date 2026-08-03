@@ -1249,6 +1249,7 @@ import type {
   AccumulatorStats,
   MemoryMetrics,
 } from '../../types/data-monitor-types';
+import { POOLED_GEOMETRY_TYPES } from '../../types/data-monitor-types';
 export type { GPUPoolTypeStats, GPUPoolStats, AccumulatorStats, MemoryMetrics };
 
 /**
@@ -1352,17 +1353,14 @@ export function renderMemoryContent(metrics: MemoryMetrics): string {
  * Render GPU buffer pool section with per-type table
  */
 function renderGPUPoolSection(stats: GPUPoolStats): string {
-  const types = ['points', 'lines', 'gsplats'] as const;
+  const rows = POOLED_GEOMETRY_TYPES.map((type) => {
+    const typeStats = stats.byType[type];
+    const reuseRate = calculateReuseRate(typeStats.allocations, typeStats.reuses);
+    const hasData =
+      typeStats.allocations > 0 || typeStats.reuses > 0 || typeStats.activeBuffers > 0;
+    const reuseColorClass = hasData ? getReuseRateColorClass(reuseRate) : getColorClass('dimmed');
 
-  const rows = types
-    .map((type) => {
-      const typeStats = stats.byType[type];
-      const reuseRate = calculateReuseRate(typeStats.allocations, typeStats.reuses);
-      const hasData =
-        typeStats.allocations > 0 || typeStats.reuses > 0 || typeStats.activeBuffers > 0;
-      const reuseColorClass = hasData ? getReuseRateColorClass(reuseRate) : getColorClass('dimmed');
-
-      return `
+    return `
       <tr class="luxar-memory-table__row" data-row="gpu-${type}">
         <td class="luxar-memory-table__cell luxar-memory-table__cell--type">${capitalize(type)}</td>
         <td class="luxar-memory-table__cell luxar-memory-table__cell--value ${reuseColorClass}" data-field="gpu-${type}-reuse">
@@ -1379,8 +1377,7 @@ function renderGPUPoolSection(stats: GPUPoolStats): string {
         </td>
       </tr>
     `;
-    })
-    .join('');
+  }).join('');
 
   return `
     <div class="luxar-memory-section">
@@ -1412,14 +1409,11 @@ function renderGPUPoolSection(stats: GPUPoolStats): string {
  * Render accumulators section with per-type table
  */
 function renderAccumulatorsSection(accumulators: MemoryMetrics['accumulators']): string {
-  const types = ['points', 'lines', 'gsplats'] as const;
+  const rows = POOLED_GEOMETRY_TYPES.map((type) => {
+    const stats = accumulators[type];
+    const hasData = stats !== null && stats.capacity > 0;
 
-  const rows = types
-    .map((type) => {
-      const stats = accumulators[type];
-      const hasData = stats !== null && stats.capacity > 0;
-
-      return `
+    return `
       <tr class="luxar-memory-table__row" data-row="acc-${type}">
         <td class="luxar-memory-table__cell luxar-memory-table__cell--type">${capitalize(type)}</td>
         <td class="luxar-memory-table__cell luxar-memory-table__cell--value" data-field="acc-${type}-capacity">
@@ -1433,8 +1427,7 @@ function renderAccumulatorsSection(accumulators: MemoryMetrics['accumulators']):
         </td>
       </tr>
     `;
-    })
-    .join('');
+  }).join('');
 
   // Calculate totals
   const totalMemory =
