@@ -105,7 +105,8 @@ export interface SimpleDims {
  * @returns Initialized SimpleDims object ready for use
  * @throws Error if the positions array structure is invalid
  *
- * @internal — used by SceneDimsManager initialization; not part of the public API.
+ * @internal — re-exported from types/index.ts; no production call site outside
+ * this module.
  */
 export function initializeDims(
   numPoints: number,
@@ -124,9 +125,9 @@ export function initializeDims(
     throw new Error(`Invalid numPoints: ${numPoints} must be a non-negative integer`);
   }
 
-  // HIGH-5: empty point clouds are legitimate; avoid dividing by zero and
-  // returning Infinity (which then failed Number.isInteger with a misleading
-  // "0 elements for 0 points" error). Infer ndim from metadata when given,
+  // Empty point clouds are legitimate: dividing by zero here would yield
+  // Infinity, which then fails Number.isInteger with a misleading
+  // "0 elements for 0 points" error. Infer ndim from metadata when given,
   // else default to 3 (the common spatial case). `displayed` stays empty —
   // there is nothing to display.
   if (numPoints === 0) {
@@ -146,15 +147,14 @@ export function initializeDims(
     throw new Error(`Invalid positions array: ${totalElements} elements for ${numPoints} points`);
   }
 
-  // HIGH-5: previously we silently truncated when metadata.length < ndim, so
-  // datasets with partial metadata fell through to the "no dim marked for
-  // display" fallback and authoring bugs went unnoticed. Pad with defaults
-  // and warn so callers see the gap.
+  // Pad with defaults and warn so callers see the gap: silently truncating
+  // partial metadata sends the dataset to the "no dim marked for display"
+  // fallback, where an authoring bug looks like normal behaviour.
   //
-  // OOS-1 (round-2 audit): the inverse case — metadata.length > ndim — is
-  // silently truncated by the `i < effectiveMetadata.length` clamp in the
-  // display-determination loop below. That hides authoring bugs the other
-  // direction. Surface it with the same warning.
+  // The inverse case — metadata.length > ndim — would be silently truncated
+  // by the `i < effectiveMetadata.length` clamp in the display-determination
+  // loop below, hiding authoring bugs the other direction, so it gets the
+  // same warning.
   let effectiveMetadata = metadata;
   if (metadata && metadata.length > 0 && metadata.length < ndim) {
     log.warning(
@@ -225,7 +225,10 @@ export function initializeDims(
  * @param numPoints - Total number of points in the dataset
  * @returns Array of [min, max] tuples for each dimension
  *
- * @internal — used by SceneDimsManager initialization; not part of the public API.
+ * @internal — re-exported from types/index.ts; no production call site outside
+ * this module. Note `SceneDimsManager` has a same-named *method* that reads
+ * cached ranges off the manager; the `sceneDimsManager.getDimensionRanges()`
+ * calls in `ui/`, `core/` and `input/` are that method, not this function.
  */
 export function getDimensionRanges(
   positions: Float32Array,

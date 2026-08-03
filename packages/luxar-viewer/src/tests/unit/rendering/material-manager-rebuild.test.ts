@@ -55,13 +55,11 @@ describe('MaterialManager.rebuildAfterContextRestore', () => {
     mm.getPointMaterial(POINT_PROPS); // per-node — registered only
 
     const before = mm.getCacheStats();
-    expect(before.cachedMaterials).toBe(0); // nothing is cached anymore
     expect(before.totalRegistered).toBe(2);
 
     mm.rebuildAfterContextRestore();
 
     const after = mm.getCacheStats();
-    expect(after.cachedMaterials).toBe(0); // still empty
     // Registry preserved — visible materials still tracked for camera updates.
     expect(after.totalRegistered).toBe(before.totalRegistered);
   });
@@ -106,7 +104,7 @@ describe('MaterialManager.rebuildAfterContextRestore', () => {
     mm.getPointMaterial(POINT_PROPS);
     mm.rebuildAfterContextRestore();
     expect(() => mm.dispose()).not.toThrow();
-    expect(mm.getCacheStats().cachedMaterials).toBe(0);
+    expect(mm.getCacheStats().totalRegistered).toBe(0);
   });
 
   it('preserved registry materials still receive camera updates after restore', async () => {

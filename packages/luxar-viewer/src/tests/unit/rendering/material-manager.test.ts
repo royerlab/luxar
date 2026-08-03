@@ -220,9 +220,7 @@ describe('MaterialManager', () => {
 
       expect(material1).not.toBe(material2);
 
-      // The point cache map stays permanently empty.
       const stats = manager.getCacheStats();
-      expect(stats.pointMaterials).toBe(0);
       // Both per-node materials are registered for camera broadcast.
       expect(stats.totalRegistered).toBe(2);
     });
@@ -415,9 +413,7 @@ describe('MaterialManager', () => {
       expect(mat1.dispose).toHaveBeenCalled();
       expect(mat2.dispose).toHaveBeenCalled();
 
-      // Cache should be cleared
       const stats = manager.getCacheStats();
-      expect(stats.pointMaterials).toBe(0);
       expect(stats.ownedMaterials).toBe(0);
       expect(stats.totalRegistered).toBe(0);
     });
@@ -431,13 +427,11 @@ describe('MaterialManager', () => {
         offset: 0.0,
       });
 
-      // Per-node: never cached, but registered for camera broadcast.
-      expect(manager.getCacheStats().pointMaterials).toBe(0);
+      // Per-node: registered for camera broadcast.
       expect(manager.getCacheStats().totalRegistered).toBe(1);
 
       manager.dispose();
 
-      expect(manager.getCacheStats().pointMaterials).toBe(0);
       expect(manager.getCacheStats().totalRegistered).toBe(0);
     });
 
@@ -454,8 +448,6 @@ describe('MaterialManager', () => {
       manager.register(clone);
 
       let stats = manager.getCacheStats();
-      expect(stats.pointMaterials).toBe(0); // per-node — no cache entry
-      expect(stats.cachedMaterials).toBe(0);
       expect(stats.ownedMaterials).toBe(1);
       expect(stats.totalRegistered).toBe(2);
 
@@ -482,7 +474,6 @@ describe('MaterialManager', () => {
       manager.unregister(clone);
 
       const stats = manager.getCacheStats();
-      expect(stats.pointMaterials).toBe(0); // per-node — no cache entry
       expect(stats.ownedMaterials).toBe(0);
       expect(stats.totalRegistered).toBe(1); // the per-node material stays registered
     });
@@ -538,9 +529,8 @@ describe('MaterialManager', () => {
   describe('getCacheStats', () => {
     it('should return accurate statistics (per-node points registered, never cached)', () => {
       const stats1 = manager.getCacheStats();
-      expect(stats1.pointMaterials).toBe(0);
       expect(stats1.totalRegistered).toBe(0);
-      expect(stats1.keys).toEqual([]);
+      expect(stats1.createCount).toBe(0);
 
       // Create materials
       manager.getPointMaterial({
@@ -560,16 +550,14 @@ describe('MaterialManager', () => {
       });
 
       const stats2 = manager.getCacheStats();
-      expect(stats2.pointMaterials).toBe(0); // per-node — no cache entries
-      expect(stats2.totalRegistered).toBe(2); // but both are registered
-      expect(stats2.keys.length).toBe(0); // no keys — nothing cached
+      expect(stats2.totalRegistered).toBe(2); // both are registered
+      expect(stats2.createCount).toBe(2); // one construction each
     });
 
-    it('should report no cache keys — all three material kinds are per-node (nothing cached)', () => {
+    it('registers all three material kinds independently — every one is per-node', () => {
       // The line-material LRU (the last cached kind) died with the lines
       // texture-storage migration: every getXMaterial call creates a
-      // fresh per-node material, so the cache maps — and therefore
-      // `keys` — stay permanently empty.
+      // fresh per-node material.
       manager.getLineMaterial({
         blendingMode: 'additive',
         opacity: 1.0,
@@ -593,13 +581,8 @@ describe('MaterialManager', () => {
       });
 
       const stats = manager.getCacheStats();
-      expect(stats.keys).toEqual([]);
-      expect(stats.pointMaterials).toBe(0);
-      expect(stats.lineMaterials).toBe(0);
-      expect(stats.gsplatMaterials).toBe(0);
-      expect(stats.cachedMaterials).toBe(0);
-      expect(stats.evictions).toBe(0);
-      // All three per-node materials are still registered for camera broadcast.
+      expect(stats.createCount).toBe(3);
+      // All three per-node materials are registered for camera broadcast.
       expect(stats.totalRegistered).toBe(3);
     });
   });

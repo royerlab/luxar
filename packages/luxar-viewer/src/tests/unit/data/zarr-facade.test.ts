@@ -131,7 +131,6 @@ describe('Zarr facade contract', () => {
     expect(zarr.openGroup).toEqual(expect.any(Function));
     expect(zarr.openArray).toEqual(expect.any(Function));
     expect(zarr.readArray).toEqual(expect.any(Function));
-    expect(zarr.get).toBe(zarr.readArray);
     expect(zarr.slice).toEqual(expect.any(Function));
     expect(zarr.isNotFoundError).toEqual(expect.any(Function));
     expect(zarr.codecRegistry).toBeDefined();
