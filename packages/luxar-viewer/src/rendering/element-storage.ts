@@ -391,6 +391,26 @@ export function setSortedIndexApplyRequestRender(fn: (() => void) | null): void 
   requestSliceRender = fn;
 }
 
+/**
+ * When true, {@link applyNextSortedIndexChunk} advances past the #715
+ * upload-acknowledgement back-pressure. Set by the depth-sort
+ * coordinator's offline-capture drain (`resortForCapture`): that drain
+ * never draws, so the ack that releases the stall can never fire and a
+ * multi-slice stream (>1 slice, e.g. a 3M-element node) would wedge the
+ * drain until its timeout on every captured frame. The stall exists only
+ * to bound the per-DRAWN-frame upload for interactive smoothness;
+ * offline, folding the slices into one upload on the capture's own
+ * render is exactly acceptable, and the range-union discipline keeps the
+ * pending span contiguous and current (a superset upload is correct,
+ * never stale).
+ */
+let backPressureBypassed = false;
+
+/** Toggle the offline-capture back-pressure bypass (see above). */
+export function setSortedIndexApplyBackPressureBypassed(bypassed: boolean): void {
+  backPressureBypassed = bypassed;
+}
+
 /** Outcome of one {@link pumpSortedIndexOrderingApply} call. */
 export interface SortedIndexPumpResult {
   /**
@@ -535,7 +555,12 @@ function applyNextSortedIndexChunk(
   // acknowledged (issue #715). Gated on the chunked backend and on having
   // written at least one slice, so WebGPU's single-slice path and every
   // stream's first slice always proceed.
-  if (chunkedApplyEnabled && state.cursor > 0 && sliceUploadPending.has(attr)) {
+  if (
+    chunkedApplyEnabled &&
+    !backPressureBypassed &&
+    state.cursor > 0 &&
+    sliceUploadPending.has(attr)
+  ) {
     return { more: true, flipped: false, stalled: true };
   }
   const arr = attr.array as Uint32Array;
