@@ -196,7 +196,7 @@ make build-launchers
   └─ Linux:  GOOS=linux GOARCH=$(uname -m) CGO_ENABLED=1 go build → linux-<arch>
 ```
 
-**Runtime fallback:** end users can set `LUXAR_LAUNCHER_NO_WEBVIEW=1` to make the launcher open the system default browser instead of the embedded WebView. Useful for headless smoke tests and minimal Linux installs without `libwebkit2gtk`.
+**Runtime fallback:** end users can set `LUXAR_LAUNCHER_NO_WEBVIEW=1` to make the launcher open the system default browser instead of the embedded WebView. Useful for headless smoke tests. It does *not* let the prebuilt Linux binary run without `libwebkit2gtk`: WebKit is linked at build time (cgo), so the loader aborts before `main()` on a system missing the `webkit2gtk-4.0` runtime.
 
 See `packages/luxar-launcher/README.md` for source-level details and `packages/luxar/src/luxar/cli/README.md` for the full bundle output structure.
 
