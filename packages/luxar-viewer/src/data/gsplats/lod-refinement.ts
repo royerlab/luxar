@@ -52,7 +52,7 @@ export interface GSplatsRefinementCtx {
     path: string,
     attrs: GSplatsMetadata | undefined,
     opts: { applyPartialExtendTolerance: boolean }
-  ): { skip: 'extend_to_all' } | { skip: false; viewState: ViewState };
+  ): { skip: false; viewState: ViewState };
   processGSplats(
     path: string,
     data: LoadedGSplatsData,
@@ -117,7 +117,9 @@ export async function runGSplatsRefinement(ctx: GSplatsRefinementCtx): Promise<v
         const refined = ctx.deriveNodeViewState(path, nodeAttrs, {
           applyPartialExtendTolerance: true,
         });
-        if (refined.skip) return;
+        // A fully-extended node is a normal node with a slice-invariant query
+        // (deriveNodeViewState), so it refines through this path like any other;
+        // the `hasMoreLODs` gate above already stops a converged one.
         const gsplatsViewState: GSplatsViewState = refined.viewState;
 
         // Account this step to the 'LOD Refinement' tree (opened only when

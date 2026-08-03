@@ -8,10 +8,10 @@
  *      to complete but the failure entry is NOT cleared from the
  *      registry. Without this guard, retry would falsely report
  *      success while the data has nowhere to land.
- *   2. extend_to_all skip uses the BASE viewState (not the derived
- *      one) — same fallback the initial-load path uses, so retry
- *      doesn't render an incorrect query region for fully-extended
- *      nodes.
+ *   2. A fully-extended node retries with the DERIVED extended-tolerance +
+ *      pinned-slice view state (#1157) — the same slice-invariant query the
+ *      initial-load path uses, so a failed fully-extended node re-fetches
+ *      its whole extent.
  *   3. Per-attempt retryCount accounting — when a retry itself throws,
  *      the failedLoaders entry is updated with retryCount + 1 so the
  *      UI can surface "tried N times" diagnostics.
@@ -67,9 +67,8 @@ function makeRootGroupWith(path: string, attrs?: { extend_to_all?: string[] }): 
 }
 
 /**
- * Build a `RetryCtx` whose registry, viewState, and rootGroup are real,
- * and whose callbacks are individual vi.fn() spies that the test can
- * assert against.
+ * Build a `RetryCtx` whose registry and rootGroup are real, and whose
+ * callbacks are individual vi.fn() spies that the test can assert against.
  */
 function makeRetryCtx(overrides: Partial<RetryCtx> = {}): RetryCtx & {
   // Surface the spies for easy assertion.
@@ -98,7 +97,6 @@ function makeRetryCtx(overrides: Partial<RetryCtx> = {}): RetryCtx & {
   const ctx: RetryCtx = {
     registry: new LoaderRegistry(),
     rootGroup: null,
-    viewState,
     deriveNodeViewState,
     processPointsData,
     commitPointsGeometry,
@@ -207,7 +205,8 @@ describe('retryFailedLoaderUnlocked — Lines loader paths', () => {
     const ok = await retryFailedLoaderUnlocked(PATH, ctx);
 
     expect(ok).toBe(true);
-    expect(ctx.spies.processLinesData).toHaveBeenCalledWith(PATH, linesData, ctx.viewState);
+    const derivedViewState = ctx.spies.deriveNodeViewState.mock.results[0].value.viewState;
+    expect(ctx.spies.processLinesData).toHaveBeenCalledWith(PATH, linesData, derivedViewState);
     expect(ctx.spies.commitLinesGeometry).toHaveBeenCalledWith(stagedFromProcess);
     // Lines variant: applyPartialExtendTolerance: false.
     expect(ctx.spies.deriveNodeViewState).toHaveBeenCalledWith(PATH, undefined, {
@@ -234,30 +233,30 @@ describe('retryFailedLoaderUnlocked — Lines loader paths', () => {
   });
 });
 
-describe('retryFailedLoaderUnlocked — GSplats loader extend_to_all skip fallback', () => {
-  it('builds gsplatsViewState from base viewState fields when derive returns skip', async () => {
+describe('retryFailedLoaderUnlocked — fully-extended GSplats node', () => {
+  it('retries with the derived extended-tolerance + pinned-slice view state (#1157)', async () => {
     const splatsData = { splatCount: 9 } as unknown as LoadedGSplatsData;
     const updateView = vi.fn().mockResolvedValue(splatsData);
     const ctx = makeRetryCtx({
       rootGroup: makeRootGroupWith(PATH, { extend_to_all: ['t', 'c'] }),
     });
-    ctx.spies.deriveNodeViewState.mockReturnValue({ skip: 'extend_to_all' });
+    // A fully-extended node is derived as a normal node with a slice-invariant
+    // query (extend-to-all tolerance + pinned slice); the retry must load with
+    // it so the failed node re-fetches its whole extent.
+    const extendedViewState = { ...makeViewState(), tolerance: [1e10, 1e10, 1e10, 1e10] };
+    ctx.spies.deriveNodeViewState.mockReturnValue({
+      skip: false,
+      viewState: extendedViewState,
+    });
     ctx.registry.registerGSplatsLoader(PATH, makeGSplatsLoader(updateView));
     ctx.registry.recordFailure(PATH, new Error('initial failure'));
 
     const ok = await retryFailedLoaderUnlocked(PATH, ctx);
 
     expect(ok).toBe(true);
-    // The base view state (NOT the derived one) — same shape loadGSplats()
-    // initial-load uses. Verify by checking what loader.updateView received.
     expect(updateView).toHaveBeenCalledTimes(1);
-    const passedViewState = updateView.mock.calls[0][0];
-    expect(passedViewState).toEqual({
-      displayDims: ctx.viewState.displayDims,
-      slicePosition: ctx.viewState.slicePosition,
-      tolerance: ctx.viewState.tolerance,
-      dimensions: ctx.viewState.dimensions,
-    });
+    // Same reference passed straight through to the loader.
+    expect(updateView.mock.calls[0][0]).toBe(extendedViewState);
     // Confirm derive was passed the node's extend_to_all attrs from the rootGroup mesh.
     expect(ctx.spies.deriveNodeViewState).toHaveBeenCalledWith(
       PATH,

@@ -143,17 +143,12 @@ export async function loadGSplatsNodeExpensive(
     // after a further scrub is stamped for the slice it actually loaded (the
     // registry then re-reloads for the newer version) — not mis-stamped fresh.
     const loadedViewVersion = ctx.getViewVersion();
-    // Use the LIVE view-state (not the build-time snapshot) for the
-    // extend_to_all skip-fallback so a deferred reload queries the current slice.
-    const live = ctx.getLiveViewState();
-    const gsplatsViewState: GSplatsViewState = derivedGSplats.skip
-      ? {
-          displayDims: live.displayDims,
-          slicePosition: live.slicePosition,
-          tolerance: live.tolerance,
-          dimensions: live.dimensions,
-        }
-      : derivedGSplats.viewState;
+    // For a fully-extended node `derivedGSplats.viewState` carries the
+    // extend-to-all tolerance sentinel (and pinned slice) on every non-displayed
+    // dim, so this first load pulls the whole slice-independent node (and the
+    // sentinels flow into the projector's `extendToAllDims`) instead of only the
+    // coincidental current-slice subset.
+    const gsplatsViewState: GSplatsViewState = derivedGSplats.viewState;
 
     // Debug-only per-stage timing (no-op unless ?debug). Buckets the
     // three meaningful costs — fetch+decode, CPU process (project+pack),

@@ -222,20 +222,22 @@ describe('NodeFactory placeholder factories — common contract', () => {
 });
 
 /**
- * retryFailedLoader must mirror initial-load on
- * `derived.skip === 'extend_to_all'` — fall back to `this.viewState`
- * and actually load data, instead of clearing the failure flag with
- * an empty placeholder.
+ * retryFailedLoader must mirror initial-load for a fully-extended node —
+ * load with the derived slice-invariant view state and actually fetch
+ * data, instead of clearing the failure flag with an empty placeholder.
  *
  * Pre-fix scenario: the retry path returned `true` and deleted the
  * entry from `failedLoaders` without calling `updateView`, leaving the
  * placeholder in its post-failure empty state while reporting success.
  *
  * The tests below spy on `deriveNodeViewState` to deterministically
- * produce `skip: 'extend_to_all'`, so we can assert the fallback
- * path calls `updateView` with the base view state.
+ * produce a fully-extended node's derived view state (a normal
+ * `{ skip: false }` result with the extend-to-all tolerance sentinel +
+ * pinned slice), so we can assert the retry path calls `updateView` with
+ * that derived state (#1157) — the slice-invariant query that loads the
+ * fully-extended node's whole extent.
  */
-describe('SceneLoader.retryFailedLoader — derived.skip fallback', () => {
+describe('SceneLoader.retryFailedLoader — fully-extended node', () => {
   let loader: SceneLoader;
   let root: THREE.Group;
 
@@ -253,7 +255,7 @@ describe('SceneLoader.retryFailedLoader — derived.skip fallback', () => {
       path: string,
       attrs: unknown,
       opts: { applyPartialExtendTolerance: boolean }
-    ) => { skip: 'extend_to_all' } | { skip: false; viewState: unknown };
+    ) => { skip: false; viewState: unknown };
     registry: {
       registerPointsLoader: (path: string, loader: unknown) => void;
       registerLinesLoader: (path: string, loader: unknown) => void;
@@ -276,7 +278,7 @@ describe('SceneLoader.retryFailedLoader — derived.skip fallback', () => {
     };
   });
 
-  it('Points retry on derived.skip falls back to this.viewState and populates placeholder', async () => {
+  it('Points retry for a fully-extended node loads with the derived extended view state and populates placeholder', async () => {
     const internals = loader as unknown as LoaderInternals;
     const factory = new NodeFactory();
     const placeholder = factory.createEmptyPointsNode(
@@ -294,17 +296,21 @@ describe('SceneLoader.retryFailedLoader — derived.skip fallback', () => {
     } as unknown as DataLoader);
     internals.registry.recordFailure('/p', new Error('initial network failure'));
 
-    vi.spyOn(internals, 'deriveNodeViewState').mockReturnValue({ skip: 'extend_to_all' });
+    const extendedViewState = { ...internals.viewState, tolerance: [0.5, 0.5, 0.5, 1e10] };
+    vi.spyOn(internals, 'deriveNodeViewState').mockReturnValue({
+      skip: false,
+      viewState: extendedViewState,
+    });
 
     const ok = await loader.retryFailedLoader('/p');
 
     expect(ok).toBe(true);
     expect(updateView).toHaveBeenCalledTimes(1);
-    expect(updateView).toHaveBeenCalledWith(internals.viewState);
+    expect(updateView).toHaveBeenCalledWith(extendedViewState);
     expect(internals.registry.failedLoaders.has('/p')).toBe(false);
   });
 
-  it('Lines retry on derived.skip falls back to this.viewState and populates placeholder', async () => {
+  it('Lines retry for a fully-extended node loads with the derived extended view state and populates placeholder', async () => {
     const internals = loader as unknown as LoaderInternals;
     const factory = new NodeFactory();
     const placeholder = factory.createEmptyLinesNode(
@@ -323,13 +329,17 @@ describe('SceneLoader.retryFailedLoader — derived.skip fallback', () => {
     } as unknown as LinesDataLoader);
     internals.registry.recordFailure('/l', new Error('initial decode failure'));
 
-    vi.spyOn(internals, 'deriveNodeViewState').mockReturnValue({ skip: 'extend_to_all' });
+    const extendedViewState = { ...internals.viewState, tolerance: [0.5, 0.5, 0.5, 1e10] };
+    vi.spyOn(internals, 'deriveNodeViewState').mockReturnValue({
+      skip: false,
+      viewState: extendedViewState,
+    });
 
     const ok = await loader.retryFailedLoader('/l');
 
     expect(ok).toBe(true);
     expect(updateView).toHaveBeenCalledTimes(1);
-    expect(updateView).toHaveBeenCalledWith(internals.viewState);
+    expect(updateView).toHaveBeenCalledWith(extendedViewState);
     expect(internals.registry.failedLoaders.has('/l')).toBe(false);
   });
 
@@ -427,7 +437,7 @@ describe('SceneLoader.retryFailedLoader — derived.skip fallback', () => {
     expect(internals.viewStateQueue.hasPending()).toBe(false);
   });
 
-  it('GSplats retry on derived.skip falls back to a viewState built from this.viewState', async () => {
+  it('GSplats retry for a fully-extended node loads with the derived extended view state', async () => {
     const internals = loader as unknown as LoaderInternals;
     const factory = new NodeFactory();
     const placeholder = factory.createEmptyGSplatsNode(
@@ -446,25 +456,19 @@ describe('SceneLoader.retryFailedLoader — derived.skip fallback', () => {
     } as unknown as GSplatsDataLoader);
     internals.registry.recordFailure('/g', new Error('initial validation failure'));
 
-    vi.spyOn(internals, 'deriveNodeViewState').mockReturnValue({ skip: 'extend_to_all' });
+    const extendedViewState = { ...internals.viewState, tolerance: [0.5, 0.5, 0.5, 1e10] };
+    vi.spyOn(internals, 'deriveNodeViewState').mockReturnValue({
+      skip: false,
+      viewState: extendedViewState,
+    });
 
     const ok = await loader.retryFailedLoader('/g');
 
     expect(ok).toBe(true);
     expect(updateView).toHaveBeenCalledTimes(1);
-    // GSplats fallback constructs a fresh object from this.viewState
-    // (mirrors loadGSplats() initial-load shape) — assert the key
-    // fields rather than reference equality.
-    const callArg = updateView.mock.calls[0][0] as {
-      displayDims: number[];
-      slicePosition: number[];
-      tolerance: number[];
-      dimensions?: unknown;
-    };
-    expect(callArg.displayDims).toBe(internals.viewState.displayDims);
-    expect(callArg.slicePosition).toBe(internals.viewState.slicePosition);
-    expect(callArg.tolerance).toBe(internals.viewState.tolerance);
-    expect(callArg.dimensions).toBe(internals.viewState.dimensions);
+    // Retry passes the derived extended-tolerance state straight through so the
+    // sentinels flow into the projector's extendToAllDims (#1157).
+    expect(updateView.mock.calls[0][0]).toBe(extendedViewState);
     expect(internals.registry.failedLoaders.has('/g')).toBe(false);
   });
 

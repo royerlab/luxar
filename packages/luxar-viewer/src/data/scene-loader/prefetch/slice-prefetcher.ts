@@ -60,6 +60,7 @@ import type { AnyDataLoader, LoaderRegistry } from '../loaders/loader-registry';
 import type { LoaderFactoryDeps } from '../loaders/loader-factory';
 import { GEOMETRY_DESCRIPTORS } from '../geometry-descriptors';
 import { deriveNodeViewState } from '../view-state/derive-node-view-state';
+import { isExtendToAll } from '../../../workers/data-worker/projection/hidden-dims';
 import { isAbortError } from '../../loaders';
 
 /** Everything the prefetcher may read off its owning SceneLoader. */
@@ -247,8 +248,26 @@ export class SlicePrefetcher {
     const derived = deriveNodeViewState(path, node.attrs, viewState, graph, {
       applyPartialExtendTolerance: GEOMETRY_DESCRIPTORS[kind].applyPartialExtendTolerance,
     });
-    if (derived.skip) return Promise.resolve();
     if (!hasHiddenDims(derived.viewState)) return Promise.resolve(); // S-cache would skip it anyway
+
+    // Skip a slice-INVARIANT (fully-extended) node: every non-displayed dim
+    // carries the extend-to-all sentinel, so its derived query equals the
+    // foreground query at any slice. A t+1 shadow would re-load AND PIN
+    // (`pin: true`) exactly what the foreground already holds — and because the
+    // foreground never re-runs its view-change branch for a slice-invariant
+    // node, that pin is never released for the whole playback session, biasing
+    // S-cache eviction against real t+1 entries. A PARTIALLY-extended node
+    // (only SOME non-displayed dims sentinel) still moves on its other dims, so
+    // this check is false for it and it is prefetched normally.
+    const nonDisplayed = derived.viewState.tolerance
+      .map((_, d) => d)
+      .filter((d) => !derived.viewState.displayDims.includes(d));
+    if (
+      nonDisplayed.length > 0 &&
+      nonDisplayed.every((d) => isExtendToAll(derived.viewState.tolerance[d]))
+    ) {
+      return Promise.resolve();
+    }
 
     const shadowViewState: ViewState = {
       ...derived.viewState,

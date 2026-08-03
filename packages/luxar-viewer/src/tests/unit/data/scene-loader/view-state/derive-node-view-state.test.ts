@@ -5,8 +5,9 @@
  *
  * Pure function: no DOM, no I/O. We build real ViewState / SceneNode /
  * Dimensions fixtures (validated against the imported types) and assert
- * the three branches:
- *   1. full-extend skip
+ * the branches:
+ *   1. fully extended -> normal node with a slice-INVARIANT query
+ *      (extend-to-all tolerance sentinel + extended dims' slice pinned to 0)
  *   2. partial-extend tolerance override
  *   3. nd_transform inverse-query mapping (affine + permutation)
  */
@@ -69,20 +70,75 @@ describe('deriveNodeViewState — no extend, no transform', () => {
   });
 });
 
-describe('deriveNodeViewState — full-extend skip', () => {
-  it('returns { skip: "extend_to_all" } when ALL non-displayed dims are extended', () => {
-    // Non-displayed dims are time + channel; extending both => full skip.
+describe('deriveNodeViewState — fully-extended = slice-invariant normal node (#1157)', () => {
+  it('derives as a NORMAL node with the extend-to-all tolerance AND pinned slice', () => {
+    // Non-displayed dims are time (0) + channel (1); extending both => fully
+    // extended. NOT a skip: it is a normal node whose query is made
+    // slice-INVARIANT — the 1e10 sentinel on every extended dim (displayed dims
+    // keep base tolerance) AND those dims' slicePosition pinned to 0.
     const result = deriveNodeViewState(
       'points',
       { extend_to_all: ['time', 'channel'] },
-      baseViewState(),
+      baseViewState(), // slicePosition [5, 1, 0, 0]
       null,
       { applyPartialExtendTolerance: true }
     );
-    expect(result).toEqual({ skip: 'extend_to_all' });
+    expect(result.skip).toBe(false);
+    expect(result.viewState.tolerance).toEqual([
+      EXTEND_TO_ALL_TOLERANCE, // time (non-displayed) -> sentinel
+      EXTEND_TO_ALL_TOLERANCE, // channel (non-displayed) -> sentinel
+      0, // z (displayed) -> base
+      0, // y (displayed) -> base
+    ]);
+    // time + channel pinned to 0 (were 5, 1); displayed dims unchanged.
+    expect(result.viewState.slicePosition).toEqual([0, 0, 0, 0]);
   });
 
-  it('does NOT skip when only some non-displayed dims are extended', () => {
+  it('is IDENTICAL across different base slice positions on the extended dims', () => {
+    // The slice-invariant query is the whole fix: per-sweep re-queries must be
+    // byte-identical so the loader's `viewStatesEqual` same-view no-op fires
+    // instead of re-fetching (and the progressive ladder can converge).
+    const a = deriveNodeViewState(
+      'points',
+      { extend_to_all: ['time', 'channel'] },
+      baseViewState({ slicePosition: [5, 1, 0, 0] }),
+      null,
+      { applyPartialExtendTolerance: true }
+    );
+    const b = deriveNodeViewState(
+      'points',
+      { extend_to_all: ['time', 'channel'] },
+      baseViewState({ slicePosition: [42, 7, 0, 0] }),
+      null,
+      { applyPartialExtendTolerance: true }
+    );
+    expect(a.viewState.slicePosition).toEqual(b.viewState.slicePosition);
+    expect(a.viewState.tolerance).toEqual(b.viewState.tolerance);
+    expect(a.viewState.slicePosition).toEqual([0, 0, 0, 0]);
+  });
+
+  it('computes the full-extend tolerance + pin UNCONDITIONALLY, even with the partial override OFF', () => {
+    // Lines derive with applyPartialExtendTolerance: false, but a fully-extended
+    // lines node must STILL get the sentinel tolerance + pinned slice so it
+    // loads a slice-invariant query — the opt only governs the PARTIAL case.
+    const result = deriveNodeViewState(
+      'lines',
+      { extend_to_all: ['time', 'channel'] },
+      baseViewState(),
+      null,
+      { applyPartialExtendTolerance: false }
+    );
+    expect(result.skip).toBe(false);
+    expect(result.viewState.tolerance).toEqual([
+      EXTEND_TO_ALL_TOLERANCE,
+      EXTEND_TO_ALL_TOLERANCE,
+      0,
+      0,
+    ]);
+    expect(result.viewState.slicePosition).toEqual([0, 0, 0, 0]);
+  });
+
+  it('does NOT extend when only some non-displayed dims are extended', () => {
     const result = deriveNodeViewState(
       'points',
       { extend_to_all: ['time'] },
@@ -91,11 +147,14 @@ describe('deriveNodeViewState — full-extend skip', () => {
       { applyPartialExtendTolerance: false }
     );
     expect(result.skip).toBe(false);
+    // Partial extend with the override OFF: base tolerance + base slice intact.
+    expect(result.viewState.tolerance).toEqual([0.5, 0.5, 0, 0]);
+    expect(result.viewState.slicePosition).toEqual([5, 1, 0, 0]);
   });
 
-  it('skips even if a displayed dim is also (redundantly) listed', () => {
+  it('stays fully extended even if a displayed dim is also (redundantly) listed', () => {
     // Listing 'z' (displayed) alongside both non-displayed dims still
-    // fully covers the non-displayed set -> skip.
+    // fully covers the non-displayed set -> fully extended (skip:false).
     const result = deriveNodeViewState(
       'points',
       { extend_to_all: ['time', 'channel', 'z'] },
@@ -103,7 +162,12 @@ describe('deriveNodeViewState — full-extend skip', () => {
       null,
       { applyPartialExtendTolerance: true }
     );
-    expect(result).toEqual({ skip: 'extend_to_all' });
+    expect(result.skip).toBe(false);
+    // Both non-displayed dims still carry the sentinel + pin.
+    expect(result.viewState.tolerance[0]).toBe(EXTEND_TO_ALL_TOLERANCE);
+    expect(result.viewState.tolerance[1]).toBe(EXTEND_TO_ALL_TOLERANCE);
+    expect(result.viewState.slicePosition[0]).toBe(0);
+    expect(result.viewState.slicePosition[1]).toBe(0);
   });
 
   it('throws via validateExtendDims when an extend dim name is unknown', () => {
