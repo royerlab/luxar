@@ -1,5 +1,5 @@
 import * as zarr from '../../../zarr';
-import { get, abortOptions } from '../../../zarr';
+import { readArray, abortOptions } from '../../../zarr';
 import { log } from '../../../../utils/log';
 import { config as appConfig } from '../../../../config';
 import { getWorkerPool } from '../../../../workers/worker-pool';
@@ -17,7 +17,7 @@ import {
 export interface PerChannelCtx {
   config: ResolvedRangeLoaderConfig;
   verbose: boolean;
-  /** Per-update abort signal forwarded to `get()` (see RangeLoader). */
+  /** Per-update abort signal forwarded to `readArray()` (see RangeLoader). */
   signal?: AbortSignal | null;
 }
 
@@ -111,7 +111,7 @@ export async function loadPerChannel(
   await Promise.all(
     ranges.map(async (range, i) => {
       const sliceSpec = firstAxisRangeSlice(shape, range);
-      const chunkData = await get(array, sliceSpec, abortOptions(ctx.signal));
+      const chunkData = await readArray(array, sliceSpec, abortOptions(ctx.signal));
       const data = clampRangeData(
         chunkData.data as RangeNumericArray,
         counts[i],

@@ -112,7 +112,7 @@ Creates the **Theme** folder with a single **Active Theme** dropdown bound to `T
 
 ## Cross-Module Wiring
 
-The parent class (`../rendering-controls.ts`) calls these builders during construction and stitches together the few inter-module dependencies:
+The parent class (`../../rendering-controls.ts`) calls these builders during construction and stitches together the few inter-module dependencies:
 
 - **FOV preset ↔ chromatic lens distortion** — `setupCameraControls(context, controllers)` is called _after_ `setupPostProcessingControls(context, controllers)` so the controller map already contains the chromatic-lens entries that the FOV preset's `onChange` will mutate. Both builders take the same `controllers` object by reference; order of insertion in the parent class is what makes the link work.
 - **FOV-in-ortho visibility** — the parent's `updateNavigationControls(type)` hides the FOV slider + preset in `ortho` mode (orthographic projection has no perspective). Called on sync and after a control-mode switch. (The orbit/fly parameter folders it once toggled now live in the Navigation rail popover.)

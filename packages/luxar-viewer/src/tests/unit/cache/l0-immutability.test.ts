@@ -12,7 +12,7 @@
  *    "consumer" loop reads through them.
  *
  * Production loaders never call getChunk() directly (they go through
- * zarr.get()), so this is a tier-boundary smoke test rather than an
+ * zarr.readArray()), so this is a tier-boundary smoke test rather than an
  * exhaustive sweep. If a future loader is wired against getChunk(), it
  * should add its own immutability assertion here.
  */

@@ -132,7 +132,7 @@ export async function buildSceneGraph(
     if (attrs && (attrs as ZarrNodeAttrs).colormap === 'custom') {
       try {
         const lutArr = await zarr.open(loc.resolve('colormap_lut'), { kind: 'array' });
-        const lutResult = await zarr.get(lutArr);
+        const lutResult = await zarr.readArray(lutArr);
         const data = lutResult.data;
         // Promote whatever typed-array we got into a tightly-typed Uint8Array.
         // The Python writer stores LUTs as uint8 of shape [256,3] or [256,4].

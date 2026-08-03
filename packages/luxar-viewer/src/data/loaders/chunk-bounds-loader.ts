@@ -15,7 +15,7 @@
  */
 
 import * as zarr from '../zarr';
-import { get } from '../zarr';
+import { readArray } from '../zarr';
 import { log } from '../../utils/log';
 
 /**
@@ -61,7 +61,7 @@ export async function fetchChunkBoundsArray(
 ): Promise<ChunkBoundsArray | null> {
   try {
     const boundsArray = await zarr.open(location.resolve(arrayName), { kind: 'array' });
-    const boundsData = await get(boundsArray);
+    const boundsData = await readArray(boundsArray);
     const data = new Float32Array(boundsData.data as ArrayBuffer | ArrayLike<number>);
     return { data, shape: Array.from(boundsArray.shape) };
   } catch (error: unknown) {

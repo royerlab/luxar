@@ -154,7 +154,8 @@ a WORLD-space quantity, and no metadata describes the local grid. This matches
 what the downstream membership window already assumes, so the two stay
 consistent.
 
-The `demos/demo_nd_transforms.py` bench is the visual regression harness for
+The `packages/luxar/src/luxar/demos/demo_nd_transforms.py` bench is the visual
+regression harness for
 this — it draws one row per transform with markers that print their own local
 index, so a wrong row lights up visibly.
 

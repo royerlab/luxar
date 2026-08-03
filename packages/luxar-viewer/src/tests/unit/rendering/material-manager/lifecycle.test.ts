@@ -22,15 +22,12 @@ import { LineMaterial } from '../../../../rendering/materials/line/material-glsl
 import { GSplatMaterial } from '../../../../rendering/materials/gsplat/material-glsl';
 import type { CameraAwareMaterial } from '../../../../rendering/materials/_shared/camera-aware-material';
 
-/** Build an empty LifecycleCtx with fresh Set/Map/WeakSet for each test. */
+/** Build an empty LifecycleCtx with fresh Set/WeakSet for each test. */
 function makeCtx(): LifecycleCtx {
   return {
     registeredMaterials: new Set<THREE.Material & CameraAwareMaterial>(),
     ownedMaterials: new Set<THREE.Material & CameraAwareMaterial>(),
     subscribedMaterials: new WeakSet<THREE.Material & CameraAwareMaterial>(),
-    pointMaterialCache: new Map(),
-    lineMaterialCache: new Map(),
-    gsplatMaterialCache: new Map(),
   };
 }
 
@@ -65,24 +62,21 @@ describe('subscribeToDispose', () => {
     const material = new PointMaterial();
     ctx.registeredMaterials.add(material);
     ctx.ownedMaterials.add(material);
-    ctx.pointMaterialCache.set('test-key', material);
 
     subscribeToDispose(material, ctx);
     material.dispose();
 
     expect(ctx.registeredMaterials.has(material)).toBe(false);
     expect(ctx.ownedMaterials.has(material)).toBe(false);
-    expect(ctx.pointMaterialCache.has('test-key')).toBe(false);
     // subscribedMaterials is also cleared so a re-subscribe (e.g. after
     // restore) attaches a fresh listener instead of being a no-op.
     expect(ctx.subscribedMaterials.has(material)).toBe(false);
   });
 
-  it('SOFT_DISPOSE_FLAG=true skips registry/cache cleanup when dispose fires', () => {
+  it('SOFT_DISPOSE_FLAG=true skips registry cleanup when dispose fires', () => {
     const ctx = makeCtx();
     const material = new PointMaterial();
     ctx.registeredMaterials.add(material);
-    ctx.pointMaterialCache.set('soft-key', material);
 
     subscribeToDispose(material, ctx);
     // Caller flags this as a soft-dispose (RenderObject cache eviction).
@@ -91,7 +85,6 @@ describe('subscribeToDispose', () => {
 
     // Cleanup MUST be skipped — material still in every registry.
     expect(ctx.registeredMaterials.has(material)).toBe(true);
-    expect(ctx.pointMaterialCache.has('soft-key')).toBe(true);
     // Listener is still attached for the next (real) dispose.
     expect(ctx.subscribedMaterials.has(material)).toBe(true);
   });
@@ -100,7 +93,6 @@ describe('subscribeToDispose', () => {
     const ctx = makeCtx();
     const material = new PointMaterial();
     ctx.registeredMaterials.add(material);
-    ctx.pointMaterialCache.set('two-step', material);
     subscribeToDispose(material, ctx);
 
     // 1st dispose: soft-flag set → cleanup skipped.
@@ -113,7 +105,6 @@ describe('subscribeToDispose', () => {
     tagged[SOFT_DISPOSE_FLAG] = false;
     material.dispatchEvent({ type: 'dispose' });
     expect(ctx.registeredMaterials.has(material)).toBe(false);
-    expect(ctx.pointMaterialCache.has('two-step')).toBe(false);
   });
 });
 
@@ -130,39 +121,20 @@ describe('removeFromRegistries', () => {
     expect(ctx.ownedMaterials.has(material)).toBe(false);
   });
 
-  it('removes a PointMaterial from pointMaterialCache (instanceof Point branch)', () => {
+  it.each([
+    ['PointMaterial', () => new PointMaterial()],
+    ['LineMaterial', () => new LineMaterial()],
+    ['GSplatMaterial', () => new GSplatMaterial()],
+  ])('removes a %s from both registries', (_name, make) => {
     const ctx = makeCtx();
-    const material = new PointMaterial();
-    ctx.pointMaterialCache.set('pt', material);
-    ctx.lineMaterialCache.set('ln', new LineMaterial());
-    ctx.gsplatMaterialCache.set('gs', new GSplatMaterial());
+    const material = make();
+    ctx.registeredMaterials.add(material);
+    ctx.ownedMaterials.add(material);
 
     removeFromRegistries(material, ctx);
 
-    expect(ctx.pointMaterialCache.has('pt')).toBe(false);
-    // Other caches are untouched
-    expect(ctx.lineMaterialCache.has('ln')).toBe(true);
-    expect(ctx.gsplatMaterialCache.has('gs')).toBe(true);
-  });
-
-  it('removes a LineMaterial from lineMaterialCache (instanceof Line branch)', () => {
-    const ctx = makeCtx();
-    const material = new LineMaterial();
-    ctx.lineMaterialCache.set('ln', material);
-
-    removeFromRegistries(material, ctx);
-
-    expect(ctx.lineMaterialCache.has('ln')).toBe(false);
-  });
-
-  it('removes a GSplatMaterial from gsplatMaterialCache (instanceof GSplat branch)', () => {
-    const ctx = makeCtx();
-    const material = new GSplatMaterial();
-    ctx.gsplatMaterialCache.set('gs', material);
-
-    removeFromRegistries(material, ctx);
-
-    expect(ctx.gsplatMaterialCache.has('gs')).toBe(false);
+    expect(ctx.registeredMaterials.has(material)).toBe(false);
+    expect(ctx.ownedMaterials.has(material)).toBe(false);
   });
 
   it('is idempotent — calling on an already-absent material is a no-op', () => {
@@ -173,18 +145,17 @@ describe('removeFromRegistries', () => {
     expect(ctx.registeredMaterials.size).toBe(0);
   });
 
-  it('only deletes the matching cache entry; siblings in the same cache are preserved', () => {
+  it('removes only the target; a sibling material stays registered', () => {
     const ctx = makeCtx();
     const target = new PointMaterial();
     const sibling = new PointMaterial();
-    ctx.pointMaterialCache.set('target', target);
-    ctx.pointMaterialCache.set('sibling', sibling);
+    ctx.registeredMaterials.add(target);
+    ctx.registeredMaterials.add(sibling);
 
     removeFromRegistries(target, ctx);
 
-    expect(ctx.pointMaterialCache.has('target')).toBe(false);
-    expect(ctx.pointMaterialCache.has('sibling')).toBe(true);
-    expect(ctx.pointMaterialCache.get('sibling')).toBe(sibling);
+    expect(ctx.registeredMaterials.has(target)).toBe(false);
+    expect(ctx.registeredMaterials.has(sibling)).toBe(true);
   });
 });
 

@@ -368,7 +368,7 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
       // still rasterizes pixel-by-pixel. The pixel-width clamp + fade
       // keeps the visible footprint bounded but doesn't avoid the
       // shading cost — discard the segment entirely when both endpoints
-      // are within the near cull margin AND rawPixelWidth blows past
+      // are within the near cull margin AND the pixel width blows past
       // the clamp by 2× (a clear pathological case, not a normal
       // close-up).
       // PERSPECTIVE ONLY: under ortho rawPixelWidth is depth-independent
@@ -376,11 +376,25 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
       // legitimately wide line vanish only while inside the 2*nearCull
       // slab and pop back one unit deeper — depth-dependent visibility
       // with no physical rationale in a depth-independent projection.
+      // The discard MUST be segment-constant, not per-quad-vertex: the
+      // per-vertex rawPixelWidth term (both width and dist vary between
+      // the t=0 and t=1 corners of the shared quad) would let only 2 of
+      // the 4 vertices exceed the clamp, sentinelling half the quad and
+      // leaving a visible non-degenerate wedge (issue #849). Evaluate the
+      // pixel width at BOTH clipped endpoints and gate on the MAX so all
+      // four vertices take the same branch — this reproduces the max of
+      // the per-vertex rawPixelWidth over the quad (only t∈{0,1} occur),
+      // so it never culls a segment a current vertex wouldn't have.
+      float startPixelWidth =
+        mix(startW, endW, tA) * uPerspectiveLineScale / max(-mvStart.z, nearCull);
+      float endPixelWidth =
+        mix(startW, endW, tB) * uPerspectiveLineScale / max(-mvEnd.z, nearCull);
+      float segMaxPixelWidth = max(startPixelWidth, endPixelWidth);
       if (
         uIsOrtho == 0 &&
         startDepth < nearCull * 2.0 &&
         endDepth < nearCull * 2.0 &&
-        rawPixelWidth > maxPW * 2.0
+        segMaxPixelWidth > maxPW * 2.0
       ) {
         gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
         vColor = vec3(0.0);
