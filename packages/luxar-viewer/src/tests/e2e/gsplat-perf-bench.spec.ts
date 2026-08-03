@@ -45,7 +45,9 @@
  *
  * No hard assertions on timings (record-only, like the line bench) —
  * only structural sanity: reachable scenarios produced samples, at
- * least MIN_FRAMES frames, and a non-empty GPU renderer string.
+ * least MIN_FRAMES frames, a non-empty GPU renderer string, a non-zero
+ * drawn element count, and (for `requiresDepthSort` scenarios on a real
+ * GPU) at least one completed depth sort during the orbit window.
  *
  * @module tests/e2e/gsplat-perf-bench.spec
  */
