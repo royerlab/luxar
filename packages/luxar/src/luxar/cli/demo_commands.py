@@ -465,7 +465,13 @@ def demo_deps(
         install_hint = f"luxar demo deps --only {unmet[0].module} --install"
     elif extras:
         cmd = _pip_install_cmd(extras)
-        install_hint = "luxar demo deps --install"
+        # Keep an active --extra filter in the hint: the bare form would install
+        # every unmet extra, more than the pip command shown right beside it.
+        install_hint = (
+            "luxar demo deps --install"
+            if extra is None
+            else f"luxar demo deps --extra {extra} --install"
+        )
     else:
         # Generic --install manages Luxar extras only. An orphan-only report has
         # no command to run, so it is a successful no-op rather than the old

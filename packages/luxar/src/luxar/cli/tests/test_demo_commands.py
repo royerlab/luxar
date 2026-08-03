@@ -469,6 +469,25 @@ class TestDeps:
         assert result.exit_code == 2
         assert "--extra and --only cannot be combined" in result.stdout
 
+    def test_deps_extra_report_hint_keeps_the_filter(self, runner) -> None:
+        """The hinted CLI command must match the pip command shown beside it.
+
+        With `--extra gsplats` the direct pip line installs only that extra, so
+        a bare `luxar demo deps --install` hint (every unmet extra) would not be
+        the equivalent alternative it claims to be.
+        """
+        from luxar.demos._dependencies import DependencyStatus
+
+        fake = [
+            DependencyStatus(
+                "torch", DependencySpec("torch>=2,<3", "gsplats"), False, False
+            )
+        ]
+        with patch("luxar.demos.survey", return_value=fake):
+            result = runner.invoke(app, ["demo", "deps", "--extra", "gsplats"])
+        assert result.exit_code == 1
+        assert "luxar demo deps --extra gsplats --install" in result.stdout
+
     def test_deps_exits_nonzero_when_something_is_missing(self, runner) -> None:
         """A CI gate can rely on the exit code, so it must track missing-ness."""
         from luxar.demos._dependencies import DependencyStatus
