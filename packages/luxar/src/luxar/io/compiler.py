@@ -1253,16 +1253,15 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         self._is_finalized = True
         try:
             aprint(f"✅ Zarr store finalized at {self._store_path}")
-        except Exception:  # nosec B110 - see below: swallowing is the point
+        except Exception:
             # Purely informational — a broken stdout (e.g. BrokenPipeError)
             # must not fail an already-complete finalization. A
             # KeyboardInterrupt here still propagates; the store stays valid.
-            #
-            # B110 (try/except/pass) is suppressed rather than silenced blindly:
-            # the store is already durable at this point, so re-raising would
-            # turn a cosmetic logging failure into a spurious build error. The
-            # bare `Exception` is deliberately broad because any stdout failure
-            # mode qualifies, and there is nothing to recover.
+            # The bare `Exception` is deliberately broad: any stdout failure mode
+            # qualifies and there is nothing to recover, the store being durable
+            # by this point. (Bandit reports try/except/pass as a LOW finding,
+            # which this project waives — see the thresholds in
+            # .pre-commit-config.yaml.)
             pass
 
     @property

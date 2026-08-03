@@ -39,11 +39,26 @@ repos:
         name: ruff (format)
 
   # Bandit security checks. Reads [tool.bandit] from pyproject.toml.
+  #
+  # The severity/confidence thresholds MUST match `hatch run security` (the
+  # invocation CI gates on), which waives low findings — subprocess usage for
+  # developer tooling and the like. Without them this hook is stricter than the
+  # project's own policy, so anyone editing a file that happens to contain an
+  # accepted low finding is blocked by something CI would pass, and the only ways
+  # out are `# nosec` churn on unrelated lines or `--no-verify`.
   - repo: https://github.com/PyCQA/bandit
     rev: 1.8.0
     hooks:
       - id: bandit
-        args: ["-c", "pyproject.toml"]
+        args:
+          [
+            "-c",
+            "pyproject.toml",
+            "--severity-level",
+            "medium",
+            "--confidence-level",
+            "medium",
+          ]
         additional_dependencies: ["bandit[toml]"]
 
   # mypy runs against the real project environment so imports resolve. Uses the
