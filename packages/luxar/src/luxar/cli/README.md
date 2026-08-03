@@ -24,7 +24,7 @@ luxar info my_data.luxar.zarr --stats
 - `luxar info --stats` - Shows dataset structure, dimensions, and compression stats
 
 **Pro Tips**:
-- Browser launch: `demo`, `viewer`, and `gsplat view` open the browser by default (add `--no-open` to skip); `serve` and `export` do not (add `--open` to launch it)
+- Browser launch: `viewer` and `gsplat view` open the browser by default (add `--no-open` to skip); `demo run` opens a viewer too but is stopped with a forwarded `--no-serve` (it has no `--no-open`); `serve` and `export` do not open by default (add `--open` to launch it)
 - Use `luxar profiles` to list network simulation profiles
 - Use `luxar serve --help` for all serving options
 - Use `luxar export --native macos` (or `linux-amd64`/`linux-arm64`) for double-clickable native bundles backed by an embedded Go launcher (requires `make build-launchers` first)
@@ -141,7 +141,7 @@ luxar export my_scene.luxar.zarr -o out/ --native macos,linux-amd64,linux-arm64 
 
 **Prerequisites**: run `make build-launchers` first to populate `cli/_launchers/` with the host-platform binary. `--native` produces `macos`, `linux-amd64`, and `linux-arm64` bundles only. CGO blocks pure cross-compilation, so each platform's binary must be built on a host of the matching OS (typically via CI).
 
-**Runtime fallback**: setting `LUXAR_LAUNCHER_NO_WEBVIEW=1` makes the launcher open the user's default browser instead of an embedded WebView — useful for headless smoke tests and minimal Linux installs without `libwebkit2gtk`.
+**Runtime fallback**: setting `LUXAR_LAUNCHER_NO_WEBVIEW=1` makes the launcher open the user's default browser instead of an embedded WebView — useful for headless smoke tests. It does not let the prebuilt Linux binary run without `libwebkit2gtk`: WebKit is linked at build time, so the launcher needs the `webkit2gtk-4.0` runtime to start regardless.
 
 See `packages/luxar-launcher/README.md` for the launcher source itself.
 
@@ -262,7 +262,7 @@ luxar gsplat migrate-format legacy.gsplats.zarr v3.gsplats.zarr --lossless  # pr
 **Options**: `--overwrite`, `--lossless` (preserve float32 Cholesky / PRECISION encoding), `--quiet/-q`.
 
 #### `luxar gsplat reencode`
-Re-quantize a **current-format** `.gsplats.zarr`'s Cholesky encoding (writes a re-quantized copy to a new path) — a structure-preserving round-trip: the whole node tree (leaf / additive ladder / `kind=lod` / partition / nested) and its `fitting` / `provenance` / `pipeline` groups carry over verbatim; only the on-disk Cholesky encoding changes. Splat count and geometry are unchanged and decode is always to float32, so viewer/GPU/WASM paths are unaffected. Unlike `migrate-format` (legacy → current, exposing only float32 vs the AUTO uint16 default via `--lossless`), this exposes the full ladder — including `memory` (uint8) — and works on already-current files. The clean way to change quantization after fitting.
+Re-quantize a **current-format** `.gsplats.zarr`'s Cholesky encoding (writes a re-quantized copy to a new path) — a structure-preserving round-trip: the whole node tree (leaf / additive ladder / `kind=lod` / partition / nested) and its `fitting` / `provenance` / `pipeline` groups carry over verbatim; only the on-disk Cholesky encoding changes. Splat count and geometry are unchanged and decode is always to float32, so viewer/GPU/WASM paths are unaffected. Unlike `migrate-format` (legacy → current, exposing only float32 vs the AUTO uint8-first policy via `--lossless`), this exposes the full ladder — including `memory` (uint8) — and works on already-current files. The clean way to change quantization after fitting.
 ```bash
 luxar gsplat reencode fit.gsplats.zarr fit_u8.gsplats.zarr -e memory      # uint8 (smallest, ~93 dB)
 luxar gsplat reencode fit.gsplats.zarr fit_auto.gsplats.zarr -e auto       # adaptive u8→u16→f32 ladder (near-lossless by certificate)

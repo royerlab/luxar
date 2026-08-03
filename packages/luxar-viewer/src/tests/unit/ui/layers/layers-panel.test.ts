@@ -15,6 +15,9 @@
  *   builds the panel DOM
  * - `dispose()` tears down the panel + clears layer state + survives
  *   double-disposal
+ * - per-row load-failure badge (`setFailedLoadsProvider`): exact-path and
+ *   descendant-prefix mapping, deterministic reason tooltip, recovery /
+ *   null-clear, row-rebuild persistence, and reason/count refresh
  *
  * `materialManager` is mocked because it would touch shader compilation
  * (WebGL); `showToast` is mocked so we can observe the empty-scene path.
@@ -24,6 +27,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import * as THREE from 'three';
 import type { SceneNode } from '../../../../data/data-loader-types';
 import type { AnimationController } from '../../../../scene/animation/animation-controller';
+import type { FailedLoadsProviderPort } from '../../../../data/scene-loader-monitor-port';
 
 // `showToast` lives in src/ui/toast; mock so the empty-scene branch
 // is observable.
@@ -788,8 +792,7 @@ describe('LayersPanel — LOD active-level dropdown', () => {
     panel.initFromScene(new THREE.Group(), makeLodSceneGraph());
     panel.show();
     const opts = perFrameOptions(animationController).get('layers-lod-status') as
-      | { continuous?: boolean }
-      | undefined;
+      { continuous?: boolean } | undefined;
     // Either no options object, or continuous explicitly falsy — never true.
     expect(opts?.continuous ?? false).toBe(false);
   });
@@ -1821,6 +1824,369 @@ function makeRecordingMaterial(defines: Record<string, string> | null): {
   } as unknown as LuxarMaterial;
   return { mat, calls };
 }
+
+describe('LayersPanel — per-row load-failure badge', () => {
+  let container: HTMLElement;
+  let animationController: AnimationController;
+
+  beforeEach(() => {
+    document.body.innerHTML = '';
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    animationController = makeAnimationController();
+    showToastMock.mockClear();
+  });
+
+  /**
+   * Minimal stub of the shared failed-loads provider. `set()` mutates the live
+   * failed set and `setReason()` mutates a single path's reason, so tests can
+   * drive recovery / reason-change through the runtime refresh path.
+   */
+  function makeFailedProvider(paths: string[], reasons: Record<string, string> = {}) {
+    let current = [...paths];
+    const provider: FailedLoadsProviderPort = {
+      getFailedPaths: () => current,
+      retryAll: async () => ({ succeeded: [], failed: [] }),
+      getFailedReason: (p: string) => reasons[p],
+    };
+    return {
+      provider,
+      set: (next: string[]) => (current = next),
+      setReason: (path: string, reason: string) => (reasons[path] = reason),
+    };
+  }
+
+  /** kind=lod group at /pyramid plus an unrelated leaf sibling at /cloud. */
+  function makeGroupPlusSiblingScene(): SceneNode {
+    return {
+      name: 'root',
+      path: '/',
+      type: 'group',
+      attrs: {},
+      children: [
+        {
+          name: 'pyramid',
+          path: '/pyramid',
+          type: 'group',
+          attrs: { layer: true, kind: 'lod', display_type: 'points' },
+          children: [
+            { name: 'lod_0', path: '/pyramid/lod_0', type: 'points', attrs: {}, children: [] },
+            { name: 'lod_1', path: '/pyramid/lod_1', type: 'points', attrs: {}, children: [] },
+          ],
+        },
+        {
+          name: 'cloud',
+          path: '/cloud',
+          type: 'points',
+          attrs: { layer: true, type: 'points' },
+          children: [],
+        },
+      ],
+    } as unknown as SceneNode;
+  }
+
+  function errorBadge(row: HTMLElement | undefined): HTMLElement | null {
+    return row?.querySelector('.luxar-layer-row__error') as HTMLElement | null;
+  }
+
+  function rowFor(container: HTMLElement, name: string): HTMLElement | undefined {
+    return Array.from(container.querySelectorAll<HTMLElement>('.luxar-layer-row')).find(
+      (r) => r.querySelector('.luxar-layer-row__name')?.textContent === name
+    );
+  }
+
+  it('an exact-path failure lights up its row with a reason in the badge label', () => {
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(new THREE.Group(), makeLayeredSceneGraph());
+    const { provider } = makeFailedProvider(['/cloud'], {
+      '/cloud': 'Vertex index 3 not found in loaded data',
+    });
+
+    panel.setFailedLoadsProvider(provider);
+
+    const row = rowFor(container, 'cloud');
+    expect(row?.classList.contains('luxar-layer-row--error')).toBe(true);
+    const badge = errorBadge(row);
+    expect(badge).not.toBeNull();
+    expect(badge?.getAttribute('aria-label')).toContain('Vertex index 3 not found in loaded data');
+    expect(badge?.title).toContain('Vertex index 3 not found in loaded data');
+  });
+
+  it('falls back to a generic reason when the provider exposes no per-path detail', () => {
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(new THREE.Group(), makeLayeredSceneGraph());
+    // Provider without getFailedReason (structural DataMonitor-style port).
+    const provider: FailedLoadsProviderPort = {
+      getFailedPaths: () => ['/cloud'],
+      retryAll: async () => ({ succeeded: [], failed: [] }),
+    };
+
+    panel.setFailedLoadsProvider(provider);
+
+    const badge = errorBadge(rowFor(container, 'cloud'));
+    expect(badge?.getAttribute('aria-label')).toBe(
+      'Failed to load — see the data monitor for details'
+    );
+  });
+
+  it('a group row lights up for a DESCENDANT failure but a string-prefix sibling stays clean', () => {
+    // The boundary test: layers `/pyramid` and `/pyramid_hi` share a string
+    // prefix, so `startsWith(path)` (no trailing slash) would wrongly light up
+    // `/pyramid` for a `/pyramid_hi/...` failure. The `path + '/'` rule must not.
+    const scene = {
+      name: 'root',
+      path: '/',
+      type: 'group',
+      attrs: {},
+      children: [
+        {
+          name: 'pyramid',
+          path: '/pyramid',
+          type: 'group',
+          attrs: { layer: true, kind: 'lod', display_type: 'points' },
+          children: [
+            { name: 'lod_0', path: '/pyramid/lod_0', type: 'points', attrs: {}, children: [] },
+          ],
+        },
+        {
+          name: 'pyramid_hi',
+          path: '/pyramid_hi',
+          type: 'group',
+          attrs: { layer: true, kind: 'lod', display_type: 'points' },
+          children: [
+            { name: 'leaf', path: '/pyramid_hi/leaf', type: 'points', attrs: {}, children: [] },
+          ],
+        },
+      ],
+    } as unknown as SceneNode;
+
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(new THREE.Group(), scene);
+    const { provider } = makeFailedProvider(['/pyramid_hi/leaf'], {
+      '/pyramid_hi/leaf': 'network 503',
+    });
+
+    panel.setFailedLoadsProvider(provider);
+
+    const hiRow = rowFor(container, 'pyramid_hi');
+    const pyramidRow = rowFor(container, 'pyramid');
+    // The actual owner lights up…
+    expect(hiRow?.classList.contains('luxar-layer-row--error')).toBe(true);
+    expect(errorBadge(hiRow)).not.toBeNull();
+    // …but the string-prefix sibling stays clean (boundary is `path + '/'`).
+    expect(pyramidRow?.classList.contains('luxar-layer-row--error')).toBe(false);
+    expect(errorBadge(pyramidRow)).toBeNull();
+  });
+
+  it('counts multiple failed descendants of a group in the badge reason', () => {
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(new THREE.Group(), makeGroupPlusSiblingScene());
+    const { provider } = makeFailedProvider(['/pyramid/lod_0', '/pyramid/lod_1']);
+
+    panel.setFailedLoadsProvider(provider);
+
+    expect(errorBadge(rowFor(container, 'pyramid'))?.getAttribute('aria-label')).toContain(
+      '2 parts failed'
+    );
+  });
+
+  it('removes the badge once the path leaves the failed set (recovery via per-frame refresh)', () => {
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(new THREE.Group(), makeLayeredSceneGraph());
+    panel.show();
+    const { provider, set } = makeFailedProvider(['/cloud'], { '/cloud': 'boom' });
+
+    panel.setFailedLoadsProvider(provider);
+    expect(errorBadge(rowFor(container, 'cloud'))).not.toBeNull();
+
+    // The path recovers; drive the same per-frame refresh the runtime uses.
+    set([]);
+    perFrameCallbacks(animationController).get('layers-lod-status')!();
+
+    const row = rowFor(container, 'cloud');
+    expect(errorBadge(row)).toBeNull();
+    expect(row?.classList.contains('luxar-layer-row--error')).toBe(false);
+  });
+
+  it('does not break the row base aria-label while in error', () => {
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(new THREE.Group(), makeLayeredSceneGraph());
+    const { provider } = makeFailedProvider(['/cloud'], { '/cloud': 'boom' });
+
+    panel.setFailedLoadsProvider(provider);
+
+    // The badge is actually present (else this test would pass even if
+    // applyRowError did nothing)…
+    const row = rowFor(container, 'cloud');
+    expect(errorBadge(row)).not.toBeNull();
+    // …and the row keeps its base "name (type)" label; the reason lives on
+    // the badge, not the row.
+    expect(row?.getAttribute('aria-label')).toBe('cloud (points)');
+  });
+
+  it('keeps the badge across a row rebuild (resetAllLayers) while the failure persists', () => {
+    // renderList() rebuilds rows badge-less; without re-applying, the
+    // signature gate would strand the row clean while the failure persists.
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(new THREE.Group(), makeLayeredSceneGraph());
+    const { provider } = makeFailedProvider(['/cloud'], { '/cloud': 'boom' });
+
+    panel.setFailedLoadsProvider(provider);
+    expect(errorBadge(rowFor(container, 'cloud'))).not.toBeNull();
+
+    panel.resetAllLayers(); // rebuilds the row list
+
+    expect(errorBadge(rowFor(container, 'cloud'))).not.toBeNull();
+    expect(rowFor(container, 'cloud')?.classList.contains('luxar-layer-row--error')).toBe(true);
+  });
+
+  it('setFailedLoadsProvider(null) clears an existing badge (empty-set sentinel)', () => {
+    // An empty failed set hashes to the same signature as "no provider"; the
+    // null reset sentinel must still force the clear.
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(new THREE.Group(), makeLayeredSceneGraph());
+    const { provider } = makeFailedProvider(['/cloud'], { '/cloud': 'boom' });
+
+    panel.setFailedLoadsProvider(provider);
+    expect(errorBadge(rowFor(container, 'cloud'))).not.toBeNull();
+
+    panel.setFailedLoadsProvider(null);
+
+    const row = rowFor(container, 'cloud');
+    expect(errorBadge(row)).toBeNull();
+    expect(row?.classList.contains('luxar-layer-row--error')).toBe(false);
+  });
+
+  it('refreshes the badge when a still-failing row gains a descendant (count + reason)', () => {
+    // Signature folds in each path's reason, so a changed/added reason on a
+    // still-failing row re-triggers the refresh — no stale tooltip, no
+    // duplicate badge.
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(new THREE.Group(), makeGroupPlusSiblingScene());
+    panel.show();
+    const { provider, set } = makeFailedProvider(['/pyramid/lod_0'], {
+      '/pyramid/lod_0': 'first',
+    });
+
+    panel.setFailedLoadsProvider(provider);
+    const groupRow = rowFor(container, 'pyramid')!;
+    expect(groupRow.querySelectorAll('.luxar-layer-row__error')).toHaveLength(1);
+    expect(errorBadge(groupRow)?.getAttribute('aria-label')).not.toContain('parts failed');
+
+    // A second descendant fails; drive the runtime per-frame refresh.
+    set(['/pyramid/lod_0', '/pyramid/lod_1']);
+    perFrameCallbacks(animationController).get('layers-lod-status')!();
+
+    // Exactly ONE badge (updated in place, not duplicated) with the new count.
+    expect(groupRow.querySelectorAll('.luxar-layer-row__error')).toHaveLength(1);
+    expect(errorBadge(groupRow)?.getAttribute('aria-label')).toContain('2 parts failed');
+  });
+
+  it('refreshes the tooltip when only a REASON changes (path set unchanged)', () => {
+    // The signature folds in each path's reason. This pins that behavior for its
+    // actual purpose: the failed PATH SET is identical across the two frames, so
+    // a paths-only signature would early-return and strand the stale tooltip —
+    // only the reason-folded signature re-applies here.
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(new THREE.Group(), makeLayeredSceneGraph());
+    panel.show();
+    const { provider, setReason } = makeFailedProvider(['/cloud'], { '/cloud': 'network 503' });
+
+    panel.setFailedLoadsProvider(provider);
+    expect(errorBadge(rowFor(container, 'cloud'))?.title).toContain('network 503');
+
+    // Same failing path, new reason (e.g. a retry reclassified the cause).
+    setReason('/cloud', 'decode error');
+    perFrameCallbacks(animationController).get('layers-lod-status')!();
+
+    const badge = errorBadge(rowFor(container, 'cloud'));
+    expect(badge?.title).toContain('decode error');
+    expect(badge?.getAttribute('aria-label')).toContain('decode error');
+  });
+
+  it('the per-frame refresh is gated on visibility and show() catches up', () => {
+    // Injected while HIDDEN: setFailedLoadsProvider applies the initial set
+    // directly, but the per-frame callback must NOT touch the DOM while hidden,
+    // and show() must re-sync to the current set.
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(new THREE.Group(), makeLayeredSceneGraph());
+    // Panel is hidden (no show()). No initial failures.
+    const { provider, set } = makeFailedProvider([]);
+    panel.setFailedLoadsProvider(provider);
+    expect(errorBadge(rowFor(container, 'cloud'))).toBeNull();
+
+    // A failure appears while hidden; the per-frame callback must be a no-op.
+    set(['/cloud']);
+    perFrameCallbacks(animationController).get('layers-lod-status')!();
+    expect(errorBadge(rowFor(container, 'cloud'))).toBeNull();
+
+    // Opening the panel catches up to the current failed set.
+    panel.show();
+    expect(errorBadge(rowFor(container, 'cloud'))).not.toBeNull();
+  });
+
+  it('reports the reason of the lexicographically-first descendant (matches.sort())', () => {
+    // Two descendants fail, supplied to the stub in REVERSE path order with
+    // distinct reasons. The reported reason must be from the lexicographically
+    // first path (/pyramid/lod_0), so dropping matches.sort() — which would pick
+    // provider-insertion order (/pyramid/lod_1) — fails this test.
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(new THREE.Group(), makeGroupPlusSiblingScene());
+    const { provider } = makeFailedProvider(['/pyramid/lod_1', '/pyramid/lod_0'], {
+      '/pyramid/lod_0': 'reason-A-first',
+      '/pyramid/lod_1': 'reason-B-second',
+    });
+
+    panel.setFailedLoadsProvider(provider);
+
+    const label = errorBadge(rowFor(container, 'pyramid'))?.getAttribute('aria-label');
+    expect(label).toContain('reason-A-first');
+    expect(label).not.toContain('reason-B-second');
+  });
+
+  it('detects a change between failure sets that collide under naive path:reason joining', () => {
+    // Reasons are arbitrary error text, so a signature built by concatenating
+    // `path:reason` and joining with `|` is ambiguous: {'/cloud': 'boom|/pyramid/lod_0:x'}
+    // encodes to the same string as {'/cloud': 'boom', '/pyramid/lod_0': 'x'}.
+    // The JSON tuple signature must tell them apart, or the transition below
+    // early-returns and the pyramid row never gets its badge.
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(new THREE.Group(), makeGroupPlusSiblingScene());
+    panel.show();
+    const { provider, set, setReason } = makeFailedProvider(['/cloud'], {
+      '/cloud': 'boom|/pyramid/lod_0:x',
+    });
+    panel.setFailedLoadsProvider(provider);
+    expect(errorBadge(rowFor(container, 'pyramid'))).toBeNull();
+
+    set(['/cloud', '/pyramid/lod_0']);
+    setReason('/cloud', 'boom');
+    setReason('/pyramid/lod_0', 'x');
+    perFrameCallbacks(animationController).get('layers-lod-status')!();
+
+    expect(errorBadge(rowFor(container, 'pyramid'))).not.toBeNull();
+  });
+
+  it('initFromScene drops the previous provider — fresh rows inherit no stale badges', () => {
+    // The app injects the provider AFTER initFromScene because initFromScene's
+    // clear() resets any prior one. Pin that: re-initializing with a new scene
+    // (before the next provider arrives) must not resurrect the old scene's
+    // failures, neither immediately nor via the per-frame refresh.
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(new THREE.Group(), makeLayeredSceneGraph());
+    const { provider } = makeFailedProvider(['/cloud'], { '/cloud': 'boom' });
+    panel.setFailedLoadsProvider(provider);
+    expect(errorBadge(rowFor(container, 'cloud'))).not.toBeNull();
+
+    panel.initFromScene(new THREE.Group(), makeLayeredSceneGraph());
+    panel.show();
+    perFrameCallbacks(animationController).get('layers-lod-status')!();
+
+    const row = rowFor(container, 'cloud');
+    expect(errorBadge(row)).toBeNull();
+    expect(row?.classList.contains('luxar-layer-row--error')).toBe(false);
+  });
+});
 
 describe('isColormapActive', () => {
   it('is true only when the USE_COLORMAP define is present', () => {

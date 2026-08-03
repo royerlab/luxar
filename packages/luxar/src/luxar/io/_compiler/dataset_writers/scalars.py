@@ -28,6 +28,7 @@ def write_positive_scalar(
     n_elements: int,
     ctx: DatasetCtx,
     log_label_singular: Optional[str] = None,
+    per_array_bytes: bool = False,
 ) -> float:
     """Canonical writer for the ``POSITIVE_SCALAR`` semantic type.
 
@@ -55,6 +56,8 @@ def write_positive_scalar(
         log_label_singular: Optional singular form for the aprint
             log line ("radius" / "width" / "amplitude"). Defaults to
             the dataset name.
+        per_array_bytes: Opt-in per-array dtype byte-budget chunking (points
+            only; defaults ``False`` so lines/gsplats keep atom-sized chunks).
 
     Returns:
         Maximum value across ``data``.
@@ -73,7 +76,10 @@ def write_positive_scalar(
         else:
             n_elems = None
             chunks = calculate_intelligent_chunks(
-                data.shape, spatial_index_data=spatial_index_data, dtype=data.dtype
+                data.shape,
+                spatial_index_data=spatial_index_data,
+                dtype=data.dtype,
+                per_array_bytes=per_array_bytes,
             )
 
     aprint(f"  ✓ Max {label}: {max_value:.3f}")
@@ -112,6 +118,7 @@ def write_bounded_scalar(
     n_elements: int,
     ctx: DatasetCtx,
     log_label_singular: Optional[str] = None,
+    per_array_bytes: bool = False,
 ) -> float:
     """Canonical writer for the ``BOUNDED_SCALAR`` semantic type.
 
@@ -120,7 +127,9 @@ def write_bounded_scalar(
     Uint8 normalised to that range when the encoding mode allows.
 
     Returns the maximum value for callers that surface it on
-    layer-control metadata.
+    layer-control metadata. ``per_array_bytes`` opts into per-array
+    dtype byte-budget chunking (points only; defaults ``False`` so
+    lines keep atom-sized chunks).
     """
     label = log_label_singular or name
 
@@ -136,7 +145,10 @@ def write_bounded_scalar(
         else:
             n_elems = None
             chunks = calculate_intelligent_chunks(
-                data.shape, spatial_index_data=spatial_index_data, dtype=data.dtype
+                data.shape,
+                spatial_index_data=spatial_index_data,
+                dtype=data.dtype,
+                per_array_bytes=per_array_bytes,
             )
 
     aprint(f"  ✓ Max {label}: {max_value:.3f}")
@@ -189,6 +201,7 @@ def write_radii(
         n_elements=n_points,
         ctx=ctx,
         log_label_singular="radius",
+        per_array_bytes=True,
     )
 
 
@@ -214,6 +227,7 @@ def write_sharpness(
         n_elements=n_points,
         ctx=ctx,
         log_label_singular="sharpness",
+        per_array_bytes=True,
     )
 
 
@@ -223,6 +237,7 @@ def write_scalars(
     spatial_index_data: Optional[Dict[str, Any]],
     n_elements: int,
     ctx: DatasetCtx,
+    per_array_bytes: bool = False,
 ) -> None:
     """Write scalars dataset to Zarr for colormap lookup.
 
@@ -234,6 +249,8 @@ def write_scalars(
             the position zarr array because duplicate positions/vertices may
             be stored as an array_ref with physical shape ``(0, D)``.
         ctx: Encoder configuration (encoder, mode, compressor).
+        per_array_bytes: Opt-in per-array dtype byte-budget chunking (points
+            only; defaults ``False`` so lines/gsplats keep atom-sized chunks).
     """
     # Validate that this is a geometry group. The logical element count is
     # passed by the caller; physical zarr shape can be zero for array_ref.
@@ -265,6 +282,7 @@ def write_scalars(
                 scalars.shape,
                 spatial_index_data=spatial_index_data,
                 dtype=scalars.dtype,
+                per_array_bytes=per_array_bytes,
             )
 
     # Colormap scalars are legitimately signed (z-scores, velocities,

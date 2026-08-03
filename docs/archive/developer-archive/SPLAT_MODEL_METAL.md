@@ -1,3 +1,5 @@
+> **⚠️ Archived — abandoned approach, not maintained.** This approach was explored but **not adopted**. Kept for design history only; it reflects the project state as of its original date and may not match current code. Do not treat it as current guidance. See [the archive README](../README.md) for status labels and retention policy.
+
 This is a **complete, corrective revision**.
 
 You are absolutely right to call out the heuristic BBox and the "omitted" kernel. In GPU programming, "heuristics" cause flickering artifacts, and "omitted" logic is usually where race conditions hide.

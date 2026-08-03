@@ -5,9 +5,9 @@
 ## Overview
 
 The three progressive (additive-LOD) loaders —
-`points/points-progressive-loader.ts`,
-`lines/lines-progressive-loader.ts`, and
-`gsplats/gsplats-progressive-loader.ts` — each load a sequence of LOD
+`../../points/points-progressive-loader.ts`,
+`../../lines/lines-progressive-loader.ts`, and
+`../../gsplats/gsplats-progressive-loader.ts` — each load a sequence of LOD
 levels and concatenate the per-LOD typed-array fields into a single
 merged payload. The bits that were identical across all three live here
 so the geometry loaders only carry their own geometry-specific wrinkles
@@ -15,7 +15,8 @@ so the geometry loaders only carry their own geometry-specific wrinkles
 sizing).
 
 This folder holds no loader of its own — it is a pure helper module
-imported by the geometry loaders one directory up.
+imported by the geometry loaders two directories up (in
+`src/data/points/`, `src/data/lines/`, and `src/data/gsplats/`).
 
 ## File Structure
 
@@ -78,11 +79,11 @@ Pure decisions that drive each progressive loader's LOD streaming loop, so
 the three loops stay identical by construction. A pass is classified from
 two facts (is a per-frame budget active? is this a background prefetch?):
 
-| Pass       | When                              | Behavior                                                                                                   |
-| ---------- | --------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `playback` | foreground, budgeted (playing)    | Commit the restored cached prefix + a **LOD-0 first-paint floor**; never block on fine levels — stay responsive. |
-| `prefetch` | background shadow pass            | **Deepen toward the full ladder** — never stop on a cache miss; bounded by the pass budget + abort.         |
-| `refine`   | foreground, unbudgeted (paused)   | Stream cache-resident levels; stop at the first cold/slow one (the `CACHE_HIT_THRESHOLD_MS` rule).          |
+| Pass       | When                            | Behavior                                                                                                         |
+| ---------- | ------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `playback` | foreground, budgeted (playing)  | Commit the restored cached prefix + a **LOD-0 first-paint floor**; never block on fine levels — stay responsive. |
+| `prefetch` | background shadow pass          | **Deepen toward the full ladder** — never stop on a cache miss; bounded by the pass budget + abort.              |
+| `refine`   | foreground, unbudgeted (paused) | Stream cache-resident levels; stop at the first cold/slow one (the `CACHE_HIT_THRESHOLD_MS` rule).               |
 
 ```typescript
 const pass = classifyStreamingPass(budgetDeadline !== null, viewState.prefetch === true);
@@ -99,12 +100,12 @@ ladders so later loops are higher-quality — still fast.
 
 ## Consumers
 
-| File                                       | Uses                                                              |
-| ------------------------------------------ | ---------------------------------------------------------------- |
-| `../points/points-progressive-loader.ts`   | `concatRequiredField`, `concatOptionalField`, streaming-policy   |
-| `../lines/lines-progressive-loader.ts`     | `concatRequiredField`, `concatOptionalField`, streaming-policy   |
-| `../gsplats/gsplats-progressive-loader.ts` | `concatRequiredField`, streaming-policy                          |
-| `streaming-policy.ts`                      | `CACHE_HIT_THRESHOLD_MS`                                          |
+| File                                          | Uses                                                           |
+| --------------------------------------------- | -------------------------------------------------------------- |
+| `../../points/points-progressive-loader.ts`   | `concatRequiredField`, `concatOptionalField`, streaming-policy |
+| `../../lines/lines-progressive-loader.ts`     | `concatRequiredField`, `concatOptionalField`, streaming-policy |
+| `../../gsplats/gsplats-progressive-loader.ts` | `concatRequiredField`, streaming-policy                        |
+| `streaming-policy.ts`                         | `CACHE_HIT_THRESHOLD_MS`                                       |
 
 ## See Also
 

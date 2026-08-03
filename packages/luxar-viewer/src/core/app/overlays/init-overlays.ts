@@ -26,8 +26,7 @@ export async function initOverlays(ports: InitOverlaysPorts): Promise<OverlayMan
   ports.disposePrevious();
 
   const root = ports.sceneManager.scene?.children?.find((c) => c.name === 'LuxarScene') as
-    | THREE.Group
-    | undefined;
+    THREE.Group | undefined;
 
   const overlayConfigs = root?.userData?.overlayConfigs;
   const zarrBaseUrl = root?.userData?.zarrBaseUrl;

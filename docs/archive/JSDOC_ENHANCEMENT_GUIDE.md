@@ -1,3 +1,5 @@
+> **⚠️ Archived — historical document, not maintained.** Kept for design history; it reflects the project state as of its original date and may not match current code. Do not treat it as current guidance. See [the archive README](README.md) for status labels and retention policy.
+
 # JSDoc Enhancement Guide
 **Purpose**: Template and examples for adding @param, @returns, @throws, @example tags to existing JSDoc
 **Target**: Phase 2, Task 2.1

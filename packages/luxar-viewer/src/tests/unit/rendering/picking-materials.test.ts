@@ -168,6 +168,18 @@ describe('LinePickingMaterial', () => {
     material.dispose();
   });
 
+  // Pathological discard must be segment-constant, in lockstep with the
+  // visual shader: rawPixelWidth varies across the shared quad's t=0/t=1
+  // corners, so gating on it sentinels only half the quad and leaves a
+  // visible wedge (issue #849). The fix gates on segMaxPixelWidth.
+  it('GLSL line picking shader gates the pathological discard on the per-segment max width (issue #849)', () => {
+    const material = new LinePickingMaterial({ nodeId: 1 });
+    expect(material.vertexShader).toContain('segMaxPixelWidth');
+    expect(material.vertexShader).toContain('segMaxPixelWidth > maxPW * 2.0');
+    expect(material.vertexShader).not.toContain('rawPixelWidth > maxPW * 2.0');
+    material.dispose();
+  });
+
   // Mirrors GSplatPickingMaterial's explicit clone (inherited
   // Material.clone() calls the constructor with no config and throws;
   // three-geometry symmetry rule).

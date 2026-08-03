@@ -324,7 +324,7 @@ if (isPointsMetadata(attrs)) {
 }
 ```
 
-See `points.ts` for complete interface definitions including `PointsViewState`, `PointsDataLoader`, and `PointsUserData`. The chunk-bounds index type is the canonical `ChunkSpatialIndex` from `data/loaders/spatial-query-builder.ts`.
+See `points.ts` for complete interface definitions including `PointsViewState`, `PointsDataLoader`, and `PointsUserData`. The chunk-bounds index type is the canonical `ChunkSpatialIndex` from `data/loaders/spatial-query/spatial-query-builder.ts`.
 
 ## Lines Types
 
@@ -358,7 +358,7 @@ if (isLinesMetadata(attrs)) {
 }
 ```
 
-See `lines.ts` for complete interface definitions including `OrderingMetadata`, `SegmentRange`, `LoadedLinesData`, `ProcessedLinesData`, `ClippedSegment`, and `LinesViewState`. The chunk-bounds index type is the canonical `ChunkSpatialIndex` from `data/loaders/spatial-query-builder.ts`; lines additionally carry the vertex-side bounds inside the loader.
+See `lines.ts` for complete interface definitions including `OrderingMetadata`, `SegmentRange`, `LoadedLinesData`, `ProcessedLinesData`, `ClippedSegment`, and `LinesViewState`. The chunk-bounds index type is the canonical `ChunkSpatialIndex` from `data/loaders/spatial-query/spatial-query-builder.ts`; lines additionally carry the vertex-side bounds inside the loader.
 
 ## GSplats Types
 
@@ -427,7 +427,7 @@ const packed = choleskyPackedSize(3); // 6 = 3*(3+1)/2
 console.log(CHOLESKY_SIZES); // { '2D': 3, '3D': 6, '4D': 10 }
 ```
 
-See `gsplats.ts` for complete interface definitions including `ProcessedGSplatsData`, `GSplatsViewState`, and `GSplatsUserData`. The chunk-bounds index type is the canonical `ChunkSpatialIndex` from `data/loaders/spatial-query-builder.ts`.
+See `gsplats.ts` for complete interface definitions including `ProcessedGSplatsData`, `GSplatsViewState`, and `GSplatsUserData`. The chunk-bounds index type is the canonical `ChunkSpatialIndex` from `data/loaders/spatial-query/spatial-query-builder.ts`.
 
 ## Specialized Group Types
 
