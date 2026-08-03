@@ -21,6 +21,7 @@ import type {
   LoaderMetrics,
   LODProgressState,
   MemoryMetrics,
+  SceneGraphNode,
 } from '../../../types/data-monitor-types';
 
 // Mock DOM environment
@@ -1102,6 +1103,38 @@ describe('DataLoadingMonitor', () => {
       const state = monitor.getSceneGraph();
 
       expect(state.totalByType.points).toBe(1000); // 600 + 400 (disjoint parts)
+    });
+
+    it('coerces malformed element-count attrs instead of poisoning the totals', () => {
+      // `pointCount` / `segmentCount` / `splatCount` are read straight off zarr
+      // `.zattrs` with a bare cast (scene-graph-converter.ts), so a hand-edited or
+      // third-party store can put a non-number there. One bad attr must not make
+      // every total downstream of it NaN (or, for `''`, silently string-concat).
+      for (const bad of [NaN, '', false, null, undefined]) {
+        for (const [type, field] of [
+          ['points', 'pointCount'],
+          ['lines', 'segmentCount'],
+          ['gsplats', 'splatCount'],
+        ] as const) {
+          const leafNode = {
+            path: '/leaf',
+            name: 'leaf',
+            type,
+            children: [],
+            [field]: bad,
+          } as unknown as SceneGraphNode;
+          monitor.setSceneGraph({
+            path: '/',
+            name: 'Scene',
+            type: 'scene',
+            children: [leafNode],
+          } as unknown as SceneGraphNode);
+          const total = monitor.getSceneGraph().totalByType[type];
+          expect(typeof total, `${type} ${String(bad)}`).toBe('number');
+          expect(Number.isFinite(total), `${type} ${String(bad)} → ${String(total)}`).toBe(true);
+          expect(total, `${type} ${String(bad)}`).toBe(0);
+        }
+      }
     });
 
     it('should track expanded nodes', () => {

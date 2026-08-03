@@ -69,7 +69,7 @@ export interface WireMonitorAfterLoadParams {
   sceneGraph: SceneNode;
   /**
    * Caller-supplied callback that traverses `rootGroup` and calls
-   * `monitor.updateVisibleSegments` / `updateVisibleSplats`. Lives on
+   * `monitor.updateVisibleCount` once per geometry type. Lives on
    * SceneLoader because it reads the live THREE scene; passing it in
    * keeps this helper free of THREE imports.
    */

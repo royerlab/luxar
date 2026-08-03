@@ -487,6 +487,33 @@ describe('renderSceneGraphTree — kind badges', () => {
     };
   }
 
+  it('header reports LAYER counts (nodesByType), not element counts', () => {
+    // The header renders "N points, N lines, N gsplats" as *layer* counts, and its
+    // tooltip says so explicitly ("not element counts") because "5 gsplats"
+    // otherwise reads as 5 splats. `nodesByType` and `totalByType` are both
+    // `GeometryCounters` and so are trivially swappable at the call site — this
+    // pins which one the header reads.
+    const state: SceneGraphState = {
+      root: { path: '/', name: 'Scene', type: 'scene', children: [] },
+      totalNodes: 3,
+      nodesByType: { points: 2, lines: 0, gsplats: 1 },
+      // Deliberately disjoint from nodesByType so reading the wrong record shows.
+      totalByType: { points: 90000, lines: 5000, gsplats: 70000 },
+      visibleByType: { points: 1, lines: 2, gsplats: 3 },
+    };
+    const html = renderSceneGraphTree(state, new Set(['/']), new Map());
+
+    expect(html).toContain('2 points');
+    expect(html).toContain('1 gsplats');
+    // A type with no layers is omitted entirely, even though it has elements.
+    expect(html).not.toContain('0 lines');
+    expect(html).not.toContain('5000 lines');
+    // Element totals must never appear in the layer-count header.
+    expect(html).not.toContain('90000 points');
+    expect(html).not.toContain('70000 gsplats');
+    expect(html).toContain('not element counts'); // the disambiguating tooltip
+  });
+
   it('renders a "K LODs" badge + active-level chip for a kind=lod group', () => {
     const root: SceneGraphNode = {
       path: '/lod',

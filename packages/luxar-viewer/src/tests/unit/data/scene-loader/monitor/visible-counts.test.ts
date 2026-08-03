@@ -127,4 +127,67 @@ describe('updateVisibleCountsInMonitor', () => {
     expect(map.size).toBe(2);
     expect(monitor.updateVisibleCount).toHaveBeenCalledWith('points', 125);
   });
+
+  it('dispatches on nodeType alone — extra count fields cannot double-count', () => {
+    // The reader table is a first-match loop over GEOMETRY_TYPES. All three guards
+    // test `userData.nodeType === <literal>`, so at most one can ever match and the
+    // iteration order is irrelevant. A mesh carrying every count field must still
+    // tally only to the type its `nodeType` names.
+    const monitor = makeMonitor();
+    const root = new THREE.Group();
+    root.add(
+      meshWith({
+        nodeType: 'lines',
+        visiblePointCount: 111,
+        visibleSegmentCount: 222,
+        visibleSplatCount: 333,
+      })
+    );
+
+    updateVisibleCountsInMonitor(root, monitor);
+
+    expect(Object.fromEntries(monitor.updateVisibleCount.mock.calls)).toEqual({
+      points: 0,
+      lines: 222,
+      gsplats: 0,
+    });
+  });
+
+  it('reports every geometry type exactly once per invocation', () => {
+    const monitor = makeMonitor();
+    const root = new THREE.Group();
+    root.add(meshWith({ nodeType: 'points', visiblePointCount: 5 }));
+    root.add(meshWith({ nodeType: 'points', visiblePointCount: 6 }));
+
+    updateVisibleCountsInMonitor(root, monitor);
+
+    // One call per type — a type with no meshes must still be reported as 0 so a
+    // previous scene's count cannot linger in the HUD.
+    expect(monitor.updateVisibleCount).toHaveBeenCalledTimes(3);
+    expect(Object.fromEntries(monitor.updateVisibleCount.mock.calls)).toEqual({
+      points: 11,
+      lines: 0,
+      gsplats: 0,
+    });
+  });
+
+  it('ignores a nodeType outside the geometry vocabulary', () => {
+    // No reader matches, so `visible` stays undefined: the mesh contributes to no
+    // total and gets no per-path entry (rather than a spurious 0).
+    const monitor = makeMonitor();
+    const root = new THREE.Group();
+    root.add(meshWith({ nodeType: 'volume', visibleVoxelCount: 9 }, '/vol'));
+    root.add(meshWith({ nodeType: 'points', visiblePointCount: 4 }, '/pts'));
+
+    updateVisibleCountsInMonitor(root, monitor);
+
+    expect(Object.fromEntries(monitor.updateVisibleCount.mock.calls)).toEqual({
+      points: 4,
+      lines: 0,
+      gsplats: 0,
+    });
+    const map = monitor.updateVisibleCountsByPath.mock.calls[0][0] as Map<string, number>;
+    expect(map.has('/vol')).toBe(false);
+    expect(map.get('/pts')).toBe(4);
+  });
 });
