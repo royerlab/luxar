@@ -23,8 +23,7 @@ import {
 import { computeWorldNdTransform, invertNdTransformForQuery } from '../../transforms/nd-transform';
 
 export type DerivedNodeViewState =
-  | { skip: 'extend_to_all' }
-  | { skip: false; viewState: ViewState };
+  { skip: 'extend_to_all' } | { skip: false; viewState: ViewState };
 
 export interface DeriveOpts {
   applyPartialExtendTolerance: boolean;

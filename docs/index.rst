@@ -83,10 +83,17 @@ Features
 
 .. toctree::
    :maxdepth: 2
+   :caption: Command-Line Interface:
+
+   guides/user/CLI_REFERENCE
+
+.. toctree::
+   :maxdepth: 2
    :caption: Format Specifications:
 
    guides/user/LUXAR_ZARR_FORMAT
    specs/GSPLATS_ZARR_FORMAT
+   guides/user/FORMAT_AND_MIGRATION
 
 .. toctree::
    :maxdepth: 2

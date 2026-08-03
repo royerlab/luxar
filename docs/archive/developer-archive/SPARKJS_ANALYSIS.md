@@ -1,3 +1,5 @@
+> **⚠️ Archived — historical document, not maintained.** Kept for design history; it reflects the project state as of its original date and may not match current code. Do not treat it as current guidance. See [the archive README](../README.md) for status labels and retention policy.
+
 # SparkJS Technical Analysis
 
 A comprehensive analysis of [SparkJS](https://github.com/sparkjsdev/spark), an advanced 3D Gaussian Splatting renderer for Three.js. This document extracts implementation tricks, optimizations, and architectural insights that could inform Luxar's nD Gaussian splat renderer development.

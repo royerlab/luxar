@@ -102,18 +102,15 @@ describe('GSplats Types', () => {
       expect(choleskyOffdiagIndices(d)).toEqual(off);
     });
 
-    it.each([1, 2, 3, 4, 5, 6, 8])(
-      'd=%d: diag ∪ offdiag partitions range(k) exactly',
-      (d) => {
-        const k = choleskyPackedSize(d);
-        const combined = [...choleskyDiagIndices(d), ...choleskyOffdiagIndices(d)].sort(
-          (a, b) => a - b
-        );
-        expect(combined).toEqual(Array.from({ length: k }, (_, i) => i));
-        expect(choleskyDiagIndices(d)).toHaveLength(d);
-        expect(choleskyOffdiagIndices(d)).toHaveLength(k - d);
-      }
-    );
+    it.each([1, 2, 3, 4, 5, 6, 8])('d=%d: diag ∪ offdiag partitions range(k) exactly', (d) => {
+      const k = choleskyPackedSize(d);
+      const combined = [...choleskyDiagIndices(d), ...choleskyOffdiagIndices(d)].sort(
+        (a, b) => a - b
+      );
+      expect(combined).toEqual(Array.from({ length: k }, (_, i) => i));
+      expect(choleskyDiagIndices(d)).toHaveLength(d);
+      expect(choleskyOffdiagIndices(d)).toHaveLength(k - d);
+    });
 
     // Guards the loader's interleave math: scattering split halves back through
     // these indices must reconstruct the original packed row (cf.

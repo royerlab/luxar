@@ -496,6 +496,11 @@ function segmentDirections(
  * Only degree-2 vertices count as joints, and only endpoints that actually
  * reach the shared vertex (untrimmed, on a visible segment) participate.
  *
+ * Caveat: the bend angle is measured in display/data space, but quad overlap
+ * is a screen-space (camera-dependent) property this scalar does not track, so
+ * a gentle 3D bend that projects sharp can sum to ~2x body brightness — see
+ * the line material README's "Known limitation" note and the Rust doc.
+ *
  * @param segments - Vertex index pairs [numSegments * 2]
  * @param visibility - Visibility mask [numSegments]
  * @param t1Params - Start interpolation parameters [numSegments]

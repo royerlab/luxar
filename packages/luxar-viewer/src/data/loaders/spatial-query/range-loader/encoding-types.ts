@@ -4,12 +4,7 @@ import { slice } from '../../../zarr';
 import type { LoadRange } from '../../base-types';
 
 export type EncodingType =
-  | 'broadcasted'
-  | 'quantized'
-  | 'lut'
-  | 'array_ref'
-  | 'perchannel'
-  | 'direct';
+  'broadcasted' | 'quantized' | 'lut' | 'array_ref' | 'perchannel' | 'direct';
 
 export interface RangeLoaderConfig {
   /** Minimum elements before using workers (default: 1000) */
@@ -45,11 +40,7 @@ export type RangeNumericArray =
  * source matches, and *converts* otherwise — see `copyDirectChunk`.
  */
 export type DirectOutputBuffer =
-  | Float32Array
-  | Float16Array
-  | Uint8Array
-  | Uint16Array
-  | Uint32Array;
+  Float32Array | Float16Array | Uint8Array | Uint16Array | Uint32Array;
 
 /**
  * Copy one fetched chunk into `output` at `destOffset`, preserving the

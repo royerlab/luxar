@@ -150,12 +150,13 @@ suppression near `1` while the quads genuinely do overlap, summing to up to
 ~2× body brightness over a width-sized lens that moves as the camera orbits.
 Straight joints are projection-invariant, so the bead-chain case the scalar
 targets is correct under every camera. A true fix needs a screen-space
-(per-frame) suppression, which is a design change tracked separately.
+(per-frame) suppression, a design change at odds with the once-per-commit
+worker architecture — the trade-off is discussed in #795.
 
 The other known artifact is the **outer-side miter wedge**: at a sharp
 bend the two quads leave a small uncovered wedge on the outside of the turn.
 Closing it needs real join geometry (extending the quads longitudinally by a
-half-width), which is tracked separately.
+half-width), which is tracked separately (#790).
 
 ## Geometry and storage layout
 
