@@ -251,7 +251,10 @@ convention (fail-fast, before any zarr group is created):
   **warned**, not rejected (degenerate triangles legitimately produce them). Render-time handling is
   **pointwise, not per-face**: on a shared-vertex indexed mesh the interpolated normal blends toward the
   neighbouring vertices' directions, so the stored-normal fragment variant (§6.2) simply epsilon-guards
-  its `normalize` — when the interpolated normal is near-zero (`dot(N, N) < ε` before normalization) it
+  its `normalize` — when the interpolated normal is not affirmatively valid (`!(dot(N, N) >= ε)` before
+  normalization — the *negated* form on purpose: `NaN` fails every comparison, so a corrupt store's
+  `NaN` normal takes the same fallback instead of slipping past a `dot(N, N) < ε` test and normalizing
+  into `NaN` shading) it
   falls back to the §6.2 screen-space-derivative flat normal rather than normalizing a zero vector into
   NaN shading. Shading near a degenerate vertex is therefore locally distorted rather than cleanly flat;
   the warning exists so authors fix the normals instead of relying on the guard.
@@ -276,27 +279,94 @@ a no-op validator is vacuous).
 writer produced; the viewer loads arbitrary — externally produced or corrupted — stores and hands `faces`
 straight to the §5.4 kernels. An out-of-range face index **panics** the Rust kernel (the crate is
 `panic = "abort"`, so the trap takes down the whole WASM module) and silently corrupts the TS backend
-(out-of-bounds reads yield `undefined`). The mesh loader must therefore structurally validate after
-decode, before either backend is invoked: `vertices`/`faces` shapes against `n_vertices`/`n_faces`,
-`faces` length a multiple of 3, every face index in `[0, V)` — checked on the exact `u32`-typed data the
-kernels receive, after any dtype conversion, because an externally produced *signed* store's `-1` passes
-a pre-cast `< V` check and then wraps to `0xffffffff` in the cast, defeating the gate — `n_vertices <=
-2^27`, and `normal_dims` well-formed whenever normals are present — failing the node with a
-`LoaderError` (one node lost, not the scene) instead of trapping. The `n_vertices <= 2^27` check belongs
-at this gate because mesh's pick `elementId` is `gl_VertexID` (§6.5) — the one type not bounded by the
-element-texture capacity — and once a vertex ordinal reaches the pick vote-key stride (`2^27`) the vote
-key silently aliases across nodes (the largest ordinal is `n_vertices - 1`, so `n_vertices <= 2^27` is
-the exact alias-free bound: every admitted ordinal stays strictly under the stride), so the bound must
-be enforced here, not assumed from the §7 whole-load workload. The writer now enforces this same
-`n_vertices <= 2^27` cap at write time (via `validate_vertices_for_writing`, above), so this loader gate
-is the defensive twin for arbitrary — externally produced or corrupted — stores rather than the only
-place the bound lives; it must still fully validate those stores as described.
-The optional arrays get the same structural gate whenever present — `normals` shape `(V, 3)`, `colors`
-shape `(V, 3|4)`, `scalars` length `V`, and the label/image-label CSR offsets monotone and in-bounds
-(§3.2) — because they bind as enabled vertex attributes on an **indexed** draw (§6.1): an undersized
-attribute doesn't trap, it makes `drawElements` read past the buffer (an invalid-operation draw or
-silent zeros, backend-dependent) and mis-shades every vertex it covers. Same `LoaderError`, same
-one-node blast radius.
+(out-of-bounds reads yield `undefined`), so the loader must structurally validate before either backend
+is invoked. But the whole-node loader (§7) fetches and decodes every array in full up front, so a check
+that runs only *after* decode arrives too late for the quantities that gate admission: a corrupt or
+hostile store (the viewer loads arbitrary `?src=` URLs) can declare enormous arrays and exhaust tab
+memory before the `LoaderError` containment ("one node lost, not the scene") is ever reachable. The gate
+therefore runs in **two stages**, and everything decidable from metadata is checked *first*, before a
+single chunk is fetched.
+
+**Stage 1 — metadata preflight (before any array materialization).** Runs purely on the node attrs
+(`n_vertices`, `n_faces`, `ndim`, `has_normals`/`normal_dims`, the presence flags §3.3) and each array's
+zarr `.zarray` metadata (declared shape, `chunks`, and dtype), touching no chunk data. It (a) rejects
+`n_vertices > 2^27` — the pick vote-key stride bound (§6.5) — so a giant vertex count is refused before
+allocation, not after a multi-gigabyte fetch; (b) bounds `n_faces`, which the writer floors at `F >= 1`
+but never caps, against a viewer-side per-node ceiling `MESH_DECODE_BUDGET_BYTES` (a viewer `src/config/`
+constant, default 512 MiB — a few-million-triangle mesh's `vertices`+`faces` run to tens–hundreds of MB,
+so the default admits the §7 workload expectation with several-fold headroom; why it must sit well
+*under* what a tab survives is the transient-peak multiplier below): both the summed declared
+footprint — each array's declared shape × its *declared-dtype* itemsize: `vertices` `V·D·4`, `faces` `F·3·itemsize` (8 bytes per index for
+an external int64 store, not the canonical uint32's 4 — budgeting the canonical dtype instead of the
+declared one would let a 64-bit store fetch twice the audited bytes), every present optional array and
+the CSR arrays included — and each array's *per-chunk* decode
+allocation (`chunks × itemsize`, edge chunks padded to the full chunk shape) must fall under it — the
+per-chunk term because zarr allocates chunk-shaped buffers, not shape-shaped ones, and zarr v2 does not
+require `chunks <= shape`, so a `faces` `"shape": [100, 3], "chunks": [268435456, 3]` declaration would
+otherwise slip a ~3 GB first-chunk allocation past a shape-only budget; (c) cross-checks every declared
+`.zarray` shape and dtype against `n_vertices`/`n_faces` and the §3.2 array table — `vertices` `(V, D)`
+float32 with `D == ndim` (a `vertices` width that disagrees with the `ndim` attr would otherwise index
+out of slice bounds in the §5.4 slab kernel — a `panic = "abort"` trap, the exact class this gate
+exists to stop), `faces` `(F, 3)` of an **integer** dtype (so `faces` materializes to a multiple of 3; float is
+rejected because it truncates in the u32 cast, mirroring the write-side `validate_faces_for_writing`
+rule — §3.2's uint32 is this writer's canonical dtype, but an external integer store is coerced to u32,
+a coercion Stage 2 makes value-preserving by range-checking the *source* values first), and each
+present optional
+`normals` `(V, 3)`, `colors` `(V, 3|4)`, `scalars` `(V,)` — because these optionals bind as enabled
+vertex attributes on an **indexed** draw (§6.1): an undersized attribute doesn't trap, it makes
+`drawElements` read past the buffer (an invalid-operation draw or silent zeros, backend-dependent) and
+mis-shades every vertex it covers, and a declared-undersized array is caught here from its shape alone;
+and (d) checks `normal_dims` well-formed whenever normals are present — exactly 3 entries, distinct
+integers, each `0 <= i < ndim` — decidable from the attrs alone, so it never forces a fetch. The decode
+layer must in turn allocate from the declared chunk `nbytes` and reject any stream that decompresses to
+a different size, so a blosc header claiming gigabytes cannot win either. Be clear about what the
+ceiling bounds: the *declared source* footprint plus any single decode buffer — not the loader's whole
+transient peak. On the admission path the decoded sources coexist with derived copies — the u32-coerced
+`faces`, the extracted display-space `position` (§6.1), the driver-side GPU upload — each itself bounded
+by the source footprint, so the worst-case transient peak is a small known multiple (≈ 3–4×) of the
+ceiling. The default prices that multiplier in: 512 MiB of admitted declaration keeps the worst-case
+transient around 2 GiB, comfortably inside a 64-bit tab — which is also why the ceiling must never be
+raised toward "what a tab survives"; the tab has to survive the *multiple*, not the ceiling. The ceiling
+is **per node** —
+N nodes can still sum to N×budget, so the "one node lost, not the scene" guarantee is per-node; v1
+imposes no aggregate cap. Any failure fails the node with a `LoaderError` (one node lost, not the scene)
+**without fetching a single chunk**, preserving the blast radius before allocation.
+
+The `n_vertices <= 2^27` cap belongs at this preflight because mesh's pick `elementId` is `gl_VertexID`
+(§6.5) — the one type not bounded by the element-texture capacity — and once a vertex ordinal reaches
+the pick vote-key stride (`2^27`) the vote key silently aliases across nodes (the largest ordinal is
+`n_vertices - 1`, so `n_vertices <= 2^27` is the exact alias-free bound: every admitted ordinal stays
+strictly under the stride), so the bound must be enforced here, not assumed from the §7 whole-load
+workload.
+
+**Stage 2 — post-decode value checks (after fetch + decode).** The remaining checks genuinely need the
+materialized arrays. First, each materialized array's length/shape must equal the shape Stage 1 admitted
+(`vertices`/`normals`/`colors`/`scalars` length `V`, `faces` `3F`) — Stage 1 vets only the *declared*
+`.zarray` shape, so a store that declares correctly but materializes a short array (a raw or mis-sized
+chunk, a non-compliant decoder) would otherwise resurrect the undersized-attribute `drawElements`
+over-read Stage 1(c) closes. Then every face index in `[0, V)` — a **two-sided check on the
+source-typed values, before the integer→u32 coercion**, because each side of the cast hides its own
+wrap-around: an externally produced *signed* store's `-1` passes a one-sided pre-cast `< V` check and
+wraps to `0xffffffff`, while a 64-bit store's `2^32 + 1` survives a check run only *after* the cast —
+it wraps to `1`, lands inside `[0, V)`, and silently rewrites topology instead of trapping. The
+two-sided source-value check rejects both, and because Stage 1 admits only `V <= 2^27`, every index it
+passes is preserved bit-for-bit by the u32 cast — so the values checked are exactly the values the
+kernels receive. Finally, the label and image-label CSR offsets monotone and in-bounds (§3.2). Same
+`LoaderError`, same one-node
+blast radius; these run only once Stage 1 has admitted the declared shapes and budget, so the
+fetch+decode they gate is already bounded.
+
+Stage 2 deliberately does **not** finite-scan the float arrays (`vertices`, `normals`, `colors`,
+`scalars`). A non-finite value can neither trap a kernel nor over-read a buffer, and its blast radius
+is already per-node without a gate: a `NaN`/`±Inf` coordinate on a hidden dimension hides the vertex
+(§5.2's #806 rule), a non-finite *displayed* coordinate corrupts at most that node's rasterization and
+bounding sphere (which the depth-sort coordinator already refuses to sort by —
+`depth-sort-coordinator/render-order.ts` checks `Number.isFinite` on every sphere it uses), non-finite
+colors/alpha are clamped by the shared shader sanitizers (§6.2's `sanitizeAlpha` and the
+`materials/_shared` helpers), and a non-finite stored normal degrades only that node's shading —
+contained because the §3.5 normalize guard is written in its NaN-robust negated form (above). No
+sibling loader finite-scans its decoded positions either; mesh matches that policy rather than
+inventing a stricter one here.
 
 ### 3.6 Authoring lint
 
@@ -841,7 +911,8 @@ float32 24-bit mantissa (the readback recombines the halves); vertex count `V` u
 *expectation*, not an invariant: for the three texture-fed types the alias-free condition is
 *structural* — `elementId` is bounded by `getMaxElementCapacityPerNode`, well under `2^27` — whereas
 mesh's `gl_VertexID` source is bounded only by `V`. The cap is therefore *enforced*: `n_vertices <=
-2^27` at the §3.5 loader gate (fail the node with a `LoaderError`; the largest admitted ordinal
+2^27` at the §3.5 loader gate's **metadata preflight** (Stage 1, before any chunk is fetched — fail the
+node with a `LoaderError`; the largest admitted ordinal
 `2^27 - 1` is the last alias-free one, and its worst-case vote key
 `(2^24 - 1) * 2^27 + 2^27 - 1 = 2^51 - 1` stays exactly representable), invoking the stride's own house
 rule that an unenforced bound is not a bound (the reason `MAX_PICK_NODE_ID` is checked at allocation,
@@ -865,10 +936,15 @@ geometry or a per-corner face-id attribute, **plus** a compacted→original face
 
 ## 7. Loading
 
-v1 uses a **whole-node loader**: fetch `vertices`, `faces` and the optional attribute arrays in full,
-decode, and hold them. No spatial index, no progressive refinement, no chunk-bounds query. Immediately
-after decode the arrays get §3.5's loader-side structural validation, before anything reaches the §5.4
-kernels.
+v1 uses a **whole-node loader**, and the fetch is explicitly gated by §3.5's two-stage loader-side
+validation. **First** the metadata preflight (§3.5 Stage 1) runs on the node attrs and every array's
+`.zarray` shape, `chunks`, and dtype — the `n_vertices <= 2^27` cap, the `n_faces`/`MESH_DECODE_BUDGET_BYTES`
+byte budget, the §3.2 shape cross-checks, and `normal_dims` well-formedness — **before any chunk is
+fetched**, so an oversized or malformed declaration fails with a `LoaderError` without allocating.
+**Then**, on a store that clears preflight, it fetches `vertices`, `faces` and the optional attribute
+arrays in full, decodes, and holds them. No spatial index, no progressive refinement, no chunk-bounds
+query. Immediately after decode the arrays get §3.5's Stage 2 post-decode value checks (materialized
+lengths, face indices in `[0, V)`, CSR offsets), before anything reaches the §5.4 kernels.
 
 Justification: meshes in this domain are typically ≤ a few million triangles and fit comfortably; the
 dual-index machinery in `lines-spatial-index-loader.ts` (1010 LOC) exists because line datasets reach
@@ -1059,9 +1135,15 @@ A reviewer should treat a `| 'mesh'` appearing in any of those five as a defect.
 - [ ] Rust: `mesh_vertex_visibility_mask` / `compact_visible_faces` unit tests incl. the non-finite rule
 - [ ] TS unit: loader, geometry assembly, cull correctness, colormap fail-closed guard,
       Rust↔TS kernel parity, corrupt-store rejection (out-of-range face index → `LoaderError`, not a
-      WASM trap; an undersized `normals`/`colors`/`scalars` array → `LoaderError`, §3.5; `n_vertices >
+      WASM trap — including a 64-bit index like `2^32 + 1` whose bare u32 cast would wrap into range,
+      pinning §3.5 Stage 2's source-value check; an undersized `normals`/`colors`/`scalars` array →
+      `LoaderError`, §3.5; `n_vertices >
       2^27` → `LoaderError`, its own pin since `pick-render.test.ts` only covers the texture-layout
-      maxima, §6.5), and the `volumetric`→`opaque` fallback warning (§6.3)
+      maxima, §6.5; an **oversized declaration** — `n_vertices > 2^27`, or an `n_faces`/`.zarray`
+      shape-or-`chunks` footprint exceeding `MESH_DECODE_BUDGET_BYTES` — rejected by the §3.5 Stage 1
+      metadata preflight, asserting **no chunk-key request** (an `<array>/<chunk-coords>` key) is ever
+      issued — only the `.zarray`/`.zattrs` metadata keys the preflight legitimately reads — verified to
+      fail before the preflight exists), and the `volumetric`→`opaque` fallback warning (§6.3)
 - [ ] TS unit (alpha chain, §6.2): an **RGBA** mesh produces **different** fragment output than the same
       mesh RGB-only (goes red if `vAlpha` is dropped — the exact "(V,4) renders like (V,3)" defect); under
       `opaque`, fragments with `a < uAlphaCutoff` are **discarded** (cutout) and survivors write alpha 1.0;
