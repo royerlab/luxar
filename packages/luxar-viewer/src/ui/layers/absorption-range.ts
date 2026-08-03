@@ -42,14 +42,16 @@ export const ABSORPTION_DEFAULT_MAX = 10.0;
  */
 export const ABSORPTION_MAX_LIMIT = 1e6;
 
-/** Decades of κ spanned by the log track below its upper bound. */
+/** Decades of κ spanned by the nominal log track below {@link ABSORPTION_DEFAULT_MAX}. */
 export const ABSORPTION_LOG_DECADES = 4;
 
 /**
- * Hard cap on the track's span in decades, used when the CURRENT κ sits
- * below the nominal floor and the floor has to be lowered to include it.
- * Bounds how compressed the useful region can get for a κ that is already
- * visually indistinguishable from 0.
+ * Hard cap on the track's total span in decades. It binds at either end: when
+ * the CURRENT κ sits below the nominal floor and the floor is lowered to
+ * include it, and when an authored κ raises the top far above the nominal
+ * maximum (the floor stays at the nominal 0.001 until the span would exceed
+ * this cap, then rises to hold it). Bounds how compressed the useful region
+ * can get for a κ that is already visually indistinguishable from 0 or opaque.
  */
 export const ABSORPTION_LOG_DECADES_MAX = 8;
 
@@ -82,7 +84,7 @@ export const ABSORPTION_LOG_DECADES_MAX = 8;
 export function absorptionSliderRange(currentValue: number): { min: number; max: number } {
   const current = Number.isFinite(currentValue) ? currentValue : 0;
   const max = Math.min(ABSORPTION_MAX_LIMIT, Math.max(ABSORPTION_DEFAULT_MAX, current));
-  const nominalMin = max / Math.pow(10, ABSORPTION_LOG_DECADES);
+  const nominalMin = ABSORPTION_DEFAULT_MAX / Math.pow(10, ABSORPTION_LOG_DECADES);
   const min = Math.max(
     max / Math.pow(10, ABSORPTION_LOG_DECADES_MAX),
     current > 0 ? Math.min(nominalMin, current) : nominalMin

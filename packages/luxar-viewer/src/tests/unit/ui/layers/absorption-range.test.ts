@@ -49,6 +49,14 @@ describe('absorptionSliderRange', () => {
     expect(absorptionSliderRange(250).max).toBe(250);
   });
 
+  it('keeps the nominal floor when the top widens for an authored κ above the maximum', () => {
+    // Raising the top for a large authored κ must only EXTEND the track upward,
+    // never lift the floor: the nominal 0.001–10 span must stay reachable.
+    const { min, max } = absorptionSliderRange(250);
+    expect(max).toBe(250);
+    expect(min).toBeCloseTo(ABSORPTION_DEFAULT_MAX / Math.pow(10, ABSORPTION_LOG_DECADES), 12); // 0.001, NOT max/1e4
+  });
+
   it('LOWERS the floor to keep a κ below the nominal minimum on the track', () => {
     // Without this the readout would show the true κ while the thumb could
     // not represent it, and the first drag would silently jump κ up.
