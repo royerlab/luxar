@@ -51,10 +51,14 @@ luxar demo list          # List all demos (key, needs, status)
 luxar demo info          # Full details for one demo
 luxar demo run           # Generate a demo and open it in the viewer (forwards -- args)
 luxar demo run-all       # Generate every demo (batch)
-luxar demo deps          # Report missing/outdated optional demo dependencies (--install, --extra)
+luxar demo deps          # Optional dependencies (--install, --extra, --only MODULE)
 luxar demo cache list    # Inventory the ~/.cache/luxar demo caches
 luxar demo cache clear   # Clear demo caches (--dry-run to preview)
 ```
+
+Report-only `demo deps` exits 1 for any missing or outdated row. Generic
+`--install` manages Luxar extras; use `--only MODULE --install` to install one
+exact constrained requirement, including a dependency outside every extra.
 
 ## `luxar gsplat`
 

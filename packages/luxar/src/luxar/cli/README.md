@@ -61,17 +61,26 @@ luxar demo run 3                  # Run by table index
 luxar demo run lorenz -- --no-serve --points=100000  # Forward args to the demo
 luxar demo cache list             # Inventory ~/.cache/luxar demo caches
 luxar demo cache clear lorenz --dry-run   # Preview a cache clear
-luxar demo deps                   # Which optional demo deps are missing?
-luxar demo deps --install         # Install the extras that provide them
-luxar demo deps --extra io        # Restrict to one extra (demos / io / gsplats)
+luxar demo deps                         # Which optional demo deps are missing?
+luxar demo deps --install               # Install the extras that provide them
+luxar demo deps --extra io              # Restrict to one extra
+luxar demo deps --only scipy            # Restrict to one import module
+luxar demo deps --only scipy --install  # Install its exact constrained spec
 ```
-`deps` exits 1 when anything is missing or out of date, so it doubles as a
-CI/setup gate. It reports the *constrained* requirement from
+In report-only mode, `deps` exits 1 when anything is missing or out of date, so
+it doubles as a CI/setup gate. It reports the *constrained* requirement from
 `luxar.demos.INSTALL_SPECS` — the same table the runtime `require_module` gate
 uses — and surveys with `find_spec`, so it never imports `torch` just to tell you
 `torch` is present. A package that imports but whose version is below its pinned
 floor is flagged `OUTDATED` rather than `ok` (the version check is best-effort:
 it needs `packaging`, and gives the benefit of the doubt when it cannot decide).
+
+Generic `--install` installs Luxar extras and judges only what that pip command
+attempted. An unmet row outside every extra is reported but does not make an
+otherwise successful extras install fail; if it is the only row, the command is
+a successful no-op. Use `--only MODULE --install` to install and verify that
+row's exact tabled requirement directly (including an orphan such as `gdown`).
+`--only` and `--extra` are mutually exclusive.
 
 ### `luxar serve`
 Serve zarr datasets or directories via HTTP.
