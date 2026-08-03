@@ -63,27 +63,3 @@ export function arraysAlmostEqual(
 ): boolean {
   return arraysEqual(a, b, epsilon);
 }
-
-/**
- * Generate random test data for stress testing.
- *
- * Float32 positions in `[-scale/2, +scale/2]` per axis; radii in `[0, 2]`.
- * Unseeded — callers that need determinism should `vi.spyOn(Math, 'random')`.
- */
-export function generateRandomPoints(
-  numPoints: number,
-  ndim: number,
-  scale = 10
-): { positions: Float32Array; radii: Float32Array } {
-  const positions = new Float32Array(numPoints * ndim);
-  const radii = new Float32Array(numPoints);
-
-  for (let i = 0; i < numPoints * ndim; i++) {
-    positions[i] = (Math.random() - 0.5) * scale;
-  }
-  for (let i = 0; i < numPoints; i++) {
-    radii[i] = Math.random() * 2;
-  }
-
-  return { positions, radii };
-}
