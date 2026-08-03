@@ -241,9 +241,10 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
         //
         // ENERGY COMPENSATION (Mip-Splatting): widening the footprint without
         // touching the peak CREATES light — a 2D Gaussian's screen-integrated
-        // brightness is 2*pi*peak*sqrt(det Sigma2D), so the inflation is
-        // sqrt(detRaw/detDilated), i.e. (sigma_px^2 + d)/sigma_px^2 for an
-        // isotropic splat. That diverges as the splat shrinks on screen
+        // brightness is 2*pi*peak*sqrt(det Sigma2D), so dilation inflates it by
+        // sqrt(detDilated/detRaw), i.e. (sigma_px^2 + d)/sigma_px^2 for an
+        // isotropic splat; the compensation multiplier below is the reciprocal,
+        // sqrt(detRaw/detDilated). The inflation diverges as the splat shrinks on screen
         // (measured 1.43x at 0.84 px, 3.75x at 0.33 px), so a scene silently
         // brightened as the camera pulled back, and a lifted points->gsplat LOD
         // ladder could not match its Points level in ANY mode. Points already

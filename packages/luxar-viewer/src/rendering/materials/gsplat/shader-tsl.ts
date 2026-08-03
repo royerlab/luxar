@@ -420,7 +420,8 @@ export function gsplatWebGPUFactory(
     //
     // ENERGY COMPENSATION (Mip-Splatting) — GLSL twin carries the derivation:
     // widening without touching the peak creates light, by
-    // sqrt(detRaw/detDilated). Consumed by the SUM branch's amplitude below.
+    // sqrt(detDilated/detRaw); the compensation below is its reciprocal.
+    // Consumed by the SUM branch's amplitude below.
     const detRaw2D: TSLNode = Sigma2D00.mul(Sigma2D11).sub(Sigma2D10.mul(Sigma2D10)).toVar();
     Sigma2D00.addAssign(uCov2DDilation);
     Sigma2D11.addAssign(uCov2DDilation);
