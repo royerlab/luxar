@@ -46,18 +46,6 @@ export function isWebGLRenderer(renderer: Renderer): renderer is THREE.WebGLRend
 }
 
 /**
- * Symmetric counterpart to `isWebGLRenderer`. Returns true when the
- * `Renderer` is a `WebGPURenderer` (or any subclass carrying the
- * positive `isWebGPURenderer` flag THREE sets on the WebGPU base
- * class). Useful for branches that need to call WebGPU-specific
- * surface (e.g. `renderer.backend.device.lost`) without forcing a
- * `three/webgpu` runtime import for an `instanceof` check.
- */
-export function isWebGPURenderer(renderer: Renderer): renderer is WebGPURenderer {
-  return (renderer as { isWebGPURenderer?: boolean }).isWebGPURenderer === true;
-}
-
-/**
  * What downstream code needs to know about the underlying graphics
  * stack. All static fields are captured once at construction.
  */
