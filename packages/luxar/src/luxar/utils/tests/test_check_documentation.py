@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -63,6 +64,21 @@ def test_result_key_independent_of_message(tmp_path: Path) -> None:
     r1 = cd.CheckResult(False, str(fp), "Docstring coverage", "Low coverage (72%)")
     r2 = cd.CheckResult(False, str(fp), "Docstring coverage", "Low coverage (11%)")
     assert cd.result_key(r1, root) == cd.result_key(r2, root)
+
+
+def test_result_key_includes_detail_when_set(tmp_path: Path) -> None:
+    root = tmp_path
+    fp = root / "packages" / "pkg" / "README.md"
+    r1 = cd.CheckResult(
+        False, str(fp), "Markdown path reference", "m", key_detail="src/a.ts"
+    )
+    r2 = cd.CheckResult(
+        False, str(fp), "Markdown path reference", "m", key_detail="src/b.ts"
+    )
+    assert cd.result_key(r1, root) == (
+        "Markdown path reference::packages/pkg/README.md::src/a.ts"
+    )
+    assert cd.result_key(r1, root) != cd.result_key(r2, root)
 
 
 def test_failure_keys_only_failed(tmp_path: Path) -> None:
@@ -263,7 +279,7 @@ def _markdown_failures(root: Path) -> list[str]:
 
 
 needs_git = pytest.mark.skipif(
-    subprocess.run(["git", "--version"], capture_output=True).returncode != 0,
+    shutil.which("git") is None,
     reason="git not available",
 )
 
@@ -361,6 +377,51 @@ def test_markdown_cross_package_shorthand_flagged(tmp_path: Path) -> None:
     assert _markdown_failures(root) == [
         "README cites path that does not resolve: `io/ordering.py`"
     ]
+
+
+@needs_git
+def test_markdown_new_broken_reference_in_baselined_readme_is_new(
+    tmp_path: Path,
+) -> None:
+    # One broken reference is baselined; a SECOND broken reference added to the
+    # SAME README must still classify as a NEW finding (per-token keys — a
+    # baselined file must not become a blind spot).
+    readme = "packages/pkg/README.md"
+    root = _make_git_project(
+        tmp_path,
+        {
+            readme: "See `./src/gone.ts`.\n",
+            "packages/pkg/src/keep.ts": "export const x = 1;\n",
+        },
+    )
+    checker = cd.DocumentationChecker(root, verbose=False)
+    checker._check_markdown_path_references()
+    baseline = cd.failure_keys(checker.results, root)
+    assert len(baseline) == 1
+
+    (root / readme).write_text("See `./src/gone.ts` and `./src/also-gone.ts`.\n")
+    checker = cd.DocumentationChecker(root, verbose=False)
+    checker._check_markdown_path_references()
+    current = cd.failure_keys(checker.results, root)
+
+    new, _, still = cd.evaluate_ratchet(current, baseline)
+    assert still == baseline
+    assert new == {f"Markdown path reference::{readme}::./src/also-gone.ts"}
+
+
+@needs_git
+def test_markdown_readme_deleted_from_worktree_skipped(tmp_path: Path) -> None:
+    # Tracked in the index but deleted from the working tree: the scan must
+    # skip it rather than crash.
+    root = _make_git_project(
+        tmp_path,
+        {
+            "packages/pkg/README.md": "See `./src/gone.ts`.\n",
+            "packages/pkg/src/keep.ts": "export const x = 1;\n",
+        },
+    )
+    (root / "packages/pkg/README.md").unlink()
+    assert _markdown_failures(root) == []
 
 
 @needs_git

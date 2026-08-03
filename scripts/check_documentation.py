@@ -35,7 +35,8 @@ DEFAULT_BASELINE_RELPATH = "scripts/docs_baseline.json"
 BASELINE_COMMENT = (
     "Documentation-debt baseline for scripts/check_documentation.py. "
     "Regenerate with: hatch run python scripts/check_documentation.py "
-    "--update-baseline. Each entry is '<check_name>::<repo-relative-path>'. "
+    "--update-baseline. Each entry is '<check_name>::<repo-relative-path>' "
+    "(plus '::<detail>' for checks that can fail a file more than once). "
     "New findings not listed here fail the check."
 )
 
@@ -49,6 +50,10 @@ class CheckResult:
     check_name: str
     message: str
     line_number: Optional[int] = None
+    # Stable discriminator for checks that can fail the same file more than
+    # once (e.g. each broken path reference in a README). Part of the ratchet
+    # key, so a new failure in an already-baselined file still counts as new.
+    key_detail: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -75,9 +80,13 @@ def result_key(result: CheckResult, project_root: Path) -> str:
     The key deliberately omits the human ``message`` (which embeds volatile
     coverage percentages) so it is stable across runs. Checks that can fail a
     file more than once (e.g. several broken path references in one README)
-    collapse to a single key, which is what the set-based ratchet wants.
+    append a stable ``key_detail`` discriminator, so baselining one failure in
+    a file never masks a new, different failure in the same file.
     """
-    return f"{result.check_name}::{relative_path(result.file_path, project_root)}"
+    key = f"{result.check_name}::{relative_path(result.file_path, project_root)}"
+    if result.key_detail:
+        key += f"::{result.key_detail}"
+    return key
 
 
 def failure_keys(results: List[CheckResult], project_root: Path) -> Set[str]:
@@ -528,7 +537,12 @@ class DocumentationChecker:
                 anchor = anchor.parent
 
         for readme_path in readme_targets:
-            content = (root / readme_path).read_text(encoding="utf-8", errors="replace")
+            readme_file = root / readme_path
+            # Tracked in the index but deleted from the working tree (a
+            # `git rm` not yet staged): nothing to scan.
+            if not readme_file.is_file():
+                continue
+            content = readme_file.read_text(encoding="utf-8", errors="replace")
             for line_number, line in enumerate(content.splitlines(), start=1):
                 for match in backtick_re.finditer(line):
                     token = match.group(1)
@@ -563,6 +577,7 @@ class DocumentationChecker:
                                 f"README cites path that does not resolve: `{token}`"
                             ),
                             line_number=line_number,
+                            key_detail=token,
                         )
                     )
 
