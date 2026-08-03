@@ -117,6 +117,45 @@ describe('deriveNodeViewState — fully-extended = slice-invariant normal node (
     expect(a.viewState.slicePosition).toEqual([0, 0, 0, 0]);
   });
 
+  it('stays IDENTICAL across scrubs even with an nd_transform on the extended dims', () => {
+    // The invariance tests above pass sceneGraph: null, so the nd_transform
+    // inverse (Step 3) never runs. Exercise it: an affine on 'time' (scale 100
+    // — big enough that rescaling the 1e10 sentinel would drop it under the
+    // 1e9 extended floor and silently un-extend the dim) plus a permutation
+    // on 'channel'. nd_transform entries are strictly per-dimension (affine
+    // or within-dim permutation), so the pin applied after inversion must
+    // still yield a byte-identical derived state at every base slice.
+    const root = node('', {}, [
+      node('points', {
+        nd_transform: {
+          time: { scale: 100, offset: 7 },
+          channel: { permutation: [2, 0, 1] },
+        },
+      }),
+    ]);
+    const attrs = { extend_to_all: ['time', 'channel'] };
+    const a = deriveNodeViewState(
+      'points',
+      attrs,
+      baseViewState({ slicePosition: [5, 1, 0, 0] }),
+      root,
+      { applyPartialExtendTolerance: true }
+    );
+    const b = deriveNodeViewState(
+      'points',
+      attrs,
+      baseViewState({ slicePosition: [42, 2, 0, 0] }),
+      root,
+      { applyPartialExtendTolerance: true }
+    );
+    expect(a.viewState.slicePosition).toEqual(b.viewState.slicePosition);
+    expect(a.viewState.slicePosition).toEqual([0, 0, 0, 0]);
+    // The sentinel must pass through the affine inverse UNSCALED (1e10/100
+    // would read as a finite 1e8 tolerance and re-slice the dim).
+    expect(a.viewState.tolerance).toEqual([EXTEND_TO_ALL_TOLERANCE, EXTEND_TO_ALL_TOLERANCE, 0, 0]);
+    expect(b.viewState.tolerance).toEqual(a.viewState.tolerance);
+  });
+
   it('computes the full-extend tolerance + pin UNCONDITIONALLY, even with the partial override OFF', () => {
     // Lines derive with applyPartialExtendTolerance: false, but a fully-extended
     // lines node must STILL get the sentinel tolerance + pinned slice so it
