@@ -256,7 +256,9 @@ convention (fail-fast, before any zarr group is created):
   `NaN` normal takes the same fallback instead of slipping past a `dot(N, N) < ε` test and normalizing
   into `NaN` shading) it
   falls back to the §6.2 screen-space-derivative flat normal rather than normalizing a zero vector into
-  NaN shading. Shading near a degenerate vertex is therefore locally distorted rather than cleanly flat;
+  NaN shading. That substituted normal also **bypasses** §6.2's `gl_FrontFacing` two-sided flip, which
+  would otherwise negate an already-viewer-facing normal — see the two-sided-normal bullet there.
+  Shading near a degenerate vertex is therefore locally distorted rather than cleanly flat;
   the warning exists so authors fix the normals instead of relying on the guard.
 - `normal_dims` (§3.4) — exactly 3 entries, integers, distinct, each `0 <= i < ndim`. Required when
   `normals` is supplied; rejected when it is not. It is an explicit `add_mesh` parameter (§4) — as
@@ -696,7 +698,19 @@ model is deliberately minimal and light-free:
   **derivative fallback** (`mesh-flat-normal.fragment`) needs **no** such flip:
   `normalize(cross(dFdx(vViewPos), dFdy(vViewPos)))` is orientation-defined by the rasterized fragment,
   not the winding, so it always faces the viewer (§7's "always faces the camera regardless of winding" is
-  correct for that variant) — the flip is a stored-normal-variant-only concern. The flip is well-defined
+  correct for that variant) — the flip is a stored-normal-variant-only concern.
+
+  That exemption is **per fragment, not per variant**, which matters because §3.5's epsilon guard
+  substitutes the same derivative normal *inside* these stored-normal builds whenever the interpolated
+  normal is not affirmatively valid. Such a fragment must take the fallback's rule, not the variant's:
+  the substituted normal already faces the viewer, so applying `gl_FrontFacing ? N : -N` to it would
+  negate a viewer-facing normal on every back-facing fragment and reintroduce exactly the inverted,
+  `uAmbient`-collapsing shade the flip exists to remove — worst precisely at the degenerate and corrupt
+  vertices the guard is there to rescue. So the flip is gated on whether the stored normal survived the
+  guard; only normals that did are flipped. Order the fragment build accordingly: evaluate the guard
+  first, and flip only on its stored-normal branch.
+
+  The flip is well-defined
   wherever it applies: stored normals are only active when `normal_dims == displayDims` (§3.4), where
   §5.4's parity post-pass keeps winding coherent — specifically its **index post-pass** form, since the
   flip consumes `gl_FrontFacing` and needs it to correlate with the authored orientation — so the flip
