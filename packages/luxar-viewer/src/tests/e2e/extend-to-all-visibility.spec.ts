@@ -64,8 +64,21 @@ const DATASET = `${FIXTURES_BASE}/test_extend_to_all_4d.luxar.zarr`;
 /** The hidden `time` dim index in the fixture (x,y,z displayed; time=3). */
 const TIME_DIM = 3;
 
-/** Every step of the hidden dim, in scrub order (range 0..4, step 1). */
+/** Every step of the hidden dim (range 0..4, step 1). */
 const TIME_VALUES = [0, 1, 2, 3, 4] as const;
+
+/**
+ * The scrub order — built from real TRANSITIONS. Every entry differs from the
+ * one before it, and the first differs from the opening slice (0), so no step
+ * is a same-value assignment. That matters because the freshness assertion
+ * below requires a sweep per step: deduplicating a no-op `setDimensionValue`
+ * is legitimate behaviour that has nothing to do with `extend_to_all`, and a
+ * sequence containing no-ops would pin it. Both properties are asserted at
+ * run time rather than left to inspection, as is the axis coverage (every
+ * step visited, in both directions, including the fill slice 2 and the
+ * control's slice 3).
+ */
+const SCRUB_SEQUENCE = [1, 2, 3, 4, 3, 2, 1, 0] as const;
 
 /** The slice the extended nodes were authored at (`fill={'time': 2}`). */
 const FILL_TIME = 2;
@@ -205,11 +218,29 @@ test.describe('extend_to_all full extension', () => {
     await waitForLuxarReady(page);
     await waitForDataLoaded(page);
 
+    // Guard the sequence's two load-bearing properties before relying on
+    // them: every step is a real transition (so the freshness assertion never
+    // depends on how a same-value assignment is handled), and the sweep still
+    // visits every step of the axis.
+    const opening = await getTimeStep(page);
+    expect(SCRUB_SEQUENCE[0], 'the first scrub must move off the opening slice').not.toBe(opening);
+    for (let i = 1; i < SCRUB_SEQUENCE.length; i++) {
+      expect(
+        SCRUB_SEQUENCE[i],
+        `scrub step ${i} repeats the previous value — a no-op assignment cannot ` +
+          'be required to trigger a sweep'
+      ).not.toBe(SCRUB_SEQUENCE[i - 1]);
+    }
+    expect(
+      [...new Set(SCRUB_SEQUENCE)].sort(),
+      'the sweep must still visit every step of the hidden axis'
+    ).toEqual([...TIME_VALUES].sort());
+
     // Sweep the whole hidden axis, including the fill slice (2), the
     // control's slice (3), and back down again — a fully-extended node's
     // query is slice-invariant, so its committed count must never move,
     // and re-querying must not reset the ladder it already converged.
-    for (const time of [...TIME_VALUES, ...[...TIME_VALUES].reverse()]) {
+    for (const time of SCRUB_SEQUENCE) {
       const before = await getLoadedViewVersions(page);
       await scrubTime(page, time);
       await expectExtendedFullAt(page, time, `after scrub to time=${time}`);
