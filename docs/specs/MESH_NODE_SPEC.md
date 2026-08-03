@@ -506,7 +506,7 @@ never zero-work, even here (it rebuilds `position`/`normal`).
 |---|---|---|
 | `position` | 3 | `extract_3d_positions(vertices, displayDims)` |
 | `normal` | 3 | stored normals when valid (§3.4), else omitted |
-| `color` | 3 or 4 | `colors` — RGB or RGBA, keep the native dtype (§6.1.1); a 4th component is a per-vertex opacity carried through an interpolated `vAlpha` (§6.2) |
+| `color` | 3 or 4 | **always bound** (never left to the GL default `(0,0,0,1)` black): when `colors` present → from `colors`, RGB or RGBA, keep the native dtype (§6.1.1); when `colors` absent → filled opaque white `(1,1,1)` as a size-3 `float32` attribute (so `vAlpha == 1.0` via the §6.1.1 GL size-3 default), mirroring `create-points-node.ts:91`. A 4th component is a per-vertex opacity carried through an interpolated `vAlpha` (§6.2) |
 | `aScalar` | 1 | `scalars`, when `has_scalars` |
 | index | — | `compact_visible_faces` output — **the only buffer rewritten on a slice change** (§5.4); `position` (and `normal`) are additionally rewritten on a `displayDims` change (§7, §3.4) |
 
@@ -559,9 +559,13 @@ model is deliberately minimal and light-free:
   it needs no light in the scene graph and no scene-graph API change. `uAmbient` and `uShadeExponent`
   are material uniforms with sane defaults; a fully-flat `uAmbient = 1.0` reproduces the emissive look
   of the other types.
-- **Base color:** vertex `color`, or the colormap LUT applied to `aScalar` under `USE_COLORMAP` — the
-  same `getColormapTexture` / `updateScalarRange` path `createLinesNode` uses, including the same
-  fail-closed guard when `colormap` is set without `has_scalars`.
+- **Base color:** the colormap LUT applied to `aScalar` under `USE_COLORMAP`, else the vertex `color`
+  attribute — which is opaque white when `colors` is absent (§6.1, filled CPU-side exactly as
+  `create-points-node.ts:91` does for points). So the minimal `add_mesh(vertices, faces)` call (no
+  colors, no scalars) renders a readable opaque-white surface, not the GL-default black that an unbound
+  `color` attribute would give. The colormap path is the same `getColormapTexture` / `updateScalarRange`
+  path `createLinesNode` uses, including the same fail-closed guard when `colormap` is set without
+  `has_scalars`. This default is identical in both the GLSL and TSL backends (§6.4).
 - **Per-vertex alpha (load-bearing).** The `color` attribute's 4th component is a per-vertex opacity and
   is carried through a **smoothly-interpolated** varying `vAlpha` — the vertex stage writes
   `vAlpha = sanitizeAlpha(color.a)` and the rasterizer interpolates it across the triangle. Contrast the
@@ -1023,6 +1027,11 @@ A reviewer should treat a `| 'mesh'` appearing in any of those five as a defect.
       `opaque`, fragments with `a < uAlphaCutoff` are **discarded** (cutout) and survivors write alpha 1.0;
       under `max`, the emitted RGB is **premultiplied** by `a` (`vec4(shadedColor * a, a)`). Each must be
       verified to fail before the fix.
+- [ ] TS unit (default base color, §6.1/§6.2): a bare `add_mesh(vertices, faces)` mesh (no `colors`, no
+      `scalars`) renders opaque **white**, not black — the `color` attribute is filled `(1,1,1)` rather
+      than left unbound. Verified to go **red** if the white fill is dropped (an unbound `color` reads the
+      GL default `(0,0,0,1)` and, times the multiplicative §6.2 shade term, the surface comes out solid
+      black).
 - [ ] TS unit: on a **`double_sided: false`** mesh, `updateView` for a `displayDims` change `[0,1,2]`→`[0,2,1]`
       re-extracts positions, re-decides the `normal` attribute, recomputes bounds, and reverses the index
       winding so front faces stay visible (goes red without the reversal precisely because `FrontSide`
