@@ -54,6 +54,7 @@ import {
 import type {
   SceneLoaderMonitorPort,
   SceneLoaderMonitorFactory,
+  FailedLoadsProviderPort,
 } from './scene-loader-monitor-port';
 import { LODGroupRegistry } from '../scene/lod-group-registry';
 
@@ -611,7 +612,7 @@ export class SceneLoader {
       makeNodeBuildCtx: () => this.makeNodeBuildCtx(),
       updateVisibleCountsInMonitor: () => this.updateVisibleCountsInMonitor(),
       getFailedLoaderPaths: () => Array.from(this.failedLoaders.keys()),
-      retryAllFailedLoaders: () => this.retryAllFailedLoaders(),
+      getFailedLoadsProvider: () => this.getFailedLoadsProvider(),
       scheduleGSplatsRefinement: () => this.scheduleGSplatsRefinement(),
       setDatasetAbortController: (c) => {
         this._datasetAbortController = c;
@@ -1443,6 +1444,28 @@ export class SceneLoader {
    */
   getFailedLoaders(): ReadonlyMap<string, { error: Error; timestamp: number; retryCount: number }> {
     return this.failedLoaders;
+  }
+
+  /**
+   * Build a {@link FailedLoadsProviderPort} over the failed-load set for a UI
+   * consumer — the data-monitor's failure banner (wired in `monitor-wiring.ts`)
+   * and the layers panel's per-row error badge (wired in
+   * `core/app/dataset/load-dataset.ts`). Each call returns a NEW provider object
+   * (the monitor and the panel hold distinct instances), but all of them close
+   * over the SAME live `failedLoaders` map and the one `retryAllFailedLoaders`
+   * entry point, so they always agree. `getFailedReason` powers the
+   * layers-panel tooltip.
+   */
+  getFailedLoadsProvider(): FailedLoadsProviderPort {
+    return {
+      getFailedPaths: () => Array.from(this.failedLoaders.keys()),
+      retryAll: () => this.retryAllFailedLoaders(),
+      getFailedReason: (path) => {
+        const info = this.failedLoaders.get(path);
+        if (!info) return undefined;
+        return info.error?.message || info.kind || undefined;
+      },
+    };
   }
 
   /**

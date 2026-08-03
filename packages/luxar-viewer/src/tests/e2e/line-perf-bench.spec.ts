@@ -16,7 +16,9 @@
  * Per scenario we record:
  *   - JS frame time stats (median, p95, p99, mean) over a fixed
  *     sample window
- *   - First-render cost (one-shot, measured separately)
+ *   - A warmed post-settle one-shot frame interval (`postSettleFrameMs`,
+ *     measured separately) — NOT a cold first render; see the field's
+ *     doc comment
  *   - Active backend (`apiSurface`) so a silent fallback can't
  *     pollute the comparison
  *   - GPU pass time stats when `timestamp-query` is supported (best
@@ -32,18 +34,15 @@ import { fileURLToPath } from 'url';
 
 import { test, type Page } from '@playwright/test';
 import { waitForLuxarReady } from './helpers';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const VIEWER_ROOT = path.resolve(__dirname, '../../..');
-
-// Dataset-server origin — same derivation as the gsplat bench so both
-// specs honor the port-parameterized perf config (see
+// Dataset-server origin — shared with the gsplat and perf-tracking benches
+// so every spec honors the port-parameterized perf config (see
 // playwright.perf.config.ts: foreign servers squatting :9000 would
 // otherwise skip every scenario as "dataset not reachable", including
 // synthetic ones gated on their bootstrap URL).
-const DATA_BASE =
-  process.env.LUXAR_PERF_DATA_BASE ??
-  `http://localhost:${process.env.LUXAR_PERF_DATA_PORT ?? 9000}`;
+import { PERF_DATA_BASE as DATA_BASE } from './perf-data-base';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const VIEWER_ROOT = path.resolve(__dirname, '../../..');
 
 function currentCommitSha(): string {
   try {
@@ -148,7 +147,23 @@ interface ScenarioResult {
   isWebGLBackend: boolean;
   visibleSegments: number;
   frameMs: FrameStats | null;
-  firstRenderMs: number | null;
+  /**
+   * A WARMED, post-settle one-shot frame interval (ms): `renderOnce()`
+   * to the next animation frame, sampled AFTER navigation/injection has
+   * already rendered and settled (same contract as the gsplat bench).
+   * NOT a cold first render — it does not enclose upload, material/
+   * pipeline compilation, or the initial draw. Null when the scenario
+   * is skipped.
+   */
+  postSettleFrameMs: number | null;
+  /** Renderer frame counter sampled just before the post-settle
+   *  measurement — > 0 proves the metric is a warmed post-settle
+   *  frame, not a cold first render (same probe as the gsplat bench).
+   *  Null when the counter is unavailable: `WebGPURenderer` keeps a
+   *  top-level `info.frame` that counts internal animation ticks, not
+   *  completed draws, so only the WebGL surface's monotonic
+   *  `info.render.frame` is honest evidence here. */
+  renderedFramesBefore?: number | null;
   gpu: GpuStats;
   notes: string[];
   skipped: boolean;
@@ -192,8 +207,8 @@ async function urlExists(url: string): Promise<boolean> {
 
 /**
  * Measure one scenario under one backend. Captures the active API
- * surface, segment count, JS frame-time distribution, first-render
- * cost, and optional GPU timestamps.
+ * surface, segment count, JS frame-time distribution, a warmed
+ * post-settle one-shot frame interval, and optional GPU timestamps.
  */
 async function measureScenario(
   page: Page,
@@ -303,8 +318,7 @@ async function measureScenario(
     const isWebGLBackend = dbg?.renderer?.backend?.isWebGLBackend === true;
     let visibleSegments = 0;
     const scene = dbg?.app?.sceneManager?.scene as
-      | { traverse?: (cb: (o: unknown) => void) => void }
-      | undefined;
+      { traverse?: (cb: (o: unknown) => void) => void } | undefined;
     scene?.traverse?.((obj: unknown) => {
       const o = obj as {
         userData?: { nodeType?: string; synthetic?: boolean };
@@ -335,7 +349,7 @@ async function measureScenario(
       isWebGLBackend: probe.isWebGLBackend,
       visibleSegments: 0,
       frameMs: null,
-      firstRenderMs: null,
+      postSettleFrameMs: null,
       gpu: { supported: false, count: 0, medianMs: null, p95Ms: null },
       notes,
       skipped: true,
@@ -343,14 +357,30 @@ async function measureScenario(
     };
   }
 
-  // One-shot first-render measurement — useful for material-build /
-  // pipeline-compile cost, separate from the steady-state frame loop.
-  const firstRenderMs = await page.evaluate(async () => {
-    const debug = (window as unknown as { __luxarDebug: { renderOnce: () => void } }).__luxarDebug;
+  // Warmed post-settle one-shot frame measurement, separate from the
+  // steady-state frame loop. NOT a cold first render: navigation (and,
+  // for synthetic scenarios, injection) has already uploaded buffers,
+  // compiled the material/pipeline, and drawn — so this does NOT
+  // capture material-build / pipeline-compile cost.
+  const postSettle = await page.evaluate(async () => {
+    const debug = (
+      window as unknown as {
+        __luxarDebug: {
+          renderOnce: () => void;
+          renderer?: { info?: { render?: { frame?: number } } };
+        };
+      }
+    ).__luxarDebug;
+    // Frame-counter evidence (issue #706): sample the renderer's frame
+    // counter before the timer starts. Only the WebGL surface exposes
+    // the monotonic `info.render.frame`; on WebGPURenderer this reads
+    // undefined and the probe records null (see the field doc).
+    const framesBefore = debug.renderer?.info?.render?.frame;
+    const renderedFramesBefore = typeof framesBefore === 'number' ? framesBefore : null;
     const t0 = performance.now();
     debug.renderOnce();
     await new Promise<void>((r) => requestAnimationFrame(() => r()));
-    return performance.now() - t0;
+    return { ms: performance.now() - t0, renderedFramesBefore };
   });
 
   // Steady-state frame timing loop. Warmup is the lesser of N frames
@@ -524,7 +554,8 @@ async function measureScenario(
     isWebGLBackend: probe.isWebGLBackend,
     visibleSegments: probe.visibleSegments,
     frameMs,
-    firstRenderMs,
+    postSettleFrameMs: postSettle.ms,
+    renderedFramesBefore: postSettle.renderedFramesBefore,
     gpu,
     notes,
     skipped: false,
@@ -554,7 +585,7 @@ test('line perf bench — JS frame timing across backends', async ({ page }) => 
           isWebGLBackend: false,
           visibleSegments: 0,
           frameMs: null,
-          firstRenderMs: null,
+          postSettleFrameMs: null,
           gpu: { supported: false, count: 0, medianMs: null, p95Ms: null },
           notes: [`dataset URL not reachable: ${probeUrl}`],
           skipped: true,
@@ -585,7 +616,7 @@ test('line perf bench — JS frame timing across backends', async ({ page }) => 
           isWebGLBackend: false,
           visibleSegments: 0,
           frameMs: null,
-          firstRenderMs: null,
+          postSettleFrameMs: null,
           gpu: { supported: false, count: 0, medianMs: null, p95Ms: null },
           notes: [`measurement threw: ${shortMsg}`],
           skipped: true,
@@ -678,6 +709,24 @@ test('line perf bench — JS frame timing across backends', async ({ page }) => 
       `perf-bench: ${failedScenarios.length} scenario(s) produced no successful timing on any backend ` +
         `(${failedScenarios.map((s) => s.id).join(', ')}). ` +
         `JSON still written to ${outPath} for inspection. Per-row reasons:\n${skipNotes}`
+    );
+  }
+
+  // Probe (issue #706): `postSettleFrameMs` is a warmed post-settle
+  // metric — where the frame counter is available (WebGL surface),
+  // prove the renderer had already drawn before we sampled it, so the
+  // number can never be silently mislabeled as a cold first render.
+  // Checked after the JSON write so a violation still leaves its
+  // diagnostic row on disk (same ordering as the gsplat bench).
+  const coldProbeRows = scenarios.filter(
+    (s) => !s.skipped && typeof s.renderedFramesBefore === 'number' && s.renderedFramesBefore <= 0
+  );
+  if (coldProbeRows.length > 0) {
+    throw new Error(
+      'perf-bench: post-settle frame measured before any render on ' +
+        coldProbeRows.map((s) => `${s.scenarioId}/${s.backend}`).join(', ') +
+        ' (renderedFramesBefore=0) — the warmed postSettleFrameMs contract is violated. ' +
+        `JSON still written to ${outPath} for inspection.`
     );
   }
 });

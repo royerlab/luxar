@@ -57,12 +57,7 @@ export class Folder {
    * @param defaultClosed - Whether folders start closed
    * @param icon - Optional leading icon (inline SVG string, rail-style)
    */
-  constructor(
-    name: string,
-    parent: Folder | null,
-    defaultClosed: boolean = false,
-    icon?: string
-  ) {
+  constructor(name: string, parent: Folder | null, defaultClosed: boolean = false, icon?: string) {
     this.name = name;
     this.icon = icon;
     this.parent = parent;

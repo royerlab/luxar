@@ -20,6 +20,7 @@ import {
   normalizeBlendingMode,
   getCompleteBlendingState,
   getGSplatNormalBlendingState,
+  getPointBlendingState,
 } from '../../../rendering/blending-state';
 import type { BlendingMode } from '../../../rendering/material-manager';
 
@@ -271,6 +272,40 @@ describe('getGSplatNormalBlendingState (premultiplied alpha-over for gsplats)', 
     expect(generic.depthWrite).toBe(true); // opacity 1.0 gates it on
     expect(gsplat.depthWrite).toBe(false);
   });
+});
+
+describe('getPointBlendingState (points never depth-write in normal mode)', () => {
+  const NON_DEPTHWRITE_FIELDS = [
+    'blending',
+    'blendEquation',
+    'blendSrc',
+    'blendDst',
+    'depthTest',
+    'transparent',
+    'shaderOutputMode',
+  ] as const;
+
+  for (const opacity of [1.0, 0.5]) {
+    it(`normal at opacity=${opacity}: depthWrite OFF, other fields match generic`, () => {
+      const point = getPointBlendingState('normal', opacity);
+      const generic = getCompleteBlendingState('normal', opacity);
+      expect(point.depthWrite).toBe(false);
+      for (const field of NON_DEPTHWRITE_FIELDS) {
+        expect(point[field], `field '${field}'`).toBe(generic[field]);
+      }
+    });
+  }
+
+  it('contrasts with the generic normal state at opacity 1.0 (only depthWrite differs)', () => {
+    expect(getCompleteBlendingState('normal', 1.0).depthWrite).toBe(true);
+    expect(getPointBlendingState('normal', 1.0).depthWrite).toBe(false);
+  });
+
+  for (const mode of ['additive', 'luminous', 'max', 'opaque', 'volumetric'] as const) {
+    it(`'${mode}' is identical to getCompleteBlendingState (only normal diverges)`, () => {
+      expect(getPointBlendingState(mode, 1.0)).toEqual(getCompleteBlendingState(mode, 1.0));
+    });
+  }
 });
 
 // [rendering.md/G11][P5] Opacity boundary tests for the normal-mode

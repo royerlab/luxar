@@ -366,7 +366,7 @@ def reencode_command(
     is always to float32, so viewer/GPU/WASM paths are unaffected.
 
     Unlike ``migrate-format`` (legacy layout → current, which only exposes
-    float32 vs the AUTO uint16 default via ``--lossless``), this exposes the
+    float32 vs the AUTO uint8-first policy via ``--lossless``), this exposes the
     full ladder including ``memory`` (uint8) and works on already-current files.
 
     Examples:
