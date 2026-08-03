@@ -1795,6 +1795,61 @@ describe('depth-sort scheduler (Phase 3)', () => {
     expect(mockApi.sort).toHaveBeenCalledTimes(2);
   });
 
+  it("pauses a HIDDEN node's chunked apply and resumes it when shown (#715)", async () => {
+    // Issue #715: a hidden/off-screen node must not advance (and thus
+    // accumulate) its chunked ordering stream — writing a slice while not
+    // drawn leaves an unflushed range that the next slice would union
+    // onto, collapsing the ladder into one giant upload. The coordinator
+    // therefore skips the pump for a node that is not effectively visible.
+    const coord = await loadCoordinator();
+    const camera = makeCamera();
+    const requestRender = vi.fn();
+    coord.configureDepthSort({ getCamera: () => camera, requestRender });
+
+    // Same element-storage instance the coordinator drives (loadCoordinator
+    // reset the module). A 1-index slice makes the 3-element apply span
+    // three frames instead of finishing in one.
+    const { setSortedIndexChunkElementsForTests, configureSortedIndexChunkedApply } =
+      await import('../../../rendering/element-storage');
+    configureSortedIndexChunkedApply(true);
+    setSortedIndexChunkElementsForTests(1);
+
+    const mesh = makeGSplatsMesh(3, 'normal');
+    coord.noteDepthSortCommit(mesh, new Float32Array([0, 0, -10, 1, 0, -1, 2, 0, -5]), 3);
+    await flush();
+    sortResolvers[0]({
+      generation: mockApi.sort.mock.calls[0][0].generation as number,
+      ordering: new Uint32Array([2, 0, 1]),
+    });
+    await flush();
+
+    // Staged but un-pumped: the inactive buffer (aSortedIndexB, slot 0 is
+    // active) is still all zeros.
+    const back = (mesh.geometry as THREE.InstancedBufferGeometry).getAttribute(
+      'aSortedIndexB'
+    ) as THREE.InstancedBufferAttribute;
+    expect(Array.from(back.array as Uint32Array)).toEqual([0, 0, 0]);
+
+    // Hidden: several frames advance NOTHING — no slice written, no
+    // pending range, no render requested for the paused stream.
+    mesh.visible = false;
+    requestRender.mockClear();
+    for (let i = 0; i < 3; i++) coord.evaluateDepthSortPerFrame();
+    expect(Array.from(back.array as Uint32Array)).toEqual([0, 0, 0]);
+    expect(back.updateRanges.length).toBe(0);
+    expect(requestRender).not.toHaveBeenCalled();
+
+    // Shown: the very next frame writes exactly the first slice
+    // (ordering[0] = 2 → inactive slot 0) and requests a render to resume.
+    mesh.visible = true;
+    coord.evaluateDepthSortPerFrame();
+    expect((back.array as Uint32Array)[0]).toBe(2);
+    expect(back.updateRanges[0]).toMatchObject({ start: 0, count: 1 });
+    expect(requestRender).toHaveBeenCalled();
+
+    setSortedIndexChunkElementsForTests(null);
+  });
+
   it('setDepthSortEnabled(false) makes the subsystem inert (?depthSort=0)', async () => {
     const coord = await loadCoordinator();
     coord.setDepthSortEnabled(false);
@@ -2388,6 +2443,25 @@ describe('depth-sort coordinator — chunked ordering apply (perf lever L8)', ()
     return { mesh, ordering };
   }
 
+  /**
+   * Advance ONE drawn frame: run the per-frame pump, then simulate the
+   * classic WebGLRenderer consuming the slice's upload. The chunked pump's
+   * back-pressure (issue #715) keys on the attribute's `onUploadCallback`
+   * (three fires it from both `createBuffer` and `updateBuffer`), so a
+   * faithful "drawn frame" FIRES that callback — which clears the pending
+   * flag — as well as clearing the update ranges. Without a drawn frame in
+   * between, the pump correctly stalls on the un-acknowledged slice.
+   */
+  function drawFrame(coord: Awaited<ReturnType<typeof loadCoordinator>>, mesh: THREE.Mesh): void {
+    coord.evaluateDepthSortPerFrame();
+    const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
+    for (const name of ['aSortedIndex', 'aSortedIndexB'] as const) {
+      const attr = geometry.getAttribute(name) as THREE.InstancedBufferAttribute | null;
+      attr?.onUploadCallback?.();
+      attr?.clearUpdateRanges();
+    }
+  }
+
   it('resolve records the pending apply; the per-frame pump streams the slices and keeps frames flowing', async () => {
     const { coord, storage } = await loadWithTinyChunks();
     const camera = makeCamera();
@@ -2404,27 +2478,60 @@ describe('depth-sort coordinator — chunked ordering apply (perf lever L8)', ()
 
     // Frames 1-2: slices land in the buffer NOT being drawn, so what
     // renders is still the previous whole ordering. Each requests a
-    // follow-up frame (the pump is the only thing keeping the on-demand
-    // loop alive between slices).
+    // follow-up frame — from the pump (progress, not stalled) AND from the
+    // drawn slice's onUpload acknowledgement; the two coalesce into one
+    // real frame in production (requestRender is idempotent per frame), so
+    // here we only assert a follow-up WAS requested.
     for (let frame = 1; frame <= 2; frame++) {
       requestRender.mockClear();
-      coord.evaluateDepthSortPerFrame();
+      drawFrame(coord, mesh);
       expect(Array.from(drawnOrdering(mesh).subarray(0, 12))).toEqual(new Array(12).fill(0));
-      expect(requestRender).toHaveBeenCalledTimes(1);
+      expect(requestRender).toHaveBeenCalled();
     }
 
     // Frame 3: the final slice completes the back buffer and flips it in.
     // The write and the flip ride THIS frame's flush.
     requestRender.mockClear();
-    coord.evaluateDepthSortPerFrame();
+    drawFrame(coord, mesh);
     expect(storage.hasPendingSortedIndexOrderingApply(geometry)).toBe(false);
     expect(Array.from(drawnOrdering(mesh).subarray(0, 12))).toEqual(Array.from(ordering));
     expect(requestRender).toHaveBeenCalledTimes(1); // the flip repaints
 
     // Steady state: further frames neither write nor request.
     requestRender.mockClear();
-    coord.evaluateDepthSortPerFrame();
+    drawFrame(coord, mesh);
     expect(requestRender).not.toHaveBeenCalled();
+  });
+
+  it('a STALLED pump (visible but un-drawn) advances nothing and requests NO render (#715)', async () => {
+    // The coordinator's `if (!stalled) requestRender?.()` contract: a
+    // VISIBLE mesh whose previous slice was not yet drawn must not spin
+    // the on-demand loop. Reverting the guard to an unconditional
+    // requestRender makes this test fail (the second frame would request).
+    const { coord, storage } = await loadWithTinyChunks();
+    const camera = makeCamera();
+    const requestRender = vi.fn();
+    coord.configureDepthSort({ getCamera: () => camera, requestRender });
+
+    const { mesh, ordering } = await resolveLargeOrdering(coord, 12); // 3 slices
+    const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
+    const back = geometry.getAttribute('aSortedIndexB') as THREE.InstancedBufferAttribute;
+
+    // Frame 1 draws slice 1: progress → exactly one requestRender.
+    requestRender.mockClear();
+    coord.evaluateDepthSortPerFrame();
+    expect((back.array as Uint32Array)[0]).toBe(ordering[0]); // slice 1 written
+    expect(requestRender).toHaveBeenCalledTimes(1);
+
+    // Frame 2 WITHOUT acknowledging the upload (mesh stays visible but is
+    // not drawn): the pump STALLS — nothing new written, and NO render is
+    // requested for the idle stream.
+    requestRender.mockClear();
+    const writtenBefore = Array.from(back.array as Uint32Array);
+    coord.evaluateDepthSortPerFrame();
+    expect(Array.from(back.array as Uint32Array)).toEqual(writtenBefore); // no slice 2
+    expect(requestRender).not.toHaveBeenCalled();
+    expect(storage.hasPendingSortedIndexOrderingApply(geometry)).toBe(true);
   });
 
   it('a cleared committedData stamp (LOD demotion) aborts the remaining slices', async () => {
@@ -2534,9 +2641,9 @@ describe('depth-sort coordinator — chunked ordering apply (perf lever L8)', ()
     sortResolvers[1]({ generation: freshGeneration, ordering });
     await flush();
     expect(storage.hasPendingSortedIndexOrderingApply(geometry)).toBe(true);
-    coord.evaluateDepthSortPerFrame();
-    coord.evaluateDepthSortPerFrame();
-    coord.evaluateDepthSortPerFrame();
+    drawFrame(coord, mesh);
+    drawFrame(coord, mesh);
+    drawFrame(coord, mesh);
     expect(Array.from(drawnOrdering(mesh).subarray(0, 12))).toEqual(Array.from(ordering));
   });
 
@@ -2564,10 +2671,10 @@ describe('depth-sort coordinator — chunked ordering apply (perf lever L8)', ()
     await flush();
 
     expect(visualUniform.value).toBe(0);
-    coord.evaluateDepthSortPerFrame();
-    coord.evaluateDepthSortPerFrame();
+    drawFrame(coord, mesh);
+    drawFrame(coord, mesh);
     expect(visualUniform.value).toBe(0); // still streaming
-    coord.evaluateDepthSortPerFrame(); // completes + flips
+    drawFrame(coord, mesh); // completes + flips
     expect(visualUniform.value).toBe(1);
     expect(pickUniform.value).toBe(1);
   });
@@ -2607,7 +2714,7 @@ describe('depth-sort coordinator — chunked ordering apply (perf lever L8)', ()
       ordering: reversed(12),
     });
     await flush();
-    for (let i = 0; i < 4; i++) coord.evaluateDepthSortPerFrame();
+    for (let i = 0; i < 4; i++) drawFrame(coord, mesh);
 
     expect(visA.value).toBe(1);
     expect(visB.value).toBe(1);
@@ -2638,7 +2745,7 @@ describe('depth-sort coordinator — chunked ordering apply (perf lever L8)', ()
       ordering: reversed(12),
     });
     await flush();
-    for (let i = 0; i < 4; i++) coord.evaluateDepthSortPerFrame();
+    for (let i = 0; i < 4; i++) drawFrame(coord, mesh);
     const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
     expect(storage.hasPendingSortedIndexOrderingApply(geometry)).toBe(false);
     expect(uniform.value).toBe(1);
@@ -2670,7 +2777,7 @@ describe('depth-sort coordinator — chunked ordering apply (perf lever L8)', ()
       ordering: reversed(12),
     });
     await flush();
-    for (let i = 0; i < 4; i++) coord.evaluateDepthSortPerFrame();
+    for (let i = 0; i < 4; i++) drawFrame(coord, mesh);
     expect(uniform.value).toBe(1);
 
     // A count-changing recommit: the writers run BEFORE noteDepthSortCommit
@@ -2723,14 +2830,14 @@ describe('depth-sort coordinator — chunked ordering apply (perf lever L8)', ()
     sortResolvers[1]({ generation: secondGeneration, ordering: second });
     await flush();
 
-    coord.evaluateDepthSortPerFrame();
-    coord.evaluateDepthSortPerFrame();
-    coord.evaluateDepthSortPerFrame(); // first completes + flips
+    drawFrame(coord, mesh);
+    drawFrame(coord, mesh);
+    drawFrame(coord, mesh); // first completes + flips
     expect(Array.from(drawnOrdering(mesh).subarray(0, 12))).toEqual(Array.from(first));
 
-    coord.evaluateDepthSortPerFrame();
-    coord.evaluateDepthSortPerFrame();
-    coord.evaluateDepthSortPerFrame(); // second completes + flips
+    drawFrame(coord, mesh);
+    drawFrame(coord, mesh);
+    drawFrame(coord, mesh); // second completes + flips
     expect(Array.from(drawnOrdering(mesh).subarray(0, 12))).toEqual(Array.from(second));
     expect(storage.hasPendingSortedIndexOrderingApply(geometry)).toBe(false);
   });

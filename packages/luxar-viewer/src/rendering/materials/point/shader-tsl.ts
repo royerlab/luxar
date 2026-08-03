@@ -73,7 +73,7 @@ import { POINT_CHORD_SCALE } from './math';
 import { getPlaceholderElementTexture } from '../../element-texture-layout';
 import {
   applyBlendingStateToMaterial,
-  getCompleteBlendingState,
+  getPointBlendingState,
   isVolumetricMode,
 } from '../../blending-state';
 import type { BlendingMode } from '../../../types/blending';
@@ -113,7 +113,7 @@ export interface PointTSLConfig {
   readonly useMaxRGBContribution?: boolean;
   /**
    * Luxar blending mode. The factory configures the matching THREE
-   * state via {@link getCompleteBlendingState} +
+   * state via {@link getPointBlendingState} +
    * {@link applyBlendingStateToMaterial}. Defaults to `'additive'` to
    * match the GLSL wrapper class.
    */
@@ -531,7 +531,8 @@ export function pointWebGPUFactory(
   // the same mode the output branch above used.
   const blendingMode: BlendingMode = config.blendingMode ?? 'additive';
   const opacityValue = (nodes.uOpacity.value as number | undefined) ?? 1.0;
-  const blendingState = getCompleteBlendingState(blendingMode, opacityValue);
+  // Points never depth-write in `normal` (see `getPointBlendingState`).
+  const blendingState = getPointBlendingState(blendingMode, opacityValue);
   applyBlendingStateToMaterial(material, blendingState);
   return material;
 }

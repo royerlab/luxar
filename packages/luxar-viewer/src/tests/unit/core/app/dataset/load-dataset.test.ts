@@ -164,18 +164,49 @@ describe('loadDataset', () => {
     const trace: Trace = { order: [], recordedViewerConfig: undefined };
     const initFromScene = vi.fn();
     const ports = makePorts(trace, {
-      layersPanel: { initFromScene } as never,
+      layersPanel: { initFromScene, setFailedLoadsProvider: vi.fn() } as never,
     });
     const root = new THREE.Group();
     root.name = 'LuxarScene';
     ports.sceneManager.scene.children = [root];
     (getSceneLoader as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
       sceneGraph: { kind: 'graph' },
+      getFailedLoadsProvider: vi.fn(() => ({ getFailedPaths: () => [], retryAll: vi.fn() })),
     });
 
     await loadDataset('scene.zarr', ports);
 
     expect(initFromScene).toHaveBeenCalledOnce();
+  });
+
+  it('hands the layers panel the failed-loads provider, AFTER initFromScene', async () => {
+    // #1055: the panel must receive the SAME provider getFailedLoadsProvider()
+    // returns, and only after initFromScene (whose clear() resets any prior
+    // provider first — injecting before would be wiped).
+    const trace: Trace = { order: [], recordedViewerConfig: undefined };
+    const initFromScene = vi.fn();
+    const setFailedLoadsProvider = vi.fn();
+    const ports = makePorts(trace, {
+      layersPanel: { initFromScene, setFailedLoadsProvider } as never,
+    });
+    const root = new THREE.Group();
+    root.name = 'LuxarScene';
+    ports.sceneManager.scene.children = [root];
+    const provider = { getFailedPaths: () => [], retryAll: vi.fn() };
+    const getFailedLoadsProvider = vi.fn(() => provider);
+    (getSceneLoader as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+      sceneGraph: { kind: 'graph' },
+      getFailedLoadsProvider,
+    });
+
+    await loadDataset('scene.zarr', ports);
+
+    // The panel got exactly the object the loader handed out…
+    expect(setFailedLoadsProvider).toHaveBeenCalledExactlyOnceWith(provider);
+    // …and strictly after initFromScene (load-ordering contract).
+    expect(setFailedLoadsProvider.mock.invocationCallOrder[0]).toBeGreaterThan(
+      initFromScene.mock.invocationCallOrder[0]
+    );
   });
 
   it('layers panel hydration is skipped when layersPanel is undefined', async () => {

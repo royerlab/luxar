@@ -71,7 +71,7 @@ describe('GSplatMaterial.applyBlendingMode (GLSL)', () => {
     expect(mat.userData.blendingMode).toBe('normal');
   });
 
-  it('normal depthWrite stays OFF at opacity 1.0 (opacity-inert, unlike points/lines)', () => {
+  it('normal depthWrite stays OFF at opacity 1.0 (opacity-inert, like points; unlike lines)', () => {
     const mat = new GSplatMaterial({ opacity: 1.0 });
     mat.applyBlendingMode('normal');
     expect(mat.depthWrite).toBe(false);
@@ -309,7 +309,7 @@ describe('GSplatTSLMaterial.applyBlendingMode (TSL)', () => {
     expect(mat.userData.blendingMode).toBe('normal');
   });
 
-  it('normal depthWrite stays OFF at opacity 1.0 (opacity-inert, unlike points/lines)', () => {
+  it('normal depthWrite stays OFF at opacity 1.0 (opacity-inert, like points; unlike lines)', () => {
     const mat = new GSplatTSLMaterial({ opacity: 1.0 });
     mat.applyBlendingMode('normal');
     expect(mat.depthWrite).toBe(false);

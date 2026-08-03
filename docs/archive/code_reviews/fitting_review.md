@@ -1,3 +1,5 @@
+> **⚠️ Archived — point-in-time review, not re-verified.** Finding statuses below (e.g. "STILL OPEN") reflect the status-check date in the header and have **not** been re-verified against current `main`. Treat this as a historical snapshot, not a live task list; verify any finding against current code before acting on it. See [the archive README](../README.md).
+
 # Fitting Pipeline Code Review - Issue Status Report
 
 **Original Review Date**: 2026-02-24

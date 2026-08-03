@@ -100,19 +100,19 @@ This glossary defines standard terminology used throughout the gsplats package s
 
 **Two contexts**:
 1. **Initial seeding**: Startup phase, generating candidate locations
-2. **Dynamic seeding**: During optimization, adding splats in high-residual regions
+2. **Dynamic relocation**: During optimization, moving weak splats to high-residual regions (fixed pool, constant count)
 
 **Standard terms**:
 - ✅ **Seeding** (for initial candidate generation)
-- ✅ **Adding** (for dynamic operations during optimization)
-- ✅ **Dynamic seeding** (to clarify context)
+- ✅ **Relocation** (for dynamic operations during optimization — fixed pool, no add/remove)
+- ✅ **Dynamic relocation** (to clarify context)
 
 **Functions**:
 - `seed_from_edges()`, `seed_from_grid()`, `seed_from_decomposition()`: Individual seeding methods
 - `generate_seeds()`: Unified seeding entry point
-- `add_splats()` / `append_()`: Dynamic adding
+- `append_()`: model method that appends splats (the default dynamic ops use fixed-pool relocation with a constant splat count, not add/remove)
 
-**Rationale**: "Seeding" emphasizes the initialization aspect, "adding" is more general.
+**Rationale**: "Seeding" emphasizes the initialization aspect; "relocation" makes the constant-count behavior explicit — the pool is fixed, splats move rather than being added or removed.
 
 ---
 
@@ -129,8 +129,7 @@ This glossary defines standard terminology used throughout the gsplats package s
 - ✅ **Removing** (generic deletion)
 
 **Functions**:
-- `prune_()`: Model method
-- `remove_splats()`: Optimizer/scheduler method
+- `prune_()`: model method that drops splats (not used by the default fixed-pool relocation, which keeps a constant count)
 
 **Avoid**:
 - ❌ Deleting (too generic)
@@ -141,17 +140,17 @@ This glossary defines standard terminology used throughout the gsplats package s
 ---
 
 ### Dynamic Operations
-**Definition**: Adaptive topology changes during optimization.
+**Definition**: Fixed-pool splat relocation during optimization (constant splat count, no topology changes).
 
 **Includes**:
-- Seeding new splats (add in high-residual regions)
-- Pruning low-importance splats
-- Learning rate boosting for problematic regions
+- Detecting weak splats (low importance = amplitude × volume)
+- Detecting high-residual peaks
+- Relocating weak splats to those peaks (parameter update only, no add/remove)
 
 **Standard terms**:
 - ✅ **Dynamic operations** (umbrella term)
 - ✅ **Adaptive operations**
-- ✅ **Topology management**
+- ✅ **Fixed-pool relocation**
 
 **Avoid**:
 - ❌ Splat management (too vague)
@@ -378,7 +377,7 @@ These are user-facing configuration options:
 
 - **`sigma_min_diag`**: Minimum allowed diagonal values (per-dimension), prevents degeneracy
 - **`sigma_max_diag`**: Maximum allowed diagonal values (per-dimension), prevents over-smoothing
-- **`truncate`**: Truncation radius in standard deviations (default: 3.0)
+- **`truncate`**: Truncation radius in standard deviations (fitting default 2.75; model/rendering default 3.0)
 - **`init_sigma_vox`**: Initial sigma for isotropic covariance initialization
 - **`norm_percentile`**: Percentile for robust normalization (0 = full range)
 - **`asymmetric_penalty`**: Over-prediction penalty factor (default: 1.0)
@@ -494,7 +493,7 @@ These are user-facing configuration options:
 
 **Definition**: Distance in standard deviations beyond which Gaussian is considered negligible
 
-**Default**: 3.0σ (captures ~99.7% of Gaussian mass)
+**Default**: 3.0σ for the model/renderer (captures ~99.7% of Gaussian mass); the fitting API (`fit_gaussian_splats`) defaults to 2.75σ
 
 **Effect**: Limits evaluation to the radius where the Gaussian contribution is negligible.
 

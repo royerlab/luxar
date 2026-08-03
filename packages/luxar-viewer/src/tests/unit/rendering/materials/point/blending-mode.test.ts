@@ -10,7 +10,7 @@ import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import { PointMaterial } from '../../../../../rendering/materials/point/material-glsl';
 import { PointTSLMaterial } from '../../../../../rendering/materials/point/material-tsl';
-import { getCompleteBlendingState } from '../../../../../rendering/blending-state';
+import { getPointBlendingState } from '../../../../../rendering/blending-state';
 import type { BlendingMode } from '../../../../../rendering/material-manager';
 
 describe('PointMaterial.applyBlendingMode', () => {
@@ -43,15 +43,19 @@ describe('PointMaterial.applyBlendingMode', () => {
     expect(mat.userData.blendingMode).toBe('additive');
   });
 
-  it('normal at opacity=1.0 writes depth; at 0.5 does not', () => {
-    const mat = new PointMaterial({ opacity: 1.0 });
-    mat.applyBlendingMode('normal');
-    expect(mat.blending).toBe(THREE.NormalBlending);
-    expect(mat.depthWrite).toBe(true);
-
-    mat.uniforms.uOpacity.value = 0.5;
-    mat.applyBlendingMode('normal');
-    expect(mat.depthWrite).toBe(false);
+  it('normal mode never writes depth, at any opacity (both backends)', () => {
+    for (const Ctor of [PointMaterial, PointTSLMaterial]) {
+      const mat = new Ctor({ opacity: 1.0 });
+      mat.applyBlendingMode('normal');
+      expect(mat.blending).toBe(THREE.NormalBlending);
+      expect(mat.depthTest).toBe(true);
+      // A point sprite stamps a flat depth plane across the whole disc,
+      // fringe included — sorted transparency never depth-writes (#1002).
+      expect(mat.depthWrite).toBe(false);
+      mat.uniforms.uOpacity.value = 0.5;
+      mat.applyBlendingMode('normal');
+      expect(mat.depthWrite).toBe(false);
+    }
   });
 
   it('opaque mode disables transparency and writes depth', () => {
@@ -202,6 +206,20 @@ describe('PointMaterial.applyBlendingMode', () => {
     expect(switched.blendDst).toBe(THREE.OneMinusSrcAlphaFactor);
   });
 
+  it('normal depthWrite=false survives TSL construction and graph rebuilds (factory-tail)', () => {
+    // applyBlendingMode('normal') toggles no defines → no rebuildGraph, so
+    // the factory tail (shader-tsl.ts) is the only path that re-derives state
+    // on a later rebuild (texture/gamma/colormap change). It must keep points
+    // out of depthWrite in normal (#1002), not fall back to the generic gate.
+    const constructed = new PointTSLMaterial({ blendingMode: 'normal', opacity: 1.0 });
+    expect(constructed.userData.blendingMode).toBe('normal');
+    expect(constructed.depthWrite).toBe(false);
+    // A rebuild while in normal (gamma crossing 1.0 rebuilds the graph) must
+    // not resurrect the opacity-gated depthWrite.
+    constructed.updateGamma(2.2);
+    expect(constructed.depthWrite).toBe(false);
+  });
+
   it('clone() carries uAbsorption and uHasElementAlpha (both backends)', () => {
     // The layers panel clones on first interaction; a clone that reset
     // κ to 1.0 or dropped the RGBA-alpha flag would silently change the
@@ -247,11 +265,12 @@ describe('PointMaterial.applyBlendingMode', () => {
   });
 });
 
-// Both wrappers delegate to getCompleteBlendingState +
-// applyBlendingStateToMaterial, so for EVERY mode the applied THREE
-// state must equal the helper's canonical values and the two backends
-// must agree field-for-field. Mirrors the line twin's convergence
-// contract (three-geometry test symmetry).
+// Both wrappers delegate to getPointBlendingState +
+// applyBlendingStateToMaterial (points force `normal` depthWrite off), so
+// for EVERY mode the applied THREE state must equal the point helper's
+// canonical values and the two backends must agree field-for-field.
+// Mirrors the line twin's convergence contract (three-geometry test
+// symmetry).
 describe('PointMaterial ↔ PointTSLMaterial blending-state convergence', () => {
   const ALL_MODES: BlendingMode[] = [
     'additive',
@@ -272,12 +291,12 @@ describe('PointMaterial ↔ PointTSLMaterial blending-state convergence', () => 
   ] as const;
 
   for (const mode of ALL_MODES) {
-    it(`'${mode}': GLSL state equals getCompleteBlendingState and matches TSL`, () => {
+    it(`'${mode}': GLSL state equals getPointBlendingState and matches TSL`, () => {
       const glsl = new PointMaterial();
       const tsl = new PointTSLMaterial();
       glsl.applyBlendingMode(mode);
       tsl.applyBlendingMode(mode);
-      const expected = getCompleteBlendingState(mode, 1.0);
+      const expected = getPointBlendingState(mode, 1.0);
       for (const field of STATE_FIELDS) {
         expect(glsl[field], `GLSL ${field} for '${mode}'`).toBe(expected[field]);
         expect(tsl[field], `TSL ${field} for '${mode}'`).toBe(expected[field]);
