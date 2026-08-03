@@ -43,7 +43,7 @@ The `ThemeManager` flattens each theme into `--luxar-*` CSS custom properties on
 
 1. Create `my-theme.theme.ts` in this folder exporting a `Theme`.
 2. Import and register it from `../theme-manager.ts` (or via `ThemeManager.registerTheme()` at runtime).
-3. If the theme needs companion CSS overrides (e.g. backdrop-filter rules), add `src/styles/themes/my-theme.css` and ensure it is imported by `src/styles/index.css`.
+3. If the theme needs companion CSS overrides (e.g. backdrop-filter rules), add a `my-theme.css` under `src/styles/themes/` and ensure it is imported by `src/styles/index.css`.
 
 ## See Also
 

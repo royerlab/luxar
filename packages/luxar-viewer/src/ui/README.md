@@ -284,7 +284,7 @@ animManager.addEventListener('complete', (e) => {
 - Integrates with `AnimationController` for frame updates
 - Updates dimension values via `SceneDimsManager`
 - CSS styling in `styles/components/dimension-sliders.css`
-- See `scene/dimension-animation-manager.ts` for core animation logic
+- See `scene/animation/dimension-animation-manager.ts` for core animation logic
 
 ### 2. Rendering Controls
 
