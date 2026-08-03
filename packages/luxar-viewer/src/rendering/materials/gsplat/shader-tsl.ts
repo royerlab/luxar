@@ -803,6 +803,12 @@ export function buildGSplatTSLNodesFromUniforms(
     ),
     uFx: uniform((uniforms.uFx?.value as number) ?? 1.0),
     uFy: uniform((uniforms.uFy?.value as number) ?? 1.0),
+    // Deliberately NOT `GSPLAT_DEFAULT_TRUNCATION_RADIUS`. This adapter is
+    // harness/snapshot only (production materials set the real default in
+    // their own constructor), and its values must stay equal to the GLSL twin
+    // in `tests/e2e/harnesses/tsl-harness/gsplats.ts` or `tsl-shader-parity`
+    // pixel-compares diverge. Note 9.0 is 3.0² — the pair must be changed
+    // together, and in the harness too.
     uTruncate: uniform((uniforms.uTruncate?.value as number) ?? 3.0),
     uTruncateSq: uniform((uniforms.uTruncateSq?.value as number) ?? 9.0),
     uRayIntegralFactor: uniform((uniforms.uRayIntegralFactor?.value as number) ?? 1.0),

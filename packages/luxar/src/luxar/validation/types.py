@@ -355,6 +355,118 @@ def validate_absorption(absorption: Any) -> float:
     return absorption_float
 
 
+def _min_truncation_radius_float32() -> float:
+    """Smallest ``T`` whose shifted-Gaussian normalization survives float32.
+
+    The CUDA (``compute_shift_params``), Metal (``shift_c``) and GPU shader
+    paths all evaluate ``C = exp(-T^2/2)`` in single precision. Below some ``T``
+    that rounds to exactly ``1.0f``, making ``1/(1-C)`` infinite — so the usable
+    lower bound is set by float32, not float64 (which only degenerates around
+    1.5e-8, four orders of magnitude lower).
+
+    Bisected once at import against the real float32 arithmetic rather than
+    derived in closed form: the obvious analytic bound ``sqrt(eps32)`` is a
+    little too high and misclassifies a band of radii near 2.4e-4.
+    """
+
+    def degenerate(t: float) -> bool:
+        c = np.exp(np.float32(-0.5) * np.float32(t) * np.float32(t))
+        return bool(np.float32(1.0) - c <= np.float32(0.0))
+
+    lo, hi = 1e-12, 1.0  # degenerate at lo, fine at hi
+    for _ in range(200):
+        mid = (lo + hi) / 2.0
+        if degenerate(mid):
+            lo = mid
+        else:
+            hi = mid
+    return hi
+
+
+#: Lower bound for :func:`validate_truncation_radius` (~2.44e-4). See
+#: :func:`_min_truncation_radius_float32` for why float32 sets it.
+MIN_TRUNCATION_RADIUS_FLOAT32: float = _min_truncation_radius_float32()
+
+#: Upper bound for :func:`validate_truncation_radius` — the largest float32
+#: (~3.40e38). Symmetric with the lower bound and for the same reason: a ``T``
+#: above this is finite in float64 but narrows to ``inf`` in float32, so it
+#: reaches the GPU as an infinite ``uTruncate`` and an infinite cull box.
+MAX_TRUNCATION_RADIUS_FLOAT32: float = float(np.finfo(np.float32).max)
+
+
+def validate_truncation_radius(truncation_radius: Any) -> float:
+    """Validate and convert a GSplat truncation radius ``T`` (in sigmas).
+
+    ``T`` sets both the support of the shifted Gaussian and its normalization
+    ``1 / (1 - exp(-T^2/2))``, so a non-positive or non-finite value poisons
+    every derived uniform (``uShiftC``, ``uInvOneMinusC``) and collapses the
+    world-space cull box. It arrives unvalidated from dataset attrs, so it is
+    checked on write.
+
+    A large ``T`` is merely a wide (and eventually untruncated) Gaussian, which
+    is well defined — so the upper bound is not a modelling choice, it is the
+    largest float32. Above it the value narrows to ``inf`` on the GPU, which is
+    the same degeneracy as the lower bound seen from the other end.
+
+    The lower bound is derived, not a magic number. ``T > 0`` alone is *not*
+    sufficient: below some threshold ``exp(-T^2/2)`` rounds to exactly 1.0, so
+    ``1 / (1 - C)`` is ``inf`` and every downstream value is poisoned — the
+    very failure this validator exists to prevent. The check is done in
+    **float32**, the narrowest consumer (the CUDA and Metal kernels and the GPU
+    shaders all evaluate the shift in single precision), which saturates around
+    ``T = 3e-4`` — four orders of magnitude before float64's ~1.5e-8. This deliberately does NOT adopt the viewer's
+    ``MIN_TRUNCATION_RADIUS`` (0.1), which is a GPU-degeneracy clamp applied at
+    read time; enforcing 0.1 here would reject values (e.g. 0.05) that
+    normalize perfectly well.
+
+    Args:
+        truncation_radius: Value to validate as a truncation radius (> 0, finite,
+            and large enough that ``1 / (1 - exp(-T^2/2))`` is finite)
+
+    Returns:
+        Valid truncation radius as float
+
+    Raises:
+        ValueError: If the value is <= 0, NaN, infinite, or so small that the
+            shifted-Gaussian normalization overflows
+        TypeError: If the value cannot be converted to float
+    """
+    try:
+        radius_float = float(truncation_radius)
+    except (ValueError, TypeError) as e:
+        raise TypeError(
+            "Truncation radius must be convertible to float, got "
+            f"{type(truncation_radius).__name__}"
+        ) from e
+
+    if math.isnan(radius_float) or math.isinf(radius_float):
+        raise ValueError(f"Truncation radius must be finite, got {radius_float}")
+
+    if radius_float <= 0:
+        raise ValueError(f"Truncation radius must be > 0, got {radius_float}")
+
+    # The shifted-Gaussian shift C = exp(-T^2/2) and its renormalization
+    # 1/(1-C). A T small enough that C rounds to 1.0 makes that infinite.
+    # The bound is the FLOAT32 one (see MIN_TRUNCATION_RADIUS_FLOAT32): a plain
+    # float comparison, because doing the float32 arithmetic per call cost ~5x
+    # the rest of the validator and made up over half of AdditiveSubLOD
+    # construction time.
+    if radius_float > MAX_TRUNCATION_RADIUS_FLOAT32:
+        raise ValueError(
+            f"Truncation radius {radius_float} is too large: it exceeds the "
+            "largest float32, so it reaches the GPU render paths as infinity"
+        )
+
+    if radius_float < MIN_TRUNCATION_RADIUS_FLOAT32:
+        raise ValueError(
+            f"Truncation radius {radius_float} is too small: exp(-T^2/2) rounds "
+            "to 1.0 in float32, so the shifted-Gaussian normalization 1/(1-C) "
+            "overflows on the GPU render paths"
+        )
+
+    return radius_float
+
+
 def validate_gamma(gamma: Any) -> float:
     """Validate and convert gamma value.
 

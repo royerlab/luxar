@@ -31,6 +31,7 @@ import {
   configureElementTextureLayout,
   resetElementTextureLayoutForTests,
 } from '../../../rendering/element-texture-layout';
+import { GSPLAT_DEFAULT_TRUNCATION_RADIUS } from '../../../config/constants';
 
 /**
  * One splat at the origin with a diagonal Cholesky factor
@@ -75,10 +76,10 @@ describe('createInstancedGSplatsMesh — bounding-box footprint expansion', () =
     expect(mesh.frustumCulled).toBe(true);
   });
 
-  it('falls back to a 3.0 truncation when the material has no uTruncate uniform', () => {
+  it('falls back to the default truncation when the material has no uTruncate uniform', () => {
     const mesh = createInstancedGSplatsMesh(makeSingleSplatConfig(), new THREE.MeshBasicMaterial());
     const box = mesh.geometry.boundingBox!;
-    const margin = 2 * 3.0; // maxRowNorm 2 × default truncation 3.0
+    const margin = 2 * GSPLAT_DEFAULT_TRUNCATION_RADIUS; // maxRowNorm 2 × default truncation
     expect(box.max.x).toBeCloseTo(margin, 5);
     expect(box.min.x).toBeCloseTo(-margin, 5);
   });

@@ -15,6 +15,65 @@ bundle, production WASM binary, and worker assets rather than accepting an
 empty or partial `dist/` directory. CI, docs, and both publish workflows also
 read the exact pnpm version from the viewer package's `packageManager` field, so
 release and pull-request builds cannot drift between pnpm patches.
+#### Changed — one canonical GSplat truncation radius, 2.75 (#1179, #1181, #1182)
+
+The fitter has stamped `truncation_radius = 2.75` since the truncation
+experiment landed, but that value was only ever applied to the fit config.
+The format spec, the three model classes, the LOD spec, the spatial-ordering
+`coverage_sigma` alias, and every read-side fallback in both Python and the
+viewer independently defaulted to `3.0` — around thirty sites in total, with
+no single definition and no test relating them.
+
+There is now one constant per language, mirrored and pinned by tests that name
+each other: `DEFAULT_TRUNCATION_RADIUS` in
+`luxar.typing_utils.constants` and `GSPLAT_DEFAULT_TRUNCATION_RADIUS` in
+`packages/luxar-viewer/src/config/constants.ts`. The viewer's former
+`SHIFTED_GAUSSIAN_DEFAULT_TRUNCATE` (a worker-internal module) is gone in
+favour of the `config/` one, so materials no longer depend on worker internals.
+
+**Behaviour change.** A store that carries *no* `truncation_radius` attribute
+now renders and culls at 2.75 rather than 3.0. Measured on a 400-splat test
+volume, the tighter kernel integrates ~7% less total mass and differs from the
+3.0 render by ~3% of peak (42 dB PSNR) — visible as slightly dimmer, slightly
+smaller splats rather than a subtle change. Every dataset produced by
+`gsplat fit` already stamps its own value and is unaffected, so this only
+reaches hand-written or pre-attr stores. `gsplat migrate-format` likewise now
+writes 2.75 where it previously baked in 3.0.
+
+`luxar.gsplats.lift` is the one deliberate exemption and keeps 3.0, as the new
+`LIFT_TRUNCATION_RADIUS` constant. Its `T` is a profile-matching parameter, not
+a render default: the point super-Gaussian sprite and the gsplat kernel
+coincide exactly at `T* = sqrt(2 ln 100) = 3.0349`, and moving the lift to 2.75
+degrades that match by roughly 8.5x.
+
+`truncation_radius` is also now validated on write. It arrives unvalidated from
+dataset attrs and sets both the kernel support and the `1/(1-C)` normalization,
+so a zero or non-finite value poisons every derived quantity — and Python had
+no guard at all. `validate_truncation_radius` joins the existing per-attr
+validator family and runs in the scene compiler and in every
+`AdditiveSubLOD.__post_init__` (the tree writer reads each sub-LOD's own value,
+so validating only the first would let a bad radius on a later rung reach disk).
+
+Its lower bound is derived rather than magic, and is checked in **float32**:
+the CUDA and Metal kernels and the GPU shaders evaluate the shift in single
+precision, where `exp(-T^2/2)` saturates to 1.0 around `T = 3e-4` — four orders
+of magnitude before float64's ~1.5e-8. A float64 check would admit radii that
+are finite in Python and infinite on the GPU.
+
+On the viewer side the attr is now also clamped at `createGSplatsNode`, the
+single earliest read. This is defence in depth rather than a bug fix: every
+current consumer (`gsplat-geometry`, `gsplats-adapter`, the two `readTruncate`
+helpers) sizes itself from `material.uniforms.uTruncate`, which the material
+constructors already clamp. It matters if a future consumer reads the raw attr,
+or a material is built outside those constructors.
+
+Separately, the Points/Lines sprite falloff constants (`K = ln 100`, the 1%
+iso-contour floor, and the renormalization) were duplicated across eight
+GLSL/TSL/picking shader sites with no shared symbol. They now come from
+`rendering/materials/_shared/falloff.ts`. The emitted shader text is
+byte-identical — the checked-in codegen snapshots are unchanged, which is the
+proof — and new tests pin the serialization plus a GLSL3-vs-TSL drift guard
+that the codegen snapshots (TSL-only) could not provide.
 
 #### Fixed — points nodes now record `ndim`, and expose their spatial metadata (#1150)
 

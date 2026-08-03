@@ -20,12 +20,13 @@ import torch
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
 from luxar.gsplats.utils.trils import unpack_tril
+from luxar.typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
 
 
 def render_gaussians_numpy(
     shape: Sequence[int],
     result: GSplatData,
-    truncate: float = 3.0,
+    truncate: float = DEFAULT_TRUNCATION_RADIUS,
     chunk_size: Optional[int] = None,
 ) -> np.ndarray:
     """
@@ -40,7 +41,7 @@ def render_gaussians_numpy(
     result : GSplatData
         Fitted Gaussian splat result containing centers, amplitudes,
         and cholesky_factors.
-    truncate : float, default=3.0
+    truncate : float, default=DEFAULT_TRUNCATION_RADIUS
         Truncation radius in standard deviations.
     chunk_size : int, optional
         Chunk size for memory management.
@@ -85,7 +86,7 @@ def render_gaussians_numpy(
 def render_gaussians_pytorch(
     shape: Sequence[int],
     result: GSplatData,
-    truncate: float = 3.0,
+    truncate: float = DEFAULT_TRUNCATION_RADIUS,
     device: str = "cpu",
     chunk_size: Optional[int] = None,
 ) -> torch.Tensor:
@@ -101,7 +102,7 @@ def render_gaussians_pytorch(
     result : GSplatData
         Fitted Gaussian splat result containing centers, amplitudes,
         and cholesky_factors.
-    truncate : float, default=3.0
+    truncate : float, default=DEFAULT_TRUNCATION_RADIUS
         Truncation radius in standard deviations.
     device : str, default="cpu"
         PyTorch device for computation.
@@ -150,7 +151,7 @@ def render_gaussians_batched(
     centers: torch.Tensor,
     Ls: torch.Tensor,
     amps: torch.Tensor,
-    truncate: float = 3.0,
+    truncate: float = DEFAULT_TRUNCATION_RADIUS,
     intensity_floor: Optional[float] = 1e-5,
     chunk_size: Optional[int] = None,
 ) -> torch.Tensor:
@@ -167,7 +168,7 @@ def render_gaussians_batched(
         Cholesky factors.
     amps : torch.Tensor, shape (N,)
         Amplitudes.
-    truncate : float, default=3.0
+    truncate : float, default=DEFAULT_TRUNCATION_RADIUS
         Truncation radius.
     intensity_floor : float or None, default=1e-5
         Minimum intensity for amplitude-aware culling.

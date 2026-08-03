@@ -1,4 +1,5 @@
 import { log, Modules } from '../../../utils/log';
+import { GSPLAT_DEFAULT_TRUNCATION_RADIUS } from '../../../config/constants';
 
 /**
  * Shared mathematical helpers for the GSplat material pair.
@@ -67,16 +68,16 @@ let truncationClampWarned = false;
 export function clampTruncationRadius(radius: number): number {
   // NaN/Inf slip past a plain comparison clamp (NaN < x is false) and
   // would poison uShiftC/uInvOneMinusC — the exact degenerate-uniform
-  // failure this clamp exists to prevent. Fall back to the 3.0 default.
+  // failure this clamp exists to prevent. Fall back to the module default.
   if (!Number.isFinite(radius)) {
     if (!truncationClampWarned) {
       truncationClampWarned = true;
       log.warning(
         Modules.RENDERER,
-        `truncation_radius ${radius} is not finite — falling back to 3.0. Further clamps are silent.`
+        `truncation_radius ${radius} is not finite — falling back to ${GSPLAT_DEFAULT_TRUNCATION_RADIUS}. Further clamps are silent.`
       );
     }
-    return 3.0;
+    return GSPLAT_DEFAULT_TRUNCATION_RADIUS;
   }
   if (radius < MIN_TRUNCATION_RADIUS) {
     if (!truncationClampWarned) {

@@ -38,6 +38,7 @@ import type { RecordingPanel } from '../../../ui/recording-panel';
 import type { PickingSystem } from '../../../rendering/picking/picking-system';
 import type { OverlayManager } from '../../../ui/overlay-manager';
 import type { LuxarApp } from '../../app';
+import { GSPLAT_DEFAULT_TRUNCATION_RADIUS } from '../../../config/constants';
 
 /**
  * Populate `window.__luxarDebug` with runtime components, helper
@@ -258,7 +259,7 @@ export function installDebugInterface(ports: InstallDebugInterfacePorts): void {
             gamma: 1.0,
             intensity: 1.0,
             offset: 0.0,
-            truncationRadius: 3.0,
+            truncationRadius: GSPLAT_DEFAULT_TRUNCATION_RADIUS,
           });
           // The real gsplat mesh path: splat texture + `aSortedIndex`
           // storage, identity ordering, footprint-expanded bounds, and

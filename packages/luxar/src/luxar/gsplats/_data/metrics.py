@@ -16,6 +16,7 @@ from luxar.gsplats.utils.spatial_axes import (
     SPATIAL_SIGMA_EPS,
     spatial_axes_from_max_sigma,
 )
+from luxar.typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
 
 
 class _SplatArrayMixin:
@@ -174,7 +175,7 @@ class _SplatArrayMixin:
         """
         if self.n_splats == 0:
             return np.empty(0, dtype=np.float64)
-        trunc = float(getattr(self, "truncation_radius", 3.0))
+        trunc = float(getattr(self, "truncation_radius", DEFAULT_TRUNCATION_RADIUS))
         if anisotropy:
             from luxar.gsplats.utils.trils import unpack_tril
 

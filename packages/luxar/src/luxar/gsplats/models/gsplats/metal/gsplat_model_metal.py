@@ -17,6 +17,7 @@ import torch
 
 from luxar.gsplats.models.gsplats.gsplat_model import GaussianSplatModel
 from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
+from luxar.typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
 
 try:
     import metal_splatting_backend
@@ -297,7 +298,7 @@ class GaussianSplatModelMetal(GaussianSplatModel):
         sigma_max_diag: Optional[Sequence[float]] = None,
         amp_max: Optional[float] = None,
         max_eccentricity: Optional[float] = None,
-        truncate: float = 3.0,
+        truncate: float = DEFAULT_TRUNCATION_RADIUS,
         intensity_floor: float = 1e-5,
         use_fp16: bool = False,
         use_metal_conic: bool = False,

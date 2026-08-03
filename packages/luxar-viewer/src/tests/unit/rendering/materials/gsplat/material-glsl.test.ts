@@ -8,6 +8,7 @@ import {
   getSplatTexture,
   updateInstancedGSplatsMesh,
 } from '../../../../../rendering/gsplat-geometry';
+import { GSPLAT_DEFAULT_TRUNCATION_RADIUS } from '../../../../../config/constants';
 
 // Mock THREE.ShaderMaterial
 vi.mock('three', async () => {
@@ -80,13 +81,13 @@ vi.mock('three', async () => {
 });
 
 describe('clampTruncationRadius NaN guard', () => {
-  it('falls back to the 3.0 default for non-finite radii instead of poisoning uniforms', () => {
+  it('falls back to the module default for non-finite radii instead of poisoning uniforms', () => {
     // NaN slips past a plain comparison clamp (NaN < 0.1 is false) and
     // would make uShiftC/uInvOneMinusC NaN — the exact degenerate-uniform
     // failure the clamp exists to prevent (truncation_radius arrives
     // unvalidated from dataset attrs).
-    expect(clampTruncationRadius(Number.NaN)).toBe(3.0);
-    expect(clampTruncationRadius(Number.POSITIVE_INFINITY)).toBe(3.0);
+    expect(clampTruncationRadius(Number.NaN)).toBe(GSPLAT_DEFAULT_TRUNCATION_RADIUS);
+    expect(clampTruncationRadius(Number.POSITIVE_INFINITY)).toBe(GSPLAT_DEFAULT_TRUNCATION_RADIUS);
     expect(clampTruncationRadius(0)).toBe(0.1);
     expect(clampTruncationRadius(2.5)).toBe(2.5);
   });
@@ -98,7 +99,7 @@ describe('GSplatMaterial', () => {
       const material = new GSplatMaterial();
 
       expect(material.uniforms.uOpacity.value).toBe(1.0);
-      expect(material.uniforms.uTruncate.value).toBe(3.0);
+      expect(material.uniforms.uTruncate.value).toBe(GSPLAT_DEFAULT_TRUNCATION_RADIUS);
       expect(material.uniforms.uResolution.value).toBeInstanceOf(THREE.Vector2);
       expect(material.uniforms.uFx.value).toBe(500);
       expect(material.uniforms.uFy.value).toBe(500);
@@ -854,9 +855,9 @@ describe('createInstancedGSplatsMesh', () => {
     const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
 
     expect(geometry.boundingBox).not.toBeNull();
-    // Bounding box is expanded by maxRowNorm * truncationRadius (default 3.0)
-    // Cholesky factors give maxRowNorm=1, so expansion=3.0
-    const expansion = 3.0;
+    // Bounding box is expanded by maxRowNorm * truncationRadius (the default).
+    // Cholesky factors give maxRowNorm=1, so expansion is the default itself.
+    const expansion = GSPLAT_DEFAULT_TRUNCATION_RADIUS;
     expect(geometry.boundingBox!.min.x).toBe(0 - expansion);
     expect(geometry.boundingBox!.min.y).toBe(0 - expansion);
     expect(geometry.boundingBox!.min.z).toBe(0 - expansion);

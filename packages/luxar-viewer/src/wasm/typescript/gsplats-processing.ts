@@ -301,7 +301,7 @@ export function extract_cholesky_submatrix(
  * @param ndim - Total dimensionality
  * @param splatCount - Number of splats
  * @param minAmplitude - Visibility threshold
- * @param truncate - Truncation radius in sigmas for the shifted Gaussian (typically 3.0)
+ * @param truncate - Truncation radius in sigmas for the shifted Gaussian
  * @param outputVisibility - Output visibility mask [splatCount]
  * @param outputAttenuation - Output attenuation factors [splatCount]
  * @returns Number of visible splats

@@ -28,6 +28,7 @@ import { clampSplatCapacity } from '../element-texture-layout';
 import type { GSplatsProjectionBounds } from '../../types/gsplats';
 import type { PooledBuffer } from './pool-stats';
 import { chooseCapacity } from './capacity';
+import { GSPLAT_DEFAULT_TRUNCATION_RADIUS } from '../../config/constants';
 
 /**
  * Packed GSplats data ready for GPU upload (from gsplats/projection.ts).
@@ -290,7 +291,7 @@ export class GSplatsBufferAdapter {
     geometry: THREE.InstancedBufferGeometry,
     data: PackedGSplatsData,
     count: number,
-    truncationRadius: number = 3.0,
+    truncationRadius: number = GSPLAT_DEFAULT_TRUNCATION_RADIUS,
     options?: { preserveOrdering?: boolean; fromInstance?: number }
   ): void {
     const texture = getSplatTexture(geometry);

@@ -30,8 +30,7 @@ import {
 } from '../../../types/committed-data';
 import { getPrefixParent, setPrefixParent } from '../../../types/prefix-lineage';
 import type { StagedGSplatsCommit } from '../process/data-processor-gsplats';
-
-const DEFAULT_TRUNCATE = 3.0;
+import { GSPLAT_DEFAULT_TRUNCATION_RADIUS } from '../../../config/constants';
 
 /**
  * Read the `uTruncate` uniform from the mesh material, falling back to
@@ -42,7 +41,7 @@ const DEFAULT_TRUNCATE = 3.0;
 function readTruncate(mesh: THREE.Mesh): number {
   return (
     (mesh.material as { uniforms?: { uTruncate?: { value: number } } })?.uniforms?.uTruncate
-      ?.value ?? DEFAULT_TRUNCATE
+      ?.value ?? GSPLAT_DEFAULT_TRUNCATION_RADIUS
   );
 }
 

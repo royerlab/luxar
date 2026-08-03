@@ -15,6 +15,7 @@ import numpy as np
 import pytest
 
 from luxar.gsplats.gsplat_data import AdditiveSubLOD, GSplatData, SubstitutiveLevel
+from luxar.typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
 
 from ._gsplat_data_helpers import _make_3d_gsplat
 
@@ -707,7 +708,9 @@ class TestGSplatsWithoutSharpness:
 class TestTruncationRadius:
     """Tests for the truncation_radius field on GSplatData and AdditiveSubLOD."""
 
-    def _make_gsplat(self, n: int = 10, truncation_radius: float = 3.0) -> GSplatData:
+    def _make_gsplat(
+        self, n: int = 10, truncation_radius: float | None = None
+    ) -> GSplatData:
         rng = np.random.RandomState(42)
         return GSplatData(
             centers=rng.rand(n, 3).astype(np.float32),
@@ -715,14 +718,18 @@ class TestTruncationRadius:
             cholesky_factors=np.tile(
                 np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (n, 1)
             ),
-            truncation_radius=truncation_radius,
+            **(
+                {}
+                if truncation_radius is None
+                else {"truncation_radius": truncation_radius}
+            ),
         )
 
     def test_default_truncation_radius(self):
         """Default truncation_radius is 3.0."""
         g = self._make_gsplat()
-        assert g.truncation_radius == 3.0
-        assert g.additive_sublods[0].truncation_radius == 3.0
+        assert g.truncation_radius == DEFAULT_TRUNCATION_RADIUS
+        assert g.additive_sublods[0].truncation_radius == DEFAULT_TRUNCATION_RADIUS
 
     def test_custom_truncation_radius(self):
         """Custom truncation_radius is propagated to LOD."""

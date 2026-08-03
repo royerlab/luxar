@@ -112,7 +112,7 @@ describe('PointMaterial.applyBlendingMode', () => {
     expect(mat.fragmentShader).toContain('#if defined(LUXAR_VOLUMETRIC)');
     // τ is κ × the SAME ray mass every other mode emits. A point's opacity is
     // a peak screen alpha (already integrated), so the old
-    // `* vRadius * POINT_CHORD_SCALE` read it as a volume density in this one
+    // the former `* vRadius * <chord scale>` read it as a volume density in this one
     // mode — which is what made a Points node and its lifted-gsplat twin
     // disagree by one path length. Any size factor here re-breaks that.
     expect(mat.fragmentShader).toContain('float tau = uAbsorption * alpha;');

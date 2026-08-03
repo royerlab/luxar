@@ -22,6 +22,7 @@ import {
   GLSL_SORTED_INDEX,
 } from '../_shared/glsl-lib';
 import type { ShaderSource } from '../_shared/shader-source';
+import { FALLOFF_FLOOR, FALLOFF_K } from '../_shared/falloff';
 import {
   ALPHA_CLAMP,
   VOLUMETRIC_SERIES_C1,
@@ -258,8 +259,8 @@ export const POINT_FRAGMENT_SHADER = /* glsl */ `
       // (C0-continuous truncation at the sprite edge, no hard ring).
       // beta=2 reproduces the gsplat Gaussian shape. K = ln(1/floor) with
       // floor = 0.01 encodes the 1% iso-contour sizing convention.
-      const mediump float K = 4.6051702;          // ln(100)
-      const mediump float C = 0.01;               // exp(-K) = floor
+      const mediump float K = ${FALLOFF_K};          // ln(100)
+      const mediump float C = ${FALLOFF_FLOOR};               // exp(-K) = floor
       const mediump float INV_ONE_MINUS_C = 1.0 / (1.0 - C);
       mediump float falloff = max(exp(-K * pow(normalizedR, vBeta)) - C, 0.0) * INV_ONE_MINUS_C;
 

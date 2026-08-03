@@ -64,6 +64,7 @@ import {
 import { proxyIUniform, type TSLNode } from '../_shared/tsl-helpers';
 import type { BlendingMode } from '../../../types/blending';
 import { computeScalarRangeUniforms } from '../_shared/scalar-range';
+import { GSPLAT_DEFAULT_TRUNCATION_RADIUS } from '../../../config/constants';
 
 export class GSplatTSLMaterial
   extends NodeMaterial
@@ -130,7 +131,9 @@ export class GSplatTSLMaterial
     super();
 
     const gammaValue = clampGamma(materialConfig.gamma);
-    const truncate = clampTruncationRadius(materialConfig.truncationRadius ?? 3.0);
+    const truncate = clampTruncationRadius(
+      materialConfig.truncationRadius ?? GSPLAT_DEFAULT_TRUNCATION_RADIUS
+    );
     const shiftC = Math.exp(-0.5 * truncate * truncate);
     const invOneMinusC = 1.0 / (1.0 - shiftC);
 

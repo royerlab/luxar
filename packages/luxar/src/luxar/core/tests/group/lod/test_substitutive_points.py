@@ -24,6 +24,7 @@ from luxar.gsplats.lift import (
     render_light,
 )
 from luxar.io.compiler import LuxarZarrCompiler
+from luxar.typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
 
 # ────────────────────────────────────────────────────────────────────────
 # Resolver
@@ -42,7 +43,7 @@ class TestResolveSubstitutiveAxisPoints:
             assert r["compression_factor"] == 4
             assert r["levels"] == 3
             assert r["method"] == "auto"
-            assert r["truncation_radius"] == 3.0
+            assert r["truncation_radius"] == DEFAULT_TRUNCATION_RADIUS
 
     def test_aliases_K_and_n_lods(self) -> None:
         r = resolve_substitutive_axis_points(dict(K=8, n_lods=2))

@@ -341,7 +341,7 @@ attrs are `type`, `kind`, `selector`, `default_level`, `display_type`,
   "n_splats": 10000,
   "ndim": 3,
   "has_colors": true,
-  "truncation_radius": 3.0,
+  "truncation_radius": 2.75,
   "ordering": "hilbert",
   "ordering_min": [0.0, 0.0, 0.0],
   "ordering_max": [256.0, 256.0, 128.0],
@@ -554,7 +554,7 @@ GSplats have ellipsoidal extent (unlike point radii). Chunk bounds include this 
 #   2D: [L00, L10, L11] → cov[0,0]=L00², cov[1,1]=L10²+L11²
 #   3D: [L00, L10, L11, L20, L21, L22] → cov[2,2]=L20²+L21²+L22²
 
-extent[d] = sqrt(covariance[d, d]) * truncation_radius  # default 3.0 (3σ = 99.7%)
+extent[d] = sqrt(covariance[d, d]) * truncation_radius  # default 2.75 (99.4% of mass)
 
 # Chunk bounds include extent
 chunk_bounds[i, d, 0] = min(centers[chunk_i, d] - extent[chunk_i, d])

@@ -37,6 +37,7 @@ import numpy as np
 import zarr
 
 from ...encoding import ArrayEncoder, EncodingMode
+from ...typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
 from .context import DatasetCtx, OrderingCtx
 from .gsplat_assembly import (
     apply_gsplat_group_attrs,
@@ -658,7 +659,9 @@ def _read_leaf_arrays(group: zarr.Group, root: zarr.Group, decoder: Any) -> Any:
     colors = decoder.decode(group["colors"], root) if "colors" in group else None
     stats_raw = group.attrs.get("lod_stats", {})
     stats = dict(stats_raw) if isinstance(stats_raw, dict) else {}
-    truncation_radius = float(group.attrs.get("truncation_radius", 3.0))
+    truncation_radius = float(
+        group.attrs.get("truncation_radius", DEFAULT_TRUNCATION_RADIUS)
+    )
     return AdditiveSubLOD(
         centers=centers,
         amplitudes=amplitudes,

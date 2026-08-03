@@ -11,6 +11,7 @@ import numpy as np
 
 from luxar.gsplats.fitting.config import FitConfig
 from luxar.gsplats.gsplat_data import GSplatData
+from luxar.typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
 
 if TYPE_CHECKING:
     from luxar.gsplats.fit_gsplats import GaussianSplatFitter
@@ -69,7 +70,7 @@ def prepare_fit_config(
     sigma_max_diag: Optional[Sequence[float] | float] = None,
     amp_max: Optional[float] = None,  # Maximum amplitude (prevents explosion)
     max_eccentricity: Optional[float] = None,
-    truncate: float = 3.0,
+    truncate: float = DEFAULT_TRUNCATION_RADIUS,
     verbose: bool = True,
     max_abs_error: Optional[float] = None,
     rel_l2_target: Optional[float] = None,
