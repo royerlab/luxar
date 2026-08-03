@@ -268,6 +268,12 @@ straight to the §5.4 kernels. An out-of-range face index **panics** the Rust ke
 decode, before either backend is invoked: `vertices`/`faces` shapes against `n_vertices`/`n_faces`,
 `faces` length a multiple of 3, every face index `< V`, and `normal_dims` well-formed whenever normals
 are present — failing the node with a `LoaderError` (one node lost, not the scene) instead of trapping.
+The optional arrays get the same structural gate whenever present — `normals` shape `(V, 3)`, `colors`
+shape `(V, 3|4)`, `scalars` length `V`, and the label/image-label CSR offsets monotone and in-bounds
+(§3.2) — because they bind as enabled vertex attributes on an **indexed** draw (§6.1): an undersized
+attribute doesn't trap, it makes `drawElements` read past the buffer (an invalid-operation draw or
+silent zeros, backend-dependent) and mis-shades every vertex it covers. Same `LoaderError`, same
+one-node blast radius.
 
 ### 3.6 Authoring lint
 
@@ -986,7 +992,8 @@ A reviewer should treat a `| 'mesh'` appearing in any of those five as a defect.
 - [ ] Rust: `mesh_vertex_visibility_mask` / `compact_visible_faces` unit tests incl. the non-finite rule
 - [ ] TS unit: loader, geometry assembly, cull correctness, colormap fail-closed guard,
       Rust↔TS kernel parity, corrupt-store rejection (out-of-range face index → `LoaderError`, not a
-      WASM trap, §3.5), and the `volumetric`→`opaque` fallback warning (§6.3)
+      WASM trap; an undersized `normals`/`colors`/`scalars` array → `LoaderError`, §3.5), and the
+      `volumetric`→`opaque` fallback warning (§6.3)
 - [ ] TS unit (alpha chain, §6.2): an **RGBA** mesh produces **different** fragment output than the same
       mesh RGB-only (goes red if `vAlpha` is dropped — the exact "(V,4) renders like (V,3)" defect); under
       `opaque`, fragments with `a < uAlphaCutoff` are **discarded** (cutout) and survivors write alpha 1.0;
