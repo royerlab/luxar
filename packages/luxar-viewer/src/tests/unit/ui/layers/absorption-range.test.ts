@@ -49,6 +49,18 @@ describe('absorptionSliderRange', () => {
     expect(absorptionSliderRange(250).max).toBe(250);
   });
 
+  it('keeps the nominal floor reachable when the top is widened for a large authored κ', () => {
+    // Regression guard: widening the top for a large authored κ must NOT drag
+    // the floor up with it, or the whole 0.001–10 nominal span becomes
+    // unreachable for scenes authored with a large κ. The floor is anchored to
+    // the nominal maximum, not the raised one.
+    expect(absorptionSliderRange(250).min).toBeCloseTo(
+      ABSORPTION_DEFAULT_MAX / Math.pow(10, ABSORPTION_LOG_DECADES),
+      12
+    );
+    expect(absorptionSliderRange(250).max).toBe(250);
+  });
+
   it('LOWERS the floor to keep a κ below the nominal minimum on the track', () => {
     // Without this the readout would show the true κ while the thumb could
     // not represent it, and the first drag would silently jump κ up.

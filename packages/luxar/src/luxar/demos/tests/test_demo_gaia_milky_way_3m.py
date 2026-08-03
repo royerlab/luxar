@@ -50,7 +50,7 @@ def test_authored_nodes_keep_gaia_volumetric_appearance(tmp_path: Path) -> None:
 
     # The markers are PLAIN points (no LOD wrapper), so they DID need kappa
     # rescaled to survive that change: tau dropped its world-radius factor, so
-    # the old 1.3 would now absorb ~35x harder. Preserving the authored look is
+    # the old 1.3 would now absorb ~3.5x harder. Preserving the authored look is
     # exactly kappa * radius * chord — the value the demo computes as
     # MARKER_ABSORPTION, recomputed here from first principles rather than
     # copied, so a change to either side has to be deliberate.

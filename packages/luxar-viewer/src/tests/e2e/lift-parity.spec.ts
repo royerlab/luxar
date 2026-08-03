@@ -19,8 +19,8 @@
  *   B  uncompensated 2D dilation  all sum modes      (σ_px²+d)/σ_px²   FIXED
  *   C  peak-vs-sum lift calib.    max/normal/opaque  1/(uRIF·σ)        OPEN
  *
- * So the sum modes assert parity; the peak modes are marked `test.fail()` —
- * expected to fail until C lands, and Playwright flags them the day it's fixed.
+ * So the sum modes assert parity; the peak modes assert the known effect-C
+ * divergence is present, and flag it loudly the day C lands and it collapses.
  */
 
 import { test, expect, type Page } from '@playwright/test';
@@ -52,7 +52,7 @@ const PARITY_TOLERANCE = 0.1;
 /** Modes whose output is a functional of the sum-projected ray mass. */
 const SUM_MODES = ['additive', 'luminous', 'volumetric'] as const;
 /** Modes that use peak projection — effect C, not yet calibrated. */
-const PEAK_MODES = ['max', 'normal'] as const;
+const PEAK_MODES = ['max', 'normal', 'opaque'] as const;
 
 /** Canvas-normalised cell centre, so the crop survives DPR and element offset. */
 interface Cell {
@@ -257,23 +257,27 @@ test.describe('Lifted-gsplat / Points parity', () => {
   }
 
   for (const mode of PEAK_MODES) {
-    test(`${mode}: lifted gsplat parity (KNOWN FAILING — effect C)`, async ({ page }) => {
-      // EXPECTED FAILURE until effect C lands. The lift equates SUM-projection
-      // brightness (`a·σ·uRIF = opacity`); under peak projection the gsplat
-      // reports raw `a_lift = opacity/(uRIF·σ)`, which diverges as 1/σ — 12× at
-      // R=0.05, 39× at R=0.02. Unfixable in the lift (two constraints, one
-      // left-hand side); it needs a peak-branch calibration. When someone fixes
-      // it Playwright reports "expected to fail but passed" — delete this block
-      // then and fold the mode into the SUM_MODES loop.
-      //
-      // MUST stay INSIDE the test body: `test.fail()` at describe scope
-      // annotates EVERY test in the suite, which silently converts real
-      // failures elsewhere into reported passes (caught by a tolerance
-      // mutation — the whole suite passed at a 1e-6 band).
-      test.fail();
+    test(`${mode}: lifted gsplat shows the known effect-C divergence`, async ({ page }) => {
       const centres = await cellCentres(page);
       await setBlendingMode(page, mode);
-      expectParity(await parityRatios(page, centres), mode);
+      const ratios = await parityRatios(page, centres);
+      // Effect C (peak-vs-sum lift calibration) is OPEN: under peak projection
+      // the lifted gsplat reports a raw a_lift = opacity/(uRIF·σ) that diverges
+      // as 1/σ — the gsplat renders ~12× brighter than its point at R=0.05 and
+      // ~30× at R=0.02. We assert that divergence is PRESENT at the two smallest
+      // radii rather than marking the whole test `test.fail()`: an unconditional
+      // test.fail() silently accepts a blank render, a shader-compile error, or a
+      // no-op mode switch (all of which would otherwise leave the ratio ≈ 1) as
+      // the "expected" failure. `parityRatios` already fails loudly if either
+      // family renders nothing. When effect C lands these ratios collapse to ≈ 1
+      // and this assertion fails — delete it then and fold the mode into the
+      // SUM_MODES loop.
+      expect(ratios[0], `r=${RADII[0]} in ${mode}: expected effect-C divergence`).toBeGreaterThan(
+        1 + PARITY_TOLERANCE
+      );
+      expect(ratios[1], `r=${RADII[1]} in ${mode}: expected effect-C divergence`).toBeGreaterThan(
+        1 + PARITY_TOLERANCE
+      );
     });
   }
 
