@@ -6,6 +6,16 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
+#### CI — the PyPI wheel viewer build is now a required release check (#688)
+
+CI now builds the standalone viewer application with the same `pnpm build`
+command used by the PyPI publish workflow, in a dedicated `wheel-viewer` job
+separate from the npm library bundle. The check verifies the application entry
+bundle, production WASM binary, and worker assets rather than accepting an
+empty or partial `dist/` directory. CI, docs, and both publish workflows also
+read the exact pnpm version from the viewer package's `packageManager` field, so
+release and pull-request builds cannot drift between pnpm patches.
+
 #### Fixed — points nodes now record `ndim`, and expose their spatial metadata (#1150)
 
 Points was the only geometry type whose writer never stamped `ndim` on the

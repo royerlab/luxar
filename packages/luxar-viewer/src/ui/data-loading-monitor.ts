@@ -84,6 +84,16 @@ import {
 } from './data-loading-monitor/timing-panel';
 
 import type { UpdateProfiler } from '../profiling/update-profiler';
+import { POOLED_GEOMETRY_TYPES } from '../types/data-monitor-types';
+import type { PooledGeometryType, AccumulatorProvider } from '../types/data-monitor-types';
+
+/** Empty accumulator slots — one per {@link POOLED_GEOMETRY_TYPES} entry. */
+function emptyAccumulatorSlots(): Record<PooledGeometryType, AccumulatorProvider | null> {
+  return Object.fromEntries(POOLED_GEOMETRY_TYPES.map((t) => [t, null])) as Record<
+    PooledGeometryType,
+    AccumulatorProvider | null
+  >;
+}
 
 /**
  * Main Data Loading Monitor class
@@ -173,15 +183,8 @@ export class DataLoadingMonitor {
   private visibleCountsByPath: ReadonlyMap<string, number> = new Map();
 
   // Accumulator providers for dynamic stats retrieval
-  private accumulatorProviders: {
-    points: { getStats: () => NonNullable<MemoryMetrics['accumulators']['points']> } | null;
-    lines: { getStats: () => NonNullable<MemoryMetrics['accumulators']['lines']> } | null;
-    gsplats: { getStats: () => NonNullable<MemoryMetrics['accumulators']['gsplats']> } | null;
-  } = {
-    points: null,
-    lines: null,
-    gsplats: null,
-  };
+  private accumulatorProviders: Record<PooledGeometryType, AccumulatorProvider | null> =
+    emptyAccumulatorSlots();
 
   // DOM element references for efficient updates (avoids full innerHTML replacement)
   private contentContainer: HTMLElement | null = null;
@@ -435,12 +438,12 @@ export class DataLoadingMonitor {
 
   /**
    * Set an accumulator provider for Memory tab stats.
-   * @param type - The type of accumulator ('points', 'lines', or 'gsplats')
+   * @param type - Which accumulator, one of {@link POOLED_GEOMETRY_TYPES}
    * @param provider - The accumulator with a getStats() method
    */
   public setAccumulatorProvider(
-    type: 'points' | 'lines' | 'gsplats',
-    provider: { getStats: () => NonNullable<MemoryMetrics['accumulators']['points']> } | null
+    type: PooledGeometryType,
+    provider: AccumulatorProvider | null
   ): void {
     this.accumulatorProviders[type] = provider;
     if (provider) {
@@ -465,7 +468,7 @@ export class DataLoadingMonitor {
     this.l0CacheProvider = null;
     this.sliceCacheProvider = null;
     this.gpuBufferPoolProvider = null;
-    this.accumulatorProviders = { points: null, lines: null, gsplats: null };
+    this.accumulatorProviders = emptyAccumulatorSlots();
     this.profiler = null;
     this.lodProgressProvider = null;
     this.failedLoadsProvider = null;
@@ -1611,8 +1614,7 @@ export class DataLoadingMonitor {
 
     // GPU pool table
     if (metrics.gpuPool) {
-      const types = ['points', 'lines', 'gsplats'] as const;
-      for (const type of types) {
+      for (const type of POOLED_GEOMETRY_TYPES) {
         const typeStats = metrics.gpuPool.byType[type];
         const reuseRate = calculateReuseRate(typeStats.allocations, typeStats.reuses);
         const hasData =
@@ -1637,8 +1639,7 @@ export class DataLoadingMonitor {
     }
 
     // Accumulator table
-    const accTypes = ['points', 'lines', 'gsplats'] as const;
-    for (const type of accTypes) {
+    for (const type of POOLED_GEOMETRY_TYPES) {
       const stats = metrics.accumulators[type];
       const hasData = stats !== null && stats.capacity > 0;
 
@@ -1883,11 +1884,9 @@ export class DataLoadingMonitor {
   private getMemoryMetrics(): MemoryMetrics {
     return {
       gpuPool: this.gpuBufferPoolProvider?.getStats() ?? null,
-      accumulators: {
-        points: this.accumulatorProviders.points?.getStats() ?? null,
-        lines: this.accumulatorProviders.lines?.getStats() ?? null,
-        gsplats: this.accumulatorProviders.gsplats?.getStats() ?? null,
-      },
+      accumulators: Object.fromEntries(
+        POOLED_GEOMETRY_TYPES.map((t) => [t, this.accumulatorProviders[t]?.getStats() ?? null])
+      ) as MemoryMetrics['accumulators'],
     };
   }
 

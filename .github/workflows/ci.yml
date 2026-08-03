@@ -19,7 +19,8 @@ jobs:
   # Change detection: decide whether this ref's changes are DOCS/MARKDOWN-ONLY.
   # When they are, the heavy jobs below skip their expensive steps but STILL RUN
   # (checkout + this gate), so every check context (`python-tests (…)`,
-  # `typescript-tests`, `release-readiness`) reports an explicit green success
+  # `typescript-tests`, `release-readiness`, `wheel-viewer`) reports an explicit
+  # green success
   # instead of a grey "skipped" (which GitHub also counts as passing, but is
   # easy to misread and fragile if those contexts ever become required).
   # Any non-doc file (or a push to main, which has no PR base) => full CI.
@@ -168,7 +169,7 @@ jobs:
         run: |
           # Self-bounded below the job timeout. If jobs are STILL queued when
           # the window closes but the heartbeat stayed fresh the whole time,
-          # the box is busy, not dead (4 slots, 5 routed jobs, or another run
+          # the box is busy, not dead (4 slots, 6 obsidian-routed test jobs,
           # draining) — leave the run alone.
           end=$(( $(date +%s) + 25 * 60 ))
           while [ "$(date +%s)" -lt "$end" ]; do
@@ -411,7 +412,7 @@ jobs:
       - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
         if: needs.changes.outputs.docs_only != 'true'
         with:
-          version: 10
+          package_json_file: packages/luxar-viewer/package.json
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         if: needs.changes.outputs.docs_only != 'true'
@@ -527,7 +528,7 @@ jobs:
       - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
         if: needs.changes.outputs.docs_only != 'true'
         with:
-          version: 10
+          package_json_file: packages/luxar-viewer/package.json
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         if: needs.changes.outputs.docs_only != 'true'
@@ -582,7 +583,7 @@ jobs:
         #   - LICENSE at the package root
         #   - dist/lib/luxar-viewer.js (the publishable barrel)
         #   - at least one wasm asset (vite emits to dist/lib/assets/)
-        #   - at least one worker asset (data-worker / projection-worker)
+        #   - at least one worker asset (data-worker / sort-worker)
         # Each grep is a packaging assertion for the publishable tarball.
         run: |
           jq -r '.[0].files[].path' /tmp/pack.json > /tmp/pack-files.txt
@@ -594,6 +595,83 @@ jobs:
           grep -qiE 'wasm' /tmp/pack-files.txt || { echo "Missing WASM asset"; exit 1; }
           grep -qiE 'worker' /tmp/pack-files.txt || { echo "Missing worker asset"; exit 1; }
           echo "All release-readiness assertions passed."
+
+  # Build the second release product in an isolated job. `release-readiness`
+  # validates the npm library bundle; this job runs the exact application build
+  # whose `dist/` directory is force-included in the PyPI wheel. Keeping the two
+  # jobs separate prevents their `emptyOutDir` Vite builds from clobbering one
+  # another and gives branch protection an unambiguous wheel-viewer signal.
+  wheel-viewer:
+    needs: [changes, pick-runner]
+    # Required checks must report explicitly even for docs-only changes, and a
+    # failed change detector must fall back to the full build rather than skip.
+    if: ${{ !cancelled() }}
+    runs-on: ${{ needs.pick-runner.outputs.label || 'ubuntu-latest' }}
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: packages/luxar-viewer
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        if: needs.changes.outputs.docs_only != 'true'
+        with:
+          # Read the exact packageManager pin used by local/Corepack installs.
+          package_json_file: packages/luxar-viewer/package.json
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        if: needs.changes.outputs.docs_only != 'true'
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: packages/luxar-viewer/pnpm-lock.yaml
+
+      - name: Set up Rust (for WASM build)
+        if: needs.changes.outputs.docs_only != 'true'
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          # Match rust-toolchain.toml and the other required TypeScript jobs.
+          toolchain: 1.92.0
+          targets: wasm32-unknown-unknown
+
+      - name: Cache cargo build
+        if: needs.changes.outputs.docs_only != 'true'
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: packages/luxar-viewer/src/wasm/rust
+
+      - name: Install wasm-pack
+        if: needs.changes.outputs.docs_only != 'true'
+        uses: jetli/wasm-pack-action@0d096b08b4e5a7de8c28de67e11e945404e9eefa # v0.4.0
+        with:
+          version: 'v0.14.0'
+
+      - run: pnpm install --frozen-lockfile
+        if: needs.changes.outputs.docs_only != 'true'
+
+      - name: Build viewer application (the dist bundled into the wheel)
+        if: needs.changes.outputs.docs_only != 'true'
+        # Keep the install + build sequence identical to publish.yml; this job
+        # expresses the package directory through defaults.working-directory.
+        run: pnpm build
+
+      - name: Verify wheel-viewer assets
+        if: needs.changes.outputs.docs_only != 'true'
+        run: |
+          set -euo pipefail
+          test -s dist/index.html \
+            || { echo "::error::viewer dist missing index.html"; exit 1; }
+          entry=$(sed -n 's#.*src="\([^"]*/assets/index-[^"]*\.js\)".*#\1#p' dist/index.html | head -1)
+          test -n "$entry" && test -s "dist/${entry#/}" \
+            || { echo "::error::viewer dist missing its application entry bundle"; exit 1; }
+          test -s dist/wasm/luxar_wasm_bg.wasm \
+            || { echo "::error::viewer dist missing the production WASM binary"; exit 1; }
+          find dist/assets -maxdepth 1 -type f -name 'data-worker-*.js' -print -quit | grep -q . \
+            || { echo "::error::viewer dist missing the data worker"; exit 1; }
+          find dist/assets -maxdepth 1 -type f -name 'sort-worker-*.js' -print -quit | grep -q . \
+            || { echo "::error::viewer dist missing the depth-sort worker"; exit 1; }
+          echo "Wheel viewer application and critical assets are present."
 
   go-launcher:
     needs: changes
@@ -668,7 +746,7 @@ jobs:
 
       - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
         with:
-          version: 10
+          package_json_file: packages/luxar-viewer/package.json
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
