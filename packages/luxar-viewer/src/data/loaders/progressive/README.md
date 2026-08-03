@@ -5,9 +5,9 @@
 ## Overview
 
 The three progressive (additive-LOD) loaders —
-`points/points-progressive-loader.ts`,
-`lines/lines-progressive-loader.ts`, and
-`gsplats/gsplats-progressive-loader.ts` — each load a sequence of LOD
+`../../points/points-progressive-loader.ts`,
+`../../lines/lines-progressive-loader.ts`, and
+`../../gsplats/gsplats-progressive-loader.ts` — each load a sequence of LOD
 levels and concatenate the per-LOD typed-array fields into a single
 merged payload. The bits that were identical across all three live here
 so the geometry loaders only carry their own geometry-specific wrinkles
@@ -15,7 +15,8 @@ so the geometry loaders only carry their own geometry-specific wrinkles
 sizing).
 
 This folder holds no loader of its own — it is a pure helper module
-imported by the geometry loaders one directory up.
+imported by the geometry loaders two directories up (in
+`src/data/points/`, `src/data/lines/`, and `src/data/gsplats/`).
 
 ## File Structure
 
@@ -99,12 +100,12 @@ ladders so later loops are higher-quality — still fast.
 
 ## Consumers
 
-| File                                       | Uses                                                           |
-| ------------------------------------------ | -------------------------------------------------------------- |
-| `../points/points-progressive-loader.ts`   | `concatRequiredField`, `concatOptionalField`, streaming-policy |
-| `../lines/lines-progressive-loader.ts`     | `concatRequiredField`, `concatOptionalField`, streaming-policy |
-| `../gsplats/gsplats-progressive-loader.ts` | `concatRequiredField`, streaming-policy                        |
-| `streaming-policy.ts`                      | `CACHE_HIT_THRESHOLD_MS`                                       |
+| File                                          | Uses                                                           |
+| --------------------------------------------- | -------------------------------------------------------------- |
+| `../../points/points-progressive-loader.ts`   | `concatRequiredField`, `concatOptionalField`, streaming-policy |
+| `../../lines/lines-progressive-loader.ts`     | `concatRequiredField`, `concatOptionalField`, streaming-policy |
+| `../../gsplats/gsplats-progressive-loader.ts` | `concatRequiredField`, streaming-policy                        |
+| `streaming-policy.ts`                         | `CACHE_HIT_THRESHOLD_MS`                                       |
 
 ## See Also
 

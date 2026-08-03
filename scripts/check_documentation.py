@@ -21,6 +21,7 @@ Usage:
 import argparse
 import json
 import re
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -34,7 +35,8 @@ DEFAULT_BASELINE_RELPATH = "scripts/docs_baseline.json"
 BASELINE_COMMENT = (
     "Documentation-debt baseline for scripts/check_documentation.py. "
     "Regenerate with: hatch run python scripts/check_documentation.py "
-    "--update-baseline. Each entry is '<check_name>::<repo-relative-path>'. "
+    "--update-baseline. Each entry is '<check_name>::<repo-relative-path>' "
+    "(plus '::<detail>' for checks that can fail a file more than once). "
     "New findings not listed here fail the check."
 )
 
@@ -48,6 +50,10 @@ class CheckResult:
     check_name: str
     message: str
     line_number: Optional[int] = None
+    # Stable discriminator for checks that can fail the same file more than
+    # once (e.g. each broken path reference in a README). Part of the ratchet
+    # key, so a new failure in an already-baselined file still counts as new.
+    key_detail: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -72,10 +78,15 @@ def result_key(result: CheckResult, project_root: Path) -> str:
     """Build a stable, portable key ``"<check_name>::<relative posix path>"``.
 
     The key deliberately omits the human ``message`` (which embeds volatile
-    coverage percentages) so it is stable across runs. There is at most one
-    failing result per (check_name, file), so keys are unique.
+    coverage percentages) so it is stable across runs. Checks that can fail a
+    file more than once (e.g. several broken path references in one README)
+    append a stable ``key_detail`` discriminator, so baselining one failure in
+    a file never masks a new, different failure in the same file.
     """
-    return f"{result.check_name}::{relative_path(result.file_path, project_root)}"
+    key = f"{result.check_name}::{relative_path(result.file_path, project_root)}"
+    if result.key_detail:
+        key += f"::{result.key_detail}"
+    return key
 
 
 def failure_keys(results: List[CheckResult], project_root: Path) -> Set[str]:
@@ -164,6 +175,9 @@ class DocumentationChecker:
 
         # Check TypeScript packages
         self._check_typescript_packages()
+
+        # Check backticked path references in package READMEs resolve
+        self._check_markdown_path_references()
 
         return all(r.passed for r in self.results)
 
@@ -360,6 +374,212 @@ class DocumentationChecker:
                         message=f"Low JSDoc coverage ({coverage:.0f}%): {package_name}/{ts_file.name}",
                     )
                 )
+
+    def _check_markdown_path_references(self):
+        """Flag backticked repo-path references in package READMEs that don't resolve."""
+        # Resolve the root once so symlinked checkouts (CI, macOS /tmp, symlinked
+        # home) don't break `.relative_to(root)` against `.resolve()`d targets.
+        root = self.project_root.resolve()
+        # Enumerate markdown files via git (never fall back to a filesystem walk,
+        # which would re-include generated/gitignored dirs and cause false positives).
+        try:
+            proc = subprocess.run(
+                ["git", "ls-files", "-z"],
+                cwd=root,
+                capture_output=True,
+                text=True,
+                errors="replace",
+                check=True,
+            )
+        except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+            self.results.append(
+                CheckResult(
+                    passed=True,
+                    file_path=str(root),
+                    check_name="Markdown path reference",
+                    message="Skipped path-reference check (git unavailable)",
+                )
+            )
+            return
+
+        # `-z` emits NUL-separated, UNQUOTED paths (no octal-escaping of
+        # non-ASCII), so basenames stay intact.
+        tracked = [p for p in proc.stdout.split("\0") if p]
+        tracked_set = set(tracked)
+        by_name: dict[str, list[str]] = {}
+        tracked_dirs: set[str] = set()
+        for path in tracked:
+            by_name.setdefault(Path(path).name, []).append(path)
+            parent = Path(path).parent
+            while parent.parts:
+                tracked_dirs.add(parent.as_posix())
+                parent = parent.parent
+
+        readme_targets = [
+            p
+            for p in tracked
+            if p.startswith("packages/") and Path(p).name == "README.md"
+        ]
+
+        backtick_re = re.compile(r"`([^`\n]+)`")
+        clean_re = re.compile(r"[\w./\-]+")
+        source_exts = {
+            ".py",
+            ".ts",
+            ".tsx",
+            ".js",
+            ".jsx",
+            ".mjs",
+            ".cjs",
+            ".rs",
+            ".md",
+            ".rst",
+            ".json",
+            ".jsonc",
+            ".yml",
+            ".yaml",
+            ".toml",
+            ".cfg",
+            ".ini",
+            ".txt",
+            ".sh",
+            ".go",
+            ".css",
+            ".scss",
+            ".html",
+            ".glsl",
+            ".wgsl",
+            ".vert",
+            ".frag",
+        }
+        skip_segments = {
+            "node_modules",
+            "target",
+            "dist",
+            "build",
+            "__pycache__",
+            ".venv",
+        }
+
+        def is_candidate(token: str) -> bool:
+            if "/" not in token or token.startswith("/"):
+                return False
+            if not clean_re.fullmatch(token):
+                return False
+            last_segment = token.rsplit("/", 1)[-1]
+            if "." not in last_segment:
+                return False
+            ext = "." + last_segment.rsplit(".", 1)[-1]
+            if ext not in source_exts:
+                return False
+            if any(seg in skip_segments for seg in token.split("/")):
+                return False
+            return True
+
+        def resolves(token: str, readme_path: str) -> bool:
+            if token.startswith("./") or token.startswith("../"):
+                resolved = (root / Path(readme_path).parent / token).resolve()
+                try:
+                    rel = resolved.relative_to(root).as_posix()
+                except ValueError:
+                    # Falls outside the project root; don't flag.
+                    return True
+                return rel in tracked_set or (root / rel).is_dir()
+
+            # Anchor a non-relative ref at each ancestor of the README's own
+            # directory (README dir, its parents, up to the repo root). This
+            # covers package-relative and repo-relative spellings.
+            anchor = Path(readme_path).parent
+            while True:
+                cand = (anchor / token).as_posix() if anchor.parts else token
+                if cand in tracked_set or (root / cand).is_dir():
+                    return True
+                if not anchor.parts:
+                    break
+                anchor = anchor.parent
+            # Shorthand fallback: accept a path-suffix match, but only within
+            # the README's own package (`packages/<name>/`). A file in another
+            # package with the same layout must not validate a broken
+            # reference here — cross-package refs have to be spelled out.
+            package_prefix = "/".join(Path(readme_path).parts[:2]) + "/"
+            basename = Path(token).name
+            for p in by_name.get(basename, []):
+                if p.startswith(package_prefix) and p.endswith("/" + token):
+                    return True
+            return False
+
+        def is_repo_path_claim(token: str, readme_path: str) -> bool:
+            """True when the token's first segment names a tracked directory at
+            one of the README's anchor levels (README dir up to the repo root).
+
+            Such a token (`src/...`, `packages/...`, `scripts/...`) is an
+            unambiguous claim on a repository path, so a broken one must be
+            flagged even when its basename no longer exists anywhere (fully
+            deleted file). External paths (`three/src/...`) fail this test.
+            A first segment naming a package directory itself (an immediate
+            child of `packages/`) is exempt: `luxar-viewer/styles.css` is npm
+            import syntax for the published package, not a repo path.
+            """
+            first_segment = token.split("/", 1)[0]
+            anchor = Path(readme_path).parent
+            while True:
+                cand = (
+                    (anchor / first_segment).as_posix()
+                    if anchor.parts
+                    else first_segment
+                )
+                if cand in tracked_dirs and not (
+                    cand.startswith("packages/") and cand.count("/") == 1
+                ):
+                    return True
+                if not anchor.parts:
+                    return False
+                anchor = anchor.parent
+
+        for readme_path in readme_targets:
+            readme_file = root / readme_path
+            # Tracked in the index but deleted from the working tree (a
+            # `git rm` not yet staged): nothing to scan.
+            if not readme_file.is_file():
+                continue
+            content = readme_file.read_text(encoding="utf-8", errors="replace")
+            for line_number, line in enumerate(content.splitlines(), start=1):
+                for match in backtick_re.finditer(line):
+                    token = match.group(1)
+                    if not is_candidate(token):
+                        continue
+                    if resolves(token, readme_path):
+                        continue
+                    # False-positive filter for NON-relative tokens (`./` and
+                    # `../` tokens are unambiguous path claims and always
+                    # flagged). A non-relative token is reported only when it
+                    # is anchored in a tracked directory (`src/...` — a repo
+                    # path claim, flagged even if the file was fully deleted)
+                    # or when its full path suffix-matches a tracked file (a
+                    # cross-package shorthand like `io/ordering.py` that must
+                    # be spelled out). Anything else — an npm import, served
+                    # URL, placeholder, or build-output description — is
+                    # skipped, even when an unrelated repo file happens to
+                    # share its basename (`three/src/math/Vector3.ts`).
+                    is_relative = token.startswith("./") or token.startswith("../")
+                    if not is_relative and not is_repo_path_claim(token, readme_path):
+                        if not any(
+                            p.endswith("/" + token)
+                            for p in by_name.get(Path(token).name, [])
+                        ):
+                            continue
+                    self.results.append(
+                        CheckResult(
+                            passed=False,
+                            file_path=str(root / readme_path),
+                            check_name="Markdown path reference",
+                            message=(
+                                f"README cites path that does not resolve: `{token}`"
+                            ),
+                            line_number=line_number,
+                            key_detail=token,
+                        )
+                    )
 
     def print_summary(self):
         """Print the per-check human summary of all checks."""
