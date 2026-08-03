@@ -679,6 +679,20 @@ model is deliberately minimal and light-free:
   rule — swapping variant and binding/omitting the `normal` attribute — when a `displayDims` change flips
   its validity, the same event that re-extracts the display-space `position` (§6.1, the §7
   `displayDims`-change rebuild).
+- **View-space normals (stored-normal variants).** The `normal` attribute binds in the node's local
+  display frame, but every other input to the shade term is **view-space** by construction — `vViewPos`,
+  the headlight `V`, and the derivative fallback's `cross(dFdx(vViewPos), dFdy(vViewPos))`. The
+  stored-normal vertex stage must therefore carry the normal into view space before interpolation:
+  `vNormal = normalMatrix * aNormal` in GLSL (the built-in `mat3 normalMatrix`, the inverse-transpose of
+  the model-view matrix), and the TSL twin via `transformNormalToView`. The inverse-transpose is
+  load-bearing, not pedantry: a mesh node carries the standard 4×4 `transform` attr (§3.3), and
+  anisotropic scaling is routine in this domain (voxel size z ≠ xy), under which the plain model-view
+  linear map skews normals off-perpendicular — while a raw untransformed normal mislights any *rotated*
+  node (the same mesh shades correctly under the flat variant and wrongly under the smooth one, since
+  only the latter reads the attribute). The fragment-stage renormalization (two-sided bullet below)
+  absorbs the length change `normalMatrix` introduces under scaling, so no vertex-stage normalize is
+  needed. Both backends' codegen snapshots (§6.4) pin this transform in the stored-normal variants'
+  `.vertex` stages.
 - **Shade term:** a camera-anchored headlight with a wrap term,
   `shade = mix(uAmbient, 1.0, pow(saturate(dot(N, V) * 0.5 + 0.5), uShadeExponent))`. View-anchored, so
   it needs no light in the scene graph and no scene-graph API change. `uAmbient` and `uShadeExponent`
