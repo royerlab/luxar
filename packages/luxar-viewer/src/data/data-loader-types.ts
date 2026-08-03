@@ -165,23 +165,21 @@ export interface LoaderStats {
   fromCache: boolean;
 }
 
+// Why this aliases `LoaderTypeName` and not `GeometryTypeName`: the contract
+// names the writable leaf vocabulary and the viewer-drawable subset separately,
+// because a type becomes authorable (Python writer, `luxar info`, scene bounds)
+// before it becomes drawable (loader + descriptor row + tolerance arm). Keying
+// dispatch on the wider `GeometryTypeName` would let a not-yet-drawable type
+// resolve to no loader at RUNTIME; keying it here makes omitting a drawable type
+// a COMPILE error at `LoaderByKind`, `GEOMETRY_DESCRIPTORS` and
+// `computeHiddenDimTolerance`. To switch a type on, widen `loader_types` in
+// `format-contract/contract.yaml` — never this alias.
 /**
- * Tag identifying which first-class geometry kind a node or handler
- * operates on. Used by the per-type registry that replaces switch/case
- * dispatch on `geometry_type` strings in scene-loader.
+ * Tag identifying which geometry kind the viewer can load and draw, and which a
+ * node or handler therefore operates on. Used by the per-type registry that
+ * replaces switch/case dispatch on `geometry_type` strings in scene-loader.
  *
- * Single-sourced from the cross-language format contract
- * (`format-contract/contract.yaml` → `loader_types`). Declaring the members
- * here by hand would let the viewer's dispatch vocabulary drift from the
- * on-disk one.
- *
- * Note this is `LoaderTypeName`, NOT `GeometryTypeName`: the contract names the
- * writable leaf vocabulary and the viewer-drawable subset separately, because a
- * type becomes authorable (Python writer, `luxar info`, scene bounds) before it
- * becomes drawable (loader + descriptor row + tolerance arm). Keying dispatch on
- * the wider `GeometryTypeName` would let a not-yet-drawable type resolve to no
- * loader at runtime instead of failing the build; keying it here means omitting
- * a drawable type is a compile error at `LoaderByKind`, `GEOMETRY_DESCRIPTORS`
- * and `computeHiddenDimTolerance`. Widen `loader_types` — never this alias.
+ * Single-sourced from the format contract (`contract.yaml` → `loader_types`);
+ * see the note above for why that list and not `geometry_types`.
  */
 export type GeometryKind = LoaderTypeName;

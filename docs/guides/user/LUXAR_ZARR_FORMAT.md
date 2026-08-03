@@ -705,9 +705,104 @@ Per-vertex labels (`label_offsets`/`label_bytes`) and image labels
 (`image_label_offsets`/`image_label_bytes`) are supported with the same
 CSR-style layout as Points (see *Per-Element Labels*).
 
+### 5. Mesh Nodes
+
+Mesh nodes contain triangle-surface data — isosurfaces, segmentation boundaries,
+organ and cortical meshes. They are the only node type that describes a
+*connected, opaque surface* rather than a set of soft per-element primitives.
+
+⚠️ **Writable, not yet renderable.** The Python writer, reader and `luxar info`
+handle mesh nodes; the viewer's loader and material land in a later phase (see
+`docs/specs/MESH_NODE_SPEC.md` §11). The format contract distinguishes the two:
+`geometry_types` (the writable leaf vocabulary) includes `mesh`, while
+`loader_types` (the viewer-drawable subset) does not yet.
+
+Two structural differences from the other three types:
+
+- **No per-element size.** A triangle's extent comes from its own vertices, so
+  there is no `radii` / `widths` / `cholesky_factors` analogue — and a mesh
+  contributes **zero extent padding** to `position_bounds`.
+- **Topology is load-bearing.** `faces` is an index array, so unlike a
+  coordinate or colour array it cannot tolerate lossy or aliasing encoding: it is
+  written with dedup and LUT encoding **disabled** (see below).
+
+**Attributes (.zattrs):**
+```javascript
+{
+  "type": "mesh",
+  "n_vertices": 10000,
+  "n_faces": 19996,
+  "ndim": 3,
+  "has_normals": true,
+  "normal_dims": [0, 1, 2],          // REQUIRED iff has_normals — see below
+  "has_colors": true,
+  "has_scalars": false,
+  "shading": "smooth",               // "smooth" | "flat"
+  "double_sided": true,
+  "position_bounds": {"min": [...], "max": [...]},
+  "ordering": "none",                // always "none" in v1 (no spatial index)
+  // ... plus the standard render attrs (opacity, gamma, intensity, offset,
+  //     absorption, blending_mode, colormap, layer, transform, nd_transform,
+  //     extend_to_all)
+}
+```
+
+#### vertices/ (Required)
+- **Shape:** `(V, D)` — nD vertex positions, exactly like `Lines.vertices`.
+- **Encoding:** `COORDINATE`, written with `deduplicate=false` and
+  `allow_lut=false`. The loader reads it as raw chunked zarr and does not resolve
+  `array_ref`, so dedup would silently drop geometry for a byte-identical sibling,
+  and LUT encoding of grid-snapped coordinates would decode as garbage.
+
+#### faces/ (Required)
+- **Shape:** `(F, 3)` — triangle vertex indices, `uint32`.
+- **Encoding:** `INDEX`, `deduplicate=false`, `allow_lut=false` — same reasoning
+  as `Lines.segments`.
+- **Winding:** counter-clockwise as seen with the mesh's authored spatial triple
+  in ascending index order. For a 3D mesh that triple is `[0,1,2]`; for an nD mesh
+  it is `sorted(normal_dims)` when normals are present. No winding can be
+  counter-clockwise under *every* 3D projection of an nD mesh, so the viewer
+  restores front-facing winding only when the displayed set matches that frame.
+- Writers must keep every index in `[0, n_vertices)`. An out-of-range index is
+  not a rendering artefact: it reads past the vertex buffer, which aborts the
+  whole WASM module in the Rust culling kernel.
+
+#### normals/ (Optional)
+- **Shape:** `(V, 3)` — **always** 3-component, even for an nD mesh.
+- **Encoding:** `COORDINATE` (per-axis `uint16` over each component's own
+  `[-1, 1]` range — a free 2× over float32 — and it correctly blocks
+  broadcasting, since a normal is always per-vertex).
+- **Paired with a required `normal_dims` attr.** Normals are a *display-space*
+  quantity, meaningful only for the three displayed dimensions, so the store must
+  record which three they describe. ⚠️ Do **not** store normals against an
+  implicit "first three dimensions": for a `(t, x, y, z)` mesh those are
+  `(t, x, y)` and such a normal is meaningless. The viewer uses stored normals
+  only when `shading == "smooth"` **and** `normal_dims` equals the active
+  `displayDims`, and otherwise computes flat face normals from the projected
+  triangle — so a wrong-but-well-formed triple degrades shading rather than
+  corrupting it, while an ill-formed one is rejected at write time.
+- Zero-length normals are **warned about, not rejected**: degenerate triangles
+  legitimately produce them and the renderer epsilon-guards its `normalize`.
+
+#### colors/ (Optional)
+- **Shape:** `(V, 3)` or `(V, 4)` — per-vertex RGB or RGBA, same encoding rules as
+  Points. The optional 4th component is per-vertex **opacity**.
+
+#### scalars/ (Optional)
+- **Shape:** `(V,)` — per-vertex colormap scalars; declared via `has_scalars` /
+  `scalar_data_range` / `colormap` (see *Scalar Colormap Attributes* below).
+
+Per-vertex labels (`label_offsets`/`label_bytes`) and image labels
+(`image_label_offsets`/`image_label_bytes`) use the same CSR-style layout as
+Points (see *Per-Element Labels*).
+
+**Not written for a mesh node:** no spatial index (`ordering` is always `"none"`),
+and a mesh may not be a child of a `kind=lod` or `kind=partition` group — the
+writer refuses both rather than producing a store nothing can load.
+
 ## Scalar Colormap Attributes
 
-For Points and Lines, an optional per-element `scalars` zarr array
+For Points, Lines and Mesh, an optional per-element `scalars` zarr array
 enables colormap-driven shading. The presence and configuration are
 declared through three attrs on the data node (next to `type`,
 `opacity`, etc.):
