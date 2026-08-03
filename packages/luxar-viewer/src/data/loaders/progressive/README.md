@@ -105,7 +105,7 @@ ladders so later loops are higher-quality — still fast.
 | `../../points/points-progressive-loader.ts`   | `concatRequiredField`, `concatOptionalField`, streaming-policy |
 | `../../lines/lines-progressive-loader.ts`     | `concatRequiredField`, `concatOptionalField`, streaming-policy |
 | `../../gsplats/gsplats-progressive-loader.ts` | `concatRequiredField`, streaming-policy                        |
-| `streaming-policy.ts`                          | `CACHE_HIT_THRESHOLD_MS`                                        |
+| `streaming-policy.ts`                         | `CACHE_HIT_THRESHOLD_MS`                                       |
 
 ## See Also
 
