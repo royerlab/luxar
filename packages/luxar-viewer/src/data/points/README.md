@@ -66,7 +66,7 @@ implementation; the loader calls it directly with a WASM backend from
   `shader-glsl.ts` / `shader-tsl.ts` sources)
 - `src/rendering/material-sync-helpers.ts` —
   `syncPointMaterialWithGeometry` propagates dtype scales
-- `src/wasm/typescript/points.ts` and `effective-radii.ts` —
+- `src/wasm/typescript/effective-radii.ts` —
   TypeScript fallback that mirrors the Rust WASM kernel
 - `src/data/loaders/README.md` — encoding dispatch /
   range-loader contract

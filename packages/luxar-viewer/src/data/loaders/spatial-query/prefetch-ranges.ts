@@ -2,7 +2,7 @@
  * Shared cache-warming read for the Points / Lines / GSplats spatial-index
  * loaders' `prefetchChunks`.
  *
- * Fires a zarr `get()` for every (array × range) pair and discards the result:
+ * Fires a zarr `readArray()` for every (array × range) pair and discards the result:
  * the read populates the L0 / L1 / L2 caches as a side-effect so the next
  * demand `updateView()` is a fast cache hit, with no full-size output buffers
  * allocated only to be thrown away.
@@ -17,7 +17,7 @@
  */
 
 import * as zarr from '../../zarr';
-import { get } from '../../zarr';
+import { readArray } from '../../zarr';
 import { firstAxisRangeSlice } from './range-loader/encoding-types';
 import type { LoadRange } from '../base-types';
 
@@ -37,7 +37,7 @@ export async function prefetchRangesIntoCache(
   for (const array of arrays) {
     const shape = array.shape;
     for (const range of ranges) {
-      fetches.push(get(array, firstAxisRangeSlice(shape, range)));
+      fetches.push(readArray(array, firstAxisRangeSlice(shape, range)));
     }
   }
   await Promise.all(fetches);

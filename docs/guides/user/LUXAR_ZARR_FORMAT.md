@@ -548,9 +548,13 @@ a single `broadcasted` value and byte-identical duplicates as an
 Chunking is **byte-based**, not a fixed element count: the first-dimension
 chunk length is derived from the 64 KB target (`TARGET_CHUNK_BYTES` ÷
 bytes-per-row for the array's *input* dtype — computed before encoding, so
-float32 rows even when the stored code is uint8/uint16), or aligned to the spatial
-index's `chunk_size` when spatial ordering is enabled (the default), so a
-chunk-index range maps to exactly one zarr chunk.
+float32 rows even when the stored code is uint8/uint16). When spatial
+ordering is enabled (the default), each Points array's first-axis chunk is
+sized to its own dtype byte budget rounded down to a **multiple** of the
+spatial index's `chunk_size` atom (never below one atom) — so a chunk-index
+range always falls inside a whole zarr chunk, and a large scene issues far
+fewer requests because most arrays pack several index chunks per zarr chunk.
+(Lines and GSplats arrays stay exactly one `chunk_size` atom per zarr chunk.)
 
 #### positions/ (Required)
 - **Shape:** `(N, D)` where N = number of points, D = dimensionality
@@ -937,6 +941,7 @@ The spatial index stores metadata in the points group `.zattrs` and chunk bounds
 {
   "type": "points",
   "n_points": 100000,
+  "ndim": 3,                      // dimensionality of `positions`
   "ordering": "hilbert",          // or "morton" - space-filling curve algorithm (default: hilbert)
   "ordering_dims": [0, 1, 2],     // Indices of spatial dimensions (curve-ordered)
   "slice_dims": [3],              // Indices of discrete dimensions (lexicographic)
@@ -944,9 +949,30 @@ The spatial index stores metadata in the points group `.zattrs` and chunk bounds
   "ordering_max": [100.0, 100.0, 100.0],     // Bounds for curve normalization
   "ordering_bits_per_dim": 21,    // Bits per dimension (max 21 for uint64)
   "chunk_size": 10000,            // Points per chunk
+  "grid_shape": [8, 8, 8],        // Points-only: chunk grid extent per ordered dim
   "max_radius": 2.5               // Maximum point radius in dataset
 }
 ```
+
+#### Ordering-metadata shape: flat vs namespaced
+
+A geometry type with **one** ordering writes the ordering keys **flat** on the
+group (`ordering`, `ordering_dims`, `slice_dims`, `ordering_min`,
+`ordering_max`, `ordering_bits_per_dim`, `chunk_size`). Points and GSplats both
+do this and share that set; Points adds `grid_shape` on top of it.
+
+A type with **more than one** ordering namespaces each into its own nested
+object instead, keeping a flat top-level `ordering` naming the curve. Lines is
+the only such type today: it indexes vertices in D-space and segments in
+(2×D)-space, so it writes `vertex_ordering` and `segment_ordering`.
+
+Follow the same rule for any new geometry type — flat for a single ordering,
+namespaced objects for several. `ordering` itself always stays flat, so a
+reader can identify the curve without knowing the type's index count.
+
+An **absent** `ordering` attr means the same as `"none"`: the node is
+unordered. Producers may omit it rather than writing `"none"` explicitly, so
+consumers must treat missing and `"none"` identically.
 
 #### chunk_bounds/ Array
 - **Shape:** `(num_chunks, D, 2)` where D = number of dimensions
@@ -1339,9 +1365,9 @@ Optimal chunk sizes balance memory usage and access patterns:
 ### Chunking with Spatial Index
 
 When using spatial indices:
-- **Chunk Alignment**: Zarr chunks are automatically aligned with spatial index chunks
+- **Chunk Alignment**: Zarr chunk boundaries always land on the spatial-index grid. Lines and GSplats arrays use exactly one `chunk_size` atom per zarr chunk; Points arrays size each first-axis chunk to the array's own dtype byte budget, rounded down to a multiple of the atom (never below one atom)
 - **Typical Strategy**: `chunk_size` is computed based on target memory per chunk (~64KB, see `TARGET_CHUNK_BYTES`)
-- **Benefits**: Loading a chunk index range loads exactly that zarr chunk
+- **Benefits**: Every chunk-index row range falls inside a whole zarr chunk, and Points arrays pack several index chunks per zarr chunk — far fewer HTTP requests on large scenes
 - **Morton Ordering**: Points within a chunk are spatially nearby due to Morton ordering
 
 ## Array Encodings

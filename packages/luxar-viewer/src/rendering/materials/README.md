@@ -116,5 +116,5 @@ delegate cross-cutting concerns to `_shared/`, and add the parity test case.
   state that every `applyBlendingMode` routes through
 - `../shaders/` — Barrel re-exporting per-geometry GLSL constants for the TSL
   parity harness's import path
-- `../../../tests/e2e/tsl-shader-parity.spec.ts` — the GLSL↔TSL parity harness
+- `../../tests/e2e/tsl-shader-parity.spec.ts` — the GLSL↔TSL parity harness
   this folder's `ShaderSource` pattern exists to serve

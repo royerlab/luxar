@@ -40,28 +40,30 @@ The pipelines are stateless: they read only the narrow config in the `Ctx` datac
    - Apply `ordering_data["sort_order"]` to `positions` and all non-broadcasted arrays (skip arrays with `shape[0] == 1`)
 
 4. **Write arrays**:
-   - `write_positions(group, positions, ordering_data, ctx.dataset_ctx)`
-   - `write_colors(group, colors, ordering_data, n_points, ctx.dataset_ctx)` — if `colors is not None`
-   - `write_radii(group, radii, ordering_data, n_points, ctx.dataset_ctx)` — if `radii is not None` (returns `max_radius`, which is also stamped as the `max_radius` group attr here)
-   - `write_bounded_scalar(group, sharpness, "sharpnesses", (0.0, SHARPNESS_MAX), ordering_data, n_points, ctx.dataset_ctx, "sharpness")` — if `sharpness is not None` (the written dataset name is `"sharpnesses"`)
-   - `write_scalars(group, scalars, ordering_data, n_points, ctx.dataset_ctx)` — if `scalars is not None`
+   - `write_positions(group, positions, ordering_data, ctx.dataset_ctx)` (opts into `per_array_bytes=True` internally)
+   - `write_colors(group, colors, ordering_data, n_points, ctx.dataset_ctx, per_array_bytes=True)` — if `colors is not None`
+   - `write_radii(group, radii, ordering_data, n_points, ctx.dataset_ctx)` — if `radii is not None` (passes `per_array_bytes=True` through to `write_positive_scalar`; returns `max_radius`, which is also stamped as the `max_radius` group attr here)
+   - `write_bounded_scalar(group, sharpness, "sharpnesses", (0.0, SHARPNESS_MAX), ordering_data, n_points, ctx.dataset_ctx, "sharpness", per_array_bytes=True)` — if `sharpness is not None` (the written dataset name is `"sharpnesses"`)
+   - `write_scalars(group, scalars, ordering_data, n_points, ctx.dataset_ctx, per_array_bytes=True)` — if `scalars is not None`
+
+   Points opt every per-point array into `per_array_bytes=True` (each array's first-axis chunk is sized to its own dtype byte budget, aligned to a multiple of the spatial-index `chunk_size` atom); Lines/GSplats keep the default `False` (plain atom-sized chunks).
    - `ctx.write_colormap_lut(group, attrs)` — writes the `colormap_lut` dataset when `colormap` needs one (a custom array, or a matplotlib/colorcet name, which is then rewritten to `"custom"`); built-in named colormaps write no LUT
 
 5. **Apply rendering defaults** + stamp attrs:
    - `apply_default_render_attrs(attrs)` — fill `opacity=1.0`, `absorption=1.0`, `gamma=1.0`, `intensity=1.0`, `offset=0.0` (only if absent); `blending_mode` is deliberately never stamped (no identity value)
-   - `group.attrs.update(attrs)` then stamp `type="points"`, `n_points`, `has_colors` / `has_radii` / `has_sharpness` / `has_scalars` (no dim-count attr is stamped; user-supplied + default rendering attrs land via the `update(attrs)` call; `max_radius` was already stamped in step 4 when radii are present)
+   - `group.attrs.update(attrs)` then stamp `type="points"`, `n_points`, `ndim`, `has_colors` / `has_radii` / `has_sharpness` / `has_scalars` (user-supplied + default rendering attrs land via the `update(attrs)` call; `max_radius` was already stamped in step 4 when radii are present)
 
 6. **Compute bounds**:
    - `compute_position_bounds(positions)` → `position_bounds`, stamped as the `position_bounds` group attr and forwarded to `ctx.update_scene_bounds(...)` unless the caller set `_skip_scene_bounds` (the multi-LOD parent writer aggregates the global bounds once instead)
 
 7. **Spatial ordering metadata**:
-   - `write_points_ordering_to_zarr(group, ordering_data, ctx.compressor)` — if `ordering_data is not None` (sets `has_spatial_index`)
+   - `write_points_ordering_to_zarr(group, ordering_data, ctx.compressor)` — if `ordering_data is not None` (sets `has_spatial_index`, and puts the curve name in `metadata["ordering"]`; `"none"` otherwise, so `Points.ordering` reports the writer's real choice)
 
 8. **Write labels** (CSR serialization; `sort_order` derived from `ordering_data`):
    - `write_labels_csr(group, labels, n_points, ctx.compressor, sort_order)` — if `labels is not None`
    - `write_image_labels_csr(group, image_labels, n_points, ctx.compressor, sort_order)` — if `image_labels is not None`
 
-9. **Return metadata**: `{"n_points", "ndim", "path", "has_colors", "has_radii", "has_sharpness", "position_bounds"}` plus (conditionally) `max_radius`, `has_scalars`, `has_spatial_index`, `has_labels`, `has_image_labels` (no `"type"` key)
+9. **Return metadata**: `{"n_points", "ndim", "path", "has_colors", "has_radii", "has_sharpness", "position_bounds", "ordering"}` plus (conditionally) `max_radius`, `has_scalars`, `has_spatial_index`, `has_labels`, `has_image_labels` (no `"type"` key)
 
 ### Lines Pipeline (`write_lines`)
 

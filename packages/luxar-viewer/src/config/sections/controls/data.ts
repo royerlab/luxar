@@ -40,8 +40,8 @@ export const controlsConfig: ControlsConfig = {
     },
     damping: {
       enabled: true,
-      // Default aligned to the value LuxarOrbitControls has always actually
-      // used (its constructor fallback): the old 0.05 here was never applied.
+      // Keep aligned with LuxarOrbitControls' constructor fallback — the two
+      // defaults must not drift apart.
       factor: { min: 0.01, max: 0.5, default: 0.25, step: 0.01 },
     },
   },

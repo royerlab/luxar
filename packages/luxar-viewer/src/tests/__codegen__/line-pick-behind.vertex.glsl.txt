@@ -163,11 +163,12 @@ vec2 nodeVar83;
 float nodeVar84;
 float nodeVar85;
 float nodeVar86;
-vec4 nodeVar87;
+float nodeVar87;
+vec4 nodeVar88;
 vec4 clipPos;
-float nodeVar88;
 float nodeVar89;
 float nodeVar90;
+float nodeVar91;
 
 // codes
 
@@ -395,12 +396,13 @@ void main() {
 	nodeVar84 = ( ( nodeVar71 * nodeUniform20 ) / max( ( - nodeVar72.z ), nodeVar54 ) );
 	nodeVar85 = max( nodeUniform21, ( 1.5 + 1.0 ) );
 	nodeVar86 = ( nodeVar85 / max( nodeVar84, 0.0001 ) );
-	nodeVar87 = vec4( ( nodeVar75.xy + ( ( ( ( ( nodeVar83 * vec2( aQuadCorner.y ) ) * vec2( clamp( nodeVar84, 1.5, nodeVar85 ) ) ) / nodeUniform19 ) * vec2( 2.0 ) ) * vec2( nodeVar75.w ) ) ), nodeVar75.z, nodeVar75.w );
+	nodeVar87 = max( ( ( mix( nodeVar69, nodeVar70, nodeVar62 ) * nodeUniform20 ) / max( ( - nodeVar49.z ), nodeVar54 ) ), ( ( mix( nodeVar69, nodeVar70, nodeVar65 ) * nodeUniform20 ) / max( ( - nodeVar50.z ), nodeVar54 ) ) );
+	nodeVar88 = vec4( ( nodeVar75.xy + ( ( ( ( ( nodeVar83 * vec2( aQuadCorner.y ) ) * vec2( clamp( nodeVar84, 1.5, nodeVar85 ) ) ) / nodeUniform19 ) * vec2( 2.0 ) ) * vec2( nodeVar75.w ) ) ), nodeVar75.z, nodeVar75.w );
 	clipPos = vec4( 0.0, 0.0, -2.0, 1.0 );
 
-	if ( (!( ( ( nodeVar51 < nodeVar54 ) && ( nodeVar52 < nodeVar54 ) ) || ( ( ( nodeVar51 < ( nodeVar54 * 2.0 ) ) && ( nodeVar52 < ( nodeVar54 * 2.0 ) ) ) && ( nodeVar84 > ( nodeVar85 * 2.0 ) ) ) )) ) {
+	if ( (!( ( ( nodeVar51 < nodeVar54 ) && ( nodeVar52 < nodeVar54 ) ) || ( ( ( nodeVar51 < ( nodeVar54 * 2.0 ) ) && ( nodeVar52 < ( nodeVar54 * 2.0 ) ) ) && ( nodeVar87 > ( nodeVar85 * 2.0 ) ) ) )) ) {
 
-		clipPos = nodeVar87;
+		clipPos = nodeVar88;
 
 
 	}
@@ -408,18 +410,7 @@ void main() {
 
 	if ( ( ( ( nodeVar43 < 1e30 ) && ( nodeVar43 > -1e30 ) ) && ( nodeVar43 >= 0.0 ) ) ) {
 
-		nodeVar88 = nodeVar43;
-
-	} else {
-
-		nodeVar88 = 0.5;
-
-	}
-
-
-	if ( ( ( ( nodeVar44 < 1e30 ) && ( nodeVar44 > -1e30 ) ) && ( nodeVar44 >= 0.0 ) ) ) {
-
-		nodeVar89 = nodeVar44;
+		nodeVar89 = nodeVar43;
 
 	} else {
 
@@ -427,7 +418,18 @@ void main() {
 
 	}
 
-	nodeVarying0 = mix( clamp( nodeVar88, 0.0, 1.0 ), clamp( nodeVar89, 0.0, 1.0 ), nodeVar68 );
+
+	if ( ( ( ( nodeVar44 < 1e30 ) && ( nodeVar44 > -1e30 ) ) && ( nodeVar44 >= 0.0 ) ) ) {
+
+		nodeVar90 = nodeVar44;
+
+	} else {
+
+		nodeVar90 = 0.5;
+
+	}
+
+	nodeVarying0 = mix( clamp( nodeVar89, 0.0, 1.0 ), clamp( nodeVar90, 0.0, 1.0 ), nodeVar68 );
 	nodeVarying1 = aQuadCorner.y;
 	nodeVarying2 = nodeVar68;
 	nodeVarying3 = nodeVar45;
@@ -436,15 +438,15 @@ void main() {
 
 	if ( ( nodeVar84 <= nodeVar85 ) ) {
 
-		nodeVar90 = 1.0;
+		nodeVar91 = 1.0;
 
 	} else {
 
-		nodeVar90 = nodeVar86;
+		nodeVar91 = nodeVar86;
 
 	}
 
-	nodeVarying6 = nodeVar90;
+	nodeVarying6 = nodeVar91;
 	nodeVarying7 = nodeVar72.z;
 	nodeVarying8 = nodeVar46;
 	nodeVarying9 = nodeVar47;

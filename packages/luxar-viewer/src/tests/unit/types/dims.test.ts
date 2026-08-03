@@ -1,7 +1,7 @@
 /**
  * Unit tests for `types/dims.ts::initializeDims`.
  *
- * Two HIGH-5 regressions are pinned here:
+ * Two regressions are pinned here:
  *   1. numPoints=0 used to divide-by-zero and throw a misleading
  *      "0 elements for 0 points" error.
  *   2. metadata shorter than ndim used to be silently truncated by the
@@ -18,9 +18,9 @@ afterEach(() => {
 
 describe('initializeDims', () => {
   it('handles numPoints=0 without throwing (empty point cloud)', () => {
-    // HIGH-5 (a) regression: empty datasets are legitimate. Old code
-    // computed `0 / 0 = NaN`, failed Number.isInteger, and threw
-    // "Invalid positions array: 0 elements for 0 points".
+    // Empty datasets are legitimate. Regression: `0 / 0 = NaN` failed
+    // Number.isInteger and threw "Invalid positions array: 0 elements
+    // for 0 points".
     expect(() => initializeDims(0, 0)).not.toThrow();
 
     const dims = initializeDims(0, 0);
@@ -52,9 +52,9 @@ describe('initializeDims', () => {
     // future refactor that routes through `log.warning` or a structured
     // logger should not break the behaviour test.
     //
-    // HIGH-5 (b) regression: ndim=4 but only 2 metadata entries used to
-    // silently fall through to the spatial-default fallback. The fix
-    // pads metadata to length=ndim with sensible defaults.
+    // Regression: ndim=4 with only 2 metadata entries used to fall
+    // through to the spatial-default fallback. Metadata is now padded to
+    // length=ndim with sensible defaults.
     const metadata: DimensionMetadata[] = [
       { name: 't', unit: 's', scale: 1, display: false },
       { name: 'c', unit: '', scale: 1, display: false },
@@ -164,10 +164,10 @@ describe('initializeDims', () => {
     expect(dims.metadata).toBeUndefined();
   });
 
-  // OOS-1 (round-2 audit): the inverse of HIGH-5 (b) — metadata LONGER than
-  // ndim. Previously the `i < effectiveMetadata.length` clamp in the
-  // display-determination loop silently truncated extra entries. Now we
-  // emit a warning so authoring bugs surface.
+  // The inverse case — metadata LONGER than ndim. The
+  // `i < effectiveMetadata.length` clamp in the display-determination loop
+  // used to truncate extra entries silently; it now warns so authoring bugs
+  // surface.
   it('warns when metadata is longer than ndim (extra entries ignored)', () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 

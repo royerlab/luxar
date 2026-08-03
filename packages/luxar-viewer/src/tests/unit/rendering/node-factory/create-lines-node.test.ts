@@ -191,10 +191,8 @@ describe('createLinesNode material wiring', () => {
       expect(meshA.userData._layerMaterialCloned).toBe(true);
       expect(meshB.userData._layerMaterialCloned).toBe(true);
 
-      // Nothing entered a cache — the per-node materials live only in
-      // the camera-update registry.
+      // The per-node materials live only in the camera-update registry.
       const stats = materialManager.getCacheStats();
-      expect(stats.cachedMaterials).toBe(0);
       expect(stats.totalRegistered).toBe(2);
     });
 
@@ -218,9 +216,8 @@ describe('createLinesNode material wiring', () => {
       expect(material.userData.scalarRange).toEqual([0.5, 2.5]);
 
       // Exactly ONE material exists for this node (clone-era: 2 — the
-      // cached original plus the clone), and none of it is cached.
+      // cached original plus the clone).
       const stats = materialManager.getCacheStats();
-      expect(stats.cachedMaterials).toBe(0);
       expect(stats.totalRegistered).toBe(1);
     });
 

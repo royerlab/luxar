@@ -104,3 +104,18 @@ class Points(DataNode):
     def has_image_labels(self) -> bool:
         """Check if points have per-element image labels for hover thumbnails."""
         return bool(self._metadata.get("has_image_labels", False))
+
+    @property
+    def max_radius(self) -> float:
+        """Get maximum point radius."""
+        return float(self._metadata.get("max_radius", 0.0))
+
+    @property
+    def has_spatial_index(self) -> bool:
+        """Check if points have spatial indexing enabled."""
+        return bool(self._metadata.get("has_spatial_index", False))
+
+    @property
+    def ordering(self) -> str:
+        """Get spatial ordering method (e.g., 'morton', 'hilbert', 'none')."""
+        return str(self._metadata.get("ordering", "none"))
