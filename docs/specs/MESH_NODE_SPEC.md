@@ -125,7 +125,7 @@ becomes plain `NodeTypeName`.
 | `vertices` | float32 | `(V, D)` | **yes** | `COORDINATE` | nD, exactly like `Lines.vertices` |
 | `faces` | uint32 | `(F, 3)` | **yes** | `INDEX` | Triangle vertex indices |
 | `normals` | float32 | `(V, 3)` | no | `COORDINATE` | Per-vertex; paired with a required `normal_dims` attr — see §3.4 |
-| `colors` | uint8/uint16/float32 | `(V, 3\|4)` | no | color helpers | RGB or RGBA (alpha = per-vertex opacity) |
+| `colors` | uint8/uint16/float32 | `(V, 3\|4)` | no | color helpers | RGB or RGBA; the 4th component is a **load-bearing** per-vertex opacity — see §6.2 |
 | `scalars` | float32/float16/uint8 | `(V,)` | no | scalar helpers | Colormap lookup |
 | `label_offsets`/`label_bytes` | — | CSR | no | — | Per-vertex hover tooltips |
 | `image_label_*` | — | CSR | no | — | Per-vertex hover thumbnails |
@@ -466,7 +466,7 @@ never zero-work, even here (it rebuilds `position`/`normal`).
 |---|---|---|
 | `position` | 3 | `extract_3d_positions(vertices, displayDims)` |
 | `normal` | 3 | stored normals when valid (§3.4), else omitted |
-| `color` | 3 or 4 | `colors` — keep the native dtype (§6.1.1) |
+| `color` | 3 or 4 | `colors` — RGB or RGBA, keep the native dtype (§6.1.1); a 4th component is a per-vertex opacity carried through an interpolated `vAlpha` (§6.2) |
 | `aScalar` | 1 | `scalars`, when `has_scalars` |
 | index | — | `compact_visible_faces` output — **the only buffer rewritten on a slice change** (§5.4); `position` (and `normal`) are additionally rewritten on a `displayDims` change (§7, §3.4) |
 
@@ -474,12 +474,20 @@ Drawn as `THREE.Mesh` with `side: DoubleSide` when `double_sided`, else `FrontSi
 
 #### 6.1.1 Keep color/scalar dtypes native
 
-Bind `uint8`/`uint16` colors with `new THREE.BufferAttribute(u8, 3, /* normalized */ true)` rather than
-widening to `Float32Array`. The GPU normalizes to `[0,1]` for free, and this avoids a 4× memory blow-up
-on the single largest optional attribute. This mirrors the existing loader doctrine — `LoadedLinesData`
-and `LoadedPointsData` both keep `Uint8Array | Uint16Array | Float32Array` colors and pay a single
-widening only where a kernel demands `f32` — and §5.4 removed the one place mesh would have needed
-`f32` (the compaction pass).
+Bind `uint8`/`uint16` colors with `new THREE.BufferAttribute(u8, itemSize, /* normalized */ true)` —
+`itemSize` is the native `3` (RGB) or `4` (RGBA) — rather than widening to `Float32Array`. The GPU
+normalizes to `[0,1]` for free, and this avoids a 4× memory blow-up on the single largest optional
+attribute. This mirrors the existing loader doctrine — `LoadedLinesData` and `LoadedPointsData` both keep
+`Uint8Array | Uint16Array | Float32Array` colors and pay a single widening only where a kernel demands
+`f32` — and §5.4 removed the one place mesh would have needed `f32` (the compaction pass).
+
+There is **one** `color` attribute regardless of component count, and hence **one** shader that reads it
+as a `vec4`: a size-3 (RGB) attribute read as a `vec4` yields `w = 1.0` by the GL attribute default, so
+RGB data carries a per-vertex opacity of `1.0` for free — the same *"1.0 for RGB data"* contract the
+gsplat/line shaders document (`materials/gsplat/shader-glsl.ts`, `materials/line/shader-glsl.ts`), though
+mesh is the first shader to obtain that `1.0` from the **GL size-3-attribute default** rather than by
+packing it CPU-side (the siblings write `1.0` into their element texels). No separate RGB-vs-RGBA material
+variant is needed; the alpha handling in §6.2 is unconditional.
 
 ### 6.2 Shading
 
@@ -501,8 +509,72 @@ model is deliberately minimal and light-free:
 - **Base color:** vertex `color`, or the colormap LUT applied to `aScalar` under `USE_COLORMAP` — the
   same `getColormapTexture` / `updateScalarRange` path `createLinesNode` uses, including the same
   fail-closed guard when `colormap` is set without `has_scalars`.
-- **Tail:** the shaded color then goes through the standard `intensity` → `offset` → `gamma` →
-  `opacity` → blending-mode output chain.
+- **Per-vertex alpha (load-bearing).** The `color` attribute's 4th component is a per-vertex opacity and
+  is carried through a **smoothly-interpolated** varying `vAlpha` — the vertex stage writes
+  `vAlpha = sanitizeAlpha(color.a)` and the rasterizer interpolates it across the triangle. Contrast the
+  gsplat shader, whose per-splat data is a per-instance constant and is therefore `flat`-qualified
+  (`flat out mediump vec3 vColor;`, `flat out mediump float vAlpha;` in
+  `materials/gsplat/shader-glsl.ts`, whose comment states "alpha is load-bearing in EVERY mode"): a mesh
+  vertex is **not** an instance constant, so its alpha must interpolate across the face exactly as the
+  line shader's `vAlpha` interpolates along a segment
+  (`vAlpha = mix(sanitizeAlpha(lineT5.z), sanitizeAlpha(lineT5.w), tEff);` in
+  `materials/line/shader-glsl.ts`). RGB data supplies `vAlpha = 1.0` for free (§6.1.1), so no
+  RGB-vs-RGBA variant is needed. This rule holds identically in **both** the GLSL and TSL material
+  backends (§6.4).
+- **Tail.** The shaded RGB then goes through the standard `intensity` → `offset` → `gamma` chain, after
+  which the coverage that drives blending is formed and the fragment is emitted per blending mode:
+
+  Mesh has **no** per-element `intensity`/amplitude/falloff scalar (§2.2) — it is a solid shaded
+  surface — so the coverage entering the blend is simply the per-vertex alpha times node opacity:
+
+  ```glsl
+  float a = vAlpha * uOpacity;   // the single coverage term; NOT intensity * uOpacity
+  ```
+
+  The §6.2 **shade** factor is a lighting term that multiplies the RGB base color only; it must **not**
+  enter `a`. Emission then branches on the blending mode's `shaderOutputMode` (`blending-state.ts`),
+  mirroring the line shader's fragment tail (`materials/line/shader-glsl.ts`):
+
+  - `additive` / `luminous` / `normal` → **alpha-weighted** (`SrcAlpha/One` or `SrcAlpha/OneMinusSrcAlpha`
+    apply `a` at composite): emit `fragColor = vec4(shadedColor, a);`.
+  - `max` → **rgb-contribution**: `MaxEquation + OneFactor/OneFactor` does **not** weight source RGB by
+    alpha at composite, so premultiply by coverage — emit `fragColor = vec4(shadedColor * a, a);` — exactly
+    the line shader's `LUXAR_MAX_RGB_CONTRIBUTION` branch (`vec4(gammaColor * a, a)`).
+  - `opaque` (mesh default) → a hard alpha **cutout**, see below.
+
+  ⚠️ For `normal`, the unsorted-translucency caveat of §6.3 (no per-triangle depth sort in v1) **compounds**
+  with per-vertex alpha: partially-transparent authored vertices make the missing sort visible, not just a
+  uniform `opacity < 1`.
+
+  The max-premultiply and the opaque-cutout emissions are distinct per-mode shader variants — a GLSL
+  `#define` exactly like the siblings' `LUXAR_MAX_RGB_CONTRIBUTION` branch (and a graph-baked TSL twin) —
+  so each is a separately compiled shader that carries its **own** codegen snapshot (§6.4), not one free
+  runtime branch. (Compile-time `#define` and runtime-uniform branches coexist in the shipped materials —
+  e.g. gsplat's opaque/peak split is a runtime `uProjectionMode` branch that TSL bakes per graph — but
+  either way the harness snapshots each mode separately, which is the point here.)
+- **`opaque` (the mesh default) → alpha is a hard cutout, not smooth transparency.** Decision, stated
+  rather than left silent: `opaque` is depth-writing and order-independent (`shaderOutputMode: 'opaque'`,
+  `blending-state.ts`), which is precisely why it is the only mode unconditionally correct without
+  per-triangle sorting (§6.3) — and smooth partial transparency is contradictory there. So under `opaque`
+  the coverage `a = vAlpha · uOpacity` acts as a **hard, order-independent cutout**:
+
+  ```glsl
+  float a = vAlpha * uOpacity;
+  if (a < uAlphaCutoff) discard;   // masks / holes; order-independent
+  fragColor = vec4(shadedColor, 1.0);   // survivors are fully opaque, depth written normally
+  ```
+
+  `uAlphaCutoff` is a material uniform with a sane default (`0.5`). This keeps `opaque` correct without
+  sorting while giving authored alpha a defined, useful meaning (masks, holes, alpha-tested detail); the
+  pick pass applies the **same** cutout so holes are neither pickable nor depth-occluding (§6.5).
+
+  Stated plainly: because node `opacity` is folded into the cutoff, `opacity` does **not** dim a default
+  (`opaque`) mesh — it sweeps the cutout threshold. On an RGB mesh (`vAlpha ≡ 1`) that is a hard **step**:
+  `opacity < uAlphaCutoff` dissolves the whole surface at once and any `opacity` above it produces no
+  change. With authored per-vertex RGBA alpha it instead **erodes** — as `opacity` drops, more vertices
+  fall below the cutoff and the surface eats away — never a uniform fade. Either way, animating opacity on
+  a default mesh does not cross-fade; a user who wants a *smooth* opacity fade selects `normal` instead
+  (and accepts its §6.3 unsorted caveat).
 
   ⚠️ **This chain is *not* currently shared.** `materials/_shared/` provides only sanitizers,
   near-fade, sorted-index addressing (`glsl-lib.ts`, `tsl-helpers.ts`) and the
@@ -529,8 +601,9 @@ buffer, which is a natural but separate extension (§9). Until then:
 
 - `opaque` (the default for mesh, unlike the other types) depth-tests and depth-writes, and is
   therefore correct;
-- `normal` with `opacity < 1` may show incorrect inter-triangle ordering, and the loader logs a
-  one-time warning naming the node.
+- `normal` with `opacity < 1` **or per-vertex RGBA alpha present** (either makes the surface
+  translucent, §6.2) may show incorrect inter-triangle ordering, and the loader logs a one-time warning
+  naming the node.
 
 Making `opaque` the mesh default is a deliberate asymmetry — it is the only mode that is unconditionally
 correct without sorting, and it is what a surface should look like.
@@ -582,8 +655,16 @@ Note that `material-manager.ts` still declares `pointMaterialCache` / `lineMater
 keeps its shape. Mesh must **not** add a fourth empty map — `createMeshMaterial` constructs directly.
 
 Both backends must produce matching output and are gated by the existing codegen snapshot harness
-(`src/tests/__codegen__/`) — new snapshots: `mesh.vertex`, `mesh.fragment`, `mesh-flat-normal.fragment`,
-`mesh-colormap.fragment`, `mesh-pick.{vertex,fragment}`.
+(`src/tests/__codegen__/`), which keys one snapshot variant per blend-mode build — whether a GLSL
+`#define` (the sibling `line-max`, `point-max`, `gsplat-normal-premult`) or a runtime-uniform branch the
+TSL path bakes per graph (`gsplat-opaque`, from gsplat's runtime `uProjectionMode` split). Note the
+harness (`tsl-codegen-snapshot.spec.ts`) asserts **both stages** of every variant unconditionally, so
+each variant is a `.vertex` + `.fragment` snapshot pair — the shipped inventory is exactly 24 such pairs.
+Mesh's per-mode emissions (§6.2) are therefore separately snapshotted — and note the mesh **default is
+`opaque`**, unlike the siblings whose default is the alpha-weighted `additive`. New variants — six, i.e.
+twelve snapshot files: `mesh` (the `opaque` default — alpha cutout, §6.2), `mesh-additive` (the
+alpha-weighted emission shared by `additive`/`luminous`/`normal`, §6.2), `mesh-max` (the max
+premultiply, §6.2), `mesh-flat-normal`, `mesh-colormap`, `mesh-pick`.
 
 > **TSL house rule** (from the depth-sorting spec's remediation): both vertex stages must trace inside
 > `Fn()` with explicit `.toVar()` statements, and the fragment must reconstruct the bottom-left
@@ -631,6 +712,19 @@ surface-mode branch (`uSurfaceDepth == 1` in `rendering/picking/gsplat/shaders.t
 fully-opaque fragment collapses to depth 0 and the mesh neither self-occludes nor occludes other nodes
 correctly in the shared pick buffer. See `rendering/picking/README.md`; the `mesh-pick.fragment` codegen
 snapshot (§6.4) is the final authority.
+
+**Alpha in the pick pass — the cutout must match.** The pick material computes the **same** coverage
+`a = vAlpha · uOpacity` (§6.2), so its vertex shader binds the `color` attribute and carries an
+interpolated `vAlpha` varying — the only vertex attribute it needs beyond `position` (element ids come
+from the `gl_VertexID` built-in, not an attribute). In `opaque` mode it
+applies the **identical** `if (a < uAlphaCutoff) discard;` before writing, so a cutout hole is neither
+pickable nor depth-occluding; without this a discarded-in-visual hole would still rasterize in the pick
+pass at true surface depth, becoming pickable **and** occluding picks of nodes visible through it. In the
+translucent modes `a` is the `brightness` coverage term the readback already votes on (replacing the
+"1.0 for a fully opaque mesh" placeholder above whenever alpha is authored). This is a **runtime-uniform
+branch** in the single pick fragment (keyed on the blending mode, like the `uSurfaceDepth` split above),
+**not** a separate `#define` — so `mesh-pick` stays a single snapshot variant and §6.4's count is
+unchanged.
 
 **Stability.** §5.4 rewrites only the index buffer per slice (`compact_visible_faces`) and never remaps
 vertex attributes ("No vertex compaction"). A face ordinal would be renumbered on every slice change; a
@@ -847,6 +941,11 @@ A reviewer should treat a `| 'mesh'` appearing in any of those five as a defect.
 - [ ] Rust: `mesh_vertex_visibility_mask` / `compact_visible_faces` unit tests incl. the non-finite rule
 - [ ] TS unit: loader, geometry assembly, cull correctness, colormap fail-closed guard,
       Rust↔TS kernel parity
+- [ ] TS unit (alpha chain, §6.2): an **RGBA** mesh produces **different** fragment output than the same
+      mesh RGB-only (goes red if `vAlpha` is dropped — the exact "(V,4) renders like (V,3)" defect); under
+      `opaque`, fragments with `a < uAlphaCutoff` are **discarded** (cutout) and survivors write alpha 1.0;
+      under `max`, the emitted RGB is **premultiplied** by `a` (`vec4(shadedColor * a, a)`). Each must be
+      verified to fail before the fix.
 - [ ] TS unit: on a **`double_sided: false`** mesh, `updateView` for a `displayDims` change `[0,1,2]`→`[0,2,1]`
       re-extracts positions, re-decides the `normal` attribute, recomputes bounds, and reverses the index
       winding so front faces stay visible (goes red without the reversal precisely because `FrontSide`
@@ -858,7 +957,8 @@ A reviewer should treat a `| 'mesh'` appearing in any of those five as a defect.
       slice moves (§5.4), not just the displayDims-change event. And on the same mesh, a `displayDims`
       change to a **different axis triple** than the frame falls back to `DoubleSide` for the epoch —
       both orientations render (§5.4/§7)
-- [ ] Codegen snapshots: 6 new (§6.4)
+- [ ] Codegen snapshots: 6 new variants = 12 files (§6.4) — incl. the per-blend-mode
+      `mesh-additive`/`mesh-max` variants
 - [ ] Fixture: `tests/fixtures/generate_test_data.py` gains a mesh fixture (auto-picked up by
       `vitest.config.ts` globalSetup)
 - [ ] E2E: one `mesh-rendering.spec.ts`, plus extend the existing multi-geometry
