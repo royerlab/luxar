@@ -363,7 +363,18 @@ GBIF_USABLE_ROWS_PER_PART: Final = 300_000
 # huge single-publisher eBird parts dominate a narrow read.
 OVERSAMPLE_FACTOR: Final = 5.0
 GBIF_READ_THREADS: Final = 48
-EXCLUDED_LICENSE: Final = "CC_BY_NC_4_0"
+#: The ONLY licenses kept. An allowlist, deliberately, not a blocklist that
+#: rejects `CC_BY_NC_4_0`: `_dictionary_codes` maps a null or unrecognised value
+#: to UNMAPPED, so a blocklist silently retains every record whose license GBIF
+#: did not populate or spells differently — and this demo claims, in its
+#: docstring and on screen, that the sample is CC BY 4.0 + CC0 only. A claim
+#: about licensing has to be enforced by construction.
+#:
+#: On the 2026-08-01 snapshot the two forms happen to agree exactly (76,057,458
+#: rows either way): GBIF populates `license` with one of its three values for
+#: every record, so there is nothing for a blocklist to miss *today*. That is
+#: precisely why the blocklist was worth replacing -- it was correct by luck.
+ALLOWED_LICENSES: Final = ("CC0_1_0", "CC_BY_4_0")
 MAX_COORD_UNCERTAINTY_M: Final = 100_000.0  # drops most country centroids
 JITTER_FLOOR_M: Final = 300.0
 JITTER_CEIL_M: Final = 25_000.0
@@ -1173,17 +1184,33 @@ class BottomKSampler:
         self._cols: Optional[List[np.ndarray]] = None
         self.n_seen = 0
 
-    def add(self, columns: Sequence[np.ndarray]) -> None:
-        """Offer a batch of parallel columns (all the same length)."""
+    def add(
+        self, columns: Sequence[np.ndarray], keys: Optional[np.ndarray] = None
+    ) -> None:
+        """Offer a batch of parallel columns (all the same length).
+
+        ``keys`` lets the CALLER supply the uniform keys instead of drawing them
+        from this sampler's RNG, and that is what makes a threaded read
+        reproducible. Bottom-k over a FIXED key per row is order-independent by
+        construction -- the k smallest keys are the k smallest however the
+        batches arrive -- whereas drawing keys here consumes one shared RNG
+        stream in `as_completed()` order, so network timing decided which part
+        got which slice of the stream and a seeded rebuild produced a different
+        sample.
+        """
         if not columns:
             return
         n = int(columns[0].shape[0])
         if any(int(c.shape[0]) != n for c in columns):
             raise ValueError("all columns in a batch must have equal length")
+        if keys is not None and int(keys.shape[0]) != n:
+            raise ValueError("keys must have the same length as the columns")
         self.n_seen += n
         if n == 0 or self.k == 0:
             return
-        keys = self._rng.random(n)
+        keys = (
+            self._rng.random(n) if keys is None else np.asarray(keys, dtype=np.float64)
+        )
         if self._keys is None:
             self._keys = keys
             self._cols = [np.array(c, copy=True) for c in columns]
@@ -1312,8 +1339,44 @@ def _dictionary_codes(column: Any, lookup: Dict[str, int]) -> np.ndarray:
     return out
 
 
+class DatasetRegistry:
+    """Assigns a stable small integer id to each GBIF ``datasetkey``.
+
+    The provenance sidecar has to count the records the scene ACTUALLY contains,
+    not the candidates that were scanned, so ``datasetkey`` must survive
+    sampling. Strings cannot ride through the numeric samplers, so each key gets
+    an int32 id here and the ids travel with the coordinates.
+    """
+
+    def __init__(self) -> None:
+        self._ids: Dict[str, int] = {}
+        self._keys: List[str] = []
+
+    def ids_for(self, names: Sequence[Optional[str]]) -> np.ndarray:
+        """Map a per-row list of dataset keys to their int32 ids."""
+        out = np.empty(len(names), dtype=np.int32)
+        for i, name in enumerate(names):
+            key = name if name is not None else ""
+            got = self._ids.get(key)
+            if got is None:
+                got = len(self._keys)
+                self._ids[key] = got
+                self._keys.append(key)
+            out[i] = got
+        return out
+
+    def key(self, dataset_id: int) -> str:
+        return self._keys[dataset_id]
+
+    def __len__(self) -> int:
+        return len(self._keys)
+
+
 def _dataset_counts(column: Any, keep_idx: np.ndarray) -> Dict[str, int]:
-    """Per-``datasetkey`` kept-record counts for the provenance sidecar.
+    """Per-``datasetkey`` kept-record counts over the SCANNED candidates.
+
+    Retained for the build log only. It is deliberately NOT what the provenance
+    sidecar reports -- see :func:`write_dataset_provenance`.
 
     GBIF's Data User Agreement asks that a redistributed subset credit its
     contributing publishers, which is what a registered Derived Dataset does
@@ -1346,7 +1409,18 @@ def _dataset_counts(column: Any, keep_idx: np.ndarray) -> Dict[str, int]:
 class _PartResult:
     """Filtered columns from one parquet part, plus the counters for the log."""
 
-    __slots__ = ("lat", "lon", "taxon", "year", "unc", "n_rows", "n_kept", "datasets")
+    __slots__ = (
+        "lat",
+        "lon",
+        "taxon",
+        "year",
+        "unc",
+        "ds_id",
+        "uid",
+        "n_rows",
+        "n_kept",
+        "datasets",
+    )
 
     def __init__(
         self,
@@ -1355,6 +1429,8 @@ class _PartResult:
         taxon: np.ndarray,
         year: np.ndarray,
         unc: np.ndarray,
+        ds_id: np.ndarray,
+        uid: np.ndarray,
         n_rows: int,
         datasets: Dict[str, int],
     ) -> None:
@@ -1363,12 +1439,16 @@ class _PartResult:
         self.taxon = taxon
         self.year = year
         self.unc = unc
+        self.ds_id = ds_id
+        self.uid = uid
         self.n_rows = n_rows
         self.n_kept = int(lat.size)
         self.datasets = datasets
 
 
-def _read_part(fs: Any, path: str) -> _PartResult:
+def _read_part(
+    fs: Any, path: str, ordinal: int, registry: "DatasetRegistry"
+) -> _PartResult:
     """Read one part with column projection and apply every record filter.
 
     Only 9 of the snapshot's 50 columns are requested, which cuts a ~28 MB part
@@ -1401,14 +1481,18 @@ def _read_part(fs: Any, path: str) -> _PartResult:
     taxon = np.where(taxon == UNMAPPED, from_phylum, taxon)
     taxon = np.where(taxon == UNMAPPED, from_kingdom, taxon)
 
-    license_codes = _dictionary_codes(table.column("license"), {EXCLUDED_LICENSE: 1})
+    license_codes = _dictionary_codes(
+        table.column("license"), {name: 1 for name in ALLOWED_LICENSES}
+    )
 
     keep = np.isfinite(lat) & np.isfinite(lon)
     keep &= (lat >= -90.0) & (lat <= 90.0) & (lon >= -180.0) & (lon <= 180.0)
     # Null island: 1.42M records sit at exactly (0, 0).
     keep &= ~((np.abs(lat) < 0.01) & (np.abs(lon) < 0.01))
     keep &= np.isfinite(year) & (year >= YEAR_MIN) & (year <= YEAR_MAX)
-    keep &= license_codes != 1  # drop CC_BY_NC_4_0
+    # == 1, not != 1: keep ONLY the allowlisted licenses, so nulls and unknowns
+    # are dropped rather than silently inherited (see ALLOWED_LICENSES).
+    keep &= license_codes == 1
     keep &= taxon != UNMAPPED
     # GBIF does not flag country centroids; a huge stated uncertainty is the
     # cheapest proxy. A NULL uncertainty is kept (most records have none).
@@ -1417,12 +1501,22 @@ def _read_part(fs: Any, path: str) -> _PartResult:
     idx = np.flatnonzero(keep)
     datasets = _dataset_counts(table.column("datasetkey"), idx)
 
+    pa = require_module("pyarrow")
+    ds_names = table.column("datasetkey").take(pa.array(idx)).to_pylist()
+    ds_id = registry.ids_for(ds_names)
+    # A globally unique row id: part ordinal in the high bits, row index in the
+    # low bits. Lets the provenance count deduplicate a record that a sampler
+    # emitted into more than one (taxon, period) slot.
+    uid = (np.int64(ordinal) << np.int64(32)) | idx.astype(np.int64)
+
     return _PartResult(
         lat[idx].astype(np.float32),
         lon[idx].astype(np.float32),
         taxon[idx],
         year[idx].astype(np.int16),
         unc[idx].astype(np.float32),
+        ds_id,
+        uid,
         n_rows,
         datasets,
     )
@@ -1444,6 +1538,7 @@ class GbifSample:
         "taxon_unc",
         "slot_taxon",
         "slot_period",
+        "scene_datasets",
         "group_totals",
         "n_rows_read",
         "n_kept",
@@ -1521,41 +1616,64 @@ def _pool_gbif(n_points: int, n_parts: int, *, seed: int) -> GbifSample:
     ]
     group_totals = np.zeros(n_tax, dtype=np.int64)
     datasets: Dict[str, int] = {}
+    registry = DatasetRegistry()
     n_rows_read = 0
     n_kept = 0
     n_done = 0
 
     with ThreadPoolExecutor(max_workers=GBIF_READ_THREADS) as pool:
-        futures = {pool.submit(_read_part, fs, p): p for p in chosen}
+        futures = {
+            pool.submit(_read_part, fs, part, i, registry): (part, i)
+            for i, part in enumerate(chosen)
+        }
         for future in as_completed(futures):
-            part = futures[future]
+            part, ordinal = futures[future]
             try:
                 res = future.result()
             except Exception as exc:  # noqa: BLE001 - one bad part must not kill the read
                 aprint(f"  ⚠️  part {Path(part).name} failed ({exc}); skipping")
                 n_done += 1
                 continue
+            # Uniform keys derived from the part's ORDINAL, not from a shared
+            # stream consumed in completion order. Bottom-k over fixed per-row
+            # keys is order-independent, so a seeded rebuild reproduces the same
+            # sample no matter how the threads interleave.
+            part_keys = np.random.default_rng([seed, ordinal]).random(int(res.lat.size))
             n_rows_read += res.n_rows
             n_kept += res.n_kept
             group_totals += np.bincount(res.taxon.astype(np.int64), minlength=n_tax)
             for key, count in res.datasets.items():
                 datasets[key] = datasets.get(key, 0) + count
-            cols = (res.lat, res.lon, res.taxon, res.year, res.unc)
-            main.add(cols)
+            cols = (
+                res.lat,
+                res.lon,
+                res.taxon,
+                res.year,
+                res.unc,
+                res.ds_id,
+                res.uid,
+            )
+            main.add(cols, keys=part_keys)
             pslot = period_slot(res.year).astype(np.int64)
             for g in range(n_tax):
                 in_group = res.taxon == g
                 if not in_group.any():
                     continue
-                marg_taxon[g].add(tuple(c[in_group] for c in cols))
+                marg_taxon[g].add(
+                    tuple(c[in_group] for c in cols), keys=part_keys[in_group]
+                )
                 for i in range(N_PERIODS):
                     cell = in_group & (pslot == i + 1)
                     if cell.any():
-                        joint[g][i].add(tuple(c[cell] for c in cols))
+                        joint[g][i].add(
+                            tuple(c[cell] for c in cols), keys=part_keys[cell]
+                        )
             for i in range(N_PERIODS):
                 in_period = pslot == i + 1
                 if in_period.any():
-                    marg_period[i].add(tuple(c[in_period] for c in cols))
+                    marg_period[i].add(
+                        tuple(c[in_period] for c in cols), keys=part_keys[in_period]
+                    )
             n_done += 1
             if n_done % 20 == 0 or n_done == n_parts:
                 aprint(
@@ -1566,7 +1684,7 @@ def _pool_gbif(n_points: int, n_parts: int, *, seed: int) -> GbifSample:
     if main.n_kept == 0:
         raise RuntimeError("every GBIF part failed or was filtered empty")
 
-    lat, lon, taxon, year, unc = main.result()
+    lat, lon, taxon, year, unc, main_ds, main_uid = main.result()
 
     # Flatten every populated slot into the scrubbable arrays. A record can
     # appear in up to three slots (taxon marginal, period marginal, joint cell);
@@ -1592,15 +1710,40 @@ def _pool_gbif(n_points: int, n_parts: int, *, seed: int) -> GbifSample:
             _take(joint[g][i], taxon_slot(g), i + 1)
 
     if cell_cols:
-        t_lat, t_lon, t_taxon, t_year, t_unc = (
-            np.concatenate([c[k] for c in cell_cols]) for k in range(5)
-        )
+        (
+            t_lat,
+            t_lon,
+            t_taxon,
+            t_year,
+            t_unc,
+            cell_ds,
+            cell_uid,
+        ) = (np.concatenate([c[k] for c in cell_cols]) for k in range(7))
         slot_taxon = np.concatenate(cell_tax)
         slot_period = np.concatenate(cell_per)
     else:  # pragma: no cover - only if every slot came back empty
         t_lat = t_lon = t_year = t_unc = np.empty(0, dtype=np.float32)
         t_taxon = np.empty(0, dtype=np.int8)
         slot_taxon = slot_period = np.empty(0, dtype=np.float32)
+        cell_ds = np.empty(0, dtype=np.int32)
+        cell_uid = np.empty(0, dtype=np.int64)
+    # Provenance over the records the SCENE CONTAINS, not the ~76M scanned
+    # candidates. A record can be emitted into several (taxon, period) slots, so
+    # deduplicate on the stable row uid before counting -- otherwise a dataset's
+    # count would depend on how many slices its records happen to land in.
+    all_uid = np.concatenate([main_uid, cell_uid])
+    all_ds = np.concatenate([main_ds, cell_ds])
+    if all_uid.size:
+        _, first = np.unique(all_uid, return_index=True)
+        counts = np.bincount(all_ds[first].astype(np.int64), minlength=len(registry))
+        scene_datasets = {
+            registry.key(i): int(c)
+            for i, c in enumerate(counts)
+            if c and registry.key(i)
+        }
+    else:  # pragma: no cover - only if every part came back empty
+        scene_datasets = {}
+
     aprint(
         f"scrubbable slots: {len(cell_cols)} populated of "
         f"{n_tax + N_PERIODS + n_tax * N_PERIODS}, {slot_taxon.size:,} elements"
@@ -1619,6 +1762,7 @@ def _pool_gbif(n_points: int, n_parts: int, *, seed: int) -> GbifSample:
         taxon_unc=t_unc,
         slot_taxon=slot_taxon,
         slot_period=slot_period,
+        scene_datasets=scene_datasets,
         group_totals=group_totals,
         n_rows_read=n_rows_read,
         n_kept=n_kept,
@@ -1636,7 +1780,11 @@ def load_gbif(n_points: int, n_parts: int) -> GbifSample:
     different ``--n-points`` or ``--n-parts`` gets its own entry instead of
     silently reusing the wrong sample.
     """
-    key = f"gbif_{GBIF_SNAPSHOT}_p{n_parts}_n{n_points}_s{SAMPLE_SEED}_cells2"
+    # The key must move whenever the READ changes shape, not just when its
+    # parameters do: the licence gate became an allowlist (so nulls/unknowns are
+    # now dropped) and the sampler switched to caller-supplied keys (so the
+    # selected rows differ). A warm cache would otherwise serve the old sample.
+    key = f"gbif_{GBIF_SNAPSHOT}_p{n_parts}_n{n_points}_s{SAMPLE_SEED}_allow_v3"
     return cache_computed(
         DEMO_NAME,
         key,
@@ -1649,14 +1797,19 @@ def load_gbif(n_points: int, n_parts: int) -> GbifSample:
 def write_dataset_provenance(sample: GbifSample) -> Path:
     """Write the contributing-publisher table next to the cached sample.
 
-    GBIF asks that a redistributed derivative credit its publishers; this is the
-    raw material for registering a Derived Dataset and getting a DOI for it.
+    Counts are over the records **actually present in the built scene**,
+    deduplicated across the (taxon, period) slots a record may be emitted into --
+    not over the ~76M candidates the read scanned. The distinction matters
+    because this file is the raw material for registering a GBIF Derived Dataset
+    (https://www.gbif.org/citation-guidelines#derivedDatasets), so counting
+    scanned candidates would over-report every publisher and could list datasets
+    that contribute no rendered record at all.
     """
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     path = CACHE_DIR / f"gbif_datasets_{sample.snapshot}.csv"
-    rows = sorted(sample.datasets.items(), key=lambda kv: -kv[1])
+    rows = sorted(sample.scene_datasets.items(), key=lambda kv: -kv[1])
     with open(path, "w", encoding="utf-8") as handle:
-        handle.write("datasetkey,records_kept\n")
+        handle.write("datasetkey,records_in_scene\n")
         for key, count in rows:
             handle.write(f"{key},{count}\n")
     aprint(f"  📄 {len(rows):,} contributing GBIF datasets -> {path.name}")

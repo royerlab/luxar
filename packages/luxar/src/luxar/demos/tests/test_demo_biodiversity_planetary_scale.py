@@ -14,6 +14,7 @@ import pytest
 
 from luxar.demos.demo_biodiversity_planetary_scale import (
     ALL_LIFE_SLOT,
+    ALLOWED_LICENSES,
     DEFAULT_N_POINTS,
     GBIF_USABLE_ROWS_PER_PART,
     JITTER_CEIL_M,
@@ -28,6 +29,7 @@ from luxar.demos.demo_biodiversity_planetary_scale import (
     TAXON_GROUP_COLORS,
     TAXON_GROUP_NAMES,
     BottomKSampler,
+    DatasetRegistry,
     chain_segment_indices,
     globe_camera,
     great_circle_resample,
@@ -184,6 +186,128 @@ def test_period_slot_never_collides_with_the_all_slot():
 def test_period_slot_clamps_out_of_range_years():
     assert int(period_slot(np.array([1850]))[0]) == 1
     assert int(period_slot(np.array([2400]))[0]) == N_PERIODS
+
+
+# ---------------------------------------------------------------------------
+# licence allowlist  (review finding: a blocklist retained nulls/unknowns)
+# ---------------------------------------------------------------------------
+
+
+def _license_mask(values):
+    """Reproduce the loader's licence gate over a column of raw GBIF values.
+
+    Mirrors `_read_part`: dictionary-code the column against the allowlist and
+    keep only code == 1. Exercised here without network or pyarrow so the
+    licensing claim is guarded by a unit test.
+    """
+    allow = {name: 1 for name in ALLOWED_LICENSES}
+    codes = np.array([allow.get(v, -1) if v is not None else -1 for v in values])
+    return codes == 1
+
+
+def test_license_allowlist_keeps_only_cc_by_and_cc0():
+    assert set(ALLOWED_LICENSES) == {"CC0_1_0", "CC_BY_4_0"}
+    values = ["CC0_1_0", "CC_BY_4_0", "CC_BY_NC_4_0"]
+    assert _license_mask(values).tolist() == [True, True, False]
+
+
+def test_license_allowlist_drops_null_and_unknown_licenses():
+    """The bug this replaces: a blocklist rejecting only CC_BY_NC_4_0 retained
+    every record GBIF left null or spelled differently, while the demo claimed a
+    CC BY / CC0-only sample."""
+    values = [None, "", "CC_BY_NC_ND_4_0", "CC_BY_SA_4_0", "unspecified", "CC0"]
+    assert not _license_mask(values).any()
+
+
+def test_license_allowlist_is_exact_not_prefix():
+    # 'CC_BY_4_0_DERIV' must not pass by sharing a prefix with an allowed value.
+    assert not _license_mask(["CC_BY_4_0_DERIV", "XCC0_1_0"]).any()
+
+
+# ---------------------------------------------------------------------------
+# DatasetRegistry  (review finding: provenance counted scanned candidates)
+# ---------------------------------------------------------------------------
+
+
+def test_dataset_registry_assigns_stable_ids():
+    r = DatasetRegistry()
+    a = r.ids_for(["ds-a", "ds-b", "ds-a"])
+    assert a.tolist() == [0, 1, 0]
+    assert a.dtype == np.int32
+    # Ids stay stable across calls, so codes gathered from different parts agree.
+    b = r.ids_for(["ds-b", "ds-c"])
+    assert b.tolist() == [1, 2]
+    assert [r.key(i) for i in range(len(r))] == ["ds-a", "ds-b", "ds-c"]
+
+
+def test_dataset_registry_maps_none_to_a_sentinel_key():
+    r = DatasetRegistry()
+    ids = r.ids_for([None, "ds-a", None])
+    assert ids[0] == ids[2]
+    assert r.key(int(ids[0])) == ""  # filtered out of the sidecar by the caller
+
+
+def test_provenance_counts_dedupe_records_emitted_to_several_slots():
+    """A record emitted into a taxon marginal, a period marginal and a joint cell
+    must count ONCE, or a dataset's total would depend on how many slices its
+    records happen to occupy."""
+    registry = DatasetRegistry()
+    ds = registry.ids_for(["ds-a", "ds-a", "ds-b"])
+    # Simulate the union: record uid=10 emitted 3x, uid=11 once, uid=12 twice.
+    all_uid = np.array([10, 10, 10, 11, 12, 12], dtype=np.int64)
+    all_ds = np.array([ds[0], ds[0], ds[0], ds[1], ds[2], ds[2]], dtype=np.int32)
+    _, first = np.unique(all_uid, return_index=True)
+    counts = np.bincount(all_ds[first].astype(np.int64), minlength=len(registry))
+    got = {registry.key(i): int(c) for i, c in enumerate(counts) if c}
+    assert got == {"ds-a": 2, "ds-b": 1}
+    assert sum(got.values()) == np.unique(all_uid).size
+
+
+# ---------------------------------------------------------------------------
+# bottom-k order independence  (review finding: as_completed decided the sample)
+# ---------------------------------------------------------------------------
+
+
+def test_bottomk_with_caller_keys_is_order_independent():
+    """The reproducibility fix: with fixed per-row keys, the selected set is the
+    same however the batches arrive — which a threaded `as_completed()` read
+    cannot otherwise guarantee."""
+    rng = np.random.default_rng(0)
+    batches = [(np.arange(i * 50, i * 50 + 50), rng.random(50)) for i in range(6)]
+
+    def run(order):
+        s = BottomKSampler(37, np.random.default_rng(999))
+        for i in order:
+            vals, keys = batches[i]
+            s.add([vals], keys=keys)
+        return np.sort(s.result()[0])
+
+    forward = run(range(6))
+    reversed_ = run(list(reversed(range(6))))
+    shuffled = run([3, 0, 5, 1, 4, 2])
+    np.testing.assert_array_equal(forward, reversed_)
+    np.testing.assert_array_equal(forward, shuffled)
+    assert forward.size == 37
+
+
+def test_bottomk_without_caller_keys_is_order_dependent():
+    """Guards the reason the fix was needed: self-drawn keys depend on arrival
+    order, so this must NOT be relied on in the threaded read."""
+    batches = [np.arange(i * 50, i * 50 + 50) for i in range(4)]
+
+    def run(order):
+        s = BottomKSampler(20, np.random.default_rng(7))
+        for i in order:
+            s.add([batches[i]])
+        return np.sort(s.result()[0])
+
+    assert not np.array_equal(run(range(4)), run(list(reversed(range(4)))))
+
+
+def test_bottomk_rejects_mismatched_keys_length():
+    s = BottomKSampler(5, np.random.default_rng(0))
+    with pytest.raises(ValueError):
+        s.add([np.arange(4)], keys=np.zeros(3))
 
 
 # ---------------------------------------------------------------------------
