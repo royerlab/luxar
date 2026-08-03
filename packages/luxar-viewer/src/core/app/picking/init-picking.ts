@@ -100,8 +100,7 @@ export async function initPicking(ports: InitPickingPorts): Promise<InitPickingR
 
   // Check if any node has labels or image labels
   const root = ports.sceneManager.scene?.children?.find((c) => c.name === 'LuxarScene') as
-    | THREE.Group
-    | undefined;
+    THREE.Group | undefined;
   if (!root) {
     return { pickingSystem: undefined, labelLoader: undefined, imageLabelLoader: undefined };
   }

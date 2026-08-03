@@ -183,8 +183,7 @@ export function computeDebugState(ctx: DebugStateContext): DebugState {
       // source presence on geometry.userData instead (the zarr node attrs
       // lack has_colors/has_radii/has_sharpness on pre-stamp datasets).
       const presence = geometry?.userData as
-        | { hasColors?: boolean; hasRadii?: boolean; hasSharpness?: boolean }
-        | undefined;
+        { hasColors?: boolean; hasRadii?: boolean; hasSharpness?: boolean } | undefined;
       pointClouds.push({
         name: object.name || 'unnamed',
         pointCount,

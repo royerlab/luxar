@@ -78,11 +78,11 @@ Pure decisions that drive each progressive loader's LOD streaming loop, so
 the three loops stay identical by construction. A pass is classified from
 two facts (is a per-frame budget active? is this a background prefetch?):
 
-| Pass       | When                              | Behavior                                                                                                   |
-| ---------- | --------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `playback` | foreground, budgeted (playing)    | Commit the restored cached prefix + a **LOD-0 first-paint floor**; never block on fine levels — stay responsive. |
-| `prefetch` | background shadow pass            | **Deepen toward the full ladder** — never stop on a cache miss; bounded by the pass budget + abort.         |
-| `refine`   | foreground, unbudgeted (paused)   | Stream cache-resident levels; stop at the first cold/slow one (the `CACHE_HIT_THRESHOLD_MS` rule).          |
+| Pass       | When                            | Behavior                                                                                                         |
+| ---------- | ------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `playback` | foreground, budgeted (playing)  | Commit the restored cached prefix + a **LOD-0 first-paint floor**; never block on fine levels — stay responsive. |
+| `prefetch` | background shadow pass          | **Deepen toward the full ladder** — never stop on a cache miss; bounded by the pass budget + abort.              |
+| `refine`   | foreground, unbudgeted (paused) | Stream cache-resident levels; stop at the first cold/slow one (the `CACHE_HIT_THRESHOLD_MS` rule).               |
 
 ```typescript
 const pass = classifyStreamingPass(budgetDeadline !== null, viewState.prefetch === true);
@@ -99,12 +99,12 @@ ladders so later loops are higher-quality — still fast.
 
 ## Consumers
 
-| File                                       | Uses                                                              |
-| ------------------------------------------ | ---------------------------------------------------------------- |
-| `../points/points-progressive-loader.ts`   | `concatRequiredField`, `concatOptionalField`, streaming-policy   |
-| `../lines/lines-progressive-loader.ts`     | `concatRequiredField`, `concatOptionalField`, streaming-policy   |
-| `../gsplats/gsplats-progressive-loader.ts` | `concatRequiredField`, streaming-policy                          |
-| `streaming-policy.ts`                      | `CACHE_HIT_THRESHOLD_MS`                                          |
+| File                                       | Uses                                                           |
+| ------------------------------------------ | -------------------------------------------------------------- |
+| `../points/points-progressive-loader.ts`   | `concatRequiredField`, `concatOptionalField`, streaming-policy |
+| `../lines/lines-progressive-loader.ts`     | `concatRequiredField`, `concatOptionalField`, streaming-policy |
+| `../gsplats/gsplats-progressive-loader.ts` | `concatRequiredField`, streaming-policy                        |
+| `streaming-policy.ts`                      | `CACHE_HIT_THRESHOLD_MS`                                       |
 
 ## See Also
 

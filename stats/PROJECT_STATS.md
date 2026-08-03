@@ -15,7 +15,7 @@ _To refresh both this file and the HTML report, run `make stats` from the projec
 | Test files | 805 |
 | Tests collected | 15,255 |
 | Coverage (Py/TS weighted) | 86.2% |
-| Total commits | 2,266 |
+| Total commits | 2,267 |
 | Commits in last 30 days | 262 |
 | Project size | 666.3 MB |
 | CI workflows | 4 |
@@ -99,11 +99,8 @@ _To refresh both this file and the HTML report, run `make stats` from the projec
 
 | Metric | Value |
 | --- | ---: |
-| Current branch | `stats-fix` |
-| Total commits | 2,266 |
+| Total commits | 2,267 |
 | Contributors (all-time) | 5 |
-| Local branches | 18 |
-| Remote branches | 17 |
 | Tags | 2 |
 | Commits (last 30 days) | 262 |
 | Files changed (last 30 days) | 1,549 |
@@ -114,11 +111,11 @@ _To refresh both this file and the HTML report, run `make stats` from the projec
 
 | Name | Commits |
 | --- | ---: |
-| royer | 2,500 |
-| Loic A. Royer | 689 |
-| Loic A. Royer (obsidian) | 394 |
-| Loic Royer | 84 |
+| royer | 1,376 |
+| Loic A. Royer | 595 |
+| Loic A. Royer (obsidian) | 210 |
 | dependabot[bot] | 44 |
+| Loic Royer | 42 |
 
 ## Dependencies
 

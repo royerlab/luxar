@@ -702,9 +702,7 @@ export class PickingSystem {
       if (isSurfacePickAwareMaterial(mat)) {
         // entry.main is typed Object3D — non-mesh mains have no material.
         const mainMat = (entry.main as THREE.Mesh).material as
-          | THREE.Material
-          | THREE.Material[]
-          | undefined;
+          THREE.Material | THREE.Material[] | undefined;
         const single = Array.isArray(mainMat) ? mainMat[0] : mainMat;
         const mode = (single?.userData.blendingMode ?? 'additive') as BlendingMode;
         mat.setSurfacePickDepth(isNormalMode(mode) || isOpaqueMode(mode));

@@ -7,6 +7,9 @@ Run explicitly (not part of the default suite):
 from __future__ import annotations
 
 import json
+import os
+import shutil
+import subprocess
 import sys
 import types
 from pathlib import Path
@@ -365,3 +368,115 @@ def test_weighted_coverage_drops_single_zero_language() -> None:
     assert gs.weighted_coverage(0.0, 1000, 70.0, 3000) == 70.0
     # Both zero -> 0.0.
     assert gs.weighted_coverage(0.0, 1000, 0.0, 3000) == 0.0
+
+
+# ---------------------------------------------------------------------------
+# get_git_statistics (HEAD-scoped, no checkout-transient fields — issue #764)
+# ---------------------------------------------------------------------------
+
+def _git_env(home: Path) -> dict[str, str]:
+    """A clean, deterministic git env so commits work headless.
+
+    `home` is an isolated empty directory used for HOME/XDG_CONFIG_HOME so that
+    old git (< 2.32, which ignores GIT_CONFIG_GLOBAL/SYSTEM) still reads no
+    user/global config. GIT_CONFIG_NOSYSTEM is honored by ancient git too.
+    """
+    env = dict(os.environ)
+    env.update(
+        {
+            "GIT_AUTHOR_NAME": "Fixture",
+            "GIT_AUTHOR_EMAIL": "fixture@example.com",
+            "GIT_COMMITTER_NAME": "Fixture",
+            "GIT_COMMITTER_EMAIL": "fixture@example.com",
+            "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_CONFIG_SYSTEM": os.devnull,
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "HOME": str(home),
+            "XDG_CONFIG_HOME": str(home),
+        }
+    )
+    return env
+
+
+def _run_git(repo: Path, *args: str, env: dict[str, str]) -> None:
+    result = subprocess.run(
+        ["git", *args],
+        cwd=repo,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"git {' '.join(args)} failed (exit {result.returncode}):\n"
+            f"{result.stderr.strip()}"
+        )
+
+
+def _commit_as(repo: Path, name: str, message: str, env: dict[str, str]) -> None:
+    """An empty commit authored+committed by `name` (deterministic)."""
+    email = f"{name.lower()}@example.com"
+    env = dict(env)
+    env.update(
+        {
+            "GIT_AUTHOR_NAME": name,
+            "GIT_AUTHOR_EMAIL": email,
+            "GIT_COMMITTER_NAME": name,
+            "GIT_COMMITTER_EMAIL": email,
+        }
+    )
+    _run_git(repo, "commit", "--allow-empty", "-m", message, env=env)
+
+
+def test_git_statistics_head_scoped_and_no_transient_fields(tmp_path: Path) -> None:
+    if shutil.which("git") is None:
+        pytest.skip("git executable not available")
+
+    home = tmp_path / "_home"
+    home.mkdir()
+    env = _git_env(home)
+    repo = tmp_path
+    # `git init` without `-b` works on ancient git (< 2.28); the branch is
+    # renamed to `main` after the first commit via `git branch -m`, which works
+    # regardless of the platform's default initial branch name.
+    _run_git(repo, "init", env=env)
+    _run_git(repo, "config", "user.name", "Fixture", env=env)
+    _run_git(repo, "config", "user.email", "fixture@example.com", env=env)
+
+    # 3 commits on main, authored by Alice (reachable from HEAD).
+    n_alice = 3
+    for i in range(n_alice):
+        _commit_as(repo, "Alice", f"alice {i}", env=env)
+        if i == 0:
+            # Normalize the initial branch name once the first commit exists.
+            _run_git(repo, "branch", "-m", "main", env=env)
+
+    # A separate `feature` branch with commits by Bob that are NOT merged back
+    # into main, so they are unreachable from HEAD.
+    _run_git(repo, "checkout", "-b", "feature", env=env)
+    for i in range(5):
+        _commit_as(repo, "Bob", f"bob {i}", env=env)
+    _run_git(repo, "checkout", "main", env=env)
+
+    stats = gs.get_git_statistics(repo)
+
+    # total_commits is HEAD-scoped: only Alice's commits count.
+    assert stats["total_commits"] == n_alice
+
+    # The exact invariant issue #764 demands: no contributor can exceed the
+    # total commit count (the --all bug let a top contributor exceed it).
+    for c in stats["top_contributors"]:
+        assert c["commits"] <= stats["total_commits"]
+
+    # Bob's commits live only on the unmerged `feature` branch, so he must not
+    # appear; Alice is the sole contributor and owns every HEAD commit.
+    names = {c["name"] for c in stats["top_contributors"]}
+    assert "Bob" not in names
+    assert names == {"Alice"}
+    alice = next(c for c in stats["top_contributors"] if c["name"] == "Alice")
+    assert alice["commits"] == stats["total_commits"]
+
+    # The checkout-transient fields are gone entirely.
+    assert "current_branch" not in stats
+    assert "local_branches" not in stats
+    assert "remote_branches" not in stats

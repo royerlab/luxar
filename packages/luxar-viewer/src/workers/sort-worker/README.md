@@ -26,22 +26,26 @@ The facade `workers/sort-worker.ts` (entry point bundled by Vite's `?worker` imp
 ### Module Layout
 
 **`sort-worker.ts`** (facade) — Vite `?worker` entry point:
+
 - Imports task helpers from `./sort-worker/<file>.ts`
 - Constructs `workerAPI` object (binds `state` to each task)
 - `expose(workerAPI)` for Comlink RPC
 
 **`sort-worker/state.ts`** — Shared mutable context:
+
 - `wasm: WasmModule | null` — WASM module instance (compiled or TypeScript fallback)
 - `nodes: Map<string, RegisteredNode>` — per-node center registry (nodeId → { generation, centers3, count })
 - `requireWasm(ctx)` — throws when `ctx.wasm` is null (used before `initialize()`)
 - `NOT_INITIALIZED_MSG` — single source of truth for the error message
 
 **`sort-worker/initialize.ts`** — One-time bootstrap:
+
 - Honors embedder-relocated WASM shim URL via `setWasmJsUrl(wasmPath)` (the main-thread override does NOT cross the worker boundary)
 - Loads compiled WASM with automatic TypeScript fallback: `ctx.wasm = await initWasm()`
 - Returns `{ wasmFallback: boolean }` to the main thread
 
 **`sort-worker/sorting.ts`** — Task bodies (called via Comlink RPC):
+
 - `registerNode(ctx, params)` — store/refresh a node's centers
 - `sortNode(ctx, params)` — compute back-to-front ordering, return transferred result or null (stale-drop)
 - `releaseNode(ctx, nodeId)` — drop a node's registration
@@ -51,17 +55,18 @@ The facade `workers/sort-worker.ts` (entry point bundled by Vite's `?worker` imp
 
 ```typescript
 {
-  wasm: WasmModule | null;                   // WASM module (compiled or TS fallback)
-  nodes: Map<string, RegisteredNode>;        // nodeId → { generation, centers3, count }
+  wasm: WasmModule | null; // WASM module (compiled or TS fallback)
+  nodes: Map<string, RegisteredNode>; // nodeId → { generation, centers3, count }
 }
 ```
 
 **RegisteredNode**:
+
 ```typescript
 {
-  generation: number;       // Per-node monotonic non-noop commit counter
-  centers3: Float32Array;   // Projected 3D centers [count * 3], TRANSFERRED from main thread
-  count: number;            // Number of elements
+  generation: number; // Per-node monotonic non-noop commit counter
+  centers3: Float32Array; // Projected 3D centers [count * 3], TRANSFERRED from main thread
+  count: number; // Number of elements
 }
 ```
 
@@ -91,16 +96,18 @@ The facade `workers/sort-worker.ts` (entry point bundled by Vite's `?worker` imp
 `registerNode(ctx: SortWorkerCtx, params: RegisterNodeParams): void`
 
 **Parameters**:
+
 ```typescript
 {
-  nodeId: string;           // Node identity (mesh UUID on the main thread)
-  generation: number;       // Per-node monotonic non-noop commit counter
-  centers3: Float32Array;   // Projected 3D centers [count * 3] — TRANSFERRED
-  count: number;            // Number of elements
+  nodeId: string; // Node identity (mesh UUID on the main thread)
+  generation: number; // Per-node monotonic non-noop commit counter
+  centers3: Float32Array; // Projected 3D centers [count * 3] — TRANSFERRED
+  count: number; // Number of elements
 }
 ```
 
 **Flow**:
+
 1. Clamp `count` to `Math.min(count, Math.floor(centers3.length / 3))` (safety)
 2. Log a warning if clamped
 3. Store/replace `ctx.nodes.set(nodeId, { generation, centers3, count })`
@@ -114,15 +121,17 @@ The facade `workers/sort-worker.ts` (entry point bundled by Vite's `?worker` imp
 `sortNode(ctx: SortWorkerCtx, params: SortParams): SortResult | null`
 
 **Parameters**:
+
 ```typescript
 {
-  nodeId: string;           // Node identity
-  generation: number;       // Generation this request was issued for (stale-drop guard)
-  modelView: Float32Array;  // Column-major 4x4 model-view matrix [16]
+  nodeId: string; // Node identity
+  generation: number; // Generation this request was issued for (stale-drop guard)
+  modelView: Float32Array; // Column-major 4x4 model-view matrix [16]
 }
 ```
 
 **Flow**:
+
 1. `requireWasm(ctx)` — throws if not initialized
 2. Lookup `node = ctx.nodes.get(nodeId)`
 3. **Stale-drop**: return `null` when `!node || node.generation !== params.generation`
@@ -131,6 +140,7 @@ The facade `workers/sort-worker.ts` (entry point bundled by Vite's `?worker` imp
 6. Return TRANSFERRED result: `transfer({ generation: node.generation, ordering, kernelMs, workerMs }, [ordering.buffer])`
 
 **Timing**:
+
 - `kernelMs` — time spent inside the backend `sort_splats_by_depth` call (includes wasm-bindgen boundary copies for compiled WASM; pure kernel for TS fallback)
 - `workerMs` — whole `sortNode` body duration (registry lookup + output allocation + kernel)
 - `boundaryMs = workerMs - kernelMs` — worker-side overhead around the backend call (computed on the main thread, see depth-sort-coordinator.ts line 561)
@@ -169,6 +179,7 @@ Clears `ctx.nodes.clear()`. Called on dataset switch / app teardown (main thread
 ## WASM Backend
 
 The worker uses the same `wasm/` module as the data workers:
+
 - `initWasm()` — loads compiled WASM with automatic TypeScript fallback
 - `isWasmFallback(wasm)` — true when running the TS fallback
 - `wasm.sort_splats_by_depth(centers3, modelView, ordering, count)` — the depth-sort kernel
@@ -213,6 +224,7 @@ The worker uses the same `wasm/` module as the data workers:
 ### Per-Frame Scheduler (depth-sort-coordinator.ts)
 
 `evaluateDepthSortPerFrame()` (line 695) — registered as the `'depth-sort-scheduler'` per-frame callback:
+
 - Compares live camera pose against `lastSortAxis` / `lastSortOffset` for each registered node
 - Dispatches a re-sort via `scheduleSort()` when the angle or translation threshold is crossed
 
@@ -268,6 +280,7 @@ Every task except `initialize()` calls `requireWasm(ctx)`, which throws when `ct
 ### Timing Split (Perf Campaign)
 
 The profiler metadata captures a four-way timing split:
+
 - `kernelMs` — inside the backend call (worker clock)
 - `boundaryMs` — worker overhead around the kernel (worker clock)
 - `queueMs` — Comlink RPC + structured clone + event-loop queueing (main clock - worker clock)

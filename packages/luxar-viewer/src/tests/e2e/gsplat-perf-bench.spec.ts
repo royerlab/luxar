@@ -19,7 +19,11 @@
  * Per scenario we record:
  *   - JS frame time stats (median, p95, p99, mean, min, max) over a
  *     fixed sample window with a continuous orbit running
- *   - First-render cost (one-shot, measured separately)
+ *   - A warmed post-settle one-shot frame interval (`postSettleFrameMs`,
+ *     measured separately). This is NOT a cold first render: by the time
+ *     it runs, injection/navigation has already uploaded textures,
+ *     compiled the material/pipeline, and drawn at least one frame, so
+ *     it does NOT include upload / compilation / initial-draw cost.
  *   - `elementCount` — the capacity-CLAMPED drawn count reported by
  *     the injector / summed from `visibleSplatCount` (never the
  *     requested count; maxTextureSize caps a node at ≈16.8M splats)
@@ -31,11 +35,11 @@
  *     `getSceneLoader().getProfiler().getDepthSortCompletions()`: the
  *     monotonic completion total plus the drained per-completion `lastMs`
  *     series (→ sortCount, sort-latency median/p95). This dedicated stream
- *     (issue #711) records one event per applied ordering — unlike the
- *     seq-merged 'Depth Sort' root's `count`, it does not undercount
- *     multi-completion frames or drop late resolves. Each event MAY also
- *     carry numeric `kernelMs`/`boundaryMs`/`queueMs` — recorded when
- *     present, absence tolerated.
+ *     (issue #711) records one event per applied ordering rather than only the
+ *     aggregate 'Depth Sort' root, so multi-completion frames retain every
+ *     latency sample. Each event MAY also carry numeric
+ *     `kernelMs`/`boundaryMs`/`queueMs` — recorded when present, absence
+ *     tolerated.
  *   - L8 GATE PROBE (10M scenario only): every sampled frame is
  *     classified 'sorting-adjacent' (an ordering apply landed within
  *     ±1 frame, detected via a depth-sort completion this frame) vs
@@ -45,7 +49,9 @@
  *
  * No hard assertions on timings (record-only, like the line bench) —
  * only structural sanity: reachable scenarios produced samples, at
- * least MIN_FRAMES frames, and a non-empty GPU renderer string.
+ * least MIN_FRAMES frames, a non-empty GPU renderer string, a non-zero
+ * drawn element count, and (for `requiresDepthSort` scenarios on a real
+ * GPU) at least one completed depth sort during the orbit window.
  *
  * @module tests/e2e/gsplat-perf-bench.spec
  */
@@ -57,6 +63,12 @@ import { fileURLToPath } from 'url';
 
 import { test, expect, type Page } from '@playwright/test';
 import { waitForLuxarReady } from './helpers';
+// Origin serving the repo root (the perf config boots
+// `python3 -m http.server 9000` there). Overridable via
+// `LUXAR_PERF_DATA_BASE` for the case where port 9000 is already held
+// by a foreign document root — Playwright's `reuseExistingServer`
+// would otherwise silently reuse it and 404 every dataset.
+import { PERF_DATA_BASE as DATA_BASE } from './perf-data-base';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const VIEWER_ROOT = path.resolve(__dirname, '../../..');
@@ -71,8 +83,8 @@ function currentCommitSha(): string {
 
 /**
  * Scenario shapes:
- *  - 'synthetic': bootstrap a tiny zarr, then push a clustered
- *    points/gsplats cloud into the live scene via
+ *  - 'synthetic': boot the viewer with NO dataset, then push a
+ *    clustered points/gsplats cloud into the live scene via
  *    `__luxarDebug.injectSyntheticScene(...)` and orbit-sample.
  *  - 'zarr-orbit': load a real dataset and orbit-sample it.
  *  - 'zarr-ladder': load a real progressive (additive-ladder) dataset
@@ -85,20 +97,28 @@ type ScenarioSpec =
       kind: 'synthetic';
       id: string;
       label: string;
-      /** Lightweight zarr URL used to bootstrap the viewer before injection. */
-      bootstrapUrl: string;
       geometry: 'points' | 'gsplats';
       count: number;
       seed: number;
       blending: string;
       /** Attach the L8 gate probe fields to this scenario's row. */
       l8Probe?: boolean;
+      /**
+       * Gate a hard assertion that at least one depth sort completed during
+       * the orbit window (relaxed on a software rasterizer).
+       */
+      requiresDepthSort?: boolean;
     }
   | {
       kind: 'zarr-orbit';
       id: string;
       label: string;
       url: string;
+      /**
+       * Gate a hard assertion that at least one depth sort completed during
+       * the orbit window (relaxed on a software rasterizer).
+       */
+      requiresDepthSort?: boolean;
     }
   | {
       kind: 'zarr-ladder';
@@ -107,60 +127,47 @@ type ScenarioSpec =
       url: string;
     };
 
-/**
- * Origin serving the repo root (the perf config boots
- * `python3 -m http.server 9000` there). Overridable via
- * `LUXAR_PERF_DATA_BASE` for the case where port 9000 is already held
- * by a foreign document root — Playwright's `reuseExistingServer`
- * would otherwise silently reuse it and 404 every dataset.
- */
-const DATA_BASE =
-  process.env.LUXAR_PERF_DATA_BASE ??
-  `http://localhost:${process.env.LUXAR_PERF_DATA_PORT ?? 9000}`;
-
-const BOOTSTRAP_URL = `${DATA_BASE}/datasets/examples/lines_basic_example.luxar.zarr`;
-
 const SCENARIOS: ScenarioSpec[] = [
   {
     kind: 'synthetic',
     id: 'synthetic-gsplats-1M-orbit',
     label: 'synthetic clustered gsplats, 1 M splats, normal blending, 30°/s orbit',
-    bootstrapUrl: BOOTSTRAP_URL,
     geometry: 'gsplats',
     count: 1_000_000,
     seed: 42,
     blending: 'normal',
+    requiresDepthSort: true,
   },
   {
     kind: 'synthetic',
     id: 'synthetic-gsplats-5M-orbit',
     label: 'synthetic clustered gsplats, 5 M splats, normal blending, 30°/s orbit',
-    bootstrapUrl: BOOTSTRAP_URL,
     geometry: 'gsplats',
     count: 5_000_000,
     seed: 42,
     blending: 'normal',
+    requiresDepthSort: true,
   },
   {
     kind: 'synthetic',
     id: 'synthetic-gsplats-10M-orbit',
     label: 'synthetic clustered gsplats, 10 M splats, normal blending, 30°/s orbit (L8 gate probe)',
-    bootstrapUrl: BOOTSTRAP_URL,
     geometry: 'gsplats',
     count: 10_000_000,
     seed: 42,
     blending: 'normal',
     l8Probe: true,
+    requiresDepthSort: true,
   },
   {
     kind: 'synthetic',
     id: 'synthetic-points-5M-orbit',
     label: 'synthetic clustered points, 5 M points, normal blending, 30°/s orbit (symmetry check)',
-    bootstrapUrl: BOOTSTRAP_URL,
     geometry: 'points',
     count: 5_000_000,
     seed: 42,
     blending: 'normal',
+    requiresDepthSort: true,
   },
   {
     kind: 'zarr-ladder',
@@ -173,6 +180,7 @@ const SCENARIOS: ScenarioSpec[] = [
     id: 'matrixcity-orbit',
     label: 'gsplats_interop_sog_matrixcity.luxar.zarr (168-leaf tiles), 30°/s orbit',
     url: `${DATA_BASE}/datasets/demos/gsplats_interop_sog_matrixcity.luxar.zarr`,
+    requiresDepthSort: true,
   },
 ];
 
@@ -296,7 +304,22 @@ interface ScenarioResult {
    */
   softwareRenderer: boolean;
   frameMs: FrameStats | null;
-  firstRenderMs: number | null;
+  /**
+   * A WARMED, post-settle one-shot frame interval (ms): `renderOnce()`
+   * to the next animation frame, sampled AFTER injection/navigation has
+   * already settled. This is NOT a cold first render and does NOT
+   * enclose texture upload, material/pipeline compilation, or the
+   * initial draw — those all happen before this is measured. Null when
+   * the scenario is skipped.
+   */
+  postSettleFrameMs: number | null;
+  /** Renderer frame counter sampled just before the post-settle
+   *  measurement — > 0 proves the metric is a warmed post-settle
+   *  frame, not a cold first render. Null when the renderer's frame
+   *  counter is unavailable (the WebGPU renderer keeps the frame id
+   *  elsewhere; this bench is WebGL-only, so in practice it is a
+   *  number). */
+  renderedFramesBefore?: number | null;
   depthSort: DepthSortStats | null;
   /** L8 gate probe (10M scenario only): p99 of frames within ±1 frame
    *  of an ordering apply. */
@@ -366,7 +389,7 @@ function makeSkippedResult(
     gpuRenderer: '',
     softwareRenderer: false,
     frameMs: null,
-    firstRenderMs: null,
+    postSettleFrameMs: null,
     depthSort: null,
     notes,
     skipped: true,
@@ -457,14 +480,38 @@ async function probeElementCount(page: Page, onlySynthetic: boolean): Promise<nu
   }, onlySynthetic);
 }
 
-/** One-shot first-render measurement (line-bench parity). */
-async function measureFirstRender(page: Page): Promise<number> {
+/**
+ * Warmed, post-settle one-shot frame measurement.
+ *
+ * IMPORTANT — this is NOT a first-render measurement. By the time it
+ * runs, injection/navigation has already uploaded textures, compiled
+ * the material/pipeline, and drawn at least one frame (synthetic
+ * injection kicks a render internally; the orbit/ladder scenarios
+ * render and settle first). It therefore times a warmed one-shot
+ * frame — `renderOnce()` to the next animation frame — and does NOT
+ * enclose upload / compilation / initial-draw cost. The returned
+ * `renderedFramesBefore` is the renderer's frame counter sampled
+ * before the timer starts; a value > 0 pins the "post-settle"
+ * contract (the timer begins after, not before, the first render).
+ */
+async function measurePostSettleFrame(
+  page: Page
+): Promise<{ ms: number; renderedFramesBefore: number | null }> {
   return page.evaluate(async () => {
-    const debug = (window as unknown as { __luxarDebug: { renderOnce: () => void } }).__luxarDebug;
+    const debug = (
+      window as unknown as {
+        __luxarDebug: {
+          renderOnce: () => void;
+          renderer?: { info?: { render?: { frame?: number } } };
+        };
+      }
+    ).__luxarDebug;
+    const framesBefore = debug.renderer?.info?.render?.frame;
+    const renderedFramesBefore = typeof framesBefore === 'number' ? framesBefore : null;
     const t0 = performance.now();
     debug.renderOnce();
     await new Promise<void>((r) => requestAnimationFrame(() => r()));
-    return performance.now() - t0;
+    return { ms: performance.now() - t0, renderedFramesBefore };
   });
 }
 
@@ -513,11 +560,10 @@ async function runOrbitSamplingLoop(page: Page): Promise<OrbitSamplingRaw> {
       // internal and the metadata stage fields are optional/in-flight.
       const profiler = debug.getSceneLoader?.()?.getProfiler?.();
       // Drain the profiler's dedicated MONOTONIC depth-sort completion stream
-      // (issue #711) instead of inferring per-sort events from the seq-merged
-      // 'Depth Sort' profiler root's `count`. That root undercounts frames
-      // where several leaves finish at once (an increase of 1 and of 20 both
-      // added exactly one event) and can DROP late/out-of-order resolves; the
-      // completion stream records one event per applied ordering, in order.
+      // (issue #711) instead of inferring per-sort events from the aggregate
+      // 'Depth Sort' profiler root's `count` and latest metadata. That old
+      // sampler turned an increase of 1 and an increase of 20 into one latency
+      // event; this stream records every applied ordering separately, in order.
       const readCompletions = (): {
         total: number;
         events: Array<{
@@ -700,23 +746,43 @@ function l8Classify(raw: OrbitSamplingRaw): {
 }
 
 /**
- * Synthetic scenario: bootstrap a tiny zarr, hide its geometry, inject
- * the synthetic cloud, settle, place the camera on a deterministic
- * orbit shell, then orbit-sample.
+ * Synthetic scenario: boot the viewer with NO dataset, inject the
+ * synthetic cloud directly via the debug ports (which exist at init
+ * regardless of any loaded dataset), settle, place the camera on a
+ * deterministic orbit shell, then orbit-sample. Self-contained — needs
+ * no external zarr, so it never silently skips on a fresh checkout.
  */
 async function measureSyntheticScenario(
   page: Page,
   scn: Extract<ScenarioSpec, { kind: 'synthetic' }>
 ): Promise<ScenarioResult> {
   const notes: string[] = [];
-  await page.goto(`/?src=${scn.bootstrapUrl}&renderer=${BACKEND}&debug&dpr=1`, {
+  await page.goto(`/?renderer=${BACKEND}&debug&dpr=1`, {
     timeout: 300_000,
   });
   await waitForLuxarReady(page, 120_000);
 
-  // Hide every bootstrap geometry node BEFORE injection so the
-  // synthetic cloud is the only rendered workload (line-bench parity:
-  // hiding, not removing, keeps loader bookkeeping intact).
+  // The no-dataset boot routes an empty `src` to "must-browse" and opens
+  // the DatasetBrowser modal; dismiss it via its own close button so its
+  // backdrop-blurred overlay doesn't composite over the canvas during
+  // sampling and inflate the synthetic frame times.
+  await page.evaluate(() => {
+    document.querySelector<HTMLElement>('.luxar-dataset-browser__close-btn')?.click();
+  });
+  // Verify the panel is actually gone (DatasetBrowser.close() removes it
+  // from the DOM). A silently-failed dismissal — say the button's class
+  // changes — would corrupt every synthetic measurement without any
+  // signal, which is the exact failure class this bench must not have;
+  // the throw surfaces as a measurement error and fails the scenario.
+  await page.waitForFunction(() => !document.getElementById('luxar-dataset-browser'), undefined, {
+    timeout: 5_000,
+  });
+
+  // Hide any pre-existing geometry nodes BEFORE injection so the
+  // synthetic cloud is the only rendered workload. With a no-dataset
+  // boot there is normally nothing to hide; kept as a harmless,
+  // future-proof guard (line-bench parity: hiding, not removing, keeps
+  // loader bookkeeping intact).
   const injected = await page.evaluate(
     async (spec: { type: 'points' | 'gsplats'; count: number; seed: number; blending: string }) => {
       const dbg = (window as unknown as { __luxarDebug?: any }).__luxarDebug;
@@ -748,9 +814,10 @@ async function measureSyntheticScenario(
   }
 
   // Deterministic orbit shell: the synthetic cloud is clustered inside
-  // ~[-100, 100]^3 around the origin, but the bootstrap zarr framed the
-  // camera for ITS bounds. Re-aim at the origin from a fixed distance
-  // so every run (and every count) starts the orbit from the same pose.
+  // ~[-100, 100]^3 around the origin, but the no-dataset boot leaves the
+  // camera at its default empty-scene framing. Re-aim at the origin from
+  // a fixed distance so every run (and every count) starts the orbit
+  // from the same pose.
   await page.evaluate(() => {
     const dbg = (window as unknown as { __luxarDebug?: any }).__luxarDebug;
     const pose = dbg.app.getCameraPose();
@@ -769,7 +836,7 @@ async function measureSyntheticScenario(
 
   const apiProbe = await probeApiSurface(page);
   const gpuRenderer = await probeGpuRenderer(page);
-  const firstRenderMs = await measureFirstRender(page);
+  const postSettle = await measurePostSettleFrame(page);
   const raw = await runOrbitSamplingLoop(page);
 
   const result: ScenarioResult = {
@@ -783,7 +850,8 @@ async function measureSyntheticScenario(
     gpuRenderer,
     softwareRenderer: isSoftwareRenderer(gpuRenderer),
     frameMs: statsOf(raw.frameDtMs),
-    firstRenderMs,
+    postSettleFrameMs: postSettle.ms,
+    renderedFramesBefore: postSettle.renderedFramesBefore,
     depthSort: depthSortStatsOf(raw),
     notes,
     skipped: false,
@@ -836,7 +904,7 @@ async function measureZarrOrbitScenario(
 
   const apiProbe = await probeApiSurface(page);
   const gpuRenderer = await probeGpuRenderer(page);
-  const firstRenderMs = await measureFirstRender(page);
+  const postSettle = await measurePostSettleFrame(page);
   const raw = await runOrbitSamplingLoop(page);
   const elementCount = await probeElementCount(page, false);
 
@@ -856,7 +924,8 @@ async function measureZarrOrbitScenario(
     gpuRenderer,
     softwareRenderer: isSoftwareRenderer(gpuRenderer),
     frameMs: statsOf(raw.frameDtMs),
-    firstRenderMs,
+    postSettleFrameMs: postSettle.ms,
+    renderedFramesBefore: postSettle.renderedFramesBefore,
     depthSort: depthSortStatsOf(raw),
     notes,
     skipped: false,
@@ -1099,7 +1168,7 @@ async function measureZarrLadderScenario(
 
   const apiProbe = await probeApiSurface(page);
   const gpuRenderer = await probeGpuRenderer(page);
-  const firstRenderMs = await measureFirstRender(page);
+  const postSettle = await measurePostSettleFrame(page);
   const elementCount = await probeElementCount(page, false);
 
   if (elementCount === 0) {
@@ -1120,7 +1189,8 @@ async function measureZarrLadderScenario(
     // The scenario's headline frame stats ARE the during-load window —
     // that's what this scenario exists to measure.
     frameMs: statsOf(ladderRaw.loadWindowDtMs),
-    firstRenderMs,
+    postSettleFrameMs: postSettle.ms,
+    renderedFramesBefore: postSettle.renderedFramesBefore,
     depthSort: null,
     ladder: {
       wallMsToLadderComplete: ladderRaw.wallMsToLadderComplete,
@@ -1155,9 +1225,9 @@ async function measureScenario(page: Page, scn: ScenarioSpec): Promise<ScenarioR
  * test: each scenario appends its row as it finishes, so a `-g`-filtered
  * partial run still produces a valid, additive file.
  *
- * NOTE: the line bench still writes its file wholesale, so running the
- * line bench AFTER this one for the same SHA drops these rows. Run this
- * spec last (or `-g`-filter per bench) when you want a combined file.
+ * NOTE: the line bench merge-writes too (keyed the same way), so the
+ * two benches can run in either order for the same SHA without
+ * clobbering each other's rows.
  */
 function mergeScenarioRow(outPath: string, row: ScenarioResult): void {
   const key = `${row.scenarioId}/${row.backend}`;
@@ -1238,14 +1308,17 @@ for (const scn of SCENARIOS) {
     // Skip-if-404: an absent demo dataset is an environment condition,
     // not a regression. Recorded in the JSON as a skipped row so the
     // diff shows the gap instead of silently omitting the scenario.
-    const probeUrl = scn.kind === 'synthetic' ? scn.bootstrapUrl : scn.url;
-    if (!(await urlExists(probeUrl))) {
+    // ONLY zarr scenarios have an external dataset — synthetic scenarios
+    // build their geometry entirely in JS via the debug ports and must
+    // NEVER silently skip on a fresh checkout (that was the whole point
+    // of issue #705), so they bypass this guard.
+    if (scn.kind !== 'synthetic' && !(await urlExists(scn.url))) {
       const row = makeSkippedResult(scn, 'dataset not reachable', [
-        `dataset URL not reachable: ${probeUrl}`,
+        `dataset URL not reachable: ${scn.url}`,
       ]);
       mergeScenarioRow(outPath, row);
       logScenario(row);
-      test.skip(true, `dataset not reachable: ${probeUrl}`);
+      test.skip(true, `dataset not reachable: ${scn.url}`);
       return;
     }
 
@@ -1306,5 +1379,37 @@ for (const scn of SCENARIOS) {
     ).toBeGreaterThanOrEqual(frameFloor);
     expect(result.gpuRenderer, `${scn.id}: empty GPU renderer string`).not.toBe('');
     expect(result.elementCount, `${scn.id}: zero drawn elements`).toBeGreaterThan(0);
+
+    // A scenario that requires depth sorting must complete at least one
+    // sort round-trip during the orbit window. The profiler's sort count
+    // stays 0 when the scheduler never dispatches or the SortWorker never
+    // returns within the window — the "green depth-sort benchmark that
+    // actually measured UNSORTED rendering" failure this guards against.
+    // Relaxed on a software rasterizer for the same reason as the
+    // frame-count floor: one multi-million-element frame can take seconds
+    // there, so the orbit may not cross the re-sort threshold within the
+    // sample window (recorded as a note).
+    const requiresDepthSort = 'requiresDepthSort' in scn && scn.requiresDepthSort === true;
+    if (requiresDepthSort && !result.skipped && !result.softwareRenderer) {
+      expect(
+        result.depthSort?.sortCount ?? 0,
+        `${scn.id}: requires depth sorting but no sort completed during the orbit window`
+      ).toBeGreaterThan(0);
+    }
+
+    // Probe (issue #706): the post-settle frame metric is captured AFTER
+    // injection/navigation already rendered — assert the renderer had
+    // already drawn at least one frame when we sampled, so the number is
+    // honestly a warmed frame and never mislabeled as a cold first render.
+    if (
+      !result.skipped &&
+      result.renderedFramesBefore !== null &&
+      result.renderedFramesBefore !== undefined
+    ) {
+      expect(
+        result.renderedFramesBefore,
+        `${scn.id}: post-settle frame measured before any render (renderedFramesBefore=${result.renderedFramesBefore})`
+      ).toBeGreaterThan(0);
+    }
   });
 }
