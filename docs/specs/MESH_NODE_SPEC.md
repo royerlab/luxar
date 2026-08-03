@@ -557,14 +557,21 @@ native dtype, not a dtype widen.
 
 `uint8`/`float16` **scalars** are uploaded as **`float32`** on the attribute path for the same root cause:
 three r184 has no itemSize-1 vertex format for a `Uint8Array` or a native `Float16Array`
-(`typeArraysToVertexFormatPrefixForItemSize1` maps neither → "Vertex format not supported yet"), and their
-1-/2-byte strides violate the multiple-of-4 rule regardless. (Even three's own `Float16BufferAttribute` is
-`Uint16Array`-backed, so it would bind as an itemSize-1 `uint32` and *silently* reinterpret the half-float
-bits — an unusable colormap index with no error, which is worse; the mesh path uses a native
-`Float16Array` scalar and so hits the loud lookup miss.) `float32` scalars bind directly as `float32`
-(4-byte stride). Mesh is the first geometry type to feed these dtypes to *vertex attributes* — the
-siblings route colors/scalars through the RGBA32F element texture — which is why nothing in the shipped
-tree has hit this before.
+(`typeArraysToVertexFormatPrefixForItemSize1` maps neither → "Vertex format not supported yet" and a
+broken pipeline). The partial escape hatches r184 does ship rescue nothing here. A **non-normalized**
+`Uint8Array` is caught by the buffer-side "patch for INT16 and UINT16" widen, which rebuilds the whole
+buffer as `Uint32Array` and binds an **integer** `uint32` attribute — four bytes per scalar, the exact
+memory of the `float32` upload, but integer-typed in the shader graph (`getTypeFromArray` → `uint`)
+instead of the `float` the material reads; a **normalized** one skips that widen and dies on the format
+lookup miss, with a 1-byte stride that violates WebGPU's multiple-of-4 rule anyway. Three's own
+`Float16BufferAttribute` (which is `Uint16Array`-backed) fails just as loudly, only more confusingly:
+`getTypeFromAttribute` special-cases it to a `float` shader input while the attribute path binds a
+`uint32` vertex format, so `createRenderPipeline` rejects the input/format class mismatch. Widening to
+`float32` (4-byte stride, valid on both backends, `float`-typed everywhere) sidesteps the whole minefield
+at zero memory cost over the only native path that even binds. `float32` scalars bind directly as
+`float32`. Mesh is the first geometry type to feed these dtypes to *vertex attributes* — the siblings
+route colors/scalars through the RGBA32F element texture — which is why nothing in the shipped tree has
+hit this before.
 
 There is **one** `color` attribute regardless of the source component count, and hence **one** shader that
 reads it as a `vec4`. RGB input still carries a per-vertex opacity of `1.0` for free — the same *"1.0 for
@@ -825,6 +832,24 @@ identity). That identity fails for a mesh — `gl_VertexID` differs at every tri
 linearly-interpolated `vElementId` would arrive fractional and `Math.round` in the readback would resolve
 to arbitrary wrong vertices. Follow the LINE pick precedent (`rendering/picking/line/pick.tsl.ts`), not
 the point pick, whose implicit-identity interpolation is unsafe for a shared-vertex indexed draw.
+
+**Provoking-vertex convention (which corner wins).** A `flat` varying is sourced from **one** corner of
+the triangle, and the two backends do not default to the same one: OpenGL ES 3.0 (the GLSL backend) fixes
+the provoking vertex to the **last** vertex of the primitive, while the WGSL `@interpolate( flat )` three
+emits for `.setInterpolation('flat')` defaults to `first`-vertex sampling. Left there, the same click on
+the same triangle `(i0, i1, i2)` reports `i2` on WebGL and `i0` on WebGPU. The pick **contract** at
+vertex granularity is therefore "a corner vertex of the front-most triangle under the cursor" — the
+cursor is over the face, not a vertex, so every corner is an equally valid answer, and no consumer may
+assume a specific one. To keep the backends bit-identical where the platform allows, the GLSL pick path
+enables the `WEBGL_provoking_vertex` extension when present and sets
+`provokingVertexWEBGL(FIRST_VERTEX_CONVENTION_WEBGL)`, aligning WebGL with WebGPU's first-vertex rule —
+context-wide state, but safe: every other `flat` varying in the shipped materials is a per-**instance**
+constant (point/gsplat quads, line segments), identical at all corners, so the convention flip is
+observable only by mesh. Where the extension is unavailable the last-vs-first divergence stands as a
+**documented exception** to §6.4's matching-output rule, and pick parity tests must assert the returned
+id is *a corner of the expected face* (membership), not one exact corner. (Making the id
+corner-independent outright would need per-corner pick data — a de-indexed shadow geometry, 3× pick
+memory — abandoning the shared-`BufferGeometry` design above for the pick pass alone; rejected for v1.)
 
 **Pick fragment output.** The `mesh-pick.fragment` writes the same shared vec4 the readback decodes —
 `vec4(vNodeId, vElementId.x, brightness, vElementId.y)` — with `brightness` the fragment's
@@ -1128,6 +1153,10 @@ A reviewer should treat a `| 'mesh'` appearing in any of those five as a defect.
       **front-viewed** face (both lit symmetrically), NOT collapsed to flat `uAmbient` — verified to go
       **red** without the §6.2 `gl_FrontFacing` normal flip (the back face shades the inverted,
       `uAmbient`-collapsing gradient instead of the front-facing one)
+- [ ] TS unit / E2E (pick corner contract, §6.5): a pick on a mesh triangle resolves to **a corner
+      vertex of that face** — assert membership in `(i0, i1, i2)`, never one exact corner (the provoking
+      vertex is backend-dependent: last on WebGL, first on WebGPU; `WEBGL_provoking_vertex` aligns them
+      only where available)
 - [ ] Codegen snapshots: 6 new variants = 12 files (§6.4) — incl. the per-blend-mode
       `mesh-additive`/`mesh-max` variants
 - [ ] Fixture: `tests/fixtures/generate_test_data.py` gains a mesh fixture (auto-picked up by
