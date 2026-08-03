@@ -170,14 +170,15 @@ plus the standard render attrs already handled by `apply_default_render_attrs` a
 MESH_RESERVED_ATTRS = frozenset({
     "type", "n_vertices", "n_faces", "ndim",
     "has_normals", "normal_dims", "has_colors", "has_scalars", "has_labels",
-    "shading", "double_sided", "position_bounds",
+    "has_image_labels", "shading", "double_sided", "position_bounds",
 })
 ```
 
 Note the sibling sets reserve `has_labels` but **not** `has_image_labels`, even though all three
-writers stamp it — so a user-supplied `has_image_labels` attr can currently clobber the writer's
-presence truth on any geometry type. Mesh **mirrors the siblings** (per the symmetry rule) rather than
-unilaterally diverging; the gap is worth a separate four-type fix, and is noted in §9.
+writers stamp it. No clobber is actually possible — `validate_render_attrs` rejects the key as
+*unknown* when it appears in no set at all — so the omission only costs the accurate "reserved"
+error message. Mesh reserves it anyway, so its set covers every presence flag it stamps; aligning
+the three sibling sets is a separate sweep, noted in §9.
 
 ### 3.4 Normals are 3D, positions are nD
 
@@ -225,8 +226,12 @@ convention (fail-fast, before any zarr group is created):
   `F >= 1`. Mirrors the `line_type='indexed'` index gate at `geometry_writers/lines.py:134-170`, which
   is the closest precedent and already encodes each of these traps.
 - `validate_normals_for_writing(normals, n_vertices)` — shape `(V, 3)`, finite. Zero-length normals are
-  **warned**, not rejected (degenerate triangles legitimately produce them), and are renormalized to the
-  flat face normal at render time.
+  **warned**, not rejected (degenerate triangles legitimately produce them). Render-time handling is
+  **pointwise, not per-face**: on a shared-vertex indexed mesh the interpolated normal blends toward the
+  neighbouring vertices' directions, so the fragment shader simply epsilon-guards its `normalize` — a
+  fragment whose interpolated normal is near zero length falls back to the §6.2 derivative flat normal.
+  Shading near a degenerate vertex is therefore locally distorted rather than cleanly flat; the warning
+  exists so authors fix the normals instead of relying on the guard.
 - `normal_dims` (§3.4) — exactly 3 entries, integers, distinct, each `0 <= i < ndim`. Required when
   `normals` is supplied; rejected when it is not.
 
@@ -242,6 +247,15 @@ Tests mirror `validation/tests/test_lines_validation.py`, which is already param
 `(factory, error_pattern, test_id)` triples — reuse that shape so each rejection in this section gets
 its own named case, and **verify each fails before the validator exists** (a test that passes against
 a no-op validator is vacuous).
+
+**Loader-side validation (viewer).** The validators above run at write time and protect only stores this
+writer produced; the viewer loads arbitrary — externally produced or corrupted — stores and hands `faces`
+straight to the §5.4 kernels. An out-of-range face index **panics** the Rust kernel (the crate is
+`panic = "abort"`, so the trap takes down the whole WASM module) and silently corrupts the TS backend
+(out-of-bounds reads yield `undefined`). The mesh loader must therefore structurally validate after
+decode, before either backend is invoked: `vertices`/`faces` shapes against `n_vertices`/`n_faces`,
+`faces` length a multiple of 3, every face index `< V`, and `normal_dims` well-formed whenever normals
+are present — failing the node with a `LoaderError` (one node lost, not the scene) instead of trapping.
 
 ### 3.6 Authoring lint
 
@@ -265,6 +279,7 @@ scene.add_mesh(
     vertices: NDArray[np.float32],          # (V, D)
     faces: NDArray[np.uint32],              # (F, 3)
     normals: NDArray[np.float32] | None = None,
+    normal_dims: Sequence[int] | None = None,   # required iff normals is given (§3.4)
     colors: NDArray | Sequence[float] | None = None,
     scalars: NDArray[np.float32] | float | None = None,
     *,
@@ -281,6 +296,11 @@ scene.add_mesh(
 viewer's §6.2 rule falls back to the flat derivative normal at render time (no write-time rewrite); an
 explicit `"flat"` is always honored and renders the faceted derivative-normal surface even when `normals`
 is present (§3.4, §6.2).
+
+`normal_dims` is §3.4's required companion attr, surfaced as an **explicit keyword** because it has no
+other way in: it is a member of `MESH_RESERVED_ATTRS` (§3.3), so passing it through `**attrs` fails the
+write as a reserved-key collision. The adder forwards it to the writer alongside `normals`, and §3.5
+validates the pair (required when `normals` is supplied, rejected when it is not).
 
 Placement mirrors the other three exactly:
 
@@ -466,7 +486,8 @@ model is deliberately minimal and light-free:
   this stored↔flat choice is a **compile-time shader variant** (§6.4's `mesh.fragment` vs
   `mesh-flat-normal.fragment`), selected identically by both the GLSL and TSL backends — so `shading`
   drives the variant, it is not inert metadata. The selection is computed **once** per node (in
-  `createMeshNode`, from `shading` and the active `displayDims`) and handed to both material factories, so
+  `createMeshNode`, from `shading`, the stored normals' presence and `normal_dims`, and the active
+  `displayDims`) and handed to both material factories, so
   the two backends never re-derive it independently. Its two conjuncts differ in stability: `shading` is
   view-independent, so a `shading == "flat"` node is statically the flat variant and never swaps; the
   `normal_dims == displayDims` conjunct is view-dependent, so a `shading == "smooth"` node re-evaluates the
@@ -499,8 +520,10 @@ model is deliberately minimal and light-free:
 
 v1 supports `opaque`, `normal`, `additive`, `luminous`, and `max`.
 
-`volumetric` is **rejected at load** with a clear message: it is an emission–absorption model over
-per-element optical depth and has no meaning for an opaque surface.
+`volumetric` is **not supported**: it is an emission–absorption model over per-element optical depth and
+has no meaning for an opaque surface. The observable behavior is a **one-time warning naming the node,
+then an `opaque` fallback**, applied in `createMeshNode` — a warning rather than a load failure, for the
+inheritance reason at the end of this section.
 
 `normal` on a mesh is drawn **without per-triangle depth sorting** in v1. The depth-sort coordinator
 sorts *instances* via `aSortedIndex`; the mesh analog is permuting triangle triples in the index
@@ -533,9 +556,9 @@ rule. Writing `blending_mode="opaque"` into every mesh node would silently break
 So: mesh joins the other three in *not* stamping the attr, and diverges only in the viewer-side `??`
 fallback. Ancestor inheritance is preserved exactly.
 
-`volumetric` rejection belongs in the same place — `createMeshNode`, warn and fall back to `opaque` —
-**not** in the writer, for the same reason: the mode may be inherited from an ancestor the mesh node
-knows nothing about at write time.
+`volumetric` handling belongs in the same place — `createMeshNode`, warn once and fall back to `opaque`
+(§6.3 above) — **not** in the writer, for the same reason: the mode may be inherited from an ancestor the
+mesh node knows nothing about at write time.
 
 ### 6.4 Materials
 
@@ -582,7 +605,9 @@ natural element).
 ## 7. Loading
 
 v1 uses a **whole-node loader**: fetch `vertices`, `faces` and the optional attribute arrays in full,
-decode, and hold them. No spatial index, no progressive refinement, no chunk-bounds query.
+decode, and hold them. No spatial index, no progressive refinement, no chunk-bounds query. Immediately
+after decode the arrays get §3.5's loader-side structural validation, before anything reaches the §5.4
+kernels.
 
 Justification: meshes in this domain are typically ≤ a few million triangles and fit comfortably; the
 dual-index machinery in `lines-spatial-index-loader.ts` (1010 LOC) exists because line datasets reach
@@ -712,7 +737,7 @@ error to catch it:
 | `types/partition-group.ts:48` — `display_type` union | Mesh is excluded from `kind=partition` (§9) |
 | `rendering/gpu-buffer-pool/pool-stats.ts:22` — `type` union | Mesh doesn't use the buffer pool (§2.1) |
 | `data/loaders/spatial-query/spatial-query-builder.ts` — chunk-query construction | No spatial index in v1 (§7). **Note:** this is the *query builder* only — `tolerance-computer.ts` in the same folder **does** need a mesh arm (§5.2.1); don't let the shared folder mislead you |
-| `ui/layers/absorption-range.ts:90,98` | Mesh rejects `volumetric` blending (§6.3) |
+| `ui/layers/absorption-range.ts:90,98` | Mesh doesn't support `volumetric` blending — warn + `opaque` fallback (§6.3) |
 
 A reviewer should treat a `| 'mesh'` appearing in any of those five as a defect.
 
@@ -736,7 +761,8 @@ A reviewer should treat a `| 'mesh'` appearing in any of those five as a defect.
       broadcast color/scalar, `extend_to_all`, reader
 - [ ] Rust: `mesh_vertex_visibility_mask` / `compact_visible_faces` unit tests incl. the non-finite rule
 - [ ] TS unit: loader, geometry assembly, cull correctness, colormap fail-closed guard,
-      Rust↔TS kernel parity
+      Rust↔TS kernel parity, corrupt-store rejection (out-of-range face index → `LoaderError`, not a
+      WASM trap, §3.5), and the `volumetric`→`opaque` fallback warning (§6.3)
 - [ ] TS unit: **flat-vs-smooth on the same normal-bearing mesh** — one mesh with valid stored normals
       (`normal_dims == displayDims`) selects the stored-normal `mesh.fragment` variant under
       `shading="smooth"`, and the SAME mesh under `shading="flat"` selects `mesh-flat-normal.fragment`
@@ -757,8 +783,8 @@ A reviewer should treat a `| 'mesh'` appearing in any of those five as a defect.
 
 ## 9. Explicitly out of scope
 
-Each of these is a deliberate exclusion, not an oversight. Each should error clearly rather than
-silently misbehave.
+Each of these is a deliberate exclusion, not an oversight. Each should surface clearly — an error, or
+for `volumetric` the named one-time warning + `opaque` fallback of §6.3 — rather than silently misbehave.
 
 | Excluded | Why | Natural follow-up |
 |---|---|---|
@@ -772,9 +798,11 @@ silently misbehave.
 | **Mesh import formats** (PLY/OBJ/STL/glTF) | Independent of the node type. | `luxar mesh import`, mirroring `gsplat import` |
 
 **Pre-existing gap noticed during this spec's review, not introduced by mesh:** none of
-`POINTS_/LINES_/GSPLATS_RESERVED_ATTRS` includes `has_image_labels`, though all three writers stamp it —
-so a user attr can clobber the writer's presence truth. Mesh mirrors the existing behavior (§3.3); the
-fix should be a separate four-type change so it isn't buried in the mesh diff.
+`POINTS_/LINES_/GSPLATS_RESERVED_ATTRS` includes `has_image_labels`, though all three writers stamp it.
+No clobber results — `validate_render_attrs`'s reject-unknown gate already fails such a write, just with
+the *unknown-attr* message instead of the *reserved* one — so this is an error-message gap.
+`MESH_RESERVED_ATTRS` includes the key from the start (§3.3); aligning the three sibling sets is a
+separate change so it isn't buried in the mesh diff.
 
 ---
 
