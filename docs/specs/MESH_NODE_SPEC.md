@@ -266,8 +266,16 @@ straight to the §5.4 kernels. An out-of-range face index **panics** the Rust ke
 `panic = "abort"`, so the trap takes down the whole WASM module) and silently corrupts the TS backend
 (out-of-bounds reads yield `undefined`). The mesh loader must therefore structurally validate after
 decode, before either backend is invoked: `vertices`/`faces` shapes against `n_vertices`/`n_faces`,
-`faces` length a multiple of 3, every face index `< V`, and `normal_dims` well-formed whenever normals
-are present — failing the node with a `LoaderError` (one node lost, not the scene) instead of trapping.
+`faces` length a multiple of 3, every face index in `[0, V)` — checked on the exact `u32`-typed data the
+kernels receive, after any dtype conversion, because an externally produced *signed* store's `-1` passes
+a pre-cast `< V` check and then wraps to `0xffffffff` in the cast, defeating the gate — `n_vertices <=
+2^27`, and `normal_dims` well-formed whenever normals are present — failing the node with a
+`LoaderError` (one node lost, not the scene) instead of trapping. The `n_vertices <= 2^27` check belongs
+at this gate because mesh's pick `elementId` is `gl_VertexID` (§6.5) — the one type not bounded by the
+element-texture capacity — and once a vertex ordinal reaches the pick vote-key stride (`2^27`) the vote
+key silently aliases across nodes (the largest ordinal is `n_vertices - 1`, so `n_vertices <= 2^27` is
+the exact alias-free bound: every admitted ordinal stays strictly under the stride), so the bound must
+be enforced here, not assumed from the §7 whole-load workload.
 The optional arrays get the same structural gate whenever present — `normals` shape `(V, 3)`, `colors`
 shape `(V, 3|4)`, `scalars` length `V`, and the label/image-label CSR offsets monotone and in-bounds
 (§3.2) — because they bind as enabled vertex attributes on an **indexed** draw (§6.1): an undersized
@@ -752,13 +760,17 @@ the point pick, whose implicit-identity interpolation is unsafe for a shared-ver
 **Pick fragment output.** The `mesh-pick.fragment` writes the same shared vec4 the readback decodes —
 `vec4(vNodeId, vElementId.x, brightness, vElementId.y)` — with `brightness` the fragment's
 coverage/opacity (1.0 for a fully opaque mesh), so the cross-node brightness-weighted vote still has a
-value. Depth is the **opaque-surface** case, not the brightness-as-depth one: an opaque mesh writes real
-projected depth (`gl_FragDepth = gl_FragCoord.z`, i.e. leaves the default), matching gsplat's
-surface-mode branch (`uSurfaceDepth == 1` in `rendering/picking/gsplat/shaders.ts`) rather than the
-`1.0 - clamp(brightness, 0, 1)` branch that points / lines / translucent gsplats use — otherwise every
-fully-opaque fragment collapses to depth 0 and the mesh neither self-occludes nor occludes other nodes
-correctly in the shared pick buffer. See `rendering/picking/README.md`; the `mesh-pick.fragment` codegen
-snapshot (§6.4) is the final authority.
+value. Depth is keyed on the blending mode, mirroring the gsplat pick wrapper's
+`setSurfacePickDepth(isNormalMode(mode) || isOpaqueMode(mode))` sync (`rendering/picking/README.md`):
+under the depth-ordered surface modes — `opaque` and `normal` — the mesh writes real projected depth
+(`gl_FragDepth = gl_FragCoord.z`, i.e. leaves the default), matching gsplat's surface-mode branch
+(`uSurfaceDepth == 1` in `rendering/picking/gsplat/shaders.ts`), so the front-most surface wins;
+otherwise every fully-opaque fragment collapses to depth 0 and the mesh neither self-occludes nor
+occludes other nodes correctly in the shared pick buffer. Under the commutative modes — `additive`,
+`luminous`, `max` — it writes the `1.0 - clamp(brightness, 0, 1)` brightness-as-depth that points /
+lines / commutative-mode gsplats use: real surface depth there would let a dim, barely-visible mesh in
+front depth-occlude a brighter node behind it, contradicting the brightest-wins vote. See
+`rendering/picking/README.md`; the `mesh-pick.fragment` codegen snapshot (§6.4) is the final authority.
 
 **Alpha in the pick pass — the cutout must match.** The pick material computes the **same** coverage
 `a = vAlpha · uOpacity` (§6.2), so its vertex shader binds the `color` attribute and carries an
@@ -786,9 +798,18 @@ hover tooltips resolve with no extra mapping.
 float32 24-bit mantissa (the readback recombines the halves); vertex count `V` uses the same split (see
 `rendering/picking/README.md` for the rationale). The pick readback also packs
 `nodeId * VOTE_KEY_STRIDE + elementId` for brightness-weighted voting, whose alias-free stride is `2^27`
-(`rendering/picking/picking-system/pick-render.ts`); the per-vertex id source stays comfortably under it
-because §7 loads a mesh whole at ≤ a few million triangles (vertex counts of the same order), so no mesh
-vertex-count cap is needed for the pick to stay exact.
+(`rendering/picking/picking-system/pick-render.ts`). The §7 ≤-few-million-triangles figure is a workload
+*expectation*, not an invariant: for the three texture-fed types the alias-free condition is
+*structural* — `elementId` is bounded by `getMaxElementCapacityPerNode`, well under `2^27` — whereas
+mesh's `gl_VertexID` source is bounded only by `V`. The cap is therefore *enforced*: `n_vertices <=
+2^27` at the §3.5 loader gate (fail the node with a `LoaderError`; the largest admitted ordinal
+`2^27 - 1` is the last alias-free one, and its worst-case vote key
+`(2^24 - 1) * 2^27 + 2^27 - 1 = 2^51 - 1` stays exactly representable), invoking the stride's own house
+rule that an unenforced bound is not a bound (the reason `MAX_PICK_NODE_ID` is checked at allocation,
+`rendering/picking/picking-system/pick-render.ts`). Note that `pick-render.test.ts`'s existing headroom
+test only pins the texture-*layout* maxima, so this vertex cap needs its own pin — a dedicated test
+that the vote key stays exact up to the largest admitted vertex ordinal and that a mesh with
+`n_vertices > 2^27` is rejected with a `LoaderError`.
 
 **Accepted v1 limitation.** `vElementId` is a `flat` varying, so within a triangle it resolves to that
 triangle's **provoking vertex**, not the cursor's barycentric-nearest vertex. Hovering a triangle
@@ -831,7 +852,9 @@ it later with no caller change.
      consult, and the display-space AABB (§2.2) changes under a permutation. (A defect this path
      introduces; the per-slice path never touched bounds.)
   3. re-decide the `normal` attribute per §3.4 — attach stored normals iff `shading == "smooth"` and
-     `normal_dims === displayDims`, else omit so the shader's flat-normal fallback (§6.2) takes over.
+     `normal_dims` equals the active `displayDims` element-wise (same length, same order — **not** a JS
+     `===`, which compares array identity and would silently force flat shading on every rebuild), else
+     omit so the shader's flat-normal fallback (§6.2) takes over.
      (For a `shading == "flat"` node the first conjunct is always false, so it stays the flat variant
      and this step never swaps it — §6.2.) Stored↔flat is a **compile-time
      shader variant** (§6.4's separate `mesh.fragment` / `mesh-flat-normal.fragment`), not mere attribute
@@ -992,8 +1015,9 @@ A reviewer should treat a `| 'mesh'` appearing in any of those five as a defect.
 - [ ] Rust: `mesh_vertex_visibility_mask` / `compact_visible_faces` unit tests incl. the non-finite rule
 - [ ] TS unit: loader, geometry assembly, cull correctness, colormap fail-closed guard,
       Rust↔TS kernel parity, corrupt-store rejection (out-of-range face index → `LoaderError`, not a
-      WASM trap; an undersized `normals`/`colors`/`scalars` array → `LoaderError`, §3.5), and the
-      `volumetric`→`opaque` fallback warning (§6.3)
+      WASM trap; an undersized `normals`/`colors`/`scalars` array → `LoaderError`, §3.5; `n_vertices >
+      2^27` → `LoaderError`, its own pin since `pick-render.test.ts` only covers the texture-layout
+      maxima, §6.5), and the `volumetric`→`opaque` fallback warning (§6.3)
 - [ ] TS unit (alpha chain, §6.2): an **RGBA** mesh produces **different** fragment output than the same
       mesh RGB-only (goes red if `vAlpha` is dropped — the exact "(V,4) renders like (V,3)" defect); under
       `opaque`, fragments with `a < uAlphaCutoff` are **discarded** (cutout) and survivors write alpha 1.0;
