@@ -5,7 +5,10 @@ Native Go launcher embedded in `luxar export --native`-produced bundles
 and zarr data over a local HTTP server and presents it inside a system
 WebView window. Setting `LUXAR_LAUNCHER_NO_WEBVIEW=1` falls back to the
 user's default browser (no native window) — useful for headless smoke
-tests and minimal Linux installs without `libwebkit2gtk`.
+tests. It does *not* let the launcher run without `libwebkit2gtk`: the
+prebuilt Linux binary links WebKit at build time and will not start
+without the webkit2gtk-4.0 runtime (see "Build dependencies (Linux)"
+below).
 
 The launcher forces browser revalidation for everything it serves — mutable
 `/data` responses and the unhashed viewer shell (`index.html`, wasm) alike —
