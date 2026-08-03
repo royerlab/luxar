@@ -207,7 +207,7 @@ The fitting pipeline orchestrates the entire process of fitting n-dimensional Ga
 4. Optimizer step → Update parameters
 5. Scheduler step → Adapt learning rate
 6. Convergence check → Early stopping
-7. Dynamic operations → Adaptive topology
+7. Dynamic operations → Fixed-pool relocation
 8. Best state tracking → Quality guarantee
 
 **Key Innovation:** Tracks best state throughout optimization (not just final state), ensuring quality even with non-monotonic convergence.
@@ -287,7 +287,7 @@ run_optimization_loop()
     ├─> Backward pass (gradients)
     ├─> Optimizer step (parameter update)
     ├─> Convergence check
-    ├─> Dynamic operations (topology changes)
+    ├─> Dynamic operations (fixed-pool relocation)
     └─> Best state tracking
     ↓
 OptimizationResults (best parameters + statistics)

@@ -14,6 +14,10 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import * as THREE from 'three';
+// Type-only (erased at runtime, so no clash with the dynamically imported
+// live profiler module the coordinator holds) — used to type the fake
+// profiler that pins the per-pass session lifecycle (issue #713).
+import type { UpdateProfiler, UpdateSession } from '../../../profiling/update-profiler';
 
 type SortResult = {
   generation: number;
@@ -109,10 +113,52 @@ async function applyStagedOrdering(mesh: THREE.Mesh): Promise<Uint32Array> {
   const { pumpSortedIndexOrderingApply, getActiveSortedIndexAttribute } =
     await import('../../../rendering/element-storage');
   const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
-  for (let guard = 0; pumpSortedIndexOrderingApply(geometry).more; guard++) {
+  for (let guard = 0; ; guard++) {
+    const result = pumpSortedIndexOrderingApply(geometry);
+    // Production pumps before every rendered frame. The draw uploads the
+    // staged slice (releasing #715 back-pressure), then onAfterRender
+    // acknowledges a newly selected ordering (#713).
+    simulateMeshRender(mesh);
+    if (!result.more) break;
     if (guard > 64) throw new Error('ordering stream did not converge');
   }
   return getActiveSortedIndexAttribute(geometry)!.array as Uint32Array;
+}
+
+/**
+ * Simulate THREE completing a visible mesh draw. Attribute uploads happen
+ * before the draw callback: fire `onUploadCallback` only for attributes with
+ * pending ranges, then invoke the coordinator's chained `onAfterRender` hook.
+ * This models both #715 upload back-pressure and #713 applied acknowledgement
+ * without constructing a WebGL renderer.
+ */
+function simulateMeshRender(mesh: THREE.Mesh): void {
+  const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
+  for (const name of ['aSortedIndex', 'aSortedIndexB'] as const) {
+    const attr = geometry.getAttribute(name) as THREE.InstancedBufferAttribute | null;
+    if (attr && attr.updateRanges.length > 0) {
+      attr.onUploadCallback?.();
+      attr.clearUpdateRanges();
+    }
+  }
+  const material = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
+  mesh.onAfterRender(
+    {} as THREE.WebGLRenderer,
+    new THREE.Scene(),
+    makeCamera(),
+    geometry,
+    material,
+    null as unknown as THREE.Group
+  );
+}
+
+/** Run the coordinator's pre-render work, then acknowledge visible draws. */
+function evaluateAndRender(
+  coord: { evaluateDepthSortPerFrame(): void },
+  ...meshes: THREE.Mesh[]
+): void {
+  coord.evaluateDepthSortPerFrame();
+  for (const mesh of meshes) simulateMeshRender(mesh);
 }
 
 /** The buffer the shaders are reading right now (no pumping). */
@@ -317,6 +363,243 @@ describe('depth-sort coordinator', () => {
     sortResolvers[1]({ generation: freshGeneration, ordering: new Uint32Array([1, 2, 0]) });
     await flush();
     expect(Array.from(await applyStagedOrdering(mesh))).toEqual([1, 2, 0]);
+  });
+
+  it('records a profiler completion once per APPLIED ordering (issue #711)', async () => {
+    const coord = await loadCoordinator();
+    // Fresh module instance to match the coordinator's post-reset module graph.
+    const { UpdateProfiler } = await import('../../../profiling/update-profiler');
+    const profiler = new UpdateProfiler();
+    const recordSpy = vi.spyOn(profiler, 'recordDepthSortCompletion');
+    coord.configureDepthSort({
+      getCamera: () => makeCamera(),
+      requestRender: vi.fn(),
+      getProfiler: () => profiler,
+    });
+
+    const mesh = makeGSplatsMesh(3, 'normal');
+    coord.noteDepthSortCommit(mesh, new Float32Array([0, 0, -10, 1, 0, -1, 2, 0, -5]), 3);
+    await flush();
+    const generation = mockApi.sort.mock.calls[0][0].generation as number;
+
+    sortResolvers[0]({
+      generation,
+      ordering: new Uint32Array([0, 2, 1]),
+      kernelMs: 4,
+      workerMs: 6,
+    });
+    await flush();
+
+    // A worker resolve only stages the ordering. The completion stream must
+    // stay empty until the inactive buffer has been filled and flipped in.
+    expect(recordSpy).not.toHaveBeenCalled();
+    expect(profiler.getDepthSortCompletions().total).toBe(0);
+    await applyStagedOrdering(mesh);
+
+    // Exactly one APPLIED completion landed on the monotonic stream.
+    expect(recordSpy).toHaveBeenCalledTimes(1);
+    const { total, events } = profiler.getDepthSortCompletions();
+    expect(total).toBe(1);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ seq: 1, kernelMs: 4, splats: 3 });
+    // boundaryMs = workerMs − kernelMs; queueMs/lastMs are wall-clock, so
+    // just assert boundaryMs and non-negative/finite latencies.
+    expect(events[0].boundaryMs).toBe(2);
+    expect(events[0].queueMs).toBeGreaterThanOrEqual(0);
+    expect(Number.isFinite(events[0].lastMs)).toBe(true);
+  });
+
+  it('does NOT record a profiler completion when a stale ordering is dropped (issue #711)', async () => {
+    const coord = await loadCoordinator();
+    const { UpdateProfiler } = await import('../../../profiling/update-profiler');
+    const profiler = new UpdateProfiler();
+    coord.configureDepthSort({
+      getCamera: () => makeCamera(),
+      requestRender: vi.fn(),
+      getProfiler: () => profiler,
+    });
+
+    const mesh = makeGSplatsMesh(3, 'normal');
+    coord.noteDepthSortCommit(mesh, new Float32Array([0, 0, -10, 1, 0, -1, 2, 0, -5]), 3);
+    await flush();
+    const staleGeneration = mockApi.sort.mock.calls[0][0].generation as number;
+
+    // A newer commit lands while the first sort is in flight (generation bumps).
+    coord.noteDepthSortCommit(mesh, new Float32Array([0, 0, -1, 1, 0, -10, 2, 0, -5]), 3);
+    await flush();
+
+    // The stale ordering resolves — dropped by the generation guard, so no
+    // fresh ordering and no completion recorded.
+    sortResolvers[0]({
+      generation: staleGeneration,
+      ordering: new Uint32Array([2, 1, 0]),
+      kernelMs: 4,
+      workerMs: 6,
+    });
+    await flush();
+    expect(profiler.getDepthSortCompletions().total).toBe(0);
+
+    // The re-issued fresh sort DOES record exactly one completion.
+    const freshGeneration = mockApi.sort.mock.calls[1][0].generation as number;
+    sortResolvers[1]({
+      generation: freshGeneration,
+      ordering: new Uint32Array([1, 2, 0]),
+      kernelMs: 4,
+      workerMs: 6,
+    });
+    await flush();
+    expect(profiler.getDepthSortCompletions().total).toBe(0);
+    await applyStagedOrdering(mesh);
+    expect(profiler.getDepthSortCompletions().total).toBe(1);
+  });
+
+  it('records both completions when two nodes resolve OUT OF ORDER (issue #711 acceptance criterion 3)', async () => {
+    const coord = await loadCoordinator();
+    const { UpdateProfiler } = await import('../../../profiling/update-profiler');
+    const profiler = new UpdateProfiler();
+    coord.configureDepthSort({
+      getCamera: () => makeCamera(),
+      requestRender: vi.fn(),
+      getProfiler: () => profiler,
+    });
+
+    const meshA = makeGSplatsMesh(3, 'normal');
+    coord.noteDepthSortCommit(meshA, new Float32Array([0, 0, -10, 1, 0, -1, 2, 0, -5]), 3);
+    await flush();
+    const meshB = makeGSplatsMesh(3, 'normal');
+    coord.noteDepthSortCommit(meshB, new Float32Array([0, 0, -1, 1, 0, -10, 2, 0, -5]), 3);
+    await flush();
+    expect(mockApi.sort).toHaveBeenCalledTimes(2);
+
+    // Resolve and apply meshB (dispatch 1) FIRST, then meshA (dispatch 0).
+    // The dedicated stream must retain one event per applied ordering in
+    // application order, independent of the aggregate timing root.
+    sortResolvers[1]({
+      generation: mockApi.sort.mock.calls[1][0].generation as number,
+      ordering: new Uint32Array([2, 0, 1]),
+      kernelMs: 4,
+      workerMs: 6,
+    });
+    await flush();
+    expect(profiler.getDepthSortCompletions().total).toBe(0);
+    await applyStagedOrdering(meshB);
+
+    sortResolvers[0]({
+      generation: mockApi.sort.mock.calls[0][0].generation as number,
+      ordering: new Uint32Array([0, 2, 1]),
+      kernelMs: 4,
+      workerMs: 6,
+    });
+    await flush();
+    expect(profiler.getDepthSortCompletions().total).toBe(1);
+    await applyStagedOrdering(meshA);
+
+    const { total, events } = profiler.getDepthSortCompletions();
+    expect(total).toBe(2);
+    expect(events.map((e) => e.seq)).toEqual([1, 2]);
+  });
+
+  it('does NOT record a completion when the mesh was demoted mid-sort (stillCommitted guard)', async () => {
+    const coord = await loadCoordinator();
+    const { UpdateProfiler } = await import('../../../profiling/update-profiler');
+    const profiler = new UpdateProfiler();
+    coord.configureDepthSort({
+      getCamera: () => makeCamera(),
+      requestRender: vi.fn(),
+      getProfiler: () => profiler,
+    });
+
+    const mesh = makeGSplatsMesh(3, 'normal');
+    coord.noteDepthSortCommit(mesh, new Float32Array([0, 0, -10, 1, 0, -1, 2, 0, -5]), 3);
+    await flush();
+    const generation = mockApi.sort.mock.calls[0][0].generation as number;
+
+    // LOD demotion mid-sort: the geometry returned to the pool, so the
+    // committedData stamp is cleared while the sort is still out.
+    delete mesh.userData.committedData;
+
+    // The ordering resolves with the CURRENT (matching) generation, so the
+    // generation guard passes — but hasCommittedData() is now false, so the
+    // ordering is NOT applied and NO completion is recorded. This pins the
+    // recording inside the `stillCommitted` conjunct, not just the generation
+    // guard.
+    sortResolvers[0]({
+      generation,
+      ordering: new Uint32Array([0, 2, 1]),
+      kernelMs: 4,
+      workerMs: 6,
+    });
+    await flush();
+
+    expect(profiler.getDepthSortCompletions().total).toBe(0);
+  });
+
+  it('does NOT record a completion when the profiler was reset while the sort was in flight', async () => {
+    const coord = await loadCoordinator();
+    const { UpdateProfiler } = await import('../../../profiling/update-profiler');
+    const profiler = new UpdateProfiler();
+    coord.configureDepthSort({
+      getCamera: () => makeCamera(),
+      requestRender: vi.fn(),
+      getProfiler: () => profiler,
+    });
+
+    const mesh = makeGSplatsMesh(3, 'normal');
+    coord.noteDepthSortCommit(mesh, new Float32Array([0, 0, -10, 1, 0, -1, 2, 0, -5]), 3);
+    await flush();
+    const generation = mockApi.sort.mock.calls[0][0].generation as number;
+
+    // reset() bumps the profiler generation, abandoning the in-flight
+    // sort's session — the completion record must honor the same
+    // reset-isolation contract and NOT land in the fresh stream.
+    profiler.reset();
+
+    sortResolvers[0]({
+      generation,
+      ordering: new Uint32Array([0, 2, 1]),
+      kernelMs: 4,
+      workerMs: 6,
+    });
+    await flush();
+    await applyStagedOrdering(mesh);
+
+    expect(profiler.getDepthSortCompletions().total).toBe(0);
+  });
+
+  it('records against the DISPATCH-TIME profiler, not one swapped in mid-sort', async () => {
+    const coord = await loadCoordinator();
+    const { UpdateProfiler } = await import('../../../profiling/update-profiler');
+    const oldProfiler = new UpdateProfiler();
+    let profiler = oldProfiler;
+    coord.configureDepthSort({
+      getCamera: () => makeCamera(),
+      requestRender: vi.fn(),
+      getProfiler: () => profiler,
+    });
+
+    const mesh = makeGSplatsMesh(3, 'normal');
+    coord.noteDepthSortCommit(mesh, new Float32Array([0, 0, -10, 1, 0, -1, 2, 0, -5]), 3);
+    await flush();
+    const generation = mockApi.sort.mock.calls[0][0].generation as number;
+
+    // A replacement profiler installed while the sort is in flight must
+    // start with a clean completion stream; the completion belongs to the
+    // profiler whose session tracked the dispatch.
+    const newProfiler = new UpdateProfiler();
+    profiler = newProfiler;
+
+    sortResolvers[0]({
+      generation,
+      ordering: new Uint32Array([0, 2, 1]),
+      kernelMs: 4,
+      workerMs: 6,
+    });
+    await flush();
+    expect(oldProfiler.getDepthSortCompletions().total).toBe(0);
+    await applyStagedOrdering(mesh);
+
+    expect(newProfiler.getDepthSortCompletions().total).toBe(0);
+    expect(oldProfiler.getDepthSortCompletions().total).toBe(1);
   });
 
   it("stale sort from a released node's previous LIFETIME is dropped (demote → re-promote)", async () => {
@@ -1716,6 +1999,61 @@ describe('depth-sort scheduler (Phase 3)', () => {
     expect(mockApi.sort).toHaveBeenCalledTimes(2);
   });
 
+  it("pauses a HIDDEN node's chunked apply and resumes it when shown (#715)", async () => {
+    // Issue #715: a hidden/off-screen node must not advance (and thus
+    // accumulate) its chunked ordering stream — writing a slice while not
+    // drawn leaves an unflushed range that the next slice would union
+    // onto, collapsing the ladder into one giant upload. The coordinator
+    // therefore skips the pump for a node that is not effectively visible.
+    const coord = await loadCoordinator();
+    const camera = makeCamera();
+    const requestRender = vi.fn();
+    coord.configureDepthSort({ getCamera: () => camera, requestRender });
+
+    // Same element-storage instance the coordinator drives (loadCoordinator
+    // reset the module). A 1-index slice makes the 3-element apply span
+    // three frames instead of finishing in one.
+    const { setSortedIndexChunkElementsForTests, configureSortedIndexChunkedApply } =
+      await import('../../../rendering/element-storage');
+    configureSortedIndexChunkedApply(true);
+    setSortedIndexChunkElementsForTests(1);
+
+    const mesh = makeGSplatsMesh(3, 'normal');
+    coord.noteDepthSortCommit(mesh, new Float32Array([0, 0, -10, 1, 0, -1, 2, 0, -5]), 3);
+    await flush();
+    sortResolvers[0]({
+      generation: mockApi.sort.mock.calls[0][0].generation as number,
+      ordering: new Uint32Array([2, 0, 1]),
+    });
+    await flush();
+
+    // Staged but un-pumped: the inactive buffer (aSortedIndexB, slot 0 is
+    // active) is still all zeros.
+    const back = (mesh.geometry as THREE.InstancedBufferGeometry).getAttribute(
+      'aSortedIndexB'
+    ) as THREE.InstancedBufferAttribute;
+    expect(Array.from(back.array as Uint32Array)).toEqual([0, 0, 0]);
+
+    // Hidden: several frames advance NOTHING — no slice written, no
+    // pending range, no render requested for the paused stream.
+    mesh.visible = false;
+    requestRender.mockClear();
+    for (let i = 0; i < 3; i++) coord.evaluateDepthSortPerFrame();
+    expect(Array.from(back.array as Uint32Array)).toEqual([0, 0, 0]);
+    expect(back.updateRanges.length).toBe(0);
+    expect(requestRender).not.toHaveBeenCalled();
+
+    // Shown: the very next frame writes exactly the first slice
+    // (ordering[0] = 2 → inactive slot 0) and requests a render to resume.
+    mesh.visible = true;
+    coord.evaluateDepthSortPerFrame();
+    expect((back.array as Uint32Array)[0]).toBe(2);
+    expect(back.updateRanges[0]).toMatchObject({ start: 0, count: 1 });
+    expect(requestRender).toHaveBeenCalled();
+
+    setSortedIndexChunkElementsForTests(null);
+  });
+
   it('setDepthSortEnabled(false) makes the subsystem inert (?depthSort=0)', async () => {
     const coord = await loadCoordinator();
     coord.setDepthSortEnabled(false);
@@ -1743,17 +2081,29 @@ describe('depth-sort scheduler (Phase 3)', () => {
     expect(mockApi.sort).not.toHaveBeenCalled();
   });
 
-  it('records each sort round-trip as a Depth Sort profiler pass with splat count + upload bytes', async () => {
+  it('records each sort round-trip as a Depth Sort profiler pass, closed when the ordering is applied', async () => {
     const coord = await loadCoordinator();
     // Fresh module instance to match the coordinator's post-reset module graph.
     const { UpdateProfiler } = await import('../../../profiling/update-profiler');
     const profiler = new UpdateProfiler();
-    await sortedSetup(coord, makeCamera(), { getProfiler: () => profiler });
+    const mesh = await sortedSetup(coord, makeCamera(), { getProfiler: () => profiler });
 
     const root = profiler.getDepthSortTimings();
+    // The pass spans dispatch→applied: the worker resolve in sortedSetup only
+    // STAGES the ordering, so the pass is still open — no sample recorded yet.
+    // The pump selects the buffer; only the following onAfterRender closes it.
+    expect(root.count).toBe(0);
+    coord.evaluateDepthSortPerFrame();
+    expect(root.count).toBe(0);
+    simulateMeshRender(mesh);
+
     expect(root.count).toBe(1);
     expect(root.metadata?.splats).toBe(2);
+    // Uploaded (`up`) now, not merely scheduled — the buffer reached the GPU.
     expect(root.metadata?.info).toMatch(/up$/);
+    // The apply duration is recorded separately from the resolve round-trip.
+    expect(Number.isFinite(root.metadata?.applyMs)).toBe(true);
+    expect(root.metadata?.applyMs).toBeGreaterThanOrEqual(0);
     // Timing split: kernelMs passes through; boundaryMs = workerMs −
     // kernelMs; queueMs = locally-timed round-trip − workerMs. The mock
     // resolves through microtask flushes so the measured round-trip vs
@@ -2309,6 +2659,18 @@ describe('depth-sort coordinator — chunked ordering apply (perf lever L8)', ()
     return { mesh, ordering };
   }
 
+  /**
+   * Advance ONE drawn frame: run the pre-render pump, then simulate both the
+   * classic WebGLRenderer's attribute upload acknowledgement (#715) and the
+   * mesh's completed-draw acknowledgement (#713). Without the upload between
+   * pumps, the stream correctly stalls; without `onAfterRender`, a selected
+   * ordering remains scheduled rather than applied.
+   */
+  function drawFrame(coord: Awaited<ReturnType<typeof loadCoordinator>>, mesh: THREE.Mesh): void {
+    coord.evaluateDepthSortPerFrame();
+    simulateMeshRender(mesh);
+  }
+
   it('resolve records the pending apply; the per-frame pump streams the slices and keeps frames flowing', async () => {
     const { coord, storage } = await loadWithTinyChunks();
     const camera = makeCamera();
@@ -2323,29 +2685,62 @@ describe('depth-sort coordinator — chunked ordering apply (perf lever L8)', ()
     expect(Array.from(drawnOrdering(mesh).subarray(0, 12))).toEqual(new Array(12).fill(0));
     expect(requestRender).toHaveBeenCalled();
 
-    // Frames 1-2: slices land in the buffer NOT being drawn, so what
-    // renders is still the previous whole ordering. Each requests a
-    // follow-up frame (the pump is the only thing keeping the on-demand
-    // loop alive between slices).
+    // Frames 1-2: slices upload into the INACTIVE buffer but the slot has
+    // not flipped, so rendering still uses the previous whole ordering. Each
+    // requests a follow-up frame — from the pump (progress, not stalled) AND from the
+    // drawn slice's onUpload acknowledgement; the two coalesce into one
+    // real frame in production (requestRender is idempotent per frame), so
+    // here we only assert a follow-up WAS requested.
     for (let frame = 1; frame <= 2; frame++) {
       requestRender.mockClear();
-      coord.evaluateDepthSortPerFrame();
+      drawFrame(coord, mesh);
       expect(Array.from(drawnOrdering(mesh).subarray(0, 12))).toEqual(new Array(12).fill(0));
-      expect(requestRender).toHaveBeenCalledTimes(1);
+      expect(requestRender).toHaveBeenCalled();
     }
 
     // Frame 3: the final slice completes the back buffer and flips it in.
     // The write and the flip ride THIS frame's flush.
     requestRender.mockClear();
-    coord.evaluateDepthSortPerFrame();
+    drawFrame(coord, mesh);
     expect(storage.hasPendingSortedIndexOrderingApply(geometry)).toBe(false);
     expect(Array.from(drawnOrdering(mesh).subarray(0, 12))).toEqual(Array.from(ordering));
     expect(requestRender).toHaveBeenCalledTimes(1); // the flip repaints
 
     // Steady state: further frames neither write nor request.
     requestRender.mockClear();
-    coord.evaluateDepthSortPerFrame();
+    drawFrame(coord, mesh);
     expect(requestRender).not.toHaveBeenCalled();
+  });
+
+  it('a STALLED pump (visible but un-drawn) advances nothing and requests NO render (#715)', async () => {
+    // The coordinator's `if (!stalled) requestRender?.()` contract: a
+    // VISIBLE mesh whose previous slice was not yet drawn must not spin
+    // the on-demand loop. Reverting the guard to an unconditional
+    // requestRender makes this test fail (the second frame would request).
+    const { coord, storage } = await loadWithTinyChunks();
+    const camera = makeCamera();
+    const requestRender = vi.fn();
+    coord.configureDepthSort({ getCamera: () => camera, requestRender });
+
+    const { mesh, ordering } = await resolveLargeOrdering(coord, 12); // 3 slices
+    const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
+    const back = geometry.getAttribute('aSortedIndexB') as THREE.InstancedBufferAttribute;
+
+    // Frame 1 draws slice 1: progress → exactly one requestRender.
+    requestRender.mockClear();
+    coord.evaluateDepthSortPerFrame();
+    expect((back.array as Uint32Array)[0]).toBe(ordering[0]); // slice 1 written
+    expect(requestRender).toHaveBeenCalledTimes(1);
+
+    // Frame 2 WITHOUT acknowledging the upload (mesh stays visible but is
+    // not drawn): the pump STALLS — nothing new written, and NO render is
+    // requested for the idle stream.
+    requestRender.mockClear();
+    const writtenBefore = Array.from(back.array as Uint32Array);
+    coord.evaluateDepthSortPerFrame();
+    expect(Array.from(back.array as Uint32Array)).toEqual(writtenBefore); // no slice 2
+    expect(requestRender).not.toHaveBeenCalled();
+    expect(storage.hasPendingSortedIndexOrderingApply(geometry)).toBe(true);
   });
 
   it('a cleared committedData stamp (LOD demotion) aborts the remaining slices', async () => {
@@ -2455,9 +2850,9 @@ describe('depth-sort coordinator — chunked ordering apply (perf lever L8)', ()
     sortResolvers[1]({ generation: freshGeneration, ordering });
     await flush();
     expect(storage.hasPendingSortedIndexOrderingApply(geometry)).toBe(true);
-    coord.evaluateDepthSortPerFrame();
-    coord.evaluateDepthSortPerFrame();
-    coord.evaluateDepthSortPerFrame();
+    drawFrame(coord, mesh);
+    drawFrame(coord, mesh);
+    drawFrame(coord, mesh);
     expect(Array.from(drawnOrdering(mesh).subarray(0, 12))).toEqual(Array.from(ordering));
   });
 
@@ -2485,10 +2880,10 @@ describe('depth-sort coordinator — chunked ordering apply (perf lever L8)', ()
     await flush();
 
     expect(visualUniform.value).toBe(0);
-    coord.evaluateDepthSortPerFrame();
-    coord.evaluateDepthSortPerFrame();
+    drawFrame(coord, mesh);
+    drawFrame(coord, mesh);
     expect(visualUniform.value).toBe(0); // still streaming
-    coord.evaluateDepthSortPerFrame(); // completes + flips
+    drawFrame(coord, mesh); // completes + flips
     expect(visualUniform.value).toBe(1);
     expect(pickUniform.value).toBe(1);
   });
@@ -2528,7 +2923,7 @@ describe('depth-sort coordinator — chunked ordering apply (perf lever L8)', ()
       ordering: reversed(12),
     });
     await flush();
-    for (let i = 0; i < 4; i++) coord.evaluateDepthSortPerFrame();
+    for (let i = 0; i < 4; i++) drawFrame(coord, mesh);
 
     expect(visA.value).toBe(1);
     expect(visB.value).toBe(1);
@@ -2559,7 +2954,7 @@ describe('depth-sort coordinator — chunked ordering apply (perf lever L8)', ()
       ordering: reversed(12),
     });
     await flush();
-    for (let i = 0; i < 4; i++) coord.evaluateDepthSortPerFrame();
+    for (let i = 0; i < 4; i++) drawFrame(coord, mesh);
     const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
     expect(storage.hasPendingSortedIndexOrderingApply(geometry)).toBe(false);
     expect(uniform.value).toBe(1);
@@ -2591,7 +2986,7 @@ describe('depth-sort coordinator — chunked ordering apply (perf lever L8)', ()
       ordering: reversed(12),
     });
     await flush();
-    for (let i = 0; i < 4; i++) coord.evaluateDepthSortPerFrame();
+    for (let i = 0; i < 4; i++) drawFrame(coord, mesh);
     expect(uniform.value).toBe(1);
 
     // A count-changing recommit: the writers run BEFORE noteDepthSortCommit
@@ -2644,14 +3039,14 @@ describe('depth-sort coordinator — chunked ordering apply (perf lever L8)', ()
     sortResolvers[1]({ generation: secondGeneration, ordering: second });
     await flush();
 
-    coord.evaluateDepthSortPerFrame();
-    coord.evaluateDepthSortPerFrame();
-    coord.evaluateDepthSortPerFrame(); // first completes + flips
+    drawFrame(coord, mesh);
+    drawFrame(coord, mesh);
+    drawFrame(coord, mesh); // first completes + flips
     expect(Array.from(drawnOrdering(mesh).subarray(0, 12))).toEqual(Array.from(first));
 
-    coord.evaluateDepthSortPerFrame();
-    coord.evaluateDepthSortPerFrame();
-    coord.evaluateDepthSortPerFrame(); // second completes + flips
+    drawFrame(coord, mesh);
+    drawFrame(coord, mesh);
+    drawFrame(coord, mesh); // second completes + flips
     expect(Array.from(drawnOrdering(mesh).subarray(0, 12))).toEqual(Array.from(second));
     expect(storage.hasPendingSortedIndexOrderingApply(geometry)).toBe(false);
   });
@@ -2683,5 +3078,361 @@ describe('depth-sort coordinator — chunked ordering apply (perf lever L8)', ()
     expect(storage.hasPendingSortedIndexOrderingApply(secondGeometry)).toBe(true);
     coord.disposeDepthSort();
     expect(storage.hasPendingSortedIndexOrderingApply(secondGeometry)).toBe(false);
+  });
+
+  // === Profiler lifecycle across the chunked apply (issue #713) ===
+
+  it('keeps the Depth Sort pass open through the flip, closing it only after the rendered upload', async () => {
+    const { coord } = await loadWithTinyChunks();
+    // Fresh module instance to match the coordinator's post-reset module graph.
+    const { UpdateProfiler } = await import('../../../profiling/update-profiler');
+    const profiler = new UpdateProfiler();
+    const camera = makeCamera();
+    coord.configureDepthSort({
+      getCamera: () => camera,
+      requestRender: vi.fn(),
+      getProfiler: () => profiler,
+    });
+
+    // 12 indices over a 4-index chunk = three slices → three pump frames.
+    const { mesh } = await resolveLargeOrdering(coord, 12);
+    const root = profiler.getDepthSortTimings();
+
+    // Resolve alone must NOT close the pass — the bytes are only staged, not
+    // yet uploaded. This is the whole point of the fix.
+    expect(root.count).toBe(0);
+
+    // Slices 1-2 stream into the buffer NOT being drawn; rendering the old
+    // slot cannot acknowledge the new ordering, so the pass stays open.
+    evaluateAndRender(coord, mesh);
+    evaluateAndRender(coord, mesh);
+    expect(root.count).toBe(0);
+
+    // Slice 3 completes the back buffer and flips it in, but flip-time alone
+    // still is not proof of upload/draw.
+    coord.evaluateDepthSortPerFrame();
+    expect(root.count).toBe(0);
+    simulateMeshRender(mesh);
+    expect(root.count).toBe(1);
+    expect(root.metadata?.splats).toBe(12);
+    expect(root.metadata?.info).toMatch(/up$/); // uploaded, not scheduled
+    expect(Number.isFinite(root.metadata?.applyMs)).toBe(true);
+    expect(root.metadata?.applyMs).toBeGreaterThanOrEqual(0);
+
+    // Steady state: another render does not close the pass a second time.
+    evaluateAndRender(coord, mesh);
+    expect(root.count).toBe(1);
+  });
+
+  it('a selected ordering with no completed draw stays scheduled and is abandoned on teardown', async () => {
+    const { coord } = await loadWithTinyChunks();
+    const { UpdateProfiler } = await import('../../../profiling/update-profiler');
+    const profiler = new UpdateProfiler();
+    coord.configureDepthSort({
+      getCamera: () => makeCamera(),
+      requestRender: vi.fn(),
+      getProfiler: () => profiler,
+    });
+
+    const { mesh } = await resolveLargeOrdering(coord, 12);
+    const root = profiler.getDepthSortTimings();
+    // Draw the first two frames so their slices upload and release #715
+    // back-pressure. Pump the final slice WITHOUT rendering that frame: the
+    // complete buffer is selected, but THREE has neither uploaded its final
+    // range nor completed a draw with it.
+    evaluateAndRender(coord, mesh);
+    evaluateAndRender(coord, mesh);
+    coord.evaluateDepthSortPerFrame();
+    expect(root.count).toBe(0);
+    expect(profiler.getDepthSortCompletions().total).toBe(0);
+
+    coord.releaseDepthSortNode(mesh);
+    expect(root.count).toBe(1);
+    expect(root.metadata?.info).toMatch(/sched$/);
+    expect(root.metadata?.applyMs).toBeUndefined();
+    expect(profiler.getDepthSortCompletions().total).toBe(0);
+
+    // A late render callback cannot resurrect the abandoned completion.
+    simulateMeshRender(mesh);
+    expect(root.count).toBe(1);
+  });
+
+  it('a chunked apply aborted by LOD demotion closes the pass exactly once, as scheduled (never uploaded)', async () => {
+    const { coord, storage } = await loadWithTinyChunks();
+    const { UpdateProfiler } = await import('../../../profiling/update-profiler');
+    const profiler = new UpdateProfiler();
+    const camera = makeCamera();
+    coord.configureDepthSort({
+      getCamera: () => camera,
+      requestRender: vi.fn(),
+      getProfiler: () => profiler,
+    });
+
+    const { mesh } = await resolveLargeOrdering(coord, 12);
+    const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
+    const root = profiler.getDepthSortTimings();
+    expect(root.count).toBe(0); // pass open, streaming
+    expect(profiler.getDepthSortCompletions().total).toBe(0);
+
+    // Stream one slice, then demote: the remaining slices abort.
+    coord.evaluateDepthSortPerFrame();
+    expect(root.count).toBe(0);
+    delete mesh.userData.committedData;
+    coord.evaluateDepthSortPerFrame(); // demotion cancels the apply
+    expect(storage.hasPendingSortedIndexOrderingApply(geometry)).toBe(false);
+
+    // The pass closed once, labeled scheduled — the bytes never reached the
+    // GPU, so they must not be reported as uploaded.
+    expect(root.count).toBe(1);
+    expect(root.metadata?.info).toMatch(/sched$/);
+    // It was staged but never became drawable, so the per-applied-ordering
+    // completion stream must stay empty.
+    expect(profiler.getDepthSortCompletions().total).toBe(0);
+
+    // Exactly once: further frames must not re-close it.
+    coord.evaluateDepthSortPerFrame();
+    expect(root.count).toBe(1);
+  });
+
+  it('a superseded held ordering closes its pass exactly once as scheduled; the drawn ones close as uploaded', async () => {
+    const { coord } = await loadWithTinyChunks();
+    const camera = makeCamera();
+
+    // A fake profiler records every pass so we can assert exactly-once
+    // per-session (the real profiler aggregates passes into one root and does
+    // not expose each session's close count). The generation/completion methods
+    // satisfy the coordinator's #711 integration; this test only inspects pass
+    // lifecycles.
+    const passes: Array<{ meta: Record<string, unknown>; ended: number }> = [];
+    const fakeProfiler = {
+      _currentGeneration: () => 0,
+      recordDepthSortCompletion: () => {},
+      beginDepthSortPass(): UpdateSession {
+        const pass = { meta: {} as Record<string, unknown>, ended: 0 };
+        passes.push(pass);
+        const session: UpdateSession = {
+          begin: () => session,
+          end: () => {
+            pass.ended++;
+          },
+          setMetadata: (m) => {
+            Object.assign(pass.meta, m);
+          },
+          markSkipped: () => {},
+        };
+        return session;
+      },
+    } as unknown as UpdateProfiler;
+    coord.configureDepthSort({
+      getCamera: () => camera,
+      requestRender: vi.fn(),
+      getProfiler: () => fakeProfiler,
+    });
+
+    // Sort 1 resolves → apply 1 starts streaming (pass 0 = current).
+    const { mesh } = await resolveLargeOrdering(coord, 12);
+
+    // Sort 2 resolves mid-stream → held behind apply 1 (pass 1 = pending).
+    coord.noteDepthSortCommit(mesh, new Float32Array(36), 12);
+    await flush();
+    sortResolvers[1]({
+      generation: mockApi.sort.mock.calls[1][0].generation as number,
+      ordering: reversed(12),
+    });
+    await flush();
+
+    // Sort 3 resolves mid-stream → supersedes the held pending (pass 2).
+    coord.noteDepthSortCommit(mesh, new Float32Array(36), 12);
+    await flush();
+    sortResolvers[2]({
+      generation: mockApi.sort.mock.calls[2][0].generation as number,
+      ordering: reversed(12),
+    });
+    await flush();
+
+    expect(passes).toHaveLength(3);
+    // Pass 1 — the superseded held ordering — closed immediately, exactly
+    // once, labeled scheduled: it never streamed a single slice.
+    expect(passes[1].ended).toBe(1);
+    expect(String(passes[1].meta.info)).toMatch(/sched$/);
+    // Passes 0 (streaming) and 2 (now held) are still open.
+    expect(passes[0].ended).toBe(0);
+    expect(passes[2].ended).toBe(0);
+
+    // Drain with a real render acknowledgement after every pre-render pump:
+    // pass 0 uploads/draws first, then the promoted pass 2 does likewise.
+    // Eight frames comfortably covers two 3-slice streams.
+    for (let i = 0; i < 8; i++) evaluateAndRender(coord, mesh);
+    expect(String(passes[0].meta.info)).toMatch(/up$/);
+    expect(String(passes[2].meta.info)).toMatch(/up$/);
+    // Every pass closed exactly once — no leak, no double-close.
+    expect(passes.map((p) => p.ended)).toEqual([1, 1, 1]);
+  });
+
+  it('records the applied sample of a pass that completes after a superseded sibling (no seq-drop)', async () => {
+    // Regression guard for the real profiler under sort churn: sessions end
+    // at APPLY, out of dispatch order — a held ordering superseded mid-stream
+    // ends BEFORE the currently-streaming pass flips. With a dispatch-time
+    // seq the streaming pass's applied sample would be dropped as "stale" by
+    // the profiler's merge guard, so the dispatch→applied timing this fix
+    // exists to record would vanish. The completion-ordered seq keeps it.
+    const { coord } = await loadWithTinyChunks();
+    const { UpdateProfiler } = await import('../../../profiling/update-profiler');
+    const profiler = new UpdateProfiler();
+    const camera = makeCamera();
+    coord.configureDepthSort({
+      getCamera: () => camera,
+      requestRender: vi.fn(),
+      getProfiler: () => profiler,
+    });
+
+    // Sort 1 streaming; sort 2 held; sort 3 supersedes the held sort 2.
+    const { mesh } = await resolveLargeOrdering(coord, 12);
+    coord.noteDepthSortCommit(mesh, new Float32Array(36), 12);
+    await flush();
+    sortResolvers[1]({
+      generation: mockApi.sort.mock.calls[1][0].generation as number,
+      ordering: reversed(12),
+    });
+    await flush();
+    coord.noteDepthSortCommit(mesh, new Float32Array(36), 12);
+    await flush();
+    sortResolvers[2]({
+      generation: mockApi.sort.mock.calls[2][0].generation as number,
+      ordering: reversed(12),
+    });
+    await flush();
+
+    // Drain: sort 1 applies (up), then the promoted sort 3 applies (up).
+    for (let i = 0; i < 8; i++) evaluateAndRender(coord, mesh);
+
+    const root = profiler.getDepthSortTimings();
+    // Three passes recorded: sort 2 (abandoned → scheduled) plus the two
+    // applied ones — the sort-1 applied sample is NOT dropped despite its
+    // lower dispatch order.
+    expect(root.count).toBe(3);
+    // The last-completing pass (sort 3, applied) shows uploaded bytes + an
+    // apply duration — the freshest state, correctly labeled.
+    expect(root.metadata?.info).toMatch(/up$/);
+    expect(Number.isFinite(root.metadata?.applyMs)).toBe(true);
+  });
+
+  it('a post-handoff requestRender throw does not close the pass early (applied sample stays uploaded)', async () => {
+    // Once the ordering is handed to the chunked-apply callbacks, a throw
+    // from the post-handoff requestRender() must NOT route into .catch and
+    // close the pass — the callbacks own its close. Otherwise the pass would
+    // record a premature scheduled sample and the real applied one would be
+    // swallowed by end()'s idempotency (issue #713).
+    const { coord } = await loadWithTinyChunks();
+    const { UpdateProfiler } = await import('../../../profiling/update-profiler');
+    const profiler = new UpdateProfiler();
+    const camera = makeCamera();
+    let throwOnce = true;
+    const requestRender = vi.fn(() => {
+      if (throwOnce) {
+        throwOnce = false;
+        throw new Error('boom');
+      }
+    });
+    coord.configureDepthSort({
+      getCamera: () => camera,
+      requestRender,
+      getProfiler: () => profiler,
+    });
+
+    // Resolve stages the ordering, hands off the session, then the bootstrap
+    // requestRender() throws → the .then rejects into .catch.
+    const { mesh } = await resolveLargeOrdering(coord, 12);
+    const root = profiler.getDepthSortTimings();
+    // The pass was already handed off, so .catch left it open — no premature
+    // scheduled sample.
+    expect(root.count).toBe(0);
+
+    // The chunked apply still completes and closes the pass as uploaded,
+    // but only once the selected buffer is actually rendered.
+    for (let i = 0; i < 4; i++) evaluateAndRender(coord, mesh);
+    expect(root.count).toBe(1);
+    expect(root.metadata?.info).toMatch(/up$/);
+  });
+
+  it('an RPC failure closes the pass in .catch exactly once (no leak, no double-close)', async () => {
+    // The .catch's `if (!applyOwnsSession)` guard must still close the pass
+    // when the RPC genuinely fails (nothing was ever staged) — the failure
+    // side of the latch, complementing the post-handoff-throw test above.
+    const { coord } = await loadWithTinyChunks();
+    const { UpdateProfiler } = await import('../../../profiling/update-profiler');
+    const profiler = new UpdateProfiler();
+    coord.configureDepthSort({
+      getCamera: () => makeCamera(),
+      requestRender: vi.fn(),
+      getProfiler: () => profiler,
+    });
+
+    const mesh = makeGSplatsMesh(12, 'normal');
+    coord.noteDepthSortCommit(mesh, new Float32Array(36), 12);
+    await flush();
+    expect(mockApi.sort).toHaveBeenCalledTimes(1);
+
+    // The sort RPC rejects: no ordering staged, so the pass closes here.
+    sortRejectors[0](new Error('worker crashed'));
+    await flush();
+
+    const root = profiler.getDepthSortTimings();
+    expect(root.count).toBe(1);
+    // No later frame re-closes it.
+    coord.evaluateDepthSortPerFrame();
+    expect(root.count).toBe(1);
+  });
+
+  it('releaseAllDepthSortNodes (dataset switch) closes an open streaming pass, as scheduled', async () => {
+    const { coord, storage } = await loadWithTinyChunks();
+    const { UpdateProfiler } = await import('../../../profiling/update-profiler');
+    const profiler = new UpdateProfiler();
+    coord.configureDepthSort({
+      getCamera: () => makeCamera(),
+      requestRender: vi.fn(),
+      getProfiler: () => profiler,
+    });
+
+    const { mesh } = await resolveLargeOrdering(coord, 12);
+    const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
+    const root = profiler.getDepthSortTimings();
+    expect(root.count).toBe(0); // pass open, still streaming
+
+    coord.releaseAllDepthSortNodes(); // dataset-switch teardown sweep
+    expect(storage.hasPendingSortedIndexOrderingApply(geometry)).toBe(false);
+    // The sweep's onAbandoned closed the open pass — recorded once, scheduled
+    // (the bytes never reached the GPU).
+    expect(root.count).toBe(1);
+    expect(root.metadata?.info).toMatch(/sched$/);
+  });
+
+  it('a teardown sweep closes BOTH the streaming and the held-pending pass', async () => {
+    const { coord } = await loadWithTinyChunks();
+    const { UpdateProfiler } = await import('../../../profiling/update-profiler');
+    const profiler = new UpdateProfiler();
+    const camera = makeCamera();
+    coord.configureDepthSort({
+      getCamera: () => camera,
+      requestRender: vi.fn(),
+      getProfiler: () => profiler,
+    });
+
+    // Pass A streaming; pass B resolves mid-stream → held as pending.
+    const { mesh } = await resolveLargeOrdering(coord, 12);
+    coord.noteDepthSortCommit(mesh, new Float32Array(36), 12);
+    await flush();
+    sortResolvers[1]({
+      generation: mockApi.sort.mock.calls[1][0].generation as number,
+      ordering: reversed(12),
+    });
+    await flush();
+    const root = profiler.getDepthSortTimings();
+    expect(root.count).toBe(0); // both open
+
+    // The sweep must abandon BOTH the current and the held ordering.
+    coord.releaseAllDepthSortNodes();
+    expect(root.count).toBe(2);
+    expect(root.metadata?.info).toMatch(/sched$/);
   });
 });

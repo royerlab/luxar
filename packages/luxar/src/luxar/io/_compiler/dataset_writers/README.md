@@ -13,7 +13,16 @@ The compiler writes a geometry node by calling one writer per attribute. The
 writers themselves are thin and stateless: the encoding policy (precision
 selection, deduplication, LUT/broadcast detection) lives in `ArrayEncoder`, and
 the chunk layout is computed by `..chunking.calculate_intelligent_chunks` so
-chunk boundaries align with the spatial index when one is present.
+chunk boundaries align with the spatial index when one is present. For a
+**Points** node each per-point array opts into `per_array_bytes=True`, sizing its
+first-axis chunk to its own INPUT (pre-encoding) dtype byte budget rounded down to
+a multiple of the spatial-index `chunk_size` atom (never below one atom) — so
+large scenes issue far fewer
+requests while chunk boundaries still land on the viewer's row-range query grid.
+Because the budget uses the input dtype (the encoder may quantize to a smaller
+dtype), the realized chunk is a conservative lower bound on the byte target.
+GSplats and Lines keep the plain atom-sized chunks (`per_array_bytes` defaults to
+`False`).
 
 All writers receive a frozen `DatasetCtx` (`..context.DatasetCtx`) carrying the
 shared `encoder`, `encoding_mode`, and `compressor`. None of them hold a
@@ -55,7 +64,7 @@ dataset_writers/
 
 ### `colors.py`
 
-- **`write_colors(group, colors, spatial_index_data, n_elements, ctx)`**
+- **`write_colors(group, colors, spatial_index_data, n_elements, ctx, per_array_bytes=False)`**
   Writes the `colors` array (or a single broadcast tuple/list) as the `COLOR`
   semantic type. Detects SDR vs HDR from the data (`color_mode = "hdr"` when any
   value exceeds 1.0) and forwards it to the encoder. Records
@@ -72,28 +81,28 @@ dataset_writers/
 The two canonical scalar writers plus geometry-named convenience wrappers and the
 colormap-scalars writer:
 
-- **`write_positive_scalar(group, data, name, spatial_index_data, n_elements, ctx, log_label_singular=None) -> float`**
+- **`write_positive_scalar(group, data, name, spatial_index_data, n_elements, ctx, log_label_singular=None, per_array_bytes=False)`** `-> float`
   Canonical `POSITIVE_SCALAR` writer used by Points (`radii`), Lines (`widths`),
   and GSplats (`amplitudes`). Accepts an array or a single broadcast value.
   Returns the maximum value so callers can cache it for layer-control metadata
   without recomputing. `log_label_singular` controls the log wording
   (`"radius"` / `"width"` / `"amplitude"`); defaults to `name`.
 
-- **`write_bounded_scalar(group, data, name, bounds, spatial_index_data, n_elements, ctx, log_label_singular=None) -> float`**
+- **`write_bounded_scalar(group, data, name, bounds, spatial_index_data, n_elements, ctx, log_label_singular=None, per_array_bytes=False)`** `-> float`
   Canonical `BOUNDED_SCALAR` writer used for `sharpnesses`. The `bounds` tuple is
   forwarded to the encoder, which quantizes the data to Uint8 normalised to that
   range when the encoding mode allows. Also returns the maximum value.
 
 - **`write_radii(group, radii, spatial_index_data, n_points, ctx) -> float`**
   Points-specific wrapper over `write_positive_scalar` (name `"radii"`,
-  label `"radius"`). Kept only for readability in `write_points`; new geometries
-  should call `write_positive_scalar` directly.
+  label `"radius"`), passing `per_array_bytes=True`. Kept only for readability
+  in `write_points`; new geometries should call `write_positive_scalar` directly.
 
 - **`write_sharpness(group, sharpness, spatial_index_data, n_points, ctx) -> float`**
   Points-specific wrapper over `write_bounded_scalar` (name `"sharpnesses"`,
-  bounds `(0.0, SHARPNESS_MAX)`, label `"sharpness"`).
+  bounds `(0.0, SHARPNESS_MAX)`, label `"sharpness"`), passing `per_array_bytes=True`.
 
-- **`write_scalars(group, scalars, spatial_index_data, n_elements, ctx)`**
+- **`write_scalars(group, scalars, spatial_index_data, n_elements, ctx, per_array_bytes=False)`**
   Writes the `scalars` array used for colormap lookup (encoded as
   `BOUNDED_SCALAR` over the data's `[min, max]`, so legitimately **signed**
   scalars — z-scores, velocities, divergence — are accepted). Requires the

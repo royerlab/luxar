@@ -65,7 +65,11 @@ describe('LRUCache — algebraic invariants over arbitrary operation traces', ()
             switch (op.kind) {
               case 'set':
                 // Size must be > 0 to be accepted; clamp to ≤ maxSize so set won't reject outright.
-                cache.set(op.key, { size: Math.min(op.size, maxSize) }, { evictMostRecent: op.scan });
+                cache.set(
+                  op.key,
+                  { size: Math.min(op.size, maxSize) },
+                  { evictMostRecent: op.scan }
+                );
                 break;
               case 'get':
                 cache.get(op.key);
@@ -191,5 +195,4 @@ describe('LRUCache — algebraic invariants over arbitrary operation traces', ()
       { numRuns: 100 }
     );
   });
-
 });

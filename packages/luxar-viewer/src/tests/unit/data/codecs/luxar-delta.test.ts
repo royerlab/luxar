@@ -89,9 +89,9 @@ describe('LuxarDeltaCodec validation and registration', () => {
   it('fromConfig resolves cols/bits and rejects dtype mismatches', () => {
     const codec = LuxarDeltaCodec.fromConfig({ cols: 3, bits: 16 }, { dataType: 'uint16' });
     expect(codec.kind).toBe('array_to_array');
-    expect(() =>
-      LuxarDeltaCodec.fromConfig({ cols: 3, bits: 16 }, { dataType: 'uint8' })
-    ).toThrow(/does not match/);
+    expect(() => LuxarDeltaCodec.fromConfig({ cols: 3, bits: 16 }, { dataType: 'uint8' })).toThrow(
+      /does not match/
+    );
     expect(() =>
       LuxarDeltaCodec.fromConfig({ cols: 3, bits: 16 }, { dataType: 'float32' })
     ).toThrow(/unsupported data type/);

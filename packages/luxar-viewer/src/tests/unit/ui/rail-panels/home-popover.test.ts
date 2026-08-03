@@ -99,7 +99,7 @@ describe('buildHomePopover', () => {
   });
 
   describe('caption behavior', () => {
-    it('shows a chip\'s label + hint on hover and returns to idle on leave', () => {
+    it("shows a chip's label + hint on hover and returns to idle on leave", () => {
       const host = document.createElement('div');
       buildHomePopover(host, makeCtx());
       const [fitChip] = chips(host);
@@ -114,7 +114,7 @@ describe('buildHomePopover', () => {
       expect(caption(host).label).toBe('Home');
     });
 
-    it('shows a chip\'s label + hint on keyboard focus', () => {
+    it("shows a chip's label + hint on keyboard focus", () => {
       const host = document.createElement('div');
       document.body.appendChild(host);
       buildHomePopover(host, makeCtx());

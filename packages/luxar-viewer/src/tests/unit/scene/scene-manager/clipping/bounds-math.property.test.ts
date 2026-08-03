@@ -213,9 +213,7 @@ describe('bounds-math properties', () => {
       fc.assert(
         fc.property(radiusArb, distArb, (radius, dist) => {
           const { near } = planesAt(radius, dist);
-          expect(near).toBeGreaterThanOrEqual(
-            minNearForRadius(radius * SPHERE_SAFETY_EXPANSION)
-          );
+          expect(near).toBeGreaterThanOrEqual(minNearForRadius(radius * SPHERE_SAFETY_EXPANSION));
         })
       );
     });
