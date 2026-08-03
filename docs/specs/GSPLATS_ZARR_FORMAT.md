@@ -3,6 +3,8 @@
 **Version**: 3.3.0
 **Last Updated**: 2026-07-13
 
+> For a version-policy and migration summary that contrasts this format with the scene container, see [Formats & Migration](../guides/user/FORMAT_AND_MIGRATION.md).
+
 > **Cross-language contract:** the format *vocabulary* shared by the Python
 > writer and the TypeScript viewer — format versions, encoding-scheme names,
 > node types/kinds, and canonical attr/array keys — is single-sourced in

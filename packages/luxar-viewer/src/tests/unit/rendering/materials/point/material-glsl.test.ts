@@ -94,8 +94,9 @@ describe('PointMaterial', () => {
       expect(material.userData.gamma).toBe(2.2); // gamma stored in userData
       expect(material.uniforms.uInvGamma.value).toBeCloseTo(1.0 / 2.2, 5);
       expect(material.blending).toBe('NormalBlending');
-      // depthWrite is mode-derived (normal + opacity<0.99 → false),
-      // matching the Line/GSplat canonical pattern.
+      // Points ALWAYS have depthWrite:false in `normal` (not opacity-gated) —
+      // a point sprite stamps a flat depth plane across the whole disc, so
+      // sorted transparency never depth-writes, mirroring the gsplat rule (#1002).
       expect(material.depthWrite).toBe(false);
     });
   });

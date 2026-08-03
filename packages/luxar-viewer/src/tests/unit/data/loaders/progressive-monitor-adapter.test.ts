@@ -29,24 +29,22 @@ function makeInnerLoader(path: string, metricsOver: Partial<LoaderMetrics> = {})
       listener = null;
     }),
     getActiveQueries: vi.fn((): QueryInfo[] => []),
-    getMetrics: vi.fn(
-      (): LoaderMetrics => ({
-        type: 'point-spatial-index',
-        path,
-        queries: 0,
-        loads: 0,
-        evictions: 0,
-        errors: 0,
-        elementsLoaded: 0,
-        bytesLoaded: 0,
-        visibleElements: 0,
-        avgQueryTime: 0,
-        avgLoadTime: 0,
-        memoryUsed: 0,
-        memoryLimit: 0,
-        ...metricsOver,
-      })
-    ),
+    getMetrics: vi.fn((): LoaderMetrics => ({
+      type: 'point-spatial-index',
+      path,
+      queries: 0,
+      loads: 0,
+      evictions: 0,
+      errors: 0,
+      elementsLoaded: 0,
+      bytesLoaded: 0,
+      visibleElements: 0,
+      avgQueryTime: 0,
+      avgLoadTime: 0,
+      memoryUsed: 0,
+      memoryLimit: 0,
+      ...metricsOver,
+    })),
     /** Test helper: emit an event as this inner loader would, with ITS path. */
     emit(event: Partial<MonitorEvent> = {}): void {
       listener?.({

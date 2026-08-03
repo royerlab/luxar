@@ -634,16 +634,19 @@ describe('MaterialManager', () => {
       expect(material.blending).toBe(THREE.AdditiveBlending);
     });
 
-    it('should set depth write for opaque normal blending', () => {
+    it('should never depth-write for normal points, even at full opacity', () => {
       const material = manager.getPointMaterial({
         blendingMode: 'normal',
-        opacity: 0.99, // Opaque threshold
+        opacity: 1.0, // Full opacity — where the generic line gate is fully on
         gamma: 1.0,
         intensity: 1.0,
         offset: 0.0,
       });
 
-      expect(material.depthWrite).toBe(true);
+      // Points opt out of the generic opacity-gated depthWrite: a point
+      // sprite stamps a flat depth plane across the whole disc, so sorted
+      // transparency never depth-writes (#1002).
+      expect(material.depthWrite).toBe(false);
     });
 
     it('should disable depth write for transparent materials', () => {

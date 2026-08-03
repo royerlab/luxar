@@ -445,9 +445,10 @@ The native launcher binaries (produced by `make build-launchers` in the
 repo root and used by `luxar export --native ...`) honor:
 
 - `LUXAR_LAUNCHER_NO_WEBVIEW=1` — Skip the embedded WebView and open the
-  exported scene in the system default browser instead. Useful on
-  headless / minimal Linux installs (missing libwebkit2gtk) and for
-  smoke-testing the launcher itself without a graphical session.
+  exported scene in the system default browser instead. Useful for
+  smoke-testing the launcher without a graphical session. It does not let
+  the prebuilt Linux binary run without libwebkit2gtk — WebKit is linked
+  at build time, so the `webkit2gtk-4.0` runtime must be present to start.
 - `LUXAR_CACHE_BUDGET_MB=<N>` — Total in-memory cache pool (L0 + L1 +
   S-cache) the launcher passes to the viewer via `?cacheBudgetMB=`
   (default 2048). WebKit WebViews don't implement `performance.memory`,

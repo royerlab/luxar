@@ -140,7 +140,7 @@ Performance open rail popovers (see [`rail-panels/`](./rail-panels/README.md)).
 
 **Design:**
 
-- **No behavioural drift** — each button fires the *exact same* command as its
+- **No behavioural drift** — each button fires the _exact same_ command as its
   keyboard shortcut, via `InputHandler.getUiActions()` (the command/panel surface
   the key bindings dispatch into). The rail never re-implements panel logic.
 - **Live active-state** — a button highlights while its panel is open. Refreshed
@@ -1093,14 +1093,14 @@ timing is driven automatically via the `frame-start` / `frame-end` event bus
 while visible — there is no public `begin()` / `end()` to call. The widget is
 mounted by its owner (the control rail) via `.element`.
 
-| Method / property | Description                                      |
-| ----------------- | ------------------------------------------------ |
-| `element`         | The widget DOM node (getter) — caller mounts it  |
-| `toggle()`        | Toggle visibility                                |
-| `show()/hide()`   | Explicit show/hide                               |
-| `cycleMode()`     | Cycle the metric: FPS → ms → graph               |
-| `visible`         | Get current visibility state (getter)            |
-| `dispose()`       | Clean up resources                               |
+| Method / property | Description                                     |
+| ----------------- | ----------------------------------------------- |
+| `element`         | The widget DOM node (getter) — caller mounts it |
+| `toggle()`        | Toggle visibility                               |
+| `show()/hide()`   | Explicit show/hide                              |
+| `cycleMode()`     | Cycle the metric: FPS → ms → graph              |
+| `visible`         | Get current visibility state (getter)           |
+| `dispose()`       | Clean up resources                              |
 
 ### DatasetBrowser
 
