@@ -465,12 +465,15 @@ export interface GridCellState {
 }
 
 /**
- * Node type for scene graph display. The shared geometry/container types are
- * single-sourced from the cross-language format contract
- * (format-contract/contract.yaml); `mesh` is a viewer-only forward-looking
- * member with no Python counterpart yet.
+ * Node type for scene graph display, single-sourced from the cross-language
+ * format contract (format-contract/contract.yaml → `node_types`).
+ *
+ * This was `NodeTypeName | 'mesh'` while `mesh` was a viewer-only forward
+ * declaration; `mesh` is now in the contract, so the local extension is gone and
+ * this is a plain alias. Keep it an alias rather than re-widening: a display type
+ * the writer cannot emit has nothing to display.
  */
-export type SceneGraphNodeType = NodeTypeName | 'mesh';
+export type SceneGraphNodeType = NodeTypeName;
 
 /**
  * Scene graph node for UI display.
