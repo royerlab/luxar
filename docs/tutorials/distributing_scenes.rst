@@ -112,7 +112,7 @@ Linux) and serves the bundled zarr internally:
 
    out/
      MyScene-linux-amd64/
-       luxar-launcher             # Statically linked ELF, +x
+       luxar-launcher             # ELF, +x (needs webkit2gtk-4.0 runtime)
        viewer/                    # Luxar viewer
        data/                      # Zarr dataset
        MyScene.png                # Icon (FreeDesktop convention)
@@ -191,8 +191,7 @@ everything":
 * The launcher binds an ephemeral localhost port (no port collision),
   so multiple bundles can run side-by-side without interfering.
 
-**Fallback for environments without a WebView runtime** (e.g. minimal
-Linux installs missing ``libwebkit2gtk``, or developers who want to
+**Browser fallback** (headless smoke tests, or developers who want to
 inspect with browser devtools): set the ``LUXAR_LAUNCHER_NO_WEBVIEW``
 environment variable:
 
@@ -202,7 +201,10 @@ environment variable:
 
 The launcher then opens the system default browser instead of an
 embedded WebView; the local HTTP server still runs, you press
-**Ctrl+C** to stop.
+**Ctrl+C** to stop. This does *not* let the prebuilt Linux binary run
+without ``libwebkit2gtk`` — WebKit is linked at build time, so the loader
+aborts before the launcher can read this variable on a system missing the
+``webkit2gtk-4.0`` runtime.
 
 
 Looking ahead: signing and notarization
