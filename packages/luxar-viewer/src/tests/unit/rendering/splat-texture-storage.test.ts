@@ -22,6 +22,7 @@ import {
 } from '../../../rendering/element-texture-layout';
 import {
   SORTED_INDEX_CHUNK_ELEMENTS,
+  acknowledgeSortedIndexOrderingDraw,
   activeSortedIndexSlot,
   getActiveSortedIndexAttribute,
   cancelAllSortedIndexOrderingApplies,
@@ -1474,6 +1475,68 @@ describe('double-buffered ordering apply (atomic swap)', () => {
       stalled: false,
     });
     expect(Array.from(activeArr(geometry).subarray(0, CHUNK))).toEqual([3, 2, 1, 0]);
+  });
+
+  it('fires onApplied only after the selected ordering completes a draw, not at the flip', () => {
+    const { geometry } = makeGeometry(16);
+    let applied = 0;
+    let abandoned = 0;
+    writeSortedIndexOrdering(geometry, reversed(CHUNK), CHUNK, {
+      onApplied: () => applied++,
+      onAbandoned: () => abandoned++,
+    });
+
+    // The pump copies the final slice and selects the buffer for the next
+    // render, but THREE has not consumed the update range or drawn it yet.
+    expect(pumpSortedIndexOrderingApply(geometry)).toEqual({
+      more: false,
+      flipped: true,
+      stalled: false,
+    });
+    expect(applied).toBe(0);
+    expect(abandoned).toBe(0);
+
+    acknowledgeSortedIndexOrderingDraw(geometry);
+    expect(applied).toBe(1);
+    expect(abandoned).toBe(0);
+    // Exactly once even if a backend/render path invokes the hook again.
+    acknowledgeSortedIndexOrderingDraw(geometry);
+    expect(applied).toBe(1);
+  });
+
+  it('abandons a selected ordering if a newer flip supersedes it before any draw', () => {
+    const { geometry } = makeGeometry(16);
+    const events: string[] = [];
+    writeSortedIndexOrdering(geometry, reversed(CHUNK), CHUNK, {
+      onApplied: () => events.push('A applied'),
+      onAbandoned: () => events.push('A abandoned'),
+    });
+    pumpSortedIndexOrderingApply(geometry); // A selected, not rendered
+
+    writeSortedIndexOrdering(geometry, new Uint32Array([1, 0, 3, 2]), CHUNK, {
+      onApplied: () => events.push('B applied'),
+      onAbandoned: () => events.push('B abandoned'),
+    });
+    pumpSortedIndexOrderingApply(geometry); // B supersedes un-rendered A
+    expect(events).toEqual(['A abandoned']);
+
+    acknowledgeSortedIndexOrderingDraw(geometry);
+    expect(events).toEqual(['A abandoned', 'B applied']);
+  });
+
+  it('cancelling after a flip abandons the selected-but-unrendered ordering', () => {
+    const { geometry } = makeGeometry(16);
+    const events: string[] = [];
+    writeSortedIndexOrdering(geometry, reversed(CHUNK), CHUNK, {
+      onApplied: () => events.push('applied'),
+      onAbandoned: () => events.push('abandoned'),
+    });
+    pumpSortedIndexOrderingApply(geometry);
+
+    cancelSortedIndexOrderingApply(geometry);
+    expect(events).toEqual(['abandoned']);
+    acknowledgeSortedIndexOrderingDraw(geometry);
+    expect(events).toEqual(['abandoned']);
   });
 
   it('an EMPTY ordering stages nothing — it must not flip away from a good order', () => {

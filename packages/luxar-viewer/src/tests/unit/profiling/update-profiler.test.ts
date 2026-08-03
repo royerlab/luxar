@@ -1015,10 +1015,10 @@ describe('UpdateProfiler — depth-sort completion stream', () => {
     }
   });
 
-  it('is a plain counter: no completion is ever dropped (unlike the seq-merged root)', () => {
-    // The 'Depth Sort' profiler root drops a merge whose seq < the stored
-    // lastSeq (a late/out-of-order resolve). This stream is independent of
-    // that policy: every recorded completion counts, in any interleaving.
+  it('is a plain counter: each recorded completion advances independently of the aggregate root', () => {
+    // The 'Depth Sort' root aggregates passes into one timing entry. This
+    // stream is independent of that aggregation: every recorded application
+    // gets its own monotonic event, in whatever order it completes.
     const profiler = new UpdateProfiler();
     // Interleave depth-sort passes (which bump sortSeq) with completions to
     // simulate out-of-order resolves — the completion total must keep climbing.
@@ -1104,7 +1104,7 @@ describe('UpdateProfiler — depth-sort completion stream', () => {
     expect(events).toHaveLength(0);
   });
 
-  it('is independent of the seq-merged depth-sort root (both advance separately)', () => {
+  it('is independent of the aggregate depth-sort root (both advance separately)', () => {
     const profiler = new UpdateProfiler();
     profiler.beginDepthSortPass().end();
     profiler.beginDepthSortPass().end();
