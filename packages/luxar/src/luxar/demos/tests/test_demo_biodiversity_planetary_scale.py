@@ -30,6 +30,9 @@ from luxar.demos.demo_biodiversity_planetary_scale import (
     TAXON_GROUP_NAMES,
     BottomKSampler,
     DatasetRegistry,
+    _dataset_ids,
+    _dictionary_codes,
+    _read_part,
     chain_segment_indices,
     globe_camera,
     great_circle_resample,
@@ -194,14 +197,17 @@ def test_period_slot_clamps_out_of_range_years():
 
 
 def _license_mask(values):
-    """Reproduce the loader's licence gate over a column of raw GBIF values.
+    """Run the loader's OWN licence gate over a column of raw GBIF values.
 
-    Mirrors `_read_part`: dictionary-code the column against the allowlist and
-    keep only code == 1. Exercised here without network or pyarrow so the
-    licensing claim is guarded by a unit test.
+    Calls the real ``_dictionary_codes`` against the real ``ALLOWED_LICENSES``,
+    exactly as ``_read_part`` does, rather than restating the rule here — a
+    test that reimplements the gate would keep passing if the gate itself were
+    inverted again.
     """
-    allow = {name: 1 for name in ALLOWED_LICENSES}
-    codes = np.array([allow.get(v, -1) if v is not None else -1 for v in values])
+    pa = pytest.importorskip("pyarrow")
+    codes = _dictionary_codes(
+        pa.array(values, type=pa.string()), {name: 1 for name in ALLOWED_LICENSES}
+    )
     return codes == 1
 
 
@@ -222,6 +228,61 @@ def test_license_allowlist_drops_null_and_unknown_licenses():
 def test_license_allowlist_is_exact_not_prefix():
     # 'CC_BY_4_0_DERIV' must not pass by sharing a prefix with an allowed value.
     assert not _license_mask(["CC_BY_4_0_DERIV", "XCC0_1_0"]).any()
+
+
+def test_read_part_keeps_only_licensed_records_and_labels_their_publisher(tmp_path):
+    """The whole reader over a synthetic part: filters, row ids, publisher ids.
+
+    Guards the licensing claim where it is actually enforced -- a unit test of
+    the gate alone would not notice `_read_part` forgetting to apply it -- and
+    checks that a kept row's dataset id still names its own publisher after the
+    dictionary round-trip.
+    """
+    pa = pytest.importorskip("pyarrow")
+    pq = pytest.importorskip("pyarrow.parquet")
+    rows = [
+        # (lat, lon, class, year, license, uncertainty, datasetkey)
+        (10.0, 20.0, "Aves", 2001, "CC0_1_0", 100.0, "ds-a"),
+        (11.0, 21.0, "Insecta", 1995, "CC_BY_4_0", None, "ds-b"),
+        (12.0, 22.0, "Aves", 2010, "CC_BY_NC_4_0", 100.0, "ds-c"),  # NC
+        (13.0, 23.0, "Aves", 2010, None, 100.0, "ds-c"),  # null license
+        (14.0, 24.0, "Aves", 2010, "UNSPECIFIED", 100.0, "ds-c"),  # unknown
+        (0.0, 0.0, "Aves", 2010, "CC0_1_0", 100.0, "ds-a"),  # null island
+        (15.0, 25.0, "Aves", 1850, "CC0_1_0", 100.0, "ds-a"),  # pre-1900
+        (16.0, 26.0, "Nonesuch", 2010, "CC0_1_0", 100.0, "ds-a"),  # unmappable
+        (17.0, 27.0, "Aves", 2010, "CC0_1_0", 500_000.0, "ds-a"),  # centroid
+        (18.0, 28.0, "Mammalia", 2020, "CC_BY_4_0", 50.0, "ds-a"),
+    ]
+    table = pa.table(
+        {
+            "decimallatitude": pa.array([r[0] for r in rows], pa.float64()),
+            "decimallongitude": pa.array([r[1] for r in rows], pa.float64()),
+            "kingdom": pa.array([None] * len(rows), pa.string()),
+            "phylum": pa.array([None] * len(rows), pa.string()),
+            "class": pa.array([r[2] for r in rows], pa.string()),
+            "year": pa.array([r[3] for r in rows], pa.int32()),
+            "license": pa.array([r[4] for r in rows], pa.string()),
+            "coordinateuncertaintyinmeters": pa.array(
+                [r[5] for r in rows], pa.float64()
+            ),
+            "datasetkey": pa.array([r[6] for r in rows], pa.string()),
+        }
+    )
+    path = tmp_path / "000000"
+    pq.write_table(table, path)
+
+    registry = DatasetRegistry()
+    res = _read_part(None, str(path), 3, registry)
+
+    # Rows 0, 1 and 9 are the only ones that clear every filter.
+    assert res.n_rows == len(rows)
+    assert res.n_kept == 3
+    np.testing.assert_allclose(res.lat, [10.0, 11.0, 18.0], atol=1e-4)
+    # The part ordinal rides in the high bits so uids are unique across parts.
+    assert res.uid.tolist() == [(3 << 32) | 0, (3 << 32) | 1, (3 << 32) | 9]
+    assert [registry.key(int(i)) for i in res.ds_id] == ["ds-a", "ds-b", "ds-a"]
+    # The scanned-candidate counts agree with the kept rows.
+    assert res.datasets == {"ds-a": 2, "ds-b": 1}
 
 
 # ---------------------------------------------------------------------------
@@ -245,6 +306,65 @@ def test_dataset_registry_maps_none_to_a_sentinel_key():
     ids = r.ids_for([None, "ds-a", None])
     assert ids[0] == ids[2]
     assert r.key(int(ids[0])) == ""  # filtered out of the sidecar by the caller
+
+
+def test_dataset_ids_map_kept_rows_through_the_column_dictionary():
+    """The ids the samplers carry must name the right publisher.
+
+    ``_dataset_ids`` goes through the column's dictionary rather than looping
+    over rows, so this checks the gather (including the null slot) lands where
+    a per-row mapping would have.
+    """
+    pa = pytest.importorskip("pyarrow")
+    column = pa.array(["ds-a", "ds-b", None, "ds-a", "ds-c", "ds-b"])
+    registry = DatasetRegistry()
+    keep = np.array([0, 2, 3, 5])  # ds-a, null, ds-a, ds-b
+    ids = _dataset_ids(column, keep, registry)
+    assert [registry.key(int(i)) for i in ids] == ["ds-a", "", "ds-a", "ds-b"]
+    assert ids.dtype == np.int32
+    # A second part reuses the ids already assigned.
+    more = _dataset_ids(column, np.array([4, 1]), registry)
+    assert [registry.key(int(i)) for i in more] == ["ds-c", "ds-b"]
+    assert int(more[1]) == int(ids[3])
+
+
+def test_dataset_ids_on_an_empty_selection():
+    pa = pytest.importorskip("pyarrow")
+    ids = _dataset_ids(
+        pa.array(["ds-a"]), np.array([], dtype=np.intp), DatasetRegistry()
+    )
+    assert ids.size == 0
+
+
+def test_dataset_registry_is_safe_under_concurrent_readers():
+    """The registry is shared by 48 reader threads.
+
+    "Look up, else take the next id and append" is a read-modify-write that the
+    GIL does not make atomic: two threads arriving with different new keys can
+    claim the same id, and one publisher's records end up credited to the other.
+    Every key must map to itself no matter how the threads interleave.
+    """
+    import sys
+    from concurrent.futures import ThreadPoolExecutor
+
+    registry = DatasetRegistry()
+    names = [f"ds-{i:05d}" for i in range(20_000)]
+    # Each worker sees the keys in a different rotation, so they meet unseen
+    # keys at different moments rather than queueing behind one another.
+    batches = [names[i * 1_000 :] + names[: i * 1_000] for i in range(16)]
+    # A short read is over long before the default 5 ms switch interval, so
+    # without this the interpreter would never preempt a worker mid-loop and
+    # the test would pass whether or not the registry locks.
+    previous = sys.getswitchinterval()
+    sys.setswitchinterval(1e-6)
+    try:
+        with ThreadPoolExecutor(max_workers=16) as pool:
+            results = list(pool.map(registry.ids_for, batches))
+    finally:
+        sys.setswitchinterval(previous)
+    for batch, ids in zip(batches, results):
+        assert [registry.key(int(i)) for i in ids] == batch
+    assert len(registry) == len(names)
 
 
 def test_provenance_counts_dedupe_records_emitted_to_several_slots():

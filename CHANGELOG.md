@@ -73,8 +73,8 @@ replicated into all 139 slots, 3.5M elements) was removed:
   elements identically at every `(taxon, period)` combination with the coarse
   gsplat level intact and no "filtered out during nD→3D processing" warnings.
 
-The globe is now one full-resolution 3M `extend_to_all` layer keeping its
-per-tile LOD.
+The globe is now one `extend_to_all` layer at a fixed resolution (see the
+textured-shell note below for why it carries no LOD of its own).
 
 The scrubbable layers do the opposite — real `(taxon, period)` coordinates, so
 scrubbing isolates — and **every reachable slot is materialised**: 9 taxon

@@ -98,8 +98,8 @@ removed:
   **gsplat** level intact and no "filtered out during nD->3D processing"
   warnings.
 
-So the globe is now ONE full-resolution 3M layer with ``extend_to_all``, keeping
-its per-tile LOD, and the replicated context globe is gone.
+So the globe is now ONE ``extend_to_all`` layer of ``N_GLOBE`` points at a fixed
+resolution, and the replicated context globe is gone.
 
 Only the globe is extended. Extending the always-on track layer as well was tried
 and reverted: 105,662 always-visible ribbons buried the selection (7,283 fish
@@ -297,6 +297,7 @@ DEMO_META = {
 
 import json
 import math
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Dict, Final, List, Optional, Sequence, Tuple
@@ -408,7 +409,7 @@ N_GLOBE: Final = 700_000
 #: over-drawing (0.29 spacing at 700k points on a radius-100 globe).
 GLOBE_RADII: Final = 0.23
 #: The Blue Marble texture is multiplied down HARD. It has to be: the globe is a
-#: sealed 3M-point shell, so at full brightness the continents (bright green
+#: sealed shell, so at full brightness the continents (bright green
 #: Europe, tan Sahara, saturated blue ocean) carry more contrast than the data
 #: drawn on top of them and the occurrence colours stop reading as data at all.
 #: Dimming the colour rather than lowering the layer's opacity keeps the shell
@@ -417,10 +418,9 @@ GLOBE_RADII: Final = 0.23
 #: reliable lever: the Layers panel restores stored per-layer settings at load,
 #: so an `opacity` attr can be overridden at runtime, whereas baked colour cannot.
 #:
-#: 0.12, not the 0.20 that looked right on the raw point cloud. Once the globe
-#: became a `substitutive_lod` layer its coarse level is mass-preserving gsplats,
-#: which are markedly brighter than the points they replace — bright enough that
-#: a 7,283-record selection stopped reading against it.
+#: 0.12, not the 0.20 that first looked right: 0.20 was chosen against a sparse
+#: early globe, and once the shell sealed at N_GLOBE it was bright enough that a
+#: 7,283-record selection stopped reading against it.
 GLOBE_DIM: Final = 0.12
 OCCURRENCE_RADII: Final = 0.062
 OCCURRENCE_OPACITY: Final = 0.75
@@ -473,14 +473,12 @@ OCCURRENCE_BLENDING: Final = "opaque"
 #: Fractional radial lift for the occurrence layers, i.e. how far the records
 #: float above the globe shell.
 #:
-#: 0.010 (= 1.0 scene unit at RADIUS 100), not the 0.0012 first used. Two things
-#: make a small lift insufficient. The globe's own points are `GLOBE_RADII`
-#: 0.16 wide, and -- more importantly -- its COARSE substitutive levels are
-#: merged Gaussians roughly 4x wider again (~0.64 at K=4/levels=2), so a
+#: 0.010 (= 1.0 scene unit at RADIUS 100), not the 0.0012 first used. A globe
+#: point is `GLOBE_RADII` 0.23 wide and its soft edge spreads wider still, so a
 #: 0.12-unit lift left the records buried inside the shell's rendered
 #: footprint. With `opaque` blending the depth test makes that intersection
 #: unmistakable: dots wink in and out along the terrain. 1% of the globe radius
-#: is imperceptible as displacement but clears the shell at every LOD level.
+#: is imperceptible as displacement but clears the shell everywhere.
 OCCURRENCE_LIFT: Final = 0.010
 
 TRACK_WIDTH: Final = 0.30
@@ -510,12 +508,13 @@ MAX_LINE_VERTICES_PER_NODE: Final = 2_500_000
 #: threshold is therefore the only lever, and it happens to be the natural one:
 #: the copies split cleanly into ~106k parts.
 MAX_TRACK_VERTICES_PER_NODE: Final = 150_000
-# The globe is partitioned for a DIFFERENT reason than the occurrence layer.
-# 3M points is comfortably under the 5.59M texture bound, but a `stream:20000`
-# geometric ladder over 3M doubles to a 1,280,000-element final commit, and
+# The globe is partitioned for a DIFFERENT reason than the occurrence layer: not
+# the 5.59M texture bound but the ladder's LAST commit. A `stream:20000`
+# geometric ladder doubles, so its final chunk is ~half the layer, and
 # `check_demo_ladders` fails any commit above 1,000,000 (a single commit that
-# large blocks the main thread). Splitting into ~750k parts caps each part's
-# ladder at 320k instead.
+# large blocks the main thread). At the current N_GLOBE this cap is slack -- the
+# globe stays one part -- and it is the guard that catches a future raise of
+# N_GLOBE rather than letting that land as a main-thread stall.
 MAX_GLOBE_POINTS_PER_NODE: Final = 1_000_000
 
 #: View-dependent LOD for the two big summary layers. A `stream:` ladder alone is
@@ -1346,23 +1345,38 @@ class DatasetRegistry:
     not the candidates that were scanned, so ``datasetkey`` must survive
     sampling. Strings cannot ride through the numeric samplers, so each key gets
     an int32 id here and the ids travel with the coordinates.
+
+    SHARED BY EVERY READER THREAD, hence the lock. "Look the key up, and if it
+    is new take the next id and append it" is a read-modify-write, and the GIL
+    does not make it atomic: two threads that each arrive with a different new
+    key can both read the same ``len(self._keys)``, both claim that id, and the
+    second append lands one slot further on -- so one publisher's records are
+    credited to the other and the real key never appears in the sidecar at all.
+    That is precisely the misattribution this registry exists to prevent.
     """
 
     def __init__(self) -> None:
+        self._lock = threading.Lock()
         self._ids: Dict[str, int] = {}
         self._keys: List[str] = []
 
     def ids_for(self, names: Sequence[Optional[str]]) -> np.ndarray:
-        """Map a per-row list of dataset keys to their int32 ids."""
+        """Map dataset keys to their int32 ids, registering any new ones.
+
+        Feed it a part's DICTIONARY (its few hundred distinct keys), never its
+        rows: a per-row Python loop over ~300k names would run in every reader
+        thread with the GIL held and dominate the read.
+        """
         out = np.empty(len(names), dtype=np.int32)
-        for i, name in enumerate(names):
-            key = name if name is not None else ""
-            got = self._ids.get(key)
-            if got is None:
-                got = len(self._keys)
-                self._ids[key] = got
-                self._keys.append(key)
-            out[i] = got
+        with self._lock:
+            for i, name in enumerate(names):
+                key = name if name is not None else ""
+                got = self._ids.get(key)
+                if got is None:
+                    got = len(self._keys)
+                    self._ids[key] = got
+                    self._keys.append(key)
+                out[i] = got
         return out
 
     def key(self, dataset_id: int) -> str:
@@ -1404,6 +1418,35 @@ def _dataset_counts(column: Any, keep_idx: np.ndarray) -> Dict[str, int]:
     return {
         key: int(count) for key, count in zip(keys, counts) if key is not None and count
     }
+
+
+def _dataset_ids(
+    column: Any, keep_idx: np.ndarray, registry: "DatasetRegistry"
+) -> np.ndarray:
+    """Registry ids for the kept rows' ``datasetkey``, one per kept row.
+
+    Goes through the column's DICTIONARY, exactly as :func:`_dictionary_codes`
+    does for the taxonomy: a part has a few hundred distinct dataset keys and
+    ~300k rows, so mapping the rows one by one in Python would put ~76M
+    interpreted iterations, GIL-held, into the middle of a 48-thread read.
+    """
+    if keep_idx.size == 0:
+        return np.empty(0, dtype=np.int32)
+    pa = require_module("pyarrow")
+    taken = column.take(pa.array(keep_idx))
+    if isinstance(taken, pa.ChunkedArray):
+        taken = taken.combine_chunks()
+    encoded = taken.dictionary_encode()
+    if isinstance(encoded, pa.ChunkedArray):
+        encoded = encoded.combine_chunks()
+    local = np.asarray(
+        encoded.indices.fill_null(-1).to_numpy(zero_copy_only=False), dtype=np.int64
+    )
+    # The trailing None gives null keys a slot of their own, so the gather below
+    # never has to special-case them (the registry maps None to "", which
+    # `write_dataset_provenance` drops).
+    dict_ids = registry.ids_for([*encoded.dictionary.to_pylist(), None])
+    return dict_ids[np.where(local >= 0, local, len(dict_ids) - 1)].astype(np.int32)
 
 
 class _PartResult:
@@ -1501,9 +1544,7 @@ def _read_part(
     idx = np.flatnonzero(keep)
     datasets = _dataset_counts(table.column("datasetkey"), idx)
 
-    pa = require_module("pyarrow")
-    ds_names = table.column("datasetkey").take(pa.array(idx)).to_pylist()
-    ds_id = registry.ids_for(ds_names)
+    ds_id = _dataset_ids(table.column("datasetkey"), idx, registry)
     # A globally unique row id: part ordinal in the high bits, row index in the
     # low bits. Lets the provenance count deduplicate a record that a sampler
     # emitted into more than one (taxon, period) slot.
@@ -1807,7 +1848,9 @@ def write_dataset_provenance(sample: GbifSample) -> Path:
     """
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     path = CACHE_DIR / f"gbif_datasets_{sample.snapshot}.csv"
-    rows = sorted(sample.scene_datasets.items(), key=lambda kv: -kv[1])
+    # Count first, then key: equal counts must not be ordered by the id the
+    # registry happened to hand out, which follows thread completion order.
+    rows = sorted(sample.scene_datasets.items(), key=lambda kv: (-kv[1], kv[0]))
     with open(path, "w", encoding="utf-8") as handle:
         handle.write("datasetkey,records_in_scene\n")
         for key, count in rows:
