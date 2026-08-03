@@ -11,6 +11,7 @@
 
 import type { SceneNode } from '../../data-loader-types';
 import type { SceneGraphNode } from '../../../types/data-monitor-types';
+import { supportsLod, supportsPartition } from '../../../types/geometry-capabilities';
 
 /** Valid scene-graph-node display types. */
 type GraphNodeType = SceneGraphNode['type'];
@@ -63,15 +64,22 @@ function deriveDisplayType(rawType: string | undefined): GraphNodeType {
 }
 
 /**
- * Leaf geometry display types a specialized group can resolve to.
+ * Whether `displayType` is a geometry type that can back a group of this `kind`.
  *
- * DO NOT widen to `GEOMETRY_TYPES`. This gates the `display_type` attr of a
- * `kind=lod` / `kind=partition` group, so it is the set of geometry types that
- * actually support those containers — the mirror of the Python-side allowlist in
- * `core/node/specialized_groups.py`. A geometry type with no LOD/partition
- * support must not be admitted here just because it is a valid leaf type.
+ * Deliberately NOT the geometry vocabulary: this gates the `display_type` attr
+ * of a `kind=lod` / `kind=partition` group, so it is the set of types that
+ * actually support that container. A geometry type with no LOD/partition support
+ * must not be admitted just because it is a valid leaf type.
+ *
+ * The two arms are asymmetric on the writer side, which is why they are asked
+ * separately rather than through one shared set: `add_partition_group_impl`
+ * (`core/node/specialized_groups.py`) rejects a non-allowlisted `display_type`,
+ * but the LOD path only *derives* one from its children and validates nothing —
+ * so for `kind=lod` this predicate is the only gate in the pipeline.
  */
-const LEAF_DISPLAY_TYPES: ReadonlySet<string> = new Set(['points', 'lines', 'gsplats']);
+function canBackSpecializedGroup(kind: 'lod' | 'partition', displayType: unknown): boolean {
+  return kind === 'lod' ? supportsLod(displayType) : supportsPartition(displayType);
+}
 
 /**
  * Read the specialized-group discriminant (`kind=lod` / `kind=partition`)
@@ -139,7 +147,7 @@ export function convertToSceneGraphNode(node: SceneNode): SceneGraphNode {
     // group represents, written by the Python compiler. Used for the tree
     // icon; absent / non-leaf values are simply left undefined.
     const displayType = (node.attrs as Record<string, unknown>).display_type;
-    if (typeof displayType === 'string' && LEAF_DISPLAY_TYPES.has(displayType)) {
+    if (canBackSpecializedGroup(kind, displayType)) {
       graphNode.displayType = displayType as SceneGraphNode['displayType'];
     }
   }
