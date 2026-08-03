@@ -266,8 +266,13 @@ straight to the §5.4 kernels. An out-of-range face index **panics** the Rust ke
 `panic = "abort"`, so the trap takes down the whole WASM module) and silently corrupts the TS backend
 (out-of-bounds reads yield `undefined`). The mesh loader must therefore structurally validate after
 decode, before either backend is invoked: `vertices`/`faces` shapes against `n_vertices`/`n_faces`,
-`faces` length a multiple of 3, every face index `< V`, and `normal_dims` well-formed whenever normals
-are present — failing the node with a `LoaderError` (one node lost, not the scene) instead of trapping.
+`faces` length a multiple of 3, every face index `< V`, `n_vertices < 2^27`, and `normal_dims`
+well-formed whenever normals are present — failing the node with a `LoaderError` (one node lost, not the
+scene) instead of trapping. The `n_vertices < 2^27` check belongs at this gate because mesh's pick
+`elementId` is `gl_VertexID` (§6.5) — the one type not bounded by the element-texture capacity — and
+once a vertex ordinal reaches the pick vote-key stride (`2^27`) the vote key silently aliases across
+nodes (the largest ordinal is `n_vertices - 1`, so `n_vertices < 2^27` keeps every ordinal strictly
+under the stride), so the bound must be enforced here, not assumed from the §7 whole-load workload.
 The optional arrays get the same structural gate whenever present — `normals` shape `(V, 3)`, `colors`
 shape `(V, 3|4)`, `scalars` length `V`, and the label/image-label CSR offsets monotone and in-bounds
 (§3.2) — because they bind as enabled vertex attributes on an **indexed** draw (§6.1): an undersized
@@ -786,9 +791,16 @@ hover tooltips resolve with no extra mapping.
 float32 24-bit mantissa (the readback recombines the halves); vertex count `V` uses the same split (see
 `rendering/picking/README.md` for the rationale). The pick readback also packs
 `nodeId * VOTE_KEY_STRIDE + elementId` for brightness-weighted voting, whose alias-free stride is `2^27`
-(`rendering/picking/picking-system/pick-render.ts`); the per-vertex id source stays comfortably under it
-because §7 loads a mesh whole at ≤ a few million triangles (vertex counts of the same order), so no mesh
-vertex-count cap is needed for the pick to stay exact.
+(`rendering/picking/picking-system/pick-render.ts`). The §7 ≤-few-million-triangles figure is a workload
+*expectation*, not an invariant: for the three texture-fed types the alias-free condition is
+*structural* — `elementId` is bounded by `getMaxElementCapacityPerNode`, well under `2^27` — whereas
+mesh's `gl_VertexID` source is bounded only by `V`. The cap is therefore *enforced*: `n_vertices < 2^27`
+at the §3.5 loader gate (fail the node with a `LoaderError`), invoking the stride's own house rule that
+an unenforced bound is not a bound (the reason `MAX_PICK_NODE_ID` is checked at allocation,
+`rendering/picking/picking-system/pick-render.ts`). Note that `pick-render.test.ts`'s existing headroom
+test only pins the texture-*layout* maxima, so this vertex cap needs its own pin — a dedicated test
+that the vote key stays exact up to the largest admitted vertex ordinal and that a mesh with
+`n_vertices ≥ 2^27` is rejected with a `LoaderError`.
 
 **Accepted v1 limitation.** `vElementId` is a `flat` varying, so within a triangle it resolves to that
 triangle's **provoking vertex**, not the cursor's barycentric-nearest vertex. Hovering a triangle
@@ -992,8 +1004,9 @@ A reviewer should treat a `| 'mesh'` appearing in any of those five as a defect.
 - [ ] Rust: `mesh_vertex_visibility_mask` / `compact_visible_faces` unit tests incl. the non-finite rule
 - [ ] TS unit: loader, geometry assembly, cull correctness, colormap fail-closed guard,
       Rust↔TS kernel parity, corrupt-store rejection (out-of-range face index → `LoaderError`, not a
-      WASM trap; an undersized `normals`/`colors`/`scalars` array → `LoaderError`, §3.5), and the
-      `volumetric`→`opaque` fallback warning (§6.3)
+      WASM trap; an undersized `normals`/`colors`/`scalars` array → `LoaderError`, §3.5; `n_vertices ≥
+      2^27` → `LoaderError`, its own pin since `pick-render.test.ts` only covers the texture-layout
+      maxima, §6.5), and the `volumetric`→`opaque` fallback warning (§6.3)
 - [ ] TS unit (alpha chain, §6.2): an **RGBA** mesh produces **different** fragment output than the same
       mesh RGB-only (goes red if `vAlpha` is dropped — the exact "(V,4) renders like (V,3)" defect); under
       `opaque`, fragments with `a < uAlphaCutoff` are **discarded** (cutout) and survivors write alpha 1.0;
