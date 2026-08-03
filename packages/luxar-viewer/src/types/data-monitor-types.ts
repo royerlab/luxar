@@ -774,3 +774,11 @@ export interface MemoryMetrics {
   gpuPool: GPUPoolStats | null;
   accumulators: Record<PooledGeometryType, AccumulatorStats | null>;
 }
+
+/**
+ * What the monitor needs from one element accumulator. Registered per
+ * {@link PooledGeometryType} via `DataLoadingMonitor.setAccumulatorProvider`.
+ */
+export interface AccumulatorProvider {
+  getStats(): AccumulatorStats;
+}
