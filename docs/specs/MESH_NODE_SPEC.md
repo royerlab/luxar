@@ -296,7 +296,18 @@ shape `(V, 3|4)`, `scalars` length `V`, and the label/image-label CSR offsets mo
 (§3.2) — because they bind as enabled vertex attributes on an **indexed** draw (§6.1): an undersized
 attribute doesn't trap, it makes `drawElements` read past the buffer (an invalid-operation draw or
 silent zeros, backend-dependent) and mis-shades every vertex it covers. Same `LoaderError`, same
-one-node blast radius.
+one-node blast radius. `normals` additionally get a per-value **finiteness** check — the one optional
+array whose non-finite values defeat a render-time shader guard. A non-finite (`NaN`/`Inf`) stored
+normal defeats the ε-guard on the §6.2 stored-normal fragment variant (specified in the
+`validate_normals_for_writing` bullet above): its `dot(N, N) < ε` test does not catch `NaN` (false under
+IEEE ordered comparison, and formally undefined in GLSL ES) and so falls through into `normalize()`,
+propagating `NaN` into the shade term — precisely the "normalize into NaN shading" the guard exists to
+prevent, for precisely the externally-produced/corrupt audience this gate defends. Rejecting it here
+keeps that guard sound, since it then only ever sees finite normals — where the ε-test correctly catches
+the legitimately zero-length ones (which are finite, warned-not-rejected at write time). This mirrors the
+write-time `validate_normals_for_writing` finiteness check and is applied unconditionally, even to a
+`shading == "flat"` node whose normals never bind, since non-finite values signal store corruption;
+`colors`/`scalars` finiteness stays write-side only, as no shader guard's soundness depends on them.
 
 ### 3.6 Authoring lint
 
@@ -1059,9 +1070,11 @@ A reviewer should treat a `| 'mesh'` appearing in any of those five as a defect.
 - [ ] Rust: `mesh_vertex_visibility_mask` / `compact_visible_faces` unit tests incl. the non-finite rule
 - [ ] TS unit: loader, geometry assembly, cull correctness, colormap fail-closed guard,
       Rust↔TS kernel parity, corrupt-store rejection (out-of-range face index → `LoaderError`, not a
-      WASM trap; an undersized `normals`/`colors`/`scalars` array → `LoaderError`, §3.5; `n_vertices >
-      2^27` → `LoaderError`, its own pin since `pick-render.test.ts` only covers the texture-layout
-      maxima, §6.5), and the `volumetric`→`opaque` fallback warning (§6.3)
+      WASM trap; an undersized `normals`/`colors`/`scalars` array → `LoaderError`, §3.5; a store carrying
+      non-finite (`NaN`/`Inf`) `normals` → `LoaderError`, §3.5, verified to fail (the store loads without
+      error) before the finiteness check is added, per §3.5's no-op-validator rule; `n_vertices > 2^27` →
+      `LoaderError`, its own pin since `pick-render.test.ts` only covers the texture-layout maxima, §6.5),
+      and the `volumetric`→`opaque` fallback warning (§6.3)
 - [ ] TS unit (alpha chain, §6.2): an **RGBA** mesh produces **different** fragment output than the same
       mesh RGB-only (goes red if `vAlpha` is dropped — the exact "(V,4) renders like (V,3)" defect); under
       `opaque`, fragments with `a < uAlphaCutoff` are **discarded** (cutout) and survivors write alpha 1.0;
