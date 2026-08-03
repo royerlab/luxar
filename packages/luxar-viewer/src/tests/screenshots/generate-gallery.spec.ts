@@ -774,7 +774,7 @@ async function captureOrbitFrames(page: any, framesDir: string, demo?: DemoEntry
       }
     }
     await page.evaluate(
-      ({ idx, n, amp }: { idx: number; n: number; amp: number }) => {
+      async ({ idx, n, amp }: { idx: number; n: number; amp: number }) => {
         const debug = (window as any).__luxarDebug;
         const o = (window as any).__orbit;
         // Guard: a mid-run reload would wipe these; skip the frame rather than
@@ -795,6 +795,12 @@ async function captureOrbitFrames(page: any, framesDir: string, demo?: DemoEntry
         cam.up.set(o.U.x, o.U.y, o.U.z);
         cam.lookAt(o.tx, o.ty, o.tz);
         cam.updateMatrixWorld();
+        // The orbit stopped the rAF loop, so the per-frame depth-sort scheduler
+        // is dead — re-sort depth-ordered nodes for THIS pose before rendering,
+        // or every frame would show the permutation frozen at the pre-orbit pose
+        // (order-dependent modes: normal / volumetric). Offline, so a full sort
+        // per frame is affordable.
+        await debug.resortDepthOrderingForCapture?.();
         debug.postProcessing?.render?.(); // synchronous render with the new camera
       },
       { idx: i, n: ORBIT_FRAMES, amp: ampRad }
