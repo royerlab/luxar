@@ -23,6 +23,7 @@ import {
   isColormapAwareMaterial,
   type ColormapAwareMaterial,
 } from './materials/_shared/colormap-aware-material';
+import type { GeometryTypeName } from '../types/format-contract';
 
 /**
  * Apply a colormap texture (or `null` to disable) to a material.
@@ -111,7 +112,9 @@ export function applyScalarRangeToMaterial(
  * `USE_COLORMAP` and should log a warning so the user understands why
  * a metadata-authored colormap did not take effect.
  *
- * @param nodeType - `'points' | 'lines' | 'gsplats'`.
+ * @param nodeType - Any {@link GeometryTypeName}. Exhaustive: a new geometry
+ *   type must state its own scalar-presence rule below rather than inheriting
+ *   the fail-closed tail, which would silently suppress its colormaps.
  * @param geometry - Optional buffer geometry; required for `points` and
  *   `lines`. When `undefined` for those types, returns `false` (fail-closed).
  * @returns `true` only when the geometry carries the per-node-type
@@ -119,7 +122,7 @@ export function applyScalarRangeToMaterial(
  * @public
  */
 export function supportsScalarColormap(
-  nodeType: 'points' | 'lines' | 'gsplats',
+  nodeType: GeometryTypeName,
   geometry?: THREE.BufferGeometry
 ): boolean {
   if (nodeType === 'gsplats') return true;
@@ -127,5 +130,15 @@ export function supportsScalarColormap(
     // Scalar presence stamp — see the doc block above.
     return geometry ? geometry.userData?.hasScalars === true : false;
   }
+  // Exhaustiveness guard: with every GeometryTypeName handled above, `nodeType`
+  // is `never` here. Adding a geometry type breaks this assignment, forcing an
+  // explicit decision instead of a silent fail-closed `false`.
+  //
+  // The value is deliberately NOT returned. This function is `@public` and
+  // re-exported from the package index, so an untyped JS caller can reach it with
+  // anything; returning `unhandled` would hand back the truthy input string and
+  // ENABLE a colormap the geometry cannot feed. Fail closed at runtime, break at
+  // compile time.
+  void (nodeType satisfies never);
   return false;
 }
