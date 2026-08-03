@@ -67,10 +67,12 @@ The subfolders:
 
 - **Single source of truth for per-node view state.** Initial load,
   update, and retry all route through
-  `view-state/derive-node-view-state.ts`. The `extend_to_all` skip
-  semantics, partial-extend tolerance override, and `nd_transform`
-  inverse-query all live in that one helper — diverging means a retry
-  can succeed against a different region than the update that failed.
+  `view-state/derive-node-view-state.ts`. The `extend_to_all` handling
+  (a fully-extended node becomes a slice-invariant query — extended
+  tolerance + pinned slice — never a skip), partial-extend tolerance
+  override, and `nd_transform` inverse-query all live in that one helper
+  — diverging means a retry can succeed against a different region than
+  the update that failed.
 - **Async process / synchronous commit split.** `process/` runs the nD
   → 3D projection (worker-preferred, main-thread fallback) and returns
   `Staged*Commit` payloads without touching geometry; `commit/` writes

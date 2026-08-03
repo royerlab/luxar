@@ -9,7 +9,9 @@
  *     registry loaders;
  *   - every shadow pass carries frameBudgetMs (the store-prefix invariant)
  *     and the pass's abort signal;
- *   - extend_to_all-skipped nodes and no-hidden-dims views are skipped;
+ *   - no-hidden-dims views are skipped; a FULLY-extended (slice-invariant)
+ *     node is skipped too (a shadow would pin the foreground's own entry),
+ *     while a PARTIALLY-extended node is still prefetched;
  *   - persist-across-ticks: a prefetch while a batch is in flight is a no-op
  *     (NOT abort+restart — a cold level outlives one frame), so background
  *     deepening can complete; abortInFlight / releaseShadows (dispose + lazy
@@ -152,19 +154,53 @@ describe('SlicePrefetcher', () => {
     expect(shadowLoaders.get('/splats')!.updateView).toHaveBeenCalledTimes(2);
   });
 
-  it('skips nodes whose extend_to_all covers all hidden dims, and no-hidden-dims views entirely', async () => {
+  it('does NOT prefetch a FULLY-extended node — its query is slice-invariant, so a shadow would pin what the foreground already holds (#1157)', async () => {
     graph.children = [makeNode('/splats', { extend_to_all: ['t'] })];
-    registry.loaders.clear();
+    registry.loaders.clear(); // only the gsplats /splats loader remains
     const dims = [
       { name: 'x' },
       { name: 'y' },
       { name: 'z' },
       { name: 't', discrete: true, step: 1 },
     ] as never;
-    prefetcher.prefetch({ ...view, dimensions: dims }, 10);
+    prefetcher.prefetch({ ...view, dimensions: dims, slicePosition: [0, 0, 0, 7] }, 10);
     await flushAsync();
-    expect(factoryCalls).toHaveLength(0); // derived.skip — no shadow built
+    // The only non-displayed dim (t) is extend-to-all → the shadow query equals
+    // the foreground query at any slice. Prefetching it would re-load and PIN
+    // the foreground's own entry (never released for a slice-invariant node),
+    // biasing S-cache eviction — so it is skipped.
+    expect(factoryCalls).toHaveLength(0);
+  });
 
+  it('still prefetches a PARTIALLY-extended node (only some non-displayed dims are sentinel)', async () => {
+    graph.children = [makeNode('/splats', { extend_to_all: ['t'] })];
+    registry.loaders.clear(); // only the gsplats /splats loader remains
+    // Two non-displayed dims: t (extended) + c (NOT extended) → the node still
+    // moves on c, so its query is slice-variant and worth prefetching.
+    const dims = [
+      { name: 'x' },
+      { name: 'y' },
+      { name: 'z' },
+      { name: 't', discrete: true, step: 1 },
+      { name: 'c', discrete: true, step: 1 },
+    ] as never;
+    prefetcher.prefetch(
+      {
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 7, 2],
+        tolerance: [0, 0, 0, 0.25, 0.25],
+        dimensions: dims,
+      },
+      10
+    );
+    await flushAsync();
+    expect(factoryCalls).toHaveLength(1);
+    const [vs] = shadowLoaders.get('/splats')!.updateView.mock.calls[0];
+    expect(vs.tolerance[3]).toBe(1e10); // t: extend-to-all sentinel
+    expect(vs.tolerance[4]).toBe(0.25); // c: still a normal sliced dim
+  });
+
+  it('skips a no-hidden-dims view entirely (S-cache ineligible)', async () => {
     graph.children = [makeNode('/splats')];
     prefetcher.prefetch(
       { displayDims: [0, 1, 2], slicePosition: [0, 0, 0], tolerance: [0, 0, 0] },

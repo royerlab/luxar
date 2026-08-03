@@ -30,56 +30,91 @@ const baseViewState: ViewState = {
   tolerance: [0, 0, 0, 1],
 };
 
+// A fully-extended node's derived view state: the extend-to-all sentinel on the
+// (single) non-displayed dim + that dim's slicePosition pinned to 0 — a
+// slice-INVARIANT query. It flows through the handler as a normal node (#1157).
+const extendedViewState: ViewState = {
+  displayDims: [0, 1, 2],
+  slicePosition: [0, 0, 0, 0],
+  tolerance: [0, 0, 0, 1e10],
+};
+
+const fakePointsData = {
+  positions: new Float32Array(),
+  colors: new Float32Array(),
+  radii: new Float32Array(),
+  sharpness: new Float32Array(),
+  pointCount: 3,
+  ndim: 3,
+  metadata: {
+    totalPoints: 3,
+    loadedPoints: 3,
+    bounds: new THREE.Box3(),
+    usedSpatialIndex: false,
+  },
+};
+
+/** Root group containing a Points mesh stamped as already-committed. */
+function rootWithMesh(path: string): THREE.Group {
+  const root = new THREE.Group();
+  const mesh = new THREE.Mesh();
+  mesh.name = path;
+  mesh.userData = { loadedViewVersion: 1 };
+  root.add(mesh);
+  return root;
+}
+
 describe('points handler', () => {
   it('discriminates as kind="points" with label="Points"', () => {
     expect(kind).toBe('points');
     expect(label).toBe('Points');
   });
 
-  it('returns null on derived.skip without calling the loader', async () => {
+  it('loads a fully-extended node with the derived extended+pinned view state on FIRST paint (#1157)', async () => {
     const loader: DataLoader = {
       loadPoints: vi.fn(),
-      updateView: vi.fn(),
+      updateView: vi.fn().mockResolvedValue(fakePointsData),
       dispose: vi.fn(),
     };
-    const queue = new ViewStateQueue();
-    const result = await loadAndStage('/p', loader, makeSession(), {
+    const session = makeSession();
+    // A fully-extended node is a normal node — the handler queries the loader
+    // with the slice-invariant extended view state, never a skip shortcut.
+    const result = await loadAndStage('/p', loader, session, {
       rootGroup: new THREE.Group(),
-      viewStateQueue: queue,
+      viewStateQueue: new ViewStateQueue(),
       clearFailure: vi.fn(),
       currentVersion: 1,
       extendedToleranceCache: new Map(),
-      deriveNodeViewState: () => ({ skip: 'extend_to_all' }),
+      deriveNodeViewState: () => ({ skip: false, viewState: extendedViewState }),
     });
-    expect(result).toBeNull();
-    expect(loader.updateView).not.toHaveBeenCalled();
+    expect(loader.updateView).toHaveBeenCalledTimes(1);
+    expect(loader.updateView).toHaveBeenCalledWith(extendedViewState, expect.anything(), undefined);
+    expect(result).toEqual({ path: '/p', data: fakePointsData });
+    // No skip path is taken for a fully-extended node under the new design.
+    expect(session.markSkipped).not.toHaveBeenCalled();
   });
 
-  it('forgets the path on skip so the next non-skip update re-baselines', async () => {
+  it('still queries the loader on a later sweep even with a committed mesh (no skip shortcut)', async () => {
+    // Regression guard for the reverted "skip once loaded" design: a
+    // fully-extended node with an already-committed, non-progressive mesh must
+    // STILL call updateView (the loader's viewStatesEqual no-op handles the
+    // cheapness), so playback-budget / abort masking can never freeze it.
     const loader: DataLoader = {
       loadPoints: vi.fn(),
-      updateView: vi.fn(),
+      updateView: vi.fn().mockResolvedValue(fakePointsData),
       dispose: vi.fn(),
     };
-    const queue = new ViewStateQueue();
-    // Spy on forgetPath so we can pin the actual contract (data.md, C3 fixed:
-    // previously the test had no expect() at all — the comment said
-    // "Indirect assertion: prev-state map is empty for /p" but never asserted).
-    const forgetPathSpy = vi.spyOn(queue, 'forgetPath');
-    queue.dispatchPrefetch('/p', baseViewState, loader); // seed prev
-    await loadAndStage('/p', loader, makeSession(), {
-      rootGroup: new THREE.Group(),
-      viewStateQueue: queue,
+    const session = makeSession();
+    await loadAndStage('/p', loader, session, {
+      rootGroup: rootWithMesh('/p'),
+      viewStateQueue: new ViewStateQueue(),
       clearFailure: vi.fn(),
-      currentVersion: 1,
+      currentVersion: 2,
       extendedToleranceCache: new Map(),
-      deriveNodeViewState: () => ({ skip: 'extend_to_all' }),
+      deriveNodeViewState: () => ({ skip: false, viewState: extendedViewState }),
     });
-    // The skip path MUST call forgetPath('/p') exactly once.
-    expect(forgetPathSpy).toHaveBeenCalledTimes(1);
-    expect(forgetPathSpy).toHaveBeenCalledWith('/p');
-    // updateView must NOT have been called (skip path short-circuits before).
-    expect(loader.updateView).not.toHaveBeenCalled();
+    expect(loader.updateView).toHaveBeenCalledWith(extendedViewState, expect.anything(), undefined);
+    expect(session.markSkipped).not.toHaveBeenCalled();
   });
 
   it('returns the staged commit on a successful load', async () => {

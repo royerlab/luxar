@@ -6,10 +6,10 @@
  *      `.add(placeholder)` happens after the await, the failure-recovery
  *      contract breaks (retry has no mesh to target) but the happy path
  *      still passes its tests.
- *   2. extend_to_all skip fallback uses the BASE viewState — on initial
- *      load we still want to construct the THREE node so future slice
- *      changes can populate it; the skip return only short-circuits on
- *      update/retry paths.
+ *   2. A fully-extended node loads with the DERIVED extended-tolerance +
+ *      pinned-slice view state on initial load — so the slice-independent
+ *      node pulls its whole extent on first paint (#1157), not just the
+ *      coincidental current-slice subset.
  *   3. On loader.loadPoints rejection, the failure is recorded AND a
  *      typed `LoaderError` is re-thrown so `loadLeafNode` can dispatch
  *      by kind and keep sibling nodes rendering.
@@ -110,7 +110,6 @@ function makeCtx(overrides: Partial<NodeBuildCtx> = {}): NodeBuildCtx & {
     factoryDeps,
     isDatasetLive: () => true,
     getViewVersion: () => 1,
-    getLiveViewState: () => viewState,
     releaseLazyGSplats: vi.fn(),
     releaseLazyPoints: vi.fn(),
     releaseLazyLines: vi.fn(),
@@ -255,18 +254,27 @@ describe('loadPointsNode — happy path', () => {
   });
 });
 
-describe('loadPointsNode — extend_to_all skip fallback on initial load', () => {
-  it('falls back to ctx.viewState (NOT the derived one) when derive returns skip', async () => {
+describe('loadPointsNode — fully-extended node on initial load (#1157)', () => {
+  it('loads with the derived extended-tolerance + pinned-slice view state for a fully-extended node', async () => {
     const loadPoints = vi.fn().mockResolvedValue({ pointCount: 1 } as LoadedPointsData);
     createPointsLoaderMock.mockReturnValue(makePointsLoader(loadPoints));
     const ctx = makeCtx();
-    ctx.spies.deriveNodeViewState.mockReturnValue({ skip: 'extend_to_all' });
+    // The full-extend derivation now carries a view state with the
+    // extend-to-all tolerance sentinel; the initial load must use IT so the
+    // slice-independent node pulls its whole extent on first paint.
+    const extendedViewState: ViewState = {
+      ...makeViewState(),
+      tolerance: [1e10, 1e10, 1e10, 1e10],
+    };
+    ctx.spies.deriveNodeViewState.mockReturnValue({
+      skip: false,
+      viewState: extendedViewState,
+    });
 
     await loadPointsNode(makeSceneNode(), new THREE.Group(), {} as never, ctx);
 
     expect(loadPoints).toHaveBeenCalledTimes(1);
-    // Initial-load uses ctx.viewState — the same object, not a copy.
-    expect(loadPoints.mock.calls[0][0]).toBe(ctx.viewState);
+    expect(loadPoints.mock.calls[0][0]).toBe(extendedViewState);
   });
 });
 

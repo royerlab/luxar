@@ -35,7 +35,7 @@ export interface LinesRefinementCtx {
     path: string,
     attrs: LinesMetadata | undefined,
     opts: { applyPartialExtendTolerance: boolean }
-  ): { skip: 'extend_to_all' } | { skip: false; viewState: ViewState };
+  ): { skip: false; viewState: ViewState };
   processLines(
     path: string,
     data: LoadedLinesData,
@@ -88,7 +88,9 @@ export async function runLinesRefinement(ctx: LinesRefinementCtx): Promise<void>
         const refined = ctx.deriveNodeViewState(path, nodeAttrs, {
           applyPartialExtendTolerance: false,
         });
-        if (refined.skip) return;
+        // A fully-extended node is a normal node with a slice-invariant query
+        // (deriveNodeViewState), so it refines through this path like any other;
+        // the `hasMoreLODs` gate above already stops a converged one.
         const linesVS: LinesViewState = refined.viewState;
 
         // Account this step to the 'LOD Refinement' tree (opened only when
