@@ -95,16 +95,12 @@ export type LuxarMegaShaderMaterial = MegaShaderMaterial | MegaShaderTSLMaterial
  * global camera-uniform updates. Supports points, lines, and gsplats.
  *
  * ALL visual materials are PER NODE (each carries the node's own
- * element texture — `uPointTex` / `uLineTex` / `uSplatTex`) and are
- * never cached; the three cache maps stay permanently empty (kept for
- * the lifecycle/stats context shapes, where an empty map is a truthful
- * no-op). The historical line-material LRU died with the lines
- * texture-storage migration — the last cached material kind.
+ * element texture — `uPointTex` / `uLineTex` / `uSplatTex`) and are never
+ * cached: sharing one would rebind a node's texture onto another node's mesh at
+ * every commit. The historical line-material LRU was the last cached kind and
+ * died with the lines texture-storage migration.
  */
 export class MaterialManager {
-  private pointMaterialCache = new Map<string, LuxarPointMaterial>();
-  private lineMaterialCache = new Map<string, LuxarLineMaterial>();
-  private gsplatMaterialCache = new Map<string, LuxarGSplatMaterial>();
   private registeredMaterials = new Set<THREE.Material & CameraAwareMaterial>();
   /**
    * Renderer capabilities — drives the GLSL vs. TSL dispatch in the
@@ -157,9 +153,6 @@ export class MaterialManager {
       registeredMaterials: this.registeredMaterials,
       ownedMaterials: this.ownedMaterials,
       subscribedMaterials: this.subscribedMaterials,
-      pointMaterialCache: this.pointMaterialCache,
-      lineMaterialCache: this.lineMaterialCache,
-      gsplatMaterialCache: this.gsplatMaterialCache,
     };
   }
 
@@ -168,16 +161,10 @@ export class MaterialManager {
    * the renderer is alive. Determines which backend the dispatch in
    * `getPointMaterial` (and Line/GSplat equivalents) picks.
    *
-   * Switching caps after materials have been cached invalidates the
-   * cache because cached entries are class-specific (PointMaterial vs
-   * PointTSLMaterial). We clear all three caches defensively.
+   * Materials already handed out keep their original class; switching caps only
+   * affects which class subsequent calls construct.
    */
   setCaps(caps: RendererCapabilities): void {
-    if (this.caps && this.caps.apiSurface !== caps.apiSurface) {
-      this.pointMaterialCache.clear();
-      this.lineMaterialCache.clear();
-      this.gsplatMaterialCache.clear();
-    }
     this.caps = caps;
   }
 
@@ -409,9 +396,6 @@ export class MaterialManager {
     const materials = new Set([...this.registeredMaterials, ...this.ownedMaterials]);
     this.registeredMaterials.clear();
     this.ownedMaterials.clear();
-    this.pointMaterialCache.clear();
-    this.lineMaterialCache.clear();
-    this.gsplatMaterialCache.clear();
     for (const material of materials) {
       material.dispose();
     }
@@ -427,32 +411,26 @@ export class MaterialManager {
   }
 
   /**
-   * Rebuild GPU-bound material state after a WebGL context-restore
-   * event. Drops the per-type allocation caches; the renderer's next
-   * request via `getXMaterial` will compile fresh shaders against the
-   * new context.
+   * Context-restore hook, called by `webgl-context-recovery` between the
+   * renderer rebuild and `NodeFactory.rebuildAfterContextRestore`.
    *
-   * Do NOT clear `registeredMaterials` / `ownedMaterials` — those track
-   * materials currently attached to visible scene meshes and must keep
-   * receiving `updateCameraParams()` after restore.
+   * There is nothing to rebuild here: materials are per node, so the node
+   * factory reconstructs them along with their meshes and textures. This used
+   * to drop the per-type allocation caches, which no longer exist.
    *
-   * Idempotent. Unlike `dispose()`, does NOT call `material.dispose()` on
-   * cached entries — those programs are already detached from a dead
-   * WebGL context, and disposing them tends to throw on some drivers.
+   * It must stay a no-op rather than clearing the registries —
+   * `registeredMaterials` / `ownedMaterials` track materials attached to
+   * visible meshes, which must keep receiving `updateCameraParams()` across a
+   * restore. Kept as an explicit member so the recovery sequence stays
+   * readable and its ordering test keeps a real subject.
    */
   rebuildAfterContextRestore(): void {
-    this.pointMaterialCache.clear();
-    this.lineMaterialCache.clear();
-    this.gsplatMaterialCache.clear();
-    // registeredMaterials / ownedMaterials deliberately preserved.
+    // Intentionally empty — see above.
   }
 
   /** Get cache statistics (delegates to stats.ts). */
   getCacheStats() {
     return buildCacheStats({
-      pointMaterialCache: this.pointMaterialCache,
-      lineMaterialCache: this.lineMaterialCache,
-      gsplatMaterialCache: this.gsplatMaterialCache,
       ownedMaterials: this.ownedMaterials,
       registeredMaterials: this.registeredMaterials,
       totalCreateMs: this.totalCreateMs,

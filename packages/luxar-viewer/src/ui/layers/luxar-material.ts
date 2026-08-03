@@ -50,7 +50,8 @@ export interface LuxarMaterial extends THREE.Material, CameraAwareMaterial {
  * LUT value window and gamma warps the value pre-lookup, so neither
  * should be applied to the output color (see the material shaders).
  *
- * @internal Exported for unit testing the colormap-vs-direct routing.
+ * Used by `layer-apply.ts` to pick the colormap-vs-direct route, and by the
+ * unit tests covering it.
  */
 export function isColormapActive(mat: LuxarMaterial): boolean {
   const defines = (mat as unknown as { defines?: Record<string, unknown> | null }).defines;
@@ -76,7 +77,7 @@ export function isColormapActive(mat: LuxarMaterial): boolean {
  * mode, on the color otherwise). Opacity and blending are handled by the
  * caller. See the material shaders' `USE_COLORMAP` path.
  *
- * @internal Exported for unit testing.
+ * Applied by `layer-apply.ts` when committing a layer's effective appearance.
  */
 export function applyColorAdjustments(
   mat: LuxarMaterial,

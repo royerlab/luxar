@@ -11,16 +11,9 @@ import * as zarrita from 'zarrita';
 
 import { boundedConcurrencyStore } from '../utils/fetch-concurrency';
 import { LuxarDeltaCodec } from './codecs/luxar-delta';
-import type {
-  AbsolutePath,
-  AsyncReadable,
-  GetOptions,
-  RangeQuery,
-  Readable,
-  SyncReadable,
-} from '@zarrita/storage';
+import type { AbsolutePath, AsyncReadable, GetOptions, Readable } from '@zarrita/storage';
 
-export type { AbsolutePath, AsyncReadable, GetOptions, RangeQuery, Readable, SyncReadable };
+export type { AbsolutePath, AsyncReadable, GetOptions, Readable };
 
 export type DataType = zarrita.DataType;
 export type TypedArray<D extends DataType> = zarrita.TypedArray<D>;
@@ -32,18 +25,11 @@ export type Array<D extends DataType = DataType, Store extends Readable = Readab
   Store
 >;
 export type FetchStore = zarrita.FetchStore;
-export type ArrayChunk<D extends DataType = DataType> = Awaited<
-  ReturnType<zarrita.Array<D, Readable>['getChunk']>
->;
 
 export interface StoreContentsEntry {
   path: string;
   kind: 'array' | 'group';
 }
-
-export type ListableStore<Store extends Readable = Readable> = Store & {
-  contents(): StoreContentsEntry[];
-};
 
 export type MaybeListableStore<Store extends Readable = Readable> = Store & {
   contents?: () => StoreContentsEntry[];
@@ -147,8 +133,6 @@ export async function readArray<D extends DataType, Store extends Readable>(
   }
   return selection === undefined ? zarrita.get(array) : zarrita.get(array, selection);
 }
-
-export const get = readArray;
 
 /**
  * Build a `GetOptions` carrying an `AbortSignal`, or `undefined` when there is
