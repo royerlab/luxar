@@ -641,12 +641,12 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
   },
   // Line volumetric parity: the emission–absorption output branch
   // (LUXAR_VOLUMETRIC; the TSL side builds it from
-  // `blendingMode: 'volumetric'`) — τ = κ·alpha·vWidthAtT·chord (the
-  // transverse ribbon integral, LINE_CHORD_SCALE = √(π/ln 100)), S(τ)
+  // `blendingMode: 'volumetric'`) — τ = κ·alpha (κ times the same ray
+  // mass the additive branch emits), S(τ)
   // screening, physical absorption alpha, AND the per-endpoint
   // texel5.zw alphas (0.6 → 0.9) → w(a) = −ln(1−a) optical depth via
   // uHasElementAlpha = 1. uAbsorption 2.0 + opacity 0.7 keep τ
-  // mid-range on the line body (τ ≈ 0.16 at the centre pixel) so S(τ)
+  // mid-range on the line body so S(τ)
   // and volAlpha are non-trivial — neither saturated at 1 nor
   // vanishing — and a GLSL/TSL divergence is visible. Mirrors
   // `point-volumetric` (three-geometry symmetry).

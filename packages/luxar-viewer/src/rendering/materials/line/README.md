@@ -14,13 +14,12 @@ semantics — `MaterialManager.getLineMaterial` dispatches on
 
 ## Module map
 
-| File               | Role                                                                                                                                                                                                                                                               |
-| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `material-glsl.ts` | `LineMaterial extends THREE.ShaderMaterial` — wraps the GLSL3 vertex/fragment pair, owns `uniforms`, manages variant `defines`, applies the canonical blending state. WebGL2 path.                                                                                 |
-| `material-tsl.ts`  | `LineTSLMaterial extends NodeMaterial` — same constructor + update API, but owns persistent `UniformNode`s and rebuilds its TSL graph (`rebuildGraph`) when graph-specialized defines or projection mode flip. WebGPU path.                                        |
-| `shader-glsl.ts`   | `LINE_VERTEX_SHADER` + `LINE_FRAGMENT_SHADER` GLSL3 source strings and the `LINE_SOURCE: ShaderSource` registry entry. The `webgpu` field re-enters `lineWebGPUFactory` so the parity harness can drive both backends from one symbol.                             |
-| `shader-tsl.ts`    | `lineWebGPUFactory(nodes, config, outMaterial?)` — TSL counterpart to the GLSL strings. Reads pre-created `UniformNode`s from a `LineTSLNodes` table and emits the NodeMaterial graph.                                                                             |
-| `math.ts`          | Shared CPU-side constants for both backends — `LINE_CHORD_SCALE = √(π/ln 100)`, the through-thickness of the Gaussian-profile ribbon per unit width (the volumetric chord factor; full derivation in its doc comment). Mirrors `point/math.ts` / `gsplat/math.ts`. |
+| File               | Role                                                                                                                                                                                                                                   |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `material-glsl.ts` | `LineMaterial extends THREE.ShaderMaterial` — wraps the GLSL3 vertex/fragment pair, owns `uniforms`, manages variant `defines`, applies the canonical blending state. WebGL2 path.                                                     |
+| `material-tsl.ts`  | `LineTSLMaterial extends NodeMaterial` — same constructor + update API, but owns persistent `UniformNode`s and rebuilds its TSL graph (`rebuildGraph`) when graph-specialized defines or projection mode flip. WebGPU path.            |
+| `shader-glsl.ts`   | `LINE_VERTEX_SHADER` + `LINE_FRAGMENT_SHADER` GLSL3 source strings and the `LINE_SOURCE: ShaderSource` registry entry. The `webgpu` field re-enters `lineWebGPUFactory` so the parity harness can drive both backends from one symbol. |
+| `shader-tsl.ts`    | `lineWebGPUFactory(nodes, config, outMaterial?)` — TSL counterpart to the GLSL strings. Reads pre-created `UniformNode`s from a `LineTSLNodes` table and emits the NodeMaterial graph.                                                 |
 
 ## Rendering model in one paragraph
 
@@ -188,15 +187,12 @@ maps into optical depth `w(a) = −ln(1 − a)`, gated by
 Since volumetric Phase 4 (VOLUMETRIC_BLENDING_SPEC.md §7) lines render
 the REAL `volumetric` blending math on both backends — the former
 additive-state fallback (and the `effectiveGeometryMode` helper that
-encoded it) is gone. The ray integral is the **transverse chord**
-through the Gaussian-profile ribbon: locally the line is a Gaussian
-tube, so a ray crossing at normalized perpendicular offset `p`
-integrates to `perpFalloff(p) · width · √(π/K)` — the shader computes
-`rayMass = perpFalloff × vWidthAtT × LINE_CHORD_SCALE` with
-`LINE_CHORD_SCALE = √(π/ln 100)` from `./math.ts` (derivation comment
-there; the value equals `POINT_CHORD_SCALE`, keeping the
-point/line/gsplat κ scales aligned). The optical depth the shader
-computes is `τ = uAbsorption × alpha × vWidthAtT × LINE_CHORD_SCALE`,
+encoded it) is gone. Since the 2026-08-02 ray-mass unification
+(VOLUMETRIC_BLENDING_SPEC.md status banner) the ray mass is the SAME
+quantity the additive branch emits — no world-thickness factor (the
+former `× vWidthAtT × LINE_CHORD_SCALE` chord factor and its `math.ts`
+module are deleted), keeping the point/line/gsplat κ scales aligned.
+The optical depth the shader computes is `τ = uAbsorption × alpha`,
 where `alpha` is the additive-mode screen density — the full intensity
 chain (`capFactor · perpFalloff · edgeAA · widthScale · vWidthFade ·
 nearFade`, so `perpFalloff` enters τ exactly once) times `uOpacity`,
@@ -233,7 +229,7 @@ either gated via `#ifdef` (GLSL) or read at TSL build time
 | `LUXAR_GAMMA_ONE`            | Skips three per-fragment `pow()` calls when `gamma == 1.0 ± 1e-4` (the default)                                                                                       | `updateGamma` when crossing the threshold                    |
 | `LUXAR_NO_GOG`               | Skips the `vColor × uIntensity + uOffset` chain and its `max(·, 0)` clamp when `intensity==1 && offset==0`                                                            | `updateIntensity` / `updateOffset` via `_refreshNoGOGDefine` |
 | `LUXAR_MAX_RGB_CONTRIBUTION` | Premultiplies `rgb *= intensity × opacity` so `CustomBlending + MaxEquation + OneFactor/OneFactor` captures contribution-weighted colour rather than flat full-bright | `applyBlendingMode('max')`                                   |
-| `LUXAR_VOLUMETRIC`           | Switches the fragment output to the emission–absorption branch (transverse chord τ, `S(τ)` screening, `1 − e^(−τ)` alpha — see the volumetric section above)          | `applyBlendingMode('volumetric')`                            |
+| `LUXAR_VOLUMETRIC`           | Switches the fragment output to the emission–absorption branch (τ = κ·alpha, `S(τ)` screening, `1 − e^(−τ)` alpha — see the volumetric section above)                 | `applyBlendingMode('volumetric')`                            |
 
 The perpendicular falloff is **not** a define-gated fast path: the
 super-Gaussian `max(exp(−K·p^β) − C, 0)/(1 − C)` is computed unconditionally

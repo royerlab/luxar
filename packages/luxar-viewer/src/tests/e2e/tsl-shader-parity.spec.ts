@@ -470,8 +470,8 @@ test.describe('TSL ↔ GLSL shader parity', () => {
 
   // Point volumetric (phase 3): the GLSL side compiles with
   // LUXAR_VOLUMETRIC, the TSL side builds the volumetric output branch
-  // from `blendingMode: 'volumetric'`. τ = κ·density·chord (the
-  // isotropic ray integral, POINT_CHORD_SCALE), the S(τ) screening, the
+  // from `blendingMode: 'volumetric'`. τ = κ·alpha (κ times the same
+  // ray mass the additive branch emits), the S(τ) screening, the
   // physical absorption alpha, AND the per-point RGBA alpha → w(a)
   // optical-depth map (the harness texture carries alpha 0.6 with
   // uHasElementAlpha = 1) must match pixel-for-pixel across backends.
@@ -547,8 +547,8 @@ test.describe('TSL ↔ GLSL shader parity', () => {
 
   // Line volumetric: the GLSL side compiles with LUXAR_VOLUMETRIC, the
   // TSL side builds the volumetric output branch from
-  // `blendingMode: 'volumetric'`. τ = κ·alpha·vWidthAtT·chord (the
-  // transverse ribbon integral, LINE_CHORD_SCALE), the S(τ) screening,
+  // `blendingMode: 'volumetric'`. τ = κ·alpha (κ times the same ray
+  // mass the additive branch emits), the S(τ) screening,
   // the physical absorption alpha, AND the per-endpoint texel5.zw
   // alphas (0.6 → 0.9, mixed along t → 0.75 at the centre pixel) →
   // w(a) optical-depth map (uHasElementAlpha = 1) must match
