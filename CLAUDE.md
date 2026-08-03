@@ -221,14 +221,15 @@ luxar demo                       # List the 78 bundled demos (table)
 luxar demo run lorenz            # Run a demo by key/index (forwards -- args)
 luxar demo cache list            # Inventory / clear demo caches (cache clear …)
 # Demos keep heavyweight packages OUT of the core install, so a fresh checkout
-# lists every demo but cannot run them all. `deps` reports what's missing or
-# below its version pin (exit 1 if anything is) and installs the extras that
-# provide it. The table is `luxar.demos.INSTALL_SPECS`, which also drives the
-# runtime `require_module` gate — so a package can't be advertised without
-# being installable.
-luxar demo deps                  # Report missing/outdated optional demo deps
-luxar demo deps --install        # Install the extras for missing/outdated packages
-luxar demo deps --extra io       # Restrict to one extra (demos / io / gsplats)
+# lists every demo but cannot run them all. Report-only `deps` exits 1 for an
+# unmet row; `--install` installs the extras that provide it, while `--only`
+# installs one exact constrained requirement. The table is
+# `luxar.demos.INSTALL_SPECS`, which also drives the runtime `require_module`
+# gate — so a package can't be advertised without being installable.
+luxar demo deps                         # Report missing/outdated optional demo deps
+luxar demo deps --install               # Install missing extras
+luxar demo deps --extra io              # Restrict to one extra
+luxar demo deps --only scipy --install  # Install one constrained requirement
 luxar serve <data.luxar.zarr> --viewer # Serve with viewer
 luxar info <data.luxar.zarr> --stats   # Dataset info
 luxar profiles                   # Network simulation profiles
