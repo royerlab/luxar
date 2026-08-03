@@ -237,6 +237,147 @@ def test_build_json_report_ratchet_classification(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Markdown path-reference check (real scan over a tiny temp GIT repo)
+# ---------------------------------------------------------------------------
+
+
+def _make_git_project(tmp_path: Path, files: dict[str, str]) -> Path:
+    """Create ``files`` under ``tmp_path`` and ``git init + add`` them all."""
+    for rel, content in files.items():
+        path = tmp_path / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content)
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
+    return tmp_path
+
+
+def _markdown_failures(root: Path) -> list[str]:
+    checker = cd.DocumentationChecker(root, verbose=False)
+    checker._check_markdown_path_references()
+    return [
+        r.message
+        for r in checker.results
+        if r.check_name == "Markdown path reference" and not r.passed
+    ]
+
+
+needs_git = pytest.mark.skipif(
+    subprocess.run(["git", "--version"], capture_output=True).returncode != 0,
+    reason="git not available",
+)
+
+
+@needs_git
+def test_markdown_valid_references_pass(tmp_path: Path) -> None:
+    root = _make_git_project(
+        tmp_path,
+        {
+            "packages/pkg/README.md": (
+                "See `./src/keep.ts`, `src/keep.ts`, and `../pkg/src/keep.ts`.\n"
+            ),
+            "packages/pkg/src/keep.ts": "export const x = 1;\n",
+        },
+    )
+    assert _markdown_failures(root) == []
+
+
+@needs_git
+def test_markdown_broken_relative_reference_flagged(tmp_path: Path) -> None:
+    root = _make_git_project(
+        tmp_path,
+        {
+            "packages/pkg/README.md": "See `./src/gone.ts`.\n",
+            "packages/pkg/src/keep.ts": "export const x = 1;\n",
+        },
+    )
+    assert _markdown_failures(root) == [
+        "README cites path that does not resolve: `./src/gone.ts`"
+    ]
+
+
+@needs_git
+def test_markdown_repo_path_claim_with_deleted_basename_flagged(
+    tmp_path: Path,
+) -> None:
+    # `src/...` is anchored in a tracked directory, so the stale reference is
+    # flagged even though no file named removed-unique.ts exists anywhere.
+    root = _make_git_project(
+        tmp_path,
+        {
+            "packages/pkg/README.md": "See `src/data/removed-unique.ts`.\n",
+            "packages/pkg/src/data/keep.ts": "export const x = 1;\n",
+        },
+    )
+    assert _markdown_failures(root) == [
+        "README cites path that does not resolve: `src/data/removed-unique.ts`"
+    ]
+
+
+@needs_git
+def test_markdown_external_path_with_colliding_basename_not_flagged(
+    tmp_path: Path,
+) -> None:
+    # `three/...` is not anchored in any tracked directory and only the
+    # basename matches a tracked file — an external (npm dependency) path.
+    root = _make_git_project(
+        tmp_path,
+        {
+            "packages/pkg/README.md": "See `three/src/math/Vector3.ts`.\n",
+            "packages/pkg/src/math/Vector3.ts": "export const x = 1;\n",
+        },
+    )
+    assert _markdown_failures(root) == []
+
+
+@needs_git
+def test_markdown_npm_package_specifier_not_flagged(tmp_path: Path) -> None:
+    # `mypkg/styles.css` is npm import syntax for the published package, even
+    # though `packages/mypkg` is a tracked directory reachable from the anchor
+    # walk.
+    root = _make_git_project(
+        tmp_path,
+        {
+            "packages/mypkg/examples/embed/README.md": (
+                "Import `mypkg/styles.css` in the host page.\n"
+            ),
+            "packages/mypkg/src/keep.ts": "export const x = 1;\n",
+        },
+    )
+    assert _markdown_failures(root) == []
+
+
+@needs_git
+def test_markdown_cross_package_shorthand_flagged(tmp_path: Path) -> None:
+    # A shorthand that suffix-matches a file in ANOTHER package must be
+    # spelled out fully, so it is flagged.
+    root = _make_git_project(
+        tmp_path,
+        {
+            "packages/pkg/README.md": "Padded on the write side (`io/ordering.py`).\n",
+            "packages/other/src/other/io/ordering.py": "x = 1\n",
+        },
+    )
+    assert _markdown_failures(root) == [
+        "README cites path that does not resolve: `io/ordering.py`"
+    ]
+
+
+@needs_git
+def test_markdown_same_package_shorthand_resolves(tmp_path: Path) -> None:
+    # The suffix fallback accepts shorthand refs within the README's own
+    # package.
+    root = _make_git_project(
+        tmp_path,
+        {
+            "packages/pkg/README.md": "See `loaders/loader.ts`.\n",
+            "packages/pkg/src/data/loaders/loader.ts": "export const x = 1;\n",
+        },
+    )
+    assert _markdown_failures(root) == []
+
+
+# ---------------------------------------------------------------------------
 # CLI (subprocess): the main() exit-code + output contracts
 # ---------------------------------------------------------------------------
 

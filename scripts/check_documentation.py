@@ -73,8 +73,9 @@ def result_key(result: CheckResult, project_root: Path) -> str:
     """Build a stable, portable key ``"<check_name>::<relative posix path>"``.
 
     The key deliberately omits the human ``message`` (which embeds volatile
-    coverage percentages) so it is stable across runs. There is at most one
-    failing result per (check_name, file), so keys are unique.
+    coverage percentages) so it is stable across runs. Checks that can fail a
+    file more than once (e.g. several broken path references in one README)
+    collapse to a single key, which is what the set-based ratchet wants.
     """
     return f"{result.check_name}::{relative_path(result.file_path, project_root)}"
 
@@ -395,9 +396,15 @@ class DocumentationChecker:
         # `-z` emits NUL-separated, UNQUOTED paths (no octal-escaping of
         # non-ASCII), so basenames stay intact.
         tracked = [p for p in proc.stdout.split("\0") if p]
+        tracked_set = set(tracked)
         by_name: dict[str, list[str]] = {}
+        tracked_dirs: set[str] = set()
         for path in tracked:
             by_name.setdefault(Path(path).name, []).append(path)
+            parent = Path(path).parent
+            while parent.parts:
+                tracked_dirs.add(parent.as_posix())
+                parent = parent.parent
 
         readme_targets = [
             p
@@ -468,7 +475,7 @@ class DocumentationChecker:
                 except ValueError:
                     # Falls outside the project root; don't flag.
                     return True
-                return rel in tracked or (root / rel).is_dir()
+                return rel in tracked_set or (root / rel).is_dir()
 
             # Anchor a non-relative ref at each ancestor of the README's own
             # directory (README dir, its parents, up to the repo root). This
@@ -476,7 +483,7 @@ class DocumentationChecker:
             anchor = Path(readme_path).parent
             while True:
                 cand = (anchor / token).as_posix() if anchor.parts else token
-                if cand in tracked or (root / cand).is_dir():
+                if cand in tracked_set or (root / cand).is_dir():
                     return True
                 if not anchor.parts:
                     break
@@ -492,6 +499,34 @@ class DocumentationChecker:
                     return True
             return False
 
+        def is_repo_path_claim(token: str, readme_path: str) -> bool:
+            """True when the token's first segment names a tracked directory at
+            one of the README's anchor levels (README dir up to the repo root).
+
+            Such a token (`src/...`, `packages/...`, `scripts/...`) is an
+            unambiguous claim on a repository path, so a broken one must be
+            flagged even when its basename no longer exists anywhere (fully
+            deleted file). External paths (`three/src/...`) fail this test.
+            A first segment naming a package directory itself (an immediate
+            child of `packages/`) is exempt: `luxar-viewer/styles.css` is npm
+            import syntax for the published package, not a repo path.
+            """
+            first_segment = token.split("/", 1)[0]
+            anchor = Path(readme_path).parent
+            while True:
+                cand = (
+                    (anchor / first_segment).as_posix()
+                    if anchor.parts
+                    else first_segment
+                )
+                if cand in tracked_dirs and not (
+                    cand.startswith("packages/") and cand.count("/") == 1
+                ):
+                    return True
+                if not anchor.parts:
+                    return False
+                anchor = anchor.parent
+
         for readme_path in readme_targets:
             content = (root / readme_path).read_text(encoding="utf-8", errors="replace")
             for line_number, line in enumerate(content.splitlines(), start=1):
@@ -501,15 +536,24 @@ class DocumentationChecker:
                         continue
                     if resolves(token, readme_path):
                         continue
-                    # False-positive filter: only report NON-relative tokens
-                    # whose basename exists elsewhere in the repo (else it's an
-                    # npm import, served URL, placeholder, or build-output
-                    # description). A `./` or `../` token is an unambiguous path
-                    # claim, so a broken relative ref is flagged even when its
-                    # basename no longer exists anywhere (fully deleted file).
+                    # False-positive filter for NON-relative tokens (`./` and
+                    # `../` tokens are unambiguous path claims and always
+                    # flagged). A non-relative token is reported only when it
+                    # is anchored in a tracked directory (`src/...` — a repo
+                    # path claim, flagged even if the file was fully deleted)
+                    # or when its full path suffix-matches a tracked file (a
+                    # cross-package shorthand like `io/ordering.py` that must
+                    # be spelled out). Anything else — an npm import, served
+                    # URL, placeholder, or build-output description — is
+                    # skipped, even when an unrelated repo file happens to
+                    # share its basename (`three/src/math/Vector3.ts`).
                     is_relative = token.startswith("./") or token.startswith("../")
-                    if not is_relative and Path(token).name not in by_name:
-                        continue
+                    if not is_relative and not is_repo_path_claim(token, readme_path):
+                        if not any(
+                            p.endswith("/" + token)
+                            for p in by_name.get(Path(token).name, [])
+                        ):
+                            continue
                     self.results.append(
                         CheckResult(
                             passed=False,
