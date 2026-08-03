@@ -42,6 +42,16 @@
  * coverage of the shared derivation rather than a reproduction of the
  * original symptom — do not read a passing Lines count as evidence that the
  * extended query ran.
+ *
+ * Committed counts alone are NOT sufficient to pin the per-slice requirement:
+ * an implementation that queries once on load and then skips every later
+ * extended-node query, keeping the geometry it already committed, holds the
+ * counts full forever. That is not hypothetical — it is what the pre-fix skip
+ * did, and it is why the ladder froze. The scrub test therefore also asserts
+ * each extended node's `loadedViewVersion` ADVANCES on every sweep, which only
+ * a node the sweep actually reached can do. Verified by mutation: with the
+ * handlers patched to converge-then-skip, the count assertions still pass and
+ * only the freshness assertion fails.
  */
 
 import { test, expect } from './fixtures';
@@ -69,6 +79,9 @@ const CONTROL_TIME = 3;
  * ladder — reads 300 here, not 1200.
  */
 const FULL = { ext_pts: 1200, ext_lines: 199, ext_gsplats: 40 } as const;
+
+/** The fully-extended nodes, one per geometry kind. */
+const EXTENDED_NODES = ['ext_pts', 'ext_lines', 'ext_gsplats'] as const;
 
 /** Committed counts per node, read from the live scene graph. */
 async function getCommittedCounts(page: Page): Promise<{
@@ -101,6 +114,31 @@ async function getCommittedCounts(page: Page): Promise<{
       ext_gsplats: number;
       sliced_pts: number;
     };
+  });
+}
+
+/**
+ * Per-node freshness stamps (`userData.loadedViewVersion`), which the loader
+ * writes on every commit — including the stamp-only no-op commit a
+ * same-view re-query produces. A node that is genuinely re-queried each
+ * sweep therefore advances its stamp; one that is skipped keeps the stamp it
+ * was left with, however full its retained geometry looks.
+ */
+async function getLoadedViewVersions(page: Page): Promise<Record<string, number>> {
+  return page.evaluate(() => {
+    const debug = (window as unknown as { __luxarDebug: any }).__luxarDebug;
+    const stamps: Record<string, number> = {};
+    debug.scene.traverse((obj: any) => {
+      const name = obj?.name as string | undefined;
+      if (!name || typeof obj.userData?.loadedViewVersion !== 'number') return;
+      for (const key of ['ext_pts', 'ext_lines', 'ext_gsplats']) {
+        if (name === `/${key}` || name.startsWith(`/${key}/`)) {
+          // Lowest stamp across a node's meshes: every one of them must move.
+          stamps[key] = Math.min(stamps[key] ?? Infinity, obj.userData.loadedViewVersion);
+        }
+      }
+    });
+    return stamps;
   });
 }
 
@@ -172,8 +210,30 @@ test.describe('extend_to_all full extension', () => {
     // query is slice-invariant, so its committed count must never move,
     // and re-querying must not reset the ladder it already converged.
     for (const time of [...TIME_VALUES, ...[...TIME_VALUES].reverse()]) {
+      const before = await getLoadedViewVersions(page);
       await scrubTime(page, time);
       await expectExtendedFullAt(page, time, `after scrub to time=${time}`);
+
+      // Counts alone cannot tell "re-queried and re-committed the same data"
+      // apart from "skipped the query and kept the old geometry" — and the
+      // second is exactly the pre-fix design that froze the ladder. The
+      // freshness stamp is what separates them: only a node the sweep
+      // actually reached gets re-stamped.
+      await expect
+        .poll(
+          async () => {
+            const now = await getLoadedViewVersions(page);
+            return Object.fromEntries(EXTENDED_NODES.map((key) => [key, now[key] > before[key]]));
+          },
+          {
+            message:
+              `after scrub to time=${time}: every extended node must be re-queried, ` +
+              'not merely left holding its previous geometry — a node reported ' +
+              `false here kept the stamp it had before the scrub (${JSON.stringify(before)})`,
+            timeout: 20000,
+          }
+        )
+        .toEqual({ ext_pts: true, ext_lines: true, ext_gsplats: true });
     }
   });
 });
