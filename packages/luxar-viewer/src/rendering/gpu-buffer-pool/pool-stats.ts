@@ -19,6 +19,11 @@ import * as THREE from 'three';
 export interface PooledBuffer {
   geometry: THREE.BufferGeometry | THREE.InstancedBufferGeometry;
   capacity: number;
+  /**
+   * Spelled out rather than `GeometryTypeName`: only POOLED geometry types have
+   * buffers here (see `pooled` in `types/geometry-capabilities`). A type
+   * rendered from a plain `BufferGeometry` never reaches the pool.
+   */
   type: 'points' | 'lines' | 'gsplats';
   inUse: boolean;
   lastUsedFrame: number;

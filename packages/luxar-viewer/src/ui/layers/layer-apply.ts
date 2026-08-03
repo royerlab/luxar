@@ -26,6 +26,8 @@ import { log, Modules } from '../../utils/log';
 import { getColormapTexture } from '../../rendering/colormap-textures';
 import { supportsScalarColormap } from '../../rendering/material-colormap-helpers';
 import { noteDepthSortBlendingModeSwitch } from '../../rendering/depth-sort-coordinator';
+import type { GeometryTypeName } from '../../types/format-contract';
+import { isDepthSortable, isGeometryType } from '../../types/geometry-capabilities';
 import {
   composeAttrs,
   collectAncestorNodes,
@@ -245,11 +247,11 @@ export class LayerApplyEngine {
       // Depth sorting: a sortable layer switching blending mode may need
       // to start (TO an effective sorted mode: clear the noop stamp +
       // reprocess so the next commit registers with the SortWorker) or
-      // stop (AWAY: release) depth sorting. All three geometry types
-      // register centers with the coordinator (gsplats/points centers,
-      // lines segment midpoints).
-      const sortableType = obj.userData?.nodeType;
-      if (sortableType === 'gsplats' || sortableType === 'points' || sortableType === 'lines') {
+      // stop (AWAY: release) depth sorting. Only types that register
+      // per-element centers with the coordinator qualify (gsplats/points
+      // centers, lines segment midpoints) — see `depthSortable` in
+      // `types/geometry-capabilities`.
+      if (isDepthSortable(obj.userData?.nodeType)) {
         noteDepthSortBlendingModeSwitch(obj as THREE.Mesh, eff.blending_mode, prevBlendingMode);
       }
     }
@@ -319,9 +321,15 @@ export class LayerApplyEngine {
         // scalar data behind the geometry (the `userData.hasScalars`
         // stamp for points/lines texel storage; always true for gsplats,
         // whose amplitude is the scalar).
-        const nodeType = leaf.type as 'points' | 'lines' | 'gsplats';
+        //
+        // `leaf.type` is a raw string off the node, so narrow it rather than
+        // asserting: `supportsScalarColormap` is exhaustive over the geometry
+        // vocabulary and must not be handed a value outside it.
         const geometry = (obj as THREE.Points | THREE.Mesh).geometry as THREE.BufferGeometry;
-        if (!supportsScalarColormap(nodeType, geometry)) {
+        const nodeType: GeometryTypeName | undefined = isGeometryType(leaf.type)
+          ? leaf.type
+          : undefined;
+        if (!nodeType || !supportsScalarColormap(nodeType, geometry)) {
           log.warning(
             Modules.UI,
             `[LayersPanel][${leaf.path}] Scalar colormap suppressed: required attribute(s) not bound on geometry (pending C4 implementation).`
