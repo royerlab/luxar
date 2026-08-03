@@ -592,11 +592,71 @@ Both backends must produce matching output and are gated by the existing codegen
 
 ### 6.5 Picking
 
-Standard: `pickingSystem.allocatePickId()`, a shadow `THREE.Mesh` sharing the same `BufferGeometry` with
-the pick material, registered via `pickingSystem.registerNode`. Simpler than lines/points — no
-`aSortedIndex` indirection, so `vElementId` is just `gl_VertexID / 3` for the face id (or the vertex id,
-depending on the picking granularity chosen; **face granularity** is proposed, matching the mesh's
-natural element).
+Standard mechanism: `pickingSystem.allocatePickId()`, a shadow `THREE.Mesh` sharing the same
+`BufferGeometry` with the pick material, registered via `pickingSystem.registerNode` — exactly as
+points / lines / gsplats do it.
+
+v1 picks at **vertex granularity**. Mesh has no depth sort and therefore no sorted-index indirection
+(§9 defers per-triangle sorting), so — unlike the other three types — the mesh pick vertex shader does
+**not** bind `aSortedIndex` and does **not** call the shared `luxarElementIdParts()` helper (which reads
+`aSortedIndex`). Instead it splits `uint(gl_VertexID)` into low/high 16-bit halves exactly as that
+helper does and writes them into the same `flat out highp vec2 vElementId` varying the readback already
+understands:
+
+```glsl
+uint i = uint(gl_VertexID);
+vElementId = vec2(float(i & 0xFFFFu), float(i >> 16u));  // split like luxarElementIdParts()
+```
+
+The mesh is drawn **indexed** (`faces` is the index buffer, §6.1), so under `drawElements`
+`gl_VertexID` is the ordinal of the vertex in the `vertices` array — a stable per-vertex id, **not** a
+triangle ordinal (`gl_VertexID / 3` would be meaningless: shared vertices break it, and WebGL2 has no
+`gl_PrimitiveID`). This pick vertex shader is the one place mesh diverges from the shared helper; the
+`mesh-pick.{vertex,fragment}` codegen snapshots of §6.4 cover it. The TSL twin (§6.4) must declare the
+`vElementId` (and `vNodeId`) varyings with `.setInterpolation('flat')`: TSL `varying()` interpolates
+linearly by default, and the point TSL pick (`rendering/picking/point/pick.tsl.ts`) only escapes without
+`flat` because a single-instance quad's four corners all carry the same id (interpolation is the
+identity). That identity fails for a mesh — `gl_VertexID` differs at every triangle corner, so a
+linearly-interpolated `vElementId` would arrive fractional and `Math.round` in the readback would resolve
+to arbitrary wrong vertices. Follow the LINE pick precedent (`rendering/picking/line/pick.tsl.ts`), not
+the point pick, whose implicit-identity interpolation is unsafe for a shared-vertex indexed draw.
+
+**Pick fragment output.** The `mesh-pick.fragment` writes the same shared vec4 the readback decodes —
+`vec4(vNodeId, vElementId.x, brightness, vElementId.y)` — with `brightness` the fragment's
+coverage/opacity (1.0 for a fully opaque mesh), so the cross-node brightness-weighted vote still has a
+value. Depth is the **opaque-surface** case, not the brightness-as-depth one: an opaque mesh writes real
+projected depth (`gl_FragDepth = gl_FragCoord.z`, i.e. leaves the default), matching gsplat's
+surface-mode branch (`uSurfaceDepth == 1` in `rendering/picking/gsplat/shaders.ts`) rather than the
+`1.0 - clamp(brightness, 0, 1)` branch that points / lines / translucent gsplats use — otherwise every
+fully-opaque fragment collapses to depth 0 and the mesh neither self-occludes nor occludes other nodes
+correctly in the shared pick buffer. See `rendering/picking/README.md`; the `mesh-pick.fragment` codegen
+snapshot (§6.4) is the final authority.
+
+**Stability.** §5.4 rewrites only the index buffer per slice (`compact_visible_faces`) and never remaps
+vertex attributes ("No vertex compaction"). A face ordinal would be renumbered on every slice change; a
+vertex ordinal is invariant across slices. That is why vertex — not face — granularity is chosen for the
+compacted draw.
+
+**Label mapping.** The returned vertex ordinal indexes the per-vertex `label_offsets` / `label_bytes`
+CSR (§3.2) directly, precisely as a point/line element ordinal indexes its own per-element label CSR, so
+hover tooltips resolve with no extra mapping.
+
+**Capacity.** As with the other three types, the two-half 16-bit split keeps vertex counts exact past the
+float32 24-bit mantissa (the readback recombines the halves); vertex count `V` uses the same split (see
+`rendering/picking/README.md` for the rationale). The pick readback also packs
+`nodeId * VOTE_KEY_STRIDE + elementId` for brightness-weighted voting, whose alias-free stride is `2^27`
+(`rendering/picking/picking-system/pick-render.ts`); the per-vertex id source stays comfortably under it
+because §7 loads a mesh whole at ≤ a few million triangles (vertex counts of the same order), so no mesh
+vertex-count cap is needed for the pick to stay exact.
+
+**Accepted v1 limitation.** `vElementId` is a `flat` varying, so within a triangle it resolves to that
+triangle's **provoking vertex**, not the cursor's barycentric-nearest vertex. Hovering a triangle
+therefore reports a well-defined vertex *of* that triangle. Barycentric-nearest-vertex resolution would
+need a de-indexed pick geometry or per-corner attributes plus barycentrics — a follow-up, not v1.
+
+**FACE granularity** (e.g. highlighting a whole triangle) is deferred: it needs either a de-indexed pick
+geometry or a per-corner face-id attribute, **plus** a compacted→original face map to stay stable under
+§5.4 compaction. It is a natural follow-up, pairing with the §9 per-triangle-sort / partition work.
 
 ---
 
