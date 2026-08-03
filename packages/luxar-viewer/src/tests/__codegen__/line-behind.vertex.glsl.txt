@@ -171,13 +171,14 @@ vec2 nodeVar90;
 float nodeVar91;
 float nodeVar92;
 float nodeVar93;
-vec4 nodeVar94;
+float nodeVar94;
+vec4 nodeVar95;
 vec4 clipPos;
-float nodeVar95;
 float nodeVar96;
 float nodeVar97;
 float nodeVar98;
 float nodeVar99;
+float nodeVar100;
 
 // codes
 
@@ -418,12 +419,13 @@ void main() {
 	nodeVar91 = ( ( nodeVar78 * nodeUniform25 ) / max( ( - nodeVar79.z ), nodeVar61 ) );
 	nodeVar92 = max( nodeUniform26, ( 1.5 + 1.0 ) );
 	nodeVar93 = ( nodeVar92 / max( nodeVar91, 0.0001 ) );
-	nodeVar94 = vec4( ( nodeVar82.xy + ( ( ( ( ( nodeVar90 * vec2( aQuadCorner.y ) ) * vec2( clamp( nodeVar91, 1.5, nodeVar92 ) ) ) / nodeUniform24 ) * vec2( 2.0 ) ) * vec2( nodeVar82.w ) ) ), nodeVar82.z, nodeVar82.w );
+	nodeVar94 = max( ( ( mix( nodeVar76, nodeVar77, nodeVar69 ) * nodeUniform25 ) / max( ( - nodeVar56.z ), nodeVar61 ) ), ( ( mix( nodeVar76, nodeVar77, nodeVar72 ) * nodeUniform25 ) / max( ( - nodeVar57.z ), nodeVar61 ) ) );
+	nodeVar95 = vec4( ( nodeVar82.xy + ( ( ( ( ( nodeVar90 * vec2( aQuadCorner.y ) ) * vec2( clamp( nodeVar91, 1.5, nodeVar92 ) ) ) / nodeUniform24 ) * vec2( 2.0 ) ) * vec2( nodeVar82.w ) ) ), nodeVar82.z, nodeVar82.w );
 	clipPos = vec4( 0.0, 0.0, -2.0, 1.0 );
 
-	if ( (!( ( ( nodeVar58 < nodeVar61 ) && ( nodeVar59 < nodeVar61 ) ) || ( ( ( nodeVar58 < ( nodeVar61 * 2.0 ) ) && ( nodeVar59 < ( nodeVar61 * 2.0 ) ) ) && ( nodeVar91 > ( nodeVar92 * 2.0 ) ) ) )) ) {
+	if ( (!( ( ( nodeVar58 < nodeVar61 ) && ( nodeVar59 < nodeVar61 ) ) || ( ( ( nodeVar58 < ( nodeVar61 * 2.0 ) ) && ( nodeVar59 < ( nodeVar61 * 2.0 ) ) ) && ( nodeVar94 > ( nodeVar92 * 2.0 ) ) ) )) ) {
 
-		clipPos = nodeVar94;
+		clipPos = nodeVar95;
 
 
 	}
@@ -432,18 +434,7 @@ void main() {
 
 	if ( ( ( ( nodeVar50 < 1e30 ) && ( nodeVar50 > -1e30 ) ) && ( nodeVar50 >= 0.0 ) ) ) {
 
-		nodeVar95 = nodeVar50;
-
-	} else {
-
-		nodeVar95 = 0.5;
-
-	}
-
-
-	if ( ( ( ( nodeVar51 < 1e30 ) && ( nodeVar51 > -1e30 ) ) && ( nodeVar51 >= 0.0 ) ) ) {
-
-		nodeVar96 = nodeVar51;
+		nodeVar96 = nodeVar50;
 
 	} else {
 
@@ -451,7 +442,18 @@ void main() {
 
 	}
 
-	nodeVarying1 = mix( clamp( nodeVar95, 0.0, 1.0 ), clamp( nodeVar96, 0.0, 1.0 ), nodeVar75 );
+
+	if ( ( ( ( nodeVar51 < 1e30 ) && ( nodeVar51 > -1e30 ) ) && ( nodeVar51 >= 0.0 ) ) ) {
+
+		nodeVar97 = nodeVar51;
+
+	} else {
+
+		nodeVar97 = 0.5;
+
+	}
+
+	nodeVarying1 = mix( clamp( nodeVar96, 0.0, 1.0 ), clamp( nodeVar97, 0.0, 1.0 ), nodeVar75 );
 	nodeVarying2 = aQuadCorner.y;
 	nodeVarying3 = nodeVar75;
 	nodeVarying4 = nodeVar52;
@@ -460,33 +462,22 @@ void main() {
 
 	if ( ( nodeVar91 <= nodeVar92 ) ) {
 
-		nodeVar97 = 1.0;
+		nodeVar98 = 1.0;
 
 	} else {
 
-		nodeVar97 = nodeVar93;
+		nodeVar98 = nodeVar93;
 
 	}
 
-	nodeVarying7 = nodeVar97;
+	nodeVarying7 = nodeVar98;
 	nodeVarying8 = nodeVar79.z;
 	nodeVarying9 = nodeVar53;
 	nodeVarying10 = nodeVar54;
 
 	if ( ( ( nodeVar45.z < 1e30 ) && ( nodeVar45.z > -1e30 ) ) ) {
 
-		nodeVar98 = min( max( nodeVar45.z, 0.0 ), 1.0 );
-
-	} else {
-
-		nodeVar98 = 1.0;
-
-	}
-
-
-	if ( ( ( nodeVar45.w < 1e30 ) && ( nodeVar45.w > -1e30 ) ) ) {
-
-		nodeVar99 = min( max( nodeVar45.w, 0.0 ), 1.0 );
+		nodeVar99 = min( max( nodeVar45.z, 0.0 ), 1.0 );
 
 	} else {
 
@@ -494,7 +485,18 @@ void main() {
 
 	}
 
-	nodeVarying11 = mix( nodeVar98, nodeVar99, nodeVar75 );
+
+	if ( ( ( nodeVar45.w < 1e30 ) && ( nodeVar45.w > -1e30 ) ) ) {
+
+		nodeVar100 = min( max( nodeVar45.w, 0.0 ), 1.0 );
+
+	} else {
+
+		nodeVar100 = 1.0;
+
+	}
+
+	nodeVarying11 = mix( nodeVar99, nodeVar100, nodeVar75 );
 
 	// result
 	gl_Position = clipPos;
