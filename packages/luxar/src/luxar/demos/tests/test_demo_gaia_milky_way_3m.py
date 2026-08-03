@@ -50,11 +50,14 @@ def test_authored_nodes_keep_gaia_volumetric_appearance(tmp_path: Path) -> None:
 
     # The markers are PLAIN points (no LOD wrapper), so they DID need kappa
     # rescaled to survive that change: tau dropped its world-radius factor, so
-    # the old 1.3 would now absorb ~35x harder. Preserving the authored look is
+    # the old 1.3 would now absorb ~3.5x harder (the markers are 10x the
+    # typical star radius, so their factor is a tenth of the stars' ~35x).
+    # Preserving the authored look is
     # exactly kappa * radius * chord — the value the demo computes as
     # MARKER_ABSORPTION, recomputed here from first principles rather than
     # copied, so a change to either side has to be deliberate.
-    marker_radius = (0.001 + 0.01 * 0.5**2) * 10.0 * 10  # typical star radius x10, SCALE=10
+    # Typical star radius x10 (the marker factor), at SCALE=10.
+    marker_radius = (0.001 + 0.01 * 0.5**2) * 10.0 * 10
     expected_marker_kappa = 1.3 * marker_radius * float(np.sqrt(np.pi / np.log(100.0)))
     for name in ("Sun", "Betelgeuse", "Rigel"):
         marker = dict(scene[name].attrs)

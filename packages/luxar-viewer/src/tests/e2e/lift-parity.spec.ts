@@ -52,7 +52,7 @@ const PARITY_TOLERANCE = 0.1;
 /** Modes whose output is a functional of the sum-projected ray mass. */
 const SUM_MODES = ['additive', 'luminous', 'volumetric'] as const;
 /** Modes that use peak projection — effect C, not yet calibrated. */
-const PEAK_MODES = ['max', 'normal'] as const;
+const PEAK_MODES = ['max', 'normal', 'opaque'] as const;
 
 /** Canvas-normalised cell centre, so the crop survives DPR and element offset. */
 interface Cell {
