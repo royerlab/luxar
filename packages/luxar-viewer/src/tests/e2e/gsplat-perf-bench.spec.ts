@@ -35,11 +35,11 @@
  *     `getSceneLoader().getProfiler().getDepthSortCompletions()`: the
  *     monotonic completion total plus the drained per-completion `lastMs`
  *     series (→ sortCount, sort-latency median/p95). This dedicated stream
- *     (issue #711) records one event per applied ordering — unlike the
- *     seq-merged 'Depth Sort' root's `count`, it does not undercount
- *     multi-completion frames or drop late resolves. Each event MAY also
- *     carry numeric `kernelMs`/`boundaryMs`/`queueMs` — recorded when
- *     present, absence tolerated.
+ *     (issue #711) records one event per applied ordering rather than only the
+ *     aggregate 'Depth Sort' root, so multi-completion frames retain every
+ *     latency sample. Each event MAY also carry numeric
+ *     `kernelMs`/`boundaryMs`/`queueMs` — recorded when present, absence
+ *     tolerated.
  *   - L8 GATE PROBE (10M scenario only): every sampled frame is
  *     classified 'sorting-adjacent' (an ordering apply landed within
  *     ±1 frame, detected via a depth-sort completion this frame) vs
@@ -551,11 +551,10 @@ async function runOrbitSamplingLoop(page: Page): Promise<OrbitSamplingRaw> {
       // internal and the metadata stage fields are optional/in-flight.
       const profiler = debug.getSceneLoader?.()?.getProfiler?.();
       // Drain the profiler's dedicated MONOTONIC depth-sort completion stream
-      // (issue #711) instead of inferring per-sort events from the seq-merged
-      // 'Depth Sort' profiler root's `count`. That root undercounts frames
-      // where several leaves finish at once (an increase of 1 and of 20 both
-      // added exactly one event) and can DROP late/out-of-order resolves; the
-      // completion stream records one event per applied ordering, in order.
+      // (issue #711) instead of inferring per-sort events from the aggregate
+      // 'Depth Sort' profiler root's `count` and latest metadata. That old
+      // sampler turned an increase of 1 and an increase of 20 into one latency
+      // event; this stream records every applied ordering separately, in order.
       const readCompletions = (): {
         total: number;
         events: Array<{
