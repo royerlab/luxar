@@ -635,7 +635,7 @@ called out as such.
 - [ ] `data/scene-loader/loaders/loader-registry.ts` — one line in `LoaderByKind`. The three parallel
       maps became a single kind-keyed store in #1079; `getLoaderType` / `disposeAll` / the counters are
       one implementation each. Omitting the entry is a **compile error**
-      (`Type 'mesh' cannot be used to index type 'LoaderByKind'`), not a silent gap
+      (`TS2339: Property 'mesh' does not exist on type 'LoaderByKind'`), not a silent gap
 - [ ] `data/scene-loader/geometry-descriptors.ts` — one row in `GEOMETRY_DESCRIPTORS`, carrying
       `loadNode`, `applyPartialExtendTolerance`, `retryCommit` and the two loader factories. This is
       the row that `load-scene-nodes`, `lifecycle/retry` and `prefetch/slice-prefetcher` all read, so
@@ -766,7 +766,7 @@ code, so this section now records the result rather than the argument.
 |---|---|
 | #1079 | `geometry_types` added to `contract.yaml` and `GeometryKind` derived from it; the duplicate `GeometryType` union repointed; `LoaderRegistry`'s three parallel maps collapsed to one kind-keyed store; `lod_backfill` moved to `group_keys()` + `GEOMETRY_TYPES` |
 | #1099 | Points given the same `process`/`commit` pair as lines and gsplats, so `NodeBuildCtx` carries one uniform pair per kind; the three hand-written dispatch switches replaced by a single `Record<GeometryKind, GeometryDescriptor>` |
-| #1150 | Points metadata brought level with lines (`ndim`, `ordering`, `max_radius`, `has_spatial_index`); vestigial material caches and unused exports removed |
+| #1150 | Points metadata brought level with lines (`ndim`, `ordering`, `max_radius`, `has_spatial_index`); vestigial material caches and unused exports removed; the `GeometryType` alias #1079 left behind finally deleted |
 
 ### 10.2 What that means for a fourth type
 
@@ -774,19 +774,21 @@ The vocabulary is now single-sourced from the format contract, so **adding `mesh
 `contract.yaml` propagates to every consumer**, and the places that must still be taught about it
 fail the build rather than going quiet:
 
-- **Missing loader entry** → `Type 'mesh' cannot be used to index type 'LoaderByKind'`
+- **Missing loader entry** → `TS2339: Property 'mesh' does not exist on type 'LoaderByKind'`
+  at `loader-registry.ts`, plus three `TS2536` follow-ons inside the generic accessors
 - **Missing descriptor row** → `TS2741: Property 'mesh' is missing … required in type
   'Record<GeometryTypeName, GeometryDescriptor>'`
 - **Missing tolerance arm** → `TS2366: Function lacks ending return statement` in
   `tolerance-computer.ts`
 
-That last category is the real gain. Before the consolidation, `lifecycle/retry.ts` expressed a
-per-type capability as *the presence of an `if`*: a kind with no arm there was not a compile error,
-it was a load that could never be retried, manually or on reconnect. Nothing in the type system said
-otherwise, and it was found only by reading. It is now a declared field on a row that must exist.
+The descriptor row is the one that matters most. Before the consolidation, `lifecycle/retry.ts`
+expressed a per-type capability as *the presence of an `if`*: a kind with no arm there was not a
+compile error, it was a load that could never be retried, manually or on reconnect. Nothing in the
+type system said so, and it was found only by reading. It is now a declared field on a row that
+cannot be omitted.
 
-**Dispatch sites `mesh` therefore does not touch at all:** `load-scene-nodes.ts`, `lifecycle/retry.ts`,
-`prefetch/slice-prefetcher.ts`.
+**Three dispatch sites therefore need no mesh edit at all:** `load-scene-nodes.ts`,
+`lifecycle/retry.ts` and `prefetch/slice-prefetcher.ts` all read the descriptor table.
 
 ### 10.3 What deliberately stayed specialized
 
