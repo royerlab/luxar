@@ -58,28 +58,30 @@ export interface GeometryCapabilities {
    * substitutive LOD ladder. Implies the leaf stamps `loadedViewVersion` so the
    * LOD registry can judge per-slice freshness.
    */
-  lod: boolean;
+  readonly lod: boolean;
 
   /**
    * May appear as a `kind=partition` group's `display_type`, i.e. can be split
    * into spatially-culled parts. Mirrors the Python-side allowlist in
    * `core/node/specialized_groups.py`.
    */
-  partition: boolean;
+  readonly partition: boolean;
 
   /**
    * Rendered through the instanced-quad path: per-element attributes live in a
    * GPU element texture drawn from the buffer pool, and the data monitor tracks
    * a per-type accumulator. A type rendered from a plain `BufferGeometry` is
-   * not pooled.
+   * not pooled. The compile-time keying of the monitor's per-type records is
+   * `POOLED_GEOMETRY_TYPES` in `types/data-monitor-types.ts` — the test suite
+   * pins the two to agree.
    */
-  pooled: boolean;
+  readonly pooled: boolean;
 
   /**
    * Registers per-element centers with the depth-sort coordinator, so switching
    * blending mode has to start or stop sorting for the layer.
    */
-  depthSortable: boolean;
+  readonly depthSortable: boolean;
 }
 
 /**
@@ -93,12 +95,18 @@ export interface GeometryCapabilities {
  * All three of the current types are uniformly capable — they are all soft,
  * emissive, per-element primitives drawn as instanced quads. The table looks
  * redundant *today*; its value is the compile error it raises tomorrow.
+ *
+ * Readonly + frozen: every predicate reads this object live, so a mutation
+ * would globally flip a capability for the whole session. (The record is
+ * frozen; the rows are readonly at the type level only, so the wiring test
+ * can flip one flag at a time through a deliberate cast.)
  */
-export const GEOMETRY_CAPABILITIES: Record<GeometryTypeName, GeometryCapabilities> = {
-  points: { lod: true, partition: true, pooled: true, depthSortable: true },
-  lines: { lod: true, partition: true, pooled: true, depthSortable: true },
-  gsplats: { lod: true, partition: true, pooled: true, depthSortable: true },
-};
+export const GEOMETRY_CAPABILITIES: Readonly<Record<GeometryTypeName, GeometryCapabilities>> =
+  Object.freeze({
+    points: { lod: true, partition: true, pooled: true, depthSortable: true },
+    lines: { lod: true, partition: true, pooled: true, depthSortable: true },
+    gsplats: { lod: true, partition: true, pooled: true, depthSortable: true },
+  });
 
 /** Look up one capability of an untyped node-type value. Non-types are `false`. */
 function hasCapability(value: unknown, capability: keyof GeometryCapabilities): boolean {

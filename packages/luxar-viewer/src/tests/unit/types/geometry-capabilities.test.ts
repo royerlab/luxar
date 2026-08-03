@@ -1,7 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { GEOMETRY_TYPES } from '../../../types/format-contract';
+import { POOLED_GEOMETRY_TYPES } from '../../../types/data-monitor-types';
 import {
   GEOMETRY_CAPABILITIES,
+  type GeometryCapabilities,
   isGeometryType,
   supportsLod,
   supportsPartition,
@@ -61,10 +63,29 @@ describe('geometry capabilities', () => {
     }
   });
 
+  it('the table record is frozen', () => {
+    // Every predicate reads the exported object live, so replacing a row
+    // would globally flip capabilities for the whole session. The record is
+    // frozen (rows stay type-level readonly so the wiring test below can
+    // flip flags through a deliberate cast).
+    expect(Object.isFrozen(GEOMETRY_CAPABILITIES)).toBe(true);
+  });
+
+  it('agrees with POOLED_GEOMETRY_TYPES on the pooled subset', () => {
+    // `POOLED_GEOMETRY_TYPES` (types/data-monitor-types.ts) keys the monitor's
+    // per-type records at compile time; the table's `pooled` column answers
+    // the same question at runtime. They must never drift apart.
+    const pooledFromTable = GEOMETRY_TYPES.filter((t) => GEOMETRY_CAPABILITIES[t].pooled);
+    expect([...POOLED_GEOMETRY_TYPES].sort()).toEqual([...pooledFromTable].sort());
+  });
+
   it('each predicate reads its own capability key', () => {
     // Every incumbent is capable of everything, so the four predicates are
     // black-box indistinguishable: `supportsLod` wired to `partition` passes
     // every other test here. Flip one flag at a time to pin the wiring.
+    // Deliberate mutation of the (type-level readonly) row, restored in
+    // `finally` and asserted below — the record itself is frozen, so the row
+    // cannot be swapped out from under the restore.
     const keys = ['lod', 'partition', 'pooled', 'depthSortable'] as const;
     const predicates = {
       lod: supportsLod,
@@ -72,10 +93,12 @@ describe('geometry capabilities', () => {
       pooled: isPooledGeometry,
       depthSortable: isDepthSortable,
     };
-    const original = { ...GEOMETRY_CAPABILITIES.points };
+    type MutableRow = { -readonly [K in keyof GeometryCapabilities]: boolean };
+    const row = GEOMETRY_CAPABILITIES.points as MutableRow;
+    const original = { ...row };
     try {
       for (const flipped of keys) {
-        Object.assign(GEOMETRY_CAPABILITIES.points, original, { [flipped]: false });
+        Object.assign(row, original, { [flipped]: false });
         for (const key of keys) {
           // Only the predicate reading the flipped key may change.
           expect(predicates[key]('points'), `${key} after flipping ${flipped}`).toBe(
@@ -84,7 +107,7 @@ describe('geometry capabilities', () => {
         }
       }
     } finally {
-      Object.assign(GEOMETRY_CAPABILITIES.points, original);
+      Object.assign(row, original);
     }
     expect(GEOMETRY_CAPABILITIES.points).toEqual(original);
   });

@@ -9,6 +9,7 @@ import type { SceneNode } from '../../data/data-loader-types';
 import { getEffectiveAttrs } from '../../data/attrs-composer';
 import type { BlendingMode } from '../../types/blending';
 import type { GeometryTypeName, NodeKind } from '../../types/format-contract';
+import { isGeometryType } from '../../types/geometry-capabilities';
 import { log, Modules } from '../../utils/log';
 // Pure display-window ↔ shader-uniform math now lives in the rendering layer
 // (`rendering/display-range`) so `rendering/` modules can import it without
@@ -330,11 +331,9 @@ export class LayerStateManager {
       );
     }
     if (node.type !== 'scene' && isLayerEnabled(layerAttr)) {
-      const isLayerType =
-        node.type === 'points' ||
-        node.type === 'lines' ||
-        node.type === 'gsplats' ||
-        node.type === 'group';
+      // Vocabulary question, not a capability one: any geometry leaf the
+      // format can carry must be listable in the panel (see `LayerType`).
+      const isLayerType = isGeometryType(node.type) || node.type === 'group';
       if (isLayerType) {
         const name = node.path.split('/').pop() || node.path;
 
