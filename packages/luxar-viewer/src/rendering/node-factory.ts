@@ -20,6 +20,7 @@ import type { LoadedPointsData, DataLoader } from '../data/data-loader-types';
 import type { PointsMetadata } from '../types/points';
 import type { LinesMetadata, LinesDataLoader } from '../types/lines';
 import type { GSplatsMetadata, GSplatsDataLoader } from '../types/gsplats';
+import { isPooledGeometry } from '../types/geometry-capabilities';
 import { log, Modules } from '../utils/log';
 import type { PickingSystem } from './picking/picking-system';
 import {
@@ -129,7 +130,7 @@ export class NodeFactory {
    * called from `SceneManager.contextRestoredHandler` in the order
    * post-processing → materials → nodes.
    *
-   * Also re-uploads geometry GPU buffers for all three geometry types. A
+   * Also re-uploads geometry GPU buffers for every POOLED geometry type. A
    * context loss zeroes the GPU-side storage — the element textures +
    * `aSortedIndex` (gsplats, points, and lines alike since the lines
    * texture-storage migration) — while the CPU mirror survives, so we
@@ -143,10 +144,12 @@ export class NodeFactory {
   rebuildAfterContextRestore(root: THREE.Object3D): void {
     root.traverse((obj) => {
       if (!(obj instanceof THREE.Mesh)) return;
-      const nodeType = obj.userData?.nodeType;
-      if (nodeType === 'gsplats' || nodeType === 'points' || nodeType === 'lines') {
+      if (isPooledGeometry(obj.userData?.nodeType)) {
         // Texture-backed storage (pool AND non-pool geometries alike):
-        // mark the element texture + aSortedIndex full-dirty.
+        // mark the element texture + aSortedIndex full-dirty. Restricted to
+        // pooled types — a geometry type rendered from a plain
+        // `BufferGeometry` has no element texture to re-upload (see
+        // `types/geometry-capabilities`).
         const geom = obj.geometry as THREE.InstancedBufferGeometry;
         const tex = getElementTexture(geom);
         if (tex) {

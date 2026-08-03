@@ -20,6 +20,7 @@ import * as zarr from '../../zarr';
 import { log, Modules } from '../../../utils/log';
 import { ZarrSceneAttrs, ZarrNodeAttrs } from '../../../types/zarr';
 import type { SceneNode } from '../../data-loader-types';
+import { isGeometryType } from '../../../types/geometry-capabilities';
 import { enumerateStore } from './enumerate-store';
 
 /**
@@ -42,7 +43,7 @@ export async function buildSceneGraph(
   // A scene root (type 'scene' or absent) keeps the container behaviour.
   const rootType = (rootAttrs as ZarrNodeAttrs)?.type;
   const rootKind = (rootAttrs as ZarrNodeAttrs)?.kind;
-  const isBareLeafRoot = rootType === 'gsplats' || rootType === 'points' || rootType === 'lines';
+  const isBareLeafRoot = isGeometryType(rootType);
   const isBareGroupRoot = rootType === 'group' && (rootKind === 'lod' || rootKind === 'partition');
   const isBareNodeRoot = isBareLeafRoot || isBareGroupRoot;
 
@@ -179,13 +180,12 @@ export async function buildSceneGraph(
 
     nodeMap.set(entry.path, node);
 
-    // Points / Lines / GSplats nodes are leaves from a scene-graph
-    // perspective. Their `additive_<i>/` multi-LOD subgroups carry
-    // the same `type` themselves and would otherwise show up as
-    // spurious child nodes in the monitor UI; mark the subtree
-    // internal so subsequent iterations skip it. Symmetric across
-    // all three leaf types.
-    if (node.type === 'gsplats' || node.type === 'points' || node.type === 'lines') {
+    // Geometry nodes are leaves from a scene-graph perspective. Their
+    // `additive_<i>/` multi-LOD subgroups carry the same `type` themselves and
+    // would otherwise show up as spurious child nodes in the monitor UI; mark
+    // the subtree internal so subsequent iterations skip it. Symmetric across
+    // the whole geometry vocabulary.
+    if (isGeometryType(node.type)) {
       internalSubtreePrefixes.push(`${entry.path}/`);
     }
   }

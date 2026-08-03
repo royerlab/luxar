@@ -10,6 +10,7 @@ TypeScript type definitions for high-dimensional data visualization in Luxar. Th
 - [Dimension Metadata](#dimension-metadata)
 - [SimpleDims Interface](#simpledims-interface)
 - [Utility Functions](#utility-functions)
+- [Geometry Vocabulary and Capabilities](#geometry-vocabulary-and-capabilities)
 - [Specialized Group Types](#specialized-group-types)
 - [Zarr Types](#zarr-types)
 - [Animation Types](#animation-types)
@@ -428,6 +429,43 @@ console.log(CHOLESKY_SIZES); // { '2D': 3, '3D': 6, '4D': 10 }
 ```
 
 See `gsplats.ts` for complete interface definitions including `ProcessedGSplatsData`, `GSplatsViewState`, and `GSplatsUserData`. The chunk-bounds index type is the canonical `ChunkSpatialIndex` from `data/loaders/spatial-query/spatial-query-builder.ts`.
+
+## Geometry Vocabulary and Capabilities
+
+`geometry-capabilities.ts` answers two different questions that look alike in code:
+
+1. **"Is this a geometry leaf?"** -- `isGeometryType(value)`, a type guard over the
+   contract-generated `GEOMETRY_TYPES`. Use it wherever the answer should follow the
+   vocabulary automatically (world-bounds walks, layer fan-out, leaf detection).
+2. **"Does this geometry type support feature X?"** -- `supportsLod`,
+   `supportsPartition`, `isPooledGeometry`, `isDepthSortable`, all reading the
+   `GEOMETRY_CAPABILITIES` table.
+
+The distinction matters because a _subset_ spelled out as
+`x === 'points' || x === 'lines' || x === 'gsplats'` is indistinguishable from the
+vocabulary at a glance, so a well-meaning sweep silently enables a feature for a
+type that cannot support it.
+
+```typescript
+import { isGeometryType, supportsLod, GEOMETRY_CAPABILITIES } from '../types/geometry-capabilities';
+
+isGeometryType(node.type); // vocabulary membership
+supportsLod(child.type); // may this be a kind=lod level?
+```
+
+`GEOMETRY_CAPABILITIES` is a `Record<GeometryTypeName, GeometryCapabilities>`, so
+**adding a geometry type to `format-contract/contract.yaml` fails to compile here**
+until its capabilities are declared -- and the runtime consumers then behave
+correctly with no further edits.
+
+A few interface fields (`LODGroupMetadata.display_type`,
+`PartitionGroupMetadata.display_type`, `SceneGraphNode.displayType`,
+`PooledBuffer.type`) still spell a subset out by hand, because a union cannot be
+derived from a value without more machinery than it is worth. Each carries a comment
+pointing at the capability it corresponds to; do not widen them to
+`GeometryTypeName`.
+
+Not re-exported from `index.ts`; import directly from `../types/geometry-capabilities`.
 
 ## Specialized Group Types
 
