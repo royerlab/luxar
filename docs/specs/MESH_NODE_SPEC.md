@@ -253,8 +253,10 @@ convention (fail-fast, before any zarr group is created):
   neighbouring vertices' directions, so the stored-normal fragment variant (§6.2) simply epsilon-guards
   its `normalize` — when the interpolated normal is near-zero (`dot(N, N) < ε` before normalization) it
   falls back to the §6.2 screen-space-derivative flat normal rather than normalizing a zero vector into
-  NaN shading. Shading near a degenerate vertex is therefore locally distorted rather than cleanly flat;
-  the warning exists so authors fix the normals instead of relying on the guard.
+  NaN shading. Like that flat normal, the substituted derivative normal also **bypasses** the §6.2
+  `gl_FrontFacing` two-sided flip (it already faces the viewer), so the fallback does not re-introduce
+  the inverted back-face shade. Shading near a degenerate vertex is therefore locally distorted rather
+  than cleanly flat; the warning exists so authors fix the normals instead of relying on the guard.
 - `normal_dims` (§3.4) — exactly 3 entries, integers, distinct, each `0 <= i < ndim`. Required when
   `normals` is supplied; rejected when it is not. It is an explicit `add_mesh` parameter (§4) — as
   writer-reserved metadata (§3.3) it cannot ride in through `**attrs`.
@@ -578,9 +580,11 @@ model is deliberately minimal and light-free:
   are material uniforms with sane defaults; a fully-flat `uAmbient = 1.0` reproduces the emissive look
   of the other types.
 - **Two-sided normal (stored-normal variants).** Every non-flat fragment build — `mesh.fragment` and its
-  `mesh-additive`/`mesh-max`/`mesh-colormap` siblings (§6.4) — renormalizes the interpolated normal in
-  the fragment stage and then flips it to face the camera BEFORE the headlight term:
-  `N = gl_FrontFacing ? N : -N` in GLSL, and the TSL twin via the `frontFacing` node. Without it, a
+  `mesh-additive`/`mesh-max`/`mesh-colormap` siblings (§6.4) — renormalizes the interpolated stored
+  normal in the fragment stage and then flips it to face the camera BEFORE the headlight term. The core
+  form is `N = gl_FrontFacing ? N : -N` in GLSL (TSL twin via the `frontFacing` node); it is **gated to
+  the stored-normal path** by the §3.5 epsilon guard spelled out at the end of this bullet, so read that
+  snippet — not this simplified one — as the shipped code. Without the flip, a
   back-facing fragment has `dot(N, V) < 0`, so the wrap term `dot(N, V) * 0.5 + 0.5` lands in `[0, 0.5)`
   and the back side shades with a dimmed, inverted gradient collapsing toward `uAmbient` (dark at the
   head-on interior, rising to a mid value at the silhouette) instead of the front-facing gradient —
@@ -593,7 +597,19 @@ model is deliberately minimal and light-free:
   wherever it applies: stored normals are only active when `normal_dims == displayDims` (§3.4), where
   §5.4's parity post-pass keeps winding coherent — specifically its **index post-pass** form, since the
   flip consumes `gl_FrontFacing` and needs it to correlate with the authored orientation — so the flip
-  gives the back face the same headlight gradient as the front.
+  gives the back face the same headlight gradient as the front. The flip is nonetheless gated on whether
+  the stored normal was actually the shaded normal: when §3.5's near-zero epsilon guard fires and
+  substitutes the screen-space-derivative flat normal, that substitute already faces the viewer by
+  construction (under the GL window-coordinate derivative convention the flat variant already relies on),
+  so the `gl_FrontFacing` flip is bypassed for that fragment exactly as in the flat variant. Note this is
+  a per-fragment fallback *inside* the stored-normal build — the same
+  `normalize(cross(dFdx(vViewPos), dFdy(vViewPos)))` computation `mesh-flat-normal.fragment` uses, inlined
+  and selected per fragment (`vViewPos` is already present as the headlight `V` source), not a swap to the
+  flat compile-time variant. Applying the flip there would negate a viewer-facing normal on a back-facing
+  fragment and collapse the shade toward `uAmbient` in precisely the degenerate-normal neighbourhoods the
+  fallback exists to paper over. Concretely the flip guards on a boolean carried out of the guard:
+  `N = (usedStored && !gl_FrontFacing) ? -N : N;`; the TSL twin gates its `frontFacing` node on the same
+  per-fragment `usedStored` select (a data-dependent `select()`, not a uniform graph split).
 - **Base color:** the colormap LUT applied to `aScalar` under `USE_COLORMAP`, else the vertex `color`
   attribute — which is opaque white when `colors` is absent (§6.1, filled CPU-side exactly as
   `create-points-node.ts:91` does for points). So the minimal `add_mesh(vertices, faces)` call (no
@@ -1091,7 +1107,10 @@ A reviewer should treat a `| 'mesh'` appearing in any of those five as a defect.
       `double_sided` mesh, a **back-viewed** face shades with the SAME headlight gradient as the
       **front-viewed** face (both lit symmetrically), NOT collapsed to flat `uAmbient` — verified to go
       **red** without the §6.2 `gl_FrontFacing` normal flip (the back face shades the inverted,
-      `uAmbient`-collapsing gradient instead of the front-facing one)
+      `uAmbient`-collapsing gradient instead of the front-facing one). And the flip is gated on the
+      §3.5 epsilon guard: a **back-facing** fragment whose stored normal is near-zero (guard fires) must
+      shade like the flat/derivative variant (viewer-facing), NOT get the flip applied — verified to go
+      red if the flip is unconditional, which would re-collapse that fragment toward `uAmbient`
 - [ ] Codegen snapshots: 6 new variants = 12 files (§6.4) — incl. the per-blend-mode
       `mesh-additive`/`mesh-max` variants
 - [ ] Fixture: `tests/fixtures/generate_test_data.py` gains a mesh fixture (auto-picked up by
