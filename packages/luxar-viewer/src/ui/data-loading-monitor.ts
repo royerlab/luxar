@@ -21,6 +21,7 @@ import type {
   CacheTelemetryState,
   SceneGraphNode,
   SceneGraphState,
+  GeometryCounters,
   LODProgressProvider,
   LODProgressState,
 } from '../types/data-monitor-types';
@@ -86,6 +87,7 @@ import {
 import type { UpdateProfiler } from '../profiling/update-profiler';
 import { POOLED_GEOMETRY_TYPES } from '../types/data-monitor-types';
 import type { PooledGeometryType, AccumulatorProvider } from '../types/data-monitor-types';
+import { GEOMETRY_TYPES, type GeometryTypeName } from '../types/format-contract';
 
 /** Empty accumulator slots — one per {@link POOLED_GEOMETRY_TYPES} entry. */
 function emptyAccumulatorSlots(): Record<PooledGeometryType, AccumulatorProvider | null> {
@@ -93,6 +95,47 @@ function emptyAccumulatorSlots(): Record<PooledGeometryType, AccumulatorProvider
     PooledGeometryType,
     AccumulatorProvider | null
   >;
+}
+
+/** A fresh all-zero per-type counter record, one slot per geometry type. */
+function zeroCounters(): GeometryCounters {
+  return Object.fromEntries(GEOMETRY_TYPES.map((t) => [t, 0])) as GeometryCounters;
+}
+
+/** The empty scene-graph state (no scene loaded / scene torn down). */
+function emptySceneGraphState(): SceneGraphState {
+  return {
+    root: null,
+    totalNodes: 0,
+    nodesByType: zeroCounters(),
+    totalByType: zeroCounters(),
+    visibleByType: zeroCounters(),
+  };
+}
+
+/**
+ * This node's own element count for `type`, or 0 when it is not that type.
+ *
+ * The per-type count fields are named after each type's ELEMENT (points have
+ * points, lines have segments, gsplats have splats), so a table cannot key them
+ * by type name. The `never` tail makes adding a geometry type a compile error
+ * here — a silent `return 0` would leave the new type's elements out of every
+ * dataset total.
+ */
+function elementCountOf(node: SceneGraphNode, type: GeometryTypeName): number {
+  if (node.type !== type) return 0;
+  switch (type) {
+    case 'points':
+      return node.pointCount ?? 0;
+    case 'lines':
+      return node.segmentCount ?? 0;
+    case 'gsplats':
+      return node.splatCount ?? 0;
+    default: {
+      const unhandled: never = type;
+      return unhandled;
+    }
+  }
 }
 
 /**
@@ -190,19 +233,7 @@ export class DataLoadingMonitor {
   private contentContainer: HTMLElement | null = null;
 
   // Scene graph state
-  private sceneGraphState: SceneGraphState = {
-    root: null,
-    totalNodes: 0,
-    pointsNodes: 0,
-    linesNodes: 0,
-    gsplatsNodes: 0,
-    totalPoints: 0,
-    visiblePoints: 0,
-    totalSegments: 0,
-    visibleSegments: 0,
-    totalSplats: 0,
-    visibleSplats: 0,
-  };
+  private sceneGraphState: SceneGraphState = emptySceneGraphState();
 
   // Track expanded nodes in scene graph tree (by path)
   private expandedNodes = new Set<string>(['/']);
@@ -495,19 +526,7 @@ export class DataLoadingMonitor {
    * collapsed tree (the root '/' marker preserves the previous default).
    */
   private resetSceneGraphState(): void {
-    this.sceneGraphState = {
-      root: null,
-      totalNodes: 0,
-      pointsNodes: 0,
-      linesNodes: 0,
-      gsplatsNodes: 0,
-      totalPoints: 0,
-      visiblePoints: 0,
-      totalSegments: 0,
-      visibleSegments: 0,
-      totalSplats: 0,
-      visibleSplats: 0,
-    };
+    this.sceneGraphState = emptySceneGraphState();
     this.expandedNodes = new Set<string>(['/']);
     this.visibleCountsByPath = new Map();
     this.structureDirty = true;
@@ -621,7 +640,7 @@ export class DataLoadingMonitor {
     };
     log.info(
       Modules.DATA_MONITOR,
-      `Scene graph updated: ${stats.totalNodes} nodes, ${stats.totalPoints} points, ${stats.totalSegments} segments`
+      `Scene graph updated: ${stats.totalNodes} nodes, ${stats.totalByType.points} points, ${stats.totalByType.lines} segments`
     );
     // Scene graph structure changed — need full rebuild on next update
     this.structureDirty = true;
@@ -662,12 +681,12 @@ export class DataLoadingMonitor {
    */
   private calculateSceneGraphStats(node: SceneGraphNode): Omit<SceneGraphState, 'root'> {
     let totalNodes = 1;
-    let pointsNodes = node.type === 'points' ? 1 : 0;
-    let linesNodes = node.type === 'lines' ? 1 : 0;
-    let gsplatsNodes = node.type === 'gsplats' ? 1 : 0;
-    let totalPoints = node.pointCount || 0;
-    let totalSegments = node.segmentCount || 0;
-    let totalSplats = node.splatCount || 0;
+    const nodesByType = zeroCounters();
+    const totalByType = zeroCounters();
+    for (const t of GEOMETRY_TYPES) {
+      if (node.type === t) nodesByType[t] = 1;
+      totalByType[t] = elementCountOf(node, t);
+    }
 
     const childStats = node.children.map((child) => this.calculateSceneGraphStats(child));
 
@@ -675,9 +694,7 @@ export class DataLoadingMonitor {
     // real tree — a kind=lod group genuinely contains K child nodes.
     for (const cs of childStats) {
       totalNodes += cs.totalNodes;
-      pointsNodes += cs.pointsNodes;
-      linesNodes += cs.linesNodes;
-      gsplatsNodes += cs.gsplatsNodes;
+      for (const t of GEOMETRY_TYPES) nodesByType[t] += cs.nodesByType[t];
     }
 
     // Geometry TOTALS: a substitutive kind=lod group's children are
@@ -688,57 +705,29 @@ export class DataLoadingMonitor {
     // reflects true full-detail size. Partition parts are disjoint and
     // additive children are skipped from the scene graph, so both keep the
     // straight sum.
-    if (node.kind === 'lod' && childStats.length > 0) {
-      const finest = childStats[childStats.length - 1];
-      totalPoints += finest.totalPoints;
-      totalSegments += finest.totalSegments;
-      totalSplats += finest.totalSplats;
-    } else {
-      for (const cs of childStats) {
-        totalPoints += cs.totalPoints;
-        totalSegments += cs.totalSegments;
-        totalSplats += cs.totalSplats;
-      }
+    const contributing =
+      node.kind === 'lod' && childStats.length > 0
+        ? [childStats[childStats.length - 1]]
+        : childStats;
+    for (const cs of contributing) {
+      for (const t of GEOMETRY_TYPES) totalByType[t] += cs.totalByType[t];
     }
 
     // Initialize visible counts to totals (will be updated by scene loader)
-    return {
-      totalNodes,
-      pointsNodes,
-      linesNodes,
-      gsplatsNodes,
-      totalPoints,
-      visiblePoints: totalPoints,
-      totalSegments,
-      visibleSegments: totalSegments,
-      totalSplats,
-      visibleSplats: totalSplats,
-    };
+    return { totalNodes, nodesByType, totalByType, visibleByType: { ...totalByType } };
   }
 
   /**
-   * Update the count of currently visible points.
-   * Called by SceneLoader after processing points with nD clipping /
-   * progressive LOD refinement.
+   * Update the count of currently visible elements of one geometry type.
+   *
+   * Called by SceneLoader (via `updateVisibleCountsInMonitor`) after the
+   * per-type commits, so the HUD reports post-nD-clipping and
+   * post-progressive-refinement counts rather than raw loaded ones. One
+   * kind-keyed setter rather than one method per type: the three bodies were
+   * identical apart from the field each wrote.
    */
-  public updateVisiblePoints(count: number): void {
-    this.sceneGraphState.visiblePoints = count;
-  }
-
-  /**
-   * Update the count of currently visible line segments.
-   * Called by SceneLoader after processing lines with nD clipping.
-   */
-  public updateVisibleSegments(count: number): void {
-    this.sceneGraphState.visibleSegments = count;
-  }
-
-  /**
-   * Update the count of currently visible gsplats.
-   * Called by SceneLoader after processing gsplats with nD clipping.
-   */
-  public updateVisibleSplats(count: number): void {
-    this.sceneGraphState.visibleSplats = count;
+  public updateVisibleCount(type: GeometryTypeName, count: number): void {
+    this.sceneGraphState.visibleByType[type] = count;
   }
 
   /**
@@ -2004,14 +1993,18 @@ export class DataLoadingMonitor {
     // Dataset totals + visible counts come from the scene graph, identically
     // for points / lines / gsplats. Visible counts are refreshed each update
     // cycle by `updateVisibleCountsInMonitor` after nD clipping / LOD refine.
-    const datasetSize = this.sceneGraphState.totalPoints;
-    const visiblePoints = this.sceneGraphState.visiblePoints;
+    // The display layer keeps per-type NAMED fields (each rendered with its own
+    // label, unit noun and DOM id), so this is where the kind-keyed aggregation
+    // model is projected onto them.
+    const { totalByType, visibleByType } = this.sceneGraphState;
+    const datasetSize = totalByType.points;
+    const visiblePoints = visibleByType.points;
 
-    const datasetSegments = this.sceneGraphState.totalSegments;
-    const visibleSegments = this.sceneGraphState.visibleSegments;
+    const datasetSegments = totalByType.lines;
+    const visibleSegments = visibleByType.lines;
 
-    const datasetSplats = this.sceneGraphState.totalSplats;
-    const visibleSplats = this.sceneGraphState.visibleSplats;
+    const datasetSplats = totalByType.gsplats;
+    const visibleSplats = visibleByType.gsplats;
 
     return {
       totalLoaders,

@@ -24,6 +24,24 @@ import { isPointsUserData } from '../../../types/points';
 import { isLinesUserData } from '../../../types/lines';
 import { isGSplatsUserData } from '../../../types/gsplats';
 import type { SceneLoaderMonitorPort } from '../../scene-loader-monitor-port';
+import { GEOMETRY_TYPES, type GeometryTypeName } from '../../../types/format-contract';
+
+/**
+ * Per-type read of a mesh's committed visible-element count, or `undefined` when
+ * the userData is not this type's.
+ *
+ * Each geometry type has both its own userData guard and its own element-noun
+ * stamp field (`visiblePointCount` / `visibleSegmentCount` / `visibleSplatCount`),
+ * so the read cannot be keyed by type name — but the DISPATCH can. Being a
+ * `Record<GeometryTypeName, …>` makes adding a geometry type a compile error
+ * here, which matters: an if/else chain would simply never tally the new type,
+ * and the HUD would report 0 visible elements for it with nothing to explain why.
+ */
+const VISIBLE_COUNT_READERS: Record<GeometryTypeName, (userData: unknown) => number | undefined> = {
+  points: (ud) => (isPointsUserData(ud) ? (ud.visiblePointCount ?? 0) : undefined),
+  lines: (ud) => (isLinesUserData(ud) ? (ud.visibleSegmentCount ?? 0) : undefined),
+  gsplats: (ud) => (isGSplatsUserData(ud) ? (ud.visibleSplatCount ?? 0) : undefined),
+};
 
 /**
  * Traverse `rootGroup`, sum the per-mesh visible-counts userData for all
@@ -36,9 +54,10 @@ export function updateVisibleCountsInMonitor(
 ): void {
   if (!rootGroup || !monitor) return;
 
-  let totalVisiblePoints = 0;
-  let totalVisibleSegments = 0;
-  let totalVisibleSplats = 0;
+  const totals = Object.fromEntries(GEOMETRY_TYPES.map((t) => [t, 0])) as Record<
+    GeometryTypeName,
+    number
+  >;
   const byPath = new Map<string, number>();
 
   // Manual recursion rather than THREE's `traverse`, which visits every
@@ -49,15 +68,15 @@ export function updateVisibleCountsInMonitor(
     if (!object.visible) return;
     if (object instanceof THREE.Mesh) {
       let visible: number | undefined;
-      if (isPointsUserData(object.userData)) {
-        visible = object.userData.visiblePointCount ?? 0;
-        totalVisiblePoints += visible;
-      } else if (isLinesUserData(object.userData)) {
-        visible = object.userData.visibleSegmentCount ?? 0;
-        totalVisibleSegments += visible;
-      } else if (isGSplatsUserData(object.userData)) {
-        visible = object.userData.visibleSplatCount ?? 0;
-        totalVisibleSplats += visible;
+      // First matching type wins, as the former if/else chain did — a mesh's
+      // userData carries exactly one `nodeType`, so at most one reader matches.
+      for (const t of GEOMETRY_TYPES) {
+        const count = VISIBLE_COUNT_READERS[t](object.userData);
+        if (count !== undefined) {
+          visible = count;
+          totals[t] += count;
+          break;
+        }
       }
       if (visible !== undefined && object.name) {
         // Mesh `name` is the scene-graph path (set by node-factory).
@@ -70,8 +89,6 @@ export function updateVisibleCountsInMonitor(
   // (callers pass the scene root); descend straight into its children.
   for (const child of rootGroup.children) visit(child);
 
-  monitor.updateVisiblePoints(totalVisiblePoints);
-  monitor.updateVisibleSegments(totalVisibleSegments);
-  monitor.updateVisibleSplats(totalVisibleSplats);
+  for (const t of GEOMETRY_TYPES) monitor.updateVisibleCount(t, totals[t]);
   monitor.updateVisibleCountsByPath(byPath);
 }
