@@ -231,6 +231,18 @@ smoothing.
 New shared validators in `luxar/validation/base.py`, following the existing `validate_*_for_writing`
 convention (fail-fast, before any zarr group is created):
 
+- `validate_vertices_for_writing(vertices)` — enforces `n_vertices = vertices.shape[0] <= 2^27`, the
+  **same** alias-free bound as the §6.5 pick vote-key stride and the §3.5 loader gate below. This mirrors
+  the loader gate at write time so the public `add_mesh` path cannot emit a store that Luxar's own loader
+  then rejects — restoring the fail-fast contract this section opens with, and honouring the §6.5 house
+  rule that an unenforced bound is not a bound. It also restores a secondary guarantee: with
+  `n_vertices <= 2^27` pinned at write time, `validate_faces_for_writing`'s `max < n_vertices` check again
+  guarantees every admitted face index (max `< 2^27`, well under `2^32`) survives the `.astype(np.uint32)`
+  cast. Raise `ValidationError(message, hint)` with a remediation hint, matching the shared-validator half
+  of the split below; the cap is a pure function of the `vertices` array and independently testable, so it
+  belongs on the shared-validator side, not among the cheap structural gates that need writer context and
+  stay inline. The validator's sole job is this vertex-count cap; generic coordinate finiteness/shape stays
+  in the shared coordinate-writing path.
 - `validate_faces_for_writing(faces, n_vertices)` — shape `(F, 3)` or flat `(3F,)`; integer dtype
   (reject float, which `.astype(np.uint32)` would silently truncate); `min >= 0`; `max < n_vertices`;
   `F >= 1`. Mirrors the `line_type='indexed'` index gate at `geometry_writers/lines.py:134-170`, which
@@ -251,7 +263,7 @@ convention (fail-fast, before any zarr group is created):
 `validate_*_for_writing` family in `validation/base.py` raises `ValidationError(message, hint)` — a
 two-arg form that gives the user a remediation hint — whereas the Lines indexed-index checks are
 **inline in the writer** and raise bare `ValueError`. Mesh should follow the *shared validator* half of
-that precedent: face/normal validation belongs in `validation/base.py` as reusable, independently
+that precedent: vertex/face/normal validation belongs in `validation/base.py` as reusable, independently
 testable functions, matching `validate_widths_for_writing` / `validate_radii_for_writing`. Only the
 cheap structural gates that need writer context stay inline.
 
@@ -514,7 +526,10 @@ space — a post-pass swaps two of each triangle's three indices to restore fron
 keyed to the *current* `displayDims` parity, so it runs on **every** index build in an odd-parity epoch
 (initial load, slice move, and `displayDims` change alike), not only at the moment `displayDims`
 changes. Equivalently, render the opposite material `side` for the duration of the odd-parity epoch — a
-persistent form that needs no per-rebuild post-pass. When the displayed set is a **different triple**
+persistent form that needs no per-rebuild post-pass. This equivalence holds only while nothing consumes
+`gl_FrontFacing`: the stored-normal shading flip (§6.2) requires the index post-pass form, since the
+opposite side of a `DoubleSide` mesh is `DoubleSide` and leaves projected winding (and thus
+`gl_FrontFacing`) reversed. When the displayed set is a **different triple**
 than the frame (e.g. `[0,1,2]` → `[1,2,3]`), or an nD mesh declares no frame (no stored normals),
 projected orientation varies per triangle and no index post-pass can fix it — the viewer renders
 `DoubleSide` for that epoch regardless of `double_sided: false`, and logs a one-time notice naming the
@@ -608,6 +623,23 @@ model is deliberately minimal and light-free:
   it needs no light in the scene graph and no scene-graph API change. `uAmbient` and `uShadeExponent`
   are material uniforms with sane defaults; a fully-flat `uAmbient = 1.0` reproduces the emissive look
   of the other types.
+- **Two-sided normal (stored-normal variants).** Every non-flat fragment build — `mesh.fragment` and its
+  `mesh-additive`/`mesh-max`/`mesh-colormap` siblings (§6.4) — renormalizes the interpolated normal in
+  the fragment stage and then flips it to face the camera BEFORE the headlight term:
+  `N = gl_FrontFacing ? N : -N` in GLSL, and the TSL twin via the `frontFacing` node. Without it, a
+  back-facing fragment has `dot(N, V) < 0`, so the wrap term `dot(N, V) * 0.5 + 0.5` lands in `[0, 0.5)`
+  and the back side shades with a dimmed, inverted gradient collapsing toward `uAmbient` (dark at the
+  head-on interior, rising to a mid value at the silhouette) instead of the front-facing gradient —
+  visible immediately because `double_sided` defaults **true** (§3.3) and §5's whole-triangle cull
+  exposes the interior back faces of a sliced closed isosurface, exactly the target data. The
+  **derivative fallback** (`mesh-flat-normal.fragment`) needs **no** such flip:
+  `normalize(cross(dFdx(vViewPos), dFdy(vViewPos)))` is orientation-defined by the rasterized fragment,
+  not the winding, so it always faces the viewer (§7's "always faces the camera regardless of winding" is
+  correct for that variant) — the flip is a stored-normal-variant-only concern. The flip is well-defined
+  wherever it applies: stored normals are only active when `normal_dims == displayDims` (§3.4), where
+  §5.4's parity post-pass keeps winding coherent — specifically its **index post-pass** form, since the
+  flip consumes `gl_FrontFacing` and needs it to correlate with the authored orientation — so the flip
+  gives the back face the same headlight gradient as the front.
 - **Base color:** the colormap LUT applied to `aScalar` under `USE_COLORMAP`, else the vertex `color`
   attribute — which is opaque white when `colors` is absent (§6.1, filled CPU-side exactly as
   `create-points-node.ts:91` does for points). So the minimal `add_mesh(vertices, faces)` call (no
@@ -863,7 +895,9 @@ rule that an unenforced bound is not a bound (the reason `MAX_PICK_NODE_ID` is c
 `rendering/picking/picking-system/pick-render.ts`). Note that `pick-render.test.ts`'s existing headroom
 test only pins the texture-*layout* maxima, so this vertex cap needs its own pin — a dedicated test
 that the vote key stays exact up to the largest admitted vertex ordinal and that a mesh with
-`n_vertices > 2^27` is rejected with a `LoaderError`.
+`n_vertices > 2^27` is rejected with a `LoaderError`. The writer **also** rejects `n_vertices > 2^27` at
+write time (`ValidationError`, via `validate_vertices_for_writing`, §3.5) — the fail-fast twin of this
+loader-side `LoaderError` pin.
 
 **Accepted v1 limitation.** `vElementId` is a `flat` varying, so within a triangle it resolves to that
 triangle's **provoking vertex**, not the cursor's barycentric-nearest vertex. Hovering a triangle
@@ -966,7 +1000,7 @@ called out as such.
       other three adders; `faces` is index data and is **not** reordered
 - [ ] `io/_compiler/geometry_writers/mesh.py`, `io/_compiler/node_common.py` (`MESH_RESERVED_ATTRS`)
 - [ ] `io/compiler.py` (`write_mesh` facade), `io/reader.py` (`MeshData`/`get_mesh`/`list_meshes`)
-- [ ] `validation/base.py` (`validate_faces_for_writing`, `validate_normals_for_writing`)
+- [ ] `validation/base.py` (`validate_vertices_for_writing`, `validate_faces_for_writing`, `validate_normals_for_writing`)
 - [ ] `cli/info_command.py`
 - [ ] **Partition rejection** — `core/node/specialized_groups.py:62`: the `display_type` guard admits
       exactly `("points", "lines", "gsplats")`. Leave `mesh` **out** of it, and extend the error message
@@ -1069,8 +1103,11 @@ A reviewer should treat a `| 'mesh'` appearing in any of those five as a defect.
 
 **Tests**
 
-- [ ] Python: writer round-trip, validators (incl. every rejection in §3.5), authoring lint,
-      broadcast color/scalar, `extend_to_all`, reader
+- [ ] Python: writer round-trip, validators (incl. every rejection in §3.5 — among them `n_vertices >
+      2^27` rejected at write time with `ValidationError` via `validate_vertices_for_writing`, the
+      fail-fast twin of the §6.5 loader-side `n_vertices > 2^27 → LoaderError` pin, verified to fail
+      before the validator exists per this section's rule), authoring lint, broadcast color/scalar,
+      `extend_to_all`, reader
 - [ ] Rust: `mesh_vertex_visibility_mask` / `compact_visible_faces` unit tests incl. the non-finite rule
 - [ ] TS unit: loader, geometry assembly, cull correctness, colormap fail-closed guard,
       Rust↔TS kernel parity, corrupt-store rejection (out-of-range face index → `LoaderError`, not a
@@ -1108,7 +1145,11 @@ A reviewer should treat a `| 'mesh'` appearing in any of those five as a defect.
       (`normal_dims == displayDims`) selects the stored-normal `mesh.fragment` variant under
       `shading="smooth"`, and the SAME mesh under `shading="flat"` selects `mesh-flat-normal.fragment`
       and shades from screen-space derivatives (§3.4, §6.2). Verified to differ — a build that ignores
-      `shading` renders both identically and the test goes red
+      `shading` renders both identically and the test goes red. And under `shading="smooth"` on a
+      `double_sided` mesh, a **back-viewed** face shades with the SAME headlight gradient as the
+      **front-viewed** face (both lit symmetrically), NOT collapsed to flat `uAmbient` — verified to go
+      **red** without the §6.2 `gl_FrontFacing` normal flip (the back face shades the inverted,
+      `uAmbient`-collapsing gradient instead of the front-facing one)
 - [ ] Codegen snapshots: 6 new variants = 12 files (§6.4) — incl. the per-blend-mode
       `mesh-additive`/`mesh-max` variants
 - [ ] Fixture: `tests/fixtures/generate_test_data.py` gains a mesh fixture (auto-picked up by
