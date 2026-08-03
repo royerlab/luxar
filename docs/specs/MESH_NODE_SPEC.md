@@ -278,9 +278,14 @@ straight to the §5.4 kernels. An out-of-range face index **panics** the Rust ke
 `panic = "abort"`, so the trap takes down the whole WASM module) and silently corrupts the TS backend
 (out-of-bounds reads yield `undefined`). The mesh loader must therefore structurally validate after
 decode, before either backend is invoked: `vertices`/`faces` shapes against `n_vertices`/`n_faces`,
-`faces` length a multiple of 3, every face index in `[0, V)` — checked on the exact `u32`-typed data the
-kernels receive, after any dtype conversion, because an externally produced *signed* store's `-1` passes
-a pre-cast `< V` check and then wraps to `0xffffffff` in the cast, defeating the gate — `n_vertices <=
+`faces` length a multiple of 3, every face index in `[0, V)` — validated **before** any dtype conversion
+on the decoded `faces` dtype and values, mirroring the write-side `validate_faces_for_writing` /
+`geometry_writers/lines.py:134-170` gate this section cites: reject a non-integer decoded dtype outright,
+then bounds-check the `[0, V)` range on the source-typed values, because a post-cast-only check silently
+admits the *in-range* lossy conversions — a *float* store's `1.5` truncates to `1` and a *wide* store's
+`2^32` wraps to `0`, both landing inside `[0, V)` — whereas the signed `-1` is the one case a post-cast
+check *does* catch (it wraps to `0xffffffff`, out of range), which is exactly why that post-cast `[0, V)`
+bounds check stays on as defense in depth — `n_vertices <=
 2^27`, and `normal_dims` well-formed whenever normals are present — failing the node with a
 `LoaderError` (one node lost, not the scene) instead of trapping. The `n_vertices <= 2^27` check belongs
 at this gate because mesh's pick `elementId` is `gl_VertexID` (§6.5) — the one type not bounded by the
@@ -1059,7 +1064,9 @@ A reviewer should treat a `| 'mesh'` appearing in any of those five as a defect.
 - [ ] Rust: `mesh_vertex_visibility_mask` / `compact_visible_faces` unit tests incl. the non-finite rule
 - [ ] TS unit: loader, geometry assembly, cull correctness, colormap fail-closed guard,
       Rust↔TS kernel parity, corrupt-store rejection (out-of-range face index → `LoaderError`, not a
-      WASM trap; an undersized `normals`/`colors`/`scalars` array → `LoaderError`, §3.5; `n_vertices >
+      WASM trap; a non-integer decoded `faces` dtype and a lossy-but-in-range index — float `1.5`→`1`,
+      wide `2^32`→`0` — → `LoaderError` from the pre-cast gate (each would pass a post-cast-only check),
+      §3.5; an undersized `normals`/`colors`/`scalars` array → `LoaderError`, §3.5; `n_vertices >
       2^27` → `LoaderError`, its own pin since `pick-render.test.ts` only covers the texture-layout
       maxima, §6.5), and the `volumetric`→`opaque` fallback warning (§6.3)
 - [ ] TS unit (alpha chain, §6.2): an **RGBA** mesh produces **different** fragment output than the same
