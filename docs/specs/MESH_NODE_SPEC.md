@@ -279,8 +279,11 @@ zarr `.zarray` metadata (declared shape, `chunks`, and dtype), touching no chunk
 allocation, not after a multi-gigabyte fetch; (b) bounds `n_faces`, which the writer floors at `F >= 1`
 but never caps, against a viewer-side per-node ceiling `MESH_DECODE_BUDGET_BYTES` (a viewer `src/config/`
 constant, default 2 GiB — a few-million-triangle mesh's `vertices`+`faces` run to tens–hundreds of MB,
-so 2 GiB is generous but bounds catastrophe): both the summed declared footprint (`vertices` `V·D·4` +
-`faces` `F·3·4` + every present optional array, CSR arrays included) and each array's *per-chunk* decode
+so 2 GiB is generous but bounds catastrophe): both the summed declared footprint — each array's declared
+shape × its *declared-dtype* itemsize: `vertices` `V·D·4`, `faces` `F·3·itemsize` (8 bytes per index for
+an external int64 store, not the canonical uint32's 4 — budgeting the canonical dtype instead of the
+declared one would let a 64-bit store fetch twice the audited bytes), every present optional array and
+the CSR arrays included — and each array's *per-chunk* decode
 allocation (`chunks × itemsize`, edge chunks padded to the full chunk shape) must fall under it — the
 per-chunk term because zarr allocates chunk-shaped buffers, not shape-shaped ones, and zarr v2 does not
 require `chunks <= shape`, so a `faces` `"shape": [100, 3], "chunks": [268435456, 3]` declaration would
@@ -291,7 +294,8 @@ out of slice bounds in the §5.4 slab kernel — a `panic = "abort"` trap, the e
 exists to stop), `faces` `(F, 3)` of an **integer** dtype (so `faces` materializes to a multiple of 3; float is
 rejected because it truncates in the u32 cast, mirroring the write-side `validate_faces_for_writing`
 rule — §3.2's uint32 is this writer's canonical dtype, but an external integer store is coerced to u32,
-and it is that coercion the Stage 2 `[0, V)` range check runs after), and each present optional
+a coercion Stage 2 makes value-preserving by range-checking the *source* values first), and each
+present optional
 `normals` `(V, 3)`, `colors` `(V, 3|4)`, `scalars` `(V,)` — because these optionals bind as enabled
 vertex attributes on an **indexed** draw (§6.1): an undersized attribute doesn't trap, it makes
 `drawElements` read past the buffer (an invalid-operation draw or silent zeros, backend-dependent) and
@@ -316,10 +320,15 @@ materialized arrays. First, each materialized array's length/shape must equal th
 (`vertices`/`normals`/`colors`/`scalars` length `V`, `faces` `3F`) — Stage 1 vets only the *declared*
 `.zarray` shape, so a store that declares correctly but materializes a short array (a raw or mis-sized
 chunk, a non-compliant decoder) would otherwise resurrect the undersized-attribute `drawElements`
-over-read Stage 1(c) closes. Then every face index in `[0, V)` — checked on the exact `u32`-typed data
-the kernels receive, after the integer→u32 coercion, because an externally produced *signed* store's
-`-1` passes a pre-cast `< V` check and then wraps to `0xffffffff` in the cast, defeating the gate — and
-the label and image-label CSR offsets monotone and in-bounds (§3.2). Same `LoaderError`, same one-node
+over-read Stage 1(c) closes. Then every face index in `[0, V)` — a **two-sided check on the
+source-typed values, before the integer→u32 coercion**, because each side of the cast hides its own
+wrap-around: an externally produced *signed* store's `-1` passes a one-sided pre-cast `< V` check and
+wraps to `0xffffffff`, while a 64-bit store's `2^32 + 1` survives a check run only *after* the cast —
+it wraps to `1`, lands inside `[0, V)`, and silently rewrites topology instead of trapping. The
+two-sided source-value check rejects both, and because Stage 1 admits only `V <= 2^27`, every index it
+passes is preserved bit-for-bit by the u32 cast — so the values checked are exactly the values the
+kernels receive. Finally, the label and image-label CSR offsets monotone and in-bounds (§3.2). Same
+`LoaderError`, same one-node
 blast radius; these run only once Stage 1 has admitted the declared shapes and budget, so the
 fetch+decode they gate is already bounded.
 
@@ -1065,7 +1074,9 @@ A reviewer should treat a `| 'mesh'` appearing in any of those five as a defect.
 - [ ] Rust: `mesh_vertex_visibility_mask` / `compact_visible_faces` unit tests incl. the non-finite rule
 - [ ] TS unit: loader, geometry assembly, cull correctness, colormap fail-closed guard,
       Rust↔TS kernel parity, corrupt-store rejection (out-of-range face index → `LoaderError`, not a
-      WASM trap; an undersized `normals`/`colors`/`scalars` array → `LoaderError`, §3.5; `n_vertices >
+      WASM trap — including a 64-bit index like `2^32 + 1` whose bare u32 cast would wrap into range,
+      pinning §3.5 Stage 2's source-value check; an undersized `normals`/`colors`/`scalars` array →
+      `LoaderError`, §3.5; `n_vertices >
       2^27` → `LoaderError`, its own pin since `pick-render.test.ts` only covers the texture-layout
       maxima, §6.5; an **oversized declaration** — `n_vertices > 2^27`, or an `n_faces`/`.zarray`
       shape-or-`chunks` footprint exceeding `MESH_DECODE_BUDGET_BYTES` — rejected by the §3.5 Stage 1
