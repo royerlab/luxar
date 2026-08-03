@@ -210,10 +210,11 @@ def build_scene(
                 # near cells ABSORB the ones behind them and the UMAP lobes
                 # read as depth-ordered structure rather than the flat
                 # order-independent sum that additive (the default)
-                # accumulates. kappa=10 with
-                # POINT_RADIUS=0.05 puts peak per-point optical depth at
-                # tau = kappa * opacity * radius * POINT_CHORD_SCALE ~ 0.16,
-                # so occlusion builds up across overlapping cells instead of
+                # accumulates. This is a MIXED substitutive ladder (the coarse
+                # levels are lifted gsplats), so the ray-mass unification left
+                # kappa untouched: tau = kappa * rayMass with rayMass the same
+                # peak-alpha the additive branch emits, and kappa=10 keeps
+                # occlusion building up across overlapping cells instead of
                 # saturating on any single one.
                 # NB volumetric implies back-to-front depth sorting
                 # (`needsDepthSort`), which this ~1M-point level now pays per

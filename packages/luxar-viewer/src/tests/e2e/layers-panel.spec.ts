@@ -249,7 +249,7 @@ test.describe('Layers Panel', () => {
     await expect(absorptionGroup).toBeVisible();
 
     // …dragging it reaches the live uAbsorption uniform. The κ track is
-    // LOGARITHMIC with per-layer bounds (ui/layers/absorption-range.ts), so
+    // LOGARITHMIC with value-adaptive bounds (ui/layers/absorption-range.ts), so
     // the input carries a NORMALISED position in [0, 1], not κ itself —
     // filling it with a κ value would just clamp to the far end. Assert
     // mapping-agnostically instead: whatever the readout says the κ is, is

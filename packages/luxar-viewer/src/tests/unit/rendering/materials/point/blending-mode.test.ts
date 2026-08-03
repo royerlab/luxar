@@ -110,7 +110,13 @@ describe('PointMaterial.applyBlendingMode', () => {
     // (a black point still absorbs) are each distinct generated code.
     const mat = new PointMaterial();
     expect(mat.fragmentShader).toContain('#if defined(LUXAR_VOLUMETRIC)');
-    expect(mat.fragmentShader).toContain('float tau = uAbsorption * alpha * vRadius *');
+    // τ is κ × the SAME ray mass every other mode emits. A point's opacity is
+    // a peak screen alpha (already integrated), so the old
+    // `* vRadius * POINT_CHORD_SCALE` read it as a volume density in this one
+    // mode — which is what made a Points node and its lifted-gsplat twin
+    // disagree by one path length. Any size factor here re-breaks that.
+    expect(mat.fragmentShader).toContain('float tau = uAbsorption * alpha;');
+    expect(mat.fragmentShader).not.toMatch(/tau\s*=[^;]*vRadius/);
     expect(mat.fragmentShader).toContain('float volAlpha = 1.0 - exp(-tau);');
     expect(mat.fragmentShader).toContain('tau < 1e-4) discard');
     expect(mat.fragmentShader).toContain('fragColor = vec4(finalColor * alpha * screen, volAlpha)');

@@ -564,7 +564,7 @@ export const POINT_SHADERS: Record<string, RegistryEntry> = {
     buildMesh: buildPointInstancedMesh,
   },
   // Point volumetric parity: the emission–absorption output branch
-  // (LUXAR_VOLUMETRIC; sum path) — τ = κ·density·chord, S(τ) screening,
+  // (LUXAR_VOLUMETRIC; sum path) — τ = κ·alpha, S(τ) screening,
   // physical absorption alpha, per-point RGBA alpha → w(a) optical
   // depth via uHasElementAlpha = 1. Mirrors the gsplat-volumetric entry;
   // uAbsorption 1.5 + opacity 0.7 keep τ mid-range so every factor is

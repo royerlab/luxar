@@ -1,207 +1,90 @@
 /**
- * Per-layer range for the volumetric absorption (κ) slider.
+ * Range for the volumetric absorption (κ) slider.
  *
- * κ is a PHYSICAL coefficient with units of 1/length: the volumetric
- * shaders build optical depth as `τ = κ · density · through-thickness`,
- * where the thickness is the geometry's own world-space size —
- * `width · LINE_CHORD_SCALE` for lines, `radius · POINT_CHORD_SCALE` for
- * points (materials/{line,point}/math.ts), and the ray integral through
- * Σ for gsplats. So the κ that produces a VISIBLE amount of absorption
- * scales as 1/thickness, and a single fixed slider range cannot serve
- * both a microscopy scene (σ ≈ voxels, κ ≈ 1) and a normalised-unit-cube
- * scene (width ≈ 1.5e-3, κ ≈ 10³). A fixed 0–10 range on the latter tops
- * out at τ ≈ 0.01 — a sub-1/255 change, i.e. a knob that visibly does
- * nothing.
+ * κ converts ray mass into optical depth: every geometry family now builds
+ * `τ = κ · rayMass`, where `rayMass` is the SAME quantity that family's
+ * additive branch emits (points/lines `alpha`, gsplats `intensity`). Because
+ * that quantity is a peak-screen-alpha-normalised number rather than a
+ * world-space length, **κ is comparable across points, lines and gsplats and
+ * across scene scales** — κ = 1 means "peak rendered alpha ≈ the authored
+ * per-element alpha" for all three. One fixed track therefore serves every
+ * scene.
  *
- * This module derives the slider's bounds per layer from the geometry
- * thickness the zarr writer already records (`max_width` for lines,
- * `max_radius` for points): the top of the track lands near
- * {@link ABSORPTION_TAU_TARGET} optical depth ("clearly opaque") for the
- * layer's THINNEST descendant, and the floor is anchored to its THICKEST
- * descendant so a mixed-thickness subtree can also reach near-transparency
- * for its fattest geometry — whatever the scene's units. Gsplats carry no
- * comparable thickness stat, and their τ = κ·opacity·rayMass is already
- * O(1)-calibrated for fitted volumes, so they keep
- * {@link ABSORPTION_DEFAULT_MAX}.
+ * HISTORY (do not reintroduce): this module used to DERIVE a per-layer upper
+ * bound as `ABSORPTION_TAU_TARGET / (thickness · chord)` from `max_width` /
+ * `max_radius`, because the point and line shaders multiplied τ by a world
+ * thickness (`radius · POINT_CHORD_SCALE`) that the gsplat shader had no
+ * counterpart for. That made κ a per-unit-length coefficient for two families
+ * and dimensionless for the third, so the stretch was a units conversion, not
+ * a UX affordance — and it could never serve a MIXED subtree (a
+ * `lift_points_to_gsplats` LOD ladder composes ONE κ over both families, and
+ * gsplats returned no stat at all). The shaders now share one convention, so
+ * the conversion is gone along with the chord constants.
  *
- * GRANULARITY: "descendant" means NODE. The recorded stat is each node's
- * per-element MAXIMUM (`np.max(widths)` / max radius — the format records
- * no minimum), so within one node the top of the track makes its THICKEST
- * element reach the target τ; an element K× thinner in the same node tops
- * out at τ/K. That is deliberate: a per-element minimum would be hostage
- * to a single taper-to-zero vertex (width-tapered lines are a first-class
- * pattern) and would blow the bound to {@link ABSORPTION_MAX_LIMIT},
- * parking most of the track in saturation. The derived range always
- * contains the legacy fixed 0–10 span, so no authored κ regresses.
+ * What remains here is the log-track mechanics: a fixed nominal span, widened
+ * only when an AUTHORED κ falls outside it so the thumb can always represent
+ * the live value.
  *
  * @module ui/layers/absorption-range
  */
 
-import type { SceneNode } from '../../data/data-loader-types';
-import { LINE_CHORD_SCALE } from '../../rendering/materials/line/math';
-import { POINT_CHORD_SCALE } from '../../rendering/materials/point/math';
-
 /**
- * Optical depth the TOP of the slider should reach for a layer whose
- * thickness is known. τ = 5 ⇒ 1 − e^(−τ) ≈ 0.993: fully opaque, with the
- * whole transparent→opaque sweep below it.
- */
-export const ABSORPTION_TAU_TARGET = 5.0;
-
-/**
- * Fallback upper bound when no thickness stat is available (gsplats, or
- * a layer whose nodes predate the stats). Also the FLOOR of every derived
- * bound, so an auto-derived range can never make a previously reachable
- * authored κ unreachable.
+ * Nominal upper bound of the κ track. With the unified convention τ = κ·rayMass
+ * and rayMass ≈ 1 at an element's peak, κ = 10 is already far past opaque
+ * (1 − e^(−10) > 0.9999), so this tops out the useful range for every family.
  */
 export const ABSORPTION_DEFAULT_MAX = 10.0;
 
 /**
- * Hard ceiling on the derived bound. Guards against a degenerate
- * thickness (a zero / near-zero `max_width` from malformed metadata)
- * blowing the track up to absurd magnitudes.
+ * Hard ceiling on the track when an authored κ exceeds the nominal maximum.
+ * Guards a pathological authored value from compressing the useful region off
+ * the track.
  */
 export const ABSORPTION_MAX_LIMIT = 1e6;
 
-/** Decades of κ spanned by the log track below its upper bound. */
+/** Decades of κ the nominal track spans below {@link ABSORPTION_DEFAULT_MAX}. */
 export const ABSORPTION_LOG_DECADES = 4;
 
 /**
- * Hard cap on the track's span in decades, used when the CURRENT κ sits
- * below the nominal floor and the floor has to be lowered to include it.
- * Bounds how compressed the useful region can get for a κ that is already
- * visually indistinguishable from 0.
+ * Hard cap on the track's span in decades. Bounds the floor from below so the
+ * useful region is never more than this many decades under the track's top —
+ * whether the floor was lowered to include a κ far below the nominal floor, or
+ * the top was raised toward the ceiling for a very large authored κ. In both
+ * cases the region compressed off the track is already visually
+ * indistinguishable from its neighbour.
  */
 export const ABSORPTION_LOG_DECADES_MAX = 8;
 
 /**
- * Upper κ bound for one leaf node, from its recorded geometry thickness.
- * Returns `undefined` when the node carries no usable thickness stat
- * (gsplats, groups, or missing / non-positive metadata) so callers can
- * distinguish "no information" from "a derived bound".
+ * Log-track bounds for the absorption slider at a given live κ.
  *
- * The stat is the node's per-element MAXIMUM (see the module note on
- * granularity): the bound makes the node's thickest element opaque at the
- * track top; thinner elements in the same node saturate proportionally
- * lower.
- */
-function leafAbsorptionMax(node: SceneNode): number | undefined {
-  const thickness =
-    node.type === 'lines'
-      ? (node.attrs.max_width as number | undefined)
-      : node.type === 'points'
-        ? (node.attrs.max_radius as number | undefined)
-        : undefined;
-  if (typeof thickness !== 'number' || !Number.isFinite(thickness) || thickness <= 0) {
-    return undefined;
-  }
-  const chord = node.type === 'lines' ? LINE_CHORD_SCALE : POINT_CHORD_SCALE;
-  return ABSORPTION_TAU_TARGET / (thickness * chord);
-}
-
-/** Derived per-layer κ bounds — see {@link absorptionBoundsForNode}. */
-export interface AbsorptionBounds {
-  /** Largest per-leaf bound in the subtree: the THINNEST descendant's opaque point. */
-  max: number;
-  /**
-   * Smallest per-leaf bound in the subtree: the THICKEST descendant's opaque
-   * point. Equals `max` for a single-thickness subtree or when no thickness
-   * stat is available.
-   */
-  minBound: number;
-}
-
-/**
- * κ bounds for a layer rooted at `node`, walking the whole subtree
- * (a group / kind=lod / kind=partition layer applies one κ to every
- * descendant material).
+ * The nominal track is {@link ABSORPTION_LOG_DECADES} decades below
+ * {@link ABSORPTION_DEFAULT_MAX}. Both ends still move to keep the CURRENT κ
+ * ON the track — otherwise the readout would show a value the thumb cannot
+ * represent, and a touch that moves nothing would write the clamped end back:
  *
- * `max` combines descendant bounds with max: the slider must be able to
- * reach a visible τ for the THINNEST geometry under the layer. A fatter
- * sibling simply saturates earlier along the track, which is still a
- * working knob; the other way round (taking the min) would reproduce the
- * "nothing happens" bug for the thin child.
- *
- * `minBound` is the opposite extreme — the THICKEST descendant's opaque
- * point — and anchors the track FLOOR (see {@link absorptionSliderRange}):
- * with the floor fixed relative to `max` alone, a fat sibling in a
- * mixed-thickness group was stuck at visible absorption (τ ≈ 0.1 for a
- * 250× thickness spread) at the lowest positive stop, with only the abrupt
- * zero stop below it.
- *
- * Both values are clamped to `[ABSORPTION_DEFAULT_MAX, ABSORPTION_MAX_LIMIT]`.
- */
-export function absorptionBoundsForNode(node: SceneNode): AbsorptionBounds {
-  let hi: number | undefined;
-  let lo: number | undefined;
-  const visit = (n: SceneNode): void => {
-    const leafMax = leafAbsorptionMax(n);
-    if (leafMax !== undefined) {
-      hi = hi === undefined ? leafMax : Math.max(hi, leafMax);
-      lo = lo === undefined ? leafMax : Math.min(lo, leafMax);
-    }
-    for (const c of n.children ?? []) visit(c);
-  };
-  visit(node);
-  if (hi === undefined || lo === undefined) {
-    return { max: ABSORPTION_DEFAULT_MAX, minBound: ABSORPTION_DEFAULT_MAX };
-  }
-  const clampBound = (v: number): number =>
-    Math.min(ABSORPTION_MAX_LIMIT, Math.max(ABSORPTION_DEFAULT_MAX, v));
-  return { max: clampBound(hi), minBound: clampBound(lo) };
-}
-
-/**
- * Log-track bounds for a layer's absorption slider.
- *
- * Both ends move so that the CURRENT κ lands ON the track over the whole
- * range a scene can meaningfully use — otherwise the readout would show a
- * value the thumb cannot represent, and a touch that moves nothing would
- * write the clamped end back:
- *
- *   - `max` is the layer's derived bound, RAISED to the current κ when an
- *     author set it above the derived "opaque" point.
- *   - `min` sits {@link ABSORPTION_LOG_DECADES} decades below the layer's
- *     `minBound` (the THICKEST descendant's opaque point — equal to `max`
- *     for a single-thickness layer), so a mixed-thickness group can reach
- *     near-transparency for its fattest geometry, not only its thinnest.
- *     It is further LOWERED to the current κ when that falls beneath it:
- *     very thin geometry derives a large `max` (a 6e-4-wide line gives
- *     ≈ 1.0e4), which would otherwise put the floor above the authored
- *     default κ = 1.
+ *   - `max` is raised to the current κ when an author set it above the
+ *     nominal maximum.
+ *   - `min` is lowered to the current κ when an author set it below the
+ *     nominal floor.
  *
  * TWO DELIBERATE CLAMPS bound that accommodation, because a pathological
- * authored κ (or thickness spread) would otherwise compress the useful
- * region off the track and recreate the original "the knob does nothing"
- * bug: `max` stops at {@link ABSORPTION_MAX_LIMIT}, and the floor —
- * however it was derived — stops at {@link ABSORPTION_LOG_DECADES_MAX}
- * decades of span. Outside those bounds
- * the thumb seats at the clamped end while the readout still shows the true
- * κ, so touching the slider writes the clamp back. That is accepted: past
- * the ceiling both κ are far beyond opaque, and below the floor both are
- * ≥ 7 decades below visible absorption — the states being swapped are
- * visually identical (see the `at the clamped extremes` tests).
+ * authored κ would otherwise compress the useful region off the track: `max`
+ * stops at {@link ABSORPTION_MAX_LIMIT}, and the floor stops at
+ * {@link ABSORPTION_LOG_DECADES_MAX} decades of span. Outside those bounds the
+ * thumb seats at the clamped end while the readout still shows the true κ, so
+ * touching the slider writes the clamp back. That is accepted: past the ceiling
+ * both κ are far beyond opaque, and below the floor both are ≥ 7 decades below
+ * visible absorption — the states being swapped are visually identical (see the
+ * `at the clamped extremes` tests).
  *
  * κ = 0 needs no room: it is the track's dedicated zero stop
  * (`LabeledSlider`, `scale: 'log'`).
  */
-export function absorptionSliderRange(
-  layerMax: number,
-  currentValue: number,
-  layerMinBound: number = layerMax
-): { min: number; max: number } {
+export function absorptionSliderRange(currentValue: number): { min: number; max: number } {
   const current = Number.isFinite(currentValue) ? currentValue : 0;
-  const max = Math.min(
-    ABSORPTION_MAX_LIMIT,
-    Math.max(
-      ABSORPTION_DEFAULT_MAX,
-      Number.isFinite(layerMax) ? layerMax : ABSORPTION_DEFAULT_MAX,
-      current
-    )
-  );
-  const floorBase =
-    Number.isFinite(layerMinBound) && layerMinBound > 0 ? Math.min(layerMinBound, max) : max;
-  const nominalMin = floorBase / Math.pow(10, ABSORPTION_LOG_DECADES);
+  const max = Math.min(ABSORPTION_MAX_LIMIT, Math.max(ABSORPTION_DEFAULT_MAX, current));
+  const nominalMin = ABSORPTION_DEFAULT_MAX / Math.pow(10, ABSORPTION_LOG_DECADES);
   const min = Math.max(
     max / Math.pow(10, ABSORPTION_LOG_DECADES_MAX),
     current > 0 ? Math.min(nominalMin, current) : nominalMin

@@ -112,7 +112,7 @@ void main() {
 	if ( ( nodeVar0 >= 1.0 ) ) {
 
 		discard;
-		
+
 
 	}
 
@@ -143,12 +143,12 @@ void main() {
 
 	nodeVar7 = ( ( ( ( ( ( min( mix( ( 0.5 + ( nodeVar5 * 0.5 ) ), 1.0, nodeVarying8 ), mix( ( 0.5 + ( nodeVar6 * 0.5 ) ), 1.0, nodeVarying9 ) ) * ( max( ( exp( ( pow( nodeVar0, pow( 2.0, ( ( nodeVarying1 * 6.0 ) - 2.0 ) ) ) * -4.6051702 ) ) - 0.01 ), 0.0 ) * 1.0101010101010102 ) ) * ( 1.0 - smoothstep( ( 1.0 - ( 1.0 / max( nodeVarying6, 1.5 ) ) ), 1.0, nodeVar0 ) ) ) * min( ( nodeVarying6 / 1.5 ), 1.0 ) ) * nodeVarying7 ) * 1.0 ) * nodeUniform2 );
 	nodeVar8 = ( nodeVar7 * mix( 1.0, ( - log( ( 1.0 - min( nodeVarying10, 0.998046875 ) ) ) ), nodeUniform3 ) );
-	nodeVar9 = ( ( ( nodeUniform4 * nodeVar8 ) * nodeVarying5 ) * 0.8259468366189925 );
+	nodeVar9 = ( nodeUniform4 * nodeVar8 );
 
 	if ( ( ( max( nodeVar4.x, max( nodeVar4.y, nodeVar4.z ) ) < 0.0001 ) && ( nodeVar9 < 0.0001 ) ) ) {
 
 		discard;
-		
+
 
 	}
 

@@ -54,9 +54,9 @@ import type { RendererCapabilities } from '../renderer-capabilities';
  *   three geometry types: the shader emits premultiplied self-screened
  *   emission with the physical absorption alpha `1 − e^(−τ)`,
  *   τ = κ·opacity·rayMass (`LUXAR_VOLUMETRIC` define, `uAbsorption`
- *   uniform; the point rayMass is the isotropic chord integral,
- *   materials/point/math.ts; the line rayMass is the transverse chord,
- *   materials/line/math.ts), over the same `One / OneMinusSrcAlpha`
+ *   uniform; for every family rayMass is the SAME quantity its additive
+ *   branch emits — see the ray-mass unification banner in
+ *   VOLUMETRIC_BLENDING_SPEC.md), over the same `One / OneMinusSrcAlpha`
  *   state as gsplat normal; order-dependent and depth-sorted
  *   (`needsDepthSort`), never depth-writes; κ = 0 renders exactly like
  *   'additive'.
