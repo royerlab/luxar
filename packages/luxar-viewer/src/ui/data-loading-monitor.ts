@@ -119,8 +119,12 @@ function emptySceneGraphState(): SceneGraphState {
  * The per-type count fields are named after each type's ELEMENT (points have
  * points, lines have segments, gsplats have splats), so a table cannot key them
  * by type name. The `never` tail makes adding a geometry type a compile error
- * here — a silent `return 0` would leave the new type's elements out of every
- * dataset total.
+ * here — a plain `return 0` would leave the new type's elements out of every
+ * dataset total with nothing to explain why.
+ *
+ * The tail still returns 0 rather than the unhandled value: breaking at compile
+ * time is the point, but at runtime a count must stay a number (returning the
+ * type string would poison every total it is summed into).
  */
 function elementCountOf(node: SceneGraphNode, type: GeometryTypeName): number {
   if (node.type !== type) return 0;
@@ -131,10 +135,9 @@ function elementCountOf(node: SceneGraphNode, type: GeometryTypeName): number {
       return node.segmentCount ?? 0;
     case 'gsplats':
       return node.splatCount ?? 0;
-    default: {
-      const unhandled: never = type;
-      return unhandled;
-    }
+    default:
+      void (type satisfies never);
+      return 0;
   }
 }
 
