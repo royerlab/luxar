@@ -50,11 +50,11 @@ picking/
 
 Each geometry has one GLSL wrapper and one TSL wrapper, both implementing the shared `CameraAwareMaterial` contract from `../materials/_shared/camera-aware-material.ts`. The TSL wrapper owns the `UniformNode`s and exposes them through `proxyIUniform` so `material.uniforms.uX.value = …` writes land directly on the node — symmetric with the visual `PointTSLMaterial` / `LineTSLMaterial` / `GSplatTSLMaterial` plumbing.
 
-| Geometry | GLSL wrapper            | TSL wrapper                | TSL factory          | Pick footprint vs visual                            |
-| -------- | ----------------------- | -------------------------- | -------------------- | --------------------------------------------------- |
-| Points   | `PointPickingMaterial`  | `PointPickingTSLMaterial`  | `point/pick.tsl.ts`  | **80% radius** (biased toward the bright core)      |
-| Lines    | `LinePickingMaterial`   | `LinePickingTSLMaterial`   | `line/pick.tsl.ts`   | **Full width** (thin lines, super-Gaussian profile) |
-| GSplats  | `GSplatPickingMaterial` | `GSplatPickingTSLMaterial` | `gsplat/pick.tsl.ts` | **1.5σ** truncation (vs the visual default 2.75σ), max-proj        |
+| Geometry | GLSL wrapper            | TSL wrapper                | TSL factory          | Pick footprint vs visual                                    |
+| -------- | ----------------------- | -------------------------- | -------------------- | ----------------------------------------------------------- |
+| Points   | `PointPickingMaterial`  | `PointPickingTSLMaterial`  | `point/pick.tsl.ts`  | **80% radius** (biased toward the bright core)              |
+| Lines    | `LinePickingMaterial`   | `LinePickingTSLMaterial`   | `line/pick.tsl.ts`   | **Full width** (thin lines, super-Gaussian profile)         |
+| GSplats  | `GSplatPickingMaterial` | `GSplatPickingTSLMaterial` | `gsplat/pick.tsl.ts` | **1.5σ** truncation (vs the visual default 2.75σ), max-proj |
 
 All three fragment shaders write `vec4(vNodeId, vElementId.x, brightness, vElementId.y)` — where `vNodeId` is the `uNodeId` uniform and `vElementId` is the ordering index split into two 16-bit halves by `luxarElementIdParts()` (low in `.x`, high in `.y`), both carried as `flat` varyings — and set `gl_FragDepth = 1.0 - clamp(brightness, 0, 1)` — brightness-as-depth, so the brightest overlapping fragment wins the depth test for hover-through-translucent stacks. The split exists because float32 has a 24-bit mantissa while a node's capacity reaches 2^25 on a 32768-texel device, so one channel could not represent large indices exactly; both halves are <= 65535 and the decoder recombines them. Vertex shaders mirror visual-side sanitization (`sanitizePositive` / `sanitizeNonNegative`) and near-plane culling so the pick footprint cannot diverge from the visible footprint.
 
