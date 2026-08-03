@@ -63,6 +63,7 @@ import {
   cancelSortedIndexOrderingApply,
   hasPendingSortedIndexOrderingApply,
   pumpSortedIndexOrderingApply,
+  setSortedIndexApplyBackPressureBypassed,
   setSortedIndexApplyRequestRender,
   writeSortedIndexOrdering,
 } from './element-storage';
@@ -1112,6 +1113,15 @@ export async function resortForCapture(maxWaitMs = 3000): Promise<void> {
   if (captureSuppressDepth === 0) requestRenderBeforeCapture = requestRender;
   captureSuppressDepth++;
   requestRender = null;
+  // The drain below never draws, but on the chunked (WebGL) path a
+  // multi-slice apply stalls after its first slice until a DRAW's upload
+  // ack releases the #715 back-pressure — so without this bypass any
+  // order-dependent node past one slice (>1M elements, e.g. the 3M-star
+  // gaia demo) could never reach quiescence: every captured frame would
+  // burn the full maxWaitMs and still film a stale ordering. Offline,
+  // folding the slices into one upload on the capture's own render is
+  // exactly acceptable (the union range stays contiguous and current).
+  setSortedIndexApplyBackPressureBypassed(true);
   try {
     // FORCE a fresh sort on every eligible node — offline capture can
     // afford a full sort per frame, so the ordering is exact for THIS pose
@@ -1155,8 +1165,18 @@ export async function resortForCapture(maxWaitMs = 3000): Promise<void> {
       if (isCaptureQuiescent()) return;
     }
   } finally {
-    captureSuppressDepth--;
-    if (captureSuppressDepth === 0) requestRender = requestRenderBeforeCapture;
+    // Clamped, not a bare decrement: disposeDepthSort resets the depth to
+    // 0, and a capture that was in flight across that dispose must not
+    // drive it negative (a later capture would then decrement back to a
+    // non-zero exit and strand `requestRender` at null forever).
+    captureSuppressDepth = Math.max(0, captureSuppressDepth - 1);
+    if (captureSuppressDepth === 0) {
+      requestRender = requestRenderBeforeCapture;
+      // Drop the snapshot so it can't pin the app's closure between
+      // captures (mirrors the dispose-path hygiene below).
+      requestRenderBeforeCapture = null;
+      setSortedIndexApplyBackPressureBypassed(false);
+    }
   }
 }
 
@@ -1267,6 +1287,15 @@ export function disposeDepthSort(): void {
   // Drop the per-slice render-continuation hook so a dispose/re-init does
   // not keep the old app's requestRender closure alive.
   setSortedIndexApplyRequestRender(null);
+  // Same hygiene for the offline-capture suppression state: a capture in
+  // flight across this dispose must not later restore the old app's
+  // requestRender closure from its snapshot (its clamped `finally` then
+  // restores the null set below), and the snapshot itself must not pin
+  // the closure. The back-pressure bypass is module state in
+  // element-storage — reset it too.
+  captureSuppressDepth = 0;
+  requestRenderBeforeCapture = null;
+  setSortedIndexApplyBackPressureBypassed(false);
   // Module-state reset completeness: both per-frame containers can hold
   // THREE object references between calls (the rank memo until the next
   // evaluate's clear; the slots only if an evaluate threw mid-collect) —

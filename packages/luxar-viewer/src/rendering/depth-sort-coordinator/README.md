@@ -231,7 +231,7 @@ The per-frame scheduler runs ONLY inside the rAF loop. Offline capture (the gall
 
 1. FORCE a fresh sort on every eligible node (`isEffectivelyVisible` + `hasCommittedData` + `isLiveOrderDependent`) — offline can afford a full sort per frame, so the ordering is exact for THIS pose, not only when a threshold trips
 2. Run the cross-node renderOrder pass + pump chunked applies via `evaluateDepthSortPerFrame`
-3. Drain worker sorts + chunked applies to quiescence (`isCaptureQuiescent`: no node `inFlight` / `resortQueued` / `hasPendingSortedIndexOrderingApply`), yielding a macrotask (`setTimeout(0)`) per iteration, bounded by `maxWaitMs` so a wedged worker can never hang the capture
+3. Drain worker sorts + chunked applies to quiescence (`isCaptureQuiescent`: no node `inFlight` / `resortQueued` / `hasPendingSortedIndexOrderingApply`), yielding a macrotask (`setTimeout(0)`) per iteration, bounded by `maxWaitMs` so a wedged worker can never hang the capture. The drain BYPASSES the #715 slice back-pressure (`setSortedIndexApplyBackPressureBypassed`): it never draws, so the upload ack that releases a stall can never fire, and a multi-slice apply (>1M elements) would otherwise wedge every frame until the timeout — offline, the slices fold into one upload on the capture's own render, which is exactly acceptable
 
 It **suppresses the `requestRender` wake** for the duration (depth-counted / reentrancy-safe via `captureSuppressDepth` / `requestRenderBeforeCapture`; only the OUTERMOST call snapshots + restores) so draining can't re-arm the loop the capture deliberately stopped. **No-op** when depth sorting is disabled, no order-dependent node exists, or the worker is unavailable (the pure-main-thread renderOrder pass still runs).
 

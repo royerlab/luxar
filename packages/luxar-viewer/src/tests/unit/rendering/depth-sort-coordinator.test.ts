@@ -816,6 +816,77 @@ describe('depth-sort coordinator', () => {
     expect(requestRender.mock.calls.length).toBeGreaterThan(rrBefore);
   });
 
+  it('resortForCapture drains a MULTI-SLICE chunked apply to the drawn buffer without any draw', async () => {
+    // The offline drain never draws, but on the chunked (WebGL) path a
+    // multi-slice apply stalls after its first slice until a DRAW's upload
+    // ack releases the #715 back-pressure. Without the capture-time bypass,
+    // any order-dependent node past one slice (>1M elements in production —
+    // e.g. the 3M-star gaia gallery demo) could never reach quiescence:
+    // every orbit frame would burn the full maxWaitMs AND still film a
+    // stale ordering. Shrink the slice to 1 element so a 3-element ordering
+    // needs 3 slices, then prove the drain completes and flips WITHOUT a
+    // single simulated draw.
+    const coord = await loadCoordinator();
+    const camera = makeCamera();
+    const requestRender = vi.fn();
+    coord.configureDepthSort({ getCamera: () => camera, requestRender });
+
+    const { setSortedIndexChunkElementsForTests, configureSortedIndexChunkedApply } =
+      await import('../../../rendering/element-storage');
+    configureSortedIndexChunkedApply(true);
+    setSortedIndexChunkElementsForTests(1);
+
+    // Establish an initial drawn ordering the normal way (draws allowed here).
+    const mesh = makeGSplatsMesh(3, 'normal');
+    coord.noteDepthSortCommit(mesh, new Float32Array([0, 0, -10, 1, 0, -1, 2, 0, -5]), 3);
+    await flush();
+    expect(mockApi.sort).toHaveBeenCalledTimes(1);
+    sortResolvers[0]({
+      generation: mockApi.sort.mock.calls[0][0].generation as number,
+      ordering: new Uint32Array([0, 2, 1]),
+    });
+    await flush();
+    await applyStagedOrdering(mesh);
+    expect(Array.from(drawnOrdering(mesh))).toEqual([0, 2, 1]);
+
+    // Capture: the forced sort resolves to a 3-slice apply. NO draw happens
+    // between here and the await — the drain must still converge well inside
+    // the bound (a stall would spin until maxWaitMs and leave the old
+    // ordering drawn, failing both assertions below).
+    const before = mockApi.sort.mock.calls.length;
+    const rrBefore = requestRender.mock.calls.length;
+    const p = coord.resortForCapture(2000);
+    expect(mockApi.sort.mock.calls.length).toBe(before + 1);
+    const start = performance.now();
+    sortResolvers[sortResolvers.length - 1]({
+      generation: mockApi.sort.mock.calls[before][0].generation as number,
+      ordering: new Uint32Array([2, 0, 1]),
+    });
+    await p;
+
+    expect(Array.from(drawnOrdering(mesh))).toEqual([2, 0, 1]);
+    expect(performance.now() - start).toBeLessThan(1500);
+    expect(requestRender.mock.calls.length).toBe(rrBefore);
+
+    // The bypass is scoped to the capture: a post-capture stream stalls on
+    // its unflushed slice again (back-pressure restored).
+    coord.noteDepthSortCommit(mesh, new Float32Array([0, 0, -3, 1, 0, -7, 2, 0, -2]), 3);
+    await flush();
+    sortResolvers[sortResolvers.length - 1]({
+      generation: mockApi.sort.mock.calls[mockApi.sort.mock.calls.length - 1][0]
+        .generation as number,
+      ordering: new Uint32Array([1, 0, 2]),
+    });
+    await flush();
+    coord.evaluateDepthSortPerFrame(); // slice 1 written (no draw yet)
+    const drawnBefore = Array.from(drawnOrdering(mesh));
+    coord.evaluateDepthSortPerFrame(); // must STALL, not advance to a flip
+    coord.evaluateDepthSortPerFrame();
+    expect(Array.from(drawnOrdering(mesh))).toEqual(drawnBefore);
+
+    setSortedIndexChunkElementsForTests(null);
+  });
+
   it('derives the model-view from fresh matrices, not renderer-maintained caches', async () => {
     // A commit can fire before the next render (first commit of a load,
     // idle-paused loop): camera.matrixWorldInverse and mesh.matrixWorld
