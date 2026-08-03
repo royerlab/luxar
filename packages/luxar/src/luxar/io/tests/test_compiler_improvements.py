@@ -90,6 +90,13 @@ class TestChunkBoundsZarrAlignment:
     This guards against the bug where the compiler computed spatial index
     partitions with one chunk_size but wrote zarr arrays with a different
     chunk_size, causing the viewer to fetch misaligned data.
+
+    Points arrays are now sized per-array to their own dtype byte budget
+    (``per_array_bytes=True``): each per-point chunk[0] is a multiple of the
+    spatial-index ``chunk_size`` atom (or the full array length), which keeps
+    it on the viewer's row-range query grid while issuing far fewer requests
+    on large scenes. GSplats and Lines are untouched — their arrays stay
+    exactly atom-sized (chunk[0] == chunk_size).
     """
 
     # -- GSplats alignment ---------------------------------------------------
@@ -230,7 +237,7 @@ class TestChunkBoundsZarrAlignment:
     # -- Points alignment ----------------------------------------------------
 
     def test_points_all_attributes_aligned(self) -> None:
-        """All point attribute arrays must share the same chunk_size as positions."""
+        """Points arrays are per-array sized (multiples of the chunk_size atom)."""
         from math import ceil
 
         from luxar.core.dimensions import Dimension, Dimensions
@@ -266,33 +273,44 @@ class TestChunkBoundsZarrAlignment:
             store = zarr.open_group(zarr_path, mode="r")
             g = store["pts"]
             chunk_size = g.attrs["chunk_size"]
-            pos_chunk0 = g["positions"].chunks[0]
 
-            # Positions must match chunk_size
-            assert pos_chunk0 == chunk_size, (
-                f"positions chunks[0]={pos_chunk0} != chunk_size={chunk_size}"
-            )
-
-            # All attributes must match positions chunk[0]
-            assert g["colors"].chunks[0] == pos_chunk0, (
-                f"colors chunks[0]={g['colors'].chunks[0]} != positions chunks[0]={pos_chunk0}"
-            )
-            assert g["radii"].chunks[0] == pos_chunk0, (
-                f"radii chunks[0]={g['radii'].chunks[0]} != positions chunks[0]={pos_chunk0}"
-            )
-            assert g["sharpnesses"].chunks[0] == pos_chunk0, (
-                f"sharpnesses chunks[0]={g['sharpnesses'].chunks[0]} != positions chunks[0]={pos_chunk0}"
-            )
-
-            # chunk_bounds partitions == zarr chunk count
+            # chunk_bounds partition count still uses the atom (unchanged).
             cb = np.array(g["chunk_bounds"])
             expected = ceil(n_points / chunk_size)
             assert cb.shape[0] == expected, (
                 f"chunk_bounds has {cb.shape[0]} partitions, expected {expected}"
             )
 
+            # Each per-point array is per-array-sized: chunk[0] is >= the atom
+            # and lands on the atom grid (a multiple of it) OR is a single
+            # full-array chunk (trivially aligned).
+            for name in ("positions", "colors", "radii", "sharpnesses"):
+                arr = g[name]
+                c0 = arr.chunks[0]
+                assert c0 >= chunk_size, (
+                    f"{name} chunks[0]={c0} < chunk_size atom={chunk_size}"
+                )
+                assert c0 % chunk_size == 0 or c0 == arr.shape[0], (
+                    f"{name} chunks[0]={c0} is neither a multiple of the atom "
+                    f"{chunk_size} nor the full array length {arr.shape[0]}"
+                )
+
+            # float32 positions enlarge past the atom (proves the per-array
+            # byte budget is active). Relate it to the atom, don't hard-code.
+            pos_chunk0 = g["positions"].chunks[0]
+            assert pos_chunk0 > chunk_size, (
+                f"positions chunks[0]={pos_chunk0} should exceed the atom "
+                f"{chunk_size} under per-array byte-budget chunking"
+            )
+            assert pos_chunk0 % chunk_size == 0, (
+                f"positions chunks[0]={pos_chunk0} must stay on the atom grid "
+                f"(multiple of {chunk_size})"
+            )
+
     def test_points_4d_with_discrete_dim(self) -> None:
-        """4D points with discrete time dim must also align all attributes."""
+        """4D points arrays stay on the atom grid under per-array sizing."""
+        from math import ceil
+
         from luxar.core.dimensions import Dimension, Dimensions
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -326,11 +344,92 @@ class TestChunkBoundsZarrAlignment:
             store = zarr.open_group(zarr_path, mode="r")
             g = store["pts4d"]
             chunk_size = g.attrs["chunk_size"]
-            pos_chunk0 = g["positions"].chunks[0]
 
-            assert pos_chunk0 == chunk_size
-            assert g["colors"].chunks[0] == pos_chunk0
-            assert g["radii"].chunks[0] == pos_chunk0
+            # Partition count still uses the atom (unchanged).
+            cb = np.array(g["chunk_bounds"])
+            assert cb.shape[0] == ceil(n_points / chunk_size)
+
+            # Every per-point array lands on the atom grid or is a single
+            # full-array chunk, and is never smaller than the atom.
+            for name in ("positions", "colors", "radii"):
+                arr = g[name]
+                c0 = arr.chunks[0]
+                assert c0 >= chunk_size, (
+                    f"{name} chunks[0]={c0} < chunk_size atom={chunk_size}"
+                )
+                assert c0 % chunk_size == 0 or c0 == arr.shape[0], (
+                    f"{name} chunks[0]={c0} is neither a multiple of the atom "
+                    f"{chunk_size} nor the full array length {arr.shape[0]}"
+                )
+
+            # Discriminating check (fails under the pre-change atom-sized
+            # writer): float32 positions in this 4D scene (atom=2048) enlarge
+            # to 2*2048=4096. Relate it to the atom, don't hard-code.
+            pos_chunk0 = g["positions"].chunks[0]
+            assert pos_chunk0 > chunk_size, (
+                f"positions chunks[0]={pos_chunk0} should exceed the atom "
+                f"{chunk_size} under per-array byte-budget chunking"
+            )
+            assert pos_chunk0 % chunk_size == 0
+
+    def test_points_1d_scalars_enlarge_past_atom(self) -> None:
+        """1D per-point arrays (radii, colormap scalars) genuinely ENLARGE to a
+        multiple of the atom — not just clamp to the full array.
+
+        Covers (a) the opted-in ``write_scalars`` path and (b) real 1D
+        enlargement: with n_points=40000 (3D → atom=2340) a 1D float32 array
+        sizes to 7*2340 = 16380 rows, which is a proper multiple of the atom
+        AND strictly smaller than the array length (so it doesn't slip through
+        the single-full-array-chunk escape hatch the other tests allow).
+        """
+        from luxar.core.dimensions import Dimension, Dimensions
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path = Path(tmpdir) / "test.luxar.zarr"
+
+            n_points = 40000
+
+            with LuxarZarrCompiler(zarr_path, enable_spatial_index=True) as compiler:
+                dims = Dimensions(
+                    [
+                        Dimension("x", display=True),
+                        Dimension("y", display=True),
+                        Dimension("z", display=True),
+                    ]
+                )
+                scene = compiler.create_scene(dimensions=dims)
+                positions = np.random.randn(n_points, 3).astype(np.float32)
+                radii = np.random.rand(n_points).astype(np.float32) + 0.1
+                # Per-point scalars (float32 array) so write_scalars runs.
+                scalars = np.random.rand(n_points).astype(np.float32)
+
+                scene.add_points(
+                    "pts1d",
+                    positions=positions,
+                    radii=radii,
+                    scalars=scalars,
+                    colormap="viridis",  # scalars require a colormap to map
+                )
+
+            store = zarr.open_group(zarr_path, mode="r")
+            g = store["pts1d"]
+            chunk_size = g.attrs["chunk_size"]
+
+            # Both 1D arrays enlarge to a proper multiple of the atom that is
+            # strictly between one atom and the full array length.
+            for name in ("radii", "scalars"):
+                arr = g[name]
+                c0 = arr.chunks[0]
+                assert c0 % chunk_size == 0, (
+                    f"{name} chunks[0]={c0} not a multiple of atom {chunk_size}"
+                )
+                assert c0 > chunk_size, (
+                    f"{name} chunks[0]={c0} did not enlarge past atom {chunk_size}"
+                )
+                assert c0 < arr.shape[0], (
+                    f"{name} chunks[0]={c0} is a single full-array chunk "
+                    f"(len={arr.shape[0]}), not genuine 1D enlargement"
+                )
 
     # -- Lines alignment -----------------------------------------------------
 
@@ -506,6 +605,88 @@ class TestChunkBoundsZarrAlignment:
         assert len(result) == 4
         target = 65536 // 4  # 16384 for float32
         assert result == tuple(min(s, target) for s in (1000, 200, 100, 50))
+
+    # -- per_array_bytes opt-in (issue #808 cause #3) -----------------------
+
+    def test_per_array_bytes_default_is_exact_atom_2d(self) -> None:
+        """Default (per_array_bytes=False) returns EXACTLY the atom for a 2D
+        array — proving the new opt-in leaves gsplats/lines byte-identical."""
+        from luxar.io._compiler.chunking import calculate_intelligent_chunks
+
+        atom = 1024
+        spatial = {"chunk_size": atom}
+        result = calculate_intelligent_chunks(
+            (50000, 4), spatial_index_data=spatial, dtype=np.dtype(np.float32)
+        )
+        assert result == (atom, 4)
+
+    def test_per_array_bytes_enlarges_small_itemsize(self) -> None:
+        """per_array_bytes=True with uint8 colors (N, 3) returns a chunk that
+        is > atom and a multiple of the atom (its own byte budget is large)."""
+        from luxar.io._compiler.chunking import calculate_intelligent_chunks
+
+        atom = 1000
+        spatial = {"chunk_size": atom}
+        # uint8, 3 cols: target_elements = 65536 // 1 = 65536;
+        # ideal rows = 65536 // 3 = 21845; atom-aligned = 21 * 1000 = 21000.
+        result = calculate_intelligent_chunks(
+            (100000, 3),
+            spatial_index_data=spatial,
+            dtype=np.dtype(np.uint8),
+            per_array_bytes=True,
+        )
+        assert result == (21000, 3)
+        assert result[0] > atom
+        assert result[0] % atom == 0
+
+    def test_per_array_bytes_floors_at_one_atom(self) -> None:
+        """When the per-array byte budget is smaller than one atom, the result
+        floors at exactly the atom (never smaller than the query grid)."""
+        from luxar.io._compiler.chunking import calculate_intelligent_chunks
+
+        atom = 20000  # deliberately larger than one byte-budget of rows
+        spatial = {"chunk_size": atom}
+        # float32, 8 cols: target_elements = 16384; ideal = 16384 // 8 = 2048,
+        # far below the atom → floored to a single atom.
+        result = calculate_intelligent_chunks(
+            (100000, 8),
+            spatial_index_data=spatial,
+            dtype=np.dtype(np.float32),
+            per_array_bytes=True,
+        )
+        assert result == (atom, 8)
+
+    def test_per_array_bytes_alignment_invariant(self) -> None:
+        """The first-axis chunk is always a multiple of the atom OR equals the
+        array length, across dtypes."""
+        from luxar.io._compiler.chunking import calculate_intelligent_chunks
+
+        atom = 1024
+        spatial = {"chunk_size": atom}
+        n_points = 50000
+        for dt in (np.float32, np.uint8, np.uint16):
+            result = calculate_intelligent_chunks(
+                (n_points, 3),
+                spatial_index_data=spatial,
+                dtype=np.dtype(dt),
+                per_array_bytes=True,
+            )
+            c0 = result[0]
+            assert c0 >= atom
+            assert c0 % atom == 0 or c0 == n_points, (
+                f"dtype={dt}: chunk[0]={c0} not atom-aligned nor full length"
+            )
+
+    def test_per_array_bytes_ignored_without_spatial_index(self) -> None:
+        """With no chunk_size atom, per_array_bytes changes nothing — the plain
+        byte-based path is used regardless of the flag."""
+        from luxar.io._compiler.chunking import calculate_intelligent_chunks
+
+        shape = (100000, 3)
+        dtype = np.dtype(np.float32)
+        default = calculate_intelligent_chunks(shape, dtype=dtype)
+        opted = calculate_intelligent_chunks(shape, dtype=dtype, per_array_bytes=True)
+        assert default == opted
 
 
 class TestTransformCentralization:
@@ -1127,6 +1308,18 @@ class TestWriterFuzzRegressions:
             # gate converts that to a typed error).
             with pytest.raises((ValueError, TypeError)):
                 scene.add_points("np_rad", self.POS, radii=np.float32(0.5))
+
+    def test_numpy_scalar_colormap_scalars_hint_is_actionable(self) -> None:
+        """The scalars preflight rejects numpy scalars with the same
+        one-step float(...) hint as radii/widths/sharpness (#752) — not
+        the dead-end np.array(scalars) suggestion that fails again on 0D."""
+        from luxar.io._compiler.node_common import validate_scalars_preflight
+
+        with pytest.raises(ValueError) as exc_info:
+            validate_scalars_preflight(np.float32(0.5), 50)
+        msg = str(exc_info.value)
+        assert "float(" in msg
+        assert "np.array(scalars)" not in msg
 
     def test_gsplat_position_bounds_is_reserved(self) -> None:
         """The gsplat writer unconditionally stamps position_bounds; a

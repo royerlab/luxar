@@ -567,7 +567,11 @@ describe('bounds-math', () => {
       // framed distance is on the order of the diagonal (~2R), so use
       // 2R / 1000 as the representative deepest zoom.
       const deepestZoom = (2 * R) / 1000;
-      const cameraPos = { x: sphere.center.x, y: sphere.center.y, z: sphere.center.z + deepestZoom };
+      const cameraPos = {
+        x: sphere.center.x,
+        y: sphere.center.y,
+        z: sphere.center.z + deepestZoom,
+      };
       const planes = calculateClippingPlanesFromSphere(sphere, cameraPos);
 
       // Inside the sphere → near is the scale-aware floor, which must sit

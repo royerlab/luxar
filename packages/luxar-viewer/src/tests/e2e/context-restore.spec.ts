@@ -62,8 +62,7 @@ test.describe('WebGL Context Restore (CR-1)', () => {
     const api = await page.evaluate(
       () =>
         ((window as any).__luxarDebug?.app?.sceneManager?.capabilities?.apiSurface as
-          | string
-          | undefined) ?? 'unknown'
+          string | undefined) ?? 'unknown'
     );
     test.skip(
       api !== 'webgl2',

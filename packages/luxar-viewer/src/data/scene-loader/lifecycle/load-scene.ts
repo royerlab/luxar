@@ -46,7 +46,10 @@ import type { MultiLevelCachingStore } from '../../../cache/multi-level-caching-
 import type { DecompressedChunkCache } from '../../../cache/decompressed-chunk-cache';
 import type { SliceCache } from '../../../cache/slice-cache';
 import type { CacheBudgets } from '../../../cache/heap-budget';
-import type { SceneLoaderMonitorPort } from '../../scene-loader-monitor-port';
+import type {
+  SceneLoaderMonitorPort,
+  FailedLoadsProviderPort,
+} from '../../scene-loader-monitor-port';
 import type { LODGroupRegistry } from '../../../scene/lod-group-registry';
 import { setupCaches } from '../cache/cache-setup';
 import { wireMonitorAfterLoad } from '../monitor/monitor-wiring';
@@ -101,11 +104,16 @@ export interface LoadSceneCtx {
   /** Stats helper used by the post-load monitor wiring. */
   updateVisibleCountsInMonitor(): void;
   /**
-   * Failed-load records + retry-all for the monitor's failure banner.
-   * Live closures over the orchestrator's registry / retry API.
+   * Registered failed-load paths — graded against the registered path set by
+   * `reportLoadOutcome` to log an honest load outcome.
    */
   getFailedLoaderPaths(): string[];
-  retryAllFailedLoaders(): Promise<{ succeeded: string[]; failed: string[]; deferred?: boolean }>;
+  /**
+   * The shared failed-loads provider (paths + retry-all + per-path reason).
+   * Single construction point so the monitor banner and the layers-panel
+   * error badge read the same live failure set.
+   */
+  getFailedLoadsProvider(): FailedLoadsProviderPort;
   /** Kick the GSplats LOD refinement loop after initial load. */
   scheduleGSplatsRefinement(): Promise<void>;
 
@@ -143,8 +151,7 @@ function synthesizeSceneDimensionsFromNode(
   const a = attrs as Record<string, unknown> | undefined;
   if (!a) return undefined;
   const bounds = (a.position_bounds ?? a.center_bounds) as
-    | { min?: number[]; max?: number[] }
-    | undefined;
+    { min?: number[]; max?: number[] } | undefined;
   const ndim =
     typeof a.ndim === 'number'
       ? a.ndim
@@ -332,8 +339,7 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
   const rootBounds =
     sceneAttrs?.position_bounds ??
     ((sceneAttrs as Record<string, unknown>)?.center_bounds as
-      | typeof sceneAttrs.position_bounds
-      | undefined);
+      typeof sceneAttrs.position_bounds | undefined);
   if (rootBounds) {
     rootGroup.userData.positionBounds = rootBounds;
     log.info(
@@ -374,10 +380,7 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
     lodGroupRegistry: ctx.lodGroupRegistry,
     sceneGraph,
     updateVisibleCounts: () => ctx.updateVisibleCountsInMonitor(),
-    failedLoads: {
-      getFailedPaths: () => ctx.getFailedLoaderPaths(),
-      retryAll: () => ctx.retryAllFailedLoaders(),
-    },
+    failedLoads: ctx.getFailedLoadsProvider(),
   });
 
   // Report what ACTUALLY happened. `loadScene` cannot throw on a failed node

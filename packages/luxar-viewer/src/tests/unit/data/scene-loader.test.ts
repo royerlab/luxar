@@ -959,6 +959,28 @@ describe('SceneLoader', () => {
     });
   });
 
+  describe('getFailedLoadsProvider — reason mapping', () => {
+    // #1055: the layers-panel error badge reads its tooltip from the provider's
+    // getFailedReason, which folds error.message → classified kind → undefined.
+    interface FailInternals {
+      registry: { recordFailure(path: string, error: Error, kind?: string): void };
+    }
+
+    it('reports error.message, falls back to kind, else undefined for an unknown path', () => {
+      const internals = sceneLoader as unknown as FailInternals;
+      internals.registry.recordFailure('/points/a', new Error('Vertex index 3 not found'));
+      // Empty message → the classified kind is reported instead.
+      internals.registry.recordFailure('/points/b', new Error(''), 'Decode');
+
+      const provider = sceneLoader.getFailedLoadsProvider();
+      expect(provider.getFailedReason?.('/points/a')).toBe('Vertex index 3 not found');
+      expect(provider.getFailedReason?.('/points/b')).toBe('Decode');
+      expect(provider.getFailedReason?.('/points/missing')).toBeUndefined();
+      // The provider reads the same live failed set.
+      expect(provider.getFailedPaths().sort()).toEqual(['/points/a', '/points/b']);
+    });
+  });
+
   describe('kickRefinementIfIdle — refinement after deferred-group activation', () => {
     interface KickInternals {
       _updateInProgress: boolean;

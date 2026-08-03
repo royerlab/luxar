@@ -6,6 +6,17 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
+#### Tooling — documentation checker is now a baseline-driven ratchet (#776)
+
+`scripts/check_documentation.py` no longer fails all-or-nothing on pre-existing
+debt. Existing missing READMEs/docstrings/JSDoc are captured in a checked-in
+baseline (`scripts/docs_baseline.json`); a flagless run tolerates baselined
+findings and fails only on NEW ones. A `--json` mode emits a deterministic,
+machine-readable report with a `ratchet` block (new/fixed/still-present), and a
+malformed baseline now reports a clean one-line error instead of a traceback.
+Regenerate or tighten the baseline with `--update-baseline`; see
+`docs/guides/developer/DOCUMENTATION_QUALITY.md`.
+
 #### Tests — demo dimension ranges are checked against generated scenes (#799)
 
 Small end-to-end builds now pin the dimension declarations in

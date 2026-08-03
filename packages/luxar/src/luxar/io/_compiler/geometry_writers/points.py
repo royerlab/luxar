@@ -176,7 +176,14 @@ def write_points(
         # Belt and braces — the fail-fast gate (step 0d) already validated
         if isinstance(colors, np.ndarray):
             validate_colors_for_writing(colors, n_points, channels=(3, 4))
-        write_colors(group, colors, ordering_data, n_points, ctx.dataset_ctx)
+        write_colors(
+            group,
+            colors,
+            ordering_data,
+            n_points,
+            ctx.dataset_ctx,
+            per_array_bytes=True,
+        )
         metadata["has_colors"] = True
 
     if radii is not None:
@@ -206,11 +213,19 @@ def write_points(
             n_points,
             ctx.dataset_ctx,
             "sharpness",
+            per_array_bytes=True,
         )
         metadata["has_sharpness"] = True
 
     if scalars is not None:
-        write_scalars(group, scalars, ordering_data, n_points, ctx.dataset_ctx)
+        write_scalars(
+            group,
+            scalars,
+            ordering_data,
+            n_points,
+            ctx.dataset_ctx,
+            per_array_bytes=True,
+        )
         metadata["has_scalars"] = True
 
     # 5b. Write colormap LUT if colormap is a custom array

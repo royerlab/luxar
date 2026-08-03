@@ -24,6 +24,7 @@ def write_colors(
     spatial_index_data: Optional[Dict[str, Any]],
     n_elements: int,
     ctx: DatasetCtx,
+    per_array_bytes: bool = False,
 ) -> None:
     """Write colors dataset to Zarr using ArrayEncoder.
 
@@ -36,6 +37,8 @@ def write_colors(
             positions zarr array because duplicate positions may be stored as
             an array_ref with physical shape ``(0, D)``.
         ctx: Encoder configuration (encoder, mode, compressor).
+        per_array_bytes: Opt-in per-array dtype byte-budget chunking (points
+            only; defaults ``False`` so lines/gsplats keep atom-sized chunks).
     """
     n_points = n_elements  # local alias keeps the rest of the body unchanged
     # RGBA colors: the alpha column is per-element opacity in [0, 1], not
@@ -61,6 +64,7 @@ def write_colors(
                 colors.shape,
                 spatial_index_data=spatial_index_data,
                 dtype=colors.dtype,
+                per_array_bytes=per_array_bytes,
             )
 
         # Detect color_mode for float arrays

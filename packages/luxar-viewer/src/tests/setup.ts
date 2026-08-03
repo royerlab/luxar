@@ -128,8 +128,7 @@ afterEach(() => {
     removeAllListeners(event: 'jsdomError'): void;
   };
   const win = (typeof window !== 'undefined' ? window : null) as
-    | (Window & { _virtualConsole?: VirtualConsoleLike })
-    | null;
+    (Window & { _virtualConsole?: VirtualConsoleLike }) | null;
   const vc = win?._virtualConsole;
   if (vc) {
     vc.removeAllListeners('jsdomError');
