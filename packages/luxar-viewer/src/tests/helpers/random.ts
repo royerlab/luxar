@@ -36,12 +36,3 @@ export function mulberry32(seed: number): () => number {
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 }
-
-/**
- * Convenience: a deterministic integer-range PRNG in [min, max).
- */
-export function mulberry32Int(seed: number, min: number, max: number): () => number {
-  const rng = mulberry32(seed);
-  const span = max - min;
-  return () => min + Math.floor(rng() * span);
-}
