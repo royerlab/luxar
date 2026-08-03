@@ -268,7 +268,7 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
   const fmtVersion = (sceneAttrs as Record<string, unknown>)?.format_version;
   if (
     fmtType === 'gsplats_zarr' &&
-    !SUPPORTED_GSPLATS_FORMAT_VERSIONS.includes(String(fmtVersion))
+    !(SUPPORTED_GSPLATS_FORMAT_VERSIONS as readonly string[]).includes(String(fmtVersion))
   ) {
     notifier.toast(
       `This .gsplats.zarr is format ${String(fmtVersion)} (expected one of ` +

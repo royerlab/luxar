@@ -108,7 +108,7 @@ def _geometry_types(c: Dict[str, Any]) -> List[str]:
 # --------------------------------------------------------------------------- #
 def _py_literal_type(name: str, values: List[str]) -> str:
     """Emit ``Name = Literal["a", "b", ...]`` (inline if it fits, else stacked)."""
-    inline = f'{name} = Literal[{", ".join(repr_str(v) for v in values)}]'
+    inline = f"{name} = Literal[{', '.join(repr_str(v) for v in values)}]"
     if len(inline) <= PY_WIDTH:
         return inline
     body = "".join(f"    {repr_str(v)},\n" for v in values)
@@ -118,7 +118,7 @@ def _py_literal_type(name: str, values: List[str]) -> str:
 def _py_tuple(name: str, elem_type: str, values: List[str]) -> str:
     """Emit ``NAME: Final[tuple[T, ...]] = (...)`` (inline if it fits, else stacked)."""
     lhs = f"{name}: Final[tuple[{elem_type}, ...]] = "
-    inline = f'{lhs}({", ".join(repr_str(v) for v in values)})'
+    inline = f"{lhs}({', '.join(repr_str(v) for v in values)})"
     if len(values) != 1 and len(inline) <= PY_WIDTH:
         return inline
     if len(values) == 1:
@@ -246,9 +246,9 @@ def _ts_str(value: str) -> str:
     return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
 
 
-def _ts_const(name: str, values: List[str]) -> str:
-    lhs = f"export const {name}: readonly string[] = "
-    inline = f'{lhs}[{", ".join(_ts_str(v) for v in values)}];'
+def _ts_const(name: str, values: List[str], elem_type: str) -> str:
+    lhs = f"export const {name}: readonly {elem_type}[] = "
+    inline = f"{lhs}[{', '.join(_ts_str(v) for v in values)}];"
     if len(inline) <= TS_WIDTH:
         return inline
     body = "".join(f"  {_ts_str(v)},\n" for v in values)
@@ -256,7 +256,7 @@ def _ts_const(name: str, values: List[str]) -> str:
 
 
 def _ts_union(name: str, values: List[str]) -> str:
-    inline = f'export type {name} = {" | ".join(_ts_str(v) for v in values)};'
+    inline = f"export type {name} = {' | '.join(_ts_str(v) for v in values)};"
     if len(inline) <= TS_WIDTH:
         return inline
     body = "".join(f"  | {_ts_str(v)}\n" for v in values)
@@ -290,31 +290,31 @@ def render_typescript(c: Dict[str, Any]) -> str:
     blocks = [
         "// --- scene (.luxar.zarr) format version ---\n"
         f"export const SCENE_FORMAT_VERSION = {_ts_str(scene['current'])};\n"
-        f"{_ts_const('SUPPORTED_SCENE_VERSIONS', scene['supported'])}\n"
+        f"{_ts_const('SUPPORTED_SCENE_VERSIONS', scene['supported'], 'SceneFormatVersion')}\n"
         f"{_ts_union('SceneFormatVersion', scene['supported'])}",
         "// --- standalone gsplats (.gsplats.zarr) node-tree format version ---\n"
         f"export const GSPLATS_FORMAT_VERSION = {_ts_str(gsplats['current'])};\n"
-        f"{_ts_const('SUPPORTED_GSPLATS_FORMAT_VERSIONS', gsplats['supported'])}\n"
+        f"{_ts_const('SUPPORTED_GSPLATS_FORMAT_VERSIONS', gsplats['supported'], 'GSplatsFormatVersion')}\n"
         f"{_ts_union('GSplatsFormatVersion', gsplats['supported'])}",
         "// --- root-header format_type identifying a standalone gsplats store ---\n"
         f"export const FORMAT_TYPE_GSPLATS = {_ts_str(c['format_type_gsplats'])};",
         "// --- scene-graph node types ---\n"
-        f"{_ts_const('NODE_TYPES', node_types)}\n"
+        f"{_ts_const('NODE_TYPES', node_types, 'NodeTypeName')}\n"
         f"{_ts_union('NodeTypeName', node_types)}",
         "// --- leaf geometry types (the element-bearing subset of NODE_TYPES) ---\n"
-        f"{_ts_const('GEOMETRY_TYPES', geometry_types)}\n"
+        f"{_ts_const('GEOMETRY_TYPES', geometry_types, 'GeometryTypeName')}\n"
         f"{_ts_union('GeometryTypeName', geometry_types)}",
         "// --- specialized-group kinds ---\n"
-        f"{_ts_const('NODE_KINDS', node_kinds)}\n"
+        f"{_ts_const('NODE_KINDS', node_kinds, 'NodeKind')}\n"
         f"{_ts_union('NodeKind', node_kinds)}",
         "// --- on-disk array encoding scheme names ---\n"
-        f"{_ts_const('ENCODING_NAMES', encodings)}\n"
+        f"{_ts_const('ENCODING_NAMES', encodings, 'EncodingName')}\n"
         f"{_ts_union('EncodingName', encodings)}",
         "// --- canonical metadata attribute keys ---\n"
-        f"{_ts_const('ATTR_KEYS', attr_keys)}\n"
+        f"{_ts_const('ATTR_KEYS', attr_keys, 'AttrKey')}\n"
         f"{_ts_union('AttrKey', attr_keys)}",
         "// --- canonical gsplats array names ---\n"
-        f"{_ts_const('ARRAY_NAMES', array_names)}\n"
+        f"{_ts_const('ARRAY_NAMES', array_names, 'ArrayName')}\n"
         f"{_ts_union('ArrayName', array_names)}",
     ]
 

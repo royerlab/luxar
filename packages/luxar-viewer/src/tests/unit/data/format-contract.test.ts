@@ -1,11 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import {
   ENCODING_NAMES,
+  GEOMETRY_TYPES,
   GSPLATS_FORMAT_VERSION,
   SUPPORTED_GSPLATS_FORMAT_VERSIONS,
   NODE_TYPES,
   NODE_KINDS,
 } from '../../../types/format-contract';
+import type { GeometryTypeName } from '../../../types/format-contract';
 import { detectEncoding } from '../../../data/loaders/spatial-query/range-loader/detect-encoding';
 
 /**
@@ -40,5 +42,22 @@ describe('format contract (TS consumer)', () => {
       expect(seq.length).toBeGreaterThan(0);
       expect(new Set(seq).size).toBe(seq.length);
     }
+  });
+
+  it('contract lists index a union-keyed record without a cast', () => {
+    // Guards against the generated lists regressing to `readonly string[]`:
+    // iterating them must yield the narrow union element so it can key a
+    // Record<GeometryTypeName, …> directly. If GEOMETRY_TYPES ever widens back
+    // to string[], the `seen[t]` index below fails to typecheck (TS7053) — the
+    // typecheck itself is the guard, since tests are inside the checked tree.
+    const seen: Record<GeometryTypeName, boolean> = {
+      points: false,
+      lines: false,
+      gsplats: false,
+    };
+    for (const t of GEOMETRY_TYPES) {
+      seen[t] = true;
+    }
+    expect(Object.values(seen).every(Boolean)).toBe(true);
   });
 });
