@@ -32,8 +32,9 @@ import { classifyLoaderError, type LoaderErrorKind } from '../nodes/load-leaf-er
  * Every {@link GeometryKind} must appear here. That is enforced — not merely
  * asked for — by {@link AnyDataLoader} indexing this type with the full
  * `GeometryKind` union: a kind added to `contract.yaml` without a loader entry
- * above fails to compile with `Type '<kind>' cannot be used to index type
- * 'LoaderByKind'`.
+ * above fails to compile with `TS2339: Property '<kind>' does not exist on type
+ * 'LoaderByKind'` at that indexed access, plus `TS2536` inside each generic
+ * accessor below.
  *
  * Note the enforcement can NOT be written as `interface LoaderByKind extends
  * Record<GeometryKind, …>` — an interface *inherits* members it does not

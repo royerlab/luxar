@@ -91,13 +91,3 @@ export async function getPointsBackend(ndim: number): Promise<WasmModule> {
   const c = await getInProcessCtx();
   return pickBackend(c, ndim);
 }
-
-/**
- * Reset the cached context. Test-only hook so a suite can force a fresh
- * `initWasm()` (e.g. after swapping the module mock). Not used in
- * production.
- */
-export function __resetInProcessCtxForTests(): void {
-  ctx = null;
-  ctxPromise = null;
-}
