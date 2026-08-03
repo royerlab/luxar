@@ -84,6 +84,7 @@ import {
 } from './data-loading-monitor/timing-panel';
 
 import type { UpdateProfiler } from '../profiling/update-profiler';
+import { POOLED_GEOMETRY_TYPES } from '../types/data-monitor-types';
 
 /**
  * Main Data Loading Monitor class
@@ -1611,8 +1612,7 @@ export class DataLoadingMonitor {
 
     // GPU pool table
     if (metrics.gpuPool) {
-      const types = ['points', 'lines', 'gsplats'] as const;
-      for (const type of types) {
+      for (const type of POOLED_GEOMETRY_TYPES) {
         const typeStats = metrics.gpuPool.byType[type];
         const reuseRate = calculateReuseRate(typeStats.allocations, typeStats.reuses);
         const hasData =
@@ -1637,8 +1637,7 @@ export class DataLoadingMonitor {
     }
 
     // Accumulator table
-    const accTypes = ['points', 'lines', 'gsplats'] as const;
-    for (const type of accTypes) {
+    for (const type of POOLED_GEOMETRY_TYPES) {
       const stats = metrics.accumulators[type];
       const hasData = stats !== null && stats.capacity > 0;
 

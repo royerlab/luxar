@@ -11,6 +11,7 @@
 
 import type { SceneNode } from '../../data-loader-types';
 import type { SceneGraphNode } from '../../../types/data-monitor-types';
+import { GEOMETRY_TYPES } from '../../../types/format-contract';
 
 /** Valid scene-graph-node display types. */
 type GraphNodeType = SceneGraphNode['type'];
@@ -63,7 +64,7 @@ function deriveDisplayType(rawType: string | undefined): GraphNodeType {
 }
 
 /** Leaf geometry display types a specialized group can resolve to. */
-const LEAF_DISPLAY_TYPES: ReadonlySet<string> = new Set(['points', 'lines', 'gsplats']);
+const LEAF_DISPLAY_TYPES: ReadonlySet<string> = new Set(GEOMETRY_TYPES);
 
 /**
  * Read the specialized-group discriminant (`kind=lod` / `kind=partition`)

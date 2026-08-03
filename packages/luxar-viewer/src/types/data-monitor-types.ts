@@ -717,6 +717,23 @@ export interface CacheStatsProvider {
 // `unknown` without making the UI template module a contracts module.
 
 /**
+ * Geometry types that own GPU-pool buffers and element accumulators.
+ *
+ * Deliberately **not** `GeometryTypeName`. This is the subset of geometry types
+ * whose data goes through the instanced-quad element-texture path, so it is what
+ * keys {@link GPUPoolStats.byType} and {@link MemoryMetrics.accumulators}. A
+ * geometry type that renders some other way has no entry in either record, and
+ * iterating the full geometry vocabulary over them would index a key that does
+ * not exist.
+ *
+ * The loops that walk those records iterate this const, so adding a key to one
+ * record without adding it here (or vice versa) is a compile error rather than a
+ * silently short iteration.
+ */
+export const POOLED_GEOMETRY_TYPES = ['points', 'lines', 'gsplats'] as const;
+export type PooledGeometryType = (typeof POOLED_GEOMETRY_TYPES)[number];
+
+/**
  * Memory metrics for GPU buffer pool (per-type).
  */
 export interface GPUPoolTypeStats {
@@ -737,11 +754,7 @@ export interface GPUPoolStats {
   capacityGrowths: number;
   activeBuffers: number;
   pooledBuffers: number;
-  byType: {
-    points: GPUPoolTypeStats;
-    lines: GPUPoolTypeStats;
-    gsplats: GPUPoolTypeStats;
-  };
+  byType: Record<PooledGeometryType, GPUPoolTypeStats>;
 }
 
 /**
@@ -759,9 +772,5 @@ export interface AccumulatorStats {
  */
 export interface MemoryMetrics {
   gpuPool: GPUPoolStats | null;
-  accumulators: {
-    points: AccumulatorStats | null;
-    lines: AccumulatorStats | null;
-    gsplats: AccumulatorStats | null;
-  };
+  accumulators: Record<PooledGeometryType, AccumulatorStats | null>;
 }
