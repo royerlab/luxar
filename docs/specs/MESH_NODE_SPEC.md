@@ -480,7 +480,10 @@ space — a post-pass swaps two of each triangle's three indices to restore fron
 keyed to the *current* `displayDims` parity, so it runs on **every** index build in an odd-parity epoch
 (initial load, slice move, and `displayDims` change alike), not only at the moment `displayDims`
 changes. Equivalently, render the opposite material `side` for the duration of the odd-parity epoch — a
-persistent form that needs no per-rebuild post-pass. When the displayed set is a **different triple**
+persistent form that needs no per-rebuild post-pass. This equivalence holds only while nothing consumes
+`gl_FrontFacing`: the stored-normal shading flip (§6.2) requires the index post-pass form, since the
+opposite side of a `DoubleSide` mesh is `DoubleSide` and leaves projected winding (and thus
+`gl_FrontFacing`) reversed. When the displayed set is a **different triple**
 than the frame (e.g. `[0,1,2]` → `[1,2,3]`), or an nD mesh declares no frame (no stored normals),
 projected orientation varies per triangle and no index post-pass can fix it — the viewer renders
 `DoubleSide` for that epoch regardless of `double_sided: false`, and logs a one-time notice naming the
@@ -574,6 +577,23 @@ model is deliberately minimal and light-free:
   it needs no light in the scene graph and no scene-graph API change. `uAmbient` and `uShadeExponent`
   are material uniforms with sane defaults; a fully-flat `uAmbient = 1.0` reproduces the emissive look
   of the other types.
+- **Two-sided normal (stored-normal variants).** Every non-flat fragment build — `mesh.fragment` and its
+  `mesh-additive`/`mesh-max`/`mesh-colormap` siblings (§6.4) — renormalizes the interpolated normal in
+  the fragment stage and then flips it to face the camera BEFORE the headlight term:
+  `N = gl_FrontFacing ? N : -N` in GLSL, and the TSL twin via the `frontFacing` node. Without it, a
+  back-facing fragment has `dot(N, V) < 0`, so the wrap term `dot(N, V) * 0.5 + 0.5` lands in `[0, 0.5)`
+  and the back side shades with a dimmed, inverted gradient collapsing toward `uAmbient` (dark at the
+  head-on interior, rising to a mid value at the silhouette) instead of the front-facing gradient —
+  visible immediately because `double_sided` defaults **true** (§3.3) and §5's whole-triangle cull
+  exposes the interior back faces of a sliced closed isosurface, exactly the target data. The
+  **derivative fallback** (`mesh-flat-normal.fragment`) needs **no** such flip:
+  `normalize(cross(dFdx(vViewPos), dFdy(vViewPos)))` is orientation-defined by the rasterized fragment,
+  not the winding, so it always faces the viewer (§7's "always faces the camera regardless of winding" is
+  correct for that variant) — the flip is a stored-normal-variant-only concern. The flip is well-defined
+  wherever it applies: stored normals are only active when `normal_dims == displayDims` (§3.4), where
+  §5.4's parity post-pass keeps winding coherent — specifically its **index post-pass** form, since the
+  flip consumes `gl_FrontFacing` and needs it to correlate with the authored orientation — so the flip
+  gives the back face the same headlight gradient as the front.
 - **Base color:** the colormap LUT applied to `aScalar` under `USE_COLORMAP`, else the vertex `color`
   attribute — which is opaque white when `colors` is absent (§6.1, filled CPU-side exactly as
   `create-points-node.ts:91` does for points). So the minimal `add_mesh(vertices, faces)` call (no
@@ -1067,7 +1087,11 @@ A reviewer should treat a `| 'mesh'` appearing in any of those five as a defect.
       (`normal_dims == displayDims`) selects the stored-normal `mesh.fragment` variant under
       `shading="smooth"`, and the SAME mesh under `shading="flat"` selects `mesh-flat-normal.fragment`
       and shades from screen-space derivatives (§3.4, §6.2). Verified to differ — a build that ignores
-      `shading` renders both identically and the test goes red
+      `shading` renders both identically and the test goes red. And under `shading="smooth"` on a
+      `double_sided` mesh, a **back-viewed** face shades with the SAME headlight gradient as the
+      **front-viewed** face (both lit symmetrically), NOT collapsed to flat `uAmbient` — verified to go
+      **red** without the §6.2 `gl_FrontFacing` normal flip (the back face shades the inverted,
+      `uAmbient`-collapsing gradient instead of the front-facing one)
 - [ ] Codegen snapshots: 6 new variants = 12 files (§6.4) — incl. the per-blend-mode
       `mesh-additive`/`mesh-max` variants
 - [ ] Fixture: `tests/fixtures/generate_test_data.py` gains a mesh fixture (auto-picked up by
