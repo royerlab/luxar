@@ -251,7 +251,10 @@ convention (fail-fast, before any zarr group is created):
   **warned**, not rejected (degenerate triangles legitimately produce them). Render-time handling is
   **pointwise, not per-face**: on a shared-vertex indexed mesh the interpolated normal blends toward the
   neighbouring vertices' directions, so the stored-normal fragment variant (§6.2) simply epsilon-guards
-  its `normalize` — when the interpolated normal is near-zero (`dot(N, N) < ε` before normalization) it
+  its `normalize` — when the interpolated normal is not affirmatively valid (`!(dot(N, N) >= ε)` before
+  normalization — the *negated* form on purpose: `NaN` fails every comparison, so a corrupt store's
+  `NaN` normal takes the same fallback instead of slipping past a `dot(N, N) < ε` test and normalizing
+  into `NaN` shading) it
   falls back to the §6.2 screen-space-derivative flat normal rather than normalizing a zero vector into
   NaN shading. Shading near a degenerate vertex is therefore locally distorted rather than cleanly flat;
   the warning exists so authors fix the normals instead of relying on the guard.
@@ -290,9 +293,10 @@ zarr `.zarray` metadata (declared shape, `chunks`, and dtype), touching no chunk
 `n_vertices > 2^27` — the pick vote-key stride bound (§6.5) — so a giant vertex count is refused before
 allocation, not after a multi-gigabyte fetch; (b) bounds `n_faces`, which the writer floors at `F >= 1`
 but never caps, against a viewer-side per-node ceiling `MESH_DECODE_BUDGET_BYTES` (a viewer `src/config/`
-constant, default 2 GiB — a few-million-triangle mesh's `vertices`+`faces` run to tens–hundreds of MB,
-so 2 GiB is generous but bounds catastrophe): both the summed declared footprint — each array's declared
-shape × its *declared-dtype* itemsize: `vertices` `V·D·4`, `faces` `F·3·itemsize` (8 bytes per index for
+constant, default 512 MiB — a few-million-triangle mesh's `vertices`+`faces` run to tens–hundreds of MB,
+so the default admits the §7 workload expectation with several-fold headroom; why it must sit well
+*under* what a tab survives is the transient-peak multiplier below): both the summed declared
+footprint — each array's declared shape × its *declared-dtype* itemsize: `vertices` `V·D·4`, `faces` `F·3·itemsize` (8 bytes per index for
 an external int64 store, not the canonical uint32's 4 — budgeting the canonical dtype instead of the
 declared one would let a 64-bit store fetch twice the audited bytes), every present optional array and
 the CSR arrays included — and each array's *per-chunk* decode
@@ -315,7 +319,15 @@ mis-shades every vertex it covers, and a declared-undersized array is caught her
 and (d) checks `normal_dims` well-formed whenever normals are present — exactly 3 entries, distinct
 integers, each `0 <= i < ndim` — decidable from the attrs alone, so it never forces a fetch. The decode
 layer must in turn allocate from the declared chunk `nbytes` and reject any stream that decompresses to
-a different size, so a blosc header claiming gigabytes cannot win either. The ceiling is **per node** —
+a different size, so a blosc header claiming gigabytes cannot win either. Be clear about what the
+ceiling bounds: the *declared source* footprint plus any single decode buffer — not the loader's whole
+transient peak. On the admission path the decoded sources coexist with derived copies — the u32-coerced
+`faces`, the extracted display-space `position` (§6.1), the driver-side GPU upload — each itself bounded
+by the source footprint, so the worst-case transient peak is a small known multiple (≈ 3–4×) of the
+ceiling. The default prices that multiplier in: 512 MiB of admitted declaration keeps the worst-case
+transient around 2 GiB, comfortably inside a 64-bit tab — which is also why the ceiling must never be
+raised toward "what a tab survives"; the tab has to survive the *multiple*, not the ceiling. The ceiling
+is **per node** —
 N nodes can still sum to N×budget, so the "one node lost, not the scene" guarantee is per-node; v1
 imposes no aggregate cap. Any failure fails the node with a `LoaderError` (one node lost, not the scene)
 **without fetching a single chunk**, preserving the blast radius before allocation.
@@ -343,6 +355,18 @@ kernels receive. Finally, the label and image-label CSR offsets monotone and in-
 `LoaderError`, same one-node
 blast radius; these run only once Stage 1 has admitted the declared shapes and budget, so the
 fetch+decode they gate is already bounded.
+
+Stage 2 deliberately does **not** finite-scan the float arrays (`vertices`, `normals`, `colors`,
+`scalars`). A non-finite value can neither trap a kernel nor over-read a buffer, and its blast radius
+is already per-node without a gate: a `NaN`/`±Inf` coordinate on a hidden dimension hides the vertex
+(§5.2's #806 rule), a non-finite *displayed* coordinate corrupts at most that node's rasterization and
+bounding sphere (which the depth-sort coordinator already refuses to sort by —
+`depth-sort-coordinator/render-order.ts` checks `Number.isFinite` on every sphere it uses), non-finite
+colors/alpha are clamped by the shared shader sanitizers (§6.2's `sanitizeAlpha` and the
+`materials/_shared` helpers), and a non-finite stored normal degrades only that node's shading —
+contained because the §3.5 normalize guard is written in its NaN-robust negated form (above). No
+sibling loader finite-scans its decoded positions either; mesh matches that policy rather than
+inventing a stricter one here.
 
 ### 3.6 Authoring lint
 
