@@ -206,12 +206,11 @@ export class LayerControls {
     });
 
     // Absorption κ — only meaningful in volumetric mode; hidden for every
-    // other mode (see syncAbsorptionVisibility). κ has units of 1/length
-    // (τ = κ · density · thickness), so its useful magnitude spans decades
-    // across scenes: a LOG track whose bounds are re-derived per layer in
-    // render() (absorption-range.ts). Position 0 on a log track is an exact
-    // κ=0 — the additive limit. The bounds here are placeholders for the
-    // pre-selection window only.
+    // other mode (see syncAbsorptionVisibility). τ = κ · rayMass with the
+    // same normalised ray mass in all three geometry families, so κ ≈ 1 is
+    // the useful anchor everywhere and one fixed LOG track serves every
+    // scene (absorption-range.ts widens it only for an out-of-range authored
+    // κ). Position 0 on a log track is an exact κ=0 — the additive limit.
     this.absorptionSlider = new LabeledSlider({
       container: this.controlsEl,
       label: 'Absorption',
@@ -459,19 +458,16 @@ export class LayerControls {
 
     this.gammaSlider?.setValue(primary.gamma);
     this.opacitySlider?.setValue(primary.opacity);
-    // Re-scale the κ track to THIS layer before seating the thumb: the
-    // reachable κ depends on the layer's geometry thickness (a 1.5e-3-wide
-    // line needs κ ≈ 4×10³ for the same optical depth a 1-voxel gsplat gets
-    // at κ ≈ 1). setRange keeps the value put.
-    // Multi-selection: the track is the PRIMARY layer's, and onChange fans
-    // that one κ out to every selected layer (same as opacity / gamma) — a
-    // co-selected thicker layer just saturates earlier along the track.
+    // Seat the thumb on a track that can represent THIS layer's live κ. The
+    // track itself is now layer-independent — every geometry family builds
+    // τ = κ · rayMass from the same normalised ray mass, so κ is comparable
+    // across points/lines/gsplats and across scene scales — and only widens
+    // when an authored κ falls outside the nominal span. setRange keeps the
+    // value put.
+    // Multi-selection: onChange fans the PRIMARY layer's κ out to every
+    // selected layer (same as opacity / gamma).
     if (this.absorptionSlider) {
-      const { min, max } = absorptionSliderRange(
-        primary.absorptionMax,
-        primary.absorption,
-        primary.absorptionMinBound
-      );
+      const { min, max } = absorptionSliderRange(primary.absorption);
       this.absorptionSlider.setRange(min, max);
       this.absorptionSlider.setValue(primary.absorption);
     }

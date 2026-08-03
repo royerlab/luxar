@@ -267,11 +267,17 @@ def generate_mandelbulb_volumetric(
             # workarounds (colors ×= 0.1 AND intensity = 0.0625) are gone
             # — real depth cueing rather than a flat-clipped glow.
             #
-            # κ = 8 (inside the panel slider range) is what leaves the
-            # surface glowing: higher κ over-self-screens toward a dim
-            # solid, lower κ loses the depth cue.
+            # κ = 0.04 is what leaves the surface glowing: higher κ
+            # over-self-screens toward a dim solid, lower κ loses the depth
+            # cue. (κ was 8 before the 2026-08-02 ray-mass unification, when
+            # the point shader still multiplied τ by a world radius; κ is now
+            # dimensionless and comparable across geometry types, so the
+            # numeric value changed while the render did not.)
             #
-            # intensity = 0.025 is the EXPOSURE-NEUTRAL authoring: the
+            # The display range and κ below were tuned in the viewer's Layers
+            # panel and baked back — that is what `layer=True` is for.
+            #
+            # intensity is the EXPOSURE-NEUTRAL authoring: the
             # scene reads correctly at the viewer's default exposure of
             # 0 EV, so no one has to dial the HDR exposure down to see
             # it. The earlier 0.5 needed −4.32 EV in the panel (the
@@ -294,8 +300,26 @@ def generate_mandelbulb_volumetric(
                 sharpness=sharpnesses,
                 opacity=0.9,
                 blending_mode="volumetric",
-                absorption=8.0,
-                intensity=0.025,
+                # Tuned in the Layers panel and baked back. The mechanical
+                # conversion for the ray-mass unification (kappa * r_mean *
+                # chord = 0.083) was only a starting point — it preserves total
+                # optical depth but not the old per-point weighting, where a
+                # bigger point absorbed proportionally more. 0.04 is the value
+                # that actually reads right.
+                absorption=0.04,
+                # Display range 0 – 36.803 in the panel. The window maps to the
+                # shader uniforms as intensity = 1/(max-min), offset =
+                # -min/(max-min) (rendering/display-range.ts::computeUniforms),
+                # so a min of 0 leaves offset at its identity and the max is
+                # simply 1/intensity. Written as the reciprocal to keep the
+                # panel number legible.
+                intensity=1.0 / 36.803,
+                # Expose the node in the viewer's Layers panel so the
+                # appearance above is live-tunable — in volumetric mode the
+                # panel shows the Absorption (kappa) slider alongside opacity /
+                # display range / gamma / blend, which is how these values were
+                # arrived at in the first place.
+                layer=True,
             )
 
             # Overlay annotations

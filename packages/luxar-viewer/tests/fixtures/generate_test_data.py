@@ -19,7 +19,7 @@ import numpy as np
 import zarr
 from arbol import aprint, asection
 
-from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar import CameraConfig, Dimension, Dimensions, LuxarZarrCompiler, ViewerConfig
 from luxar.encoding import ArrayEncoder, EncodingMode, SemanticType
 
 # Output directory
@@ -88,6 +88,7 @@ FIXTURE_NAMES: list[str] = [
     "test_lod_group_additive_finest.luxar.zarr",
     "test_lod_group_volumetric.luxar.zarr",
     "test_log_scalar.luxar.zarr",
+    "test_lift_parity.luxar.zarr",
     "test_lut.luxar.zarr",
     "test_lut_u16.luxar.zarr",
     "test_mixed.luxar.zarr",
@@ -1849,6 +1850,133 @@ def _sunflower_disk(n: int, radius: float) -> np.ndarray:
     return np.column_stack([r * np.cos(theta), r * np.sin(theta)]).astype(np.float32)
 
 
+# Point radii spanning sub-pixel to comfortably-resolved at the parity spec's
+# camera distance. The two ends matter: effect B (uncompensated 2D dilation)
+# only bites below ~1 px of screen sigma, effect A (the tau chord factor)
+# scales as 1/radius, so a single radius would miss one of them.
+LIFT_PARITY_RADII: list[float] = [0.02, 0.05, 0.15, 0.40]
+LIFT_PARITY_COLUMNS: list[float] = [-7.5, -2.5, 2.5, 7.5]
+LIFT_PARITY_ROW_Y: dict[str, float] = {"points": 3.5, "gsplats": -3.5}
+LIFT_PARITY_N = 20000
+LIFT_PARITY_BLOB_R = 1.5
+# Low enough that the additive stack through a blob stays well below clipping,
+# so the spec's photometry runs in the linear part of the response.
+LIFT_PARITY_OPACITY = 0.003
+
+
+def _lift_parity_blob(rng: "np.random.Generator", cx: float, cy: float) -> np.ndarray:
+    """Uniform-in-ball cluster centred at (cx, cy, 0)."""
+    v = rng.normal(size=(LIFT_PARITY_N, 3))
+    v /= np.linalg.norm(v, axis=1, keepdims=True)
+    r = LIFT_PARITY_BLOB_R * rng.random(LIFT_PARITY_N) ** (1.0 / 3.0)
+    p = (v * r[:, None]).astype(np.float32)
+    p[:, 0] += cx
+    p[:, 1] += cy
+    return p
+
+
+def generate_lift_parity_test() -> None:
+    """Points vs their ``lift_points_to_gsplats`` twin, at four radii.
+
+    A substitutive-LOD points ladder is MIXED geometry: the coarse levels are
+    lifted gsplats, the finest level stays the original Points node. The two
+    families must therefore render the same scene identically in EVERY blending
+    mode, or the ladder visibly changes character as it switches levels.
+
+    Layout is a 4x2 grid — one column per radius, top row Points, bottom row the
+    lifted twin, identical cluster geometry — so a spec can crop each cell and
+    compare brightness directly. Everything sits under ONE ``layer=True`` group
+    so a single Blend control drives all eight nodes.
+
+    Three distinct defects have been measured with this shape (see
+    VOLUMETRIC_BLENDING_SPEC.md, 2026-08-02): the tau chord factor (volumetric),
+    uncompensated 2D dilation (every sum mode, including additive), and the
+    peak-vs-sum lift calibration (max/normal/opaque, still open).
+    """
+    from luxar.gsplats.lift import lift_points_to_gsplats
+
+    with asection("Generating Points-vs-lifted-GSplats Parity Test"):
+        output = FIXTURES_DIR / "test_lift_parity.luxar.zarr"
+        rng = np.random.default_rng(0)
+
+        dims = Dimensions(
+            [
+                Dimension("x", unit="units", display=True),
+                Dimension("y", unit="units", display=True),
+                Dimension("z", unit="units", display=True),
+            ]
+        )
+
+        # Photometry-grade viewer config: identity tone response and every
+        # non-linear / stochastic post-effect off, camera pinned. Without this
+        # the spec measures through ACES + bloom + TAA jitter and no brightness
+        # ratio is trustworthy.
+        viewer_config = ViewerConfig(
+            camera=CameraConfig(
+                position=(0.0, 0.0, 33.0),
+                target=(0.0, 0.0, 0.0),
+                up=(0.0, 1.0, 0.0),
+                fov=47.0,
+            ),
+            background_color="#000000",
+            tone_mapping="None",
+            exposure=0.0,
+            global_offset=0.0,
+            global_gamma=1.0,
+            bloom_enabled=False,
+            vignette_enabled=False,
+            detector_noise_enabled=False,
+            fxaa_enabled=False,
+            msaa_enabled=False,
+            ssaa_enabled=False,
+            chromatic_lens_distortion_enabled=False,
+            adaptive_dpr_enabled=False,
+            control_type="orbit",
+            auto_rotate=False,
+        )
+
+        with LuxarZarrCompiler(
+            output,
+            encoding_mode=EncodingMode.PRECISION,
+            compressor=None,
+            float16_allowed=False,
+        ) as compiler:
+            scene = compiler.create_scene(dimensions=dims, viewer_config=viewer_config)
+            grp = scene.add_group("probe", layer=True)
+
+            for i, radius in enumerate(LIFT_PARITY_RADII):
+                pos_p = _lift_parity_blob(rng, LIFT_PARITY_COLUMNS[i], LIFT_PARITY_ROW_Y["points"])
+                pos_g = pos_p.copy()
+                pos_g[:, 1] += LIFT_PARITY_ROW_Y["gsplats"] - LIFT_PARITY_ROW_Y["points"]
+
+                colors = np.full((LIFT_PARITY_N, 3), 255, np.uint8)
+                radii = np.full(LIFT_PARITY_N, radius, np.float32)
+
+                grp.add_points(
+                    f"pts_r{i}",
+                    pos_p,
+                    colors=colors,
+                    radii=radii,
+                    sharpness=np.full(LIFT_PARITY_N, 0.5, np.float32),
+                    opacity=LIFT_PARITY_OPACITY,
+                )
+
+                # opacity=1.0 into the lift, LIFT_PARITY_OPACITY on the node —
+                # the same split the points row uses, so the two rows differ
+                # only in geometry family.
+                lifted = lift_points_to_gsplats(pos_g, radii, colors, opacity=1.0)
+                grp.add_gsplats(
+                    f"gsp_r{i}",
+                    lifted.centers,
+                    lifted.amplitudes,
+                    lifted.cholesky_factors,
+                    colors=colors,
+                    opacity=LIFT_PARITY_OPACITY,
+                )
+
+        aprint(f"✅ Created: {output}")
+
+
 def generate_points_blending_modes_test() -> None:
     """Five overlapping point-cloud layers, one per blending mode.
 
@@ -3290,6 +3418,7 @@ def main() -> None:
         aprint("")
 
         generate_points_blending_modes_test()
+        generate_lift_parity_test()
         generate_lines_blending_modes_test()
         generate_blending_inherited_test()
         generate_points_normal_overlap_test()

@@ -417,8 +417,28 @@ export function gsplatWebGPUFactory(
     // of a razor-thin sub-pixel spike. Applied to the shared `.toVar()`s before
     // the Cholesky + eigen extent below so footprint and quad stay consistent.
     // Diagonal only — the off-diagonal would rotate/shear the ellipse.
+    //
+    // ENERGY COMPENSATION (Mip-Splatting) — GLSL twin carries the derivation:
+    // widening without touching the peak creates light, by
+    // sqrt(detDilated/detRaw); the compensation below is its reciprocal.
+    // Consumed ONLY by the SUM branch's amplitude below, so — per this file's
+    // JS-conditional-emission rule (see the projection-mode comment further
+    // down) — the determinants are emitted only when that branch is live.
+    // detRaw2D must still be captured BEFORE the diagonal dilation.
+    const surfaceMode = usesPeakProjection(config.blendingMode ?? 'additive');
+    const useSumProjection = !surfaceMode;
+    const detRaw2D: TSLNode | null = useSumProjection
+      ? Sigma2D00.mul(Sigma2D11).sub(Sigma2D10.mul(Sigma2D10)).toVar()
+      : null;
     Sigma2D00.addAssign(uCov2DDilation);
     Sigma2D11.addAssign(uCov2DDilation);
+    let dilationCompensation: TSLNode | null = null;
+    if (useSumProjection && detRaw2D) {
+      const detDilated2D: TSLNode = Sigma2D00.mul(Sigma2D11).sub(Sigma2D10.mul(Sigma2D10)).toVar();
+      dilationCompensation = sqrt(
+        max(detRaw2D, float(0.0)).div(max(detDilated2D, float(1e-12)))
+      ).toVar();
+    }
 
     // 2D Cholesky factorisation: [invL00, L10, invL11] for fragment-side
     // MUL-instead-of-DIV.
@@ -447,9 +467,8 @@ export function gsplatWebGPUFactory(
     // line-integral (whose ~2.4×·sigmaRay boost would over-brighten and,
     // in normal mode, saturate coverage-alpha to opaque and streak at
     // grazing angles). The wrapper calls rebuildGraph() when this
-    // boundary flips.
-    const surfaceMode = usesPeakProjection(config.blendingMode ?? 'additive');
-    const useSumProjection = !surfaceMode;
+    // boundary flips. (`surfaceMode` / `useSumProjection` are computed above,
+    // where the dilation-compensation emission needs the same gate.)
     let vAmplitude2DVal: TSLNode;
     if (useSumProjection) {
       // SCALE-FREE inversion (GLSL twin: shader-glsl.ts): normalize
@@ -504,7 +523,14 @@ export function gsplatWebGPUFactory(
       );
       const sigmaRay: TSLNode = sqrt(sTrace).div(sqrt(quad));
       const rayIntegrationBoost: TSLNode = sigmaRay.mul(uRayIntegralFactor);
-      vAmplitude2DVal = aAmplitude.mul(rayIntegrationBoost).mul(nearFade);
+      // dilationCompensation keeps the screen-integrated light invariant under
+      // the 2D low-pass (derivation at its definition). Sum projection only —
+      // this branch's quantity IS that integral. The peak branch reports a
+      // peak, not an integral, and is left alone.
+      vAmplitude2DVal = aAmplitude
+        .mul(rayIntegrationBoost)
+        .mul(nearFade)
+        .mul(dilationCompensation!);
     } else {
       vAmplitude2DVal = aAmplitude.mul(nearFade);
     }

@@ -185,7 +185,7 @@ vec4 nodeVar94;
 void main() {
 
 	// transforms
-	
+
 
 	// flow
 	// code

@@ -16,8 +16,6 @@ import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import { LineMaterial } from '../../../../../rendering/materials/line/material-glsl';
 import { LineTSLMaterial } from '../../../../../rendering/materials/line/material-tsl';
-import { LINE_CHORD_SCALE } from '../../../../../rendering/materials/line/math';
-import { POINT_CHORD_SCALE } from '../../../../../rendering/materials/point/math';
 import { getCompleteBlendingState } from '../../../../../rendering/blending-state';
 import type { BlendingMode } from '../../../../../rendering/material-manager';
 
@@ -119,13 +117,12 @@ describe('LineMaterial.applyBlendingMode (GLSL)', () => {
   it('line fragment shader contains the volumetric emission–absorption branch', () => {
     // Shader-text pins for the LUXAR_VOLUMETRIC output branch — a
     // pure-TS state test can't guard the emitted GLSL (the blending
-    // campaign's mutation lesson). τ = κ·density·chord (the transverse
-    // ribbon through-thickness), physical absorption alpha, and the
-    // color-discard bypass (a black line still absorbs) are each
-    // distinct generated code. Mirrors the point twin.
+    // campaign's mutation lesson). τ = κ × the ray mass, physical absorption
+    // alpha, and the color-discard bypass (a black line still absorbs) are
+    // each distinct generated code. Mirrors the point twin.
     const mat = new LineMaterial();
     expect(mat.fragmentShader).toContain('#if defined(LUXAR_VOLUMETRIC)');
-    expect(mat.fragmentShader).toContain('float tau = uAbsorption * alpha * vWidthAtT *');
+    expect(mat.fragmentShader).toContain('float tau = uAbsorption * alpha;');
     expect(mat.fragmentShader).toContain('float volAlpha = 1.0 - exp(-tau);');
     expect(mat.fragmentShader).toContain('tau < 1e-4) discard');
     expect(mat.fragmentShader).toContain('fragColor = vec4(gammaColor * alpha * screen, volAlpha)');
@@ -150,15 +147,18 @@ describe('LineMaterial.applyBlendingMode (GLSL)', () => {
     );
   });
 
-  it('LINE_CHORD_SCALE equals POINT_CHORD_SCALE (the κ-scale alignment contract, executable)', () => {
-    // Both math.ts files derive √(π/ln 100) independently (isotropic
-    // ball chord ∝ radius vs transverse ribbon chord ∝ width) and their
-    // comments declare the values identical — which is what makes the
-    // shared κ slider mean the same optical depth per unit size across
-    // geometry types. Retuning one constant without the other would
-    // silently de-calibrate κ; this pin makes the contract executable.
-    expect(LINE_CHORD_SCALE).toBe(POINT_CHORD_SCALE);
-    expect(LINE_CHORD_SCALE).toBeCloseTo(Math.sqrt(Math.PI / Math.log(100.0)), 15);
+  it('volumetric tau is kappa x the ray mass, with NO world-thickness factor', () => {
+    // The κ-scale alignment contract, executable. τ must be built from the
+    // SAME ray mass the additive branch emits — a line's opacity is a peak
+    // screen alpha (already an integrated quantity), so multiplying by a
+    // world thickness (the old `* vWidthAtT * LINE_CHORD_SCALE`) read it as a
+    // volume density in this one mode and as a peak alpha in the other five.
+    // That made a Lines node and its lifted-gsplat twin disagree by exactly
+    // one path length. Re-introducing any size factor here silently
+    // de-calibrates κ across geometry types.
+    const src = new LineMaterial().fragmentShader;
+    expect(src).toContain('float tau = uAbsorption * alpha;');
+    expect(src).not.toMatch(/tau\s*=[^;]*vWidthAtT/);
   });
 
   it('non-volumetric fragment folds vAlpha into the contribution (alpha active in EVERY mode)', () => {

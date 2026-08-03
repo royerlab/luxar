@@ -10,7 +10,6 @@ import { getEffectiveAttrs } from '../../data/attrs-composer';
 import type { BlendingMode } from '../../types/blending';
 import type { NodeKind } from '../../types/format-contract';
 import { log, Modules } from '../../utils/log';
-import { absorptionBoundsForNode } from './absorption-range';
 // Pure display-window ↔ shader-uniform math now lives in the rendering layer
 // (`rendering/display-range`) so `rendering/` modules can import it without
 // violating the module layer order. Imported for this module's own internal
@@ -201,20 +200,6 @@ export interface LayerInfo {
   opacity: number;
   /** Absorption coefficient κ (≥ 0; only meaningful in volumetric mode) */
   absorption: number;
-  /**
-   * Upper κ bound for this layer's Absorption slider, derived from the
-   * geometry thickness recorded in the subtree's zarr metadata — κ's useful
-   * magnitude goes as 1/thickness, so the track has to be per-layer. See
-   * `absorption-range.ts`.
-   */
-  absorptionMax: number;
-  /**
-   * Smallest per-leaf κ bound in the subtree (the THICKEST descendant's
-   * opaque point) — anchors the slider FLOOR, so a mixed-thickness group
-   * can still reach near-transparency for its fattest geometry. Equals
-   * `absorptionMax` for single-thickness or stat-less layers.
-   */
-  absorptionMinBound: number;
   /** Current display-range minimum (maps to intensity+offset in shader) */
   displayMin: number;
   /** Current display-range maximum */
@@ -439,10 +424,6 @@ export class LayerStateManager {
         const lodGroupChildCount = kind === 'lod' ? (node.children?.length ?? 0) : undefined;
         const partCount = kind === 'partition' ? (node.children?.length ?? 0) : undefined;
 
-        // Per-layer κ track bounds from the subtree's recorded thickness —
-        // one walk yields both ends (thinnest → max, thickest → floor anchor).
-        const absorptionBounds = absorptionBoundsForNode(node);
-
         // Partition-of-LOD discovery. A kind=partition layer that wraps
         // kind=lod descendants gets a broadcast dropdown over every
         // nested lod_group. The walk stops at the first lod_group it
@@ -485,8 +466,6 @@ export class LayerStateManager {
           // each layer's live values per ancestry node, so a composed
           // init would multiply ancestor κ in twice.
           absorption: (node.attrs.absorption as number) ?? 1.0,
-          absorptionMax: absorptionBounds.max,
-          absorptionMinBound: absorptionBounds.minBound,
           displayMin,
           displayMax,
           dataMin,

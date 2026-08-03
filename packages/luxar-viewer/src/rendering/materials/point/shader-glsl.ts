@@ -29,7 +29,6 @@ import {
   VOLUMETRIC_SERIES_TAU_THRESHOLD,
   VOLUMETRIC_TAU_EPS,
 } from '../_shared/volumetric';
-import { POINT_CHORD_SCALE } from './math';
 import { pointWebGPUFactory, buildPointTSLNodesFromUniforms } from './shader-tsl';
 
 export const POINT_VERTEX_SHADER = /* glsl */ `
@@ -300,11 +299,21 @@ export const POINT_FRAGMENT_SHADER = /* glsl */ `
       // uHasElementAlpha: the identity 1.0 written for RGB data must
       // NOT map to w ≈ 6.24.
       alpha *= mix(1.0, -log(1.0 - min(vAlpha, ${ALPHA_CLAMP})), uHasElementAlpha);
-      // 'volumetric' optical depth: the isotropic special case of the
-      // gsplat ray integral (VOLUMETRIC_BLENDING_SPEC.md §3.1) —
-      // rayMass = density × through-thickness of the Gaussian-profile
-      // ball (R·√(π/K), see materials/point/math.ts).
-      float tau = uAbsorption * alpha * vRadius * ${POINT_CHORD_SCALE};
+      // 'volumetric' optical depth: kappa x the SAME ray mass every other
+      // mode emits (VOLUMETRIC_BLENDING_SPEC.md §3.1). The alpha above is
+      // already the complete ray mass — a point's opacity is a peak SCREEN
+      // ALPHA, i.e. an integrated quantity, and falloff is its transverse
+      // profile. It used to be multiplied by a world thickness
+      // (R * sqrt(pi/K)) as though opacity were a volume density still
+      // awaiting integration; that read it as a density in this one mode and
+      // as a peak alpha in the other five, so a Points node and its
+      // lift_points_to_gsplats twin disagreed by exactly that path length
+      // (24x at R=0.05). Gsplats have always used this rule
+      // (tau = kappa * opacity * intensity, their additive ray mass); points
+      // and lines now match it, which is what makes tau a functional of the
+      // one quantity the lift and the substitutive merge already conserve
+      // across LOD levels.
+      float tau = uAbsorption * alpha;
       // Discard only when color AND τ are both negligible — a black
       // point still absorbs (a pure-ink occluder keeps its optical depth).
       if (max(adjusted.r, max(adjusted.g, adjusted.b)) < 1e-4 && tau < 1e-4) discard;
