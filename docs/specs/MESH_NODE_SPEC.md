@@ -135,6 +135,16 @@ reason `Lines.segments` does: the loader reads it as raw chunked zarr and does n
 so dedup would silently drop geometry for a byte-identical sibling, and LUT encoding of grid-snapped
 values would decode as garbage topology.
 
+**Winding convention:** faces are wound counter-clockwise as seen with the mesh's authored spatial
+triple in ascending index order (front-facing under `FrontSide`, §6.1). For a 3D mesh that frame is
+trivially `[0,1,2]`; for an nD mesh it is `sorted(normal_dims)` when normals are present — there is no
+other signal for which three axes the author wound against, and no winding can be counter-clockwise
+under *every* 3D projection of an nD mesh (orientation under a different axis triple is per-triangle
+data-dependent). The viewer restores front-facing winding only when the displayed *set* equals that
+frame and its order is an odd permutation of it (§5.4/§7); for any other displayed triple — or an nD
+mesh with no stored normals — `double_sided: false` falls back to `DoubleSide` for the epoch (§5.4).
+The frame depends only on the *set* of `normal_dims`, not its order (§3.4).
+
 **Naming.** `faces` (not `triangles`, not `indices`) — it parallels `segments` as the topology array,
 reads correctly in the mesh domain, and leaves `indices` free for its existing meaning in the Lines
 `line_type='indexed'` authoring API.
@@ -182,8 +192,8 @@ unilaterally diverging; the gap is worth a separate four-type fix, and is noted 
 ### 3.4 Normals are 3D, positions are nD
 
 Positions live in nD like every other geometry type. Normals are a **display-space** quantity: they are
-only meaningful for the three displayed dimensions, and re-deriving them per slice change is the
-correct behaviour when `displayDims` rotates.
+only meaningful for the three displayed dimensions, so re-deriving them when `displayDims` rotates (not
+on a plain slice move) is the correct behaviour — the `displayDims`-change rebuild path in §7.
 
 Therefore `normals` is stored as `(V, 3)`, accompanied by a **required companion attr** recording which
 three dimension indices those components correspond to:
@@ -222,10 +232,14 @@ convention (fail-fast, before any zarr group is created):
   `F >= 1`. Mirrors the `line_type='indexed'` index gate at `geometry_writers/lines.py:134-170`, which
   is the closest precedent and already encodes each of these traps.
 - `validate_normals_for_writing(normals, n_vertices)` — shape `(V, 3)`, finite. Zero-length normals are
-  **warned**, not rejected (degenerate triangles legitimately produce them), and are renormalized to the
-  flat face normal at render time.
+  **warned**, not rejected (degenerate triangles legitimately produce them). They cannot be repaired at
+  write or upload time — an indexed shared vertex has no unique face normal to substitute — so the
+  stored-normal fragment variant (§6.2) must guard for them: when the interpolated normal is near-zero
+  (`dot(N, N) < ε` before normalization), it falls back to the screen-space-derivative normal rather
+  than normalizing a zero vector into NaN shading.
 - `normal_dims` (§3.4) — exactly 3 entries, integers, distinct, each `0 <= i < ndim`. Required when
-  `normals` is supplied; rejected when it is not.
+  `normals` is supplied; rejected when it is not. It is an explicit `add_mesh` parameter (§4) — as
+  writer-reserved metadata (§3.3) it cannot ride in through `**attrs`.
 
 **Raise `ValidationError`, not `ValueError`.** Note the precedent cited above is split: the shared
 `validate_*_for_writing` family in `validation/base.py` raises `ValidationError(message, hint)` — a
@@ -262,6 +276,7 @@ scene.add_mesh(
     vertices: NDArray[np.float32],          # (V, D)
     faces: NDArray[np.uint32],              # (F, 3)
     normals: NDArray[np.float32] | None = None,
+    normal_dims: Sequence[int] | None = None,   # required iff normals is given — §3.4/§3.5
     colors: NDArray | Sequence[float] | None = None,
     scalars: NDArray[np.float32] | float | None = None,
     *,
@@ -360,7 +375,7 @@ slightly jagged edge; for a coarse mesh with a thin tolerance it can drop whole 
 visual limitation and must be documented in the user guide, not glossed.
 
 It is the right v1 trade: it costs **~140 LOC of new kernel** instead of ~1500, requires no
-re-triangulation, no per-frame index rebuild, and no attribute interpolation machinery.
+re-triangulation, no new vertices, and no attribute interpolation machinery.
 
 ### 5.4 Kernel
 
@@ -386,17 +401,35 @@ pub fn compact_visible_faces(
 ) -> u32;
 ```
 
-**No vertex compaction.** Only the *index buffer* is rebuilt; the vertex attribute buffers are uploaded
-once, in full, and left alone. `drawElements` never fetches an unreferenced vertex, so culled vertices
-cost nothing to draw, and the mesh is resident in full anyway (§7). This deliberately avoids:
+**No vertex compaction.** On a per-*slice* change (`displayDims` unchanged) only the *index buffer* is
+rebuilt; the vertex attribute buffers are uploaded once, in full, and left alone. The one exception is a
+`displayDims` change: because `position` and `normal` are both `displayDims`-derived (§6.1, §3.4), it
+re-extracts and re-uploads the `position` buffer and re-decides the `normal` attribute (§7). This is
+re-extraction of the display-space projection, **not** compaction — compaction is still never done.
+`drawElements` never fetches an unreferenced vertex, so culled vertices cost nothing to draw, and the
+mesh is resident in full anyway (§7). This deliberately avoids:
 
 - `compact_by_mask` (`wasm/rust/src/projection.rs:122`), which is **`&[f32]`-only** and could not
   compact the `uint8`/`uint16` colors or `float16`/`uint8` scalars §3.2 permits without a widening pass;
 - a `vertex_remap` array and the index remapping that goes with it;
-- re-uploading every attribute buffer on each slice change (the index buffer alone is re-uploaded).
+- re-uploading every attribute buffer on each slice change (on a slice change the index buffer alone is
+  re-uploaded; a `displayDims` change additionally re-uploads `position`/`normal`, §7).
 
 The only cost is VRAM for vertices that are currently invisible — bounded by the mesh size, which is
 already the resident working set.
+
+**Winding.** `compact_visible_faces` preserves the authored order, so it is winding-agnostic. Parity is
+decidable only against the authored winding frame (§3.2): when the displayed set equals that frame and
+the `displayDims` (x,y,z) column order is an **odd permutation** of it — a reflection of display
+space — a post-pass swaps two of each triangle's three indices to restore front-facing winding. This is
+keyed to the *current* `displayDims` parity, so it runs on **every** index build in an odd-parity epoch
+(initial load, slice move, and `displayDims` change alike), not only at the moment `displayDims`
+changes. Equivalently, render the opposite material `side` for the duration of the odd-parity epoch — a
+persistent form that needs no per-rebuild post-pass. When the displayed set is a **different triple**
+than the frame (e.g. `[0,1,2]` → `[1,2,3]`), or an nD mesh declares no frame (no stored normals),
+projected orientation varies per triangle and no index post-pass can fix it — the viewer renders
+`DoubleSide` for that epoch regardless of `double_sided: false`, and logs a one-time notice naming the
+node.
 
 `mesh_vertex_visibility_mask` calls `validate_ndim` like its siblings and therefore panics above 16D;
 `pickBackend(ctx, ndim)` (`workers/data-worker/state.ts:60`) returns `ctx.tsFallback` — the **whole
@@ -407,12 +440,19 @@ implemented by **both** backends, or the TS module will not structurally satisfy
 ### 5.5 Fast path
 
 When `displayDims.length === ndim` (no hidden dimensions — the common 3D case), the mask is trivially
-all-ones and the whole cull is skipped: positions are extracted once via the existing
-`extract_3d_positions` and the index buffer is uploaded verbatim. Only a `displayDims` change or a
-non-3D dataset triggers the cull path.
+all-ones and the *cull* is skipped: with `displayDims` unchanged, positions are extracted once via the
+existing `extract_3d_positions` and the index buffer is uploaded verbatim (no compaction) — after the §5.4 parity
+post-pass, which reverses the winding if the initial `displayDims` is odd-parity (nothing restricts the
+opening/restored view to ascending order). Skipping the cull is **not**
+the same as doing no work, though: a `displayDims` change on this fast path still re-extracts positions
+via `extract_3d_positions`, re-decides the `normal` attribute per §3.4, recomputes bounds, and — for an
+odd-parity permutation — reverses the index winding (§7); only the visibility-mask recompute is elided.
+A non-3D dataset triggers the full cull path.
 
-Combined with §5.4's no-compaction rule, this means a plain 3D mesh uploads every buffer exactly once
-and does **zero** per-slice work — `updateView` returns early.
+Combined with §5.4's no-compaction rule, this means a plain 3D mesh uploads every buffer once per
+`displayDims` epoch (once until `displayDims` changes), and only a pure slicePosition/tolerance move
+with unchanged `displayDims` is truly zero-work — `updateView` returns early. A `displayDims` change is
+never zero-work, even here (it rebuilds `position`/`normal`).
 
 ---
 
@@ -428,7 +468,7 @@ and does **zero** per-slice work — `updateView` returns early.
 | `normal` | 3 | stored normals when valid (§3.4), else omitted |
 | `color` | 3 or 4 | `colors` — keep the native dtype (§6.1.1) |
 | `aScalar` | 1 | `scalars`, when `has_scalars` |
-| index | — | `compact_visible_faces` output — **the only buffer rewritten per slice** (§5.4) |
+| index | — | `compact_visible_faces` output — **the only buffer rewritten on a slice change** (§5.4); `position` (and `normal`) are additionally rewritten on a `displayDims` change (§7, §3.4) |
 
 Drawn as `THREE.Mesh` with `side: DoubleSide` when `double_sided`, else `FrontSide`.
 
@@ -450,8 +490,9 @@ model is deliberately minimal and light-free:
 - **Normal source:** the `normal` attribute when present and valid; otherwise a flat normal derived in
   the fragment shader from screen-space derivatives of the view position
   (`normalize(cross(dFdx(vViewPos), dFdy(vViewPos)))`). The derivative fallback means a mesh with no
-  stored normals still shades correctly, and it is what makes §3.4's "recompute on non-default
-  displayDims" cheap.
+  stored normals still shades correctly, and it is what makes §7's `displayDims`-change rebuild cheap:
+  when `normal_dims` no longer matches `displayDims`, the mesh drops the stored normals and shades from
+  derivatives.
 - **Shade term:** a camera-anchored headlight with a wrap term,
   `shade = mix(uAmbient, 1.0, pow(saturate(dot(N, V) * 0.5 + 0.5), uShadeExponent))`. View-anchored, so
   it needs no light in the scene graph and no scene-graph API change. `uAmbient` and `uShadeExponent`
@@ -605,8 +646,8 @@ float32 24-bit mantissa (the readback recombines the halves); vertex count `V` u
 `rendering/picking/README.md` for the rationale). The pick readback also packs
 `nodeId * VOTE_KEY_STRIDE + elementId` for brightness-weighted voting, whose alias-free stride is `2^27`
 (`rendering/picking/picking-system/pick-render.ts`); the per-vertex id source stays comfortably under it
-because §7 loads a mesh whole at ≤ a few million vertices, so no mesh vertex-count cap is needed for the
-pick to stay exact.
+because §7 loads a mesh whole at ≤ a few million triangles (vertex counts of the same order), so no mesh
+vertex-count cap is needed for the pick to stay exact.
 
 **Accepted v1 limitation.** `vElementId` is a `flat` varying, so within a triangle it resolves to that
 triangle's **provoking vertex**, not the cursor's barycentric-nearest vertex. Hovering a triangle
@@ -633,8 +674,37 @@ The loader still implements the standard `MeshDataLoader` interface (`loadMesh` 
 `dispose` + the optional monitor surface), so a spatial-index implementation can be swapped in behind
 it later with no caller change.
 
-`updateView` recomputes the visibility mask and index buffer (§5) and returns; on the fast path (§5.5)
-it is a no-op returning the cached data.
+`updateView` distinguishes two kinds of view change:
+
+- **slicePosition/tolerance change only** (`displayDims` unchanged): recompute the visibility mask and
+  index buffer (§5) and return (the index build still applies the current-parity winding post-pass §5.4,
+  so an odd-parity epoch stays correct across slice moves); on the fast path (§5.5) it is a no-op
+  returning the cached data.
+- **`displayDims` change**: because both `position` and `normal` are `displayDims`-derived (§6.1, §3.4),
+  the rebuild runs these steps, in order:
+  1. re-run `extract_3d_positions(vertices, displayDims)` and re-upload the `position` buffer;
+  2. **recompute `geometry.boundingBox`/`boundingSphere`** — re-uploading `position` does *not*
+     invalidate Three.js's cached bounds, which `frustumCulled` and the raycaster/picking broad phase
+     consult, and the display-space AABB (§2.2) changes under a permutation. (A defect this path
+     introduces; the per-slice path never touched bounds.)
+  3. re-decide the `normal` attribute per §3.4 — attach stored normals iff `normal_dims === displayDims`,
+     else omit so the shader's flat-normal fallback (§6.2) takes over. Stored↔flat is a **compile-time
+     shader variant** (§6.4's separate `mesh.fragment` / `mesh-flat-normal.fragment`), not mere attribute
+     presence — a declared-but-unbound `normal` reads `(0,0,0,1)`, not "absent" — so flipping the choice
+     must switch the material variant through each backend's existing variant path (§6.4), not by
+     attaching/detaching the buffer alone;
+  4. recompute the mask and index buffer; when the displayed set equals the winding frame (§3.2), the
+     index build applies the current-`displayDims` winding post-pass (§5.4) — an odd-parity selection
+     reflects display space, so without it a `double_sided: false` mesh (§6.1, `FrontSide`) renders
+     **inside-out** (an open surface vanishes). When the new `displayDims` is a **different triple**
+     than the frame, the material instead falls back to `DoubleSide` for the epoch (§5.4) — projected
+     orientation is per-triangle data-dependent there and no post-pass can correct it. The §6.2
+     derivative-normal fallback is unaffected either way — it always faces the camera regardless of
+     winding.
+
+  This holds **even on the §5.5 fast path**: a 3D axis permutation leaves the mask all-ones but still
+  requires `position`/`normal` re-derivation, bounds recompute, and (for an odd permutation) winding
+  reversal.
 
 Files:
 
@@ -777,6 +847,17 @@ A reviewer should treat a `| 'mesh'` appearing in any of those five as a defect.
 - [ ] Rust: `mesh_vertex_visibility_mask` / `compact_visible_faces` unit tests incl. the non-finite rule
 - [ ] TS unit: loader, geometry assembly, cull correctness, colormap fail-closed guard,
       Rust↔TS kernel parity
+- [ ] TS unit: on a **`double_sided: false`** mesh, `updateView` for a `displayDims` change `[0,1,2]`→`[0,2,1]`
+      re-extracts positions, re-decides the `normal` attribute, recomputes bounds, and reverses the index
+      winding so front faces stay visible (goes red without the reversal precisely because `FrontSide`
+      culls the flipped triangles) — rebuilds `position`/`normal`/index, not just the index (§7).
+      Separately, on a **`double_sided: false`, ≥4D** mesh carrying normals (so `sorted(normal_dims)`
+      declares the winding frame, §3.2) displayed with an **odd-parity** ordering of that frame, a pure
+      slicePosition move (unchanged `displayDims`) rebuilds the index only BUT still preserves
+      front-facing winding (front faces stay visible), proving the winding post-pass persists across
+      slice moves (§5.4), not just the displayDims-change event. And on the same mesh, a `displayDims`
+      change to a **different axis triple** than the frame falls back to `DoubleSide` for the epoch —
+      both orientations render (§5.4/§7)
 - [ ] Codegen snapshots: 6 new (§6.4)
 - [ ] Fixture: `tests/fixtures/generate_test_data.py` gains a mesh fixture (auto-picked up by
       `vitest.config.ts` globalSetup)
