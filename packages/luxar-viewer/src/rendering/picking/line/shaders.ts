@@ -206,7 +206,7 @@ export const LINE_PICK_VERTEX_SHADER = /* glsl */ `
       float minPixelWidth = 1.5;
       float maxPW = max(uMaxLinePixelWidth, minPixelWidth + 1.0);
       // Visual-shader parity: discard pathological near-camera segments
-      // (both endpoints inside near-cull margin AND rawPixelWidth blows
+      // (both endpoints inside near-cull margin AND the pixel width blows
       // past clamp by 2×). Without this, picking still rasterizes the
       // half-viewport quad the visual pass already culled.
       // Segment-constant, not per-quad-vertex: the per-vertex

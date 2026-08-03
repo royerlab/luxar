@@ -369,7 +369,7 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
       // still rasterizes pixel-by-pixel. The pixel-width clamp + fade
       // keeps the visible footprint bounded but doesn't avoid the
       // shading cost — discard the segment entirely when both endpoints
-      // are within the near cull margin AND rawPixelWidth blows past
+      // are within the near cull margin AND the pixel width blows past
       // the clamp by 2× (a clear pathological case, not a normal
       // close-up).
       // PERSPECTIVE ONLY: under ortho rawPixelWidth is depth-independent
