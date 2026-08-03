@@ -1009,8 +1009,8 @@ describe('DataLoadingMonitor', () => {
       expect(state.root).toBeDefined();
       expect(state.root?.path).toBe('/');
       expect(state.totalNodes).toBe(4); // Scene + points1 + group1 + points2
-      expect(state.pointsNodes).toBe(2); // points1 + points2
-      expect(state.totalPoints).toBe(1500); // 1000 + 500
+      expect(state.nodesByType.points).toBe(2); // points1 + points2
+      expect(state.totalByType.points).toBe(1500); // 1000 + 500
     });
 
     it('does NOT sum substitutive kind=lod levels — counts the finest only', () => {
@@ -1060,9 +1060,9 @@ describe('DataLoadingMonitor', () => {
       const state = monitor.getSceneGraph();
 
       // Finest level (20_000), NOT 1_000 + 4_000 + 20_000 = 25_000.
-      expect(state.totalSplats).toBe(20_000);
+      expect(state.totalByType.gsplats).toBe(20_000);
       // Structural counts still reflect the real tree (all 3 levels).
-      expect(state.gsplatsNodes).toBe(3);
+      expect(state.nodesByType.gsplats).toBe(3);
       expect(state.totalNodes).toBe(5); // Scene + lod group + 3 levels
     });
 
@@ -1101,7 +1101,7 @@ describe('DataLoadingMonitor', () => {
       monitor.setSceneGraph(sceneGraph);
       const state = monitor.getSceneGraph();
 
-      expect(state.totalPoints).toBe(1000); // 600 + 400 (disjoint parts)
+      expect(state.totalByType.points).toBe(1000); // 600 + 400 (disjoint parts)
     });
 
     it('should track expanded nodes', () => {
@@ -1156,8 +1156,8 @@ describe('DataLoadingMonitor', () => {
       monitor.setSceneGraph(sceneGraph);
       const state = monitor.getSceneGraph();
 
-      expect(state.linesNodes).toBe(2);
-      expect(state.totalSegments).toBe(300);
+      expect(state.nodesByType.lines).toBe(2);
+      expect(state.totalByType.lines).toBe(300);
     });
 
     it('should track visible points separately from total points', () => {
@@ -1181,15 +1181,15 @@ describe('DataLoadingMonitor', () => {
 
       // Initially visiblePoints equals totalPoints
       let state = monitor.getSceneGraph();
-      expect(state.totalPoints).toBe(200000);
-      expect(state.visiblePoints).toBe(200000);
+      expect(state.totalByType.points).toBe(200000);
+      expect(state.visibleByType.points).toBe(200000);
 
       // Update visible points (simulating nD slicing / progressive LOD)
-      monitor.updateVisiblePoints(50000);
+      monitor.updateVisibleCount('points', 50000);
 
       state = monitor.getSceneGraph();
-      expect(state.totalPoints).toBe(200000); // Total unchanged
-      expect(state.visiblePoints).toBe(50000); // Only visible count updated
+      expect(state.totalByType.points).toBe(200000); // Total unchanged
+      expect(state.visibleByType.points).toBe(50000); // Only visible count updated
 
       // getGlobalStats should source points from the scene graph, so a
       // progressive points loader (no LoaderMonitor surface) still reports.
@@ -1354,7 +1354,7 @@ describe('DataLoadingMonitor', () => {
       monitor.setSceneGraph(sceneGraph);
 
       // Update with combined visible count
-      monitor.updateVisiblePoints(200);
+      monitor.updateVisibleCount('points', 200);
 
       const stats = monitor.getGlobalStats();
       expect(stats.datasetSize).toBe(1000); // 500 + 500
@@ -1382,15 +1382,15 @@ describe('DataLoadingMonitor', () => {
 
       // Initially visibleSegments equals totalSegments
       let state = monitor.getSceneGraph();
-      expect(state.totalSegments).toBe(1000);
-      expect(state.visibleSegments).toBe(1000);
+      expect(state.totalByType.lines).toBe(1000);
+      expect(state.visibleByType.lines).toBe(1000);
 
       // Update visible segments (simulating nD slicing that hides some segments)
-      monitor.updateVisibleSegments(150);
+      monitor.updateVisibleCount('lines', 150);
 
       state = monitor.getSceneGraph();
-      expect(state.totalSegments).toBe(1000); // Total unchanged
-      expect(state.visibleSegments).toBe(150); // Only visible count updated
+      expect(state.totalByType.lines).toBe(1000); // Total unchanged
+      expect(state.visibleByType.lines).toBe(150); // Only visible count updated
 
       // getGlobalStats should return the tracked visible count
       const stats = monitor.getGlobalStats();
@@ -1425,7 +1425,7 @@ describe('DataLoadingMonitor', () => {
       monitor.setSceneGraph(sceneGraph);
 
       // Update with combined visible count
-      monitor.updateVisibleSegments(200);
+      monitor.updateVisibleCount('lines', 200);
 
       const stats = monitor.getGlobalStats();
       expect(stats.datasetSegments).toBe(1000); // 500 + 500
@@ -1453,15 +1453,15 @@ describe('DataLoadingMonitor', () => {
 
       // Initially visibleSplats equals totalSplats
       let state = monitor.getSceneGraph();
-      expect(state.totalSplats).toBe(5000);
-      expect(state.visibleSplats).toBe(5000);
+      expect(state.totalByType.gsplats).toBe(5000);
+      expect(state.visibleByType.gsplats).toBe(5000);
 
       // Update visible splats (simulating nD slicing that hides some splats)
-      monitor.updateVisibleSplats(1200);
+      monitor.updateVisibleCount('gsplats', 1200);
 
       state = monitor.getSceneGraph();
-      expect(state.totalSplats).toBe(5000); // Total unchanged
-      expect(state.visibleSplats).toBe(1200); // Only visible count updated
+      expect(state.totalByType.gsplats).toBe(5000); // Total unchanged
+      expect(state.visibleByType.gsplats).toBe(1200); // Only visible count updated
 
       // getGlobalStats should return the tracked visible count
       const stats = monitor.getGlobalStats();
@@ -1496,7 +1496,7 @@ describe('DataLoadingMonitor', () => {
       monitor.setSceneGraph(sceneGraph);
 
       // Update with combined visible count
-      monitor.updateVisibleSplats(1000);
+      monitor.updateVisibleCount('gsplats', 1000);
 
       const stats = monitor.getGlobalStats();
       expect(stats.datasetSplats).toBe(5000); // 3000 + 2000

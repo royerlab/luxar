@@ -11,14 +11,10 @@ import type { SceneLoaderMonitorPort } from '../../../../../data/scene-loader-mo
 
 function makeMonitor() {
   return {
-    updateVisiblePoints: vi.fn(),
-    updateVisibleSegments: vi.fn(),
-    updateVisibleSplats: vi.fn(),
+    updateVisibleCount: vi.fn(),
     updateVisibleCountsByPath: vi.fn(),
   } as unknown as SceneLoaderMonitorPort & {
-    updateVisiblePoints: ReturnType<typeof vi.fn>;
-    updateVisibleSegments: ReturnType<typeof vi.fn>;
-    updateVisibleSplats: ReturnType<typeof vi.fn>;
+    updateVisibleCount: ReturnType<typeof vi.fn>;
     updateVisibleCountsByPath: ReturnType<typeof vi.fn>;
   };
 }
@@ -34,7 +30,7 @@ describe('updateVisibleCountsInMonitor', () => {
   it('no-ops when rootGroup or monitor is null', () => {
     const monitor = makeMonitor();
     updateVisibleCountsInMonitor(null, monitor);
-    expect(monitor.updateVisiblePoints).not.toHaveBeenCalled();
+    expect(monitor.updateVisibleCount).not.toHaveBeenCalled();
 
     const group = new THREE.Group();
     updateVisibleCountsInMonitor(group, null);
@@ -52,9 +48,9 @@ describe('updateVisibleCountsInMonitor', () => {
 
     updateVisibleCountsInMonitor(root, monitor);
 
-    expect(monitor.updateVisiblePoints).toHaveBeenCalledWith(200);
-    expect(monitor.updateVisibleSegments).toHaveBeenCalledWith(30);
-    expect(monitor.updateVisibleSplats).toHaveBeenCalledWith(1000);
+    expect(monitor.updateVisibleCount).toHaveBeenCalledWith('points', 200);
+    expect(monitor.updateVisibleCount).toHaveBeenCalledWith('lines', 30);
+    expect(monitor.updateVisibleCount).toHaveBeenCalledWith('gsplats', 1000);
   });
 
   it('treats missing visible-count userData as zero', () => {
@@ -65,9 +61,9 @@ describe('updateVisibleCountsInMonitor', () => {
 
     updateVisibleCountsInMonitor(root, monitor);
 
-    expect(monitor.updateVisiblePoints).toHaveBeenCalledWith(0);
-    expect(monitor.updateVisibleSegments).toHaveBeenCalledWith(0);
-    expect(monitor.updateVisibleSplats).toHaveBeenCalledWith(0);
+    expect(monitor.updateVisibleCount).toHaveBeenCalledWith('points', 0);
+    expect(monitor.updateVisibleCount).toHaveBeenCalledWith('lines', 0);
+    expect(monitor.updateVisibleCount).toHaveBeenCalledWith('gsplats', 0);
   });
 
   it('excludes hidden meshes (inactive substitutive-LOD levels)', () => {
@@ -91,7 +87,7 @@ describe('updateVisibleCountsInMonitor', () => {
     updateVisibleCountsInMonitor(root, monitor);
 
     // Only the visible level's 5000 — NOT 5000 + 1000 + 2000 = 8000.
-    expect(monitor.updateVisibleSplats).toHaveBeenCalledWith(5000);
+    expect(monitor.updateVisibleCount).toHaveBeenCalledWith('gsplats', 5000);
   });
 
   it('prunes whole hidden subtrees (toggled-off layer group)', () => {
@@ -106,7 +102,7 @@ describe('updateVisibleCountsInMonitor', () => {
 
     updateVisibleCountsInMonitor(root, monitor);
 
-    expect(monitor.updateVisiblePoints).toHaveBeenCalledWith(42);
+    expect(monitor.updateVisibleCount).toHaveBeenCalledWith('points', 42);
   });
 
   it('pushes a per-path breakdown keyed by mesh name (scene-graph path)', () => {
@@ -129,6 +125,6 @@ describe('updateVisibleCountsInMonitor', () => {
     expect(map.get('/splats')).toBe(1000);
     expect(map.has('/hidden')).toBe(false);
     expect(map.size).toBe(2);
-    expect(monitor.updateVisiblePoints).toHaveBeenCalledWith(125);
+    expect(monitor.updateVisibleCount).toHaveBeenCalledWith('points', 125);
   });
 });

@@ -481,15 +481,9 @@ describe('renderSceneGraphTree — kind badges', () => {
     return {
       root,
       totalNodes: 1,
-      pointsNodes: 0,
-      linesNodes: 0,
-      gsplatsNodes: 1,
-      totalPoints: 0,
-      visiblePoints: 0,
-      totalSegments: 0,
-      visibleSegments: 0,
-      totalSplats: 0,
-      visibleSplats: 0,
+      nodesByType: { points: 0, lines: 0, gsplats: 1 },
+      totalByType: { points: 0, lines: 0, gsplats: 0 },
+      visibleByType: { points: 0, lines: 0, gsplats: 0 },
     };
   }
 
