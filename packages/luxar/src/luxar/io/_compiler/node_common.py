@@ -66,6 +66,30 @@ GSPLATS_RESERVED_ATTRS: FrozenSet[str] = frozenset(
         "position_bounds",
     }
 )
+# Note this set reserves ``has_image_labels`` while the three above do not, even
+# though all four writers stamp it. No clobber is possible either way —
+# ``validate_render_attrs`` rejects the key as *unknown* when it appears in no
+# set at all — so the omission costs only the accurate "reserved" message rather
+# than correctness. Mesh covers every flag it stamps from the start; aligning the
+# three siblings is a separate sweep (MESH_NODE_SPEC.md §9) so it isn't buried
+# in the mesh diff.
+MESH_RESERVED_ATTRS: FrozenSet[str] = frozenset(
+    {
+        "type",
+        "n_vertices",
+        "n_faces",
+        "ndim",
+        "has_normals",
+        "normal_dims",
+        "has_colors",
+        "has_scalars",
+        "has_labels",
+        "has_image_labels",
+        "shading",
+        "double_sided",
+        "position_bounds",
+    }
+)
 
 # The render/appearance attrs whose VALUES are validated below, and the ONLY
 # keys advertised in the "Unknown node attribute" hint. A user typo like

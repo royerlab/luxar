@@ -55,6 +55,7 @@ CategoryList = Optional[List[str]]  # Category labels for categorical dimensions
 PointsMetadata = Dict[str, Any]
 LinesMetadata = Dict[str, Any]
 GSplatsMetadata = Dict[str, Any]
+MeshMetadata = Dict[str, Any]
 SceneMetadata = Dict[str, Any]
 
 # Color value type aliases

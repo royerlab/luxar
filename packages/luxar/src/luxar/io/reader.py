@@ -91,6 +91,24 @@ class LinesData(_DictCompatMixin):
 
 
 @dataclass(frozen=True)
+class MeshData(_DictCompatMixin):
+    """Structured result from get_mesh().
+
+    ``normal_dims`` is surfaced as its own field rather than left in ``metadata``
+    because it is not optional context — a normals array cannot be oriented
+    without it, so any consumer reading ``normals`` must read this too.
+    """
+
+    vertices: np.ndarray
+    faces: np.ndarray
+    normals: Optional[np.ndarray]
+    normal_dims: Optional[List[int]]
+    colors: Optional[np.ndarray]
+    scalars: Optional[np.ndarray]
+    metadata: Dict[str, Any]
+
+
+@dataclass(frozen=True)
 class GSplatsData(_DictCompatMixin):
     """Structured result from get_gsplats()."""
 
@@ -258,6 +276,12 @@ class LuxarScene:
                     "original_line_type",
                     child.attrs.get("line_type", "segments"),
                 )
+            elif node_type == "mesh":
+                info["n_vertices"] = child.attrs.get("n_vertices", 0)
+                info["n_faces"] = child.attrs.get("n_faces", 0)
+                info["ndim"] = child.attrs.get("ndim", 3)
+                info["has_normals"] = child.attrs.get("has_normals", False)
+                info["shading"] = child.attrs.get("shading", "flat")
             elif node_type == "group":
                 # Recursively collect children
                 self._collect_nodes(child, full_name, nodes)
@@ -275,6 +299,10 @@ class LuxarScene:
     def list_lines(self) -> List[str]:
         """Names of all lines nodes."""
         return [n["name"] for n in self.nodes if n["type"] == "lines"]
+
+    def list_meshes(self) -> List[str]:
+        """Names of all mesh nodes."""
+        return [n["name"] for n in self.nodes if n["type"] == "mesh"]
 
     def list_groups(self) -> List[str]:
         """Names of all group nodes."""
@@ -495,6 +523,69 @@ class LuxarScene:
             sharpness=sharpness,
             segments=segments,
             indices=segments,
+            metadata=metadata,
+        )
+
+    def get_mesh(self, name: str) -> MeshData:
+        """Load mesh node data with automatic decoding.
+
+        Args:
+            name: Name of the mesh node
+
+        Returns:
+            MeshData with fields: vertices, faces, normals, normal_dims, colors,
+            scalars, metadata. Supports dict-style access for backward
+            compatibility.
+
+        Raises:
+            KeyError: If node doesn't exist
+            ValueError: If node is not a mesh node, or is missing a required array
+        """
+        if not self.has_node(name):
+            raise KeyError(f"Mesh node not found: {name}")
+
+        group = self._root[name]
+        if group.attrs.get("type") != "mesh":
+            raise ValueError(f"Node '{name}' is not a mesh node")
+
+        vertices = self._decode_array(group, "vertices")
+        if vertices is None:
+            raise ValueError(f"Mesh node '{name}' missing required 'vertices' array")
+        faces = self._decode_array(group, "faces")
+        if faces is None:
+            raise ValueError(f"Mesh node '{name}' missing required 'faces' array")
+        # Normalize to (F, 3) so a consumer never has to guess the layout. The
+        # writer always emits (F, 3), but an externally produced store may store
+        # the flat form the write-side validator also accepts.
+        if faces.ndim == 1:
+            faces = faces.reshape(-1, 3)
+
+        normals = self._decode_array(group, "normals")
+        colors = self._decode_array(group, "colors")
+        scalars = self._decode_array(group, "scalars")
+
+        metadata = dict(group.attrs)
+
+        if "transform" in metadata:
+            metadata["transform"] = read_transform_from_zarr(metadata["transform"])
+
+        # Read normal_dims only when normals are actually present. A stray attr
+        # without the array would otherwise be handed on as if it oriented
+        # something.
+        raw_dims = metadata.get("normal_dims")
+        normal_dims = (
+            [int(d) for d in raw_dims]
+            if normals is not None and raw_dims is not None
+            else None
+        )
+
+        return MeshData(
+            vertices=vertices,
+            faces=faces,
+            normals=normals,
+            normal_dims=normal_dims,
+            colors=colors,
+            scalars=scalars,
             metadata=metadata,
         )
 

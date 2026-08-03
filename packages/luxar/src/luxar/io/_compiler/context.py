@@ -49,7 +49,7 @@ class GeometryWriteCtx:
     Carries the encoder/ordering configs + scene compressor the dataset
     serializers and ordering writers need, plus bound-method hooks for the
     orchestrator state a write must mutate: the scene-bounds accumulator, the
-    warn-once colormap-LUT flag, and the line-authoring warning registry. The
+    warn-once colormap-LUT flag, and the per-type authoring-warning registry. The
     finalized guard and metadata-cache write stay on the orchestrator (they
     bracket the extracted body in its delegate).
     """
@@ -60,7 +60,10 @@ class GeometryWriteCtx:
     compressor: "CompressorLike"
     update_scene_bounds: "Callable[[Dict[str, List[float]]], None]"
     write_colormap_lut: "Callable[[zarr.Group, Dict[str, Any]], None]"
-    claim_line_authoring_warning: "Callable[[str], bool]"
+    #: ``(geometry_kind, path) -> True`` exactly once, so a partition's leaves
+    #: collapse to one authoring warning per logical node. Keyed by kind too, so
+    #: one type's lint cannot silence another's on the same node.
+    claim_authoring_warning: "Callable[[str, str], bool]"
 
 
 @dataclass(frozen=True)

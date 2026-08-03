@@ -1,8 +1,8 @@
 """luxar.group – Group node with data-adding methods for scene graphs.
 
-A Group can contain child data nodes (Points, Lines, GSplats) and other Groups,
-forming a hierarchical scene structure. Groups walk up the parent chain to find
-the root Scene for dimension validation and writer access.
+A Group can contain child data nodes (Points, Lines, GSplats, Mesh) and other
+Groups, forming a hierarchical scene structure. Groups walk up the parent chain
+to find the root Scene for dimension validation and writer access.
 """
 
 from __future__ import annotations
@@ -24,6 +24,7 @@ import numpy as np
 from ...typing_utils.aliases import ColorArray, PositionArray
 from ..gsplats import GSplats
 from ..lines import Lines
+from ..mesh import Mesh
 from ..node import Node
 from ..points import Points
 
@@ -331,6 +332,101 @@ class Group(Node):
             additive_lod=additive_lod,
             substitutive_lod=substitutive_lod,
             partition=partition,
+            **attrs,
+        )
+
+    def add_mesh(
+        self,
+        name: str,
+        vertices: "np.ndarray",
+        faces: "np.ndarray",
+        normals: Optional["np.ndarray"] = None,
+        normal_dims: Optional[Sequence[int]] = None,
+        colors: Optional[Any] = None,
+        scalars: Optional[Any] = None,
+        *,
+        shading: Optional[str] = None,
+        double_sided: bool = True,
+        labels: Optional[Sequence[str]] = None,
+        image_labels: Optional[Any] = None,
+        parent: Optional["Node"] = None,
+        extend_to_all: Optional[Union[List[str], str]] = None,
+        dim_order: Optional[List[str]] = None,
+        fill: Optional[Dict[str, float]] = None,
+        **attrs: Any,
+    ) -> "Mesh":
+        """Add a triangle mesh (surface) node to this group.
+
+        The surface geometry type: nD ``vertices`` plus a ``faces`` triangle-index
+        array. Unlike Points / Lines / GSplats, a mesh has no per-element size —
+        a triangle's extent comes from its own vertices — so it also contributes
+        no extent padding to the scene's bounds.
+
+        Not supported for meshes (each raises rather than silently degrading):
+        ``additive_lod`` / ``substitutive_lod`` (no coarse stand-in exists for a
+        connected surface), ``partition`` (a BSP cut needs vertex duplication at
+        part boundaries), and adding one under a ``kind=lod`` / ``kind=partition``
+        parent. See ``docs/specs/MESH_NODE_SPEC.md`` §9.
+
+        Args:
+            name: Name of the mesh node.
+            vertices: Vertex positions of shape ``(V, D)``.
+            faces: Triangle vertex indices, ``(F, 3)`` or flat ``(3F,)``. Wound
+                counter-clockwise as seen with the authored spatial triple in
+                ascending index order.
+            normals: Optional per-vertex normals of shape ``(V, 3)``. Requires
+                ``normal_dims``.
+            normal_dims: The three dimension indices ``normals`` describes.
+                Required with ``normals`` and rejected without them — it is not
+                inferable, and an implicit "first three dimensions" is wrong for
+                any mesh whose leading dimension is not spatial (for a
+                ``(t, x, y, z)`` mesh those are ``(t, x, y)``). Passing it through
+                ``**attrs`` fails: it is writer-reserved metadata.
+            colors: Per-vertex colors ``(V, 3|4)``, a broadcast RGB(A) tuple/list,
+                or None. A 4th component is per-vertex opacity.
+            scalars: Per-vertex scalars ``(V,)`` or a single value for colormap
+                lookup. Requires a ``colormap`` attr.
+            shading: ``"smooth"`` or ``"flat"``. Defaults to ``"smooth"`` when
+                ``normals`` are given, else ``"flat"``. An explicit value is
+                stored as given — ``"flat"`` renders faceted even with normals
+                present, and ``"smooth"`` without normals falls back to derived
+                flat normals at render time.
+            double_sided: Whether back faces render (default ``True``).
+            labels: Optional per-vertex strings for hover tooltips.
+            image_labels: Optional per-vertex images for hover thumbnails.
+            parent: Optional explicit parent node (defaults to this group).
+            extend_to_all: Dimension name(s) across which this mesh stays visible.
+            dim_order: Names of the dimensions the ``vertices`` columns are in,
+                for remapping onto the scene's dimension order. ``faces`` is index
+                data addressing vertex rows and is never reordered.
+            fill: Fill values for scene dimensions absent from ``dim_order``.
+            **attrs: Additional attributes — ``opacity``, ``intensity``,
+                ``gamma``, ``colormap``, ``layer``, ``visible``, ``transform``,
+                ``nd_transform``, ``blending_mode``. Note ``volumetric`` blending
+                has no meaning for an opaque surface.
+
+        Returns:
+            The created Mesh node.
+        """
+        from .adders.mesh import add_mesh_impl
+
+        return add_mesh_impl(
+            self,
+            name=name,
+            vertices=vertices,
+            faces=faces,
+            normals=normals,
+            normal_dims=normal_dims,
+            colors=colors,
+            scalars=scalars,
+            shading=shading,
+            double_sided=double_sided,
+            labels=labels,
+            image_labels=image_labels,
+            parent=parent,
+            extend_to_all=extend_to_all,
+            dim_order=dim_order,
+            fill=fill,
             **attrs,
         )
 
