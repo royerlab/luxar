@@ -12,8 +12,9 @@
 // user closes the window; on close we shut down the HTTP server. Setting
 // LUXAR_LAUNCHER_NO_WEBVIEW=1 falls back to the system default browser
 // (no native window, server runs until SIGINT/SIGTERM). This is useful
-// for headless smoke-tests and for environments without a WebView
-// runtime (e.g. minimal Linux installs missing libwebkit2gtk).
+// for headless smoke-tests where no window is wanted; it does NOT let the
+// binary run without a WebView runtime — cgo links libwebkit2gtk-4.0 at
+// build time, so the loader aborts before main() on a system lacking it.
 package main
 
 import (
@@ -213,9 +214,10 @@ func main() {
 	}
 	defer shutdownServer(srv)
 
-	// Browser-fallback mode: useful for headless smoke tests, for
-	// minimal Linux environments without libwebkit2gtk, and for users
-	// who explicitly want a real browser tab (devtools, extensions).
+	// Browser-fallback mode: useful for headless smoke tests and for
+	// users who explicitly want a real browser tab (devtools, extensions).
+	// Note this cannot rescue a system missing libwebkit2gtk — cgo links
+	// the runtime at build time, so the loader aborts before we get here.
 	if os.Getenv("LUXAR_LAUNCHER_NO_WEBVIEW") == "1" {
 		runBrowserFallback(viewerURL)
 		return
