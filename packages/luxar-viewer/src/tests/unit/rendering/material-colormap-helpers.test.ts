@@ -83,6 +83,26 @@ describe('supportsScalarColormap', () => {
     expect(supportsScalarColormap('points')).toBe(false);
   });
 
+  it('fails closed for a node type outside the geometry vocabulary', () => {
+    // `@public` and re-exported from the package index, so an untyped JS caller
+    // can reach it with anything. The exhaustive tail must return `false` rather
+    // than echoing its input — a truthy return would ENABLE a colormap on
+    // geometry that has no scalar source behind it.
+    for (const bogus of ['mesh', 'group', 'volume', '']) {
+      expect(
+        supportsScalarColormap(bogus as Parameters<typeof supportsScalarColormap>[0]),
+        bogus
+      ).toBe(false);
+      expect(
+        supportsScalarColormap(
+          bogus as Parameters<typeof supportsScalarColormap>[0],
+          new THREE.BufferGeometry()
+        ),
+        bogus
+      ).toBe(false);
+    }
+  });
+
   it('returns false for lines without the hasScalars stamp', () => {
     // The fixed 6-texel line layout always has the texel5.xy scalar
     // slots, so scalar presence is the `userData.hasScalars` stamp set

@@ -133,6 +133,12 @@ export function supportsScalarColormap(
   // Exhaustiveness guard: with every GeometryTypeName handled above, `nodeType`
   // is `never` here. Adding a geometry type breaks this assignment, forcing an
   // explicit decision instead of a silent fail-closed `false`.
-  const unhandled: never = nodeType;
-  return unhandled;
+  //
+  // The value is deliberately NOT returned. This function is `@public` and
+  // re-exported from the package index, so an untyped JS caller can reach it with
+  // anything; returning `unhandled` would hand back the truthy input string and
+  // ENABLE a colormap the geometry cannot feed. Fail closed at runtime, break at
+  // compile time.
+  void (nodeType satisfies never);
+  return false;
 }
