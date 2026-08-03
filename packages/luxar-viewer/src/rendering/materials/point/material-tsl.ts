@@ -44,7 +44,7 @@ import {
 import { getPlaceholderElementTexture } from '../../element-texture-layout';
 import {
   applyBlendingStateToMaterial,
-  getCompleteBlendingState,
+  getPointBlendingState,
   isVolumetricMode,
   type CompleteBlendingState,
 } from '../../blending-state';
@@ -484,7 +484,8 @@ export class PointTSLMaterial
     this._explicitTransparent = undefined;
 
     const opacity = (this.uniforms.uOpacity?.value as number | undefined) ?? 1.0;
-    const state: CompleteBlendingState = getCompleteBlendingState(mode, opacity);
+    // Points never depth-write in `normal` (see `getPointBlendingState`).
+    const state: CompleteBlendingState = getPointBlendingState(mode, opacity);
 
     if (!this.defines) {
       this.defines = {};

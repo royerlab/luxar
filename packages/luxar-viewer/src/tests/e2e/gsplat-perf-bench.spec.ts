@@ -19,7 +19,11 @@
  * Per scenario we record:
  *   - JS frame time stats (median, p95, p99, mean, min, max) over a
  *     fixed sample window with a continuous orbit running
- *   - First-render cost (one-shot, measured separately)
+ *   - A warmed post-settle one-shot frame interval (`postSettleFrameMs`,
+ *     measured separately). This is NOT a cold first render: by the time
+ *     it runs, injection/navigation has already uploaded textures,
+ *     compiled the material/pipeline, and drawn at least one frame, so
+ *     it does NOT include upload / compilation / initial-draw cost.
  *   - `elementCount` — the capacity-CLAMPED drawn count reported by
  *     the injector / summed from `visibleSplatCount` (never the
  *     requested count; maxTextureSize caps a node at ≈16.8M splats)
@@ -27,16 +31,18 @@
  *     — the SwiftShader guard for remote/CI runs — plus a derived
  *     `softwareRenderer` boolean so a software-rasterized run is
  *     obvious in the JSON instead of looking like a 1000x regression
- *   - Depth-sort dispatch stats sampled per rAF from
- *     `getSceneLoader().getProfiler().getDepthSortTimings()`: final
- *     sort count plus the series of `lastMs` values observed when the
- *     count increments (→ sortCount, sort-latency median/p95).
- *     Metadata MAY also carry numeric `kernelMs`/`boundaryMs`/
- *     `queueMs` (being added by a parallel change) — recorded when
+ *   - Depth-sort completion stats sampled per rAF from
+ *     `getSceneLoader().getProfiler().getDepthSortCompletions()`: the
+ *     monotonic completion total plus the drained per-completion `lastMs`
+ *     series (→ sortCount, sort-latency median/p95). This dedicated stream
+ *     (issue #711) records one event per applied ordering — unlike the
+ *     seq-merged 'Depth Sort' root's `count`, it does not undercount
+ *     multi-completion frames or drop late resolves. Each event MAY also
+ *     carry numeric `kernelMs`/`boundaryMs`/`queueMs` — recorded when
  *     present, absence tolerated.
  *   - L8 GATE PROBE (10M scenario only): every sampled frame is
  *     classified 'sorting-adjacent' (an ordering apply landed within
- *     ±1 frame, detected via a depth-sort count increment) vs
+ *     ±1 frame, detected via a depth-sort completion this frame) vs
  *     'idle-orbit'; the per-class p99s are reported separately as
  *     `sortAdjacentP99Ms` / `idleOrbitP99Ms`. This gate decides a
  *     later optimization lever.
@@ -55,6 +61,12 @@ import { fileURLToPath } from 'url';
 
 import { test, expect, type Page } from '@playwright/test';
 import { waitForLuxarReady } from './helpers';
+// Origin serving the repo root (the perf config boots
+// `python3 -m http.server 9000` there). Overridable via
+// `LUXAR_PERF_DATA_BASE` for the case where port 9000 is already held
+// by a foreign document root — Playwright's `reuseExistingServer`
+// would otherwise silently reuse it and 404 every dataset.
+import { PERF_DATA_BASE as DATA_BASE } from './perf-data-base';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const VIEWER_ROOT = path.resolve(__dirname, '../../..');
@@ -104,17 +116,6 @@ type ScenarioSpec =
       label: string;
       url: string;
     };
-
-/**
- * Origin serving the repo root (the perf config boots
- * `python3 -m http.server 9000` there). Overridable via
- * `LUXAR_PERF_DATA_BASE` for the case where port 9000 is already held
- * by a foreign document root — Playwright's `reuseExistingServer`
- * would otherwise silently reuse it and 404 every dataset.
- */
-const DATA_BASE =
-  process.env.LUXAR_PERF_DATA_BASE ??
-  `http://localhost:${process.env.LUXAR_PERF_DATA_PORT ?? 9000}`;
 
 const BOOTSTRAP_URL = `${DATA_BASE}/datasets/examples/lines_basic_example.luxar.zarr`;
 
@@ -233,15 +234,39 @@ interface DepthSortStats {
   kernelMsMedian?: number;
   boundaryMsMedian?: number;
   queueMsMedian?: number;
+  /**
+   * Present (> 0) when completions aged out of the profiler's bounded
+   * ring between two polls, so they are counted in {@link finalCount}
+   * but missing from {@link sortCount} and the latency percentiles —
+   * treat the latency stats of such a window as under-sampled.
+   */
+  droppedCompletions?: number;
 }
 
 interface LadderStats {
-  /** ms from navigation start to the last observed element-count commit. */
+  /** ms from navigation start to ladder completion. Exact
+   *  stamp-confirmed completion time (the first tick of the last
+   *  continuous committedLadderComplete window) UNLESS {@link
+   *  usedFallback} (a count-plateau estimate) or {@link timedOut} (the
+   *  ladder never completed within the cap, so this is a last-commit
+   *  lower bound). */
   wallMsToLadderComplete: number;
-  /** False when the ladder finished before our polling loop started —
-   *  wallMs is then a lower bound, not a measurement. */
+  /** True when the recorder observed the summed splat count grow during
+   *  the run. */
   observedGrowth: boolean;
-  /** Frame stats DURING the progressive-load window (start → last commit). */
+  /** True when NO committed gsplat leaf was ever observed (the defensive
+   *  path), so completion was estimated from the count plateau rather
+   *  than confirmed by committed-ladder stamps. Always false on a
+   *  timed-out run — {@link timedOut} takes precedence there, since no
+   *  plateau estimate was established either. */
+  usedFallback: boolean;
+  /** True when the poll hit LADDER_MAX_MS before completion —
+   *  wallMsToLadderComplete is then a last-commit lower bound, not a
+   *  confirmed completion. */
+  timedOut: boolean;
+  /** Frame stats DURING the progressive-load window (start → completion:
+   *  the confirmed stamp window on stamped runs, else the last count
+   *  change). */
   loadWindowFrameMs: FrameStats | null;
 }
 
@@ -270,7 +295,22 @@ interface ScenarioResult {
    */
   softwareRenderer: boolean;
   frameMs: FrameStats | null;
-  firstRenderMs: number | null;
+  /**
+   * A WARMED, post-settle one-shot frame interval (ms): `renderOnce()`
+   * to the next animation frame, sampled AFTER injection/navigation has
+   * already settled. This is NOT a cold first render and does NOT
+   * enclose texture upload, material/pipeline compilation, or the
+   * initial draw — those all happen before this is measured. Null when
+   * the scenario is skipped.
+   */
+  postSettleFrameMs: number | null;
+  /** Renderer frame counter sampled just before the post-settle
+   *  measurement — > 0 proves the metric is a warmed post-settle
+   *  frame, not a cold first render. Null when the renderer's frame
+   *  counter is unavailable (the WebGPU renderer keeps the frame id
+   *  elsewhere; this bench is WebGL-only, so in practice it is a
+   *  number). */
+  renderedFramesBefore?: number | null;
   depthSort: DepthSortStats | null;
   /** L8 gate probe (10M scenario only): p99 of frames within ±1 frame
    *  of an ordering apply. */
@@ -340,7 +380,7 @@ function makeSkippedResult(
     gpuRenderer: '',
     softwareRenderer: false,
     frameMs: null,
-    firstRenderMs: null,
+    postSettleFrameMs: null,
     depthSort: null,
     notes,
     skipped: true,
@@ -431,29 +471,61 @@ async function probeElementCount(page: Page, onlySynthetic: boolean): Promise<nu
   }, onlySynthetic);
 }
 
-/** One-shot first-render measurement (line-bench parity). */
-async function measureFirstRender(page: Page): Promise<number> {
+/**
+ * Warmed, post-settle one-shot frame measurement.
+ *
+ * IMPORTANT — this is NOT a first-render measurement. By the time it
+ * runs, injection/navigation has already uploaded textures, compiled
+ * the material/pipeline, and drawn at least one frame (synthetic
+ * injection kicks a render internally; the orbit/ladder scenarios
+ * render and settle first). It therefore times a warmed one-shot
+ * frame — `renderOnce()` to the next animation frame — and does NOT
+ * enclose upload / compilation / initial-draw cost. The returned
+ * `renderedFramesBefore` is the renderer's frame counter sampled
+ * before the timer starts; a value > 0 pins the "post-settle"
+ * contract (the timer begins after, not before, the first render).
+ */
+async function measurePostSettleFrame(
+  page: Page
+): Promise<{ ms: number; renderedFramesBefore: number | null }> {
   return page.evaluate(async () => {
-    const debug = (window as unknown as { __luxarDebug: { renderOnce: () => void } }).__luxarDebug;
+    const debug = (
+      window as unknown as {
+        __luxarDebug: {
+          renderOnce: () => void;
+          renderer?: { info?: { render?: { frame?: number } } };
+        };
+      }
+    ).__luxarDebug;
+    const framesBefore = debug.renderer?.info?.render?.frame;
+    const renderedFramesBefore = typeof framesBefore === 'number' ? framesBefore : null;
     const t0 = performance.now();
     debug.renderOnce();
     await new Promise<void>((r) => requestAnimationFrame(() => r()));
-    return performance.now() - t0;
+    return { ms: performance.now() - t0, renderedFramesBefore };
   });
 }
 
 /** Raw per-frame series returned by the in-page orbit sampling loop. */
 interface OrbitSamplingRaw {
   frameDtMs: number[];
-  /** Per sampled frame: did the profiler depth-sort count increment? */
+  /** Per sampled frame: did any depth-sort completion land this frame? */
   sortInc: boolean[];
-  /** One entry per observed count increment. */
+  /** One entry per drained depth-sort completion (issue #711 stream). */
   sortEvents: Array<{
     lastMs: number;
     kernelMs: number | null;
     boundaryMs: number | null;
     queueMs: number | null;
   }>;
+  /**
+   * Completions that aged out of the profiler's bounded (512-event) ring
+   * before this loop could drain them — i.e. a single poll gap saw more
+   * completions than the ring retains. `finalSortCount` stays exact (it
+   * reads the monotonic total), but these events contribute no latency
+   * sample, so median/p95 under-sample when this is > 0.
+   */
+  droppedCompletions: number;
   finalSortCount: number;
   totalMs: number;
 }
@@ -478,25 +550,26 @@ async function runOrbitSamplingLoop(page: Page): Promise<OrbitSamplingRaw> {
       // Cast-to-any chain per the debug-API contract: profiler shape is
       // internal and the metadata stage fields are optional/in-flight.
       const profiler = debug.getSceneLoader?.()?.getProfiler?.();
-      const readSort = (): {
-        count: number;
-        lastMs: number;
-        kernelMs: number | null;
-        boundaryMs: number | null;
-        queueMs: number | null;
+      // Drain the profiler's dedicated MONOTONIC depth-sort completion stream
+      // (issue #711) instead of inferring per-sort events from the seq-merged
+      // 'Depth Sort' profiler root's `count`. That root undercounts frames
+      // where several leaves finish at once (an increase of 1 and of 20 both
+      // added exactly one event) and can DROP late/out-of-order resolves; the
+      // completion stream records one event per applied ordering, in order.
+      const readCompletions = (): {
+        total: number;
+        events: Array<{
+          seq: number;
+          lastMs: number;
+          kernelMs: number | null;
+          boundaryMs: number | null;
+          queueMs: number | null;
+        }>;
       } | null => {
         try {
-          const t = profiler?.getDepthSortTimings?.();
-          if (!t || typeof t.count !== 'number') return null;
-          const md = t.metadata ?? {};
-          const num = (v: unknown): number | null => (typeof v === 'number' ? v : null);
-          return {
-            count: t.count,
-            lastMs: typeof t.lastMs === 'number' ? t.lastMs : 0,
-            kernelMs: num(md.kernelMs),
-            boundaryMs: num(md.boundaryMs),
-            queueMs: num(md.queueMs),
-          };
+          const c = profiler?.getDepthSortCompletions?.();
+          if (!c || typeof c.total !== 'number' || !Array.isArray(c.events)) return null;
+          return c;
         } catch {
           return null;
         }
@@ -521,7 +594,8 @@ async function runOrbitSamplingLoop(page: Page): Promise<OrbitSamplingRaw> {
       const dts: number[] = [];
       const sortInc: boolean[] = [];
       const sortEvents: OrbitSamplingRaw['sortEvents'] = [];
-      let prevSortCount = readSort()?.count ?? 0;
+      let droppedCompletions = 0;
+      let prevCompletionSeq = readCompletions()?.total ?? 0;
       let frames = 0;
       let lastTime = performance.now();
       const start = lastTime;
@@ -533,7 +607,8 @@ async function runOrbitSamplingLoop(page: Page): Promise<OrbitSamplingRaw> {
             frameDtMs: dts,
             sortInc,
             sortEvents,
-            finalSortCount: readSort()?.count ?? prevSortCount,
+            droppedCompletions,
+            finalSortCount: readCompletions()?.total ?? prevCompletionSeq,
             totalMs: performance.now() - start,
           });
         };
@@ -549,28 +624,45 @@ async function runOrbitSamplingLoop(page: Page): Promise<OrbitSamplingRaw> {
           // starts.
           orbit(dt);
 
-          // Read the sort counter on EVERY tick, warmup included:
-          // sorts dispatched during warmup must advance the baseline,
-          // otherwise the first sampled frame inherits their increment
-          // and is misclassified as sorting-adjacent (and contributes a
-          // spurious latency sample).
-          const s = readSort();
-          const inc = s !== null && s.count > prevSortCount;
+          // Drain the completion stream on EVERY tick, warmup included:
+          // sorts that complete during warmup must advance the baseline,
+          // otherwise the first sampled frame inherits their events and is
+          // misclassified as sorting-adjacent (and contributes spurious
+          // latency samples). `inc` = did any completion land this frame;
+          // every completion since the previous poll is drained (a frame
+          // with N completions pushes N events, not one — the multi-
+          // completion undercount issue #711 fixed).
+          const c = readCompletions();
+          const inc = c !== null && c.total > prevCompletionSeq;
 
           if (warmupDone) {
             if (collectingStart === null) collectingStart = now;
             dts.push(dt);
             sortInc.push(inc);
-            if (inc && s) {
-              sortEvents.push({
-                lastMs: s.lastMs,
-                kernelMs: s.kernelMs,
-                boundaryMs: s.boundaryMs,
-                queueMs: s.queueMs,
-              });
+            // Drain EVERY completion since the previous poll — one sortEvents
+            // entry per completion (a frame with N completions pushes N).
+            if (c) {
+              let drained = 0;
+              for (const e of c.events) {
+                if (e.seq > prevCompletionSeq) {
+                  drained++;
+                  sortEvents.push({
+                    lastMs: e.lastMs,
+                    kernelMs: e.kernelMs,
+                    boundaryMs: e.boundaryMs,
+                    queueMs: e.queueMs,
+                  });
+                }
+              }
+              // Ring overflow: more completions landed since the previous
+              // poll than the profiler's bounded ring retains. `total`
+              // stays exact, but the aged-out events can never contribute
+              // a latency sample — count them so the stats disclose the
+              // gap instead of silently under-sampling.
+              droppedCompletions += Math.max(0, c.total - prevCompletionSeq - drained);
             }
           }
-          if (s) prevSortCount = s.count;
+          if (c) prevCompletionSeq = c.total;
           lastTime = now;
           frames++;
           const collectingElapsed = collectingStart === null ? 0 : now - collectingStart;
@@ -618,12 +710,13 @@ function depthSortStatsOf(raw: OrbitSamplingRaw): DepthSortStats {
   if (kernel !== undefined) stats.kernelMsMedian = kernel;
   if (boundary !== undefined) stats.boundaryMsMedian = boundary;
   if (queue !== undefined) stats.queueMsMedian = queue;
+  if (raw.droppedCompletions > 0) stats.droppedCompletions = raw.droppedCompletions;
   return stats;
 }
 
 /**
  * L8 gate probe: split frames into 'sorting-adjacent' (a depth-sort
- * count increment within ±1 frame) vs 'idle-orbit' and return each
+ * completion within ±1 frame) vs 'idle-orbit' and return each
  * class's p99. Decides whether ordering applies are what spikes the
  * tail, or the orbit itself.
  */
@@ -714,7 +807,7 @@ async function measureSyntheticScenario(
 
   const apiProbe = await probeApiSurface(page);
   const gpuRenderer = await probeGpuRenderer(page);
-  const firstRenderMs = await measureFirstRender(page);
+  const postSettle = await measurePostSettleFrame(page);
   const raw = await runOrbitSamplingLoop(page);
 
   const result: ScenarioResult = {
@@ -728,7 +821,8 @@ async function measureSyntheticScenario(
     gpuRenderer,
     softwareRenderer: isSoftwareRenderer(gpuRenderer),
     frameMs: statsOf(raw.frameDtMs),
-    firstRenderMs,
+    postSettleFrameMs: postSettle.ms,
+    renderedFramesBefore: postSettle.renderedFramesBefore,
     depthSort: depthSortStatsOf(raw),
     notes,
     skipped: false,
@@ -781,7 +875,7 @@ async function measureZarrOrbitScenario(
 
   const apiProbe = await probeApiSurface(page);
   const gpuRenderer = await probeGpuRenderer(page);
-  const firstRenderMs = await measureFirstRender(page);
+  const postSettle = await measurePostSettleFrame(page);
   const raw = await runOrbitSamplingLoop(page);
   const elementCount = await probeElementCount(page, false);
 
@@ -801,7 +895,8 @@ async function measureZarrOrbitScenario(
     gpuRenderer,
     softwareRenderer: isSoftwareRenderer(gpuRenderer),
     frameMs: statsOf(raw.frameDtMs),
-    firstRenderMs,
+    postSettleFrameMs: postSettle.ms,
+    renderedFramesBefore: postSettle.renderedFramesBefore,
     depthSort: depthSortStatsOf(raw),
     notes,
     skipped: false,
@@ -809,12 +904,19 @@ async function measureZarrOrbitScenario(
 }
 
 /**
- * Progressive-ladder load scenario: poll the summed `visibleSplatCount`
- * each driven frame; the ladder is complete when the sum stops growing
- * for {@link LADDER_STABLE_MS}. Records the wall ms from navigation
- * start to the LAST observed commit plus the frame-time distribution
- * DURING the growth window (`performance.now()` in-page is relative to
- * navigation start, so commit timestamps ARE wall-ms-from-nav).
+ * Progressive-ladder load scenario: poll each visible gsplat leaf's
+ * `userData.committedLadderComplete` stamp every driven frame; the
+ * ladder is complete once every visible leaf reports a committed FULL
+ * ladder (no leaf still stamped `false`). The viewer writes that stamp
+ * whenever a gsplat leaf commits, so the stamped path is the normal
+ * one; only if NO committed leaf is ever observed does the scenario
+ * fall back to the count plateau — the ladder is treated complete when
+ * the summed `visibleSplatCount` stops growing for
+ * {@link LADDER_STABLE_MS} — and the result is flagged `usedFallback`.
+ * Records the wall ms from navigation start to completion plus the
+ * frame-time distribution DURING the growth window (`performance.now()`
+ * in-page is relative to navigation start, so commit timestamps ARE
+ * wall-ms-from-nav).
  */
 async function measureZarrLadderScenario(
   page: Page,
@@ -838,30 +940,77 @@ async function measureZarrLadderScenario(
       dtsUpToLastChange: 0,
       observedGrowth: false,
       initialCount: 0,
+      // Stamp-based completion (the authoritative signal): sticky flag
+      // that any leaf ever carried a committedLadderComplete stamp, plus
+      // the start timestamp of the current continuous "all stamped
+      // complete" window (0 while any visible leaf is still incomplete).
+      sawStamps: false,
+      ladderCompleteAt: 0,
+      // Frame count at the tick the current completion window opened —
+      // the stamped-run load-window length (dtsUpToLastChange only covers
+      // the last COUNT change, which a stamp-only final commit can trail).
+      dtsUpToComplete: 0,
     };
     (window as unknown as { __ladderRec: typeof rec }).__ladderRec = rec;
-    const sumSplats = (): number => {
+    // Per-tick scan: sum visible splats (drives the count-plateau
+    // fallback) AND fold each visible leaf's committedLadderComplete
+    // stamp into the completion signal.
+    const scanScene = (): {
+      sum: number;
+      nodeCount: number;
+      stampedCount: number;
+      anyStamped: boolean;
+      anyIncomplete: boolean;
+    } => {
       const debug = (window as unknown as { __luxarDebug?: any }).__luxarDebug;
-      let total = 0;
-      debug?.scene?.traverse?.((obj: any) => {
+      let sum = 0;
+      let nodeCount = 0;
+      let stampedCount = 0;
+      let anyStamped = false;
+      let anyIncomplete = false;
+      // Use traverseVisible so hidden subtrees — e.g. an abandoned hidden
+      // LOD level stamped `false` — are pruned, matching production's
+      // foldProgress.
+      debug?.scene?.traverseVisible?.((obj: any) => {
         if (
           obj?.userData?.nodeType === 'gsplats' &&
           typeof obj.userData.visibleSplatCount === 'number'
         ) {
-          total += obj.userData.visibleSplatCount;
+          sum += obj.userData.visibleSplatCount;
+          nodeCount += 1;
+          const stamp = obj.userData.committedLadderComplete;
+          if (typeof stamp === 'boolean') {
+            anyStamped = true;
+            stampedCount += 1;
+            if (stamp === false) anyIncomplete = true;
+          }
         }
       });
-      return total;
+      return { sum, nodeCount, stampedCount, anyStamped, anyIncomplete };
     };
     const tick = (now: number): void => {
       if (rec.lastT !== null) {
         rec.dts.push(now - rec.lastT);
-        const sum = sumSplats();
+        const { sum, nodeCount, stampedCount, anyStamped, anyIncomplete } = scanScene();
         if (sum !== rec.lastSum) {
           if (rec.dts.length > 0 && sum > 0) rec.observedGrowth = true;
           rec.lastSum = sum;
           rec.lastChangeAt = now;
           rec.dtsUpToLastChange = rec.dts.length;
+        }
+        if (anyStamped) rec.sawStamps = true;
+        // Complete only when EVERY counted visible leaf carries a stamp
+        // AND none is still incomplete — a created-but-uncommitted leaf
+        // (numeric count, no stamp yet) keeps this false.
+        const stampedComplete = nodeCount > 0 && stampedCount === nodeCount && !anyIncomplete;
+        if (stampedComplete) {
+          if (rec.ladderCompleteAt === 0) {
+            rec.ladderCompleteAt = now;
+            rec.dtsUpToComplete = rec.dts.length;
+          }
+        } else {
+          rec.ladderCompleteAt = 0;
+          rec.dtsUpToComplete = 0;
         }
       }
       rec.lastT = now;
@@ -893,6 +1042,9 @@ async function measureZarrLadderScenario(
             dtsUpToLastChange: number;
             observedGrowth: boolean;
             initialCount: number;
+            sawStamps: boolean;
+            ladderCompleteAt: number;
+            dtsUpToComplete: number;
           };
         }
       ).__ladderRec;
@@ -902,18 +1054,35 @@ async function measureZarrLadderScenario(
       return new Promise<{
         wallMsToLadderComplete: number;
         observedGrowth: boolean;
+        usedFallback: boolean;
         loadWindowDtMs: number[];
         finalCount: number;
         initialCount: number;
         timedOut: boolean;
       }>((resolve) => {
         const finish = (timedOut: boolean): void => {
+          // A timed-out run established NO completion of either kind
+          // (the loop checks completion before the cap), so neither
+          // completion label applies: wallMs is the last-commit lower
+          // bound and timedOut takes precedence over usedFallback.
+          const usedFallback = !timedOut && !rec.sawStamps;
+          const stampConfirmed = !timedOut && rec.ladderCompleteAt > 0;
           resolve({
             // performance.now() is relative to navigation start, and the
-            // recorder ran from navigation start — this IS wall ms.
-            wallMsToLadderComplete: rec.lastChangeAt,
+            // recorder ran from navigation start — this IS wall ms. A
+            // stamp-confirmed run reports the confirmed completion
+            // timestamp; fallback/timed-out runs report the last count
+            // change (exact plateau estimate / lower bound respectively).
+            wallMsToLadderComplete: stampConfirmed ? rec.ladderCompleteAt : rec.lastChangeAt,
             observedGrowth: rec.observedGrowth,
-            loadWindowDtMs: rec.dts.slice(0, Math.max(rec.dtsUpToLastChange, 1)),
+            usedFallback,
+            // Stamped runs window start → confirmed completion; otherwise
+            // start → last count change (a stamp-only final commit can
+            // trail the last count change).
+            loadWindowDtMs: rec.dts.slice(
+              0,
+              Math.max(stampConfirmed ? rec.dtsUpToComplete : rec.dtsUpToLastChange, 1)
+            ),
             finalCount: rec.lastSum,
             initialCount: rec.initialCount,
             timedOut,
@@ -921,12 +1090,25 @@ async function measureZarrLadderScenario(
         };
         const tick = (): void => {
           const now = performance.now();
-          if (now - loopStart > cfg.maxMs) {
-            finish(true);
+          // Completion first, THEN the cap — a completion established
+          // just before LADDER_MAX_MS must not be misreported as a
+          // timeout by a poll tick that fires just after it.
+          if (rec.sawStamps) {
+            // Authoritative: finish once every visible leaf has committed
+            // its FULL ladder (ladderCompleteAt is the start of that window).
+            if (rec.ladderCompleteAt > 0) {
+              finish(false);
+              return;
+            }
+          } else if (rec.lastSum > 0 && now - rec.lastChangeAt > cfg.stableMs) {
+            // Defensive fallback: no committed leaf was ever observed, so
+            // infer completion from the count plateau (approximate — see
+            // usedFallback).
+            finish(false);
             return;
           }
-          if (rec.lastSum > 0 && now - rec.lastChangeAt > cfg.stableMs) {
-            finish(false);
+          if (now - loopStart > cfg.maxMs) {
+            finish(true);
             return;
           }
           debug.renderOnce();
@@ -942,11 +1124,14 @@ async function measureZarrLadderScenario(
   if (ladderRaw.timedOut) {
     notes.push(`ladder polling hit the ${LADDER_MAX_MS}ms cap before stabilizing`);
   }
-  if (!ladderRaw.observedGrowth) {
+  if (ladderRaw.usedFallback) {
     notes.push(
-      'ladder completed before polling began — wallMsToLadderComplete is a lower bound only'
+      `no committed gsplat leaf observed — completion estimated from a ${LADDER_STABLE_MS}ms count plateau (approximate)`
     );
-  } else {
+  } else if (!ladderRaw.timedOut) {
+    notes.push('ladder completion confirmed via committed-ladder stamps');
+  }
+  if (ladderRaw.observedGrowth) {
     notes.push(
       `ladder grew ${ladderRaw.initialCount} → ${ladderRaw.finalCount} splats during polling`
     );
@@ -954,7 +1139,7 @@ async function measureZarrLadderScenario(
 
   const apiProbe = await probeApiSurface(page);
   const gpuRenderer = await probeGpuRenderer(page);
-  const firstRenderMs = await measureFirstRender(page);
+  const postSettle = await measurePostSettleFrame(page);
   const elementCount = await probeElementCount(page, false);
 
   if (elementCount === 0) {
@@ -975,11 +1160,14 @@ async function measureZarrLadderScenario(
     // The scenario's headline frame stats ARE the during-load window —
     // that's what this scenario exists to measure.
     frameMs: statsOf(ladderRaw.loadWindowDtMs),
-    firstRenderMs,
+    postSettleFrameMs: postSettle.ms,
+    renderedFramesBefore: postSettle.renderedFramesBefore,
     depthSort: null,
     ladder: {
       wallMsToLadderComplete: ladderRaw.wallMsToLadderComplete,
       observedGrowth: ladderRaw.observedGrowth,
+      usedFallback: ladderRaw.usedFallback,
+      timedOut: ladderRaw.timedOut,
       loadWindowFrameMs: statsOf(ladderRaw.loadWindowDtMs),
     },
     notes,
@@ -1008,9 +1196,9 @@ async function measureScenario(page: Page, scn: ScenarioSpec): Promise<ScenarioR
  * test: each scenario appends its row as it finishes, so a `-g`-filtered
  * partial run still produces a valid, additive file.
  *
- * NOTE: the line bench still writes its file wholesale, so running the
- * line bench AFTER this one for the same SHA drops these rows. Run this
- * spec last (or `-g`-filter per bench) when you want a combined file.
+ * NOTE: the line bench merge-writes too (keyed the same way), so the
+ * two benches can run in either order for the same SHA without
+ * clobbering each other's rows.
  */
 function mergeScenarioRow(outPath: string, row: ScenarioResult): void {
   const key = `${row.scenarioId}/${row.backend}`;
@@ -1056,8 +1244,8 @@ function logScenario(result: ScenarioResult): void {
     : '';
   const ladderSummary = result.ladder
     ? ` ladder=${result.ladder.wallMsToLadderComplete.toFixed(0)}ms${
-        result.ladder.observedGrowth ? '' : ' (lower bound)'
-      }`
+        result.ladder.usedFallback ? ' (fallback est.)' : ''
+      }${result.ladder.timedOut ? ' (lower bound)' : ''}`
     : '';
   const l8Summary =
     result.sortAdjacentP99Ms !== undefined
@@ -1126,6 +1314,13 @@ for (const scn of SCENARIOS) {
         'no depth-sort dispatch observed during the window — orbit may not have crossed the re-sort threshold'
       );
     }
+    if (result.depthSort?.droppedCompletions) {
+      result.notes.push(
+        `${result.depthSort.droppedCompletions} depth-sort completions aged out of the bounded ` +
+          'ring between polls — sortCount and the latency percentiles under-sample ' +
+          '(finalCount is still exact)'
+      );
+    }
 
     // Write BEFORE asserting so a partial/failed scenario still leaves
     // its diagnostic row on disk.
@@ -1152,5 +1347,19 @@ for (const scn of SCENARIOS) {
     ).toBeGreaterThanOrEqual(frameFloor);
     expect(result.gpuRenderer, `${scn.id}: empty GPU renderer string`).not.toBe('');
     expect(result.elementCount, `${scn.id}: zero drawn elements`).toBeGreaterThan(0);
+    // Probe (issue #706): the post-settle frame metric is captured AFTER
+    // injection/navigation already rendered — assert the renderer had
+    // already drawn at least one frame when we sampled, so the number is
+    // honestly a warmed frame and never mislabeled as a cold first render.
+    if (
+      !result.skipped &&
+      result.renderedFramesBefore !== null &&
+      result.renderedFramesBefore !== undefined
+    ) {
+      expect(
+        result.renderedFramesBefore,
+        `${scn.id}: post-settle frame measured before any render (renderedFramesBefore=${result.renderedFramesBefore})`
+      ).toBeGreaterThan(0);
+    }
   });
 }

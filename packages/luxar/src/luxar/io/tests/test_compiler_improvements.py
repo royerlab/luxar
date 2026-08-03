@@ -1309,6 +1309,18 @@ class TestWriterFuzzRegressions:
             with pytest.raises((ValueError, TypeError)):
                 scene.add_points("np_rad", self.POS, radii=np.float32(0.5))
 
+    def test_numpy_scalar_colormap_scalars_hint_is_actionable(self) -> None:
+        """The scalars preflight rejects numpy scalars with the same
+        one-step float(...) hint as radii/widths/sharpness (#752) — not
+        the dead-end np.array(scalars) suggestion that fails again on 0D."""
+        from luxar.io._compiler.node_common import validate_scalars_preflight
+
+        with pytest.raises(ValueError) as exc_info:
+            validate_scalars_preflight(np.float32(0.5), 50)
+        msg = str(exc_info.value)
+        assert "float(" in msg
+        assert "np.array(scalars)" not in msg
+
     def test_gsplat_position_bounds_is_reserved(self) -> None:
         """The gsplat writer unconditionally stamps position_bounds; a
         user-supplied value must be rejected up front, not silently

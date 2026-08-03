@@ -185,6 +185,30 @@
   flex-shrink: 0;
 }
 
+/* ========== Load-Failure Badge ========== */
+
+.luxar-layer-row__error {
+  line-height: 0;
+  flex-shrink: 0;
+  color: var(--luxar-error);
+  cursor: help;
+}
+
+.luxar-layer-row__error svg {
+  width: 15px;
+  height: 15px;
+  display: block;
+}
+
+/* Tint the row so a failed node reads at a glance even before hover. */
+.luxar-layer-row--error {
+  border-left-color: var(--luxar-error);
+}
+
+.luxar-layer-row--error .luxar-layer-row__name {
+  color: var(--luxar-error);
+}
+
 /* ========== Controls Section ========== */
 
 .luxar-layers-panel__controls {

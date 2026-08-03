@@ -1086,20 +1086,21 @@ def get_git_statistics(root: Path) -> dict[str, Any]:
         "contributors": 0,
         "first_commit_date": None,
         "last_commit_date": None,
-        "local_branches": 0,
-        "remote_branches": 0,
         "tags": 0,
         "commits_last_30_days": 0,
         "files_changed_last_30_days": 0,
         "top_contributors": [],
-        "current_branch": None,
     }
 
     out = _git(root, "rev-list", "--count", "HEAD")
     if out:
         git_stats["total_commits"] = int(out.strip())
 
-    out = _git(root, "shortlog", "-sn", "--all")
+    # Scope shortlog to HEAD (not --all) so contributor counts share the exact
+    # same commit set as total_commits above. Using --all here counted commits
+    # on every local ref (including unmerged branches), which let a top
+    # contributor's count exceed total_commits (see issue #764).
+    out = _git(root, "shortlog", "-sn", "HEAD")
     if out:
         contributors = [line for line in out.strip().split("\n") if line.strip()]
         git_stats["contributors"] = len(contributors)
@@ -1116,17 +1117,6 @@ def get_git_statistics(root: Path) -> dict[str, Any]:
         git_stats["first_commit_date"] = dates[0].split()[0]
         git_stats["last_commit_date"] = dates[-1].split()[0]
 
-    out = _git(root, "branch")
-    if out:
-        git_stats["local_branches"] = len(
-            [b for b in out.strip().split("\n") if b.strip()]
-        )
-    out = _git(root, "branch", "-r")
-    if out:
-        git_stats["remote_branches"] = len(
-            [b for b in out.strip().split("\n") if b.strip()]
-        )
-
     out = _git(root, "tag")
     if out:
         git_stats["tags"] = len([t for t in out.strip().split("\n") if t.strip()])
@@ -1142,10 +1132,6 @@ def get_git_statistics(root: Path) -> dict[str, Any]:
     if out:
         files = {line.strip() for line in out.split("\n") if line.strip()}
         git_stats["files_changed_last_30_days"] = len(files)
-
-    out = _git(root, "rev-parse", "--abbrev-ref", "HEAD")
-    if out:
-        git_stats["current_branch"] = out.strip()
 
     return git_stats
 
@@ -1746,11 +1732,8 @@ footer {{ text-align: center; padding: 1.5rem; color: #666; font-size: 0.82rem; 
 <div>
 <table>
 <tr><th>Metric</th><th class="number">Value</th></tr>
-<tr><td>Current Branch</td><td class="number mono">{html.escape(git.get("current_branch") or "N/A")}</td></tr>
 <tr><td>Total Commits</td><td class="number">{git["total_commits"]:,}</td></tr>
 <tr><td>Contributors (all-time)</td><td class="number">{git["contributors"]}</td></tr>
-<tr><td>Local Branches</td><td class="number">{git["local_branches"]}</td></tr>
-<tr><td>Remote Branches</td><td class="number">{git["remote_branches"]}</td></tr>
 <tr><td>Tags</td><td class="number">{git["tags"]}</td></tr>
 <tr><td>Commits (last 30 days)</td><td class="number">{git["commits_last_30_days"]:,}</td></tr>
 <tr><td>Files Changed (last 30 days)</td><td class="number">{git["files_changed_last_30_days"]:,}</td></tr>
@@ -2081,11 +2064,8 @@ def generate_markdown_report(stats: dict[str, Any], output_file: Path) -> None:
     lines.append("")
     lines.append("| Metric | Value |")
     lines.append("| --- | ---: |")
-    lines.append(f"| Current branch | `{git.get('current_branch') or 'N/A'}` |")
     lines.append(f"| Total commits | {git['total_commits']:,} |")
     lines.append(f"| Contributors (all-time) | {git['contributors']} |")
-    lines.append(f"| Local branches | {git['local_branches']} |")
-    lines.append(f"| Remote branches | {git['remote_branches']} |")
     lines.append(f"| Tags | {git['tags']} |")
     lines.append(f"| Commits (last 30 days) | {git['commits_last_30_days']:,} |")
     lines.append(

@@ -360,6 +360,41 @@ export function getGSplatNormalBlendingState(): CompleteBlendingState {
 }
 
 /**
+ * Point-specific blending state: identical to
+ * {@link getCompleteBlendingState} for every mode EXCEPT `normal`, where
+ * `depthWrite` is forced off unconditionally.
+ *
+ * Why points diverge from the generic predicate (mirrors the rationale
+ * in {@link getGSplatNormalBlendingState}): a point `normal` sprite
+ * stamps a single FLAT depth plane across the WHOLE billboard disc —
+ * transparent soft fringe included. When the back-to-front sort order is
+ * stale (routine for transparent sprites), that fringe depth-rejects the
+ * opaque core of an atom genuinely behind it, punching occlusion halos.
+ * Sorted transparency never depth-writes, so points opt out of
+ * `depthWrite` in `normal` at ANY opacity — unlike the generic
+ * `normalModeDepthWrite` predicate (`opacity >= 0.99`), which lines still
+ * use. Trade-off: an opaque `normal` points layer no longer occludes
+ * additive layers behind it (#1002).
+ *
+ * All OTHER modes are returned unchanged from
+ * {@link getCompleteBlendingState}.
+ *
+ * @param mode - See {@link getCompleteBlendingState}.
+ * @param opacity - Layer opacity in `[0, 1]`. Passed through for the
+ *   non-`normal` modes; ignored for `normal` (depthWrite never flips).
+ *   Default `1.0`.
+ * @returns The complete THREE.js material state for a point material.
+ * @public
+ */
+export function getPointBlendingState(
+  mode: BlendingMode,
+  opacity: number = 1.0
+): CompleteBlendingState {
+  const state = getCompleteBlendingState(mode, opacity);
+  return mode === 'normal' ? { ...state, depthWrite: false } : state;
+}
+
+/**
  * Apply a CompleteBlendingState to a THREE material in-place. Returns
  * `true` when any THREE.js side state actually changed (callers can
  * use this to decide whether to set `needsUpdate`).

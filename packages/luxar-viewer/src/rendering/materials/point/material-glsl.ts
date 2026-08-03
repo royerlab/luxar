@@ -17,7 +17,7 @@ import {
   applyScalarRangeToMaterial,
 } from '../../material-colormap-helpers';
 import {
-  getCompleteBlendingState,
+  getPointBlendingState,
   applyBlendingStateToMaterial,
   isVolumetricMode,
   type CompleteBlendingState,
@@ -402,7 +402,8 @@ export class PointMaterial
    */
   applyBlendingMode(mode: BlendingMode): void {
     const opacity = (this.uniforms.uOpacity?.value as number | undefined) ?? 1.0;
-    const state: CompleteBlendingState = getCompleteBlendingState(mode, opacity);
+    // Points never depth-write in `normal` (see `getPointBlendingState`).
+    const state: CompleteBlendingState = getPointBlendingState(mode, opacity);
 
     // Defensive: THREE may leave `defines` undefined when none were
     // passed at construction. We rely on it as our source of truth for

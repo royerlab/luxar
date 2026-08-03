@@ -1,3 +1,5 @@
+> **⚠️ Archived — historical status record, not maintained.** This was the canonical status record for the performance-optimization work (latest snapshot in this series). Retained for history; it reflects the state as of its last-updated date. See [the archive README](../README.md).
+
 # Luxar Performance Optimization - Implementation Status
 
 **Last Updated**: 2025-12-27

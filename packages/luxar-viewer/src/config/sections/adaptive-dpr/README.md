@@ -31,6 +31,7 @@ ranges, TTL consistency). The runtime on/off toggle lives in
   The `AdaptiveDPRManager` constructor merges this literal directly
   underneath `config.adaptiveDPR`, so partial overrides (including the unit
   tests' fixed-shape config mock) can never leave a knob `undefined`.
+
 - `types.ts` — `AdaptiveDPRConfig` interface. `enabled` is the
   construction-time default; runtime toggling is delegated to
   `renderingControls.defaults.adaptiveDPREnabled`.

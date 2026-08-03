@@ -84,6 +84,14 @@ export async function loadDataset(src: string, ports: LoadDatasetPorts): Promise
     const root = ports.sceneManager.scene.children.find((c) => c.name === 'LuxarScene');
     if (root) {
       ports.layersPanel.initFromScene(root as THREE.Group, sceneLoader.sceneGraph);
+      // Hand the layers panel an equivalent failed-loads provider over the same
+      // live failure set the data monitor reads (each getFailedLoadsProvider()
+      // call returns a new object, but all close over the loader's one
+      // failedLoaders map), so a node whose loader threw shows a per-row error
+      // badge in the always-open panel instead of only in the console /
+      // collapsed monitor. After initFromScene: its clear() resets any prior
+      // provider first.
+      ports.layersPanel.setFailedLoadsProvider(sceneLoader.getFailedLoadsProvider());
     }
   }
   // Notify on-screen affordances (the control rail's Layers button gates its

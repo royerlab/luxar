@@ -16,7 +16,7 @@ scripts/
 
 | Script | Purpose |
 |--------|---------|
-| `check_documentation.py` | Check top-level package READMEs plus Python docstring and TypeScript JSDoc coverage |
+| `check_documentation.py` | Baseline-driven ratchet over top-level package READMEs plus Python docstring and TypeScript JSDoc coverage (JSON output; fails only on NEW findings) |
 | `check_demo_ladders.py` | Audit built demo scenes for missing or degenerate additive streaming ladders |
 | `check_version_consistency.py` | Verify the zero-padded Python CalVer and npm-normalized viewer version describe the same release |
 | `set_version.py` | Update the Python and viewer release versions together |
@@ -76,12 +76,23 @@ all nested subpackages, or modify files.
 **Usage:**
 
 ```bash
-# Check all documentation
+# Check all documentation (ratchet mode: fails only on NEW findings)
 hatch run python scripts/check_documentation.py
 
 # With verbose output
 hatch run python scripts/check_documentation.py --verbose
 
+# Machine-readable JSON report (includes a `ratchet` block)
+hatch run python scripts/check_documentation.py --json
+
+# (Re)write the debt baseline from the current state, then exit 0
+hatch run python scripts/check_documentation.py --update-baseline
+
+# Point at a non-default baseline file
+hatch run python scripts/check_documentation.py --baseline path/to/baseline.json
+
+# Legacy strict mode: ignore the baseline and fail on ANY finding
+hatch run python scripts/check_documentation.py --no-baseline
 ```
 
 **What it checks:**
@@ -90,9 +101,12 @@ hatch run python scripts/check_documentation.py --verbose
 - Public Python definitions have nearby docstrings (heuristic)
 - Exported TypeScript declarations have nearby JSDoc (heuristic)
 
-The current repository has known failures, so `make check-docs` is an audit
-report rather than a green required gate. See GitHub issue #776 before
-tightening or enabling it in CI.
+Existing documentation debt is captured in `scripts/docs_baseline.json`. A
+flagless run tolerates every baselined finding and fails (exit 1) only on NEW
+missing READMEs/docstrings/JSDoc, so `make check-docs` is a real ratchet rather
+than an all-or-nothing gate. As debt is paid down, regenerate/tighten the
+baseline with `--update-baseline` and commit the smaller file. See
+`docs/guides/developer/DOCUMENTATION_QUALITY.md` for the full model.
 
 ---
 
