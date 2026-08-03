@@ -655,14 +655,16 @@ Note that `material-manager.ts` still declares `pointMaterialCache` / `lineMater
 keeps its shape. Mesh must **not** add a fourth empty map — `createMeshMaterial` constructs directly.
 
 Both backends must produce matching output and are gated by the existing codegen snapshot harness
-(`src/tests/__codegen__/`), which keys one snapshot per blend-mode variant — whether a GLSL `#define`
-(the sibling `line-max.fragment`, `point-max.fragment`, `gsplat-normal-premult.*`) or a runtime-uniform
-branch the TSL path bakes per graph (`gsplat-opaque.*`, from gsplat's runtime `uProjectionMode` split).
+(`src/tests/__codegen__/`), which keys one snapshot variant per blend-mode build — whether a GLSL
+`#define` (the sibling `line-max`, `point-max`, `gsplat-normal-premult`) or a runtime-uniform branch the
+TSL path bakes per graph (`gsplat-opaque`, from gsplat's runtime `uProjectionMode` split). Note the
+harness (`tsl-codegen-snapshot.spec.ts`) asserts **both stages** of every variant unconditionally, so
+each variant is a `.vertex` + `.fragment` snapshot pair — the shipped inventory is exactly 24 such pairs.
 Mesh's per-mode emissions (§6.2) are therefore separately snapshotted — and note the mesh **default is
-`opaque`**, unlike the siblings whose default is the alpha-weighted `additive`. New snapshots:
-`mesh.vertex`, `mesh.fragment` (the `opaque` default — alpha cutout, §6.2), `mesh-additive.fragment` (the
-alpha-weighted emission shared by `additive`/`luminous`/`normal`, §6.2), `mesh-max.fragment` (the max
-premultiply, §6.2), `mesh-flat-normal.fragment`, `mesh-colormap.fragment`, `mesh-pick.{vertex,fragment}`.
+`opaque`**, unlike the siblings whose default is the alpha-weighted `additive`. New variants — six, i.e.
+twelve snapshot files: `mesh` (the `opaque` default — alpha cutout, §6.2), `mesh-additive` (the
+alpha-weighted emission shared by `additive`/`luminous`/`normal`, §6.2), `mesh-max` (the max
+premultiply, §6.2), `mesh-flat-normal`, `mesh-colormap`, `mesh-pick`.
 
 > **TSL house rule** (from the depth-sorting spec's remediation): both vertex stages must trace inside
 > `Fn()` with explicit `.toVar()` statements, and the fragment must reconstruct the bottom-left
@@ -713,14 +715,16 @@ snapshot (§6.4) is the final authority.
 
 **Alpha in the pick pass — the cutout must match.** The pick material computes the **same** coverage
 `a = vAlpha · uOpacity` (§6.2), so its vertex shader binds the `color` attribute and carries an
-interpolated `vAlpha` varying — the one vertex input it needs beyond `gl_VertexID`. In `opaque` mode it
+interpolated `vAlpha` varying — the only vertex attribute it needs beyond `position` (element ids come
+from the `gl_VertexID` built-in, not an attribute). In `opaque` mode it
 applies the **identical** `if (a < uAlphaCutoff) discard;` before writing, so a cutout hole is neither
 pickable nor depth-occluding; without this a discarded-in-visual hole would still rasterize in the pick
 pass at true surface depth, becoming pickable **and** occluding picks of nodes visible through it. In the
 translucent modes `a` is the `brightness` coverage term the readback already votes on (replacing the
 "1.0 for a fully opaque mesh" placeholder above whenever alpha is authored). This is a **runtime-uniform
 branch** in the single pick fragment (keyed on the blending mode, like the `uSurfaceDepth` split above),
-**not** a separate `#define` — so `mesh-pick.fragment` stays one snapshot and §6.4's count is unchanged.
+**not** a separate `#define` — so `mesh-pick` stays a single snapshot variant and §6.4's count is
+unchanged.
 
 **Stability.** §5.4 rewrites only the index buffer per slice (`compact_visible_faces`) and never remaps
 vertex attributes ("No vertex compaction"). A face ordinal would be renumbered on every slice change; a
@@ -953,7 +957,8 @@ A reviewer should treat a `| 'mesh'` appearing in any of those five as a defect.
       slice moves (§5.4), not just the displayDims-change event. And on the same mesh, a `displayDims`
       change to a **different axis triple** than the frame falls back to `DoubleSide` for the epoch —
       both orientations render (§5.4/§7)
-- [ ] Codegen snapshots: 8 new (§6.4) — incl. the per-blend-mode `mesh-additive`/`mesh-max` variants
+- [ ] Codegen snapshots: 6 new variants = 12 files (§6.4) — incl. the per-blend-mode
+      `mesh-additive`/`mesh-max` variants
 - [ ] Fixture: `tests/fixtures/generate_test_data.py` gains a mesh fixture (auto-picked up by
       `vitest.config.ts` globalSetup)
 - [ ] E2E: one `mesh-rendering.spec.ts`, plus extend the existing multi-geometry
