@@ -97,8 +97,9 @@
     "check:knip": "knip --no-progress --no-config-hints",
     "check:knip:ci": "knip --no-progress --no-config-hints --include files,dependencies",
     "format": "prettier --write src",
-    "check": "pnpm run typecheck && pnpm run lint && pnpm test --run",
-    "check:ci": "pnpm run check:overrides && pnpm run typecheck && pnpm run lint && pnpm run check:layers && pnpm run check:knip:ci && pnpm run test:coverage",
+    "check:format": "prettier --check src",
+    "check": "pnpm run check:format && pnpm run typecheck && pnpm run lint && pnpm test --run",
+    "check:ci": "pnpm run check:overrides && pnpm run check:format && pnpm run typecheck && pnpm run lint && pnpm run check:layers && pnpm run check:knip:ci && pnpm run test:coverage",
     "ci:release": "pnpm run build:lib && pnpm run build:lib:check"
   },
   "dependencies": {

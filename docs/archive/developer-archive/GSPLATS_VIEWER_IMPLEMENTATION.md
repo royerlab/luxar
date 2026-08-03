@@ -1,3 +1,5 @@
+> **⚠️ Archived — implemented plan, not maintained.** The work described here **shipped**; this plan is kept for design history and was not updated afterwards, so details may not match current code. Do not treat it as current guidance. See [the archive README](../README.md) for status labels and retention policy.
+
 # GSplats Viewer Implementation Plan
 
 This document describes the implementation plan for adding Gaussian Splat (gsplat) support to the Luxar TypeScript viewer.

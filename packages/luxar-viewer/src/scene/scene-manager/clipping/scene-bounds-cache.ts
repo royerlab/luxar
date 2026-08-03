@@ -9,8 +9,12 @@
  * by callers that need a value; first call walks the scene graph
  * once for `userData.positionBounds`, projects nD min/max through
  * the current `sceneDimsManager.getDims().displayed`, computes the
- * sphere + near-cull, and caches everything. Subsequent calls are
- * O(1) until `invalidate()` is called.
+ * sphere + near-cull, and caches everything. On a HIT the result is
+ * cached and subsequent calls are O(1) until `invalidate()` is
+ * called. On a MISS (no `position_bounds` metadata anywhere in the
+ * graph) nothing is cached — there is no negative caching, so every
+ * subsequent call repeats the full scene-graph traversal until
+ * metadata appears in the graph.
  *
  * Pure with respect to SceneManager — the cache reads its inputs
  * from the supplied scene + the global `sceneDimsManager` singleton.
@@ -50,12 +54,13 @@ export class SceneBoundsCache {
 
   /**
    * Compute the cache from the scene metadata if not already
-   * computed. Idempotent: subsequent calls are O(1) until
-   * `invalidate()` is called.
+   * computed. Idempotent: after a successful hit subsequent calls
+   * are O(1) until `invalidate()` is called.
    *
    * If no `position_bounds` metadata is found in the scene graph,
    * the cache remains empty and `getBounds()` / `getSphere()`
-   * return null.
+   * return null. There is no negative caching, so a miss re-walks
+   * the whole scene graph on every call until metadata appears.
    */
   ensure(scene: THREE.Scene): void {
     if (this._bounds !== null) return;
@@ -112,13 +117,16 @@ export function computeBoundsFromMetadata(scene: THREE.Scene): BoundingBox | nul
 
 /**
  * Search for `userData.positionBounds` in the scene graph. Returns
- * the first match. Root-level metadata is set on the root group by
- * the scene loader, so the match is normally found on the first
- * visited node — but `THREE.Object3D.traverse` cannot stop early
- * (the `if (result) return` below skips visit bodies, not the
- * recursion), so this walks the WHOLE graph on every call, hit or
- * miss. Callers must cache the result (`SceneBoundsCache.ensure`
- * caches the hit; a metadata-less scene re-pays the full walk each
+ * the first match. The scene loader attaches the metadata to the
+ * root group, which is added as a child of the `THREE.Scene`, so
+ * the match is normally found on that root group near the TOP of
+ * the graph — not on the first visited object (which is the bare
+ * `THREE.Scene`, carrying no `positionBounds`). But
+ * `THREE.Object3D.traverse` cannot stop early (the `if (result)
+ * return` below skips visit bodies, not the recursion), so this
+ * walks the WHOLE graph on every call, hit or miss. Callers must
+ * cache the result (`SceneBoundsCache.ensure` caches the hit; a
+ * metadata-less scene re-pays the full walk each
  * call — measured harmless at real scene sizes, ~0.1 ms at ~2k
  * objects, since Luxar geometry is instanced and graphs stay small).
  */

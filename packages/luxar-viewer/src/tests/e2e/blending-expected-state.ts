@@ -14,11 +14,13 @@
  *   blendSrc/Dst:  OneFactor=201, SrcAlphaFactor=204,
  *                  OneMinusSrcAlphaFactor=205
  *
- * `normal.depthWrite` here is the opacity>=0.99 value (fixtures author
- * their normal layers at the default opacity 1.0); callers comparing
- * layers at other opacities must derive it via
- * `opacity >= 0.99` (normalModeDepthWrite) instead, as the points half
- * of blending-modes.spec.ts does.
+ * `normal.depthWrite: true` here is the LINE value: lines keep the
+ * opacity-gated `normalModeDepthWrite` predicate (true at the fixtures'
+ * default opacity 1.0), and lines-blending-modes.spec.ts depends on this
+ * numeric. POINTS, by contrast, ALWAYS use `depthWrite: false` in
+ * `normal` (a point sprite stamps a flat depth plane across the whole
+ * disc, so sorted transparency never depth-writes — #1002);
+ * blending-modes.spec.ts overrides the points expectation to false.
  */
 
 export interface ExpectedBlendState {

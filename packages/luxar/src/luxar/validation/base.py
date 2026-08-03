@@ -387,8 +387,9 @@ def validate_radii_for_writing(
 
     if not isinstance(radii, np.ndarray):
         raise ValidationError(
-            f"{context}: Expected numpy array, got {type(radii).__name__}",
-            "Convert to numpy array: np.array(radii)",
+            f"{context}: Expected a 1D numpy array or a Python float, got {type(radii).__name__}",
+            "Pass a Python float — e.g. float(radii) — for a single broadcast "
+            "value, or a 1D array with one value per point",
         )
 
     if radii.ndim != 1:
@@ -482,8 +483,9 @@ def validate_widths_for_writing(
         # Anything else (str, None, ...) used to fall through silently and
         # die deep in the encoder AFTER the vertices were already written.
         raise ValidationError(
-            f"{context}: Expected numpy array or scalar, got {type(widths).__name__}",
-            "Provide a per-vertex widths array or a single positive width",
+            f"{context}: Expected a 1D numpy array or a Python float, got {type(widths).__name__}",
+            "Pass a Python float — e.g. float(widths) — for a single broadcast "
+            "value, or a 1D array with one value per vertex",
         )
 
 
@@ -576,8 +578,9 @@ def validate_sharpness_for_writing(
 
     if not isinstance(sharpness, np.ndarray):
         raise ValidationError(
-            f"{context}: Expected numpy array, got {type(sharpness).__name__}",
-            "Convert to numpy array: np.array(sharpness)",
+            f"{context}: Expected a 1D numpy array or a Python float, got {type(sharpness).__name__}",
+            "Pass a Python float — e.g. float(sharpness) — for a single broadcast "
+            "value, or a 1D array with one value per point",
         )
 
     if sharpness.ndim != 1:
