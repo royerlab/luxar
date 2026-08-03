@@ -845,7 +845,7 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
           'test_integer_colors.luxar.zarr',
           testCase.path
         );
-        const raw = await zarr.get(array);
+        const raw = await zarr.readArray(array);
 
         expect(attrs.encoding?.name).toBe(testCase.encodingName);
         expect(ArrayDecoder.isEncoded(attrs)).toBe(false);
@@ -984,7 +984,7 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
       expect(lutMetadata).not.toBeNull();
 
       // Load only the range of indices we need (simulating what the loader does)
-      // In the real implementation, zarr.get() with slice would be used
+      // In the real implementation, zarr.readArray() with slice would be used
       // For this test, we verify the decodeLUTIndices produces correct output
       // by checking that the full decode matches expected palette values
 

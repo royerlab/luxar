@@ -51,19 +51,19 @@ The pipelines are stateless: they read only the narrow config in the `Ctx` datac
 
 5. **Apply rendering defaults** + stamp attrs:
    - `apply_default_render_attrs(attrs)` — fill `opacity=1.0`, `absorption=1.0`, `gamma=1.0`, `intensity=1.0`, `offset=0.0` (only if absent); `blending_mode` is deliberately never stamped (no identity value)
-   - `group.attrs.update(attrs)` then stamp `type="points"`, `n_points`, `has_colors` / `has_radii` / `has_sharpness` / `has_scalars` (no dim-count attr is stamped; user-supplied + default rendering attrs land via the `update(attrs)` call; `max_radius` was already stamped in step 4 when radii are present)
+   - `group.attrs.update(attrs)` then stamp `type="points"`, `n_points`, `ndim`, `has_colors` / `has_radii` / `has_sharpness` / `has_scalars` (user-supplied + default rendering attrs land via the `update(attrs)` call; `max_radius` was already stamped in step 4 when radii are present)
 
 6. **Compute bounds**:
    - `compute_position_bounds(positions)` → `position_bounds`, stamped as the `position_bounds` group attr and forwarded to `ctx.update_scene_bounds(...)` unless the caller set `_skip_scene_bounds` (the multi-LOD parent writer aggregates the global bounds once instead)
 
 7. **Spatial ordering metadata**:
-   - `write_points_ordering_to_zarr(group, ordering_data, ctx.compressor)` — if `ordering_data is not None` (sets `has_spatial_index`)
+   - `write_points_ordering_to_zarr(group, ordering_data, ctx.compressor)` — if `ordering_data is not None` (sets `has_spatial_index`, and puts the curve name in `metadata["ordering"]`; `"none"` otherwise, so `Points.ordering` reports the writer's real choice)
 
 8. **Write labels** (CSR serialization; `sort_order` derived from `ordering_data`):
    - `write_labels_csr(group, labels, n_points, ctx.compressor, sort_order)` — if `labels is not None`
    - `write_image_labels_csr(group, image_labels, n_points, ctx.compressor, sort_order)` — if `image_labels is not None`
 
-9. **Return metadata**: `{"n_points", "ndim", "path", "has_colors", "has_radii", "has_sharpness", "position_bounds"}` plus (conditionally) `max_radius`, `has_scalars`, `has_spatial_index`, `has_labels`, `has_image_labels` (no `"type"` key)
+9. **Return metadata**: `{"n_points", "ndim", "path", "has_colors", "has_radii", "has_sharpness", "position_bounds", "ordering"}` plus (conditionally) `max_radius`, `has_scalars`, `has_spatial_index`, `has_labels`, `has_image_labels` (no `"type"` key)
 
 ### Lines Pipeline (`write_lines`)
 

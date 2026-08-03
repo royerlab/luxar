@@ -1,5 +1,5 @@
 import * as zarr from '../../../zarr';
-import { get, abortOptions } from '../../../zarr';
+import { readArray, abortOptions } from '../../../zarr';
 import { log } from '../../../../utils/log';
 import type { LoadRange } from '../../base-types';
 import {
@@ -15,7 +15,7 @@ import {
 export interface DirectCtx {
   config: ResolvedRangeLoaderConfig;
   verbose: boolean;
-  /** Per-update abort signal forwarded to `get()` (see RangeLoader). */
+  /** Per-update abort signal forwarded to `readArray()` (see RangeLoader). */
   signal?: AbortSignal | null;
 }
 
@@ -50,7 +50,7 @@ export async function loadDirect(
   await Promise.all(
     ranges.map(async (range, i) => {
       const sliceSpec = firstAxisRangeSlice(shape, range);
-      const chunkData = await get(array, sliceSpec, abortOptions(ctx.signal));
+      const chunkData = await readArray(array, sliceSpec, abortOptions(ctx.signal));
       const data = clampRangeData(
         chunkData.data as RangeNumericArray,
         counts[i],

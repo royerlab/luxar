@@ -32,16 +32,6 @@
 
 import type { GeometryKind } from '../../data-loader-types';
 
-/**
- * @deprecated Renamed to {@link GeometryKind}, which is single-sourced from the
- * format contract (`format-contract/contract.yaml` → `geometry_types`). This
- * alias exists only so an in-flight branch that imports the old name keeps
- * compiling through the rename; it is not part of the published surface (the
- * package `exports` map exposes `src/index.ts` only, which never exported it).
- * Remove once no branch references it.
- */
-export type GeometryType = GeometryKind;
-
 /** Per-dimension metadata needed for tolerance computation. */
 export interface DimensionInfo {
   discrete?: boolean;

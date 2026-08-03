@@ -7,13 +7,11 @@
  * material — sharing would rebind one node's texture onto another's
  * mesh at every commit. `getLineMaterial` therefore creates a fresh
  * material on EVERY call (mirroring `getPointMaterial` /
- * `getGSplatMaterial`), `lineMaterialCache` stays permanently empty
- * (kept only for the lifecycle/stats context shapes), and
- * `getCacheStats().evictions` is hardcoded 0.
+ * `getGSplatMaterial`), and no material cache exists at all.
  *
  * This suite pins that contract: distinct instances per call, immediate
- * + ongoing camera-param registration for every created material, empty
- * caches across many creations, zero evictions, and dispose() reaching
+ * + ongoing camera-param registration for every created material, one
+ * construction per call across many creations, and dispose() reaching
  * every per-node material through the registry.
  */
 
@@ -82,42 +80,28 @@ describe('MaterialManager per-node line materials (no LRU cache)', () => {
     }
   });
 
-  it('lineMaterialCache stays permanently empty across many creations', () => {
+  it('constructs one material per call and registers every one of them', () => {
+    // The observable consequence of having no cache: N calls means N
+    // constructions and N registrations, never fewer.
     const mm = new MaterialManager();
     for (let i = 0; i < 25; i++) {
       mm.getLineMaterial(baseProps({ opacity: i / 25 }));
     }
     const stats = mm.getCacheStats();
-    expect(stats.lineMaterials).toBe(0); // never cached
-    expect(stats.cachedMaterials).toBe(0); // no kind is cached anymore
-    expect(stats.keys).toEqual([]); // nothing keyed
-    expect(stats.totalRegistered).toBe(25); // but all registered for camera updates
-    expect(stats.createCount).toBe(25); // one construction per call
+    expect(stats.createCount).toBe(25);
+    expect(stats.totalRegistered).toBe(25);
   });
 
-  it('evictions is always 0 (the LRU machinery is gone)', () => {
-    const mm = new MaterialManager();
-    expect(mm.getCacheStats().evictions).toBe(0);
-    for (let i = 0; i < 10; i++) {
-      mm.getLineMaterial(baseProps({ opacity: i / 10 }));
-    }
-    expect(mm.getCacheStats().evictions).toBe(0);
-  });
-
-  it('per-node point and gsplat creations never populate any cache either', () => {
-    // All three material kinds are per node (each carries its own
-    // element texture): none of the creation paths may touch a cache map.
+  it('every material kind is per node, including points and gsplats', () => {
+    // All three kinds carry their own element texture, so no creation
+    // path may return a shared instance — each call adds a registration.
     const mm = new MaterialManager();
     mm.getLineMaterial(baseProps({ opacity: 0.1 }));
     mm.getPointMaterial(baseProps({ opacity: 0.1 }));
     mm.getPointMaterial(baseProps({ opacity: 0.2 }));
     mm.getGSplatMaterial(baseProps({ opacity: 0.3 }));
     const stats = mm.getCacheStats();
-    expect(stats.lineMaterials).toBe(0);
-    expect(stats.pointMaterials).toBe(0);
-    expect(stats.gsplatMaterials).toBe(0);
-    expect(stats.cachedMaterials).toBe(0);
-    expect(stats.evictions).toBe(0);
+    expect(stats.createCount).toBe(4);
     expect(stats.totalRegistered).toBe(4);
   });
 
