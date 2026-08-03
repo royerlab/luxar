@@ -535,7 +535,9 @@ re-extraction of the display-space projection, **not** compaction — compaction
 mesh is resident in full anyway (§7). This deliberately avoids:
 
 - `compact_by_mask` (`wasm/rust/src/projection.rs:122`), which is **`&[f32]`-only** and could not
-  compact the `uint8`/`uint16` colors or `float16`/`uint8` scalars §3.2 permits without a widening pass;
+  compact the native `uint8`/`uint16` colors §3.2 permits without a widening pass (the `uint8`/`float16`
+  scalars are uploaded as `f32` on the attribute path anyway, §6.1.1, but the colors stay native, only
+  padded RGB→RGBA);
 - a `vertex_remap` array and the index remapping that goes with it;
 - re-uploading every attribute buffer on each slice change (on a slice change the index buffer alone is
   re-uploaded; a `displayDims` change additionally re-uploads `position`/`normal`, §7).
@@ -594,27 +596,62 @@ never zero-work, even here (it rebuilds `position`/`normal`).
 |---|---|---|
 | `position` | 3 | `extract_3d_positions(vertices, displayDims)` |
 | `normal` | 3 | stored normals when valid (§3.4), else omitted |
-| `color` | 3 or 4 | **always bound** (never left to the GL default `(0,0,0,1)` black): when `colors` present → from `colors`, RGB or RGBA, keep the native dtype (§6.1.1); when `colors` absent → filled opaque white `(1,1,1)` as a size-3 `float32` attribute (so `vAlpha == 1.0` via the §6.1.1 GL size-3 default), mirroring `create-points-node.ts:91`. A 4th component is a per-vertex opacity carried through an interpolated `vAlpha` (§6.2) |
-| `aScalar` | 1 | `scalars`, when `has_scalars` |
+| `color` | 3 or 4 | **always bound** (never left to the GL default `(0,0,0,1)` black): when `colors` present → from `colors`, native dtype kept, with `uint8`/`uint16` RGB **padded to RGBA** (opaque alpha) so it binds as a valid vertex format on the WebGPU backend (§6.1.1); when `colors` absent → filled opaque white `(1,1,1)` as a size-3 `float32` attribute (`float32x3` is valid on both backends, so `vAlpha == 1.0` comes via the size-3 `w = 1.0` default, §6.1.1), mirroring `create-points-node.ts:91`. A 4th component is a per-vertex opacity carried through an interpolated `vAlpha` (§6.2) |
+| `aScalar` | 1 | `scalars`, when `has_scalars`; `uint8`/`float16` uploaded as `float32` on the attribute path (§6.1.1) |
 | index | — | `compact_visible_faces` output — **the only buffer rewritten on a slice change** (§5.4); `position` (and `normal`) are additionally rewritten on a `displayDims` change (§7, §3.4) |
 
 Drawn as `THREE.Mesh` with `side: DoubleSide` when `double_sided`, else `FrontSide`.
 
-#### 6.1.1 Keep color/scalar dtypes native
+#### 6.1.1 Color/scalar vertex-attribute dtypes
 
-Bind `uint8`/`uint16` colors with `new THREE.BufferAttribute(u8, itemSize, /* normalized */ true)` —
-`itemSize` is the native `3` (RGB) or `4` (RGBA) — rather than widening to `Float32Array`. The GPU
-normalizes to `[0,1]` for free, and this avoids a 4× memory blow-up on the single largest optional
-attribute. This mirrors the existing loader doctrine — `LoadedLinesData` and `LoadedPointsData` both keep
-`Uint8Array | Uint16Array | Float32Array` colors and pay a single widening only where a kernel demands
-`f32` — and §5.4 removed the one place mesh would have needed `f32` (the compaction pass).
+Bind `uint8`/`uint16` colors with `new THREE.BufferAttribute(u8, 4, /* normalized */ true)`, keeping the
+native dtype (the GPU normalizes to `[0,1]` for free) rather than widening to `Float32Array` — but always
+at **4 components**. When `colors` is RGB (§3.2 permits `(V, 3)`), pad it to RGBA at geometry-assembly
+time with a fully-opaque alpha (`255` for `uint8`, `65535` for `uint16`, both normalizing to `1.0`); RGBA
+input binds as-is. This is load-bearing, not cosmetic: the TSL materials run on a real `WebGPURenderer`
+(`?renderer=webgpu` negotiates an adapter and passes the device; `forceWebGL` is a diagnostic mode only),
+and three r184's `WebGPURenderer` exposes **no 3-component 8/16-bit vertex format** for that family — its
+`GPUVertexFormat` table lists only `unorm8x2`/`unorm8x4` and `unorm16x2`/`unorm16x4` — and WebGPU requires
+`arrayStride` to be a multiple of 4. A tightly-packed size-3 `uint8`/`uint16` attribute has a 3-byte /
+6-byte stride (three r184 uploads it packed and sets
+`arrayStride = itemSize · BYTES_PER_ELEMENT`); neither stride is a multiple of 4, so `createRenderPipeline`
+fails validation and an RGB `uint8`/`uint16` mesh renders **nothing** on the WebGPU backend — violating
+§6.4's "both backends must produce matching output". Padding to `unorm8x4` (4-byte stride) / `unorm16x4`
+(8-byte stride) fixes both the format and the stride, and the memory win over float32 widening survives:
+4 bytes/vertex for `uint8` RGBA vs 12 for `f32×3`. `float32` colors need no padding — `float32x3` is a
+valid WebGPU format with a 12-byte (4-multiple) stride — so they bind at their native `3` or `4`
+components. This still mirrors the loader doctrine — `LoadedLinesData` and `LoadedPointsData` keep
+`Uint8Array | Uint16Array | Float32Array` colors — and §5.4 removed the one place mesh would have needed a
+full `f32` widen of the color array (the compaction pass); the RGBA pad is a 3→4 component copy in the
+native dtype, not a dtype widen.
 
-There is **one** `color` attribute regardless of component count, and hence **one** shader that reads it
-as a `vec4`: a size-3 (RGB) attribute read as a `vec4` yields `w = 1.0` by the GL attribute default, so
-RGB data carries a per-vertex opacity of `1.0` for free — the same *"1.0 for RGB data"* contract the
-gsplat/line shaders document (`materials/gsplat/shader-glsl.ts`, `materials/line/shader-glsl.ts`), though
-mesh is the first shader to obtain that `1.0` from the **GL size-3-attribute default** rather than by
-packing it CPU-side (the siblings write `1.0` into their element texels). No separate RGB-vs-RGBA material
+`uint8`/`float16` **scalars** are uploaded as **`float32`** on the attribute path for the same root cause:
+three r184 has no itemSize-1 vertex format for a `Uint8Array` or a native `Float16Array`
+(`typeArraysToVertexFormatPrefixForItemSize1` maps neither → "Vertex format not supported yet" and a
+broken pipeline). The partial escape hatches r184 does ship rescue nothing here. A **non-normalized**
+`Uint8Array` is caught by the buffer-side "patch for INT16 and UINT16" widen, which rebuilds the whole
+buffer as `Uint32Array` and binds an **integer** `uint32` attribute — four bytes per scalar, the exact
+memory of the `float32` upload, but integer-typed in the shader graph (`getTypeFromArray` → `uint`)
+instead of the `float` the material reads; a **normalized** one skips that widen and dies on the format
+lookup miss, with a 1-byte stride that violates WebGPU's multiple-of-4 rule anyway. Three's own
+`Float16BufferAttribute` (which is `Uint16Array`-backed) fails just as loudly, only more confusingly:
+`getTypeFromAttribute` special-cases it to a `float` shader input while the attribute path binds a
+`uint32` vertex format, so `createRenderPipeline` rejects the input/format class mismatch. Widening to
+`float32` (4-byte stride, valid on both backends, `float`-typed everywhere) sidesteps the whole minefield
+at zero memory cost over the only native path that even binds. `float32` scalars bind directly as
+`float32`. Mesh is the first geometry type to feed these dtypes to *vertex attributes* — the siblings
+route colors/scalars through the RGBA32F element texture — which is why nothing in the shipped tree has
+hit this before.
+
+There is **one** `color` attribute regardless of the source component count, and hence **one** shader that
+reads it as a `vec4`. RGB input still carries a per-vertex opacity of `1.0` for free — the same *"1.0 for
+RGB data"* contract the gsplat/line shaders document (`materials/gsplat/shader-glsl.ts`,
+`materials/line/shader-glsl.ts`) — but mesh obtains that `1.0` two ways depending on the format: for
+`uint8`/`uint16` RGB it is the **CPU-side pad alpha** (exactly as the siblings write `1.0` into their
+element texels), and only for a format WebGPU already accepts (`float32x3` — the absent-colors white fill
+in §6.1, and any `float32` RGB) is it left to the size-3 `w = 1.0` attribute default. That default holds
+on **both** backends, but *only for a valid format*; it cannot rescue the invalid `uint8`/`uint16` size-3
+layout, which is exactly why those are padded rather than left size-3. No separate RGB-vs-RGBA material
 variant is needed; the alpha handling in §6.2 is unconditional.
 
 ### 6.2 Shading
@@ -865,6 +902,24 @@ identity). That identity fails for a mesh — `gl_VertexID` differs at every tri
 linearly-interpolated `vElementId` would arrive fractional and `Math.round` in the readback would resolve
 to arbitrary wrong vertices. Follow the LINE pick precedent (`rendering/picking/line/pick.tsl.ts`), not
 the point pick, whose implicit-identity interpolation is unsafe for a shared-vertex indexed draw.
+
+**Provoking-vertex convention (which corner wins).** A `flat` varying is sourced from **one** corner of
+the triangle, and the two backends do not default to the same one: OpenGL ES 3.0 (the GLSL backend) fixes
+the provoking vertex to the **last** vertex of the primitive, while the WGSL `@interpolate( flat )` three
+emits for `.setInterpolation('flat')` defaults to `first`-vertex sampling. Left there, the same click on
+the same triangle `(i0, i1, i2)` reports `i2` on WebGL and `i0` on WebGPU. The pick **contract** at
+vertex granularity is therefore "a corner vertex of the front-most triangle under the cursor" — the
+cursor is over the face, not a vertex, so every corner is an equally valid answer, and no consumer may
+assume a specific one. To keep the backends bit-identical where the platform allows, the GLSL pick path
+enables the `WEBGL_provoking_vertex` extension when present and sets
+`provokingVertexWEBGL(FIRST_VERTEX_CONVENTION_WEBGL)`, aligning WebGL with WebGPU's first-vertex rule —
+context-wide state, but safe: every other `flat` varying in the shipped materials is a per-**instance**
+constant (point/gsplat quads, line segments), identical at all corners, so the convention flip is
+observable only by mesh. Where the extension is unavailable the last-vs-first divergence stands as a
+**documented exception** to §6.4's matching-output rule, and pick parity tests must assert the returned
+id is *a corner of the expected face* (membership), not one exact corner. (Making the id
+corner-independent outright would need per-corner pick data — a de-indexed shadow geometry, 3× pick
+memory — abandoning the shared-`BufferGeometry` design above for the pick pass alone; rejected for v1.)
 
 **Pick fragment output.** The `mesh-pick.fragment` writes the same shared vec4 the readback decodes —
 `vec4(vNodeId, vElementId.x, brightness, vElementId.y)` — with `brightness` the fragment's
@@ -1154,6 +1209,12 @@ A reviewer should treat a `| 'mesh'` appearing in any of those five as a defect.
       than left unbound. Verified to go **red** if the white fill is dropped (an unbound `color` reads the
       GL default `(0,0,0,1)` and, times the multiplicative §6.2 shade term, the surface comes out solid
       black).
+- [ ] TS unit (native vertex-attr dtypes, §6.1.1): geometry assembly binds a `uint8`/`uint16` **RGB** mesh
+      as a **4-component** normalized `color` attribute (padded RGBA, opaque alpha) and a `uint8`/`float16`
+      **scalar** as a `float32` `aScalar` — never a size-3 `uint8`/`uint16` color nor an itemSize-1
+      `uint8`/`float16` scalar, both of which fail `createRenderPipeline` validation on the WebGPU backend.
+      Assert the resulting `BufferAttribute` `itemSize`/array-type and that the padded alpha is opaque
+      (`vAlpha == 1.0`); pairs with the §6.4 codegen-snapshot harness that exercises the TSL/WebGPU path.
 - [ ] TS unit: on a **`double_sided: false`** mesh, `updateView` for a `displayDims` change `[0,1,2]`→`[0,2,1]`
       re-extracts positions, re-decides the `normal` attribute, recomputes bounds, and reverses the index
       winding so front faces stay visible (goes red without the reversal precisely because `FrontSide`
@@ -1174,6 +1235,10 @@ A reviewer should treat a `| 'mesh'` appearing in any of those five as a defect.
       **front-viewed** face (both lit symmetrically), NOT collapsed to flat `uAmbient` — verified to go
       **red** without the §6.2 `gl_FrontFacing` normal flip (the back face shades the inverted,
       `uAmbient`-collapsing gradient instead of the front-facing one)
+- [ ] TS unit / E2E (pick corner contract, §6.5): a pick on a mesh triangle resolves to **a corner
+      vertex of that face** — assert membership in `(i0, i1, i2)`, never one exact corner (the provoking
+      vertex is backend-dependent: last on WebGL, first on WebGPU; `WEBGL_provoking_vertex` aligns them
+      only where available)
 - [ ] Codegen snapshots: 6 new variants = 12 files (§6.4) — incl. the per-blend-mode
       `mesh-additive`/`mesh-max` variants
 - [ ] Fixture: `tests/fixtures/generate_test_data.py` gains a mesh fixture (auto-picked up by
