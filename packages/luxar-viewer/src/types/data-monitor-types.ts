@@ -509,6 +509,12 @@ export interface SceneGraphNode {
    * Resolved geometry `display_type` (points / lines / gsplats) for a
    * specialized group — the type the user logically sees the group as.
    * Absent for plain groups and leaves (use `type` there).
+   *
+   * Spelled out rather than `GeometryTypeName`: this is the LOD/partition-CAPABLE
+   * subset of the vocabulary (it mirrors `LODGroupMetadata.display_type` and
+   * `PartitionGroupMetadata.display_type`), so do not widen it when a geometry
+   * type is added — declare that type's `lod` / `partition` capabilities in
+   * `types/geometry-capabilities` instead.
    */
   displayType?: 'points' | 'lines' | 'gsplats';
   /** For `kind=lod` groups: number of substitutive levels (child count). */
