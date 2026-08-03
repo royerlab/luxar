@@ -253,23 +253,28 @@ describe('loadGSplatsNode — LOD branch', () => {
   });
 });
 
-describe('loadGSplatsNode — extend_to_all skip fallback', () => {
-  it('builds a 4-field spread (not the same identity as ctx.viewState)', async () => {
+describe('loadGSplatsNode — fully-extended derive (issue #1157)', () => {
+  it('uses the derived extended-tolerance view state by identity, not a rebuild of ctx.viewState (issue #1157)', async () => {
     const loadGSplats = vi.fn().mockResolvedValue({ splatCount: 0 } as LoadedGSplatsData);
     createGSplatsLoaderMock.mockReturnValue(makeGSplatsLoader(loadGSplats));
     const ctx = makeCtx();
-    ctx.spies.deriveNodeViewState.mockReturnValue({ skip: 'extend_to_all' });
+    // Distinct sentinel: a DIFFERENT object from ctx.viewState carrying the
+    // 1e10 extend tolerance. data-processor-gsplats reads exactly these
+    // sentinels to keep the hidden dims, so the fully-extended query MUST reach
+    // the loader — not the pre-#1157 fallback that rebuilt the raw live slice.
+    const derivedVS: ViewState = {
+      displayDims: [0, 1, 2],
+      slicePosition: [0, 0, 0, 0],
+      tolerance: [1e10, 0, 0, 1],
+      dimensions: undefined,
+    };
+    ctx.spies.deriveNodeViewState.mockReturnValue({ skip: 'extend_to_all', viewState: derivedVS });
 
     await loadGSplatsNode(makeSceneNode(), new THREE.Group(), {} as never, ctx);
 
     const passed = loadGSplats.mock.calls[0][0] as GSplatsViewState;
-    // Same field VALUES…
-    expect(passed.displayDims).toBe(ctx.viewState.displayDims);
-    expect(passed.slicePosition).toBe(ctx.viewState.slicePosition);
-    expect(passed.tolerance).toBe(ctx.viewState.tolerance);
-    expect(passed.dimensions).toBe(ctx.viewState.dimensions);
-    // …but a NEW object identity (4-field spread, unlike Points which
-    // returns ctx.viewState by reference).
+    // Passed straight through by identity — no 4-field spread, no fallback.
+    expect(passed).toBe(derivedVS);
     expect(passed).not.toBe(ctx.viewState);
   });
 });

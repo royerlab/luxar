@@ -656,9 +656,13 @@ export class SceneLoader {
    * would. The pre-extraction retry skipped both adjustments, which
    * could produce a "successful" retry rendering incorrect data.
    *
-   * Returns `{ skip: 'extend_to_all' }` if the node's `extend_to_all`
-   * dims fully cover all non-displayed dims (the work is a no-op),
-   * otherwise the derived view state.
+   * ALWAYS returns a derived `viewState`. `skip` is an optimization hint
+   * (`'extend_to_all'`) that the node's `extend_to_all` dims fully cover all
+   * non-displayed dims, so the per-slice update handler may short-circuit; the
+   * returned `viewState` still carries the 1e10 tolerance sentinels on the
+   * hidden dims so the initial-load / refinement / retry paths fetch the
+   * correct query (the prefetcher correctly skips a fully-extended node on the
+   * hint) (issue #1157).
    *
    * @param path  Scene-graph path of the node, used to compose the
    *              world `nd_transform` from this node up to the root.
@@ -680,7 +684,7 @@ export class SceneLoader {
       applyPartialExtendTolerance: boolean;
       extendedToleranceCache?: Map<string, number[]>;
     }
-  ): { skip: 'extend_to_all' } | { skip: false; viewState: ViewState } {
+  ): { skip: 'extend_to_all' | false; viewState: ViewState } {
     return deriveNodeViewStateHelper(path, attrs, this.viewState, this._sceneGraph, opts);
   }
 

@@ -272,7 +272,13 @@ export function defineRefinementLoopContract(
       expect(releaseLock).toHaveBeenCalledTimes(1);
     });
 
-    it('skips loaders whose derived view-state is fully-extended', async () => {
+    it('keeps refining a fully-extended node (issue #1157) — no early skip', async () => {
+      // Regression for #1157 symptom 2 (frozen additive ladder). A
+      // fully-extended node's derive now returns `skip: 'extend_to_all'` WITH a
+      // derived view state (the 1e10-sentinel tolerance); the refinement loop
+      // must NOT short-circuit on that hint, or the additive ladder freezes at
+      // its first chunk. It must keep converging like any other loader, driving
+      // `loader.updateView` with the DERIVED view state.
       let calls = 0;
       const loader: { updateView: ReturnType<typeof vi.fn>; hasMoreLODs?: boolean } = {
         get hasMoreLODs() {
@@ -286,14 +292,18 @@ export function defineRefinementLoopContract(
       await run({
         loaders: new Map([['/n', loader]]),
         viewStateQueue: new ViewStateQueue(),
-        deriveNodeViewState: () => ({ skip: 'extend_to_all' }),
+        deriveNodeViewState: () => ({ skip: 'extend_to_all', viewState: baseViewState }),
         updateVisibleCountsInMonitor: vi.fn(),
         releaseLock: vi.fn(),
         retriggerUpdate: vi.fn(),
         processSpy,
       });
 
-      expect(loader.updateView).not.toHaveBeenCalled();
+      // The ladder advanced: updateView was driven once with the derived state.
+      expect(loader.updateView).toHaveBeenCalledTimes(1);
+      expect(loader.updateView.mock.calls[0][0]).toBe(baseViewState);
+      // `updateView` returned nullish (bare vi.fn), so the process step is never
+      // reached — unchanged from before, and unrelated to the skip hint.
       expect(processSpy).not.toHaveBeenCalled();
     });
   });

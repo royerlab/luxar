@@ -134,9 +134,13 @@ export async function loadLinesNodeExpensive(
     // Capture the version at DERIVE time (see loadGSplatsNodeExpensive) so a
     // deferred reload is stamped for the slice it actually loaded.
     const loadedViewVersion = ctx.getViewVersion();
-    const linesViewState: LinesViewState = derivedLines.skip
-      ? ctx.getLiveViewState()
-      : derivedLines.viewState;
+    // Always load with the derived view state — including the fully-extended
+    // (`derivedLines.skip === 'extend_to_all'`) case. deriveNodeViewState derives
+    // from the loader's live view state, so the derived state already IS the
+    // current slice with the extend handling applied. A prior version fell back
+    // to the raw live slice on skip, which sliced the fully-extended node's
+    // segments away (issue #1157).
+    const linesViewState: LinesViewState = derivedLines.viewState;
 
     const data = await loader.loadLines(linesViewState);
 

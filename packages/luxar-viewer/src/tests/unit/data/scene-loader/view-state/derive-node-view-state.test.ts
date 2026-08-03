@@ -70,8 +70,8 @@ describe('deriveNodeViewState — no extend, no transform', () => {
 });
 
 describe('deriveNodeViewState — full-extend skip', () => {
-  it('returns { skip: "extend_to_all" } when ALL non-displayed dims are extended', () => {
-    // Non-displayed dims are time + channel; extending both => full skip.
+  it('returns skip "extend_to_all" WITH a derived view state when ALL non-displayed dims are extended', () => {
+    // Non-displayed dims are time + channel; extending both => full skip hint.
     const result = deriveNodeViewState(
       'points',
       { extend_to_all: ['time', 'channel'] },
@@ -79,7 +79,18 @@ describe('deriveNodeViewState — full-extend skip', () => {
       null,
       { applyPartialExtendTolerance: true }
     );
-    expect(result).toEqual({ skip: 'extend_to_all' });
+    expect(result.skip).toBe('extend_to_all');
+    // #1157: `skip` is only an optimization hint now — a fully-extended node
+    // still carries its derived view state (the base slice with the 1e10
+    // sentinels applied to the extended, hidden dims), so consumers query the
+    // "ignore these dims" region instead of falling back to the raw live slice.
+    expect(result.viewState).toBeDefined();
+    expect(result.viewState.tolerance).toEqual([
+      EXTEND_TO_ALL_TOLERANCE,
+      EXTEND_TO_ALL_TOLERANCE,
+      0,
+      0,
+    ]);
   });
 
   it('does NOT skip when only some non-displayed dims are extended', () => {
@@ -93,9 +104,9 @@ describe('deriveNodeViewState — full-extend skip', () => {
     expect(result.skip).toBe(false);
   });
 
-  it('skips even if a displayed dim is also (redundantly) listed', () => {
+  it('skips (with a derived view state) even if a displayed dim is also (redundantly) listed', () => {
     // Listing 'z' (displayed) alongside both non-displayed dims still
-    // fully covers the non-displayed set -> skip.
+    // fully covers the non-displayed set -> skip hint, plus the derived state.
     const result = deriveNodeViewState(
       'points',
       { extend_to_all: ['time', 'channel', 'z'] },
@@ -103,7 +114,18 @@ describe('deriveNodeViewState — full-extend skip', () => {
       null,
       { applyPartialExtendTolerance: true }
     );
-    expect(result).toEqual({ skip: 'extend_to_all' });
+    expect(result.skip).toBe('extend_to_all');
+    expect(result.viewState).toBeDefined();
+    // 'z' (index 2) is a displayed dim but is redundantly extended, so its
+    // tolerance slot also gets the sentinel — harmless, as a displayed dim's
+    // tolerance is ignored by the query. The two hidden dims (time, channel)
+    // carry the sentinel as the #1157 fix requires.
+    expect(result.viewState.tolerance).toEqual([
+      EXTEND_TO_ALL_TOLERANCE,
+      EXTEND_TO_ALL_TOLERANCE,
+      EXTEND_TO_ALL_TOLERANCE,
+      0,
+    ]);
   });
 
   it('throws via validateExtendDims when an extend dim name is unknown', () => {
@@ -129,6 +151,36 @@ describe('deriveNodeViewState — full-extend skip', () => {
     );
     // No dimensions => Step 1 short-circuits, no skip.
     expect(result.skip).toBe(false);
+  });
+
+  it('carries the 1e10 sentinels on the fully-extended case (issue #1157 regression)', () => {
+    // The core #1157 regression. Before the fix, a fully-extended node
+    // early-returned a bare `{ skip: 'extend_to_all' }` with NO view state,
+    // BEFORE the tolerance override ran. Consumers then either short-circuited
+    // (freezing the additive ladder) or fell back to the raw live slice —
+    // slicing points/lines away and filtering gsplats out, because
+    // data-processor-gsplats derives its extended-dims set from exactly these
+    // 1e10 sentinels, which were never applied. Now the fully-extended case
+    // ALSO gets the override, so the derived view state carries the sentinels
+    // that feed the initial-load / refinement / retry / prefetch paths.
+    const result = deriveNodeViewState(
+      'points',
+      { extend_to_all: ['time', 'channel'] },
+      baseViewState(),
+      null,
+      { applyPartialExtendTolerance: true }
+    );
+    expect(result.skip).toBe('extend_to_all');
+    // Hidden dims (time = 0, channel = 1) carry the sentinel; displayed dims stay 0.
+    expect(result.viewState.tolerance).toEqual([
+      EXTEND_TO_ALL_TOLERANCE,
+      EXTEND_TO_ALL_TOLERANCE,
+      0,
+      0,
+    ]);
+    // Only the tolerance changed — slice position and display dims are the base ones.
+    expect(result.viewState.displayDims).toEqual([2, 3]);
+    expect(result.viewState.slicePosition).toEqual([5, 1, 0, 0]);
   });
 });
 
@@ -357,5 +409,52 @@ describe('deriveNodeViewState — nd_transform no-preimage propagation', () => {
     });
     if (result.skip !== false) throw new Error('expected non-skip');
     expect(result.viewState.noPreimage).toBe(true);
+  });
+});
+
+describe('deriveNodeViewState — fully-extended + nd_transform (issue #1157)', () => {
+  it('keeps the 1e10 sentinel UNSCALED on extended dims under an affine nd_transform and exempts them from no-preimage', () => {
+    // Step 3 (nd_transform inverse) is newly reachable for a FULLY-extended node
+    // after the #1157 fix. `time` is discrete AND scaled: without the extend
+    // exemption the inverse (world 5, scale 2 -> local 2.5, off-grid) would flag
+    // noPreimage and blank the node, and the sentinel would be divided below the
+    // 1e9 floor and silently un-extend the dim. Both must be prevented.
+    const discreteTimeDims: DimensionMetadata[] = [
+      { name: 'time', unit: '', scale: 1.0, discrete: true, step: 1 },
+      { name: 'channel', unit: '', scale: 1.0 },
+      { name: 'z', unit: 'um', scale: 1.0 },
+      { name: 'y', unit: 'um', scale: 1.0 },
+    ];
+    const root = node('', {}, [node('points', { nd_transform: { time: { scale: 2 } } })]);
+    const result = deriveNodeViewState(
+      'points',
+      { extend_to_all: ['time', 'channel'] },
+      baseViewState({ dimensions: discreteTimeDims }),
+      root,
+      { applyPartialExtendTolerance: true }
+    );
+    expect(result.skip).toBe('extend_to_all');
+    // Both extended dims keep the sentinel UNSCALED (not divided by |scale|).
+    expect(result.viewState.tolerance[0]).toBe(EXTEND_TO_ALL_TOLERANCE);
+    expect(result.viewState.tolerance[1]).toBe(EXTEND_TO_ALL_TOLERANCE);
+    // Extended dims are exempt from the no-preimage rule, even discrete+scaled.
+    expect(result.viewState.noPreimage).toBeUndefined();
+    // The position is still inverted: (5 - 0) / 2 = 2.5.
+    expect(result.viewState.slicePosition[0]).toBeCloseTo(2.5, 10);
+  });
+
+  it('returns the skip hint vacuously (with a defined view state) when there are zero non-displayed dims', () => {
+    // Every dim is displayed, so nonDisplayedDims is empty and `[].every(...)`
+    // is vacuously true -> fully-extended skip hint, without throwing. Vacuous
+    // coverage for that branch.
+    const result = deriveNodeViewState(
+      'points',
+      { extend_to_all: ['time'] },
+      baseViewState({ displayDims: [0, 1, 2, 3] }),
+      null,
+      { applyPartialExtendTolerance: true }
+    );
+    expect(result.skip).toBe('extend_to_all');
+    expect(result.viewState).toBeDefined();
   });
 });

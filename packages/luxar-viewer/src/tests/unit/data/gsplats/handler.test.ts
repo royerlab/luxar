@@ -52,7 +52,10 @@ describe('gsplats handler', () => {
       currentVersion: 1,
       updateVersion: 1,
       extendedToleranceCache: new Map(),
-      deriveNodeViewState: () => ({ skip: 'extend_to_all' }),
+      deriveNodeViewState: () => ({
+        skip: 'extend_to_all',
+        viewState: { displayDims: [], slicePosition: [], tolerance: [] },
+      }),
     });
     expect(result).toBeNull();
     expect(loader.updateView).not.toHaveBeenCalled();
@@ -74,7 +77,10 @@ describe('gsplats handler', () => {
       currentVersion: 1,
       updateVersion: 1,
       extendedToleranceCache: new Map(),
-      deriveNodeViewState: () => ({ skip: 'extend_to_all' }),
+      deriveNodeViewState: () => ({
+        skip: 'extend_to_all',
+        viewState: { displayDims: [], slicePosition: [], tolerance: [] },
+      }),
     });
     expect(forgetPathSpy).toHaveBeenCalledTimes(1);
     expect(forgetPathSpy).toHaveBeenCalledWith('/g');
@@ -325,7 +331,10 @@ describe('gsplats handler — no-op commit skip', () => {
 
       await loadAndStage('/g', makeLoaderReturning(data), makeSession(), {
         ...makeCtx(clearFailure, new THREE.Group()),
-        deriveNodeViewState: () => ({ skip: 'extend_to_all' as const }),
+        deriveNodeViewState: () => ({
+          skip: 'extend_to_all' as const,
+          viewState: { displayDims: [], slicePosition: [], tolerance: [] },
+        }),
       });
 
       expect(clearFailure).not.toHaveBeenCalled();

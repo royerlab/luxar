@@ -52,7 +52,7 @@ export interface GSplatsRefinementCtx {
     path: string,
     attrs: GSplatsMetadata | undefined,
     opts: { applyPartialExtendTolerance: boolean }
-  ): { skip: 'extend_to_all' } | { skip: false; viewState: ViewState };
+  ): { skip: 'extend_to_all' | false; viewState: ViewState };
   processGSplats(
     path: string,
     data: LoadedGSplatsData,
@@ -117,7 +117,10 @@ export async function runGSplatsRefinement(ctx: GSplatsRefinementCtx): Promise<v
         const refined = ctx.deriveNodeViewState(path, nodeAttrs, {
           applyPartialExtendTolerance: true,
         });
-        if (refined.skip) return;
+        // No skip short-circuit: a fully-extended node's derived state carries
+        // the 1e10 tolerance sentinels on its hidden dims, so refinement must
+        // keep converging its additive ladder for it too. Returning early on
+        // skip froze the ladder at its first chunk (issue #1157).
         const gsplatsViewState: GSplatsViewState = refined.viewState;
 
         // Account this step to the 'LOD Refinement' tree (opened only when

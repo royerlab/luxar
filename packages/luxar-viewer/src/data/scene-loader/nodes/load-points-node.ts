@@ -150,10 +150,13 @@ export async function loadPointsNodeExpensive(
     // Capture the version at DERIVE time (see loadGSplatsNodeExpensive) so a
     // deferred reload is stamped for the slice it actually loaded.
     const loadedViewVersion = ctx.getViewVersion();
-    // Full-extend on initial load: behave as if extend_to_all weren't set
-    // (load with the base view state) so the empty node still populates. Use the
-    // LIVE view-state so a deferred reload queries the current slice.
-    const pointsViewState: ViewState = derived.skip ? ctx.getLiveViewState() : derived.viewState;
+    // Always load with the derived view state — including the fully-extended
+    // (`derived.skip === 'extend_to_all'`) case. deriveNodeViewState derives
+    // from the loader's live `this.viewState`, so the derived state already IS
+    // the current slice with the extend override applied (1e10 sentinels on the
+    // hidden dims). A prior version fell back to the raw live slice on skip,
+    // which sliced the fully-extended node's points away (issue #1157).
+    const pointsViewState: ViewState = derived.viewState;
 
     const data = await (loader as PointsDataLoader).loadPoints(pointsViewState);
 

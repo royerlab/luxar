@@ -49,6 +49,7 @@ import {
 } from '../../../../data/scene-loader/process/data-processor-gsplats';
 import type { LoadedGSplatsData, GSplatsViewState } from '../../../../types/gsplats';
 import { WorkerTimeoutError, WorkerUnavailableError } from '../../../../workers/worker-pool/errors';
+import { EXTEND_TO_ALL_TOLERANCE } from '../../../../data/scene-loader/view-state/extend-tolerance';
 
 /**
  * Dispatcher-shaped result (keyed by `visibleCount`, as the worker /
@@ -234,6 +235,57 @@ describe('processGSplatsData', () => {
       max: [1, 1, 1],
       maxRowNorm: 0.5,
     });
+  });
+
+  // Issue #1157 symptom 3 coverage: buildGSplatsParams derives extendToAllDims
+  // from the 1e10 tolerance sentinels (data-processor-gsplats.ts reads
+  // isExtendToAll(viewState.tolerance[d]) per non-displayed dim). These two
+  // tests pin that derivation on the params object handed to the in-process
+  // dispatcher (mockProcessGSplats).
+  it('derives extendToAllDims from a 1e10 tolerance sentinel on a hidden dim (issue #1157)', async () => {
+    const root = new THREE.Group();
+    root.add(makeMesh('/g'));
+    // Hidden dim 't' (index 3) fully extended via the sentinel. This pins the
+    // downstream sentinel→extendToAllDims reader in buildGSplatsParams that the
+    // #1157 fix relies on: symptom 3 was that without the sentinel in this
+    // tolerance array the set stayed empty and every splat was filtered out on
+    // the hidden dim once the slice moved off `fill`. Dim 't' is ALSO marked
+    // discrete here, so the assertions pin the extended-wins-over-discrete
+    // branch (the sentinel routes it to extendToAllDims, NOT discreteDims).
+    const vs: GSplatsViewState = {
+      ...makeViewState(),
+      tolerance: [1, 1, 1, EXTEND_TO_ALL_TOLERANCE],
+      dimensions: [
+        { name: 'x', unit: 'px', scale: 1 },
+        { name: 'y', unit: 'px', scale: 1 },
+        { name: 'z', unit: 'px', scale: 1 },
+        { name: 't', unit: 's', scale: 1, discrete: true, step: 1 },
+      ],
+    };
+
+    const result = await processGSplatsData('/g', makeData(500), vs, root, 1);
+    expect(result).not.toBeNull();
+    expect(mockProcessGSplats).toHaveBeenCalledTimes(1);
+
+    const params = mockProcessGSplats.mock.calls[0][0];
+    expect(params.extendToAllDims).toContain(3);
+    // The extended dim wins over discrete: even though 't' is discrete, the
+    // sentinel routes it to extendToAllDims and NOT discreteDims.
+    expect(params.discreteDims).not.toContain(3);
+  });
+
+  it('leaves extendToAllDims empty for an ordinary (non-sentinel) tolerance (issue #1157)', async () => {
+    // Negation so the assertion above is not vacuous: an ordinary tolerance
+    // array yields NO extended dims — the sentinel is what drives the set.
+    const root = new THREE.Group();
+    root.add(makeMesh('/g'));
+
+    const result = await processGSplatsData('/g', makeData(500), makeViewState(), root, 1);
+    expect(result).not.toBeNull();
+    expect(mockProcessGSplats).toHaveBeenCalledTimes(1);
+
+    const params = mockProcessGSplats.mock.calls[0][0];
+    expect(params.extendToAllDims).toEqual([]);
   });
 });
 

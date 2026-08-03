@@ -38,7 +38,7 @@ export interface GSplatsHandlerCtx {
     path: string,
     attrs: { extend_to_all?: string[] } | undefined,
     opts: { applyPartialExtendTolerance: boolean; extendedToleranceCache?: Map<string, number[]> }
-  ): { skip: 'extend_to_all' } | { skip: false; viewState: ViewState };
+  ): { skip: 'extend_to_all' | false; viewState: ViewState };
   /** Per-update abort signal forwarded to `loader.updateView` (see DataLoader). */
   signal?: AbortSignal;
   /**

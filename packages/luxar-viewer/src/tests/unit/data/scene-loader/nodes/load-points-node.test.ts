@@ -6,10 +6,11 @@
  *      `.add(placeholder)` happens after the await, the failure-recovery
  *      contract breaks (retry has no mesh to target) but the happy path
  *      still passes its tests.
- *   2. extend_to_all skip fallback uses the BASE viewState — on initial
- *      load we still want to construct the THREE node so future slice
- *      changes can populate it; the skip return only short-circuits on
- *      update/retry paths.
+ *   2. A fully-extended node's initial load uses the DERIVED view state
+ *      (which carries the 1e10 extend-tolerance sentinels), NOT the raw
+ *      ctx.viewState. `skip: 'extend_to_all'` is only an optimization hint;
+ *      the derived state already IS the live slice with the extend override
+ *      applied, so the node populates correctly (issue #1157).
  *   3. On loader.loadPoints rejection, the failure is recorded AND a
  *      typed `LoaderError` is re-thrown so `loadLeafNode` can dispatch
  *      by kind and keep sibling nodes rendering.
@@ -255,18 +256,31 @@ describe('loadPointsNode — happy path', () => {
   });
 });
 
-describe('loadPointsNode — extend_to_all skip fallback on initial load', () => {
-  it('falls back to ctx.viewState (NOT the derived one) when derive returns skip', async () => {
+describe('loadPointsNode — fully-extended derive on initial load (issue #1157)', () => {
+  it('uses the derived extended-tolerance view state, not the raw ctx.viewState, on the fully-extended skip hint (issue #1157)', async () => {
     const loadPoints = vi.fn().mockResolvedValue({ pointCount: 1 } as LoadedPointsData);
     createPointsLoaderMock.mockReturnValue(makePointsLoader(loadPoints));
     const ctx = makeCtx();
-    ctx.spies.deriveNodeViewState.mockReturnValue({ skip: 'extend_to_all' });
+    // Distinct sentinel: a DIFFERENT object from ctx.viewState, carrying the
+    // 1e10 extend tolerance that deriveNodeViewState now applies to a
+    // fully-extended node. The `toBe` identity check below fails if the load
+    // ever falls back to the raw ctx.viewState (the pre-#1157 bug).
+    const derivedVS: ViewState = {
+      displayDims: [0, 1, 2],
+      slicePosition: [0, 0, 0, 0],
+      tolerance: [1e10, 0, 0, 1],
+      dimensions: undefined,
+    };
+    ctx.spies.deriveNodeViewState.mockReturnValue({ skip: 'extend_to_all', viewState: derivedVS });
 
     await loadPointsNode(makeSceneNode(), new THREE.Group(), {} as never, ctx);
 
     expect(loadPoints).toHaveBeenCalledTimes(1);
-    // Initial-load uses ctx.viewState — the same object, not a copy.
-    expect(loadPoints.mock.calls[0][0]).toBe(ctx.viewState);
+    // Initial-load uses the DERIVED view state (with the extend sentinels), not
+    // ctx.viewState — the derived state already IS the live slice with the
+    // extend override applied.
+    expect(loadPoints.mock.calls[0][0]).toBe(derivedVS);
+    expect(loadPoints.mock.calls[0][0]).not.toBe(ctx.viewState);
   });
 });
 

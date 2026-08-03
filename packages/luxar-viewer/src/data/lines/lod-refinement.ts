@@ -35,7 +35,7 @@ export interface LinesRefinementCtx {
     path: string,
     attrs: LinesMetadata | undefined,
     opts: { applyPartialExtendTolerance: boolean }
-  ): { skip: 'extend_to_all' } | { skip: false; viewState: ViewState };
+  ): { skip: 'extend_to_all' | false; viewState: ViewState };
   processLines(
     path: string,
     data: LoadedLinesData,
@@ -88,7 +88,9 @@ export async function runLinesRefinement(ctx: LinesRefinementCtx): Promise<void>
         const refined = ctx.deriveNodeViewState(path, nodeAttrs, {
           applyPartialExtendTolerance: false,
         });
-        if (refined.skip) return;
+        // No skip short-circuit: refinement must keep converging a fully-extended
+        // node's additive ladder too. Returning early on skip froze the ladder at
+        // its first chunk (issue #1157).
         const linesVS: LinesViewState = refined.viewState;
 
         // Account this step to the 'LOD Refinement' tree (opened only when

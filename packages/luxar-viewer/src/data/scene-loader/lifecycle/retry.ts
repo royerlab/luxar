@@ -8,9 +8,11 @@
  * never touch that lock so retry-from-inside-retry doesn't deadlock.
  *
  * Each retry repeats the same query-shape logic the main update path
- * uses (deriveNodeViewState + the per-type viewState fallback for
- * extend_to_all skip) so retry / update / initial-load are never out
- * of sync.
+ * uses: it always retries with `deriveNodeViewState(...).viewState`. The
+ * `extend_to_all` skip is only an optimization hint now (there is no
+ * per-type raw-viewState fallback), so retry / update / initial-load are
+ * never out of sync — a fully-extended node retries with the derived state
+ * that carries the 1e10 sentinels on its hidden dims.
  */
 
 import type * as THREE from 'three';
@@ -26,11 +28,12 @@ import type { StagedPointsCommit } from '../process/data-processor-points';
 import type { StagedGSplatsCommit } from '../process/data-processor-gsplats';
 
 /**
- * Result of `deriveNodeViewState` — `skip` is true when the helper
- * decides the node should fall back to the base view state (e.g. full
- * extend_to_all coverage where deriving would empty the query).
+ * Result of `deriveNodeViewState` — always carries a derived `viewState`.
+ * `skip` is only an optimization hint (`'extend_to_all'` when the node's
+ * extend_to_all dims fully cover the non-displayed set); the retry still uses
+ * `viewState`, which carries the 1e10 tolerance sentinels for the hidden dims.
  */
-type DerivedViewState = { skip: 'extend_to_all' } | { skip: false; viewState: ViewState };
+type DerivedViewState = { skip: 'extend_to_all' | false; viewState: ViewState };
 
 /**
  * Narrow context the retry helpers need from the orchestrator. Keeps
@@ -120,11 +123,13 @@ export async function retryFailedLoaderUnlocked(path: string, ctx: RetryCtx): Pr
       const derived = ctx.deriveNodeViewState(path, attrs, {
         applyPartialExtendTolerance: descriptor.applyPartialExtendTolerance,
       });
-      // Mirror the initial-load fallback: when `derived.skip` is true
-      // (extend_to_all fully covers), the placeholder still needs data
-      // committed — skipping the load and clearing failedLoaders would
-      // falsely report success against an empty placeholder.
-      const viewState = derived.skip ? ctx.viewState : derived.viewState;
+      // Mirror the initial-load path: always retry with the derived view
+      // state, including the fully-extended (`derived.skip === 'extend_to_all'`)
+      // case. The derived state carries the 1e10 tolerance sentinels on the
+      // hidden dims, so the retry fetches the correct "ignore those dims" query
+      // rather than the raw base slice (which would slice/filter the node's data
+      // away and then falsely clear the failure — issue #1157).
+      const viewState = derived.viewState;
       await descriptor.retryCommit(ctx, path, registry.loadersOf(kind).get(path)!, viewState);
       return verifyAndClear(kind);
     } else {

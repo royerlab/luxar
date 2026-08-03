@@ -35,7 +35,7 @@ export interface PointsRefinementCtx {
     path: string,
     attrs: PointsMetadata | undefined,
     opts: { applyPartialExtendTolerance: boolean }
-  ): { skip: 'extend_to_all' } | { skip: false; viewState: ViewState };
+  ): { skip: 'extend_to_all' | false; viewState: ViewState };
   /**
    * Points commits directly (no async-project step like lines/gsplats);
    * the helper passes the freshly loaded data straight to
@@ -87,7 +87,10 @@ export async function runPointsRefinement(ctx: PointsRefinementCtx): Promise<voi
         const refined = ctx.deriveNodeViewState(path, nodeAttrs, {
           applyPartialExtendTolerance: true,
         });
-        if (refined.skip) return;
+        // No skip short-circuit: a fully-extended node's derived state carries
+        // the 1e10 tolerance sentinels on its hidden dims, so refinement must
+        // keep converging its additive ladder for it too. Returning early on
+        // skip froze the ladder at its first chunk (issue #1157).
         const pointsVS: PointsViewState = refined.viewState;
 
         // Account this step to the 'LOD Refinement' tree (opened only when

@@ -215,17 +215,30 @@ describe('loadLinesNode — happy path', () => {
   });
 });
 
-describe('loadLinesNode — extend_to_all skip fallback', () => {
-  it('uses ctx.viewState when derive returns skip', async () => {
+describe('loadLinesNode — fully-extended derive (issue #1157)', () => {
+  it('uses the derived view state by identity, not the raw ctx.viewState, on the fully-extended skip hint (issue #1157)', async () => {
     const loadLines = vi.fn().mockResolvedValue({ segmentCount: 0 } as LoadedLinesData);
     createLinesLoaderMock.mockReturnValue(makeLinesLoader(loadLines));
     const ctx = makeCtx();
-    ctx.spies.deriveNodeViewState.mockReturnValue({ skip: 'extend_to_all' });
+    // Distinct object from ctx.viewState (an ordinary tolerance value, since
+    // the lines path derives with applyPartialExtendTolerance: false and never
+    // produces a 1e10 sentinel — extent rides segment bounds, not tolerance).
+    // The derived state already IS the live slice with the extend handling
+    // applied, so a fully-extended lines node must load with it — not the
+    // pre-#1157 fallback to the raw base slice (which sliced its segments away).
+    const derivedVS: ViewState = {
+      displayDims: [0, 1, 2],
+      slicePosition: [0, 0, 0, 0],
+      tolerance: [0.7, 0, 0, 1],
+      dimensions: undefined,
+    };
+    ctx.spies.deriveNodeViewState.mockReturnValue({ skip: 'extend_to_all', viewState: derivedVS });
 
     await loadLinesNode(makeSceneNode(), new THREE.Group(), {} as never, ctx);
 
-    // Identity-check: initial-load falls back to the base viewState reference.
-    expect(loadLines.mock.calls[0][0]).toBe(ctx.viewState);
+    // Identity-check: initial-load uses the derived view state reference.
+    expect(loadLines.mock.calls[0][0]).toBe(derivedVS);
+    expect(loadLines.mock.calls[0][0]).not.toBe(ctx.viewState);
   });
 });
 

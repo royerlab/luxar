@@ -143,17 +143,14 @@ export async function loadGSplatsNodeExpensive(
     // after a further scrub is stamped for the slice it actually loaded (the
     // registry then re-reloads for the newer version) — not mis-stamped fresh.
     const loadedViewVersion = ctx.getViewVersion();
-    // Use the LIVE view-state (not the build-time snapshot) for the
-    // extend_to_all skip-fallback so a deferred reload queries the current slice.
-    const live = ctx.getLiveViewState();
-    const gsplatsViewState: GSplatsViewState = derivedGSplats.skip
-      ? {
-          displayDims: live.displayDims,
-          slicePosition: live.slicePosition,
-          tolerance: live.tolerance,
-          dimensions: live.dimensions,
-        }
-      : derivedGSplats.viewState;
+    // Always load with the derived view state — including the fully-extended
+    // (`derivedGSplats.skip === 'extend_to_all'`) case. deriveNodeViewState
+    // derives from the loader's live view state, so the derived state already IS
+    // the current slice with the extend override applied: the 1e10 tolerance
+    // sentinels on the hidden dims are what data-processor-gsplats reads to keep
+    // those dims. A prior version fell back to the raw live slice on skip, which
+    // filtered the fully-extended node's splats out (issue #1157).
+    const gsplatsViewState: GSplatsViewState = derivedGSplats.viewState;
 
     // Debug-only per-stage timing (no-op unless ?debug). Buckets the
     // three meaningful costs — fetch+decode, CPU process (project+pack),

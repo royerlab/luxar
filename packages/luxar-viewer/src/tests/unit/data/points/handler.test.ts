@@ -49,7 +49,7 @@ describe('points handler', () => {
       clearFailure: vi.fn(),
       currentVersion: 1,
       extendedToleranceCache: new Map(),
-      deriveNodeViewState: () => ({ skip: 'extend_to_all' }),
+      deriveNodeViewState: () => ({ skip: 'extend_to_all', viewState: baseViewState }),
     });
     expect(result).toBeNull();
     expect(loader.updateView).not.toHaveBeenCalled();
@@ -73,7 +73,7 @@ describe('points handler', () => {
       clearFailure: vi.fn(),
       currentVersion: 1,
       extendedToleranceCache: new Map(),
-      deriveNodeViewState: () => ({ skip: 'extend_to_all' }),
+      deriveNodeViewState: () => ({ skip: 'extend_to_all', viewState: baseViewState }),
     });
     // The skip path MUST call forgetPath('/p') exactly once.
     expect(forgetPathSpy).toHaveBeenCalledTimes(1);

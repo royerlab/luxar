@@ -234,30 +234,35 @@ describe('retryFailedLoaderUnlocked — Lines loader paths', () => {
   });
 });
 
-describe('retryFailedLoaderUnlocked — GSplats loader extend_to_all skip fallback', () => {
-  it('builds gsplatsViewState from base viewState fields when derive returns skip', async () => {
+describe('retryFailedLoaderUnlocked — GSplats loader fully-extended derive (issue #1157)', () => {
+  it('retries with the derived extended view state, not a base-field rebuild, on the fully-extended skip hint (issue #1157)', async () => {
     const splatsData = { splatCount: 9 } as unknown as LoadedGSplatsData;
     const updateView = vi.fn().mockResolvedValue(splatsData);
     const ctx = makeRetryCtx({
       rootGroup: makeRootGroupWith(PATH, { extend_to_all: ['t', 'c'] }),
     });
-    ctx.spies.deriveNodeViewState.mockReturnValue({ skip: 'extend_to_all' });
+    // Distinct sentinel: a DIFFERENT object from ctx.viewState carrying the
+    // 1e10 extend tolerance. The retry must use this derived state (which
+    // ignores the hidden dims) rather than rebuilding the raw base slice —
+    // otherwise it fetches the wrong query and falsely clears the failure.
+    const derivedVS: ViewState = {
+      displayDims: [0, 1, 2],
+      slicePosition: [0, 0, 0, 0],
+      tolerance: [1e10, 1e10, 0, 1],
+      dimensions: undefined,
+    };
+    ctx.spies.deriveNodeViewState.mockReturnValue({ skip: 'extend_to_all', viewState: derivedVS });
     ctx.registry.registerGSplatsLoader(PATH, makeGSplatsLoader(updateView));
     ctx.registry.recordFailure(PATH, new Error('initial failure'));
 
     const ok = await retryFailedLoaderUnlocked(PATH, ctx);
 
     expect(ok).toBe(true);
-    // The base view state (NOT the derived one) — same shape loadGSplats()
-    // initial-load uses. Verify by checking what loader.updateView received.
+    // The DERIVED view state reaches the loader by identity — not a
+    // field-by-field rebuild of ctx.viewState.
     expect(updateView).toHaveBeenCalledTimes(1);
-    const passedViewState = updateView.mock.calls[0][0];
-    expect(passedViewState).toEqual({
-      displayDims: ctx.viewState.displayDims,
-      slicePosition: ctx.viewState.slicePosition,
-      tolerance: ctx.viewState.tolerance,
-      dimensions: ctx.viewState.dimensions,
-    });
+    expect(updateView.mock.calls[0][0]).toBe(derivedVS);
+    expect(updateView.mock.calls[0][0]).not.toBe(ctx.viewState);
     // Confirm derive was passed the node's extend_to_all attrs from the rootGroup mesh.
     expect(ctx.spies.deriveNodeViewState).toHaveBeenCalledWith(
       PATH,

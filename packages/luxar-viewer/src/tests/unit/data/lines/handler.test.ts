@@ -38,7 +38,10 @@ describe('lines handler', () => {
       clearFailure: vi.fn(),
       currentVersion: 1,
       updateVersion: 1,
-      deriveNodeViewState: () => ({ skip: 'extend_to_all' }),
+      deriveNodeViewState: () => ({
+        skip: 'extend_to_all',
+        viewState: { displayDims: [], slicePosition: [], tolerance: [] },
+      }),
     });
     expect(result).toBeNull();
     expect(loader.updateView).not.toHaveBeenCalled();
@@ -62,7 +65,10 @@ describe('lines handler', () => {
       clearFailure: vi.fn(),
       currentVersion: 1,
       updateVersion: 1,
-      deriveNodeViewState: () => ({ skip: 'extend_to_all' }),
+      deriveNodeViewState: () => ({
+        skip: 'extend_to_all',
+        viewState: { displayDims: [], slicePosition: [], tolerance: [] },
+      }),
     });
     expect(forgetPathSpy).toHaveBeenCalledTimes(1);
     expect(forgetPathSpy).toHaveBeenCalledWith('/l');
