@@ -63,8 +63,3 @@ export function boundedConcurrencyStore<S extends object>(store: S): S {
     },
   }) as S;
 }
-
-/** Test-only: current in-flight count (for assertions). */
-export function _activeFetchCount(): number {
-  return activeFetches;
-}
