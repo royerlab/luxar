@@ -84,9 +84,7 @@ def _update_constant(text: str, name: str, new_value: int) -> tuple[str, int]:
     Returns (new_text, n_replacements).  Only replaces the first occurrence
     on a left-margin line — top-level demo constants.
     """
-    pattern = re.compile(
-        rf"(?m)^({re.escape(name)}\s*=\s*)([0-9_]+)(\s*(?:#.*)?)$"
-    )
+    pattern = re.compile(rf"(?m)^({re.escape(name)}\s*=\s*)([0-9_]+)(\s*(?:#.*)?)$")
 
     def repl(m: re.Match[str]) -> str:
         return f"{m.group(1)}{new_value}{m.group(3)}"
@@ -141,7 +139,9 @@ def main() -> int:
     for demo_name, (filename, var_name) in DEMO_FILE_MAP.items():
         s = by_name.get(demo_name)
         if s is None or s.get("status") != "ok":
-            print(f"{demo_name:<32} {'—':>10} {'—':>12} {'—':>10}  (no calibration result)")
+            print(
+                f"{demo_name:<32} {'—':>10} {'—':>12} {'—':>10}  (no calibration result)"
+            )
             continue
         k_star_raw = int(s["recommended_k_star"])
         k_star = _round_clean(k_star_raw)
@@ -149,7 +149,9 @@ def main() -> int:
 
         path = DEMOS_DIR / filename
         if not path.exists():
-            print(f"{demo_name:<32} {k_star_raw:>10} {k_star:>12} {per_pass:>10}  MISSING: {filename}")
+            print(
+                f"{demo_name:<32} {k_star_raw:>10} {k_star:>12} {per_pass:>10}  MISSING: {filename}"
+            )
             continue
 
         # SEEDS_PER_TILE demos don't have MAX_SPLATS_PER_PASS.
@@ -159,7 +161,9 @@ def main() -> int:
         marker = f"{var_name}={k_star}"
         if per_pass_arg is not None and "MAX_SPLATS_PER_PASS" in change:
             marker += f" per_pass={change['MAX_SPLATS_PER_PASS']}"
-        print(f"{demo_name:<32} {k_star_raw:>10} {k_star:>12} {per_pass:>10}  {filename} → {marker}")
+        print(
+            f"{demo_name:<32} {k_star_raw:>10} {k_star:>12} {per_pass:>10}  {filename} → {marker}"
+        )
 
     print()
     print(f"Updated {len(rows)} demo files.")

@@ -632,7 +632,7 @@ gen-data-manifest:  ## Regenerate demos/data_manifest.json from the demos/data t
 
 # Code quality checks (using Hatch)
 lint-python:  ## Run ruff linting on Python code
-	$(HATCH) run python -m ruff check packages/luxar/src/luxar/
+	$(HATCH) run python -m ruff check packages/luxar/src/luxar/ scripts scripts/benchmarks
 
 lint-typescript:  ## Run ESLint on TypeScript code
 	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
@@ -765,8 +765,8 @@ run-pre-commit:  ## Run pre-commit on all files
 # Quality checks (run all using Hatch)
 #
 # ⚠️  NOT READ-ONLY. `hatch run check` starts with the `format` script
-# (`ruff format` + `ruff check --fix`) over packages/luxar/src, so this target
-# REWRITES source files across the whole tree. That is fine solo, but it will
+# (`ruff format` + `ruff check --fix`) over packages/luxar/src and scripts, so
+# this target REWRITES source files across the tree. That is fine solo, but it will
 # stomp on a concurrently-running agent's or colleague's unsaved edits. For a
 # read-only verdict use the scoped targets instead:
 #     make lint-python type-check-python security check-typescript check-rust
