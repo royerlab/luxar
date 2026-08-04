@@ -320,7 +320,7 @@ export interface WasmModule {
    * @param ndim - Total dimensionality
    * @param splatCount - Number of splats
    * @param minAmplitude - Visibility threshold
-   * @param truncate - Truncation radius for shifted Gaussian (typically 3.0)
+   * @param truncate - Truncation radius in sigmas for the shifted Gaussian
    * @param outputVisibility - Output visibility mask [splatCount]
    * @param outputAttenuation - Output attenuation factors [splatCount]
    * @returns Number of visible splats
@@ -406,7 +406,7 @@ export interface WasmModule {
    * @param splatCount - Number of splats
    * @param colorComponents - Color channel count (3 = RGB, 4 = RGBA); strides every color read/write
    * @param minAmplitude - Visibility threshold
-   * @param truncate - Truncation radius in sigmas (typically 3.0)
+   * @param truncate - Truncation radius in sigmas
    * @param outCenters3d - Output visible centers [splatCount * 3] worst-case
    * @param outCholesky3d - Output visible 3D Cholesky [splatCount * 6] worst-case
    * @param outAmplitudes - Output visible attenuated amplitudes [splatCount] worst-case

@@ -62,6 +62,7 @@ import {
   VOLUMETRIC_TAU_EPS,
 } from '../_shared/volumetric';
 import { lineWebGPUFactory, buildLineTSLNodesFromUniforms } from './shader-tsl';
+import { FALLOFF_FLOOR, FALLOFF_K } from '../_shared/falloff';
 import type { ShaderSource } from '../_shared/shader-source';
 
 export const LINE_VERTEX_SHADER = /* glsl */ `
@@ -485,8 +486,8 @@ export const LINE_FRAGMENT_SHADER = /* glsl */ `
       // edge), s=0 -> beta=0.25 (cusp). Shifted by C and renormalised so
       // perpFalloff(0)=1 and perpFalloff(1)=0 (C0-continuous truncation at
       // the line edge, no hard ring). K = ln(1/floor), floor = 0.01.
-      const float K = 4.6051702;          // ln(100)
-      const float C = 0.01;               // exp(-K) = floor
+      const float K = ${FALLOFF_K};          // ln(100)
+      const float C = ${FALLOFF_FLOOR};               // exp(-K) = floor
       const float INV_ONE_MINUS_C = 1.0 / (1.0 - C);
       float beta = exp2(6.0 * vSharpness - 2.0);
       float perpFalloff = max(exp(-K * pow(p, beta)) - C, 0.0) * INV_ONE_MINUS_C;

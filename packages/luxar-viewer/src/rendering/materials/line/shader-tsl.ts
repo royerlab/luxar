@@ -61,6 +61,7 @@ import {
   Discard,
 } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
+import { FALLOFF_FLOOR, FALLOFF_K, INV_ONE_MINUS_FALLOFF_FLOOR } from '../_shared/falloff';
 import { getPlaceholderElementTexture } from '../../element-texture-layout';
 import {
   perspectiveNearFadeStaticTSL,
@@ -580,9 +581,9 @@ export function lineWebGPUFactory(
     // edge. The [0, 1] sharpness KNOB maps to beta = 2^(6s - 2) (s=0.5 ->
     // beta=2, a truncated Gaussian). K = ln(1/floor), floor = 0.01.
     // Mirrors the GLSL3 fragment exactly.
-    const K = 4.6051702; // ln(100)
-    const C = 0.01; // exp(-K) = floor
-    const invOneMinusC = 1.0 / (1.0 - C);
+    const K = FALLOFF_K; // ln(100)
+    const C = FALLOFF_FLOOR; // exp(-K) = floor
+    const invOneMinusC = INV_ONE_MINUS_FALLOFF_FLOOR;
     const beta: TSLNode = float(2.0).pow(vSharpness.mul(6.0).sub(2.0));
     const perpFalloff: TSLNode = exp(p.pow(beta).mul(-K)).sub(C).max(float(0.0)).mul(invOneMinusC);
 

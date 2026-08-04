@@ -38,11 +38,11 @@ import { getWorkerPool } from '../../../workers/worker-pool';
 import { isWorkerInfrastructureError } from '../../../workers/worker-pool/errors';
 import { projectGSplatsInProcess } from '../../../workers/data-worker/projection/in-process';
 import { isExtendToAll } from '../../../workers/data-worker/projection/hidden-dims';
-import { SHIFTED_GAUSSIAN_DEFAULT_TRUNCATE } from '../../../workers/data-worker/projection/constants';
+import { GSPLAT_DEFAULT_TRUNCATION_RADIUS } from '../../../config/constants';
 import type { UpdateSession } from '../../../profiling/update-profiler';
 
 /** Default truncation radius if the mesh material doesn't expose one. */
-const DEFAULT_TRUNCATE = SHIFTED_GAUSSIAN_DEFAULT_TRUNCATE;
+const DEFAULT_TRUNCATE = GSPLAT_DEFAULT_TRUNCATION_RADIUS;
 
 import type { StagedNoopCommit } from '../commit/noop-commit';
 

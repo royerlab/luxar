@@ -5,6 +5,8 @@ Tests for fitting configuration dataclasses.
 import numpy as np
 import pytest
 
+from luxar.typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
+
 try:
     import torch
 
@@ -239,7 +241,7 @@ class TestConstraintConfig:
         assert cfg.sigma_max_diag is None
         assert cfg.amp_max is None
         assert cfg.max_eccentricity == 10.0
-        assert cfg.truncate == 2.75
+        assert cfg.truncate == DEFAULT_TRUNCATION_RADIUS
         assert cfg.voxel_size is None
         assert cfg.output_space == "real"
         assert cfg.boundary_penalty is None

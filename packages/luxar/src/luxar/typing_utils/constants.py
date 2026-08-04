@@ -130,6 +130,27 @@ NODE_TYPE_MESH: Final[str] = "mesh"
 MIN_POINT_RADIUS: Final[float] = 0.001  # Minimum visible radius
 MAX_POINT_RADIUS: Final[float] = 1000.0  # Maximum practical radius
 
+#: GSplat truncation radius ``T``, in sigmas: the Mahalanobis distance beyond
+#: which a splat's shifted Gaussian is exactly zero. The kernel is
+#: ``max(0, exp(-D²/2) - C) / (1 - C)`` with ``C = exp(-T²/2)``, so ``T`` sets
+#: both the support and the normalization ``1/(1 - C)``.
+#:
+#: 2.75 comes from ``da53b17d2`` (2.5σ measured +1.6 dB over the prior default;
+#: 2.75 is the quality/speed middle ground). It was applied only to the fitter
+#: config at the time, leaving ~20 sites defaulting to 3.0 — this constant is
+#: the single source that replaces them.
+#:
+#: MIRROR: ``GSPLAT_DEFAULT_TRUNCATION_RADIUS`` in
+#: ``packages/luxar-viewer/src/config/constants.ts`` must hold the same value.
+#: Both sides are pinned by tests that name each other.
+#:
+#: EXEMPTION: :mod:`luxar.gsplats.lift` keeps 3.0. Its ``T`` is not a render
+#: default but a profile-matching parameter — the point/line super-Gaussian
+#: sprite and the gsplat kernel coincide exactly at ``T* = sqrt(2 ln 100) =
+#: 3.0349``. Measured radial-weighted relative L2 of the lift: 1.96% at T=3.0,
+#: 16.91% at T=2.75. See ``lift.py`` for the derivation.
+DEFAULT_TRUNCATION_RADIUS: Final[float] = 2.75
+
 # Spatial index grid constants
 SPATIAL_INDEX_MAX_CELLS_DISCRETE: Final[int] = (
     10000  # Maximum cells for discrete dimensions (safety cap)

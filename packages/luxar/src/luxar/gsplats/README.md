@@ -804,7 +804,7 @@ tensor = render_to_volume_tensor(gsplat_data, shape=(128, 128, 128), device="cud
 - `gsplat_data`: GSplatData to render
 - `shape`: Output volume shape, e.g. `(128, 128, 128)`
 - `device`: `"cuda"`, `"mps"`, `"cpu"`, or `None` (auto-detect)
-- `truncate`: Truncation radius in standard deviations (default 3.0)
+- `truncate`: Truncation radius in standard deviations (default `DEFAULT_TRUNCATION_RADIUS` = 2.75)
 - `intensity_floor`: Amplitude-aware culling threshold (default 1e-5)
 - `chunk_size`: Optional chunk size for memory management on large volumes
 
@@ -1020,10 +1020,10 @@ Structural Similarity Index via nD Gaussian-weighted convolution. Supports 2D, 3
 
 ### Rendering Functions
 
-#### `render_to_volume(gsplat_data, shape, device=None, truncate=3.0, intensity_floor=1e-5, chunk_size=None)`
+#### `render_to_volume(gsplat_data, shape, device=None, truncate=2.75, intensity_floor=1e-5, chunk_size=None)`
 Render Gaussian splats to a NumPy array.
 
-#### `render_to_volume_tensor(gsplat_data, shape, device=None, truncate=3.0, intensity_floor=1e-5, chunk_size=None)`
+#### `render_to_volume_tensor(gsplat_data, shape, device=None, truncate=2.75, intensity_floor=1e-5, chunk_size=None)`
 Render Gaussian splats to a `torch.Tensor` on the rendering device. Avoids GPU-to-CPU copy for downstream GPU operations.
 
 ## Device Support and Performance

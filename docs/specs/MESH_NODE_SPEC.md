@@ -256,7 +256,9 @@ convention (fail-fast, before any zarr group is created):
   `NaN` normal takes the same fallback instead of slipping past a `dot(N, N) < ε` test and normalizing
   into `NaN` shading) it
   falls back to the §6.2 screen-space-derivative flat normal rather than normalizing a zero vector into
-  NaN shading. Shading near a degenerate vertex is therefore locally distorted rather than cleanly flat;
+  NaN shading. That substituted normal also **bypasses** §6.2's `gl_FrontFacing` two-sided flip, which
+  would otherwise negate an already-viewer-facing normal — see the two-sided-normal bullet there.
+  Shading near a degenerate vertex is therefore locally distorted rather than cleanly flat;
   the warning exists so authors fix the normals instead of relying on the guard.
 - `normal_dims` (§3.4) — exactly 3 entries, integers, distinct, each `0 <= i < ndim`. Required when
   `normals` is supplied; rejected when it is not. It is an explicit `add_mesh` parameter (§4) — as
@@ -679,7 +681,24 @@ model is deliberately minimal and light-free:
   rule — swapping variant and binding/omitting the `normal` attribute — when a `displayDims` change flips
   its validity, the same event that re-extracts the display-space `position` (§6.1, the §7
   `displayDims`-change rebuild).
-- **Shade term:** a camera-anchored headlight with a wrap term,
+- **View-space normals (stored-normal variants).** The `normal` attribute binds in the node's local
+  display frame, but every other input to the shade term is **view-space** by construction — `vViewPos`,
+  the headlight `V`, and the derivative fallback's `cross(dFdx(vViewPos), dFdy(vViewPos))`. The
+  stored-normal vertex stage must therefore carry the normal into view space before interpolation:
+  `vNormal = normalMatrix * normal` in GLSL (the built-in `mat3 normalMatrix`, the inverse-transpose of
+  the model-view matrix), and the TSL twin via `transformNormalToView`. The inverse-transpose is
+  load-bearing, not pedantry: a mesh node carries the standard 4×4 `transform` attr (§3.3), and
+  anisotropic scaling is routine in this domain (voxel size z ≠ xy), under which the plain model-view
+  linear map skews normals off-perpendicular — while a raw untransformed normal mislights any *rotated*
+  node (the same mesh shades correctly under the flat variant and wrongly under the smooth one, since
+  only the latter reads the attribute). The fragment-stage renormalization (two-sided bullet below)
+  absorbs the length change `normalMatrix` introduces under scaling, so no vertex-stage normalize is
+  needed. The TSL backend's generated `.vertex` codegen snapshots (§6.4) pin this transform for that
+  backend; the hand-written GLSL twin has no codegen snapshot and is instead pinned by the §8
+  rotated/anisotropically-scaled shading test.
+- **Shade term:** a camera-anchored headlight — `V` is the fixed view-space view axis `vec3(0, 0, 1)`, a
+  directional camera headlight identical in both backends (so `dot(N, V)` reduces to the view-space
+  normal's z-component) — with a wrap term,
   `shade = mix(uAmbient, 1.0, pow(saturate(dot(N, V) * 0.5 + 0.5), uShadeExponent))`. View-anchored, so
   it needs no light in the scene graph and no scene-graph API change. `uAmbient` and `uShadeExponent`
   are material uniforms with sane defaults; a fully-flat `uAmbient = 1.0` reproduces the emissive look
@@ -696,8 +715,25 @@ model is deliberately minimal and light-free:
   **derivative fallback** (`mesh-flat-normal.fragment`) needs **no** such flip:
   `normalize(cross(dFdx(vViewPos), dFdy(vViewPos)))` is orientation-defined by the rasterized fragment,
   not the winding, so it always faces the viewer (§7's "always faces the camera regardless of winding" is
-  correct for that variant) — the flip is a stored-normal-variant-only concern. The flip is well-defined
-  wherever it applies: stored normals are only active when `normal_dims == displayDims` (§3.4), where
+  correct for that variant) — the flip is a stored-normal-variant-only concern.
+
+  That exemption is **per fragment, not per variant**, which matters because §3.5's epsilon guard
+  substitutes the same derivative normal *inside* these stored-normal builds whenever the interpolated
+  normal is not affirmatively valid. Such a fragment must take the fallback's rule, not the variant's:
+  the substituted normal already faces the viewer, so applying `gl_FrontFacing ? N : -N` to it would
+  negate a viewer-facing normal on every back-facing fragment and reintroduce exactly the inverted,
+  `uAmbient`-collapsing shade the flip exists to remove — worst precisely at the degenerate and corrupt
+  vertices the guard is there to rescue. So the flip is gated on whether the stored normal survived the
+  guard; only normals that did are flipped. One structural constraint on the fragment build follows: the
+  guard's condition reads an interpolated varying, so a branch on it is **non-uniform control flow**,
+  where GLSL leaves `dFdx`/`dFdy` undefined (normal validity can differ between fragments of the same
+  2×2 quad). The derivative fallback normal is therefore computed **unconditionally**, before any
+  guard-dependent branching, and the guard *selects* per fragment between the flipped stored normal and
+  that precomputed fallback — only the `gl_FrontFacing` flip, never the derivative evaluation, sits
+  behind the guard.
+
+  The flip is well-defined wherever it applies: stored normals are only active when
+  `normal_dims == displayDims` (§3.4), where
   §5.4's parity post-pass keeps winding coherent — specifically its **index post-pass** form, since the
   flip consumes `gl_FrontFacing` and needs it to correlate with the authored orientation — so the flip
   gives the back face the same headlight gradient as the front.
@@ -855,8 +891,9 @@ Note that `material-manager.ts` still declares `pointMaterialCache` / `lineMater
 `gsplatMaterialCache`; these are **vestigial and permanently empty**, kept only so `getCacheStats()`
 keeps its shape. Mesh must **not** add a fourth empty map — `createMeshMaterial` constructs directly.
 
-Both backends must produce matching output and are gated by the existing codegen snapshot harness
-(`src/tests/__codegen__/`), which keys one snapshot variant per blend-mode build — whether a GLSL
+Both backends must produce matching output; the existing codegen snapshot harness
+(`src/tests/__codegen__/`) gates the **TSL-generated** shaders (the hand-written GLSL twins are pinned
+by behavior tests instead — e.g. §8's stored-normal view-space-transform check), and keys one snapshot variant per blend-mode build — whether a GLSL
 `#define` (the sibling `line-max`, `point-max`, `gsplat-normal-premult`) or a runtime-uniform branch the
 TSL path bakes per graph (`gsplat-opaque`, from gsplat's runtime `uProjectionMode` split). Note the
 harness (`tsl-codegen-snapshot.spec.ts`) asserts **both stages** of every variant unconditionally, so
@@ -1227,14 +1264,35 @@ A reviewer should treat a `| 'mesh'` appearing in any of those five as a defect.
       change to a **different axis triple** than the frame falls back to `DoubleSide` for the epoch —
       both orientations render (§5.4/§7)
 - [ ] TS unit: **flat-vs-smooth on the same normal-bearing mesh** — one mesh with valid stored normals
-      (`normal_dims == displayDims`) selects the stored-normal `mesh.fragment` variant under
+      (`normal_dims == displayDims`; use vertex-averaged normals that differ from the geometric face
+      normals, so smooth and flat genuinely disagree — a faceted face-normal fixture would render the
+      two variants identically even in a correct build) selects the stored-normal `mesh.fragment` variant under
       `shading="smooth"`, and the SAME mesh under `shading="flat"` selects `mesh-flat-normal.fragment`
       and shades from screen-space derivatives (§3.4, §6.2). Verified to differ — a build that ignores
       `shading` renders both identically and the test goes red. And under `shading="smooth"` on a
       `double_sided` mesh, a **back-viewed** face shades with the SAME headlight gradient as the
       **front-viewed** face (both lit symmetrically), NOT collapsed to flat `uAmbient` — verified to go
       **red** without the §6.2 `gl_FrontFacing` normal flip (the back face shades the inverted,
-      `uAmbient`-collapsing gradient instead of the front-facing one)
+      `uAmbient`-collapsing gradient instead of the front-facing one). And on the same back-viewed mesh
+      with one vertex's stored normal zeroed, the fragments where §3.5's epsilon guard fires shade from
+      the substituted derivative normal **without** the flip — the same camera-facing gradient as the
+      front view — verified to go **red** against a build that applies `gl_FrontFacing ? N : -N` to the
+      fallback normal (§6.2's per-fragment exemption)
+- [ ] TS unit (**both backends** — GLSL and TSL): **stored-normal view-space transform** — a
+      smooth-shaded mesh whose stored per-vertex normals equal its geometric face normals, with at least
+      one face normal that **mixes the differently-scaled axes** — a nonzero component both along z and
+      within the xy-plane (a tetrahedron, whose four face normals positively span R³, guarantees this;
+      an axis-aligned box, or a quad tilted only within the equal-scale xy-plane, does not: for any
+      normal that is an eigenvector of the scale `S·n` stays parallel to `S⁻¹·n`, so the
+      inverse-transpose error hides), placed on a node whose §3.3 4×4 `transform` both rotates and
+      non-uniformly scales (voxel z ≠ xy).
+      Under `shading="smooth"` it shades from the `normalMatrix`-transformed (inverse-transpose of
+      model-view) view-space normal (§6.2): the gradient stays head-on / camera-anchored and — on this
+      faceted fixture — matches the flat variant's derivative-normal response on the same geometry. Run
+      on the hand-written GLSL backend as well as TSL, since §6.2 designates this behavior test (not a
+      codegen snapshot) as the GLSL twin's pin. Verified to go **red** against a build that binds the raw
+      untransformed normal, or uses the plain model-view instead of the inverse-transpose — either
+      mislights the rotated node / skews normals off-perpendicular under the anisotropic scale
 - [ ] TS unit / E2E (pick corner contract, §6.5): a pick on a mesh triangle resolves to **a corner
       vertex of that face** — assert membership in `(i0, i1, i2)`, never one exact corner (the provoking
       vertex is backend-dependent: last on WebGL, first on WebGPU; `WEBGL_provoking_vertex` aligns them

@@ -20,6 +20,7 @@ from numpy.typing import NDArray
 from ...core.dimensions import Dimensions
 from ...encoding import SemanticType
 from ...encoding.compression import resolve_compressor
+from ...typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
 from .chunking import calculate_intelligent_chunks
 from .colormap import write_colormap_lut_if_needed
 from .context import DatasetCtx, OrderingCtx
@@ -146,7 +147,7 @@ def apply_gsplat_spatial_ordering(
     n_dims: int,
     cholesky_is_uniform: bool,
     ctx: OrderingCtx,
-    coverage_sigma: float = 3.0,
+    coverage_sigma: float = DEFAULT_TRUNCATION_RADIUS,
     barrier_dims: Optional[Sequence[int]] = None,
 ) -> Tuple[
     NDArray[np.float32],
@@ -472,7 +473,7 @@ def apply_gsplat_group_attrs(
         ("gamma", 1.0),
         ("intensity", 1.0),
         ("offset", 0.0),
-        ("truncation_radius", 3.0),
+        ("truncation_radius", DEFAULT_TRUNCATION_RADIUS),
     ]:
         if key not in attrs:
             attrs[key] = default

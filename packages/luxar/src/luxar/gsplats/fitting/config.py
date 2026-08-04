@@ -11,6 +11,7 @@ import numpy as np
 import torch
 
 from luxar.gsplats.fitting.dynamic_ops import DynamicOpsConfig
+from luxar.typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
 
 if TYPE_CHECKING:
     from luxar.gsplats.gsplat_data import GSplatData
@@ -95,7 +96,7 @@ class ConstraintConfig:
     sigma_max_diag: Optional[Sequence[float] | float] = None
     amp_max: Optional[float] = None
     max_eccentricity: Optional[float] = 10.0
-    truncate: float = 2.75
+    truncate: float = DEFAULT_TRUNCATION_RADIUS
     voxel_size: Optional[Sequence[float] | float] = None
     output_space: str = "real"
     boundary_penalty: Optional[float] = None

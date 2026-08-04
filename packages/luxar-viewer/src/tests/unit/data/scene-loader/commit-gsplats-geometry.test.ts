@@ -37,6 +37,7 @@ import { SOFT_DISPOSE_FLAG } from '../../../../rendering/material-manager';
 import { configureRenderObjectEviction } from '../../../../data/scene-loader/commit/invalidate-render-object';
 import type { StagedGSplatsCommit } from '../../../../data/scene-loader/process/data-processor-gsplats';
 import { getPrefixParent, setPrefixParent } from '../../../../types/prefix-lineage';
+import { GSPLAT_DEFAULT_TRUNCATION_RADIUS } from '../../../../config/constants';
 
 function makeProcessed(splatCount = 2) {
   return {
@@ -637,7 +638,7 @@ describe('commitGSplatsGeometry — append fast path (Phase 4 Stage 2, fromInsta
     // Positive-path bookkeeping stamps re-enable the NEXT append.
     const ud = root.children[0].userData as { gpuPrefixIntact: boolean; committedTruncate: number };
     expect(ud.gpuPrefixIntact).toBe(true);
-    expect(ud.committedTruncate).toBe(3.0);
+    expect(ud.committedTruncate).toBe(GSPLAT_DEFAULT_TRUNCATION_RADIUS);
     // Consume-and-clear: the gate consumed the lineage entry, unpinning the
     // parent concat (prefix-lineage.ts retention contract).
     expect(getPrefixParent(next.sourceData)).toBeUndefined();
@@ -690,7 +691,7 @@ describe('commitGSplatsGeometry — append fast path (Phase 4 Stage 2, fromInsta
     const root = new THREE.Group();
     root.add(makeMesh('/g'));
     const pool = makePool(new THREE.BufferGeometry());
-    const next = primeAndExtend(root, pool, 4, 6); // committedTruncate stamped 3.0
+    const next = primeAndExtend(root, pool, 4, 6); // committedTruncate stamped at the default
     // A truncate change is invisible to the view state / lineage — give the
     // mesh a material with a different uTruncate so readTruncate diverges.
     (root.children[0] as THREE.Mesh).material = {

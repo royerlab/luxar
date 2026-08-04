@@ -13,7 +13,7 @@
  * HISTORY (do not reintroduce): this module used to DERIVE a per-layer upper
  * bound as `ABSORPTION_TAU_TARGET / (thickness · chord)` from `max_width` /
  * `max_radius`, because the point and line shaders multiplied τ by a world
- * thickness (`radius · POINT_CHORD_SCALE`) that the gsplat shader had no
+ * thickness (the former point chord factor) that the gsplat shader had no
  * counterpart for. That made κ a per-unit-length coefficient for two families
  * and dimensionless for the third, so the stretch was a units conversion, not
  * a UX affordance — and it could never serve a MIXED subtree (a

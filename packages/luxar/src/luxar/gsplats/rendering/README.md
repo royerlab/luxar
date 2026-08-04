@@ -47,6 +47,6 @@ mse = ((rendered - original) ** 2).mean()
 - **`gsplat_data`** (`GSplatData`) — The Gaussian splat data to render, containing centers, Cholesky factors, and amplitudes.
 - **`shape`** (`Tuple[int, ...]`) — Output volume shape (e.g., `(128, 128, 128)` for 3D).
 - **`device`** (default `None`) — Device for rendering: `"cuda"`, `"mps"`, `"cpu"`, or `None` for auto-detection.
-- **`truncate`** (default 3.0) — Truncation radius in standard deviations. Gaussians are evaluated within this radius from their centers.
+- **`truncate`** (default 2.75, `DEFAULT_TRUNCATION_RADIUS`) — Truncation radius in standard deviations. Gaussians are evaluated within this radius from their centers.
 - **`intensity_floor`** (default 1e-5) — Minimum intensity threshold for amplitude-aware culling.
 - **`chunk_size`** — Optional chunk size for memory management on large volumes.

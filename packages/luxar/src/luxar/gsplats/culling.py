@@ -63,6 +63,7 @@ from luxar.gsplats.models.gsplats.rendering_core import (
     linear_strides,
     render_gaussians,
 )
+from luxar.typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
 
 
 @dataclass(frozen=True)
@@ -437,7 +438,7 @@ def _compute_per_splat_error(
     amps: torch.Tensor,
     reference: torch.Tensor,
     shape: Sequence[int],
-    truncate: float = 3.0,
+    truncate: float = DEFAULT_TRUNCATION_RADIUS,
     intensity_floor: float = 1e-5,
     chunk_size: Optional[int] = None,
     fractional: bool = False,
@@ -517,7 +518,7 @@ def compute_per_splat_deletion_error(
     amps: torch.Tensor,
     residual: torch.Tensor,
     shape: Sequence[int],
-    truncate: float = 3.0,
+    truncate: float = DEFAULT_TRUNCATION_RADIUS,
     intensity_floor: float = 1e-5,
     chunk_size: Optional[int] = None,
 ) -> torch.Tensor:
@@ -550,7 +551,7 @@ def cull_by_contribution(
     amps: torch.Tensor,
     target: Optional[torch.Tensor],
     shape: Sequence[int],
-    truncate: float = 3.0,
+    truncate: float = DEFAULT_TRUNCATION_RADIUS,
     error_percentile: float = 99.0,
     error_tolerance: float = 1.0,
     redundancy_threshold: float = 0.01,

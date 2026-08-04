@@ -16,6 +16,8 @@ from luxar.gsplats._data.render import RenderMixin
 
 # center_at_centroid (kept on GSplatData) shifts only the spatial axes (#487).
 from luxar.gsplats.utils.spatial_axes import spatial_only_shift
+from luxar.typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
+from luxar.validation.types import validate_truncation_radius
 
 if TYPE_CHECKING:
     from luxar.gsplats.tree import GSplatLeaf, GSplatNode, GSplatPartition
@@ -241,10 +243,16 @@ class AdditiveSubLOD(_SplatArrayMixin):
     cholesky_factors: np.ndarray
     colors: Optional[np.ndarray] = None
     stats: Dict[str, Any] = field(default_factory=dict)
-    truncation_radius: float = 3.0
+    truncation_radius: float = DEFAULT_TRUNCATION_RADIUS
 
     def __post_init__(self) -> None:
         """Validate array shape consistency."""
+        # The standalone .gsplats.zarr path never reaches the scene compiler's
+        # `validate_render_attrs`, so the truncation radius is checked here too.
+        # Validating per sub-LOD (not just via GSplatData's first-LOD property)
+        # is deliberate: the tree writer reads each sub-LOD's own value, so a
+        # bad radius on a later rung would otherwise reach disk unchecked.
+        validate_truncation_radius(self.truncation_radius)
         n = self.centers.shape[0]
         if self.amplitudes.shape != (n,):
             raise ValueError(
@@ -381,7 +389,7 @@ class GSplatData(RenderMixin, IOAdapterMixin, FilteringMixin, CullingMixin):
         *,
         additive_sublods: Optional[List[AdditiveSubLOD]] = None,
         substitutive_levels: Optional[List[SubstitutiveLevel]] = None,
-        truncation_radius: float = 3.0,
+        truncation_radius: float = DEFAULT_TRUNCATION_RADIUS,
         _node: "Optional[GSplatNode]" = None,
     ) -> None:
         """Build the single in-memory ground truth: a matrix-shaped node tree.

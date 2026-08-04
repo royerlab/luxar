@@ -130,7 +130,10 @@ export interface GSplatsMetadata {
    */
   n_additive_sublods?: number;
 
-  /** Gaussian truncation radius in standard deviations (default 3.0 if absent). */
+  /**
+   * Gaussian truncation radius in standard deviations. Falls back to
+   * `GSPLAT_DEFAULT_TRUNCATION_RADIUS` (config/constants.ts) when absent.
+   */
   truncation_radius?: number;
 }
 

@@ -53,10 +53,6 @@ jobs:
       - name: Install viewer dependencies
         run: cd packages/luxar-viewer && pnpm install --frozen-lockfile
 
-      # Create stub viewer dist so editable install succeeds (force-include)
-      - name: Create viewer dist stub
-        run: mkdir -p packages/luxar-viewer/dist
-
       # Build Sphinx docs (Python API + guides + tutorials)
       - name: Build Sphinx documentation
         run: hatch run docs:build

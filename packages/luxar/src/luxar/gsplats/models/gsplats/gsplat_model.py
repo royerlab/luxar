@@ -22,6 +22,7 @@ from luxar.gsplats.models.utils.inverse_softplus import (
     stable_inverse_softplus_torch,
 )
 from luxar.gsplats.utils import resolve_torch_device
+from luxar.typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
 
 
 class GaussianSplatModel(nn.Module):
@@ -67,7 +68,7 @@ class GaussianSplatModel(nn.Module):
         elongation of the Gaussian splats. For example, max_eccentricity=4.0
         means the longest axis can be at most 2x the shortest (since
         eccentricity is the variance ratio, axis ratio = sqrt(eccentricity)).
-    truncate : float, default=3.0
+    truncate : float, default=DEFAULT_TRUNCATION_RADIUS
         Truncation radius in standard deviations for computational efficiency.
     device : str or torch.device, optional
         PyTorch device for computations. Explicit values override auto-detection.
@@ -97,7 +98,7 @@ class GaussianSplatModel(nn.Module):
         sigma_max_diag: Optional[Sequence[float]] = None,
         amp_max: Optional[float] = None,  # Maximum amplitude (prevents explosion)
         max_eccentricity: Optional[float] = None,  # Max ratio of longest/shortest axis
-        truncate: float = 3.0,
+        truncate: float = DEFAULT_TRUNCATION_RADIUS,
         voxel_size: Optional[np.ndarray] = None,
         device: Optional[str | torch.device] = None,
         use_cuda: bool = True,

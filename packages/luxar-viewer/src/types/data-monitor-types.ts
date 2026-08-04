@@ -6,7 +6,7 @@
  * and loading statistics in real-time.
  */
 
-import type { NodeKind, NodeTypeName } from './format-contract';
+import type { GeometryTypeName, NodeKind, NodeTypeName } from './format-contract';
 
 /**
  * Geometry-neutral index range for monitor events and query tracking.
@@ -498,6 +498,20 @@ export interface SceneGraphNode {
   vertexCount?: number;
   /** Number of splats (for gsplats nodes) */
   splatCount?: number;
+  /**
+   * Number of triangles (for mesh nodes).
+   *
+   * Faces rather than vertices, because this trio counts the DRAWN PRIMITIVE per
+   * type — note `lines` is counted by `segmentCount`, not `vertexCount`, for the
+   * same reason. (The Python `Mesh.n_elements` counts vertices instead, since
+   * there the primary element is whatever the per-element attribute arrays are
+   * indexed by. The two conventions answer different questions.)
+   *
+   * Stays `undefined` until the mesh loader lands (MESH_NODE_SPEC.md §11 phase 3);
+   * no mesh node can reach the monitor before then, and `elementCountOf` already
+   * treats a missing count as 0.
+   */
+  faceCount?: number;
   /** Number of visible splats after nD slicing (for gsplats nodes) */
   visibleSplatCount?: number;
   /**
@@ -512,6 +526,12 @@ export interface SceneGraphNode {
    * Resolved geometry `display_type` (points / lines / gsplats) for a
    * specialized group — the type the user logically sees the group as.
    * Absent for plain groups and leaves (use `type` there).
+   *
+   * Spelled out rather than `GeometryTypeName`: this is the LOD/partition-CAPABLE
+   * subset of the vocabulary (it mirrors `LODGroupMetadata.display_type` and
+   * `PartitionGroupMetadata.display_type`), so do not widen it when a geometry
+   * type is added — declare that type's `lod` / `partition` capabilities in
+   * `types/geometry-capabilities` instead.
    */
   displayType?: 'points' | 'lines' | 'gsplats';
   /** For `kind=lod` groups: number of substitutive levels (child count). */
@@ -598,6 +618,21 @@ export interface LODProgressProvider {
 }
 
 /**
+ * Per-geometry-type counters, one entry per {@link GeometryTypeName}.
+ *
+ * Keyed by the contract vocabulary rather than written out as
+ * `points…`/`lines…`/`gsplats…` triplets, so adding a geometry type extends
+ * every counter at once (and fails to compile until the producers supply it)
+ * instead of needing a field, an accumulator and a reader per counter.
+ *
+ * The *element* nouns (points / segments / splats) deliberately do NOT live
+ * here: they belong to the display layer, which keeps per-type named fields on
+ * {@link DataLoadingStats} because each is rendered with its own label and DOM
+ * id. This shape is the aggregation model; the nouns are presentation.
+ */
+export type GeometryCounters = Record<GeometryTypeName, number>;
+
+/**
  * Scene graph state for monitor
  */
 export interface SceneGraphState {
@@ -605,24 +640,12 @@ export interface SceneGraphState {
   root: SceneGraphNode | null;
   /** Total number of nodes */
   totalNodes: number;
-  /** Number of points nodes */
-  pointsNodes: number;
-  /** Number of lines nodes */
-  linesNodes: number;
-  /** Number of gsplats nodes */
-  gsplatsNodes: number;
-  /** Total points across all nodes */
-  totalPoints: number;
-  /** Currently visible points (after nD clipping / progressive LOD) */
-  visiblePoints: number;
-  /** Total segments across all lines */
-  totalSegments: number;
-  /** Currently visible segments (after nD clipping) */
-  visibleSegments: number;
-  /** Total splats across all gsplats nodes */
-  totalSplats: number;
-  /** Currently visible splats (after nD clipping) */
-  visibleSplats: number;
+  /** Number of scene-graph nodes of each geometry type */
+  nodesByType: GeometryCounters;
+  /** Total elements of each geometry type across all nodes */
+  totalByType: GeometryCounters;
+  /** Currently visible elements per type (after nD clipping / progressive LOD) */
+  visibleByType: GeometryCounters;
 }
 
 /**

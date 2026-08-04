@@ -132,6 +132,7 @@ class TestGaussianSplatModelInitialization:
 
         assert model.shape == setup["shape"]
         assert model.dim == 3
+        # Explicitly supplied above — this pins round-tripping, not the default.
         assert model.truncate == 3.0
 
         # Check parameter shapes for 3D

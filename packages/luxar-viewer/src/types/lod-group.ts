@@ -27,6 +27,11 @@ export interface LODGroupMetadata {
    * Geometry type the user sees this layer as. Resolved at write time
    * (typically the finest child's type, walking through nested
    * specialized groups). The viewer uses this for the layers-panel label.
+   *
+   * Spelled out rather than `GeometryTypeName`: this is the LOD-CAPABLE subset
+   * of the vocabulary, so do not widen it when a geometry type is added —
+   * declare that type's `lod` capability in `types/geometry-capabilities`
+   * instead, and extend this union only if it comes out `true`.
    */
   display_type?: 'points' | 'lines' | 'gsplats';
 

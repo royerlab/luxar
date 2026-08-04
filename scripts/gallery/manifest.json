@@ -273,6 +273,25 @@
       "note": "topographic globe (Points) + 2.3M-segment HydroRIVERS networks (Lines); lodFinest:false so the coverage LOD stays light enough for a software-GL orbit video, absolute distance frames the whole globe (sparse rivers fool the coverage fill)"
     },
     {
+      "id": "biodiversity_planetary_scale",
+      "title": "Biodiversity at Planetary Scale",
+      "geometry": "points+lines",
+      "category": "geoscience",
+      "script": "demo_biodiversity_planetary_scale.py",
+      "dataset": "datasets/demos/biodiversity_planetary_scale.luxar.zarr",
+      "lodFinest": false,
+      "distance": 300,
+      "viewAngle": {
+        "azimuth": 20,
+        "elevation": 25
+      },
+      "dimensionNav": {
+        "key": "1",
+        "steps": 3
+      },
+      "note": "Blue Marble globe (Points) + a kind=partition of per-tile kind=lod GBIF occurrence ladders (Points) + CC0 Movebank tracks (Lines); lodFinest:false so the per-tile coverage LOD stays coarse enough for a software-GL orbit video (forcing finest would commit all 8 tiles' 1.87M-point levels at once), absolute distance frames the whole globe, dimensionNav steps the 10-category taxon slider"
+    },
+    {
       "id": "nuclear_pore_complex",
       "title": "Nuclear Pore Complex",
       "geometry": "points",

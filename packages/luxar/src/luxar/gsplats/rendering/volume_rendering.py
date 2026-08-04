@@ -12,6 +12,7 @@ import numpy as np
 import torch
 
 from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
+from luxar.typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
 
 if TYPE_CHECKING:
     from luxar.gsplats.gsplat_data import GSplatData
@@ -36,7 +37,7 @@ def render_to_volume_tensor(
     gsplat_data: GSplatData,
     shape: Tuple[int, ...],
     device: str | None = None,
-    truncate: float = 3.0,
+    truncate: float = DEFAULT_TRUNCATION_RADIUS,
     intensity_floor: float = 1e-5,
     chunk_size: int | None = None,
 ) -> torch.Tensor:
@@ -55,7 +56,7 @@ def render_to_volume_tensor(
         Output volume shape (e.g., (128, 128, 128) for 3D).
     device : str, optional
         Device to use for rendering. If None, auto-detects the best device.
-    truncate : float, default=3.0
+    truncate : float, default=DEFAULT_TRUNCATION_RADIUS
         Truncation radius in standard deviations.
     intensity_floor : float, default=1e-5
         Minimum intensity threshold for amplitude-aware culling.
@@ -148,7 +149,7 @@ def render_to_volume(
     gsplat_data: GSplatData,
     shape: Tuple[int, ...],
     device: str | None = None,
-    truncate: float = 3.0,
+    truncate: float = DEFAULT_TRUNCATION_RADIUS,
     intensity_floor: float = 1e-5,
     chunk_size: int | None = None,
 ) -> np.ndarray:
@@ -167,7 +168,7 @@ def render_to_volume(
     device : str, optional
         Device to use for rendering. If None, auto-detects the best device.
         Options: "cuda", "mps", "cpu".
-    truncate : float, default=3.0
+    truncate : float, default=DEFAULT_TRUNCATION_RADIUS
         Truncation radius in standard deviations. Gaussians are evaluated within
         this radius from their centers.
     intensity_floor : float, default=1e-5

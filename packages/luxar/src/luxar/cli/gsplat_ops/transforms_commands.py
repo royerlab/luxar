@@ -128,7 +128,7 @@ def cull_dataset(
         None,
         "--truncate",
         help="Gaussian truncation radius in standard deviations. "
-        "Defaults to the value stored in the dataset (typically 3.0). "
+        "Defaults to the value stored in the dataset. "
         "Affects AABB size for per-splat evaluation in GPU-based modes.",
     ),
     max_iters: int = typer.Option(

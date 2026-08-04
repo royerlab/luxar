@@ -6,6 +6,24 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
+#### Added — targeted demo dependency installs and consistent install status (#915)
+
+`luxar demo deps --only MODULE` now narrows the report to one import module and,
+with `--install`, installs that row's exact constrained requirement instead of
+pulling an entire Luxar extra. This also gives dependencies outside every extra
+(currently `gdown`) an explicit managed install path. `--only` is
+case-insensitive and mutually exclusive with `--extra`.
+
+Generic `--install` continues to manage Luxar extras and now treats an
+orphan-only report consistently with an orphan left beside a successfully
+installed extra: it explains that no command was attempted and exits 0 rather
+than turning an unattempted requirement into an install failure. Report-only
+mode remains the CI/setup gate and still exits 1 for every missing or outdated
+row. The obsolete editable-install `mkdir packages/luxar-viewer/dist`
+workarounds were removed from the Makefile and CI/docs workflows; editable
+installs have not required that wheel-only artifact since the custom Hatch build
+hook gained `force_include_editable`.
+
 #### Added — `mesh`, a writable triangle-surface geometry type
 
 `scene.add_mesh(name, vertices, faces, ...)` writes a triangle surface into a
@@ -97,6 +115,71 @@ bundle, production WASM binary, and worker assets rather than accepting an
 empty or partial `dist/` directory. CI, docs, and both publish workflows also
 read the exact pnpm version from the viewer package's `packageManager` field, so
 release and pull-request builds cannot drift between pnpm patches.
+#### Changed — one canonical GSplat truncation radius, 2.75 (#1179, #1181, #1182)
+
+The fitter has stamped `truncation_radius = 2.75` since the truncation
+experiment landed, but that value was only ever applied to the fit config.
+The format spec, the three model classes, the LOD spec, the spatial-ordering
+`coverage_sigma` alias, and every read-side fallback in both Python and the
+viewer independently defaulted to `3.0` — around thirty sites in total, with
+no single definition and no test relating them.
+
+There is now one constant per language, mirrored and pinned by tests that name
+each other: `DEFAULT_TRUNCATION_RADIUS` in
+`luxar.typing_utils.constants` and `GSPLAT_DEFAULT_TRUNCATION_RADIUS` in
+`packages/luxar-viewer/src/config/constants.ts`. The viewer's former
+`SHIFTED_GAUSSIAN_DEFAULT_TRUNCATE` (a worker-internal module) is gone in
+favour of the `config/` one, so materials no longer depend on worker internals.
+
+**Behaviour change.** A store that carries *no* `truncation_radius` attribute
+now renders and culls at 2.75 rather than 3.0. Measured on a 400-splat test
+volume, the tighter kernel integrates ~7% less total mass and differs from the
+3.0 render by ~3% of peak (42 dB PSNR) — visible as slightly dimmer, slightly
+smaller splats rather than a subtle change. Every dataset produced by
+`gsplat fit` already stamps its own value and is unaffected, so this only
+reaches hand-written or pre-attr stores. `gsplat migrate-format` likewise now
+writes 2.75 where it previously baked in 3.0.
+
+`luxar.gsplats.lift` is the one deliberate exemption and keeps 3.0, as the new
+`LIFT_TRUNCATION_RADIUS` constant. Its `T` is a profile-matching parameter, not
+a render default: the point super-Gaussian sprite and the gsplat kernel
+coincide exactly at `T* = sqrt(2 ln 100) = 3.0349`, and moving the lift to 2.75
+degrades that match by roughly 8.5x.
+
+`truncation_radius` is also now validated on write. It arrives unvalidated from
+dataset attrs and sets both the kernel support and the `1/(1-C)` normalization,
+so a zero or non-finite value poisons every derived quantity — and Python had
+no guard at all. `validate_truncation_radius` joins the existing per-attr
+validator family and runs in the scene compiler and in every
+`AdditiveSubLOD.__post_init__` (the tree writer reads each sub-LOD's own value,
+so validating only the first would let a bad radius on a later rung reach disk).
+
+Its lower bound is derived rather than magic, and is checked in **float32**:
+the CUDA and Metal kernels and the GPU shaders evaluate the shift in single
+precision, where `exp(-T^2/2)` saturates to 1.0 around `T = 3e-4` — four orders
+of magnitude before float64's ~1.5e-8. A float64 check would admit radii that
+are finite in Python and infinite on the GPU.
+
+On the viewer side the attr is now also clamped at `createGSplatsNode`, the
+single earliest read. This is defence in depth rather than a bug fix: every
+current consumer (`gsplat-geometry`, `gsplats-adapter`, the two `readTruncate`
+helpers) sizes itself from `material.uniforms.uTruncate`, which the material
+constructors already clamp. It matters if a future consumer reads the raw attr,
+or a material is built outside those constructors. The clamp itself now uses
+the same float32 bounds as the writer: a radius whose value or square would
+narrow to Infinity in a float32 uniform (`uTruncate` / `uTruncateSq`; e.g.
+`1e308` or `1e30`, both finite in JS) falls back to the default,
+and the lower floor is the bisected float32 degeneracy bound (~2.4e-4) rather
+than the former 0.1 — so small-but-valid radii the validator accepts render at
+their stored value, consistent with the chunk bounds computed from them.
+
+Separately, the Points/Lines sprite falloff constants (`K = ln 100`, the 1%
+iso-contour floor, and the renormalization) were duplicated across eight
+GLSL/TSL/picking shader sites with no shared symbol. They now come from
+`rendering/materials/_shared/falloff.ts`. The emitted shader text is
+byte-identical — the checked-in codegen snapshots are unchanged, which is the
+proof — and new tests pin the serialization plus a GLSL3-vs-TSL drift guard
+that the codegen snapshots (TSL-only) could not provide.
 
 #### Fixed — points nodes now record `ndim`, and expose their spatial metadata (#1150)
 
@@ -118,6 +201,115 @@ that is hilbert-ordered. The writer now returns it, matching Lines and GSplats.
 `docs/guides/user/LUXAR_ZARR_FORMAT.md` records the rule the three types follow:
 one ordering per type means flat keys, several means namespaced objects (Lines
 is the only type with two), and an absent `ordering` attr means `"none"`.
+
+#### Demos — Biodiversity at Planetary Scale (GBIF + Movebank)
+
+New `biodiversity_planetary_scale` demo, and the first one in the ecology
+problem space: a Blue Marble globe carrying a 15M-record sample of GBIF's 3.7
+billion georeferenced species occurrences as Points, plus CC0 Movebank animal
+tracks as Lines, with `taxon` (categorical, 10 categories: `All life` plus 9
+groups) and `period` (categorical, 14 categories: `All years` plus 13 decades,
+1900s-2020s) as non-displayed dimensions. Reads the GBIF AWS Open Data parquet
+snapshot directly and anonymously (250 random parts, 9 of 50 columns projected —
+97.9M rows scanned, 76.1M kept, in 55 s at 48 threads).
+
+**Lines whose time coordinate advances along the chain** — new to the repo;
+every previous 4D Lines demo holds `t` constant per polyline. Migration
+worldlines vary it, and the Liang-Barsky clipper handles it: a segment straddling
+the slab is drawn *clipped*, so a boundary segment reads as a whisker that grows
+and shrinks as you scrub. Verified arithmetically on a 40-track prototype (520
+segments = 440 within-slice + 80 straddlers), then on real data. Track time is
+binned to a whole decade deliberately: off-grid discrete values are only fetched
+within a quarter-step of the grid, so fractional values would work on a small
+scene and fail silently on a large one — and an A/B showed they render
+identically anyway.
+
+**Context layers use `extend_to_all`; selection layers use real coordinate
+slots.** The globe must survive every scrub or the selected records are left
+floating in black — which is what `extend_to_all` is for, and it was broken
+(#1157: a fully-extended node was never queried at all).
+That defect was found while building this demo, filed with a self-contained
+repro, and **is now fixed**; verified here before the workaround (a 25k globe
+replicated into all 139 slots, 3.5M elements) was removed:
+
+- the issue's control scene loads its extended layer to the full 1,200,000
+  points and holds it byte-identically across every scrub, where it previously
+  fetched nothing;
+- an `extend_to_all` + `substitutive_lod` partition-of-LOD holds 318,686
+  elements identically at every `(taxon, period)` combination with the coarse
+  gsplat level intact and no "filtered out during nD→3D processing" warnings.
+
+The globe is now one `extend_to_all` layer at a fixed resolution (see the
+textured-shell note below for why it carries no LOD of its own).
+
+The scrubbable layers do the opposite — real `(taxon, period)` coordinates, so
+scrubbing isolates — and **every reachable slot is materialised**: 9 taxon
+marginals, 13 period marginals, 117 joint cells. That is not an `extend_to_all`
+matter but a consequence of the viewer showing the *intersection* of the
+non-displayed slices, so a joint-only layer leaves one-slider moves on an empty
+slot. Two density findings, both measured: time is binned by **decade** (at year
+granularity the median populated cell held 244 points and 688 held under 500;
+by decade, 108/108 cells at median 2,390), and the reservoirs are **stratified
+over the cross product during the read** — sampling joint cells from a per-taxon
+reservoir gave `Birds`/`1960s` just 258 points, because bird records are
+overwhelmingly recent eBird.
+
+Scaling is a `kind=partition` wrapper whose every child is a per-tile `kind=lod`
+ladder — the Points counterpart of the gsplat `adaptive` recipe, and the first
+use of that shape for Points in the repo. Tiling alone does not bound cost (a
+partition renders every part, and a `stream:` ladder is progressive so it
+converges to 100% regardless of distance); built that way, whole-globe framing
+held all 18.1M elements resident. With per-tile LOD and measured
+`coverage_fractions` it holds **~0.5M**, and zooming into a tile walks that tile
+up to its full 1,875,000-point finest level while neighbours stay coarse.
+
+Two calibration notes, both measured in-browser: the default
+`coverage_fraction = sqrt(N_i/N_finest)` is calibrated for a single lod group
+filling the screen, so with T tiles (each ~0.6 of the viewport diagonal at
+whole-globe) it still selects a mid level; and a threshold placed *on* that 0.6
+metric makes the tiles flap, leaving two levels cross-faded and resident at once
+(1.07M instead of 186k) because the selector's hysteresis is 10% and
+downgrade-only.
+
+On the `extend_to_all` fix itself: #1157 was that a fully-extended context node
+was never queried — `deriveNodeViewState` returned its full-extend `skip` before
+applying the tolerance override that implements the extension — so its arrays
+never loaded and its ladder froze. That is fixed on main (#1167), which is what
+lets the globe be a single extended layer. The scrubbable layers stay on real
+`(taxon, period)` slots for the intersection reason above, not because of this
+bug.
+
+Also worth knowing when reusing the recipe: `partition=` must be *omitted* from
+the per-tile calls (even the documented `partition=False` bypass trips the
+mutual-exclusion guard, which tests `partition is not None`), and only `opacity`
+propagates from a `kind=lod` group to its children's materials — `intensity` and
+`gamma` leave the child uniforms at 1, so appearance trims must be baked into the
+per-element colours.
+
+Rendering settings were tuned interactively in the Layers panel and then baked,
+not guessed. Two things generalise beyond this demo. **Absorption and brightness
+are a coupled pair**: raising `absorption` is what makes a point cloud read as an
+opaque material (one that can still be made slightly transparent, which a truly
+opaque mode cannot), but it also drives the layer nearly black — so push
+brightness up in the same move by lowering the display-range max, which raises
+`intensity` (the panel's DISPLAY RANGE is a window, `intensity = 1/(hi-lo)`). And
+**a textured shell cannot survive Gaussian merging**: giving the globe a
+substitutive LOD turned its coarsest level into 46k merged splats per 750k-point
+tile, which under volumetric absorption rendered as huge dark ellipsoids. Coarse
+levels read as *density* — meaningful for the diffuse occurrence cloud, wrong for
+a continuous surface — so the globe is a fixed-resolution backdrop instead.
+
+Also fixed while transcribing: `intensity` is capped at 100 by
+`validate_intensity` (a 250 build fails outright, and costs nothing because both
+saturate); only `opacity` propagates from a `kind=lod` group to its children, so
+compositing attrs ride on the `layer=True` partition wrapper; and deriving that
+wrapper's `position_bounds` from a 3-column array in a 5-D scene dropped a whole
+BSP tile, rendering the globe with a wedge missing.
+
+Data handling is documented too, including why the measured 73.0% bird share of
+the filtered sample is *not* GBIF's ~60% (the filters are not taxon-neutral), the
+per-record `coordinateuncertaintyinmeters` jitter that breaks up
+rounded-coordinate lattices, and the CC-BY/CC0-only license filter.
 
 #### Tooling — documentation checker is now a baseline-driven ratchet (#776)
 

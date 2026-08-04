@@ -35,6 +35,7 @@ from luxar.gsplats.gsplat_data import (
     SubstitutiveLevel,
 )
 from luxar.gsplats.io._archive import extract_compressed_zarr
+from luxar.typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
 
 __all__ = ["migrate_format", "detect_legacy_format"]
 
@@ -139,7 +140,9 @@ def _read_v1_x_root(
 
     decoder = ArrayDecoder()
     splats_group = root["splats"]
-    truncation_radius = float(splats_group.attrs.get("truncation_radius", 3.0))
+    truncation_radius = float(
+        splats_group.attrs.get("truncation_radius", DEFAULT_TRUNCATION_RADIUS)
+    )
 
     # Build per-AdditiveSubLOD list
     sublods: List[AdditiveSubLOD] = []
@@ -223,7 +226,9 @@ def _read_v2_0_root(
 
     decoder = ArrayDecoder()
     splats_group = root["splats"]
-    truncation_radius = float(splats_group.attrs.get("truncation_radius", 3.0))
+    truncation_radius = float(
+        splats_group.attrs.get("truncation_radius", DEFAULT_TRUNCATION_RADIUS)
+    )
     n_substitutive = int(
         root.attrs.get("n_substitutive", splats_group.attrs.get("n_substitutive", 1))
     )

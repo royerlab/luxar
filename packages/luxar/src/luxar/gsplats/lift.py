@@ -71,12 +71,32 @@ from numpy.typing import NDArray
 from .gsplat_data import GSplatData
 
 __all__ = [
+    "LIFT_TRUNCATION_RADIUS",
     "coarse_substitutive_levels",
     "compute_ray_integral_factor",
     "lift_lines_to_gsplats",
     "lift_points_to_gsplats",
     "render_light",
 ]
+
+
+#: Truncation radius ``T`` used by the lift — deliberately NOT
+#: :data:`luxar.typing_utils.constants.DEFAULT_TRUNCATION_RADIUS` (2.75).
+#:
+#: Here ``T`` is a *profile-matching* parameter, not a render default. The point
+#: super-Gaussian sprite truncates at its 1% iso-contour, so it coincides with a
+#: truncated Gaussian exactly at ``T* = sqrt(2 ln 100) = 3.0349``; 3.0 is the
+#: nearby round value the seed formulas were calibrated against.
+#:
+#: Moving this to 2.75 would degrade the profile match by ~8.5x. The exact
+#: percentage depends on the norm convention (the module docstring above quotes
+#: 0.45% at ``T = 3`` under its own normalisation), but the *ratio* is stable
+#: across every weighting — e.g. radial-weighted (``u^2``) relative L2 gives
+#: 0.00% / 1.96% / 16.91% at ``T*`` / 3.0 / 2.75, and the unweighted 1D profile
+#: gives 0.00% / 0.91% / 7.60%.
+#:
+#: So the divergence from the codebase default is intentional and load-bearing.
+LIFT_TRUNCATION_RADIUS: float = 3.0
 
 
 def compute_ray_integral_factor(truncation_radius: float) -> float:
@@ -109,7 +129,7 @@ def lift_points_to_gsplats(
     opacity: float = 1.0,
     *,
     radius_scale: float = 1.0,
-    truncation_radius: float = 3.0,
+    truncation_radius: float = LIFT_TRUNCATION_RADIUS,
 ) -> GSplatData:
     """Lift a point cloud to a single-level :class:`GSplatData` of isotropic Gaussians.
 
@@ -134,7 +154,9 @@ def lift_points_to_gsplats(
         Mirrors the shader ``radiusScale`` dtype normalisation (e.g. 1/255 for
         uint8 radii). Default 1.0.
     truncation_radius : float
-        Gaussian truncation ``T`` in sigmas (default 3.0, the gsplat default).
+        Gaussian truncation ``T`` in sigmas. Defaults to
+        :data:`LIFT_TRUNCATION_RADIUS` (3.0) — NOT the codebase-wide
+        ``DEFAULT_TRUNCATION_RADIUS``; see that constant for why.
 
     Returns
     -------
@@ -279,7 +301,7 @@ def lift_lines_to_gsplats(
     scalars: Union[NDArray, None] = None,
     colormap: Union[str, NDArray, None] = None,
     radius_scale: float = 1.0,
-    truncation_radius: float = 3.0,
+    truncation_radius: float = LIFT_TRUNCATION_RADIUS,
     bead_spacing_factor: float = 1.0,
 ) -> GSplatData:
     """Lift a line set to a flat :class:`GSplatData` of **isotropic bead** Gaussians.

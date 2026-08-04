@@ -52,6 +52,11 @@ import {
 } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
 import {
+  FALLOFF_FLOOR,
+  FALLOFF_K,
+  INV_ONE_MINUS_FALLOFF_FLOOR,
+} from '../../materials/_shared/falloff';
+import {
   perspectiveNearFadeStaticTSL,
   sanitizeNonNegative,
   type TSLNode,
@@ -383,9 +388,9 @@ export function linePickWebGPUFactory(
     // Shifted-truncated super-Gaussian perpendicular cross-section —
     // visual-shader parity. beta = 2^(6s - 2) from the [0, 1] knob.
     // K = ln(100), C = exp(-K).
-    const K = 4.6051702;
-    const C = 0.01;
-    const invOneMinusC = 1.0 / (1.0 - C);
+    const K = FALLOFF_K;
+    const C = FALLOFF_FLOOR;
+    const invOneMinusC = INV_ONE_MINUS_FALLOFF_FLOOR;
     const beta: TSLNode = float(2.0).pow(vSharpness.mul(6.0).sub(2.0));
     const perpFalloff: TSLNode = exp(p.pow(beta).mul(-K)).sub(C).max(float(0.0)).mul(invOneMinusC);
     const minPW = float(1.5);

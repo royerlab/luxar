@@ -25,6 +25,7 @@ import {
   GLSL_SORTED_INDEX,
 } from '../../materials/_shared/glsl-lib';
 import { linePickWebGPUFactory, buildLinePickTSLNodesFromUniforms } from './pick.tsl';
+import { FALLOFF_FLOOR, FALLOFF_K } from '../../materials/_shared/falloff';
 
 /**
  * Picking vertex shader for lines.
@@ -295,8 +296,8 @@ export const LINE_PICK_FRAGMENT_SHADER = /* glsl */ `
       // Shifted-truncated super-Gaussian perpendicular cross-section —
       // visual-shader parity. beta = 2^(6s - 2) from the [0, 1] knob.
       // K = ln(100), C = exp(-K). See shader-glsl.ts.
-      const float K = 4.6051702;
-      const float C = 0.01;
+      const float K = ${FALLOFF_K};
+      const float C = ${FALLOFF_FLOOR};
       const float INV_ONE_MINUS_C = 1.0 / (1.0 - C);
       float beta = exp2(6.0 * vSharpness - 2.0);
       float perpFalloff = max(exp(-K * pow(p, beta)) - C, 0.0) * INV_ONE_MINUS_C;

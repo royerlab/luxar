@@ -494,6 +494,11 @@ def validate_render_attrs(
 
         validate_opacity(attrs["opacity"])
 
+    if "truncation_radius" in attrs:
+        from ...validation.types import validate_truncation_radius
+
+        validate_truncation_radius(attrs["truncation_radius"])
+
     if "gamma" in attrs:
         from ...validation.types import validate_gamma
 
