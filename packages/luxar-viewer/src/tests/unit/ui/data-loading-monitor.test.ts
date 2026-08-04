@@ -1110,8 +1110,22 @@ describe('DataLoadingMonitor', () => {
       // `.zattrs` with a bare cast (scene-graph-converter.ts), so a hand-edited or
       // third-party store can put a non-number there. One bad attr must not make
       // every total downstream of it NaN, Infinity, or a string — truthy
-      // non-numbers like '1000' would string-concat into every downstream sum.
-      for (const bad of [NaN, '', false, null, undefined, '1000', 'invalid', Infinity, -Infinity]) {
+      // non-numbers like '1000' would string-concat into every downstream sum,
+      // and finite-but-impossible counts (negative, fractional) must not
+      // produce negative/fractional dataset totals either.
+      for (const bad of [
+        NaN,
+        '',
+        false,
+        null,
+        undefined,
+        '1000',
+        'invalid',
+        Infinity,
+        -Infinity,
+        -1,
+        2.5,
+      ]) {
         for (const [type, field] of [
           ['points', 'pointCount'],
           ['lines', 'segmentCount'],

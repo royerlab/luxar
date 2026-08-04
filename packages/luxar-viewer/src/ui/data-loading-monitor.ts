@@ -137,12 +137,13 @@ function emptySceneGraphState(): SceneGraphState {
  * time is the point, but at runtime a count must stay a number (returning the
  * type string would poison every total it is summed into).
  *
- * The finite-number check and not `?? 0` / `|| 0`: these counts are read
+ * The integer check and not `?? 0` / `|| 0`: these counts are read
  * straight off zarr `.zattrs` with a bare cast (`scene-graph-converter.ts`), so
  * a hand-edited or third-party store can put anything there. `?? 0` would let
  * `NaN` through and turn the whole HUD into `NaN`; `|| 0` would still admit
- * truthy non-numbers (`'1000'` string-concatenates into every downstream sum)
- * and `Infinity`. Only a finite number may enter the totals.
+ * truthy non-numbers (`'1000'` string-concatenates into every downstream sum),
+ * `Infinity`, and impossible negative or fractional "counts". Only a
+ * non-negative integer may enter the totals.
  */
 function elementCountOf(node: SceneGraphNode, type: GeometryTypeName): number {
   if (node.type !== type) return 0;
@@ -161,7 +162,7 @@ function elementCountOf(node: SceneGraphNode, type: GeometryTypeName): number {
       void (type satisfies never);
       return 0;
   }
-  return typeof count === 'number' && Number.isFinite(count) ? count : 0;
+  return typeof count === 'number' && Number.isInteger(count) && count >= 0 ? count : 0;
 }
 
 /**
