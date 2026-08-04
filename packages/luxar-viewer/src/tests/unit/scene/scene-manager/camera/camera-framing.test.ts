@@ -166,6 +166,84 @@ describe('computeSceneBoundingBox', () => {
     expect(result.primitiveCount).toBe(1);
   });
 
+  it('excludes STALE index entries past the draw range from the framing box', () => {
+    // How a real partially-culled mesh node looks: the index buffer is allocated once
+    // at the node's full face-count capacity, the drawn prefix is expressed via
+    // `drawRange`, and the tail keeps stale indices from earlier epochs (see
+    // rendering/mesh-geometry.ts::applyIndices). Here the stale tail still names the
+    // far triangle at 1000 — walking `index.count` instead of the draw range would
+    // frame that culled geometry.
+    const scene = new THREE.Scene();
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute(
+      'position',
+      // prettier-ignore
+      new THREE.BufferAttribute(
+        new Float32Array([
+          0, 0, 0, 10, 0, 0, 0, 10, 0, // near triangle, vertices 0,1,2
+          1000, 1000, 1000, 1010, 1000, 1000, 1000, 1010, 1000, // far triangle, vertices 3,4,5
+        ]),
+        3
+      )
+    );
+    geometry.setIndex(new THREE.BufferAttribute(new Uint16Array([0, 1, 2, 3, 4, 5]), 1));
+    geometry.setDrawRange(0, 3); // only the near triangle is drawn this epoch
+    const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial());
+    mesh.userData = { nodeType: 'mesh' };
+    scene.add(mesh);
+    scene.updateMatrixWorld(true);
+
+    const result = computeSceneBoundingBox(scene);
+    expect(result.box.min.toArray()).toEqual([0, 0, 0]);
+    expect(result.box.max.toArray()).toEqual([10, 10, 0]);
+    expect(result.primitiveCount).toBe(1);
+  });
+
+  it('skips a fully-culled mesh whose index buffer still has CAPACITY', () => {
+    // How a real mesh node looks when every triangle is culled. The index buffer is
+    // allocated once at the node's full face count and the visible prefix is drawn via
+    // `drawRange` (so that replacing the index per epoch — which leaks its GPU buffer —
+    // never happens). Reading `index.count` here would therefore see 3 and frame a mesh
+    // that draws NOTHING, which is the exact failure the zero-count skip prevents.
+    const scene = new THREE.Scene();
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute(
+      'position',
+      new THREE.BufferAttribute(new Float32Array([0, 0, 0, 10, 0, 0, 0, 10, 0]), 3)
+    );
+    geometry.setIndex(new THREE.BufferAttribute(new Uint16Array([0, 1, 2]), 1));
+    geometry.setDrawRange(0, 0);
+    const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial());
+    mesh.userData = { nodeType: 'mesh' };
+    scene.add(mesh);
+    scene.updateMatrixWorld(true);
+
+    const result = computeSceneBoundingBox(scene);
+    expect(result.primitiveCount).toBe(0);
+    expect(result.box.isEmpty()).toBe(true);
+  });
+
+  it('counts a partially-culled mesh by its draw range, not its capacity', () => {
+    // Two faces of capacity, one drawn.
+    const scene = new THREE.Scene();
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute(
+      'position',
+      new THREE.BufferAttribute(
+        new Float32Array([0, 0, 0, 10, 0, 0, 0, 10, 0, 1, 1, 0, 2, 2, 0, 3, 3, 0]),
+        3
+      )
+    );
+    geometry.setIndex(new THREE.BufferAttribute(new Uint16Array([0, 1, 2, 3, 4, 5]), 1));
+    geometry.setDrawRange(0, 3);
+    const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial());
+    mesh.userData = { nodeType: 'mesh' };
+    scene.add(mesh);
+    scene.updateMatrixWorld(true);
+
+    expect(computeSceneBoundingBox(scene).primitiveCount).toBe(1);
+  });
+
   it('aggregates Points bounds and counts instances as primitives', () => {
     const scene = new THREE.Scene();
     const geometry = new THREE.InstancedBufferGeometry();

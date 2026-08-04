@@ -83,24 +83,26 @@ describe('buildDefaultColorAttribute', () => {
 
 describe('buildIndexAttribute', () => {
   it('uses Uint16Array below 65536 vertices', () => {
-    expect(buildIndexAttribute(new Uint32Array([0, 1, 2]), 100).array).toBeInstanceOf(Uint16Array);
+    expect(buildIndexAttribute(new Uint32Array([0, 1, 2]), 100, 1).array).toBeInstanceOf(
+      Uint16Array
+    );
   });
 
   it('uses Uint32Array at and above 65536 vertices', () => {
-    expect(buildIndexAttribute(new Uint32Array([0, 1, 2]), 65536).array).toBeInstanceOf(
+    expect(buildIndexAttribute(new Uint32Array([0, 1, 2]), 65536, 1).array).toBeInstanceOf(
       Uint32Array
     );
   });
 
   it('keys the dtype on vertexCount, NOT on the largest index present', () => {
-    // The index buffer is rebuilt on every slice change while vertexCount is fixed
-    // for the node. Keying off the observed maximum would let the dtype flip between
-    // rebuilds, and changing a drawn geometry's index dtype is exactly the
-    // attribute-identity change the WebGPU backend does not tolerate.
+    // vertexCount is fixed for the node; the largest index actually drawn changes with
+    // the slice. Keying off the observed maximum would let the dtype differ between
+    // epochs, defeating the buffer reuse — and re-binding a drawn geometry's index with
+    // a different dtype is the attribute-identity change WebGPU does not tolerate.
     const sparse = new Uint32Array([0, 1, 2]); // max index 2, but a big node
-    expect(buildIndexAttribute(sparse, 200_000).array).toBeInstanceOf(Uint32Array);
+    expect(buildIndexAttribute(sparse, 200_000, 1).array).toBeInstanceOf(Uint32Array);
     const dense = new Uint32Array([60000, 60001, 60002]); // large indices, small node
-    expect(buildIndexAttribute(dense, 65535).array).toBeInstanceOf(Uint16Array);
+    expect(buildIndexAttribute(dense, 65535, 1).array).toBeInstanceOf(Uint16Array);
   });
 });
 
@@ -110,6 +112,7 @@ describe('buildMeshGeometry', () => {
     indices: new Uint32Array([0, 1, 2]),
     colors: null,
     vertexCount: 3,
+    faceCount: 1,
   });
 
   it('binds position, color and an index, and computes bounds', () => {
@@ -144,6 +147,7 @@ describe('updateMeshGeometry', () => {
       indices: new Uint32Array([0, 1, 2]),
       colors: null,
       vertexCount: 3,
+      faceCount: 1,
     });
   }
 
@@ -157,6 +161,7 @@ describe('updateMeshGeometry', () => {
       indices: new Uint32Array(0),
       colors: null,
       vertexCount: 1,
+      faceCount: 0,
     });
   }
 
@@ -170,9 +175,14 @@ describe('updateMeshGeometry', () => {
       indices: new Uint32Array([]),
       colors: null,
       vertexCount: 3,
+      faceCount: 1,
     });
     expect(g.getAttribute('position')).toBe(positionBefore);
-    expect(g.index?.count).toBe(0);
+    // Nothing drawn is an empty DRAW RANGE over the capacity buffer, not a
+    // zero-length index — the index is allocated once at the node's face count so that
+    // replacing it per epoch (which leaks its GPU buffer) never happens.
+    expect(g.drawRange.count).toBe(0);
+    expect(g.index?.count).toBe(3); // capacity, unchanged
   });
 
   it('recomputes bounds when position is replaced', () => {
@@ -188,6 +198,7 @@ describe('updateMeshGeometry', () => {
       indices: new Uint32Array([0, 1, 2]),
       colors: null,
       vertexCount: 3,
+      faceCount: 1,
     });
     expect(g.boundingSphere!.radius).toBeGreaterThan(before);
   });
@@ -200,6 +211,7 @@ describe('updateMeshGeometry', () => {
       indices: new Uint32Array([0, 1, 2]),
       colors: null,
       vertexCount: 3,
+      faceCount: 1,
     });
     // Same object identity — computeBoundingSphere() would have replaced it.
     expect(g.boundingSphere).toBe(sphere);
@@ -217,6 +229,7 @@ describe('updateMeshGeometry', () => {
         indices: new Uint32Array([0, 1, 2]),
         colors: null,
         vertexCount: 3,
+        faceCount: 1,
       });
       expect(warn).not.toHaveBeenCalled();
 
@@ -225,6 +238,7 @@ describe('updateMeshGeometry', () => {
         indices: new Uint32Array([0, 1, 2]),
         colors: null,
         vertexCount: 6,
+        faceCount: 2,
       });
       expect(warn).toHaveBeenCalledTimes(1);
     } finally {
@@ -243,6 +257,7 @@ describe('updateMeshGeometry', () => {
       colors: new Uint8Array([255, 0, 0, 0, 255, 0, 0, 0, 255]),
       colorComponents: 3,
       vertexCount: 3,
+      faceCount: 1,
     });
     const color = g.getAttribute('color');
     expect(color.count).toBe(3);
@@ -261,6 +276,7 @@ describe('updateMeshGeometry', () => {
       indices: new Uint32Array([0, 1, 2]),
       colors: null,
       vertexCount: 3,
+      faceCount: 1,
     });
     const color = g.getAttribute('color');
     expect(color.count).toBe(3);
@@ -280,6 +296,7 @@ describe('updateMeshGeometry', () => {
       colors: new Uint8Array([255, 0, 0, 0, 255, 0, 0, 0, 255]),
       colorComponents: 3,
       vertexCount: 3,
+      faceCount: 1,
     });
     const colorBefore = g.getAttribute('color') as THREE.BufferAttribute;
     const versionBefore = colorBefore.version;
@@ -289,11 +306,97 @@ describe('updateMeshGeometry', () => {
       colors: new Uint8Array([255, 0, 0, 0, 255, 0, 0, 0, 255]),
       colorComponents: 3,
       vertexCount: 3,
+      faceCount: 1,
     });
     expect(g.getAttribute('color')).toBe(colorBefore); // same object, not re-created
     // No re-upload either: an unchanged `version` proves the buffer wasn't dirtied.
     expect((g.getAttribute('color') as THREE.BufferAttribute).version).toBe(versionBefore);
     // Nothing rebound → the commit skips the WebGPU RenderObject eviction.
+    expect(rebuilt).toBe(false);
+  });
+});
+
+describe('applyIndices — the index buffer is allocated once per node', () => {
+  /** The one-vertex placeholder `createEmptyMeshNode` attaches. */
+  function placeholder(): THREE.BufferGeometry {
+    return buildMeshGeometry({
+      position: new Float32Array(3),
+      indices: new Uint32Array(0),
+      colors: null,
+      vertexCount: 1,
+      faceCount: 0,
+    });
+  }
+
+  const real = {
+    position: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
+    colors: null,
+    vertexCount: 3,
+    faceCount: 1,
+  };
+
+  it('keeps the SAME index attribute across epochs', () => {
+    // The leak guard. Three caches attribute buffers in a WeakMap keyed by the
+    // attribute and only deletes a GPU buffer via `WebGLAttributes.remove()`, which
+    // nothing calls when `geometry.index` is replaced — so a per-epoch `setIndex`
+    // orphans one index buffer per slice move, unfreed for the tab's lifetime. Mesh is
+    // the only geometry type that rewrites its index per epoch.
+    const g = placeholder();
+    updateMeshGeometry(g, { ...real, indices: new Uint32Array([0, 1, 2]) });
+    const indexAttr = g.index;
+    expect(indexAttr).not.toBeNull();
+
+    for (const indices of [new Uint32Array(0), new Uint32Array([0, 1, 2]), new Uint32Array(0)]) {
+      updateMeshGeometry(g, { ...real, indices });
+      expect(g.index).toBe(indexAttr);
+      expect(g.drawRange.count).toBe(indices.length);
+    }
+  });
+
+  it('sizes capacity from faceCount even when the FIRST epoch is culled', () => {
+    // The realistic scrub a visible-count-sized capacity gets wrong: a mesh loaded at
+    // a timepoint where nothing is visible, then scrubbed to where it is. Sizing from
+    // the first epoch's `indices.length` (0) means the next epoch cannot fit and calls
+    // `setIndex`, orphaning a buffer per move. Caught by mutation — without this case
+    // `capacity = indices.length` passed the whole suite.
+    const g = placeholder();
+    updateMeshGeometry(g, { ...real, indices: new Uint32Array(0) });
+    const indexAttr = g.index;
+    expect(indexAttr?.count).toBe(3); // faceCount * 3, not 0
+
+    updateMeshGeometry(g, { ...real, indices: new Uint32Array([0, 1, 2]) });
+    expect(g.index).toBe(indexAttr);
+    expect(g.drawRange.count).toBe(3);
+  });
+
+  it('bounds the index upload to the rewritten prefix', () => {
+    // Reusing the buffer must not mean re-uploading all of it: a large mesh with a
+    // small visible set would then move far more bytes per slice change than the old
+    // reallocating path did, trading the leak for a bandwidth regression. The classic
+    // WebGL backend honours update ranges (the WebGPU ones re-upload in full).
+    const g = placeholder();
+    updateMeshGeometry(g, { ...real, indices: new Uint32Array(0) });
+    updateMeshGeometry(g, { ...real, indices: new Uint32Array([0, 1, 2]) });
+    const index = g.index!;
+    // `needsUpdate` is setter-only in three (it just bumps `version`), so the
+    // observable is the version counter, not a readable flag.
+    expect(index.version).toBeGreaterThan(0);
+    expect(index.updateRanges).toEqual([{ start: 0, count: 3 }]);
+
+    // Two epochs in a row without a render in between must not stack duplicate ranges.
+    // A real renderer clears them after each upload, so this is hygiene rather than a
+    // correctness bug — but unbounded growth between frames is not left to chance.
+    updateMeshGeometry(g, { ...real, indices: new Uint32Array([0, 1, 2]) });
+    expect(index.updateRanges).toHaveLength(1);
+  });
+
+  it('does not report an index rebind as a vertex-attribute rebuild', () => {
+    // `attributesRebuilt` drives the WebGPU RenderObject eviction and is about VERTEX
+    // attributes. Once the index buffer is stable, a slice move rebinds nothing, so a
+    // scrub must not keep evicting three's render-object cache.
+    const g = placeholder();
+    updateMeshGeometry(g, { ...real, indices: new Uint32Array([0, 1, 2]) });
+    const rebuilt = updateMeshGeometry(g, { ...real, indices: new Uint32Array(0) });
     expect(rebuilt).toBe(false);
   });
 });

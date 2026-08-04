@@ -1,7 +1,7 @@
 /**
  * The mesh process → commit pair.
  *
- * Two behaviours here are easy to get subtly wrong and invisible when they are:
+ * Three behaviours here are easy to get subtly wrong and invisible when they are:
  *
  * 1. The undecidable-winding notice must fire **once per node**, not once per index
  *    build. The projection runs on every slice move, so a per-call warning turns a
@@ -9,6 +9,10 @@
  * 2. The commit must resolve its target by TYPE as well as name.
  *    `getObjectByName` searches the whole subtree, so a path collision would
  *    otherwise let mesh geometry be written into a points node — silently.
+ * 3. The whole-triangle cull must run on the mesh's own recomputed membership slab
+ *    (`computeTolerance('mesh', …)`), not the navigation ride-along
+ *    `viewState.tolerance` — whose flat 0.5 / point-radius values have nothing to do
+ *    with a mesh's cell size.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -71,6 +75,40 @@ const VIEW: MeshViewState = {
   tolerance: [1e10, 1e10, 1e10, 0.5],
 } as MeshViewState;
 
+/** One triangle in 4D, all three vertices at hidden dim `w = w`. */
+function loadedAtW(w: number): LoadedMeshData {
+  return {
+    vertices: new Float32Array([0, 0, 0, w, 1, 0, 0, w, 0, 1, 0, w]),
+    faces: new Uint32Array([0, 1, 2]),
+    normals: null,
+    colors: null,
+    scalars: undefined,
+    vertexCount: 3,
+    faceCount: 1,
+    ndim: 4,
+  };
+}
+
+/** Build a 4D view (displayDims [0,1,2], hidden dim 3) with per-dim metadata. */
+function viewWithDim(
+  toleranceW: number,
+  dim3: { name: string; discrete?: boolean; step?: number }
+): MeshViewState {
+  // Full DimensionMetadata objects (unit/scale are required fields) so a single
+  // `as MeshViewState` cast suffices, matching the VIEW const above.
+  return {
+    displayDims: [0, 1, 2],
+    slicePosition: [0, 0, 0, 0],
+    tolerance: [1e10, 1e10, 1e10, toleranceW],
+    dimensions: [
+      { name: 'x', unit: '', scale: 1 },
+      { name: 'y', unit: '', scale: 1 },
+      { name: 'z', unit: '', scale: 1 },
+      { unit: '', scale: 1, ...dim3 },
+    ],
+  } as MeshViewState;
+}
+
 describe('processMeshData — the undecidable-winding notice', () => {
   beforeEach(() => {
     resetWindingNoticesForTesting();
@@ -132,7 +170,8 @@ describe('commitMeshGeometry', () => {
     });
     commitMeshGeometry({ rootGroup: root, currentVersion: 7 }, staged);
 
-    expect(mesh.geometry.index?.count).toBe(3);
+    // `drawRange` is the drawn quantity; `index.count` is the node's capacity.
+    expect(mesh.geometry.drawRange.count).toBe(3);
     expect(mesh.geometry.getAttribute('position').count).toBe(3);
     expect(mesh.userData.visibleTriangleCount).toBe(1);
     expect(mesh.userData.loadedViewVersion).toBe(7);
@@ -225,7 +264,74 @@ describe('commitMeshGeometry', () => {
     commitMeshGeometry({ rootGroup: root, currentVersion: 1 }, staged);
     // An empty index, not a stale one: the previous epoch's triangles must stop
     // drawing rather than lingering.
-    expect(mesh.geometry.index?.count).toBe(0);
+    // Nothing drawn, and not a stale draw. The index buffer keeps its capacity (it is
+    // allocated once per node), so what has to go to zero is the DRAW RANGE.
+    expect(mesh.geometry.drawRange.count).toBe(0);
     expect(mesh.userData.visibleTriangleCount).toBe(0);
+  });
+});
+
+describe('processMeshData — membership tolerance', () => {
+  beforeEach(() => {
+    resetWindingNoticesForTesting();
+    vi.restoreAllMocks();
+  });
+
+  it('culls a discrete hidden dim at the half-cell from step, not the ride-along 0.5', async () => {
+    // Triangle at w = 3, slice at w = 0. The ride-along tolerance for dim 3 is
+    // 0.5 (what `simpleDimsToViewState` would emit) — under that value |3 − 0| > 0.5
+    // and the triangle culls. The mesh's own membership slab is the half-cell of the
+    // step: 0.5 × 10 = 5, so |3 − 0| ≤ 5 and the triangle stays visible.
+    const staged = await processMeshData(
+      '/surface',
+      loadedAtW(3),
+      viewWithDim(0.5, { name: 'w', discrete: true, step: 10 }),
+      { normal_dims: undefined, double_sided: true }
+    );
+    expect(staged.projected.visibleFaceCount).toBe(1);
+
+    // Upper edge: w = 7 exceeds the discrete half-cell (5) and must cull. This
+    // pins the discrete arm specifically — a fall-through to the CONTINUOUS arm
+    // (step × meshSlabTolerance = 10 × 1 = 10) would wrongly keep it.
+    const overEdge = await processMeshData(
+      '/surface',
+      loadedAtW(7),
+      viewWithDim(0.5, { name: 'w', discrete: true, step: 10 }),
+      { normal_dims: undefined, double_sided: true }
+    );
+    expect(overEdge.projected.visibleFaceCount).toBe(0);
+  });
+
+  it('a large ride-along maxRadius no longer widens the continuous slab', async () => {
+    // Triangle at w = 50, slice at w = 0. The ride-along tolerance is a huge
+    // point-radius (1e6) that would keep the triangle. The mesh's continuous slab is
+    // step × meshSlabTolerance = 1 × 1 = 1, so |50| > 1 and the triangle culls.
+    const staged = await processMeshData(
+      '/surface',
+      loadedAtW(50),
+      viewWithDim(1e6, { name: 'w', discrete: false, step: 1 }),
+      { normal_dims: undefined, double_sided: true }
+    );
+    expect(staged.projected.visibleFaceCount).toBe(0);
+  });
+
+  it('extend_to_all keeps an extended dim slice-invariant', async () => {
+    // Triangle at w = 1000, far outside any finite slab. Without extend_to_all the
+    // half-cell membership (0.5 × 10 = 5) culls it; naming 'w' in extend_to_all lifts
+    // dim 3 to the infinite sentinel, so the far vertex stays visible.
+    const view = viewWithDim(0.5, { name: 'w', discrete: true, step: 10 });
+
+    const without = await processMeshData('/surface', loadedAtW(1000), view, {
+      normal_dims: undefined,
+      double_sided: true,
+    });
+    expect(without.projected.visibleFaceCount).toBe(0);
+
+    const withExtend = await processMeshData('/surface', loadedAtW(1000), view, {
+      normal_dims: undefined,
+      double_sided: true,
+      extend_to_all: ['w'],
+    });
+    expect(withExtend.projected.visibleFaceCount).toBe(1);
   });
 });

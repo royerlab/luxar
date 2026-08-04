@@ -63,17 +63,25 @@ export interface SceneBoundingBoxResult {
  *
  * A mesh's `position` attribute holds every vertex of the whole nD mesh in
  * display space and is never compacted (see rendering/mesh-geometry.ts); the nD
- * slab cull expresses visibility purely through the index buffer, rebuilt each
+ * slab cull expresses visibility purely through the index buffer, rewritten each
  * slice to name only the drawn triangles. `geometry.boundingBox` therefore spans
  * the ENTIRE buffer — including culled triangles' vertices and vertices no
  * triangle references — so framing off it pulls the camera out to cover geometry
  * that is not on screen (e.g. a moving 4D surface's whole trajectory). Walk the
- * index instead, unioning only the referenced vertices. Runs on F-key recenter,
- * not per frame.
+ * drawn index entries instead, unioning only the referenced vertices. Runs on
+ * F-key recenter, not per frame.
+ *
+ * Only the `drawRange` prefix is walked, for the same reason
+ * {@link drawnTriangleCount} reads it: the index buffer is allocated once at the
+ * node's full face-count capacity and the tail past the range keeps STALE indices
+ * from earlier epochs — including them would frame culled geometry, the very bug
+ * this helper exists to fix. (`drawRange.count` is `Infinity` on a geometry
+ * nobody has set it on; the clamp to `index.count` covers that, matching how
+ * three clamps the draw itself.)
  *
  * Returns an empty box when there is no index or no position attribute — the
- * caller's `instanceCount <= 0` guard already skips an empty index, so this box
- * is only used when there ARE drawn triangles. Fresh each call, so the caller
+ * caller's `instanceCount <= 0` guard already skips an empty draw range, so this
+ * box is only used when there ARE drawn triangles. Fresh each call, so the caller
  * uses it directly (no `.clone()`, unlike the shared `geometry.boundingBox`).
  */
 function computeMeshVisibleBox(geometry: THREE.BufferGeometry): THREE.Box3 {
@@ -81,13 +89,35 @@ function computeMeshVisibleBox(geometry: THREE.BufferGeometry): THREE.Box3 {
   const index = geometry.index;
   const position = geometry.getAttribute('position') as THREE.BufferAttribute | undefined;
   if (!index || !position) return box;
+  const start = Math.max(0, geometry.drawRange.start);
+  const end = Math.min(index.count, start + geometry.drawRange.count);
   const v = new THREE.Vector3();
-  for (let i = 0; i < index.count; i++) {
+  for (let i = start; i < end; i++) {
     const vi = index.getX(i);
     v.set(position.getX(vi), position.getY(vi), position.getZ(vi));
     box.expandByPoint(v);
   }
   return box;
+}
+
+/**
+ * Triangles a mesh geometry actually draws.
+ *
+ * `drawRange`, not `index.count`. Mesh allocates its index buffer once at the node's
+ * full face-count capacity and draws the visible prefix via `drawRange`
+ * (`rendering/mesh-geometry.ts` explains why: replacing `geometry.index` per epoch
+ * leaks its GPU buffer). So `index.count` is the capacity — reading it here would
+ * report every face as on-screen and, worse, give a fully-culled mesh a non-zero
+ * count, which is exactly the "contributes bounds while drawing nothing" bug the
+ * count guard exists to prevent.
+ *
+ * `drawRange.count` defaults to `Infinity` on a geometry nobody has set it on, so the
+ * fallback keeps this finite rather than poisoning `primitiveCount`.
+ */
+function drawnTriangleCount(geometry: THREE.BufferGeometry): number {
+  const drawn = geometry.drawRange.count;
+  if (Number.isFinite(drawn)) return drawn / 3;
+  return (geometry.index?.count ?? 0) / 3;
 }
 
 /**
@@ -101,10 +131,11 @@ function computeMeshVisibleBox(geometry: THREE.BufferGeometry): THREE.Box3 {
  *     bounding box from the geometry, `instanceCount` for the
  *     primitive count.
  *   - `THREE.Mesh` with `userData.nodeType === 'mesh'` — bounding box from the
- *     vertices the current index buffer REFERENCES (the DRAWN triangles), NOT
+ *     vertices the drawn index entries REFERENCE (the `drawRange` prefix), NOT
  *     the full `position` buffer (which is never compacted and holds every
  *     vertex of the whole nD mesh — see {@link computeMeshVisibleBox}), and the
- *     DRAWN TRIANGLE count (`index.count / 3`) for the primitive count.
+ *     DRAWN TRIANGLE count (`drawRange.count / 3`, see
+ *     {@link drawnTriangleCount}) for the primitive count.
  *   - `THREE.InstancedMesh` — bounding box from the geometry, plus
  *     the count from `mesh.count` for the primitive count.
  *
@@ -152,11 +183,11 @@ export function computeSceneBoundingBox(scene: THREE.Scene): SceneBoundingBoxRes
     const geometry = object.geometry;
 
     // Primitives, counted per type in the unit each type actually draws: instances for
-    // the instanced-quad types, and DRAWN TRIANGLES for a mesh. Reading the index
+    // the instanced-quad types, and DRAWN TRIANGLES for a mesh. Reading what is drawn
     // rather than `n_faces` is what makes a culled mesh report what is on screen — the
-    // index buffer is the only thing a slice change rewrites.
+    // draw range is the only thing a slice change rewrites.
     const instanceCount = isLuxarMesh
-      ? (geometry.index?.count ?? 0) / 3
+      ? drawnTriangleCount(geometry)
       : isInstancedMesh
         ? object.count
         : ((geometry as THREE.InstancedBufferGeometry).instanceCount ?? 0);

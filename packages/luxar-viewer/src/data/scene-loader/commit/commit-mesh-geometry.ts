@@ -80,6 +80,10 @@ export function commitMeshGeometry(
     colors: data.colors,
     colorComponents: data.colorComponents,
     vertexCount: data.vertexCount,
+    // The node's TOTAL faces, which sizes the index buffer's capacity — not the
+    // visible count, which changes every slice move and would reallocate (and leak)
+    // the index buffer each time.
+    faceCount: data.faceCount,
   });
 
   // The epoch's side, which is NOT simply the node's `double_sided`: an odd-parity

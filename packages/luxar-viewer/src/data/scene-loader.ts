@@ -44,6 +44,7 @@ import { runLinesRefinement } from './lines/lod-refinement';
 import { loadAndStage as pointsLoadAndStage, label as pointsLabel } from './points/handler';
 import { loadAndStage as linesLoadAndStage, label as linesLabel } from './lines/handler';
 import { loadAndStage as gsplatsLoadAndStage, label as gsplatsLabel } from './gsplats/handler';
+import { loadAndStage as meshLoadAndStage, label as meshLabel } from './mesh/handler';
 
 export type { StagedLinesCommit } from './scene-loader/process/data-processor-lines';
 export type { StagedGSplatsCommit } from './scene-loader/process/data-processor-gsplats';
@@ -198,6 +199,9 @@ export class SceneLoader {
   }
   private get gsplatLoaders() {
     return this.registry.gsplatLoaders;
+  }
+  private get meshLoaders() {
+    return this.registry.meshLoaders;
   }
   private get failedLoaders() {
     return this.registry.failedLoaders;
@@ -706,7 +710,7 @@ export class SceneLoader {
    */
   private async runLoaderUpdates<TLoader, TStaged>(
     loaders: Map<string, TLoader>,
-    loaderType: 'Points' | 'Lines' | 'GSplats',
+    loaderType: 'Points' | 'Lines' | 'GSplats' | 'Mesh',
     updateFn: (path: string, loader: TLoader, session: UpdateSession) => Promise<TStaged | null>
   ): Promise<Array<{ staged: TStaged | null; session: UpdateSession }>> {
     return runLoaderUpdatesHelper(loaders, loaderType, updateFn, {
@@ -824,7 +828,11 @@ export class SceneLoader {
         tolerance: viewState.tolerance ? [...viewState.tolerance] : [...this.viewState.tolerance],
       };
 
-      const totalLoaders = this.loaders.size + this.linesLoaders.size + this.gsplatLoaders.size;
+      const totalLoaders =
+        this.loaders.size +
+        this.linesLoaders.size +
+        this.gsplatLoaders.size +
+        this.meshLoaders.size;
       log.update(
         Modules.SCENE_LOADER,
         `Updating view v${currentVersion} for ${totalLoaders} loaders`
@@ -848,7 +856,7 @@ export class SceneLoader {
 
       // Per-type handler-ctx construction lives in
       // scene-loader/update-view/build-update-ctxs.ts.
-      const { pointsCtx, linesCtx, gsplatsCtx } = buildUpdateCtxs({
+      const { pointsCtx, linesCtx, gsplatsCtx, meshCtx } = buildUpdateCtxs({
         rootGroup: this.rootGroup,
         viewStateQueue: this.viewStateQueue,
         clearFailure: (path) => this.failedLoaders.delete(path),
@@ -876,11 +884,16 @@ export class SceneLoader {
         (path, loader, session) => gsplatsLoadAndStage(path, loader, session, gsplatsCtx)
       );
 
+      const meshTask = this.runLoaderUpdates(this.meshLoaders, meshLabel, (path, loader, session) =>
+        meshLoadAndStage(path, loader, session, meshCtx)
+      );
+
       // Wait for ALL loaders to complete (load + process)
-      const [pointsStaged, linesStaged, gsplatsStaged] = await Promise.all([
+      const [pointsStaged, linesStaged, gsplatsStaged, meshStaged] = await Promise.all([
         pointsTask,
         linesTask,
         gsplatsTask,
+        meshTask,
       ]);
 
       // S6: predictive prefetch now lives inside each loader-task
@@ -893,7 +906,7 @@ export class SceneLoader {
       // Stage 2: Atomic commit — ALL geometry mutations in one sync block.
       // Implementation in scene-loader/update-view/atomic-commit.ts.
       // ================================================================
-      runAtomicCommit(pointsStaged, linesStaged, gsplatsStaged, {
+      runAtomicCommit(pointsStaged, linesStaged, gsplatsStaged, meshStaged, {
         gpuBufferPool: this._gpuBufferPool,
         nodeFactory: this.nodeFactory,
         // When this update was superseded mid-flight, skip the geometry
@@ -904,6 +917,7 @@ export class SceneLoader {
           this.updatePointsGeometry(path, data, session),
         commitLinesGeometry: (staged, session) => this.commitLinesGeometry(staged, session),
         commitGSplatsGeometry: (staged, session) => this.commitGSplatsGeometry(staged, session),
+        commitMeshGeometry: (staged, session) => this.commitMeshGeometry(staged, session),
       });
 
       // Post-commit bookkeeping is meaningful only for a committed frame. A
@@ -1260,7 +1274,7 @@ export class SceneLoader {
     path: string,
     data: LoadedMeshData,
     viewState: MeshViewState,
-    attrs: Pick<MeshMetadata, 'normal_dims' | 'double_sided'>
+    attrs: Pick<MeshMetadata, 'normal_dims' | 'double_sided' | 'extend_to_all'>
   ): Promise<StagedMeshCommit> {
     return processMeshDataHelper(path, data, viewState, attrs);
   }
