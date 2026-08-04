@@ -120,6 +120,115 @@ that is hilbert-ordered. The writer now returns it, matching Lines and GSplats.
 one ordering per type means flat keys, several means namespaced objects (Lines
 is the only type with two), and an absent `ordering` attr means `"none"`.
 
+#### Demos — Biodiversity at Planetary Scale (GBIF + Movebank)
+
+New `biodiversity_planetary_scale` demo, and the first one in the ecology
+problem space: a Blue Marble globe carrying a 15M-record sample of GBIF's 3.7
+billion georeferenced species occurrences as Points, plus CC0 Movebank animal
+tracks as Lines, with `taxon` (categorical, 10 categories: `All life` plus 9
+groups) and `period` (categorical, 14 categories: `All years` plus 13 decades,
+1900s-2020s) as non-displayed dimensions. Reads the GBIF AWS Open Data parquet
+snapshot directly and anonymously (250 random parts, 9 of 50 columns projected —
+97.9M rows scanned, 76.1M kept, in 55 s at 48 threads).
+
+**Lines whose time coordinate advances along the chain** — new to the repo;
+every previous 4D Lines demo holds `t` constant per polyline. Migration
+worldlines vary it, and the Liang-Barsky clipper handles it: a segment straddling
+the slab is drawn *clipped*, so a boundary segment reads as a whisker that grows
+and shrinks as you scrub. Verified arithmetically on a 40-track prototype (520
+segments = 440 within-slice + 80 straddlers), then on real data. Track time is
+binned to a whole decade deliberately: off-grid discrete values are only fetched
+within a quarter-step of the grid, so fractional values would work on a small
+scene and fail silently on a large one — and an A/B showed they render
+identically anyway.
+
+**Context layers use `extend_to_all`; selection layers use real coordinate
+slots.** The globe must survive every scrub or the selected records are left
+floating in black — which is what `extend_to_all` is for, and it was broken
+(#1157: a fully-extended node was never queried at all).
+That defect was found while building this demo, filed with a self-contained
+repro, and **is now fixed**; verified here before the workaround (a 25k globe
+replicated into all 139 slots, 3.5M elements) was removed:
+
+- the issue's control scene loads its extended layer to the full 1,200,000
+  points and holds it byte-identically across every scrub, where it previously
+  fetched nothing;
+- an `extend_to_all` + `substitutive_lod` partition-of-LOD holds 318,686
+  elements identically at every `(taxon, period)` combination with the coarse
+  gsplat level intact and no "filtered out during nD→3D processing" warnings.
+
+The globe is now one `extend_to_all` layer at a fixed resolution (see the
+textured-shell note below for why it carries no LOD of its own).
+
+The scrubbable layers do the opposite — real `(taxon, period)` coordinates, so
+scrubbing isolates — and **every reachable slot is materialised**: 9 taxon
+marginals, 13 period marginals, 117 joint cells. That is not an `extend_to_all`
+matter but a consequence of the viewer showing the *intersection* of the
+non-displayed slices, so a joint-only layer leaves one-slider moves on an empty
+slot. Two density findings, both measured: time is binned by **decade** (at year
+granularity the median populated cell held 244 points and 688 held under 500;
+by decade, 108/108 cells at median 2,390), and the reservoirs are **stratified
+over the cross product during the read** — sampling joint cells from a per-taxon
+reservoir gave `Birds`/`1960s` just 258 points, because bird records are
+overwhelmingly recent eBird.
+
+Scaling is a `kind=partition` wrapper whose every child is a per-tile `kind=lod`
+ladder — the Points counterpart of the gsplat `adaptive` recipe, and the first
+use of that shape for Points in the repo. Tiling alone does not bound cost (a
+partition renders every part, and a `stream:` ladder is progressive so it
+converges to 100% regardless of distance); built that way, whole-globe framing
+held all 18.1M elements resident. With per-tile LOD and measured
+`coverage_fractions` it holds **~0.5M**, and zooming into a tile walks that tile
+up to its full 1,875,000-point finest level while neighbours stay coarse.
+
+Two calibration notes, both measured in-browser: the default
+`coverage_fraction = sqrt(N_i/N_finest)` is calibrated for a single lod group
+filling the screen, so with T tiles (each ~0.6 of the viewport diagonal at
+whole-globe) it still selects a mid level; and a threshold placed *on* that 0.6
+metric makes the tiles flap, leaving two levels cross-faded and resident at once
+(1.07M instead of 186k) because the selector's hysteresis is 10% and
+downgrade-only.
+
+On the `extend_to_all` fix itself: #1157 was that a fully-extended context node
+was never queried — `deriveNodeViewState` returned its full-extend `skip` before
+applying the tolerance override that implements the extension — so its arrays
+never loaded and its ladder froze. That is fixed on main (#1167), which is what
+lets the globe be a single extended layer. The scrubbable layers stay on real
+`(taxon, period)` slots for the intersection reason above, not because of this
+bug.
+
+Also worth knowing when reusing the recipe: `partition=` must be *omitted* from
+the per-tile calls (even the documented `partition=False` bypass trips the
+mutual-exclusion guard, which tests `partition is not None`), and only `opacity`
+propagates from a `kind=lod` group to its children's materials — `intensity` and
+`gamma` leave the child uniforms at 1, so appearance trims must be baked into the
+per-element colours.
+
+Rendering settings were tuned interactively in the Layers panel and then baked,
+not guessed. Two things generalise beyond this demo. **Absorption and brightness
+are a coupled pair**: raising `absorption` is what makes a point cloud read as an
+opaque material (one that can still be made slightly transparent, which a truly
+opaque mode cannot), but it also drives the layer nearly black — so push
+brightness up in the same move by lowering the display-range max, which raises
+`intensity` (the panel's DISPLAY RANGE is a window, `intensity = 1/(hi-lo)`). And
+**a textured shell cannot survive Gaussian merging**: giving the globe a
+substitutive LOD turned its coarsest level into 46k merged splats per 750k-point
+tile, which under volumetric absorption rendered as huge dark ellipsoids. Coarse
+levels read as *density* — meaningful for the diffuse occurrence cloud, wrong for
+a continuous surface — so the globe is a fixed-resolution backdrop instead.
+
+Also fixed while transcribing: `intensity` is capped at 100 by
+`validate_intensity` (a 250 build fails outright, and costs nothing because both
+saturate); only `opacity` propagates from a `kind=lod` group to its children, so
+compositing attrs ride on the `layer=True` partition wrapper; and deriving that
+wrapper's `position_bounds` from a 3-column array in a 5-D scene dropped a whole
+BSP tile, rendering the globe with a wedge missing.
+
+Data handling is documented too, including why the measured 73.0% bird share of
+the filtered sample is *not* GBIF's ~60% (the filters are not taxon-neutral), the
+per-record `coordinateuncertaintyinmeters` jitter that breaks up
+rounded-coordinate lattices, and the CC-BY/CC0-only license filter.
+
 #### Tooling — documentation checker is now a baseline-driven ratchet (#776)
 
 `scripts/check_documentation.py` no longer fails all-or-nothing on pre-existing
