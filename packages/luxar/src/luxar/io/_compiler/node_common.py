@@ -462,9 +462,10 @@ def validate_render_attrs(
     if reserved_attrs:
         collisions = sorted(reserved_attrs & attrs.keys())
         if collisions:
-            # ``ordering=`` was a tolerated (silently stamped-over) call
-            # pattern before it was reserved (#1221), so point migrating
-            # callers at the real knob.
+            # ``ordering=`` was a tolerated call pattern before it was
+            # reserved (#1221) — the caller's value was re-persisted over the
+            # writer's stamp and won on disk — so point migrating callers at
+            # the real knob.
             hint = (
                 " The sort order is chosen once at compiler construction — "
                 "LuxarZarrCompiler(ordering_method=...) — not per node."
