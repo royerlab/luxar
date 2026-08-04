@@ -199,7 +199,7 @@
       "bucket": "zenodo",
       "record": "cc-by",
       "license": "pd-noaa",
-      "source": "NOAA NEXRAD Level II, KTLX (Twin Lakes, OK), 2013-05-31 23Z",
+      "source": "NOAA NEXRAD Level II, KTLX (Twin Lakes, OK), 2013-05-31 21Z - 06-01 03Z",
       "attribution": "U.S. NOAA/NWS NEXRAD Level II via NOAA Open Data Dissemination (public domain, 17 U.S.C. 105; acknowledge NOAA, no endorsement implied). Derived product: regridded and Gaussian-fitted, not original NOAA data.",
       "dir": "gsplats_nexrad_supercell",
       "files": [

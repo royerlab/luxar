@@ -151,7 +151,7 @@ DATASETS: dict[str, dict] = {
         bucket="zenodo",
         record="cc-by",
         license="pd-noaa",
-        source="NOAA NEXRAD Level II, KTLX (Twin Lakes, OK), 2013-05-31 23Z",
+        source="NOAA NEXRAD Level II, KTLX (Twin Lakes, OK), 2013-05-31 21Z - 06-01 03Z",
         # NOAA NODD asks for attribution, forbids implying endorsement, and
         # forbids presenting MODIFIED data as original NOAA data — hence the
         # explicit derived-product sentence.
