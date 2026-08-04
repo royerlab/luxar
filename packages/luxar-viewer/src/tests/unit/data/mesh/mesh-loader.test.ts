@@ -91,8 +91,17 @@ const TYPED: Record<string, new (length: number) => ArrayBufferView> = {
   '<f8': Float64Array as never,
 };
 
-/** Build a store holding a single mesh node at `/mesh`. */
-function buildStore(attrs: MeshMetadata, arrays: Record<string, ArraySpec>): RecordingStore {
+/**
+ * Build the raw key→bytes entries for a single mesh node at `/mesh`.
+ *
+ * Extracted from `buildStore` so both the synchronous `RecordingStore` and the
+ * read-gating `GatingStore` can be built from the SAME store contents — the two
+ * differ only in when a chunk read resolves, never in what is on disk.
+ */
+function buildEntries(
+  attrs: MeshMetadata,
+  arrays: Record<string, ArraySpec>
+): Map<string, Uint8Array> {
   const entries = new Map<string, Uint8Array>();
   const enc = (o: unknown) => new TextEncoder().encode(JSON.stringify(o));
 
@@ -128,7 +137,83 @@ function buildStore(attrs: MeshMetadata, arrays: Record<string, ArraySpec>): Rec
       entries.set(key, new Uint8Array(view.buffer, view.byteOffset, view.byteLength).slice());
     }
   }
-  return new RecordingStore(entries);
+  return entries;
+}
+
+/** Build a store holding a single mesh node at `/mesh`. */
+function buildStore(attrs: MeshMetadata, arrays: Record<string, ArraySpec>): RecordingStore {
+  return new RecordingStore(buildEntries(attrs, arrays));
+}
+
+// ---------------------------------------------------------------------------
+// A store that can HOLD chunk reads, to open a window between two fetches
+// ---------------------------------------------------------------------------
+
+/**
+ * Structurally a `zarr.Readable`, like {@link RecordingStore}, but it does not
+ * resolve chunk reads synchronously. Metadata (`.zarray`/`.zattrs`/…) resolves
+ * immediately so a load can walk the tree, but every CHUNK read is parked and
+ * only resolves on an explicit `releaseOldest` / `releaseAll`.
+ *
+ * That control is what lets a test complete fetch A while fetch B is still in
+ * flight — impossible with the synchronous `RecordingStore`, whose reads all
+ * settle on the next microtask drain. It is the only way to reproduce the
+ * dispose+reload latch race, where a stale fetch must settle in the gap after a
+ * replacement fetch has already started.
+ */
+class GatingStore {
+  /** Every key `get` was called with, in order. */
+  readonly requested: string[] = [];
+
+  /** Chunk reads awaiting release, oldest first. */
+  private readonly held: { key: string; resolve: (v: Uint8Array | undefined) => void }[] = [];
+
+  private static readonly META = new Set([
+    '.zarray',
+    '.zattrs',
+    '.zgroup',
+    '.zmetadata',
+    'zarr.json',
+  ]);
+
+  constructor(private readonly entries: Map<string, Uint8Array>) {}
+
+  private static isMeta(key: string): boolean {
+    return GatingStore.META.has(key.slice(key.lastIndexOf('/') + 1));
+  }
+
+  get(key: string): Promise<Uint8Array | undefined> {
+    this.requested.push(key);
+    // Metadata resolves eagerly so the loader can open arrays; chunk reads park.
+    if (GatingStore.isMeta(key)) return Promise.resolve(this.entries.get(key));
+    return new Promise<Uint8Array | undefined>((resolve) => {
+      this.held.push({ key, resolve });
+    });
+  }
+
+  /** Resolve the oldest held read whose key matches, with its stored bytes. */
+  releaseOldest(key: string): void {
+    const idx = this.held.findIndex((h) => h.key === key);
+    if (idx === -1) return;
+    const [h] = this.held.splice(idx, 1);
+    h.resolve(this.entries.get(h.key));
+  }
+
+  /** Resolve every held read, so no awaiting promise hangs at teardown. */
+  releaseAll(): void {
+    const pending = this.held.splice(0);
+    for (const h of pending) h.resolve(this.entries.get(h.key));
+  }
+
+  /** Non-metadata (chunk) requests — see {@link RecordingStore.chunkRequests}. */
+  chunkRequests(): string[] {
+    return this.requested.filter((k) => !GatingStore.isMeta(k));
+  }
+}
+
+/** Build a read-gating store holding a single mesh node at `/mesh`. */
+function buildGatingStore(attrs: MeshMetadata, arrays: Record<string, ArraySpec>): GatingStore {
+  return new GatingStore(buildEntries(attrs, arrays));
 }
 
 function meshAttrs(overrides: Partial<MeshMetadata> = {}): MeshMetadata {
@@ -160,6 +245,13 @@ function tetArrays(overrides: Record<string, ArraySpec> = {}): Record<string, Ar
 }
 
 function makeLoader(store: RecordingStore, attrs: MeshMetadata): MeshLoader {
+  return new MeshLoader('/mesh', attrs, zarr.root(store).resolve('mesh'), {
+    zarrStore: store,
+    arrayRefRegistry: new ArrayRefRegistry(),
+  });
+}
+
+function makeGatingLoader(store: GatingStore, attrs: MeshMetadata): MeshLoader {
   return new MeshLoader('/mesh', attrs, zarr.root(store).resolve('mesh'), {
     zarrStore: store,
     arrayRefRegistry: new ArrayRefRegistry(),
@@ -334,6 +426,69 @@ describe('MeshLoader — whole-node residency', () => {
     const before = store.chunkRequests().length;
     await loader.loadMesh(VIEW);
     expect(store.chunkRequests().length).toBeGreaterThan(before);
+  });
+
+  it("a stale fetch settling after dispose+reload does not erase the replacement load's latch", async () => {
+    // The `inFlight` latch is shared across concurrent callers, and its
+    // `.finally()` must clear it only if it still points at ITS OWN fetch. The
+    // dangerous interleaving is a dispose+reload straddling a slow fetch:
+    //
+    //   1. load A starts               → inFlight = A
+    //   2. dispose()                   → generation bumped, latch cleared
+    //   3. load B starts               → inFlight = B
+    //   4. A settles (stale gen)       → A's .finally() runs
+    //
+    // An UNCONDITIONAL `this.inFlight = null` at step 4 erases B's latch even
+    // though A is not the current fetch. The loader is then left with a pending
+    // fetch (B) and NO latch, so the next `updateView` — seeing data === null and
+    // inFlight === null — starts a THIRD concurrent whole-mesh fetch, the exact
+    // duplicate-work the whole-node design exists to prevent. The identity guard
+    // (`if (this.inFlight === pending)`) makes step 4 a no-op, leaving B latched.
+    //
+    // A gating store is required: only by parking A's reads can A be made to
+    // settle in the window after B has already started.
+    const store = buildGatingStore(meshAttrs(), tetArrays());
+    const loader = makeGatingLoader(store, meshAttrs());
+    // setTimeout(0) drains all pending microtasks WITHOUT resolving held reads —
+    // those resolve only on an explicit release below.
+    const flush = () => new Promise((r) => setTimeout(r, 0));
+
+    // 1. A starts and parks at its held vertices-chunk read.
+    const original = loader.loadMesh(VIEW);
+    await flush();
+
+    // 2. Dispose bumps the generation and clears the latch.
+    loader.dispose();
+
+    // 3. B starts and parks at its own held vertices-chunk read; inFlight = B.
+    const replacement = loader.loadMesh(VIEW);
+    await flush();
+
+    // 4. Complete ONLY A: release its vertices chunk (it then requests faces),
+    //    then its faces chunk, so A's fetch resolves and its `.finally()` runs
+    //    while B is still parked.
+    store.releaseOldest('/mesh/vertices/0.0');
+    await flush();
+    store.releaseOldest('/mesh/faces/0.0');
+    await flush();
+
+    // 5. Inject an updateView. On the fix it joins the still-pending replacement
+    //    load (latch intact) and issues no new chunk read; on the bug the erased
+    //    latch lets it start a third whole-mesh fetch.
+    const before = store.chunkRequests().length;
+    const injected = loader.updateView(VIEW);
+    await flush();
+    expect(store.chunkRequests().length).toBe(before);
+
+    // Cleanup: drain every parked read so no awaited promise hangs at teardown.
+    // Releasing a read lets its loader request the NEXT chunk, which re-parks, so
+    // pump release+flush a few times until all fetches have settled.
+    const settled = Promise.allSettled([original, replacement, injected]);
+    for (let i = 0; i < 6; i++) {
+      store.releaseAll();
+      await flush();
+    }
+    await settled;
   });
 
   it('drops its cached data on dispose', async () => {

@@ -298,7 +298,7 @@ export class MeshLoader implements MeshDataLoader {
     if (this.inFlight) return this.inFlight;
 
     const generation = this.generation;
-    this.inFlight = this.fetch(signal)
+    const pending: Promise<LoadedMeshData> = this.fetch(signal)
       .then((data) => {
         // Only publish if this loader has not been disposed since the fetch began.
         // The caller still receives the data — it is view-independent, so it is not
@@ -307,11 +307,16 @@ export class MeshLoader implements MeshDataLoader {
         return data;
       })
       .finally(() => {
-        // Cleared on failure too, so a retry can start a fresh fetch rather
-        // than re-awaiting the rejected promise forever.
-        this.inFlight = null;
+        // Clear the latch only if it still points at THIS fetch. Cleared on failure
+        // too, so a retry can start a fresh fetch rather than re-awaiting a rejected
+        // promise forever. The identity guard matters across a dispose+reload: a stale
+        // fetch that settles after the loader was disposed and re-loaded must not erase
+        // the REPLACEMENT load's latch — doing so would strand a pending fetch with no
+        // latch, letting the next updateView start a third concurrent whole-mesh fetch.
+        if (this.inFlight === pending) this.inFlight = null;
       });
-    return this.inFlight;
+    this.inFlight = pending;
+    return pending;
   }
 
   /** Load the mesh. `viewState` is accepted for interface symmetry and unused. */
