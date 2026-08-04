@@ -40,6 +40,8 @@ const ATTRS: MeshMetadata = {
   ordering: 'none',
 };
 
+const ATTRS_COLORS: MeshMetadata = { ...ATTRS, has_colors: true };
+
 function loaded(): LoadedMeshData {
   return {
     // One triangle in 4D, all three vertices at w = 0.
@@ -51,6 +53,15 @@ function loaded(): LoadedMeshData {
     vertexCount: 3,
     faceCount: 1,
     ndim: 4,
+  };
+}
+
+// Same triangle, but with authored per-vertex RGB colors.
+function loadedWithColors(): LoadedMeshData {
+  return {
+    ...loaded(),
+    colors: new Uint8Array([255, 0, 0, 0, 255, 0, 0, 0, 255]),
+    colorComponents: 3,
   };
 }
 
@@ -125,6 +136,26 @@ describe('commitMeshGeometry', () => {
     expect(mesh.geometry.getAttribute('position').count).toBe(3);
     expect(mesh.userData.visibleTriangleCount).toBe(1);
     expect(mesh.userData.loadedViewVersion).toBe(7);
+  });
+
+  it('installs authored per-vertex colors so the mesh actually displays them', async () => {
+    // Regression for #1243: the node is born with the 1-vertex placeholder color,
+    // and the commit must grow `color` to the authored buffer. Before the fix the
+    // color attribute stayed count 1 (the placeholder) and authored colors never
+    // rendered.
+    const root = new THREE.Group();
+    const mesh = createEmptyMeshNode('/surface', ATTRS_COLORS, loader);
+    root.add(mesh);
+
+    const staged = await processMeshData('/surface', loadedWithColors(), VIEW, {
+      normal_dims: [0, 1, 2],
+      double_sided: false,
+    });
+    commitMeshGeometry({ rootGroup: root, currentVersion: 1 }, staged);
+
+    const color = mesh.geometry.getAttribute('color');
+    expect(color.count).toBe(3);
+    expect(color.itemSize).toBe(4); // uint8 RGB padded to RGBA
   });
 
   it('applies the epoch side, which can differ from the authored double_sided', async () => {

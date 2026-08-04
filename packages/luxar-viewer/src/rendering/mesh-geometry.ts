@@ -182,12 +182,27 @@ export function buildMeshGeometry(input: MeshGeometryInput): THREE.BufferGeometr
  * permutation. Skipping that recompute makes a permuted mesh vanish from the
  * frustum test while still being "loaded", which is a confusing failure to debug.
  *
- * @returns the geometry, for call-site chaining.
+ * The `color` attribute is **installed on the first commit and then left alone**:
+ * the node is created with a 1-vertex placeholder color (see
+ * `createEmptyMeshNode`), so the authored colors have to be bound here or they
+ * would never reach the shader. It is a first-commit-only install, not a
+ * per-slice-move update — see the guard below.
+ *
+ * @returns `attributesRebuilt` — `true` when a VERTEX attribute was rebound via
+ * `setAttribute` (the first-commit position grow-rebind or the first-commit color
+ * install), `false` otherwise. The commit uses this to evict three's stale WebGPU
+ * `RenderObject` cache after a vertex-attribute rebind (its cached `vertexBuffers`
+ * keeps pointing at the OLD GPU buffer/pipeline otherwise) — the same contract the
+ * points/lines/gsplats commits follow via `invalidateRenderObjectFor`. A pure slice
+ * move rebinds no vertex attribute (only `setIndex` runs), so it returns `false` and
+ * the commit skips the eviction. The geometry is mutated in place, so no caller
+ * needs it returned.
  */
 export function updateMeshGeometry(
   geometry: THREE.BufferGeometry,
   input: MeshGeometryInput
-): THREE.BufferGeometry {
+): boolean {
+  let attributesRebuilt = false;
   const positionAttr = geometry.getAttribute('position') as THREE.BufferAttribute | undefined;
   if (positionAttr && positionAttr.array !== input.position) {
     if (positionAttr.array.length === input.position.length) {
@@ -201,11 +216,49 @@ export function updateMeshGeometry(
         `Mesh position length changed (${positionAttr.array.length} -> ${input.position.length}); rebinding`
       );
       geometry.setAttribute('position', new THREE.BufferAttribute(input.position, 3, false));
+      // A new attribute object → three's cached WebGPU RenderObject is now stale.
+      attributesRebuilt = true;
     }
     geometry.computeBoundingBox();
     geometry.computeBoundingSphere();
   }
 
+  // Install the `color` attribute exactly once, on the first commit. The node is
+  // born with the 1-vertex placeholder color from `createEmptyMeshNode`
+  // (`colors: null, vertexCount: 1`), so without this the authored per-vertex
+  // colors would never bind and an indexed draw would fetch `color` out of bounds
+  // (black under WebGL2 robust access; a pipeline-validation failure on WebGPU).
+  //
+  // Keyed off `vertexCount` for the SAME reason `buildIndexAttribute` keys the
+  // index dtype off it: the placeholder is 1-vertex (`colorAttr.count === 1`) and a
+  // real drawable mesh has N vertices, so `count !== vertexCount` is true exactly
+  // on the first commit and false on every subsequent slice move. That keeps the
+  // color buffer uploaded-once (the no-compaction doctrine — only the index rebuilds
+  // on a slice move) instead of re-uploading it on every scrub. Note `projectMesh`
+  // reallocates `position` on every call, so color must NOT be tied to position
+  // identity — that would re-upload color on every slice move.
+  //
+  // Format stability across the guard: the no-colors default-white path stays
+  // `float32x3` at count N — a format-preserving rebind exactly like `position`'s
+  // first-commit grow, so it never changes attribute format. Only authored,
+  // non-float32-RGB colors change format ONCE on first install (placeholder
+  // `float32x3` → e.g. `unorm8x4`) and never again, so there is no per-rebuild dtype
+  // flip — the WebGPU attribute-identity hazard the surrounding code and
+  // `buildIndexAttribute` guard against.
+  //
+  // This install rebinds a vertex attribute, so it sets `attributesRebuilt` to
+  // drive the commit's WebGPU RenderObject eviction (see the @returns note).
+  const colorAttr = geometry.getAttribute('color') as THREE.BufferAttribute | undefined;
+  if (!colorAttr || colorAttr.count !== input.vertexCount) {
+    geometry.setAttribute(
+      'color',
+      input.colors
+        ? buildColorAttribute(input.colors, input.colorComponents ?? 3, input.vertexCount)
+        : buildDefaultColorAttribute(input.vertexCount)
+    );
+    attributesRebuilt = true;
+  }
+
   geometry.setIndex(buildIndexAttribute(input.indices, input.vertexCount));
-  return geometry;
+  return attributesRebuilt;
 }

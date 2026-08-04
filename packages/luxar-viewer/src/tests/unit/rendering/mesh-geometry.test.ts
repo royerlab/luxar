@@ -146,6 +146,19 @@ describe('updateMeshGeometry', () => {
     });
   }
 
+  // The real production placeholder from `createEmptyMeshNode`: one vertex, no
+  // indices, no colors. This is the state `updateMeshGeometry` first sees, so the
+  // color-install guard must fire against it (unlike `seeded()`, which is already
+  // 3-vertex).
+  function placeholder(): THREE.BufferGeometry {
+    return buildMeshGeometry({
+      position: new Float32Array(3),
+      indices: new Uint32Array(0),
+      colors: null,
+      vertexCount: 1,
+    });
+  }
+
   it('replaces the index without touching the position buffer on a slice move', () => {
     // The whole point of the no-compaction design: a slice change rewrites the index
     // buffer alone, and the vertex buffers stay uploaded.
@@ -189,5 +202,70 @@ describe('updateMeshGeometry', () => {
     });
     // Same object identity — computeBoundingSphere() would have replaced it.
     expect(g.boundingSphere).toBe(sphere);
+  });
+
+  it('installs authored colors on the first commit, growing off the placeholder', () => {
+    // The node is born with the 1-vertex placeholder color; the first real commit
+    // has to bind the authored per-vertex colors here or they never reach the
+    // shader. Before the fix `color` stayed the 1-vertex placeholder.
+    const g = placeholder();
+    const rebuilt = updateMeshGeometry(g, {
+      position: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
+      indices: new Uint32Array([0, 1, 2]),
+      colors: new Uint8Array([255, 0, 0, 0, 255, 0, 0, 0, 255]),
+      colorComponents: 3,
+      vertexCount: 3,
+    });
+    const color = g.getAttribute('color');
+    expect(color.count).toBe(3);
+    expect(color.itemSize).toBe(4); // uint8 RGB padded to RGBA
+    expect(color.normalized).toBe(true);
+    expect(Array.from(color.array).slice(0, 4)).toEqual([255, 0, 0, 255]);
+    // A vertex-attribute rebind happened (position grow + color install), so the
+    // commit must evict three's stale WebGPU RenderObject cache.
+    expect(rebuilt).toBe(true);
+  });
+
+  it('installs the default-white attribute for null colors from the placeholder', () => {
+    const g = placeholder();
+    updateMeshGeometry(g, {
+      position: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
+      indices: new Uint32Array([0, 1, 2]),
+      colors: null,
+      vertexCount: 3,
+    });
+    const color = g.getAttribute('color');
+    expect(color.count).toBe(3);
+    expect(color.itemSize).toBe(3);
+    expect(Array.from(color.array)).toEqual([1, 1, 1, 1, 1, 1, 1, 1, 1]);
+  });
+
+  it('leaves the color buffer untouched on a subsequent slice move', () => {
+    // The guard is keyed off vertexCount, so once colors are installed (count 3) a
+    // later slice move at the SAME vertexCount must NOT re-create/re-upload the
+    // buffer — only the index rebuilds. Tying color to position identity would fail
+    // this, since `projectMesh` reallocates position every call.
+    const g = placeholder();
+    updateMeshGeometry(g, {
+      position: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
+      indices: new Uint32Array([0, 1, 2]),
+      colors: new Uint8Array([255, 0, 0, 0, 255, 0, 0, 0, 255]),
+      colorComponents: 3,
+      vertexCount: 3,
+    });
+    const colorBefore = g.getAttribute('color') as THREE.BufferAttribute;
+    const versionBefore = colorBefore.version;
+    const rebuilt = updateMeshGeometry(g, {
+      position: new Float32Array([0, 0, 0, 2, 0, 0, 0, 2, 0]),
+      indices: new Uint32Array([2, 1, 0]),
+      colors: new Uint8Array([255, 0, 0, 0, 255, 0, 0, 0, 255]),
+      colorComponents: 3,
+      vertexCount: 3,
+    });
+    expect(g.getAttribute('color')).toBe(colorBefore); // same object, not re-created
+    // No re-upload either: an unchanged `version` proves the buffer wasn't dirtied.
+    expect((g.getAttribute('color') as THREE.BufferAttribute).version).toBe(versionBefore);
+    // Nothing rebound → the commit skips the WebGPU RenderObject eviction.
+    expect(rebuilt).toBe(false);
   });
 });
