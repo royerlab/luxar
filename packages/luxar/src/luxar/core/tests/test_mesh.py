@@ -854,3 +854,155 @@ def test_degenerate_meshes_round_trip(tmp_path, label, vertices, faces) -> None:
     mesh = LuxarScene.load(store).get_mesh("m")
     assert np.array_equal(mesh.faces, faces)
     assert mesh.vertices.shape == vertices.shape
+
+
+# =============================================================================
+# Per-vertex labels and image labels (CSR)
+# =============================================================================
+
+
+def test_labels_round_trip(tmp_path) -> None:
+    """Per-vertex hover labels are CSR-written and flagged.
+
+    Labels are per-VERTEX for a mesh, matching Lines (which is also per-vertex
+    rather than per-segment) — the count must line up with the vertex array, not
+    the face array.
+    """
+    store = _write(tmp_path, name="lab", labels=["a", "b", "c", "d"])
+    node = zarr.open_group(store, mode="r")["lab"]
+
+    assert dict(node.attrs)["has_labels"] is True
+    assert "label_offsets" in node
+    assert "label_bytes" in node
+
+    mesh = LuxarScene.load(store).get_mesh("lab")
+    assert mesh.metadata["has_labels"] is True
+
+
+def test_labels_length_must_match_vertex_count(tmp_path) -> None:
+    """A label per FACE rather than per vertex is the natural mistake, and fails."""
+    with LuxarZarrCompiler(tmp_path / "badlab.luxar.zarr") as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        with pytest.raises(ValueError, match="[Ll]abels"):
+            scene.add_mesh("m", _V, _F, labels=["only", "two"])
+
+
+def test_image_labels_round_trip(tmp_path) -> None:
+    """Per-vertex hover thumbnails write through the image-label CSR path."""
+    thumbnails = [
+        np.full((2, 2, 3), fill_value=i * 60, dtype=np.uint8) for i in range(4)
+    ]
+    store = _write(tmp_path, name="img", image_labels=thumbnails)
+    node = zarr.open_group(store, mode="r")["img"]
+
+    assert dict(node.attrs)["has_image_labels"] is True
+    assert "image_label_offsets" in node
+    assert "image_label_bytes" in node
+
+
+@pytest.mark.parametrize(
+    "kwargs,pattern,test_id",
+    [
+        (
+            {"colors": np.ones((4, 3), np.float32), "colormap": "viridis"},
+            "both 'colors' and 'colormap'",
+            "colors_plus_colormap",
+        ),
+        (
+            {"scalars": np.zeros(4, np.float32)},
+            "requires a 'colormap'",
+            "scalars_without_colormap",
+        ),
+    ],
+)
+def test_appearance_mutual_exclusivity(tmp_path, kwargs, pattern, test_id) -> None:
+    """Colour sources are mutually exclusive, matching the sibling adders.
+
+    `colors` and `colormap` both decide the surface's colour, so supplying both
+    leaves the winner to writer ordering rather than to the author; `scalars`
+    without a `colormap` has no LUT to map through and would render as nothing.
+    """
+    with LuxarZarrCompiler(tmp_path / f"{test_id}.luxar.zarr") as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        with pytest.raises(ValueError, match=pattern):
+            scene.add_mesh("m", _V, _F, **kwargs)
+
+
+def test_vertices_must_be_2d_at_the_adder(tmp_path) -> None:
+    """A 1D vertices array is rejected by the adder before the writer sees it."""
+    with LuxarZarrCompiler(tmp_path / "v1d.luxar.zarr") as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        with pytest.raises(ValueError, match=r"shape \(V, D\)"):
+            scene.add_mesh("m", np.zeros(9, dtype=np.float32), _F)
+
+
+def test_double_sided_must_be_a_bool(tmp_path) -> None:
+    """A truthy non-bool would be persisted as-is and read as a lie by the viewer."""
+    with LuxarZarrCompiler(tmp_path / "dsb.luxar.zarr") as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        with pytest.raises(ValueError, match="double_sided must be a bool"):
+            scene.add_mesh("m", _V, _F, double_sided="yes")
+
+
+def test_per_vertex_color_array_round_trips(tmp_path) -> None:
+    """An ndarray `colors` (not a broadcast tuple) takes the per-vertex write path.
+
+    The broadcast-tuple and per-vertex-array paths differ inside the writer — only
+    the array one runs the shape validator and stores one row per vertex — so both
+    need exercising. RGBA here so the per-vertex alpha column is covered too.
+    """
+    colors = np.array(
+        [
+            [1.0, 0.0, 0.0, 1.0],
+            [0.0, 1.0, 0.0, 0.5],
+            [0.0, 0.0, 1.0, 0.25],
+            [1.0, 1.0, 1.0, 0.0],
+        ],
+        dtype=np.float32,
+    )
+    store = _write(tmp_path, name="pvc", colors=colors)
+    mesh = LuxarScene.load(store).get_mesh("pvc")
+
+    assert mesh.colors is not None
+    assert mesh.colors.shape == (4, 4), (
+        f"expected per-vertex RGBA, got {mesh.colors.shape}"
+    )
+    assert mesh.metadata["has_colors"] is True
+
+
+def test_mesh_node_properties_reflect_what_was_written(tmp_path) -> None:
+    """Every `Mesh` property must read back what the writer actually stamped.
+
+    Exercised through a fully-populated node rather than per-property, because the
+    failure mode these guard against is a property reading the WRONG metadata key —
+    which returns a plausible default instead of raising, so only comparing against
+    known-written values catches it.
+    """
+    thumbnails = [np.zeros((2, 2, 3), dtype=np.uint8) for _ in range(4)]
+    with LuxarZarrCompiler(tmp_path / "props.luxar.zarr") as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        node = scene.add_mesh(
+            "full",
+            _V,
+            _F,
+            normals=_N,
+            normal_dims=(0, 1, 2),
+            scalars=np.linspace(0, 1, 4).astype(np.float32),
+            colormap="viridis",
+            shading="smooth",
+            double_sided=False,
+            labels=["a", "b", "c", "d"],
+            image_labels=thumbnails,
+        )
+
+        assert node.n_elements == 4
+        assert node.n_faces == 4
+        assert node.has_normals is True
+        assert node.normal_dims == [0, 1, 2]
+        assert node.has_colors is False  # scalars+colormap, not explicit colors
+        assert node.has_scalars is True
+        assert node.has_labels is True
+        assert node.has_image_labels is True
+        assert node.shading == "smooth"
+        assert node.double_sided is False
+        assert node.ordering == "none"
