@@ -740,3 +740,39 @@ def test_info_tree_does_not_label_a_geometry_leaf_as_a_group(capsys) -> None:
         assert GROUP_ICON not in child_lines[0], (
             f"{gtype!r} leaf was classified as a group: {child_lines[0]!r}"
         )
+
+
+def test_info_tree_shows_mesh_face_count_and_icon(capsys) -> None:
+    """A mesh row reports BOTH counts, and gets its own type icon.
+
+    Faces are labelled separately rather than sharing the ``n=`` slot: a mesh's
+    vertex count says little about its size on its own (a coarse surface and a
+    dense one can share a vertex budget) while render cost tracks triangles. So
+    ``n=`` keeps meaning "primary elements" for every geometry type, and
+    ``faces=`` is additive.
+
+    Asserted through ``_print_tree`` rather than ``format_tree_node`` directly, so
+    it also covers ``_print_tree`` actually collecting ``n_faces`` — populating
+    the attr and rendering it are separate steps, and the first was in place
+    before the second, showing a mesh with no face count at all.
+    """
+    import numpy as np
+    import zarr
+
+    from luxar.cli.info_command import _print_tree
+
+    store = zarr.group()
+    store.attrs["type"] = "scene"
+    child = store.create_group("child")
+    child.attrs["type"] = "mesh"
+    child.attrs["n_vertices"] = 5
+    child.attrs["n_faces"] = 7
+    child.create_dataset("vertices", data=np.zeros((5, 3), dtype=np.float32))
+    child.create_dataset("faces", data=np.zeros((7, 3), dtype=np.uint32))
+
+    _print_tree(store)
+    line = next(ln for ln in capsys.readouterr().out.splitlines() if "child" in ln)
+
+    assert "n=5" in line, f"vertex count missing: {line!r}"
+    assert "faces=7" in line, f"face count missing: {line!r}"
+    assert "\U0001f53a" in line, f"mesh type icon missing: {line!r}"  # 🔺

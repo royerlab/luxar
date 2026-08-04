@@ -41,6 +41,13 @@ const VISIBLE_COUNT_READERS: Record<GeometryTypeName, (userData: unknown) => num
   points: (ud) => (isPointsUserData(ud) ? (ud.visiblePointCount ?? 0) : undefined),
   lines: (ud) => (isLinesUserData(ud) ? (ud.visibleSegmentCount ?? 0) : undefined),
   gsplats: (ud) => (isGSplatsUserData(ud) ? (ud.visibleSplatCount ?? 0) : undefined),
+  // Mesh has no loader yet (MESH_NODE_SPEC.md §11 phase 3), so no object3D in the
+  // scene carries mesh visible-count userData and this reader can never match.
+  // `undefined` is the honest return — it means "not this type's userData", which
+  // is exactly the state of affairs — and it keeps the walk's first-match-wins
+  // logic unchanged. Replace with a real `isMeshUserData` guard when the loader
+  // lands; the compile error that brought you here is the reminder.
+  mesh: () => undefined,
 };
 
 /**

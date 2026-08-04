@@ -624,6 +624,268 @@ def validate_sharpness_for_writing(
         )
 
 
+def validate_vertices_for_writing(
+    vertices: NDArray[Any], context: str = "vertices"
+) -> None:
+    """Enforce the mesh vertex-count ceiling before any zarr write.
+
+    Shape and finiteness are NOT re-checked here — the shared coordinate path
+    (:func:`validate_positions_for_writing`) owns those for every geometry type.
+    This validator's sole job is the ``n_vertices <= MAX_MESH_VERTICES`` cap,
+    which is specific to mesh because a mesh's pick ``elementId`` is the raw
+    ``gl_VertexID`` rather than an element-texture index (see
+    :data:`~luxar.typing_utils.constants.MAX_MESH_VERTICES`).
+
+    The viewer's loader rejects an over-cap store too. Mirroring it at write time
+    is the point: without this, the public ``add_mesh`` path could emit a store
+    that Luxar's own loader then refuses — a bound that exists only on the read
+    side is not a bound, and the failure would surface far from its cause.
+
+    Args:
+        vertices: The mesh ``(V, D)`` vertex array.
+        context: Context for error messages.
+
+    Raises:
+        ValidationError: If the vertex count exceeds the cap.
+    """
+    from ..typing_utils.constants import MAX_MESH_VERTICES
+
+    n_vertices = int(np.asarray(vertices).shape[0])
+    if n_vertices > MAX_MESH_VERTICES:
+        raise ValidationError(
+            f"{context}: Mesh has {n_vertices:,} vertices, which exceeds the "
+            f"maximum of {MAX_MESH_VERTICES:,} (2^27). Above this the viewer's "
+            f"per-node pick vote key aliases across nodes, so picking would "
+            f"silently resolve to the wrong node.",
+            "Split the surface into several mesh nodes, or decimate it below "
+            f"{MAX_MESH_VERTICES:,} vertices",
+        )
+
+
+def validate_faces_for_writing(
+    faces: Any, n_vertices: int, context: str = "faces"
+) -> None:
+    """Validate mesh triangle indices for writing.
+
+    Accepts the two documented layouts — an ``(F, 3)`` triangle array or a flat
+    ``(3F,)`` array. The closest precedent is the ``line_type='indexed'`` index
+    gate in the lines writer, which already encodes each of these traps; this is
+    the shared-validator form of the same rules.
+
+    Every check corresponds to a way bad indices fail *silently* rather than
+    loudly, since the writer casts with ``.astype(np.uint32)`` and the viewer
+    hands the result straight to kernels that index without bounds-checking:
+
+    - **integer dtype** — a float array truncates on cast (``1.7`` → ``1``),
+      producing triangles the author never wound.
+    - **min >= 0** — a negative index wraps to ~4 billion on the unsigned cast.
+    - **max < n_vertices** — an out-of-range index reads past the vertex buffer;
+      in the Rust kernel (``panic = "abort"``) that takes down the whole WASM
+      module rather than one node.
+    - **F >= 1** — a mesh with no faces draws nothing; an indexed draw never
+      references a vertex no face names.
+
+    Args:
+        faces: Triangle indices, ``(F, 3)`` or flat ``(3F,)``.
+        n_vertices: Vertex count the indices must address.
+        context: Context for error messages.
+
+    Raises:
+        ValidationError: If the faces array is malformed or out of range.
+    """
+    faces_array = np.asarray(faces)
+
+    if faces_array.ndim > 2 or (faces_array.ndim == 2 and faces_array.shape[1] != 3):
+        raise ValidationError(
+            f"{context}: Faces must be an (F, 3) triangle array or a flat (3F,) "
+            f"array, got shape {faces_array.shape}",
+            "Reshape to (F, 3) — one row per triangle, three vertex indices each",
+        )
+
+    if faces_array.size == 0:
+        raise ValidationError(
+            f"{context}: Mesh has no faces (empty array). A mesh with no faces "
+            "renders nothing — an indexed draw never references a vertex that no "
+            "face names.",
+            "Provide at least one triangle, e.g. faces=[[0, 1, 2]]",
+        )
+
+    if faces_array.size % 3 != 0:
+        raise ValidationError(
+            f"{context}: Faces must have an element count divisible by 3 "
+            f"(triangles), got {faces_array.size}",
+            "Provide three vertex indices per triangle",
+        )
+
+    if not np.issubdtype(faces_array.dtype, np.integer):
+        raise ValidationError(
+            f"{context}: Faces must be an integer array, got dtype "
+            f"{faces_array.dtype}. A float index truncates on the uint32 cast "
+            f"(1.7 -> 1), which would silently rewrite the topology.",
+            "Convert with faces.astype(np.uint32)",
+        )
+
+    face_min = int(faces_array.min())
+    if face_min < 0:
+        raise ValidationError(
+            f"{context}: Face index {face_min} < 0. Negative indices wrap to ~4 "
+            f"billion on the uint32 cast instead of failing.",
+            "Use non-negative vertex indices",
+        )
+
+    face_max = int(faces_array.max())
+    if face_max >= n_vertices:
+        raise ValidationError(
+            f"{context}: Face index {face_max} is out of range for {n_vertices} "
+            f"vertices (valid indices are 0..{n_vertices - 1}). An out-of-range "
+            f"index reads past the vertex buffer at render time.",
+            "Check the indices are 0-based and address this mesh's own vertices",
+        )
+
+
+def validate_normals_for_writing(
+    normals: NDArray[Any], n_vertices: int, context: str = "normals"
+) -> None:
+    """Validate per-vertex mesh normals for writing.
+
+    Shape ``(V, 3)`` and finiteness are required. Normals are always 3-component
+    even for an nD mesh: they are a display-space quantity, and which three
+    dimensions they belong to is recorded separately by ``normal_dims`` (see
+    :func:`validate_normal_dims_for_writing`).
+
+    Zero-length normals are **warned about, not rejected**. Degenerate triangles
+    legitimately produce them, and the renderer already handles the case: the
+    stored-normal fragment path epsilon-guards its ``normalize`` and falls back to
+    a screen-space-derivative flat normal. The warning exists so authors fix the
+    source rather than lean on that fallback, because the fallback is pointwise —
+    on a shared-vertex mesh the interpolated normal near a degenerate vertex
+    blends toward its neighbours, so shading there is locally distorted rather
+    than cleanly flat.
+
+    Args:
+        normals: Per-vertex normals, shape ``(V, 3)``.
+        n_vertices: Expected vertex count.
+        context: Context for error messages.
+
+    Raises:
+        ValidationError: If normals are the wrong shape or non-finite.
+    """
+    if not isinstance(normals, np.ndarray):
+        raise ValidationError(
+            f"{context}: Expected numpy array, got {type(normals).__name__}",
+            "Convert your data to a numpy array using np.array(normals)",
+        )
+
+    if normals.ndim != 2 or normals.shape[1] != 3:
+        raise ValidationError(
+            f"{context}: Expected shape (n_vertices, 3), got {normals.shape}. "
+            "Normals are always 3-component — they describe the displayed "
+            "dimensions, named by the normal_dims attr.",
+            "Provide one 3-component normal per vertex",
+        )
+
+    if normals.shape[0] != n_vertices:
+        raise ValidationError(
+            f"{context}: Normals count ({normals.shape[0]}) doesn't match vertex "
+            f"count ({n_vertices})",
+            f"Provide exactly {n_vertices} normals (one per vertex)",
+        )
+
+    _validate_numeric_finite_values(normals, context)
+
+    zero_count = int(np.count_nonzero(np.all(normals == 0.0, axis=1)))
+    if zero_count:
+        import warnings
+
+        warnings.warn(
+            f"{context}: {zero_count} of {n_vertices} normals are zero-length. "
+            "These are usually produced by degenerate (zero-area) triangles. The "
+            "renderer falls back to a derived flat normal per fragment, but "
+            "shading near a zero normal on a shared-vertex mesh is locally "
+            "distorted rather than cleanly flat — recompute the normals to fix "
+            "it properly.",
+            UserWarning,
+            stacklevel=2,
+        )
+
+
+def validate_normal_dims_for_writing(
+    normal_dims: Any, ndim: int, context: str = "normal_dims"
+) -> None:
+    """Validate the companion attr naming which dimensions ``normals`` describe.
+
+    Required whenever ``normals`` is supplied and rejected when it is not — that
+    pairing is enforced by the caller, which knows both. This validator checks
+    the value itself: exactly 3 entries, integral, distinct, each a valid
+    dimension index.
+
+    Normals are stored ``(V, 3)`` because they are only meaningful for the three
+    displayed dimensions, so the store must say *which* three. Storing them
+    against an implicit "first three dimensions" is the bug this attr exists to
+    prevent: for a ``(t, x, y, z)`` mesh the first three dims are ``(t, x, y)``
+    and a normal against them is meaningless. The viewer compares this list to
+    the active ``displayDims`` and falls back to flat normals when they differ,
+    so a wrong-but-well-formed list degrades shading rather than corrupting it —
+    but an *ill-formed* one would index out of bounds.
+
+    Args:
+        normal_dims: Candidate dimension-index triple.
+        ndim: The mesh's dimensionality (indices must be < this).
+        context: Context for error messages.
+
+    Raises:
+        ValidationError: If the triple is malformed or out of range.
+    """
+    if isinstance(normal_dims, (str, bytes)) or not isinstance(
+        normal_dims, (Sequence, np.ndarray)
+    ):
+        raise ValidationError(
+            f"{context}: Expected a sequence of 3 dimension indices, got "
+            f"{type(normal_dims).__name__}",
+            "Pass e.g. normal_dims=(0, 1, 2) naming the dimensions the normals "
+            "describe",
+        )
+
+    # Iterate the entries as GIVEN, never through ``np.asarray``. Coercing first
+    # destroys the evidence: ``np.asarray((True, 0, 2))`` is an int64 array, so a
+    # bool entry arrives here already indistinguishable from dimension 1 and the
+    # per-entry type check below can never see it. (A bool is an int subclass, so
+    # only an explicit rejection catches it.) A 1-element ndarray is unwrapped by
+    # ``tolist`` for the same reason — its scalars are numpy types, not Python
+    # ones, but ``tolist`` yields Python ints and preserves bool-ness.
+    raw_dims = (
+        normal_dims.tolist()
+        if isinstance(normal_dims, np.ndarray)
+        else list(normal_dims)
+    )
+    if len(raw_dims) != 3:
+        raise ValidationError(
+            f"{context}: Expected exactly 3 dimension indices, got {len(raw_dims)}",
+            "Normals are 3-component, so exactly three dimensions name them",
+        )
+
+    for i, dim in enumerate(raw_dims):
+        if isinstance(dim, (bool, np.bool_)) or not isinstance(dim, (int, np.integer)):
+            raise ValidationError(
+                f"{context}: Entry {i} must be an integer dimension index, got "
+                f"{dim!r} ({type(dim).__name__})",
+                "Use integer dimension indices, e.g. normal_dims=(0, 1, 2)",
+            )
+        if not 0 <= int(dim) < ndim:
+            raise ValidationError(
+                f"{context}: Entry {i} is dimension {int(dim)}, out of range for "
+                f"a {ndim}D mesh (valid indices are 0..{ndim - 1})",
+                f"Name three of this mesh's own {ndim} dimensions",
+            )
+
+    int_dims = [int(d) for d in raw_dims]
+    if len(set(int_dims)) != 3:
+        raise ValidationError(
+            f"{context}: Dimension indices must be distinct, got {int_dims}",
+            "Name three different dimensions",
+        )
+
+
 def validate_zarr_attributes(attrs: dict, is_root: bool = False) -> None:
     """Validate that all required Zarr attributes are present.
 
@@ -665,13 +927,19 @@ def validate_zarr_attributes(attrs: dict, is_root: bool = False) -> None:
             UserWarning,
         )
 
-    # Validate type attribute
+    # Validate type attribute against the contract vocabulary, not a literal
+    # set: a node type added to ``node_types`` but missed here would make every
+    # store containing one fail this validator as "invalid", which is the
+    # opposite failure from the geometry-leaf checks (#1203) but the same root
+    # cause — a hand-copied vocabulary. Iteration order is the contract's, so
+    # the hint is deterministic (a set's ``join`` was not).
     if "type" in attrs:
-        valid_types = {"scene", "group", "points", "lines", "gsplats"}
-        if attrs["type"] not in valid_types:
+        from ..typing_utils._format_contract import NODE_TYPES
+
+        if attrs["type"] not in NODE_TYPES:
             raise ValidationError(
                 f"Invalid node type: '{attrs['type']}'",
-                f"Use one of: {', '.join(valid_types)}",
+                f"Use one of: {', '.join(NODE_TYPES)}",
             )
 
     # Validate version if present. Keep this import local: typing_utils.config

@@ -66,6 +66,7 @@ from ._compiler.geometry_writers.gsplats import (
 )
 from ._compiler.geometry_writers.gsplats import write_gsplats as _write_gsplats_impl
 from ._compiler.geometry_writers.lines import write_lines as _write_lines_impl
+from ._compiler.geometry_writers.mesh import write_mesh as _write_mesh_impl
 from ._compiler.geometry_writers.points import write_points as _write_points_impl
 from ._compiler.gsplat_assembly import apply_gsplat_group_attrs
 from ._compiler.node_common import prepare_transform_attrs as _prepare_transform_attrs
@@ -192,9 +193,12 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         # Emit the ACES-vs-LUT tone-mapping warning at most once per compile,
         # the first time a colormap LUT is written (see _write_colormap_lut_if_needed).
         self._lut_tone_mapping_warned: bool = False
-        # Partition wrappers write one Lines leaf per part. Keep the heuristic
-        # authoring warning once per logical node rather than once per leaf.
-        self._line_authoring_warnings: set[str] = set()
+        # Partition wrappers write one geometry leaf per part. Keep each
+        # heuristic authoring warning once per logical node rather than once per
+        # leaf. Keyed by (geometry kind, path) so the per-type heuristics share
+        # one registry without their paths colliding — a new geometry type with
+        # an authoring lint needs no new field here.
+        self._authoring_warnings: set[tuple[str, str]] = set()
 
         # Create array encoder with specified encoding mode and float16 control
         self._encoder = ArrayEncoder(float16_allowed=float16_allowed)
@@ -553,6 +557,81 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             scalars,
             indices,
             line_type,
+            labels,
+            image_labels,
+            **attrs,
+        )
+        self._metadata_cache[path.lstrip("/")] = metadata
+        return metadata
+
+    def write_mesh(  # type: ignore[override]
+        self,
+        path: NodePath,
+        vertices: NDArray[np.float32],
+        faces: NDArray[np.uint32],
+        normals: Optional[NDArray[np.float32]] = None,
+        normal_dims: Optional[Sequence[int]] = None,
+        colors: Optional[
+            Union[NDArray[np.float32], List[float], Tuple[float, ...]]
+        ] = None,
+        scalars: Optional[Union[NDArray[np.float32], float]] = None,
+        shading: Optional[str] = None,
+        double_sided: bool = True,
+        labels: Optional["Sequence[str]"] = None,
+        image_labels: Optional[Any] = None,
+        **attrs: Any,
+    ) -> dict[str, Any]:
+        """Write a triangle mesh to Zarr.
+
+        Mesh is the surface geometry type: ``vertices`` in nD plus a ``faces``
+        triangle-index array. Unlike Points / Lines / GSplats it carries no
+        per-element size (a triangle's extent comes from its own vertices), and
+        it has no spatial index or LOD in v1 — the loader is whole-node.
+
+        Scalar convenience: ``colors`` accepts a broadcast RGB(A) tuple/list, and
+        ``scalars`` a single value, exactly as the sibling writers do.
+
+        Args:
+            path: Path for the mesh within the store.
+            vertices: Vertex positions of shape ``(V, D)``.
+            faces: Triangle vertex indices, ``(F, 3)`` or flat ``(3F,)``. Wound
+                counter-clockwise as seen with the mesh's authored spatial triple
+                in ascending index order.
+            normals: Optional per-vertex normals, shape ``(V, 3)``. Requires
+                ``normal_dims``.
+            normal_dims: The three dimension indices the normals describe —
+                required with ``normals`` and rejected without them. Normals are a
+                display-space quantity, so the store must say which three
+                dimensions they belong to; an implicit "first three" is wrong for
+                any mesh whose leading dimension is not spatial.
+            colors: Colors — array ``(V, 3|4)``, RGB(A) tuple/list, or None. A 4th
+                component is per-vertex opacity.
+            scalars: Scalars for colormap lookup — array ``(V,)``, scalar, or None.
+            shading: ``"smooth"`` or ``"flat"``. Defaults to ``"smooth"`` when
+                normals are supplied, else ``"flat"``. An explicit value is stored
+                as given: ``"flat"`` renders a faceted surface even with normals
+                present, and ``"smooth"`` without normals falls back to derived
+                flat normals at render time.
+            double_sided: Whether back faces render. ``True`` by default.
+            labels: Optional per-vertex strings for hover tooltips (CSR-encoded).
+            image_labels: Optional per-vertex images for hover thumbnails.
+            **attrs: Additional attributes.
+
+        Returns:
+            Metadata dictionary about the written mesh.
+        """
+        self._check_not_finalized("write_mesh")
+        metadata = _write_mesh_impl(
+            self._make_geometry_ctx(),
+            path,
+            vertices,
+            faces,
+            normals,
+            normal_dims,
+            colors,
+            scalars,
+            shading,
+            double_sided,
             labels,
             image_labels,
             **attrs,
@@ -1007,18 +1086,24 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             compressor=self.compressor,
         )
 
-    def _claim_line_authoring_warning(self, path: str) -> bool:
-        """Return True once for each logical Lines node path."""
-        if path in self._line_authoring_warnings:
+    def _claim_authoring_warning(self, kind: str, path: str) -> bool:
+        """Return True once for each (geometry kind, logical node path) pair.
+
+        Keyed by kind as well as path so two geometry types' lints on the same
+        logical node stay independent — one type claiming the path must not
+        silence another's.
+        """
+        key = (kind, path)
+        if key in self._authoring_warnings:
             return False
-        self._line_authoring_warnings.add(path)
+        self._authoring_warnings.add(key)
         return True
 
     def _make_geometry_ctx(self) -> GeometryWriteCtx:
         """Build the narrow context for the extracted geometry write pipelines.
 
         Bundles the dataset/ordering configs + compressor with bound-method hooks
-        for scene bounds, colormap warnings, and line-authoring warnings.
+        for scene bounds, colormap warnings, and per-type authoring warnings.
         """
         return GeometryWriteCtx(
             store=self.store,
@@ -1027,7 +1112,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             compressor=self.compressor,
             update_scene_bounds=self._update_scene_bounds,
             write_colormap_lut=self._write_colormap_lut_if_needed,
-            claim_line_authoring_warning=self._claim_line_authoring_warning,
+            claim_authoring_warning=self._claim_authoring_warning,
         )
 
     def _make_gsplats_ctx(self) -> GSplatsWriteCtx:
@@ -1172,6 +1257,11 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             # Purely informational — a broken stdout (e.g. BrokenPipeError)
             # must not fail an already-complete finalization. A
             # KeyboardInterrupt here still propagates; the store stays valid.
+            # The bare `Exception` is deliberately broad: any stdout failure mode
+            # qualifies and there is nothing to recover, the store being durable
+            # by this point. (Bandit reports try/except/pass as a LOW finding,
+            # which this project waives — see the thresholds in
+            # .pre-commit-config.yaml.)
             pass
 
     @property

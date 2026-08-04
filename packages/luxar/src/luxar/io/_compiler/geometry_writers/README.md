@@ -1,6 +1,6 @@
 # luxar.io._compiler.geometry_writers
 
-**Internal write pipelines** for the three geometry types (Points, Lines, GSplats). Each module exports a single `write_*` function that sequences the validation → ordering → array encoding → metadata stamping pipeline for its geometry. These are the bodies of the `LuxarZarrCompiler.write_{points,lines,gsplats}` orchestrator methods; the orchestrator builds a `GeometryWriteCtx` or `GSplatsWriteCtx`, calls the appropriate pipeline here, then records the returned metadata in its cache.
+**Internal write pipelines** for the four geometry types (Points, Lines, GSplats, Mesh). Each module exports a single `write_*` function that sequences the validation → ordering → array encoding → metadata stamping pipeline for its geometry. These are the bodies of the `LuxarZarrCompiler.write_{points,lines,gsplats,mesh}` orchestrator methods; the orchestrator builds a `GeometryWriteCtx` or `GSplatsWriteCtx`, calls the appropriate pipeline here, then records the returned metadata in its cache.
 
 ## Purpose
 
@@ -13,6 +13,7 @@ Extract the per-geometry pipeline bodies from the orchestrator so each geometry 
 | **points.py** | Points | `write_points(ctx: GeometryWriteCtx, path, positions, colors=None, radii=None, sharpness=None, scalars=None, labels=None, image_labels=None, **attrs)` | `GeometryWriteCtx` |
 | **lines.py** | Lines | `write_lines(ctx: GeometryWriteCtx, path, vertices, widths, colors=None, sharpness=None, scalars=None, indices=None, line_type="polyline", labels=None, image_labels=None, **attrs)` | `GeometryWriteCtx` |
 | **gsplats.py** | GSplats | `write_gsplats(ctx: GSplatsWriteCtx, path, centers, amplitudes, cholesky_factors, colors=None, labels=None, image_labels=None, **attrs)` | `GSplatsWriteCtx` |
+| **mesh.py** | Mesh | `write_mesh(ctx: GeometryWriteCtx, path, vertices, faces, normals=None, normal_dims=None, colors=None, scalars=None, shading=None, double_sided=True, labels=None, image_labels=None, **attrs)` | `GeometryWriteCtx` |
 | **gsplats.py** | GSplats subtree | `write_gsplat_leaf_subtree(ctx: GSplatsWriteCtx, path, leaf, **attrs)` | `GSplatsWriteCtx` |
 
 The pipelines are stateless: they read only the narrow config in the `Ctx` dataclass (encoder, compressor, ordering settings, zarr store) and return a metadata dict for the caller to record.
@@ -163,16 +164,43 @@ Writes an in-memory `GSplatLeaf` (a single splat set or an additive ladder) into
 
 5. **Return metadata**: the `metadata` dict returned straight from `write_gsplat_leaf` (no `"lut_tone_mapping_warned"` key; includes `n_splats` and `position_bounds`, plus `n_additive_sublods` only when the leaf is an additive ladder — a single splat set returns straight from `_write_single_splat_set` without that key)
 
+### Mesh Pipeline (`write_mesh`)
+
+The shortest of the four, and structurally so: no spatial ordering (the viewer
+loads a mesh whole, so a chunk index has nothing to skip), no primary size scalar
+(a triangle's extent comes from its own vertices, not a per-element
+radius/width/covariance), no LOD and no partition.
+
+1. **Fail-fast pre-write gate** (runs BEFORE zarr group creation):
+   - `validate_render_attrs(attrs, MESH_RESERVED_ATTRS)`
+   - `validate_node_path(path)`
+   - `validate_positions_for_writing(vertices, context="vertices")` → `(n_vertices, n_dims)`, then `validate_vertices_for_writing(vertices)` for the `MAX_MESH_VERTICES` (2^27) ceiling. Order matters: the cap reads `shape[0]`, meaningful only once the array is known 2D
+   - `validate_faces_for_writing(faces, n_vertices)` — layout `(F,3)` or flat `(3F,)`, integer dtype, `min >= 0`, `max < n_vertices`, `F >= 1`. Runs BEFORE the `uint32` cast, which is what makes the bounds check meaningful
+   - `normals` / `normal_dims` are enforced as a **pair in both directions** — each is meaningless alone
+   - `shading` must be `"smooth"` / `"flat"`; `double_sided` must be a bool
+   - `validate_colors_for_writing(..., channels=(3,4))` or `validate_broadcast_color`, `validate_scalars_preflight`, `validate_labels_for_writing`
+   - `prepare_transform_attrs(attrs, ctx.store)` — not idempotent, so exactly once
+
+2. **Normalize faces** to `(F, 3)` `uint32`. Safe only here: the validator has established an integer dtype and both bounds, and the vertex cap keeps every admitted index far below 2^32, so the cast is value-preserving.
+
+3. **Authoring lint** (warn-only): the unwelded-vertices heuristic — `V == 3F` *and* no shared vertex index means the mesh was authored as independent triangles rather than a welded surface. Routed through `ctx.claim_authoring_warning("mesh", key)` so a partition's leaves would collapse to one message.
+
+4. **Encode arrays**: `vertices` (`COORDINATE`) and `faces` (`INDEX`), both with `deduplicate=False, allow_lut=False` — same reason as `Lines.segments`: the loader reads them as raw chunked zarr without resolving `array_ref`, so dedup would drop geometry for a byte-identical sibling and LUT encoding of grid-snapped values would decode as garbage. Then optional `normals` (`COORDINATE` — per-axis `uint16` over `[-1,1]`, a free 2x over float32, and it correctly blocks broadcasting since a normal is always per-vertex), `colors`, `scalars`.
+
+5. **Stamp attrs** below `attrs.update` so a caller cannot clobber presence truth, plus `ordering="none"` (stamped rather than omitted, so a reader never distinguishes "no ordering" from "attr missing").
+
+6. **Update scene bounds** and write label / image-label CSR arrays.
+
 ## Context Types
 
-**`GeometryWriteCtx`** (Points / Lines):
+**`GeometryWriteCtx`** (Points / Lines / Mesh):
 - `store: zarr.Group` — open zarr store
 - `dataset_ctx: DatasetCtx` — encoder, encoding_mode, compressor
 - `ordering_ctx: OrderingCtx` — enable_spatial_index, ordering_method
 - `compressor: CompressorLike` — scene default compressor (used by the ordering + label writers)
 - `update_scene_bounds: Callable[[Dict[str, List[float]]], None]` — scene-bounds accumulator hook
 - `write_colormap_lut: Callable[[zarr.Group, Dict[str, Any]], None]` — custom-colormap LUT writer hook
-- `claim_line_authoring_warning: Callable[[str], bool]` — warn-once registry for logical Lines nodes (partition leaves share their parent key)
+- `claim_authoring_warning: Callable[[str, str], bool]` — warn-once registry keyed by `(geometry_kind, path)`, so each type's authoring lint fires once per logical node (partition leaves share their parent key) and one type cannot silence another's on the same node
 
 **`GSplatsWriteCtx`** (GSplats):
 - `store: zarr.Group`

@@ -5,6 +5,7 @@ from .dimensions import Dimension, Dimensions
 from .group import Group
 from .gsplats import GSplats
 from .lines import Lines
+from .mesh import Mesh
 from .node import Node
 from .overlay import Overlay
 from .points import Points
@@ -43,6 +44,7 @@ __all__ = [
     "Overlay",
     "Points",
     "Lines",
+    "Mesh",
     "GSplats",
     "Dimension",
     "Dimensions",
