@@ -223,8 +223,16 @@ function logicalLayout(array: zarr.Array<zarr.DataType, zarr.Readable>): Logical
     shape.length >= 2 ? shape[shape.length - 1] : 1;
 
   // 1. Broadcast: rows come from n_elements, components from the stored row.
+  //
+  // Gated on the encoding NAME as well as the count, which matters in two ways. It
+  // keeps a hostile store from claiming a `(1, d)` shape covers V vertices by
+  // stamping `n_elements` alone (Stage 2's length check would catch that anyway, but
+  // one stage later and with a message that names the wrong thing). And it keeps this
+  // branch from hijacking an array that legitimately carries BOTH `n_elements` and
+  // `original_shape` — only the two broadcast encoders stamp `n_elements` today, but
+  // priority order should not depend on that staying true.
   const n = encoding?.n_elements;
-  if (typeof n === 'number' && Number.isInteger(n) && n >= 0) {
+  if (encoding?.name === 'broadcasted' && typeof n === 'number' && Number.isInteger(n) && n >= 0) {
     const components = trailing(array.shape);
     if (!Number.isInteger(components) || components < 1) return null;
     return { rows: n, components, count: n * components };

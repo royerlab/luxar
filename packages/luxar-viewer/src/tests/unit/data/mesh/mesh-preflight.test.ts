@@ -219,6 +219,28 @@ describe('preflightMesh — acceptance', () => {
     expect(result.colorComponents).toBe(4);
   });
 
+  it('does not treat a NON-broadcast array as broadcast just because n_elements is set', () => {
+    // Defense in depth (credit: the alternative fix in #1239 gated on the encoding
+    // name, which is stricter than gating on the count alone). Only the two broadcast
+    // encoders stamp `n_elements` today, but the priority order should not depend on
+    // that staying true — and a hostile store must not cover V vertices by claiming a
+    // (1, d) shape with a bare `n_elements`. Stage 2 would catch it, but one stage
+    // later and naming the wrong thing.
+    expectReject(
+      () =>
+        preflightMesh(
+          PATH,
+          tetAttrs({ has_colors: true }),
+          tetHandles({
+            colors: fakeArray([1, 3], '<f4', [1, 3], {
+              encoding: { name: 'uint8', n_elements: 4 },
+            }),
+          })
+        ),
+      /colors describes 1 x 3 values but must be 4 x 3/
+    );
+  });
+
   it('still rejects a broadcast colour whose n_elements disagrees with n_vertices', () => {
     // Accepting `n_elements` must not become "accept any broadcast array": the
     // decoder expands to `n_elements` rows, so a mismatch is exactly the

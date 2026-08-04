@@ -258,7 +258,10 @@ Four things in there are easy to get wrong, and each is pinned:
   `original_shape` rejects a uniform colour, because the broadcast encoder stamps
   `n_elements` and *not* `original_shape`: `add_mesh(..., colors=(1, 0, 0))` and any
   incidentally-uniform colour array both land as `shape: [1, 3]` and look like a
-  1-row array.
+  1-row array. The broadcast branch is gated on the encoding NAME as well as the
+  count — stricter than needed for writer-produced stores (only the two broadcast
+  encoders stamp `n_elements`), but it stops a hostile store covering V vertices with
+  a bare `n_elements`, and stops the branch hijacking an array carrying both keys.
 
 At the default budget the ceiling binds long before the vertex cap: a 3D float32
 mesh runs out of bytes at ~44.7M vertices against a cap of 134.2M. The cap is still
