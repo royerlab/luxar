@@ -11,6 +11,7 @@ import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import {
   computeDebugState,
+  computeDrawOrder,
   type DebugStateContext,
 } from '../../../../../core/app/debug/debug-state';
 import type { SimpleDims } from '../../../../../types/dims';
@@ -456,5 +457,137 @@ describe('computeDebugState', () => {
       expect(state.lodGroups).toEqual([]);
       expect(state.partitions).toEqual([]);
     });
+  });
+});
+
+describe('computeDrawOrder', () => {
+  /** A data mesh with a material carrying the queried draw-order state. */
+  function makeDataMesh(
+    nodeType: 'points' | 'gsplats' | 'lines',
+    opts: {
+      name: string;
+      elements: number;
+      transparent: boolean;
+      depthWrite: boolean;
+      renderOrder: number;
+    }
+  ): THREE.Mesh {
+    const geometry = new THREE.InstancedBufferGeometry();
+    geometry.instanceCount = opts.elements;
+    const material = new THREE.MeshBasicMaterial();
+    material.transparent = opts.transparent;
+    material.depthWrite = opts.depthWrite;
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.userData = { nodeType };
+    mesh.name = opts.name;
+    mesh.renderOrder = opts.renderOrder;
+    return mesh;
+  }
+
+  it('returns an empty array for a scene with no data meshes', () => {
+    expect(computeDrawOrder(new THREE.Scene())).toEqual([]);
+  });
+
+  it('reports bucket / depthWrite / renderOrder / elements per data mesh', () => {
+    const scene = new THREE.Scene();
+    scene.add(
+      makeDataMesh('gsplats', {
+        name: '/cloud',
+        elements: 15_000_000,
+        transparent: true,
+        depthWrite: false,
+        renderOrder: 1,
+      })
+    );
+    scene.add(
+      makeDataMesh('points', {
+        name: '/earth',
+        elements: 4200,
+        transparent: false,
+        depthWrite: true,
+        renderOrder: 0,
+      })
+    );
+
+    const order = computeDrawOrder(scene);
+    // Sorted by renderOrder ascending → the opaque backdrop (0) precedes the
+    // transparent cloud (1).
+    expect(order).toEqual([
+      { path: '/earth', bucket: 'opaque', depthWrite: true, renderOrder: 0, elements: 4200 },
+      {
+        path: '/cloud',
+        bucket: 'transparent',
+        depthWrite: false,
+        renderOrder: 1,
+        elements: 15_000_000,
+      },
+    ]);
+  });
+
+  it('omits hidden meshes (their renderOrder is stale, never reset)', () => {
+    const scene = new THREE.Scene();
+    scene.add(
+      makeDataMesh('points', {
+        name: '/shown',
+        elements: 10,
+        transparent: true,
+        depthWrite: false,
+        renderOrder: 0,
+      })
+    );
+    const hidden = makeDataMesh('gsplats', {
+      name: '/hidden',
+      elements: 20,
+      transparent: true,
+      depthWrite: false,
+      renderOrder: 9,
+    });
+    hidden.visible = false;
+    scene.add(hidden);
+
+    expect(computeDrawOrder(scene).map((e) => e.path)).toEqual(['/shown']);
+  });
+
+  it('prunes a visible mesh nested under a hidden group (subtree, not just self)', () => {
+    // A hidden substitutive-LOD level is a hidden THREE.Group whose inner
+    // meshes stay visible=true; the walk must prune the whole subtree.
+    const scene = new THREE.Scene();
+    const hiddenGroup = new THREE.Group();
+    hiddenGroup.visible = false;
+    hiddenGroup.add(
+      makeDataMesh('gsplats', {
+        name: '/hiddenLevel/mesh',
+        elements: 20,
+        transparent: true,
+        depthWrite: false,
+        renderOrder: 9,
+      })
+    );
+    scene.add(hiddenGroup);
+
+    expect(computeDrawOrder(scene)).toEqual([]);
+  });
+
+  it('ignores non-data objects and breaks renderOrder ties in scene-graph order', () => {
+    const scene = new THREE.Scene();
+    scene.add(new THREE.Group()); // no nodeType → skipped
+    const a = makeDataMesh('lines', {
+      name: '/a',
+      elements: 10,
+      transparent: true,
+      depthWrite: false,
+      renderOrder: 0,
+    });
+    const b = makeDataMesh('lines', {
+      name: '/b',
+      elements: 20,
+      transparent: true,
+      depthWrite: false,
+      renderOrder: 0,
+    });
+    scene.add(a, b);
+
+    const order = computeDrawOrder(scene);
+    expect(order.map((e) => e.path)).toEqual(['/a', '/b']);
   });
 });

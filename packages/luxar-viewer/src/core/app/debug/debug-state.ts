@@ -106,6 +106,26 @@ export interface DebugState {
   initialized: boolean;
 }
 
+/**
+ * One data mesh's cross-node draw-order record, reported by
+ * `window.__luxarDebug.getDrawOrder()`. Mirrors what the depth-sort
+ * coordinator's `renderOrder` pass and the material's blending state
+ * decide, so a viewer bug (a backdrop drawn after the content in front of
+ * it) can be diagnosed from the console without a renderer capture.
+ */
+export interface DrawOrderEntry {
+  /** Scene-graph path / name of the mesh (node-factory stamps `mesh.name = path`). */
+  path: string;
+  /** Blending bucket: `'transparent'` sorts, `'opaque'` is drawn depth-first. */
+  bucket: 'opaque' | 'transparent';
+  /** Whether this mesh writes depth (`material.depthWrite`). */
+  depthWrite: boolean;
+  /** Resolved `mesh.renderOrder` (compared ascending → lowest drawn first). */
+  renderOrder: number;
+  /** Element count for the mesh (points / splats / line segments). */
+  elements: number;
+}
+
 /** Surface this helper needs from the parent LuxarApp's components. */
 export interface DebugStateContext {
   scene: THREE.Object3D;
@@ -183,7 +203,8 @@ export function computeDebugState(ctx: DebugStateContext): DebugState {
       // source presence on geometry.userData instead (the zarr node attrs
       // lack has_colors/has_radii/has_sharpness on pre-stamp datasets).
       const presence = geometry?.userData as
-        { hasColors?: boolean; hasRadii?: boolean; hasSharpness?: boolean } | undefined;
+        | { hasColors?: boolean; hasRadii?: boolean; hasSharpness?: boolean }
+        | undefined;
       pointClouds.push({
         name: object.name || 'unnamed',
         pointCount,
@@ -272,4 +293,69 @@ export function computeDebugState(ctx: DebugStateContext): DebugState {
     isAnimating: ctx.isAnimating,
     initialized: ctx.initialized,
   };
+}
+
+/** The three data-mesh node types that carry a material + draw order. */
+const DATA_NODE_TYPES: ReadonlySet<string> = new Set(['points', 'gsplats', 'lines']);
+
+/**
+ * Walk the scene and report the effective cross-node draw order of every
+ * VISIBLE data mesh, sorted by `renderOrder` ascending (THREE's stable default
+ * breaks ties in scene-graph order, preserved here because the walk yields in
+ * that order and the sort is stable). Powers `window.__luxarDebug.getDrawOrder()`.
+ *
+ * Reads live THREE state: the blending bucket + `depthWrite` from the mesh's
+ * material and the resolved `renderOrder` the depth-sort coordinator assigned.
+ * Hidden subtrees are pruned (like `data/scene-loader/monitor/visible-counts.ts`):
+ * `renderOrder` is only assigned to visible sorted meshes and never reset, so a
+ * toggled-off layer or inactive LOD level would otherwise report a stale order.
+ * Element counts reuse the same `instanceCount` / `visible*Count` source of
+ * truth as {@link computeDebugState}.
+ */
+export function computeDrawOrder(scene: THREE.Object3D): DrawOrderEntry[] {
+  const entries: DrawOrderEntry[] = [];
+
+  // Manual recursion rather than `traverse`, which visits `visible === false`
+  // subtrees; those keep a stale `renderOrder` and must not be reported.
+  const visit = (object: THREE.Object3D): void => {
+    if (!object.visible) return;
+    if (
+      object instanceof THREE.Mesh &&
+      DATA_NODE_TYPES.has((object.userData as { nodeType?: string })?.nodeType ?? '')
+    ) {
+      // Materials can be arrays; the render bucket + depthWrite are shared, so
+      // the first material is representative.
+      const material = Array.isArray(object.material) ? object.material[0] : object.material;
+
+      const geometry = object.geometry as THREE.BufferGeometry;
+      const userData = object.userData as {
+        visiblePointCount?: number;
+        visibleSplatCount?: number;
+        visibleSegmentCount?: number;
+      };
+      const fallbackCount =
+        userData.visiblePointCount ??
+        userData.visibleSplatCount ??
+        userData.visibleSegmentCount ??
+        0;
+      const elements =
+        geometry instanceof THREE.InstancedBufferGeometry && Number.isFinite(geometry.instanceCount)
+          ? geometry.instanceCount
+          : fallbackCount;
+
+      entries.push({
+        path: object.name || 'unnamed',
+        bucket: material?.transparent ? 'transparent' : 'opaque',
+        depthWrite: !!material?.depthWrite,
+        renderOrder: object.renderOrder,
+        elements,
+      });
+    }
+    for (const child of object.children) visit(child);
+  };
+  visit(scene);
+
+  // Stable sort by renderOrder — equal keys keep traversal (scene-graph) order,
+  // matching THREE's fallback for objects that share a world-space depth key.
+  return entries.sort((a, b) => a.renderOrder - b.renderOrder);
 }

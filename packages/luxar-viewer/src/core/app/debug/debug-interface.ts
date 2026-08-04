@@ -23,7 +23,7 @@ import { noteDepthSortCommit, resortForCapture } from '../../../rendering/depth-
 import { setCommittedData } from '../../../types/committed-data';
 import type { LoadedPointsData } from '../../../types/points';
 import type { SyntheticInjectionResult, SyntheticSceneSpec } from '../../../scene/synthetic-scene';
-import { computeDebugState } from './debug-state';
+import { computeDebugState, computeDrawOrder } from './debug-state';
 import { buildDebugCacheHelpers } from './debug-cache-helpers';
 import {
   setLodLoadStatsEnabled,
@@ -135,6 +135,15 @@ export function installDebugInterface(ports: InstallDebugInterfacePorts): void {
     renderOnce: () => {
       ports.animationController.startAnimation();
     },
+
+    // Effective cross-node draw order of every data mesh, sorted by
+    // renderOrder ascending (then THREE's stable scene-graph order). Each
+    // entry carries the blending bucket (opaque/transparent), depthWrite,
+    // the resolved renderOrder, and the element count — enough to diagnose a
+    // compositing-order bug (e.g. a backdrop drawn after the content in front
+    // of it) from the console. Implementation in `./debug-state.ts` so it can
+    // be unit-tested against real THREE fixtures.
+    getDrawOrder: () => computeDrawOrder(ports.sceneManager.scene),
 
     // Force a fresh, quiescent depth ordering for the current camera pose,
     // awaiting the worker sort + chunked apply. Used by offline capture
@@ -368,6 +377,10 @@ export function installDebugInterface(ports: InstallDebugInterfacePorts): void {
   // Log available debug commands
   log.info(Modules.LUXAR, 'Debug interface ready:');
   log.info(Modules.LUXAR, '  __luxarDebug.getState() - Get current state snapshot');
+  log.info(
+    Modules.LUXAR,
+    '  __luxarDebug.getDrawOrder() - Per-mesh draw order (bucket, depthWrite, renderOrder)'
+  );
   log.info(Modules.LUXAR, '  __luxarDebug.renderOnce() - Trigger single frame render');
   log.info(
     Modules.LUXAR,

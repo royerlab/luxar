@@ -53,6 +53,7 @@ import type {
 import type { LODGroupRegistry } from '../../../scene/lod-group-registry';
 import { setupCaches } from '../cache/cache-setup';
 import { wireMonitorAfterLoad } from '../monitor/monitor-wiring';
+import { createDrawOrderProvider } from '../monitor/draw-order-provider';
 import { loadOverlayConfigs } from '../../loaders';
 import { buildSceneGraph } from '../nodes/build-scene-graph';
 import { loadSceneNodes } from '../nodes/load-scene-nodes';
@@ -151,7 +152,8 @@ function synthesizeSceneDimensionsFromNode(
   const a = attrs as Record<string, unknown> | undefined;
   if (!a) return undefined;
   const bounds = (a.position_bounds ?? a.center_bounds) as
-    { min?: number[]; max?: number[] } | undefined;
+    | { min?: number[]; max?: number[] }
+    | undefined;
   const ndim =
     typeof a.ndim === 'number'
       ? a.ndim
@@ -339,7 +341,8 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
   const rootBounds =
     sceneAttrs?.position_bounds ??
     ((sceneAttrs as Record<string, unknown>)?.center_bounds as
-      typeof sceneAttrs.position_bounds | undefined);
+      | typeof sceneAttrs.position_bounds
+      | undefined);
   if (rootBounds) {
     rootGroup.userData.positionBounds = rootBounds;
     log.info(
@@ -381,6 +384,7 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
     sceneGraph,
     updateVisibleCounts: () => ctx.updateVisibleCountsInMonitor(),
     failedLoads: ctx.getFailedLoadsProvider(),
+    drawOrderProvider: createDrawOrderProvider(rootGroup),
   });
 
   // Report what ACTUALLY happened. `loadScene` cannot throw on a failed node
