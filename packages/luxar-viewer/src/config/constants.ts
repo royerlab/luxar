@@ -18,3 +18,19 @@
  * Changing this value REQUIRES rebuilding the WASM module.
  */
 export const MAX_SUPPORTED_DIMS = 16;
+
+/**
+ * GSplat truncation radius `T`, in sigmas: the Mahalanobis distance beyond
+ * which a splat's shifted Gaussian is exactly zero. The kernel is
+ * `max(0, exp(-D²/2) - C) / (1 - C)` with `C = exp(-T²/2)`, so `T` sets both
+ * the support and the normalization `1 / (1 - C)`.
+ *
+ * Used as the fallback when a node carries no `truncation_radius` attribute
+ * and as the default for materials constructed without one. A fitted dataset
+ * always stamps its own value, which wins.
+ *
+ * MIRROR: `DEFAULT_TRUNCATION_RADIUS` in
+ * `packages/luxar/src/luxar/typing_utils/constants.py` must hold the same
+ * value. Both sides are pinned by tests that name each other.
+ */
+export const GSPLAT_DEFAULT_TRUNCATION_RADIUS = 2.75;

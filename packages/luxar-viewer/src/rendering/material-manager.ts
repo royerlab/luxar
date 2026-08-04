@@ -46,6 +46,7 @@ import {
   type LifecycleCtx,
 } from './material-manager/lifecycle';
 import { getCacheStats as buildCacheStats } from './material-manager/stats';
+import { GSPLAT_DEFAULT_TRUNCATION_RADIUS } from '../config/constants';
 
 // Re-export the sentinel for callers that import from material-manager.
 export { SOFT_DISPOSE_FLAG };
@@ -292,7 +293,7 @@ export class MaterialManager {
       intensity: props.intensity,
       offset: props.offset,
       blendingMode: props.blendingMode,
-      truncationRadius: props.truncationRadius ?? 3.0,
+      truncationRadius: props.truncationRadius ?? GSPLAT_DEFAULT_TRUNCATION_RADIUS,
     });
     this.totalCreateMs += performance.now() - createStart;
     this.createCount++;

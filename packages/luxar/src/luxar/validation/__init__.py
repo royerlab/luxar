@@ -40,6 +40,7 @@ from .types import (
     validate_radii,
     validate_sharpness,
     validate_transform,
+    validate_truncation_radius,
 )
 
 __all__ = [
@@ -65,6 +66,7 @@ __all__ = [
     "validate_node_type",
     "validate_physical_unit",
     "validate_opacity",
+    "validate_truncation_radius",
     "validate_gamma",
     "validate_absorption",
     "validate_blending_mode",

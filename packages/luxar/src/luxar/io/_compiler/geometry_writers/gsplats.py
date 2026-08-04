@@ -17,6 +17,7 @@ from arbol import aprint
 from numpy.typing import NDArray
 
 from ....typing_utils.aliases import NodePath
+from ....typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
 from ..context import GSplatsWriteCtx
 from ..gsplat_assembly import (
     apply_gsplat_spatial_ordering,
@@ -100,8 +101,8 @@ def write_gsplats(
     # 1. Setup: Create group
     group = ctx.store.require_group(path)
 
-    # Extract truncation_radius for spatial ordering (default 3.0)
-    truncation_radius = float(attrs.get("truncation_radius", 3.0))
+    # Extract truncation_radius for spatial ordering
+    truncation_radius = float(attrs.get("truncation_radius", DEFAULT_TRUNCATION_RADIUS))
 
     aprint(f"📝 Writing {n_splats:,} gsplats ({n_dims}D) to {path}")
     if isinstance(amplitudes, (int, float)):

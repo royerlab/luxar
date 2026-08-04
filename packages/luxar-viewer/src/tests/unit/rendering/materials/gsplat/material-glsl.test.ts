@@ -1,13 +1,17 @@
 import { describe, it, expect, vi } from 'vitest';
 import * as THREE from 'three';
 import { GSplatMaterial } from '../../../../../rendering/materials/gsplat/material-glsl';
-import { clampTruncationRadius } from '../../../../../rendering/materials/gsplat/math';
+import {
+  clampTruncationRadius,
+  MIN_TRUNCATION_RADIUS,
+} from '../../../../../rendering/materials/gsplat/math';
 import {
   createGSplatQuadGeometry,
   createInstancedGSplatsMesh,
   getSplatTexture,
   updateInstancedGSplatsMesh,
 } from '../../../../../rendering/gsplat-geometry';
+import { GSPLAT_DEFAULT_TRUNCATION_RADIUS } from '../../../../../config/constants';
 
 // Mock THREE.ShaderMaterial
 vi.mock('three', async () => {
@@ -79,16 +83,45 @@ vi.mock('three', async () => {
   };
 });
 
-describe('clampTruncationRadius NaN guard', () => {
-  it('falls back to the 3.0 default for non-finite radii instead of poisoning uniforms', () => {
-    // NaN slips past a plain comparison clamp (NaN < 0.1 is false) and
+describe('clampTruncationRadius guard', () => {
+  it('falls back to the module default for radii that are not finite in float32', () => {
+    // NaN slips past a plain comparison clamp (NaN < min is false) and
     // would make uShiftC/uInvOneMinusC NaN — the exact degenerate-uniform
     // failure the clamp exists to prevent (truncation_radius arrives
     // unvalidated from dataset attrs).
-    expect(clampTruncationRadius(Number.NaN)).toBe(3.0);
-    expect(clampTruncationRadius(Number.POSITIVE_INFINITY)).toBe(3.0);
-    expect(clampTruncationRadius(0)).toBe(0.1);
+    expect(clampTruncationRadius(Number.NaN)).toBe(GSPLAT_DEFAULT_TRUNCATION_RADIUS);
+    expect(clampTruncationRadius(Number.POSITIVE_INFINITY)).toBe(GSPLAT_DEFAULT_TRUNCATION_RADIUS);
+    // Finite in float64, Infinity once narrowed to the float32 GPU uniform —
+    // the hostile-attr mirror image of the tiny-radius degeneracy. The
+    // write-side validator rejects these; the read-side clamp is the layer
+    // that sees unvalidated stores, so it must catch them too.
+    expect(clampTruncationRadius(3.5e38)).toBe(GSPLAT_DEFAULT_TRUNCATION_RADIUS);
+    expect(clampTruncationRadius(1e308)).toBe(GSPLAT_DEFAULT_TRUNCATION_RADIUS);
+    // Finite even as a float32, but its SQUARE — uploaded as the uTruncateSq
+    // uniform (the fragment discard threshold) — narrows to Infinity. The
+    // usable ceiling is sqrt(float32.max) ≈ 1.84e19, matching the write-side
+    // MAX_TRUNCATION_RADIUS_FLOAT32.
+    expect(clampTruncationRadius(1e30)).toBe(GSPLAT_DEFAULT_TRUNCATION_RADIUS);
+    expect(clampTruncationRadius(2e19)).toBe(GSPLAT_DEFAULT_TRUNCATION_RADIUS);
+    expect(clampTruncationRadius(1e19)).toBe(1e19);
+    expect(clampTruncationRadius(0)).toBe(MIN_TRUNCATION_RADIUS);
     expect(clampTruncationRadius(2.5)).toBe(2.5);
+  });
+
+  it('clamps at the float32 degeneracy bound, agreeing with the Python writer', () => {
+    // The write-side validator (MIN_TRUNCATION_RADIUS_FLOAT32 in
+    // luxar/validation/types.py) accepts anything that normalizes in
+    // float32, and on-disk chunk bounds are computed from the stored
+    // radius — so the read-side clamp must not silently rewrite those
+    // values (a 0.05 store must render at 0.05, matching its bounds).
+    expect(clampTruncationRadius(0.05)).toBe(0.05);
+    expect(clampTruncationRadius(0.01)).toBe(0.01);
+    // The bound sits where exp(-T²/2) rounds to 1.0 in float32 (~2.44e-4):
+    // well below float64's ~1.5e-8 threshold, well above zero.
+    expect(MIN_TRUNCATION_RADIUS).toBeGreaterThan(1e-4);
+    expect(MIN_TRUNCATION_RADIUS).toBeLessThan(1e-3);
+    expect(Math.fround(Math.exp(-0.5 * MIN_TRUNCATION_RADIUS ** 2))).toBeLessThan(1.0);
+    expect(clampTruncationRadius(1e-5)).toBe(MIN_TRUNCATION_RADIUS);
   });
 });
 
@@ -98,7 +131,7 @@ describe('GSplatMaterial', () => {
       const material = new GSplatMaterial();
 
       expect(material.uniforms.uOpacity.value).toBe(1.0);
-      expect(material.uniforms.uTruncate.value).toBe(3.0);
+      expect(material.uniforms.uTruncate.value).toBe(GSPLAT_DEFAULT_TRUNCATION_RADIUS);
       expect(material.uniforms.uResolution.value).toBeInstanceOf(THREE.Vector2);
       expect(material.uniforms.uFx.value).toBe(500);
       expect(material.uniforms.uFy.value).toBe(500);
@@ -854,9 +887,9 @@ describe('createInstancedGSplatsMesh', () => {
     const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
 
     expect(geometry.boundingBox).not.toBeNull();
-    // Bounding box is expanded by maxRowNorm * truncationRadius (default 3.0)
-    // Cholesky factors give maxRowNorm=1, so expansion=3.0
-    const expansion = 3.0;
+    // Bounding box is expanded by maxRowNorm * truncationRadius (the default).
+    // Cholesky factors give maxRowNorm=1, so expansion is the default itself.
+    const expansion = GSPLAT_DEFAULT_TRUNCATION_RADIUS;
     expect(geometry.boundingBox!.min.x).toBe(0 - expansion);
     expect(geometry.boundingBox!.min.y).toBe(0 - expansion);
     expect(geometry.boundingBox!.min.z).toBe(0 - expansion);

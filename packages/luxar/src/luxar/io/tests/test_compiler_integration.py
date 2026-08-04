@@ -371,6 +371,45 @@ class TestCompilerIntegration:
         for leaf in ("bad_pts", "bad_lns", "bad_gs", "bad_grp", "bad_ml", "bad_mll"):
             assert leaf not in store, f"partial node {leaf} left on disk"
 
+    def test_invalid_truncation_radius_rejected_before_write(self, tmp_path) -> None:
+        """An invalid truncation_radius fails BEFORE any group lands on disk.
+
+        `truncation_radius` arrives unvalidated from dataset attrs and sets
+        both the kernel support and the 1/(1-C) normalization, so a
+        zero/NaN value would poison uShiftC/uInvOneMinusC and collapse the
+        world-space cull box. Same fail-fast contract as absorption.
+        """
+        output_path = tmp_path / "test.luxar.zarr"
+
+        rng = np.random.default_rng(0)
+        positions = rng.standard_normal((10, 3)).astype(np.float32)
+        amplitudes = np.abs(rng.standard_normal(10)).astype(np.float32)
+        cholesky = np.tile(np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (10, 1))
+
+        with LuxarZarrCompiler(output_path) as compiler:
+            compiler.create_scene(dimensions=Dimensions.default_3d())
+
+            with pytest.raises(ValueError, match="Truncation radius must be > 0"):
+                compiler.write_gsplats(
+                    "bad_zero", positions, amplitudes, cholesky, truncation_radius=0.0
+                )
+            with pytest.raises(ValueError, match="Truncation radius must be > 0"):
+                compiler.write_gsplats(
+                    "bad_neg", positions, amplitudes, cholesky, truncation_radius=-1.0
+                )
+            with pytest.raises(ValueError, match="Truncation radius must be finite"):
+                compiler.write_gsplats(
+                    "bad_nan",
+                    positions,
+                    amplitudes,
+                    cholesky,
+                    truncation_radius=float("nan"),
+                )
+
+        store = zarr.open_group(output_path, mode="r")
+        for leaf in ("bad_zero", "bad_neg", "bad_nan"):
+            assert leaf not in store, f"partial node {leaf} left on disk"
+
     def test_nan_transform_rejected_before_write(self, tmp_path) -> None:
         """A non-finite transform fails BEFORE any group lands on disk.
 

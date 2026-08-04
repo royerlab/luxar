@@ -55,6 +55,11 @@ import {
 } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
 import {
+  FALLOFF_FLOOR,
+  FALLOFF_K,
+  INV_ONE_MINUS_FALLOFF_FLOOR,
+} from '../../materials/_shared/falloff';
+import {
   perspectiveNearFadeTSL,
   sanitizeNonNegative,
   type TSLNode,
@@ -251,9 +256,9 @@ export function pointPickWebGPUFactory(
   const r2: TSLNode = dot(centered, centered).toVar();
   const normalizedR: TSLNode = r2.mul(4.0).sqrt();
   // Shifted-truncated super-Gaussian (matches shader-tsl.ts).
-  const K = 4.6051702; // ln(100)
-  const C = 0.01; // exp(-K) = floor
-  const invOneMinusC = 1.0 / (1.0 - C);
+  const K = FALLOFF_K; // ln(100)
+  const C = FALLOFF_FLOOR; // exp(-K) = floor
+  const invOneMinusC = INV_ONE_MINUS_FALLOFF_FLOOR;
   // nearFade folded into brightness (matches gsplat pick).
   const brightness: TSLNode = exp(normalizedR.pow(vBeta).mul(-K))
     .sub(C)

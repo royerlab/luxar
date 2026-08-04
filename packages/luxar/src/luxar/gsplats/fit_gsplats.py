@@ -23,6 +23,7 @@ from luxar.gsplats.fitting.validation import DEFAULT_SIGMA_MIN_DIAG
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.utils import resolve_torch_device
 from luxar.gsplats.utils.trils import tril_size
+from luxar.typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
 from luxar.utils.arbol_warnings import arbol_warnings
 
 
@@ -113,7 +114,7 @@ class GaussianSplatFitter:
         sigma_max_diag: Optional[Sequence[float] | float] = None,
         amp_max: Optional[float] = None,
         max_eccentricity: Optional[float] = 10.0,
-        truncate: float = 2.75,
+        truncate: float = DEFAULT_TRUNCATION_RADIUS,
         seed_method: str = "auto",
         verbose: bool = True,
         max_abs_error: Optional[float] = None,
@@ -266,7 +267,7 @@ def fit_gaussian_splats(
     sigma_max_diag: Optional[Sequence[float] | float] = None,
     amp_max: Optional[float] = None,
     max_eccentricity: Optional[float] = 10.0,
-    truncate: float = 2.75,
+    truncate: float = DEFAULT_TRUNCATION_RADIUS,
     device: Optional[str] = None,
     seed_method: str = "auto",
     verbose: bool = True,

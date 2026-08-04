@@ -1,5 +1,6 @@
 """Test validation functions in types.py module."""
 
+import math
 from typing import Any, cast
 
 import numpy as np
@@ -7,6 +8,8 @@ import pytest
 
 from luxar.validation import validate_categories
 from luxar.validation.types import (
+    MAX_TRUNCATION_RADIUS_FLOAT32,
+    MIN_TRUNCATION_RADIUS_FLOAT32,
     is_color_array,
     is_position_array,
     is_transform_matrix,
@@ -25,6 +28,7 @@ from luxar.validation.types import (
     validate_radii,
     validate_sharpness,
     validate_transform,
+    validate_truncation_radius,
 )
 
 
@@ -246,6 +250,148 @@ class TestGammaValidation:
 
         with pytest.raises(TypeError, match="Gamma must be convertible to float"):
             validate_gamma("not_a_number")
+
+
+class TestTruncationRadiusValidation:
+    """Test validate_truncation_radius function (GSplat kernel support T)."""
+
+    def test_valid_truncation_radius(self) -> None:
+        """Any finite positive T is valid — there is no upper bound."""
+        assert validate_truncation_radius(2.75) == 2.75
+        assert validate_truncation_radius(3) == 3.0
+        assert validate_truncation_radius("1.5") == 1.5
+        # No 0.1-style lower clamp here: the viewer's MIN_TRUNCATION_RADIUS
+        # bisects the same float32 degeneracy bound, so small-but-valid values
+        # accepted here render unmodified.
+        assert validate_truncation_radius(0.01) == 0.01
+        assert validate_truncation_radius(1e3) == 1e3
+        assert validate_truncation_radius(np.float32(2.75)) == pytest.approx(2.75)
+
+    def test_invalid_truncation_radius(self) -> None:
+        """Zero, negative, NaN and infinite are rejected."""
+        with pytest.raises(ValueError, match="Truncation radius must be > 0"):
+            validate_truncation_radius(0.0)
+
+        with pytest.raises(ValueError, match="Truncation radius must be > 0"):
+            validate_truncation_radius(-1.0)
+
+        with pytest.raises(ValueError, match="Truncation radius must be finite"):
+            validate_truncation_radius(float("nan"))
+
+        with pytest.raises(ValueError, match="Truncation radius must be finite"):
+            validate_truncation_radius(float("inf"))
+
+        with pytest.raises(
+            TypeError, match="Truncation radius must be convertible to float"
+        ):
+            validate_truncation_radius("not_a_number")
+
+        with pytest.raises(
+            TypeError, match="Truncation radius must be convertible to float"
+        ):
+            validate_truncation_radius(None)
+
+    def test_rejects_normalization_overflow(self) -> None:
+        """A T > 0 is not enough — the normalization must stay finite in float32.
+
+        Below a threshold, exp(-T^2/2) rounds to exactly 1.0 and 1/(1-C) is inf,
+        poisoning every derived render value. The bound is set by FLOAT32, not
+        float64: the CUDA (`compute_shift_params`) and Metal (`shift_c`) kernels
+        and the GPU shaders all evaluate the shift in single precision and
+        saturate around T = 3e-4 — four orders of magnitude before float64's
+        ~1.5e-8. A float64-based check would admit values that are finite in
+        Python and infinite on the GPU.
+        """
+        # 1e-4 is the load-bearing case: FINITE in float64, degenerate in
+        # float32. A float64 check would wrongly accept it.
+        for degenerate in (1e-300, 1e-9, 1e-8, 1e-6, 1e-4):
+            with pytest.raises(ValueError, match="too small"):
+                validate_truncation_radius(degenerate)
+        assert math.isfinite(1.0 / (1.0 - math.exp(-0.5 * 1e-4 * 1e-4))), (
+            "test premise: 1e-4 normalizes finitely in float64, so this case "
+            "only fails if the check is done in the wrong precision"
+        )
+
+        # Comfortably above the float32 boundary: legitimate, must be accepted.
+        for ok in (0.01, 0.05, 0.1, 2.75):
+            c32 = np.exp(np.float32(-0.5) * np.float32(ok) * np.float32(ok))
+            assert np.float32(1.0) - c32 > 0, "test premise: must normalize in float32"
+            assert validate_truncation_radius(ok) == ok
+
+
+class TestMaxTruncationRadiusFloat32:
+    """The upper bound is the largest float32 whose SQUARE is finite in float32."""
+
+    def test_rejects_float32_overflow(self) -> None:
+        # Mirror of the lower-bound case: finite in float64, `inf` once narrowed
+        # to float32, so it reaches the GPU as an infinite uTruncate and an
+        # infinite cull box. Found by feeding hostile zarr attrs through the
+        # loader — 1e308 sailed through until this check existed.
+        for too_big in (3.5e38, 1e100, 1e308):
+            assert math.isfinite(too_big), "test premise: finite in float64"
+            with np.errstate(over="ignore"):
+                assert not np.isfinite(np.float32(too_big)), (
+                    "test premise: inf in float32"
+                )
+            with pytest.raises(ValueError, match="too large"):
+                validate_truncation_radius(too_big)
+
+    def test_rejects_square_overflow(self) -> None:
+        # The subtler band: T itself narrows to a FINITE float32, but the GPU
+        # also consumes T² as its own uniform (uTruncateSq, the fragment
+        # discard threshold), and THAT overflows. Bounding T at float32's max
+        # alone would accept these while uploading an infinite uTruncateSq.
+        for too_big in (2e19, 1e30, 3e38):
+            t32 = np.float32(too_big)
+            assert np.isfinite(t32), "test premise: T finite in float32"
+            with np.errstate(over="ignore"):
+                assert not np.isfinite(t32 * t32), "test premise: T² inf in float32"
+            with pytest.raises(ValueError, match="too large"):
+                validate_truncation_radius(too_big)
+
+    def test_accepts_up_to_the_square_finite_maximum(self) -> None:
+        # Absurd but representable radii stay legal — the bound is a
+        # representability limit, not a modelling opinion.
+        for ok in (1e19, MAX_TRUNCATION_RADIUS_FLOAT32):
+            assert validate_truncation_radius(ok) == ok
+
+    def test_bound_is_exact(self) -> None:
+        # The bound is EXACTLY the largest float32 with a float32-finite
+        # square: one ulp up overflows. Pins the sqrt(float32.max) shortcut
+        # against real float32 arithmetic.
+        t = np.float32(MAX_TRUNCATION_RADIUS_FLOAT32)
+        assert np.isfinite(t * t)
+        one_ulp_up = np.nextafter(t, np.float32(np.inf))
+        with np.errstate(over="ignore"):
+            assert not np.isfinite(one_ulp_up * one_ulp_up)
+
+
+class TestMinTruncationRadiusFloat32:
+    """The bisected float32 bound must match real float32 arithmetic exactly."""
+
+    def test_matches_float32_arithmetic(self) -> None:
+        # MIN_TRUNCATION_RADIUS_FLOAT32 is bisected once at import so the
+        # per-call check can be a plain float comparison (doing the float32
+        # arithmetic per call cost ~30x more and dominated AdditiveSubLOD
+        # construction). This pins that the shortcut is exact: a closed-form
+        # `sqrt(eps32)` guess is NOT — it misclassifies a band near 2.4e-4.
+        def degenerate(t: float) -> bool:
+            c = np.exp(np.float32(-0.5) * np.float32(t) * np.float32(t))
+            return bool(np.float32(1.0) - c <= np.float32(0.0))
+
+        probes = np.logspace(-9, -1, 5000)
+        mismatches = [
+            float(t)
+            for t in probes
+            if degenerate(float(t)) != (float(t) < MIN_TRUNCATION_RADIUS_FLOAT32)
+        ]
+        assert not mismatches, f"threshold disagrees with float32 at {mismatches[:5]}"
+
+    def test_is_the_float32_bound_not_the_float64_one(self) -> None:
+        # float64 only degenerates around 1.5e-8; using that bound would admit
+        # radii that are finite in Python and infinite on the GPU.
+        assert 1e-4 < MIN_TRUNCATION_RADIUS_FLOAT32 < 1e-3
+        assert math.isfinite(1.0 / (1.0 - math.exp(-0.5 * 1e-4 * 1e-4)))
 
 
 class TestAbsorptionValidation:

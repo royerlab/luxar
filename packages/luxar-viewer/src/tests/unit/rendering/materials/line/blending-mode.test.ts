@@ -151,7 +151,7 @@ describe('LineMaterial.applyBlendingMode (GLSL)', () => {
     // The κ-scale alignment contract, executable. τ must be built from the
     // SAME ray mass the additive branch emits — a line's opacity is a peak
     // screen alpha (already an integrated quantity), so multiplying by a
-    // world thickness (the old `* vWidthAtT * LINE_CHORD_SCALE`) read it as a
+    // world thickness (the old `* vWidthAtT * <chord scale>`) read it as a
     // volume density in this one mode and as a peak alpha in the other five.
     // That made a Lines node and its lifted-gsplat twin disagree by exactly
     // one path length. Re-introducing any size factor here silently

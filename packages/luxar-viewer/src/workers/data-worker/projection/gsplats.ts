@@ -16,7 +16,8 @@ import { pickBackend, type WasmCtx } from '../state';
 import { validateProjectionInputs } from '../validation';
 import { coerceColorsToFloat32, fillColorsWhite } from '../../color-utils';
 import { classifyHiddenDims } from './hidden-dims';
-import { MIN_AMPLITUDE, SHIFTED_GAUSSIAN_DEFAULT_TRUNCATE } from './constants';
+import { GSPLAT_DEFAULT_TRUNCATION_RADIUS } from '../../../config/constants';
+import { MIN_AMPLITUDE } from './constants';
 import type { ProjectionViewState } from '../types';
 import type { GSplatsProjectionBounds } from '../../../types/gsplats';
 
@@ -118,7 +119,8 @@ export async function projectGSplatsTo3D(
     discreteSteps?: Record<number, number>;
     /** Indices of dimensions to skip entirely (extend_to_all — always visible) */
     extendToAllDims?: readonly number[];
-    /** Truncation radius in sigmas for shifted Gaussian attenuation (default 3.0) */
+    /** Truncation radius in sigmas for shifted Gaussian attenuation (defaults to
+     *  `GSPLAT_DEFAULT_TRUNCATION_RADIUS`) */
     truncate?: number;
     /** Components per color item: 3 (RGB, default) or 4 (RGBA — alpha = per-splat opacity) */
     colorComponents?: 3 | 4;
@@ -282,7 +284,7 @@ export async function projectGSplatsTo3D(
   // colors[i*colorComponents] for any visible splat.
   const coercedColors = coerceColorsOrWhite(colors, splatCount, colorComponents);
 
-  const truncate = params.truncate ?? SHIFTED_GAUSSIAN_DEFAULT_TRUNCATE;
+  const truncate = params.truncate ?? GSPLAT_DEFAULT_TRUNCATION_RADIUS;
 
   // FUSED single-call projection: discrete gate → continuous attenuation →
   // visibility → compacted outputs, all in one pass. Replaces the former

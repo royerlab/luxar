@@ -53,6 +53,7 @@ import {
   usesPeakProjection,
 } from '../../blending-state';
 import { computeScalarRangeUniforms, scalarRangeUniformEntries } from '../_shared/scalar-range';
+import { GSPLAT_DEFAULT_TRUNCATION_RADIUS } from '../../../config/constants';
 
 /**
  * Configuration for gsplat material creation
@@ -79,7 +80,7 @@ export interface GSplatMaterialConfig {
   intensity?: number;
   /** Offset (additive brightness shift / black level), default 0.0 */
   offset?: number;
-  /** Truncation radius in sigmas (default 3.0) */
+  /** Truncation radius in sigmas (defaults to `GSPLAT_DEFAULT_TRUNCATION_RADIUS`) */
   truncationRadius?: number;
   /** Blending mode */
   blendingMode?: BlendingMode;
@@ -169,7 +170,9 @@ export class GSplatMaterial
     const blendingMode = materialConfig.blendingMode ?? 'additive';
     const gammaValue = clampGamma(materialConfig.gamma);
 
-    const truncate = clampTruncationRadius(materialConfig.truncationRadius ?? 3.0);
+    const truncate = clampTruncationRadius(
+      materialConfig.truncationRadius ?? GSPLAT_DEFAULT_TRUNCATION_RADIUS
+    );
     const shiftC = Math.exp(-0.5 * truncate * truncate);
     const invOneMinusC = 1.0 / (1.0 - shiftC);
 

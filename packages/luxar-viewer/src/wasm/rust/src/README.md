@@ -146,7 +146,8 @@ to keep parity tests green.
 
 The shifted Gaussian truncation eliminates a popping artifact at the
 splat boundary that a raw `exp(-D²/2)` would produce when splats cross the
-slab edge. `truncate` is typically 3.0 (three sigma).
+slab edge. `truncate` is supplied by the caller from the dataset's `truncation_radius`
+(2.75 by default).
 
 ### `effective_radii.rs` — Pythagorean radius shrinkage
 

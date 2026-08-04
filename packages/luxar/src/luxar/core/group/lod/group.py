@@ -46,6 +46,8 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
 from arbol import aprint
 
+from ....validation.types import validate_truncation_radius
+
 if TYPE_CHECKING:
     from ...node import Node
 
@@ -443,9 +445,19 @@ def resolve_substitutive_axis(spec: Any, geometry: str) -> Optional[Dict[str, An
             f"method must be one of {sorted(SUBSTITUTIVE_METHODS)}; got {method!r}"
         )
 
-    truncation_radius = float(kwargs.pop("truncation_radius", 3.0))
-    if truncation_radius <= 0:
-        raise ValueError(f"truncation_radius must be > 0, got {truncation_radius}")
+    if "truncation_radius" in kwargs:
+        truncation_radius = float(kwargs.pop("truncation_radius"))
+    else:
+        # NOT the codebase-wide DEFAULT_TRUNCATION_RADIUS (2.75): this value
+        # feeds lift_points_to_gsplats / lift_lines_to_gsplats, whose T is a
+        # profile-matching parameter calibrated at 3.0 — see
+        # LIFT_TRUNCATION_RADIUS in luxar.gsplats.lift for the derivation.
+        # Lazy import, mirroring the adders (keeps luxar.gsplats out of the
+        # core import graph).
+        from ....gsplats.lift import LIFT_TRUNCATION_RADIUS
+
+        truncation_radius = LIFT_TRUNCATION_RADIUS
+    validate_truncation_radius(truncation_radius)
 
     device = kwargs.pop("device", "auto")
     seed = kwargs.pop("seed", None)

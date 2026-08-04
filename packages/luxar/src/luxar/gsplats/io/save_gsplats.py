@@ -53,6 +53,7 @@ from luxar.typing_utils._format_contract import (
     GSPLATS_FORMAT_VERSION,
     SUPPORTED_GSPLATS_VERSIONS,
 )
+from luxar.typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
 from luxar.utils.arbol_warnings import arbol_warnings
 from luxar.utils.paths import normalize_zarr_path
 
@@ -642,7 +643,7 @@ def save_gsplats(
     compress: Optional[Literal["zip", "tar.gz"]] = None,
     compressor: Optional[Any] = DEFAULT_COMP,
     zip_deflate: bool = False,
-    truncation_radius: float = 3.0,
+    truncation_radius: float = DEFAULT_TRUNCATION_RADIUS,
 ) -> None:
     """Save a single Gaussian-splat set to ``.gsplats.zarr`` (a leaf node).
 

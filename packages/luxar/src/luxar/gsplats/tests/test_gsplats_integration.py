@@ -271,7 +271,9 @@ class TestGaussianSplatsIntegration:
         Ls = torch.tensor(L_full, device=device)
         amps_t = torch.tensor(result.amplitudes, device=device)
 
-        recon_torch = render_gaussians(image.shape, centers, Ls, amps_t, truncate=3.0)
+        # Both sides must use the SAME truncation: recon_numpy above takes the
+        # default, so pinning 3.0 here would compare two different kernels.
+        recon_torch = render_gaussians(image.shape, centers, Ls, amps_t)
         recon_torch_np = recon_torch.cpu().numpy()
 
         # Should be nearly identical

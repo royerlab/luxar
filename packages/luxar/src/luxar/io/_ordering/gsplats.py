@@ -6,6 +6,7 @@ from typing import Literal, Optional, Sequence
 
 import numpy as np
 
+from ...typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
 from .bounds import _BARRIER_BOUND_EPS
 from .compound import _compound_sort
 
@@ -48,7 +49,7 @@ def compute_chunk_bounds_gsplats(
     centers: np.ndarray,
     cholesky_factors: np.ndarray,
     chunk_size: int,
-    coverage_sigma: float = 3.0,
+    coverage_sigma: float = DEFAULT_TRUNCATION_RADIUS,
     slice_dims: Optional[Sequence[int]] = None,
 ) -> np.ndarray:
     """Compute chunk bounding boxes for GSplats (includes ellipsoidal extent).
@@ -67,7 +68,9 @@ def compute_chunk_bounds_gsplats(
             (N, k), or a single shared row (1, k) reused for every chunk when
             all splats have a uniform (identical) Cholesky factorization
         chunk_size: Number of splats per chunk
-        coverage_sigma: Coverage radius in standard deviations (default 3.0)
+        coverage_sigma: Coverage radius in standard deviations. This is the
+            gsplat ``truncation_radius`` under its spatial-ordering name; the
+            compiler binds the two in ``gsplat_tree.py``.
         slice_dims: Barrier/categorical dimension indices (no σ expansion).
             Default None → expand all axes (historical behavior).
 
