@@ -418,10 +418,19 @@ def validate_render_attrs(
     if reserved_attrs:
         collisions = sorted(reserved_attrs & attrs.keys())
         if collisions:
+            # ``ordering=`` was a tolerated (silently stamped-over) call
+            # pattern before it was reserved (#1221), so point migrating
+            # callers at the real knob.
+            hint = (
+                " The sort order is chosen once at compiler construction — "
+                "LuxarZarrCompiler(ordering_method=...) — not per node."
+                if "ordering" in collisions
+                else ""
+            )
             raise ValueError(
                 f"Attribute(s) {collisions} are reserved: the writer stamps "
                 f"them authoritatively (type, element counts, presence flags, "
-                f"bounds, ...). Remove them from the node attrs."
+                f"bounds, ...). Remove them from the node attrs.{hint}"
             )
 
     if reject_unknown:

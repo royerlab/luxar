@@ -50,8 +50,11 @@ def _gsplats() -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
 # Every caller value is rejected key-first, so a genuine method ("morton"), the
 # "index off" sentinel ("none"), and an unrecognised string ("zzz") are all the
 # same class of bug the issue lists — none may reach disk and overwrite the
-# stamp. ``match`` pins the collided attr, not just any "reserved" text.
+# stamp. ``match`` pins the collided attr AND the ordering_method hint (the
+# error must point migrating callers at the real knob), not just any
+# "reserved" text.
 _BAD_ORDERINGS = ["morton", "none", "zzz"]
+_REJECTED = r"ordering.*reserved.*ordering_method"
 
 
 @pytest.mark.parametrize("bad_value", _BAD_ORDERINGS)
@@ -61,7 +64,7 @@ def test_add_points_ordering_kwarg_is_rejected(bad_value: str) -> None:
         path = Path(tmp) / "scene.luxar.zarr"
         with LuxarZarrCompiler(path) as c:
             scene = c.create_scene(dimensions=Dimensions.default_3d())
-            with pytest.raises(ValueError, match=r"ordering.*reserved"):
+            with pytest.raises(ValueError, match=_REJECTED):
                 scene.add_points("p", positions, ordering=bad_value)
 
 
@@ -72,7 +75,7 @@ def test_add_lines_ordering_kwarg_is_rejected(bad_value: str) -> None:
         path = Path(tmp) / "scene.luxar.zarr"
         with LuxarZarrCompiler(path) as c:
             scene = c.create_scene(dimensions=Dimensions.default_3d())
-            with pytest.raises(ValueError, match=r"ordering.*reserved"):
+            with pytest.raises(ValueError, match=_REJECTED):
                 scene.add_lines("l", vertices, widths, ordering=bad_value)
 
 
@@ -83,7 +86,7 @@ def test_add_gsplats_ordering_kwarg_is_rejected(bad_value: str) -> None:
         path = Path(tmp) / "scene.luxar.zarr"
         with LuxarZarrCompiler(path) as c:
             scene = c.create_scene(dimensions=Dimensions.default_3d())
-            with pytest.raises(ValueError, match=r"ordering.*reserved"):
+            with pytest.raises(ValueError, match=_REJECTED):
                 scene.add_gsplats(
                     "g",
                     centers=centers,
