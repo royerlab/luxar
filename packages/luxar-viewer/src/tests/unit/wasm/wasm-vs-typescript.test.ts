@@ -1609,6 +1609,279 @@ describe('WASM vs TypeScript Comparison', () => {
   });
 
   // ============================================================================
+  // MESH CULLING
+  // ============================================================================
+  describe('mesh_culling functions', () => {
+    /**
+     * The case that fails WITHOUT `Math.fround` in the TS backend.
+     *
+     * Rust computes `slice - tolerance` in f32 and ROUNDS; JS reads two f32
+     * values out of a Float32Array and subtracts them in f64, which is EXACT.
+     * The gap is under half an ulp, so it is normally invisible — but when the
+     * f32 rounding goes DOWN, the rounded bound is itself a legal f32 vertex
+     * coordinate lying inside the gap, and a vertex sitting exactly there is
+     * `>=` the f32 bound (WASM: visible) but `<` the exact f64 bound (an
+     * unfrounded TS backend: culled).
+     */
+    it.skipIf(!wasmFilesExist)('agrees at a sub-ulp f32-vs-f64 slab boundary', () => {
+      const slice = Math.fround(1.0);
+      const tol = Math.fround(0.1);
+      const exactBound = slice - tol; // f64, exact
+      const f32Bound = Math.fround(exactBound); // what Rust computes
+
+      // Assert the premise of this test rather than trusting it: the rounding
+      // must go DOWN, or there is no observable divergence to detect.
+      expect(f32Bound).toBeLessThan(exactBound);
+
+      const positions = new Float32Array([0, 0, 0, f32Bound]);
+      const slicePos = new Float32Array([0, 0, 0, slice]);
+      const tolerance = new Float32Array([1e10, 1e10, 1e10, tol]);
+      const displayDims = new Uint32Array([0, 1, 2]);
+
+      const tsMask = new Uint8Array(1);
+      const wasmMask = new Uint8Array(1);
+      const tsVisible = tsModule.mesh_vertex_visibility_mask(
+        positions,
+        slicePos,
+        tolerance,
+        displayDims,
+        4,
+        1,
+        tsMask
+      );
+      const wasmVisible = wasmModule!.mesh_vertex_visibility_mask(
+        positions,
+        slicePos,
+        tolerance,
+        displayDims,
+        4,
+        1,
+        wasmMask
+      );
+
+      // The vertex sits exactly ON the f32 bound, so both must call it visible.
+      expect(wasmVisible).toBe(1);
+      expect(tsVisible).toBe(wasmVisible);
+      expect(arraysEqual(tsMask, wasmMask)).toBe(true);
+    });
+
+    it.skipIf(!wasmFilesExist)('agrees on a random 6D mesh with 3 hidden dims', () => {
+      const numVertices = 4000;
+      const numFaces = 3000;
+      const ndim = 6;
+
+      // Deterministic pseudo-random data (sine waves), as the sibling stress
+      // tests do — but with a PER-DIMENSION frequency. A shared phase
+      // (`sin(i * 0.037 + d * 1.23)`) correlates the three hidden coordinates,
+      // and AND-ing three correlated slabs culls every vertex, which would make
+      // the comparison below trivially true.
+      const positions = new Float32Array(numVertices * ndim);
+      for (let i = 0; i < numVertices; i++) {
+        for (let d = 0; d < ndim; d++) {
+          positions[i * ndim + d] = Math.sin(i * 0.037 * (d + 1) + d * 1.23) * 2;
+        }
+      }
+      // Faces over CONSECUTIVE vertices, like a real indexed surface: with
+      // uniformly random indices, needing all three vertices visible leaves ~0
+      // faces and the compaction comparison would be vacuous too.
+      const faces = new Uint32Array(numFaces * 3);
+      for (let f = 0; f < numFaces; f++) {
+        faces[f * 3] = f % numVertices;
+        faces[f * 3 + 1] = (f + 1) % numVertices;
+        faces[f * 3 + 2] = (f + 2) % numVertices;
+      }
+
+      const slicePos = new Float32Array([0, 0, 0, 0.5, -0.25, 1.0]);
+      // Tolerances measured to leave ~9% of vertices and ~4% of faces visible —
+      // a real mix, asserted explicitly below.
+      const tolerance = new Float32Array([1e10, 1e10, 1e10, 1.2, 1.2, 1.2]);
+      const displayDims = new Uint32Array([0, 1, 2]);
+
+      const tsMask = new Uint8Array(numVertices);
+      const wasmMask = new Uint8Array(numVertices);
+      const tsVisible = tsModule.mesh_vertex_visibility_mask(
+        positions,
+        slicePos,
+        tolerance,
+        displayDims,
+        ndim,
+        numVertices,
+        tsMask
+      );
+      const wasmVisible = wasmModule!.mesh_vertex_visibility_mask(
+        positions,
+        slicePos,
+        tolerance,
+        displayDims,
+        ndim,
+        numVertices,
+        wasmMask
+      );
+
+      expect(wasmVisible).toBe(tsVisible);
+      expect(arraysEqual(tsMask, wasmMask)).toBe(true);
+      // Guard against a vacuous comparison: a mask that is all-0 or all-1 would
+      // match trivially and prove nothing about the boundary logic.
+      expect(tsVisible).toBeGreaterThan(0);
+      expect(tsVisible).toBeLessThan(numVertices);
+
+      const tsFaces = new Uint32Array(numFaces * 3);
+      const wasmFaces = new Uint32Array(numFaces * 3);
+      const tsKept = tsModule.compact_visible_faces(faces, tsMask, numFaces, tsFaces);
+      const wasmKept = wasmModule!.compact_visible_faces(faces, wasmMask, numFaces, wasmFaces);
+
+      expect(wasmKept).toBe(tsKept);
+      expect(tsKept).toBeGreaterThan(0);
+      expect(tsKept).toBeLessThan(numFaces);
+      expect(
+        arraysEqual(tsFaces.subarray(0, tsKept * 3), wasmFaces.subarray(0, wasmKept * 3))
+      ).toBe(true);
+    });
+
+    it.skipIf(!wasmFilesExist)('agrees on non-finite coordinates and infinite tolerance', () => {
+      // Row per vertex: NaN / +Inf / -Inf on the hidden dim, then a finite one.
+      // prettier-ignore
+      const positions = new Float32Array([
+        0, 0, 0, NaN,
+        0, 0, 0, Infinity,
+        0, 0, 0, -Infinity,
+        0, 0, 0, 5,
+      ]);
+      const slicePos = new Float32Array([0, 0, 0, 5]);
+      const displayDims = new Uint32Array([0, 1, 2]);
+
+      // Both a finite EXTEND_TO_ALL sentinel and a genuinely infinite tolerance:
+      // the latter makes sliceMax === +Infinity, where only an explicit
+      // finite-check keeps an infinite coordinate culled.
+      for (const tol of [1e10, Infinity]) {
+        const tolerance = new Float32Array([1e10, 1e10, 1e10, tol]);
+        const tsMask = new Uint8Array(4);
+        const wasmMask = new Uint8Array(4);
+        const tsVisible = tsModule.mesh_vertex_visibility_mask(
+          positions,
+          slicePos,
+          tolerance,
+          displayDims,
+          4,
+          4,
+          tsMask
+        );
+        const wasmVisible = wasmModule!.mesh_vertex_visibility_mask(
+          positions,
+          slicePos,
+          tolerance,
+          displayDims,
+          4,
+          4,
+          wasmMask
+        );
+
+        expect(wasmVisible).toBe(tsVisible);
+        expect(arraysEqual(tsMask, wasmMask)).toBe(true);
+        // Only the finite vertex survives, under either tolerance.
+        expect(Array.from(wasmMask)).toEqual([0, 0, 0, 1]);
+      }
+    });
+
+    it.skipIf(!wasmFilesExist)('agrees that the slab bounds are inclusive', () => {
+      // prettier-ignore
+      const positions = new Float32Array([
+        0, 0, 0, 4.5, // exactly slice_min
+        0, 0, 0, 5.5, // exactly slice_max
+      ]);
+      const slicePos = new Float32Array([0, 0, 0, 5]);
+      const tolerance = new Float32Array([1e10, 1e10, 1e10, 0.5]);
+      const displayDims = new Uint32Array([0, 1, 2]);
+
+      const tsMask = new Uint8Array(2);
+      const wasmMask = new Uint8Array(2);
+      const tsVisible = tsModule.mesh_vertex_visibility_mask(
+        positions,
+        slicePos,
+        tolerance,
+        displayDims,
+        4,
+        2,
+        tsMask
+      );
+      const wasmVisible = wasmModule!.mesh_vertex_visibility_mask(
+        positions,
+        slicePos,
+        tolerance,
+        displayDims,
+        4,
+        2,
+        wasmMask
+      );
+
+      expect(wasmVisible).toBe(2);
+      expect(tsVisible).toBe(wasmVisible);
+      expect(arraysEqual(tsMask, wasmMask)).toBe(true);
+    });
+
+    /**
+     * Out-of-range face indices come from the STORE, so both backends must drop
+     * the face. Without the range guard the WASM build would trap (the crate is
+     * `panic = "abort"`, so an out-of-bounds read takes down the whole module)
+     * while TS would read `undefined` — this test is the only place that
+     * difference is observable.
+     */
+    it.skipIf(!wasmFilesExist)('agrees on out-of-range face indices without trapping', () => {
+      const mask = new Uint8Array([1, 1, 1]); // valid indices 0..2
+      // prettier-ignore
+      const faces = new Uint32Array([
+        0, 1, 2,          // valid
+        0, 1, 3,          // just past the end
+        99, 0, 1,         // far past the end
+        0, 1, 0xffffffff, // a signed -1 reinterpreted
+      ]);
+      const numFaces = 4;
+
+      const tsFaces = new Uint32Array(numFaces * 3);
+      const wasmFaces = new Uint32Array(numFaces * 3);
+      const tsKept = tsModule.compact_visible_faces(faces, mask, numFaces, tsFaces);
+      const wasmKept = wasmModule!.compact_visible_faces(faces, mask, numFaces, wasmFaces);
+
+      expect(wasmKept).toBe(1);
+      expect(tsKept).toBe(wasmKept);
+      expect(arraysEqual(tsFaces.subarray(0, 3), wasmFaces.subarray(0, 3))).toBe(true);
+      expect(Array.from(wasmFaces.subarray(0, 3))).toEqual([0, 1, 2]);
+    });
+
+    it.skipIf(!wasmFilesExist)('agrees on the no-hidden-dims fast path', () => {
+      const positions = new Float32Array([0, 0, 0, 1, 2, 3, -5, 9, 100]);
+      const slicePos = new Float32Array([50, 50, 50]);
+      const tolerance = new Float32Array([0, 0, 0]);
+      const displayDims = new Uint32Array([0, 1, 2]);
+
+      const tsMask = new Uint8Array(3);
+      const wasmMask = new Uint8Array(3);
+      const tsVisible = tsModule.mesh_vertex_visibility_mask(
+        positions,
+        slicePos,
+        tolerance,
+        displayDims,
+        3,
+        3,
+        tsMask
+      );
+      const wasmVisible = wasmModule!.mesh_vertex_visibility_mask(
+        positions,
+        slicePos,
+        tolerance,
+        displayDims,
+        3,
+        3,
+        wasmMask
+      );
+
+      expect(wasmVisible).toBe(3);
+      expect(tsVisible).toBe(wasmVisible);
+      expect(arraysEqual(tsMask, wasmMask)).toBe(true);
+    });
+  });
+
+  // ============================================================================
   // STRESS TESTS WITH RANDOM DATA
   // ============================================================================
   describe('stress tests with random data', () => {

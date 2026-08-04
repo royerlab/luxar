@@ -21,6 +21,7 @@ src/
 ├── lib.rs                  — crate root: module declarations + WASM re-exports
 ├── common.rs               — shared constants, ndim validation, packed-Cholesky index
 ├── lines_clipping.rs       — Liang-Barsky nD slab clipping + attribute interpolation
+├── mesh_culling.rs         — whole-triangle nD slab culling for indexed surfaces
 ├── gsplats_processing.rs   — Mahalanobis distance, marginal Cholesky, attenuation
 ├── effective_radii.rs      — Pythagorean radius shrinkage when slicing through hidden dims
 ├── projection.rs           — extract 3D positions, bounds, compact-by-mask
@@ -125,6 +126,51 @@ The batch path replaces the `HashSet<u32>` of display dims with a fixed-size
 `[bool; 16]` lookup. `dv.abs() < 1e-7` short-circuits the
 parallel-to-slice case before any division. `t1 >= t2` aborts the per-segment
 loop the moment the valid interval collapses.
+
+### `mesh_culling.rs` — whole-triangle nD culling
+
+The counterpart to `lines_clipping.rs` for indexed triangle surfaces, and
+deliberately far smaller. Lines _clip_: a segment crossing the slab yields an
+interpolated intersection. Triangles are not clipped — the exact equivalent is nD
+polygon clipping with fan re-triangulation and per-new-vertex attribute
+interpolation on every slice move. Instead:
+
+```
+A triangle is drawn iff ALL THREE of its vertices pass the nD slab test.
+```
+
+The cost is a ragged, triangle-quantized cut boundary instead of a clean planar
+section — a documented v1 trade (`docs/specs/MESH_NODE_SPEC.md` §5.3), buying
+~150 LOC instead of ~1500.
+
+| Function                      | Purpose                                                                                                                                |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `mesh_vertex_visibility_mask` | Per-vertex nD slab membership → `u8` mask. The `p1_in` branch of `clip_segment_single`, applied per vertex; returns the visible count. |
+| `compact_visible_faces`       | Keeps faces whose three vertices are all visible, writing **original** (un-remapped) vertex indices; returns the visible face count.   |
+
+Two properties are load-bearing and easy to "simplify" away:
+
+- **No vertex compaction.** Only the index buffer is rebuilt on a slice change;
+  vertex attribute buffers are uploaded once, in full. `drawElements` never
+  fetches an unreferenced vertex, so culled vertices cost nothing to draw. This
+  is also why `projection::compact_by_mask` is unusable here — it is `&[f32]`-only
+  and could not compact native `uint8`/`uint16` vertex colors.
+- **The explicit `is_finite` test.** It looks subsumed by the range comparison
+  (`NaN` fails both; `±Inf` fails against any finite bound), but an infinite
+  `tolerance` makes `slab_max = +Inf`, and `+Inf <= +Inf` is _true_.
+
+`compact_visible_faces` range-checks each face index against `vertex_mask.len()`
+and drops the whole face if out of range. Face indices are _store-supplied_, and
+because the crate is `panic = "abort"` an out-of-bounds read would take down the
+entire WASM module rather than one node. The loader gates this first
+(`MESH_NODE_SPEC.md` §3.5 Stage 2); the check is defense in depth. Note the
+deliberate asymmetry: store-supplied _values_ are range-checked in release
+builds, while _shape_ parameters the caller computed are `debug_assert`ed, as in
+every sibling kernel.
+
+Winding is untouched — the authored per-face index order is preserved verbatim,
+so restoring front-facing winding under a reflected display permutation is a
+caller-owned post-pass (§5.4).
 
 ### `gsplats_processing.rs` — Mahalanobis, marginal Cholesky, attenuation
 

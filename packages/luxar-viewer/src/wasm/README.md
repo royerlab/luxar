@@ -44,7 +44,8 @@ non-standard location.
 - `calculate_effective_radii()` — Radius when sliced through higher dimensions
   (per-element nD visibility/culling otherwise lives INSIDE the projection
   kernels: `clip_segments_batch` for Lines, the attenuation/fused kernel for
-  GSplats)
+  GSplats). Mesh is the exception: its cull is a standalone pair, below, because
+  it produces an index buffer rather than compacted per-element attributes.
 
 ### Decoding
 
@@ -84,6 +85,20 @@ non-standard location.
 - `calculate_segment_lengths()` — Compute segment lengths for LOD
 - `compute_cap_suppression()` — Per-endpoint cap suppression in [0, 1] (clipped endpoints + interior polyline joints) for the shader cap factor
 - `lerp()` / `lerp_vec3()` / `distance_3d()` — Math helpers
+
+### Mesh Culling
+
+Whole-triangle nD culling for indexed surfaces. Unlike Lines, nothing is clipped
+or interpolated — a triangle is drawn iff **all three** of its vertices pass the
+nD slab test, so a cut boundary is triangle-quantized (a documented v1 trade;
+see `docs/specs/MESH_NODE_SPEC.md` §5).
+
+- `mesh_vertex_visibility_mask()` — Per-vertex nD slab membership → `u8` mask
+- `compact_visible_faces()` — Keep faces whose three vertices are all visible,
+  writing ORIGINAL (un-remapped) vertex indices
+
+Only the index buffer is rebuilt on a slice change; vertex attribute buffers are
+uploaded once and left alone, so vertices are never compacted.
 
 ## 16-Dimension Limit
 
@@ -142,6 +157,7 @@ wasm/
 │   ├── effective-radii.ts — Radius calculations
 │   ├── gsplats-processing.ts — GSplat processing
 │   ├── lines-clipping.ts — Line clipping
+│   ├── mesh-culling.ts   — Whole-triangle nD culling
 │   └── projection.ts     — nD → 3D projection
 └── rust/                 — Rust source (parallel to TypeScript)
     ├── Cargo.toml
@@ -153,7 +169,7 @@ wasm/
 ## Subpackages
 
 - [`rust/`](./rust/src/README.md) — Rust source compiled to WASM. Implements
-  the kernels for Points, Lines, GSplats, projection, and line clipping.
+  the kernels for Points, Lines, GSplats, Mesh, projection, and line clipping.
   See `rust/src/README.md` for the full Rust/WASM build pipeline.
 - [`typescript/`](./typescript/README.md) — Pure TypeScript fallback
   matching the Rust kernels function-for-function. Used when WASM fails

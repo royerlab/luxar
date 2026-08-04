@@ -36,6 +36,7 @@
 //! - `projection` - nD to 3D projection and bounds
 //! - `gsplats_processing` - GSplat nD->3D projection, attenuation, Cholesky
 //! - `lines_clipping` - Line segment clipping for nD slicing
+//! - `mesh_culling` - Whole-triangle nD visibility culling for mesh surfaces
 //! - `depth_sort` - Back-to-front splat ordering (depth-sorting Phase 2)
 
 // Clippy lint configuration for this numerical WASM crate.
@@ -66,6 +67,7 @@ mod depth_sort;
 mod effective_radii;
 mod gsplats_processing;
 mod lines_clipping;
+mod mesh_culling;
 mod projection;
 
 // Re-export all public functions for WASM binding
@@ -88,6 +90,7 @@ pub use lines_clipping::{
     distance_3d, interpolate_clipped_positions, interpolate_colors_batch,
     interpolate_scalars_batch, lerp, lerp_vec3,
 };
+pub use mesh_culling::{compact_visible_faces, mesh_vertex_visibility_mask};
 pub use projection::{
     calculate_bounds_3d, compact_by_mask, count_visible, extract_3d_positions,
     radii_to_visibility_mask,

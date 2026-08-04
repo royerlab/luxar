@@ -15,6 +15,7 @@ here automatically — not just when WASM is missing.
 | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
 | `index.ts`              | Barrel re-exporting every kernel and the `TypeScriptFallback` class implementing the `WasmModule` interface                                 |
 | `lines-clipping.ts`     | Liang-Barsky segment clipping, batched position/scalar/color interpolation, segment lengths, per-endpoint cap suppression                   |
+| `mesh-culling.ts`       | Whole-triangle nD culling: per-vertex slab membership + face compaction preserving original vertex indices. `Math.fround`s the slab bounds  |
 | `gsplats-processing.ts` | Marginal Cholesky factorization, Mahalanobis distance, shifted-Gaussian attenuation, visible-Cholesky extraction                            |
 | `effective-radii.ts`    | `calculate_effective_radii` — `R_eff = sqrt(R² − D²)` for nD points sliced by a hyperplane                                                  |
 | `decode.ts`             | LUT / quantized / log-scalar / geolog-scalar / per-channel (linear, log, signed-log, geolog) decoders + `decode_broadcasted`                |
@@ -39,6 +40,27 @@ as its Rust counterpart for the same inputs, within Float32 epsilon
 tolerance. This is locked in by
 `src/tests/unit/wasm/wasm-vs-typescript.test.ts` (skipped when the
 WASM binary isn't built; CI builds it and runs parity checks).
+
+### Where `Math.fround` is mandatory
+
+JS numbers are f64. Reading a `Float32Array` yields an exact f32 widened to f64,
+and **arithmetic on those values is then done in f64**, which does not round the
+way the Rust f32 kernel does. Anywhere a comparison can land on the boundary,
+that difference is observable and must be closed with `Math.fround` at each step,
+in the Rust operation order:
+
+- `depth-sort.ts` frounds every step so the sort permutation is exact.
+- `decode.ts` frounds the per-channel anchors, which arrive as f32 in WASM.
+- `mesh-culling.ts` frounds the slab bounds. The f64 difference of two f32 values
+  is _exact_ while Rust's f32 subtraction rounds; the gap is under half an ulp,
+  but when the rounding goes DOWN the rounded bound is itself a legal f32 vertex
+  coordinate, and a vertex sitting exactly there is visible in WASM and culled in
+  unfrounded TS (`slice=1.0, tolerance=0.1` is such a case, and is a parity test).
+
+`lines-clipping.ts` does **not** fround its slab bounds. Its clipping arithmetic
+proceeds to a `t`-parameter comparison rather than a bare membership test, so the
+same construction has not been shown to diverge there — but treat it as
+unverified rather than as licence to skip fround in a new kernel.
 
 ## Performance
 
