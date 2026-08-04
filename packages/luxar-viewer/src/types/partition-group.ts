@@ -44,6 +44,11 @@ export interface PartitionGroupMetadata {
    * resolve to this same display type (homogeneity is mandatory for
    * Partition — you cannot decompose a single logical layer into mixed-type
    * parts).
+   *
+   * Spelled out rather than `GeometryTypeName`: this is the PARTITION-CAPABLE
+   * subset of the vocabulary, so do not widen it when a geometry type is added —
+   * declare that type's `partition` capability in `types/geometry-capabilities`
+   * instead, and extend this union only if it comes out `true`.
    */
   display_type: 'points' | 'lines' | 'gsplats';
 

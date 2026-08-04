@@ -22,6 +22,7 @@ import type { SceneNode } from './data-loader-types';
 import { clamp } from '../utils/clamp';
 import { normalizeBlendingMode } from '../rendering/blending-state';
 import type { BlendingMode } from '../types/blending';
+import { isGeometryType } from '../types/geometry-capabilities';
 
 export interface ComposableAttrs {
   opacity?: number;
@@ -146,13 +147,17 @@ export function getEffectiveAttrs(root: SceneNode, targetPath: string): Effectiv
 }
 
 /**
- * Collect every data-leaf (points/lines/gsplats) descended from `start`.
+ * Collect every data-leaf descended from `start`.
  * Used by group-layer controls that need to fan out to actual materials.
+ *
+ * "Data-leaf" is the whole geometry vocabulary, not a fixed list: a group-level
+ * opacity / gamma / colormap control must reach every leaf underneath it, so a
+ * geometry type omitted here would silently ignore its ancestors' attributes.
  */
 export function collectDataDescendants(start: SceneNode): SceneNode[] {
   const result: SceneNode[] = [];
   const visit = (n: SceneNode): void => {
-    if (n.type === 'points' || n.type === 'lines' || n.type === 'gsplats') {
+    if (isGeometryType(n.type)) {
       result.push(n);
     }
     if (n.children) for (const c of n.children) visit(c);
