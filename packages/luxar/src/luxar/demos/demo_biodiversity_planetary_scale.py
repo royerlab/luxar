@@ -147,8 +147,15 @@ turns a cloud of points into something that reads as an opaque *material* — an
 one that can still be made slightly transparent on demand, which a truly opaque
 mode cannot. But absorption also makes a layer very dim, almost black. The fix is
 to push brightness up in the same move by lowering the display-range max, which
-raises ``intensity``. The globe is exactly that pair: ``absorption=10`` with a
-display max of 0.041 (a 24x gain). Either number alone looks wrong.
+raises ``intensity``. The globe was tuned exactly that way — ``absorption=10``
+with a display max of 0.041, a 24x gain — and either number alone looks wrong.
+
+**A backdrop cannot be a transparent mode, though.** The globe ultimately ships
+``opaque`` rather than the ``volumetric`` it was tuned to, because a backdrop
+needs two things no transparent mode provides: to be drawn BEFORE the data, and
+to occlude the far hemisphere. See ``GLOBE_BLENDING`` for the measured draw order
+that forced this and for royerlab/luxar#1227. The tuned brightness survives
+(``intensity`` and ``gamma`` still apply); the absorption term does not.
 
 The occurrence records take the opposite treatment — ``opaque`` (depth-tested,
 and still alpha-blended, so ``opacity`` matters) with a hard brightness push — so
@@ -447,8 +454,42 @@ OCCURRENCE_COLOR_SCALE: Final = 0.85
 # selection washes out over a bright surface.
 #: Globe: DISPLAY RANGE 0-0.041 -> 1/0.041.
 GLOBE_INTENSITY: Final = 24.39
+#: Retained for reference but INERT under `opaque` (see GLOBE_BLENDING): the
+#: absorption term belongs to the emission-absorption `volumetric` integral.
 GLOBE_ABSORPTION: Final = 10.0
-GLOBE_BLENDING: Final = "volumetric"
+#: `opaque`, not the `volumetric` this was originally tuned to.
+#:
+#: The globe is a BACKDROP, and only `opaque` gets a backdrop's two required
+#: properties. It is the one mode with `transparent: false`
+#: (`rendering/blending-state.ts`), so THREE puts it in the opaque bucket, drawn
+#: before every transparent layer; and it is the only mode that unconditionally
+#: sets `depthWrite: true`, so it actually occludes.
+#:
+#: Both mattered. Measured draw order with a volumetric globe, read off
+#: `onBeforeRender` in the live scene:
+#:
+#:     3-10. All life  (8 tiles)  transparent  depthWrite=0
+#:     11.   Earth                transparent  depthWrite=0   <- AFTER the data
+#:     12.   Migration highways   transparent  depthWrite=0
+#:
+#: 1. The globe composited ON TOP of the 15M-record layer, multiplying it by the
+#:    shell's transmittance -- at absorption 10, most of the way to erasing it.
+#:    The cause is the containment rule in
+#:    `rendering/depth-sort-coordinator/render-order.ts`, which hoists a group
+#:    whose bounding sphere contains another's so that "embedded content
+#:    composites on top". It is written for a small marker inside a huge cloud;
+#:    here the geometry is inverted -- the data sits on a shell OUTSIDE the
+#:    globe, and its 8-tile bounding sphere is a loose upper bound -- so the
+#:    DATA was classified as the container and the BACKDROP as embedded content.
+#:    Filed as royerlab/luxar#1227.
+#: 2. `volumetric` never writes depth, so nothing occluded anything: far-side
+#:    records and track ribbons showed straight through the planet. (The globe's
+#:    earlier `normal` + opacity 1.0 did write depth --
+#:    `normalModeDepthWrite` requires opacity >= 0.99.)
+#:
+#: The cost is that the shell no longer self-shades as a participating medium.
+#: `intensity` and `gamma` still apply, so the tuned brightness survives.
+GLOBE_BLENDING: Final = "opaque"
 #: The SCRUBBABLE records layer's own opacity. Separate from
 #: OCCURRENCE_OPACITY (which belongs to the untuned `All life` summary layer):
 #: `opaque` blending still alpha-blends (SrcAlpha / OneMinusSrcAlpha), so 0.75
@@ -2591,7 +2632,6 @@ def build_scene(output_path: Path, sample: GbifSample, tracks: TrackSet) -> Path
                     "period": float(PERIOD_ALL_SLOT),
                 },
                 blending_mode=GLOBE_BLENDING,
-                absorption=GLOBE_ABSORPTION,
                 intensity=GLOBE_INTENSITY,
                 offset=0.0,
                 gamma=1.0,

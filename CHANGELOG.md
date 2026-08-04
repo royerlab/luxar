@@ -6,6 +6,40 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
+#### Demos — the biodiversity globe is `opaque`, so it stops painting over its own data (#1227)
+
+The globe was `volumetric` with a heavy absorption, which read well in isolation
+but made the layers unreadable together. Measured draw order in the live scene
+(hooking `onBeforeRender`, so this is THREE's real sequence rather than an
+inference from `renderOrder`):
+
+```
+ 3-10. All life  (8 tiles)  transparent  depthWrite=0
+ 11.   Earth                transparent  depthWrite=0   <- backdrop drawn LAST
+ 12.   Migration highways   transparent  depthWrite=0
+```
+
+Two consequences. The globe composited **on top of** the 15M-record layer,
+multiplying it by the shell's transmittance — at absorption 10, most of the way
+to erasing it. And because no mode except `opaque` writes depth, nothing occluded
+anything, so far-side records and track ribbons showed straight through the
+planet.
+
+The ordering is a containment rule in
+`rendering/depth-sort-coordinator/render-order.ts` firing on inverted geometry: it
+hoists a group whose bounding sphere contains another's so that "embedded content
+composites on top", which assumes *container = background*. Here the data sits on
+a shell **outside** the globe and its 8-tile group sphere is a deliberately loose
+upper bound, so the data was classified as the container and the backdrop as
+embedded content. Filed as #1227.
+
+`opaque` is the only mode with `transparent: false`, so THREE draws it in the
+opaque bucket ahead of every transparent layer, and the only one that
+unconditionally sets `depthWrite: true`. The globe now draws first (verified:
+`/Earth` at step 1 with `depthWrite=1`) and occludes correctly. The cost is that
+the shell no longer self-shades as a participating medium; `intensity` and
+`gamma` still apply, so the tuned brightness survives.
+
 #### Added — targeted demo dependency installs and consistent install status (#915)
 
 `luxar demo deps --only MODULE` now narrows the report to one import module and,
