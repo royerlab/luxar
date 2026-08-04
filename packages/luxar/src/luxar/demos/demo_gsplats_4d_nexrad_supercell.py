@@ -132,7 +132,8 @@ Options:
     --grid-m=N:          Horizontal grid spacing in metres (default: 750)
     --grid-z-m=N:        Vertical grid spacing in metres (default: 1500)
     --splats=N:          Fixed splats per timepoint (default 0 = adaptive)
-    --dbz-floor=N:       dBZ below which a cell is transparent (default: 20)
+    --dbz-floor=N:       dBZ below which a cell is transparent (default: 20;
+                         must lie below the 70 dBZ ceiling)
     --vert-exag=N:       Vertical exaggeration for display (default: 1 = true)
     --relist:            Maintenance: print a fresh S3 listing and exit
 
@@ -558,6 +559,19 @@ VERT_EXAG = _parse_float_arg("vert-exag", 1.0)
 #: concentric ground-clutter rings around the radar, while 25+ starts eating the
 #: anvil and forward-flank shield. 20 removes both artifacts and keeps the storm.
 DBZ_FLOOR = _parse_float_arg("dbz-floor", 20.0)
+# The floor must sit strictly between the no-data sentinel and the ceiling.
+# At floor == DBZ_CEIL the intensity span is zero, every frame degenerates to
+# an empty-sky placeholder and the global rescale divides by zero; ABOVE the
+# ceiling the clip bounds invert and np.clip maps EVERY cell — no-data
+# included — to full intensity, fabricating a solid block of echo. At or below
+# NO_DATA_DBZ the sentinel itself rises above the floor and cached no-data
+# cells read as echo. Reject all three loudly instead of producing garbage.
+if not (NO_DATA_DBZ < DBZ_FLOOR < DBZ_CEIL):
+    raise SystemExit(
+        f"--dbz-floor={DBZ_FLOOR:g} is out of range: the floor must lie "
+        f"strictly between {NO_DATA_DBZ:g} (the no-data sentinel) and the "
+        f"{DBZ_CEIL:g} dBZ ceiling."
+    )
 RELIST = "--relist" in sys.argv
 
 Arbol.max_depth = 5
@@ -1248,6 +1262,15 @@ def combine_timepoints_to_4d(gsplats_list: list[GSplatData]) -> GSplatData:
     origin = np.array([BOX_Z_KM[0], BOX_Y_KM[0], BOX_X_KM[0]])  # centers are (z, y, x)
     global_max = max(float(g.amplitudes.max()) for g in gsplats_list)
     aprint(f"Global peak amplitude across timepoints: {global_max:.4f}")
+    if global_max <= 0.0:
+        # Every timepoint is an empty-sky placeholder (a high but valid
+        # --dbz-floor on a narrow selection can do this). The global rescale
+        # would divide by zero, and the scene would be blank anyway.
+        raise SystemExit(
+            "Every requested timepoint is an empty-sky placeholder — nothing "
+            f"exceeded the {DBZ_FLOOR:g} dBZ floor. Lower --dbz-floor or "
+            "select different timepoints."
+        )
 
     processed = [
         g.translate(origin).scale_intensity(AMPLITUDE_PEAK / global_max)
@@ -1535,9 +1558,14 @@ def main() -> None:
         gsplats_list = load_precomputed_bundle(
             DEMO_NAME, _PRECOMPUTED_BUNDLE_NAME, file_names, recompute=RECOMPUTE
         )
-    except FileNotFoundError:
+    except FileNotFoundError as exc:
+        # Two distinct causes land here and the message must not conflate
+        # them: the LFS asset genuinely absent (pointer not pulled), or a
+        # non-default --dbz-floor/--splats/--grid-m changing the per-frame
+        # cache names so they miss the shipped bundle. The exception says
+        # which; pass it through.
         aprint(
-            "Precomputed bundle unavailable (Git LFS asset not pulled). "
+            f"Precomputed bundle unavailable ({exc}). "
             "Falling back to recomputing from the NEXRAD archive."
         )
         gsplats_list = None

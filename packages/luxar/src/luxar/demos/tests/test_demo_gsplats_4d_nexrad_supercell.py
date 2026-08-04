@@ -20,8 +20,7 @@ pytest.importorskip("scipy")
 _DEMO_PATH = Path(__file__).resolve().parents[1] / "demo_gsplats_4d_nexrad_supercell.py"
 
 
-def _load_demo_module():
-    name = "_luxar_demo_nexrad_for_tests"
+def _load_demo_module(name: str = "_luxar_demo_nexrad_for_tests"):
     spec = importlib.util.spec_from_file_location(name, _DEMO_PATH)
     if spec is None or spec.loader is None:
         pytest.skip(f"Could not locate demo at {_DEMO_PATH}")
@@ -424,6 +423,67 @@ class TestFloatFlags:
         assert _demo._parse_float_arg("dbz-floor", 20.0) == 20.0
         monkeypatch.setattr(_demo.sys, "argv", ["x", "--dbz-floor=abc"])
         assert _demo._parse_float_arg("dbz-floor", 20.0) == 20.0
+
+
+class TestDbzFloorValidation:
+    """An out-of-range floor must be rejected loudly, not produce garbage.
+
+    At floor == DBZ_CEIL the intensity span is zero, so every frame becomes an
+    empty-sky placeholder and the global rescale divides by zero; ABOVE the
+    ceiling np.clip's bounds invert and every cell — no-data included — maps to
+    full intensity; at or below NO_DATA_DBZ the cached sentinel reads as echo.
+    """
+
+    @pytest.mark.parametrize("bad", ["70", "75", "-999", "-1500"])
+    def test_out_of_range_floor_is_rejected_at_startup(
+        self, monkeypatch, bad: str
+    ) -> None:
+        name = "_luxar_demo_nexrad_floor_check"
+        monkeypatch.setattr(sys, "argv", ["demo", f"--dbz-floor={bad}"])
+        try:
+            with pytest.raises(SystemExit, match="dbz-floor"):
+                _load_demo_module(name)
+        finally:
+            sys.modules.pop(name, None)
+
+    def test_valid_floors_are_accepted(self, monkeypatch) -> None:
+        name = "_luxar_demo_nexrad_floor_check"
+        for good in ("0", "35.5", "69.9"):
+            monkeypatch.setattr(sys, "argv", ["demo", f"--dbz-floor={good}"])
+            try:
+                module = _load_demo_module(name)
+                assert module.DBZ_FLOOR == pytest.approx(float(good))
+            finally:
+                sys.modules.pop(name, None)
+
+
+class Test4DAssembly:
+    """The all-placeholder edge of combine_timepoints_to_4d."""
+
+    @staticmethod
+    def _frame(peak_amplitude: float):
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        ndim = 3
+        return GSplatData(
+            centers=np.zeros((1, ndim), dtype=np.float32),
+            amplitudes=np.full(1, peak_amplitude, dtype=np.float32),
+            cholesky_factors=np.eye(ndim, dtype=np.float32)[np.tril_indices(ndim)][
+                None, :
+            ],
+            truncation_radius=_demo.TRUNCATE_SIGMAS,
+        )
+
+    def test_all_placeholder_selection_fails_loudly(self) -> None:
+        """A valid but high floor can leave every frame empty; the global
+        rescale must refuse rather than divide by zero."""
+        with pytest.raises(SystemExit, match="empty-sky"):
+            _demo.combine_timepoints_to_4d([self._frame(0.0), self._frame(0.0)])
+
+    def test_mixed_selection_scales_to_the_global_peak(self) -> None:
+        combined = _demo.combine_timepoints_to_4d([self._frame(0.0), self._frame(0.5)])
+        assert combined.ndim == 4
+        assert float(combined.amplitudes.max()) == pytest.approx(_demo.AMPLITUDE_PEAK)
 
 
 class TestFrameSubsampling:
