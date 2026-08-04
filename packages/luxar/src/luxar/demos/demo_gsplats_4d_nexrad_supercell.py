@@ -51,9 +51,12 @@ THE STORM
 On 2013-05-31 this supercell produced the widest tornado ever recorded — 4.2 km
 across at peak, rated EF3. Touchdown was at 23:03 UTC, dissipation at 23:43 UTC.
 The 82 volume scans here span 21:00 UTC through 03:00 UTC, so scrubbing the
-Time slider carries you from a nearly empty sky, through initiation and
-tornadogenesis, into the overnight mesoscale system that flooded Oklahoma
-City. The first ~16 frames are almost bare: the storm has not formed yet.
+Time slider carries you from before the El Reno storm existed, through its
+initiation and tornadogenesis, into the overnight mesoscale system that flooded
+Oklahoma City. The opening frames are not empty — at this 300 km domain they
+already hold the separate convection to the north-east (frame 0 fits ~570
+splats) — but the supercell itself does not appear until around 22Z, and you can
+watch it emerge and then dominate the domain.
 
 DATA SOURCE & CITATIONS:
 ========================
@@ -69,8 +72,10 @@ Site:    KTLX - Twin Lakes, Oklahoma (35.33306 N, 97.27748 W, 369 m AMSL
 Date:    2013-05-31 21:00Z - 2013-06-01 03:00Z (82 volume scans, ~4.3 min
          cadence): initiation, the El Reno tornado, and the overnight growth
          into the MCS that flooded Oklahoma City
-VCP:     212 (precipitation mode, 15 elevations 0.5-19.5 deg, split cuts)
-Size:    ~850 MB total (82 files, ~10 MB each, gzipped Archive II)
+VCP:     212 (precipitation mode, 14 true elevations 0.5-19.5 deg after
+         split-cut dedup, from 17 sweeps)
+Size:    800 MB total, measured (82 files, 7.8-12.3 MB each, gzipped
+         Archive II)
 License: U.S. Government work, public domain (17 U.S.C. 105). NOAA requests
          attribution and that modified data not be presented as original NOAA
          data. The shipped splat bundle is a DERIVED product (regridded and
@@ -100,7 +105,7 @@ Doviak, R. J., and D. S. Zrnic (1993). Doppler Radar and Weather Observations,
 WORKFLOW:
 =========
 
- 1. Download  82 Level II volume scans over plain HTTPS (cached, ~850 MB)
+ 1. Download  82 Level II volume scans over plain HTTPS (cached, 800 MB)
  2. Decode    each with MetPy Level2File (reads the archived .gz directly)
  3. Select    one reflectivity sweep per true elevation (split-cut dedup)
  4. Geolocate every gate with the 4/3-effective-earth beam model
@@ -209,10 +214,14 @@ SITE_LAT, SITE_LON = 35.33306, -97.27748
 #: stay stable, and the 2013 archive is closed so there is nothing to discover.
 #: Refresh with --relist if the archive is ever re-ingested under other keys.
 #:
-#: Measured caveat: the first ~16 scans (the 21Z hour) hold almost NO echo in
-#: this domain — the storm has not initiated yet, so the timelapse opens on a
-#: nearly empty sky and the first cells appear around 22Z. That lead-in is
-#: deliberate; trim it with --max-timepoints or --start-index.
+#: Measured caveat: the El Reno supercell has not initiated during the 21Z hour,
+#: so the first ~16 scans do not contain the subject of the demo. They are NOT
+#: empty, though — measured on the shipped 300x300 km box at floor 20, frame 0
+#: holds 6,909 occupied voxels and fits 567 splats (peak amplitude 0.44) from the
+#: separate convection to the north-east, rising to 73,209 voxels by frame 16.
+#: An earlier 180x120 km box did open on a nearly bare sky; widening the domain
+#: changed that. Trim the lead-in with --max-timepoints if you want to start
+#: closer to tornadogenesis.
 VOLUME_SCANS: tuple[tuple[str, str], ...] = (
     ("2013/05/31", "210009"),
     ("2013/05/31", "210337"),
@@ -427,6 +436,31 @@ SCENE_WINDOW = (0.0, 0.88)
 SCENE_INTENSITY = 1.0 / (SCENE_WINDOW[1] - SCENE_WINDOW[0])
 SCENE_OFFSET = -SCENE_WINDOW[0] * SCENE_INTENSITY
 
+
+def _parse_float_arg(name: str, default: float) -> float:
+    """Read a FLOAT CLI flag, accepting ``--name=2.5`` and ``--name 2.5``.
+
+    `parse_int_arg` truncates, which silently discarded the fractional part of
+    continuous quantities: `--dbz-floor=22.5` became 22 and `--vert-exag=2.5`
+    became 2, with no warning. Both read as continuous in the docs, so they need
+    a float parser.
+    """
+    flag = f"--{name}"
+    for i, arg in enumerate(sys.argv):
+        raw: Optional[str] = None
+        if arg.startswith(f"{flag}="):
+            raw = arg.split("=", 1)[1]
+        elif arg == flag and i + 1 < len(sys.argv):
+            raw = sys.argv[i + 1]
+        if raw is not None:
+            try:
+                return float(raw)
+            except ValueError:
+                aprint(f"Ignoring malformed {flag}={raw!r}; using {default}")
+                return default
+    return default
+
+
 FLAGS = parse_demo_flags()
 NO_SERVE = FLAGS["no_serve"]
 SERVE_ONLY = FLAGS["serve_only"]
@@ -492,13 +526,17 @@ VOXELS_PER_SEED = 4.0
 SPLATS_MIN, SPLATS_MAX = 50, 60_000
 #: Occupancy below which a timepoint is treated as EMPTY SKY and skipped.
 #:
-#: This MUST be its own constant rather than reusing SPLATS_MIN. It was briefly
-#: conflated with it, and the effect was measured: at a 1500-voxel threshold,
-#: frames 7 and 8 (522 and 1,334 occupied voxels) were thrown away as "empty"
-#: even though they hold the storm's FIRST CELLS — so the supercell popped into
-#: existence fully formed instead of emerging. An occupancy floor and a splat
-#: floor answer different questions; 50 keeps genuine initiation echo while
-#: still skipping the truly bare 21Z frames (10-66 voxels of speckle).
+#: This MUST be its own constant rather than reusing SPLATS_MIN. The two answer
+#: different questions, and conflating them measurably destroyed data: at a
+#: 1500-voxel threshold (SPLATS_MIN's old value) frames holding the storm's first
+#: cells were discarded as "empty", so the supercell popped into existence fully
+#: formed instead of emerging.
+#:
+#: NOTE: at the shipped settings this branch never fires — the sparsest frame has
+#: 6,909 occupied voxels, far above 50, and none of the 82 bundled frames is a
+#: placeholder. It is retained as a guard for narrower boxes or higher
+#: --dbz-floor values, where genuinely empty frames do occur and fitting one
+#: wastes a GPU pass to produce noise.
 MIN_OCCUPIED_VOXELS = 50
 #: Gaussian truncation radius, in sigmas. Taken from the shared core constant and
 #: passed to BOTH the fitter and the empty-sky placeholder, because
@@ -513,13 +551,13 @@ TRUNCATE_SIGMAS = DEFAULT_TRUNCATION_RADIUS
 #: covariance-consistent diagonal transform. 1 = true to scale. The storm is a
 #: 7.5:1 pancake (129 km wide, 17 km deep), which is real, so exaggeration is
 #: off by default; 2-3 makes the vault and overshooting top far more legible.
-VERT_EXAG = float(parse_int_arg("vert-exag", 1))
+VERT_EXAG = _parse_float_arg("vert-exag", 1.0)
 #: dBZ below which a cell is fully transparent. 20 dBZ is the conventional
 #: "this is precipitation" threshold, and a rendered sweep over 5/10/15/20/25/30
 #: picked it: at 5-15 the domain fills with clear-air and insect return plus
 #: concentric ground-clutter rings around the radar, while 25+ starts eating the
 #: anvil and forward-flank shield. 20 removes both artifacts and keeps the storm.
-DBZ_FLOOR = float(parse_int_arg("dbz-floor", 20))
+DBZ_FLOOR = _parse_float_arg("dbz-floor", 20.0)
 RELIST = "--relist" in sys.argv
 
 Arbol.max_depth = 5
@@ -595,7 +633,10 @@ def domain_box_wireframe() -> tuple[np.ndarray, np.ndarray]:
         pairs for ``line_type="indexed"``. Indexed rather than segments so the
         three edges meeting at each corner share one vertex row and join cleanly.
     """
-    z0, z1 = BOX_Z_KM
+    # Stretch with the splats: --vert-exag previously scaled only the
+    # gsplats, so the storm grew straight out through the top of the box
+    # that is supposed to bound it.
+    z0, z1 = BOX_Z_KM[0] * VERT_EXAG, BOX_Z_KM[1] * VERT_EXAG
     y0, y1 = BOX_Y_KM
     x0, x1 = BOX_X_KM
     corners = np.array(
@@ -687,8 +728,10 @@ def tornado_marker_segments(indices: list[int]) -> tuple[np.ndarray, list[int]]:
         if pos is None:
             continue
         east, north = pos
-        verts.append([BOX_Z_KM[0], north, east, float(t)])
-        verts.append([TORNADO_MARKER_TOP_KM, north, east, float(t)])
+        # Scaled by VERT_EXAG for the same reason as the wireframe: an
+        # unscaled marker loses its intended height relative to the storm.
+        verts.append([BOX_Z_KM[0] * VERT_EXAG, north, east, float(t)])
+        verts.append([TORNADO_MARKER_TOP_KM * VERT_EXAG, north, east, float(t)])
         frames.append(t)
     if not verts:
         return np.zeros((0, 4), dtype=np.float32), []
@@ -1068,9 +1111,13 @@ def _budget_token() -> str:
     Under the adaptive budget every frame gets its own K, so keying the cache on
     a single number would be a lie; key it on the policy that produced them.
     """
-    if SPLATS_OVERRIDE:
-        return f"k{SPLATS_OVERRIDE}"
-    return f"vps{VOXELS_PER_SEED:g}"
+    budget = f"k{SPLATS_OVERRIDE}" if SPLATS_OVERRIDE else f"vps{VOXELS_PER_SEED:g}"
+    # The dBZ floor MUST be here. It is applied by dbz_to_intensity BEFORE the
+    # fit, so it changes the fitted splats — but it is not part of the grid
+    # geometry, so without it `--dbz-floor=30` silently loaded splats fitted at
+    # the default 20 and displayed them as if the flag had worked. Same class of
+    # bug as leaving the box out of the grid key.
+    return f"{budget}_f{DBZ_FLOOR:g}"
 
 
 def splat_budget(volume: np.ndarray) -> int:
@@ -1258,7 +1305,7 @@ def create_luxar_scene(
                     discrete=True,
                     range=(0, n_timepoints - 1),
                     step=1.0,
-                    description="Volume scan, ~4.5 min apart, 23:00-23:56 UTC",
+                    description="Volume scan, ~4.3 min apart, 2013-05-31 21Z - 06-01 03Z",
                 ),
             ]
         )
@@ -1300,7 +1347,7 @@ def create_luxar_scene(
             )
             scene.attrs["description"] = (
                 f"{n_timepoints} WSR-88D volume scans from KTLX (Twin Lakes, OK), "
-                "23:00-23:56 UTC on 2013-05-31, regridded from polar to Cartesian "
+                "21:00 UTC on 2013-05-31 to 03:00 UTC on 06-01, regridded to Cartesian "
                 "and fitted as Gaussian splats. The tornado touched down at 23:03 "
                 "and dissipated at 23:43 UTC. Colour is radar reflectivity: blue "
                 "light rain, yellow heavy rain, red the hail core."
@@ -1399,7 +1446,11 @@ def create_luxar_scene(
                 blend_mode="difference",
             )
             for t in range(n_timepoints):
-                stamp = scan_label(t) if t < len(VOLUME_SCANS) else ""
+                # Index the SOURCE scan, not the timeline position: with
+                # --max-timepoints subsampling, frame t is scan
+                # frame_indices[t], and using t labelled every frame wrongly.
+                src = frame_indices[t] if t < len(frame_indices) else None
+                stamp = scan_label(src) if src is not None else ""
                 scene.add_text(
                     f"2013-{stamp}" if stamp else "",
                     position=(0.02, 0.97),
@@ -1429,10 +1480,16 @@ def create_luxar_scene(
 
 def _select_frame_indices(n: int) -> list[int]:
     """Evenly subsample the pinned scan list down to ``n`` timepoints."""
-    if n >= len(VOLUME_SCANS):
-        return list(range(len(VOLUME_SCANS)))
-    stride = max(1, len(VOLUME_SCANS) // n)
-    return list(range(0, len(VOLUME_SCANS), stride))[:n]
+    total = len(VOLUME_SCANS)
+    if n >= total:
+        return list(range(total))
+    if n <= 1:
+        return [0]
+    # Span the FULL window, endpoints included. A plain `range(0, total,
+    # total // n)` stops short: n=4 over 82 scans gave [0, 20, 40, 60], missing
+    # the last 21 scans — so a subsampled run silently truncated the event
+    # rather than sampling it.
+    return sorted({round(i * (total - 1) / (n - 1)) for i in range(n)})
 
 
 def main() -> None:

@@ -382,3 +382,86 @@ class TestTornadoTrack:
             assert t0 <= _demo.scan_utc_seconds(indices[t]) <= t1
         # ~40 min at ~4.3 min cadence -> a handful of frames, not all 82.
         assert 5 <= len(frames) <= 12
+
+
+class TestCacheIdentity:
+    """Every parameter that changes the FITTED splats must be in the cache key."""
+
+    def test_dbz_floor_participates_in_the_fit_identity(self, monkeypatch) -> None:
+        """Regression: --dbz-floor silently reused splats fitted at the default.
+
+        The floor is applied by dbz_to_intensity BEFORE the fit, so it changes
+        the splats — but it is not part of the grid geometry, so leaving it out
+        of the key made the flag a no-op against any warm cache or the shipped
+        bundle.
+        """
+        before = _demo._frame_cache_file(0).name
+        monkeypatch.setattr(_demo, "DBZ_FLOOR", 30.0)
+        after = _demo._frame_cache_file(0).name
+        assert before != after, "changing the dBZ floor must change the cache name"
+
+    def test_geometry_and_budget_both_participate(self, monkeypatch) -> None:
+        base = _demo._frame_cache_file(0).name
+        monkeypatch.setattr(_demo, "GRID_Z_M", 3000)
+        assert _demo._frame_cache_file(0).name != base
+        monkeypatch.setattr(_demo, "GRID_Z_M", 1500)
+        monkeypatch.setattr(_demo, "SPLATS_OVERRIDE", 12345)
+        assert _demo._frame_cache_file(0).name != base
+
+
+class TestFloatFlags:
+    def test_fractional_values_survive(self, monkeypatch) -> None:
+        """Regression: parse_int_arg truncated 22.5 -> 22 with no warning."""
+        monkeypatch.setattr(_demo.sys, "argv", ["x", "--dbz-floor=22.5"])
+        assert _demo._parse_float_arg("dbz-floor", 20.0) == pytest.approx(22.5)
+
+    def test_space_separated_form(self, monkeypatch) -> None:
+        monkeypatch.setattr(_demo.sys, "argv", ["x", "--vert-exag", "2.5"])
+        assert _demo._parse_float_arg("vert-exag", 1.0) == pytest.approx(2.5)
+
+    def test_absent_and_malformed_fall_back(self, monkeypatch) -> None:
+        monkeypatch.setattr(_demo.sys, "argv", ["x"])
+        assert _demo._parse_float_arg("dbz-floor", 20.0) == 20.0
+        monkeypatch.setattr(_demo.sys, "argv", ["x", "--dbz-floor=abc"])
+        assert _demo._parse_float_arg("dbz-floor", 20.0) == 20.0
+
+
+class TestFrameSubsampling:
+    def test_subsample_spans_the_whole_window(self) -> None:
+        """Regression: range(0, 82, 82//4) gave [0,20,40,60], dropping 21 scans.
+
+        A subsampled run must SAMPLE the event, not truncate it.
+        """
+        total = len(_demo.VOLUME_SCANS)
+        for n in (2, 3, 4, 7, 13, 40):
+            idx = _demo._select_frame_indices(n)
+            assert idx[0] == 0
+            assert idx[-1] == total - 1, f"n={n} stopped at {idx[-1]} of {total - 1}"
+            assert idx == sorted(set(idx))
+            assert len(idx) <= n
+
+    def test_single_frame_and_full_run(self) -> None:
+        assert _demo._select_frame_indices(1) == [0]
+        full = _demo._select_frame_indices(len(_demo.VOLUME_SCANS))
+        assert full == list(range(len(_demo.VOLUME_SCANS)))
+
+
+class TestVerticalExaggeration:
+    def test_wireframe_and_marker_scale_with_the_splats(self, monkeypatch) -> None:
+        """Regression: only the splats were stretched, so the storm grew out
+        through the top of the box that is meant to bound it."""
+        corners_1x, _ = _demo.domain_box_wireframe()
+        verts_1x, frames = _demo.tornado_marker_segments(
+            list(range(len(_demo.VOLUME_SCANS)))
+        )
+        monkeypatch.setattr(_demo, "VERT_EXAG", 3.0)
+        corners_3x, _ = _demo.domain_box_wireframe()
+        verts_3x, _ = _demo.tornado_marker_segments(
+            list(range(len(_demo.VOLUME_SCANS)))
+        )
+        # Column 0 is `up`; heights must triple, ground plan must not move.
+        assert corners_3x[:, 0].max() == pytest.approx(corners_1x[:, 0].max() * 3.0)
+        assert np.allclose(corners_3x[:, 1:], corners_1x[:, 1:])
+        assert len(frames) > 0
+        assert verts_3x[:, 0].max() == pytest.approx(verts_1x[:, 0].max() * 3.0)
+        assert np.allclose(verts_3x[:, 1:], verts_1x[:, 1:])
