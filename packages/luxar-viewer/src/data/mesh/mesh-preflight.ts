@@ -330,6 +330,13 @@ export function preflightMesh(
   // canonical 4 would be wrong in both directions.
   const DECODED_BYTES_PER_VALUE = 4;
   let accountedBytes = 0;
+  // The largest single chunk buffer, folded into the total below rather than only
+  // checked on its own. A chunk buffer exists DURING decode, alongside the arrays,
+  // so checking it independently lets a store sit just under budget on both terms
+  // and peak near 2x — directly constructible, since zarr v2's `chunks > shape`
+  // allowance means a tiny array can declare a near-budget chunk. Folding is what
+  // makes this constant's docstring true.
+  let maxChunkBytes = 0;
   for (const [slot, array] of Object.entries(arrays)) {
     if (!array) continue;
     const name = MESH_ARRAY_NAMES[slot as keyof MeshArrayHandles] ?? slot;
@@ -359,6 +366,7 @@ export function preflightMesh(
       rejectMesh(path, `${name} declares an unusable chunk shape [${String(array.chunks)}]`);
     }
     const chunkBytes = perChunk * parsed.itemSize;
+    if (chunkBytes > maxChunkBytes) maxChunkBytes = chunkBytes;
     if (chunkBytes > MESH_DECODE_BUDGET_BYTES) {
       rejectMesh(
         path,
@@ -369,13 +377,15 @@ export function preflightMesh(
       );
     }
   }
-  if (accountedBytes > MESH_DECODE_BUDGET_BYTES) {
+  const peakBytes = accountedBytes + maxChunkBytes;
+  if (peakBytes > MESH_DECODE_BUDGET_BYTES) {
     rejectMesh(
       path,
-      `this node's arrays account for ${mib(accountedBytes)} (stored bytes plus what ` +
-        `they decode to), over the ${mib(MESH_DECODE_BUDGET_BYTES)} per-node budget. ` +
-        'A mesh is loaded whole, so this is what the load would allocate. Decimate ' +
-        'the mesh or split it across nodes.'
+      `this node's arrays account for ${mib(peakBytes)} (stored bytes, what they ` +
+        'decode to, and the largest single chunk buffer), over the ' +
+        `${mib(MESH_DECODE_BUDGET_BYTES)} per-node budget. A mesh is loaded whole, so ` +
+        'this is what the load would allocate. Decimate the mesh or split it across ' +
+        'nodes.'
     );
   }
 

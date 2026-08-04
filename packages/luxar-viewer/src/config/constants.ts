@@ -86,10 +86,14 @@ export const MAX_MESH_VERTICES = 134217728;
  * `"chunks": [268435456, 3]` would slip a multi-gigabyte first-chunk allocation
  * past a shape-only budget.
  *
- * Be precise about what this bounds: stored bytes plus decoded bytes plus any
- * single chunk buffer — NOT the loader's whole transient peak. Beyond the decoded
- * arrays the admission path also holds the extracted display-space `position` and
- * the driver-side GPU upload, so the real peak is a modest multiple of this value.
+ * Be precise about what this bounds: the SUM of stored bytes, decoded bytes, and
+ * the largest single chunk buffer — the three are added together, not checked
+ * independently, because a chunk buffer exists during decode alongside the arrays.
+ * (An oversized chunk is ALSO rejected on its own, so a single array cannot exceed
+ * the ceiling even where the sum would fit.) This is still not the loader's whole
+ * transient peak: the admission path also holds the extracted display-space
+ * `position` and the driver-side GPU upload, so the real peak is a modest multiple
+ * of this value.
  * 512 MiB keeps that comfortably inside a 64-bit tab — which is why this must
  * never be raised toward "what a tab survives": the tab has to survive the
  * multiple, not the ceiling.

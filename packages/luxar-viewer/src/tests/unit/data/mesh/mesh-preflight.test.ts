@@ -448,6 +448,30 @@ describe('preflightMesh — (b) the byte budget', () => {
     expect(n * 3 * 1).toBeLessThan(MESH_DECODE_BUDGET_BYTES);
   });
 
+  it('folds the largest chunk buffer INTO the total, not just checking it alone', () => {
+    // Constructible because zarr v2 allows `chunks > shape`: pair a near-budget
+    // accounted sum with a tiny array declaring a near-budget oversized chunk. Each
+    // term passes its own check, so an independent per-chunk test admits a store that
+    // peaks near 2x the ceiling at fetch time.
+    //
+    // 20M vertices x 3 x f32 = 240 MB stored + 240 MB decoded = 480 MB accounted;
+    // a 4-triangle faces array declaring a 6M-triangle chunk adds ~72 MB. Neither
+    // term alone exceeds 512 MiB; together they do.
+    const n = 20_000_000;
+    const chunkTriangles = 6_000_000;
+    expectReject(
+      () =>
+        preflightMesh(PATH, tetAttrs({ n_vertices: n }), {
+          vertices: fakeArray([n, 3], '<f4', [65536, 3]),
+          faces: fakeArray([4, 3], '<u4', [chunkTriangles, 3]),
+        }),
+      /largest single chunk buffer/
+    );
+    // Each term individually fits, which is what makes the fold load-bearing.
+    expect(n * 3 * 4 * 2).toBeLessThan(MESH_DECODE_BUDGET_BYTES);
+    expect(chunkTriangles * 3 * 4).toBeLessThan(MESH_DECODE_BUDGET_BYTES);
+  });
+
   it('rejects an unrecognised dtype rather than budgeting it as free', () => {
     expectReject(
       () => preflightMesh(PATH, tetAttrs(), tetHandles({ colors: fakeArray([4, 3], '<c16') })),

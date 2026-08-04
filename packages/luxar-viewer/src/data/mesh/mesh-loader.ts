@@ -45,7 +45,7 @@ import { log, Modules } from '../../utils/log';
 import { ArrayDecoder, type ArrayMetadata, type ArrayRefRegistry } from '../array-decoder/decoder';
 import { colorComponentsOf, loadColorRanges } from '../loaders';
 import { RangeLoader } from '../loaders/spatial-query/range-loader';
-import { LoaderError } from '../scene-loader/nodes/load-leaf-error-dispatch';
+import { LoaderError, classifyLoaderError } from '../scene-loader/nodes/load-leaf-error-dispatch';
 import {
   MESH_ARRAY_NAMES,
   preflightMesh,
@@ -144,9 +144,12 @@ export class MeshLoader implements MeshDataLoader {
     try {
       [vertices, faces] = await Promise.all([open('vertices'), open('faces')]);
     } catch (error) {
-      // A mesh without both of these is not a mesh. Distinguish it from the
-      // optional arrays below, which are absent by design.
-      throw new LoaderError('Validation', this.path, error);
+      // A mesh without both of these is not a mesh. But the CAUSE decides the kind:
+      // `classifyLoaderError` tells a genuinely malformed store from a transient
+      // network failure, and mis-labelling the latter 'Validation' would have the
+      // failure record treat it as deterministic and never retry it. Matches how the
+      // sibling node loaders route raw errors.
+      throw new LoaderError(classifyLoaderError(error), this.path, error);
     }
 
     const handles: MeshArrayHandles = { vertices, faces };
@@ -298,7 +301,7 @@ export class MeshLoader implements MeshDataLoader {
     if (this.inFlight) return this.inFlight;
 
     const generation = this.generation;
-    this.inFlight = this.fetch(signal)
+    const mine: Promise<LoadedMeshData> = this.fetch(signal)
       .then((data) => {
         // Only publish if this loader has not been disposed since the fetch began.
         // The caller still receives the data — it is view-independent, so it is not
@@ -307,11 +310,20 @@ export class MeshLoader implements MeshDataLoader {
         return data;
       })
       .finally(() => {
-        // Cleared on failure too, so a retry can start a fresh fetch rather
-        // than re-awaiting the rejected promise forever.
-        this.inFlight = null;
+        // Clear the latch only if it is still OURS. `dispose()` nulls `inFlight`
+        // while this promise may still be pending, so a stale completion landing
+        // after a replacement load has begun would otherwise wipe the NEW load's
+        // latch — and from then until that fetch publishes, every `updateView` (a
+        // slice scrub, precisely the case the latch exists for) starts another
+        // whole-mesh fetch. Dispose-then-reload is a designed, tested path here, so
+        // this is a live race rather than a theoretical one.
+        //
+        // Cleared on failure too, so a retry can start a fresh fetch rather than
+        // re-awaiting the rejected promise forever.
+        if (this.inFlight === mine) this.inFlight = null;
       });
-    return this.inFlight;
+    this.inFlight = mine;
+    return mine;
   }
 
   /** Load the mesh. `viewState` is accepted for interface symmetry and unused. */

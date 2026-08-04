@@ -59,7 +59,14 @@ Three details in here are easy to get wrong and are pinned by tests:
   range, and rewrites topology instead of trapping. An out-of-range index
   **panics** the Rust kernel (`panic = "abort"`, so it takes down the whole WASM
   module, not one node) and silently corrupts the TypeScript one.
-- **The byte budget must charge what arrays DECODE to, not just what they store.**
+- **The byte budget adds three terms rather than checking them separately.** Stored
+  bytes, decoded bytes, and the largest single chunk buffer are SUMMED, because a
+  chunk buffer exists during decode alongside the arrays. Checking the chunk term
+  independently lets a store sit just under budget on both and peak near 2x — and
+  zarr v2's `chunks > shape` allowance makes that directly constructible. (An
+  oversized chunk is _also_ rejected on its own, so one array can never exceed the
+  ceiling even where the sum would fit.)
+- **The budget must charge what arrays DECODE to, not just what they store.**
   The stored side can be arbitrarily smaller than the allocation: a broadcast array
   stores one row and expands to `n_elements` rows, so a ~12-byte declaration can
   materialize gigabytes; every decoder-routed array yields a `Float32Array`, so a
@@ -122,6 +129,20 @@ vanishes.
 Two traps: swapping all three indices is a rotation and leaves winding
 _unchanged_; and reversing in the undecidable case is worse than doing nothing,
 because it flips the triangles that were already correct.
+
+## The in-flight latch is identity-guarded
+
+`load()` collapses concurrent callers onto one fetch. Clearing that latch on
+completion has to check that the latch is still _the completing promise's own_:
+`dispose()` nulls `inFlight` while the old promise may still be pending, so an
+unconditional clear lets a stale completion wipe a REPLACEMENT load's latch. From
+then until the new fetch publishes, every `updateView` — a slice scrub, precisely
+what the latch exists for — starts another whole-mesh fetch. Dispose-then-reload is
+a designed, tested path here, so this is a live race rather than a theoretical one.
+
+Note the two guards are separate and both needed: a generation token stops a stale
+completion _publishing_ into a disposed loader, and the identity check stops it
+_erasing the latch_. Fixing only the first leaves the duplicate fetches.
 
 ## Public surface
 

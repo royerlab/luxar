@@ -234,9 +234,24 @@ Four things in there are easy to get wrong, and each is pinned:
   The decoded term is also the only thing bounding `ndim`, which has no cap of its
   own — `n_vertices: 4, ndim: 2^26` passes every count check on a trivial stored
   footprint. The stored term still reads the *declared* dtype (an external `int64`
-  costs 8 bytes per index), and the per-chunk term stays separate because zarr v2
-  does not require `chunks <= shape`, so a 100-triangle array can declare a
-  268M-triangle chunk.
+  costs 8 bytes per index), and the largest single chunk buffer is SUMMED in rather
+  than checked alone: a chunk buffer exists during decode alongside the arrays, and
+  zarr v2's `chunks > shape` allowance makes "just under budget on both terms
+  separately, near 2x together" directly constructible. An oversized chunk is *also*
+  rejected on its own, so one array can never exceed the ceiling even where the sum
+  would fit.
+- **The in-flight latch is identity-guarded, and that is a separate fix from the
+  generation token.** `load()` collapses concurrent callers onto one fetch, and
+  `dispose()` nulls the latch while the old promise may still be pending — so an
+  unconditional clear on completion lets a stale settle wipe a REPLACEMENT load's
+  latch, after which every `updateView` (a slice scrub, precisely what the latch
+  exists for) starts another whole-mesh fetch. The generation token stops a stale
+  completion *publishing* into a disposed loader; the identity check stops it
+  *erasing the latch*. Fixing only the first leaves the duplicate fetches.
+- **An open failure is classified, not assumed deterministic.** Wrapping any
+  `vertices`/`faces` open error as `kind: 'Validation'` would have the failure record
+  treat a transient network fault as permanent and never retry it. Routed through
+  `classifyLoaderError`, matching the sibling node loaders.
 - **Shapes are checked logically, and "logical" has three sources.**
   `encoding.n_elements` (broadcast) first, then `encoding.original_shape` (LUT /
   per-channel quantization), then the stored shape. Consulting only

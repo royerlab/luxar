@@ -41,14 +41,52 @@ interface ArraySpec {
 // without statically known members, which `implements` rejects (TS2422). The
 // loader takes a `zarr.Readable` parameter, so assignability is checked there —
 // where it actually matters — rather than asserted here.
+/**
+ * Zarr metadata filenames; anything else under an array path is a chunk fetch.
+ *
+ * `zarr.json` is included because zarrita probes for zarr **v3** metadata before
+ * falling back to v2, so a v2 store legitimately sees one request per node opened.
+ */
+const META_KEYS = new Set(['.zarray', '.zattrs', '.zgroup', '.zmetadata', 'zarr.json']);
+
 class RecordingStore {
   /** Every key `get` was called with, in order. */
   readonly requested: string[] = [];
 
   constructor(private readonly entries: Map<string, Uint8Array>) {}
 
+  /**
+   * Per-ordinal control over `faces` CHUNK reads, so a test can order two
+   * concurrent loads deterministically instead of hoping microtask timing
+   * cooperates. `failFacesRead` rejects the nth such read; `parkFacesRead` returns a
+   * promise that never settles, holding that load in flight indefinitely.
+   */
+  failFacesRead: number | null = null;
+  parkFacesRead: number | null = null;
+  private facesReads = 0;
+
+  /** Reject any `get` for a key containing this substring, with this error. */
+  rejectKeyContaining: { needle: string; error: Error } | null = null;
+
   get(key: string): Promise<Uint8Array | undefined> {
     this.requested.push(key);
+    // A zarr v2 chunk key's last segment is DOT-SEPARATED coords (`0.0`), so "has no
+    // dot" does not identify one — the metadata allowlist is the reliable
+    // discriminator, exactly as `chunkRequests()` uses below.
+    const base = key.slice(key.lastIndexOf('/') + 1);
+    const isFacesChunk = key.includes('/faces/') && !META_KEYS.has(base);
+    if (isFacesChunk) {
+      this.facesReads += 1;
+      if (this.facesReads === this.failFacesRead) {
+        return Promise.reject(new Error('simulated read failure'));
+      }
+      if (this.facesReads === this.parkFacesRead) {
+        return new Promise(() => {}); // never settles
+      }
+    }
+    if (this.rejectKeyContaining && key.includes(this.rejectKeyContaining.needle)) {
+      return Promise.reject(this.rejectKeyContaining.error);
+    }
     return Promise.resolve(this.entries.get(key));
   }
 
@@ -66,8 +104,7 @@ class RecordingStore {
    * request per node it opens, with no chunk behind it.
    */
   chunkRequests(): string[] {
-    const META = new Set(['.zarray', '.zattrs', '.zgroup', '.zmetadata', 'zarr.json']);
-    return this.requested.filter((k) => !META.has(k.slice(k.lastIndexOf('/') + 1)));
+    return this.requested.filter((k) => !META_KEYS.has(k.slice(k.lastIndexOf('/') + 1)));
   }
 }
 
@@ -318,6 +355,38 @@ describe('MeshLoader — whole-node residency', () => {
     expect(store.chunkRequests().length).toBeGreaterThan(2);
   });
 
+  it('a stale completion must not erase the REPLACEMENT load\u2019s in-flight latch', async () => {
+    // The race #1240 named. `dispose()` nulls `inFlight` while the old promise may
+    // still be pending; if that promise's cleanup clears the latch unconditionally it
+    // wipes the NEW load's latch when it settles — and from then until the new fetch
+    // publishes, every updateView (a slice scrub, precisely what the latch exists
+    // for) starts another whole-mesh fetch.
+    //
+    // Driven by ORDINAL rather than by timing, because microtask ordering will not
+    // reliably keep the replacement in flight past the original's completion: read #1
+    // of `faces` fails fast (settling the original), and read #2 parks forever
+    // (holding the replacement in flight). Promise IDENTITY is then the observable —
+    // a third call must JOIN the replacement rather than start its own fetch.
+    const store = buildStore(meshAttrs(), tetArrays());
+    store.failFacesRead = 1;
+    store.parkFacesRead = 2;
+    const loader = makeLoader(store, meshAttrs());
+
+    const first = loader.loadMesh(VIEW);
+    loader.dispose(); // mid-flight, before `first` settles
+    const replacement = loader.loadMesh(VIEW);
+
+    await expect(first).rejects.toThrow(); // the stale completion runs its cleanup
+    const third = loader.updateView(VIEW);
+
+    // Same promise: the latch survived the stale settle. With an unconditional
+    // clear, `third` is a brand-new fetch instead.
+    expect(third).toBe(replacement);
+    // And no third `faces` read was issued.
+    expect(store.requested.filter((k) => k.endsWith('/faces/0.0'))).toHaveLength(2);
+    void replacement.catch(() => {}); // parked forever; keep it from surfacing
+  });
+
   it('does not repopulate its cache from a fetch that settles after dispose', async () => {
     // Without the generation token the in-flight completion writes `this.data` back
     // onto a torn-down loader, pinning a whole mesh nothing will ever read. The
@@ -445,6 +514,27 @@ describe('MeshLoader — Stage 1 rejects BEFORE any chunk is fetched', () => {
       attrs,
       /three DISTINCT dimensions/
     );
+  });
+
+  it('classifies a TRANSIENT open failure as Network, not Validation', async () => {
+    // A hardcoded 'Validation' would have the failure record treat a flaky network as
+    // deterministic and never retry it — the kind is persisted precisely so retry
+    // policy can tell the two apart. Matches how the sibling node loaders route raw
+    // errors through `classifyLoaderError`.
+    const attrs = meshAttrs();
+    const store = buildStore(attrs, tetArrays());
+    store.rejectKeyContaining = {
+      needle: '/faces/',
+      error: new Error('network request failed'),
+    };
+    let thrown: unknown;
+    try {
+      await makeLoader(store, attrs).loadMesh(VIEW);
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(LoaderError);
+    expect((thrown as LoaderError).kind).toBe('Network');
   });
 
   it('a missing faces array — a mesh without one is not a mesh', async () => {
