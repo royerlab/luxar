@@ -27,6 +27,8 @@ import {
   noticeUndecidableWinding,
   type ProjectedMeshData,
 } from '../../mesh/projection';
+import { computeTolerance } from '../../loaders';
+import { EXTEND_TO_ALL_TOLERANCE } from '../view-state/extend-tolerance';
 import type { LoadedMeshData, MeshMetadata, MeshViewState } from '../../../types/mesh';
 
 /** Everything `commitMeshGeometry` needs, staged and ready for GPU upload. */
@@ -51,17 +53,49 @@ const noticedWinding = new Set<string>();
 /**
  * Project loaded mesh data for the given view state and stage it for commit.
  *
- * @param attrs - The node's metadata; `normal_dims` supplies the winding frame and
- *   `double_sided` the authored side.
+ * @param attrs - The node's metadata; `normal_dims` supplies the winding frame,
+ *   `double_sided` the authored side, and `extend_to_all` the extended
+ *   (slice-invariant) dimensions whose membership slab is infinite.
  */
 export async function processMeshData(
   path: string,
   data: LoadedMeshData,
   viewState: MeshViewState,
-  attrs: Pick<MeshMetadata, 'normal_dims' | 'double_sided'>
+  attrs: Pick<MeshMetadata, 'normal_dims' | 'double_sided' | 'extend_to_all'>
 ): Promise<StagedMeshCommit> {
+  // The whole-triangle cull is a MEMBERSHIP gate applied after the node is fully
+  // resident, so it must run on the mesh's own per-dimension slab tolerance — the
+  // half-cell for a discrete hidden dim, `step × meshSlabTolerance` for a continuous
+  // one — NOT the navigation ride-along `viewState.tolerance` (`simpleDimsToViewState`'s
+  // flat 0.5 for discrete dims and the scene `maxRadius`, a point-radius quantity
+  // unrelated to a mesh's cell size, for continuous ones). Recompute it here, exactly
+  // as `processLinesData` does for the lines clipping slab. `computeTolerance('mesh', …)`
+  // always uses the membership role — mesh has no query path.
+  let tolerance = computeTolerance('mesh', viewState.displayDims, data.ndim, viewState.dimensions);
+
+  // Re-apply extend_to_all: an extended dim is slice-invariant, so its slab is
+  // infinite. Mirrors the lines processor — the fresh recompute above dropped the
+  // sentinel the derived view state carried.
+  const extendDims = attrs.extend_to_all ?? [];
+  if (extendDims.length > 0 && viewState.dimensions) {
+    const dims = viewState.dimensions;
+    tolerance = [...tolerance];
+    for (const dimName of extendDims) {
+      const dimIndex = dims.findIndex((d: { name?: string }) => d.name === dimName);
+      if (dimIndex >= 0 && dimIndex < tolerance.length) {
+        tolerance[dimIndex] = EXTEND_TO_ALL_TOLERANCE;
+      }
+    }
+  }
+
   const backend = await getMeshBackend(data.ndim);
-  const projected = projectMesh(data, viewState, attrs.normal_dims, attrs.double_sided, backend);
+  const projected = projectMesh(
+    data,
+    { ...viewState, tolerance },
+    attrs.normal_dims,
+    attrs.double_sided,
+    backend
+  );
 
   // Reported here rather than inside `resolveWinding`, which stays pure so it can
   // be called on every index build without a logging side effect.

@@ -1260,7 +1260,7 @@ export class SceneLoader {
     path: string,
     data: LoadedMeshData,
     viewState: MeshViewState,
-    attrs: Pick<MeshMetadata, 'normal_dims' | 'double_sided'>
+    attrs: Pick<MeshMetadata, 'normal_dims' | 'double_sided' | 'extend_to_all'>
   ): Promise<StagedMeshCommit> {
     return processMeshDataHelper(path, data, viewState, attrs);
   }
