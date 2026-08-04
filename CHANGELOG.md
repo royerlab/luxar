@@ -282,7 +282,8 @@ Four things in there are easy to get wrong, and each is pinned:
   a bare `n_elements`, and stops the branch hijacking an array carrying both keys.
 
 At the default budget the ceiling binds long before the vertex cap: a 3D float32
-mesh runs out of bytes at ~44.7M vertices against a cap of 134.2M. The cap is still
+mesh runs out of bytes at ~22.4M vertices against a cap of 134.2M — half the
+stored-only arithmetic, since the decoded term is charged too. The cap is still
 checked, and checked first, so a nonsensical declaration is told about pick-key
 aliasing rather than blamed for bytes.
 
@@ -355,6 +356,23 @@ alpha; `float32` binds natively. The index dtype keys on `vertexCount`, not the
 largest index present, because the index buffer is rebuilt on every slice change and
 a dtype that flips between rebuilds is the attribute-identity change WebGPU does not
 tolerate.
+
+**Camera framing was silently blind to a mesh.** `computeSceneBoundingBox` gates on
+`InstancedBufferGeometry`, which a mesh never is — so a mesh-only scene returned an
+empty box and zero primitives, and the camera framed nothing. That was a live bug
+introduced by making mesh drawable, and the file's own docstring had predicted it
+verbatim ("a geometry type rendered from a plain `BufferGeometry` still contributes
+nothing to the bounds — and therefore frames the camera wrongly, silently"). Mesh now
+has its own arm, counting DRAWN triangles from the index rather than the authored
+`n_faces`, so a culled mesh reports what is on screen. A prose warning was not enough
+to stop this happening once; the lesson is that only a compile error is.
+
+The monitor's scene tree gained its mesh arm too — it rendered a blank count while the
+other three showed one, even though the converter was already populating `faceCount`.
+And `loaderDisplay`'s `default:` became a `satisfies never` guard: it previously shared
+an arm with points, so a future `LoaderType` member would have been rendered as
+"points / pts" in silence. Mesh is the concrete case waiting on that, since
+`MeshLoader` has no `getMetrics` yet.
 
 Two exclusions confirmed rather than assumed. Mesh stays out of slice prefetch
 because `prefetch()` has exactly three hardcoded call sites and no fourth was added —

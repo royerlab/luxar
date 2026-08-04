@@ -84,6 +84,53 @@ describe('computeSceneBoundingBox', () => {
     expect(result.primitiveCount).toBe(0);
   });
 
+  it('aggregates a MESH, which renders a plain BufferGeometry not an instanced one', () => {
+    // Regression. The instanced arm requires an `InstancedBufferGeometry`, so a mesh
+    // matched no branch and a mesh-only scene returned an EMPTY box with zero
+    // primitives — the camera framed nothing, silently. The file's own docstring had
+    // predicted exactly this for "a geometry type rendered from a plain
+    // BufferGeometry", which is what mesh is.
+    const scene = new THREE.Scene();
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute(
+      'position',
+      new THREE.BufferAttribute(new Float32Array([0, 0, 0, 10, 0, 0, 0, 10, 0]), 3)
+    );
+    geometry.setIndex(new THREE.BufferAttribute(new Uint16Array([0, 1, 2]), 1));
+    const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial());
+    mesh.userData = { nodeType: 'mesh' };
+    scene.add(mesh);
+    scene.updateMatrixWorld(true);
+
+    const result = computeSceneBoundingBox(scene);
+    expect(result.box.isEmpty()).toBe(false);
+    expect(result.box.min.toArray()).toEqual([0, 0, 0]);
+    expect(result.box.max.toArray()).toEqual([10, 10, 0]);
+    // Counted in DRAWN TRIANGLES, read from the index — so a culled mesh reports what
+    // is actually on screen rather than its authored face count.
+    expect(result.primitiveCount).toBe(1);
+  });
+
+  it('skips a mesh whose index is empty (every triangle culled)', () => {
+    // The zero-primitive skip must still apply, or `box.isEmpty() === false` would stop
+    // meaning "there is visible geometry".
+    const scene = new THREE.Scene();
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute(
+      'position',
+      new THREE.BufferAttribute(new Float32Array([0, 0, 0, 10, 0, 0, 0, 10, 0]), 3)
+    );
+    geometry.setIndex(new THREE.BufferAttribute(new Uint16Array([]), 1));
+    const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial());
+    mesh.userData = { nodeType: 'mesh' };
+    scene.add(mesh);
+    scene.updateMatrixWorld(true);
+
+    const result = computeSceneBoundingBox(scene);
+    expect(result.primitiveCount).toBe(0);
+    expect(result.box.isEmpty()).toBe(true);
+  });
+
   it('aggregates Points bounds and counts instances as primitives', () => {
     const scene = new THREE.Scene();
     const geometry = new THREE.InstancedBufferGeometry();

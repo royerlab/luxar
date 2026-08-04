@@ -104,7 +104,8 @@ Three details in here are easy to get wrong and are pinned by tests:
   like a 1-row array.
 
 At the default 512 MiB budget the **budget binds long before the vertex cap**: a
-3D float32 mesh runs out of bytes at ~44.7M vertices, well under 2^27 (134.2M).
+3D float32 mesh runs out of bytes at ~22.4M vertices, well under 2^27 (134.2M) —
+half the stored-only arithmetic, because the decoded term is charged as well.
 The cap is still checked, and checked first, so a nonsensical declaration gets the
 message that names the real problem (pick-key aliasing) rather than blaming bytes.
 

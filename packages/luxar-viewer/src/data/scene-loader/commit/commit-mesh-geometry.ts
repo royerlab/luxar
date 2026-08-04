@@ -28,6 +28,7 @@
 import type * as THREE from 'three';
 import { log, Modules } from '../../../utils/log';
 import { updateMeshGeometry } from '../../../rendering/mesh-geometry';
+import { invalidateRenderObjectFor } from './invalidate-render-object';
 import { applyMeshSide } from '../../../rendering/node-factory/create-mesh-node';
 import { stampLoadedViewVersion } from './stamp-view-version';
 import { isMeshUserData } from '../../../types/mesh';
@@ -73,7 +74,7 @@ export function commitMeshGeometry(
   const object = found as THREE.Mesh;
 
   const { data, projected } = staged;
-  updateMeshGeometry(object.geometry, {
+  const attributesRebuilt = updateMeshGeometry(object.geometry, {
     position: projected.position,
     indices: projected.indices,
     colors: data.colors,
@@ -85,6 +86,13 @@ export function commitMeshGeometry(
   // reflection keeps single-sided (the index post-pass restored winding), while an
   // undecidable frame forces double-sided regardless of what was authored.
   applyMeshSide(object, projected.side);
+
+  // A first-commit vertex-attribute rebind (position grow / color install) leaves
+  // three's cached WebGPU RenderObject pointing at the old vertex buffers; evict it
+  // so the next draw rebuilds from the current attributes. WebGPU-gated — a no-op on
+  // the classic WebGL backend and in headless contexts. Same contract as the
+  // points/lines/gsplats commits. A pure slice move rebinds nothing, so this is skipped.
+  if (attributesRebuilt) invalidateRenderObjectFor(object);
 
   object.userData.visibleTriangleCount = projected.visibleFaceCount;
   object.userData.visibleVertexCount = projected.visibleVertexCount;
