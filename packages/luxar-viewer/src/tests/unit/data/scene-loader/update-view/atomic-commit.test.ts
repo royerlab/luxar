@@ -8,7 +8,7 @@
  *      outer `finally` sweep covers beginFrame throws) —
  *      idempotent end() lets these overlap safely. This is the "belt-
  *      and-braces" guard the inline comment names.
- *   2. `markPickingDirty()` runs ONLY if at least one of the three
+ *   2. `markPickingDirty()` runs ONLY if at least one of the four
  *      staged arrays is non-empty — the pick-cache invalidation is
  *      otherwise a no-op cost. It ALSO runs on a partially-failing
  *      pass (successful sibling commits changed geometry) before the
@@ -28,6 +28,7 @@ import type { UpdateSession } from '../../../../../profiling/update-profiler';
 import type { LoadedPointsData } from '../../../../../data/data-loader-types';
 import type { StagedLinesCommit } from '../../../../../data/scene-loader/process/data-processor-lines';
 import type { StagedGSplatsCommit } from '../../../../../data/scene-loader/process/data-processor-gsplats';
+import type { StagedMeshCommit } from '../../../../../data/scene-loader/process/data-processor-mesh';
 
 // ============================================================================
 // Local fixtures
@@ -80,11 +81,22 @@ function makeGSplatsStaged(
   }));
 }
 
+function makeMeshStaged(
+  count: number,
+  withNulls: number[] = []
+): AtomicCommitInput<StagedMeshCommit>[] {
+  return Array.from({ length: count }, (_, i) => ({
+    staged: withNulls.includes(i) ? null : ({ path: `/m${i}` } as unknown as StagedMeshCommit),
+    session: makeSession(),
+  }));
+}
+
 function makeCtx(overrides: Partial<AtomicCommitCtx> = {}): AtomicCommitCtx & {
   spies: {
     updatePointsGeometry: ReturnType<typeof vi.fn>;
     commitLinesGeometry: ReturnType<typeof vi.fn>;
     commitGSplatsGeometry: ReturnType<typeof vi.fn>;
+    commitMeshGeometry: ReturnType<typeof vi.fn>;
     markPickingDirty: ReturnType<typeof vi.fn>;
     beginFrame: ReturnType<typeof vi.fn>;
   };
@@ -92,6 +104,7 @@ function makeCtx(overrides: Partial<AtomicCommitCtx> = {}): AtomicCommitCtx & {
   const updatePointsGeometry = vi.fn();
   const commitLinesGeometry = vi.fn();
   const commitGSplatsGeometry = vi.fn();
+  const commitMeshGeometry = vi.fn();
   const markPickingDirty = vi.fn();
   const beginFrame = vi.fn();
 
@@ -101,6 +114,7 @@ function makeCtx(overrides: Partial<AtomicCommitCtx> = {}): AtomicCommitCtx & {
     updatePointsGeometry,
     commitLinesGeometry,
     commitGSplatsGeometry,
+    commitMeshGeometry,
     ...overrides,
   };
   return Object.assign(ctx, {
@@ -108,6 +122,7 @@ function makeCtx(overrides: Partial<AtomicCommitCtx> = {}): AtomicCommitCtx & {
       updatePointsGeometry,
       commitLinesGeometry,
       commitGSplatsGeometry,
+      commitMeshGeometry,
       markPickingDirty,
       beginFrame,
     },
@@ -123,14 +138,16 @@ describe('runAtomicCommit — happy path', () => {
     const points = makePointsStaged(3);
     const lines = makeLinesStaged(2);
     const gsplats = makeGSplatsStaged(1);
+    const mesh = makeMeshStaged(2);
     const ctx = makeCtx();
 
-    runAtomicCommit(points, lines, gsplats, ctx);
+    runAtomicCommit(points, lines, gsplats, mesh, ctx);
 
     expect(ctx.spies.beginFrame).toHaveBeenCalledTimes(1);
     expect(ctx.spies.updatePointsGeometry).toHaveBeenCalledTimes(3);
     expect(ctx.spies.commitLinesGeometry).toHaveBeenCalledTimes(2);
     expect(ctx.spies.commitGSplatsGeometry).toHaveBeenCalledTimes(1);
+    expect(ctx.spies.commitMeshGeometry).toHaveBeenCalledTimes(2);
     expect(ctx.spies.markPickingDirty).toHaveBeenCalledTimes(1);
   });
 
@@ -138,7 +155,7 @@ describe('runAtomicCommit — happy path', () => {
     const points = makePointsStaged(2);
     const ctx = makeCtx();
 
-    runAtomicCommit(points, [], [], ctx);
+    runAtomicCommit(points, [], [], [], ctx);
 
     expect(ctx.spies.updatePointsGeometry).toHaveBeenNthCalledWith(
       1,
@@ -160,7 +177,7 @@ describe('runAtomicCommit — gpuBufferPool null', () => {
     const ctx = makeCtx({ gpuBufferPool: null });
     const points = makePointsStaged(1);
 
-    runAtomicCommit(points, [], [], ctx);
+    runAtomicCommit(points, [], [], [], ctx);
 
     expect(ctx.spies.beginFrame).not.toHaveBeenCalled();
     expect(ctx.spies.updatePointsGeometry).toHaveBeenCalledTimes(1);
@@ -169,12 +186,22 @@ describe('runAtomicCommit — gpuBufferPool null', () => {
 });
 
 describe('runAtomicCommit — empty input arrays', () => {
-  it('does NOT call markPickingDirty when all three arrays are empty', () => {
+  it('does NOT call markPickingDirty when all four arrays are empty', () => {
     const ctx = makeCtx();
-    runAtomicCommit([], [], [], ctx);
+    runAtomicCommit([], [], [], [], ctx);
     expect(ctx.spies.markPickingDirty).not.toHaveBeenCalled();
     // beginFrame still fires (no guard around it in the helper).
     expect(ctx.spies.beginFrame).toHaveBeenCalledTimes(1);
+  });
+
+  it('calls markPickingDirty when ONLY mesh is staged (pins the meshStaged.length clause)', () => {
+    // A mesh-only pass changes geometry, so the pick cache must go stale — the
+    // `markPickingDirty` OR-condition must include meshStaged, not just the
+    // other three arrays.
+    const ctx = makeCtx();
+    runAtomicCommit([], [], [], makeMeshStaged(1), ctx);
+    expect(ctx.spies.commitMeshGeometry).toHaveBeenCalledTimes(1);
+    expect(ctx.spies.markPickingDirty).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -183,7 +210,7 @@ describe('runAtomicCommit — null staged entries', () => {
     const points = makePointsStaged(3, [1]); // index 1 has staged: null
     const ctx = makeCtx();
 
-    runAtomicCommit(points, [], [], ctx);
+    runAtomicCommit(points, [], [], [], ctx);
 
     // Only 2 commits (indices 0 and 2).
     expect(ctx.spies.updatePointsGeometry).toHaveBeenCalledTimes(2);
@@ -195,13 +222,14 @@ describe('runAtomicCommit — null staged entries', () => {
 });
 
 describe('runAtomicCommit — synchronous throw mid-commit', () => {
-  it('fault isolation: a throwing points commit does NOT starve lines/gsplats siblings; errors surface as ONE AggregateError', () => {
+  it('fault isolation: a throwing points commit does NOT starve lines/gsplats/mesh siblings; errors surface as ONE AggregateError', () => {
     const points = makePointsStaged(3);
     const lines = makeLinesStaged(2);
     const gsplats = makeGSplatsStaged(1);
+    const mesh = makeMeshStaged(1);
     const ctx = makeCtx();
     // Commit /p2 throws — the remaining points and the ENTIRE lines +
-    // gsplats loops must still run (their staged data is valid; skipping
+    // gsplats + mesh loops must still run (their staged data is valid; skipping
     // them would leave the whole frame stale), and the error re-surfaces
     // as an AggregateError AFTER the pass completes.
     ctx.spies.updatePointsGeometry.mockImplementation((path: string) => {
@@ -210,7 +238,7 @@ describe('runAtomicCommit — synchronous throw mid-commit', () => {
 
     let thrown: unknown;
     try {
-      runAtomicCommit(points, lines, gsplats, ctx);
+      runAtomicCommit(points, lines, gsplats, mesh, ctx);
     } catch (err) {
       thrown = err;
     }
@@ -222,9 +250,10 @@ describe('runAtomicCommit — synchronous throw mid-commit', () => {
     expect(ctx.spies.updatePointsGeometry).toHaveBeenCalledTimes(3);
     expect(ctx.spies.commitLinesGeometry).toHaveBeenCalledTimes(2);
     expect(ctx.spies.commitGSplatsGeometry).toHaveBeenCalledTimes(1);
+    expect(ctx.spies.commitMeshGeometry).toHaveBeenCalledTimes(1);
 
     // Every session ends: per-iteration finally AND the outer sweep → 2 each.
-    for (const s of [...points, ...lines, ...gsplats]) {
+    for (const s of [...points, ...lines, ...gsplats, ...mesh]) {
       expect((s.session.end as ReturnType<typeof vi.fn>).mock.calls.length).toBe(2);
     }
   });
@@ -236,7 +265,7 @@ describe('runAtomicCommit — synchronous throw mid-commit', () => {
       if (path === '/p0') throw new Error('boom');
     });
 
-    expect(() => runAtomicCommit(points, [], [], ctx)).toThrow(AggregateError);
+    expect(() => runAtomicCommit(points, [], [], [], ctx)).toThrow(AggregateError);
     // /p1 committed, so the cached pick buffer is stale — the invalidation
     // must run BEFORE the aggregate error re-surfaces.
     expect(ctx.spies.markPickingDirty).toHaveBeenCalledTimes(1);
@@ -262,7 +291,7 @@ describe('runAtomicCommit — gpuBufferPool.beginFrame throws', () => {
       gpuBufferPool: { beginFrame } as unknown as AtomicCommitCtx['gpuBufferPool'],
     });
 
-    expect(() => runAtomicCommit(points, lines, gsplats, ctx)).toThrow('beginFrame boom');
+    expect(() => runAtomicCommit(points, lines, gsplats, [], ctx)).toThrow('beginFrame boom');
 
     // No commits ran (the throw preceded the per-type loops).
     expect(ctx.spies.updatePointsGeometry).not.toHaveBeenCalled();
@@ -305,6 +334,7 @@ describe('runAtomicCommit — session.end idempotency contract', () => {
       [{ staged: { path: '/p', data: {} as LoadedPointsData }, session }],
       [],
       [],
+      [],
       ctx
     );
 
@@ -318,17 +348,19 @@ describe('runAtomicCommit — superseded (signal aborted)', () => {
     const points = makePointsStaged(3);
     const lines = makeLinesStaged(2);
     const gsplats = makeGSplatsStaged(1);
+    const mesh = makeMeshStaged(1);
     const ac = new AbortController();
     ac.abort();
     const ctx = makeCtx({ signal: ac.signal });
 
-    runAtomicCommit(points, lines, gsplats, ctx);
+    runAtomicCommit(points, lines, gsplats, mesh, ctx);
 
     // No geometry mutation reaches the GPU for a superseded update.
     expect(ctx.spies.beginFrame).not.toHaveBeenCalled();
     expect(ctx.spies.updatePointsGeometry).not.toHaveBeenCalled();
     expect(ctx.spies.commitLinesGeometry).not.toHaveBeenCalled();
     expect(ctx.spies.commitGSplatsGeometry).not.toHaveBeenCalled();
+    expect(ctx.spies.commitMeshGeometry).not.toHaveBeenCalled();
     expect(ctx.spies.markPickingDirty).not.toHaveBeenCalled();
 
     // G5: every opened profiler session is still closed exactly twice
@@ -343,6 +375,9 @@ describe('runAtomicCommit — superseded (signal aborted)', () => {
     for (const g of gsplats) {
       expect((g.session.end as ReturnType<typeof vi.fn>).mock.calls.length).toBe(2);
     }
+    for (const m of mesh) {
+      expect((m.session.end as ReturnType<typeof vi.fn>).mock.calls.length).toBe(2);
+    }
   });
 
   it('commits normally when the signal is present but NOT aborted', () => {
@@ -350,7 +385,7 @@ describe('runAtomicCommit — superseded (signal aborted)', () => {
     const ac = new AbortController(); // not aborted
     const ctx = makeCtx({ signal: ac.signal });
 
-    runAtomicCommit(points, [], [], ctx);
+    runAtomicCommit(points, [], [], [], ctx);
 
     expect(ctx.spies.beginFrame).toHaveBeenCalledTimes(1);
     expect(ctx.spies.updatePointsGeometry).toHaveBeenCalledTimes(2);

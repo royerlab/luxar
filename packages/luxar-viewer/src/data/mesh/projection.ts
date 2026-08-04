@@ -246,6 +246,23 @@ export function projectMesh(
 
   const winding = resolveWinding(displayDims, normalDims, doubleSided);
 
+  // A discrete nd_transform maps this world slice to no local grid point on some
+  // hidden dimension, so nothing in this node belongs to the slice. Mirror the
+  // spatial-index loaders (points/lines/gsplats), which return an empty query for
+  // `noPreimage` rather than culling against the fractional inverse position — the
+  // latter would leak triangles from a neighbouring category. See ViewState.noPreimage.
+  if (viewState.noPreimage) {
+    return {
+      position,
+      indices: new Uint32Array(0),
+      visibleFaceCount: 0,
+      visibleVertexCount: 0,
+      side: winding.side,
+      usedFastPath: false,
+      undecidableReason: winding.undecidableReason,
+    };
+  }
+
   // §5.5 fast path: with no hidden dimensions the mask is trivially all-ones, so
   // the cull is skipped and the index buffer is used verbatim.
   //
