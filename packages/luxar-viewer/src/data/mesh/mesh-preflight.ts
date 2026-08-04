@@ -25,8 +25,10 @@
  * - **`n_vertices <= MAX_MESH_VERTICES`** — above `2^27` the pick vote key
  *   aliases across nodes (§6.5). Refused before allocation, not after a
  *   multi-gigabyte fetch.
- * - **Byte budget** — the summed declared footprint AND each array's largest
- *   single per-chunk decode allocation, both against `MESH_DECODE_BUDGET_BYTES`.
+ * - **Byte budget** — stored bytes, decoded bytes and the largest single chunk
+ *   allocation, SUMMED against `MESH_DECODE_BUDGET_BYTES`. Charged against the array
+ *   whose bytes are actually fetched, which for an `array_ref` is the TARGET, not the
+ *   `(0, k)` stub that points at it.
  * - **Shape and dtype cross-checks** — against `n_vertices`/`n_faces`/`ndim`
  *   and the §3.2 array table.
  * - **`normal_dims` well-formedness** — 3 distinct integers in `[0, ndim)`.
@@ -65,11 +67,12 @@
  * @module data/mesh/mesh-preflight
  */
 
-import type * as zarr from '../zarr';
+import * as zarr from '../zarr';
 import { MAX_MESH_VERTICES, MESH_DECODE_BUDGET_BYTES } from '../../config/constants';
 import type { ArrayMetadata } from '../array-decoder/decoder';
 import { LoaderError } from '../scene-loader/nodes/load-leaf-error-dispatch';
 import type { MeshMetadata } from '../../types/mesh';
+import type { EncodingName } from '../../types/format-contract';
 
 /**
  * Metadata-only handles for the arrays a mesh node declares.
@@ -248,6 +251,157 @@ function logicalLayout(array: zarr.Array<zarr.DataType, zarr.Readable>): Logical
   return { rows: total / components, components, count: total };
 }
 
+/**
+ * Encoding names the budget knows how to charge, keyed so a NEW contract encoding is a
+ * compile error here rather than a silent bypass.
+ *
+ * This exists because the budget was bypassed four times by one category of mistake:
+ * *the bytes the loader fetches are not the bytes this handle declares.* `broadcasted`
+ * expands a `(1, k)` stub to `n_elements` rows; a narrow dtype widens 4x on decode;
+ * an unbounded `ndim` inflates the logical count; and `array_ref` reads a different
+ * array entirely. Each was fixed as an instance, and a fourth still appeared.
+ *
+ * The root cause was that an unrecognised encoding fell through to "use the stored
+ * shape" — fail-OPEN. So the set is now closed and explicit:
+ *
+ * - `handledByLayout` — the logical size is recoverable from the encoding's own attrs
+ *   (`n_elements` / `original_shape`) or from the stored shape, and the fetched bytes
+ *   are this array's own.
+ * - `followsRef` — the fetched bytes belong to another array; the chain is walked.
+ *
+ * Anything absent is REFUSED. A future encoder that changes the stored-vs-logical
+ * relationship therefore fails the node loudly instead of slipping past the ceiling,
+ * which is the whole point of having a ceiling.
+ */
+const ENCODING_BUDGET_KIND: Record<EncodingName, 'handledByLayout' | 'followsRef'> = {
+  none: 'handledByLayout',
+  broadcasted: 'handledByLayout',
+  array_ref: 'followsRef',
+  lut_uint8: 'handledByLayout',
+  lut_uint16: 'handledByLayout',
+  rgb_uint8: 'handledByLayout',
+  rgb_uint16: 'handledByLayout',
+  bounded_scalar_uint8: 'handledByLayout',
+  bounded_scalar_uint16: 'handledByLayout',
+  geolog_scalar_uint8: 'handledByLayout',
+  geolog_scalar_uint16: 'handledByLayout',
+  log_scalar_uint8: 'handledByLayout',
+  log_scalar_uint16: 'handledByLayout',
+  linear_perchannel_u8: 'handledByLayout',
+  linear_perchannel_u16: 'handledByLayout',
+  log_perchannel_u8: 'handledByLayout',
+  log_perchannel_u16: 'handledByLayout',
+  signed_log_perchannel_u8: 'handledByLayout',
+  signed_log_perchannel_u16: 'handledByLayout',
+  geolog_perchannel_u8: 'handledByLayout',
+  geolog_perchannel_u16: 'handledByLayout',
+  float16: 'handledByLayout',
+  float32: 'handledByLayout',
+  uint8: 'handledByLayout',
+  uint16: 'handledByLayout',
+  uint32: 'handledByLayout',
+  // The INDEX encoder emits this for faces when an index needs 64 bits.
+  uint64: 'handledByLayout',
+};
+
+/**
+ * Refuse an encoding the budget cannot account for.
+ *
+ * Fail-closed on purpose — see {@link ENCODING_BUDGET_KIND}. An absent `encoding` attr
+ * is fine (an unencoded array), but a NAMED encoding outside the contract's vocabulary
+ * means this store was written by something whose stored-vs-logical relationship we
+ * have not reasoned about.
+ */
+function assertBudgetableEncoding(
+  path: string,
+  name: string,
+  array: zarr.Array<zarr.DataType, zarr.Readable>
+): void {
+  const encodingName = ((array.attrs ?? {}) as unknown as ArrayMetadata).encoding?.name;
+  if (encodingName === undefined) return;
+  if (!Object.hasOwn(ENCODING_BUDGET_KIND, encodingName)) {
+    rejectMesh(
+      path,
+      `${name} declares encoding '${encodingName}', which the byte budget cannot ` +
+        'account for. Refused rather than admitted, because an encoding whose ' +
+        'stored-to-decoded relationship is unknown can bypass the per-node ceiling.'
+    );
+  }
+}
+
+/**
+ * Maximum `array_ref` hops the preflight will follow before refusing.
+ *
+ * A target may itself be encoded — including as another `array_ref` — and
+ * `ArrayDecoder.decodeArrayRef` recurses without a depth limit of its own. Three
+ * hops is far more than the writer ever produces (it emits at most one level of
+ * indirection), so this exists to bound a hostile or cyclic store rather than to
+ * accommodate a real one.
+ */
+const MAX_ARRAY_REF_HOPS = 3;
+
+/**
+ * Follow an `array_ref` chain, metadata-only, and return the array whose bytes are
+ * actually fetched.
+ *
+ * The referring array is a STUB — the Python encoder writes it at `(0, k)` and puts
+ * the real shape in `encoding.original_shape` — so budgeting the handle the loader
+ * opened charges ~48 bytes and says nothing about what gets read. `ArrayDecoder`
+ * resolves `encoding.target` against the store root and reads that array in full, so
+ * the budget has to follow the same path. It only *warns* on a length mismatch; the
+ * throw comes from Stage 2, i.e. after the allocation the budget exists to prevent.
+ *
+ * Metadata-only throughout: `zarr.open(..., { kind: 'array' })` reads `.zarray` and
+ * `.zattrs` and no chunk. Cycles are bounded by both the hop limit and a seen-set, so
+ * a store whose target points back at itself is refused rather than hanging.
+ */
+async function resolveRefTarget(
+  path: string,
+  name: string,
+  array: zarr.Array<zarr.DataType, zarr.Readable>,
+  storeRoot: zarr.Location<zarr.Readable> | undefined
+): Promise<zarr.Array<zarr.DataType, zarr.Readable>> {
+  const seen = new Set<string>();
+  let current = array;
+  for (let hop = 0; hop <= MAX_ARRAY_REF_HOPS; hop++) {
+    const encoding = ((current.attrs ?? {}) as unknown as ArrayMetadata).encoding;
+    if (encoding?.name !== 'array_ref') return current;
+
+    const target = encoding.target;
+    if (typeof target !== 'string' || target.length === 0) {
+      rejectMesh(path, `${name} declares an array_ref with no target path.`);
+    }
+    if (!storeRoot) {
+      rejectMesh(
+        path,
+        `${name} is an array_ref to '${target}', but no store root is available to ` +
+          'resolve it. The budget cannot bound what would be fetched, so the node is ' +
+          'refused rather than admitted blind.'
+      );
+    }
+    if (seen.has(target)) {
+      rejectMesh(path, `${name} array_ref chain revisits '${target}' — the store is cyclic.`);
+    }
+    seen.add(target);
+    if (hop === MAX_ARRAY_REF_HOPS) {
+      rejectMesh(
+        path,
+        `${name} array_ref chain exceeds ${MAX_ARRAY_REF_HOPS} hops (via '${target}').`
+      );
+    }
+    try {
+      current = await zarr.open(storeRoot.resolve(target), { kind: 'array' });
+    } catch (error) {
+      rejectMesh(
+        path,
+        `${name} is an array_ref to '${target}', which could not be opened: ` +
+          `${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
+  return current;
+}
+
 /** Human-readable byte count for error messages. */
 function mib(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
@@ -276,11 +430,12 @@ function rejectMesh(path: string, message: string): never {
  * @throws LoaderError `kind: 'Validation'` on any rejection, having fetched no
  *   chunk data.
  */
-export function preflightMesh(
+export async function preflightMesh(
   path: string,
   attrs: MeshMetadata,
-  arrays: MeshArrayHandles
-): MeshPreflightResult {
+  arrays: MeshArrayHandles,
+  storeRoot?: zarr.Location<zarr.Readable>
+): Promise<MeshPreflightResult> {
   // --- (a) counts, and the vote-key cap -------------------------------------
   const nVertices = attrs.n_vertices;
   const nFaces = attrs.n_faces;
@@ -348,15 +503,27 @@ export function preflightMesh(
   for (const [slot, array] of Object.entries(arrays)) {
     if (!array) continue;
     const name = MESH_ARRAY_NAMES[slot as keyof MeshArrayHandles] ?? slot;
-    const parsed = parseDtype(String(array.dtype));
+
+    // The array whose BYTES are fetched, which is not this handle when the encoding
+    // is an `array_ref`: the referring array is a `(0, k)` stub, so charging it
+    // budgets ~48 bytes for a read that can pull gigabytes. Metadata-only.
+    assertBudgetableEncoding(path, name, array);
+    const fetched = await resolveRefTarget(path, name, array, storeRoot);
+    // The target may carry its own encoding, which must be budgetable too.
+    if (fetched !== array) assertBudgetableEncoding(path, name, fetched);
+
+    const parsed = parseDtype(String(fetched.dtype));
     if (!parsed) {
-      rejectMesh(path, `${name} has an unrecognised dtype '${String(array.dtype)}'`);
+      rejectMesh(path, `${name} has an unrecognised dtype '${String(fetched.dtype)}'`);
     }
 
-    const stored = elementCount(array.shape);
+    const stored = elementCount(fetched.shape);
     if (stored === null) {
-      rejectMesh(path, `${name} declares an unusable shape [${String(array.shape)}]`);
+      rejectMesh(path, `${name} declares an unusable shape [${String(fetched.shape)}]`);
     }
+    // The LOGICAL layout still comes from the referring array: that is where
+    // `original_shape` records what the values mean for this node, and it is what
+    // the decoder materializes. The stored/chunk terms come from the target.
     const layout = logicalLayout(array);
     if (layout === null) {
       rejectMesh(path, `${name} declares an unusable logical shape`);
@@ -369,9 +536,9 @@ export function preflightMesh(
     // shape-only budget. Zarr allocates chunk-shaped buffers, and edge chunks
     // are padded to the full chunk shape, so the declared chunk shape IS the
     // allocation.
-    const perChunk = elementCount(array.chunks);
+    const perChunk = elementCount(fetched.chunks);
     if (perChunk === null) {
-      rejectMesh(path, `${name} declares an unusable chunk shape [${String(array.chunks)}]`);
+      rejectMesh(path, `${name} declares an unusable chunk shape [${String(fetched.chunks)}]`);
     }
     const chunkBytes = perChunk * parsed.itemSize;
     if (chunkBytes > maxChunkBytes) maxChunkBytes = chunkBytes;
@@ -379,7 +546,7 @@ export function preflightMesh(
       rejectMesh(
         path,
         `${name} declares a single chunk of ${mib(chunkBytes)} (chunks ` +
-          `[${String(array.chunks)}], dtype ${String(array.dtype)}), over the ` +
+          `[${String(fetched.chunks)}], dtype ${String(fetched.dtype)}), over the ` +
           `${mib(MESH_DECODE_BUDGET_BYTES)} per-node budget. One chunk is one ` +
           "allocation, so this is refused regardless of the array's total size."
       );

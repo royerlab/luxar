@@ -240,6 +240,24 @@ Four things in there are easy to get wrong, and each is pinned:
   separately, near 2x together" directly constructible. An oversized chunk is *also*
   rejected on its own, so one array can never exceed the ceiling even where the sum
   would fit.
+- **The budget fails CLOSED on an encoding it does not recognise.** Four separate
+  bypasses turned out to be one category — *the bytes the loader fetches are not the
+  bytes the handle declares* — and fixing them one at a time kept yielding a fifth,
+  because an unrecognised encoding fell through to "use the stored shape". The budget
+  now keys a `Record<EncodingName, ...>` off the contract's `ENCODING_NAMES`, so adding
+  a contract encoding is a compile error at the mesh preflight and an unknown one at
+  runtime is refused rather than admitted. It paid for itself on first compile by
+  catching a missing `uint64` entry.
+- **An `array_ref` is budgeted at its TARGET, not at the stub pointing to it.**
+  `ArrayDecoder` resolves `encoding.target` against the store root and reads that array
+  in full, while the referring array is a `(0, k)` stub — so a 48-byte declaration could
+  pull an unbounded array, and the throw only came from Stage 2, after the allocation.
+  Stage 1 now follows the chain metadata-only, with a hop limit and a seen-set so a
+  cyclic store is refused rather than hung. Refusing `array_ref` outright was not an
+  option: `normals`/`colors`/`scalars` are written with dedup ON, so meshes sharing a
+  colour array legitimately produce a ref. This is the same class as the broadcast
+  bypass above and was missed by that fix — which is why the budget is now expressed as
+  "charge the array whose bytes are fetched" rather than as a list of encodings.
 - **The in-flight latch is identity-guarded, and that is a separate fix from the
   generation token.** `load()` collapses concurrent callers onto one fetch, and
   `dispose()` nulls the latch while the old promise may still be pending — so an
