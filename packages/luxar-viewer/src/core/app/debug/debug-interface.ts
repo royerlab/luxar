@@ -136,8 +136,9 @@ export function installDebugInterface(ports: InstallDebugInterfacePorts): void {
       ports.animationController.startAnimation();
     },
 
-    // Effective cross-node draw order of every data mesh, sorted by
-    // renderOrder ascending (then THREE's stable scene-graph order). Each
+    // Effective cross-node draw order of every data mesh: opaque bucket
+    // first (THREE renders its whole opaque list before the transparent
+    // list), then renderOrder ascending within each bucket. Each
     // entry carries the blending bucket (opaque/transparent), depthWrite,
     // the resolved renderOrder, and the element count — enough to diagnose a
     // compositing-order bug (e.g. a backdrop drawn after the content in front

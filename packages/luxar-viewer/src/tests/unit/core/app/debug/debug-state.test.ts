@@ -510,8 +510,8 @@ describe('computeDrawOrder', () => {
     );
 
     const order = computeDrawOrder(scene);
-    // Sorted by renderOrder ascending → the opaque backdrop (0) precedes the
-    // transparent cloud (1).
+    // Opaque bucket first, then renderOrder → the opaque backdrop precedes
+    // the transparent cloud.
     expect(order).toEqual([
       { path: '/earth', bucket: 'opaque', depthWrite: true, renderOrder: 0, elements: 4200 },
       {
@@ -522,6 +522,36 @@ describe('computeDrawOrder', () => {
         elements: 15_000_000,
       },
     ]);
+  });
+
+  it('reports an opaque mesh before transparent ones even when its renderOrder is higher', () => {
+    // THREE renders its whole opaque list before the transparent list;
+    // renderOrder only orders meshes WITHIN a list. An opaque mesh can carry
+    // a stale positive renderOrder (assigned while it was in a sorted mode,
+    // never reset on a live blending-mode switch) — the report must still
+    // place it first, or the tool misdiagnoses the very compositing bug it
+    // exists to surface.
+    const scene = new THREE.Scene();
+    scene.add(
+      makeDataMesh('gsplats', {
+        name: '/cloud',
+        elements: 100,
+        transparent: true,
+        depthWrite: false,
+        renderOrder: 0,
+      })
+    );
+    scene.add(
+      makeDataMesh('points', {
+        name: '/earth',
+        elements: 10,
+        transparent: false,
+        depthWrite: true,
+        renderOrder: 5, // stale, from before a switch to opaque
+      })
+    );
+
+    expect(computeDrawOrder(scene).map((e) => e.path)).toEqual(['/earth', '/cloud']);
   });
 
   it('omits hidden meshes (their renderOrder is stale, never reset)', () => {

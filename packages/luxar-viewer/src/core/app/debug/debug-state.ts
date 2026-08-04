@@ -17,6 +17,7 @@
 
 import * as THREE from 'three';
 import type { SimpleDims } from '../../../types/dims';
+import { LOADER_TYPES, type LoaderTypeName } from '../../../types/format-contract';
 
 /** Per-mesh point-cloud info reported by getState(). */
 export interface PointCloudInfo {
@@ -116,11 +117,15 @@ export interface DebugState {
 export interface DrawOrderEntry {
   /** Scene-graph path / name of the mesh (node-factory stamps `mesh.name = path`). */
   path: string;
-  /** Blending bucket: `'transparent'` sorts, `'opaque'` is drawn depth-first. */
+  /**
+   * Blending bucket: `'transparent'` sorts, `'opaque'` is drawn depth-first.
+   * THREE renders the whole opaque list before the transparent list, so the
+   * bucket outranks `renderOrder` in the effective draw order.
+   */
   bucket: 'opaque' | 'transparent';
   /** Whether this mesh writes depth (`material.depthWrite`). */
   depthWrite: boolean;
-  /** Resolved `mesh.renderOrder` (compared ascending → lowest drawn first). */
+  /** Resolved `mesh.renderOrder` (ascending within a bucket → lowest drawn first). */
   renderOrder: number;
   /** Element count for the mesh (points / splats / line segments). */
   elements: number;
@@ -203,8 +208,7 @@ export function computeDebugState(ctx: DebugStateContext): DebugState {
       // source presence on geometry.userData instead (the zarr node attrs
       // lack has_colors/has_radii/has_sharpness on pre-stamp datasets).
       const presence = geometry?.userData as
-        | { hasColors?: boolean; hasRadii?: boolean; hasSharpness?: boolean }
-        | undefined;
+        { hasColors?: boolean; hasRadii?: boolean; hasSharpness?: boolean } | undefined;
       pointClouds.push({
         name: object.name || 'unnamed',
         pointCount,
@@ -295,14 +299,22 @@ export function computeDebugState(ctx: DebugStateContext): DebugState {
   };
 }
 
-/** The three data-mesh node types that carry a material + draw order. */
-const DATA_NODE_TYPES: ReadonlySet<string> = new Set(['points', 'gsplats', 'lines']);
+/**
+ * The viewer-drawable node types that carry a material + draw order — the
+ * loader set (points / lines / gsplats), shared with
+ * `data/scene-loader/monitor/draw-order-provider.ts` so drawability stays a
+ * single capability and a future `mesh` loader is admitted in one place.
+ */
+const DATA_NODE_TYPES: ReadonlySet<string> = new Set<LoaderTypeName>(LOADER_TYPES);
 
 /**
  * Walk the scene and report the effective cross-node draw order of every
- * VISIBLE data mesh, sorted by `renderOrder` ascending (THREE's stable default
- * breaks ties in scene-graph order, preserved here because the walk yields in
- * that order and the sort is stable). Powers `window.__luxarDebug.getDrawOrder()`.
+ * VISIBLE data mesh: opaque meshes first — THREE renders its whole opaque
+ * list before the transparent list, so the bucket outranks `renderOrder`,
+ * which only orders meshes WITHIN a list — then `renderOrder` ascending.
+ * Residual ties keep traversal (scene-graph) order as a deterministic report
+ * order (THREE itself then compares material id / view-z, which this snapshot
+ * doesn't reproduce). Powers `window.__luxarDebug.getDrawOrder()`.
  *
  * Reads live THREE state: the blending bucket + `depthWrite` from the mesh's
  * material and the resolved `renderOrder` the depth-sort coordinator assigned.
@@ -355,7 +367,13 @@ export function computeDrawOrder(scene: THREE.Object3D): DrawOrderEntry[] {
   };
   visit(scene);
 
-  // Stable sort by renderOrder — equal keys keep traversal (scene-graph) order,
-  // matching THREE's fallback for objects that share a world-space depth key.
-  return entries.sort((a, b) => a.renderOrder - b.renderOrder);
+  // Bucket first (THREE draws every opaque mesh before any transparent one,
+  // regardless of renderOrder — and an opaque mesh can carry a stale positive
+  // renderOrder from a live blending-mode switch, since it is never reset),
+  // then renderOrder within the bucket. The sort is stable, so residual ties
+  // keep traversal (scene-graph) order.
+  return entries.sort((a, b) => {
+    if (a.bucket !== b.bucket) return a.bucket === 'opaque' ? -1 : 1;
+    return a.renderOrder - b.renderOrder;
+  });
 }

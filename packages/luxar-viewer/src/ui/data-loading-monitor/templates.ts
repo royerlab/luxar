@@ -21,20 +21,14 @@ import type {
   NodeDrawOrder,
 } from '../../types/data-monitor-types';
 import { escapeHtml } from '../../utils/escape-html';
-import { GEOMETRY_TYPES } from '../../types/format-contract';
+import { GEOMETRY_TYPES, LOADER_TYPES } from '../../types/format-contract';
 
 /**
  * Semantic color names mapped to CSS class modifiers.
  * These are used with the luxar-color--{name} classes.
  */
 export type SemanticColor =
-  | 'success'
-  | 'warning'
-  | 'error'
-  | 'info'
-  | 'muted'
-  | 'dimmed'
-  | 'primary';
+  'success' | 'warning' | 'error' | 'info' | 'muted' | 'dimmed' | 'primary';
 
 /**
  * Get CSS class for a semantic color.
@@ -1680,10 +1674,24 @@ export function drawOrderChipContent(
   };
 }
 
+/**
+ * The viewer-drawable node types (the loader set) that get a draw-order chip
+ * slot. Matches the provider's classification in
+ * `data/scene-loader/monitor/draw-order-provider.ts`.
+ */
+const DRAWABLE_NODE_TYPES: ReadonlySet<string> = new Set<string>(LOADER_TYPES);
+
 function renderDrawOrderChip(node: SceneGraphNode, state: NodeDrawOrder | undefined): string {
   const content = drawOrderChipContent(state);
-  if (!content) return '';
-  return `<span class="luxar-scene-graph__draworder" data-draworder-path="${escapeHtml(node.path)}" title="${escapeHtml(content.title)}">${escapeHtml(content.text)}</span>`;
+  // A drawable node gets a (possibly empty) chip slot even without live
+  // state: the per-tick updater only patches EXISTING elements, and a node
+  // hidden at structural-render time (toggled-off layer, inactive
+  // substitutive-LOD level) has no provider state yet — without the empty
+  // slot its chip could never appear once the node becomes visible.
+  if (!content && !DRAWABLE_NODE_TYPES.has(node.type)) return '';
+  const text = content ? escapeHtml(content.text) : '';
+  const title = content ? escapeHtml(content.title) : '';
+  return `<span class="luxar-scene-graph__draworder" data-draworder-path="${escapeHtml(node.path)}" title="${title}">${text}</span>`;
 }
 
 /**
