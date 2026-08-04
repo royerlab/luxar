@@ -243,11 +243,13 @@ describe('updateMeshGeometry', () => {
   it('leaves the color buffer untouched on a subsequent slice move', () => {
     // The guard is keyed off vertexCount, so once colors are installed (count 3) a
     // later slice move at the SAME vertexCount must NOT re-create/re-upload the
-    // buffer — only the index rebuilds. Tying color to position identity would fail
-    // this, since `projectMesh` reallocates position every call.
+    // buffer — only the index rebuilds. A pure slice move keeps the SAME
+    // displayDims, so `projectMesh` now memoises and hands back the IDENTICAL
+    // position array — modelled here by reusing `slicePosition` across both calls.
     const g = placeholder();
+    const slicePosition = new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]);
     updateMeshGeometry(g, {
-      position: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
+      position: slicePosition,
       indices: new Uint32Array([0, 1, 2]),
       colors: new Uint8Array([255, 0, 0, 0, 255, 0, 0, 0, 255]),
       colorComponents: 3,
@@ -256,7 +258,7 @@ describe('updateMeshGeometry', () => {
     const colorBefore = g.getAttribute('color') as THREE.BufferAttribute;
     const versionBefore = colorBefore.version;
     const rebuilt = updateMeshGeometry(g, {
-      position: new Float32Array([0, 0, 0, 2, 0, 0, 0, 2, 0]),
+      position: slicePosition, // same array — the memoised pure-slice-move projection
       indices: new Uint32Array([2, 1, 0]),
       colors: new Uint8Array([255, 0, 0, 0, 255, 0, 0, 0, 255]),
       colorComponents: 3,

@@ -173,14 +173,19 @@ export function buildMeshGeometry(input: MeshGeometryInput): THREE.BufferGeometr
  * the no-compaction design: the vertex attribute buffers stay uploaded and
  * untouched, and `drawElements` simply stops referencing the culled vertices.
  *
- * `position` is re-uploaded only when it actually differs in identity — that
- * happens on a `displayDims` change, where the display-space projection is
- * re-extracted. **Bounds are recomputed whenever position is replaced**, because
- * re-uploading the buffer does *not* invalidate Three.js's cached
- * `boundingBox`/`boundingSphere`, which `frustumCulled` and the raycaster broad
- * phase both consult — and the display-space AABB genuinely changes under an axis
- * permutation. Skipping that recompute makes a permuted mesh vanish from the
- * frustum test while still being "loaded", which is a confusing failure to debug.
+ * `position` is touched only when it actually differs in identity. `projectMesh`
+ * now memoizes the projection per `displayDims`, so a pure slice move hands back
+ * the SAME array and this block is skipped entirely — no re-upload, no bounds
+ * recompute. A re-extraction (a `displayDims` change, or the first commit) hands
+ * back a fresh array; that case **rebinds** the attribute to the new array (so
+ * the geometry adopts its identity and the next same-`displayDims` epoch compares
+ * equal) and drives the WebGPU RenderObject eviction via `attributesRebuilt`.
+ * **Bounds are recomputed on that rebind**, because a new array does *not*
+ * invalidate Three.js's cached `boundingBox`/`boundingSphere`, which
+ * `frustumCulled` and the raycaster broad phase both consult — and the
+ * display-space AABB genuinely changes under an axis permutation. Skipping that
+ * recompute makes a permuted mesh vanish from the frustum test while still being
+ * "loaded", which is a confusing failure to debug.
  *
  * The `color` attribute is **installed on the first commit and then left alone**:
  * the node is created with a 1-vertex placeholder color (see
@@ -189,8 +194,9 @@ export function buildMeshGeometry(input: MeshGeometryInput): THREE.BufferGeometr
  * per-slice-move update — see the guard below.
  *
  * @returns `attributesRebuilt` — `true` when a VERTEX attribute was rebound via
- * `setAttribute` (the first-commit position grow-rebind or the first-commit color
- * install), `false` otherwise. The commit uses this to evict three's stale WebGPU
+ * `setAttribute` (a position re-extraction rebind — `displayDims` change or first
+ * commit — or the first-commit color install), `false` otherwise. The commit uses
+ * this to evict three's stale WebGPU
  * `RenderObject` cache after a vertex-attribute rebind (its cached `vertexBuffers`
  * keeps pointing at the OLD GPU buffer/pipeline otherwise) — the same contract the
  * points/lines/gsplats commits follow via `invalidateRenderObjectFor`. A pure slice
@@ -205,20 +211,29 @@ export function updateMeshGeometry(
   let attributesRebuilt = false;
   const positionAttr = geometry.getAttribute('position') as THREE.BufferAttribute | undefined;
   if (positionAttr && positionAttr.array !== input.position) {
-    if (positionAttr.array.length === input.position.length) {
-      (positionAttr.array as Float32Array).set(input.position);
-      positionAttr.needsUpdate = true;
-    } else {
-      // A length change means the vertex count changed, which the whole-node
-      // loader never does for a live node. Rebind rather than silently truncate.
+    // A different array identity means the projection was re-extracted — a
+    // `displayDims` change or the first commit. `projectMesh` memoises the
+    // projection per `displayDims`, so a PURE SLICE MOVE hands back the SAME array
+    // and never reaches here; only a genuine position change does. Rebind to the
+    // new array (rather than copying into the old buffer) so the geometry ADOPTS
+    // its identity — the next same-`displayDims` epoch then compares equal and
+    // skips this whole block, which is the reuse contract projectMesh's cache exists
+    // to honour. Bounds are recomputed because the display-space AABB genuinely
+    // changes under an axis permutation (and re-uploading does not invalidate
+    // three's cached boundingBox/boundingSphere, which frustum culling and the
+    // raycaster both consult).
+    if (positionAttr.count > 1 && positionAttr.array.length !== input.position.length) {
+      // The vertex count changed on an already-populated node — impossible for the
+      // whole-node loader, so worth a warning rather than a silent rebind. The first
+      // commit (placeholder count 1, length 3 -> N) is the expected growth and stays quiet.
       log.warning(
         Modules.SCENE_LOADER,
         `Mesh position length changed (${positionAttr.array.length} -> ${input.position.length}); rebinding`
       );
-      geometry.setAttribute('position', new THREE.BufferAttribute(input.position, 3, false));
-      // A new attribute object → three's cached WebGPU RenderObject is now stale.
-      attributesRebuilt = true;
     }
+    geometry.setAttribute('position', new THREE.BufferAttribute(input.position, 3, false));
+    // A new attribute object → three's cached WebGPU RenderObject is now stale.
+    attributesRebuilt = true;
     geometry.computeBoundingBox();
     geometry.computeBoundingSphere();
   }
@@ -234,9 +249,11 @@ export function updateMeshGeometry(
   // real drawable mesh has N vertices, so `count !== vertexCount` is true exactly
   // on the first commit and false on every subsequent slice move. That keeps the
   // color buffer uploaded-once (the no-compaction doctrine — only the index rebuilds
-  // on a slice move) instead of re-uploading it on every scrub. Note `projectMesh`
-  // reallocates `position` on every call, so color must NOT be tied to position
-  // identity — that would re-upload color on every slice move.
+  // on a slice move) instead of re-uploading it on every scrub. Color stays keyed
+  // off `vertexCount` rather than position identity because a `displayDims` change
+  // re-extracts (and rebinds) `position` while the authored colors are unchanged —
+  // tying color to position identity would needlessly re-install it on every
+  // displayDims change.
   //
   // Format stability across the guard: the no-colors default-white path stays
   // `float32x3` at count N — a format-preserving rebind exactly like `position`'s

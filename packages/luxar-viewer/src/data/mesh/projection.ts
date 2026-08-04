@@ -32,7 +32,9 @@
  *
  * A `displayDims` change is the one case that also rewrites `position`, because
  * `position` is `displayDims`-derived. That is re-extraction of the projection,
- * **not** compaction.
+ * **not** compaction. The projection is memoized per `displayDims` (see
+ * {@link projectedPositionCache}), so a pure slice move reuses the very same
+ * `position` array — only the index buffer is rebuilt.
  *
  * @module data/mesh/projection
  */
@@ -41,6 +43,24 @@ import { log, Modules } from '../../utils/log';
 import { validateProjectionInputs } from '../../workers/data-worker/validation';
 import type { WasmModule } from '../../wasm/types';
 import type { LoadedMeshData, MeshViewState } from '../../types/mesh';
+
+/**
+ * Memoized display-space projection, keyed by the whole-node {@link LoadedMeshData}.
+ *
+ * Keying on the loaded-data object (not the node path) means the entry is GC'd
+ * with the loader — no module-scope leak, unlike a path-keyed `Map` that would
+ * outlive disposal. It memoizes the display-space projection so a pure slice
+ * move (same `displayDims`) reuses the IDENTICAL `Float32Array` and skips
+ * `extract_3d_positions`, which is what gives {@link updateMeshGeometry} the
+ * stable array identity it needs to skip re-uploading the position buffer and
+ * recomputing bounds. A `displayDims` change is a cache miss and re-extracts
+ * into a FRESH array (never in place — the old array may still be bound to the
+ * live geometry).
+ */
+const projectedPositionCache = new WeakMap<
+  LoadedMeshData,
+  { key: string; position: Float32Array }
+>();
 
 /** Which faces of the surface an epoch must draw. */
 export type MeshSide = 'front' | 'double';
@@ -241,8 +261,32 @@ export function projectMesh(
     );
   }
 
-  const position = new Float32Array(vertexCount * 3);
-  backend.extract_3d_positions(vertices, new Uint32Array(displayDims), ndim, vertexCount, position);
+  // Memoize the display-space projection per `displayDims`. A pure slice move
+  // (same displayed triple) hands back the SAME array, so `updateMeshGeometry`
+  // sees an unchanged identity and skips the position re-upload and bounds
+  // recompute. A `displayDims` change misses and re-extracts.
+  const positionKey = displayDims.join(',');
+  const cachedPosition = projectedPositionCache.get(data);
+  let position: Float32Array;
+  if (cachedPosition && cachedPosition.key === positionKey) {
+    // Deterministic same output for the same displayDims — reusing the identity
+    // is the whole point, so we do NOT re-extract.
+    position = cachedPosition.position;
+  } else {
+    // CRITICAL: allocate a FRESH array on a miss, never extract into the cached
+    // one — that array may currently be bound to the live geometry from the
+    // previous `displayDims` epoch, and overwriting it in place would corrupt
+    // the displayed mesh and defeat the identity signal.
+    position = new Float32Array(vertexCount * 3);
+    backend.extract_3d_positions(
+      vertices,
+      new Uint32Array(displayDims),
+      ndim,
+      vertexCount,
+      position
+    );
+    projectedPositionCache.set(data, { key: positionKey, position });
+  }
 
   const winding = resolveWinding(displayDims, normalDims, doubleSided);
 
