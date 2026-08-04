@@ -24,6 +24,8 @@ import type {
   GeometryCounters,
   LODProgressProvider,
   LODProgressState,
+  DrawOrderProvider,
+  NodeDrawOrder,
 } from '../types/data-monitor-types';
 
 // Performance timeline removed - now using hierarchical timing panel
@@ -62,6 +64,7 @@ import {
   renderSceneGraphTree,
   summariseLodStates,
   lodChipContent,
+  drawOrderChipContent,
   nodeStatsContent,
   countAdditiveNodes,
   levelRoleTitleSuffix,
@@ -158,6 +161,12 @@ function elementCountOf(node: SceneGraphNode, type: GeometryTypeName): number {
     case 'gsplats':
       count = node.splatCount;
       break;
+    case 'mesh':
+      // Faces, matching the drawn-primitive convention above (`lines` counts
+      // segments, not vertices, for the same reason). Undefined until the mesh
+      // loader lands, which the integer check below already reads as 0.
+      count = node.faceCount;
+      break;
     default:
       void (type satisfies never);
       return 0;
@@ -251,6 +260,11 @@ export class DataLoadingMonitor {
   private lodStates: Map<string, LODProgressState> = new Map();
   /** Per-path visible counts pushed by the SceneLoader's visible-counts walk. */
   private visibleCountsByPath: ReadonlyMap<string, number> = new Map();
+  // Live per-mesh draw-order provider (blending bucket / depthWrite /
+  // renderOrder). Polled each tick — renderOrder is camera-dependent — to
+  // drive the scene-graph tree's draw-order chip.
+  private drawOrderProvider: DrawOrderProvider | null = null;
+  private drawOrderStates: Map<string, NodeDrawOrder> = new Map();
 
   // Accumulator providers for dynamic stats retrieval
   private accumulatorProviders: Record<PooledGeometryType, AccumulatorProvider | null> =
@@ -495,6 +509,22 @@ export class DataLoadingMonitor {
   }
 
   /**
+   * Set the draw-order provider for live per-mesh compositing state (blending
+   * bucket / depthWrite / renderOrder) in the scene-graph tree. Polled each
+   * tick. Passing a provider marks the structure dirty so the tree re-renders
+   * with the draw-order chip slot.
+   */
+  public setDrawOrderProvider(provider: DrawOrderProvider | null): void {
+    this.drawOrderProvider = provider;
+    if (provider) {
+      log.info(Modules.DATA_MONITOR, 'Draw-order provider connected');
+      this.structureDirty = true;
+    } else {
+      this.drawOrderStates = new Map();
+    }
+  }
+
+  /**
    * Set an accumulator provider for Memory tab stats.
    * @param type - Which accumulator, one of {@link POOLED_GEOMETRY_TYPES}
    * @param provider - The accumulator with a getStats() method
@@ -531,6 +561,8 @@ export class DataLoadingMonitor {
     this.lodProgressProvider = null;
     this.failedLoadsProvider = null;
     this.lodStates = new Map();
+    this.drawOrderProvider = null;
+    this.drawOrderStates = new Map();
     // Reset to undefined (not 'not-wired') so the next scene's
     // setCacheTelemetryState call lands cleanly. If the next setup
     // doesn't call the setter, the aggregator falls back to
@@ -556,6 +588,7 @@ export class DataLoadingMonitor {
     this.sceneGraphState = emptySceneGraphState();
     this.expandedNodes = new Set<string>(['/']);
     this.visibleCountsByPath = new Map();
+    this.drawOrderStates = new Map();
     this.structureDirty = true;
   }
 
@@ -798,6 +831,9 @@ export class DataLoadingMonitor {
     // scene-graph tree's chips and header summary reflect this frame.
     if (this.lodProgressProvider) {
       this.lodStates = this.lodProgressProvider.getLODStates();
+    }
+    if (this.drawOrderProvider) {
+      this.drawOrderStates = this.drawOrderProvider.getDrawOrderStates();
     }
 
     // 4. Update UI (this also pulls fresh stats from providers)
@@ -1530,6 +1566,26 @@ export class DataLoadingMonitor {
       }
     });
 
+    // Patch live draw-order chips (bucket / depthWrite / renderOrder) in
+    // place — renderOrder is recomputed per frame from the camera pose.
+    const drawOrderChips = this.contentContainer.querySelectorAll(
+      '.luxar-scene-graph__draworder[data-draworder-path]'
+    );
+    drawOrderChips.forEach((chip) => {
+      const path = (chip as HTMLElement).dataset.draworderPath;
+      if (!path) return;
+      const content = drawOrderChipContent(this.drawOrderStates.get(path));
+      if (content) {
+        chip.textContent = content.text;
+        (chip as HTMLElement).title = content.title;
+      } else {
+        // No live mesh for this node right now (hidden layer / reload):
+        // clear rather than leaving a stale value on screen.
+        chip.textContent = '';
+        (chip as HTMLElement).title = '';
+      }
+    });
+
     // Re-mark active/inactive substitutive-level rows: the LOD selector can
     // switch levels between structural rebuilds, so classes + tooltips are
     // patched each tick from the parent group's live state.
@@ -1864,7 +1920,12 @@ export class DataLoadingMonitor {
     if (this.sceneGraphState.root) {
       return content.replace(
         '<div id="loader-list-content"></div>',
-        renderSceneGraphTree(this.sceneGraphState, this.expandedNodes, this.lodStates)
+        renderSceneGraphTree(
+          this.sceneGraphState,
+          this.expandedNodes,
+          this.lodStates,
+          this.drawOrderStates
+        )
       );
     } else {
       return content.replace(

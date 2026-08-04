@@ -35,6 +35,11 @@ class BlendingMode(str, Enum):
     * ``VOLUMETRIC``: ``depthTest=true``, ``depthWrite=false``; requires
       back-to-front depth sorting in the viewer.
 
+    ``OPAQUE`` is the only mode that escapes the viewer's sorted (transparent)
+    set entirely and the only one that unconditionally writes depth, so a
+    backdrop must be ``OPAQUE`` to be reliably composited *under* the
+    transparent content drawn in front of it.
+
     Validation of raw strings lives in
     :func:`luxar.validation.types.validate_blending_mode`, which derives its
     accepted set from this enum.
@@ -51,13 +56,22 @@ class BlendingMode(str, Enum):
 
 
 class NodeType(str, Enum):
-    """Types of nodes in the scene hierarchy."""
+    """Types of nodes in the scene hierarchy.
+
+    The members must stay in step with ``node_types`` in
+    ``format-contract/contract.yaml`` (projected as
+    :data:`luxar.typing_utils._format_contract.NODE_TYPES`), which is the
+    cross-language source of truth. ``test_node_type_matches_contract`` pins the
+    two together, so a contract edit that misses this enum fails a test rather
+    than drifting.
+    """
 
     SCENE = "scene"
     GROUP = "group"
     POINTS = "points"
     LINES = "lines"
     GSPLATS = "gsplats"
+    MESH = "mesh"
 
     @classmethod
     def validate(cls, value: str) -> "NodeType":

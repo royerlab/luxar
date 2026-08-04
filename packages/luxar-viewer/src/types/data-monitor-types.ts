@@ -465,12 +465,15 @@ export interface GridCellState {
 }
 
 /**
- * Node type for scene graph display. The shared geometry/container types are
- * single-sourced from the cross-language format contract
- * (format-contract/contract.yaml); `mesh` is a viewer-only forward-looking
- * member with no Python counterpart yet.
+ * Node type for scene graph display, single-sourced from the cross-language
+ * format contract (format-contract/contract.yaml → `node_types`).
+ *
+ * This was `NodeTypeName | 'mesh'` while `mesh` was a viewer-only forward
+ * declaration; `mesh` is now in the contract, so the local extension is gone and
+ * this is a plain alias. Keep it an alias rather than re-widening: a display type
+ * the writer cannot emit has nothing to display.
  */
-export type SceneGraphNodeType = NodeTypeName | 'mesh';
+export type SceneGraphNodeType = NodeTypeName;
 
 /**
  * Scene graph node for UI display.
@@ -495,6 +498,20 @@ export interface SceneGraphNode {
   vertexCount?: number;
   /** Number of splats (for gsplats nodes) */
   splatCount?: number;
+  /**
+   * Number of triangles (for mesh nodes).
+   *
+   * Faces rather than vertices, because this trio counts the DRAWN PRIMITIVE per
+   * type — note `lines` is counted by `segmentCount`, not `vertexCount`, for the
+   * same reason. (The Python `Mesh.n_elements` counts vertices instead, since
+   * there the primary element is whatever the per-element attribute arrays are
+   * indexed by. The two conventions answer different questions.)
+   *
+   * Stays `undefined` until the mesh loader lands (MESH_NODE_SPEC.md §11 phase 3);
+   * no mesh node can reach the monitor before then, and `elementCountOf` already
+   * treats a missing count as 0.
+   */
+  faceCount?: number;
   /** Number of visible splats after nD slicing (for gsplats nodes) */
   visibleSplatCount?: number;
   /**
@@ -598,6 +615,33 @@ export interface LODProgressState {
  */
 export interface LODProgressProvider {
   getLODStates(): Map<string, LODProgressState>;
+}
+
+/**
+ * Live cross-node draw-order state for one data mesh, read off the THREE
+ * material + object (`material.transparent`, `material.depthWrite`,
+ * `mesh.renderOrder`). Surfaced per node in the scene-graph tree so a
+ * compositing-order bug (a backdrop drawn after the content in front of it)
+ * is visible without a renderer capture. Pure observability.
+ */
+export interface NodeDrawOrder {
+  /** `'transparent'` (in the sorted set) or `'opaque'` (drawn depth-first). */
+  bucket: 'opaque' | 'transparent';
+  /** Whether the mesh writes depth (`material.depthWrite`). */
+  depthWrite: boolean;
+  /** Resolved `mesh.renderOrder` (compared ascending → lowest drawn first). */
+  renderOrder: number;
+}
+
+/**
+ * Provides a snapshot of live per-mesh draw-order state keyed by scene-graph
+ * path (mesh `name`). Injected via `SceneLoaderMonitorPort.setDrawOrderProvider`
+ * and polled on each tick — `renderOrder` is camera-dependent, so a live read
+ * per tick keeps the panel honest as the view orbits. Implemented in the data
+ * layer over the live THREE root group.
+ */
+export interface DrawOrderProvider {
+  getDrawOrderStates(): Map<string, NodeDrawOrder>;
 }
 
 /**

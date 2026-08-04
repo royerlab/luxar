@@ -2,7 +2,7 @@
 
 Guidance for Claude Code when working with this repository.
 
-**Luxar** is a high-performance system for compiling and visualizing arbitrary-sized nD scientific scenes. It supports three first-class geometry types — **Points**, **Lines**, and **Gaussian Splats** — with more planned.
+**Luxar** is a high-performance system for compiling and visualizing arbitrary-sized nD scientific scenes. It renders three first-class geometry types — **Points**, **Lines**, and **Gaussian Splats**. A fourth, **Mesh** (triangle surfaces), is *writable* today but not yet renderable: the Python writer, reader and CLI handle it, while the viewer's loader/material land in a later phase (see `docs/specs/MESH_NODE_SPEC.md` §11). The contract names the two sets separately — `geometry_types` (writable) and `loader_types` (viewer-drawable) — so neither side has to answer the other's question.
 
 ## Quick Reference
 
@@ -46,8 +46,8 @@ make test-e2e     # Full Playwright E2E suite (~17 min)
 make test-e2e-smoke  # E2E smoke subset (the specs CI would run)
 make test-perf-e2e   # Opt-in Playwright performance suite
 # check-all is NOT read-only: `hatch run check` begins with `format`, so it
-# REWRITES packages/luxar/src. When other agents/people are editing the same
-# tree, use the read-only scoped targets instead (listed right below it).
+# REWRITES packages/luxar/src and scripts. When other agents/people are editing
+# the same tree, use the read-only scoped targets instead (listed right below it).
 make check-all    # All quality checks (Python, TypeScript, Rust, Go) — reformats
 make lint-python        # read-only: ruff check
 make type-check-python  # read-only: mypy
@@ -217,7 +217,7 @@ See `docs/guides/developer/BUILD_SYSTEM_SPEC.md` for complete documentation.
 
 ### Luxar CLI
 ```bash
-luxar demo                       # List the 78 bundled demos (table)
+luxar demo                       # List the 79 bundled demos (table)
 luxar demo run lorenz            # Run a demo by key/index (forwards -- args)
 luxar demo cache list            # Inventory / clear demo caches (cache clear …)
 # Demos keep heavyweight packages OUT of the core install, so a fresh checkout
@@ -1068,6 +1068,7 @@ Support: nm, um, mm, cm, m, meter, metre, km, inch, foot, px, au
 - **Points**: positions (Float32, nD, required), colors (Uint8/Float32 HDR), radii (Float32), sharpness (Float32)
 - **Lines**: vertices (Float32, nD, required), widths (Float32, required), segments (Uint32, auto-generated), colors (Uint8/Float32), sharpness (Float32)
 - **GSplats**: centers (Float32, nD, required), amplitudes (Float32, required), cholesky_factors (Float32, required), colors (Uint8/Float32, RGB or RGBA — the optional alpha is per-splat opacity, consumed by every blending mode; mapped to optical depth in `volumetric`)
+- **Mesh** (writable, not yet renderable): vertices (Float32, nD, required), faces (Uint32 `(F,3)`, required), normals (Float32 `(V,3)`) + a required `normal_dims` companion attr naming which three dimensions they describe, colors (Uint8/Float32, RGB or RGBA), scalars (Float32). No per-element size — a triangle's extent comes from its own vertices, so a mesh adds zero extent padding to scene bounds. No LOD, no `kind=partition`, no spatial index, no `volumetric` blending; each is refused with an explanation rather than silently degraded.
 
 ### Transforms
 - 4x4 matrices stored as 16-element lists

@@ -141,6 +141,17 @@ demos = [
     "scikit-learn>=1.0",
     # `--show-roundtrip` diagnostic plots in the gsplat demos.
     "matplotlib>=3.5.0",
+    # Pure-Python NEXRAD Level II decoder (metpy.io.Level2File) for
+    # demo_gsplats_4d_nexrad_supercell. The >=1.6.3 floor is LOAD-BEARING:
+    # metpy declares only `numpy>=1.20.0`, so a resolver would happily pair
+    # metpy 1.5.x with Luxar's core `numpy>=2.0,<3.0` and break at runtime;
+    # 1.6.3 is the release that added NumPy 2.0 support. Verified NOT to
+    # threaten the `zarr>=2.16,<3.0` pin: metpy pulls xarray, but only
+    # xarray's CORE requirements (numpy/packaging/pandas) — `zarr>=3.0` lives
+    # in the `xarray[io]` extra, which nothing here requests. A clean install
+    # resolves to metpy 1.7.1 + numpy 2.5.1 + xarray with no zarr at all.
+    # Mirrored by INSTALL_SPECS in luxar.demos._dependencies.
+    "metpy>=1.6.3,<2.0",
 ]
 docs = [
     "sphinx>=7.0.0",
@@ -275,12 +286,15 @@ dependencies = [
 test = "pytest {args:packages/luxar/src/luxar}"
 test-cov = "mkdir -p coverage/python && pytest -m 'not slow' --cov=luxar --cov-report=term-missing --cov-report=html {args:packages/luxar/src/luxar}"
 test-cov-all = "mkdir -p coverage/python && pytest --cov=luxar --cov-report=term-missing --cov-report=html {args:packages/luxar/src/luxar}"
+# `scripts/benchmarks` is listed explicitly: a broad `benchmarks/` entry in
+# .gitignore makes ruff's directory walk skip it, but pre-commit still formats
+# those tracked files, so it must be covered here to keep them in sync.
 format = [
-    "ruff format packages/luxar/src",
-    "ruff check --fix packages/luxar/src"
+    "ruff format packages/luxar/src scripts scripts/benchmarks",
+    "ruff check --fix packages/luxar/src scripts scripts/benchmarks"
 ]
 lint = [
-    "ruff check packages/luxar/src",
+    "ruff check packages/luxar/src scripts scripts/benchmarks",
     "mypy packages/luxar/src/luxar"
 ]
 security = "bandit -r packages/luxar/src/luxar -c pyproject.toml --severity-level medium --confidence-level medium -q"

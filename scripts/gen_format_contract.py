@@ -103,12 +103,55 @@ def _geometry_types(c: Dict[str, Any]) -> List[str]:
     return geometry_types
 
 
+def _loader_types(c: Dict[str, Any]) -> List[str]:
+    """Return ``loader_types``, validated as the viewer-drawable subset.
+
+    Where ``geometry_types`` answers *"is this node a geometry leaf?"* (a
+    vocabulary), this answers *"can the viewer load and draw it?"* (a
+    capability). A type is writable the moment the Python side can emit it, but
+    drawable only once it has a loader, a ``GEOMETRY_DESCRIPTORS`` row and a
+    hidden-dim tolerance arm — so the two lists are allowed to differ, and each
+    consumer must pick the one matching its question. Keeping them as one list
+    forces a wrong answer to one of the two.
+
+    The rules mirror :func:`_geometry_types`, minus the container check (already
+    guaranteed transitively by the subset rule):
+
+    * **non-empty** — an empty list renders ``export type LoaderTypeName = ;``.
+    * **subset of geometry_types** — the viewer cannot dispatch on a type the
+      writer has no vocabulary for; such an entry is unrepresentable on disk.
+    * **no duplicates** — a repeat widens ``LOADER_TYPES`` while leaving the
+      union unchanged, desynchronising the two projections of one key.
+    """
+    loader_types = list(c["loader_types"])
+    geometry_types = list(c["geometry_types"])
+
+    def fail(problem: str) -> None:
+        raise SystemExit(f"contract.yaml: loader_types {problem}")
+
+    if not loader_types:
+        fail("must not be empty (codegen would emit an empty union)")
+
+    stray = [t for t in loader_types if t not in geometry_types]
+    if stray:
+        fail(
+            f"entries {stray} are missing from geometry_types; the viewer cannot "
+            "dispatch on a type the writer has no vocabulary for"
+        )
+
+    duplicates = sorted({t for t in loader_types if loader_types.count(t) > 1})
+    if duplicates:
+        fail(f"contains duplicate entries {duplicates}")
+
+    return loader_types
+
+
 # --------------------------------------------------------------------------- #
 # Python projection
 # --------------------------------------------------------------------------- #
 def _py_literal_type(name: str, values: List[str]) -> str:
     """Emit ``Name = Literal["a", "b", ...]`` (inline if it fits, else stacked)."""
-    inline = f'{name} = Literal[{", ".join(repr_str(v) for v in values)}]'
+    inline = f"{name} = Literal[{', '.join(repr_str(v) for v in values)}]"
     if len(inline) <= PY_WIDTH:
         return inline
     body = "".join(f"    {repr_str(v)},\n" for v in values)
@@ -118,7 +161,7 @@ def _py_literal_type(name: str, values: List[str]) -> str:
 def _py_tuple(name: str, elem_type: str, values: List[str]) -> str:
     """Emit ``NAME: Final[tuple[T, ...]] = (...)`` (inline if it fits, else stacked)."""
     lhs = f"{name}: Final[tuple[{elem_type}, ...]] = "
-    inline = f'{lhs}({", ".join(repr_str(v) for v in values)})'
+    inline = f"{lhs}({', '.join(repr_str(v) for v in values)})"
     if len(values) != 1 and len(inline) <= PY_WIDTH:
         return inline
     if len(values) == 1:
@@ -138,6 +181,7 @@ def render_python(c: Dict[str, Any]) -> str:
     node_types = list(c["node_types"])
     node_kinds = list(c["node_kinds"])
     geometry_types = _geometry_types(c)
+    loader_types = _loader_types(c)
     encodings = list(c["encodings"])
     attr_keys = list(c["attr_keys"])
     array_names = list(c["array_names"])
@@ -191,6 +235,14 @@ def render_python(c: Dict[str, Any]) -> str:
     )
 
     parts.append(
+        "# --- viewer-drawable geometry types (the subset of GEOMETRY_TYPES with a\n"
+        "#     loader / descriptor row / tolerance arm; a CAPABILITY, not the\n"
+        "#     vocabulary — see contract.yaml::loader_types) ---\n"
+        f"{_py_literal_type('LoaderTypeName', loader_types)}\n"
+        f"{_py_tuple('LOADER_TYPES', 'LoaderTypeName', loader_types)}\n"
+    )
+
+    parts.append(
         "# --- specialized-group kinds ---\n"
         f"{_py_literal_type('NodeKind', node_kinds)}\n"
         f"{_py_tuple('NODE_KINDS', 'NodeKind', node_kinds)}\n"
@@ -224,6 +276,10 @@ def render_python(c: Dict[str, Any]) -> str:
         "FORMAT_TYPE_GSPLATS",
         "NodeTypeName",
         "NODE_TYPES",
+        "GeometryTypeName",
+        "GEOMETRY_TYPES",
+        "LoaderTypeName",
+        "LOADER_TYPES",
         "NodeKind",
         "NODE_KINDS",
         "EncodingName",
@@ -260,7 +316,7 @@ def _ts_const(name: str, values: List[str], elem_type: str = "string") -> str:
     can narrow the same tuples because ``x in tup`` is not type-checked there.
     """
     lhs = f"export const {name}: readonly {elem_type}[] = "
-    inline = f'{lhs}[{", ".join(_ts_str(v) for v in values)}];'
+    inline = f"{lhs}[{', '.join(_ts_str(v) for v in values)}];"
     if len(inline) <= TS_WIDTH:
         return inline
     body = "".join(f"  {_ts_str(v)},\n" for v in values)
@@ -268,7 +324,7 @@ def _ts_const(name: str, values: List[str], elem_type: str = "string") -> str:
 
 
 def _ts_union(name: str, values: List[str]) -> str:
-    inline = f'export type {name} = {" | ".join(_ts_str(v) for v in values)};'
+    inline = f"export type {name} = {' | '.join(_ts_str(v) for v in values)};"
     if len(inline) <= TS_WIDTH:
         return inline
     body = "".join(f"  | {_ts_str(v)}\n" for v in values)
@@ -282,6 +338,7 @@ def render_typescript(c: Dict[str, Any]) -> str:
     node_types = list(c["node_types"])
     node_kinds = list(c["node_kinds"])
     geometry_types = _geometry_types(c)
+    loader_types = _loader_types(c)
     encodings = list(c["encodings"])
     attr_keys = list(c["attr_keys"])
     array_names = list(c["array_names"])
@@ -316,6 +373,13 @@ def render_typescript(c: Dict[str, Any]) -> str:
         "// --- leaf geometry types (the element-bearing subset of NODE_TYPES) ---\n"
         f"{_ts_const('GEOMETRY_TYPES', geometry_types, 'GeometryTypeName')}\n"
         f"{_ts_union('GeometryTypeName', geometry_types)}",
+        "// --- viewer-drawable geometry types: the subset of GEOMETRY_TYPES that has a\n"
+        "//     loader, a GEOMETRY_DESCRIPTORS row and a tolerance arm. A CAPABILITY,\n"
+        "//     not the vocabulary — key dispatch tables on this, not on\n"
+        "//     GeometryTypeName, so a not-yet-drawable type cannot resolve to no\n"
+        "//     loader. See contract.yaml::loader_types. ---\n"
+        f"{_ts_const('LOADER_TYPES', loader_types, 'LoaderTypeName')}\n"
+        f"{_ts_union('LoaderTypeName', loader_types)}",
         "// --- specialized-group kinds ---\n"
         f"{_ts_const('NODE_KINDS', node_kinds, 'NodeKind')}\n"
         f"{_ts_union('NodeKind', node_kinds)}",

@@ -14,7 +14,7 @@
  */
 
 import type { DataLoader, GeometryKind } from '../../data-loader-types';
-import { GEOMETRY_TYPES } from '../../../types/format-contract';
+import { LOADER_TYPES } from '../../../types/format-contract';
 import type { LinesDataLoader } from '../../../types/lines';
 import type { GSplatsDataLoader } from '../../../types/gsplats';
 
@@ -101,14 +101,19 @@ export class LoaderRegistry {
   /**
    * Every loader, bucketed by geometry kind, path → loader.
    *
-   * One bucket per {@link GEOMETRY_TYPES} entry, created up front so
+   * One bucket per {@link LOADER_TYPES} entry, created up front so
    * {@link loadersOf} never has to handle a missing bucket. The kind-specific
    * accessors below are thin views onto these same `Map` objects — callers that
    * hold `registry.loaders` and mutate it directly are mutating this store, as
    * they always were.
+   *
+   * `LOADER_TYPES`, not `GEOMETRY_TYPES`: a bucket here presupposes a loader
+   * interface in {@link LoaderByKind}, so this must be the viewer-drawable
+   * subset. Building it from the wider leaf vocabulary would allocate a bucket
+   * for a type `loadersOf` can never be called with.
    */
   private readonly byKind: ReadonlyMap<GeometryKind, Map<string, AnyDataLoader>> = new Map(
-    GEOMETRY_TYPES.map((kind) => [kind, new Map<string, AnyDataLoader>()])
+    LOADER_TYPES.map((kind) => [kind, new Map<string, AnyDataLoader>()])
   );
 
   /**
@@ -227,8 +232,8 @@ export class LoaderRegistry {
    *
    * Nothing prevents the same path from being registered under two kinds, so
    * this has a documented precedence: points > lines > gsplats. That order is
-   * now the **bucket insertion order**, which comes from `GEOMETRY_TYPES` —
-   * i.e. from the order of `geometry_types` in `format-contract/contract.yaml`.
+   * now the **bucket insertion order**, which comes from `LOADER_TYPES` —
+   * i.e. from the order of `loader_types` in `format-contract/contract.yaml`.
    * Reordering that list would silently reorder this precedence; the
    * "checks points first when a path collides" test is the guard.
    */

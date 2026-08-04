@@ -892,6 +892,19 @@ Fetches the aerial "small city" MatrixCity scene — **13,589,514 Gaussians** �
 
 **Demonstrates**: Combined GSplats + Lines in 4D, cell lineage tracking as 4D polylines (X, Y, Z, Time), `extend_to_all` for persistent trajectory visibility, StarryNite tracking data, volume rendering + track overlay.
 
+---
+
+#### demo_gsplats_4d_nexrad_supercell.py - 4D NEXRAD El Reno Tornadic Supercell
+82 WSR-88D weather-radar volume scans of the **2013-05-31 Oklahoma convective evening** — including the **El Reno supercell**, which produced the widest tornado ever recorded (4.2 km, EF3) — as a 4D Gaussian-splat timelapse spanning 21:00 UTC to 03:00 UTC. Scrubbing the **Time** slider carries you from a nearly empty sky through initiation, tornadogenesis (touchdown 23:03) and the tornado's end (23:43), into the overnight mesoscale system that flooded Oklahoma City. The opening frames already hold the separate convection to the north-east; the El Reno supercell itself appears around 22Z and then grows to dominate the domain. The 3D structure is the point: the **hook echo** curling around the low-level mesocyclone, the **bounded weak echo region** where the updraft is too violent for precipitation to form, and the **overshooting top** punching past 15 km. The domain spans 300 x 300 km, which retains 90% of the >=20 dBZ echo (a tighter storm-scale box kept only 75%). A **magenta vertical line** marks the surveyed tornado position on the frames when it was down — taken from the NWS ground damage survey (via the SPC tornado database), an independent source that lands right on the radar's hook echo. A faint **wireframe cube** outlines the analysis domain, which is what makes the 300 x 300 x 18 km slab legible as a volume rather than a floating cloud.
+
+A radar does not sample a volume — it spins a 0.95° beam at 14 discrete elevations, so the raw data is a set of nested *cones* with gaps between them. The demo regrids them onto a Cartesian storm box with a Barnes-weighted kd-tree interpolation, masks every cell the beam could not actually reach, and fits each timepoint independently.
+
+**Run**: `luxar demo run gsplats_4d_nexrad_supercell`
+
+**Requires**: Nothing for the default path — the fitted splats ship via Git LFS (no network, no GPU, no radar decoder). `--recompute` downloads 800 MB of Level II volume scans from the NOAA archive and needs `metpy` plus a GPU.
+
+**Demonstrates**: Weather/atmosphere as gsplats + lines, polar→Cartesian objective analysis (Barnes on a `cKDTree`, scipy only — no Py-ART), the 4/3-effective-earth beam-propagation model, geometric coverage masking instead of threshold-tuning, `combine_as_new_dimension` for a stacked 4D time axis (streaming ladder only — coarse substitutive levels average the merged amplitudes down and muddy the hail core, so they are deliberately not used), an *adaptive* splat budget (constant occupied-voxels-per-splat, since the system grows ~6x across the window), a *global* rather than per-frame intensity scale so the storm's intensification and decay survive, a baked `CameraConfig(up=(0,0,1))` because a geographic scene on the viewer's default up-vector renders altitude sideways, and a baked appearance (turbo over the full amplitude window at low opacity with moderate volumetric absorption) so colour still corresponds to conventional dBZ bands. Options: `--recompute`, `--no-serve`, `--serve-only`, `--max-timepoints=N`, `--grid-m=N`, `--grid-z-m=N`, `--splats=N`, `--dbz-floor=N`, `--vert-exag=N`, `--relist`.
+
 ## Demo Pattern
 
 Each demo follows this self-contained pattern:
@@ -1256,6 +1269,7 @@ hatch run python packages/luxar/src/luxar/demos/demo_gsplats_recipes_tribolium.p
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_4d_zebrafish_timelapse.py
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_4d_neuromast_2ch.py
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_4d_celegans_tracking.py
+hatch run python packages/luxar/src/luxar/demos/demo_gsplats_4d_nexrad_supercell.py
 ```
 
 ## Troubleshooting

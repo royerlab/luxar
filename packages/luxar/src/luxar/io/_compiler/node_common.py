@@ -1,11 +1,15 @@
-"""Node-authoring blocks shared byte-for-byte by the Points and Lines writers.
+"""Node-authoring blocks shared byte-for-byte by the geometry writers.
 
 These are the small, geometry-agnostic steps that :meth:`~luxar.io.compiler.\
-LuxarZarrCompiler.write_points` and :meth:`~luxar.io.compiler.LuxarZarrCompiler.\
-write_lines` performed identically: normalizing the ``transform`` /
-``nd_transform`` attrs and stamping the default compositing attributes. Both are
-pure in-place mutators of the caller's ``attrs`` dict so the on-disk output is
-unchanged from the inlined versions.
+LuxarZarrCompiler.write_points`, :meth:`~luxar.io.compiler.LuxarZarrCompiler.\
+write_lines` and :meth:`~luxar.io.compiler.LuxarZarrCompiler.write_mesh` perform
+identically: normalizing the ``transform`` / ``nd_transform`` attrs and stamping
+the default compositing attributes. Both are pure in-place mutators of the
+caller's ``attrs`` dict so the on-disk output is unchanged from the inlined
+versions.
+
+Also home to the per-geometry ``*_RESERVED_ATTRS`` sets — the writer-authoritative
+keys a caller must not supply.
 """
 
 from __future__ import annotations
@@ -22,8 +26,22 @@ from ...core.dimensions import Dimensions
 # letting them through would either silently lose the user's value (the stamp
 # wins on disk) or blow up post-write with an accidental TypeError when the
 # Node object is constructed (``type=`` collides with the Node constructor).
-# The ``ordering*`` stamps are deliberately NOT reserved: ``ordering=`` is an
-# accepted (stamped-over) call pattern in existing code and tests.
+# ``ordering`` IS reserved (all geometry types). The writer stamps it
+# authoritatively from the compiler's ``ordering_method`` — the sort order is not
+# a per-node request; there is no ``ordering=`` parameter on ``add_points`` /
+# ``add_lines`` / ``add_gsplats``, so any ``ordering=`` would arrive through
+# ``**attrs``. Leaving it unreserved is not benign: ``Node.__init__`` re-persists
+# the caller's ``**attrs`` through ``write_group`` AFTER the geometry writer has
+# stamped the group, so an unreserved caller value would be what lands on disk and
+# would desync the attr from the actual on-disk sort order (issue #1221). Reserving
+# it rejects that value up front and points the caller at the real knob,
+# ``LuxarZarrCompiler(ordering_method=...)`` / ``write_gsplats_tree(ordering=...)``.
+# Mesh has no spatial index at all (``ordering`` is always ``"none"``), so the same
+# reservation just keeps a supplied value from writing a lie the viewer would read.
+# The companion ``ordering_min``/``ordering_max``/``ordering_bits_per_dim``/
+# ``ordering_dims`` sub-metadata stamps are writer-authoritative too; they are not
+# listed here because a caller supplying one is already rejected by the
+# unknown-attr gate.
 POINTS_RESERVED_ATTRS: FrozenSet[str] = frozenset(
     {
         "type",
@@ -34,8 +52,10 @@ POINTS_RESERVED_ATTRS: FrozenSet[str] = frozenset(
         "has_sharpness",
         "has_scalars",
         "has_labels",
+        "has_image_labels",
         "position_bounds",
         "max_radius",
+        "ordering",
     }
 )
 LINES_RESERVED_ATTRS: FrozenSet[str] = frozenset(
@@ -49,8 +69,10 @@ LINES_RESERVED_ATTRS: FrozenSet[str] = frozenset(
         "has_sharpness",
         "has_scalars",
         "has_labels",
+        "has_image_labels",
         "max_width",
         "position_bounds",
+        "ordering",
     }
 )
 GSPLATS_RESERVED_ATTRS: FrozenSet[str] = frozenset(
@@ -60,10 +82,39 @@ GSPLATS_RESERVED_ATTRS: FrozenSet[str] = frozenset(
         "ndim",
         "has_colors",
         "has_labels",
+        "has_image_labels",
         "amplitude_range",
         "amplitude_data_range",
         "center_bounds",
         "position_bounds",
+        "ordering",
+    }
+)
+# ``has_image_labels`` is now reserved by all four sets. It had been missing from
+# the three above even though every writer stamps it (the gap MESH_NODE_SPEC.md §9
+# recorded). No clobber was possible — ``validate_render_attrs`` rejects a key
+# absent from every set as *unknown* — so the cost was only the less accurate
+# error message, but the asymmetry made "which flags does this writer own?"
+# unanswerable from the sets alone.
+MESH_RESERVED_ATTRS: FrozenSet[str] = frozenset(
+    {
+        "type",
+        "n_vertices",
+        "n_faces",
+        "ndim",
+        "has_normals",
+        "normal_dims",
+        "has_colors",
+        "has_scalars",
+        "has_labels",
+        "has_image_labels",
+        "shading",
+        "double_sided",
+        "position_bounds",
+        # Reserved like the sibling sets above; for mesh there is additionally
+        # no spatial index, so a supplied `ordering` cannot be honoured and would
+        # otherwise overwrite the writer's `"none"` on disk (see note at the top).
+        "ordering",
     }
 )
 
@@ -102,8 +153,8 @@ _ALLOWED_NODE_ATTRS: FrozenSet[str] = frozenset(
         # Processed by prepare_transform_attrs / apply_gsplat_group_attrs.
         "transform",
         "nd_transform",
-        # Spatial ordering, gsplat Gaussian cutoff, LOD selection, nD broadcast.
-        "ordering",
+        # gsplat Gaussian cutoff, LOD selection, nD broadcast. (``ordering`` is
+        # NOT here: it is writer-stamped and reserved via ``*_RESERVED_ATTRS``.)
         "truncation_radius",
         "coverage_fraction",
         "extend_to_all",
@@ -140,7 +191,6 @@ _SUGGESTION_ATTRS: tuple[str, ...] = tuple(
         | {
             "transform",
             "nd_transform",
-            "ordering",
             "truncation_radius",
             "coverage_fraction",
             "extend_to_all",
@@ -412,10 +462,20 @@ def validate_render_attrs(
     if reserved_attrs:
         collisions = sorted(reserved_attrs & attrs.keys())
         if collisions:
+            # ``ordering=`` was a tolerated call pattern before it was
+            # reserved (#1221) — the caller's value was re-persisted over the
+            # writer's stamp and won on disk — so point migrating callers at
+            # the real knob.
+            hint = (
+                " The sort order is chosen once at compiler construction — "
+                "LuxarZarrCompiler(ordering_method=...) — not per node."
+                if "ordering" in collisions
+                else ""
+            )
             raise ValueError(
                 f"Attribute(s) {collisions} are reserved: the writer stamps "
                 f"them authoritatively (type, element counts, presence flags, "
-                f"bounds, ...). Remove them from the node attrs."
+                f"bounds, ...). Remove them from the node attrs.{hint}"
             )
 
     if reject_unknown:

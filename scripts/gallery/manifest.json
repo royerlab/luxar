@@ -431,6 +431,17 @@
       "dataset": "datasets/demos/gsplats_4d_zebrafish_timelapse.luxar.zarr"
     },
     {
+      "id": "gsplats_4d_nexrad_supercell",
+      "title": "4D NEXRAD Supercell (El Reno)",
+      "geometry": "mixed",
+      "category": "geoscience",
+      "script": "demo_gsplats_4d_nexrad_supercell.py",
+      "dataset": "datasets/demos/gsplats_4d_nexrad_supercell.luxar.zarr",
+      "timelapse": {
+        "framePoint": 0.45
+      }
+    },
+    {
       "id": "hilbert_curve_3d",
       "title": "Hilbert Curve 3D",
       "geometry": "lines",

@@ -35,6 +35,7 @@ import type {
   SceneGraphState,
   SceneGraphNode,
   LODProgressState,
+  NodeDrawOrder,
 } from '../../../types/data-monitor-types';
 
 describe('getColorClass', () => {
@@ -481,9 +482,9 @@ describe('renderSceneGraphTree — kind badges', () => {
     return {
       root,
       totalNodes: 1,
-      nodesByType: { points: 0, lines: 0, gsplats: 1 },
-      totalByType: { points: 0, lines: 0, gsplats: 0 },
-      visibleByType: { points: 0, lines: 0, gsplats: 0 },
+      nodesByType: { points: 0, lines: 0, gsplats: 1, mesh: 0 },
+      totalByType: { points: 0, lines: 0, gsplats: 0, mesh: 0 },
+      visibleByType: { points: 0, lines: 0, gsplats: 0, mesh: 0 },
     };
   }
 
@@ -496,10 +497,10 @@ describe('renderSceneGraphTree — kind badges', () => {
     const state: SceneGraphState = {
       root: { path: '/', name: 'Scene', type: 'scene', children: [] },
       totalNodes: 3,
-      nodesByType: { points: 2, lines: 0, gsplats: 1 },
+      nodesByType: { points: 2, lines: 0, gsplats: 1, mesh: 0 },
       // Deliberately disjoint from nodesByType so reading the wrong record shows.
-      totalByType: { points: 90000, lines: 5000, gsplats: 70000 },
-      visibleByType: { points: 1, lines: 2, gsplats: 3 },
+      totalByType: { points: 90000, lines: 5000, gsplats: 70000, mesh: 0 },
+      visibleByType: { points: 1, lines: 2, gsplats: 3, mesh: 0 },
     };
     const html = renderSceneGraphTree(state, new Set(['/']), new Map());
 
@@ -544,5 +545,45 @@ describe('renderSceneGraphTree — kind badges', () => {
     };
     const html = renderSceneGraphTree(tree(root), new Set(), new Map());
     expect(html).toContain('4 parts');
+  });
+
+  describe('draw-order chip', () => {
+    const gsplatsNode: SceneGraphNode = {
+      path: '/cloud',
+      name: 'cloud',
+      type: 'gsplats',
+      children: [],
+    };
+
+    it('renders bucket + renderOrder when live state exists', () => {
+      const drawOrderStates = new Map<string, NodeDrawOrder>([
+        ['/cloud', { bucket: 'transparent', depthWrite: false, renderOrder: 3 }],
+      ]);
+      const html = renderSceneGraphTree(tree(gsplatsNode), new Set(), new Map(), drawOrderStates);
+      expect(html).toContain('data-draworder-path="/cloud"');
+      expect(html).toContain('#3 transparent');
+    });
+
+    it('renders a persistent EMPTY chip slot for a drawable node without state', () => {
+      // A node hidden at structural-render time (toggled-off layer, inactive
+      // substitutive-LOD level) has no provider state. The per-tick updater
+      // only patches existing `.luxar-scene-graph__draworder` elements, so
+      // the empty slot must exist or the chip could never appear once the
+      // node becomes visible.
+      const html = renderSceneGraphTree(tree(gsplatsNode), new Set(), new Map(), new Map());
+      // Empty slot: no text, no tooltip — nothing fabricated.
+      expect(html).toContain('data-draworder-path="/cloud" title=""></span>');
+    });
+
+    it('renders no chip slot for a non-drawable node (group)', () => {
+      const group: SceneGraphNode = {
+        path: '/grp',
+        name: 'grp',
+        type: 'group',
+        children: [],
+      };
+      const html = renderSceneGraphTree(tree(group), new Set(), new Map(), new Map());
+      expect(html).not.toContain('data-draworder-path');
+    });
   });
 });
