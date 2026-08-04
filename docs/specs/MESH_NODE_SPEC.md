@@ -1,6 +1,6 @@
 # Mesh Node Specification
 
-**Status:** Proposed
+**Status:** In delivery — Phases 0–1 landed (writer side; §11), viewer phases 2–6 still to come
 **Scope:** A fourth first-class geometry type — `mesh` — symmetric to Points, Lines and GSplats.
 **Non-goals:** LOD/decimation, spatial indexing, exact nD triangle clipping. See [§9](#9-explicitly-out-of-scope).
 **Target data:** isosurfaces and segmentation boundaries — 3D geometry whose hidden dimensions are
