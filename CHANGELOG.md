@@ -37,6 +37,7 @@ geolocation), and a faint wireframe cube outlining the analysis domain.
 Adds `metpy>=1.6.3,<2.0` to the `demos` extra (pure-Python Level II decoder; the
 floor is the NumPy-2 release). The default path loads precomputed splats from
 Git LFS and needs no network, GPU or decoder.
+
 #### Fixed — a caller `ordering=` no longer desyncs a node's on-disk sort order (#1221)
 
 `add_points` / `add_lines` / `add_gsplats` used to accept an `ordering=` keyword

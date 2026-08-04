@@ -205,8 +205,8 @@
       "files": [
         {
           "name": "nexrad_supercell.gsplats.zarr.zip",
-          "sha256": "26edeef242add651baee696e4d92a67297dbaf93e04403785c44d1ec23a6845b",
-          "bytes": 10059838
+          "sha256": "950a4a2eff4ec35c4fa2fef00ac357e214f7e8395568d8b8322f4e9e8dc67d94",
+          "bytes": 10060822
         }
       ]
     },

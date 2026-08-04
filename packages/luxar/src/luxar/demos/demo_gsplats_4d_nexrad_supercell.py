@@ -572,6 +572,27 @@ if not (NO_DATA_DBZ < DBZ_FLOOR < DBZ_CEIL):
         f"strictly between {NO_DATA_DBZ:g} (the no-data sentinel) and the "
         f"{DBZ_CEIL:g} dBZ ceiling."
     )
+# The remaining numeric flags get the same loud rejection as the floor above,
+# because each fails far from the flag otherwise: a zero grid spacing divides by
+# zero inside np.arange / _vertical_stretch, a negative one yields an empty grid
+# that misreports as "every timepoint is an empty-sky placeholder", a negative
+# splat budget reaches the fitter, --vert-exag<=0 collapses the vertical axis
+# through a singular transform, and --max-timepoints=0 silently renders frame 0.
+for _flag, _value, _minimum in (
+    ("--max-timepoints", MAX_TIMEPOINTS, 1),
+    ("--grid-m", GRID_M, 1),
+    ("--grid-z-m", GRID_Z_M, 1),
+    ("--splats", SPLATS_OVERRIDE, 0),
+):
+    if _value < _minimum:
+        raise SystemExit(
+            f"{_flag}={_value} is out of range: it must be at least {_minimum}."
+        )
+if VERT_EXAG <= 0.0:
+    raise SystemExit(
+        f"--vert-exag={VERT_EXAG:g} is out of range: the exaggeration must be "
+        "positive (1 = true to scale)."
+    )
 RELIST = "--relist" in sys.argv
 
 Arbol.max_depth = 5
@@ -1114,12 +1135,19 @@ def _geometry_token() -> str:
     unchanged name, so a re-run silently mixed volumes of different shapes and
     splat clouds in different coordinate frames. Grid spacing alone is not the
     geometry — the extent is half of it.
+
+    The extents are encoded EXACTLY (``%g``, so ``0.25`` stays ``0.25``). An
+    earlier ``int()`` truncation collapsed the fractional vertical bounds, so a
+    fractional box change with the same integer parts reused grids and splats
+    from the wrong coordinate frame — the same failure as omitting the box.
+    NOTE: the LFS bundle's inner filenames embed this token, so changing its
+    format (or any extent) requires renaming the bundle entries to match.
     """
     return (
         f"g{GRID_M}x{GRID_Z_M}"
-        f"_b{int(BOX_X_KM[0])},{int(BOX_X_KM[1])}"
-        f",{int(BOX_Y_KM[0])},{int(BOX_Y_KM[1])}"
-        f",{int(BOX_Z_KM[0])},{int(BOX_Z_KM[1])}"
+        f"_b{BOX_X_KM[0]:g},{BOX_X_KM[1]:g}"
+        f",{BOX_Y_KM[0]:g},{BOX_Y_KM[1]:g}"
+        f",{BOX_Z_KM[0]:g},{BOX_Z_KM[1]:g}"
     )
 
 

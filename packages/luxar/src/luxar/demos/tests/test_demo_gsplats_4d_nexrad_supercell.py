@@ -327,6 +327,32 @@ class TestPinnedScanList:
             assert name.endswith(".gsplats.zarr.zip")
             assert f"{i:04d}" in name
 
+    def test_shipped_bundle_inner_names_are_the_cache_names(self) -> None:
+        """Open the actual LFS bundle and compare, when it is materialized.
+
+        The format check above cannot catch a token-format change that leaves
+        the pattern intact; only the real archive can. Skipped on checkouts
+        where the bundle is still an LFS pointer.
+        """
+        import zipfile
+
+        from luxar.utils.demos import is_lfs_pointer
+
+        bundle = (
+            Path(_demo.__file__).parent
+            / "data"
+            / _demo.DEMO_NAME
+            / _demo._PRECOMPUTED_BUNDLE_NAME
+        )
+        if not bundle.exists() or is_lfs_pointer(bundle):
+            pytest.skip("LFS bundle not materialized (run `git lfs pull`)")
+        with zipfile.ZipFile(bundle) as zf:
+            inner = {Path(n).name for n in zf.namelist() if not n.endswith("/")}
+        expected = {
+            _demo._frame_cache_file(i).name for i in range(len(_demo.VOLUME_SCANS))
+        }
+        assert inner == expected
+
 
 class TestTornadoTrack:
     """The marker is a surveyed damage path, so it must land where radar sees it."""
@@ -434,6 +460,15 @@ class TestCacheIdentity:
         monkeypatch.setattr(_demo, "SPLATS_OVERRIDE", 12345)
         assert _demo._frame_cache_file(0).name != base
 
+    def test_fractional_box_bounds_participate(self, monkeypatch) -> None:
+        """Regression: int() in the geometry token collapsed 0.25 -> 0, so a
+        fractional bound change with the same integer parts reused grids and
+        splats fitted in the wrong coordinate frame."""
+        base = _demo._frame_cache_file(0).name
+        # Same integer parts as the shipped (0.25, 18.25) vertical bounds.
+        monkeypatch.setattr(_demo, "BOX_Z_KM", (0.5, 18.5))
+        assert _demo._frame_cache_file(0).name != base
+
 
 class TestFloatFlags:
     def test_fractional_values_survive(self, monkeypatch) -> None:
@@ -482,6 +517,57 @@ class TestDbzFloorValidation:
                 assert module.DBZ_FLOOR == pytest.approx(float(good))
             finally:
                 sys.modules.pop(name, None)
+
+
+class TestNumericFlagValidation:
+    """Out-of-range numeric flags must be rejected at startup, like the floor.
+
+    Each otherwise fails far from the flag: a zero grid spacing divides by zero
+    inside np.arange / _vertical_stretch, a negative one yields an empty grid
+    that misreports as "every timepoint is an empty-sky placeholder", a
+    negative splat budget reaches the fitter, --vert-exag=0 collapses the
+    vertical axis through a singular transform, and --max-timepoints=0
+    silently rendered a single frame.
+    """
+
+    @pytest.mark.parametrize(
+        "flag",
+        [
+            "--max-timepoints=0",
+            "--max-timepoints=-3",
+            "--grid-m=0",
+            "--grid-m=-750",
+            "--grid-z-m=0",
+            "--splats=-100",
+            "--vert-exag=0",
+            "--vert-exag=-2",
+        ],
+    )
+    def test_out_of_range_values_are_rejected_at_startup(
+        self, monkeypatch, flag: str
+    ) -> None:
+        name = "_luxar_demo_nexrad_flag_check"
+        monkeypatch.setattr(sys, "argv", ["demo", flag])
+        try:
+            with pytest.raises(SystemExit, match=flag.split("=")[0]):
+                _load_demo_module(name)
+        finally:
+            sys.modules.pop(name, None)
+
+    def test_valid_values_are_accepted(self, monkeypatch) -> None:
+        name = "_luxar_demo_nexrad_flag_check"
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            ["demo", "--max-timepoints=1", "--grid-m=500", "--splats=0"],
+        )
+        try:
+            module = _load_demo_module(name)
+            assert module.MAX_TIMEPOINTS == 1
+            assert module.GRID_M == 500
+            assert module.SPLATS_OVERRIDE == 0
+        finally:
+            sys.modules.pop(name, None)
 
 
 class Test4DAssembly:
