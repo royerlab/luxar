@@ -41,6 +41,7 @@ rendering/
 ├── element-storage.ts                  # Shared texture-backed element storage + aSortedIndex writers
 ├── depth-sort-coordinator.ts           # Main-thread side of the depth-sort worker + camera re-sort scheduler (Phases 2-3)
 ├── point-geometry.ts                   # Point quad base + 3-texel layout/texel writer
+├── mesh-geometry.ts                    # Plain indexed BufferGeometry for Mesh (NOT instanced/texture-backed): WebGPU-safe colour dtypes, capacity index + drawRange
 ├── widen-to-float32.ts                 # Dtype widening for the texel writers
 │
 ├── materials/                          # Per-geometry material and shader stacks

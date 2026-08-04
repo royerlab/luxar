@@ -59,6 +59,26 @@ export interface SceneBoundingBoxResult {
 }
 
 /**
+ * Triangles a mesh geometry actually draws.
+ *
+ * `drawRange`, not `index.count`. Mesh allocates its index buffer once at the node's
+ * full face-count capacity and draws the visible prefix via `drawRange`
+ * (`rendering/mesh-geometry.ts` explains why: replacing `geometry.index` per epoch
+ * leaks its GPU buffer). So `index.count` is the capacity — reading it here would
+ * report every face as on-screen and, worse, give a fully-culled mesh a non-zero
+ * count, which is exactly the "contributes bounds while drawing nothing" bug the
+ * count guard exists to prevent.
+ *
+ * `drawRange.count` defaults to `Infinity` on a geometry nobody has set it on, so the
+ * fallback keeps this finite rather than poisoning `primitiveCount`.
+ */
+function drawnTriangleCount(geometry: THREE.BufferGeometry): number {
+  const drawn = geometry.drawRange.count;
+  if (Number.isFinite(drawn)) return drawn / 3;
+  return (geometry.index?.count ?? 0) / 3;
+}
+
+/**
  * Walk `scene` and aggregate the world-space bounding box of every
  * renderable primitive. Points, Lines, and GSplats all render as
  * `THREE.Mesh + InstancedBufferGeometry`, so one shape covers those three;
@@ -69,8 +89,8 @@ export interface SceneBoundingBoxResult {
  *     bounding box from the geometry, `instanceCount` for the
  *     primitive count.
  *   - `THREE.Mesh` with `userData.nodeType === 'mesh'` — bounding box from the
- *     geometry, and the DRAWN TRIANGLE count (`index.count / 3`) for the
- *     primitive count.
+ *     geometry, and the DRAWN TRIANGLE count (`drawRange.count / 3`, see
+ *     {@link drawnTriangleCount}) for the primitive count.
  *   - `THREE.InstancedMesh` — bounding box from the geometry, plus
  *     the count from `mesh.count` for the primitive count.
  *
@@ -122,11 +142,11 @@ export function computeSceneBoundingBox(scene: THREE.Scene): SceneBoundingBoxRes
     if (!geometry.boundingBox) return;
 
     // Primitives, counted per type in the unit each type actually draws: instances for
-    // the instanced-quad types, and DRAWN TRIANGLES for a mesh. Reading the index
+    // the instanced-quad types, and DRAWN TRIANGLES for a mesh. Reading what is drawn
     // rather than `n_faces` is what makes a culled mesh report what is on screen — the
-    // index buffer is the only thing a slice change rewrites.
+    // draw range is the only thing a slice change rewrites.
     const instanceCount = isLuxarMesh
-      ? (geometry.index?.count ?? 0) / 3
+      ? drawnTriangleCount(geometry)
       : isInstancedMesh
         ? object.count
         : ((geometry as THREE.InstancedBufferGeometry).instanceCount ?? 0);

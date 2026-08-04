@@ -157,19 +157,24 @@ describe('SceneLoader.updateView — mesh re-projects on every sweep', () => {
     });
     expect((meshLoader.updateView as any).mock.calls.length).toBeGreaterThan(0);
     const callsAfterFirst = (meshLoader.updateView as any).mock.calls.length;
-    expect(meshNode.geometry.index?.count).toBe(3);
+    // `drawRange`, not `index.count`: the index buffer is allocated once at the
+    // node's face-count capacity and the visible prefix is drawn via the draw range
+    // (see `rendering/mesh-geometry.ts` — replacing the index per epoch leaks its GPU
+    // buffer). `index.count` therefore stays at the capacity across sweeps and could
+    // not witness a cull at all.
+    expect(meshNode.geometry.drawRange.count).toBe(3);
 
     // Second sweep: slice moves to w = 99. Every vertex is at w = 0, far outside
     // the ±0.5 slab, so the whole triangle culls. This can ONLY hold if the mesh
     // re-joined the sweep and re-projected — a frozen initial projection would
-    // leave the index at 3.
+    // leave the draw range at 3.
     await sceneLoader.updateView({
       displayDims: [0, 1, 2],
       slicePosition: [0, 0, 0, 99],
       tolerance: [1e10, 1e10, 1e10, 0.5],
     });
     expect((meshLoader.updateView as any).mock.calls.length).toBeGreaterThan(callsAfterFirst);
-    expect(meshNode.geometry.index?.count).toBe(0);
+    expect(meshNode.geometry.drawRange.count).toBe(0);
   });
 
   it('extend_to_all survives the sweep: an extended mesh away from w = 0 stays visible', async () => {
@@ -199,7 +204,9 @@ describe('SceneLoader.updateView — mesh re-projects on every sweep', () => {
       slicePosition: [0, 0, 0, 0],
       tolerance: [1e10, 1e10, 1e10, 0.5],
     });
-    expect(meshNode.geometry.index?.count).toBe(3);
+    // `drawRange`, not `index.count` — the latter is the node's fixed capacity, so it
+    // would read 3 even with every triangle culled and could not witness visibility.
+    expect(meshNode.geometry.drawRange.count).toBe(3);
 
     // Scrub w: an extended node must stay slice-invariant.
     await sceneLoader.updateView({
@@ -207,6 +214,6 @@ describe('SceneLoader.updateView — mesh re-projects on every sweep', () => {
       slicePosition: [0, 0, 0, 99],
       tolerance: [1e10, 1e10, 1e10, 0.5],
     });
-    expect(meshNode.geometry.index?.count).toBe(3);
+    expect(meshNode.geometry.drawRange.count).toBe(3);
   });
 });

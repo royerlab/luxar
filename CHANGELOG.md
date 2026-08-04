@@ -353,9 +353,35 @@ multiple of 4, so a size-3 `uint8` colour attribute (3-byte stride) fails
 `createRenderPipeline` and the mesh renders nothing on WebGPU while looking correct
 on WebGL. RGB `uint8`/`uint16` colours are therefore padded to RGBA with an opaque
 alpha; `float32` binds natively. The index dtype keys on `vertexCount`, not the
-largest index present, because the index buffer is rebuilt on every slice change and
-a dtype that flips between rebuilds is the attribute-identity change WebGPU does not
-tolerate.
+largest index present, because `vertexCount` is fixed for the node while the largest
+index drawn changes with the slice, and a dtype that differs between epochs is the
+attribute-identity change WebGPU does not tolerate.
+
+**The index buffer is allocated once per node and drawn through `drawRange`.**
+Replacing `geometry.index` on every slice move leaks its GPU buffer: three caches
+attribute buffers in a `WeakMap` keyed by the attribute object and only calls
+`gl.deleteBuffer` from `WebGLAttributes.remove()`, which runs on geometry disposal
+(for whichever index is current then) and when the *wireframe* attribute is replaced —
+never when `index` itself is swapped. The orphaned attribute's `WeakMap` entry is
+collected and its GPU buffer is never freed, so a timelapse scrub orphaned one index
+buffer per move. Mesh is the only type that rewrites its index per epoch (the other
+three update pooled attributes in place), so nothing in the tree had hit this.
+
+The buffer is now sized from the node's total `faceCount` and the visible prefix drawn
+with `setDrawRange`. Reuse requires the buffer to already be at that FULL capacity
+rather than merely large enough for the current epoch — the placeholder is born with a
+zero-length index, so a first epoch that happens to be fully culled would otherwise
+fit in it and force a reallocation on the next epoch that reveals a triangle. The
+upload is bounded to the rewritten prefix via update ranges, so reuse does not trade
+the leak for a per-move bandwidth regression (the classic WebGL backend honours them;
+the WebGPU ones re-upload in full regardless). Because the attribute object is then
+stable, a slice move also rebinds nothing, so it leaves three's cached `RenderObject`
+alone and does not participate in the `attributesRebuilt` eviction contract.
+
+One consequence for readers of counts: `index.count` is the capacity and
+`drawRange.count` is what is drawn, which is why `camera-framing.ts` reads the latter —
+taking the former would give a fully-culled mesh a non-zero primitive count and frame a
+scene that draws nothing.
 
 **Camera framing was silently blind to a mesh.** `computeSceneBoundingBox` gates on
 `InstancedBufferGeometry`, which a mesh never is — so a mesh-only scene returned an

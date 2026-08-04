@@ -94,6 +94,7 @@ export function createEmptyMeshNode(
     indices: new Uint32Array(0),
     colors: null,
     vertexCount: 1,
+    faceCount: 0,
   });
 
   const mesh = new THREE.Mesh(geometry, createMeshPlaceholderMaterial(attrs));

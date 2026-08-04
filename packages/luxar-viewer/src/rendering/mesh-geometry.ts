@@ -34,6 +34,14 @@ export interface MeshGeometryInput {
   colorComponents?: 3 | 4;
   /** Vertices in the buffers (NOT the visible count — nothing is compacted). */
   vertexCount: number;
+  /**
+   * Total faces in the node, which sizes the index buffer's CAPACITY.
+   *
+   * Not `indices.length / 3`: that is the currently-visible count, which changes
+   * every slice move. The buffer is allocated once at the node's full face count and
+   * the visible prefix is drawn via `drawRange` — see {@link applyIndices}.
+   */
+  faceCount: number;
 }
 
 /**
@@ -120,20 +128,91 @@ export function buildDefaultColorAttribute(vertexCount: number): THREE.BufferAtt
  * 32-bit path for every draw. Meshes in this domain are usually well under 65k
  * vertices per node.
  *
- * The threshold is on `vertexCount`, not on the max index present: the index buffer
- * is rebuilt on every slice change while `vertexCount` is fixed for the node, so
- * keying off the observed maximum would let the dtype flip between rebuilds — and
- * changing a drawn geometry's index dtype is exactly the kind of attribute-identity
+ * The threshold is on `vertexCount`, not on the max index present: `vertexCount` is
+ * fixed for the node, whereas the largest index actually drawn changes with the slice.
+ * Keying off the observed maximum would let the dtype differ between epochs, which
+ * would defeat the buffer reuse in {@link applyIndices} — and re-binding a drawn
+ * geometry's index with a different dtype is exactly the kind of attribute-identity
  * change the WebGPU backend does not tolerate.
  */
 export function buildIndexAttribute(
   indices: Uint32Array,
-  vertexCount: number
+  vertexCount: number,
+  faceCount: number
 ): THREE.BufferAttribute {
-  if (vertexCount < 65536) {
-    return new THREE.BufferAttribute(new Uint16Array(indices), 1, false);
+  // Capacity is the node's FULL face count, not the visible one, so the buffer is
+  // allocated once for the node's lifetime — see `applyIndices` for why.
+  const capacity = Math.max(faceCount * 3, indices.length);
+  const array = vertexCount < 65536 ? new Uint16Array(capacity) : new Uint32Array(capacity);
+  array.set(indices);
+  return new THREE.BufferAttribute(array, 1, false);
+}
+
+/**
+ * Point `geometry`'s index at `indices`, reusing the existing buffer when it can.
+ *
+ * ## Why not simply `setIndex(buildIndexAttribute(...))` every epoch
+ *
+ * Because that leaks GPU memory on every slice move. Three caches attribute buffers
+ * in a `WeakMap` keyed by the attribute object and only ever calls `gl.deleteBuffer`
+ * from `WebGLAttributes.remove()` — which runs on geometry disposal (for whichever
+ * index is current at that moment) and, notably, when the *wireframe* attribute is
+ * replaced. Nothing calls it when `geometry.index` itself is replaced: the old
+ * attribute becomes unreachable, its `WeakMap` entry is collected, and the GPU buffer
+ * it owned is never freed. Mesh is the only geometry type that rewrites its index per
+ * epoch — the other three update pooled attributes in place — so nothing in the tree
+ * had hit this before.
+ *
+ * So the index buffer is allocated once at the node's full face-count capacity and
+ * the visible prefix is drawn with `setDrawRange`. The tail past the range keeps
+ * stale indices, which is safe precisely because `drawRange` bounds the draw; three
+ * clamps it to `index.count`.
+ *
+ * Reuse also means the index attribute OBJECT is stable after the first commit, so —
+ * unlike a per-epoch `setIndex` — a slice move leaves three's cached `RenderObject`
+ * untouched. That is why this does not participate in the `attributesRebuilt`
+ * eviction contract: it never rebinds anything after the build.
+ *
+ * A consequence worth knowing when reading counts elsewhere: `index.count` is now the
+ * CAPACITY, not what is drawn. `drawRange.count` is the drawn quantity — which is why
+ * `camera-framing.ts` reads that instead.
+ */
+export function applyIndices(
+  geometry: THREE.BufferGeometry,
+  indices: Uint32Array,
+  vertexCount: number,
+  faceCount: number
+): void {
+  const existing = geometry.index;
+  const wantUint16 = vertexCount < 65536;
+  const dtypeMatches = wantUint16
+    ? existing?.array instanceof Uint16Array
+    : existing?.array instanceof Uint32Array;
+
+  // Reuse requires the buffer to already be at the node's FULL capacity, not merely
+  // big enough for this epoch. The placeholder is born with a zero-length index
+  // (`faceCount: 0`), so a first epoch that happens to be fully culled would otherwise
+  // "fit" in it, leave it at zero, and force a `setIndex` on the next epoch that
+  // reveals a triangle — reintroducing exactly the per-move reallocation this avoids.
+  const capacity = Math.max(faceCount * 3, indices.length);
+  if (existing && dtypeMatches && existing.array.length >= capacity) {
+    (existing.array as Uint16Array | Uint32Array).set(indices);
+    // Bound the upload to the prefix actually rewritten. Without this the whole
+    // capacity buffer is re-uploaded every slice move, which for a large mesh with a
+    // small visible set is far more bandwidth than the old reallocating path spent —
+    // i.e. it would trade the leak for a per-move bandwidth regression. The classic
+    // WebGL backend honours update ranges; the WebGPU backends ignore them and
+    // re-upload in full, so this is an improvement there and neutral here.
+    existing.clearUpdateRanges();
+    if (indices.length > 0) existing.addUpdateRange(0, indices.length);
+    existing.needsUpdate = true;
+  } else {
+    geometry.setIndex(buildIndexAttribute(indices, vertexCount, faceCount));
   }
-  return new THREE.BufferAttribute(indices, 1, false);
+
+  // The tail past this range keeps stale indices, which is safe precisely because the
+  // draw range bounds the draw — three clamps it to `index.count`.
+  geometry.setDrawRange(0, indices.length);
 }
 
 /**
@@ -160,7 +239,7 @@ export function buildMeshGeometry(input: MeshGeometryInput): THREE.BufferGeometr
       ? buildColorAttribute(input.colors, input.colorComponents ?? 3, input.vertexCount)
       : buildDefaultColorAttribute(input.vertexCount)
   );
-  geometry.setIndex(buildIndexAttribute(input.indices, input.vertexCount));
+  applyIndices(geometry, input.indices, input.vertexCount, input.faceCount);
   geometry.computeBoundingBox();
   geometry.computeBoundingSphere();
   return geometry;
@@ -263,6 +342,6 @@ export function updateMeshGeometry(
     attributesRebuilt = true;
   }
 
-  geometry.setIndex(buildIndexAttribute(input.indices, input.vertexCount));
+  applyIndices(geometry, input.indices, input.vertexCount, input.faceCount);
   return attributesRebuilt;
 }

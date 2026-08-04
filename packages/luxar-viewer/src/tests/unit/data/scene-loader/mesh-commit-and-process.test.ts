@@ -170,7 +170,8 @@ describe('commitMeshGeometry', () => {
     });
     commitMeshGeometry({ rootGroup: root, currentVersion: 7 }, staged);
 
-    expect(mesh.geometry.index?.count).toBe(3);
+    // `drawRange` is the drawn quantity; `index.count` is the node's capacity.
+    expect(mesh.geometry.drawRange.count).toBe(3);
     expect(mesh.geometry.getAttribute('position').count).toBe(3);
     expect(mesh.userData.visibleTriangleCount).toBe(1);
     expect(mesh.userData.loadedViewVersion).toBe(7);
@@ -263,7 +264,9 @@ describe('commitMeshGeometry', () => {
     commitMeshGeometry({ rootGroup: root, currentVersion: 1 }, staged);
     // An empty index, not a stale one: the previous epoch's triangles must stop
     // drawing rather than lingering.
-    expect(mesh.geometry.index?.count).toBe(0);
+    // Nothing drawn, and not a stale draw. The index buffer keeps its capacity (it is
+    // allocated once per node), so what has to go to zero is the DRAW RANGE.
+    expect(mesh.geometry.drawRange.count).toBe(0);
     expect(mesh.userData.visibleTriangleCount).toBe(0);
   });
 });
