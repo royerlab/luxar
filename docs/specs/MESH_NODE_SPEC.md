@@ -707,8 +707,13 @@ model is deliberately minimal and light-free:
   negate a viewer-facing normal on every back-facing fragment and reintroduce exactly the inverted,
   `uAmbient`-collapsing shade the flip exists to remove — worst precisely at the degenerate and corrupt
   vertices the guard is there to rescue. So the flip is gated on whether the stored normal survived the
-  guard; only normals that did are flipped. Order the fragment build accordingly: evaluate the guard
-  first, and flip only on its stored-normal branch.
+  guard; only normals that did are flipped. One structural constraint on the fragment build follows: the
+  guard's condition reads an interpolated varying, so a branch on it is **non-uniform control flow**,
+  where GLSL leaves `dFdx`/`dFdy` undefined (normal validity can differ between fragments of the same
+  2×2 quad). The derivative fallback normal is therefore computed **unconditionally**, before any
+  guard-dependent branching, and the guard *selects* per fragment between the flipped stored normal and
+  that precomputed fallback — only the `gl_FrontFacing` flip, never the derivative evaluation, sits
+  behind the guard.
 
   The flip is well-defined
   wherever it applies: stored normals are only active when `normal_dims == displayDims` (§3.4), where
