@@ -393,6 +393,22 @@ has its own arm, counting DRAWN triangles from the index rather than the authore
 `n_faces`, so a culled mesh reports what is on screen. A prose warning was not enough
 to stop this happening once; the lesson is that only a compile error is.
 
+**Framing a mesh reads the drawn vertices, not the whole position buffer.** Counting
+drawn triangles while taking bounds from `computeBoundingBox()` was internally
+inconsistent: under the no-compaction design the position buffer always holds every
+vertex of the whole nD mesh, so the box spanned vertices whose triangles the slab cull
+removed — and vertices no triangle references at all. A 4D surface that translates over
+time framed its ENTIRE trajectory, pulling the camera out (and inflating the derived
+scene scale and zoom limits) while the drawn slice sat small and off-centre. The
+projection now returns the AABB of the vertices its emitted index references, the
+commit stamps it on `userData`, and the framing walk prefers it — falling back to the
+geometry box when a node has no stamp yet, so absence stays conservative rather than
+reading as empty. The geometry's own bounds deliberately stay whole-buffer:
+over-inclusive is conservative-correct for frustum culling and the raycast broad phase.
+The two states the first round of tests pinned — fully visible and fully culled — are
+exactly the two where this cannot show, so the partial-cull case is now covered on both
+sides.
+
 The monitor's scene tree gained its mesh arm too — it rendered a blank count while the
 other three showed one, even though the converter was already populating `faceCount`.
 And `loaderDisplay`'s `default:` became a `satisfies never` guard: it previously shared

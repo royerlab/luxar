@@ -79,6 +79,23 @@ function drawnTriangleCount(geometry: THREE.BufferGeometry): number {
 }
 
 /**
+ * The mesh's committed visible-vertex box, in local space, or `null` when it has none.
+ *
+ * `null` covers two cases the caller must fall back on rather than treat as empty: a
+ * node committed before this stamp existed, and a geometry whose index is empty (which
+ * the zero-primitive guard has already skipped by the time this runs).
+ */
+function visibleBoxOf(object: THREE.Object3D): THREE.Box3 | null {
+  const userData = object.userData as { visibleBounds?: { min: number[]; max: number[] } | null };
+  const bounds = userData.visibleBounds;
+  if (!bounds) return null;
+  return new THREE.Box3(
+    new THREE.Vector3(bounds.min[0], bounds.min[1], bounds.min[2]),
+    new THREE.Vector3(bounds.max[0], bounds.max[1], bounds.max[2])
+  );
+}
+
+/**
  * Walk `scene` and aggregate the world-space bounding box of every
  * renderable primitive. Points, Lines, and GSplats all render as
  * `THREE.Mesh + InstancedBufferGeometry`, so one shape covers those three;
@@ -153,7 +170,15 @@ export function computeSceneBoundingBox(scene: THREE.Scene): SceneBoundingBoxRes
     if (instanceCount <= 0) return;
     primitiveCount += instanceCount;
 
-    const tempBox = geometry.boundingBox.clone();
+    // For a mesh, prefer the bounds of the vertices the index actually references.
+    // `geometry.boundingBox` spans the WHOLE position buffer, which under the
+    // no-compaction design holds every vertex of the whole nD mesh — including those
+    // whose triangles the slab cull removed, and any no triangle references at all. A
+    // 4D surface that translates over time would otherwise frame its entire
+    // trajectory while the drawn slice sits small and off-centre (#1252). The
+    // geometry's own bounds stay whole-buffer deliberately: over-inclusive is
+    // conservative-correct for frustum culling and the raycast broad phase.
+    const tempBox = (isLuxarMesh ? visibleBoxOf(object) : null) ?? geometry.boundingBox.clone();
     tempBox.applyMatrix4(object.matrixWorld);
     if (!tempBox.isEmpty()) {
       box.union(tempBox);

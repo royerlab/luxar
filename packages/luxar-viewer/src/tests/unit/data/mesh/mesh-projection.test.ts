@@ -467,6 +467,68 @@ describe('projectMesh — the winding post-pass', () => {
   });
 });
 
+describe('projectMesh — visible bounds (#1252)', () => {
+  it('spans only the vertices the emitted index references', () => {
+    // The whole point: `position` holds all six vertices of both triangles, but only
+    // triangle A survives the slab, so the box must exclude triangle B's z = 1 plane.
+    const result = projectMesh(
+      twoTrianglesIn4D(),
+      viewState([0, 1, 2], [0, 0, 0, 0], [1e10, 1e10, 1e10, 0.5]),
+      undefined,
+      true,
+      backend
+    );
+    expect(result.visibleFaceCount).toBe(1);
+    // Triangle A is (0,0,0), (1,0,0), (0,1,0); triangle B sits at z = 1.
+    expect(result.visibleBounds).toEqual({ min: [0, 0, 0], max: [1, 1, 0] });
+  });
+
+  it('follows the slice to the other triangle', () => {
+    // Anti-vacuity: a box that always described triangle A would pass above.
+    const result = projectMesh(
+      twoTrianglesIn4D(),
+      viewState([0, 1, 2], [0, 0, 0, 10], [1e10, 1e10, 1e10, 0.5]),
+      undefined,
+      true,
+      backend
+    );
+    expect(result.visibleBounds).toEqual({ min: [0, 0, 1], max: [1, 1, 1] });
+  });
+
+  it('is null when nothing is drawn', () => {
+    // "No drawn geometry" — the framing walk must skip it, not read a degenerate box
+    // at the origin.
+    const result = projectMesh(
+      twoTrianglesIn4D(),
+      viewState([0, 1, 2], [0, 0, 0, 100], [1e10, 1e10, 1e10, 0.5]),
+      undefined,
+      true,
+      backend
+    );
+    expect(result.visibleFaceCount).toBe(0);
+    expect(result.visibleBounds).toBeNull();
+  });
+
+  it('is computed on the fast path too, so an unreferenced vertex cannot inflate it', () => {
+    // Nothing is culled here, but a vertex NO triangle references still sits in the
+    // position buffer and would enlarge `computeBoundingBox()`.
+    const mesh: LoadedMeshData = {
+      ...oneTriangleIn3D(),
+      vertices: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0, 500, 500, 500]),
+      vertexCount: 4,
+    };
+    const result = projectMesh(
+      mesh,
+      viewState([0, 1, 2], [0, 0, 0], [1e10, 1e10, 1e10]),
+      undefined,
+      true,
+      backend
+    );
+    expect(result.usedFastPath).toBe(true);
+    expect(result.visibleBounds).toEqual({ min: [0, 0, 0], max: [1, 1, 0] });
+  });
+});
+
 describe('projectMesh — the two-sided dimension hazard', () => {
   // The dimension hazard runs in BOTH directions and the kernels fail differently at
   // each end: above 16 dims the Rust kernel calls `validate_ndim` and the crate is

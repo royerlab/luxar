@@ -74,6 +74,23 @@ export interface ProjectedMeshData {
   usedFastPath: boolean;
 
   /**
+   * Display-space AABB of the vertices the emitted index actually references, or
+   * `null` when nothing is drawn.
+   *
+   * NOT the same as the geometry's bounding box, and the difference is the point.
+   * Under the no-compaction design `position` always holds EVERY vertex of the whole
+   * nD mesh, so `computeBoundingBox()` spans vertices whose triangles the slab cull
+   * removed — and vertices no triangle references at all. Framing a 4D surface that
+   * translates over time on that box pulls the camera out to cover the whole
+   * trajectory while the drawn slice sits small and off-centre (#1252).
+   *
+   * Consumed by `camera-framing.ts` through `userData`. Deliberately NOT written to
+   * `geometry.boundingSphere`: over-inclusive bounds are conservative-correct for
+   * frustum culling and the raycast broad phase, so those keep the whole-buffer box.
+   */
+  visibleBounds: { min: [number, number, number]; max: [number, number, number] } | null;
+
+  /**
    * Set when the node asked for single-sided rendering but winding could not be
    * decided, carrying the reason. Threaded out to the caller rather than logged
    * here so {@link resolveWinding} and {@link projectMesh} stay free of side
@@ -210,6 +227,40 @@ function reverseWinding(indices: Uint32Array, faceCount: number): void {
 }
 
 /**
+ * AABB of the display-space vertices `indices` references.
+ *
+ * Walks the INDEX rather than the position buffer, which is what makes it exclude
+ * culled and wholly-unreferenced vertices. Returns `null` for an empty index — "no
+ * drawn geometry", which the framing walk must skip rather than treat as a point at
+ * the origin. Non-finite coordinates are skipped so one bad vertex cannot poison the
+ * box into NaN (the cull already drops vertices with non-finite HIDDEN coordinates,
+ * but a displayed axis is not filtered).
+ */
+function boundsOfIndexed(
+  position: Float32Array,
+  indices: Uint32Array
+): { min: [number, number, number]; max: [number, number, number] } | null {
+  const min: [number, number, number] = [Infinity, Infinity, Infinity];
+  const max: [number, number, number] = [-Infinity, -Infinity, -Infinity];
+  let seen = 0;
+  for (let i = 0; i < indices.length; i++) {
+    const base = indices[i] * 3;
+    const x = position[base];
+    const y = position[base + 1];
+    const z = position[base + 2];
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) continue;
+    if (x < min[0]) min[0] = x;
+    if (y < min[1]) min[1] = y;
+    if (z < min[2]) min[2] = z;
+    if (x > max[0]) max[0] = x;
+    if (y > max[1]) max[1] = y;
+    if (z > max[2]) max[2] = z;
+    seen++;
+  }
+  return seen > 0 ? { min, max } : null;
+}
+
+/**
  * Project a loaded mesh into display space for one view state.
  *
  * @param backend - WASM module or the TypeScript reference, already selected for
@@ -259,6 +310,7 @@ export function projectMesh(
       visibleVertexCount: 0,
       side: winding.side,
       usedFastPath: false,
+      visibleBounds: null,
       undecidableReason: winding.undecidableReason,
     };
   }
@@ -281,6 +333,9 @@ export function projectMesh(
       visibleVertexCount: vertexCount,
       side: winding.side,
       usedFastPath: true,
+      // Computed even here: nothing is culled on the fast path, but a vertex no
+      // triangle references still inflates the whole-buffer box.
+      visibleBounds: boundsOfIndexed(position, indices),
       undecidableReason: winding.undecidableReason,
     };
   }
@@ -315,6 +370,7 @@ export function projectMesh(
     visibleVertexCount,
     side: winding.side,
     usedFastPath: false,
+    visibleBounds: boundsOfIndexed(position, indices),
     undecidableReason: winding.undecidableReason,
   };
 }

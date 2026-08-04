@@ -176,6 +176,60 @@ describe('computeSceneBoundingBox', () => {
     expect(computeSceneBoundingBox(scene).primitiveCount).toBe(1);
   });
 
+  it('frames a PARTIALLY culled mesh on the drawn vertices, not the whole buffer (#1252)', () => {
+    // The case both extremes hide. Under no-compaction the position buffer holds every
+    // vertex of the whole nD mesh, so a 4D surface that moves over time spans its entire
+    // trajectory. Framing that box pulls the camera out to cover timepoints nothing is
+    // drawing, with the visible slice small and off-centre.
+    const scene = new THREE.Scene();
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute(
+      'position',
+      new THREE.BufferAttribute(
+        // Triangle A near the origin (drawn); triangle B far away (culled).
+        // prettier-ignore
+        new Float32Array([
+          0, 0, 0, 1, 0, 0, 0, 1, 0,
+          900, 900, 900, 901, 900, 900, 900, 901, 900,
+        ]),
+        3
+      )
+    );
+    geometry.setIndex(new THREE.BufferAttribute(new Uint16Array([0, 1, 2, 3, 4, 5]), 1));
+    geometry.setDrawRange(0, 3); // only triangle A
+    const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial());
+    mesh.userData = {
+      nodeType: 'mesh',
+      visibleBounds: { min: [0, 0, 0], max: [1, 1, 0] },
+    };
+    scene.add(mesh);
+    scene.updateMatrixWorld(true);
+
+    const result = computeSceneBoundingBox(scene);
+    expect(result.primitiveCount).toBe(1);
+    // Strictly the drawn triangle — NOT the 900-unit whole-buffer box.
+    expect(result.box.max.toArray()).toEqual([1, 1, 0]);
+  });
+
+  it('falls back to the geometry box for a mesh with no committed visible bounds', () => {
+    // A node committed before the stamp existed, or one never committed. Falling back
+    // keeps framing conservative rather than treating the absence as an empty box.
+    const scene = new THREE.Scene();
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute(
+      'position',
+      new THREE.BufferAttribute(new Float32Array([0, 0, 0, 10, 0, 0, 0, 10, 0]), 3)
+    );
+    geometry.setIndex(new THREE.BufferAttribute(new Uint16Array([0, 1, 2]), 1));
+    geometry.setDrawRange(0, 3);
+    const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial());
+    mesh.userData = { nodeType: 'mesh' };
+    scene.add(mesh);
+    scene.updateMatrixWorld(true);
+
+    expect(computeSceneBoundingBox(scene).box.max.toArray()).toEqual([10, 10, 0]);
+  });
+
   it('aggregates Points bounds and counts instances as primitives', () => {
     const scene = new THREE.Scene();
     const geometry = new THREE.InstancedBufferGeometry();

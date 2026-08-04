@@ -299,6 +299,19 @@ export interface MeshUserData {
 
   /** Vertices that passed the nD slab test; diagnostic, not a draw bound */
   visibleVertexCount: number;
+
+  /**
+   * Display-space AABB of the vertices the current index references, or `null` when
+   * nothing is drawn. Absent until the first commit.
+   *
+   * Read by `camera-framing.ts` in preference to `geometry.boundingBox`, which spans
+   * the WHOLE position buffer: under the no-compaction design that includes vertices
+   * whose triangles the slab cull removed, so framing a 4D surface that moves over
+   * time on it covers the entire trajectory rather than the drawn slice (#1252). The
+   * geometry's own bounds stay whole-buffer on purpose — over-inclusive is
+   * conservative-correct for frustum culling and the raycast broad phase.
+   */
+  visibleBounds?: { min: [number, number, number]; max: [number, number, number] } | null;
 }
 
 /** Runtime guard for {@link MeshUserData}, mirroring `isPointsUserData`. */

@@ -100,6 +100,11 @@ export function commitMeshGeometry(
 
   object.userData.visibleTriangleCount = projected.visibleFaceCount;
   object.userData.visibleVertexCount = projected.visibleVertexCount;
+  // Bounds over the vertices the index actually references, for camera framing. The
+  // geometry's own box spans the whole position buffer (correct to keep — conservative
+  // bounds are safe for frustum culling), which would frame a moving 4D surface's
+  // entire trajectory instead of the drawn slice (#1252).
+  object.userData.visibleBounds = projected.visibleBounds;
 
   stampLoadedViewVersion(object.userData, loadedViewVersion ?? currentVersion);
 
