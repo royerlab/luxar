@@ -334,6 +334,11 @@ def _pip_install_cmd(extras: list[str]) -> list[str]:
     return [*base, f"luxar[{joined}]"]
 
 
+def _pip_install_requirement_cmd(requirement: str) -> list[str]:
+    """The pip command that installs one exact tabled requirement."""
+    return [sys.executable, "-m", "pip", "install", requirement]
+
+
 @app_demo.command("deps")
 def demo_deps(
     extra: Optional[str] = typer.Option(
@@ -343,10 +348,19 @@ def demo_deps(
         # gsplat commands, and means "editable" to the pip this command drives.
         help="Only consider one extra (demos / io / gsplats). Default: all.",
     ),
+    only: Optional[str] = typer.Option(
+        None,
+        "--only",
+        metavar="MODULE",
+        help=(
+            "Only consider one import module (case-insensitive) and install its "
+            "exact constrained requirement. Cannot be combined with --extra."
+        ),
+    ),
     install: bool = typer.Option(
         False,
         "--install",
-        help="Install the extras for missing or out-of-date packages.",
+        help="Install the extras, or the exact --only requirement, for unmet rows.",
     ),
     dry_run: bool = typer.Option(
         False, "--dry-run", help="With --install, print the pip command only."
@@ -357,27 +371,48 @@ def demo_deps(
     Demos deliberately keep heavyweight packages out of the core install, so a
     fresh checkout can run `luxar demo list` but not every demo. This reports
     what is missing or out of date and, with ``--install``, installs the Luxar
-    extras that provide it.
+    extras that provide it. ``--only MODULE`` instead installs that module's
+    exact constrained requirement, avoiding a whole-extra install for one gap.
     """
-    from ..demos import extras_for, survey
+    from ..demos import DependencyStatus, extras_for, survey
 
     if dry_run and not install:
         # Silently ignoring a flag the user typed is worse than saying so.
         aprint("ℹ️  --dry-run only applies with --install; reporting only.")
 
     # Extra names are lowercase by PEP 685, so accept any casing the user types.
-    # Normalize a blank value (`--extra ""` / "   ") to None: `survey` treats
-    # only None as "survey everything", so an empty-string extra is an active
-    # filter that matches just the no-extra specs (gdown) — never what a blank
-    # meant.
+    # Normalize blank filters to None: neither `--extra ""` nor `--only ""`
+    # should become an active filter with a surprising empty/orphan-only result.
     extra = (extra.strip().lower() or None) if extra else None
-    rows = survey(extra)
+    only = (only.strip() or None) if only else None
+    if extra is not None and only is not None:
+        aprint("❌ --extra and --only cannot be combined.")
+        raise typer.Exit(2)
+
+    def selected_rows() -> list[DependencyStatus]:
+        current = survey(extra)
+        if only is None:
+            return current
+        folded = only.casefold()
+        return [row for row in current if row.module.casefold() == folded]
+
+    rows = selected_rows()
     if not rows:
-        known = extras_for(survey()) or ["(none)"]
-        aprint(
-            f"❌ No known dependencies for extra {extra!r}. "
-            f"Valid extras: {', '.join(known)}."
-        )
+        all_rows = survey()
+        if only is not None:
+            aprint(
+                f"❌ Unknown optional dependency module {only!r}. Use the import "
+                "name (for example PIL, umap, or sklearn), not the distribution "
+                "name. Valid modules: "
+                + ", ".join(row.module for row in all_rows)
+                + "."
+            )
+        else:
+            known = extras_for(all_rows) or ["(none)"]
+            aprint(
+                f"❌ No known dependencies for extra {extra!r}. "
+                f"Valid extras: {', '.join(known)}."
+            )
         raise typer.Exit(1)
 
     # "Unmet" = missing OR installed-but-below-its-pin (OUTDATED). Both need the
@@ -421,17 +456,47 @@ def demo_deps(
             "   Not in any extra (install individually): "
             + ", ".join(f"'{r.spec.spec}'" for r in orphans)
         )
-    if not extras:
-        raise typer.Exit(1)
 
-    cmd = _pip_install_cmd(extras)
+    targeted = only is not None
+    if targeted:
+        # `--only` selects exactly one table row and installs its constrained
+        # requirement directly — including an orphan such as gdown.
+        cmd = _pip_install_requirement_cmd(unmet[0].spec.spec)
+        install_hint = f"luxar demo deps --only {unmet[0].module} --install"
+    elif extras:
+        cmd = _pip_install_cmd(extras)
+        # Keep an active --extra filter in the hint: the bare form would install
+        # every unmet extra, more than the pip command shown right beside it.
+        install_hint = (
+            "luxar demo deps --install"
+            if extra is None
+            else f"luxar demo deps --extra {extra} --install"
+        )
+    else:
+        # Generic --install manages Luxar extras only. An orphan-only report has
+        # no command to run, so it is a successful no-op rather than the old
+        # exit-1 special case (the same orphan alongside an installed extra
+        # already exited 0). --only provides the explicit individual path.
+        noun = "requirement" if len(unmet) == 1 else "requirements"
+        aprint(
+            f"\nℹ️  No Luxar extra provides the unmet {noun}; "
+            + ("nothing installed." if install else "install individually:")
+        )
+        for row in unmet:
+            hint = f"luxar demo deps --only {row.module} --install"
+            aprint(f"   {hint}")
+            if not install:
+                aprint(
+                    f"   Or directly: {shlex.join(_pip_install_requirement_cmd(row.spec.spec))}"
+                )
+        raise typer.Exit(0 if install else 1)
 
     # shlex.join, not " ".join: the interpreter path and the checkout root both
     # routinely contain spaces (e.g. "Application Support"), and the extras
     # brackets are shell globs — an unquoted line would not paste back in.
     shown = shlex.join(cmd)
     if not install:
-        aprint("\n   Install with:  luxar demo deps --install")
+        aprint(f"\n   Install with:  {install_hint}")
         aprint(f"   Or directly:   {shown}")
         raise typer.Exit(1)
 
@@ -447,20 +512,23 @@ def demo_deps(
     # pip wrote into site-packages after our finders cached its contents, so a
     # re-survey without this reports everything still missing.
     importlib.invalidate_caches()
-    left = [r for r in survey(extra) if not r.satisfied]
-    # Judge the install ONLY on what it was asked to provide. An orphan spec
-    # (no extra) was never in the pip command, so listing it as "still missing
-    # after install" blames the install for something it never attempted.
-    still = [r for r in left if r.spec.extra in extras]
+    left = [r for r in selected_rows() if not r.satisfied]
+    # Judge an extras install ONLY on what it was asked to provide. An orphan
+    # spec was never in that pip command, while a targeted install did attempt
+    # its exact row and therefore must verify it like any other requested item.
+    still = left if targeted else [r for r in left if r.spec.extra in extras]
     if still:
         aprint(
             "⚠️  Still missing or outdated after install: "
             f"{', '.join(r.module for r in still)}"
         )
         raise typer.Exit(1)
-    aprint(f"✅ Installed: {', '.join(f'luxar[{e}]' for e in extras)}.")
-    # Don't claim completeness while an orphan is still absent — the install
-    # genuinely could not cover it.
+    if targeted:
+        aprint(f"✅ Installed: '{unmet[0].spec.spec}'.")
+    else:
+        aprint(f"✅ Installed: {', '.join(f'luxar[{e}]' for e in extras)}.")
+    # Don't claim completeness while an orphan is still absent — the extras
+    # install genuinely could not cover it.
     if left:
         aprint(
             "ℹ️  Still to install by hand: "
