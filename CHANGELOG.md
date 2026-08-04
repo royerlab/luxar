@@ -98,6 +98,52 @@ Out of scope for this phase, each refused with an explanation rather than
 silently degraded: LOD/decimation, `kind=partition`, per-triangle depth sorting,
 spatial indexing, `volumetric` blending, and mesh import formats.
 
+#### Added — `mesh` nD culling kernels, in both backends
+
+The nD visibility half of the mesh vertical: `mesh_vertex_visibility_mask` and
+`compact_visible_faces`, implemented in the Rust/WASM crate and its TypeScript
+reference, kept in exact parity. Nothing calls them yet — the loader that will is
+the next phase (`docs/specs/MESH_NODE_SPEC.md` §11) — so a mesh still writes but
+does not render.
+
+**Whole-triangle cull, not clipping.** A triangle is drawn iff *all three* of its
+vertices pass the nD slab test. Lines clip a segment against the slab and
+interpolate every attribute at the crossing; the exact triangle equivalent is nD
+polygon clipping with fan re-triangulation and per-new-vertex interpolation on
+every slice move. Culling whole triangles instead costs 183 code lines across both
+backends against 803 for segment clipping (the spec puts full nD polygon clipping
+at roughly ~1500), at the price of a ragged, triangle-quantized cut boundary
+instead of a clean planar section. Exact clipping stays out of scope.
+
+**Vertices are never compacted.** `compact_visible_faces` writes *original*
+vertex indices, so a slice change rebuilds only the index buffer while the vertex
+attribute buffers stay uploaded in full. `drawElements` never fetches an
+unreferenced vertex, so culled vertices cost nothing to draw, and this avoids a
+vertex-remap array as well as `compact_by_mask`, which is `f32`-only and could
+not compact native `uint8`/`uint16` vertex colors.
+
+Two details are load-bearing and both are pinned by mutation-tested cases:
+
+- The TypeScript backend `Math.fround`s its slab bounds. JS computes
+  `slice - tolerance` in f64, where the difference of two f32 values is *exact*,
+  while Rust rounds it to f32. The gap is under half an ulp — but when the
+  rounding goes down, the rounded bound is itself a legal f32 vertex coordinate,
+  and a vertex sitting exactly there was visible in WASM and culled in
+  TypeScript. `slice = 1.0, tolerance = 0.1` is such a case and is now a parity
+  test.
+- An out-of-range face index drops that face in both backends instead of reading
+  past the mask. Face indices come from the store, and the two backends fail
+  asymmetrically without the check: because the crate is `panic = "abort"`, a
+  Rust out-of-bounds read traps with an opaque, uncatchable
+  `RuntimeError: unreachable` rather than failing as a node-scoped error, while
+  TypeScript would read `undefined` and diverge silently. The loader
+  rejects such a store up front; this is defense in depth behind that gate.
+
+Both kernels are declared on the `WasmModule` interface and listed in the
+`REQUIRED_WASM_EXPORTS` staleness check, so an out-of-date `public/wasm/` build is
+reported as stale (and falls back to TypeScript) instead of failing later with an
+opaque "not a function".
+
 #### Fixed — a `kind=lod` group could be given a display type nothing can load
 
 The LOD path only ever *derived* `display_type` from its finest child, with no

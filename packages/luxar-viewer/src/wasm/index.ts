@@ -44,12 +44,23 @@ export type { WasmModule } from './types';
 let wasmJsUrlOverride: string | undefined;
 
 /**
- * Export added with the line cap-suppression kernel. A stale gitignored
- * `public/wasm/` build can still import and initialise successfully while
- * missing this post-rename function, otherwise failing later at first use.
+ * Exports added after the initial kernel set. A stale gitignored `public/wasm/`
+ * build can still import and initialise successfully while missing them,
+ * otherwise failing later at first use — where the symptom is an opaque
+ * "x is not a function" rather than "your WASM build is old".
+ *
+ * - `compute_cap_suppression` — added with the line cap-suppression kernel.
+ * - `mesh_vertex_visibility_mask` / `compact_visible_faces` — added with the
+ *   mesh culling kernels.
+ *
+ * Add a name here when you add a kernel, so a stale build is diagnosed rather
+ * than silently half-working. Failing this check enters the normal TypeScript
+ * fallback path, which is correct but slower — `make build-wasm` is the fix.
  */
 const REQUIRED_WASM_EXPORTS = [
   'compute_cap_suppression',
+  'mesh_vertex_visibility_mask',
+  'compact_visible_faces',
 ] as const satisfies readonly (keyof WasmModule)[];
 
 function assertRequiredWasmExports(module: Record<string, unknown>): void {

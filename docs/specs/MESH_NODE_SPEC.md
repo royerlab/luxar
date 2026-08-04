@@ -292,7 +292,8 @@ a no-op validator is vacuous).
 **Loader-side validation (viewer).** The validators above run at write time and protect only stores this
 writer produced; the viewer loads arbitrary — externally produced or corrupted — stores and hands `faces`
 straight to the §5.4 kernels. An out-of-range face index **panics** the Rust kernel (the crate is
-`panic = "abort"`, so the trap takes down the whole WASM module) and silently corrupts the TS backend
+`panic = "abort"`, so the trap escapes as an opaque, uncatchable `RuntimeError: unreachable` rather
+than a node-scoped error) and silently corrupts the TS backend
 (out-of-bounds reads yield `undefined`), so the loader must structurally validate before either backend
 is invoked. But the whole-node loader (§7) fetches and decodes every array in full up front, so a check
 that runs only *after* decode arrives too late for the quantities that gate admission: a corrupt or

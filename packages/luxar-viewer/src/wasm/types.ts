@@ -618,4 +618,75 @@ export interface WasmModule {
     outputStart: Float32Array,
     outputEnd: Float32Array
   ): number;
+
+  // ============================================================================
+  // MESH CULLING - whole-triangle nD visibility for indexed surfaces
+  // ============================================================================
+
+  /**
+   * Compute per-vertex nD slab membership for a mesh.
+   *
+   * For each non-displayed ("hidden") dimension `d`, with
+   * `sliceMin = slicePosition[d] - tolerance[d]` and
+   * `sliceMax = slicePosition[d] + tolerance[d]`, a vertex is in iff
+   * `v[d] >= sliceMin && v[d] <= sliceMax` for every such `d`. This is the
+   * `p1_in` branch of {@link WasmModule.clip_segment_single} applied per vertex.
+   *
+   * A `NaN` or `±Inf` coordinate on any hidden dimension makes the vertex
+   * invisible (the #806 rule, shared with the lines backends).
+   *
+   * Unlike lines, nothing is clipped or interpolated — see
+   * {@link WasmModule.compact_visible_faces} for the whole-triangle rule and
+   * `docs/specs/MESH_NODE_SPEC.md` §5 for why v1 does not clip.
+   *
+   * The WASM implementation calls `validate_ndim` and therefore panics above 16
+   * dimensions; `pickBackend(ctx, ndim)` routes `ndim > 16` to the uncapped
+   * TypeScript backend.
+   *
+   * @param positions - Vertex positions [numVertices * ndim]
+   * @param slicePosition - Current slice position [ndim]
+   * @param tolerance - Per-dimension tolerance [ndim]
+   * @param displayDims - Which dimensions are displayed [numDisplayDims]
+   * @param ndim - Number of dimensions
+   * @param numVertices - Number of vertices
+   * @param output - Output visibility mask [numVertices] (1 = in, 0 = out)
+   * @returns Number of visible vertices
+   */
+  mesh_vertex_visibility_mask(
+    positions: Float32Array,
+    slicePosition: Float32Array,
+    tolerance: Float32Array,
+    displayDims: Uint32Array,
+    ndim: number,
+    numVertices: number,
+    output: Uint8Array
+  ): number;
+
+  /**
+   * Compact `faces` to those whose three vertices are all visible.
+   *
+   * Writes ORIGINAL (un-remapped) vertex indices, so a slice change rebuilds
+   * only the index buffer while the vertex attribute buffers stay uploaded in
+   * full. The authored per-face index order is preserved, so this is
+   * winding-agnostic.
+   *
+   * A face index `>= vertexMask.length` drops the whole face rather than reading
+   * out of bounds — the indices are store-supplied, and the two backends fail
+   * differently without the guard (a Rust out-of-bounds read traps with an
+   * uncatchable `RuntimeError: unreachable`; the TS read yields `undefined`).
+   *
+   * @param faces - Triangle vertex indices [numFaces * 3]
+   * @param vertexMask - Per-vertex visibility from
+   *   {@link WasmModule.mesh_vertex_visibility_mask}; its LENGTH defines the
+   *   valid vertex range, so pass a view sized exactly `numVertices`
+   * @param numFaces - Number of triangles
+   * @param output - Output indices [numFaces * 3] worst case
+   * @returns Number of visible faces written (slice `output` to 3x this)
+   */
+  compact_visible_faces(
+    faces: Uint32Array,
+    vertexMask: Uint8Array,
+    numFaces: number,
+    output: Uint32Array
+  ): number;
 }

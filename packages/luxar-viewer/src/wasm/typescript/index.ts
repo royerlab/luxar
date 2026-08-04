@@ -10,6 +10,7 @@
  * - effective-radii.ts -> effective_radii.rs
  * - decode.ts      -> decode.rs
  * - lines-clipping.ts -> lines_clipping.rs
+ * - mesh-culling.ts -> mesh_culling.rs
  * - depth-sort.ts  -> depth_sort.rs
  */
 
@@ -64,6 +65,7 @@ export {
   calculate_segment_lengths,
   compute_cap_suppression,
 } from './lines-clipping';
+export { mesh_vertex_visibility_mask, compact_visible_faces } from './mesh-culling';
 
 // Re-export as a module class for compatibility with WasmModule interface
 import type { WasmModule } from '../types';
@@ -117,6 +119,7 @@ import {
   calculate_segment_lengths,
   compute_cap_suppression,
 } from './lines-clipping';
+import { mesh_vertex_visibility_mask, compact_visible_faces } from './mesh-culling';
 
 /**
  * TypeScript fallback class implementing WasmModule interface.
@@ -165,4 +168,6 @@ export class TypeScriptFallback implements WasmModule {
   interpolate_colors_batch = interpolate_colors_batch;
   calculate_segment_lengths = calculate_segment_lengths;
   compute_cap_suppression = compute_cap_suppression;
+  mesh_vertex_visibility_mask = mesh_vertex_visibility_mask;
+  compact_visible_faces = compact_visible_faces;
 }
