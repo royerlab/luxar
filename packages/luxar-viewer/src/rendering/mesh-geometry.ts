@@ -209,12 +209,16 @@ export function updateMeshGeometry(
       (positionAttr.array as Float32Array).set(input.position);
       positionAttr.needsUpdate = true;
     } else {
-      // A length change means the vertex count changed, which the whole-node
-      // loader never does for a live node. Rebind rather than silently truncate.
-      log.warning(
-        Modules.SCENE_LOADER,
-        `Mesh position length changed (${positionAttr.array.length} -> ${input.position.length}); rebinding`
-      );
+      // A length change on a LIVE node means the vertex count changed, which the
+      // whole-node loader never does — warn and rebind rather than silently
+      // truncate. The 1-vertex placeholder growing to the real buffer is the
+      // expected first commit of every mesh, not an anomaly, so it stays quiet.
+      if (positionAttr.count !== 1) {
+        log.warning(
+          Modules.SCENE_LOADER,
+          `Mesh position length changed (${positionAttr.array.length} -> ${input.position.length}); rebinding`
+        );
+      }
       geometry.setAttribute('position', new THREE.BufferAttribute(input.position, 3, false));
       // A new attribute object → three's cached WebGPU RenderObject is now stale.
       attributesRebuilt = true;

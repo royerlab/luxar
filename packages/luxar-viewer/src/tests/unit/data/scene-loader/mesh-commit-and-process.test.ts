@@ -138,6 +138,19 @@ describe('commitMeshGeometry', () => {
     expect(mesh.userData.loadedViewVersion).toBe(7);
   });
 
+  it('applies the node transform to the placeholder, like the sibling factories', () => {
+    // `MeshMetadata.transform` is column-major (THREE.js layout, translation at
+    // [12..14]). Points/lines/gsplats all apply it at creation; a mesh that skips
+    // it renders in untransformed coordinates — silently, since nothing else
+    // consumes the attr.
+    const withTransform: MeshMetadata = {
+      ...ATTRS,
+      transform: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 5, 6, 7, 1],
+    };
+    const mesh = createEmptyMeshNode('/surface', withTransform, loader);
+    expect(mesh.position.toArray()).toEqual([5, 6, 7]);
+  });
+
   it('installs authored per-vertex colors so the mesh actually displays them', async () => {
     // Regression for #1243: the node is born with the 1-vertex placeholder color,
     // and the commit must grow `color` to the authored buffer. Before the fix the

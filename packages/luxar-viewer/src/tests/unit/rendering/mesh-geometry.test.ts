@@ -10,8 +10,9 @@
  * test suite doesn't run.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import * as THREE from 'three';
+import { log } from '../../../utils/log';
 import {
   buildColorAttribute,
   buildDefaultColorAttribute,
@@ -202,6 +203,33 @@ describe('updateMeshGeometry', () => {
     });
     // Same object identity — computeBoundingSphere() would have replaced it.
     expect(g.boundingSphere).toBe(sphere);
+  });
+
+  it('keeps the length-change warning for live nodes but not the placeholder grow', () => {
+    // Every mesh's first commit grows the 1-vertex placeholder to the real buffer —
+    // that is the designed path, not an anomaly, and must not log a warning per
+    // mesh. A LIVE node changing vertex count is what the warning exists for.
+    const warn = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    try {
+      const g = placeholder();
+      updateMeshGeometry(g, {
+        position: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
+        indices: new Uint32Array([0, 1, 2]),
+        colors: null,
+        vertexCount: 3,
+      });
+      expect(warn).not.toHaveBeenCalled();
+
+      updateMeshGeometry(g, {
+        position: new Float32Array(18),
+        indices: new Uint32Array([0, 1, 2]),
+        colors: null,
+        vertexCount: 6,
+      });
+      expect(warn).toHaveBeenCalledTimes(1);
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it('installs authored colors on the first commit, growing off the placeholder', () => {
