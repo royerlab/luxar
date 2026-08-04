@@ -147,8 +147,10 @@ turns a cloud of points into something that reads as an opaque *material* — an
 one that can still be made slightly transparent on demand, which a truly opaque
 mode cannot. But absorption also makes a layer very dim, almost black. The fix is
 to push brightness up in the same move by lowering the display-range max, which
-raises ``intensity``. The globe was tuned exactly that way — ``absorption=10``
-with a display max of 0.041, a 24x gain — and either number alone looks wrong.
+raises ``intensity``. The globe showed this cleanly in both directions: tuned as ``absorption=10`` with
+a display max of 0.041 (a 24x gain), then re-tuned to a 0.205 window (a 4.88x
+gain) once the switch to ``opaque`` removed the absorption. Exactly 5x less gain
+for exactly the darkening that went away — they are one knob, not two.
 
 **A backdrop cannot be a transparent mode, though.** The globe ultimately ships
 ``opaque`` rather than the ``volumetric`` it was tuned to, because a backdrop
@@ -452,10 +454,19 @@ OCCURRENCE_COLOR_SCALE: Final = 0.85
 # The occurrence records take the opposite treatment: `opaque` (depth-tested,
 # unblended) so they read as crisp dots sitting on the lit globe. An additive
 # selection washes out over a bright surface.
-#: Globe: DISPLAY RANGE 0-0.041 -> 1/0.041.
-GLOBE_INTENSITY: Final = 24.39
-#: Retained for reference but INERT under `opaque` (see GLOBE_BLENDING): the
-#: absorption term belongs to the emission-absorption `volumetric` integral.
+#: Globe: DISPLAY RANGE 0-0.205 -> 1/0.205.
+#:
+#: 4.88, re-tuned after the switch to `opaque`. It was 24.39 (a 0-0.041 window)
+#: while the globe was `volumetric` with `absorption=10`, and the ratio is the
+#: point: 24.39 / 4.88 = 5.0. That whole 5x was compensating for the darkening
+#: the absorption term imposed. Drop the absorption and the gain has to come
+#: down with it — the two really are one knob, and carrying the old value over
+#: to `opaque` left the planet blown out.
+GLOBE_INTENSITY: Final = 4.88
+#: Inert under `opaque` (the absorption term belongs to the emission-absorption
+#: `volumetric` integral). Kept as the value to restore, together with
+#: GLOBE_INTENSITY 24.39, if royerlab/luxar#1227 makes `volumetric` viable for a
+#: backdrop.
 GLOBE_ABSORPTION: Final = 10.0
 #: `opaque`, not the `volumetric` this was originally tuned to.
 #:
