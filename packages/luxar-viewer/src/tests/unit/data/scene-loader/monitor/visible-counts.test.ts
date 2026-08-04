@@ -150,6 +150,7 @@ describe('updateVisibleCountsInMonitor', () => {
       points: 0,
       lines: 222,
       gsplats: 0,
+      mesh: 0,
     });
   });
 
@@ -163,11 +164,12 @@ describe('updateVisibleCountsInMonitor', () => {
 
     // One call per type — a type with no meshes must still be reported as 0 so a
     // previous scene's count cannot linger in the HUD.
-    expect(monitor.updateVisibleCount).toHaveBeenCalledTimes(3);
+    expect(monitor.updateVisibleCount).toHaveBeenCalledTimes(4);
     expect(Object.fromEntries(monitor.updateVisibleCount.mock.calls)).toEqual({
       points: 11,
       lines: 0,
       gsplats: 0,
+      mesh: 0,
     });
   });
 
@@ -185,6 +187,7 @@ describe('updateVisibleCountsInMonitor', () => {
       points: 4,
       lines: 0,
       gsplats: 0,
+      mesh: 0,
     });
     const map = monitor.updateVisibleCountsByPath.mock.calls[0][0] as Map<string, number>;
     expect(map.has('/vol')).toBe(false);

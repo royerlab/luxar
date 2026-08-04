@@ -92,9 +92,10 @@ export interface GeometryCapabilities {
  * partitioning, pooled storage and depth sorting is a decision that must be
  * made explicitly, not inherited by accident from a widened literal.
  *
- * All three of the current types are uniformly capable — they are all soft,
- * emissive, per-element primitives drawn as instanced quads. The table looks
- * redundant *today*; its value is the compile error it raises tomorrow.
+ * Points / Lines / GSplats are uniformly capable — they are all soft, emissive,
+ * per-element primitives drawn as instanced quads. `mesh` is the row that proves
+ * the table earns its keep: it is uniformly INCAPABLE, and every `false` is a
+ * real architectural fact rather than a not-yet-wired placeholder.
  *
  * Readonly + frozen: every predicate reads this object live, so a mutation
  * would globally flip a capability for the whole session. (The record is
@@ -106,6 +107,17 @@ export const GEOMETRY_CAPABILITIES: Readonly<Record<GeometryTypeName, GeometryCa
     points: { lod: true, partition: true, pooled: true, depthSortable: true },
     lines: { lod: true, partition: true, pooled: true, depthSortable: true },
     gsplats: { lod: true, partition: true, pooled: true, depthSortable: true },
+    // Mesh: a connected surface, not a set of independent elements — see
+    // docs/specs/MESH_NODE_SPEC.md §2.1 and §9.
+    //   lod           the additive/substitutive ladder reduces independent
+    //                 elements; the mesh analogue is QEM decimation.
+    //   partition     a BSP cut needs vertex duplication at part boundaries.
+    //   pooled        mesh renders as an indexed BufferGeometry, NOT through the
+    //                 instanced-quad element-texture stack.
+    //   depthSortable sorting a mesh means permuting an index buffer, not an
+    //                 instance list, so it registers no per-element centers.
+    // Flip a flag here when the corresponding path lands — never at a call site.
+    mesh: { lod: false, partition: false, pooled: false, depthSortable: false },
   });
 
 /** Look up one capability of an untyped node-type value. Non-types are `false`. */

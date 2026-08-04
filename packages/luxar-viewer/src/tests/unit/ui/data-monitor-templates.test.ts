@@ -481,9 +481,9 @@ describe('renderSceneGraphTree — kind badges', () => {
     return {
       root,
       totalNodes: 1,
-      nodesByType: { points: 0, lines: 0, gsplats: 1 },
-      totalByType: { points: 0, lines: 0, gsplats: 0 },
-      visibleByType: { points: 0, lines: 0, gsplats: 0 },
+      nodesByType: { points: 0, lines: 0, gsplats: 1, mesh: 0 },
+      totalByType: { points: 0, lines: 0, gsplats: 0, mesh: 0 },
+      visibleByType: { points: 0, lines: 0, gsplats: 0, mesh: 0 },
     };
   }
 
@@ -496,10 +496,10 @@ describe('renderSceneGraphTree — kind badges', () => {
     const state: SceneGraphState = {
       root: { path: '/', name: 'Scene', type: 'scene', children: [] },
       totalNodes: 3,
-      nodesByType: { points: 2, lines: 0, gsplats: 1 },
+      nodesByType: { points: 2, lines: 0, gsplats: 1, mesh: 0 },
       // Deliberately disjoint from nodesByType so reading the wrong record shows.
-      totalByType: { points: 90000, lines: 5000, gsplats: 70000 },
-      visibleByType: { points: 1, lines: 2, gsplats: 3 },
+      totalByType: { points: 90000, lines: 5000, gsplats: 70000, mesh: 0 },
+      visibleByType: { points: 1, lines: 2, gsplats: 3, mesh: 0 },
     };
     const html = renderSceneGraphTree(state, new Set(['/']), new Map());
 

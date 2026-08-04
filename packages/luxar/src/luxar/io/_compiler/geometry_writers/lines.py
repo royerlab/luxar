@@ -214,7 +214,7 @@ def write_lines(
 
     if authoring_warning_fraction is not None:
         warning_key = _line_authoring_warning_key(ctx, path)
-        if ctx.claim_line_authoring_warning(warning_key):
+        if ctx.claim_authoring_warning("lines", warning_key):
             aprint(
                 f"  ⚠️ Node '{warning_key}': {authoring_warning_fraction:.0%} "
                 "of consecutive segments share a forward endpoint coordinate "
