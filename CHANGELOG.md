@@ -185,6 +185,73 @@ Both kernels are declared on the `WasmModule` interface and listed in the
 reported as stale (and falls back to TypeScript) instead of failing later with an
 opaque "not a function".
 
+#### Added — the mesh data path: whole-node loader, two-stage validation, nD cull
+
+The viewer half of the mesh vertical that turns the kernels above into loaded
+geometry: `types/mesh.ts`, and `data/mesh/` with a whole-node `MeshLoader`, the
+admission gate that guards it, and the display-space projection that drives the
+cull. `mesh` is still absent from `loader_types`, so nothing in the render path
+reaches this yet and a mesh still writes without drawing; wiring it up is the next
+step.
+
+**Whole-node, deliberately.** `lines-spatial-index-loader.ts` runs to ~1400 lines
+because line datasets reach tens of millions of vertices and a slice change
+genuinely needs only a fraction of them, so a dual chunk index earns its
+complexity. Mesh faces share vertices across any cut, so the working set after a
+`displayDims` change is the whole mesh regardless — an index would add machinery
+and skip nothing. Consequently `updateView` never re-fetches: it returns the same
+cached mesh, and only the index buffer downstream changes with the view.
+
+**Admission runs in two stages, and the split is what makes it work.** The writer's
+validators protect only stores Luxar produced, while the viewer loads arbitrary
+`?src=` URLs. Because the loader fetches everything up front, a check that runs
+after decode arrives too late — a hostile store can declare enormous arrays and
+exhaust tab memory before the per-node `LoaderError` containment is reachable. So
+Stage 1 decides everything it can from `.zarray`/`.zattrs` alone, with no chunk
+fetched: the `2^27` vertex cap, a 512 MiB `MESH_DECODE_BUDGET_BYTES` ceiling,
+shape/dtype cross-checks, `normal_dims` well-formedness, and presence flags that
+must agree with the store. Stage 2 then checks what needs materialized arrays.
+Tests assert the no-fetch property against a store that records every key it is
+asked for, rather than against a proxy for it.
+
+Four things in there are easy to get wrong, and each is pinned:
+
+- **`faces` is read raw, never through `ArrayDecoder`.** The decoder yields
+  `Float32Array`, whose 24-bit mantissa cannot represent every index a
+  2^27-vertex mesh may carry — it would silently round anything above 16,777,216.
+- **The face-index range check is two-sided and runs pre-coercion**, because each
+  side of the integer→u32 cast hides its own wrap-around: a signed store's `-1`
+  passes a one-sided `< V` test and becomes `0xffffffff`, while a 64-bit store's
+  `2^32 + 1` survives a post-cast check by wrapping to `1`, landing inside range,
+  and rewriting topology instead of trapping. 64-bit values are compared as
+  `BigInt` so nothing above 2^53 can round into range first.
+- **The byte budget reads the *declared* dtype and needs a per-chunk term.** The
+  `INDEX` encoder narrows `faces` to the smallest unsigned dtype that fits (a small
+  mesh lands as `uint8`) while an external `int64` store costs 8 bytes per index, so
+  a canonical-dtype budget is wrong in both directions. And zarr v2 does not
+  require `chunks <= shape`, so a 100-triangle array can declare a 268M-triangle
+  chunk and slip a multi-gigabyte allocation past a shape-only budget.
+- **Shapes are checked logically, not as stored.** `encoding.original_shape` wins
+  where present, or a LUT-encoded normals array and a broadcast uniform colour —
+  both of which the writer really produces — would be rejected as malformed.
+
+At the default budget the ceiling binds long before the vertex cap: a 3D float32
+mesh runs out of bytes at ~44.7M vertices against a cap of 134.2M. The cap is still
+checked, and checked first, so a nonsensical declaration is told about pick-key
+aliasing rather than blamed for bytes.
+
+**Winding is resolved against the authored frame.** `sorted(normal_dims)` is the
+axis triple the stored face order is front-facing in. When the displayed triple
+equals that frame with odd parity, display space is a reflection and every
+projected triangle is uniformly reversed, so two of each triangle's three indices
+are swapped — without it a `double_sided: false` mesh renders inside-out, and an
+open surface vanishes. That reversal is keyed to the current `displayDims` parity
+rather than to the *event* of it changing, so it runs on every index build in an
+odd-parity epoch, initial load included. When the displayed triple is a *different*
+triple than the frame, or the mesh declares no frame at all, projected orientation
+is per-triangle data-dependent and no index post-pass can fix it: the epoch renders
+double-sided with a one-time notice naming the node.
+
 #### Fixed — a `kind=lod` group could be given a display type nothing can load
 
 The LOD path only ever *derived* `display_type` from its finest child, with no
