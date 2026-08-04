@@ -424,6 +424,44 @@ def test_bottomk_without_caller_keys_is_order_dependent():
     assert not np.array_equal(run(range(4)), run(list(reversed(range(4)))))
 
 
+def test_bottomk_selection_does_not_depend_on_batch_granularity():
+    """The sampler buffers batches and only trims when the buffer is worth it.
+
+    Chunking must stay invisible: one 600-row batch, six 100-row batches and
+    600 single-row batches all have to select the same rows, or the buffering
+    would have changed the sample rather than just the copying.
+    """
+    keys = np.random.default_rng(4).random(600)
+    values = np.arange(600)
+
+    def run(batch_size):
+        s = BottomKSampler(120, np.random.default_rng(0))
+        for start in range(0, 600, batch_size):
+            stop = start + batch_size
+            s.add([values[start:stop]], keys=keys[start:stop])
+        return np.sort(s.result()[0]), s.n_kept
+
+    whole, n_whole = run(600)
+    chunked, n_chunked = run(100)
+    dribbled, n_dribbled = run(1)
+    expected = np.sort(np.argsort(keys)[:120])
+    np.testing.assert_array_equal(whole, expected)
+    np.testing.assert_array_equal(chunked, expected)
+    np.testing.assert_array_equal(dribbled, expected)
+    assert n_whole == n_chunked == n_dribbled == 120
+
+
+def test_bottomk_n_kept_is_exact_before_a_trim():
+    """`n_kept` is read between parts to log progress, so it must be right
+    while batches are still buffered -- and must not force a trim to say so."""
+    s = BottomKSampler(50, np.random.default_rng(0))
+    s.add([np.arange(10)])
+    assert s.n_kept == 10
+    s.add([np.arange(10, 100)])
+    assert s.n_kept == 50
+    assert s.result()[0].size == 50
+
+
 def test_bottomk_rejects_mismatched_keys_length():
     s = BottomKSampler(5, np.random.default_rng(0))
     with pytest.raises(ValueError):

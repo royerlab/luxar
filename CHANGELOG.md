@@ -54,6 +54,7 @@ that is hilbert-ordered. The writer now returns it, matching Lines and GSplats.
 `docs/guides/user/LUXAR_ZARR_FORMAT.md` records the rule the three types follow:
 one ordering per type means flat keys, several means namespaced objects (Lines
 is the only type with two), and an absent `ordering` attr means `"none"`.
+
 #### Demos — Biodiversity at Planetary Scale (GBIF + Movebank)
 
 New `biodiversity_planetary_scale` demo, and the first one in the ecology

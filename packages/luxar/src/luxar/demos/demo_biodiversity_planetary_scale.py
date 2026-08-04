@@ -385,9 +385,6 @@ YEAR_MAX: Final = 2026
 
 # --- Sampling ----------------------------------------------------------------
 DEFAULT_N_POINTS: Final = 15_000_000
-# Per-group cap for the scrubbable layer, so rare groups stay explorable while
-# the always-on layer keeps GBIF's true (bird-dominated) proportions.
-TAXON_LAYER_CAP_PER_GROUP: Final = 160_000
 SAMPLE_SEED: Final = 20260803
 
 # --- Scene / rendering -------------------------------------------------------
@@ -1172,6 +1169,15 @@ class BottomKSampler:
       whichever parts finish first -- would populate a group's sample from one
       or two publishing datasets and so from one or two regions, producing a
       map with birds in Denmark and nowhere else.
+
+    Batches are BUFFERED and the retained sample is only trimmed once the
+    buffer is worth a trim. Trimming on every batch is what makes the default
+    build expensive: a full 15M-row reservoir would be concatenated and
+    ``argpartition``ed once per parquet part -- measured at 0.5 s each, ~100 s
+    over the 250-part default read, and ~1.5 GB of copying per trim -- even
+    though almost every incoming row loses. Buffering changes nothing about
+    WHICH rows are selected (bottom-k over fixed keys does not care how the
+    stream is chunked), only how often the reservoir is rewritten.
     """
 
     def __init__(self, k: int, rng: np.random.Generator) -> None:
@@ -1181,6 +1187,16 @@ class BottomKSampler:
         self._rng = rng
         self._keys: Optional[np.ndarray] = None
         self._cols: Optional[List[np.ndarray]] = None
+        self._pending_keys: List[np.ndarray] = []
+        self._pending_cols: List[List[np.ndarray]] = []
+        self._pending_n = 0
+        self._n_cols: Optional[int] = None
+        #: Trim once the buffer holds a quarter of a reservoir. Bigger buffers
+        #: keep getting faster, but each one is also held in memory alongside
+        #: the retained sample; a quarter is where the default read stops
+        #: paying for trims (122 s -> ~12 s) without growing the peak much.
+        self._trim_at = max(1, self.k // 4)
+        self._n_kept = 0
         self.n_seen = 0
 
     def add(
@@ -1196,6 +1212,9 @@ class BottomKSampler:
         stream in `as_completed()` order, so network timing decided which part
         got which slice of the stream and a seeded rebuild produced a different
         sample.
+
+        A batch is held by reference until the next trim, so do not mutate one
+        after offering it.
         """
         if not columns:
             return
@@ -1210,33 +1229,56 @@ class BottomKSampler:
         keys = (
             self._rng.random(n) if keys is None else np.asarray(keys, dtype=np.float64)
         )
-        if self._keys is None:
-            self._keys = keys
-            self._cols = [np.array(c, copy=True) for c in columns]
-        else:
+        if self._n_cols is None:
+            self._n_cols = len(columns)
+        elif len(columns) != self._n_cols:
+            raise ValueError("batch column count changed between add() calls")
+        self._pending_keys.append(keys)
+        self._pending_cols.append([np.asarray(c) for c in columns])
+        self._pending_n += n
+        self._n_kept = min(self.k, self._n_kept + n)
+        if self._pending_n >= self._trim_at:
+            self._trim()
+
+    def _trim(self) -> None:
+        """Merge the buffered batches into the retained sample and cut to ``k``."""
+        if not self._pending_cols:
+            return
+        key_parts = self._pending_keys
+        col_parts = self._pending_cols
+        if self._keys is not None:
             assert self._cols is not None
-            if len(columns) != len(self._cols):
-                raise ValueError("batch column count changed between add() calls")
-            self._keys = np.concatenate([self._keys, keys])
-            self._cols = [
-                np.concatenate([old, new]) for old, new in zip(self._cols, columns)
-            ]
-        if self._keys.size > self.k:
+            key_parts = [self._keys, *key_parts]
+            col_parts = [self._cols, *col_parts]
+        self._pending_keys = []
+        self._pending_cols = []
+        self._pending_n = 0
+        # A single-element concatenate still copies, so the retained columns
+        # never alias a caller's array.
+        keys = np.concatenate(key_parts)
+        cols = [
+            np.concatenate([part[j] for part in col_parts])
+            for j in range(len(col_parts[0]))
+        ]
+        if keys.size > self.k:
             # argpartition is O(n): we only need the k smallest, unordered.
-            sel = np.argpartition(self._keys, self.k - 1)[: self.k]
-            self._keys = self._keys[sel]
-            assert self._cols is not None
-            self._cols = [c[sel] for c in self._cols]
+            sel = np.argpartition(keys, self.k - 1)[: self.k]
+            keys = keys[sel]
+            cols = [c[sel] for c in cols]
+        self._keys = keys
+        self._cols = cols
 
     def result(self) -> List[np.ndarray]:
         """The sampled columns, in the order they were offered."""
+        self._trim()
         if self._cols is None:
             return []
         return self._cols
 
     @property
     def n_kept(self) -> int:
-        return 0 if self._keys is None else int(self._keys.size)
+        """How many rows the sample holds -- without forcing a trim."""
+        return self._n_kept
 
 
 # =============================================================================
@@ -1604,10 +1646,11 @@ def _pool_gbif(n_points: int, n_parts: int, *, seed: int) -> GbifSample:
       means the sample keeps GBIF's REAL composition -- bird-dominated,
       Europe/North-America-dominated. That is the honest picture and it is what
       the always-on layer draws.
-    * up to ``TAXON_LAYER_CAP_PER_GROUP`` records **per taxonomic group**, for
-      the scrubbable layer. Capping (rather than reweighting the main sample)
-      is what makes a 0.1%-of-GBIF group explorable without misrepresenting how
-      much of GBIF it actually is.
+    * one capped reservoir **per reachable (taxon, period) slot** --
+      :data:`MARGINAL_CELL_CAP` for the marginals, :data:`JOINT_CELL_CAP` for
+      the joint cells -- for the scrubbable layer. Capping per slot (rather
+      than reweighting the main sample) is what makes a 0.1%-of-GBIF group
+      explorable without misrepresenting how much of GBIF it actually is.
     """
     fs = _gbif_filesystem()
     snapshot = _resolve_snapshot(fs)
@@ -1668,7 +1711,11 @@ def _pool_gbif(n_points: int, n_parts: int, *, seed: int) -> GbifSample:
             for i, part in enumerate(chosen)
         }
         for future in as_completed(futures):
-            part, ordinal = futures[future]
+            # POP, don't index: `as_completed` drops its own reference as it
+            # yields, so this dict is the last thing holding a finished part's
+            # columns. Keeping all 250 alive to the end of the read costs ~2 GB
+            # on the default build for data already folded into the samplers.
+            part, ordinal = futures.pop(future)
             try:
                 res = future.result()
             except Exception as exc:  # noqa: BLE001 - one bad part must not kill the read
@@ -1825,7 +1872,12 @@ def load_gbif(n_points: int, n_parts: int) -> GbifSample:
     # parameters do: the licence gate became an allowlist (so nulls/unknowns are
     # now dropped) and the sampler switched to caller-supplied keys (so the
     # selected rows differ). A warm cache would otherwise serve the old sample.
-    key = f"gbif_{GBIF_SNAPSHOT}_p{n_parts}_n{n_points}_s{SAMPLE_SEED}_allow_v3"
+    # The per-slot caps are in the key for the same reason -- they size the
+    # scrubbable arrays this function returns.
+    key = (
+        f"gbif_{GBIF_SNAPSHOT}_p{n_parts}_n{n_points}_s{SAMPLE_SEED}"
+        f"_m{MARGINAL_CELL_CAP}_j{JOINT_CELL_CAP}_allow_v3"
+    )
     return cache_computed(
         DEMO_NAME,
         key,
@@ -2514,7 +2566,10 @@ def build_scene(output_path: Path, sample: GbifSample, tracks: TrackSet) -> Path
             scene.attrs["title"] = "Biodiversity at Planetary Scale"
             scene.attrs["gbif_snapshot"] = sample.snapshot
             scene.attrs["gbif_citation"] = sample.citation
-            scene.attrs["gbif_datasets"] = len(sample.datasets)
+            # The publishers behind the records the scene HOLDS, matching the
+            # sidecar. `sample.datasets` counts the ~76M scanned candidates and
+            # would credit publishers that contributed no rendered record.
+            scene.attrs["gbif_datasets"] = len(sample.scene_datasets)
 
             # The globe: extended over every slice (so it is the persistent
             # geographic reference), partitioned to stay under the per-node
@@ -2683,7 +2738,8 @@ def _build_params() -> Dict[str, Any]:
         "seed": SAMPLE_SEED,
         "n_globe": N_GLOBE,
         "tile_points": TARGET_TILE_POINTS,
-        "taxon_cap": TAXON_LAYER_CAP_PER_GROUP,
+        "marginal_cap": MARGINAL_CELL_CAP,
+        "joint_cap": JOINT_CELL_CAP,
         "version": 1,
     }
 
