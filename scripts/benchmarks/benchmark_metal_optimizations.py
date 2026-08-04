@@ -39,10 +39,10 @@ from pathlib import Path
 
 import numpy as np
 
-
 # ============================================================================
 # Environment guard
 # ============================================================================
+
 
 def require_metal() -> None:
     """Exit early if Metal/MPS isn't available — there's nothing to benchmark."""
@@ -63,6 +63,7 @@ def require_metal() -> None:
 # Test data
 # ============================================================================
 
+
 def create_test_data(N: int, shape: tuple[int, ...], seed: int = 42):
     """Create reproducible random test data for benchmarking."""
     rng = np.random.default_rng(seed)
@@ -77,6 +78,7 @@ def create_test_data(N: int, shape: tuple[int, ...], seed: int = 42):
 # ============================================================================
 # Per-call benchmarks (forward / training)
 # ============================================================================
+
 
 def benchmark_forward(model, n_warmup: int = 5, n_iters: int = 25) -> float:
     """Benchmark forward pass; returns mean wall-clock per iteration in ms."""
@@ -159,6 +161,7 @@ METRICS: list[tuple[str, str, bool]] = [
 # Main run
 # ============================================================================
 
+
 def run_benchmarks(label: str) -> dict:
     """Run benchmark suite and return results dict."""
     require_metal()
@@ -226,6 +229,7 @@ def run_benchmarks(label: str) -> dict:
 # Compare mode (mirrors CUDA benchmark)
 # ============================================================================
 
+
 def compare_results(file_a: str, file_b: str) -> bool:
     with open(file_a) as f:
         a = json.load(f)
@@ -258,8 +262,12 @@ def compare_results(file_a: str, file_b: str) -> bool:
             has_data = True
             pct_change = ((val_b - val_a) / val_a) * 100 if val_a > 0 else 0.0
 
-            is_regression = (pct_change > 5.0) if higher_is_worse else (pct_change < -5.0)
-            is_improvement = (pct_change < -5.0) if higher_is_worse else (pct_change > 5.0)
+            is_regression = (
+                (pct_change > 5.0) if higher_is_worse else (pct_change < -5.0)
+            )
+            is_improvement = (
+                (pct_change < -5.0) if higher_is_worse else (pct_change > 5.0)
+            )
             flag = ""
             if is_regression:
                 flag = " REGRESSION"
@@ -300,6 +308,7 @@ def compare_results(file_a: str, file_b: str) -> bool:
 # ============================================================================
 # Stress / leak-check mode (validates MET-1 @autoreleasepool)
 # ============================================================================
+
 
 def _rss_bytes() -> int:
     """Return current process RSS in bytes (macOS / Linux compatible)."""
@@ -398,6 +407,7 @@ def run_stress(label: str, n_iters: int = 10_000) -> dict:
 # CLI
 # ============================================================================
 
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Metal optimization benchmark runner")
     parser.add_argument("--label", type=str, help="Label for this benchmark run")
@@ -441,7 +451,9 @@ def main() -> None:
         return
 
     if not args.label or not args.output:
-        parser.error("--label and --output are required when not using --compare or --stress")
+        parser.error(
+            "--label and --output are required when not using --compare or --stress"
+        )
 
     print(f"\nMetal Optimization Benchmark: {args.label}")
     print("=" * 60)
