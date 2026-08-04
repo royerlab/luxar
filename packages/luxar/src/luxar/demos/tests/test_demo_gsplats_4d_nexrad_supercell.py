@@ -180,6 +180,18 @@ class TestCoverageMask:
         b = coverage_mask(0.5, 19.5, 460.0)
         assert a is b
 
+    def test_memo_keys_on_the_full_grid_geometry(self, monkeypatch) -> None:
+        """Regression: the memo key ignored GRID_Z_M and the box extents, so
+        reconfiguring them in-process handed back a stale mask of the wrong
+        shape."""
+        monkeypatch.setattr(_demo, "BOX_X_KM", (-12.0, 12.0))
+        monkeypatch.setattr(_demo, "BOX_Y_KM", (-12.0, 12.0))
+        monkeypatch.setattr(_demo, "BOX_Z_KM", (0.25, 6.25))
+        a = coverage_mask(0.5, 19.5, 460.0)
+        monkeypatch.setattr(_demo, "GRID_Z_M", _demo.GRID_Z_M * 2)
+        b = coverage_mask(0.5, 19.5, 460.0)
+        assert b.shape[0] != a.shape[0]
+
 
 class TestDbzToIntensity:
     def test_clips_below_floor_to_zero_and_is_non_negative(self) -> None:
@@ -210,6 +222,21 @@ class TestDbzToIntensity:
 
 
 class TestGridVolume:
+    """The Barnes gridder, on a shrunken box.
+
+    grid_volume itself is grid-size-agnostic, so these unit tests do not need
+    the production 300x300x18 km domain — at full size every case sweeps 1.92 M
+    cells (eight 262144 x 32 kd-tree queries and ~1 GB of transient arrays) to
+    assert the value of ONE cell. A 24x24x6 km box exercises the identical code
+    path at ~4k cells.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _small_box(self, monkeypatch) -> None:
+        monkeypatch.setattr(_demo, "BOX_X_KM", (-12.0, 12.0))
+        monkeypatch.setattr(_demo, "BOX_Y_KM", (-12.0, 12.0))
+        monkeypatch.setattr(_demo, "BOX_Z_KM", (0.25, 6.25))
+
     def test_empty_neighbourhoods_report_no_data(self) -> None:
         """Cells with no gate inside the ROI must come back -inf, not zero dBZ."""
         # One gate, parked far outside the box.
@@ -220,7 +247,7 @@ class TestGridVolume:
         assert np.all(np.isneginf(grid))
 
     def test_masked_cells_are_marked_no_data(self) -> None:
-        xyz = np.array([[-60.0, 20.0, 5.0]])
+        xyz = np.array([[-6.0, 2.0, 5.0]])
         dbz = np.array([50.0], dtype=np.float32)
         shape = tuple(a.size for a in _demo.grid_axes())
         mask = np.zeros(shape, dtype=bool)
@@ -231,26 +258,26 @@ class TestGridVolume:
         """Two gates straddling a cell: the answer sits between their values."""
         z_ax, y_ax, x_ax = _demo.grid_axes()
         # Pick an interior cell and place gates just either side of it.
-        cx, cy, cz = float(x_ax[140]), float(y_ax[120]), float(z_ax[10])
+        cx, cy, cz = float(x_ax[16]), float(y_ax[16]), float(z_ax[2])
         xyz = np.array([[cx - 0.3, cy, cz], [cx + 0.3, cy, cz]])
         dbz = np.array([20.0, 60.0], dtype=np.float32)
         mask = np.zeros((z_ax.size, y_ax.size, x_ax.size), dtype=bool)
-        mask[10, 120, 140] = True
+        mask[2, 16, 16] = True
         grid = grid_volume(xyz, dbz, mask)
-        value = grid[10, 120, 140]
+        value = grid[2, 16, 16]
         assert 20.0 <= value <= 60.0
         # Equidistant gates -> the mean.
         assert value == pytest.approx(40.0, abs=1e-3)
 
     def test_nearer_gate_dominates(self) -> None:
         z_ax, y_ax, x_ax = _demo.grid_axes()
-        cx, cy, cz = float(x_ax[140]), float(y_ax[120]), float(z_ax[10])
+        cx, cy, cz = float(x_ax[16]), float(y_ax[16]), float(z_ax[2])
         xyz = np.array([[cx + 0.05, cy, cz], [cx + 1.2, cy, cz]])
         dbz = np.array([60.0, 20.0], dtype=np.float32)
         mask = np.zeros((z_ax.size, y_ax.size, x_ax.size), dtype=bool)
-        mask[10, 120, 140] = True
+        mask[2, 16, 16] = True
         grid = grid_volume(xyz, dbz, mask)
-        assert grid[10, 120, 140] > 50.0
+        assert grid[2, 16, 16] > 50.0
 
 
 class TestFrameSelection:

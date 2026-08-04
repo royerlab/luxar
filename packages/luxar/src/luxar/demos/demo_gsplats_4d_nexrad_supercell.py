@@ -33,7 +33,7 @@ which is a satisfying confirmation that both are describing the same storm.
 WHY THE DATA LOOKS THE WAY IT DOES
 
 A WSR-88D does not sample a volume. It spins a ~0.95-degree pencil beam around
-the horizon at one elevation angle, steps up, and spins again — 15 tilts from
+the horizon at one elevation angle, steps up, and spins again — 14 tilts from
 0.5 to 19.5 degrees, about 4.5 minutes for a full volume. The result is a set of
 nested CONES of samples, not a grid. Adjacent tilts are 0.5 degrees apart near
 the ground but 3.2 degrees apart aloft, far wider than the beam itself, so the
@@ -976,7 +976,11 @@ def coverage_mask(el_min: float, el_max: float, r_max_km: float) -> np.ndarray:
 
     Cached: the box, spacing and VCP are identical for every timepoint.
     """
-    key = (el_min, el_max, r_max_km, GRID_M)
+    # The key must carry the FULL grid geometry (box extents and both
+    # spacings), not just GRID_M — grid_axes() reads all of them, so a partial
+    # key would hand back a stale mask of the wrong shape or contents after
+    # any of the others is reconfigured in-process.
+    key = (el_min, el_max, r_max_km, _geometry_token())
     if key in _COVERAGE_MEMO:
         return _COVERAGE_MEMO[key]
 
