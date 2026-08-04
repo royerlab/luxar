@@ -6,7 +6,7 @@
  * and loading statistics in real-time.
  */
 
-import type { NodeKind, NodeTypeName } from './format-contract';
+import type { GeometryTypeName, NodeKind, NodeTypeName } from './format-contract';
 
 /**
  * Geometry-neutral index range for monitor events and query tracking.
@@ -601,6 +601,21 @@ export interface LODProgressProvider {
 }
 
 /**
+ * Per-geometry-type counters, one entry per {@link GeometryTypeName}.
+ *
+ * Keyed by the contract vocabulary rather than written out as
+ * `points…`/`lines…`/`gsplats…` triplets, so adding a geometry type extends
+ * every counter at once (and fails to compile until the producers supply it)
+ * instead of needing a field, an accumulator and a reader per counter.
+ *
+ * The *element* nouns (points / segments / splats) deliberately do NOT live
+ * here: they belong to the display layer, which keeps per-type named fields on
+ * {@link DataLoadingStats} because each is rendered with its own label and DOM
+ * id. This shape is the aggregation model; the nouns are presentation.
+ */
+export type GeometryCounters = Record<GeometryTypeName, number>;
+
+/**
  * Scene graph state for monitor
  */
 export interface SceneGraphState {
@@ -608,24 +623,12 @@ export interface SceneGraphState {
   root: SceneGraphNode | null;
   /** Total number of nodes */
   totalNodes: number;
-  /** Number of points nodes */
-  pointsNodes: number;
-  /** Number of lines nodes */
-  linesNodes: number;
-  /** Number of gsplats nodes */
-  gsplatsNodes: number;
-  /** Total points across all nodes */
-  totalPoints: number;
-  /** Currently visible points (after nD clipping / progressive LOD) */
-  visiblePoints: number;
-  /** Total segments across all lines */
-  totalSegments: number;
-  /** Currently visible segments (after nD clipping) */
-  visibleSegments: number;
-  /** Total splats across all gsplats nodes */
-  totalSplats: number;
-  /** Currently visible splats (after nD clipping) */
-  visibleSplats: number;
+  /** Number of scene-graph nodes of each geometry type */
+  nodesByType: GeometryCounters;
+  /** Total elements of each geometry type across all nodes */
+  totalByType: GeometryCounters;
+  /** Currently visible elements per type (after nD clipping / progressive LOD) */
+  visibleByType: GeometryCounters;
 }
 
 /**
