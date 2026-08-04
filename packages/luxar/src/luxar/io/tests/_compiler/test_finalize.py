@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 import zarr
 
 from luxar.io._compiler.finalize.hashing import compute_content_hashes
@@ -12,6 +13,7 @@ from luxar.io._compiler.finalize.lod_backfill import (
 )
 from luxar.io._compiler.finalize.validation import validate_discrete_dimension_ranges
 from luxar.typing_utils._format_contract import GEOMETRY_TYPES
+from luxar.typing_utils.geometry_capabilities import lod_capable_types
 
 
 def _lod_tree() -> zarr.Group:
@@ -324,13 +326,19 @@ def test_display_type_backfill_ignores_arrays_when_picking_finest_child() -> Non
     assert dict(root["lodgrp"].attrs).get("display_type") == "lines"
 
 
-def test_display_type_backfill_resolves_every_contract_geometry_type() -> None:
+def test_display_type_backfill_resolves_every_lod_capable_geometry_type() -> None:
     """Leaf resolution is driven by the contract, not a local literal.
 
-    Pins the single-sourcing: a geometry type added to ``contract.yaml`` is
-    resolvable here without editing this module.
+    Pins the single-sourcing: an LOD-capable geometry type added to
+    ``contract.yaml`` is resolvable here without editing this module.
+
+    Parametrised over ``lod_capable_types()`` rather than ``GEOMETRY_TYPES``,
+    because the two are no longer the same set. Being a geometry leaf (the
+    vocabulary) and being usable as a ``kind=lod`` group's ``display_type`` (a
+    capability) are different questions, and a type can answer yes to the first
+    and no to the second — see the rejection test below for the other half.
     """
-    for geometry_type in GEOMETRY_TYPES:
+    for geometry_type in lod_capable_types():
         root = zarr.group()
         lod = root.create_group("lodgrp")
         lod.attrs["kind"] = "lod"
@@ -340,6 +348,36 @@ def test_display_type_backfill_resolves_every_contract_geometry_type() -> None:
         finalize_lod_display_types(root)
 
         assert dict(root["lodgrp"].attrs).get("display_type") == geometry_type
+
+
+def test_display_type_backfill_rejects_every_lod_incapable_geometry_type() -> None:
+    """A geometry type with no LOD ladder must not be back-filled onto a lod group.
+
+    The other half of the test above, and the reason the guard exists: without it
+    the back-fill happily stamps ``display_type='mesh'``, producing a ``kind=lod``
+    group that no viewer path can load — written with no error at all. Failing
+    here instead means the broken store is never produced.
+
+    Parametrised over the complement so it covers a fifth type automatically, and
+    skips cleanly (rather than passing vacuously) if every geometry type ever
+    becomes LOD-capable.
+    """
+    incapable = [t for t in GEOMETRY_TYPES if t not in lod_capable_types()]
+    if not incapable:
+        pytest.skip("every contract geometry type is LOD-capable")
+
+    for geometry_type in incapable:
+        root = zarr.group()
+        lod = root.create_group("lodgrp")
+        lod.attrs["kind"] = "lod"
+        leaf = lod.create_group("leaf")
+        leaf.attrs["type"] = geometry_type
+
+        with pytest.raises(ValueError, match="display_type for a kind=lod group"):
+            finalize_lod_display_types(root)
+
+        # And nothing was stamped on the way out.
+        assert "display_type" not in dict(root["lodgrp"].attrs)
 
 
 def test_display_type_backfill_ignores_a_typed_array_sibling() -> None:

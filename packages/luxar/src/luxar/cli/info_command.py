@@ -189,6 +189,18 @@ def _print_tree(
         if show_stats:
             attrs["shape"] = centers.shape
             attrs["dtype"] = str(centers.dtype)
+    elif node_type == "mesh" and "vertices" in group:
+        vertices = group["vertices"]
+        attrs["n_vertices"] = vertices.shape[0]
+        # Faces too, unlike the sibling branches' single count: a mesh's vertex
+        # count says little about its size on its own (a coarse surface and a
+        # dense one can share a vertex budget), and the face count is what the
+        # render cost tracks.
+        if "faces" in group:
+            attrs["n_faces"] = group["faces"].shape[0]
+        if show_stats:
+            attrs["shape"] = vertices.shape
+            attrs["dtype"] = str(vertices.dtype)
 
     # Print node
     if depth == 0:

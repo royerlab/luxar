@@ -51,13 +51,22 @@ class BlendingMode(str, Enum):
 
 
 class NodeType(str, Enum):
-    """Types of nodes in the scene hierarchy."""
+    """Types of nodes in the scene hierarchy.
+
+    The members must stay in step with ``node_types`` in
+    ``format-contract/contract.yaml`` (projected as
+    :data:`luxar.typing_utils._format_contract.NODE_TYPES`), which is the
+    cross-language source of truth. ``test_node_type_matches_contract`` pins the
+    two together, so a contract edit that misses this enum fails a test rather
+    than drifting.
+    """
 
     SCENE = "scene"
     GROUP = "group"
     POINTS = "points"
     LINES = "lines"
     GSPLATS = "gsplats"
+    MESH = "mesh"
 
     @classmethod
     def validate(cls, value: str) -> "NodeType":

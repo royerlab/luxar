@@ -158,6 +158,12 @@ function elementCountOf(node: SceneGraphNode, type: GeometryTypeName): number {
     case 'gsplats':
       count = node.splatCount;
       break;
+    case 'mesh':
+      // Faces, matching the drawn-primitive convention above (`lines` counts
+      // segments, not vertices, for the same reason). Undefined until the mesh
+      // loader lands, which the integer check below already reads as 0.
+      count = node.faceCount;
+      break;
     default:
       void (type satisfies never);
       return 0;

@@ -41,8 +41,63 @@ def test_named_node_type_constants_match_contract() -> None:
         constants.NODE_TYPE_POINTS,
         constants.NODE_TYPE_LINES,
         constants.NODE_TYPE_GSPLATS,
+        constants.NODE_TYPE_MESH,
     }
     assert named == set(fc.NODE_TYPES)
+
+
+def test_loader_types_are_a_subset_of_geometry_types() -> None:
+    """``loader_types`` names the VIEWER-DRAWABLE subset of ``geometry_types``.
+
+    The two lists answer different questions — "is this a geometry leaf?" (which
+    the Python writer asks) versus "can the viewer load and draw it?" — and they
+    legitimately differ, because a type becomes authorable before it becomes
+    drawable. What is NOT legitimate is the reverse containment: the viewer cannot
+    dispatch on a type the writer has no vocabulary for, so such an entry would be
+    unrepresentable on disk.
+    """
+    assert set(fc.LOADER_TYPES) <= set(fc.GEOMETRY_TYPES)
+    assert fc.LOADER_TYPES, "loader sequence must not be empty"
+    assert len(fc.LOADER_TYPES) == len(set(fc.LOADER_TYPES))
+
+
+@pytest.mark.skipif(
+    not GEN_SCRIPT.exists(),
+    reason="generator script not present (packaged install without repo scripts/)",
+)
+@pytest.mark.parametrize(
+    ("loader_types", "expected"),
+    [
+        pytest.param([], "must not be empty", id="empty"),
+        pytest.param(
+            ["points", "not_a_geometry_type"], "missing from geometry_types", id="stray"
+        ),
+        pytest.param(["points", "points"], "duplicate", id="duplicates"),
+    ],
+)
+def test_generator_rejects_malformed_loader_types(
+    loader_types: list, expected: str
+) -> None:
+    """The ``loader_types`` invariants are ENFORCED by codegen, not just asserted.
+
+    Mirrors the ``geometry_types`` cases below. Without these a malformed contract
+    would generate happily and break far away — an empty list emits an empty
+    TypeScript union, and a stray entry gives the viewer a dispatch kind no store
+    can contain.
+    """
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("gen_format_contract", GEN_SCRIPT)
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    good = mod.load_contract()
+    tampered = {**good, "loader_types": loader_types}
+
+    with pytest.raises(SystemExit) as exc:
+        mod._loader_types(tampered)
+    assert expected in str(exc.value)
 
 
 def test_scene_version_consumers_single_sourced() -> None:

@@ -31,18 +31,30 @@ SUPPORTED_GSPLATS_VERSIONS: Final[tuple[GSplatsFormatVersion, ...]] = (
 FORMAT_TYPE_GSPLATS: Final[str] = "gsplats_zarr"
 
 # --- scene-graph node types ---
-NodeTypeName = Literal["scene", "group", "points", "lines", "gsplats"]
+NodeTypeName = Literal["scene", "group", "points", "lines", "gsplats", "mesh"]
 NODE_TYPES: Final[tuple[NodeTypeName, ...]] = (
     "scene",
     "group",
     "points",
     "lines",
     "gsplats",
+    "mesh",
 )
 
 # --- leaf geometry types (the element-bearing subset of NODE_TYPES) ---
-GeometryTypeName = Literal["points", "lines", "gsplats"]
-GEOMETRY_TYPES: Final[tuple[GeometryTypeName, ...]] = ("points", "lines", "gsplats")
+GeometryTypeName = Literal["points", "lines", "gsplats", "mesh"]
+GEOMETRY_TYPES: Final[tuple[GeometryTypeName, ...]] = (
+    "points",
+    "lines",
+    "gsplats",
+    "mesh",
+)
+
+# --- viewer-drawable geometry types (the subset of GEOMETRY_TYPES with a
+#     loader / descriptor row / tolerance arm; a CAPABILITY, not the
+#     vocabulary — see contract.yaml::loader_types) ---
+LoaderTypeName = Literal["points", "lines", "gsplats"]
+LOADER_TYPES: Final[tuple[LoaderTypeName, ...]] = ("points", "lines", "gsplats")
 
 # --- specialized-group kinds ---
 NodeKind = Literal["lod", "partition"]
@@ -156,6 +168,10 @@ __all__ = [
     "FORMAT_TYPE_GSPLATS",
     "NodeTypeName",
     "NODE_TYPES",
+    "GeometryTypeName",
+    "GEOMETRY_TYPES",
+    "LoaderTypeName",
+    "LOADER_TYPES",
     "NodeKind",
     "NODE_KINDS",
     "EncodingName",

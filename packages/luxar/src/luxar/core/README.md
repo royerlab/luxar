@@ -1,6 +1,6 @@
 # luxar.core
 
-The `core` module contains the fundamental data structures and classes that form the foundation of Luxar's scene graph system. This includes scene nodes, data containers (Points, Lines, GSplats), dimensional specifications, and transformation utilities.
+The `core` module contains the fundamental data structures and classes that form the foundation of Luxar's scene graph system. This includes scene nodes, data containers (Points, Lines, GSplats, Mesh), dimensional specifications, and transformation utilities.
 
 ## Overview
 
@@ -215,7 +215,7 @@ group.nd_transform = {"Channel": {"permutation": [2, 0, 1]}}
 
 ### 4. DataNode (`datanode.py`)
 
-Abstract base class for all data-bearing nodes (Points, Lines, GSplats).
+Abstract base class for all data-bearing nodes (Points, Lines, GSplats, Mesh).
 
 **Purpose:**
 Provides common interface and behavior for all nodes that contain visualization data.
@@ -249,7 +249,8 @@ Node
  └── DataNode (abstract)
       ├── Points
       ├── Lines
-      └── GSplats
+      ├── GSplats
+      └── Mesh
 ```
 
 ### 5. Points (`points.py`)
@@ -446,6 +447,84 @@ These methods automatically handle:
 - Loading data from .gsplats.zarr archives
 - Passing all data (centers, amplitudes, cholesky_factors, colors) to add_gsplats()
 - Preserving optional attributes (colors, labels) when present
+
+### 7b. Mesh (`mesh.py`)
+
+Node for triangle-surface data (isosurfaces, segmentation boundaries, organ and
+cortical meshes).
+
+**Purpose:**
+Represents 2D *surfaces* embedded in nD — the one thing the other three types
+cannot express. Points, Lines and GSplats are all soft, emissive, per-element
+primitives; a surface is connected, opaque and shaded.
+
+⚠️ **Writable, not yet renderable.** The Python writer, reader and `luxar info`
+handle mesh today; the viewer's loader, material and picking land in a later phase
+(`docs/specs/MESH_NODE_SPEC.md` §11). The format contract names the two sets
+separately — `geometry_types` (writable) vs `loader_types` (viewer-drawable) — so
+`mesh` is in the first and not yet the second.
+
+**Key Features:**
+- nD `vertices` plus a `faces` triangle-index array (`(F, 3)` or flat `(3F,)`)
+- Optional per-vertex `normals`, with a **required** `normal_dims` companion
+- Per-vertex colors (RGB or RGBA) and scalars for colormap lookup
+- `shading` (`"smooth"` / `"flat"`) and `double_sided`
+- Progressive writing (data written immediately to Zarr)
+
+**What a mesh does NOT have**, and why the absences are structural rather than
+gaps:
+- **No per-element size.** A triangle's extent comes from its own vertices, so
+  there is no radius/width/covariance analogue — and a mesh contributes *zero*
+  extent padding to scene bounds.
+- **No LOD ladder.** The additive/substitutive machinery reduces a set of
+  independent elements; a connected surface is not one. The mesh analogue is QEM
+  decimation, which is a project rather than a line item.
+- **No `kind=partition`.** A BSP cut needs vertex duplication at part boundaries.
+- **No spatial index** (`ordering` is always `"none"`; the viewer loads a mesh
+  whole, so a chunk index has nothing to skip).
+
+Each of those is refused with an explanation — including adding a mesh under a
+`kind=lod` / `kind=partition` parent — rather than silently degrading.
+
+**Usage Example:**
+```python
+# A welded tetrahedron
+vertices = np.array([[0, 0, 0], [10, 0, 0], [0, 10, 0], [0, 0, 10]],
+                    dtype=np.float32)
+faces = np.array([[0, 1, 2], [0, 1, 3], [0, 2, 3], [1, 2, 3]], dtype=np.uint32)
+normals = compute_vertex_normals(vertices, faces)  # your own helper
+
+mesh = scene.add_mesh('tetra',
+                      vertices=vertices,
+                      faces=faces,
+                      normals=normals,
+                      normal_dims=(0, 1, 2),   # required with normals
+                      colors=(0.8, 0.8, 0.9))
+
+print(f"Vertices: {mesh.n_elements:,}")
+print(f"Faces: {mesh.n_faces:,}")
+print(f"Shading: {mesh.shading}")
+```
+
+**Why `normal_dims` is required, not inferred:**
+Normals are a *display-space* quantity — only meaningful for the three displayed
+dimensions — so they are stored `(V, 3)` and the store must record *which* three.
+Storing them against an implicit "first three dimensions" is wrong for any mesh
+whose leading dimension is not spatial: for a `(t, x, y, z)` mesh the first three
+are `(t, x, y)`, and a normal against them is meaningless. Making the triple
+explicit turns an invisible wrong-orientation render into a checkable equality.
+
+**Key Properties:**
+- `n_elements` - Number of vertices (the geometry-neutral DataNode count, matching
+  `Lines`, which also counts vertices rather than segments; the on-disk key stays
+  `n_vertices`)
+- `n_faces` - Number of triangles
+- `has_normals` / `normal_dims` - Stored normals and the dimensions they describe
+- `has_colors` / `has_scalars` - Optional per-vertex appearance channels
+- `has_labels` / `has_image_labels` - Hover tooltips / thumbnails
+- `shading` - `"smooth"` or `"flat"`
+- `double_sided` - Whether back faces render
+- `ordering` - Always `"none"` in v1 (no spatial index)
 
 ### 8. Dimensions (`dimensions.py`)
 

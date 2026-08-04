@@ -351,8 +351,9 @@ def format_tree_node(
         depth: Current depth in tree.
         is_last: Whether this is the last child.
         prefix: Prefix for the current line.
-        node_type: Type of node ("scene", "group", "points", "lines", or
-            "gsplats"). Unknown values are rendered without a type icon.
+        node_type: Type of node ("scene", "group", "points", "lines",
+            "gsplats", or "mesh"). Unknown values are rendered without a type
+            icon.
         attrs: Node attributes to display.
 
     Returns:
@@ -375,6 +376,8 @@ def format_tree_node(
         line += " 📏"
     elif node_type == "gsplats":
         line += " 💠"
+    elif node_type == "mesh":
+        line += " 🔺"
 
     # Add selected attributes
     if attrs:
@@ -385,6 +388,13 @@ def format_tree_node(
             important_attrs.append(f"n={attrs['n_vertices']:,}")
         if "n_splats" in attrs:
             important_attrs.append(f"n={attrs['n_splats']:,}")
+        # Faces get their own label rather than sharing the `n=` slot: a mesh's
+        # vertex count says little about its size on its own (a coarse surface and
+        # a dense one can share a vertex budget), and the render cost tracks
+        # triangles. Both are shown, so `n=` keeps meaning "primary elements"
+        # across every geometry type.
+        if "n_faces" in attrs:
+            important_attrs.append(f"faces={attrs['n_faces']:,}")
         if "shape" in attrs:
             important_attrs.append(f"shape={attrs['shape']}")
         if "dtype" in attrs:

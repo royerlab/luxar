@@ -465,12 +465,15 @@ export interface GridCellState {
 }
 
 /**
- * Node type for scene graph display. The shared geometry/container types are
- * single-sourced from the cross-language format contract
- * (format-contract/contract.yaml); `mesh` is a viewer-only forward-looking
- * member with no Python counterpart yet.
+ * Node type for scene graph display, single-sourced from the cross-language
+ * format contract (format-contract/contract.yaml → `node_types`).
+ *
+ * This was `NodeTypeName | 'mesh'` while `mesh` was a viewer-only forward
+ * declaration; `mesh` is now in the contract, so the local extension is gone and
+ * this is a plain alias. Keep it an alias rather than re-widening: a display type
+ * the writer cannot emit has nothing to display.
  */
-export type SceneGraphNodeType = NodeTypeName | 'mesh';
+export type SceneGraphNodeType = NodeTypeName;
 
 /**
  * Scene graph node for UI display.
@@ -495,6 +498,20 @@ export interface SceneGraphNode {
   vertexCount?: number;
   /** Number of splats (for gsplats nodes) */
   splatCount?: number;
+  /**
+   * Number of triangles (for mesh nodes).
+   *
+   * Faces rather than vertices, because this trio counts the DRAWN PRIMITIVE per
+   * type — note `lines` is counted by `segmentCount`, not `vertexCount`, for the
+   * same reason. (The Python `Mesh.n_elements` counts vertices instead, since
+   * there the primary element is whatever the per-element attribute arrays are
+   * indexed by. The two conventions answer different questions.)
+   *
+   * Stays `undefined` until the mesh loader lands (MESH_NODE_SPEC.md §11 phase 3);
+   * no mesh node can reach the monitor before then, and `elementCountOf` already
+   * treats a missing count as 0.
+   */
+  faceCount?: number;
   /** Number of visible splats after nD slicing (for gsplats nodes) */
   visibleSplatCount?: number;
   /**
