@@ -88,7 +88,7 @@ is the slow exception).
 git clone https://github.com/royerlab/luxar.git
 cd luxar
 make setup-dev          # Auto-installs Node.js, pnpm, Hatch (no sudo)
-luxar demo              # Browse the 77 bundled demos
+luxar demo              # Browse the 78 bundled demos
 luxar demo run lorenz   # Run one — generates the data and opens the viewer
 ```
 
@@ -102,15 +102,15 @@ That last command generates a Lorenz attractor and opens the viewer:
 category, what it needs, and whether you have already built it:
 
 ```
-🎬 [Luxar] 77 demos
+🎬 [Luxar] 78 demos
 
   #  KEY                                    GEOM         CATEGORY       NEEDS                STATUS
 ───────────────────────────────────────────────────────────────────────────────────────────────────
   1  arxiv_papers                           points       embeddings     ⬇20MB                cached
-  6  cellxgene_census_umap                  points       embeddings     ⬇12MB LFS
-  8  chromatrace_choir_umap_sequence        points       embeddings     📁manual              cached
- 24  gsplats_2d_cmu1_pathology              gsplats      medical        ⬇150MB GPU* LFS      cached
- 26  gsplats_3d_acto3d_heart                gsplats      microscopy     ⬇13MB GPU* LFS       cached
+  7  cellxgene_census_umap                  points       embeddings     ⬇12MB LFS
+  9  chromatrace_choir_umap_sequence        points       embeddings     📁manual              cached
+ 25  gsplats_2d_cmu1_pathology              gsplats      medical        ⬇150MB GPU* LFS      cached
+ 27  gsplats_3d_acto3d_heart                gsplats      microscopy     ⬇13MB GPU* LFS       cached
  ...
 
 Run one:  luxar demo run <key|#>       Details:  luxar demo info <key|#>
@@ -954,6 +954,7 @@ the full citation.
 - **Milky Way Dust** — Leike, Glatzle & Enßlin (2020), *A&A*, [doi:10.1051/0004-6361/202038169](https://doi.org/10.1051/0004-6361/202038169); data [Zenodo](https://doi.org/10.5281/zenodo.3993082) (CC BY 4.0).
 - **Global Earthquakes** — [USGS Earthquake Catalog](https://earthquake.usgs.gov/) (real-time feed); Earth texture: NASA Blue Marble.
 - **Rivers of Earth** — [HydroRIVERS v10](https://www.hydrosheds.org/products/hydrorivers) (HydroSHEDS; Lehner & Grill 2013, *Hydrol. Process.* 27(15), CC BY 4.0) + [ETOPO 2022](https://www.ncei.noaa.gov/products/etopo-global-relief-model) global relief (NOAA NCEI, [doi:10.25921/fd45-gt74](https://doi.org/10.25921/fd45-gt74), public domain).
+- **Biodiversity at Planetary Scale** — [GBIF](https://www.gbif.org/) occurrence records ([GBIF.org occurrence snapshot](https://registry.opendata.aws/gbif/) on the AWS Open Data registry; a CC BY 4.0 / CC0 1.0 subset) + CC0 animal-migration tracks from [Movebank](https://www.movebank.org/); Earth texture: NASA [Blue Marble](https://visibleearth.nasa.gov/collection/1484/blue-marble).
 
 **Connectomes, structures & networks**
 - **FlyWire Connectome** — FlyWire whole-brain connectome, public release 783; Dorkenwald et al. (2024) & Schlegel et al. (2024), *Nature*; [annotations](https://github.com/flyconnectome/flywire_annotations), [connectivity (Zenodo)](https://zenodo.org/records/10676866), [Codex](https://codex.flywire.ai/).
