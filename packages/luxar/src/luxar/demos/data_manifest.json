@@ -195,6 +195,21 @@
         }
       ]
     },
+    "gsplats_nexrad_supercell": {
+      "bucket": "zenodo",
+      "record": "cc-by",
+      "license": "pd-noaa",
+      "source": "NOAA NEXRAD Level II, KTLX (Twin Lakes, OK), 2013-05-31 23Z",
+      "attribution": "U.S. NOAA/NWS NEXRAD Level II via NOAA Open Data Dissemination (public domain, 17 U.S.C. 105; acknowledge NOAA, no endorsement implied). Derived product: regridded and Gaussian-fitted, not original NOAA data.",
+      "dir": "gsplats_nexrad_supercell",
+      "files": [
+        {
+          "name": "nexrad_supercell.gsplats.zarr.zip",
+          "sha256": "c954c29dfba08dd5880a8c03a837377cb12e99ca873a852d50d2ff4445a1b211",
+          "bytes": 10059182
+        }
+      ]
+    },
     "gsplats_multichannel": {
       "bucket": "zenodo",
       "record": "cc-by",

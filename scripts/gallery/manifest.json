@@ -1,5 +1,5 @@
 {
-  "$comment": "Single source of truth for the Luxar gallery harness. Consumed by BOTH scripts/gallery/generate_gallery_datasets.py (dataset generation) and packages/luxar-viewer/src/tests/screenshots/generate-gallery.spec.ts (still + orbit-video capture). Add a demo here to include it in the gallery; nothing else needs updating. Fields: id (gallery media filename stem + dataset stem), title (caption), geometry, category, script (demo_*.py under packages/luxar/src/luxar/demos, or null if the demo lives only on a feature branch and its dataset must be pre-generated), dataset (path under datasets/demos, relative to repo root), exposure (OPTIONAL log2-stops override; omit for auto-exposure), autoFrame (OPTIONAL, default true; set false for very heavy scenes to skip fill-to-screen and use the baked camera), autoExpose (OPTIONAL, default true; set false to use the demo's baked exposure), dimensionNav (OPTIONAL {key, steps} for nD demos), readme (true = a current top pick for the README gallery). zoom (OPTIONAL multiplicative zoom after fill: >1 in, <1 out). timelapse (OPTIONAL {framePoint} — advance the time dim while recording a 4D series; framePoint = fraction of the range used to frame the still). distance (OPTIONAL absolute camera distance in world units — bypasses fill; for faint/diffuse subjects). viewAngle (OPTIONAL {azimuth, elevation} in degrees — orients the camera before framing). orbitUp (OPTIONAL 'x'|'y'|'z' world up-axis the rock revolves about; default y; use z for a subject lying along Z). timelapse.framePoint (OPTIONAL still-framing fraction of time range).",
+  "$comment": "Single source of truth for the Luxar gallery harness. Consumed by BOTH scripts/gallery/generate_gallery_datasets.py (dataset generation) and packages/luxar-viewer/src/tests/screenshots/generate-gallery.spec.ts (still + orbit-video capture). Add a demo here to include it in the gallery; nothing else needs updating. Fields: id (gallery media filename stem + dataset stem), title (caption), geometry, category, script (demo_*.py under packages/luxar/src/luxar/demos, or null if the demo lives only on a feature branch and its dataset must be pre-generated), dataset (path under datasets/demos, relative to repo root), exposure (OPTIONAL log2-stops override; omit for auto-exposure), autoFrame (OPTIONAL, default true; set false for very heavy scenes to skip fill-to-screen and use the baked camera), autoExpose (OPTIONAL, default true; set false to use the demo's baked exposure), dimensionNav (OPTIONAL {key, steps} for nD demos), readme (true = a current top pick for the README gallery). zoom (OPTIONAL multiplicative zoom after fill: >1 in, <1 out). timelapse (OPTIONAL {framePoint} \u2014 advance the time dim while recording a 4D series; framePoint = fraction of the range used to frame the still). distance (OPTIONAL absolute camera distance in world units \u2014 bypasses fill; for faint/diffuse subjects). viewAngle (OPTIONAL {azimuth, elevation} in degrees \u2014 orients the camera before framing). orbitUp (OPTIONAL 'x'|'y'|'z' world up-axis the rock revolves about; default y; use z for a subject lying along Z). timelapse.framePoint (OPTIONAL still-framing fraction of time range).",
   "demos": [
     {
       "id": "lorenz",
@@ -81,7 +81,7 @@
     },
     {
       "id": "asteroids_solar_system",
-      "title": "Solar System — 1.5M Asteroids",
+      "title": "Solar System \u2014 1.5M Asteroids",
       "geometry": "points+lines",
       "category": "astronomy",
       "script": "demo_asteroids_solar_system.py",
@@ -201,7 +201,7 @@
       "autoFrame": false,
       "autoExpose": false,
       "readme": true,
-      "note": "87 tract bundles, 6.83M segments at the finest level. lodFinest:false so the coverage LOD serves the ~640K-element coarse levels — forcing every element never reaches networkidle inside the 120s goto budget. autoFrame/autoExpose off because both closed loops re-screenshot a scene this heavy until they converge (one run took an hour before timing out in measureLuminance), and because the demo's opening pose and its additive opacity/intensity window are deliberately baked — letting the harness retune them would undo the tuning"
+      "note": "87 tract bundles, 6.83M segments at the finest level. lodFinest:false so the coverage LOD serves the ~640K-element coarse levels \u2014 forcing every element never reaches networkidle inside the 120s goto budget. autoFrame/autoExpose off because both closed loops re-screenshot a scene this heavy until they converge (one run took an hour before timing out in measureLuminance), and because the demo's opening pose and its additive opacity/intensity window are deliberately baked \u2014 letting the harness retune them would undo the tuning"
     },
     {
       "id": "cellxgene_census_umap",
@@ -213,7 +213,7 @@
     },
     {
       "id": "cosmicflows_laniakea",
-      "title": "Cosmicflows — Laniakea Supercluster",
+      "title": "Cosmicflows \u2014 Laniakea Supercluster",
       "geometry": "points+lines",
       "category": "astronomy",
       "script": "demo_cosmicflows_laniakea.py",
@@ -429,6 +429,17 @@
       "category": "microscopy",
       "script": "demo_gsplats_4d_zebrafish_timelapse.py",
       "dataset": "datasets/demos/gsplats_4d_zebrafish_timelapse.luxar.zarr"
+    },
+    {
+      "id": "gsplats_4d_nexrad_supercell",
+      "title": "4D NEXRAD Supercell (El Reno)",
+      "geometry": "mixed",
+      "category": "geoscience",
+      "script": "demo_gsplats_4d_nexrad_supercell.py",
+      "dataset": "datasets/demos/gsplats_4d_nexrad_supercell.luxar.zarr",
+      "timelapse": {
+        "framePoint": 0.45
+      }
     },
     {
       "id": "hilbert_curve_3d",

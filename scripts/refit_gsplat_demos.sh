@@ -34,6 +34,8 @@ declare -a DEMOS=(
     "zebrafish_4d:$DEMOS_DIR/demo_gsplats_4d_zebrafish_timelapse.py"
     "cmu1_pathology:$DEMOS_DIR/demo_gsplats_2d_cmu1_pathology.py"
     "codex_pancreas:$DEMOS_DIR/demo_gsplats_2d_codex_pancreas.py"
+    # Last: the largest download (~127 MB of raw NEXRAD volume scans).
+    "nexrad_supercell:$DEMOS_DIR/demo_gsplats_4d_nexrad_supercell.py"
 )
 
 OK_NAMES=()
