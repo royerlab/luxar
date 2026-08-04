@@ -6,6 +6,24 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
+#### Added — targeted demo dependency installs and consistent install status (#915)
+
+`luxar demo deps --only MODULE` now narrows the report to one import module and,
+with `--install`, installs that row's exact constrained requirement instead of
+pulling an entire Luxar extra. This also gives dependencies outside every extra
+(currently `gdown`) an explicit managed install path. `--only` is
+case-insensitive and mutually exclusive with `--extra`.
+
+Generic `--install` continues to manage Luxar extras and now treats an
+orphan-only report consistently with an orphan left beside a successfully
+installed extra: it explains that no command was attempted and exits 0 rather
+than turning an unattempted requirement into an install failure. Report-only
+mode remains the CI/setup gate and still exits 1 for every missing or outdated
+row. The obsolete editable-install `mkdir packages/luxar-viewer/dist`
+workarounds were removed from the Makefile and CI/docs workflows; editable
+installs have not required that wheel-only artifact since the custom Hatch build
+hook gained `force_include_editable`.
+
 #### CI — the PyPI wheel viewer build is now a required release check (#688)
 
 CI now builds the standalone viewer application with the same `pnpm build`

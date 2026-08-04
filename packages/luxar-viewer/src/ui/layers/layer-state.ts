@@ -8,7 +8,8 @@
 import type { SceneNode } from '../../data/data-loader-types';
 import { getEffectiveAttrs } from '../../data/attrs-composer';
 import type { BlendingMode } from '../../types/blending';
-import type { NodeKind } from '../../types/format-contract';
+import type { GeometryTypeName, NodeKind } from '../../types/format-contract';
+import { isGeometryType } from '../../types/geometry-capabilities';
 import { log, Modules } from '../../utils/log';
 // Pure display-window ↔ shader-uniform math now lives in the rendering layer
 // (`rendering/display-range`) so `rendering/` modules can import it without
@@ -21,15 +22,18 @@ import { computeUniforms, computeDisplayRange } from '../../rendering/display-ra
  * Geometry type of a layer.
  *
  * - ``group`` — composite container; controls fan out to descendants.
- * - ``points`` / ``lines`` / ``gsplats`` — leaf data layers.
+ * - every {@link GeometryTypeName} — leaf data layers. Deliberately the whole
+ *   geometry vocabulary: any leaf type the format can carry is a layer the panel
+ *   must be able to list.
  *
- * Specialized groups (``kind === 'lod'``, future ``'partition'``) appear in
- * the layers panel as their underlying ``display_type`` (one of the
- * three leaf types) — never as ``'group'``. The specialized-group
- * nature is surfaced via the ``kind`` field on ``LayerInfo``, which
- * drives the per-layer badge / LOD dropdown.
+ * Specialized groups (``kind === 'lod'`` / ``'partition'``) appear in the layers
+ * panel as their underlying ``display_type`` — never as ``'group'``. That
+ * ``display_type`` is drawn from the LOD/partition-capable *subset* of the
+ * vocabulary, not from `LayerType` itself (see `types/geometry-capabilities`).
+ * The specialized-group nature is surfaced via the ``kind`` field on
+ * ``LayerInfo``, which drives the per-layer badge / LOD dropdown.
  */
-export type LayerType = 'points' | 'lines' | 'gsplats' | 'group';
+export type LayerType = GeometryTypeName | 'group';
 
 /**
  * Coerce a node's raw `layer` attr into "exposed in the Layers panel".
@@ -327,11 +331,9 @@ export class LayerStateManager {
       );
     }
     if (node.type !== 'scene' && isLayerEnabled(layerAttr)) {
-      const isLayerType =
-        node.type === 'points' ||
-        node.type === 'lines' ||
-        node.type === 'gsplats' ||
-        node.type === 'group';
+      // Vocabulary question, not a capability one: any geometry leaf the
+      // format can carry must be listable in the panel (see `LayerType`).
+      const isLayerType = isGeometryType(node.type) || node.type === 'group';
       if (isLayerType) {
         const name = node.path.split('/').pop() || node.path;
 

@@ -311,10 +311,6 @@ jobs:
         # tests — all three legs silently ran 3.12. See #839.
         run: pipx install --python "${{ steps.setup-python.outputs.python-path }}" hatch
 
-      - name: Create viewer dist placeholder
-        if: needs.changes.outputs.docs_only != 'true'
-        run: mkdir -p packages/luxar-viewer/dist
-
       - name: Assert hatch uses the matrix interpreter
         if: needs.changes.outputs.docs_only != 'true'
         # The guard that #839 was missing. It must compare for EQUALITY: the
@@ -489,11 +485,6 @@ jobs:
       - name: Install Hatch
         if: needs.changes.outputs.docs_only != 'true'
         run: pipx install hatch
-
-      - name: Create viewer dist placeholder
-        if: needs.changes.outputs.docs_only != 'true'
-        working-directory: .
-        run: mkdir -p packages/luxar-viewer/dist
 
       - name: Generate test fixtures
         if: needs.changes.outputs.docs_only != 'true'

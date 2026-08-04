@@ -76,6 +76,13 @@ export interface SceneBoundingBoxResult {
  * box of `box.isEmpty() === true` actually means "no visible
  * geometry."
  *
+ * The `nodeType` list below is NOT the geometry vocabulary and widening it
+ * alone would be a false fix: the arm also requires an
+ * `InstancedBufferGeometry`, so a geometry type rendered from a plain
+ * `BufferGeometry` still contributes nothing to the bounds — and therefore
+ * frames the camera wrongly, silently. Such a type needs its own arm here (the
+ * `THREE.InstancedMesh` branch is the shape to copy), not an extra literal.
+ *
  * Pure with respect to the scene — does NOT mutate object world
  * matrices; the caller should call `scene.updateMatrixWorld(true)`
  * before calling if needed.
