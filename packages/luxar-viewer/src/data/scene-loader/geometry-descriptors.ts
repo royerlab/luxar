@@ -162,6 +162,7 @@ export const GEOMETRY_DESCRIPTORS: Record<GeometryKind, GeometryDescriptor> = {
       const staged = await ctx.processMeshData(path, data, meshViewState, {
         normal_dims: attrs?.attrs?.normal_dims,
         double_sided: attrs?.attrs?.double_sided ?? true,
+        extend_to_all: attrs?.attrs?.extend_to_all,
       });
       ctx.commitMeshGeometry(staged);
     },

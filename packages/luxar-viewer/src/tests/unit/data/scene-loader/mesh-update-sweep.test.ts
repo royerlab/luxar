@@ -78,10 +78,10 @@ const ATTRS: MeshMetadata = {
   ordering: 'none',
 };
 
-/** One triangle in 4D, all three vertices at w = 0. */
-function loaded(): LoadedMeshData {
+/** One triangle in 4D, all three vertices at hidden dim `w`. */
+function loaded(w = 0): LoadedMeshData {
   return {
-    vertices: new Float32Array([0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0]),
+    vertices: new Float32Array([0, 0, 0, w, 1, 0, 0, w, 0, 1, 0, w]),
     faces: new Uint32Array([0, 1, 2]),
     normals: null,
     colors: null,
@@ -170,5 +170,43 @@ describe('SceneLoader.updateView — mesh re-projects on every sweep', () => {
     });
     expect((meshLoader.updateView as any).mock.calls.length).toBeGreaterThan(callsAfterFirst);
     expect(meshNode.geometry.index?.count).toBe(0);
+  });
+
+  it('extend_to_all survives the sweep: an extended mesh away from w = 0 stays visible', async () => {
+    await sceneLoader.loadScene('http://localhost:8000/test.zarr');
+
+    // Triangle at w = 50, node extended across w. The derivation pins an
+    // extended dim's slicePosition to a constant 0 (purely to stabilize the
+    // same-view no-op — see derive-node-view-state.ts Step 4), so visibility
+    // rests ENTIRELY on the infinite-tolerance sentinel. `processMeshData`
+    // RECOMPUTES the membership tolerance (discarding the derived sentinel) and
+    // re-applies the extension from the attrs the sweep handler passes it —
+    // dropping `extend_to_all` there culls every extended mesh that does not
+    // happen to sit at w = 0 (|50 − 0| ≫ the recomputed step × 1 slab).
+    const meshData = loaded(50);
+    const meshLoader = {
+      updateView: vi.fn().mockResolvedValue(meshData),
+      loadMesh: vi.fn().mockResolvedValue(meshData),
+      dispose: vi.fn(),
+    } as unknown as MeshDataLoader;
+
+    const meshNode = createEmptyMeshNode('/mesh', { ...ATTRS, extend_to_all: ['w'] }, meshLoader);
+    (sceneLoader as any).rootGroup.add(meshNode);
+    (sceneLoader as any).registry.registerMeshLoader('/mesh', meshLoader);
+
+    await sceneLoader.updateView({
+      displayDims: [0, 1, 2],
+      slicePosition: [0, 0, 0, 0],
+      tolerance: [1e10, 1e10, 1e10, 0.5],
+    });
+    expect(meshNode.geometry.index?.count).toBe(3);
+
+    // Scrub w: an extended node must stay slice-invariant.
+    await sceneLoader.updateView({
+      displayDims: [0, 1, 2],
+      slicePosition: [0, 0, 0, 99],
+      tolerance: [1e10, 1e10, 1e10, 0.5],
+    });
+    expect(meshNode.geometry.index?.count).toBe(3);
   });
 });
