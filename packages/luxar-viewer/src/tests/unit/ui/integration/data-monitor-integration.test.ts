@@ -657,7 +657,7 @@ describe('Data Monitor Integration', () => {
         ],
       });
       expect(monitor.getSceneGraph().root).not.toBeNull();
-      expect(monitor.getSceneGraph().pointsNodes).toBe(1);
+      expect(monitor.getSceneGraph().nodesByType.points).toBe(1);
 
       // Reload simulation: disconnect loaders should also drop the
       // tree so the next scene doesn't display a stale shape if it
@@ -666,8 +666,8 @@ describe('Data Monitor Integration', () => {
 
       const after = monitor.getSceneGraph();
       expect(after.root).toBeNull();
-      expect(after.pointsNodes).toBe(0);
-      expect(after.totalPoints).toBe(0);
+      expect(after.nodesByType.points).toBe(0);
+      expect(after.totalByType.points).toBe(0);
     });
 
     it('dispose() clears scene graph display state', () => {
@@ -682,7 +682,7 @@ describe('Data Monitor Integration', () => {
           { path: '/Lines', name: 'Lines', type: 'lines', segmentCount: 50, children: [] },
         ],
       });
-      expect(monitor.getSceneGraph().linesNodes).toBe(1);
+      expect(monitor.getSceneGraph().nodesByType.lines).toBe(1);
 
       monitor.dispose();
 
@@ -690,8 +690,8 @@ describe('Data Monitor Integration', () => {
       // dispose should not see the previous scene's tree.
       const after = monitor.getSceneGraph();
       expect(after.root).toBeNull();
-      expect(after.linesNodes).toBe(0);
-      expect(after.totalSegments).toBe(0);
+      expect(after.nodesByType.lines).toBe(0);
+      expect(after.totalByType.lines).toBe(0);
     });
   });
 });
