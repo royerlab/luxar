@@ -6,6 +6,47 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
+#### Demos — the biodiversity globe is `opaque`, so it stops painting over its own data (#1227)
+
+The globe was `volumetric` with a heavy absorption, which read well in isolation
+but made the layers unreadable together. Measured draw order in the live scene
+(hooking `onBeforeRender`, so this is THREE's real sequence rather than an
+inference from `renderOrder`):
+
+```
+ 3-10. All life  (8 tiles)  transparent  depthWrite=0
+ 11.   Earth                transparent  depthWrite=0   <- backdrop drawn LAST
+ 12.   Migration highways   transparent  depthWrite=0
+```
+
+Two consequences. The globe composited **on top of** the 15M-record layer,
+multiplying it by the shell's transmittance — at absorption 10, most of the way
+to erasing it. And because no mode except `opaque` writes depth, nothing occluded
+anything, so far-side records and track ribbons showed straight through the
+planet.
+
+The ordering is a containment rule in
+`rendering/depth-sort-coordinator/render-order.ts` firing on inverted geometry: it
+hoists a group whose bounding sphere contains another's so that "embedded content
+composites on top", which assumes *container = background*. Here the data sits on
+a shell **outside** the globe and its 8-tile group sphere is a deliberately loose
+upper bound, so the data was classified as the container and the backdrop as
+embedded content. Filed as #1227.
+
+`opaque` is the only mode with `transparent: false`, so THREE draws it in the
+opaque bucket ahead of every transparent layer, and the only one that
+unconditionally sets `depthWrite: true`. The globe now draws first (verified:
+`/Earth` at step 1 with `depthWrite=1`) and occludes correctly. The cost is that
+the shell no longer self-shades as a participating medium.
+
+The brightness was re-tuned with it: the display window went from 0–0.041 (a
+24.39x gain, chosen against `absorption=10`) to 0–0.205 (a 4.88x gain). The gains
+land almost exactly 5x apart (24.39 / 4.88 = **5.0**) — a neat near-exact
+coincidence, though the switch to `opaque` also changed the compositing (now
+unblended and opacity-independent), not only the absorption term, so read it as a
+mnemonic rather than a proof that the whole gain was absorption. Either way,
+carrying the old gain over to `opaque` left the planet blown out.
+
 #### Demos — 4D NEXRAD weather-radar supercell (atmosphere/geoscience gap)
 
 New `demo_gsplats_4d_nexrad_supercell`: 82 WSR-88D Level II volume scans of the
