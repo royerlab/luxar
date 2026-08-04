@@ -29,6 +29,7 @@ import type {
   PooledGeometryType,
 } from '../types/data-monitor-types';
 import type { UpdateProfiler } from '../profiling/update-profiler';
+import type { GeometryTypeName } from '../types/format-contract';
 
 /** Provider injected via `setL0CacheProvider`. */
 export interface L0CacheProviderPort {
@@ -129,9 +130,7 @@ export interface SceneLoaderMonitorPort {
   // Scene metadata + per-frame counters
   setSceneGraph(root: SceneGraphNode): void;
   forceUpdate(): void;
-  updateVisiblePoints(count: number): void;
-  updateVisibleSegments(count: number): void;
-  updateVisibleSplats(count: number): void;
+  updateVisibleCount(type: GeometryTypeName, count: number): void;
   /**
    * Per-node visible counts after nD slicing, keyed by scene-graph path
    * (mesh `name`). Drives the "(N visible after slicing)" suffix in the
