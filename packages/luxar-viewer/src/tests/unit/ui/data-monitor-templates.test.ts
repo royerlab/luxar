@@ -587,3 +587,39 @@ describe('renderSceneGraphTree — kind badges', () => {
     });
   });
 });
+
+describe('nodeStatsContent — per-type element counts in the scene tree', () => {
+  const node = (o: Record<string, unknown>) =>
+    ({ path: '/n', name: 'n', type: 'group', children: [], hasSpatialIndex: false, ...o }) as never;
+
+  it('reports a MESH in triangles, with vertices in the tooltip', () => {
+    // Mesh had no arm here, so a mesh row rendered a blank count while points, lines
+    // and gsplats all showed one — and `faceCount` was populated by the converter for
+    // nothing. Triangles, not vertices: the drawn-primitive convention `lines` follows
+    // in reporting segments.
+    const r = nodeStatsContent(node({ type: 'mesh', faceCount: 1200, vertexCount: 640 }));
+    expect(r).not.toBeNull();
+    expect(r!.text).toBe(formatNumber(1200));
+    expect(r!.title).toContain('1,200 triangles');
+    expect(r!.title).toContain('640 vertices');
+  });
+
+  it('omits the vertex clause when the store did not record one', () => {
+    const r = nodeStatsContent(node({ type: 'mesh', faceCount: 8 }));
+    expect(r!.title).toBe('8 triangles');
+  });
+
+  it('returns null for a mesh with no faceCount rather than rendering a blank row', () => {
+    expect(nodeStatsContent(node({ type: 'mesh' }))).toBeNull();
+  });
+
+  it('still reports the other three types in their own units', () => {
+    // Anti-vacuity for the arm order: adding the mesh branch must not shadow these.
+    expect(nodeStatsContent(node({ type: 'gsplats', splatCount: 5 }))!.title).toContain(
+      'Gaussian splats'
+    );
+    expect(nodeStatsContent(node({ type: 'lines', segmentCount: 7 }))!.title).toContain(
+      'line segments'
+    );
+  });
+});

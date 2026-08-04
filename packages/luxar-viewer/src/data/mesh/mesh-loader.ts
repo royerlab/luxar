@@ -165,7 +165,10 @@ export class MeshLoader implements MeshDataLoader {
       })
     );
 
-    this.preflight = preflightMesh(this.path, this.attrs, handles);
+    // `storeRoot` is passed so the preflight can follow an `array_ref` to the array
+    // whose bytes are actually fetched — the referring array is a `(0, k)` stub, so
+    // budgeting the handle alone charges ~48 bytes for a read that can pull gigabytes.
+    this.preflight = await preflightMesh(this.path, this.attrs, handles, zarr.root(this.zarrStore));
     this.handles = handles;
   }
 

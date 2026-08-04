@@ -46,8 +46,16 @@ export const GSPLAT_DEFAULT_TRUNCATION_RADIUS = 2.75;
  * which resolves picks to the wrong node with nothing to signal it.
  *
  * Enforced by the loader's Stage-1 metadata preflight (see
- * `data/mesh/mesh-preflight.ts`), i.e. before any chunk is fetched, so an
- * oversized declaration costs no allocation.
+ * `data/mesh/mesh-preflight.ts`), i.e. before any CHUNK is fetched, so an
+ * oversized declaration costs no geometry allocation.
+ *
+ * Precisely "no chunk", not "no allocation": the preflight has to read `.zarray`
+ * and `.zattrs` to learn the shapes and encodings it decides on, and a hostile
+ * store's `.zattrs` is not itself bounded by anything here — a `lut_uint16`
+ * encoding legitimately carries its lookup table inline as a JSON list, so that
+ * blob could be made arbitrarily large. Bounding a metadata response is a
+ * store-layer concern (every sibling loader reads `.zattrs` the same way), not
+ * something this gate can do, so the claim is scoped to what it actually buys.
  *
  * MIRROR: `MAX_MESH_VERTICES` in
  * `packages/luxar/src/luxar/typing_utils/constants.py` must hold the same

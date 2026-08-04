@@ -163,8 +163,10 @@ function elementCountOf(node: SceneGraphNode, type: GeometryTypeName): number {
       break;
     case 'mesh':
       // Faces, matching the drawn-primitive convention above (`lines` counts
-      // segments, not vertices, for the same reason). Undefined until the mesh
-      // loader lands, which the integer check below already reads as 0.
+      // segments, not vertices, for the same reason). Populated by
+      // `scene-graph-converter.ts` from the node's `n_faces` attr now that the mesh
+      // loader has landed; still optional, so a store omitting the attr reads as 0
+      // via the integer check below rather than NaN.
       count = node.faceCount;
       break;
     default:

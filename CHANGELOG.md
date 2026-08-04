@@ -240,6 +240,24 @@ Four things in there are easy to get wrong, and each is pinned:
   separately, near 2x together" directly constructible. An oversized chunk is *also*
   rejected on its own, so one array can never exceed the ceiling even where the sum
   would fit.
+- **The budget fails CLOSED on an encoding it does not recognise.** Four separate
+  bypasses turned out to be one category — *the bytes the loader fetches are not the
+  bytes the handle declares* — and fixing them one at a time kept yielding a fifth,
+  because an unrecognised encoding fell through to "use the stored shape". The budget
+  now keys a `Record<EncodingName, ...>` off the contract's `ENCODING_NAMES`, so adding
+  a contract encoding is a compile error at the mesh preflight and an unknown one at
+  runtime is refused rather than admitted. It paid for itself on first compile by
+  catching a missing `uint64` entry.
+- **An `array_ref` is budgeted at its TARGET, not at the stub pointing to it.**
+  `ArrayDecoder` resolves `encoding.target` against the store root and reads that array
+  in full, while the referring array is a `(0, k)` stub — so a 48-byte declaration could
+  pull an unbounded array, and the throw only came from Stage 2, after the allocation.
+  Stage 1 now follows the chain metadata-only, with a hop limit and a seen-set so a
+  cyclic store is refused rather than hung. Refusing `array_ref` outright was not an
+  option: `normals`/`colors`/`scalars` are written with dedup ON, so meshes sharing a
+  colour array legitimately produce a ref. This is the same class as the broadcast
+  bypass above and was missed by that fix — which is why the budget is now expressed as
+  "charge the array whose bytes are fetched" rather than as a list of encodings.
 - **The in-flight latch is identity-guarded, and that is a separate fix from the
   generation token.** `load()` collapses concurrent callers onto one fetch, and
   `dispose()` nulls the latch while the old promise may still be pending — so an
@@ -264,7 +282,8 @@ Four things in there are easy to get wrong, and each is pinned:
   a bare `n_elements`, and stops the branch hijacking an array carrying both keys.
 
 At the default budget the ceiling binds long before the vertex cap: a 3D float32
-mesh runs out of bytes at ~44.7M vertices against a cap of 134.2M. The cap is still
+mesh runs out of bytes at ~22.4M vertices against a cap of 134.2M — half the
+stored-only arithmetic, since the decoded term is charged too. The cap is still
 checked, and checked first, so a nonsensical declaration is told about pick-key
 aliasing rather than blamed for bytes.
 
@@ -337,6 +356,23 @@ alpha; `float32` binds natively. The index dtype keys on `vertexCount`, not the
 largest index present, because the index buffer is rebuilt on every slice change and
 a dtype that flips between rebuilds is the attribute-identity change WebGPU does not
 tolerate.
+
+**Camera framing was silently blind to a mesh.** `computeSceneBoundingBox` gates on
+`InstancedBufferGeometry`, which a mesh never is — so a mesh-only scene returned an
+empty box and zero primitives, and the camera framed nothing. That was a live bug
+introduced by making mesh drawable, and the file's own docstring had predicted it
+verbatim ("a geometry type rendered from a plain `BufferGeometry` still contributes
+nothing to the bounds — and therefore frames the camera wrongly, silently"). Mesh now
+has its own arm, counting DRAWN triangles from the index rather than the authored
+`n_faces`, so a culled mesh reports what is on screen. A prose warning was not enough
+to stop this happening once; the lesson is that only a compile error is.
+
+The monitor's scene tree gained its mesh arm too — it rendered a blank count while the
+other three showed one, even though the converter was already populating `faceCount`.
+And `loaderDisplay`'s `default:` became a `satisfies never` guard: it previously shared
+an arm with points, so a future `LoaderType` member would have been rendered as
+"points / pts" in silence. Mesh is the concrete case waiting on that, since
+`MeshLoader` has no `getMetrics` yet.
 
 Two exclusions confirmed rather than assumed. Mesh stays out of slice prefetch
 because `prefetch()` has exactly three hardcoded call sites and no fourth was added —

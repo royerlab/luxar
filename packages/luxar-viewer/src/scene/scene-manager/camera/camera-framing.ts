@@ -61,12 +61,15 @@ export interface SceneBoundingBoxResult {
 /**
  * Walk `scene` and aggregate the world-space bounding box of every
  * renderable primitive. Points, Lines, and GSplats all render as
- * `THREE.Mesh + InstancedBufferGeometry`, so a single shape covers
- * them:
+ * `THREE.Mesh + InstancedBufferGeometry`, so one shape covers those three;
+ * Mesh renders a plain indexed `BufferGeometry` and needs its own:
  *
  *   - `THREE.Mesh` with `InstancedBufferGeometry` and
  *     `userData.nodeType` in {'points', 'lines', 'gsplats'} —
  *     bounding box from the geometry, `instanceCount` for the
+ *     primitive count.
+ *   - `THREE.Mesh` with `userData.nodeType === 'mesh'` — bounding box from the
+ *     geometry, and the DRAWN TRIANGLE count (`index.count / 3`) for the
  *     primitive count.
  *   - `THREE.InstancedMesh` — bounding box from the geometry, plus
  *     the count from `mesh.count` for the primitive count.
@@ -76,12 +79,13 @@ export interface SceneBoundingBoxResult {
  * box of `box.isEmpty() === true` actually means "no visible
  * geometry."
  *
- * The `nodeType` list below is NOT the geometry vocabulary and widening it
- * alone would be a false fix: the arm also requires an
- * `InstancedBufferGeometry`, so a geometry type rendered from a plain
- * `BufferGeometry` still contributes nothing to the bounds — and therefore
- * frames the camera wrongly, silently. Such a type needs its own arm here (the
- * `THREE.InstancedMesh` branch is the shape to copy), not an extra literal.
+ * The instanced arm's `nodeType` list is NOT the geometry vocabulary, and widening
+ * it alone would be a false fix: that arm also requires an
+ * `InstancedBufferGeometry`, so a type rendered from a plain `BufferGeometry`
+ * would still contribute nothing and frame the camera wrongly, silently. This
+ * warning was left by the groundwork phase and it described a real bug — a
+ * mesh-only scene returned empty bounds and zero primitives until the mesh arm
+ * below was added. Any future non-instanced type needs its own arm too.
  *
  * Pure with respect to the scene — does NOT mutate object world
  * matrices; the caller should call `scene.updateMatrixWorld(true)`
@@ -101,8 +105,15 @@ export function computeSceneBoundingBox(scene: THREE.Scene): SceneBoundingBoxRes
       object instanceof THREE.Mesh &&
       object.geometry instanceof THREE.InstancedBufferGeometry &&
       (nodeType === 'points' || nodeType === 'lines' || nodeType === 'gsplats');
+    // Mesh's own arm: a plain indexed `BufferGeometry`, so it matches neither of the
+    // two branches above. Deliberately not folded into the instanced test — see the
+    // false-fix note in the docstring.
+    const isLuxarMesh =
+      object instanceof THREE.Mesh &&
+      !(object.geometry instanceof THREE.InstancedBufferGeometry) &&
+      nodeType === 'mesh';
 
-    if (!isInstancedMesh && !isLuxarInstancedMesh) return;
+    if (!isInstancedMesh && !isLuxarInstancedMesh && !isLuxarMesh) return;
 
     const geometry = object.geometry;
     if (!geometry.boundingBox) {
@@ -110,9 +121,15 @@ export function computeSceneBoundingBox(scene: THREE.Scene): SceneBoundingBoxRes
     }
     if (!geometry.boundingBox) return;
 
-    const instanceCount = isInstancedMesh
-      ? object.count
-      : ((geometry as THREE.InstancedBufferGeometry).instanceCount ?? 0);
+    // Primitives, counted per type in the unit each type actually draws: instances for
+    // the instanced-quad types, and DRAWN TRIANGLES for a mesh. Reading the index
+    // rather than `n_faces` is what makes a culled mesh report what is on screen — the
+    // index buffer is the only thing a slice change rewrites.
+    const instanceCount = isLuxarMesh
+      ? (geometry.index?.count ?? 0) / 3
+      : isInstancedMesh
+        ? object.count
+        : ((geometry as THREE.InstancedBufferGeometry).instanceCount ?? 0);
     if (instanceCount <= 0) return;
     primitiveCount += instanceCount;
 
