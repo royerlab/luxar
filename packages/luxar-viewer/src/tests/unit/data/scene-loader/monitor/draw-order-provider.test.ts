@@ -111,6 +111,24 @@ describe('createDrawOrderProvider', () => {
     expect(createDrawOrderProvider(root).getDrawOrderStates().has('/hiddenLevel/mesh')).toBe(false);
   });
 
+  it('returns an empty map when the root group itself is hidden', () => {
+    // THREE prunes every descendant of an invisible ancestor, so a hidden
+    // root means nothing in the scene is drawn — the provider must report
+    // nothing rather than stale per-mesh state (agrees with computeDrawOrder).
+    const root = new THREE.Group();
+    root.add(
+      makeDataMesh('gsplats', {
+        name: '/cloud',
+        transparent: true,
+        depthWrite: false,
+        renderOrder: 2,
+      })
+    );
+    root.visible = false;
+
+    expect(createDrawOrderProvider(root).getDrawOrderStates().size).toBe(0);
+  });
+
   it('re-reads renderOrder live on each call (camera-dependent)', () => {
     const root = new THREE.Group();
     const mesh = makeDataMesh('lines', {

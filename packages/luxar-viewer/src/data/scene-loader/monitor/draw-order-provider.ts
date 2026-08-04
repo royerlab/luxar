@@ -62,9 +62,12 @@ export function createDrawOrderProvider(rootGroup: THREE.Group | null): DrawOrde
         }
         for (const child of object.children) visit(child);
       };
-      // The root group's own visibility shouldn't gate the whole scene;
-      // descend straight into its children (matches visible-counts.ts).
-      for (const child of rootGroup.children) visit(child);
+      // The root group's own visibility gates the whole scene: THREE prunes
+      // its descendants when it is hidden, so nothing under it is drawn and
+      // reporting stale renderOrder values would be dishonest. Also keeps
+      // this walk in agreement with `computeDrawOrder` (debug-state), which
+      // honors the supplied root's visibility.
+      visit(rootGroup);
 
       return states;
     },

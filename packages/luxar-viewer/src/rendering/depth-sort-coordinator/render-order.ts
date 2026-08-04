@@ -297,8 +297,10 @@ function encloseTwoSpheres(
  * toward the member by `R' - R`. Ritter hugs a cluster-plus-outlier layout far
  * tighter than the legacy centroid + max-reach bound, but on near-symmetric
  * layouts it OVERSHOOTS the exact circumsphere, so it is not universally
- * tighter — {@link orderGroupsWithContainment} takes the smaller of this and
- * {@link centroidMaxReachSphere}.
+ * tighter — and its center is offset, so a smaller radius alone does not make
+ * its containment relation a subset of the legacy one.
+ * {@link orderGroupsWithContainment} therefore requires an edge to hold under
+ * BOTH this and {@link centroidMaxReachSphere}.
  */
 function groupEnclosingSphere(slots: readonly OrderSlot[]): {
   x: number;
@@ -360,9 +362,10 @@ function groupEnclosingSphere(slots: readonly OrderSlot[]): {
  * Legacy enclosing sphere: centroid of the usable member centers, radius the
  * max over members of (center-distance + member radius). Skips members with
  * `radius < 0` and yields the `{r: -1}` sentinel when none are usable; exact
- * for a single member. Paired with {@link groupEnclosingSphere} so
- * {@link orderGroupsWithContainment} can take the tighter of the two — this
- * one wins on near-symmetric layouts where Ritter overshoots.
+ * for a single member. Paired with {@link groupEnclosingSphere}:
+ * {@link orderGroupsWithContainment} requires a containment edge to hold under
+ * both bounds, so the tighter Ritter sphere can only remove legacy false
+ * edges, never introduce new off-center ones.
  */
 function centroidMaxReachSphere(slots: readonly OrderSlot[]): {
   x: number;
@@ -409,28 +412,30 @@ function orderGroupsWithContainment(byDepth: OrderGroup[]): OrderGroup[] {
   const n = byDepth.length;
   if (n < 2) return byDepth;
 
-  // Enclosing sphere per group: the SMALLER-radius of two valid enclosing
-  // spheres — the Ritter union ({@link groupEnclosingSphere}) and the legacy
-  // centroid + max-reach bound ({@link centroidMaxReachSphere}). Both enclose
-  // every member, so the tighter one is always safe and its RADIUS is never
-  // looser than the legacy bound (radius <= old radius for every group) —
-  // which is what strictly removes the biodiversity cluster-plus-outlier false
-  // edge (Earth globe wrongly "inside" the spread-out `All life` tiles).
+  // Two valid enclosing spheres per group: the Ritter union
+  // ({@link groupEnclosingSphere}) and the legacy centroid + max-reach bound
+  // ({@link centroidMaxReachSphere}); `tight` is whichever has the smaller
+  // radius (Ritter overshoots near-symmetric layouts, centroid overshoots
+  // cluster-plus-outlier ones).
   //
-  // NOTE this bounds the radius, not the containment RELATION: the Ritter
-  // sphere is off-center, so on some layouts it can still contain a disjoint
-  // OFF-CENTER neighbour the centroid sphere would not — the same accepted
-  // false-positive class, relocated rather than eliminated. That stays within
-  // this module's documented lesser-error tradeoff (hoist the possible
-  // container rather than risk erasing embedded content) and never breaks
-  // acyclicity (edges still point strictly large → small radius). A true
-  // containment (an embedded node inside a member sphere) is detected either way.
+  // A containment edge requires the relation to hold under BOTH spheres. The
+  // tight sphere alone is not enough: a smaller Ritter sphere is OFF-CENTER,
+  // so on some layouts it contains a disjoint neighbour the centroid sphere
+  // never did — a NEW false-positive edge that could regress draw order on
+  // scenes the old bound handled correctly. Requiring the legacy bound to
+  // agree makes the edge set a strict SUBSET of the legacy relation (the
+  // tight bound only ever REMOVES false edges — e.g. the biodiversity
+  // cluster-plus-outlier one, Earth globe wrongly "inside" the spread-out
+  // `All life` tiles — never relocates them), while a true containment (an
+  // embedded node inside a member sphere) satisfies both bounds and is kept.
+  // Acyclicity is preserved: every edge points strictly large → small in the
+  // tight radius.
   const spheres = byDepth.map((group) => {
     const ritter = groupEnclosingSphere(group.slots);
     // No usable members → both bounds are the {r: -1} sentinel.
-    if (ritter.r < 0) return ritter;
-    const centroid = centroidMaxReachSphere(group.slots);
-    return centroid.r <= ritter.r ? centroid : ritter;
+    if (ritter.r < 0) return { tight: ritter, legacy: ritter };
+    const legacy = centroidMaxReachSphere(group.slots);
+    return { tight: legacy.r <= ritter.r ? legacy : ritter, legacy };
   });
 
   // indegree[i] = number of groups that must draw before group i.
@@ -440,7 +445,11 @@ function orderGroupsWithContainment(byDepth: OrderGroup[]): OrderGroup[] {
   for (let a = 0; a < n; a++) {
     const edges: number[] = [];
     for (let b = 0; b < n; b++) {
-      if (a !== b && groupContains(spheres[a], spheres[b])) {
+      if (
+        a !== b &&
+        groupContains(spheres[a].tight, spheres[b].tight) &&
+        groupContains(spheres[a].legacy, spheres[b].legacy)
+      ) {
         edges.push(b);
         indegree[b]++;
         anyEdge = true;
