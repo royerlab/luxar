@@ -266,15 +266,16 @@ class DocumentationChecker:
 
     def _check_python_file_docstrings(self, py_file: Path, package_name: str):
         """Check Python file for docstring coverage."""
-        # Read + parse under one guard so shebangs, __future__ imports, leading
-        # comments and multi-line signatures don't fool a text heuristic, and a
-        # bad read/parse yields a clean finding instead of crashing the run.
-        # utf-8-sig strips a leading BOM (harmless otherwise). ValueError covers
-        # embedded-NUL sources on 3.10/3.11 and UnicodeDecodeError (a ValueError
-        # subclass) from a non-UTF-8 file; neither has a lineno.
+        # Parse the raw bytes so Python's own source-encoding rules apply: a
+        # PEP 263 cookie (`# coding: latin-1`) and a leading UTF-8 BOM are both
+        # handled, whereas decoding to str first would reject a valid non-UTF-8
+        # file. AST parsing also means shebangs, __future__ imports, leading
+        # comments and multi-line signatures don't fool a text heuristic. A bad
+        # parse yields a clean finding instead of crashing the run: SyntaxError
+        # covers unparseable and undeclared non-UTF-8 sources, ValueError the
+        # embedded-NUL case on 3.10/3.11; neither of the latter has a lineno.
         try:
-            content = py_file.read_text(encoding="utf-8-sig")
-            tree = ast.parse(content)
+            tree = ast.parse(py_file.read_bytes())
         except (SyntaxError, ValueError) as exc:
             self.results.append(
                 CheckResult(
