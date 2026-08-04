@@ -37,10 +37,11 @@
  *
  * At the default 512 MiB budget the **byte budget is far tighter than the vertex
  * cap**, and it is worth knowing which error to expect. A 3D float32 mesh runs
- * out of budget at ~44.7M vertices and a uint16-quantized one at ~89.5M, both
+ * out of budget at ~22.4M vertices and a uint16-quantized one at ~29.8M, both
  * well under `2^27` (134.2M) — so in practice no mesh reaches the cap by growing
- * legitimately; `2^27` vertices of quantized 3D coordinates alone declare 768
- * MiB.
+ * legitimately. (Those figures halve the stored-only arithmetic because the decoded
+ * term is charged too: a float32 vertex costs 4 bytes stored AND 4 decoded. The
+ * float32 number is measured, not derived — see the boundary test.)
  *
  * The cap is still checked, and checked **first**, for two reasons. It gives a
  * hostile or nonsensical declaration (`n_vertices: 2^30`) the message that names
@@ -174,6 +175,21 @@ export function parseDtype(dtype: string): { itemSize: number; integer: boolean 
   if (kind === 'f') return { itemSize: width, integer: false };
   return null;
 }
+
+/**
+ * What "shape check" actually means here, stated precisely because it is more lenient
+ * than the spec's `(V, D)` wording suggests.
+ *
+ * A shape is reduced to (rows, components) = (product / trailing extent, trailing
+ * extent), so `[2, 2, 3]` and `[4, 1, 1, 1, 3]` are both accepted for a 4-vertex 3D
+ * mesh. That is deliberate rather than sloppy: the decoder returns a FLAT typed array,
+ * and C-order flattening makes those declarations byte-identical to `[4, 3]` — verified
+ * end to end, same buffer and same `vertexCount`. Insisting on exactly 2-D would refuse
+ * stores that are equivalent in every way the loader can observe.
+ *
+ * What it still refuses is anything whose flattened size or trailing extent disagrees
+ * with `n_vertices`/`ndim`, which is the part that would mis-stride the slab kernel.
+ */
 
 /** Product of a shape's extents, or `null` when the shape is unusable. */
 function elementCount(shape: readonly number[] | undefined): number | null {
@@ -330,6 +346,27 @@ function assertBudgetableEncoding(
 }
 
 /**
+ * Whether this array's bytes live in ANOTHER array, so the budget must follow a
+ * reference to find them.
+ *
+ * Reads {@link ENCODING_BUDGET_KIND} rather than testing for `'array_ref'` directly,
+ * and that indirection is the point: with a literal test the table's *values* were
+ * decorative — only its key set was consulted — so a future ref-following encoding
+ * added as `followsRef` would have been silently treated as `handledByLayout` and
+ * walked right past the ceiling. That is the same "two places encode one fact" shape
+ * as the four bypasses the table exists to prevent, so the table is now the single
+ * source of truth for both questions it answers.
+ */
+function followsReference(array: zarr.Array<zarr.DataType, zarr.Readable>): boolean {
+  const encodingName = ((array.attrs ?? {}) as unknown as ArrayMetadata).encoding?.name;
+  if (encodingName === undefined) return false;
+  return (
+    Object.hasOwn(ENCODING_BUDGET_KIND, encodingName) &&
+    ENCODING_BUDGET_KIND[encodingName as EncodingName] === 'followsRef'
+  );
+}
+
+/**
  * Maximum `array_ref` hops the preflight will follow before refusing.
  *
  * A target may itself be encoded — including as another `array_ref` — and
@@ -364,10 +401,10 @@ async function resolveRefTarget(
   const seen = new Set<string>();
   let current = array;
   for (let hop = 0; hop <= MAX_ARRAY_REF_HOPS; hop++) {
+    if (!followsReference(current)) return current;
     const encoding = ((current.attrs ?? {}) as unknown as ArrayMetadata).encoding;
-    if (encoding?.name !== 'array_ref') return current;
 
-    const target = encoding.target;
+    const target = encoding?.target;
     if (typeof target !== 'string' || target.length === 0) {
       rejectMesh(path, `${name} declares an array_ref with no target path.`);
     }
