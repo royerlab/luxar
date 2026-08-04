@@ -59,6 +59,25 @@ Three details in here are easy to get wrong and are pinned by tests:
   range, and rewrites topology instead of trapping. An out-of-range index
   **panics** the Rust kernel (`panic = "abort"`, so it takes down the whole WASM
   module, not one node) and silently corrupts the TypeScript one.
+- **The budget fails CLOSED on an unknown encoding.** This one is structural rather
+  than a single bug fix: the gate was bypassed four times by _one_ category — the bytes
+  the loader fetches are not the bytes the handle declares. `broadcasted` expands a
+  `(1, k)` stub to `n_elements` rows; a narrow dtype widens 4x on decode; an unbounded
+  `ndim` inflates the logical count; `array_ref` reads a different array entirely. Each
+  was fixed as an instance and a fourth still appeared, because an unrecognised encoding
+  fell through to "use the stored shape". The set is now closed against the contract's
+  `ENCODING_NAMES` via a `Record<EncodingName, ...>`, so a new contract encoding is a
+  **compile error here** and an unknown one at runtime is refused. It earned its keep
+  immediately: it caught a missing `uint64` entry on first compile.
+- **An `array_ref` is budgeted at its TARGET.** `ArrayDecoder` resolves
+  `encoding.target` against the store root and reads _that_ array in full, while the
+  referring array is a stub the writer emits at `(0, k)` — so charging the handle the
+  loader opened budgets ~48 bytes for a read that can pull gigabytes. Stage 1 follows
+  the chain metadata-only (`zarr.open` reads `.zarray`/`.zattrs` and no chunk), with a
+  hop limit and a seen-set so a cyclic store is refused rather than hung. Rejecting
+  `array_ref` outright would not do: `normals`/`colors`/`scalars` are written with
+  dedup ON, so two meshes sharing a colour array legitimately produce a ref the viewer
+  must still load.
 - **The byte budget adds three terms rather than checking them separately.** Stored
   bytes, decoded bytes, and the largest single chunk buffer are SUMMED, because a
   chunk buffer exists during decode alongside the arrays. Checking the chunk term
@@ -85,7 +104,8 @@ Three details in here are easy to get wrong and are pinned by tests:
   like a 1-row array.
 
 At the default 512 MiB budget the **budget binds long before the vertex cap**: a
-3D float32 mesh runs out of bytes at ~44.7M vertices, well under 2^27 (134.2M).
+3D float32 mesh runs out of bytes at ~22.4M vertices, well under 2^27 (134.2M) —
+half the stored-only arithmetic, because the decoded term is charged as well.
 The cap is still checked, and checked first, so a nonsensical declaration gets the
 message that names the real problem (pick-key aliasing) rather than blaming bytes.
 

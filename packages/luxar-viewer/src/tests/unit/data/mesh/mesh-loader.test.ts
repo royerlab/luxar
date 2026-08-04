@@ -106,6 +106,14 @@ class RecordingStore {
   chunkRequests(): string[] {
     return this.requested.filter((k) => !META_KEYS.has(k.slice(k.lastIndexOf('/') + 1)));
   }
+
+  /**
+   * Add an array at an arbitrary path — used for `array_ref` targets, which live
+   * OUTSIDE the mesh node (a deduplicated array is shared across nodes).
+   */
+  addArray(arrayPath: string, spec: ArraySpec): void {
+    writeArray(this.entries, arrayPath, spec);
+  }
 }
 
 /**
@@ -128,6 +136,44 @@ const TYPED: Record<string, new (length: number) => ArrayBufferView> = {
   '<f8': Float64Array as never,
 };
 
+/**
+ * Write one array's metadata (+ optional single raw chunk) into an entry map.
+ *
+ * Shared by `buildStore` and {@link RecordingStore.addArray} so an `array_ref` target
+ * outside the mesh node is built exactly like a node-local array.
+ */
+function writeArray(entries: Map<string, Uint8Array>, arrayPath: string, spec: ArraySpec): void {
+  const enc = (o: unknown) => new TextEncoder().encode(JSON.stringify(o));
+  const chunks = spec.chunks ?? spec.shape;
+  entries.set(
+    `${arrayPath}/.zarray`,
+    enc({
+      zarr_format: 2,
+      shape: spec.shape,
+      chunks,
+      dtype: spec.dtype,
+      compressor: null,
+      filters: null,
+      fill_value: 0,
+      order: 'C',
+    })
+  );
+  entries.set(`${arrayPath}/.zattrs`, enc(spec.attrs ?? {}));
+  if (spec.data) {
+    const Ctor = TYPED[spec.dtype];
+    // Chunks are allocated at the full chunk shape, edge chunks padded, so the
+    // buffer must be chunk-sized even when the data is shorter.
+    const chunkElems = chunks.reduce((a, b) => a * b, 1);
+    const buf = new Ctor(chunkElems) as unknown as { set(v: unknown, o: number): void };
+    buf.set(spec.data as never, 0);
+    const view = buf as unknown as ArrayBufferView;
+    entries.set(
+      `${arrayPath}/${chunks.map(() => 0).join('.')}`,
+      new Uint8Array(view.buffer, view.byteOffset, view.byteLength).slice()
+    );
+  }
+}
+
 /** Build a store holding a single mesh node at `/mesh`. */
 function buildStore(attrs: MeshMetadata, arrays: Record<string, ArraySpec>): RecordingStore {
   const entries = new Map<string, Uint8Array>();
@@ -138,32 +184,7 @@ function buildStore(attrs: MeshMetadata, arrays: Record<string, ArraySpec>): Rec
   entries.set('/mesh/.zattrs', enc(attrs));
 
   for (const [name, spec] of Object.entries(arrays)) {
-    const chunks = spec.chunks ?? spec.shape;
-    entries.set(
-      `/mesh/${name}/.zarray`,
-      enc({
-        zarr_format: 2,
-        shape: spec.shape,
-        chunks,
-        dtype: spec.dtype,
-        compressor: null,
-        filters: null,
-        fill_value: 0,
-        order: 'C',
-      })
-    );
-    entries.set(`/mesh/${name}/.zattrs`, enc(spec.attrs ?? {}));
-    if (spec.data) {
-      const Ctor = TYPED[spec.dtype];
-      // Chunks are allocated at the full chunk shape, edge chunks padded, so the
-      // buffer must be chunk-sized even when the data is shorter.
-      const chunkElems = chunks.reduce((a, b) => a * b, 1);
-      const buf = new Ctor(chunkElems) as unknown as { set(v: unknown, o: number): void };
-      buf.set(spec.data as never, 0);
-      const view = buf as unknown as ArrayBufferView;
-      const key = `/mesh/${name}/${chunks.map(() => 0).join('.')}`;
-      entries.set(key, new Uint8Array(view.buffer, view.byteOffset, view.byteLength).slice());
-    }
+    writeArray(entries, `/mesh/${name}`, spec);
   }
   return new RecordingStore(entries);
 }
@@ -535,6 +556,81 @@ describe('MeshLoader — Stage 1 rejects BEFORE any chunk is fetched', () => {
     }
     expect(thrown).toBeInstanceOf(LoaderError);
     expect((thrown as LoaderError).kind).toBe('Network');
+  });
+
+  it('an array_ref TARGET is budgeted, not the (0, k) stub that points at it', async () => {
+    // #1247. `ArrayDecoder` resolves `encoding.target` against the store root and
+    // reads THAT array in full, but the referring array is a stub the Python encoder
+    // writes at `(0, k)` — so budgeting the handle the loader opened charges ~48 bytes
+    // for a read that pulls gigabytes. Reproduced in the issue as a 44-second
+    // materialization of a ~3 GB fill-value chunk: exactly the exhaustion this gate
+    // exists to refuse, and the case its own docstring calls "too late after decode".
+    const huge = 268_435_456;
+    const attrs = meshAttrs();
+    const store = buildStore(attrs, {
+      vertices: {
+        shape: [0, 3],
+        dtype: '<f4',
+        attrs: {
+          encoding: { name: 'array_ref', target: 'evil', original_shape: [4, 3] },
+        },
+      },
+      faces: { shape: [4, 3], dtype: '<u4', data: TET_FACES },
+    });
+    // The target lives outside the mesh node, as a deduplicated array really does.
+    store.addArray('/evil', { shape: [huge, 3], chunks: [huge, 3], dtype: '<f4' });
+
+    await expect(makeLoader(store, attrs).loadMesh(VIEW)).rejects.toThrow(
+      /over the .* per-node budget/
+    );
+    // The whole point: the target's chunk was never requested.
+    expect(store.chunkRequests()).toEqual([]);
+  });
+
+  it('follows a legitimate array_ref — dedup is a real writer behaviour', async () => {
+    // Rejecting array_ref outright is not free: `normals`/`colors`/`scalars` go
+    // through write_colors/write_scalars with dedup ON, so two meshes sharing a colour
+    // array legitimately produce a ref the viewer must still load.
+    const attrs = meshAttrs({ has_colors: true });
+    const store = buildStore(attrs, {
+      ...tetArrays(),
+      colors: {
+        shape: [0, 3],
+        dtype: '<f4',
+        attrs: {
+          encoding: { name: 'array_ref', target: 'shared_colors', original_shape: [4, 3] },
+        },
+      },
+    });
+    store.addArray('/shared_colors', {
+      shape: [4, 3],
+      dtype: '<f4',
+      data: [1, 0, 0, 0, 1, 0, 0, 0, 1, 1, 1, 0],
+    });
+
+    const data = await makeLoader(store, attrs).loadMesh(VIEW);
+    expect(data.colors!.length).toBe(12);
+    expect(Array.from(data.colors!.slice(0, 3))).toEqual([1, 0, 0]);
+  });
+
+  it('refuses a CYCLIC array_ref chain instead of hanging', async () => {
+    const attrs = meshAttrs();
+    const store = buildStore(attrs, {
+      vertices: {
+        shape: [0, 3],
+        dtype: '<f4',
+        attrs: { encoding: { name: 'array_ref', target: 'loop_a', original_shape: [4, 3] } },
+      },
+      faces: { shape: [4, 3], dtype: '<u4', data: TET_FACES },
+    });
+    store.addArray('/loop_a', {
+      shape: [0, 3],
+      dtype: '<f4',
+      attrs: { encoding: { name: 'array_ref', target: 'loop_a', original_shape: [4, 3] } },
+    });
+
+    await expect(makeLoader(store, attrs).loadMesh(VIEW)).rejects.toThrow(/cyclic/);
+    expect(store.chunkRequests()).toEqual([]);
   });
 
   it('a missing faces array — a mesh without one is not a mesh', async () => {
