@@ -25,6 +25,7 @@ import type * as zarr from '../zarr';
 import type { GeometryKind, SceneNode, ViewState, DataLoader } from '../data-loader-types';
 import type { LinesDataLoader, LinesViewState } from '../../types/lines';
 import type { GSplatsDataLoader, GSplatsViewState } from '../../types/gsplats';
+import type { MeshDataLoader, MeshMetadata, MeshViewState } from '../../types/mesh';
 import type { AnyDataLoader } from './loaders/loader-registry';
 import type { LoaderFactoryDeps } from './loaders/loader-factory';
 import type { NodeBuildCtx } from './nodes/build-ctx';
@@ -32,6 +33,7 @@ import type { RetryCtx } from './lifecycle/retry';
 import { loadPointsNode } from './nodes/load-points-node';
 import { loadLinesNode } from './nodes/load-lines-node';
 import { loadGSplatsNode } from './nodes/load-gsplats-node';
+import { loadMeshNode } from './nodes/load-mesh-node';
 import {
   createPointsLoader,
   createLinesLoader,
@@ -39,6 +41,8 @@ import {
   createProgressivePointsLoader,
   createProgressiveLinesLoader,
   createProgressiveGSplatsLoader,
+  createMeshLoader,
+  createProgressiveMeshLoader,
 } from './loaders/loader-factory';
 
 export interface GeometryDescriptor {
@@ -131,6 +135,38 @@ export const GEOMETRY_DESCRIPTORS: Record<GeometryKind, GeometryDescriptor> = {
     },
     createLoader: createGSplatsLoader,
     createProgressiveLoader: createProgressiveGSplatsLoader,
+  },
+  mesh: {
+    loadNode: loadMeshNode,
+    // Mesh takes the partial-extend tolerance. Lines is the one type that opts
+    // out, because its segment bounds already encode the non-displayed extent so
+    // applying it again double-counts during clipping. A mesh has no per-element
+    // bounds at all, so there is nothing to double-count.
+    applyPartialExtendTolerance: true,
+    async retryCommit(ctx, path, loader, viewState) {
+      // Pass the derived state through WHOLE, as the lines and gsplats arms do.
+      // Rebuilding it field-by-field drops `noPreimage`, which
+      // `deriveNodeViewState` sets when a discrete `nd_transform` maps the world
+      // slice between grid points.
+      const meshViewState = viewState as MeshViewState;
+      const data = await (loader as MeshDataLoader).updateView(meshViewState);
+      // No staged null-check, unlike lines/gsplats: `processMeshData` is async only
+      // because backend selection is, and it always yields a staged commit — there
+      // is no worker projection that can decline.
+      //
+      // The attrs come off the committed object's `userData`, which is where the
+      // retry path can reach them: `RetryCtx` carries no node attrs, and mesh needs
+      // `normal_dims` + `double_sided` to decide winding.
+      const attrs = ctx.rootGroup?.getObjectByName(path)?.userData as
+        { attrs?: MeshMetadata } | undefined;
+      const staged = await ctx.processMeshData(path, data, meshViewState, {
+        normal_dims: attrs?.attrs?.normal_dims,
+        double_sided: attrs?.attrs?.double_sided ?? true,
+      });
+      ctx.commitMeshGeometry(staged);
+    },
+    createLoader: createMeshLoader,
+    createProgressiveLoader: createProgressiveMeshLoader,
   },
 };
 

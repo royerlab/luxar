@@ -274,3 +274,38 @@ export interface MeshDataLoader {
  * alias for documentation, exactly as `LinesViewState` is.
  */
 export type MeshViewState = ViewState;
+
+/**
+ * User data attached to the `THREE.Mesh` object for a Mesh node in the scene.
+ *
+ * Enables runtime type checking and provides access to the loader/metadata.
+ * Dimension info is NOT stored here — it lives only at the Scene level.
+ */
+export interface MeshUserData {
+  /** Node type identifier for runtime type checking */
+  nodeType: 'mesh';
+
+  /** Data loader instance */
+  loader: MeshDataLoader;
+
+  /** Zarr group attributes */
+  attrs: MeshMetadata;
+
+  /** Scene path of this node */
+  path: string;
+
+  /** Triangles the current slice indexes (0 until the first commit) */
+  visibleTriangleCount: number;
+
+  /** Vertices that passed the nD slab test; diagnostic, not a draw bound */
+  visibleVertexCount: number;
+}
+
+/** Runtime guard for {@link MeshUserData}, mirroring `isPointsUserData`. */
+export function isMeshUserData(userData: unknown): userData is MeshUserData {
+  return (
+    typeof userData === 'object' &&
+    userData !== null &&
+    (userData as { nodeType?: unknown }).nodeType === 'mesh'
+  );
+}

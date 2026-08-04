@@ -21,6 +21,11 @@
  * - `gsplatsObjects` / `totalGSplats`: `THREE.Mesh` nodes tagged with
  *   `userData.nodeType === 'gsplats'`. `userData.visibleSplatCount`
  *   contributes to the running total (default 0 if absent).
+ * - `meshObjects` / `totalTriangles`: `THREE.Mesh` objects tagged
+ *   `userData.nodeType === 'mesh'`. `userData.visibleTriangleCount`
+ *   contributes (default 0 if absent). Mesh never bumps `spatialIndexed` —
+ *   it has no spatial index, so counting it would inflate a metric that
+ *   means "nodes that can skip chunks on a slice change".
  * - `spatialIndexed`: how many of the above also set
  *   `userData.attrs.has_spatial_index`.
  *
@@ -37,6 +42,8 @@ export interface SceneStats {
   totalSegments: number;
   gsplatsObjects: number;
   totalGSplats: number;
+  meshObjects: number;
+  totalTriangles: number;
   spatialIndexed: number;
 }
 
@@ -49,6 +56,8 @@ export function computeSceneStats(scene: THREE.Object3D | null | undefined): Sce
   let totalSegments = 0;
   let gsplatsObjects = 0;
   let totalGSplats = 0;
+  let meshObjects = 0;
+  let totalTriangles = 0;
   let spatialIndexed = 0;
 
   scene.traverse((obj) => {
@@ -86,6 +95,15 @@ export function computeSceneStats(scene: THREE.Object3D | null | undefined): Sce
       if (obj.userData.attrs?.has_spatial_index) {
         spatialIndexed++;
       }
+    } else if (nodeType === 'mesh') {
+      meshObjects++;
+      // The commit-stamped count, with no geometry fallback: mesh draws a plain
+      // indexed BufferGeometry, so there is no `instanceCount` to read, and
+      // `index.count / 3` would count the placeholder's empty index as 0 anyway.
+      totalTriangles += obj.userData.visibleTriangleCount ?? 0;
+      // No `spatialIndexed` bump: mesh has no spatial index in v1 (§7), and its
+      // `ordering` attr is always 'none'. Counting it here would inflate a metric
+      // that means "how many nodes can skip chunks on a slice change".
     }
   });
 
@@ -96,6 +114,8 @@ export function computeSceneStats(scene: THREE.Object3D | null | undefined): Sce
     totalSegments,
     gsplatsObjects,
     totalGSplats,
+    meshObjects,
+    totalTriangles,
     spatialIndexed,
   };
 }

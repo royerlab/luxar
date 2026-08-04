@@ -72,6 +72,15 @@ export interface ProjectedMeshData {
 
   /** True when the cull was skipped because there are no hidden dimensions */
   usedFastPath: boolean;
+
+  /**
+   * Set when the node asked for single-sided rendering but winding could not be
+   * decided, carrying the reason. Threaded out to the caller rather than logged
+   * here so {@link resolveWinding} and {@link projectMesh} stay free of side
+   * effects — the projection runs on every slice move, so a warning emitted at
+   * this depth would flood the console during a scrub.
+   */
+  undecidableReason?: string;
 }
 
 /** How the winding of the displayed projection relates to the authored frame. */
@@ -255,6 +264,7 @@ export function projectMesh(
       visibleVertexCount: vertexCount,
       side: winding.side,
       usedFastPath: true,
+      undecidableReason: winding.undecidableReason,
     };
   }
 
@@ -288,6 +298,7 @@ export function projectMesh(
     visibleVertexCount,
     side: winding.side,
     usedFastPath: false,
+    undecidableReason: winding.undecidableReason,
   };
 }
 

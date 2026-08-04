@@ -97,6 +97,7 @@ function makeCtx(overrides: Partial<NodeBuildCtx> = {}): NodeBuildCtx & {
     createEmptyPointsNode: vi.fn(),
     createEmptyLinesNode: vi.fn(),
     createEmptyGSplatsNode,
+    createEmptyMeshNode: vi.fn(),
     applyTransform: vi.fn(),
     markPickingDirty: vi.fn(),
   } as unknown as NodeBuildCtx['nodeFactory'];
@@ -121,6 +122,8 @@ function makeCtx(overrides: Partial<NodeBuildCtx> = {}): NodeBuildCtx & {
     processPointsData,
     commitPointsGeometry: vi.fn(),
     commitGSplatsGeometry,
+    processMeshData: vi.fn(),
+    commitMeshGeometry: vi.fn(),
     ...overrides,
   };
   return Object.assign(ctx, {

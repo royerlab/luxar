@@ -91,3 +91,27 @@ export async function getPointsBackend(ndim: number): Promise<WasmModule> {
   const c = await getInProcessCtx();
   return pickBackend(c, ndim);
 }
+
+/**
+ * Resolve the WASM backend for the main-thread Mesh projection.
+ *
+ * Mesh runs in-process for a different reason than Points, and the distinction is
+ * worth keeping rather than collapsing: Points is memory-bound per update, whereas
+ * Mesh is whole-node resident (`docs/specs/MESH_NODE_SPEC.md` §7) so its payload is
+ * ONE large transfer rather than lines' many small ones. That is a genuinely
+ * different benefit profile, so worker offload is a follow-up to be MEASURED rather
+ * than assumed — consistent with the measure-first performance doctrine.
+ *
+ * `data/mesh/projection.ts` calls `extract_3d_positions` plus the two cull kernels
+ * on the module returned here. Note {@link pickBackend} swaps the WHOLE module for
+ * `ndim > MAX_SUPPORTED_DIMS`, which is why both cull kernels must exist on
+ * `WasmModule` and in both backends.
+ *
+ * A separate export from {@link getPointsBackend} even though the bodies are
+ * identical: they are the same *call* but not the same *contract*, and merging them
+ * would tie two subsystems' backend choice together for no reason beyond brevity.
+ */
+export async function getMeshBackend(ndim: number): Promise<WasmModule> {
+  const c = await getInProcessCtx();
+  return pickBackend(c, ndim);
+}

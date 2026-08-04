@@ -5,7 +5,7 @@ const DISPLAYED = 1e10;
 
 describe('computeTolerance — common rules', () => {
   it('sets infinite tolerance for displayed dimensions across all geometry types', () => {
-    for (const type of ['points', 'lines', 'gsplats'] as const) {
+    for (const type of ['points', 'lines', 'gsplats', 'mesh'] as const) {
       const tol = computeTolerance(type, [0, 1, 2], 4);
       expect(tol[0]).toBe(DISPLAYED);
       expect(tol[1]).toBe(DISPLAYED);
@@ -236,5 +236,80 @@ describe('computeTolerance — gsplats', () => {
     ];
     const tol = computeTolerance('gsplats', [0, 1, 2], 4, dims);
     expect(tol[3]).toBe(3.0);
+  });
+});
+
+describe('computeTolerance — mesh', () => {
+  const HIDDEN_DISCRETE: DimensionInfo[] = [
+    { discrete: false },
+    { discrete: false },
+    { discrete: false },
+    { discrete: true, step: 1.0 },
+  ];
+
+  it('uses the HALF-cell membership rule for discrete dims, not the quarter-cell query reach', () => {
+    // Mesh is whole-node resident, so this slab is a per-element visibility gate
+    // applied after fetch — like the lines projection-clipping slab — not a
+    // chunk-fetch reach. The quarter-cell default is deliberately < 0.5 x step and
+    // would drop on-grid geometry.
+    const tol = computeTolerance('mesh', [0, 1, 2], 4, HIDDEN_DISCRETE);
+    expect(tol[3]).toBe(0.5);
+    // Explicitly NOT the value the other three get by default.
+    expect(tol[3]).not.toBe(computeTolerance('gsplats', [0, 1, 2], 4, HIDDEN_DISCRETE)[3]);
+  });
+
+  it('scales the half-cell with the step', () => {
+    const dims = [...HIDDEN_DISCRETE.slice(0, 3), { discrete: true, step: 4.0 }];
+    expect(computeTolerance('mesh', [0, 1, 2], 4, dims)[3]).toBe(2.0);
+  });
+
+  it('ignores discreteRole — mesh has no query role to serve', () => {
+    // The other three switch behaviour on this option. Mesh has no spatial index and
+    // issues no range query, so membership is the only rule it has; honouring a
+    // 'query' role here would quietly hand a fetch reach to the one caller that is
+    // asking about visibility.
+    for (const role of ['query', 'membership'] as const) {
+      expect(
+        computeTolerance('mesh', [0, 1, 2], 4, HIDDEN_DISCRETE, { discreteRole: role })[3]
+      ).toBe(0.5);
+    }
+  });
+
+  it('gives a hidden CONTINUOUS dim one cell by default — emphatically not Lines’ 0', () => {
+    // THE trap this arm exists for. Lines can use 0 because segment clipping
+    // interpolates through the slab; mesh culls whole triangles with no
+    // interpolation, so 0 reduces membership to exact float equality with the slice
+    // plane and the node renders NOTHING.
+    const dims: DimensionInfo[] = [
+      { discrete: false },
+      { discrete: false },
+      { discrete: false },
+      { discrete: false, step: 2.0 },
+    ];
+    expect(computeTolerance('mesh', [0, 1, 2], 4, dims)[3]).toBe(2.0);
+    expect(computeTolerance('lines', [0, 1, 2], 4, dims)[3]).toBe(0);
+  });
+
+  it('never returns 0 for a hidden spatial dim, whatever the dimension metadata', () => {
+    // The invariant behind the trap above, asserted across the shapes a store can
+    // actually present: absent metadata, no step, and a zero step.
+    const shapes: (DimensionInfo[] | undefined)[] = [
+      undefined,
+      [{ discrete: false }, { discrete: false }, { discrete: false }, { discrete: false }],
+      [{ discrete: false }, { discrete: false }, { discrete: false }, { discrete: false, step: 0 }],
+    ];
+    for (const dims of shapes) {
+      expect(computeTolerance('mesh', [0, 1, 2], 4, dims)[3]).toBeGreaterThan(0);
+    }
+  });
+
+  it('honours meshSlabTolerance for the continuous arm', () => {
+    const dims: DimensionInfo[] = [
+      { discrete: false },
+      { discrete: false },
+      { discrete: false },
+      { discrete: false, step: 1.0 },
+    ];
+    expect(computeTolerance('mesh', [0, 1, 2], 4, dims, { meshSlabTolerance: 3.0 })[3]).toBe(3.0);
   });
 });
