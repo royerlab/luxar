@@ -201,6 +201,32 @@ describe('projectMesh — the whole-triangle cull', () => {
   });
 });
 
+describe('projectMesh — noPreimage', () => {
+  it('emits an empty index buffer when the world slice has no local preimage', () => {
+    // A discrete nd_transform can map the world slice to no local grid point on a
+    // hidden dim. The three spatial-index loaders return an empty query for that;
+    // the mesh cull must too, rather than culling against the fractional inverse
+    // slicePosition and leaking a neighbouring category's triangles.
+    const data = twoTrianglesIn4D();
+    const slice = viewState([0, 1, 2], [0, 0, 0, 0], [1e10, 1e10, 1e10, 0.5]);
+
+    // Sanity: without the flag, triangle A at w = 0 IS visible at this slice.
+    const visible = projectMesh(data, slice, undefined, true, backend);
+    expect(visible.visibleFaceCount).toBe(1);
+
+    // Same data + slice, but the slice has no local preimage → nothing belongs.
+    const culled = projectMesh(
+      twoTrianglesIn4D(),
+      { ...slice, noPreimage: true } as MeshViewState,
+      undefined,
+      true,
+      backend
+    );
+    expect(culled.visibleFaceCount).toBe(0);
+    expect(culled.indices.length).toBe(0);
+  });
+});
+
 describe('projectMesh — the no-hidden-dims fast path', () => {
   it('skips the cull and indexes every face when displayDims covers ndim', () => {
     const result = projectMesh(
