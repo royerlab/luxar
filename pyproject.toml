@@ -286,12 +286,15 @@ dependencies = [
 test = "pytest {args:packages/luxar/src/luxar}"
 test-cov = "mkdir -p coverage/python && pytest -m 'not slow' --cov=luxar --cov-report=term-missing --cov-report=html {args:packages/luxar/src/luxar}"
 test-cov-all = "mkdir -p coverage/python && pytest --cov=luxar --cov-report=term-missing --cov-report=html {args:packages/luxar/src/luxar}"
+# `scripts/benchmarks` is listed explicitly: a broad `benchmarks/` entry in
+# .gitignore makes ruff's directory walk skip it, but pre-commit still formats
+# those tracked files, so it must be covered here to keep them in sync.
 format = [
-    "ruff format packages/luxar/src",
-    "ruff check --fix packages/luxar/src"
+    "ruff format packages/luxar/src scripts scripts/benchmarks",
+    "ruff check --fix packages/luxar/src scripts scripts/benchmarks"
 ]
 lint = [
-    "ruff check packages/luxar/src",
+    "ruff check packages/luxar/src scripts scripts/benchmarks",
     "mypy packages/luxar/src/luxar"
 ]
 security = "bandit -r packages/luxar/src/luxar -c pyproject.toml --severity-level medium --confidence-level medium -q"
