@@ -98,8 +98,9 @@ hatch run python scripts/check_documentation.py --no-baseline
 **What it checks:**
 - Top-level Python packages have README.md files with minimum content markers
 - Top-level TypeScript packages have README.md files
-- Public Python definitions have nearby docstrings (heuristic)
+- Python modules, functions, classes and methods carry docstrings (AST-parsed, exact)
 - Exported TypeScript declarations have nearby JSDoc (heuristic)
+- A Python file that cannot be parsed is reported as a `Python syntax` finding (the run continues rather than crashing)
 
 Existing documentation debt is captured in `scripts/docs_baseline.json`. A
 flagless run tolerates every baselined finding and fails (exit 1) only on NEW

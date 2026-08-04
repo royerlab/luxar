@@ -46,8 +46,8 @@ make test-e2e     # Full Playwright E2E suite (~17 min)
 make test-e2e-smoke  # E2E smoke subset (the specs CI would run)
 make test-perf-e2e   # Opt-in Playwright performance suite
 # check-all is NOT read-only: `hatch run check` begins with `format`, so it
-# REWRITES packages/luxar/src. When other agents/people are editing the same
-# tree, use the read-only scoped targets instead (listed right below it).
+# REWRITES packages/luxar/src and scripts. When other agents/people are editing
+# the same tree, use the read-only scoped targets instead (listed right below it).
 make check-all    # All quality checks (Python, TypeScript, Rust, Go) — reformats
 make lint-python        # read-only: ruff check
 make type-check-python  # read-only: mypy
@@ -217,7 +217,7 @@ See `docs/guides/developer/BUILD_SYSTEM_SPEC.md` for complete documentation.
 
 ### Luxar CLI
 ```bash
-luxar demo                       # List the 78 bundled demos (table)
+luxar demo                       # List the 79 bundled demos (table)
 luxar demo run lorenz            # Run a demo by key/index (forwards -- args)
 luxar demo cache list            # Inventory / clear demo caches (cache clear …)
 # Demos keep heavyweight packages OUT of the core install, so a fresh checkout

@@ -618,6 +618,33 @@ export interface LODProgressProvider {
 }
 
 /**
+ * Live cross-node draw-order state for one data mesh, read off the THREE
+ * material + object (`material.transparent`, `material.depthWrite`,
+ * `mesh.renderOrder`). Surfaced per node in the scene-graph tree so a
+ * compositing-order bug (a backdrop drawn after the content in front of it)
+ * is visible without a renderer capture. Pure observability.
+ */
+export interface NodeDrawOrder {
+  /** `'transparent'` (in the sorted set) or `'opaque'` (drawn depth-first). */
+  bucket: 'opaque' | 'transparent';
+  /** Whether the mesh writes depth (`material.depthWrite`). */
+  depthWrite: boolean;
+  /** Resolved `mesh.renderOrder` (compared ascending → lowest drawn first). */
+  renderOrder: number;
+}
+
+/**
+ * Provides a snapshot of live per-mesh draw-order state keyed by scene-graph
+ * path (mesh `name`). Injected via `SceneLoaderMonitorPort.setDrawOrderProvider`
+ * and polled on each tick — `renderOrder` is camera-dependent, so a live read
+ * per tick keeps the panel honest as the view orbits. Implemented in the data
+ * layer over the live THREE root group.
+ */
+export interface DrawOrderProvider {
+  getDrawOrderStates(): Map<string, NodeDrawOrder>;
+}
+
+/**
  * Per-geometry-type counters, one entry per {@link GeometryTypeName}.
  *
  * Keyed by the contract vocabulary rather than written out as

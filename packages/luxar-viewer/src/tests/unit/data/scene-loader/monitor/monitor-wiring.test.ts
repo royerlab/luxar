@@ -41,6 +41,7 @@ function makeMonitor(): SceneLoaderMonitorPort & {
     setProfiler: vi.fn(() => callOrder.push('setProfiler')),
     setCacheTelemetryState: vi.fn(() => callOrder.push('setCacheTelemetryState')),
     setLODProgressProvider: vi.fn(() => callOrder.push('setLODProgressProvider')),
+    setDrawOrderProvider: vi.fn(() => callOrder.push('setDrawOrderProvider')),
     setFailedLoadsProvider: vi.fn(() => callOrder.push('setFailedLoadsProvider')),
     setSceneGraph: vi.fn(() => callOrder.push('setSceneGraph')),
     forceUpdate: vi.fn(() => callOrder.push('forceUpdate')),
@@ -82,6 +83,7 @@ function makeBaseParams(monitor: SceneLoaderMonitorPort | null): WireMonitorAfte
       getFailedPaths: () => [],
       retryAll: vi.fn().mockResolvedValue({ succeeded: [], failed: [] }),
     },
+    drawOrderProvider: { getDrawOrderStates: () => new Map() },
   };
 }
 
@@ -94,6 +96,18 @@ describe('wireMonitorAfterLoad — failed-loads provider', () => {
       (monitor as unknown as { setFailedLoadsProvider: ReturnType<typeof vi.fn> })
         .setFailedLoadsProvider
     ).toHaveBeenCalledWith(params.failedLoads);
+  });
+});
+
+describe('wireMonitorAfterLoad — draw-order provider', () => {
+  it('injects the drawOrder provider into the monitor', () => {
+    const monitor = makeMonitor();
+    const params = makeBaseParams(monitor);
+    wireMonitorAfterLoad(params);
+    expect(
+      (monitor as unknown as { setDrawOrderProvider: ReturnType<typeof vi.fn> })
+        .setDrawOrderProvider
+    ).toHaveBeenCalledWith(params.drawOrderProvider);
   });
 });
 

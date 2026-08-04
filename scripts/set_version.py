@@ -51,11 +51,15 @@ def main(argv: list[str]) -> int:
         flags=re.MULTILINE,
     )
     if n != 1:
-        print(f"error: could not find __version__ assignment in {INIT}", file=sys.stderr)
+        print(
+            f"error: could not find __version__ assignment in {INIT}", file=sys.stderr
+        )
         return 1
     changed = new_text != text
     INIT.write_text(new_text)
-    print(f"{'updated' if changed else 'unchanged'}: {INIT.relative_to(REPO)} -> {version}")
+    print(
+        f"{'updated' if changed else 'unchanged'}: {INIT.relative_to(REPO)} -> {version}"
+    )
 
     # --- viewer package.json (semver-normalized: strip leading zeros) ---
     semver = ".".join(str(int(p)) for p in version.split("."))
@@ -70,14 +74,21 @@ def main(argv: list[str]) -> int:
             f"{PKG_JSON.relative_to(REPO)} -> {semver}"
         )
     else:
-        print(f"warning: {PKG_JSON.relative_to(REPO)} not found; skipped viewer version", file=sys.stderr)
+        print(
+            f"warning: {PKG_JSON.relative_to(REPO)} not found; skipped viewer version",
+            file=sys.stderr,
+        )
 
     print()
     print("Next steps (main is branch-protected — no direct push):")
     print(f"  git switch -c release/v{version}")
     print(f"  git commit -am 'release: v{version}'")
     print("  gh pr create --fill   # merge once CI is green")
-    print("  make release          # tags v{0} and triggers the PyPI publish".format(version))
+    print(
+        "  make release          # tags v{0} and triggers the PyPI publish".format(
+            version
+        )
+    )
     return 0
 
 

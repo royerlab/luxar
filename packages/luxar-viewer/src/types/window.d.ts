@@ -64,6 +64,14 @@ declare global {
       // shapes are intentionally dynamic — use `unknown` to force callers
       // to narrow.
       getState?: () => unknown;
+      /**
+       * Per-mesh effective draw order (path, blending bucket, depthWrite,
+       * renderOrder, element count): opaque bucket first, then renderOrder
+       * ascending within each bucket. Returned as `unknown` to force
+       * narrowing; the concrete shape is `DrawOrderEntry[]` from
+       * `core/app/debug/debug-state.ts`.
+       */
+      getDrawOrder?: () => unknown;
       renderOnce?: () => void;
       /**
        * Force a fresh, quiescent depth ordering for the current camera pose,

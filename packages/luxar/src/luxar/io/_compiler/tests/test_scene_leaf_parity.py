@@ -306,7 +306,6 @@ def test_standalone_leaf_matches_scene_leaf_with_colors_and_ordering():
                 amplitudes=amplitudes,
                 cholesky_factors=cholesky,
                 colors=colors,
-                ordering="hilbert",
             )
         scene_leaf = zarr.open_group(str(scene_path), mode="r")["g"]
 
