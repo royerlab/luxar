@@ -164,8 +164,9 @@ Two properties are load-bearing and easy to "simplify" away:
 
 `compact_visible_faces` range-checks each face index against `vertex_mask.len()`
 and drops the whole face if out of range. Face indices are _store-supplied_, and
-because the crate is `panic = "abort"` an out-of-bounds read would take down the
-entire WASM module rather than one node. The loader gates this first
+because the crate is `panic = "abort"` an out-of-bounds read would trap with an
+opaque, uncatchable `RuntimeError: unreachable` rather than failing as a
+node-scoped error. The loader gates this first
 (`MESH_NODE_SPEC.md` §3.5 Stage 2); the check is defense in depth. Note the
 deliberate asymmetry: store-supplied _values_ are range-checked in release
 builds, while _shape_ parameters the caller computed are `debug_assert`ed, as in

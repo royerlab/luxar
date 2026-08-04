@@ -672,8 +672,8 @@ export interface WasmModule {
    *
    * A face index `>= vertexMask.length` drops the whole face rather than reading
    * out of bounds — the indices are store-supplied, and the two backends fail
-   * differently without the guard (a Rust out-of-bounds read aborts the entire
-   * WASM module; the TS read yields `undefined`).
+   * differently without the guard (a Rust out-of-bounds read traps with an
+   * uncatchable `RuntimeError: unreachable`; the TS read yields `undefined`).
    *
    * @param faces - Triangle vertex indices [numFaces * 3]
    * @param vertexMask - Per-vertex visibility from

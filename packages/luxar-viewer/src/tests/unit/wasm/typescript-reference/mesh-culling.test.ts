@@ -400,8 +400,9 @@ describe('mesh_culling: compact_visible_faces', () => {
   });
 
   it('drops out-of-range face indices instead of reading past the mask', () => {
-    // The Rust sibling would abort the whole WASM module on this input; here an
-    // unguarded read would yield `undefined`. Both must simply drop the face.
+    // The Rust sibling would trap (`RuntimeError: unreachable`) on this input;
+    // here an unguarded read would yield `undefined`. Both must simply drop the
+    // face.
     // The trailing VALID face is the point of the layout: a bad index must skip
     // only that face. Were it a `break`, one corrupt index early in the array
     // would silently discard every valid face after it, and a test whose only

@@ -56,10 +56,11 @@
 //! Be aware that the two backends fail *differently* when that contract is
 //! broken, which matters when reading a bug report: Rust bounds-checks slice
 //! indexing even in release, so an oversized count **traps** — and because the
-//! crate is `panic = "abort"` the trap takes down the whole WASM module, not just
-//! this node (observed as `RuntimeError: unreachable`). The TypeScript reference
-//! instead reads `undefined`, fails the finite test, and silently culls. Neither
-//! is corruption, but only one is loud.
+//! crate is `panic = "abort"` there is no unwinding, so the trap escapes to the
+//! host as an opaque `RuntimeError: unreachable` that nothing in Rust can catch
+//! or attribute to a node, and the trapped instance carries no state guarantees
+//! afterwards. The TypeScript reference instead reads `undefined`, fails the
+//! finite test, and silently culls. Neither is corruption, but only one is loud.
 //!
 //! ## Parity
 //!
@@ -242,11 +243,12 @@ pub fn mesh_vertex_visibility_mask(
 ///
 /// This guard exists because the values come from the *store*, not from the
 /// caller: the viewer loads arbitrary (externally produced, possibly corrupted)
-/// datasets, and an out-of-bounds slice read here would not be a local error —
-/// the crate is `panic = "abort"`, so the trap takes down the entire WASM
-/// module, losing every other node's kernels with it. The TypeScript backend
-/// would instead read `undefined` and silently diverge. Dropping the face keeps
-/// both backends in parity and fails safe.
+/// datasets, and an out-of-bounds slice read here would not be a node-scoped
+/// error — the crate is `panic = "abort"`, so the trap escapes as an opaque,
+/// uncatchable `RuntimeError: unreachable`, and the trapped instance carries no
+/// state guarantees afterwards. The TypeScript backend would instead read
+/// `undefined` and silently diverge. Dropping the face keeps both backends in
+/// parity and fails safe.
 ///
 /// The loader validates face indices up front and fails the node with a
 /// `LoaderError` before reaching here (§3.5 Stage 2), so on the sanctioned path
@@ -848,8 +850,8 @@ mod tests {
     }
 
     /// An out-of-range face index drops the face instead of trapping. With
-    /// `panic = "abort"` an out-of-bounds read would take down the whole WASM
-    /// module, not just this node.
+    /// `panic = "abort"` an out-of-bounds read would escape as an opaque,
+    /// uncatchable `RuntimeError: unreachable`.
     #[test]
     fn test_compact_drops_out_of_range_index_without_panicking() {
         // vertex_mask has 3 entries → valid indices are 0..2.

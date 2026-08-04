@@ -1822,9 +1822,9 @@ describe('WASM vs TypeScript Comparison', () => {
     /**
      * Out-of-range face indices come from the STORE, so both backends must drop
      * the face. Without the range guard the WASM build would trap (the crate is
-     * `panic = "abort"`, so an out-of-bounds read takes down the whole module)
-     * while TS would read `undefined` — this test is the only place that
-     * difference is observable.
+     * `panic = "abort"`, so the trap escapes as an uncatchable
+     * `RuntimeError: unreachable`) while TS would read `undefined` — this test
+     * is the only place that difference is observable.
      */
     it.skipIf(!wasmFilesExist)('agrees on out-of-range face indices without trapping', () => {
       const mask = new Uint8Array([1, 1, 1]); // valid indices 0..2

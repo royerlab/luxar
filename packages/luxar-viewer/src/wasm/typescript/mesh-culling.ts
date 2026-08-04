@@ -18,8 +18,9 @@
  * §3.5 Stage 2). The two backends fail *differently* when that is violated, which
  * matters when reading a bug report: this implementation reads `undefined`, fails
  * the finite test and silently culls, whereas Rust bounds-checks even in release
- * and **traps** — taking down the whole WASM module, since the crate is
- * `panic = "abort"` (surfaced as `RuntimeError: unreachable`).
+ * and **traps** — the crate is `panic = "abort"`, so there is no unwinding and the
+ * trap escapes as an opaque, uncatchable `RuntimeError: unreachable`, leaving the
+ * instance with no state guarantees afterwards.
  *
  * ## This file is not only a fallback
  *
@@ -160,8 +161,9 @@ export function mesh_vertex_visibility_mask(
  * A face index `>= vertexMask.length` drops the whole face. The values come
  * from the *store* — the viewer loads arbitrary, possibly corrupted datasets —
  * and the two backends fail differently without this guard: Rust would read out
- * of bounds and, being `panic = "abort"`, take down the entire WASM module,
- * while here the read would yield `undefined` and silently diverge. The loader
+ * of bounds and, being `panic = "abort"`, trap with an opaque, uncatchable
+ * `RuntimeError: unreachable`, while here the read would yield `undefined` and
+ * silently diverge. The loader
  * range-checks face indices up front and fails the node with a `LoaderError`
  * before reaching either backend (§3.5 Stage 2), so on the sanctioned path this
  * is unreachable; it is defense in depth, not a substitute for that gate.

@@ -134,8 +134,9 @@ Two details are load-bearing and both are pinned by mutation-tested cases:
 - An out-of-range face index drops that face in both backends instead of reading
   past the mask. Face indices come from the store, and the two backends fail
   asymmetrically without the check: because the crate is `panic = "abort"`, a
-  Rust out-of-bounds read takes down the whole WASM module rather than one node,
-  while TypeScript would read `undefined` and diverge silently. The loader
+  Rust out-of-bounds read traps with an opaque, uncatchable
+  `RuntimeError: unreachable` rather than failing as a node-scoped error, while
+  TypeScript would read `undefined` and diverge silently. The loader
   rejects such a store up front; this is defense in depth behind that gate.
 
 Both kernels are declared on the `WasmModule` interface and listed in the
