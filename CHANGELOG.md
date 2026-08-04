@@ -39,12 +39,13 @@ unconditionally sets `depthWrite: true`. The globe now draws first (verified:
 `/Earth` at step 1 with `depthWrite=1`) and occludes correctly. The cost is that
 the shell no longer self-shades as a participating medium.
 
-The brightness was re-tuned with it, and the arithmetic is a neat confirmation
-that absorption and brightness are one knob rather than two: the display window
-went from 0–0.041 (a 24.39x gain, chosen against `absorption=10`) to 0–0.205 (a
-4.88x gain). 24.39 / 4.88 = **5.0** — the whole factor had been compensating for
-the darkening the absorption imposed. Carrying the old gain over to `opaque` left
-the planet blown out.
+The brightness was re-tuned with it: the display window went from 0–0.041 (a
+24.39x gain, chosen against `absorption=10`) to 0–0.205 (a 4.88x gain). The gains
+land almost exactly 5x apart (24.39 / 4.88 = **5.0**) — a neat near-exact
+coincidence, though the switch to `opaque` also changed the compositing (now
+unblended and opacity-independent), not only the absorption term, so read it as a
+mnemonic rather than a proof that the whole gain was absorption. Either way,
+carrying the old gain over to `opaque` left the planet blown out.
 
 #### Demos — 4D NEXRAD weather-radar supercell (atmosphere/geoscience gap)
 

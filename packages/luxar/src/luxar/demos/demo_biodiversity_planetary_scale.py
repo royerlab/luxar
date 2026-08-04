@@ -55,8 +55,8 @@ its neighbours stay coarse.
 
 **The globe deliberately gets none of that.** A textured shell cannot survive
 Gaussian merging: at K=4/levels=2 the coarsest level is 46k merged splats per
-750k-point tile, and under the volumetric absorption below those render as huge
-dark ellipsoids — the planet becomes a pile of blobs. Coarse levels are
+750k-point tile, and those coarse ellipsoids cannot reproduce a continuous
+textured shell — the planet becomes a pile of blobs. Coarse levels are
 meaningful for a diffuse point cloud (they read as *density*, which is exactly
 what the occurrence layer wants) and meaningless for a continuous surface. The
 globe is instead a fixed-resolution backdrop, sized (``N_GLOBE``) so it never
@@ -147,22 +147,27 @@ turns a cloud of points into something that reads as an opaque *material* — an
 one that can still be made slightly transparent on demand, which a truly opaque
 mode cannot. But absorption also makes a layer very dim, almost black. The fix is
 to push brightness up in the same move by lowering the display-range max, which
-raises ``intensity``. The globe showed this cleanly in both directions: tuned as ``absorption=10`` with
-a display max of 0.041 (a 24x gain), then re-tuned to a 0.205 window (a 4.88x
-gain) once the switch to ``opaque`` removed the absorption. Exactly 5x less gain
-for exactly the darkening that went away — they are one knob, not two.
+raises ``intensity``. The globe showed this: tuned as ``absorption=10`` with a
+display max of 0.041 (a 24x gain), then re-tuned to a 0.205 window (a 4.88x gain)
+once the switch to ``opaque`` removed the absorption. The gains land almost
+exactly 5x apart (24.39 / 4.88 = 5.0), a neat near-exact coincidence — but the
+switch to ``opaque`` also changed the compositing (now unblended and
+opacity-independent), not only the absorption term, so read it as a useful
+mnemonic rather than a proof that the whole gain was absorption.
 
 **A backdrop cannot be a transparent mode, though.** The globe ultimately ships
 ``opaque`` rather than the ``volumetric`` it was tuned to, because a backdrop
 needs two things no transparent mode provides: to be drawn BEFORE the data, and
 to occlude the far hemisphere. See ``GLOBE_BLENDING`` for the measured draw order
-that forced this and for royerlab/luxar#1227. The tuned brightness survives
-(``intensity`` and ``gamma`` still apply); the absorption term does not.
+that forced this and for royerlab/luxar#1227 (since resolved). The tuned
+brightness survives (``intensity`` and ``gamma`` still apply); the absorption
+term does not.
 
-The occurrence records take the opposite treatment — ``opaque`` (depth-tested,
-and still alpha-blended, so ``opacity`` matters) with a hard brightness push — so
-they read as crisp discrete marks sitting *on* the lit globe. An additive
-selection washes out over a bright surface.
+The scrubbable records layer takes the opposite treatment — ``opaque``
+(depth-tested, unblended: ``transparent: false`` disables framebuffer blending,
+so the fragment's emitted alpha is discarded and ``opacity`` has no effect) with
+a hard brightness push — so it reads as crisp discrete marks sitting *on* the lit
+globe. An additive selection washes out over a bright surface.
 
 Two things that only show up on a real build:
 
@@ -400,9 +405,9 @@ SAMPLE_SEED: Final = 20260803
 #: The globe carries NO substitutive LOD, and is sized so it does not need one.
 #:
 #: A textured shell cannot survive Gaussian merging. At K=4/levels=2 the coarsest
-#: level is 46k merged splats per 750k-point tile, and with the volumetric
-#: absorption below those render as huge dark ellipsoids -- the planet becomes a
-#: pile of blobs. Coarse levels are meaningful for a diffuse point cloud (they
+#: level is 46k merged splats per 750k-point tile, and those coarse ellipsoids
+#: cannot reproduce a continuous textured shell -- the planet becomes a pile of
+#: blobs. Coarse levels are meaningful for a diffuse point cloud (they
 #: read as density, which is the `All life` layer's whole point) and meaningless
 #: for a continuous surface.
 #:
@@ -418,11 +423,11 @@ GLOBE_RADII: Final = 0.23
 #: sealed shell, so at full brightness the continents (bright green
 #: Europe, tan Sahara, saturated blue ocean) carry more contrast than the data
 #: drawn on top of them and the occurrence colours stop reading as data at all.
-#: Dimming the colour rather than lowering the layer's opacity keeps the shell
-#: opaque, which matters because a translucent globe lets far-side records and
-#: tracks bleed through and look like a broken land mask. It is also the only
-#: reliable lever: the Layers panel restores stored per-layer settings at load,
-#: so an `opacity` attr can be overridden at runtime, whereas baked colour cannot.
+#: Baked colour dimming is the lever that drops the texture's contrast so the
+#: data reads on top. Layer `opacity` is not even an option here: under `opaque`
+#: it is inert (`transparent: false` disables framebuffer blending, so the
+#: fragment's emitted alpha is discarded), so it can neither dim the shell nor
+#: make it translucent.
 #:
 #: 0.12, not the 0.20 that first looked right: 0.20 was chosen against a sparse
 #: early globe, and once the shell sealed at N_GLOBE it was bright enough that a
@@ -448,25 +453,29 @@ OCCURRENCE_COLOR_SCALE: Final = 0.85
 # as an opaque surface (and can still be made slightly transparent on demand) --
 # but it also makes the layer very dim, almost black. The fix is to push
 # brightness up by the same move: LOWER the display-range max, which raises
-# `intensity`. The globe below is exactly that pair -- absorption 10 with a
-# display max of 0.041 (a 24x gain). Either number alone looks wrong.
+# `intensity`. The globe was originally tuned exactly that way -- absorption 10
+# with a display max of 0.041 (a 24x gain), either number alone looking wrong --
+# before it shipped `opaque`, and that tuning is what drove this observation.
 #
-# The occurrence records take the opposite treatment: `opaque` (depth-tested,
-# unblended) so they read as crisp dots sitting on the lit globe. An additive
-# selection washes out over a bright surface.
+# The scrubbable records layer takes the opposite treatment: `opaque`
+# (depth-tested, unblended) so it reads as crisp dots sitting on the lit globe.
+# An additive selection washes out over a bright surface.
 #: Globe: DISPLAY RANGE 0-0.205 -> 1/0.205.
 #:
 #: 4.88, re-tuned after the switch to `opaque`. It was 24.39 (a 0-0.041 window)
-#: while the globe was `volumetric` with `absorption=10`, and the ratio is the
-#: point: 24.39 / 4.88 = 5.0. That whole 5x was compensating for the darkening
-#: the absorption term imposed. Drop the absorption and the gain has to come
-#: down with it — the two really are one knob, and carrying the old value over
-#: to `opaque` left the planet blown out.
+#: while the globe was `volumetric` with `absorption=10`, and the ratio is neat:
+#: 24.39 / 4.88 = 5.0. Most of that 5x was compensating for the darkening the
+#: absorption term imposed, but the switch to `opaque` also changed the
+#: compositing (unblended, opacity-independent), not only the absorption term --
+#: so read the exact 5.0 as a near-exact coincidence, not a proof that the whole
+#: gain was absorption. Either way, carrying the old 24.39 over to `opaque` left
+#: the planet blown out, so the gain had to come down.
 GLOBE_INTENSITY: Final = 4.88
 #: Inert under `opaque` (the absorption term belongs to the emission-absorption
-#: `volumetric` integral). Kept as the value to restore, together with
-#: GLOBE_INTENSITY 24.39, if royerlab/luxar#1227 makes `volumetric` viable for a
-#: backdrop.
+#: `volumetric` integral). Kept as the reference value to restore, together with
+#: GLOBE_INTENSITY 24.39, if a future change ever makes a `volumetric` backdrop
+#: viable (the backdrop-ordering problem was worked in royerlab/luxar#1227, now
+#: resolved).
 GLOBE_ABSORPTION: Final = 10.0
 #: `opaque`, not the `volumetric` this was originally tuned to.
 #:
@@ -476,36 +485,46 @@ GLOBE_ABSORPTION: Final = 10.0
 #: before every transparent layer; and it is the only mode that unconditionally
 #: sets `depthWrite: true`, so it actually occludes.
 #:
-#: Both mattered. Measured draw order with a volumetric globe, read off
-#: `onBeforeRender` in the live scene:
+#: Both mattered at the time. Measured draw order with a volumetric globe, read
+#: off `onBeforeRender` in the live scene:
 #:
 #:     3-10. All life  (8 tiles)  transparent  depthWrite=0
 #:     11.   Earth                transparent  depthWrite=0   <- AFTER the data
 #:     12.   Migration highways   transparent  depthWrite=0
 #:
-#: 1. The globe composited ON TOP of the 15M-record layer, multiplying it by the
-#:    shell's transmittance -- at absorption 10, most of the way to erasing it.
-#:    The cause is the containment rule in
+#: 1. The globe ORIGINALLY composited ON TOP of the 15M-record layer, multiplying
+#:    it by the shell's transmittance -- at absorption 10, most of the way to
+#:    erasing it. The cause was the containment rule in
 #:    `rendering/depth-sort-coordinator/render-order.ts`, which hoists a group
 #:    whose bounding sphere contains another's so that "embedded content
-#:    composites on top". It is written for a small marker inside a huge cloud;
-#:    here the geometry is inverted -- the data sits on a shell OUTSIDE the
-#:    globe, and its 8-tile bounding sphere is a loose upper bound -- so the
-#:    DATA was classified as the container and the BACKDROP as embedded content.
-#:    Filed as royerlab/luxar#1227.
+#:    composites on top". Written for a small marker inside a huge cloud; here the
+#:    geometry is inverted -- the data sits on a shell OUTSIDE the globe, and its
+#:    8-tile bounding sphere is a loose upper bound -- so the DATA was classified
+#:    as the container and the BACKDROP as embedded content. Filed as
+#:    royerlab/luxar#1227 and since RESOLVED at the engine level:
+#:    `orderGroupsWithContainment` now requires a containment edge to hold under
+#:    BOTH the Ritter and the legacy centroid bounds, which drops this scene's
+#:    false edge (its own comment names it). So the draw-ORDER half no longer
+#:    needs `opaque`.
 #: 2. `volumetric` never writes depth, so nothing occluded anything: far-side
-#:    records and track ribbons showed straight through the planet. (The globe's
-#:    earlier `normal` + opacity 1.0 did write depth --
-#:    `normalModeDepthWrite` requires opacity >= 0.99.)
+#:    records and track ribbons showed straight through the planet. Nor would a
+#:    `normal` globe have occluded: `getPointBlendingState` forces
+#:    `depthWrite: false` for a `normal` POINTS layer at ANY opacity (issue
+#:    #1002 -- the `normalModeDepthWrite` / opacity >= 0.99 predicate governs
+#:    only Lines). Tightening the draw order (reason 1) does not make any
+#:    transparent mode write depth, so `opaque` is STILL required here: it is the
+#:    ONLY mode that makes the globe occlude.
 #:
 #: The cost is that the shell no longer self-shades as a participating medium.
 #: `intensity` and `gamma` still apply, so the tuned brightness survives.
 GLOBE_BLENDING: Final = "opaque"
 #: The SCRUBBABLE records layer's own opacity. Separate from
-#: OCCURRENCE_OPACITY (which belongs to the untuned `All life` summary layer):
-#: `opaque` blending still alpha-blends (SrcAlpha / OneMinusSrcAlpha), so 0.75
-#: would leave the dots 25% transparent over the globe. The panel reading was
-#: 1.00.
+#: OCCURRENCE_OPACITY (which belongs to the untuned `All life` summary layer).
+#: 1.0 is the natural value for crisp opaque dots, but it is effectively inert:
+#: under `opaque`, `transparent: false` disables framebuffer blending, so the
+#: fragment's emitted alpha is discarded and the layer opacity never reaches the
+#: pixel. A no-op recorded for intent / in case the mode changes. The panel
+#: reading was 1.00.
 RECORDS_OPACITY: Final = 1.0
 #: Occurrences: DISPLAY RANGE 0-0.004 -> 1/0.004 = 250, GAMMA 0.82.
 #:
