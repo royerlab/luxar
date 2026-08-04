@@ -84,8 +84,9 @@ current consumer (`gsplat-geometry`, `gsplats-adapter`, the two `readTruncate`
 helpers) sizes itself from `material.uniforms.uTruncate`, which the material
 constructors already clamp. It matters if a future consumer reads the raw attr,
 or a material is built outside those constructors. The clamp itself now uses
-the same float32 bounds as the writer: a radius that would narrow to Infinity
-in a float32 uniform (e.g. `1e308`, finite in JS) falls back to the default,
+the same float32 bounds as the writer: a radius whose value or square would
+narrow to Infinity in a float32 uniform (`uTruncate` / `uTruncateSq`; e.g.
+`1e308` or `1e30`, both finite in JS) falls back to the default,
 and the lower floor is the bisected float32 degeneracy bound (~2.4e-4) rather
 than the former 0.1 — so small-but-valid radii the validator accepts render at
 their stored value, consistent with the chunk bounds computed from them.

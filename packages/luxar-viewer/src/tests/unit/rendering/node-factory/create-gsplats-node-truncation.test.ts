@@ -103,6 +103,9 @@ describe('createGSplatsNode — truncation_radius sanitization', () => {
     // MAX_TRUNCATION_RADIUS_FLOAT32; the read-side clamp mirrors it.
     ['above-float32-max (3.5e38)', 3.5e38],
     ['float64-only-finite (1e308)', 1e308],
+    // Finite even as a float32, but its SQUARE — uploaded as the uTruncateSq
+    // uniform — overflows to Infinity. Same treatment.
+    ['square-overflows-float32 (1e30)', 1e30],
   ])('falls back to the default for a %s radius', (_label, value) => {
     expect(uTruncateOf(build(value))).toBe(GSPLAT_DEFAULT_TRUNCATION_RADIUS);
   });

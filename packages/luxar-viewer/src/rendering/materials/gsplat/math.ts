@@ -92,18 +92,20 @@ let truncationClampWarned = false;
 /** Clamp a truncation radius to the float32 degeneracy bounds (warns once). */
 export function clampTruncationRadius(radius: number): number {
   // NaN/Inf slip past a plain comparison clamp (NaN < x is false), and a
-  // JS-finite value beyond float32 range (a hostile attr like 1e308, or
-  // 3.5e38) narrows to Infinity the moment it is uploaded as a GPU uniform —
-  // either way uTruncate and the cull box get poisoned. `Math.fround` catches
-  // both, mirroring the write-side `MAX_TRUNCATION_RADIUS_FLOAT32` bound in
+  // JS-finite value can still poison the GPU uniforms two ways: beyond
+  // float32 range (a hostile attr like 1e308) `uTruncate` itself narrows to
+  // Infinity, and beyond sqrt(float32.max) ≈ 1.84e19 the squared uniform
+  // `uTruncateSq = T²` does. Testing the square catches both (a radius whose
+  // square is float32-finite is itself float32-finite), mirroring the
+  // write-side `MAX_TRUNCATION_RADIUS_FLOAT32` bound in
   // `packages/luxar/src/luxar/validation/types.py`. Fall back to the module
   // default.
-  if (!Number.isFinite(Math.fround(radius))) {
+  if (!Number.isFinite(Math.fround(radius * radius))) {
     if (!truncationClampWarned) {
       truncationClampWarned = true;
       log.warning(
         Modules.RENDERER,
-        `truncation_radius ${radius} is not finite in float32 — falling back to ${GSPLAT_DEFAULT_TRUNCATION_RADIUS}. Further clamps are silent.`
+        `truncation_radius ${radius} (or its square, uploaded as uTruncateSq) is not finite in float32 — falling back to ${GSPLAT_DEFAULT_TRUNCATION_RADIUS}. Further clamps are silent.`
       );
     }
     return GSPLAT_DEFAULT_TRUNCATION_RADIUS;

@@ -320,7 +320,7 @@ class TestTruncationRadiusValidation:
 
 
 class TestMaxTruncationRadiusFloat32:
-    """The upper bound is the largest float32, for the same reason as the lower."""
+    """The upper bound is the largest float32 whose SQUARE is finite in float32."""
 
     def test_rejects_float32_overflow(self) -> None:
         # Mirror of the lower-bound case: finite in float64, `inf` once narrowed
@@ -329,15 +329,41 @@ class TestMaxTruncationRadiusFloat32:
         # loader — 1e308 sailed through until this check existed.
         for too_big in (3.5e38, 1e100, 1e308):
             assert math.isfinite(too_big), "test premise: finite in float64"
-            assert not np.isfinite(np.float32(too_big)), "test premise: inf in float32"
+            with np.errstate(over="ignore"):
+                assert not np.isfinite(np.float32(too_big)), (
+                    "test premise: inf in float32"
+                )
             with pytest.raises(ValueError, match="too large"):
                 validate_truncation_radius(too_big)
 
-    def test_accepts_up_to_the_float32_maximum(self) -> None:
+    def test_rejects_square_overflow(self) -> None:
+        # The subtler band: T itself narrows to a FINITE float32, but the GPU
+        # also consumes T² as its own uniform (uTruncateSq, the fragment
+        # discard threshold), and THAT overflows. Bounding T at float32's max
+        # alone would accept these while uploading an infinite uTruncateSq.
+        for too_big in (2e19, 1e30, 3e38):
+            t32 = np.float32(too_big)
+            assert np.isfinite(t32), "test premise: T finite in float32"
+            with np.errstate(over="ignore"):
+                assert not np.isfinite(t32 * t32), "test premise: T² inf in float32"
+            with pytest.raises(ValueError, match="too large"):
+                validate_truncation_radius(too_big)
+
+    def test_accepts_up_to_the_square_finite_maximum(self) -> None:
         # Absurd but representable radii stay legal — the bound is a
         # representability limit, not a modelling opinion.
-        for ok in (1e30, MAX_TRUNCATION_RADIUS_FLOAT32):
+        for ok in (1e19, MAX_TRUNCATION_RADIUS_FLOAT32):
             assert validate_truncation_radius(ok) == ok
+
+    def test_bound_is_exact(self) -> None:
+        # The bound is EXACTLY the largest float32 with a float32-finite
+        # square: one ulp up overflows. Pins the sqrt(float32.max) shortcut
+        # against real float32 arithmetic.
+        t = np.float32(MAX_TRUNCATION_RADIUS_FLOAT32)
+        assert np.isfinite(t * t)
+        one_ulp_up = np.nextafter(t, np.float32(np.inf))
+        with np.errstate(over="ignore"):
+            assert not np.isfinite(one_ulp_up * one_ulp_up)
 
 
 class TestMinTruncationRadiusFloat32:

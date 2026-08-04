@@ -97,6 +97,13 @@ describe('clampTruncationRadius guard', () => {
     // that sees unvalidated stores, so it must catch them too.
     expect(clampTruncationRadius(3.5e38)).toBe(GSPLAT_DEFAULT_TRUNCATION_RADIUS);
     expect(clampTruncationRadius(1e308)).toBe(GSPLAT_DEFAULT_TRUNCATION_RADIUS);
+    // Finite even as a float32, but its SQUARE — uploaded as the uTruncateSq
+    // uniform (the fragment discard threshold) — narrows to Infinity. The
+    // usable ceiling is sqrt(float32.max) ≈ 1.84e19, matching the write-side
+    // MAX_TRUNCATION_RADIUS_FLOAT32.
+    expect(clampTruncationRadius(1e30)).toBe(GSPLAT_DEFAULT_TRUNCATION_RADIUS);
+    expect(clampTruncationRadius(2e19)).toBe(GSPLAT_DEFAULT_TRUNCATION_RADIUS);
+    expect(clampTruncationRadius(1e19)).toBe(1e19);
     expect(clampTruncationRadius(0)).toBe(MIN_TRUNCATION_RADIUS);
     expect(clampTruncationRadius(2.5)).toBe(2.5);
   });

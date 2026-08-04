@@ -387,11 +387,14 @@ def _min_truncation_radius_float32() -> float:
 #: :func:`_min_truncation_radius_float32` for why float32 sets it.
 MIN_TRUNCATION_RADIUS_FLOAT32: float = _min_truncation_radius_float32()
 
-#: Upper bound for :func:`validate_truncation_radius` — the largest float32
-#: (~3.40e38). Symmetric with the lower bound and for the same reason: a ``T``
-#: above this is finite in float64 but narrows to ``inf`` in float32, so it
-#: reaches the GPU as an infinite ``uTruncate`` and an infinite cull box.
-MAX_TRUNCATION_RADIUS_FLOAT32: float = float(np.finfo(np.float32).max)
+#: Upper bound for :func:`validate_truncation_radius` (~1.84e19): the largest
+#: float32 whose SQUARE is still finite in float32. The GPU consumes ``T``
+#: twice — as ``uTruncate`` and as ``uTruncateSq = T²`` (the fragment discard
+#: threshold) — so bounding ``T`` at float32's max is not enough: everything in
+#: ``(sqrt(float32.max), float32.max]`` uploads a finite ``uTruncate`` next to
+#: an infinite ``uTruncateSq``. One ulp above this value the float32 square
+#: overflows (pinned by test).
+MAX_TRUNCATION_RADIUS_FLOAT32: float = float(np.sqrt(np.finfo(np.float32).max))
 
 
 def validate_truncation_radius(truncation_radius: Any) -> float:
@@ -405,8 +408,11 @@ def validate_truncation_radius(truncation_radius: Any) -> float:
 
     A large ``T`` is merely a wide (and eventually untruncated) Gaussian, which
     is well defined — so the upper bound is not a modelling choice, it is the
-    largest float32. Above it the value narrows to ``inf`` on the GPU, which is
-    the same degeneracy as the lower bound seen from the other end.
+    largest float32 whose square is still finite in float32. The GPU consumes
+    ``T²`` as its own uniform (``uTruncateSq``, the fragment discard
+    threshold), so a ``T`` that itself narrows finitely but whose float32
+    square overflows is the same degeneracy as the lower bound seen from the
+    other end.
 
     The lower bound is derived, not a magic number. ``T > 0`` alone is *not*
     sufficient: below some threshold ``exp(-T^2/2)`` rounds to exactly 1.0, so
@@ -454,8 +460,10 @@ def validate_truncation_radius(truncation_radius: Any) -> float:
     # construction time.
     if radius_float > MAX_TRUNCATION_RADIUS_FLOAT32:
         raise ValueError(
-            f"Truncation radius {radius_float} is too large: it exceeds the "
-            "largest float32, so it reaches the GPU render paths as infinity"
+            f"Truncation radius {radius_float} is too large: its square "
+            "overflows float32, so it reaches the GPU render paths as an "
+            "infinite uTruncateSq (and beyond float32's max, as an infinite "
+            "uTruncate too)"
         )
 
     if radius_float < MIN_TRUNCATION_RADIUS_FLOAT32:
