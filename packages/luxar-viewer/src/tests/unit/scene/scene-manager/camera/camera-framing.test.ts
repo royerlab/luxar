@@ -131,6 +131,41 @@ describe('computeSceneBoundingBox', () => {
     expect(result.box.isEmpty()).toBe(true);
   });
 
+  it('frames only the vertices the index references, not the whole position buffer', () => {
+    // Regression from #1252 (the #1241 review point). A mesh's `position` buffer
+    // holds EVERY vertex of the whole nD mesh and is never compacted; only the
+    // triangles named by the current index buffer are drawn. Framing off the
+    // full-buffer AABB (`geometry.boundingBox`) would cover unreferenced/culled
+    // vertices and pull the camera way out. Here vertex 3 at (1000,1000,1000) is
+    // NOT referenced by the index, so it must NOT widen the framing box.
+    const scene = new THREE.Scene();
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute(
+      'position',
+      // prettier-ignore
+      new THREE.BufferAttribute(
+        new Float32Array([
+          0, 0, 0, 10, 0, 0, 0, 10, 0, // near triangle, vertices 0,1,2
+          1000, 1000, 1000, // far vertex 3 — no triangle references it
+        ]),
+        3
+      )
+    );
+    geometry.setIndex(new THREE.BufferAttribute(new Uint16Array([0, 1, 2]), 1));
+    const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial());
+    mesh.userData = { nodeType: 'mesh' };
+    scene.add(mesh);
+    scene.updateMatrixWorld(true);
+
+    const result = computeSceneBoundingBox(scene);
+    expect(result.box.isEmpty()).toBe(false);
+    // Covers ONLY the near triangle; the far vertex is excluded (max is [10,10,0],
+    // nowhere near 1000).
+    expect(result.box.min.toArray()).toEqual([0, 0, 0]);
+    expect(result.box.max.toArray()).toEqual([10, 10, 0]);
+    expect(result.primitiveCount).toBe(1);
+  });
+
   it('aggregates Points bounds and counts instances as primitives', () => {
     const scene = new THREE.Scene();
     const geometry = new THREE.InstancedBufferGeometry();

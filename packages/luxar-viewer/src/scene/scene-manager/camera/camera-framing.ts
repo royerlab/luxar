@@ -59,6 +59,38 @@ export interface SceneBoundingBoxResult {
 }
 
 /**
+ * LOCAL-space bounding box of the triangles a mesh currently DRAWS.
+ *
+ * A mesh's `position` attribute holds every vertex of the whole nD mesh in
+ * display space and is never compacted (see rendering/mesh-geometry.ts); the nD
+ * slab cull expresses visibility purely through the index buffer, rebuilt each
+ * slice to name only the drawn triangles. `geometry.boundingBox` therefore spans
+ * the ENTIRE buffer — including culled triangles' vertices and vertices no
+ * triangle references — so framing off it pulls the camera out to cover geometry
+ * that is not on screen (e.g. a moving 4D surface's whole trajectory). Walk the
+ * index instead, unioning only the referenced vertices. Runs on F-key recenter,
+ * not per frame.
+ *
+ * Returns an empty box when there is no index or no position attribute — the
+ * caller's `instanceCount <= 0` guard already skips an empty index, so this box
+ * is only used when there ARE drawn triangles. Fresh each call, so the caller
+ * uses it directly (no `.clone()`, unlike the shared `geometry.boundingBox`).
+ */
+function computeMeshVisibleBox(geometry: THREE.BufferGeometry): THREE.Box3 {
+  const box = new THREE.Box3();
+  const index = geometry.index;
+  const position = geometry.getAttribute('position') as THREE.BufferAttribute | undefined;
+  if (!index || !position) return box;
+  const v = new THREE.Vector3();
+  for (let i = 0; i < index.count; i++) {
+    const vi = index.getX(i);
+    v.set(position.getX(vi), position.getY(vi), position.getZ(vi));
+    box.expandByPoint(v);
+  }
+  return box;
+}
+
+/**
  * Walk `scene` and aggregate the world-space bounding box of every
  * renderable primitive. Points, Lines, and GSplats all render as
  * `THREE.Mesh + InstancedBufferGeometry`, so one shape covers those three;
@@ -69,8 +101,10 @@ export interface SceneBoundingBoxResult {
  *     bounding box from the geometry, `instanceCount` for the
  *     primitive count.
  *   - `THREE.Mesh` with `userData.nodeType === 'mesh'` — bounding box from the
- *     geometry, and the DRAWN TRIANGLE count (`index.count / 3`) for the
- *     primitive count.
+ *     vertices the current index buffer REFERENCES (the DRAWN triangles), NOT
+ *     the full `position` buffer (which is never compacted and holds every
+ *     vertex of the whole nD mesh — see {@link computeMeshVisibleBox}), and the
+ *     DRAWN TRIANGLE count (`index.count / 3`) for the primitive count.
  *   - `THREE.InstancedMesh` — bounding box from the geometry, plus
  *     the count from `mesh.count` for the primitive count.
  *
@@ -116,10 +150,6 @@ export function computeSceneBoundingBox(scene: THREE.Scene): SceneBoundingBoxRes
     if (!isInstancedMesh && !isLuxarInstancedMesh && !isLuxarMesh) return;
 
     const geometry = object.geometry;
-    if (!geometry.boundingBox) {
-      geometry.computeBoundingBox();
-    }
-    if (!geometry.boundingBox) return;
 
     // Primitives, counted per type in the unit each type actually draws: instances for
     // the instanced-quad types, and DRAWN TRIANGLES for a mesh. Reading the index
@@ -131,9 +161,26 @@ export function computeSceneBoundingBox(scene: THREE.Scene): SceneBoundingBoxRes
         ? object.count
         : ((geometry as THREE.InstancedBufferGeometry).instanceCount ?? 0);
     if (instanceCount <= 0) return;
+
+    // Framing box, in LOCAL geometry space before the world transform below.
+    // Mesh takes its box from ONLY the vertices the drawn triangles reference (the
+    // full `position` buffer over-covers culled geometry — see computeMeshVisibleBox);
+    // this box is already fresh, so it is used directly. The instanced arms and
+    // InstancedMesh keep using the shared `geometry.boundingBox` (hence `.clone()`),
+    // whose over-inclusive extent is fine there.
+    let tempBox: THREE.Box3;
+    if (isLuxarMesh) {
+      tempBox = computeMeshVisibleBox(geometry);
+    } else {
+      if (!geometry.boundingBox) {
+        geometry.computeBoundingBox();
+      }
+      if (!geometry.boundingBox) return;
+      tempBox = geometry.boundingBox.clone();
+    }
+
     primitiveCount += instanceCount;
 
-    const tempBox = geometry.boundingBox.clone();
     tempBox.applyMatrix4(object.matrixWorld);
     if (!tempBox.isEmpty()) {
       box.union(tempBox);
