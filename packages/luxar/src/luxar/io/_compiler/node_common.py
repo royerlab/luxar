@@ -1,11 +1,15 @@
-"""Node-authoring blocks shared byte-for-byte by the Points and Lines writers.
+"""Node-authoring blocks shared byte-for-byte by the geometry writers.
 
 These are the small, geometry-agnostic steps that :meth:`~luxar.io.compiler.\
-LuxarZarrCompiler.write_points` and :meth:`~luxar.io.compiler.LuxarZarrCompiler.\
-write_lines` performed identically: normalizing the ``transform`` /
-``nd_transform`` attrs and stamping the default compositing attributes. Both are
-pure in-place mutators of the caller's ``attrs`` dict so the on-disk output is
-unchanged from the inlined versions.
+LuxarZarrCompiler.write_points`, :meth:`~luxar.io.compiler.LuxarZarrCompiler.\
+write_lines` and :meth:`~luxar.io.compiler.LuxarZarrCompiler.write_mesh` perform
+identically: normalizing the ``transform`` / ``nd_transform`` attrs and stamping
+the default compositing attributes. Both are pure in-place mutators of the
+caller's ``attrs`` dict so the on-disk output is unchanged from the inlined
+versions.
+
+Also home to the per-geometry ``*_RESERVED_ATTRS`` sets — the writer-authoritative
+keys a caller must not supply.
 """
 
 from __future__ import annotations
@@ -22,8 +26,21 @@ from ...core.dimensions import Dimensions
 # letting them through would either silently lose the user's value (the stamp
 # wins on disk) or blow up post-write with an accidental TypeError when the
 # Node object is constructed (``type=`` collides with the Node constructor).
-# The ``ordering*`` stamps are deliberately NOT reserved: ``ordering=`` is an
-# accepted (stamped-over) call pattern in existing code and tests.
+#
+# ``ordering`` is NOT reserved for Points / Lines / GSplats, and the reason is
+# narrower than it used to say here. The old note claimed a caller's ``ordering=``
+# is "stamped-over"; measured, it is not — ``Node.__init__`` re-persists the
+# caller's ``**attrs`` through ``write_group`` AFTER the geometry writer has
+# stamped the group, so the CALLER's value is what lands on disk (verified for all
+# three types). It stays unreserved because ``ordering=`` is a genuine request
+# parameter there — ``add_gsplats(ordering="hilbert")`` selects the ordering
+# method, and ``test_scene_leaf_parity`` depends on it. Making those writers
+# honour or reject the request instead of being silently overwritten is a
+# pre-existing question this set cannot settle.
+#
+# Mesh DOES reserve it: mesh has no spatial index at all (``ordering`` is always
+# ``"none"``), so there is no request to make and a supplied value could only
+# write a lie the viewer would later read.
 POINTS_RESERVED_ATTRS: FrozenSet[str] = frozenset(
     {
         "type",
@@ -34,6 +51,7 @@ POINTS_RESERVED_ATTRS: FrozenSet[str] = frozenset(
         "has_sharpness",
         "has_scalars",
         "has_labels",
+        "has_image_labels",
         "position_bounds",
         "max_radius",
     }
@@ -49,6 +67,7 @@ LINES_RESERVED_ATTRS: FrozenSet[str] = frozenset(
         "has_sharpness",
         "has_scalars",
         "has_labels",
+        "has_image_labels",
         "max_width",
         "position_bounds",
     }
@@ -60,19 +79,19 @@ GSPLATS_RESERVED_ATTRS: FrozenSet[str] = frozenset(
         "ndim",
         "has_colors",
         "has_labels",
+        "has_image_labels",
         "amplitude_range",
         "amplitude_data_range",
         "center_bounds",
         "position_bounds",
     }
 )
-# Note this set reserves ``has_image_labels`` while the three above do not, even
-# though all four writers stamp it. No clobber is possible either way —
-# ``validate_render_attrs`` rejects the key as *unknown* when it appears in no
-# set at all — so the omission costs only the accurate "reserved" message rather
-# than correctness. Mesh covers every flag it stamps from the start; aligning the
-# three siblings is a separate sweep (MESH_NODE_SPEC.md §9) so it isn't buried
-# in the mesh diff.
+# ``has_image_labels`` is now reserved by all four sets. It had been missing from
+# the three above even though every writer stamps it (the gap MESH_NODE_SPEC.md §9
+# recorded). No clobber was possible — ``validate_render_attrs`` rejects a key
+# absent from every set as *unknown* — so the cost was only the less accurate
+# error message, but the asymmetry made "which flags does this writer own?"
+# unanswerable from the sets alone.
 MESH_RESERVED_ATTRS: FrozenSet[str] = frozenset(
     {
         "type",
@@ -88,6 +107,10 @@ MESH_RESERVED_ATTRS: FrozenSet[str] = frozenset(
         "shading",
         "double_sided",
         "position_bounds",
+        # Mesh-only, unlike the sibling sets above: there is no mesh spatial
+        # index, so a supplied `ordering` cannot be honoured and would otherwise
+        # overwrite the writer's `"none"` on disk (see the note at the top).
+        "ordering",
     }
 )
 

@@ -59,11 +59,19 @@ def _is_unwelded(faces: NDArray[np.integer], n_vertices: int) -> bool:
 
     Mirrors ``_exploded_chain_fraction`` in the lines writer: a cheap warn-only
     heuristic for a mistake that otherwise shows up only as bad shading.
+
+    Distinctness is tested with ``bincount``, not ``unique``: ``unique`` sorts,
+    which measured 1.5 s on a 1M-face soup — a full second added to a write, for a
+    warning, in exactly the case that triggers it. By the time this line runs
+    ``V == 3F`` holds and the caller's validator has already established every
+    index is in ``[0, V)``, so "all distinct" is equivalent to "every index used
+    exactly once", which ``bincount`` answers in one linear pass (~9 ms at 1M
+    faces, same verdict on both soup and one-shared-vertex inputs).
     """
     n_faces = faces.shape[0]
     if n_faces < _AUTHORING_LINT_MIN_FACES or n_vertices != 3 * n_faces:
         return False
-    return int(np.unique(faces).size) == n_vertices
+    return bool(np.bincount(faces.ravel(), minlength=n_vertices).max() == 1)
 
 
 def _mesh_authoring_warning_key(ctx: GeometryWriteCtx, path: str) -> str:

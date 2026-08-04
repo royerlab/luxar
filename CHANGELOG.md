@@ -55,6 +55,39 @@ hand-copied set. That one failed the opposite way from the geometry-leaf checks
 fixed in #1203 — a newly added node type would make every store containing one
 report as "invalid" — but had the same root cause.
 
+#### Fixed — writer-stamped presence flags are now reserved on every geometry type
+
+`has_image_labels` was missing from `POINTS_/LINES_/GSPLATS_RESERVED_ATTRS` even
+though all three writers stamp it. Passing it explicitly was already an error, but
+reported as an *unknown* attribute rather than a *reserved* one, and the asymmetry
+made "which flags does this writer own?" unanswerable from the sets alone. All four
+sets now cover every flag their writer stamps.
+
+Mesh additionally reserves `ordering`, which the sibling types deliberately leave
+open. A measurement while adding it corrected a stale claim in that module: the old
+comment said a caller's `ordering=` is "stamped-over" by the writer, and it is not —
+`Node.__init__` re-persists the caller's attrs through `write_group` *after* the
+geometry writer has stamped the group, so the caller's value is what lands on disk
+(verified for points, lines and gsplats). Those three keep accepting it because
+`ordering=` is a real request parameter there (`add_gsplats(ordering="hilbert")`
+selects the method). Mesh has no spatial index at all, so a supplied value could
+only write a lie the viewer would later read — hence reserved.
+
+**Behaviour change:** `add_points(has_image_labels=...)` /
+`add_lines(has_image_labels=...)` / `add_gsplats(has_image_labels=...)` and
+`add_mesh(ordering=...)` now raise a "reserved attribute" error. All four already
+failed; only the message changes, except `add_mesh(ordering=...)` which is new.
+
+#### Fixed — the bandit pre-commit hook was stricter than the gate CI runs
+
+The hook ran bandit unfiltered while `hatch run security` (what CI gates on) passes
+`--severity-level medium --confidence-level medium`, and the CI step's own comment
+says low findings such as developer-tooling subprocess calls are out of scope. The
+mismatch meant editing any file that happened to contain an accepted low finding
+was blocked by something CI would pass, leaving only `# nosec` churn on unrelated
+lines or `--no-verify`. The hook now carries the same thresholds. Verified it still
+fails on a medium/medium finding.
+
 #### CI — the PyPI wheel viewer build is now a required release check (#688)
 
 CI now builds the standalone viewer application with the same `pnpm build`

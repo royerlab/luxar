@@ -200,7 +200,7 @@ radius/width/covariance), no LOD and no partition.
 - `compressor: CompressorLike` — scene default compressor (used by the ordering + label writers)
 - `update_scene_bounds: Callable[[Dict[str, List[float]]], None]` — scene-bounds accumulator hook
 - `write_colormap_lut: Callable[[zarr.Group, Dict[str, Any]], None]` — custom-colormap LUT writer hook
-- `claim_line_authoring_warning: Callable[[str], bool]` — warn-once registry for logical Lines nodes (partition leaves share their parent key)
+- `claim_authoring_warning: Callable[[str, str], bool]` — warn-once registry keyed by `(geometry_kind, path)`, so each type's authoring lint fires once per logical node (partition leaves share their parent key) and one type cannot silence another's on the same node
 
 **`GSplatsWriteCtx`** (GSplats):
 - `store: zarr.Group`

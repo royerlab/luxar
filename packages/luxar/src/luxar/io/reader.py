@@ -579,6 +579,31 @@ class LuxarScene:
             else None
         )
 
+        # Two consistency checks on the normals pair, because ``MeshData`` declares
+        # shapes its consumers rely on: ``normal_dims`` is a dimension TRIPLE, and
+        # ``normals`` is one 3-vector per vertex. Handing back a 2-entry triple or a
+        # short array satisfies the type annotation while breaking the first consumer
+        # that indexes ``[2]`` or zips against the vertices — a corrupt-store failure
+        # showing up far from its cause.
+        #
+        # Deliberately NOT checked here: whether every face index is within range.
+        # That needs a full scan of F indices on every read, and the viewer's loader
+        # already owns it as an admission gate (MESH_NODE_SPEC.md §3.5 Stage 2)
+        # precisely because an out-of-range index can trap its kernels. Python
+        # consumers index numpy, which raises on its own.
+        if normal_dims is not None and len(normal_dims) != 3:
+            raise ValueError(
+                f"Mesh node '{name}' has a malformed 'normal_dims' attr "
+                f"{normal_dims!r}: expected exactly 3 dimension indices naming the "
+                f"dimensions the (V, 3) normals describe."
+            )
+        if normals is not None and normals.shape[0] != vertices.shape[0]:
+            raise ValueError(
+                f"Mesh node '{name}' has {normals.shape[0]} normals for "
+                f"{vertices.shape[0]} vertices — normals are per-vertex, so the "
+                f"counts must match."
+            )
+
         return MeshData(
             vertices=vertices,
             faces=faces,

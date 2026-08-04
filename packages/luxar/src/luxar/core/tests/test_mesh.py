@@ -359,3 +359,498 @@ def test_welded_mesh_does_not_warn(tmp_path, capsys) -> None:
         scene = compiler.create_scene(dimensions=Dimensions.default_3d())
         scene.add_mesh("fan", vertices, faces)
     assert "independent triangles" not in capsys.readouterr().out
+
+
+# =============================================================================
+# nD meshes — the spec's actual target shape
+# =============================================================================
+
+
+def test_4d_mesh_round_trips_with_non_leading_normal_dims(tmp_path) -> None:
+    """A 4D mesh whose normals describe dims (1,2,3), not the leading three.
+
+    This is the case `normal_dims` exists for and the shape the spec targets
+    (3D surfaces whose hidden dimensions are discrete — time, channel), yet every
+    other test here is 3D where `normal_dims == (0,1,2)` and an implicit
+    "first three dimensions" would work by accident. For a `(t, x, y, z)` mesh the
+    first three are `(t, x, y)`, so a normal against them is meaningless — only an
+    explicit triple distinguishes right from wrong here.
+
+    Asserts the full chain: `ndim` 4 on disk, `(V, 4)` vertices, `(V, 3)` normals,
+    4-component `position_bounds`, and the triple surviving the round trip.
+    """
+    from luxar.core.dimensions import Dimension, Dimensions
+
+    dims = Dimensions(
+        [
+            # `t` range matches the data exactly (two timepoints, 0 and 1) so the
+            # discrete-range validator stays quiet — its warning is about the test
+            # fixture, not the mesh.
+            Dimension(name="t", unit="px", range=(0, 1), step=1.0, display=False),
+            Dimension(name="x", unit="um", range=(0, 20), step=1.0, display=True),
+            Dimension(name="y", unit="um", range=(0, 20), step=1.0, display=True),
+            Dimension(name="z", unit="um", range=(0, 20), step=1.0, display=True),
+        ]
+    )
+    # One tetrahedron at each of two timepoints.
+    tetra = np.array([[0, 0, 0], [10, 0, 0], [0, 10, 0], [0, 0, 10]], dtype=np.float32)
+    vertices = np.vstack(
+        [np.hstack([np.full((4, 1), t, np.float32), tetra]) for t in (0.0, 1.0)]
+    )
+    faces = np.array(
+        [
+            [0, 1, 2],
+            [0, 1, 3],
+            [0, 2, 3],
+            [1, 2, 3],
+            [4, 5, 6],
+            [4, 5, 7],
+            [4, 6, 7],
+            [5, 6, 7],
+        ],
+        dtype=np.uint32,
+    )
+    normals = np.tile(_N, (2, 1))
+
+    store = tmp_path / "nd.luxar.zarr"
+    with LuxarZarrCompiler(store) as compiler:
+        scene = compiler.create_scene(dimensions=dims)
+        node = scene.add_mesh(
+            "nd_surface", vertices, faces, normals=normals, normal_dims=(1, 2, 3)
+        )
+        assert node.normal_dims == [1, 2, 3]
+
+    mesh = LuxarScene.load(store).get_mesh("nd_surface")
+    assert mesh.vertices.shape == (8, 4)
+    assert mesh.faces.shape == (8, 3)
+    assert mesh.normals is not None and mesh.normals.shape == (8, 3)
+    assert mesh.normal_dims == [1, 2, 3]
+    assert mesh.metadata["ndim"] == 4
+    assert np.array_equal(mesh.vertices, vertices)
+    assert np.array_equal(mesh.faces, faces)
+    # Bounds span every dimension, not just the displayed three.
+    assert len(mesh.metadata["position_bounds"]["min"]) == 4
+
+
+def test_2d_mesh_is_accepted(tmp_path) -> None:
+    """A planar 2D mesh writes and reads.
+
+    2D geometry is a first-class authoring path in this codebase (the 2D gsplat
+    demos), and a mesh needs only two axes to be a valid surface. Its normals can
+    only name two dimensions plus... nothing — so normals are omitted here, which
+    is exactly why `normal_dims` validation rejects a triple containing an
+    out-of-range index for a 2D mesh.
+    """
+    from luxar.core.dimensions import Dimension, Dimensions
+
+    dims = Dimensions(
+        [
+            Dimension(name="x", unit="um", range=(0, 20), step=1.0, display=True),
+            Dimension(name="y", unit="um", range=(0, 20), step=1.0, display=True),
+        ]
+    )
+    vertices = np.array([[0, 0], [10, 0], [10, 10], [0, 10]], dtype=np.float32)
+    faces = np.array([[0, 1, 2], [0, 2, 3]], dtype=np.uint32)
+
+    store = tmp_path / "flat2d.luxar.zarr"
+    with LuxarZarrCompiler(store) as compiler:
+        scene = compiler.create_scene(dimensions=dims)
+        scene.add_mesh("plane", vertices, faces)
+
+    mesh = LuxarScene.load(store).get_mesh("plane")
+    assert mesh.vertices.shape == (4, 2)
+    assert mesh.metadata["ndim"] == 2
+    assert np.array_equal(mesh.faces, faces)
+
+
+def test_normal_dims_out_of_range_for_a_2d_mesh(tmp_path) -> None:
+    """A 2D mesh cannot carry normals: no valid triple of dimension indices exists.
+
+    Confirms the ndim-relative bound is applied against the MESH's own
+    dimensionality rather than a fixed 3, which a `(0,1,2)` default would hide.
+    """
+    from luxar.core.dimensions import Dimension, Dimensions
+
+    dims = Dimensions(
+        [
+            Dimension(name="x", unit="um", range=(0, 20), step=1.0, display=True),
+            Dimension(name="y", unit="um", range=(0, 20), step=1.0, display=True),
+        ]
+    )
+    vertices = np.array([[0, 0], [10, 0], [10, 10], [0, 10]], dtype=np.float32)
+    faces = np.array([[0, 1, 2], [0, 2, 3]], dtype=np.uint32)
+    normals = np.zeros((4, 3), dtype=np.float32)
+    normals[:, 2] = 1.0
+
+    with LuxarZarrCompiler(tmp_path / "bad2d.luxar.zarr") as compiler:
+        scene = compiler.create_scene(dimensions=dims)
+        with pytest.raises(ValueError, match="out of range"):
+            scene.add_mesh(
+                "plane", vertices, faces, normals=normals, normal_dims=(0, 1, 2)
+            )
+
+
+def test_dim_order_permutes_vertex_columns_without_breaking_faces(tmp_path) -> None:
+    """`dim_order` reorders vertex COLUMNS, so face indices stay valid untouched.
+
+    The writer deliberately does not reorder `faces`, and this is the invariant that
+    makes that correct: `dim_order` permutes dimensions (columns), never vertex rows,
+    so a row index still names the same physical vertex afterwards. If it ever
+    permuted rows instead, every face would silently point at the wrong vertices —
+    a corruption with no error, so it is asserted on the physical points rather than
+    on the arrays alone.
+
+    Authored in (z, y, x) with distinct magnitudes per axis so a permutation is
+    visible in the values rather than only in the shape.
+    """
+    from luxar.core.dimensions import Dimension, Dimensions
+
+    dims = Dimensions(
+        [
+            Dimension(name="x", unit="um", range=(0, 30), step=1.0, display=True),
+            Dimension(name="y", unit="um", range=(0, 30), step=1.0, display=True),
+            Dimension(name="z", unit="um", range=(0, 30), step=1.0, display=True),
+        ]
+    )
+    authored = np.array(
+        [[1, 2, 3], [1, 2, 13], [1, 12, 3], [11, 2, 3]], dtype=np.float32
+    )
+
+    store = tmp_path / "do.luxar.zarr"
+    with LuxarZarrCompiler(store) as compiler:
+        scene = compiler.create_scene(dimensions=dims)
+        scene.add_mesh("m", authored, _F, dim_order=["z", "y", "x"])
+
+    mesh = LuxarScene.load(store).get_mesh("m")
+
+    assert np.array_equal(mesh.vertices, authored[:, ::-1])
+    assert mesh.vertices.shape[0] == authored.shape[0]
+    assert np.array_equal(mesh.faces, _F)
+    # The invariant that matters: each face still names the same three points.
+    for face_index, triangle in enumerate(_F):
+        assert np.array_equal(
+            authored[triangle][:, ::-1], mesh.vertices[mesh.faces[face_index]]
+        ), f"face {face_index} no longer names its authored vertices"
+
+
+@pytest.mark.filterwarnings("ignore:Dimension 't' has range")
+def test_extend_to_all_on_a_mesh(tmp_path) -> None:
+    """A mesh stays visible across a named non-displayed dimension.
+
+    The discrete-range warning is filtered deliberately: a mesh authored at one
+    `t` and extended across the whole axis is exactly the intended use, so the
+    "data ends before the range" notice is correct but not what this test is about.
+
+    `extend_to_all` is resolved by the shared scene helper, which takes the
+    geometry type only for its warning text — so this checks the attr actually
+    reaches the mesh node's zarr attrs, which is the part specific to this writer.
+    """
+    from luxar.core.dimensions import Dimension, Dimensions
+
+    dims = Dimensions(
+        [
+            Dimension(name="t", unit="px", range=(0, 3), step=1.0, display=False),
+            Dimension(name="x", unit="um", range=(0, 20), step=1.0, display=True),
+            Dimension(name="y", unit="um", range=(0, 20), step=1.0, display=True),
+            Dimension(name="z", unit="um", range=(0, 20), step=1.0, display=True),
+        ]
+    )
+    vertices = np.hstack([np.zeros((4, 1), np.float32), _V])
+
+    store = tmp_path / "ex.luxar.zarr"
+    with LuxarZarrCompiler(store) as compiler:
+        scene = compiler.create_scene(dimensions=dims)
+        scene.add_mesh("m", vertices, _F, extend_to_all=["t"])
+
+    attrs = dict(zarr.open_group(store, mode="r")["m"].attrs)
+    assert attrs["extend_to_all"] == ["t"]
+
+
+@pytest.mark.parametrize("encoding_mode_name", ["AUTO", "PRECISION", "MEMORY"])
+def test_topology_is_exact_under_every_encoding_mode(
+    tmp_path, encoding_mode_name
+) -> None:
+    """`faces` must round-trip byte-exact in every encoding mode, MEMORY included.
+
+    The encoder narrows integer arrays by observed value range, so a 400-vertex
+    mesh's `faces` is stored as uint16 rather than uint32. That is lossless and
+    reversible (the original dtype is recorded), but it is exactly the kind of
+    space optimisation that would be catastrophic if it ever became lossy: a face
+    index off by one is a different surface, and nothing downstream would report
+    it. MEMORY mode is the one that quantizes most aggressively, so it is the case
+    worth pinning.
+
+    400 vertices deliberately — above the uint8 range, so any narrowing to a byte
+    would be fatal and visible rather than coincidentally survivable.
+    """
+    from luxar.encoding import EncodingMode
+
+    n_vertices = 400
+    rng = np.random.default_rng(0)
+    vertices = (rng.random((n_vertices, 3), dtype=np.float32) * 100).astype(np.float32)
+    faces = np.stack(
+        [
+            np.arange(0, n_vertices - 2),
+            np.arange(1, n_vertices - 1),
+            np.arange(2, n_vertices),
+        ],
+        axis=1,
+    ).astype(np.uint32)
+
+    store = tmp_path / f"enc_{encoding_mode_name}.luxar.zarr"
+    with LuxarZarrCompiler(
+        store, encoding_mode=getattr(EncodingMode, encoding_mode_name)
+    ) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        scene.add_mesh("m", vertices, faces)
+
+    mesh = LuxarScene.load(store).get_mesh("m")
+    assert np.array_equal(mesh.faces, faces), (
+        f"{encoding_mode_name} mode altered the topology"
+    )
+    # And the encoder must not have LUT-encoded it: the loader reads `faces` as raw
+    # chunked zarr without resolving indirection, so a LUT would decode as garbage.
+    encoding = dict(zarr.open_group(store, mode="r")["m"]["faces"].attrs).get(
+        "encoding", {}
+    )
+    assert "lut" not in str(encoding.get("name", "")), (
+        f"faces were LUT-encoded ({encoding}) despite allow_lut=False"
+    )
+
+
+def test_face_index_width_escalates_past_uint16(tmp_path) -> None:
+    """A mesh with more than 65535 vertices must not have its indices stuck at uint16.
+
+    The encoder picks integer width from the observed value range. Below the
+    boundary `faces` legitimately stores as uint16; above it, staying there would
+    wrap every index past 65535 and silently rewire the surface. Tested at both
+    sides of the boundary so the assertion cannot pass by the width simply never
+    narrowing at all.
+    """
+    results = {}
+    # Tight bracket around the 65535 boundary — enough to prove escalation
+    # without paying for a 70k-vertex write.
+    for n_vertices in (65_000, 66_000):
+        vertices = np.zeros((n_vertices, 3), dtype=np.float32)
+        vertices[:, 0] = np.arange(n_vertices, dtype=np.float32)
+        faces = np.stack(
+            [
+                np.arange(0, n_vertices - 2),
+                np.arange(1, n_vertices - 1),
+                np.arange(2, n_vertices),
+            ],
+            axis=1,
+        ).astype(np.uint32)
+
+        store = tmp_path / f"w{n_vertices}.luxar.zarr"
+        with LuxarZarrCompiler(store) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_mesh("m", vertices, faces)
+
+        mesh = LuxarScene.load(store).get_mesh("m")
+        assert np.array_equal(mesh.faces, faces), f"topology broke at {n_vertices}"
+        results[n_vertices] = zarr.open_group(store, mode="r")["m"]["faces"].dtype
+
+    assert results[65_000] == np.uint16, "expected narrowing below the boundary"
+    assert results[66_000].itemsize >= 4, (
+        f"index width did not escalate above 65535 (got {results[66_000]})"
+    )
+
+
+def test_mesh_nested_under_a_plain_group_inside_a_lod_group_is_refused(
+    tmp_path,
+) -> None:
+    """The indirection case that ONLY the finalize back-fill catches.
+
+    `add_mesh`'s add-time guard inspects the IMMEDIATE parent, so a mesh whose
+    parent is a plain group that itself sits inside a `kind=lod` group sails past
+    it — and the resolved display type still walks down to `mesh`. This is the case
+    that makes the multi-route guard necessary rather than redundant: with only the
+    add-time check, this store would be written with `display_type="mesh"` and load
+    nowhere.
+
+    Unlike the direct case the failure surfaces at finalize, so it is raised from
+    the compiler's context-manager exit rather than from `add_mesh`.
+    """
+    with pytest.raises(ValueError, match="display_type"):
+        with LuxarZarrCompiler(tmp_path / "nested.luxar.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            inner = scene.add_lod_group("ladder").add_group("inner")
+            inner.add_mesh("c0", _V, _F)
+
+
+def test_mesh_under_nested_lod_groups_is_refused(tmp_path) -> None:
+    """A lod-inside-lod ladder is refused at the innermost add, not silently nested."""
+    with LuxarZarrCompiler(tmp_path / "ll.luxar.zarr") as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        inner = scene.add_lod_group("l1").add_lod_group("l2")
+        with pytest.raises(ValueError, match="kind=lod"):
+            inner.add_mesh("c0", _V, _F)
+
+
+# =============================================================================
+# Reader robustness on a corrupt / externally produced store
+# =============================================================================
+
+
+def _handwritten_mesh_store(tmp_path, mutate):
+    """Build a mesh store directly in zarr, bypassing the writer's validation."""
+    path = tmp_path / "hand.luxar.zarr"
+    root = zarr.open_group(path, mode="w")
+    root.attrs.update(
+        {
+            "type": "scene",
+            "luxar_version": "0.3",
+            "scene_dimensions": {
+                "dimensions": [
+                    {
+                        "name": n,
+                        "unit": "um",
+                        "range": [0.0, 10.0],
+                        "step": 1.0,
+                        "display": True,
+                    }
+                    for n in ("x", "y", "z")
+                ]
+            },
+        }
+    )
+    node = root.create_group("m")
+    node.attrs.update(
+        {
+            "type": "mesh",
+            "n_vertices": 4,
+            "n_faces": 4,
+            "ndim": 3,
+            "has_normals": False,
+            "has_colors": False,
+            "has_scalars": False,
+            "shading": "flat",
+            "double_sided": True,
+            "ordering": "none",
+            "position_bounds": {"min": [0.0, 0.0, 0.0], "max": [1.0, 1.0, 1.0]},
+        }
+    )
+    node.create_dataset("vertices", data=_V)
+    node.create_dataset("faces", data=_F)
+    mutate(node)
+    return path
+
+
+def test_reader_rejects_a_malformed_normal_dims_triple(tmp_path) -> None:
+    """`MeshData.normal_dims` is a TRIPLE; a 2-entry attr must not be handed back.
+
+    A short list satisfies the `Optional[List[int]]` annotation while breaking the
+    first consumer that indexes `[2]`, so the corrupt store would surface as an
+    IndexError far from its cause. Built by writing zarr directly, since the
+    writer's own validator makes this unreachable through `add_mesh`.
+    """
+    path = _handwritten_mesh_store(
+        tmp_path,
+        lambda node: (
+            node.create_dataset("normals", data=np.zeros((4, 3), dtype=np.float32)),
+            node.attrs.update({"has_normals": True, "normal_dims": [0, 1]}),
+        ),
+    )
+    with pytest.raises(ValueError, match="malformed 'normal_dims'"):
+        LuxarScene.load(path).get_mesh("m")
+
+
+def test_reader_rejects_undersized_normals(tmp_path) -> None:
+    """Normals are per-vertex, so a short array is a corrupt store, not a partial one."""
+    path = _handwritten_mesh_store(
+        tmp_path,
+        lambda node: (
+            node.create_dataset("normals", data=np.zeros((2, 3), dtype=np.float32)),
+            node.attrs.update({"has_normals": True, "normal_dims": [0, 1, 2]}),
+        ),
+    )
+    with pytest.raises(ValueError, match="2 normals for 4 vertices"):
+        LuxarScene.load(path).get_mesh("m")
+
+
+def test_reader_ignores_normal_dims_without_a_normals_array(tmp_path) -> None:
+    """A stray `normal_dims` attr with no normals orients nothing, so it is dropped.
+
+    Not an error: the attr alone is inert, and refusing the whole node over it would
+    make an otherwise-readable mesh unreadable.
+    """
+    path = _handwritten_mesh_store(
+        tmp_path,
+        lambda node: node.attrs.update({"has_normals": True, "normal_dims": [0, 1, 2]}),
+    )
+    mesh = LuxarScene.load(path).get_mesh("m")
+    assert mesh.normals is None
+    assert mesh.normal_dims is None
+
+
+def test_identical_vertices_are_not_deduplicated(tmp_path) -> None:
+    """Coincident vertex rows must survive as distinct rows.
+
+    This is the concrete hazard `deduplicate=False` exists for. The encoder can
+    store a duplicate array as an `array_ref` with physical shape `(0, D)`; if it
+    ever did that to `vertices`, every face index would address a row that is not
+    there. An all-coincident mesh is the worst case — every row is a duplicate of
+    every other — so it is the input that would trigger collapsing if it were
+    enabled.
+    """
+    vertices = np.zeros((4, 3), dtype=np.float32)
+    faces = np.array([[0, 1, 2], [1, 2, 3]], dtype=np.uint32)
+
+    store = tmp_path / "dup.luxar.zarr"
+    with LuxarZarrCompiler(store) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        scene.add_mesh("m", vertices, faces)
+
+    mesh = LuxarScene.load(store).get_mesh("m")
+    assert mesh.vertices.shape == (4, 3), (
+        f"vertices collapsed to {mesh.vertices.shape} — face indices now dangle"
+    )
+    assert np.array_equal(mesh.faces, faces)
+    # And the stored array is materialised, not an indirection the loader would
+    # have to resolve (it reads `vertices` as raw chunked zarr).
+    stored = zarr.open_group(store, mode="r")["m"]["vertices"]
+    assert stored.shape == (4, 3), f"physical shape {stored.shape} is not (4, 3)"
+
+
+@pytest.mark.parametrize(
+    "label,vertices,faces",
+    [
+        (
+            "single_triangle",
+            np.eye(3, dtype=np.float32),
+            np.array([[0, 1, 2]], np.uint32),
+        ),
+        (
+            "all_degenerate_faces",
+            np.eye(3, dtype=np.float32),
+            np.array([[0, 0, 0], [1, 1, 1]], np.uint32),
+        ),
+        (
+            "orphan_vertex",
+            np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0], [9, 9, 9]], np.float32),
+            np.array([[0, 1, 2]], np.uint32),
+        ),
+        (
+            "huge_coordinates",
+            (np.eye(3, dtype=np.float32) * 1e30),
+            np.array([[0, 1, 2]], np.uint32),
+        ),
+    ],
+)
+def test_degenerate_meshes_round_trip(tmp_path, label, vertices, faces) -> None:
+    """Nasty-but-valid meshes write and read with topology intact.
+
+    None of these is an error: a zero-area triangle, a vertex no face references,
+    and extreme coordinates are all things real decimation and isosurface output
+    produce. Rejecting them would refuse legitimate data, so the contract is that
+    they round-trip rather than that they are caught.
+    """
+    store = tmp_path / f"{label}.luxar.zarr"
+    with LuxarZarrCompiler(store) as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        scene.add_mesh("m", vertices, faces)
+
+    mesh = LuxarScene.load(store).get_mesh("m")
+    assert np.array_equal(mesh.faces, faces)
+    assert mesh.vertices.shape == vertices.shape

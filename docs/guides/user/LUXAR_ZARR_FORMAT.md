@@ -755,9 +755,18 @@ Two structural differences from the other three types:
   and LUT encoding of grid-snapped coordinates would decode as garbage.
 
 #### faces/ (Required)
-- **Shape:** `(F, 3)` — triangle vertex indices, `uint32`.
+- **Shape:** `(F, 3)` — triangle vertex indices.
+- **On-disk dtype:** ⚠️ **any unsigned integer width — a reader must not assume
+  `uint32`.** `uint32` is the writer's canonical logical dtype, but the `INDEX`
+  encoder narrows integer arrays losslessly by observed value range, so a
+  4-vertex mesh stores `uint8` and a 60k-vertex one `uint16`. The narrowing is
+  reversible (the original dtype is recorded in the array's `encoding` attr) and
+  verified exact in every encoding mode, but a consumer that hardcodes `uint32`
+  will reject valid stores. Accept any integer dtype and widen on read.
 - **Encoding:** `INDEX`, `deduplicate=false`, `allow_lut=false` — same reasoning
-  as `Lines.segments`.
+  as `Lines.segments`. Note `allow_lut=false` matters here beyond the raw-read
+  argument: grid-structured index values are exactly what LUT encoding targets, so
+  without it a regular mesh would be a prime candidate for it.
 - **Winding:** counter-clockwise as seen with the mesh's authored spatial triple
   in ascending index order. For a 3D mesh that triple is `[0,1,2]`; for an nD mesh
   it is `sorted(normal_dims)` when normals are present. No winding can be
