@@ -19,12 +19,12 @@ import zarr
 from luxar.core.dimensions import Dimension, Dimensions
 from luxar.core.group.lod.points import resolve_substitutive_axis_points
 from luxar.gsplats.lift import (
+    LIFT_TRUNCATION_RADIUS,
     coarse_substitutive_levels,
     lift_points_to_gsplats,
     render_light,
 )
 from luxar.io.compiler import LuxarZarrCompiler
-from luxar.typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
 
 # ────────────────────────────────────────────────────────────────────────
 # Resolver
@@ -43,7 +43,10 @@ class TestResolveSubstitutiveAxisPoints:
             assert r["compression_factor"] == 4
             assert r["levels"] == 3
             assert r["method"] == "auto"
-            assert r["truncation_radius"] == DEFAULT_TRUNCATION_RADIUS
+            # The resolver's default feeds the point/line lift, whose T is a
+            # profile-matching parameter (3.0) — deliberately NOT the render
+            # default DEFAULT_TRUNCATION_RADIUS (2.75). See lift.py.
+            assert r["truncation_radius"] == LIFT_TRUNCATION_RADIUS
 
     def test_aliases_K_and_n_lods(self) -> None:
         r = resolve_substitutive_axis_points(dict(K=8, n_lods=2))

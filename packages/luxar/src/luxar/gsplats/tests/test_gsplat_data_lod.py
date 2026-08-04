@@ -726,7 +726,7 @@ class TestTruncationRadius:
         )
 
     def test_default_truncation_radius(self):
-        """Default truncation_radius is 3.0."""
+        """Default truncation_radius is DEFAULT_TRUNCATION_RADIUS."""
         g = self._make_gsplat()
         assert g.truncation_radius == DEFAULT_TRUNCATION_RADIUS
         assert g.additive_sublods[0].truncation_radius == DEFAULT_TRUNCATION_RADIUS
