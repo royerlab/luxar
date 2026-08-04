@@ -6,6 +6,20 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
+#### Fixed — a caller `ordering=` no longer desyncs a node's on-disk sort order (#1221)
+
+`add_points` / `add_lines` / `add_gsplats` used to accept an `ordering=` keyword
+that nothing on the write side read, yet it was persisted over the value the
+geometry writer had already stamped — leaving the `ordering` attr disagreeing
+with how the arrays are actually sorted. The viewer trusts that attr to decode
+the space-filling-curve chunk index, so a stale value silently decoded the wrong
+curve (or, with `ordering="none"`, threw the spatial index away and loaded every
+element). `ordering` is now a reserved, writer-stamped attr on all three
+geometry types: supplying it is rejected up front, and the stamp always reflects
+the compiler's `ordering_method`. The standalone `save_gsplats` /
+`write_gsplats_tree` API, where `ordering` is a real honoured parameter, is
+unchanged.
+
 #### Added — targeted demo dependency installs and consistent install status (#915)
 
 `luxar demo deps --only MODULE` now narrows the report to one import module and,

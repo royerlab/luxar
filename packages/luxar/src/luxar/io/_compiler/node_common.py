@@ -22,8 +22,12 @@ from ...core.dimensions import Dimensions
 # letting them through would either silently lose the user's value (the stamp
 # wins on disk) or blow up post-write with an accidental TypeError when the
 # Node object is constructed (``type=`` collides with the Node constructor).
-# The ``ordering*`` stamps are deliberately NOT reserved: ``ordering=`` is an
-# accepted (stamped-over) call pattern in existing code and tests.
+# ``ordering`` IS reserved: the writer stamps it authoritatively from the
+# compiler's ``ordering_method``, so a caller value would silently overwrite it
+# and desync the attr from the on-disk sort order (issue #1221). The companion
+# ``ordering_min``/``ordering_max``/``ordering_bits_per_dim``/``ordering_dims``
+# sub-metadata stamps are writer-authoritative too; they are not listed here
+# because a caller supplying one is already rejected by the unknown-attr gate.
 POINTS_RESERVED_ATTRS: FrozenSet[str] = frozenset(
     {
         "type",
@@ -36,6 +40,7 @@ POINTS_RESERVED_ATTRS: FrozenSet[str] = frozenset(
         "has_labels",
         "position_bounds",
         "max_radius",
+        "ordering",
     }
 )
 LINES_RESERVED_ATTRS: FrozenSet[str] = frozenset(
@@ -51,6 +56,7 @@ LINES_RESERVED_ATTRS: FrozenSet[str] = frozenset(
         "has_labels",
         "max_width",
         "position_bounds",
+        "ordering",
     }
 )
 GSPLATS_RESERVED_ATTRS: FrozenSet[str] = frozenset(
@@ -64,6 +70,7 @@ GSPLATS_RESERVED_ATTRS: FrozenSet[str] = frozenset(
         "amplitude_data_range",
         "center_bounds",
         "position_bounds",
+        "ordering",
     }
 )
 
@@ -102,8 +109,8 @@ _ALLOWED_NODE_ATTRS: FrozenSet[str] = frozenset(
         # Processed by prepare_transform_attrs / apply_gsplat_group_attrs.
         "transform",
         "nd_transform",
-        # Spatial ordering, gsplat Gaussian cutoff, LOD selection, nD broadcast.
-        "ordering",
+        # gsplat Gaussian cutoff, LOD selection, nD broadcast. (``ordering`` is
+        # NOT here: it is writer-stamped and reserved via ``*_RESERVED_ATTRS``.)
         "truncation_radius",
         "coverage_fraction",
         "extend_to_all",
@@ -140,7 +147,6 @@ _SUGGESTION_ATTRS: tuple[str, ...] = tuple(
         | {
             "transform",
             "nd_transform",
-            "ordering",
             "truncation_radius",
             "coverage_fraction",
             "extend_to_all",
