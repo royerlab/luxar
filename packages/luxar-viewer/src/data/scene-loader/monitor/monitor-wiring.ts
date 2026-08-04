@@ -16,7 +16,11 @@
 
 import type { SceneNode } from '../../data-loader-types';
 import type { DataLoader } from '../../data-loader-types';
-import type { SceneGraphNode, CacheTelemetryState } from '../../../types/data-monitor-types';
+import type {
+  SceneGraphNode,
+  CacheTelemetryState,
+  DrawOrderProvider,
+} from '../../../types/data-monitor-types';
 import type {
   FailedLoadsProviderPort,
   SceneLoaderMonitorPort,
@@ -68,6 +72,12 @@ export interface WireMonitorAfterLoadParams {
   /** The scene-graph SceneNode the loader just built. */
   sceneGraph: SceneNode;
   /**
+   * Live per-mesh draw-order provider (bucket / depthWrite / renderOrder),
+   * built by the caller over the THREE root group so this helper stays free
+   * of THREE imports. Null in headless tests with no scene.
+   */
+  drawOrderProvider: DrawOrderProvider | null;
+  /**
    * Caller-supplied callback that traverses `rootGroup` and calls
    * `monitor.updateVisibleCount` once per geometry type. Lives on
    * SceneLoader because it reads the live THREE scene; passing it in
@@ -103,6 +113,7 @@ export function wireMonitorAfterLoad(params: WireMonitorAfterLoadParams): void {
     sceneGraph,
     updateVisibleCounts,
     failedLoads,
+    drawOrderProvider,
   } = params;
 
   if (!monitor) return;
@@ -161,6 +172,10 @@ export function wireMonitorAfterLoad(params: WireMonitorAfterLoadParams): void {
       partitionGroups: collectPartitionGroups(sceneGraph),
     })
   );
+
+  // Scene-Graph tab — live per-mesh draw order (bucket / depthWrite /
+  // renderOrder). Reads the live THREE root group each tick.
+  monitor.setDrawOrderProvider(drawOrderProvider);
 
   // Scene-Graph tab — initial snapshot.
   const sceneGraphRoot: SceneGraphNode = convertToSceneGraphNode(sceneGraph);

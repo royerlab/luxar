@@ -1497,8 +1497,8 @@ describe('depth-sort coordinator', () => {
 
   it('a partition wrapper whose AGGREGATE bounds contain a leaf draws all its parts first', async () => {
     // Multi-mesh groups aggregate an enclosing sphere from their members
-    // (centroid + max member reach). Two wide parts flank the origin; a
-    // marker leaf sits inside the union. The wrapper's MEAN view-z (-10)
+    // (the tighter of a Ritter union and a centroid+max-reach bound). Two wide
+    // parts flank the origin; a marker leaf sits inside it. The wrapper's MEAN view-z (-10)
     // is nearer than the marker (-30), so pure depth would draw the
     // marker first and the wrapper's parts would erase it — the aggregate
     // containment edge must hoist the whole wrapper, while the BSP ranks
@@ -1528,6 +1528,173 @@ describe('depth-sort coordinator', () => {
     expect(parts[0].renderOrder).toBe(0);
     expect(parts[1].renderOrder).toBe(1);
     expect(marker.renderOrder).toBe(2);
+  });
+
+  it('a loose-bound false positive: spread-out tiles do NOT hoist a disjoint neighbour', async () => {
+    // The biodiversity-demo inversion (#1227): a small sorted-mode (volumetric)
+    // backdrop — standing in for the demo's globe, since an actually-opaque mesh
+    // never enters the sorted set — sits OUTSIDE a partition group whose tiles
+    // are spread far along one axis.
+    // The old loose bound (centroid of member centers + max reach) centered
+    // the group sphere on the tile CENTROID and inflated its radius to reach
+    // the lone far tile, wrongly swallowing the disjoint globe. The TIGHT
+    // union hugs the real tile footprint, so no containment edge forms and
+    // plain farthest-first depth order survives.
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+
+    // Four clustered tiles near x=0 plus one far outlier at x=100 (all at
+    // z=-50). Centroid lands at x≈22.4, and the loose radius (reach to the
+    // x=100 tile, ≈78.6) sweeps a huge sphere back across the -x half-space
+    // that holds no actual content. The tight union is centered near x=50
+    // with radius ≈51 — it never reaches the globe.
+    const tileX = [0, 2, 4, 6, 100];
+    const tiles = tileX.map((x) => {
+      const t = makeGSplatsMesh(2, 'volumetric');
+      t.geometry.boundingSphere!.center.set(x, 0, -50);
+      t.geometry.boundingSphere!.radius = 1;
+      return t;
+    });
+    makePartitionWrapper(undefined, tiles);
+
+    // Disjoint backdrop on the -x side, FARTHER than the tiles (z=-60 vs -50)
+    // so farthest-first draws it first — unless a false containment edge
+    // hoists the tiles ahead of it.
+    const globe = makeGSplatsMesh(2, 'volumetric');
+    globe.geometry.boundingSphere!.center.set(-30, 0, -60);
+    globe.geometry.boundingSphere!.radius = 2;
+
+    coord.noteDepthSortCommit(globe, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    for (const t of tiles) coord.noteDepthSortCommit(t, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    await flush();
+
+    coord.evaluateDepthSortPerFrame();
+
+    // Tight bound: no edge → depth order. The farther globe draws first; all
+    // tiles follow. Under the old loose bound the globe would be hoisted to
+    // LAST (rank 5), inverting the backdrop behind its neighbour.
+    expect(globe.renderOrder).toBe(0);
+    expect(Math.min(...tiles.map((t) => t.renderOrder))).toBeGreaterThan(0);
+  });
+
+  it('a genuine containment inside one union member still hoists the partition first', async () => {
+    // Guard the other side of the tight bound: a leaf truly embedded inside
+    // one of a partition's member spheres must STILL be detected. Here a big
+    // member sphere fully encloses the globe, so the union contains it and the
+    // whole wrapper is hoisted ahead — even though the globe is FARTHER
+    // (z=-80) than the tiles' mean depth, so only containment (not depth) can
+    // produce this order.
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+
+    const big = makeGSplatsMesh(2, 'volumetric');
+    big.geometry.boundingSphere!.center.set(0, 0, -10);
+    big.geometry.boundingSphere!.radius = 100;
+    const small = makeGSplatsMesh(2, 'volumetric');
+    small.geometry.boundingSphere!.center.set(0, 0, -12);
+    small.geometry.boundingSphere!.radius = 5;
+    const tiles = [big, small];
+    makePartitionWrapper(undefined, tiles);
+
+    const globe = makeGSplatsMesh(2, 'volumetric');
+    globe.geometry.boundingSphere!.center.set(0, 0, -80); // deep inside `big`
+    globe.geometry.boundingSphere!.radius = 1;
+
+    coord.noteDepthSortCommit(globe, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    for (const t of tiles) coord.noteDepthSortCommit(t, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    await flush();
+
+    coord.evaluateDepthSortPerFrame();
+
+    // Containment edge holds: both tiles draw before the embedded globe.
+    expect(Math.max(...tiles.map((t) => t.renderOrder))).toBeLessThan(globe.renderOrder);
+  });
+
+  it('a symmetric (equilateral) tile layout does not hoist a neighbour Ritter alone would swallow', async () => {
+    // The min-of-two bound guard: on a near-symmetric footprint Ritter's union
+    // OVERSHOOTS the exact circumsphere (here ~11.9 vs 10.1) and off-centers it,
+    // which can re-introduce the very #1227 false-positive edge. The exact
+    // centroid+max-reach bound wins on this layout, so a neighbour that sits
+    // OUTSIDE the circumsphere but INSIDE the raw Ritter overshoot must NOT be
+    // hoisted. Fails if the bound is the raw Ritter sphere.
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+
+    // Three tiles on an equilateral triangle, circumradius 10, coplanar at
+    // z=-50. Centroid == circumcenter (origin), so the exact bound is r≈10.1;
+    // Ritter seeds on a side (r≈8.76) then expands to ~11.93 off-center.
+    const tileXY: Array<[number, number]> = [
+      [10, 0],
+      [-5, 8.66],
+      [-5, -8.66],
+    ];
+    const tiles = tileXY.map(([x, y]) => {
+      const t = makeGSplatsMesh(2, 'volumetric');
+      t.geometry.boundingSphere!.center.set(x, y, -50);
+      t.geometry.boundingSphere!.radius = 0.1;
+      return t;
+    });
+    makePartitionWrapper(undefined, tiles);
+
+    // Neighbour ~11 out along Ritter's bulge direction: outside the r≈10.1
+    // circumsphere (dist ≈ 11.0) but well inside the r≈11.9 Ritter overshoot.
+    // Slightly farther in z so farthest-first draws it first absent a false edge.
+    const neighbour = makeGSplatsMesh(2, 'volumetric');
+    neighbour.geometry.boundingSphere!.center.set(5.5, 9.53, -50.5);
+    neighbour.geometry.boundingSphere!.radius = 0.2;
+
+    coord.noteDepthSortCommit(neighbour, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    for (const t of tiles) coord.noteDepthSortCommit(t, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    await flush();
+
+    coord.evaluateDepthSortPerFrame();
+
+    // No false edge → depth order: the farther neighbour draws first. Under a
+    // raw Ritter bound it would be swallowed and hoisted to last.
+    expect(neighbour.renderOrder).toBe(0);
+    expect(Math.min(...tiles.map((t) => t.renderOrder))).toBeGreaterThan(0);
+  });
+
+  it('an asymmetric layout does not hoist an off-center neighbour only the Ritter sphere covers', async () => {
+    // A smaller Ritter radius does NOT make its containment relation a subset
+    // of the legacy one: the Ritter center is OFFSET, so its bulge can cover a
+    // disjoint neighbour the centroid sphere never reached. Three tiles at
+    // (0,0), (10,0), (0,8) give Ritter center (5,4) r≈6.5 vs centroid
+    // (3.33,2.67) r≈7.28 — Ritter is smaller and gets picked as the tight
+    // bound, yet a neighbour at (11,4) sits INSIDE it (dist 6.0) while the
+    // centroid sphere excludes it (dist ≈7.78 > 7.28). The edge must require
+    // BOTH bounds to agree, so this neighbour keeps plain depth order. Fails
+    // if containment is tested against the min-radius sphere alone.
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+
+    const tileXY: Array<[number, number]> = [
+      [0, 0],
+      [10, 0],
+      [0, 8],
+    ];
+    const tiles = tileXY.map(([x, y]) => {
+      const t = makeGSplatsMesh(2, 'volumetric');
+      t.geometry.boundingSphere!.center.set(x, y, -50);
+      t.geometry.boundingSphere!.radius = 0.1;
+      return t;
+    });
+    makePartitionWrapper(undefined, tiles);
+
+    // Slightly farther in z so farthest-first draws it first absent a false edge.
+    const neighbour = makeGSplatsMesh(2, 'volumetric');
+    neighbour.geometry.boundingSphere!.center.set(11, 4, -50.5);
+    neighbour.geometry.boundingSphere!.radius = 0.2;
+
+    coord.noteDepthSortCommit(neighbour, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    for (const t of tiles) coord.noteDepthSortCommit(t, new Float32Array([0, 0, -1, 1, 0, -2]), 2);
+    await flush();
+
+    coord.evaluateDepthSortPerFrame();
+
+    // No new false edge relative to the legacy bound → depth order survives.
+    expect(neighbour.renderOrder).toBe(0);
+    expect(Math.min(...tiles.map((t) => t.renderOrder))).toBeGreaterThan(0);
   });
 
   it('meshes without usable depth (no bounds / non-finite center) rank at view-z 0, no NaN poisoning', async () => {

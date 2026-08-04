@@ -35,6 +35,7 @@ import torch
 
 def _load_kidney_dapi() -> tuple[np.ndarray, str]:
     from skimage.data import kidney
+
     raw = kidney()
     V = raw[:, :, :, 0].astype(np.float32)
     V = (V - V.min()) / (V.max() - V.min() + 1e-8)
@@ -43,6 +44,7 @@ def _load_kidney_dapi() -> tuple[np.ndarray, str]:
 
 def _load_kidney_actin() -> tuple[np.ndarray, str]:
     from skimage.data import kidney
+
     raw = kidney()
     V = raw[:, :, :, 2].astype(np.float32)
     V = (V - V.min()) / (V.max() - V.min() + 1e-8)
@@ -52,6 +54,7 @@ def _load_kidney_actin() -> tuple[np.ndarray, str]:
 def _load_opencell_ch0() -> tuple[np.ndarray, str]:
     import tempfile
     import urllib.request
+
     import tifffile
 
     cache_dir = Path.home() / ".cache" / "luxar" / "gsplats_opencell_map4"
@@ -63,7 +66,7 @@ def _load_opencell_ch0() -> tuple[np.ndarray, str]:
             "MAP4_ENSG00000047849/"
             "OC-FOV_MAP4_ENSG00000047849_CID000828_FID00002848_stack.tif"
         )
-        print(f"Downloading OpenCell MAP4 TIFF (~70 MB)...")
+        print("Downloading OpenCell MAP4 TIFF (~70 MB)...")
         fd, tmp = tempfile.mkstemp(dir=cache_dir, suffix=".tmp")
         os.close(fd)
         try:
@@ -129,7 +132,7 @@ def run_single_fit(
 
     # Capture peak GPU memory BEFORE rendering (fitting peak is what matters)
     if torch.cuda.is_available():
-        peak_gpu_mb = torch.cuda.max_memory_allocated() / (1024 ** 2)
+        peak_gpu_mb = torch.cuda.max_memory_allocated() / (1024**2)
     else:
         peak_gpu_mb = 0.0
 
@@ -160,10 +163,18 @@ def run_benchmark(
     # Warmup run (first torch.compile is expensive, skews memory)
     if torch.cuda.is_available():
         V_warmup, _ = DATASET_LOADERS[0]()
-        from luxar.gsplats.fit_progressive_gsplats import fit_progressive_gaussian_splats
+        from luxar.gsplats.fit_progressive_gsplats import (
+            fit_progressive_gaussian_splats,
+        )
+
         _ = fit_progressive_gaussian_splats(
-            V_warmup, max_splats=1000, max_splats_per_pass=500,
-            iters_per_pass=50, max_passes=2, device=device, verbose=False,
+            V_warmup,
+            max_splats=1000,
+            max_splats_per_pass=500,
+            iters_per_pass=50,
+            max_passes=2,
+            device=device,
+            verbose=False,
         )
         del V_warmup, _
         torch.cuda.empty_cache()
@@ -180,11 +191,17 @@ def run_benchmark(
         psnr, wall_time, peak_mb = run_single_fit(
             V, max_splats, max_splats_per_pass, iters_per_pass, device
         )
-        print(f"    PSNR={psnr:.2f} dB, time={wall_time:.1f}s, peak_mem={peak_mb:.1f} MB")
-        results.append({
-            "dataset": name, "psnr_db": psnr,
-            "time_s": wall_time, "peak_gpu_mb": peak_mb,
-        })
+        print(
+            f"    PSNR={psnr:.2f} dB, time={wall_time:.1f}s, peak_mem={peak_mb:.1f} MB"
+        )
+        results.append(
+            {
+                "dataset": name,
+                "psnr_db": psnr,
+                "time_s": wall_time,
+                "peak_gpu_mb": peak_mb,
+            }
+        )
         del V
 
     psnrs = [r["psnr_db"] for r in results]
@@ -202,14 +219,18 @@ def run_benchmark(
 # 3-axis Pareto dominance
 # ---------------------------------------------------------------------------
 
-PSNR_EPS = 0.05       # dB — below this is noise
+PSNR_EPS = 0.05  # dB — below this is noise
 TIME_EPS_FRAC = 0.02  # 2% — measurement jitter
-MEM_EPS_FRAC = 0.02   # 2% — allocation jitter
+MEM_EPS_FRAC = 0.02  # 2% — allocation jitter
 
 
 def pareto_dominates(
-    new_psnr: float, new_time: float, new_mem: float,
-    old_psnr: float, old_time: float, old_mem: float,
+    new_psnr: float,
+    new_time: float,
+    new_mem: float,
+    old_psnr: float,
+    old_time: float,
+    old_mem: float,
 ) -> bool:
     """3-axis Pareto: (PSNR higher, time lower, memory lower).
 
@@ -243,7 +264,8 @@ def main():
     parser.add_argument("--splats-per-pass", type=int, default=8000)
     parser.add_argument("--iters-per-pass", type=int, default=5000)
     parser.add_argument(
-        "--baseline", type=str,
+        "--baseline",
+        type=str,
         default="scripts/benchmarks/data/progressive_pareto_baseline.json",
     )
     parser.add_argument("--device", type=str, default=None)
@@ -260,7 +282,7 @@ def main():
 
     baseline_path = Path(args.baseline)
 
-    print(f"=== Progressive 3-Axis Pareto Benchmark ===")
+    print("=== Progressive 3-Axis Pareto Benchmark ===")
     print(
         f"Budget: {args.max_splats} total, {args.splats_per_pass}/pass, "
         f"{args.iters_per_pass} iters/pass, device={device}"
@@ -272,7 +294,7 @@ def main():
     )
 
     print()
-    print(f"--- Aggregate ---")
+    print("--- Aggregate ---")
     print(f"  median_PSNR  = {median_psnr:.4f} dB")
     print(f"  median_time  = {median_time:.2f} s")
     print(f"  max_peak_mem = {max_mem:.1f} MB")
@@ -284,14 +306,18 @@ def main():
         old_time = baseline["median_time"]
         old_mem = baseline.get("max_peak_mem", float("inf"))
         print()
-        print(f"--- Baseline ---")
+        print("--- Baseline ---")
         print(f"  median_PSNR  = {old_psnr:.4f} dB")
         print(f"  median_time  = {old_time:.2f} s")
         print(f"  max_peak_mem = {old_mem:.1f} MB")
 
         dominates = pareto_dominates(
-            median_psnr, median_time, max_mem,
-            old_psnr, old_time, old_mem,
+            median_psnr,
+            median_time,
+            max_mem,
+            old_psnr,
+            old_time,
+            old_mem,
         )
         print()
         if dominates:

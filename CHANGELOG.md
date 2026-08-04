@@ -6,6 +6,52 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
+#### Demos — 4D NEXRAD weather-radar supercell (atmosphere/geoscience gap)
+
+New `demo_gsplats_4d_nexrad_supercell`: 82 WSR-88D Level II volume scans of the
+2013-05-31 Oklahoma convective evening as a 4D Gaussian-splat timelapse, 21:00
+UTC through 03:00 UTC — initiation, the El Reno tornado (touchdown 23:03,
+dissipation 23:43), and the overnight growth into the mesoscale system that
+flooded Oklahoma City. First atmosphere demo in the suite and the first gsplats
+demo in the `geoscience` category.
+
+Radar data arrives as nested *cones* — 14 discrete elevation tilts, not a
+volume — so the demo regrids polar gates onto a fixed Cartesian storm box with a
+Barnes-weighted `cKDTree` interpolation (scipy only, no Py-ART), geolocating
+every gate through the 4/3-effective-earth beam model and masking cells the beam
+could never reach rather than hiding the extrapolation with a threshold. Grid
+spacing (750 m) is matched to the real beam width at the storm's range rather
+than to gate spacing. Timepoints are stacked with `combine_as_new_dimension`
+into one 4D node, and a single GLOBAL intensity scale is used instead of the
+usual per-frame normalisation so the storm's intensification and decay survive.
+The splat budget is adaptive (constant occupied-voxels-per-splat) because the
+system grows ~6x across the window, and the scene bakes `CameraConfig(up=(0,0,1))`
+— a geographic scene left on the viewer's default up-vector renders its altitude
+axis sideways.
+
+Two Lines nodes accompany the splats: a marker at the surveyed tornado position
+on the frames when it was on the ground (NWS damage survey via the SPC tornado
+database — it lands on the radar's hook echo, an independent cross-check of the
+geolocation), and a faint wireframe cube outlining the analysis domain.
+
+Adds `metpy>=1.6.3,<2.0` to the `demos` extra (pure-Python Level II decoder; the
+floor is the NumPy-2 release). The default path loads precomputed splats from
+Git LFS and needs no network, GPU or decoder.
+
+#### Fixed — a caller `ordering=` no longer desyncs a node's on-disk sort order (#1221)
+
+`add_points` / `add_lines` / `add_gsplats` used to accept an `ordering=` keyword
+that nothing on the write side read, yet it was persisted over the value the
+geometry writer had already stamped — leaving the `ordering` attr disagreeing
+with how the arrays are actually sorted. The viewer trusts that attr to decode
+the space-filling-curve chunk index, so a stale value silently decoded the wrong
+curve (or, with `ordering="none"`, threw the spatial index away and loaded every
+element). `ordering` is now a reserved, writer-stamped attr on all three
+geometry types: supplying it is rejected up front, and the stamp always reflects
+the compiler's `ordering_method`. The standalone `save_gsplats` /
+`write_gsplats_tree` API, where `ordering` is a real honoured parameter, is
+unchanged.
+
 #### Added — targeted demo dependency installs and consistent install status (#915)
 
 `luxar demo deps --only MODULE` now narrows the report to one import module and,

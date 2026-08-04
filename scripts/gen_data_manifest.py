@@ -147,6 +147,21 @@ DATASETS: dict[str, dict] = {
         source="NLM Visible Human Project (Male head, PNG)",
         attribution="U.S. NLM Visible Human Project (public domain; acknowledge NLM, no endorsement implied).",
     ),
+    "gsplats_nexrad_supercell": dict(
+        bucket="zenodo",
+        record="cc-by",
+        license="pd-noaa",
+        source="NOAA NEXRAD Level II, KTLX (Twin Lakes, OK), 2013-05-31 21Z - 06-01 03Z",
+        # NOAA NODD asks for attribution, forbids implying endorsement, and
+        # forbids presenting MODIFIED data as original NOAA data — hence the
+        # explicit derived-product sentence.
+        attribution=(
+            "U.S. NOAA/NWS NEXRAD Level II via NOAA Open Data Dissemination "
+            "(public domain, 17 U.S.C. 105; acknowledge NOAA, no endorsement "
+            "implied). Derived product: regridded and Gaussian-fitted, not "
+            "original NOAA data."
+        ),
+    ),
     "gsplats_multichannel": dict(
         bucket="zenodo",
         record="cc-by",

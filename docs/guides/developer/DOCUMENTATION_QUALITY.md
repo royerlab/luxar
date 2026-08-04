@@ -14,7 +14,13 @@ time without a flag-day rewrite.
 - README quality: has a `## Quick Start` / `## Getting Started` section, is at
   least 500 characters, and contains a code example.
 - Every non-underscore `*.py` file (plus `__init__.py`) has a module docstring.
-- Docstring coverage across `def`/`class` definitions is at least 70%.
+- Docstring coverage is at least 70%, counting every `def`/`async def`/`class`
+  the file defines — methods and nested definitions included.
+- Both are measured from the parsed AST rather than a text heuristic, so a
+  shebang, a UTF-8 BOM, a PEP 263 encoding cookie and a multi-line signature
+  are all handled the way Python itself handles them.
+- A `*.py` file that cannot be parsed is reported as a `Python syntax` finding
+  (the run continues rather than crashing).
 
 **TypeScript** (`packages/luxar-viewer/src/`, one pass per package directory):
 

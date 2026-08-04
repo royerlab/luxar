@@ -98,6 +98,16 @@ INSTALL_SPECS: dict[str, DependencySpec] = {
         "Needed only by the gsplat demos' `--show-roundtrip` diagnostic plot; "
         "the demo itself runs without it.",
     ),
+    "metpy": DependencySpec(
+        "metpy>=1.6.3,<2.0",
+        "demos",
+        "Pure-Python NEXRAD Level II decoder (metpy.io.Level2File). Needed only "
+        "to re-decode and re-fit the radar volumes; the precomputed Git LFS "
+        "bundle skips it entirely. The >=1.6.3 floor is load-bearing: metpy "
+        "declares only numpy>=1.20.0, and 1.6.3 is the first release with "
+        "NumPy 2.0 support, so below it the resolver pairs metpy with Luxar's "
+        "numpy>=2.0 core pin and it breaks at runtime.",
+    ),
     "mrcfile": DependencySpec("mrcfile>=1.4.0", "demos"),
     "networkx": DependencySpec("networkx>=3.0", "demos"),
     "nibabel": DependencySpec("nibabel>=5.0.0", "demos"),

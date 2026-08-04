@@ -17,6 +17,7 @@
 
 import * as THREE from 'three';
 import type { SimpleDims } from '../../../types/dims';
+import { LOADER_TYPES, type LoaderTypeName } from '../../../types/format-contract';
 
 /** Per-mesh point-cloud info reported by getState(). */
 export interface PointCloudInfo {
@@ -104,6 +105,30 @@ export interface DebugState {
   cameraFov: number;
   isAnimating: boolean;
   initialized: boolean;
+}
+
+/**
+ * One data mesh's cross-node draw-order record, reported by
+ * `window.__luxarDebug.getDrawOrder()`. Mirrors what the depth-sort
+ * coordinator's `renderOrder` pass and the material's blending state
+ * decide, so a viewer bug (a backdrop drawn after the content in front of
+ * it) can be diagnosed from the console without a renderer capture.
+ */
+export interface DrawOrderEntry {
+  /** Scene-graph path / name of the mesh (node-factory stamps `mesh.name = path`). */
+  path: string;
+  /**
+   * Blending bucket: `'transparent'` sorts, `'opaque'` is drawn depth-first.
+   * THREE renders the whole opaque list before the transparent list, so the
+   * bucket outranks `renderOrder` in the effective draw order.
+   */
+  bucket: 'opaque' | 'transparent';
+  /** Whether this mesh writes depth (`material.depthWrite`). */
+  depthWrite: boolean;
+  /** Resolved `mesh.renderOrder` (ascending within a bucket → lowest drawn first). */
+  renderOrder: number;
+  /** Element count for the mesh (points / splats / line segments). */
+  elements: number;
 }
 
 /** Surface this helper needs from the parent LuxarApp's components. */
@@ -272,4 +297,83 @@ export function computeDebugState(ctx: DebugStateContext): DebugState {
     isAnimating: ctx.isAnimating,
     initialized: ctx.initialized,
   };
+}
+
+/**
+ * The viewer-drawable node types that carry a material + draw order — the
+ * loader set (points / lines / gsplats), shared with
+ * `data/scene-loader/monitor/draw-order-provider.ts` so drawability stays a
+ * single capability and a future `mesh` loader is admitted in one place.
+ */
+const DATA_NODE_TYPES: ReadonlySet<string> = new Set<LoaderTypeName>(LOADER_TYPES);
+
+/**
+ * Walk the scene and report the effective cross-node draw order of every
+ * VISIBLE data mesh: opaque meshes first — THREE renders its whole opaque
+ * list before the transparent list, so the bucket outranks `renderOrder`,
+ * which only orders meshes WITHIN a list — then `renderOrder` ascending.
+ * Residual ties keep traversal (scene-graph) order as a deterministic report
+ * order (THREE itself then compares material id / view-z, which this snapshot
+ * doesn't reproduce). Powers `window.__luxarDebug.getDrawOrder()`.
+ *
+ * Reads live THREE state: the blending bucket + `depthWrite` from the mesh's
+ * material and the resolved `renderOrder` the depth-sort coordinator assigned.
+ * Hidden subtrees are pruned (like `data/scene-loader/monitor/visible-counts.ts`):
+ * `renderOrder` is only assigned to visible sorted meshes and never reset, so a
+ * toggled-off layer or inactive LOD level would otherwise report a stale order.
+ * Element counts reuse the same `instanceCount` / `visible*Count` source of
+ * truth as {@link computeDebugState}.
+ */
+export function computeDrawOrder(scene: THREE.Object3D): DrawOrderEntry[] {
+  const entries: DrawOrderEntry[] = [];
+
+  // Manual recursion rather than `traverse`, which visits `visible === false`
+  // subtrees; those keep a stale `renderOrder` and must not be reported.
+  const visit = (object: THREE.Object3D): void => {
+    if (!object.visible) return;
+    if (
+      object instanceof THREE.Mesh &&
+      DATA_NODE_TYPES.has((object.userData as { nodeType?: string })?.nodeType ?? '')
+    ) {
+      // Materials can be arrays; the render bucket + depthWrite are shared, so
+      // the first material is representative.
+      const material = Array.isArray(object.material) ? object.material[0] : object.material;
+
+      const geometry = object.geometry as THREE.BufferGeometry;
+      const userData = object.userData as {
+        visiblePointCount?: number;
+        visibleSplatCount?: number;
+        visibleSegmentCount?: number;
+      };
+      const fallbackCount =
+        userData.visiblePointCount ??
+        userData.visibleSplatCount ??
+        userData.visibleSegmentCount ??
+        0;
+      const elements =
+        geometry instanceof THREE.InstancedBufferGeometry && Number.isFinite(geometry.instanceCount)
+          ? geometry.instanceCount
+          : fallbackCount;
+
+      entries.push({
+        path: object.name || 'unnamed',
+        bucket: material?.transparent ? 'transparent' : 'opaque',
+        depthWrite: !!material?.depthWrite,
+        renderOrder: object.renderOrder,
+        elements,
+      });
+    }
+    for (const child of object.children) visit(child);
+  };
+  visit(scene);
+
+  // Bucket first (THREE draws every opaque mesh before any transparent one,
+  // regardless of renderOrder — and an opaque mesh can carry a stale positive
+  // renderOrder from a live blending-mode switch, since it is never reset),
+  // then renderOrder within the bucket. The sort is stable, so residual ties
+  // keep traversal (scene-graph) order.
+  return entries.sort((a, b) => {
+    if (a.bucket !== b.bucket) return a.bucket === 'opaque' ? -1 : 1;
+    return a.renderOrder - b.renderOrder;
+  });
 }
