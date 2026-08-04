@@ -732,8 +732,8 @@ model is deliberately minimal and light-free:
   that precomputed fallback — only the `gl_FrontFacing` flip, never the derivative evaluation, sits
   behind the guard.
 
-  The flip is well-defined
-  wherever it applies: stored normals are only active when `normal_dims == displayDims` (§3.4), where
+  The flip is well-defined wherever it applies: stored normals are only active when
+  `normal_dims == displayDims` (§3.4), where
   §5.4's parity post-pass keeps winding coherent — specifically its **index post-pass** form, since the
   flip consumes `gl_FrontFacing` and needs it to correlate with the authored orientation — so the flip
   gives the back face the same headlight gradient as the front.
@@ -1273,7 +1273,11 @@ A reviewer should treat a `| 'mesh'` appearing in any of those five as a defect.
       `double_sided` mesh, a **back-viewed** face shades with the SAME headlight gradient as the
       **front-viewed** face (both lit symmetrically), NOT collapsed to flat `uAmbient` — verified to go
       **red** without the §6.2 `gl_FrontFacing` normal flip (the back face shades the inverted,
-      `uAmbient`-collapsing gradient instead of the front-facing one)
+      `uAmbient`-collapsing gradient instead of the front-facing one). And on the same back-viewed mesh
+      with one vertex's stored normal zeroed, the fragments where §3.5's epsilon guard fires shade from
+      the substituted derivative normal **without** the flip — the same camera-facing gradient as the
+      front view — verified to go **red** against a build that applies `gl_FrontFacing ? N : -N` to the
+      fallback normal (§6.2's per-fragment exemption)
 - [ ] TS unit (**both backends** — GLSL and TSL): **stored-normal view-space transform** — a
       smooth-shaded mesh whose stored per-vertex normals equal its geometric face normals, with at least
       one face normal that **mixes the differently-scaled axes** — a nonzero component both along z and
