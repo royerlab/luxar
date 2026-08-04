@@ -45,6 +45,22 @@
 //! could not compact the native `uint8`/`uint16` vertex colors the format
 //! permits without a widening pass.
 //!
+//! ## Buffer-shape contract
+//!
+//! `ndim`, `num_vertices` and `num_faces` are trusted, and are `debug_assert`ed
+//! rather than checked — matching every sibling kernel (`compact_by_mask`,
+//! `count_visible`). The loader is required to reconcile the declared shapes with
+//! the materialized array lengths before calling (`MESH_NODE_SPEC.md` §3.5
+//! Stage 2), so a mismatch is a caller bug, not untrusted input.
+//!
+//! Be aware that the two backends fail *differently* when that contract is
+//! broken, which matters when reading a bug report: Rust bounds-checks slice
+//! indexing even in release, so an oversized count **traps** — and because the
+//! crate is `panic = "abort"` the trap takes down the whole WASM module, not just
+//! this node (observed as `RuntimeError: unreachable`). The TypeScript reference
+//! instead reads `undefined`, fails the finite test, and silently culls. Neither
+//! is corruption, but only one is loud.
+//!
 //! ## Parity
 //!
 //! Kept in 1:1 parity with `wasm/typescript/mesh-culling.ts`. That reference is
@@ -83,6 +99,21 @@ const MAX_DIMS: usize = MAX_SUPPORTED_DIMS;
 /// `tolerance` (rather than the finite `EXTEND_TO_ALL_TOLERANCE` sentinel,
 /// `1e10`) makes `slice_max = +Inf`, and `+Inf <= +Inf` is **true**. Without
 /// this test an infinite coordinate would then be reported visible.
+///
+/// The rule covers the *coordinate* only, and the slab parameters behave the
+/// OPPOSITE way — worth knowing before reading a surprising screen:
+///
+/// - a `NaN` in `slice_position` or `tolerance` makes every **finite** vertex
+///   visible, because `value < NaN` and `value > NaN` are both false, so the
+///   slab test degenerates to "not non-finite". It fails OPEN, not closed.
+/// - a **negative** `tolerance` inverts the slab (`min > max`) and culls
+///   everything.
+///
+/// Both are caller bugs — `slice_position` and `tolerance` are viewer-computed,
+/// not store-supplied — and both backends agree exactly (verified across the
+/// full non-finite matrix), so neither is guarded here. Callers deriving a
+/// tolerance from possibly-absent dimension metadata should not let a `NaN`
+/// reach this kernel expecting it to be culled.
 ///
 /// # Arguments
 /// * `positions` - Vertex positions [num_vertices * ndim]
@@ -137,6 +168,10 @@ pub fn mesh_vertex_visibility_mask(
     // vertex-independent, and only hidden dimensions contribute — so the inner
     // loop runs over `num_hidden` (usually 1: a timepoint or channel) instead of
     // over `ndim` with a display-dim branch on every step.
+    //
+    // This is load-bearing, not cargo-cult: measured 2.6x against the same
+    // kernel with the bounds recomputed inside the vertex loop (1M vertices, 8D,
+    // 5 hidden dims). Don't fold it back in for brevity.
     let mut hidden_dims = [0usize; MAX_DIMS];
     let mut slab_min = [0f32; MAX_DIMS];
     let mut slab_max = [0f32; MAX_DIMS];
@@ -233,7 +268,13 @@ pub fn mesh_vertex_visibility_mask(
 /// * `output` - Output indices [num_faces * 3] worst case
 ///
 /// # Returns
-/// Number of visible faces written (slice `output` to `3 ×` this).
+///
+/// Number of visible faces written. **Slice `output` to `3 ×` this before use.**
+/// Everything past that point is left untouched — deliberately, to avoid a second
+/// pass over the buffer — so on a reused buffer it holds the *previous* frame's
+/// indices, and on a fresh one it holds zeros. Uploading the whole buffer as an
+/// index range therefore draws stale or degenerate triangles rather than
+/// nothing, which is the failure this return value exists to prevent.
 #[wasm_bindgen]
 pub fn compact_visible_faces(
     faces: &[u32],
@@ -396,6 +437,35 @@ mod tests {
         assert_eq!(mask, vec![1, 0]);
     }
 
+    /// A `NaN` slab PARAMETER fails OPEN — the opposite of a NaN coordinate.
+    /// Both `value < NaN` and `value > NaN` are false, so the test degenerates to
+    /// "not non-finite". Pinned so nobody adds a one-sided guard in one backend
+    /// and silently breaks parity; the TS reference asserts the same.
+    #[test]
+    fn test_nan_slab_parameters_fail_open() {
+        // A vertex far outside any sane slab, so only fail-open admits it.
+        let positions = vec![1.0, 2.0, 3.0, 999.0];
+
+        let (mask, visible) = mask_4d(&positions, f32::NAN, 0.5, 1);
+        assert_eq!(visible, 1, "NaN slice position should fail OPEN");
+        assert_eq!(mask, vec![1]);
+
+        let (mask, visible) = mask_4d(&positions, 5.0, f32::NAN, 1);
+        assert_eq!(visible, 1, "NaN tolerance should fail OPEN");
+        assert_eq!(mask, vec![1]);
+    }
+
+    /// A NEGATIVE tolerance inverts the slab (`min > max`) and culls everything,
+    /// including a vertex exactly on the slice.
+    #[test]
+    fn test_negative_tolerance_culls_everything() {
+        let positions = vec![1.0, 2.0, 3.0, 5.0]; // exactly on the slice
+        let (mask, visible) = mask_4d(&positions, 5.0, -1.0, 1);
+
+        assert_eq!(visible, 0);
+        assert_eq!(mask, vec![0]);
+    }
+
     /// #806: NaN on a hidden dim cannot be localized against the slice → out.
     #[test]
     fn test_nan_on_hidden_dim_is_invisible() {
@@ -527,6 +597,56 @@ mod tests {
             &mut output,
         );
 
+        assert_eq!(visible, 1);
+        assert_eq!(output, vec![1, 0]);
+    }
+
+    /// Fewer than 3 DISPLAY dims must work. The dimension hazard is two-sided
+    /// (see the WASM 16-dimension note in `CLAUDE.md`): >16D panics, and a
+    /// hardcoded sub-ndim of 3 has crashed a sibling kernel on 2D data before
+    /// (#881). This kernel is structurally immune — it reads only hidden
+    /// dimensions and never builds a display marginal — so the test exists to
+    /// keep it that way.
+    #[test]
+    fn test_fewer_than_three_display_dims() {
+        // 2D data, both dims shown → no hidden dims → all visible.
+        let mut output = vec![0u8; 2];
+        let visible = mesh_vertex_visibility_mask(
+            &[0.0, 0.0, 5.0, 5.0],
+            &[5.0, 5.0],
+            &[0.5, 0.5],
+            &[0, 1],
+            2,
+            2,
+            &mut output,
+        );
+        assert_eq!(visible, 2);
+
+        // 3D data, 2 dims shown → dim 2 hidden and discriminating.
+        let mut output = vec![0u8; 2];
+        let visible = mesh_vertex_visibility_mask(
+            &[0.0, 0.0, 5.0, 0.0, 0.0, 9.0],
+            &[0.0, 0.0, 5.0],
+            &[1e10, 1e10, 0.5],
+            &[0, 1],
+            3,
+            2,
+            &mut output,
+        );
+        assert_eq!(visible, 1);
+        assert_eq!(output, vec![1, 0]);
+
+        // ZERO dims shown → every dimension hidden.
+        let mut output = vec![0u8; 2];
+        let visible = mesh_vertex_visibility_mask(
+            &[5.0, 5.0, 9.0, 9.0],
+            &[5.0, 5.0],
+            &[0.5, 0.5],
+            &[],
+            2,
+            2,
+            &mut output,
+        );
         assert_eq!(visible, 1);
         assert_eq!(output, vec![1, 0]);
     }
@@ -733,18 +853,25 @@ mod tests {
     #[test]
     fn test_compact_drops_out_of_range_index_without_panicking() {
         // vertex_mask has 3 entries → valid indices are 0..2.
+        //
+        // The trailing VALID face is the point of the layout: a bad index must
+        // `continue` past that face only. With `break`, one corrupt index early in
+        // the array would silently discard every valid face after it — most of the
+        // mesh vanishing with no error — and a test whose only valid face came
+        // first could not tell the two apart.
         let faces = vec![
             0u32, 1, 2, // valid
             0, 1, 3, // index 3 out of range
             99, 0, 1, // wildly out of range
+            2, 1, 0, // valid, AFTER the bad ones
         ];
         let mask = vec![1u8, 1, 1];
-        let mut output = vec![0u32; 9];
+        let mut output = vec![0u32; 12];
 
-        let kept = compact_visible_faces(&faces, &mask, 3, &mut output);
+        let kept = compact_visible_faces(&faces, &mask, 4, &mut output);
 
-        assert_eq!(kept, 1);
-        assert_eq!(&output[..3], &[0, 1, 2]);
+        assert_eq!(kept, 2, "the valid face after a bad one must survive");
+        assert_eq!(&output[..6], &[0, 1, 2, 2, 1, 0]);
     }
 
     /// `u32::MAX` is the sentinel most likely to appear from a signed `-1`
@@ -758,6 +885,32 @@ mod tests {
         let kept = compact_visible_faces(&faces, &mask, 1, &mut output);
 
         assert_eq!(kept, 0);
+    }
+
+    /// `vertex_mask.len()` — not a separate count — is the valid-vertex
+    /// authority, so an OVERSIZED reused scratch mask admits faces that index
+    /// its stale tail. Pinned because the doc comment promises this, and because
+    /// a caller reusing one buffer across meshes must slice it to
+    /// `num_vertices` (the second half here) rather than pass it whole.
+    #[test]
+    fn test_compact_treats_mask_len_as_the_vertex_range() {
+        // 4 real vertices, but a 16-slot scratch buffer whose tail is stale 1s.
+        let mut scratch = vec![1u8; 16];
+        for slot in scratch.iter_mut().take(4) {
+            *slot = 0;
+        }
+        scratch[1] = 1; // the only genuinely visible real vertex
+        let faces = vec![1u32, 1, 1, 9, 10, 11]; // 2nd face lives in the stale tail
+        let mut output = vec![0u32; 6];
+
+        // Passed WHOLE: the stale tail is treated as real, so both faces survive.
+        let kept = compact_visible_faces(&faces, &scratch, 2, &mut output);
+        assert_eq!(kept, 2, "oversized mask admits its stale tail");
+
+        // Sliced to the real vertex count: the stale face is correctly dropped.
+        let kept = compact_visible_faces(&faces, &scratch[..4], 2, &mut output);
+        assert_eq!(kept, 1);
+        assert_eq!(&output[..3], &[1, 1, 1]);
     }
 
     /// A degenerate face (repeated index) is not special-cased: it is kept iff

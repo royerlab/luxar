@@ -97,6 +97,23 @@ describe('mesh_culling: mesh_vertex_visibility_mask', () => {
     expect(Array.from(mask)).toEqual([1, 0]);
   });
 
+  it('fails OPEN on a NaN slab parameter — the opposite of a NaN coordinate', () => {
+    // Both `value < NaN` and `value > NaN` are false, so the slab test
+    // degenerates to "not non-finite". Pinned so nobody adds a one-sided guard
+    // in one backend and silently breaks parity; the Rust kernel asserts the same.
+    const far = [1, 2, 3, 999]; // far outside any sane slab
+    expect(mask4d(far, NaN, 0.5, 1).visible).toBe(1); // NaN slice position
+    expect(mask4d(far, 5.0, NaN, 1).visible).toBe(1); // NaN tolerance
+  });
+
+  it('culls everything when the tolerance is negative (inverted slab)', () => {
+    // min > max, so even a vertex exactly on the slice is out.
+    const { mask, visible } = mask4d([1, 2, 3, 5], 5.0, -1.0, 1);
+
+    expect(visible).toBe(0);
+    expect(Array.from(mask)).toEqual([0]);
+  });
+
   it('culls a NaN coordinate on a hidden dimension (#806)', () => {
     const { mask, visible } = mask4d([1, 2, 3, NaN], 5.0, 1e10, 1);
 
@@ -205,6 +222,32 @@ describe('mesh_culling: mesh_vertex_visibility_mask', () => {
 
     expect(visible).toBe(1);
     expect(Array.from(output)).toEqual([1, 0]);
+  });
+
+  it.each([
+    ['2D data, both dims shown (no hidden)', [0, 0, 5, 5], [5, 5], [0.5, 0.5], [0, 1], 2, [1, 1]],
+    ['3D data, 2 dims shown', [0, 0, 5, 0, 0, 9], [0, 0, 5], [1e10, 1e10, 0.5], [0, 1], 3, [1, 0]],
+    ['1D shown of 2D', [0, 5, 0, 9], [0, 5], [1e10, 0.5], [0], 2, [1, 0]],
+    ['ZERO dims shown (all hidden)', [5, 5, 9, 9], [5, 5], [0.5, 0.5], [], 2, [1, 0]],
+  ])('handles fewer than 3 display dims: %s', (_label, pos, slice, tol, dd, ndim, expected) => {
+    // The dimension hazard is two-sided: >16D panics in WASM, and a hardcoded
+    // sub-ndim of 3 has crashed a sibling kernel on 2D data (#881). This kernel
+    // reads only hidden dims and never builds a display marginal, so it is
+    // structurally immune — these cases keep it that way.
+    const numVertices = (pos as number[]).length / (ndim as number);
+    const output = new Uint8Array(numVertices);
+    const visible = mesh_vertex_visibility_mask(
+      new Float32Array(pos as number[]),
+      new Float32Array(slice as number[]),
+      new Float32Array(tol as number[]),
+      new Uint32Array(dd as number[]),
+      ndim as number,
+      numVertices,
+      output
+    );
+
+    expect(Array.from(output)).toEqual(expected);
+    expect(visible).toBe((expected as number[]).filter((v) => v === 1).length);
   });
 
   it('admits the whole finite axis at EXTEND_TO_ALL_TOLERANCE (1e10)', () => {
@@ -359,17 +402,41 @@ describe('mesh_culling: compact_visible_faces', () => {
   it('drops out-of-range face indices instead of reading past the mask', () => {
     // The Rust sibling would abort the whole WASM module on this input; here an
     // unguarded read would yield `undefined`. Both must simply drop the face.
+    // The trailing VALID face is the point of the layout: a bad index must skip
+    // only that face. Were it a `break`, one corrupt index early in the array
+    // would silently discard every valid face after it, and a test whose only
+    // valid face came first could not tell the two apart.
     // prettier-ignore
     const faces = new Uint32Array([
       0, 1, 2,  // valid
       0, 1, 3,  // index 3 out of range (mask has 3 entries)
       99, 0, 1, // wildly out of range
+      2, 1, 0,  // valid, AFTER the bad ones
     ]);
-    const output = new Uint32Array(9);
+    const output = new Uint32Array(12);
 
-    const kept = compact_visible_faces(faces, new Uint8Array([1, 1, 1]), 3, output);
+    const kept = compact_visible_faces(faces, new Uint8Array([1, 1, 1]), 4, output);
 
-    expect(kept).toBe(1);
+    expect(kept).toBe(2);
+    expect(Array.from(output.subarray(0, 6))).toEqual([0, 1, 2, 2, 1, 0]);
+  });
+
+  it('coerces indices with ToUint32 so a SIGNED source matches WASM', () => {
+    // The declared `Uint32Array` is not a runtime guarantee, and the spec
+    // contemplates externally produced signed stores (§3.5 Stage 2). Without the
+    // `>>> 0`, `-1` passed this upper-bound-only guard and `vertexMask[-1]` was
+    // `undefined` (`!== 0`, so "visible") — emitting a face with a negative index
+    // here while WASM, seeing wasm-bindgen's `0xffffffff`, dropped it. That is the
+    // #806 divergence pattern, and it ships because this is the >16D backend.
+    const mask = new Uint8Array([1, 1, 1]);
+    const output = new Uint32Array(3);
+    const signed = new Int32Array([0, 1, -1]) as unknown as Uint32Array;
+
+    expect(compact_visible_faces(signed, mask, 1, output)).toBe(0);
+
+    // Fractional indices truncate exactly as wasm-bindgen's coercion does.
+    const fractional = [0.9, 1.2, 2.7] as unknown as Uint32Array;
+    expect(compact_visible_faces(fractional, mask, 1, output)).toBe(1);
     expect(Array.from(output.subarray(0, 3))).toEqual([0, 1, 2]);
   });
 
@@ -383,6 +450,24 @@ describe('mesh_culling: compact_visible_faces', () => {
     );
 
     expect(kept).toBe(0);
+  });
+
+  it('treats vertexMask.length as the valid-vertex range, not a separate count', () => {
+    // 4 real vertices in a 16-slot scratch buffer whose tail is stale 1s. Passed
+    // WHOLE, the stale tail counts as real; sliced to the true count, it doesn't.
+    // Pinned because the doc comment promises exactly this, and a caller reusing
+    // one buffer across meshes must subarray it.
+    const scratch = new Uint8Array(16).fill(1);
+    scratch.fill(0, 0, 4);
+    scratch[1] = 1; // the only genuinely visible real vertex
+    const faces = new Uint32Array([1, 1, 1, 9, 10, 11]); // 2nd face is in the stale tail
+    const output = new Uint32Array(6);
+
+    expect(compact_visible_faces(faces, scratch, 2, output)).toBe(2);
+
+    const kept = compact_visible_faces(faces, scratch.subarray(0, 4), 2, output);
+    expect(kept).toBe(1);
+    expect(Array.from(output.subarray(0, 3))).toEqual([1, 1, 1]);
   });
 
   it('keeps a degenerate (repeated-index) face when its vertices are visible', () => {

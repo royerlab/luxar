@@ -1828,24 +1828,69 @@ describe('WASM vs TypeScript Comparison', () => {
      */
     it.skipIf(!wasmFilesExist)('agrees on out-of-range face indices without trapping', () => {
       const mask = new Uint8Array([1, 1, 1]); // valid indices 0..2
+      // The trailing valid face proves the guard SKIPS a bad face rather than
+      // stopping: a `break` would discard every valid face after the first bad
+      // index, quietly losing most of a corrupt mesh.
       // prettier-ignore
       const faces = new Uint32Array([
         0, 1, 2,          // valid
         0, 1, 3,          // just past the end
         99, 0, 1,         // far past the end
         0, 1, 0xffffffff, // a signed -1 reinterpreted
+        2, 1, 0,          // valid, AFTER the bad ones
       ]);
-      const numFaces = 4;
+      const numFaces = 5;
 
       const tsFaces = new Uint32Array(numFaces * 3);
       const wasmFaces = new Uint32Array(numFaces * 3);
       const tsKept = tsModule.compact_visible_faces(faces, mask, numFaces, tsFaces);
       const wasmKept = wasmModule!.compact_visible_faces(faces, mask, numFaces, wasmFaces);
 
-      expect(wasmKept).toBe(1);
+      expect(wasmKept).toBe(2);
       expect(tsKept).toBe(wasmKept);
-      expect(arraysEqual(tsFaces.subarray(0, 3), wasmFaces.subarray(0, 3))).toBe(true);
-      expect(Array.from(wasmFaces.subarray(0, 3))).toEqual([0, 1, 2]);
+      expect(arraysEqual(tsFaces.subarray(0, 6), wasmFaces.subarray(0, 6))).toBe(true);
+      expect(Array.from(wasmFaces.subarray(0, 6))).toEqual([0, 1, 2, 2, 1, 0]);
+    });
+
+    /**
+     * A SIGNED or fractional face-index source must land on the same answer in
+     * both backends. wasm-bindgen copies `&[u32]` through `Uint32Array.set`, so
+     * WASM sees ToUint32 values (`-1` → `0xffffffff`, `1.5` → `1`); the TS
+     * reference reproduces that with `>>> 0`. Before it did, `-1` passed the TS
+     * upper-bound guard and `vertexMask[-1]` read `undefined` (truthy), emitting a
+     * negative-index face in TS and none in WASM — the #806 divergence pattern.
+     */
+    it.skipIf(!wasmFilesExist)('agrees on signed and fractional face indices', () => {
+      const mask = new Uint8Array([1, 1, 1]);
+      const cases: unknown[] = [
+        new Int32Array([0, 1, -1]),
+        new Int32Array([-1, -2, -3]),
+        [0, 1, -1],
+        [0.9, 1.2, 2.7],
+        new Uint32Array([0, 1, 2]), // canonical path must be unaffected
+      ];
+      for (const faces of cases) {
+        const tsOut = new Uint32Array(3);
+        const wasmOut = new Uint32Array(3);
+        type Compact = (f: unknown, m: Uint8Array, n: number, o: Uint32Array) => number;
+        const tsKept = (tsModule.compact_visible_faces as unknown as Compact)(
+          faces,
+          mask,
+          1,
+          tsOut
+        );
+        const wasmKept = (wasmModule!.compact_visible_faces as unknown as Compact)(
+          faces,
+          mask,
+          1,
+          wasmOut
+        );
+
+        expect(tsKept).toBe(wasmKept);
+        expect(arraysEqual(tsOut.subarray(0, tsKept * 3), wasmOut.subarray(0, wasmKept * 3))).toBe(
+          true
+        );
+      }
     });
 
     it.skipIf(!wasmFilesExist)('agrees on the no-hidden-dims fast path', () => {

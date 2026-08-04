@@ -140,8 +140,11 @@ A triangle is drawn iff ALL THREE of its vertices pass the nD slab test.
 ```
 
 The cost is a ragged, triangle-quantized cut boundary instead of a clean planar
-section — a documented v1 trade (`docs/specs/MESH_NODE_SPEC.md` §5.3), buying
-~150 LOC instead of ~1500.
+section — a documented v1 trade (`docs/specs/MESH_NODE_SPEC.md` §5.3). The
+saving is real: **183 code lines** across both backends (110 Rust + 73
+TypeScript, excluding comments and tests) against **803** for segment clipping
+(461 + 342). The spec estimates full nD polygon clipping at roughly ~1500 —
+that figure is the _unbuilt_ alternative, not the size of `lines_clipping.rs`.
 
 | Function                      | Purpose                                                                                                                                |
 | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |

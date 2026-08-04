@@ -64,8 +64,9 @@ does not render.
 vertices pass the nD slab test. Lines clip a segment against the slab and
 interpolate every attribute at the crossing; the exact triangle equivalent is nD
 polygon clipping with fan re-triangulation and per-new-vertex interpolation on
-every slice move. Culling whole triangles instead costs ~150 lines of kernel
-rather than ~1500, at the price of a ragged, triangle-quantized cut boundary
+every slice move. Culling whole triangles instead costs 183 code lines across both
+backends against 803 for segment clipping (the spec puts full nD polygon clipping
+at roughly ~1500), at the price of a ragged, triangle-quantized cut boundary
 instead of a clean planar section. Exact clipping stays out of scope.
 
 **Vertices are never compacted.** `compact_visible_faces` writes *original*
