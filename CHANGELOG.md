@@ -225,15 +225,25 @@ Four things in there are easy to get wrong, and each is pinned:
   `2^32 + 1` survives a post-cast check by wrapping to `1`, landing inside range,
   and rewriting topology instead of trapping. 64-bit values are compared as
   `BigInt` so nothing above 2^53 can round into range first.
-- **The byte budget reads the *declared* dtype and needs a per-chunk term.** The
-  `INDEX` encoder narrows `faces` to the smallest unsigned dtype that fits (a small
-  mesh lands as `uint8`) while an external `int64` store costs 8 bytes per index, so
-  a canonical-dtype budget is wrong in both directions. And zarr v2 does not
-  require `chunks <= shape`, so a 100-triangle array can declare a 268M-triangle
-  chunk and slip a multi-gigabyte allocation past a shape-only budget.
-- **Shapes are checked logically, not as stored.** `encoding.original_shape` wins
-  where present, or a LUT-encoded normals array and a broadcast uniform colour —
-  both of which the writer really produces — would be rejected as malformed.
+- **The byte budget charges what arrays DECODE to, not only what they store.** The
+  stored side can be arbitrarily smaller than the allocation, so a stored-only
+  budget is wrong in the dangerous direction: a broadcast array stores one row and
+  expands to `n_elements` rows (a ~12-byte declaration can materialize gigabytes),
+  every decoder-routed array yields a `Float32Array` (a `uint8` store decodes at
+  4x), and `faces` widens to u32 whatever narrow dtype the `INDEX` encoder chose.
+  The decoded term is also the only thing bounding `ndim`, which has no cap of its
+  own — `n_vertices: 4, ndim: 2^26` passes every count check on a trivial stored
+  footprint. The stored term still reads the *declared* dtype (an external `int64`
+  costs 8 bytes per index), and the per-chunk term stays separate because zarr v2
+  does not require `chunks <= shape`, so a 100-triangle array can declare a
+  268M-triangle chunk.
+- **Shapes are checked logically, and "logical" has three sources.**
+  `encoding.n_elements` (broadcast) first, then `encoding.original_shape` (LUT /
+  per-channel quantization), then the stored shape. Consulting only
+  `original_shape` rejects a uniform colour, because the broadcast encoder stamps
+  `n_elements` and *not* `original_shape`: `add_mesh(..., colors=(1, 0, 0))` and any
+  incidentally-uniform colour array both land as `shape: [1, 3]` and look like a
+  1-row array.
 
 At the default budget the ceiling binds long before the vertex cap: a 3D float32
 mesh runs out of bytes at ~44.7M vertices against a cap of 134.2M. The cap is still

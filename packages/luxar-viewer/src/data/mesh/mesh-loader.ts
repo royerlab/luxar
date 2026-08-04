@@ -104,6 +104,17 @@ export class MeshLoader implements MeshDataLoader {
   /** Serializes concurrent first loads onto one fetch (see {@link load}). */
   private inFlight: Promise<LoadedMeshData> | null = null;
 
+  /**
+   * Bumped by {@link dispose}, so a fetch that settles afterwards cannot write its
+   * result back into a loader that has been torn down.
+   *
+   * Without it, `dispose()` during an in-flight load leaves the completion free to
+   * repopulate `this.data` — resurrecting the cache on a dead loader, and for a
+   * near-budget mesh pinning up to half a gigabyte that nothing will ever read.
+   * Cheap enough that the whole-mesh payload makes it worth having.
+   */
+  private generation = 0;
+
   constructor(
     private readonly path: string,
     private readonly attrs: MeshMetadata,
@@ -286,9 +297,13 @@ export class MeshLoader implements MeshDataLoader {
     if (this.data) return Promise.resolve(this.data);
     if (this.inFlight) return this.inFlight;
 
+    const generation = this.generation;
     this.inFlight = this.fetch(signal)
       .then((data) => {
-        this.data = data;
+        // Only publish if this loader has not been disposed since the fetch began.
+        // The caller still receives the data — it is view-independent, so it is not
+        // wrong, just unwanted — but the loader does not retain it.
+        if (generation === this.generation) this.data = data;
         return data;
       })
       .finally(() => {
@@ -327,6 +342,7 @@ export class MeshLoader implements MeshDataLoader {
    * a subsequent `loadMesh` re-initializes and re-fetches rather than throwing.
    */
   dispose(): void {
+    this.generation++;
     this.handles = null;
     this.preflight = null;
     this.data = null;

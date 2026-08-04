@@ -38,10 +38,10 @@ that runs after decode arrives too late for the quantities that gate admission. 
 hostile store can declare enormous arrays and exhaust tab memory before the
 per-node `LoaderError` containment is ever reachable.
 
-| Stage | Runs on                    | Catches                                                                                                                                                                |
-| ----- | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1     | attrs + `.zarray` metadata | `n_vertices > 2^27`; over-budget declared footprint or per-chunk allocation; wrong shapes/dtypes; malformed `normal_dims`; presence flags that disagree with the store |
-| 2     | the materialized arrays    | short arrays; face indices outside `[0, V)`                                                                                                                            |
+| Stage | Runs on                    | Catches                                                                                                                                                            |
+| ----- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1     | attrs + `.zarray` metadata | `n_vertices > 2^27`; over-budget stored, decoded or per-chunk bytes; wrong logical shapes/dtypes; malformed `normal_dims`; a presence flag with no array behind it |
+| 2     | the materialized arrays    | short arrays; face indices outside `[0, V)`                                                                                                                        |
 
 Both fail the node with a `LoaderError` of kind `Validation` — one node lost, not
 the scene. The kind is load-bearing: it is persisted on the failure record, so the
@@ -59,13 +59,23 @@ Three details in here are easy to get wrong and are pinned by tests:
   range, and rewrites topology instead of trapping. An out-of-range index
   **panics** the Rust kernel (`panic = "abort"`, so it takes down the whole WASM
   module, not one node) and silently corrupts the TypeScript one.
-- **The byte budget reads the DECLARED dtype and needs a per-chunk term.** The
-  writer's `INDEX` encoder narrows `faces` to the smallest unsigned dtype that
-  fits (a small mesh lands as `uint8`) while an external `int64` store costs 8
-  bytes per index — so a canonical-dtype budget is wrong in both directions. And
-  zarr v2 does not require `chunks <= shape`, so a 100-triangle array can declare
-  a 268M-triangle chunk and slip a multi-gigabyte allocation past a shape-only
-  budget.
+- **The byte budget must charge what arrays DECODE to, not just what they store.**
+  The stored side can be arbitrarily smaller than the allocation: a broadcast array
+  stores one row and expands to `n_elements` rows, so a ~12-byte declaration can
+  materialize gigabytes; every decoder-routed array yields a `Float32Array`, so a
+  `uint8` store decodes at 4x; and `faces` widens to u32 whatever narrow dtype the
+  `INDEX` encoder chose. The decoded term is also the only thing bounding `ndim`,
+  which has no cap of its own. The stored term still reads the **declared** dtype
+  (never a canonical one — `int64` costs 8 bytes per index), and the per-chunk term
+  is separate because zarr v2 does not require `chunks <= shape`, so a 100-triangle
+  array can declare a 268M-triangle chunk.
+- **Shapes are checked LOGICALLY, and "logical" means three sources.**
+  `encoding.n_elements` (broadcast) wins first, then `encoding.original_shape`
+  (LUT / per-channel quantization), then the stored shape. Consulting only
+  `original_shape` rejects a uniform colour: the broadcast encoder stamps
+  `n_elements` and _not_ `original_shape`, so `add_mesh(..., colors=(1, 0, 0))` —
+  and any incidentally-uniform colour array — lands as `shape: [1, 3]` and looks
+  like a 1-row array.
 
 At the default 512 MiB budget the **budget binds long before the vertex cap**: a
 3D float32 mesh runs out of bytes at ~44.7M vertices, well under 2^27 (134.2M).
@@ -126,7 +136,14 @@ a reader might expect a re-fetch and find none.
 
 ## Not here yet
 
-Label / image-label CSR arrays are **budgeted** by Stage 1 but not fetched —
-picking arrives in a later phase. Counting them from the start means the ceiling
-does not silently loosen when the label loader lands; Stage 2's CSR
-offset-monotonicity check arrives with it.
+Label / image-label CSR arrays are **budgeted and pair-checked** by Stage 1 but not
+fetched — picking arrives in a later phase. Counting them from the start means the
+ceiling does not silently loosen when the label loader lands, and the pair check
+means a `has_labels` with one array missing fails now, while the error can still
+name the real problem. Stage 2's CSR offset-monotonicity check arrives with the
+fetch.
+
+Note what the presence-flag check does _not_ cover: the converse direction, an
+array the flags disown, is unreachable through the loader (it opens an optional
+array only when its flag is set), so it is deliberately not asserted rather than
+being enforcement that can never fire.

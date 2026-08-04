@@ -314,6 +314,17 @@ def test_ten_line_window_still_accepted_so_the_rule_stays_a_superset() -> None:
     assert cd.DocumentationChecker._has_jsdoc_above(line_comment, len(line_comment) - 1)
 
 
+def test_a_plain_block_comment_also_counts_as_jsdoc() -> None:
+    # Condition 1 checks only that the nearest non-blank line closes a block comment,
+    # so an ordinary /* ... */ implementation comment above an export counts too.
+    # That is looser than "has JSDoc" strictly means. Pinned rather than tightened:
+    # the rule is deliberately a SUPERSET of the old window so it can only remove
+    # findings, and narrowing it is a separate decision with its own blast radius
+    # (eight files newly failed when the strict form was tried alone).
+    lines = ["/* not really jsdoc */", "export type T = string;"]
+    assert cd.DocumentationChecker._has_jsdoc_above(lines, len(lines) - 1)
+
+
 def test_undocumented_export_is_still_undocumented() -> None:
     # Anti-vacuity: the two accepting conditions must not accept everything.
     lines = (

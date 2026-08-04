@@ -186,6 +186,58 @@ describe('preflightMesh — acceptance', () => {
     ).not.toThrow();
   });
 
+  it('accepts a BROADCAST colors array — the shape a uniform colour really takes', () => {
+    // The regression this pins. `add_mesh(..., colors=(1, 0, 0))` is a first-class
+    // API, and an INCIDENTALLY uniform (V, 3) array is broadcast-encoded too. Both
+    // land on disk as `shape: [1, 3]` with `n_elements: V` and — crucially — NO
+    // `original_shape`, verified against a written store. A logical-shape rule that
+    // consults only `original_shape` therefore sees a 1-row array and refuses a
+    // perfectly ordinary mesh.
+    expect(() =>
+      preflightMesh(
+        PATH,
+        tetAttrs({ has_colors: true }),
+        tetHandles({
+          colors: fakeArray([1, 3], '<f4', [1, 3], {
+            encoding: { name: 'broadcasted', n_elements: 4, original_dtype: 'float32' },
+          }),
+        })
+      )
+    ).not.toThrow();
+  });
+
+  it('reads the channel count of a broadcast RGBA colour from its stored row', () => {
+    const result = preflightMesh(
+      PATH,
+      tetAttrs({ has_colors: true }),
+      tetHandles({
+        colors: fakeArray([1, 4], '|u1', [1, 4], {
+          encoding: { name: 'broadcasted', n_elements: 4, original_dtype: 'uint8' },
+        }),
+      })
+    );
+    expect(result.colorComponents).toBe(4);
+  });
+
+  it('still rejects a broadcast colour whose n_elements disagrees with n_vertices', () => {
+    // Accepting `n_elements` must not become "accept any broadcast array": the
+    // decoder expands to `n_elements` rows, so a mismatch is exactly the
+    // undersized-attribute over-read the shape checks exist to stop.
+    expectReject(
+      () =>
+        preflightMesh(
+          PATH,
+          tetAttrs({ has_colors: true }),
+          tetHandles({
+            colors: fakeArray([1, 3], '<f4', [1, 3], {
+              encoding: { name: 'broadcasted', n_elements: 3 },
+            }),
+          })
+        ),
+      /colors describes 3 x 3 values but must be 4 x 3/
+    );
+  });
+
   it('accepts a BROADCAST scalars array, which stores one value for V vertices', () => {
     expect(() =>
       preflightMesh(
@@ -281,7 +333,7 @@ describe('preflightMesh — (b) the byte budget', () => {
           vertices: fakeArray([n, 4], '<f4', [65536, 4]),
           faces: fakeArray([4, 3], '<u4', [4, 3]),
         }),
-      /declared arrays total .* over the .* per-node budget/
+      /account for .* over the .* per-node budget/
     );
     expect(n).toBeLessThan(MAX_MESH_VERTICES);
   });
@@ -304,16 +356,19 @@ describe('preflightMesh — (b) the byte budget', () => {
   it('budgets the DECLARED dtype, not the canonical one', () => {
     // faces is logically uint32, but an external int64 store costs 8 bytes per
     // index. Budgeting a canonical 4 would let it fetch twice the audited bytes.
-    // 24M faces x 3 x 8 = 576 MiB (rejected); the same shape at 4 bytes would be
-    // 288 MiB (admitted) — so this asserts the itemsize is genuinely read.
-    const f = 24_000_000;
+    //
+    // At 20M faces the int64 store accounts for 720 MB (stored 480 + decoded 240)
+    // and is rejected, while the same shape as uint32 accounts for 480 MB (stored
+    // 240 + decoded 240) and is admitted. The pair is what proves the stored
+    // itemsize is genuinely read rather than assumed.
+    const f = 20_000_000;
     const int64Handles: MeshArrayHandles = {
       vertices: fakeArray([4, 3], '<f4', [4, 3]),
       faces: fakeArray([f, 3], '<i8', [65536, 3]),
     };
     expectReject(
       () => preflightMesh(PATH, tetAttrs({ n_faces: f }), int64Handles),
-      /declared arrays total/
+      /account for .* over the/
     );
     // Same shape, 4-byte dtype: admitted. If the budget ignored dtype these two
     // would agree, and the test above would be passing for the wrong reason.
@@ -337,8 +392,60 @@ describe('preflightMesh — (b) the byte budget', () => {
           labelOffsets: fakeArray([5], '<u4', [5]),
           labelBytes: fakeArray([bytes], '|u1', [65536]),
         }),
-      /declared arrays total/
+      /account for .* over the/
     );
+  });
+
+  it('charges what an array DECODES to, not only what it stores', () => {
+    // The budget-bypass this pins. A broadcast array stores one row and the decoder
+    // expands it to `n_elements` rows, so a ~12-byte declaration can materialize
+    // gigabytes. Budgeting the stored footprint alone admits it.
+    const rows = 60_000_000;
+    expectReject(
+      () =>
+        preflightMesh(PATH, tetAttrs({ n_vertices: rows, has_colors: true }), {
+          vertices: fakeArray([rows, 3], '<u2', [65536, 3]),
+          faces: fakeArray([4, 3], '<u4', [4, 3]),
+          colors: fakeArray([1, 4], '|u1', [1, 4], {
+            encoding: { name: 'broadcasted', n_elements: rows },
+          }),
+        }),
+      /account for .* over the/
+    );
+  });
+
+  it('bounds ndim, which has no cap of its own, via the decoded footprint', () => {
+    // `n_vertices: 4, ndim: 2^26` passes every count check and its STORED footprint
+    // is trivial, but `vertices` decodes to 4 x 2^26 float32 values — over a
+    // gigabyte. The logical term is the only thing standing between that
+    // declaration and the allocation.
+    const wide = 2 ** 26;
+    expectReject(
+      () =>
+        preflightMesh(PATH, tetAttrs({ ndim: wide }), {
+          vertices: fakeArray([4, wide], '|u1', [4, 4096]),
+          faces: fakeArray([4, 3], '<u4', [4, 3]),
+        }),
+      /account for .* over the/
+    );
+  });
+
+  it('charges a narrow dtype at its DECODED width, not its stored width', () => {
+    // Every decoder-routed array yields a Float32Array, so a uint8 store decodes at
+    // 4x its stored bytes — and `faces` is widened to u32 regardless of the narrow
+    // dtype the INDEX encoder chose. A stored-only budget under-counts by 4x here,
+    // in the dangerous direction.
+    const n = 100_000_000;
+    expectReject(
+      () =>
+        preflightMesh(PATH, tetAttrs({ n_vertices: n }), {
+          // 300 MB stored as uint8, but 1.2 GB once decoded to float32.
+          vertices: fakeArray([n, 3], '|u1', [65536, 3]),
+          faces: fakeArray([4, 3], '<u4', [4, 3]),
+        }),
+      /account for .* over the/
+    );
+    expect(n * 3 * 1).toBeLessThan(MESH_DECODE_BUDGET_BYTES);
   });
 
   it('rejects an unrecognised dtype rather than budgeting it as free', () => {
@@ -355,14 +462,14 @@ describe('preflightMesh — (c) shape and dtype cross-checks', () => {
     // ndim, so a narrower row reads past the end of the array.
     expectReject(
       () => preflightMesh(PATH, tetAttrs({ ndim: 4 }), tetHandles()),
-      /vertices declares shape \[4, 3\].*\(n_vertices, ndim\) = \(4, 4\)/s
+      /vertices describes 4 x 3 values but must be 4 x 4/
     );
   });
 
   it('rejects a vertices row count that disagrees with n_vertices', () => {
     expectReject(
       () => preflightMesh(PATH, tetAttrs(), tetHandles({ vertices: fakeArray([3, 3], '<f4') })),
-      /vertices declares shape \[3, 3\]/
+      /vertices describes 3 x 3 values/
     );
   });
 
@@ -374,7 +481,7 @@ describe('preflightMesh — (c) shape and dtype cross-checks', () => {
     expectReject(
       () =>
         preflightMesh(PATH, tetAttrs(), tetHandles({ faces: fakeArray(shape as number[], '<u4') })),
-      /faces declares shape/
+      /faces describes/
     );
   });
 
@@ -405,9 +512,9 @@ describe('preflightMesh — (c) shape and dtype cross-checks', () => {
   });
 
   it.each([
-    ['normals', 'has_normals', [3, 3], /normals declares shape/],
-    ['colors', 'has_colors', [4, 2], /colors declares shape/],
-    ['scalars', 'has_scalars', [3], /scalars declares shape/],
+    ['normals', 'has_normals', [3, 3], /normals describes/],
+    ['colors', 'has_colors', [4, 2], /colors describes/],
+    ['scalars', 'has_scalars', [3], /scalars describes/],
   ])('rejects an undersized %s array', (slot, flag, shape, pattern) => {
     // These bind as ENABLED vertex attributes on an indexed draw. An undersized
     // one does not trap — drawElements reads past the buffer and mis-shades
@@ -449,25 +556,35 @@ describe('preflightMesh — presence flags must match the store', () => {
     // lying flag produces a draw referencing a buffer never uploaded.
     expectReject(
       () => preflightMesh(PATH, tetAttrs(override as Partial<MeshMetadata>), tetHandles()),
-      new RegExp(`${flag} is set but the array is missing`)
+      new RegExp(`${flag} is set but its array\\(s\\) are missing`)
     );
   });
 
+  it('does NOT reject an array the flags disown — the loader cannot produce that', () => {
+    // The converse direction is unreachable through the real loader: `initialize`
+    // opens an optional array only when its flag is set. Asserting a rejection here
+    // would be testing a state production cannot construct, and the docs would be
+    // claiming an enforcement that never fires. So this pins the absence.
+    expect(() =>
+      preflightMesh(PATH, tetAttrs(), tetHandles({ normals: fakeArray([4, 3], '<f4') }))
+    ).not.toThrow();
+  });
+
   it.each([
-    ['normals', 'has_normals'],
-    ['colors', 'has_colors'],
-    ['scalars', 'has_scalars'],
-  ])('rejects a %s array the flags disown', (slot, flag) => {
+    ['has_labels', { has_labels: true }, 'labelOffsets'],
+    ['has_image_labels', { has_image_labels: true }, 'imageLabelOffsets'],
+  ])('rejects %s with only half of its CSR pair', (flag, override, presentSlot) => {
+    // v1 never fetches the label arrays, but a half-present pair is a store that
+    // fails confusingly the moment picking lands — so it is refused now, while the
+    // error can still name the actual problem.
     expectReject(
       () =>
         preflightMesh(
           PATH,
-          tetAttrs(),
-          tetHandles({
-            [slot as string]: fakeArray(slot === 'scalars' ? [4] : [4, 3], '<f4'),
-          })
+          tetAttrs(override as Partial<MeshMetadata>),
+          tetHandles({ [presentSlot as string]: fakeArray([5], '<u4') })
         ),
-      new RegExp(`${flag} says is absent`)
+      new RegExp(`${flag} is set but its array\\(s\\) are missing`)
     );
   });
 });

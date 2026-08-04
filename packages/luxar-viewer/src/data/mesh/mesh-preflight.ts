@@ -184,23 +184,60 @@ function elementCount(shape: readonly number[] | undefined): number | null {
 }
 
 /**
- * The array's LOGICAL shape — what the values mean, as opposed to how they are
- * stored.
+ * The array's LOGICAL layout — what the values MEAN and how many the decoder will
+ * materialize — as opposed to how they are stored.
  *
- * `encoding.original_shape` wins when present, because an encoded array's
- * stored shape legitimately differs: a broadcast uniform colour stores one
- * entry, and a LUT-encoded array stores codes. Checking the stored shape
- * against `(V, 3)` would reject both of those perfectly valid stores.
+ * Three sources, in the same priority order `ArrayDecoder` itself applies, and all
+ * three occur in stores this writer produces:
  *
- * Same rule `colorComponentsOf` applies for the channel count; kept here as its
- * own helper because the budget below needs the *stored* shape while the
- * cross-checks need the logical one, and conflating the two is exactly the bug
- * this comment exists to prevent.
+ * 1. **`encoding.n_elements`** (broadcast). The stored array holds ONE row and the
+ *    decoder expands it to `n_elements` rows. Critically, the broadcast encoder
+ *    stamps `n_elements` and **not** `original_shape` — so an `original_shape`-only
+ *    reading of "logical" mistakes a uniform colour for a 1-row array and rejects
+ *    it. `add_mesh(..., colors=(1, 0, 0))` is a first-class API, and an
+ *    *incidentally* uniform `(V, 3)` array is broadcast-encoded too, so this is the
+ *    common case rather than an exotic one.
+ * 2. **`encoding.original_shape`** (LUT, per-channel quantization). The stored array
+ *    holds codes whose shape differs from the values'.
+ * 3. **`array.shape`** for a plain unencoded array.
+ *
+ * Returning a layout rather than a shape is deliberate: the byte budget needs the
+ * total logical `count` (what gets allocated), while the cross-checks need `rows`
+ * and `components` separately. Collapsing them to one array invites reading the
+ * wrong one, which is exactly how the broadcast-colour rejection got in.
  */
-function logicalShape(array: zarr.Array<zarr.DataType, zarr.Readable>): readonly number[] {
+interface LogicalLayout {
+  /** Logical rows — one per vertex for every mesh array. */
+  rows: number;
+  /** Components per row: 3 for normals, 3 or 4 for colours, 1 for scalars. */
+  components: number;
+  /** Total values the decoder materializes (`rows * components`). */
+  count: number;
+}
+
+function logicalLayout(array: zarr.Array<zarr.DataType, zarr.Readable>): LogicalLayout | null {
   const attrs = (array.attrs ?? {}) as unknown as ArrayMetadata;
-  const original = attrs.encoding?.original_shape;
-  return Array.isArray(original) && original.length > 0 ? original : array.shape;
+  const encoding = attrs.encoding;
+
+  const trailing = (shape: readonly number[]): number =>
+    shape.length >= 2 ? shape[shape.length - 1] : 1;
+
+  // 1. Broadcast: rows come from n_elements, components from the stored row.
+  const n = encoding?.n_elements;
+  if (typeof n === 'number' && Number.isInteger(n) && n >= 0) {
+    const components = trailing(array.shape);
+    if (!Number.isInteger(components) || components < 1) return null;
+    return { rows: n, components, count: n * components };
+  }
+
+  // 2/3. Declared logical shape, else the stored one.
+  const original = encoding?.original_shape;
+  const shape = Array.isArray(original) && original.length > 0 ? original : array.shape;
+  const total = elementCount(shape);
+  if (total === null) return null;
+  const components = trailing(shape);
+  if (!Number.isInteger(components) || components < 1) return null;
+  return { rows: total / components, components, count: total };
 }
 
 /** Human-readable byte count for error messages. */
@@ -260,14 +297,39 @@ export function preflightMesh(
     );
   }
 
-  // --- (b) byte budget, from DECLARED shapes and DECLARED dtypes ------------
+  // --- (b) byte budget -----------------------------------------------------
   //
-  // Declared dtype, not the canonical one: `faces` is logically uint32 but the
-  // writer's INDEX encoder narrows it to the smallest unsigned dtype that fits
-  // (a small mesh lands as uint8), while an external int64 store costs 8 bytes
-  // per index. Budgeting a canonical 4 would under-count the first and let the
-  // second fetch twice the audited bytes.
-  let declaredBytes = 0;
+  // TWO terms per array, because the loader allocates twice over: it fetches the
+  // stored bytes, and then the decoder materializes the LOGICAL values, and on the
+  // admission path those coexist.
+  //
+  // Budgeting only the stored footprint is not conservative, it is wrong in the
+  // dangerous direction — the stored side can be arbitrarily smaller than what gets
+  // allocated:
+  //
+  //   * a BROADCAST array stores one row and decodes to `n_elements` rows, so a
+  //     ~12-byte declaration can materialize gigabytes;
+  //   * every decoder-routed array yields a Float32Array, so a `uint8` store decodes
+  //     at 4x its stored bytes and a `uint16` at 2x;
+  //   * `faces` is widened to u32 regardless of the narrow dtype the INDEX encoder
+  //     chose, so a `uint8` faces array also costs 4x on decode.
+  //
+  // So the logical term is charged at 4 bytes per value — the width of the widest
+  // thing any of these paths materializes (`Float32Array`, or `Uint32Array` for
+  // faces). Colours kept in their native dtype cost less than that, which makes this
+  // an over-estimate for them and never an under-estimate.
+  //
+  // Charging the logical term is also what bounds `ndim`, which has no cap of its
+  // own: `n_vertices: 4, ndim: 2^25` passes every count check, and its stored
+  // footprint can be tiny, but `vertices` decodes to 4 x 2^25 floats. The budget is
+  // the only thing standing between that declaration and a 512 MB allocation.
+  //
+  // The DECLARED dtype drives the stored term (never a canonical one): `faces` is
+  // logically uint32 but the INDEX encoder narrows it to the smallest unsigned dtype
+  // that fits, while an external int64 store costs 8 bytes per index — so a
+  // canonical 4 would be wrong in both directions.
+  const DECODED_BYTES_PER_VALUE = 4;
+  let accountedBytes = 0;
   for (const [slot, array] of Object.entries(arrays)) {
     if (!array) continue;
     const name = MESH_ARRAY_NAMES[slot as keyof MeshArrayHandles] ?? slot;
@@ -280,7 +342,11 @@ export function preflightMesh(
     if (stored === null) {
       rejectMesh(path, `${name} declares an unusable shape [${String(array.shape)}]`);
     }
-    declaredBytes += stored * parsed.itemSize;
+    const layout = logicalLayout(array);
+    if (layout === null) {
+      rejectMesh(path, `${name} declares an unusable logical shape`);
+    }
+    accountedBytes += stored * parsed.itemSize + layout.count * DECODED_BYTES_PER_VALUE;
 
     // Per-chunk term. Not redundant with the sum: zarr v2 does not require
     // `chunks <= shape`, so a `"shape": [100, 3]` array declaring
@@ -303,34 +369,52 @@ export function preflightMesh(
       );
     }
   }
-  if (declaredBytes > MESH_DECODE_BUDGET_BYTES) {
+  if (accountedBytes > MESH_DECODE_BUDGET_BYTES) {
     rejectMesh(
       path,
-      `declared arrays total ${mib(declaredBytes)}, over the ` +
-        `${mib(MESH_DECODE_BUDGET_BYTES)} per-node budget. A mesh is loaded whole, ` +
-        'so this is what the fetch would allocate. Decimate the mesh or split it ' +
-        'across nodes.'
+      `this node's arrays account for ${mib(accountedBytes)} (stored bytes plus what ` +
+        `they decode to), over the ${mib(MESH_DECODE_BUDGET_BYTES)} per-node budget. ` +
+        'A mesh is loaded whole, so this is what the load would allocate. Decimate ' +
+        'the mesh or split it across nodes.'
     );
   }
 
   // --- (c) shape and dtype cross-checks ------------------------------------
-  const vShape = logicalShape(arrays.vertices);
-  if (vShape.length !== 2 || vShape[0] !== nVertices || vShape[1] !== ndim) {
-    rejectMesh(
-      path,
-      `vertices declares shape [${vShape.join(', ')}] but the attrs say ` +
-        `(n_vertices, ndim) = (${nVertices}, ${ndim}). A width that disagrees with ` +
-        'ndim would index out of slice bounds in the nD slab kernel.'
-    );
-  }
+  //
+  // Against the LOGICAL layout, not the stored shape: a broadcast uniform colour
+  // stores one row, and a LUT-encoded normals array stores codes. Checking the
+  // stored shape rejects both, and both are stores this writer really produces.
+  const checkLayout = (
+    slot: keyof MeshArrayHandles,
+    array: zarr.Array<zarr.DataType, zarr.Readable>,
+    rows: number,
+    components: readonly number[],
+    extra = ''
+  ): LogicalLayout => {
+    const layout = logicalLayout(array);
+    if (layout === null) {
+      rejectMesh(path, `${MESH_ARRAY_NAMES[slot]} declares an unusable logical shape`);
+    }
+    if (layout.rows !== rows || !components.includes(layout.components)) {
+      rejectMesh(
+        path,
+        `${MESH_ARRAY_NAMES[slot]} describes ${layout.rows} x ${layout.components} ` +
+          `values but must be ${rows} x ${components.join(' or ')}.` +
+          (extra ? ` ${extra}` : '')
+      );
+    }
+    return layout;
+  };
 
-  const fShape = logicalShape(arrays.faces);
-  if (fShape.length !== 2 || fShape[0] !== nFaces || fShape[1] !== 3) {
-    rejectMesh(
-      path,
-      `faces declares shape [${fShape.join(', ')}] but must be (n_faces, 3) = ` + `(${nFaces}, 3).`
-    );
-  }
+  checkLayout(
+    'vertices',
+    arrays.vertices,
+    nVertices,
+    [ndim],
+    'A width that disagrees with ndim would index out of slice bounds in the nD slab kernel.'
+  );
+  checkLayout('faces', arrays.faces, nFaces, [3]);
+
   const fDtype = parseDtype(String(arrays.faces.dtype));
   if (!fDtype?.integer) {
     rejectMesh(
@@ -341,58 +425,41 @@ export function preflightMesh(
     );
   }
 
-  // Presence flags must agree with what is actually in the store, in BOTH
-  // directions. A flag set with no array behind it is the load-bearing case:
-  // the geometry builder reads the flag to decide whether to bind `normal` /
-  // `aScalar` and to enable the colormap path, so a lying flag produces a draw
-  // referencing a buffer that was never uploaded. The converse (an array the
-  // flags disown) is milder — the data is silently ignored — but it means the
-  // store disagrees with itself, so it is refused too rather than guessed at.
-  for (const [flagName, flag, array] of [
-    ['has_normals', attrs.has_normals, arrays.normals],
-    ['has_colors', attrs.has_colors, arrays.colors],
-    ['has_scalars', attrs.has_scalars, arrays.scalars],
+  // Presence flags must be backed by an array that is actually there. The
+  // geometry builder reads these flags to decide whether to bind `normal` /
+  // `aScalar` and to enable the colormap path, so a flag with nothing behind it
+  // produces a draw referencing a buffer that was never uploaded.
+  //
+  // Only this direction is checked. The converse — an array the flags disown — is
+  // NOT reachable through the loader, which opens an optional array only when its
+  // flag is set, so asserting it here would be testing a state production cannot
+  // construct. The label CSR arrays are checked as a PAIR for the same reason the
+  // others are checked at all: v1 never fetches them, but a `has_labels` with one
+  // array missing is a store that will fail confusingly the moment picking lands.
+  for (const [flagName, flag, required] of [
+    ['has_normals', attrs.has_normals, [arrays.normals] as const],
+    ['has_colors', attrs.has_colors, [arrays.colors] as const],
+    ['has_scalars', attrs.has_scalars, [arrays.scalars] as const],
+    ['has_labels', attrs.has_labels, [arrays.labelOffsets, arrays.labelBytes] as const],
+    [
+      'has_image_labels',
+      attrs.has_image_labels,
+      [arrays.imageLabelOffsets, arrays.imageLabelBytes] as const,
+    ],
   ] as const) {
-    if (flag && !array) {
-      rejectMesh(path, `${flagName} is set but the array is missing from the store.`);
-    }
-    if (!flag && array) {
-      rejectMesh(path, `the store contains an array that ${flagName} says is absent.`);
+    if (flag && required.some((a) => !a)) {
+      rejectMesh(path, `${flagName} is set but its array(s) are missing from the store.`);
     }
   }
 
   // Optional per-vertex arrays. Each binds as an enabled vertex attribute on an
   // indexed draw, so an undersized one over-reads rather than failing loudly.
-  if (arrays.normals) {
-    const shape = logicalShape(arrays.normals);
-    if (shape.length !== 2 || shape[0] !== nVertices || shape[1] !== 3) {
-      rejectMesh(
-        path,
-        `normals declares shape [${shape.join(', ')}] but must be (${nVertices}, 3).`
-      );
-    }
-  }
+  if (arrays.normals) checkLayout('normals', arrays.normals, nVertices, [3]);
+  let colorComponents: 3 | 4 | undefined;
   if (arrays.colors) {
-    const shape = logicalShape(arrays.colors);
-    if (shape.length !== 2 || shape[0] !== nVertices || (shape[1] !== 3 && shape[1] !== 4)) {
-      rejectMesh(
-        path,
-        `colors declares shape [${shape.join(', ')}] but must be (${nVertices}, 3) or ` +
-          `(${nVertices}, 4).`
-      );
-    }
+    colorComponents = checkLayout('colors', arrays.colors, nVertices, [3, 4]).components as 3 | 4;
   }
-  if (arrays.scalars) {
-    const shape = logicalShape(arrays.scalars);
-    // A broadcast scalar legitimately stores a single value, and `n_elements`
-    // (not `original_shape`) is how the encoder records its logical length —
-    // so accept either the full-length vector or a 1-element broadcast.
-    const broadcastN = (arrays.scalars.attrs as unknown as ArrayMetadata)?.encoding?.n_elements;
-    const isBroadcast = broadcastN === nVertices;
-    if (!isBroadcast && (shape.length !== 1 || shape[0] !== nVertices)) {
-      rejectMesh(path, `scalars declares shape [${shape.join(', ')}] but must be (${nVertices},).`);
-    }
-  }
+  if (arrays.scalars) checkLayout('scalars', arrays.scalars, nVertices, [1]);
 
   // --- (d) normal_dims well-formedness ------------------------------------
   let normalDims: number[] | undefined;
@@ -421,11 +488,5 @@ export function preflightMesh(
     normalDims = [...dims];
   }
 
-  return {
-    nVertices,
-    nFaces,
-    ndim,
-    colorComponents: arrays.colors ? (logicalShape(arrays.colors)[1] === 4 ? 4 : 3) : undefined,
-    normalDims,
-  };
+  return { nVertices, nFaces, ndim, colorComponents, normalDims };
 }

@@ -68,22 +68,31 @@ export const MAX_MESH_VERTICES = 134217728;
  * otherwise exhaust tab memory before the per-node `LoaderError` containment
  * is ever reachable.
  *
- * Two quantities are checked against this, both from `.zarray` metadata alone:
- * the summed declared footprint of every present array, and each array's
- * single largest per-chunk decode allocation. The second is not redundant —
- * zarr v2 does not require `chunks <= shape`, so a `"shape": [100, 3]` array
- * declaring `"chunks": [268435456, 3]` would slip a multi-gigabyte first-chunk
- * allocation past a shape-only budget.
+ * Three quantities are checked against this, all from `.zarray` metadata alone:
+ * every array's stored footprint, what each one DECODES to, and each array's
+ * single largest per-chunk allocation.
  *
- * Be precise about what this bounds: the declared *source* footprint plus any
- * single decode buffer — NOT the loader's whole transient peak. On the
- * admission path the decoded sources coexist with derived copies (the
- * u32-coerced `faces`, the extracted display-space `position`, the driver-side
- * GPU upload), each itself bounded by the source footprint, so the worst-case
- * peak is a small known multiple (~3-4x) of this value. 512 MiB therefore keeps
- * the worst case near 2 GiB, comfortably inside a 64-bit tab — which is also
- * why this must never be raised toward "what a tab survives": the tab has to
- * survive the multiple, not the ceiling.
+ * Charging the decoded term is not belt-and-braces — the stored side can be
+ * arbitrarily smaller than what gets allocated, so a stored-only budget is wrong
+ * in the dangerous direction. A broadcast array stores one row and expands to
+ * `n_elements` rows, so a ~12-byte declaration can materialize gigabytes; every
+ * decoder-routed array yields a `Float32Array`, so a `uint8` store decodes at 4x
+ * its stored bytes; and `faces` widens to u32 whatever narrow dtype the INDEX
+ * encoder chose. The decoded term is also the only thing bounding `ndim`, which
+ * has no cap of its own.
+ *
+ * The per-chunk term is likewise not redundant: zarr v2 does not require
+ * `chunks <= shape`, so a `"shape": [100, 3]` array declaring
+ * `"chunks": [268435456, 3]` would slip a multi-gigabyte first-chunk allocation
+ * past a shape-only budget.
+ *
+ * Be precise about what this bounds: stored bytes plus decoded bytes plus any
+ * single chunk buffer — NOT the loader's whole transient peak. Beyond the decoded
+ * arrays the admission path also holds the extracted display-space `position` and
+ * the driver-side GPU upload, so the real peak is a modest multiple of this value.
+ * 512 MiB keeps that comfortably inside a 64-bit tab — which is why this must
+ * never be raised toward "what a tab survives": the tab has to survive the
+ * multiple, not the ceiling.
  *
  * The ceiling is per NODE. N nodes can still sum to N x budget; the guarantee
  * it buys is "one node lost, not the scene", not an aggregate cap.

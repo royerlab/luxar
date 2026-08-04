@@ -229,6 +229,31 @@ describe('MeshLoader — the happy path', () => {
     expect(Array.from(data.scalars!)).toEqual([0, 0.25, 0.5, 1]);
   });
 
+  it('loads a BROADCAST uniform colour end to end', async () => {
+    // The regression the review caught, exercised through the real loader rather
+    // than hand-built handles: `add_mesh(..., colors=(1, 0, 0))` writes ONE stored
+    // row with `n_elements: V` and no `original_shape`. Stage 1 has to accept it and
+    // the decoder has to expand it, or a first-class API produces a store the viewer
+    // refuses.
+    const attrs = meshAttrs({ has_colors: true });
+    const store = buildStore(
+      attrs,
+      tetArrays({
+        colors: {
+          shape: [1, 3],
+          dtype: '<f4',
+          data: [1, 0, 0],
+          attrs: { encoding: { name: 'broadcasted', n_elements: 4, original_dtype: 'float32' } },
+        },
+      })
+    );
+    const data = await makeLoader(store, attrs).loadMesh(VIEW);
+    expect(data.colorComponents).toBe(3);
+    // Expanded to one entry per vertex, all the same colour.
+    expect(data.colors!.length).toBe(4 * 3);
+    expect(Array.from(data.colors!)).toEqual([1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0]);
+  });
+
   it('reports RGBA colours as 4 components', async () => {
     const attrs = meshAttrs({ has_colors: true });
     const store = buildStore(
@@ -293,6 +318,24 @@ describe('MeshLoader — whole-node residency', () => {
     expect(store.chunkRequests().length).toBeGreaterThan(2);
   });
 
+  it('does not repopulate its cache from a fetch that settles after dispose', async () => {
+    // Without the generation token the in-flight completion writes `this.data` back
+    // onto a torn-down loader, pinning a whole mesh nothing will ever read. The
+    // awaiting caller still gets its data — view-independent, so not wrong — but the
+    // loader must not retain it.
+    const store = buildStore(meshAttrs(), tetArrays());
+    const loader = makeLoader(store, meshAttrs());
+    const inFlight = loader.loadMesh(VIEW);
+    loader.dispose();
+    await expect(inFlight).resolves.toBeDefined();
+
+    // If the cache had been repopulated, this second load would be served from it
+    // and issue no further chunk reads.
+    const before = store.chunkRequests().length;
+    await loader.loadMesh(VIEW);
+    expect(store.chunkRequests().length).toBeGreaterThan(before);
+  });
+
   it('drops its cached data on dispose', async () => {
     const store = buildStore(meshAttrs(), tetArrays());
     const loader = makeLoader(store, meshAttrs());
@@ -342,7 +385,7 @@ describe('MeshLoader — Stage 1 rejects BEFORE any chunk is fetched', () => {
         faces: { shape: [4, 3], dtype: '<u4' },
       }),
       attrs,
-      /over the .* per-node budget/
+      /account for .* over the/
     );
   });
 
@@ -364,7 +407,7 @@ describe('MeshLoader — Stage 1 rejects BEFORE any chunk is fetched', () => {
     await expectRejectedWithoutFetching(
       buildStore(attrs, tetArrays()),
       attrs,
-      /vertices declares shape/
+      /vertices describes/
     );
   });
 
@@ -382,7 +425,7 @@ describe('MeshLoader — Stage 1 rejects BEFORE any chunk is fetched', () => {
     await expectRejectedWithoutFetching(
       buildStore(attrs, tetArrays({ colors: { shape: [2, 3], dtype: '|u1' } })),
       attrs,
-      /colors declares shape/
+      /colors describes/
     );
   });
 
@@ -391,7 +434,7 @@ describe('MeshLoader — Stage 1 rejects BEFORE any chunk is fetched', () => {
     await expectRejectedWithoutFetching(
       buildStore(attrs, tetArrays()),
       attrs,
-      /has_normals is set but the array is missing/
+      /has_normals is set but its array\(s\) are missing/
     );
   });
 
