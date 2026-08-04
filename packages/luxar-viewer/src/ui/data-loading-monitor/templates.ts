@@ -18,9 +18,10 @@ import type {
   SceneGraphNode,
   SceneGraphState,
   LODProgressState,
+  NodeDrawOrder,
 } from '../../types/data-monitor-types';
 import { escapeHtml } from '../../utils/escape-html';
-import { GEOMETRY_TYPES } from '../../types/format-contract';
+import { GEOMETRY_TYPES, LOADER_TYPES } from '../../types/format-contract';
 
 /**
  * Semantic color names mapped to CSS class modifiers.
@@ -1653,6 +1654,47 @@ function renderLodChip(node: SceneGraphNode, state: LODProgressState | undefined
 }
 
 /**
+ * Chip text + tooltip for a node's live draw-order state: the blending
+ * bucket, whether it writes depth, and the resolved `renderOrder` (drawn
+ * ascending). Returns `null` when no draw-order state is known for the node
+ * (no live mesh — a group, or before the first provider poll). Shared by the
+ * initial render and the monitor's incremental patcher so both agree.
+ */
+export function drawOrderChipContent(
+  state: NodeDrawOrder | undefined
+): { text: string; title: string } | null {
+  if (!state) return null;
+  const dw = state.depthWrite ? 'depthWrite on' : 'depthWrite off';
+  return {
+    text: `#${state.renderOrder} ${state.bucket}`,
+    title:
+      `Draw order: renderOrder ${state.renderOrder} (compared ascending — lower is drawn first), ` +
+      `${state.bucket} blending bucket, ${dw}. Opaque backdrops must be 'opaque' to composite ` +
+      'under the transparent content in front of them.',
+  };
+}
+
+/**
+ * The viewer-drawable node types (the loader set) that get a draw-order chip
+ * slot. Matches the provider's classification in
+ * `data/scene-loader/monitor/draw-order-provider.ts`.
+ */
+const DRAWABLE_NODE_TYPES: ReadonlySet<string> = new Set<string>(LOADER_TYPES);
+
+function renderDrawOrderChip(node: SceneGraphNode, state: NodeDrawOrder | undefined): string {
+  const content = drawOrderChipContent(state);
+  // A drawable node gets a (possibly empty) chip slot even without live
+  // state: the per-tick updater only patches EXISTING elements, and a node
+  // hidden at structural-render time (toggled-off layer, inactive
+  // substitutive-LOD level) has no provider state yet — without the empty
+  // slot its chip could never appear once the node becomes visible.
+  if (!content && !DRAWABLE_NODE_TYPES.has(node.type)) return '';
+  const text = content ? escapeHtml(content.text) : '';
+  const title = content ? escapeHtml(content.title) : '';
+  return `<span class="luxar-scene-graph__draworder" data-draworder-path="${escapeHtml(node.path)}" title="${title}">${text}</span>`;
+}
+
+/**
  * Role of a node that is a direct child of a substitutive `kind=lod`
  * group: `active` = the level currently rendered, `inactive` = a level
  * present in the file but not rendered right now. `undefined` when the
@@ -1726,6 +1768,7 @@ function renderSceneGraphNode(
   expandedNodes: Set<string>,
   depth: number = 0,
   lodStates?: Map<string, LODProgressState>,
+  drawOrderStates?: Map<string, NodeDrawOrder>,
   levelCtx?: LevelContext
 ): string {
   const hasChildren = node.children.length > 0;
@@ -1757,6 +1800,7 @@ function renderSceneGraphNode(
 
   const kindBadge = renderKindBadge(node);
   const lodChip = renderLodChip(node, lodStates?.get(node.path));
+  const drawOrderChip = renderDrawOrderChip(node, drawOrderStates?.get(node.path));
 
   // Expand/collapse toggle
   const toggleIcon = hasChildren ? (isExpanded ? '▼' : '▶') : '•';
@@ -1809,6 +1853,9 @@ function renderSceneGraphNode(
 
         <!-- Live LOD-progress chip (also carries the ⏳ refining marker) -->
         ${lodChip}
+
+        <!-- Live draw-order chip (blending bucket / depthWrite / renderOrder) -->
+        ${drawOrderChip}
       </div>
 
       <!-- Children (if expanded) -->
@@ -1821,6 +1868,7 @@ function renderSceneGraphNode(
                   expandedNodes,
                   depth + 1,
                   lodStates,
+                  drawOrderStates,
                   node.kind === 'lod'
                     ? {
                         parentPath: node.path,
@@ -1858,7 +1906,8 @@ export function activeLevelRole(
 export function renderSceneGraphTree(
   state: SceneGraphState,
   expandedNodes: Set<string>,
-  lodStates?: Map<string, LODProgressState>
+  lodStates?: Map<string, LODProgressState>,
+  drawOrderStates?: Map<string, NodeDrawOrder>
 ): string {
   if (!state.root) {
     return `
@@ -1899,7 +1948,7 @@ export function renderSceneGraphTree(
       </div>
       ${lodSummary ? `<div class="luxar-scene-graph__lod-summary" data-field="lod-summary" title="${escapeHtml(lodSummaryTooltip)}">${lodSummary}</div>` : ''}
       <div class="luxar-scene-graph__container">
-        ${renderSceneGraphNode(state.root, expandedNodes, 0, lodStates)}
+        ${renderSceneGraphNode(state.root, expandedNodes, 0, lodStates, drawOrderStates)}
       </div>
     </div>
   `;
