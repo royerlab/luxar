@@ -60,14 +60,22 @@ def test_loader_types_is_a_subset_of_geometry_types() -> None:
     assert set(LOADER_TYPES) <= set(GEOMETRY_TYPES)
 
 
-def test_mesh_is_writable_but_not_yet_drawable() -> None:
-    """The concrete case the vocabulary/capability split exists for.
+def test_mesh_is_both_writable_and_drawable() -> None:
+    """Mesh completed the phase-3 switch-on.
 
-    If this ever fails because mesh joined ``loader_types``, that is the phase-3
-    switch-on and the assertion should move, not be deleted.
+    This assertion MOVED rather than being deleted, as its predecessor asked: it
+    used to read ``"mesh" not in LOADER_TYPES``, pinning the writable-but-not-yet-
+    drawable state the vocabulary/capability split was introduced for. Flipping it
+    is the switch-on's visible signature on the Python side, and keeping the test
+    (rather than dropping it) is what stops mesh silently falling back OUT of
+    ``loader_types`` in some later contract edit.
+
+    Note the split itself is NOT obsolete now that the two lists agree on mesh:
+    ``loader_types`` remains a capability and ``geometry_types`` a vocabulary, and
+    the next writable-before-drawable type will need the gap again.
     """
     assert "mesh" in GEOMETRY_TYPES
-    assert "mesh" not in LOADER_TYPES
+    assert "mesh" in LOADER_TYPES
 
 
 @pytest.mark.parametrize("geometry_type", ["points", "lines", "gsplats"])

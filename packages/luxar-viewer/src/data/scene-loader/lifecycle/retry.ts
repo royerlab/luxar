@@ -18,6 +18,7 @@ import type * as THREE from 'three';
 import type { LoadedPointsData, ViewState } from '../../data-loader-types';
 import type { LinesDataLoader, LinesViewState } from '../../../types/lines';
 import type { GSplatsDataLoader, GSplatsViewState } from '../../../types/gsplats';
+import type { MeshDataLoader, MeshMetadata, MeshViewState } from '../../../types/mesh';
 import { log, Modules } from '../../../utils/log';
 import type { LoaderRegistry } from '../loaders/loader-registry';
 import type { LODGroupRegistry } from '../../../scene/lod-group-registry';
@@ -25,6 +26,7 @@ import { GEOMETRY_DESCRIPTORS } from '../geometry-descriptors';
 import type { StagedLinesCommit } from '../process/data-processor-lines';
 import type { StagedPointsCommit } from '../process/data-processor-points';
 import type { StagedGSplatsCommit } from '../process/data-processor-gsplats';
+import type { StagedMeshCommit } from '../process/data-processor-mesh';
 
 /**
  * Result of `deriveNodeViewState` — always a `{ skip: false; viewState }`
@@ -69,6 +71,13 @@ export interface RetryCtx {
     viewState: GSplatsViewState
   ): Promise<StagedGSplatsCommit | null>;
   commitGSplatsGeometry(staged: StagedGSplatsCommit): void;
+  processMeshData(
+    path: string,
+    data: Awaited<ReturnType<MeshDataLoader['updateView']>>,
+    viewState: MeshViewState,
+    attrs: Pick<MeshMetadata, 'normal_dims' | 'double_sided'>
+  ): Promise<StagedMeshCommit>;
+  commitMeshGeometry(staged: StagedMeshCommit): void;
 }
 
 /**

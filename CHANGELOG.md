@@ -280,6 +280,71 @@ triple than the frame, or the mesh declares no frame at all, projected orientati
 is per-triangle data-dependent and no index post-pass can fix it: the epoch renders
 double-sided with a one-time notice naming the node.
 
+#### Added — mesh renders: the `loader_types` switch-on
+
+`mesh` joins `loader_types` in the format contract, which is the moment it becomes
+viewer-drawable. A mesh now loads and draws — **unshaded**, with flat per-vertex
+colour. The shading model, picking, and Layers-panel appearance controls land in
+later phases (`docs/specs/MESH_NODE_SPEC.md` §11), so in this phase a mesh ignores
+`blending_mode`, `opacity`, `intensity`, `gamma` and `offset`; that is stated in
+`create-mesh-node.ts` because it otherwise reads as a bug.
+
+Flipping the contract fires exactly the three compile errors the split was designed
+to fire, and no others — measured before writing any code: 6 `tsc` errors across
+`tolerance-computer.ts`, `geometry-descriptors.ts` and `loader-registry.ts`, plus one
+vitest failure and one pytest failure, both deliberate pins. The Python pin
+`test_mesh_is_writable_but_not_yet_drawable` asked in its own docstring to be MOVED
+rather than deleted when this happened, and it was.
+
+**Mesh needed its own tolerance arm, and could not borrow any of the other three.**
+Every existing strategy derives from that type's per-element extent, and a mesh has
+none. Two halves, each with a specific failure mode if copied:
+
+- *Not Lines' `0` for hidden continuous dims.* Lines get away with zero because
+  segment clipping interpolates through the slab — a segment crossing the slice
+  yields an intersection even at zero thickness. Mesh culls whole triangles with no
+  interpolation, so `0` reduces membership to exact float equality with the slice
+  plane and the node renders **nothing**. This is the most tempting wrong answer,
+  because Lines is the nearest structural sibling; a test asserts mesh and lines
+  disagree here rather than merely checking mesh's value.
+- *Not the quarter-cell query reach for hidden discrete dims.* Mesh's slab is a
+  membership gate applied after fetch, not a chunk-fetch reach, so it takes the
+  half-cell. It is also the only arm that ignores `discreteRole`: mesh issues no
+  range query, so membership is the only rule it has, and honouring a `'query'` role
+  would hand a fetch reach to the one caller asking about visibility.
+
+Be honest about the continuous arm: with per-vertex cull there is no true planar
+cut, so a continuous hidden spatial dimension renders a **thick slab** and the
+thickness is the only control. The dominant real case is discrete — a mesh's hidden
+dimensions are almost always time or channel.
+
+**Rendering is a plain indexed `BufferGeometry`, not the instanced-quad stack.** The
+other three render per-element sprites whose size and orientation are computed in the
+shader, so they need an `InstancedBufferGeometry` and an RGBA32F element texture. A
+triangle is already geometry. Consequences: no GPU buffer pool (nothing churns —
+vertex buffers are uploaded once per `displayDims` epoch), no depth-sort registration
+(an opaque surface gets correct occlusion from the depth buffer), and no capacity
+clamp (mesh is bounded by `MAX_MESH_VERTICES` at the loader instead of by texture
+dimensions).
+
+Mesh is also the first type to feed colours to **vertex attributes** rather than an
+element texture, which is why the dtype rules matter: three r184's WebGPU backend
+exposes no 3-component 8/16-bit vertex format and requires `arrayStride` to be a
+multiple of 4, so a size-3 `uint8` colour attribute (3-byte stride) fails
+`createRenderPipeline` and the mesh renders nothing on WebGPU while looking correct
+on WebGL. RGB `uint8`/`uint16` colours are therefore padded to RGBA with an opaque
+alpha; `float32` binds natively. The index dtype keys on `vertexCount`, not the
+largest index present, because the index buffer is rebuilt on every slice change and
+a dtype that flips between rebuilds is the attribute-identity change WebGPU does not
+tolerate.
+
+Two exclusions confirmed rather than assumed. Mesh stays out of slice prefetch
+because `prefetch()` has exactly three hardcoded call sites and no fourth was added —
+now pinned by a test, since "it works because nobody wrote the line" is what a later
+refactor table-drives away. And `createProgressiveMeshLoader` **rejects** with an
+explanation instead of falling back to the single-LOD loader: mesh has no LOD path at
+all, and the descriptor table requires the factory for every drawable kind.
+
 #### Fixed — a `kind=lod` group could be given a display type nothing can load
 
 The LOD path only ever *derived* `display_type` from its finest child, with no

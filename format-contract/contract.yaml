@@ -60,13 +60,10 @@ geometry_types: ["points", "lines", "gsplats", "mesh"]
 # ERROR at `LoaderByKind`, `GEOMETRY_DESCRIPTORS` and `computeHiddenDimTolerance`
 # — never a silent gap.
 #
-# `mesh` is deliberately absent: it is writable (see `geometry_types`) but its
-# viewer loader/descriptor/tolerance arm land in a later phase — see
-# docs/specs/MESH_NODE_SPEC.md §11.
 #   TS: data/data-loader-types.ts::GeometryKind
 # The generator enforces that this is non-empty, a subset of `geometry_types`,
 # and duplicate-free.
-loader_types: ["points", "lines", "gsplats"]
+loader_types: ["points", "lines", "gsplats", "mesh"]
 
 # Specialized-group kinds written by the compiler.
 #   Python: io/_compiler/gsplat_tree.py   TS: types/data-monitor-types.ts

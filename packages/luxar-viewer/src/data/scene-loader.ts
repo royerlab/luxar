@@ -28,6 +28,9 @@ import {
   commitGSplatsGeometry as commitGSplatsGeometryHelper,
   type StagedGSplatsCommit,
 } from './scene-loader/process/data-processor-gsplats';
+import { commitMeshGeometry as commitMeshGeometryHelper } from './scene-loader/commit/commit-mesh-geometry';
+import { processMeshData as processMeshDataHelper } from './scene-loader/process/data-processor-mesh';
+import type { StagedMeshCommit } from './scene-loader/process/data-processor-mesh';
 import type { LoaderFactoryDeps } from './scene-loader/loaders/loader-factory';
 import { commitPointsGeometry as commitPointsGeometryHelper } from './scene-loader/commit/commit-points-geometry';
 import {
@@ -92,6 +95,7 @@ import { SliceCache } from '../cache/slice-cache';
 import type { CacheBudgets } from '../cache/heap-budget';
 import type { LinesDataLoader, LinesViewState, LoadedLinesData } from '../types/lines';
 import type { GSplatsDataLoader, GSplatsViewState, LoadedGSplatsData } from '../types/gsplats';
+import type { LoadedMeshData, MeshDataLoader, MeshMetadata, MeshViewState } from '../types/mesh';
 import { clearCommittedData } from '../types/committed-data';
 import { releaseDepthSortNode } from '../rendering/depth-sort-coordinator';
 import { GPUBufferPool } from '../rendering/gpu-buffer-pool';
@@ -1246,6 +1250,43 @@ export class SceneLoader {
   }
 
   /**
+   * Project + stage a mesh for commit.
+   *
+   * Implementation lives in `scene-loader/process/data-processor-mesh.ts`. Async
+   * only because backend selection is, so unlike the lines/gsplats twins this never
+   * resolves to `null` — there is no worker projection that can decline.
+   */
+  private processMeshData(
+    path: string,
+    data: LoadedMeshData,
+    viewState: MeshViewState,
+    attrs: Pick<MeshMetadata, 'normal_dims' | 'double_sided'>
+  ): Promise<StagedMeshCommit> {
+    return processMeshDataHelper(path, data, viewState, attrs);
+  }
+
+  /**
+   * Commit mesh geometry (synchronous).
+   *
+   * Implementation lives in `scene-loader/commit/commit-mesh-geometry.ts`. Takes no
+   * GPU buffer pool: a mesh's vertex buffers are uploaded once per `displayDims`
+   * epoch and never resized, so there is nothing for the pool to recycle.
+   */
+  private commitMeshGeometry(
+    staged: StagedMeshCommit,
+    session?: UpdateSession,
+    loadedViewVersion: number = this._updateVersion
+  ): void {
+    commitMeshGeometryHelper(
+      { rootGroup: this.rootGroup, currentVersion: this._updateVersion },
+      staged,
+      session,
+      loadedViewVersion
+    );
+    this._requestRender?.();
+  }
+
+  /**
    * Build the per-call NodeBuildCtx for the initial-load leaf helpers.
    * Snapshots viewState + factoryDeps so a concurrent updateView can't
    * mutate state mid-flight. Never passes `this`.
@@ -1319,6 +1360,10 @@ export class SceneLoader {
         this.processGSplatsData(path, data, viewState, session),
       commitGSplatsGeometry: (staged, session, loadedViewVersion) =>
         this.commitGSplatsGeometry(staged, session, loadedViewVersion),
+      processMeshData: (path, data, viewState, attrs) =>
+        this.processMeshData(path, data, viewState, attrs),
+      commitMeshGeometry: (staged, session, loadedViewVersion) =>
+        this.commitMeshGeometry(staged, session, loadedViewVersion),
     };
   }
 
@@ -1339,7 +1384,7 @@ export class SceneLoader {
    */
   private connectLoaderToMonitor(
     path: string,
-    loader: DataLoader | LinesDataLoader | GSplatsDataLoader
+    loader: DataLoader | LinesDataLoader | GSplatsDataLoader | MeshDataLoader
   ): void {
     connectLoaderToMonitorHelper(path, loader, this.monitor);
   }
@@ -1562,6 +1607,8 @@ export class SceneLoader {
       commitLinesGeometry: (staged) => this.commitLinesGeometry(staged),
       processGSplatsData: (path, data, vs) => this.processGSplatsData(path, data, vs),
       commitGSplatsGeometry: (staged) => this.commitGSplatsGeometry(staged),
+      processMeshData: (path, data, vs, attrs) => this.processMeshData(path, data, vs, attrs),
+      commitMeshGeometry: (staged) => this.commitMeshGeometry(staged),
     };
   }
 

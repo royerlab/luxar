@@ -28,10 +28,12 @@ import { LinesProgressiveLoader } from '../../lines/lines-progressive-loader';
 export type { PointsSpatialIndexLoader } from '../../points/points-spatial-index-loader';
 import { LinesSpatialIndexLoader } from '../../lines/lines-spatial-index-loader';
 import { GSplatsSpatialIndexLoader } from '../../gsplats/gsplats-spatial-index-loader';
+import { MeshLoader } from '../../mesh/mesh-loader';
 import { GSplatsProgressiveLoader } from '../../gsplats/gsplats-progressive-loader';
 import type { SceneNode } from '../../data-loader-types';
 import type { LinesDataLoader } from '../../../types/lines';
 import type { GSplatsDataLoader } from '../../../types/gsplats';
+import type { MeshDataLoader, MeshMetadata } from '../../../types/mesh';
 import { ArrayRefRegistry } from '../../array-decoder/decoder';
 import { log, Modules } from '../../../utils/log';
 import type { DecompressedChunkCache } from '../../../cache/decompressed-chunk-cache';
@@ -218,6 +220,56 @@ export async function createProgressiveGSplatsLoader(
     node.path,
     energyTable,
     deps.sliceCache ?? undefined
+  );
+}
+
+/**
+ * Create the loader for a mesh node.
+ *
+ * The whole-node loader — no spatial-index variant to choose between, because a
+ * mesh has no per-slice working set to skip (see `data/mesh/README.md`). So unlike
+ * the three sibling factories this one has a single branch.
+ */
+export function createMeshLoader(
+  node: SceneNode,
+  loc: zarr.Location<zarr.Readable>,
+  deps: LoaderFactoryDeps
+): MeshDataLoader {
+  const nodeLoc = resolveNodeLoc(node, loc, deps.zarrStore);
+  log.query(Modules.SCENE_LOADER, `Using MeshLoader for ${node.path}`);
+  return new MeshLoader(node.path, node.attrs as unknown as MeshMetadata, nodeLoc, {
+    zarrStore: deps.zarrStore,
+    arrayRefRegistry: deps.arrayRefRegistry,
+  });
+}
+
+/**
+ * Refuse to build a progressive (multi-LOD) mesh loader.
+ *
+ * Mesh has no LOD path at all — no decimation, no additive ladder
+ * (`docs/specs/MESH_NODE_SPEC.md` §9) — and the Python side already refuses to
+ * write a mesh under a `kind=lod` group. This exists because
+ * `GeometryDescriptor` requires the factory for every drawable kind, and the
+ * honest implementation of "this kind cannot do that" is a clear throw rather than
+ * a silent fallback to the single-LOD loader.
+ *
+ * Reaching this means a store declared `n_additive_sublods > 1` on a mesh node,
+ * which no Luxar writer produces; failing loudly is what turns that into one lost
+ * node with an explanation instead of a mesh that quietly renders its coarsest
+ * level forever.
+ */
+export function createProgressiveMeshLoader(
+  node: SceneNode,
+  _nAdditive: number,
+  _parentEffectiveAttrs: SceneNode['attrs'],
+  _deps: LoaderFactoryDeps
+): Promise<MeshDataLoader> {
+  return Promise.reject(
+    new Error(
+      `Mesh node ${node.path} declares additive sub-LODs, but mesh has no LOD path ` +
+        '(MESH_NODE_SPEC.md §9): there is no decimation and no additive ladder. ' +
+        'Write the mesh as a plain leaf.'
+    )
   );
 }
 

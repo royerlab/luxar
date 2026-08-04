@@ -42,6 +42,7 @@ function deriveDisplayName(path: string, rootType?: string): string {
       gsplats: 'GSplats',
       points: 'Points',
       lines: 'Lines',
+      mesh: 'Mesh',
       lod: 'LOD',
       partition: 'Partition',
       group: 'Group',
@@ -135,6 +136,11 @@ export function convertToSceneGraphNode(node: SceneNode): SceneGraphNode {
     graphNode.vertexCount = node.attrs.n_vertices as number | undefined;
   } else if (node.type === 'gsplats') {
     graphNode.splatCount = node.attrs.n_splats as number | undefined;
+  } else if (node.type === 'mesh') {
+    // Faces, not vertices: this family counts the DRAWN PRIMITIVE per type, which
+    // is also why `lines` above is counted by segments rather than vertices.
+    graphNode.faceCount = node.attrs.n_faces as number | undefined;
+    graphNode.vertexCount = node.attrs.n_vertices as number | undefined;
   }
 
   const kind = deriveKind(node);
