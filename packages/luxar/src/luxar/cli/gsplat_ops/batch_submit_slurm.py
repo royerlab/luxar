@@ -23,7 +23,7 @@ def submit_batch_jobs(
     preempt_partition: Optional[str],
 ) -> None:
     """Write sbatch scripts, submit dependent jobs, and persist manifest updates."""
-    import subprocess  # nosec B404 - controlled Slurm CLI invocations
+    import subprocess  # nosec B404
 
     from luxar.gsplats.batch.manifest import save_manifest
 
@@ -57,7 +57,8 @@ def submit_batch_jobs(
     calibrate_job_id = None
     if calibrate_script:
         aprint("Submitting calibration job...")
-        result = subprocess.run(  # nosec - trusted local sbatch invocation
+        # Trusted local sbatch invocation — fixed argv, no shell.
+        result = subprocess.run(  # nosec B603, B607
             ["sbatch", str(out / "calibrate.sbatch")],
             capture_output=True,
             text=True,
@@ -77,7 +78,8 @@ def submit_batch_jobs(
         if calibrate_job_id:
             dep_cmd.append(f"--dependency=afterok:{calibrate_job_id}")
         dep_cmd.append(str(out / "denoise_array.sbatch"))
-        result = subprocess.run(  # nosec B603 - trusted local sbatch invocation
+        # Trusted local sbatch invocation — fixed argv, no shell.
+        result = subprocess.run(  # nosec B603
             dep_cmd,
             capture_output=True,
             text=True,
@@ -107,7 +109,8 @@ def submit_batch_jobs(
     if fit_dep_id:
         fit_cmd.append(f"--dependency=afterok:{fit_dep_id}")
     fit_cmd.append(str(fit_path))
-    result = subprocess.run(  # nosec B603 - trusted local sbatch invocation
+    # Trusted local sbatch invocation — fixed argv, no shell.
+    result = subprocess.run(  # nosec B603
         fit_cmd,
         capture_output=True,
         text=True,
@@ -127,7 +130,8 @@ def submit_batch_jobs(
         if fit_dep_id:
             preempt_cmd.append(f"--dependency=afterok:{fit_dep_id}")
         preempt_cmd.append(str(out / "fit_array_preempt.sbatch"))
-        result = subprocess.run(  # nosec B603 - trusted local sbatch invocation
+        # Trusted local sbatch invocation — fixed argv, no shell.
+        result = subprocess.run(  # nosec B603
             preempt_cmd,
             capture_output=True,
             text=True,
@@ -153,7 +157,8 @@ def submit_batch_jobs(
         merge_cmd.append(f"--dependency=afterok:{dep_str}")
     merge_cmd.append(str(merge_path))
 
-    result = subprocess.run(  # nosec B603 - trusted local sbatch invocation
+    # Trusted local sbatch invocation — fixed argv, no shell.
+    result = subprocess.run(  # nosec B603
         merge_cmd,
         capture_output=True,
         text=True,
