@@ -545,11 +545,8 @@ install-dev:  ## Install Luxar Python package in editable mode for development
 # Goes through $(HATCH) like every other Python target: a bare `pip` installs
 # into whatever interpreter happens to be active (often the system one), which
 # then diverges from the env `make test` / `make check-all` actually use.
-# The mkdir is belt-and-suspenders, NOT a hard requirement: hatch_build.py's
-# `initialize()` swaps in `force_include_editable` for editable builds,
-# replacing the wheel target's viewer force-include, so an editable install on
-# a tree that has never built the viewer already succeeds without dist/.
-	@mkdir -p packages/luxar-viewer/dist
+# hatch_build.py replaces the wheel-only viewer force-include for editable
+# builds, so a fresh tree does not need packages/luxar-viewer/dist/.
 	$(HATCH) run pip install -e .
 
 install-demo-deps:  ## Install the demo extras (demos + gsplats + io)
@@ -557,11 +554,8 @@ install-demo-deps:  ## Install the demo extras (demos + gsplats + io)
 # so a CUDA build put in place by `make setup-cuda` (or a custom --index-url
 # wheel) survives this target; only a torch-less env gets the PyPI default.
 	@echo "📦 Installing optional demo dependencies (demos + gsplats + io extras)..."
-# Same belt-and-suspenders mkdir as install-dev — see the note there: editable
-# builds get `force_include_editable` from hatch_build.py instead of the wheel
-# target's viewer force-include, so a tree that has never built the viewer (a
-# fresh clone, a git worktree) installs fine without dist/.
-	@mkdir -p packages/luxar-viewer/dist
+# This is also editable, so hatch_build.py excludes the wheel-only viewer
+# bundle; a fresh clone/worktree installs without a prebuilt dist/ directory.
 	$(HATCH) run pip install -e ".[demos,gsplats,io]"
 	@echo ""
 	@$(HATCH) run luxar demo deps || true
