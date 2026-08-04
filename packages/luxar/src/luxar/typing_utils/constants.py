@@ -116,12 +116,15 @@ PHYSICAL_UNIT_DEFAULT: Final[str] = "au"  # Arbitrary units
 ZARR_METADATA_FILENAME: Final[str] = ".zmetadata"
 ZARR_ATTRS_KEY: Final[str] = ".zattrs"
 
-# Node type identifiers
+# Node type identifiers. These must cover `node_types` in
+# `format-contract/contract.yaml` exactly — `test_named_node_type_constants_match_contract`
+# pins the set both ways, so a contract addition with no constant here fails there.
 NODE_TYPE_SCENE: Final[str] = "scene"
 NODE_TYPE_GROUP: Final[str] = "group"
 NODE_TYPE_POINTS: Final[str] = "points"
 NODE_TYPE_LINES: Final[str] = "lines"
 NODE_TYPE_GSPLATS: Final[str] = "gsplats"
+NODE_TYPE_MESH: Final[str] = "mesh"
 
 # Point radius constants
 MIN_POINT_RADIUS: Final[float] = 0.001  # Minimum visible radius
