@@ -210,6 +210,101 @@ def test_ratchet_fixed_finding_detected(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# AST-based docstring checks (regression: text-heuristic false positives)
+# ---------------------------------------------------------------------------
+
+
+def _make_pkg(tmp_path: Path) -> Path:
+    """Create an empty python package tree and return its directory."""
+    pkg = tmp_path / "packages" / "luxar" / "src" / "luxar" / "widgets"
+    pkg.mkdir(parents=True)
+    return pkg
+
+
+def test_shebang_before_module_docstring_not_flagged(tmp_path: Path) -> None:
+    # A leading shebang used to defeat the ``.startswith('"""')`` heuristic even
+    # though a real module docstring follows it.
+    pkg = _make_pkg(tmp_path)
+    module = pkg / "gadget.py"
+    module.write_text(
+        "#!/usr/bin/env python3\n"
+        '"""Real docstring."""\n\n'
+        "def alpha():\n"
+        '    """Alpha."""\n'
+        "    return 1\n\n\n"
+        "def beta():\n"
+        '    """Beta."""\n'
+        "    return 2\n"
+    )
+    checker = _scan(tmp_path)
+    keys = cd.failure_keys(checker.results, tmp_path)
+    rel = "packages/luxar/src/luxar/widgets/gadget.py"
+    assert f"Module docstring::{rel}" not in keys
+
+
+def test_multiline_signature_with_docstring_counts_as_documented(
+    tmp_path: Path,
+) -> None:
+    # A multi-line signature put the docstring beyond the 2-line lookahead, so
+    # a fully-documented function was miscounted as undocumented.
+    pkg = _make_pkg(tmp_path)
+    module = pkg / "gadget.py"
+    module.write_text(
+        '"""Module."""\n\n'
+        "def wide(\n"
+        "    a,\n"
+        "    b,\n"
+        "    c,\n"
+        "):\n"
+        '    """Wide docstring."""\n'
+        "    return a + b + c\n\n\n"
+        "def narrow():\n"
+        '    """Narrow docstring."""\n'
+        "    return 0\n"
+    )
+    checker = _scan(tmp_path)
+    keys = cd.failure_keys(checker.results, tmp_path)
+    rel = "packages/luxar/src/luxar/widgets/gadget.py"
+    assert f"Docstring coverage::{rel}" not in keys
+
+
+def test_low_coverage_below_threshold_is_flagged(tmp_path: Path) -> None:
+    # Module docstring present so ONLY the coverage check can fire; three
+    # undocumented functions sit at 0% -> well below the 70% floor.
+    pkg = _make_pkg(tmp_path)
+    module = pkg / "gadget.py"
+    module.write_text(
+        '"""Module."""\n\n'
+        "def alpha():\n    return 1\n\n\n"
+        "def beta():\n    return 2\n\n\n"
+        "def gamma():\n    return 3\n"
+    )
+    checker = _scan(tmp_path)
+    keys = cd.failure_keys(checker.results, tmp_path)
+    rel = "packages/luxar/src/luxar/widgets/gadget.py"
+    assert f"Docstring coverage::{rel}" in keys
+
+
+def test_syntax_error_file_reported_once_and_does_not_raise(
+    tmp_path: Path,
+) -> None:
+    pkg = _make_pkg(tmp_path)
+    module = pkg / "broken.py"
+    module.write_text('"""Module."""\n\ndef (:\n    pass\n')
+
+    checker = _scan(tmp_path)  # must not raise
+    rel = "packages/luxar/src/luxar/widgets/broken.py"
+    syntax = [
+        r
+        for r in checker.results
+        if r.check_name == "Python syntax"
+        and cd.result_key(r, tmp_path) == f"Python syntax::{rel}"
+        and not r.passed
+    ]
+    assert len(syntax) == 1
+
+
+# ---------------------------------------------------------------------------
 # build_json_report structure (with and without a baseline)
 # ---------------------------------------------------------------------------
 

@@ -15,6 +15,8 @@ time without a flag-day rewrite.
   least 500 characters, and contains a code example.
 - Every non-underscore `*.py` file (plus `__init__.py`) has a module docstring.
 - Docstring coverage across `def`/`class` definitions is at least 70%.
+- A `*.py` file that cannot be parsed is reported as a `Python syntax` finding
+  (the run continues rather than crashing).
 
 **TypeScript** (`packages/luxar-viewer/src/`, one pass per package directory):
 
