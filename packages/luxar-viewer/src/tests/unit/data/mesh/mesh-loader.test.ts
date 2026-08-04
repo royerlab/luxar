@@ -241,6 +241,35 @@ describe('MeshLoader — the happy path', () => {
     expect(data.colorComponents).toBe(4);
     expect(data.colors!.length).toBe(16);
   });
+
+  it('expands a BROADCAST uniform colour to one colour per vertex', async () => {
+    // A uniform colour is stored broadcast: a single (1, d) row with the logical
+    // vertex count recorded in `encoding.n_elements` (NOT `original_shape`), which
+    // is exactly what the Python encoder writes. This goes through a REAL broadcast
+    // store — the whole point is that admission AND decode both honour the
+    // convention, expanding the one row to V copies.
+    const attrs = meshAttrs({ has_colors: true });
+    const store = buildStore(
+      attrs,
+      tetArrays({
+        colors: {
+          shape: [1, 3],
+          dtype: '|u1',
+          data: [255, 0, 0],
+          attrs: { encoding: { name: 'broadcasted', n_elements: 4, original_dtype: 'uint8' } },
+        },
+      })
+    );
+    const data = await makeLoader(store, attrs).loadMesh(VIEW);
+    expect(data.colorComponents).toBe(3);
+    expect(data.colors!.length).toBe(4 * 3);
+    // Native uint8 preserved through the broadcast decode — losing the
+    // `original_dtype` restoration would widen to Float32 and render 255× too
+    // bright (the GPU expects normalized uint8, not raw 0-255 floats).
+    expect(data.colors).toBeInstanceOf(Uint8Array);
+    // Every vertex is the same red — the broadcast row replicated across V.
+    expect(Array.from(data.colors!)).toEqual([255, 0, 0, 255, 0, 0, 255, 0, 0, 255, 0, 0]);
+  });
 });
 
 describe('MeshLoader — whole-node residency', () => {

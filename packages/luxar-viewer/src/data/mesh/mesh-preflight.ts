@@ -374,7 +374,19 @@ export function preflightMesh(
   }
   if (arrays.colors) {
     const shape = logicalShape(arrays.colors);
-    if (shape.length !== 2 || shape[0] !== nVertices || (shape[1] !== 3 && shape[1] !== 4)) {
+    // A uniform colour is stored broadcast: a genuine `broadcasted` encoding
+    // whose stored shape is (1, d), with `n_elements` (not `original_shape`)
+    // recording the logical vertex count — the same convention the scalars
+    // branch below handles. Both the encoding NAME and n_elements must match:
+    // a store that claimed a (1, d) shape without a real broadcast encoding
+    // would decode via the DIRECT path and silently zero-fill vertices 1..V-1.
+    // Accept that alongside a full-length (V, d) store; either way the
+    // component axis must be 3 or 4, since `colorComponents` reads it back
+    // from `logicalShape(...)[1]`.
+    const encoding = (arrays.colors.attrs as unknown as ArrayMetadata)?.encoding;
+    const isBroadcast = encoding?.name === 'broadcasted' && encoding.n_elements === nVertices;
+    const rowsOk = isBroadcast ? shape[0] === 1 : shape[0] === nVertices;
+    if (shape.length !== 2 || !rowsOk || (shape[1] !== 3 && shape[1] !== 4)) {
       rejectMesh(
         path,
         `colors declares shape [${shape.join(', ')}] but must be (${nVertices}, 3) or ` +

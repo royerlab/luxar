@@ -199,6 +199,35 @@ describe('preflightMesh — acceptance', () => {
       )
     ).not.toThrow();
   });
+
+  it('accepts a BROADCAST colors array (uniform colour) stored as (1, 4)', () => {
+    // A uniform colour is stored broadcast as (1, d), with `n_elements`
+    // recording the logical vertex count — the same convention the scalars
+    // branch accepts. The component axis (d) is still read back verbatim.
+    const result = preflightMesh(
+      PATH,
+      tetAttrs({ has_colors: true }),
+      tetHandles({
+        colors: fakeArray([1, 4], '|u1', [1, 4], {
+          encoding: { name: 'broadcasted', n_elements: 4, original_dtype: 'uint8' },
+        }),
+      })
+    );
+    expect(result.colorComponents).toBe(4);
+  });
+
+  it('accepts a BROADCAST colors array (uniform colour) stored as (1, 3)', () => {
+    const result = preflightMesh(
+      PATH,
+      tetAttrs({ has_colors: true }),
+      tetHandles({
+        colors: fakeArray([1, 3], '|u1', [1, 3], {
+          encoding: { name: 'broadcasted', n_elements: 4, original_dtype: 'uint8' },
+        }),
+      })
+    );
+    expect(result.colorComponents).toBe(3);
+  });
 });
 
 describe('preflightMesh — (a) counts and the vote-key cap', () => {
@@ -435,6 +464,25 @@ describe('preflightMesh — (c) shape and dtype cross-checks', () => {
       );
       expect(result.colorComponents).toBe(channels);
     }
+  });
+
+  it.each([
+    // n_elements ≠ n_vertices: the broadcast would not cover all V vertices.
+    ['a mismatched n_elements', { name: 'broadcasted', n_elements: 2 }],
+    // Not actually a broadcast encoding: a (1, d) store here decodes via the
+    // DIRECT path and silently zero-fills vertices 1..V-1 (black) — so the
+    // shape must be rejected unless it is a GENUINE broadcast.
+    ['a non-broadcast encoding', { name: 'none', n_elements: 4 }],
+  ])('rejects a (1, 3) colors store with %s', (_label, encoding) => {
+    expectReject(
+      () =>
+        preflightMesh(
+          PATH,
+          tetAttrs({ has_colors: true }),
+          tetHandles({ colors: fakeArray([1, 3], '|u1', [1, 3], { encoding }) })
+        ),
+      /colors declares shape/
+    );
   });
 });
 
