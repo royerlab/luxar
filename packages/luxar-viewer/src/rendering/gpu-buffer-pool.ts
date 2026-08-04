@@ -55,6 +55,7 @@ export type {
   PoolStats,
   PooledBufferRef,
 } from './gpu-buffer-pool/pool-stats';
+import { GSPLAT_DEFAULT_TRUNCATION_RADIUS } from '../config/constants';
 // (`selectBuffersToEvict` / `chooseCapacity` used to be re-exported here
 // too, but every consumer imports them from their `gpu-buffer-pool/`
 // modules directly — the facade copies were dead.)
@@ -289,7 +290,8 @@ export class GPUBufferPool {
 
   /**
    * Update GSplats geometry in place.
-   * @param truncationRadius - Truncation radius in sigmas (default 3.0).
+   * @param truncationRadius - Truncation radius in sigmas (defaults to
+   *   `GSPLAT_DEFAULT_TRUNCATION_RADIUS`).
    *   Must match the material's truncationRadius for correct frustum culling.
    * @param options - `preserveOrdering`: keep the geometry's existing
    *   `aSortedIndex` permutation instead of resetting it to identity
@@ -302,7 +304,7 @@ export class GPUBufferPool {
     geometry: THREE.InstancedBufferGeometry,
     data: PackedGSplatsData,
     count: number,
-    truncationRadius: number = 3.0,
+    truncationRadius: number = GSPLAT_DEFAULT_TRUNCATION_RADIUS,
     options?: { preserveOrdering?: boolean; fromInstance?: number }
   ): void {
     this.gsplats.updateGeometry(geometry, data, count, truncationRadius, options);

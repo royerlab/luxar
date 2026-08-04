@@ -40,6 +40,7 @@ import {
   writeSortedIndexIdentity,
   elementTexelCapacity,
 } from './element-storage';
+import { GSPLAT_DEFAULT_TRUNCATION_RADIUS } from '../config/constants';
 
 /**
  * Create the base quad geometry for gsplat instances.
@@ -372,7 +373,8 @@ export function createInstancedGSplatsMesh(
   const matWithUniforms = material as THREE.Material & {
     uniforms?: { uTruncate?: { value: number } };
   };
-  const truncationRadius = matWithUniforms.uniforms?.uTruncate?.value ?? 3.0;
+  const truncationRadius =
+    matWithUniforms.uniforms?.uTruncate?.value ?? GSPLAT_DEFAULT_TRUNCATION_RADIUS;
   applySplatCullBounds(geometry, meshConfig, count, truncationRadius);
 
   // Create mesh with instanced geometry
@@ -488,7 +490,7 @@ export function updateInstancedGSplatsMesh(
   const material = mesh.material as THREE.Material & {
     uniforms?: { uTruncate?: { value: number } };
   };
-  const truncationRadius = material.uniforms?.uTruncate?.value ?? 3.0;
+  const truncationRadius = material.uniforms?.uTruncate?.value ?? GSPLAT_DEFAULT_TRUNCATION_RADIUS;
   applySplatCullBounds(liveGeometry, meshConfig, count, truncationRadius);
 
   return rebuilt;

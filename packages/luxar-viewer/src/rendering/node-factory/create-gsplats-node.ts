@@ -14,6 +14,8 @@ import type { GSplatsMetadata, GSplatsUserData, GSplatsDataLoader } from '../../
 import type { PickingSystem } from '../picking/picking-system';
 import { applyTransform } from './transforms';
 import { resolveColormapWindow } from '../display-range';
+import { GSPLAT_DEFAULT_TRUNCATION_RADIUS } from '../../config/constants';
+import { clampTruncationRadius } from '../materials/gsplat/math';
 
 /** Build a GSplats mesh + optional picking shadow node. */
 export function createGSplatsNode(
@@ -61,7 +63,9 @@ export function createGSplatsNode(
     intensity: hasColormap ? 1.0 : composedIntensity,
     offset: hasColormap ? 0.0 : composedOffset,
     blendingMode: (nodeAttrs.blending_mode as string | undefined as BlendingMode) ?? 'additive',
-    truncationRadius: (attrs.truncation_radius as number | undefined) ?? 3.0,
+    truncationRadius: clampTruncationRadius(
+      (attrs.truncation_radius as number | undefined) ?? GSPLAT_DEFAULT_TRUNCATION_RADIUS
+    ),
   });
 
   // Apply the colormap. GSplat materials are PER NODE (each carries the

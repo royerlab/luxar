@@ -12,6 +12,8 @@ import numpy as np
 import pytest
 import torch
 
+from luxar.typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
+
 # Skip entire module on non-macOS platforms
 pytestmark = pytest.mark.skipif(
     sys.platform != "darwin" or not torch.backends.mps.is_available(),
@@ -59,7 +61,7 @@ class TestOptimizerCompatibility:
     def test_model_has_truncate_property(self, simple_model):
         """Test that model.truncate is accessible."""
         assert hasattr(simple_model, "truncate")
-        assert simple_model.truncate == 3.0
+        assert simple_model.truncate == DEFAULT_TRUNCATION_RADIUS
 
     def test_model_has_internal_parameters(self, simple_model):
         """Test that internal parameters are accessible (required by optimizer)."""

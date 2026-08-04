@@ -40,7 +40,7 @@ save_gsplats(
     compress=None,                # "zip" or "tar.gz" for compressed archive
     compressor=DEFAULT_COMP,      # Width-aware default (zstd l9, shuffle by dtype)
     zip_deflate=False,            # Use DEFLATE compression for outer zip
-    truncation_radius=3.0,        # Gaussian truncation radius (std devs)
+    truncation_radius=2.75,       # Gaussian truncation radius (std devs)
 )
 ```
 
@@ -270,7 +270,7 @@ accordingly (see `docs/specs/GSPLATS_ZARR_FORMAT.md`).
     "min": [0.0, 0.0, 0.0],
     "max": [256.0, 256.0, 128.0]
   },
-  "truncation_radius": 3.0
+  "truncation_radius": 2.75
 }
 ```
 

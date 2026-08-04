@@ -70,6 +70,7 @@ import torch
 from arbol import aprint, asection
 
 from luxar.gsplats.gsplat_data import AdditiveSubLOD, GSplatData
+from luxar.typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
 
 
 def _compute_psnr_chunked(
@@ -137,7 +138,7 @@ def fit_progressive_gaussian_splats(
     on_pass_complete: Optional[Callable[[int, AdditiveSubLOD, float], None]] = None,
     device: Optional[str] = None,
     verbose: bool = True,
-    truncate: float = 2.75,
+    truncate: float = DEFAULT_TRUNCATION_RADIUS,
     residual_pass_min_iters: int = 500,
     **kwargs: Any,
 ) -> GSplatData:

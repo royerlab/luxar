@@ -21,6 +21,8 @@ from typing import Any, Dict, Optional, Sequence, Tuple, cast
 import numpy as np
 import torch
 
+from luxar.typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
+
 
 def calculate_optimal_chunk_size(
     K: int, d: int, device: torch.device, dtype: torch.dtype
@@ -708,7 +710,7 @@ def render_gaussians(
     centers: torch.Tensor,  # (N, d) voxel coords
     Ls: torch.Tensor,  # (N, d, d) lower-tri
     amps: torch.Tensor,  # (N,)
-    truncate: float = 3.0,
+    truncate: float = DEFAULT_TRUNCATION_RADIUS,
     intensity_floor: Optional[
         float
     ] = 1e-5,  # for amplitude-aware culling; None disables
@@ -732,7 +734,7 @@ def render_gaussians(
         Lower-triangular Cholesky factors.
     amps : torch.Tensor, shape (N,)
         Splat amplitudes.
-    truncate : float, default=3.0
+    truncate : float, default=DEFAULT_TRUNCATION_RADIUS
         Truncation radius in standard deviations.
     intensity_floor : float or None, default=1e-5
         Minimum intensity threshold for amplitude-aware culling.

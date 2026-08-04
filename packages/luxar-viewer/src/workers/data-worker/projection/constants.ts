@@ -24,10 +24,3 @@ export const MIN_AMPLITUDE = 1e-6;
  * even after float round-trips, while staying unreachable for real data.
  */
 export const EXTEND_TO_ALL_THRESHOLD = 1e9;
-
-/**
- * Default truncation radius (in sigmas) for the GSplat shifted-Gaussian
- * hidden-dimension attenuation. Splats beyond this Mahalanobis distance
- * in the hidden dims attenuate to zero.
- */
-export const SHIFTED_GAUSSIAN_DEFAULT_TRUNCATE = 3.0;

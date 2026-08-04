@@ -23,6 +23,7 @@ import {
   GLSL_SORTED_INDEX,
 } from '../../materials/_shared/glsl-lib';
 import { pointPickWebGPUFactory, buildPointPickTSLNodesFromUniforms } from './pick.tsl';
+import { FALLOFF_FLOOR, FALLOFF_K } from '../../materials/_shared/falloff';
 
 /**
  * Picking vertex shader for points.
@@ -166,8 +167,8 @@ export const POINT_PICK_FRAGMENT_SHADER = /* glsl */ `
       float normalizedR = sqrt(4.0 * r2);
       // Shifted-truncated super-Gaussian (matches shader-glsl.ts) so the pick
       // brightness tie-break tracks the visible falloff. K=ln(100), C=exp(-K).
-      const float K = 4.6051702;
-      const float C = 0.01;
+      const float K = ${FALLOFF_K};
+      const float C = ${FALLOFF_FLOOR};
       const float INV_ONE_MINUS_C = 1.0 / (1.0 - C);
       float falloff = max(exp(-K * pow(normalizedR, vBeta)) - C, 0.0) * INV_ONE_MINUS_C;
 

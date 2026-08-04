@@ -14,6 +14,7 @@ import torch
 
 from luxar.gsplats.models.gsplats.gsplat_model import GaussianSplatModel
 from luxar.gsplats.utils.device import resolve_torch_device
+from luxar.typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
 
 # Import CUDA extension when available
 try:
@@ -332,7 +333,7 @@ class GaussianSplatModelCUDA(torch.nn.Module):
         Maximum diagonal values for Cholesky factor.
     amp_max : float, optional
         Maximum amplitude value. Prevents amplitude explosion during optimization.
-    truncate : float, default=3.0
+    truncate : float, default=DEFAULT_TRUNCATION_RADIUS
         Truncation radius in standard deviations.
     intensity_floor : float, default=1e-5
         Minimum intensity threshold for early culling.
@@ -382,7 +383,7 @@ class GaussianSplatModelCUDA(torch.nn.Module):
         sigma_max_diag: Optional[Sequence[float]] = None,
         amp_max: Optional[float] = None,
         max_eccentricity: Optional[float] = None,
-        truncate: float = 3.0,
+        truncate: float = DEFAULT_TRUNCATION_RADIUS,
         intensity_floor: float = 1e-5,
         use_fp16: bool = False,
         voxel_size: Optional[np.ndarray] = None,

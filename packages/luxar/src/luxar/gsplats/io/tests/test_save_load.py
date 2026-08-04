@@ -21,6 +21,7 @@ from luxar.gsplats.io import (
     save_gsplats,
 )
 from luxar.typing_utils._format_contract import GSPLATS_FORMAT_VERSION
+from luxar.typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
 
 
 def _positive_diag(chol: np.ndarray, d: int = 3) -> np.ndarray:
@@ -835,11 +836,11 @@ class TestCompression:
 class TestTruncationRadiusRoundtrip:
     def test_default_truncation_radius(self):
         g = GSplatData(**create_test_splats_3d(50))
-        assert g.truncation_radius == 3.0
+        assert g.truncation_radius == DEFAULT_TRUNCATION_RADIUS
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "test.gsplats.zarr"
             g.save(path, ordering="none", encoding_mode=EncodingMode.PRECISION)
-            assert GSplatData.load(path).truncation_radius == 3.0
+            assert GSplatData.load(path).truncation_radius == DEFAULT_TRUNCATION_RADIUS
 
     def test_custom_truncation_radius_single_lod(self):
         g = GSplatData(**create_test_splats_3d(50), truncation_radius=2.75)
@@ -946,7 +947,7 @@ class TestTruncationRadiusRoundtrip:
             attrs = dict(root.attrs)
             del attrs["truncation_radius"]
             root.attrs.put(attrs)
-            assert GSplatData.load(path).truncation_radius == 3.0
+            assert GSplatData.load(path).truncation_radius == DEFAULT_TRUNCATION_RADIUS
 
 
 def test_save_explicit_none_compressor_disables_compression():

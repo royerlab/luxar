@@ -55,6 +55,7 @@ import {
   cameraProjectionMatrix,
 } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
+import { FALLOFF_FLOOR, FALLOFF_K, INV_ONE_MINUS_FALLOFF_FLOOR } from '../_shared/falloff';
 import {
   sanitizeAlpha,
   sanitizeNonNegative,
@@ -422,9 +423,9 @@ export function pointWebGPUFactory(
     // Shifted-truncated super-Gaussian: max(exp(-K * rho^beta) - C, 0) / (1 - C),
     // C0-continuous at the sprite edge. beta=2 reproduces the gsplat Gaussian.
     // K = ln(1/floor), floor = 0.01. Mirrors the GLSL3 fragment exactly.
-    const K = 4.6051702; // ln(100)
-    const C = 0.01; // exp(-K) = floor
-    const invOneMinusC = 1.0 / (1.0 - C);
+    const K = FALLOFF_K; // ln(100)
+    const C = FALLOFF_FLOOR; // exp(-K) = floor
+    const invOneMinusC = INV_ONE_MINUS_FALLOFF_FLOOR;
     const falloff: TSLNode = exp(normalizedR.pow(vBeta).mul(-K))
       .sub(C)
       .max(float(0.0))

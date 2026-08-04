@@ -381,7 +381,7 @@ interface GSplatsMetadata {
   ordering: 'morton' | 'hilbert' | 'none'; // Spatial ordering method
   extend_to_all?: string[]; // Dimensions to extend visibility across
   n_lods?: number; // Number of LOD levels (v1.1 multi-LOD format)
-  truncation_radius?: number; // Gaussian truncation radius (default 3.0)
+  truncation_radius?: number; // Gaussian truncation radius (defaults to GSPLAT_DEFAULT_TRUNCATION_RADIUS)
   // ... additional properties
 }
 ```
