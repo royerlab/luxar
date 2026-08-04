@@ -70,7 +70,7 @@ def _load_opencell_ch0() -> tuple[np.ndarray, str]:
             "MAP4_ENSG00000047849/"
             "OC-FOV_MAP4_ENSG00000047849_CID000828_FID00002848_stack.tif"
         )
-        print(f"Downloading OpenCell MAP4 TIFF (~70 MB)...")
+        print("Downloading OpenCell MAP4 TIFF (~70 MB)...")
         fd, tmp = tempfile.mkstemp(dir=cache_dir, suffix=".tmp")
         os.close(fd)
         try:
@@ -220,7 +220,7 @@ def main():
 
     baseline_path = Path(args.baseline)
 
-    print(f"=== Pareto Fitting Benchmark ===")
+    print("=== Pareto Fitting Benchmark ===")
     print(f"Budget: {args.budget} splats, {args.iters} iters, device={device}")
     print()
 
@@ -240,7 +240,7 @@ def main():
         old_psnr = baseline["median_psnr"]
         old_time = baseline["median_time"]
         print()
-        print(f"--- Baseline ---")
+        print("--- Baseline ---")
         print(f"  median_PSNR = {old_psnr:.4f} dB")
         print(f"  median_time = {old_time:.2f} s")
 
@@ -251,7 +251,9 @@ def main():
         else:
             dpsnr = median_psnr - old_psnr
             dtime = median_time - old_time
-            print(f"PARETO: NOT DOMINANT ✗  (ΔPSNR={dpsnr:+.4f} dB, Δtime={dtime:+.2f} s)")
+            print(
+                f"PARETO: NOT DOMINANT ✗  (ΔPSNR={dpsnr:+.4f} dB, Δtime={dtime:+.2f} s)"
+            )
     else:
         dominates = True  # First run — accept as baseline
         print()
