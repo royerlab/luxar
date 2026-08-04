@@ -467,6 +467,125 @@ describe('projectMesh — the winding post-pass', () => {
   });
 });
 
+describe('projectMesh — the two-sided dimension hazard', () => {
+  // The dimension hazard runs in BOTH directions and the kernels fail differently at
+  // each end: above 16 dims the Rust kernel calls `validate_ndim` and the crate is
+  // `panic = "abort"`, so it takes down the whole WASM module rather than one node
+  // (which is why `getMeshBackend` routes there to this backend); below 3 DISPLAY dims
+  // a hardcoded sub-ndim of 3 has read `display_dims[2]` out of bounds in a sibling
+  // kernel before (#881). Both ends are covered for the kernels in isolation; these pin
+  // `projectMesh` itself, whose fast-path choice, winding decision and index rebuild all
+  // read the same two lengths.
+
+  /** Two triangles in `ndim` dims: the first at hidden 0, the second at hidden 10. */
+  function twoTrianglesInND(ndim: number): LoadedMeshData {
+    const vertices = new Float32Array(6 * ndim);
+    for (let v = 0; v < 6; v++) {
+      // A unit triangle in the first three axes, duplicated.
+      if (v % 3 === 1) vertices[v * ndim] = 1;
+      if (v % 3 === 2) vertices[v * ndim + 1] = 1;
+      if (v >= 3) for (let d = 3; d < ndim; d++) vertices[v * ndim + d] = 10;
+    }
+    return {
+      vertices,
+      faces: new Uint32Array([0, 1, 2, 3, 4, 5]),
+      normals: null,
+      colors: null,
+      scalars: undefined,
+      vertexCount: 6,
+      faceCount: 2,
+      ndim,
+    };
+  }
+
+  it('culls correctly at ndim = 20, past the WASM ceiling', () => {
+    const ndim = 20;
+    const result = projectMesh(
+      twoTrianglesInND(ndim),
+      viewState([0, 1, 2], new Array(ndim).fill(0), new Array(ndim).fill(0.5)),
+      undefined,
+      true,
+      backend
+    );
+    // The slab sits at 0 on all 17 hidden axes, so only the first triangle survives.
+    expect(result.visibleFaceCount).toBe(1);
+    expect(Array.from(result.indices)).toEqual([0, 1, 2]);
+    expect(result.usedFastPath).toBe(false);
+  });
+
+  it('still culls on hidden axes when only TWO dimensions are displayed', () => {
+    // ndim 3 with displayDims [0, 1] leaves axis 2 hidden, so the cull must run —
+    // `hasHiddenDims` is `displayDims.length < ndim`, not `ndim > 3`.
+    const mesh: LoadedMeshData = {
+      ...oneTriangleIn3D(),
+      // Third vertex pushed off the hidden z slab.
+      vertices: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 9]),
+    };
+    const result = projectMesh(
+      mesh,
+      viewState([0, 1], [0, 0, 0], [1e10, 1e10, 0.5]),
+      [0, 1, 2],
+      false,
+      backend
+    );
+    expect(result.usedFastPath).toBe(false);
+    // Whole-triangle rule: one vertex outside drops the face.
+    expect(result.visibleFaceCount).toBe(0);
+  });
+
+  it('still emits a size-3 position buffer below 3 display dims', () => {
+    // `position` is always `vertexCount * 3` whatever the display count, because the
+    // geometry attribute is size-3 — so a 2D epoch projects onto x/y with z flat. What
+    // this pins is the EXTRACTION (x from dim 0, y from dim 1, nothing shifted into the
+    // wrong channel).
+    //
+    // It deliberately does NOT claim to test the kernel's zero-fill of the unused
+    // channel: `projectMesh` hands the kernel a freshly allocated Float32Array, which is
+    // already zeroed, so deleting that fill is unobservable from here. Verified by
+    // mutation — the fill is pinned where it is actually observable, by the
+    // `wasm/typescript-reference` tests that pass a pre-dirtied output buffer.
+    const result = projectMesh(
+      oneTriangleIn3D(),
+      viewState([0, 1], [0, 0, 0], [1e10, 1e10, 1e10]),
+      [0, 1, 2],
+      true,
+      backend
+    );
+    expect(result.position).toHaveLength(9);
+    // The triangle is (0,0,0), (1,0,0), (0,1,0); displaying dims [0, 1] keeps x and y.
+    expect(Array.from(result.position)).toEqual([0, 0, 0, 1, 0, 0, 0, 1, 0]);
+  });
+
+  it('forces double-sided below 3 display dims, with a reason naming the count', () => {
+    // A winding frame needs 3 axes, so single-sided cannot be honoured — and an open
+    // surface rendered inside-out vanishes entirely, which is why this falls back rather
+    // than guessing.
+    const result = projectMesh(
+      oneTriangleIn3D(),
+      viewState([0, 1], [0, 0, 0], [1e10, 1e10, 1e10]),
+      [0, 1, 2],
+      false,
+      backend
+    );
+    expect(result.side).toBe('double');
+    expect(result.undecidableReason).toMatch(/2 displayed dimensions/);
+  });
+
+  it('survives a single displayed dimension', () => {
+    // 1D display is degenerate but must not read out of bounds or throw.
+    const result = projectMesh(
+      oneTriangleIn3D(),
+      viewState([0], [0, 0, 0], [1e10, 1e10, 1e10]),
+      undefined,
+      true,
+      backend
+    );
+    expect(result.position).toHaveLength(9);
+    expect(result.position[1]).toBe(0);
+    expect(result.position[2]).toBe(0);
+  });
+});
+
 describe('noticeUndecidableWinding', () => {
   it('logs once per node, not once per rebuild', () => {
     // The notice is separate from resolveWinding precisely so it cannot fire on
