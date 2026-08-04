@@ -31,17 +31,18 @@ A `mesh` node closes that gap with indexed triangles and real surface shading.
 
 ### 1.1 Existing forward-declaration
 
-The viewer already reserves the name in one place:
+The viewer reserved the name ahead of the data model. One of those placeholders has since been folded
+into the contract:
 
-- `packages/luxar-viewer/src/types/data-monitor-types.ts:473` —
-  `export type SceneGraphNodeType = NodeTypeName | 'mesh';`
-- `packages/luxar-viewer/src/data/scene-loader/monitor/scene-graph-converter.ts:25` — `'mesh'` in the
-  display-type whitelist.
+- `packages/luxar-viewer/src/types/data-monitor-types.ts` — `SceneGraphNodeType` was
+  `NodeTypeName | 'mesh'` while `mesh` was a viewer-only forward declaration; #1220 put `mesh` in the
+  contract and deleted the local extension, so it is now the plain alias
+  `SceneGraphNodeType = NodeTypeName`.
+- `packages/luxar-viewer/src/data/scene-loader/monitor/scene-graph-converter.ts:26` — `'mesh'` is still
+  in the display-type whitelist.
 
-`format-contract/contract.yaml` documents this explicitly as *"a TS-only forward-looking member … the
-viewer extends this base union locally"*. Both are display-only placeholders; there is no data model,
-loader, geometry, or material behind them. This spec makes the name real and removes the local
-extension in favour of the contract.
+These were display-only placeholders; there was no data model, loader, geometry, or material behind
+them. This spec makes the name real end to end.
 
 ---
 
@@ -101,22 +102,32 @@ radius-scale uniform.
 
 ```yaml
 # format-contract/contract.yaml
-node_types:     ["scene", "group", "points", "lines", "gsplats", "mesh"]
-geometry_types: ["points", "lines", "gsplats", "mesh"]   # the leaf subset
+node_types:     ["scene", "group", "points", "lines", "gsplats", "mesh"]  # done (#1220)
+geometry_types: ["points", "lines", "gsplats", "mesh"]  # writable leaf subset — done (#1220)
+loader_types:   ["points", "lines", "gsplats"]          # viewer-drawable subset — ADD mesh in Phase 3
 ```
 
-**Both** lists must be updated. `geometry_types` (added in #1079) is the leaf subset that keys
-per-geometry dispatch, and the generator enforces that it is non-empty, a subset of `node_types`, free
-of the container types, and duplicate-free — so adding `mesh` to only one of the two fails
-`check-contract` with a named error rather than drifting silently.
+There are **three** lists, and they answer three different questions (the split landed in #1220).
+`node_types` is the full vocabulary; `geometry_types` (added in #1079) is the writable leaf subset that
+keys the Python writer side (bounds, `luxar info`, LOD backfill); `loader_types` (added in #1220) is the
+viewer-drawable subset that keys per-geometry dispatch. The generator enforces the nesting
+`loader_types ⊆ geometry_types ⊆ node_types`, that `geometry_types` and `loader_types` are each
+non-empty and duplicate-free, and that `geometry_types` is free of the container types — so a half-done
+addition fails `check-contract` with a named error rather than drifting silently.
 
-Then `make gen-contract` regenerates both projections
+`mesh` is **already in `node_types` and `geometry_types`** (#1220), so a mesh leaf is writable today.
+The one list it is deliberately *not* in yet is `loader_types`: adding it there is the Phase-3 switch-on,
+and it is what turns on the three §10.2 compile errors that map out the viewer work. Do **not** read
+"mesh is in both lists" as "the contract work is done" — the drawable half is a one-line `loader_types`
+edit that intentionally waits for Phase 3.
+
+`make gen-contract` regenerated both projections
 (`packages/luxar/src/luxar/typing_utils/_format_contract.py` and
-`packages/luxar-viewer/src/types/format-contract.ts`), and `hatch run check-contract` gates drift. The
-`'mesh'` local extension in `data-monitor-types.ts` is deleted at the same time — `SceneGraphNodeType`
-becomes plain `NodeTypeName`.
-
-`NodeType.MESH = "mesh"` is added to `luxar/typing_utils/enums.py`.
+`packages/luxar-viewer/src/types/format-contract.ts`) for the node-type addition, and `hatch run
+check-contract` gates drift. As part of #1220 the `'mesh'` local extension in `data-monitor-types.ts`
+was deleted — `SceneGraphNodeType` is now plain `NodeTypeName` — and `NodeType.MESH = "mesh"` /
+`NODE_TYPE_MESH = "mesh"` were added to `luxar/typing_utils/enums.py` and `constants.py`. Adding `mesh`
+to `loader_types` in Phase 3 re-runs `gen-contract` for the viewer projection.
 
 ### 3.2 Arrays
 
@@ -181,14 +192,13 @@ MESH_RESERVED_ATTRS = frozenset({
     "type", "n_vertices", "n_faces", "ndim",
     "has_normals", "normal_dims", "has_colors", "has_scalars", "has_labels",
     "has_image_labels", "shading", "double_sided", "position_bounds",
+    "ordering",  # mesh-only: no spatial index, so a supplied ordering can't be honoured
 })
 ```
 
-Note the sibling sets reserve `has_labels` but **not** `has_image_labels`, even though all three
-writers stamp it. No clobber is actually possible — `validate_render_attrs` rejects the key as
-*unknown* when it appears in no set at all — so the omission only costs the accurate "reserved"
-error message. Mesh reserves it anyway, so its set covers every presence flag it stamps; aligning
-the three sibling sets is a separate sweep, noted in §9.
+All four sets — `POINTS_/LINES_/GSPLATS_RESERVED_ATTRS` and `MESH_RESERVED_ATTRS` — now reserve
+`has_image_labels`; #1220 aligned the three sibling sets with the mesh set, so every set covers every
+presence flag its writer stamps.
 
 ### 3.4 Normals are 3D, positions are nD
 
@@ -1109,7 +1119,10 @@ called out as such.
 **Python**
 
 - [ ] `format-contract/contract.yaml` → `make gen-contract` (regenerates both projections)
-- [ ] `typing_utils/enums.py` — `NodeType.MESH`
+- [x] `typing_utils/enums.py` — `NodeType.MESH` and `typing_utils/constants.py` — `NODE_TYPE_MESH`
+      — **both landed in #1220.** They must match `contract.yaml`: `test_node_type_enum_matches_contract`
+      guards the enum and `test_named_node_type_constants_match_contract` the `NODE_TYPE_*` constants —
+      that pair is how the missing constant was caught in #1220
 - [ ] `core/mesh.py`, `core/group/adders/mesh.py`
 - [ ] `core/group/group.py`, `core/scene/scene.py`, `core/__init__.py`, `luxar/__init__.py`
 - [ ] `core/group/dim_order.py` — `add_mesh` calls `apply_dim_order_positions` for `vertices` like the
@@ -1138,7 +1151,7 @@ called out as such.
 **TypeScript**
 
 - [ ] `types/mesh.ts`, `types/index.ts`, `types/window.d.ts`, `data/data-loader-types.ts`
-- [ ] `types/data-monitor-types.ts` — **delete** the local `| 'mesh'` extension (now in the contract)
+- [x] `types/data-monitor-types.ts` — the local `| 'mesh'` extension is **already deleted** (#1220), so `SceneGraphNodeType` is now plain `NodeTypeName`
 - [ ] `data/scene-loader/loaders/loader-registry.ts` — one line in `LoaderByKind`. The three parallel
       maps became a single kind-keyed store in #1079; `getLoaderType` / `disposeAll` / the counters are
       one implementation each. Omitting the entry is a **compile error**
@@ -1147,7 +1160,7 @@ called out as such.
       `loadNode`, `applyPartialExtendTolerance`, `retryCommit` and the two loader factories. This is
       the row that `load-scene-nodes`, `lifecycle/retry` and `prefetch/slice-prefetcher` all read, so
       those three files need **no mesh edit at all**. A missing row fails the build with
-      `TS2741: Property 'mesh' is missing … required in type 'Record<GeometryTypeName, …>'`
+      `TS2741: Property 'mesh' is missing … required in type 'Record<GeometryKind, …>'`
 - [ ] `data/scene-loader/loaders/loader-factory.ts`, `nodes/build-scene-graph.ts`
       (bare-leaf-root union), `nodes/build-ctx.ts` (the `processMeshData` / `commitMeshGeometry`
       pair, matching the uniform shape #1099 gave all three existing types)
@@ -1327,12 +1340,11 @@ for `volumetric` the named one-time warning + `opaque` fallback of §6.3 — rat
 | **Worker projection** | Measure first (§7). | — |
 | **Mesh import formats** (PLY/OBJ/STL/glTF) | Independent of the node type. | `luxar mesh import`, mirroring `gsplat import` |
 
-**Pre-existing gap noticed during this spec's review, not introduced by mesh:** none of
-`POINTS_/LINES_/GSPLATS_RESERVED_ATTRS` includes `has_image_labels`, though all three writers stamp it.
-No clobber results — `validate_render_attrs`'s reject-unknown gate already fails such a write, just with
-the *unknown-attr* message instead of the *reserved* one — so this is an error-message gap.
-`MESH_RESERVED_ATTRS` includes the key from the start (§3.3); aligning the three sibling sets is a
-separate change so it isn't buried in the mesh diff.
+**Pre-existing gap noticed during this spec's review, since closed by #1220:**
+`POINTS_/LINES_/GSPLATS_RESERVED_ATTRS` had omitted `has_image_labels` even though all three writers
+stamp it. No clobber ever resulted — `validate_render_attrs`'s reject-unknown gate already failed such a
+write, just with the *unknown-attr* message instead of the *reserved* one — so it was only an
+error-message gap. #1220 added the key to all three sibling sets, matching `MESH_RESERVED_ATTRS` (§3.3).
 
 ---
 
@@ -1355,12 +1367,14 @@ code, so this section now records the result rather than the argument.
 
 The vocabulary is now single-sourced from the format contract, so **adding `mesh` to
 `contract.yaml` propagates to every consumer**, and the places that must still be taught about it
-fail the build rather than going quiet:
+fail the build rather than going quiet. Note the trigger: these three errors fire on adding `mesh` to
+**`loader_types`** (the Phase-3 switch-on, §3.1), not to `node_types`/`geometry_types` — those two
+already contain `mesh` (#1220) and compile clean. The errors are the map of what Phase 3 must implement:
 
 - **Missing loader entry** → `TS2339: Property 'mesh' does not exist on type 'LoaderByKind'`
   at `loader-registry.ts`, plus three `TS2536` follow-ons inside the generic accessors
 - **Missing descriptor row** → `TS2741: Property 'mesh' is missing … required in type
-  'Record<GeometryTypeName, GeometryDescriptor>'`
+  'Record<GeometryKind, GeometryDescriptor>'`
 - **Missing tolerance arm** → `TS2366: Function lacks ending return statement` in
   `tolerance-computer.ts`
 
@@ -1403,19 +1417,22 @@ Use `geometryDescriptorFor(node.type)`, which gates the lookup with `Object.hasO
 
 | Phase | Contents | Verifiable outcome |
 |---|---|---|
-| **0** ✅ *(done — §10.1)* | Single-source `GeometryKind` from the contract; collapse `LoaderRegistry`; unify the per-type pipeline; table-drive the dispatch switches | Landed as #1079 / #1099 / #1150, all behaviour-preserving. Deleting the `SceneGraphNodeType` local extension is the one piece left, and belongs with Phase 1's contract edit |
-| **1** | Contract + `NodeType.MESH` + `core/mesh.py` + adder + writer + validators + reader + `info` + the LOD/partition rejections (§8) | `scene.add_mesh(...)` writes a `.luxar.zarr`; `luxar info --stats` reports it; round-trip test green; a mesh child of a lod/partition group **raises** |
+| **0** ✅ *(done — §10.1)* | Single-source `GeometryKind` from the contract; collapse `LoaderRegistry`; unify the per-type pipeline; table-drive the dispatch switches | Landed as #1079 / #1099 / #1150, all behaviour-preserving. The `SceneGraphNodeType` local extension has since been deleted (#1220) — it is now plain `NodeTypeName` — so Phase 0 is fully landed |
+| **1** | Writable contract (`node_types`/`geometry_types` + `NodeType.MESH`/`NODE_TYPE_MESH` — already landed in #1220) + `core/mesh.py` + adder + writer + validators + reader + `info` + the LOD/partition rejections (§8) | `scene.add_mesh(...)` writes a `.luxar.zarr`; `luxar info --stats` reports it; round-trip test green; a mesh child of a lod/partition group **raises** |
 | **2** | Rust + TS cull kernels with parity tests | Kernels green in isolation, no viewer changes |
-| **3** | `types/mesh.ts` + loader + node load + `mesh-geometry.ts` + one `LoaderByKind` entry + one `GEOMETRY_DESCRIPTORS` row | Mesh loads and renders **unshaded** (flat vertex color); E2E smoke green |
+| **3** | `mesh` → `loader_types` in `contract.yaml` (the switch-on — fires the three §10.2 compile errors) + `types/mesh.ts` + loader + node load + `mesh-geometry.ts` + one `LoaderByKind` entry + one `GEOMETRY_DESCRIPTORS` row + the `computeHiddenDimTolerance` arm | Mesh loads and renders **unshaded** (flat vertex color); E2E smoke green |
 | **4** | GLSL + TSL material pair + codegen snapshots + shading model | Shaded surface, both backends pixel-equivalent |
 | **5** | Picking pair, layers panel, monitor, stats, camera framing, debug | Full parity with the other three at the UI level |
 | **6** | Fixture + E2E spec + demo + docs + CHANGELOG | Shippable |
 
 Phase 0 landed alone, with no mesh code, so any regression it caused would have been unambiguous.
-Phases 1–2 are independent and can land in parallel. Phase 3 used to be the widest diff — a sweep
-across every dispatch site — and is now one of the narrower ones: the three dispatch files need no
-mesh edit, leaving the loader, the geometry builder, and two table entries. Phase 4 is the deepest
-single piece of work.
+Phase 1 (the Python writable side) and Phase 2 (the cull kernels) are independent and can land in
+parallel. The *drawable* half of the contract edit — adding `mesh` to `loader_types` — is **not** part
+of Phase 1: it fires the three §10.2 compile errors, which can only be cleared by real Phase-3 code, so
+it belongs with Phase 3. Phase 3 used to be the widest diff — a sweep across every dispatch site — and
+is now one of the narrower ones: the three dispatch files need no mesh edit, leaving the `loader_types`
+switch-on, the loader, the geometry builder, and two table entries. Phase 4 is the deepest single piece
+of work.
 
 **Estimate:** 5–6 PRs, roughly 4–5.5K LOC including tests — against ~14K LOC for the full Lines
 vertical, the difference being everything in §9 plus the dispatch work Phase 0 already absorbed.
