@@ -245,7 +245,7 @@ MIN_NODE_MINOR := 22
 
 | Command | Description |
 |---------|-------------|
-| `make check-all` | Run all quality checks (Python, TypeScript, Rust, Go). **Not read-only** — `hatch run check` begins with `format`, so this rewrites `packages/luxar/src`. Use the scoped `lint-*` / `type-check-*` / `check-typescript` / `check-rust` targets for a read-only verdict. |
+| `make check-all` | Run all quality checks (Python, TypeScript, Rust, Go). **Not read-only** — `hatch run check` begins with `format`, so this rewrites `packages/luxar/src` and `scripts`. Use the scoped `lint-*` / `type-check-*` / `check-typescript` / `check-rust` targets for a read-only verdict. |
 | `make check-typescript` | Run all TypeScript checks (typecheck, lint, test) |
 | `make check-rust` | Run Rust type/lint checks (cargo check + clippy) |
 | `make check-knip` | **Report only, non-gating** — full knip (unused files/exports/types + `@internal` tag hints). The enforced subset (`files,dependencies`) runs inside `make check-all`; the full run has a standing backlog, so it never fails the build. |

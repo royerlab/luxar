@@ -22,7 +22,6 @@ def create_test_volume(shape: Tuple[int, ...], seed: int = 42) -> np.ndarray:
     volume = rng.random(shape, dtype=np.float32)
 
     # Add some Gaussian blobs for structure
-    ndim = len(shape)
     for _ in range(10):
         center = tuple(rng.integers(0, s, size=1)[0] for s in shape)
         sigma = rng.uniform(5, 15)
