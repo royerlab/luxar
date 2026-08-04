@@ -105,6 +105,12 @@ export async function loadAndStage(
   const staged = await processMeshData(path, data, meshViewState, {
     normal_dims: meshAttrs?.normal_dims,
     double_sided: meshAttrs?.double_sided ?? true,
+    // Required, not a ride-along: `processMeshData` RECOMPUTES the membership
+    // tolerance from dimension metadata (discarding the derived view state's
+    // extended tolerance), then re-applies extend_to_all from these attrs. An
+    // extended mesh would otherwise commit on first load but cull on the first
+    // slice move, when this sweep re-projects it.
+    extend_to_all: meshAttrs?.extend_to_all,
   });
   markPathHealthy();
   session.setMetadata({ info: `${data.faceCount} faces` });
