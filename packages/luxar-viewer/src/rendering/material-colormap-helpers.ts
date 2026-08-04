@@ -126,8 +126,15 @@ export function supportsScalarColormap(
   geometry?: THREE.BufferGeometry
 ): boolean {
   if (nodeType === 'gsplats') return true;
-  if (nodeType === 'points' || nodeType === 'lines') {
+  if (nodeType === 'points' || nodeType === 'lines' || nodeType === 'mesh') {
     // Scalar presence stamp — see the doc block above.
+    //
+    // `mesh` shares the stamp rather than probing for an attribute, even though a
+    // mesh binds real vertex attributes instead of packing texels: the stamp is
+    // the signal every other type already uses, so keeping one rule avoids a
+    // second way to be wrong. Until the mesh geometry builder lands
+    // (MESH_NODE_SPEC.md §11 phase 3) nothing stamps it, so this fails closed —
+    // which is the correct answer while a mesh cannot be drawn at all.
     return geometry ? geometry.userData?.hasScalars === true : false;
   }
   // Exhaustiveness guard: with every GeometryTypeName handled above, `nodeType`

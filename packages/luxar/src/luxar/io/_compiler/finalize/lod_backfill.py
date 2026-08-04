@@ -8,6 +8,7 @@ import zarr
 from arbol import aprint
 
 from ....typing_utils._format_contract import GEOMETRY_TYPES
+from ....typing_utils.geometry_capabilities import require_lod_display_type
 
 
 def finalize_lod_position_bounds(store: zarr.Group) -> None:
@@ -149,6 +150,14 @@ def finalize_lod_display_types(store: zarr.Group) -> None:
         if attrs.get("kind") == "lod" and "display_type" not in attrs:
             resolved = resolve(group)
             if resolved:
+                # This is the route that actually runs for an explicit-builder
+                # ladder, so the LOD-capability rule is enforced here and not
+                # only at the add-time entry points. A geometry type with no LOD
+                # ladder must not be stamped: the result loads nowhere, and once
+                # written the store looks authored rather than back-filled.
+                require_lod_display_type(
+                    resolved, f"kind=lod group {group.path or '/'}"
+                )
                 group.attrs["display_type"] = resolved
                 aprint(
                     f"  📐 Back-filled display_type={resolved!r} on "

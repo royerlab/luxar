@@ -39,6 +39,7 @@ from .core.dimensions import Dimension, Dimensions
 from .core.group import Group
 from .core.gsplats import GSplats
 from .core.lines import Lines
+from .core.mesh import Mesh
 from .core.node import Node
 from .core.overlay import Overlay
 from .core.points import Points
@@ -127,6 +128,7 @@ __all__: list[str] = [
     "Group",
     "Points",
     "Lines",
+    "Mesh",
     "GSplats",
     "Node",
     "Overlay",

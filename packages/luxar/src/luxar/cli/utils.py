@@ -154,9 +154,9 @@ def wait_for_server(
     # Not a bind: detect the all-interfaces host the user passed and redirect
     # the readiness *probe* to loopback (you cannot connect() to 0.0.0.0 on
     # macOS). The real bind is uvicorn's, with the user's explicit host,
-    # guarded by _warn_if_lan_exposed. The inline nosec waives bandit B104
-    # (hardcoded_bind_all_interfaces), which false-positives on this literal.
-    connect_host = "127.0.0.1" if host in ("0.0.0.0", "::") else host  # nosec B104
+    # guarded by _warn_if_lan_exposed. The nosec waives bandit's B104
+    # (hardcoded_bind_all_interfaces) false positive on the compared "0.0.0.0" literal.
+    connect_host = "127.0.0.1" if host in ("0.0.0.0", "::") else host  # nosec
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if thread is not None and not thread.is_alive():
@@ -351,8 +351,9 @@ def format_tree_node(
         depth: Current depth in tree.
         is_last: Whether this is the last child.
         prefix: Prefix for the current line.
-        node_type: Type of node ("scene", "group", "points", "lines", or
-            "gsplats"). Unknown values are rendered without a type icon.
+        node_type: Type of node ("scene", "group", "points", "lines",
+            "gsplats", or "mesh"). Unknown values are rendered without a type
+            icon.
         attrs: Node attributes to display.
 
     Returns:
@@ -375,6 +376,8 @@ def format_tree_node(
         line += " 📏"
     elif node_type == "gsplats":
         line += " 💠"
+    elif node_type == "mesh":
+        line += " 🔺"
 
     # Add selected attributes
     if attrs:
@@ -385,6 +388,13 @@ def format_tree_node(
             important_attrs.append(f"n={attrs['n_vertices']:,}")
         if "n_splats" in attrs:
             important_attrs.append(f"n={attrs['n_splats']:,}")
+        # Faces get their own label rather than sharing the `n=` slot: a mesh's
+        # vertex count says little about its size on its own (a coarse surface and
+        # a dense one can share a vertex budget), and the render cost tracks
+        # triangles. Both are shown, so `n=` keeps meaning "primary elements"
+        # across every geometry type.
+        if "n_faces" in attrs:
+            important_attrs.append(f"faces={attrs['n_faces']:,}")
         if "shape" in attrs:
             important_attrs.append(f"shape={attrs['shape']}")
         if "dtype" in attrs:

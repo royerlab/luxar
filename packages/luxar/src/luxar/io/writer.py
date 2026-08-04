@@ -16,6 +16,7 @@ from ..typing_utils.aliases import (
     GSplatsMetadata,
     LinesMetadata,
     MaxShape,
+    MeshMetadata,
     NodePath,
     PointsMetadata,
 )
@@ -146,6 +147,50 @@ class ZarrWriterProtocol(Protocol):
 
         Returns:
             Dictionary containing metadata about the written lines
+        """
+        ...
+
+    def write_mesh(
+        self,
+        path: NodePath,
+        vertices: PositionArray,
+        faces: NDArray[np.uint32],
+        normals: Optional[NDArray[np.float32]] = None,
+        normal_dims: Optional[Sequence[int]] = None,
+        colors: Optional[Union[ColorArray, tuple, list]] = None,
+        scalars: Optional[Union[ScalarArray, float]] = None,
+        shading: Optional[str] = None,
+        double_sided: bool = True,
+        labels: Optional[Sequence[str]] = None,
+        image_labels: Optional[Any] = None,
+        **attrs: Any,
+    ) -> MeshMetadata:
+        """Write a triangle mesh immediately to Zarr.
+
+        The surface geometry type: nD ``vertices`` plus a ``faces`` triangle-index
+        array. It carries no per-element size — a triangle's extent comes from its
+        own vertices — and has no spatial index or LOD in v1.
+
+        Args:
+            path: Path within the Zarr store for this mesh node
+            vertices: Vertex positions of shape (V, D)
+            faces: Triangle vertex indices, (F, 3) or flat (3F,)
+            normals: Optional per-vertex normals of shape (V, 3); requires
+                ``normal_dims``
+            normal_dims: The three dimension indices ``normals`` describes —
+                required with ``normals``, rejected without
+            colors: Optional - array of shape (V, 3|4), tuple/list (R,G,B[,A]), or
+                None
+            scalars: Optional - array of shape (V,), scalar float, or None. Used
+                for colormap lookup when a colormap is applied.
+            shading: ``"smooth"`` / ``"flat"``; defaults by normal presence
+            double_sided: Whether back faces render (default True)
+            labels: Optional list of strings, one per vertex, for hover tooltips
+            image_labels: Optional per-element images for hover thumbnails
+            **attrs: Additional attributes for the mesh
+
+        Returns:
+            Dictionary containing metadata about the written mesh
         """
         ...
 

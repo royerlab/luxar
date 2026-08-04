@@ -6,7 +6,7 @@ import os
 import re
 import shutil
 import socket
-import subprocess  # nosec B404 - controlled squeue liveness probe
+import subprocess  # nosec B404
 from pathlib import Path
 
 import typer
@@ -43,7 +43,8 @@ def _staging_attempt_live(token: str) -> bool | None:
     m = _SLURM_TOKEN_RE.match(token)
     if m:
         try:
-            res = subprocess.run(  # nosec B603, B607 - trusted squeue probe
+            # Trusted squeue probe — fixed argv, no shell.
+            res = subprocess.run(  # nosec B603, B607
                 ["squeue", "-h", "-j", m.group(1), "-o", "%T"],
                 capture_output=True,
                 text=True,
@@ -234,7 +235,7 @@ def run_batch_validate_cmd(*, output_dir: Path, fix: bool) -> None:
 
 def run_batch_cancel_cmd(*, output_dir: Path) -> None:
     """Run ``batch-fit cancel`` command implementation."""
-    import subprocess  # nosec B404 - controlled Slurm CLI invocation
+    import subprocess  # nosec B404
 
     try:
         from luxar.gsplats.batch.manifest import load_manifest
@@ -257,7 +258,8 @@ def run_batch_cancel_cmd(*, output_dir: Path) -> None:
             raise typer.Exit(0)
 
         aprint(f"Cancelling {len(job_ids)} job(s): {', '.join(job_ids)}")
-        result = subprocess.run(  # nosec B603 - trusted local scancel invocation
+        # Trusted local scancel invocation — fixed argv, no shell.
+        result = subprocess.run(  # nosec B603
             ["scancel"] + job_ids,
             capture_output=True,
             text=True,

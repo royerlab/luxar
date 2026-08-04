@@ -23,12 +23,27 @@ export type GSplatsFormatVersion = '3.0' | '3.1' | '3.2' | '3.3';
 export const FORMAT_TYPE_GSPLATS = 'gsplats_zarr';
 
 // --- scene-graph node types ---
-export const NODE_TYPES: readonly NodeTypeName[] = ['scene', 'group', 'points', 'lines', 'gsplats'];
-export type NodeTypeName = 'scene' | 'group' | 'points' | 'lines' | 'gsplats';
+export const NODE_TYPES: readonly NodeTypeName[] = [
+  'scene',
+  'group',
+  'points',
+  'lines',
+  'gsplats',
+  'mesh',
+];
+export type NodeTypeName = 'scene' | 'group' | 'points' | 'lines' | 'gsplats' | 'mesh';
 
 // --- leaf geometry types (the element-bearing subset of NODE_TYPES) ---
-export const GEOMETRY_TYPES: readonly GeometryTypeName[] = ['points', 'lines', 'gsplats'];
-export type GeometryTypeName = 'points' | 'lines' | 'gsplats';
+export const GEOMETRY_TYPES: readonly GeometryTypeName[] = ['points', 'lines', 'gsplats', 'mesh'];
+export type GeometryTypeName = 'points' | 'lines' | 'gsplats' | 'mesh';
+
+// --- viewer-drawable geometry types: the subset of GEOMETRY_TYPES that has a
+//     loader, a GEOMETRY_DESCRIPTORS row and a tolerance arm. A CAPABILITY,
+//     not the vocabulary — key dispatch tables on this, not on
+//     GeometryTypeName, so a not-yet-drawable type cannot resolve to no
+//     loader. See contract.yaml::loader_types. ---
+export const LOADER_TYPES: readonly LoaderTypeName[] = ['points', 'lines', 'gsplats'];
+export type LoaderTypeName = 'points' | 'lines' | 'gsplats';
 
 // --- specialized-group kinds ---
 export const NODE_KINDS: readonly NodeKind[] = ['lod', 'partition'];

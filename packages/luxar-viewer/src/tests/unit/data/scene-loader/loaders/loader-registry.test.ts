@@ -15,7 +15,7 @@ import type { DataLoader } from '../../../../../data/data-loader-types';
 import type { LinesDataLoader } from '../../../../../types/lines';
 import type { GSplatsDataLoader } from '../../../../../types/gsplats';
 import type { GeometryKind } from '../../../../../data/data-loader-types';
-import { GEOMETRY_TYPES } from '../../../../../types/format-contract';
+import { LOADER_TYPES } from '../../../../../types/format-contract';
 
 function makeStub<T>(): T & { dispose: ReturnType<typeof vi.fn> } {
   return { dispose: vi.fn() } as unknown as T & { dispose: ReturnType<typeof vi.fn> };
@@ -270,9 +270,14 @@ describe('LoaderRegistry.disposeAll', () => {
 });
 
 describe('LoaderRegistry — kind-keyed surface', () => {
-  it('covers every geometry type in the format contract', () => {
+  // `LOADER_TYPES`, not `GEOMETRY_TYPES`: the registry has a bucket per
+  // VIEWER-DRAWABLE kind, which is a subset of the writable leaf vocabulary. A
+  // type that is authorable but has no loader yet (see contract.yaml) has no
+  // bucket here by design, so iterating the wider list would assert that
+  // `loadersOf` works for a kind `LoaderByKind` has no member for.
+  it('covers every viewer-drawable geometry type in the format contract', () => {
     const r = new LoaderRegistry();
-    for (const kind of GEOMETRY_TYPES) {
+    for (const kind of LOADER_TYPES) {
       expect(() => r.loadersOf(kind as GeometryKind)).not.toThrow();
       expect(r.loadersOf(kind as GeometryKind).size).toBe(0);
     }
@@ -324,7 +329,10 @@ describe('LoaderRegistry — kind-keyed surface', () => {
     r.register('points', '/p', points);
     r.register('lines', '/l', lines);
     r.register('gsplats', '/g', gsplats);
-    expect(r.totalLoaderCount).toBe(GEOMETRY_TYPES.length);
+    // One loader per drawable kind was registered above, so the expected total is
+    // `LOADER_TYPES.length` — not `GEOMETRY_TYPES.length`, which also counts
+    // types with no loader to register.
+    expect(r.totalLoaderCount).toBe(LOADER_TYPES.length);
 
     r.disposeAll();
 

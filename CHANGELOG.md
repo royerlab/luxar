@@ -38,6 +38,88 @@ workarounds were removed from the Makefile and CI/docs workflows; editable
 installs have not required that wheel-only artifact since the custom Hatch build
 hook gained `force_include_editable`.
 
+#### Added — `mesh`, a writable triangle-surface geometry type
+
+`scene.add_mesh(name, vertices, faces, ...)` writes a triangle surface into a
+`.luxar.zarr`: nD `vertices` plus a `faces` triangle-index array, with optional
+per-vertex `normals`, `colors`, `scalars`, labels and image labels. `luxar info`
+reports vertex and face counts, `LuxarScene.get_mesh()` / `list_meshes()` read it
+back, and a mesh leaf contributes to scene bounds like any other geometry.
+
+**Writable, not yet renderable.** The viewer cannot draw a mesh yet — its loader,
+material and picking land in a later phase (`docs/specs/MESH_NODE_SPEC.md` §11).
+The format contract now names the two sets separately so neither side has to
+answer the other's question: `geometry_types` is the writable leaf vocabulary
+(which `mesh` joins now) and the new `loader_types` is the viewer-drawable subset
+(which it does not). Adding a type to `loader_types` without its viewer code is
+still a compile error at `LoaderByKind`, `GEOMETRY_DESCRIPTORS` and
+`computeHiddenDimTolerance`, exactly as before.
+
+Unlike the other three types a mesh has no per-element size — a triangle's extent
+comes from its own vertices — so it adds no extent padding to bounds. `normals`
+are stored `(V, 3)` with a **required** `normal_dims` attr naming which three
+dimensions they describe, because normals are a display-space quantity and an
+implicit "first three dimensions" is wrong for any mesh whose leading dimension
+is not spatial (for a `(t, x, y, z)` mesh those are `(t, x, y)`).
+
+Out of scope for this phase, each refused with an explanation rather than
+silently degraded: LOD/decimation, `kind=partition`, per-triangle depth sorting,
+spatial indexing, `volumetric` blending, and mesh import formats.
+
+#### Fixed — a `kind=lod` group could be given a display type nothing can load
+
+The LOD path only ever *derived* `display_type` from its finest child, with no
+check that the result was a type the ladder supports — the partition sibling has
+always had that guard. A geometry type with no LOD ladder was therefore accepted
+and stamped, producing a `kind=lod` group the viewer cannot load, written with no
+error at all. The guard is now applied at all three routes the value can reach
+zarr by: the explicit `add_lod_group(display_type=...)` kwarg, the finalize-time
+back-fill (the route that actually runs), and `compute_lod_display_type`.
+
+It is deliberately not a homogeneity check and not an allowlist: `kind=lod` stays
+intentionally heterogeneous-tolerant (a coarse points level under a fine gsplats
+level is supported), and nested specialized groups keep carrying non-geometry
+marker strings. Only a known geometry type whose capability row says it has no
+LOD support is refused.
+
+Relatedly, `validate_node_attrs` no longer checks node `type` against a
+hand-copied set. That one failed the opposite way from the geometry-leaf checks
+fixed in #1203 — a newly added node type would make every store containing one
+report as "invalid" — but had the same root cause.
+
+#### Fixed — writer-stamped presence flags are now reserved on every geometry type
+
+`has_image_labels` was missing from `POINTS_/LINES_/GSPLATS_RESERVED_ATTRS` even
+though all three writers stamp it. Passing it explicitly was already an error, but
+reported as an *unknown* attribute rather than a *reserved* one, and the asymmetry
+made "which flags does this writer own?" unanswerable from the sets alone. All four
+sets now cover every flag their writer stamps.
+
+Mesh additionally reserves `ordering`, which the sibling types deliberately leave
+open. A measurement while adding it corrected a stale claim in that module: the old
+comment said a caller's `ordering=` is "stamped-over" by the writer, and it is not —
+`Node.__init__` re-persists the caller's attrs through `write_group` *after* the
+geometry writer has stamped the group, so the caller's value is what lands on disk
+(verified for points, lines and gsplats). Those three keep accepting it because
+`ordering=` is a real request parameter there (`add_gsplats(ordering="hilbert")`
+selects the method). Mesh has no spatial index at all, so a supplied value could
+only write a lie the viewer would later read — hence reserved.
+
+**Behaviour change:** `add_points(has_image_labels=...)` /
+`add_lines(has_image_labels=...)` / `add_gsplats(has_image_labels=...)` and
+`add_mesh(ordering=...)` now raise a "reserved attribute" error. All four already
+failed; only the message changes, except `add_mesh(ordering=...)` which is new.
+
+#### Fixed — the bandit pre-commit hook was stricter than the gate CI runs
+
+The hook ran bandit unfiltered while `hatch run security` (what CI gates on) passes
+`--severity-level medium --confidence-level medium`, and the CI step's own comment
+says low findings such as developer-tooling subprocess calls are out of scope. The
+mismatch meant editing any file that happened to contain an accepted low finding
+was blocked by something CI would pass, leaving only `# nosec` churn on unrelated
+lines or `--no-verify`. The hook now carries the same thresholds. Verified it still
+fails on a medium/medium finding.
+
 #### CI — the PyPI wheel viewer build is now a required release check (#688)
 
 CI now builds the standalone viewer application with the same `pnpm build`
