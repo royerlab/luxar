@@ -25,6 +25,7 @@
 
 import * as THREE from 'three';
 import { buildMeshGeometry } from '../mesh-geometry';
+import { applyTransform } from './transforms';
 import type { MeshSide } from '../../data/mesh/projection';
 import type { MeshDataLoader, MeshMetadata, MeshUserData } from '../../types/mesh';
 
@@ -113,6 +114,8 @@ export function createEmptyMeshNode(
     visibleVertexCount: 0,
   };
   mesh.userData = userData;
+
+  if (attrs.transform) applyTransform(mesh, attrs.transform);
 
   return mesh;
 }
