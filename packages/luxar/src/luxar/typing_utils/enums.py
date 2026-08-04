@@ -35,6 +35,11 @@ class BlendingMode(str, Enum):
     * ``VOLUMETRIC``: ``depthTest=true``, ``depthWrite=false``; requires
       back-to-front depth sorting in the viewer.
 
+    ``OPAQUE`` is the only mode that escapes the viewer's sorted (transparent)
+    set entirely and the only one that unconditionally writes depth, so a
+    backdrop must be ``OPAQUE`` to be reliably composited *under* the
+    transparent content drawn in front of it.
+
     Validation of raw strings lives in
     :func:`luxar.validation.types.validate_blending_mode`, which derives its
     accepted set from this enum.

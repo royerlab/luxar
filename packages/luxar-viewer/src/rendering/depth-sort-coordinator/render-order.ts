@@ -18,6 +18,12 @@
  * 1. {@link clearRenderOrderFrameState} at the top of the frame,
  * 2. {@link collectRenderOrderSlot} once per surviving sorted-mode mesh,
  * 3. {@link assignGlobalRenderOrder} after the loop.
+ *
+ * Compositing invariant (see `rendering/blending-state.ts`): `opaque` is the
+ * only blending mode that escapes this sorted set entirely — it is the sole
+ * mode with `transparent: false` — and it unconditionally sets
+ * `depthWrite: true`. A backdrop must therefore be `opaque` to be reliably
+ * composited-over by the transparent content this module orders in front of it.
  */
 
 import * as THREE from 'three';
@@ -259,6 +265,140 @@ function groupContains(
   return dist + inner.r <= outer.r * (1 + CONTAINMENT_EPS);
 }
 
+/** Enclosing sphere of two member spheres `a` and `b` (Ritter seed). */
+function encloseTwoSpheres(
+  a: { x: number; y: number; z: number; r: number },
+  b: { x: number; y: number; z: number; r: number }
+): { x: number; y: number; z: number; r: number } {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const dz = b.z - a.z;
+  const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+  // One sphere already swallows the other (covers the concentric d===0 case,
+  // so the division below is only reached with d > 0).
+  if (d + b.r <= a.r) return { x: a.x, y: a.y, z: a.z, r: a.r };
+  if (d + a.r <= b.r) return { x: b.x, y: b.y, z: b.z, r: b.r };
+  const r = (d + a.r + b.r) / 2;
+  const t = (r - a.r) / d; // center sits `r - a.r` along a → b
+  return { x: a.x + dx * t, y: a.y + dy * t, z: a.z + dz * t, r };
+}
+
+/**
+ * Tight enclosing sphere of a group's member spheres via Ritter's algorithm.
+ * Each member is `{viewX, viewY, viewZ, radius}`; members with `radius < 0`
+ * carry no usable bounds and are skipped. A group with no usable members
+ * yields the `{r: -1}` sentinel (unchanged from the old bound); a single-member
+ * group yields exactly that member's sphere (the dominant single-leaf case,
+ * kept exact).
+ *
+ * Seed from an extreme member pair (farthest-of-farthest by center distance +
+ * radius), then iteratively expand: for a member at distance `d` with radius
+ * `rm`, when `d + rm > R` grow to `R' = (R + d + rm) / 2` and shift the center
+ * toward the member by `R' - R`. Ritter hugs a cluster-plus-outlier layout far
+ * tighter than the legacy centroid + max-reach bound, but on near-symmetric
+ * layouts it OVERSHOOTS the exact circumsphere, so it is not universally
+ * tighter — and its center is offset, so a smaller radius alone does not make
+ * its containment relation a subset of the legacy one.
+ * {@link orderGroupsWithContainment} therefore requires an edge to hold under
+ * BOTH this and {@link centroidMaxReachSphere}.
+ */
+function groupEnclosingSphere(slots: readonly OrderSlot[]): {
+  x: number;
+  y: number;
+  z: number;
+  r: number;
+} {
+  const members = slots.filter((s) => s.radius >= 0);
+  if (members.length === 0) return { x: 0, y: 0, z: 0, r: -1 };
+  const first = members[0];
+  if (members.length === 1) {
+    return { x: first.viewX, y: first.viewY, z: first.viewZ, r: first.radius };
+  }
+
+  // Extreme-pair seed: farthest member from an arbitrary one, then the
+  // farthest from that (center distance + the member's own radius = reach).
+  const farthestFrom = (m: OrderSlot): OrderSlot => {
+    let best = m;
+    let bestReach = -Infinity;
+    for (const s of members) {
+      const dx = s.viewX - m.viewX;
+      const dy = s.viewY - m.viewY;
+      const dz = s.viewZ - m.viewZ;
+      const reach = Math.sqrt(dx * dx + dy * dy + dz * dz) + s.radius;
+      if (reach > bestReach) {
+        bestReach = reach;
+        best = s;
+      }
+    }
+    return best;
+  };
+  const a = farthestFrom(first);
+  const b = farthestFrom(a);
+  const sphere = encloseTwoSpheres(
+    { x: a.viewX, y: a.viewY, z: a.viewZ, r: a.radius },
+    { x: b.viewX, y: b.viewY, z: b.viewZ, r: b.radius }
+  );
+
+  // Expand to cover any member sphere still poking outside the current bound.
+  for (const s of members) {
+    const dx = s.viewX - sphere.x;
+    const dy = s.viewY - sphere.y;
+    const dz = s.viewZ - sphere.z;
+    const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    if (d + s.radius <= sphere.r) continue; // already covered
+    const rNew = (sphere.r + d + s.radius) / 2;
+    if (d > 0) {
+      const t = (rNew - sphere.r) / d; // shift center toward s by (rNew - R)
+      sphere.x += dx * t;
+      sphere.y += dy * t;
+      sphere.z += dz * t;
+    }
+    sphere.r = rNew;
+  }
+  return sphere;
+}
+
+/**
+ * Legacy enclosing sphere: centroid of the usable member centers, radius the
+ * max over members of (center-distance + member radius). Skips members with
+ * `radius < 0` and yields the `{r: -1}` sentinel when none are usable; exact
+ * for a single member. Paired with {@link groupEnclosingSphere}:
+ * {@link orderGroupsWithContainment} requires a containment edge to hold under
+ * both bounds, so the tighter Ritter sphere can only remove legacy false
+ * edges, never introduce new off-center ones.
+ */
+function centroidMaxReachSphere(slots: readonly OrderSlot[]): {
+  x: number;
+  y: number;
+  z: number;
+  r: number;
+} {
+  let x = 0;
+  let y = 0;
+  let z = 0;
+  let count = 0;
+  for (const slot of slots) {
+    if (slot.radius < 0) continue;
+    x += slot.viewX;
+    y += slot.viewY;
+    z += slot.viewZ;
+    count++;
+  }
+  if (count === 0) return { x: 0, y: 0, z: 0, r: -1 };
+  x /= count;
+  y /= count;
+  z /= count;
+  let r = 0;
+  for (const slot of slots) {
+    if (slot.radius < 0) continue;
+    const dx = slot.viewX - x;
+    const dy = slot.viewY - y;
+    const dz = slot.viewZ - z;
+    r = Math.max(r, Math.sqrt(dx * dx + dy * dy + dz * dz) + slot.radius);
+  }
+  return { x, y, z, r };
+}
+
 /**
  * Order groups farthest-first EXCEPT that a group whose bounding sphere
  * strictly contains another group's must draw before it (rationale in
@@ -272,37 +412,30 @@ function orderGroupsWithContainment(byDepth: OrderGroup[]): OrderGroup[] {
   const n = byDepth.length;
   if (n < 2) return byDepth;
 
-  // Enclosing sphere per group: centroid of member centers, radius the
-  // max center-distance + member radius (exact for the dominant
-  // single-leaf group-of-one case; a cheap upper bound for partitions).
-  // That partition bound can contain a genuinely disjoint small neighbour;
-  // the false-positive is accepted as the documented lesser-error tradeoff
-  // (draw the possible container first rather than erase embedded content).
+  // Two valid enclosing spheres per group: the Ritter union
+  // ({@link groupEnclosingSphere}) and the legacy centroid + max-reach bound
+  // ({@link centroidMaxReachSphere}); `tight` is whichever has the smaller
+  // radius (Ritter overshoots near-symmetric layouts, centroid overshoots
+  // cluster-plus-outlier ones).
+  //
+  // A containment edge requires the relation to hold under BOTH spheres. The
+  // tight sphere alone is not enough: a smaller Ritter sphere is OFF-CENTER,
+  // so on some layouts it contains a disjoint neighbour the centroid sphere
+  // never did — a NEW false-positive edge that could regress draw order on
+  // scenes the old bound handled correctly. Requiring the legacy bound to
+  // agree makes the edge set a strict SUBSET of the legacy relation (the
+  // tight bound only ever REMOVES false edges — e.g. the biodiversity
+  // cluster-plus-outlier one, Earth globe wrongly "inside" the spread-out
+  // `All life` tiles — never relocates them), while a true containment (an
+  // embedded node inside a member sphere) satisfies both bounds and is kept.
+  // Acyclicity is preserved: every edge points strictly large → small in the
+  // tight radius.
   const spheres = byDepth.map((group) => {
-    let x = 0;
-    let y = 0;
-    let z = 0;
-    let count = 0;
-    for (const slot of group.slots) {
-      if (slot.radius < 0) continue;
-      x += slot.viewX;
-      y += slot.viewY;
-      z += slot.viewZ;
-      count++;
-    }
-    if (count === 0) return { x: 0, y: 0, z: 0, r: -1 };
-    x /= count;
-    y /= count;
-    z /= count;
-    let r = 0;
-    for (const slot of group.slots) {
-      if (slot.radius < 0) continue;
-      const dx = slot.viewX - x;
-      const dy = slot.viewY - y;
-      const dz = slot.viewZ - z;
-      r = Math.max(r, Math.sqrt(dx * dx + dy * dy + dz * dz) + slot.radius);
-    }
-    return { x, y, z, r };
+    const ritter = groupEnclosingSphere(group.slots);
+    // No usable members → both bounds are the {r: -1} sentinel.
+    if (ritter.r < 0) return { tight: ritter, legacy: ritter };
+    const legacy = centroidMaxReachSphere(group.slots);
+    return { tight: legacy.r <= ritter.r ? legacy : ritter, legacy };
   });
 
   // indegree[i] = number of groups that must draw before group i.
@@ -312,7 +445,11 @@ function orderGroupsWithContainment(byDepth: OrderGroup[]): OrderGroup[] {
   for (let a = 0; a < n; a++) {
     const edges: number[] = [];
     for (let b = 0; b < n; b++) {
-      if (a !== b && groupContains(spheres[a], spheres[b])) {
+      if (
+        a !== b &&
+        groupContains(spheres[a].tight, spheres[b].tight) &&
+        groupContains(spheres[a].legacy, spheres[b].legacy)
+      ) {
         edges.push(b);
         indegree[b]++;
         anyEdge = true;

@@ -26,6 +26,7 @@ import type {
   GPUPoolStats,
   AccumulatorStats,
   LODProgressProvider,
+  DrawOrderProvider,
   PooledGeometryType,
 } from '../types/data-monitor-types';
 import type { UpdateProfiler } from '../profiling/update-profiler';
@@ -114,6 +115,12 @@ export interface SceneLoaderMonitorPort {
    * badges, "LOD x/N" chips, refining indicator, and header summary.
    */
   setLODProgressProvider(provider: LODProgressProvider | null): void;
+  /**
+   * Inject the live per-mesh draw-order provider (blending bucket,
+   * depthWrite, renderOrder keyed by scene-graph path). Polled each tick to
+   * drive the scene-graph tree's draw-order chip — pure observability.
+   */
+  setDrawOrderProvider(provider: DrawOrderProvider | null): void;
   /**
    * Inject the failed-loads provider (count/paths + retry-all). The UI
    * shows a warning banner with a Retry action while failures exist.
