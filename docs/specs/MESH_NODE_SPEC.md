@@ -115,7 +115,9 @@ viewer-drawable subset that keys per-geometry dispatch. The generator enforces t
 non-empty and duplicate-free, and that `geometry_types` is free of the container types — so a half-done
 addition fails `check-contract` with a named error rather than drifting silently.
 
-`mesh` is **already in `node_types` and `geometry_types`** (#1220), so a mesh leaf is writable today.
+`mesh` is **already in `node_types` and `geometry_types`** (#1220) — and #1220 also landed the whole
+Python writer vertical behind those entries (`core/mesh.py`, `add_mesh`, validators, compiler writer,
+reader, `info`; the Phase-1 checklist in §8) — so a mesh leaf is writable today.
 The one list it is deliberately *not* in yet is `loader_types`: adding it there is the Phase-3 switch-on,
 and it is what turns on the three §10.2 compile errors that map out the viewer work. Do **not** read
 "mesh is in both lists" as "the contract work is done" — the drawable half is a one-line `loader_types`
@@ -1118,29 +1120,37 @@ called out as such.
 
 **Python**
 
-- [ ] `format-contract/contract.yaml` → `make gen-contract` (regenerates both projections)
+- [x] `format-contract/contract.yaml` → `make gen-contract` — the writable-side edit (`node_types` +
+      `geometry_types`) **landed in #1220**; the Phase-3 `loader_types` switch-on re-runs it (§3.1)
 - [x] `typing_utils/enums.py` — `NodeType.MESH` and `typing_utils/constants.py` — `NODE_TYPE_MESH`
       — **both landed in #1220.** They must match `contract.yaml`: `test_node_type_enum_matches_contract`
       guards the enum and `test_named_node_type_constants_match_contract` the `NODE_TYPE_*` constants —
       that pair is how the missing constant was caught in #1220
-- [ ] `core/mesh.py`, `core/group/adders/mesh.py`
-- [ ] `core/group/group.py`, `core/scene/scene.py`, `core/__init__.py`, `luxar/__init__.py`
-- [ ] `core/group/dim_order.py` — `add_mesh` calls `apply_dim_order_positions` for `vertices` like the
-      other three adders; `faces` is index data and is **not** reordered
-- [ ] `io/_compiler/geometry_writers/mesh.py`, `io/_compiler/node_common.py` (`MESH_RESERVED_ATTRS`)
-- [ ] `io/compiler.py` (`write_mesh` facade), `io/reader.py` (`MeshData`/`get_mesh`/`list_meshes`)
-- [ ] `validation/base.py` (`validate_vertices_for_writing`, `validate_faces_for_writing`, `validate_normals_for_writing`)
-- [ ] `cli/info_command.py`
-- [ ] **Partition rejection** — `core/node/specialized_groups.py:62`: the `display_type` guard admits
-      exactly `("points", "lines", "gsplats")`. Leave `mesh` **out** of it, and extend the error message
-      to say why (mesh has no LOD/partition support yet) rather than just listing valid values.
-- [ ] **LOD rejection** — `core/group/lod/group.py`: ⚠️ **there is no equivalent whitelist.**
-      `compute_lod_display_type` simply returns `resolve_display_type(children[-1])`, and
-      `resolve_display_type` falls through to `node.attrs.get("type", "group")` for a plain leaf. A mesh
-      child would therefore be **silently accepted** and produce a `kind=lod` group with
-      `display_type="mesh"` that no viewer path can load. An explicit reject must be **added** to
-      `compute_lod_display_type` (or to `Node.add_lod_group`) — this is a new guard, not a
-      leave-mesh-out-of-an-existing-list edit. Cover it with a test asserting the raise.
+- [x] `core/mesh.py`, `core/group/adders/mesh.py` — **landed in #1220**
+- [x] `core/group/group.py`, `core/__init__.py`, `luxar/__init__.py` — **landed in #1220**;
+      `core/scene/scene.py` needed no edit (`Scene` subclasses `Group`, so it inherits `add_mesh`)
+- [x] `core/group/dim_order.py` — **landed in #1220** as anticipated: `add_mesh` calls
+      `apply_dim_order_positions` for `vertices` like the other three adders (no `dim_order.py` edit
+      was needed); `faces` is index data and is **not** reordered
+- [x] `io/_compiler/geometry_writers/mesh.py`, `io/_compiler/node_common.py` (`MESH_RESERVED_ATTRS`)
+      — **landed in #1220**
+- [x] `io/compiler.py` (`write_mesh` facade), `io/reader.py` (`MeshData`/`get_mesh`/`list_meshes`)
+      — **landed in #1220**
+- [x] `validation/base.py` (`validate_vertices_for_writing`, `validate_faces_for_writing`,
+      `validate_normals_for_writing`) — **landed in #1220**
+- [x] `cli/info_command.py` — **landed in #1220**
+- [x] **Partition rejection** — **landed in #1220**, in a stronger form than this item planned:
+      `add_partition_group_impl` asks the shared capability table (`supports_partition` in
+      `typing_utils/geometry_capabilities.py`) instead of hardcoding a tuple, and the error message
+      explains *why* mesh is excluded (its faces share vertices across any cut). Pinned by
+      `test_mesh_under_a_partition_group_is_rejected`.
+- [x] **LOD rejection** — **landed in #1220.** The hole this item flagged was real:
+      `compute_lod_display_type` simply returned `resolve_display_type(children[-1])`, which falls
+      through to `node.attrs.get("type", "group")` for a plain leaf, so a mesh child would have been
+      silently accepted into a `kind=lod` group with `display_type="mesh"` that no viewer path can
+      load. It now calls `require_lod_display_type` (capability-driven, matching the partition guard),
+      and the explicit `display_type=` route through `add_lod_group_impl` is gated the same way.
+      Pinned by `test_mesh_under_a_lod_group_is_rejected`.
 - [x] `io/_compiler/finalize/lod_backfill.py` — **already handled by #1079.** `resolve()` now tests
       `t in GEOMETRY_TYPES` instead of a hardcoded tuple, so `mesh` is recognised as a leaf the moment
       it enters the contract, with no edit here. All four child-iteration sites also moved to
@@ -1224,15 +1234,18 @@ A reviewer should treat a `| 'mesh'` appearing in any of those five as a defect.
 
 **Docs**
 
-- [ ] `docs/guides/user/LUXAR_ZARR_FORMAT.md` — mesh node layout
-- [ ] `CLAUDE.md` — geometry-types line, "three first-class geometry types" → four
-- [ ] Package READMEs: `core/`, `io/_compiler/geometry_writers/`, `data/mesh/`,
-      `rendering/materials/mesh/`, `rendering/picking/mesh/`
+- [x] `docs/guides/user/LUXAR_ZARR_FORMAT.md` — mesh node layout — **landed in #1220**
+- [ ] `CLAUDE.md` — geometry-types line: #1220 already names mesh as writable-but-not-renderable;
+      the "three first-class geometry types" → four flip waits until mesh actually renders (Phase 3+)
+- [ ] Package READMEs: `core/` and `io/_compiler/geometry_writers/` were updated in #1220; the viewer
+      ones (`data/mesh/`, `rendering/materials/mesh/`, `rendering/picking/mesh/`) arrive with their
+      packages
 - [ ] `CHANGELOG.md`
 
 **Tests**
 
-- [ ] Python: writer round-trip, validators (incl. every rejection in §3.5 — among them `n_vertices >
+- [x] Python — **landed in #1220** (`core/tests/test_mesh.py`,
+      `validation/tests/test_mesh_validation.py`): writer round-trip, validators (incl. every rejection in §3.5 — among them `n_vertices >
       2^27` rejected at write time with `ValidationError` via `validate_vertices_for_writing`, the
       fail-fast twin of the §6.5 loader-side `n_vertices > 2^27 → LoaderError` pin, verified to fail
       before the validator exists per this section's rule), authoring lint, broadcast color/scalar,
@@ -1418,7 +1431,7 @@ Use `geometryDescriptorFor(node.type)`, which gates the lookup with `Object.hasO
 | Phase | Contents | Verifiable outcome |
 |---|---|---|
 | **0** ✅ *(done — §10.1)* | Single-source `GeometryKind` from the contract; collapse `LoaderRegistry`; unify the per-type pipeline; table-drive the dispatch switches | Landed as #1079 / #1099 / #1150, all behaviour-preserving. The `SceneGraphNodeType` local extension has since been deleted (#1220) — it is now plain `NodeTypeName` — so Phase 0 is fully landed |
-| **1** | Writable contract (`node_types`/`geometry_types` + `NodeType.MESH`/`NODE_TYPE_MESH` — already landed in #1220) + `core/mesh.py` + adder + writer + validators + reader + `info` + the LOD/partition rejections (§8) | `scene.add_mesh(...)` writes a `.luxar.zarr`; `luxar info --stats` reports it; round-trip test green; a mesh child of a lod/partition group **raises** |
+| **1** ✅ *(done — #1220)* | Writable contract (`node_types`/`geometry_types` + `NodeType.MESH`/`NODE_TYPE_MESH`) + `core/mesh.py` + adder + writer + validators + reader + `info` + the LOD/partition rejections (§8) | Landed as #1220, all in one PR: `scene.add_mesh(...)` writes a `.luxar.zarr`; `luxar info --stats` reports it; round-trip tests green; a mesh child of a lod/partition group **raises** (both rejections pinned by tests) |
 | **2** | Rust + TS cull kernels with parity tests | Kernels green in isolation, no viewer changes |
 | **3** | `mesh` → `loader_types` in `contract.yaml` (the switch-on — fires the three §10.2 compile errors) + `types/mesh.ts` + loader + node load + `mesh-geometry.ts` + one `LoaderByKind` entry + one `GEOMETRY_DESCRIPTORS` row + the `computeHiddenDimTolerance` arm | Mesh loads and renders **unshaded** (flat vertex color); E2E smoke green |
 | **4** | GLSL + TSL material pair + codegen snapshots + shading model | Shaded surface, both backends pixel-equivalent |
@@ -1426,13 +1439,13 @@ Use `geometryDescriptorFor(node.type)`, which gates the lookup with `Object.hasO
 | **6** | Fixture + E2E spec + demo + docs + CHANGELOG | Shippable |
 
 Phase 0 landed alone, with no mesh code, so any regression it caused would have been unambiguous.
-Phase 1 (the Python writable side) and Phase 2 (the cull kernels) are independent and can land in
-parallel. The *drawable* half of the contract edit — adding `mesh` to `loader_types` — is **not** part
-of Phase 1: it fires the three §10.2 compile errors, which can only be cleared by real Phase-3 code, so
-it belongs with Phase 3. Phase 3 used to be the widest diff — a sweep across every dispatch site — and
-is now one of the narrower ones: the three dispatch files need no mesh edit, leaving the `loader_types`
-switch-on, the loader, the geometry builder, and two table entries. Phase 4 is the deepest single piece
-of work.
+Phase 1 (the Python writable side) landed next, as #1220; Phase 2 (the cull kernels) is independent
+of the remaining viewer phases and can land at any point. The *drawable* half of the contract edit —
+adding `mesh` to `loader_types` — was deliberately **not** part of Phase 1: it fires the three §10.2
+compile errors, which can only be cleared by real Phase-3 code, so it belongs with Phase 3. Phase 3
+used to be the widest diff — a sweep across every dispatch site — and is now one of the narrower ones:
+the three dispatch files need no mesh edit, leaving the `loader_types` switch-on, the loader, the
+geometry builder, and two table entries. Phase 4 is the deepest single piece of work.
 
 **Estimate:** 5–6 PRs, roughly 4–5.5K LOC including tests — against ~14K LOC for the full Lines
 vertical, the difference being everything in §9 plus the dispatch work Phase 0 already absorbed.
