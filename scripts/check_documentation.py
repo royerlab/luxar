@@ -19,6 +19,7 @@ Usage:
 """
 
 import argparse
+import ast
 import json
 import re
 import subprocess
@@ -265,12 +266,30 @@ class DocumentationChecker:
 
     def _check_python_file_docstrings(self, py_file: Path, package_name: str):
         """Check Python file for docstring coverage."""
-        content = py_file.read_text()
+        # Parse the raw bytes so Python's own source-encoding rules apply: a
+        # PEP 263 cookie (`# coding: latin-1`) and a leading UTF-8 BOM are both
+        # handled, whereas decoding to str first would reject a valid non-UTF-8
+        # file. AST parsing also means shebangs, __future__ imports, leading
+        # comments and multi-line signatures don't fool a text heuristic. A bad
+        # parse yields a clean finding instead of crashing the run: SyntaxError
+        # covers unparseable and undeclared non-UTF-8 sources, ValueError the
+        # embedded-NUL case on 3.10/3.11; neither of the latter has a lineno.
+        try:
+            tree = ast.parse(py_file.read_bytes())
+        except (SyntaxError, ValueError) as exc:
+            self.results.append(
+                CheckResult(
+                    passed=False,
+                    file_path=str(py_file),
+                    check_name="Python syntax",
+                    message=(f"Could not parse {package_name}/{py_file.name}: {exc}"),
+                    line_number=getattr(exc, "lineno", None),
+                )
+            )
+            return
 
         # Check for module docstring
-        if not content.strip().startswith('"""') and not content.strip().startswith(
-            "'''"
-        ):
+        if ast.get_docstring(tree) is None:
             self.results.append(
                 CheckResult(
                     passed=False,
@@ -281,22 +300,14 @@ class DocumentationChecker:
             )
 
         # Count functions/classes and docstrings
-        func_class_pattern = r"^(def |class )"
-        docstring_pattern = r'^\s+["\']'
-
-        lines = content.split("\n")
         func_class_count = 0
         docstring_count = 0
 
-        for i, line in enumerate(lines):
-            if re.match(func_class_pattern, line):
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                 func_class_count += 1
-                # Check if next non-empty line is a docstring
-                for j in range(i + 1, min(i + 3, len(lines))):
-                    if lines[j].strip():
-                        if re.match(docstring_pattern, lines[j]):
-                            docstring_count += 1
-                        break
+                if ast.get_docstring(node) is not None:
+                    docstring_count += 1
 
         if func_class_count > 0:
             coverage = (docstring_count / func_class_count) * 100
