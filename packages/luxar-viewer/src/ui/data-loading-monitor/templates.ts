@@ -20,6 +20,7 @@ import type {
   LODProgressState,
 } from '../../types/data-monitor-types';
 import { escapeHtml } from '../../utils/escape-html';
+import { GEOMETRY_TYPES } from '../../types/format-contract';
 
 /**
  * Semantic color names mapped to CSS class modifiers.
@@ -1869,11 +1870,9 @@ export function renderSceneGraphTree(
 
   // Header with stats. "layers" (node counts), not element counts — the
   // tooltip disambiguates, since "5 gsplats" otherwise reads as 5 splats.
-  const headerStats = [
-    state.pointsNodes > 0 ? `${state.pointsNodes} points` : null,
-    state.linesNodes > 0 ? `${state.linesNodes} lines` : null,
-    state.gsplatsNodes > 0 ? `${state.gsplatsNodes} gsplats` : null,
-  ]
+  const headerStats = GEOMETRY_TYPES.map((t) =>
+    state.nodesByType[t] > 0 ? `${state.nodesByType[t]} ${t}` : null
+  )
     .filter(Boolean)
     .join(', ');
   const headerStatsTooltip =
