@@ -358,7 +358,7 @@ def make_additive_lod_lines(
 
     Each entry in the returned list is a list of per-polyline vertex
     arrays — the polylines assigned to that LOD level. The caller
-    (``_write_lines_multi_lod`` in ``io/compiler.py``) walks each
+    (``write_lines_multi_lod`` in ``io/compiler.py``) walks each
     level's polylines, gathers their vertices + widths + (per-vertex)
     color / scalar arrays, builds segment indices LOCAL to the
     subgroup, and writes the subgroup.
@@ -371,8 +371,11 @@ def make_additive_lod_lines(
         method / n_lods / counts / seed: see Points equivalent. Same
           semantics, with one currency note: a ``"stream:<c>"`` spec sizes
           ``c`` in VERTICES (so the same spec means the same payload for
-          every geometry) and is converted here to a polyline count via the
-          mean polyline length — cuts stay on whole-polyline boundaries.
+          every geometry). Each geometric vertex target ``[c, 2c, 4c, …]`` is
+          mapped to the first whole-polyline boundary whose CUMULATIVE vertex
+          count (along the additive order) reaches it, so cuts stay on
+          whole-polyline boundaries while honouring the vertex budget even when
+          polyline lengths are highly skewed.
 
     Returns:
         List of LOD-level entries. Each entry is a list of per-polyline
@@ -439,14 +442,29 @@ def make_additive_lod_lines(
 
     if isinstance(counts, str) and counts.startswith("stream:"):
         # `stream:C` is sized in VERTICES — the payload currency, symmetric with
-        # Points and GSplats — but this ladder slices POLYLINES, so convert via
-        # the mean polyline length. Cuts therefore still land on whole-polyline
-        # boundaries, preserving the segment-topology invariant.
+        # Points and GSplats — but this ladder can only cut on whole-polyline
+        # boundaries. Converting C to a fixed polyline count via the MEAN length
+        # misses the vertex budget badly when polyline lengths are skewed (one
+        # giant `indexed` component plus many tiny ones), so instead size the
+        # cuts against the ACTUAL cumulative vertex count along the additive
+        # order: each geometric vertex target `[C, 2C, 4C, …]` becomes the first
+        # whole-polyline boundary whose cumulative vertices reach it. Cuts stay
+        # on whole-polyline boundaries, preserving the segment-topology
+        # invariant, and every level honours the vertex budget as closely as
+        # indivisible polylines allow.
         from ....utils.lod_breakpoints import parse_stream_chunk, stream_cuts
 
-        mean_len = max(1.0, n / p)
-        c_polys = max(1, int(round(parse_stream_chunk(counts) / mean_len)))
-        breakpoints = stream_cuts(p, c_polys)
+        chunk_verts = parse_stream_chunk(counts)
+        poly_lengths = np.fromiter(
+            (polylines[int(i)].shape[0] for i in perm), dtype=np.int64, count=p
+        )
+        cum_verts = np.cumsum(poly_lengths)
+        breakpoints = []
+        for target in stream_cuts(n, chunk_verts)[:-1]:
+            # first whole-polyline boundary whose cumulative vertices reach target
+            bp = min(p, int(np.searchsorted(cum_verts, target, side="left")) + 1)
+            if bp > (breakpoints[-1] if breakpoints else 0):
+                breakpoints.append(bp)
     elif isinstance(counts, str):
         # Energy: fractions → cumulative counts (over polylines).
         from .points import _energy_breakpoints_to_counts  # shared helper

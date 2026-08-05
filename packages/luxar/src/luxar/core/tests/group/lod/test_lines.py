@@ -565,9 +565,10 @@ class TestLinesStreamBreakpoints:
         rng = np.random.RandomState(seed)
         return rng.rand(n_seg * 2, 3).astype(np.float32)
 
-    def test_chunk_is_converted_from_vertices_to_polylines(self) -> None:
-        # 500 two-vertex polylines: mean length 2, so stream:200 vertices
-        # becomes 100 polylines in the first level.
+    def test_uniform_lengths_size_first_level_by_vertex_budget(self) -> None:
+        # 500 uniform two-vertex polylines: cuts are sized by CUMULATIVE
+        # vertices, so a stream:200 vertex budget is exactly the first 100 whole
+        # polylines (100 × 2 = 200 vertices).
         verts = self._segments(500)
 
         levels = make_additive_lod_lines(
@@ -615,3 +616,129 @@ class TestLinesStreamBreakpoints:
 
         with pytest.raises(ValueError, match="energy:.*stream:|stream:.*energy:"):
             make_additive_lod_lines(verts, line_type="segments", counts="bogus:1")
+
+    @staticmethod
+    def _skewed_indexed(
+        n_big: int = 50, big_len: int = 100, n_small: int = 500
+    ) -> tuple:
+        # Skewed `indexed` set: `n_big` "big" polylines (`big_len` vertices each,
+        # spanning a long physical distance) + `n_small` tiny 2-vertex polylines.
+        # `salience` puts the big polylines FIRST in the additive order, so the
+        # early cuts are dominated by the large polylines — the exact regime
+        # where sizing the `stream:` chunk from the MEAN polyline length misses
+        # the budget. Returns (verts, indices, widths, n, p, big_len).
+        n = n_big * big_len + 2 * n_small
+        p = n_big + n_small
+        verts = np.zeros((n, 3), dtype=np.float32)
+
+        edges = []
+        for b in range(n_big):
+            base = b * big_len
+            # A chain of `big_len` vertices with unit spacing → physical
+            # length big_len - 1 (large salience).
+            verts[base : base + big_len, 0] = np.arange(big_len, dtype=np.float32)
+            verts[base : base + big_len, 1] = float(b * 10)
+            a = np.arange(base, base + big_len - 1, dtype=np.int64)
+            edges.append(np.stack([a, a + 1], axis=1))
+
+        sbase = n_big * big_len
+        # Tiny two-vertex polylines with a minute physical length (small
+        # salience → they sort AFTER every big polyline).
+        verts[sbase : sbase + 2 * n_small : 2, 0] = 0.0
+        verts[sbase + 1 : sbase + 2 * n_small : 2, 0] = 0.01
+        sa = np.arange(sbase, sbase + 2 * n_small, 2, dtype=np.int64)
+        edges.append(np.stack([sa, sa + 1], axis=1))
+
+        indices = np.concatenate(edges, axis=0)
+        widths = np.ones(n, dtype=np.float32)
+        return verts, indices, widths, n, p, big_len
+
+    def test_skewed_lengths_track_the_vertex_budget_not_polyline_count(
+        self,
+    ) -> None:
+        # n = 6000 vertices, p = 550 polylines, mean length = 6000/550 ≈ 10.9.
+        # OLD (mean-based) code: c_polys = round(500 / 10.9) = 46, so the FIRST
+        # level is the first 46 polylines = 46 big polylines = 4600 vertices —
+        # 9.2x the first geometric vertex target of 500. NEW code sizes cuts
+        # against the ACTUAL cumulative vertex count, so the first level reaches
+        # exactly 500 vertices (5 big polylines) and every level tracks the
+        # geometric [500, 1000, 2000, 4000] vertex schedule. chunk=500 is an exact
+        # multiple of big_len, so every target lands on a whole-polyline boundary
+        # (cuts == targets) — this pins the undershoot off-by-one cleanly; the
+        # sibling test below exercises the mid-polyline overshoot regime.
+        from luxar.utils.lod_breakpoints import stream_cuts
+
+        verts, indices, widths, n, _p, big_len = self._skewed_indexed()
+
+        chunk = 500
+        levels = make_additive_lod_lines(
+            verts,
+            line_type="indexed",
+            indices=indices,
+            widths=widths,
+            method="salience",
+            counts=f"stream:{chunk}",
+        )
+
+        # Each cut is the FIRST whole-polyline boundary whose cumulative vertices
+        # REACH its geometric target 2^k · C, so it lands in
+        # [target, target + big_len] — it reaches the target and overshoots by at
+        # most the one crossing polyline. The OLD mean-based sizing produces a
+        # first cut of 4600 vertices (9.2x its 500-vertex target) and fails this.
+        level_vertex_counts = [sum(int(m.size) for m in level) for level in levels]
+        cum_cuts = np.cumsum(level_vertex_counts)[:-1]
+        targets = stream_cuts(n, chunk)[:-1]
+        assert len(cum_cuts) == len(targets)
+        for cut, target in zip(cum_cuts, targets):
+            assert target <= cut <= target + big_len, (cut, target)
+
+        # Whole-polyline (segment-topology) invariant: every returned member is a
+        # COMPLETE polyline — a tiny 2-vertex one or a whole 100-vertex big one.
+        # This is what fails if an implementation sliced perm-ordered VERTICES at
+        # the exact targets (which would still partition perfectly below).
+        assert all(int(m.size) in (2, big_len) for level in levels for m in level)
+
+        # Whole-polyline integrity: the concatenation of every level's polylines
+        # is a partition of all n vertices — no split, loss, or duplication.
+        joined = np.concatenate([m for level in levels for m in level])
+        assert joined.size == n
+        assert np.array_equal(np.unique(joined), np.arange(n))
+
+    def test_skewed_lengths_overshoot_lands_within_one_polyline(self) -> None:
+        # Same skewed fixture, but chunk=530 is NOT a multiple of big_len=100, so
+        # no geometric target lands on a whole-polyline boundary. Each cut must
+        # therefore overshoot its target by the one crossing big polyline:
+        # targets = stream_cuts(6000, 530)[:-1] = [530, 1060, 2120, 4240] and the
+        # cuts land at [600, 1100, 2200, 4300] — each strictly past its target but
+        # within one big_len of it. This exercises the mid-polyline overshoot
+        # regime the exact-alignment (chunk=500) case can never reach.
+        from luxar.utils.lod_breakpoints import stream_cuts
+
+        verts, indices, widths, n, _p, big_len = self._skewed_indexed()
+
+        chunk = 530
+        levels = make_additive_lod_lines(
+            verts,
+            line_type="indexed",
+            indices=indices,
+            widths=widths,
+            method="salience",
+            counts=f"stream:{chunk}",
+        )
+
+        level_vertex_counts = [sum(int(m.size) for m in level) for level in levels]
+        cum_cuts = np.cumsum(level_vertex_counts)[:-1]
+        targets = stream_cuts(n, chunk)[:-1]
+        assert len(cum_cuts) == len(targets)
+        for cut, target in zip(cum_cuts, targets):
+            # Reaches the target and overshoots by at most the crossing polyline.
+            assert target <= cut <= target + big_len, (cut, target)
+            # Strictly past the target: the mid-polyline overshoot the
+            # exact-alignment case cannot reach (there the cut equals the target).
+            assert cut > target, (cut, target)
+
+        # Same whole-polyline (segment-topology) invariant and full partition.
+        assert all(int(m.size) in (2, big_len) for level in levels for m in level)
+        joined = np.concatenate([m for level in levels for m in level])
+        assert joined.size == n
+        assert np.array_equal(np.unique(joined), np.arange(n))
