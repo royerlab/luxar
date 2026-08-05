@@ -69,7 +69,7 @@
 
 import * as zarr from '../zarr';
 import { MAX_MESH_VERTICES, MESH_DECODE_BUDGET_BYTES } from '../../config/constants';
-import type { ArrayMetadata } from '../array-decoder/decoder';
+import { ArrayDecoder, type ArrayMetadata } from '../array-decoder/decoder';
 import { LoaderError, classifyLoaderError } from '../scene-loader/nodes/load-leaf-error-dispatch';
 import type { MeshMetadata } from '../../types/mesh';
 import type { EncodingName } from '../../types/format-contract';
@@ -475,6 +475,43 @@ async function resolveRefTarget(
   return current;
 }
 
+/**
+ * Dtypes an UNENCODED `colors` array may use — §3.2's `uint8/uint16/float32`,
+ * in both spellings (zarrita reports friendly names, a raw `.zarray` carries
+ * numpy typestrings).
+ *
+ * Colours are the one mesh array whose dtype is MEANING-BEARING at the GPU: the
+ * shared colour path preserves the native type on its direct branch, and the
+ * renderer's normalization is defined per dtype (uint8 as 0–255, uint16 as
+ * 0–65535, float32 read as-is in [0, 1]). An unencoded `int32` or `int64`
+ * colours array has no defined normalization — it widens to a float buffer
+ * whose 0–255-ish values all clamp ≥ 1.0 and shade the mesh flat white, with
+ * nothing to say why. Every other array is decoder-routed to value-preserving
+ * `Float32Array`, where any recognised dtype is fine — which is why this check
+ * exists for colours alone.
+ *
+ * ENCODED colours are exempt: their stored dtype holds codes (LUT indices,
+ * quantized levels), and the decode path materializes a defined buffer
+ * regardless — the closed {@link ENCODING_BUDGET_KIND} vocabulary already
+ * bounds what "encoded" can mean.
+ */
+const UNENCODED_COLOR_DTYPES = new Set([
+  'uint8',
+  '|u1',
+  '<u1',
+  '>u1',
+  '=u1',
+  'uint16',
+  '|u2',
+  '<u2',
+  '>u2',
+  '=u2',
+  'float32',
+  '<f4',
+  '>f4',
+  '=f4',
+]);
+
 /** Human-readable byte count for error messages. */
 function mib(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
@@ -736,6 +773,20 @@ export async function preflightMesh(
   let colorComponents: 3 | 4 | undefined;
   if (arrays.colors) {
     colorComponents = checkLayout('colors', arrays.colors, nVertices, [3, 4]).components as 3 | 4;
+    // Same predicate the colour loader's direct branch uses, so this gate covers
+    // exactly the loads whose native dtype reaches the GPU (see
+    // UNENCODED_COLOR_DTYPES for why colours alone need it).
+    const colorAttrs = (arrays.colors.attrs ?? {}) as unknown as ArrayMetadata;
+    const colorDtype = String(arrays.colors.dtype);
+    if (!ArrayDecoder.isEncoded(colorAttrs) && !UNENCODED_COLOR_DTYPES.has(colorDtype)) {
+      rejectMesh(
+        path,
+        `colors has dtype '${colorDtype}'; an unencoded colors array must be uint8, ` +
+          'uint16 or float32 (§3.2) — the dtypes with a defined colour ' +
+          'normalization. Anything else mis-shades every vertex with nothing to ' +
+          'say why.'
+      );
+    }
   }
   if (arrays.scalars) checkLayout('scalars', arrays.scalars, nVertices, [1]);
 

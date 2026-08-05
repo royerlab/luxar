@@ -641,6 +641,71 @@ describe('preflightMesh — (c) shape and dtype cross-checks', () => {
       expect(result.colorComponents).toBe(channels);
     }
   });
+
+  it.each([
+    ['int8', '|i1'],
+    ['int32', '<i4'],
+    ['int64', '<i8'],
+    ['uint64', '<u8'],
+    ['float64', '<f8'],
+    ['float16', '<f2'],
+  ])(
+    'rejects an unencoded %s colors array — no defined colour normalization',
+    async (_l, dtype) => {
+      // Colours are the one array whose dtype is meaning-bearing at the GPU: the
+      // shared colour path preserves the native type on its direct branch, and
+      // normalization is defined only for uint8/uint16/float32 (§3.2). An int32
+      // store's 0–255 values would widen to floats that all clamp ≥ 1.0 and shade
+      // the mesh flat white with nothing to say why — rejected from metadata
+      // instead, before any chunk is fetched.
+      await expectReject(
+        () =>
+          preflightMesh(
+            PATH,
+            tetAttrs({ has_colors: true }),
+            tetHandles({ colors: fakeArray([4, 3], dtype as string) })
+          ),
+        /an unencoded colors array must be uint8, uint16 or float32/
+      );
+    }
+  );
+
+  it.each([
+    ['uint8', '|u1'],
+    ['uint16', '<u2'],
+    ['float32', '<f4'],
+  ])('accepts an unencoded %s colors array — §3.2 exactly', async (_l, dtype) => {
+    await expect(
+      preflightMesh(
+        PATH,
+        tetAttrs({ has_colors: true }),
+        tetHandles({ colors: fakeArray([4, 3], dtype as string) })
+      )
+    ).resolves.toBeDefined();
+  });
+
+  it('exempts ENCODED colors from the dtype gate — their stored dtype holds codes', async () => {
+    // A LUT-encoded colours array stores uint16 indices; the decode path (not the
+    // native dtype) defines what reaches the GPU, so the unencoded-dtype rule must
+    // not fire. Same predicate as the colour loader's direct-branch check.
+    await expect(
+      preflightMesh(
+        PATH,
+        tetAttrs({ has_colors: true }),
+        tetHandles({
+          colors: fakeArray([4, 1], '<u2', [4, 1], {
+            encoding: {
+              name: 'lut_uint16',
+              lut: [0, 0, 0],
+              lut_mode: 'row',
+              original_shape: [4, 3],
+              original_dtype: 'float32',
+            },
+          }),
+        })
+      )
+    ).resolves.toBeDefined();
+  });
 });
 
 describe('preflightMesh — presence flags must match the store', () => {
