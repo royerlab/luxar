@@ -75,8 +75,9 @@ export interface LuxarOrbitControlsConfig {
  * `ArcballControls`, and works with both `PerspectiveCamera` and
  * `OrthographicCamera`. Pointer gestures accumulate into per-frame delta
  * buffers (rotation/pan/zoom/roll) that are applied fractionally and decayed
- * each {@link update}, giving the smooth "weighted" feel; the same code path
- * also drives auto-rotation and Shift+scroll view-axis roll.
+ * each {@link update}, giving the smooth "weighted" feel; Shift+scroll
+ * view-axis roll feeds the same damped buffers, while auto-rotation is
+ * applied directly in the same update step.
  *
  * This same class backs both the manager's orbit (3D) and ortho (2D) modes,
  * each with its own instance — `ControlsManager` disposes and reconstructs a
