@@ -172,17 +172,34 @@ Arbol.max_depth = 5
 
 
 def extract_isosurface(volume: np.ndarray, name: str) -> tuple:
-    """Smooth `volume`, then return `(vertices, faces, normals)` in micrometres.
+    """Smooth `volume`, then return `(vertices, faces, normals)`.
 
-    Vertices come back in the array's own (Z, Y, X) axis order, scaled by
-    ``VOXEL_SIZE_ZYX`` through marching_cubes' ``spacing`` — so the scene's
-    dimensions are declared (z, y, x) to match rather than transposing a
-    multi-hundred-thousand-row array for cosmetics.
+    Vertices come back in micrometres, in the array's own (Z, Y, X) axis order,
+    scaled by ``VOXEL_SIZE_ZYX`` through marching_cubes' ``spacing`` — so the
+    scene's dimensions are declared (z, y, x) to match rather than transposing a
+    multi-hundred-thousand-row array for cosmetics. (Normals are unitless
+    directions; skimage does not apply ``spacing`` to them, so under this
+    dataset's mild anisotropy they are tilted a few degrees off the true
+    physical-surface normal — immaterial for shading.)
 
-    The returned normals are the interpolated intensity GRADIENT, pointing toward
-    DECREASING intensity (marching_cubes' ``gradient_direction="descent"``
-    default) — i.e. outward from a bright object, which is the orientation a
-    surface enclosing signal wants.
+    The returned normals are the interpolated NEGATIVE intensity gradient,
+    pointing toward DECREASING intensity — i.e. outward from a bright object,
+    which is the orientation a surface enclosing signal wants. marching_cubes
+    computes those normals the same way regardless of ``gradient_direction``; the
+    flag only controls FACE WINDING. Its ``"descent"`` default does
+    ``np.fliplr(faces)``, which leaves each triangle's right-handed winding
+    opposite the outward normals — so exterior triangles render back-facing and
+    the headlight shading inverts. We pass ``"ascent"`` to keep the winding
+    consistent with the outward normals.
+
+    NB: skimage documents ``"ascent"`` as "exterior was greater than object",
+    which is the opposite of this bright-signal data — but that label is written
+    for a LEFT-hand-rule consumer (its source comment: "MC implementation is
+    right-handed, but gradient_direction is left-handed"). Luxar's renderer is
+    right-handed (CCW = front-facing), so the unflipped ``"ascent"`` winding is
+    the one that matches our outward normals. In skimage 0.26 the flag only
+    toggles the ``np.fliplr(faces)`` winding; the winding test guards against a
+    well-meaning revert to ``"descent"``.
     """
     ndimage = require_module("scipy.ndimage")
     measure = require_module("skimage.measure")
@@ -196,7 +213,7 @@ def extract_isosurface(volume: np.ndarray, name: str) -> tuple:
         aprint(f"intensity span (p1–p99.5): {lo:.0f}–{hi:.0f} → isolevel {level:.0f}")
 
         vertices, faces, normals, _values = measure.marching_cubes(
-            v, level=level, spacing=VOXEL_SIZE_ZYX
+            v, level=level, spacing=VOXEL_SIZE_ZYX, gradient_direction="ascent"
         )
         aprint(f"{len(vertices):,} vertices, {len(faces):,} triangles")
 
