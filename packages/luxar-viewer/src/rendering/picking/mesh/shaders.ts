@@ -32,30 +32,25 @@
  * | `uSurfaceDepth` | `isNormalMode(mode) \|\| isOpaqueMode(mode)` | real projected depth (front-most wins) vs brightness-as-depth (brightest wins) |
  * | `uAlphaCutout` | `isOpaqueMode(mode)` | apply the visual shader's identical `a < uAlphaCutoff` discard |
  *
- * ## Named exception to §6.4's matching-output rule: the surface-depth VALUE
+ * ## The surface-depth VALUE matches across backends — despite how the snapshot reads
  *
- * Under `uSurfaceDepth == 1` this shader writes `gl_FragCoord.z` — the hyperbolic
- * window-space depth. Its TSL twin writes three's `depth` node, which the generated
- * code expands to a **linear** view-space depth,
- * `(positionView.z + cameraNear) / (cameraNear - cameraFar)`
- * (visible in `mesh-pick.fragment.glsl.txt`). The two are different numbers for the
- * same fragment.
+ * Under `uSurfaceDepth == 1` this shader writes `gl_FragCoord.z`. Its TSL twin
+ * writes three's `depth` node, whose `DEPTH` scope is camera-aware at build time:
+ * a perspective camera expands to `viewZToPerspectiveDepth(positionView.z, near,
+ * far)` — exactly the hyperbolic window-space depth `gl_FragCoord.z` is — and an
+ * orthographic camera to `viewZToOrthographicDepth`, which is exactly the
+ * orthographic `gl_FragCoord.z`. So the two backends write the SAME value per
+ * fragment, and cross-node depth comparisons — including against the commutative
+ * modes' `1 - brightness` fragments sharing this buffer — resolve identically.
  *
- * That is acceptable, and the reason is specific rather than general: the pick
- * buffer's depth channel is never read back or compared across frames — it exists
- * ONLY to order fragments within one pick render via the depth test. Both
- * expressions are strictly monotonically increasing in distance and both map
- * `[near, far]` onto `[0, 1]`, so "front-most wins" resolves identically; only the
- * distribution between them differs. The pick pass already mixes depth CONVENTIONS
- * across nodes by design (brightness-as-depth for the commutative modes, projected
- * depth for the surface ones), so a monotone reparameterization within one
- * convention changes no outcome.
- *
- * The same GLSL-`gl_FragCoord.z`-vs-TSL-`depth` pairing already ships in the gsplat
- * pick shaders, where it is undocumented; recording it here rather than leaving a
- * future reader to rediscover it. If pick depth ever becomes a VALUE a consumer
- * reads — a depth-buffer readback, a cross-frame comparison — this stops being
- * benign and both sides must be brought onto one expression.
+ * Recording this because `mesh-pick.fragment.glsl.txt` is easy to misread as a
+ * divergence: the snapshot expands `depth` to the LINEAR
+ * `(positionView.z + cameraNear) / (cameraNear - cameraFar)` form only because the
+ * codegen harness renders with an ORTHOGRAPHIC camera (see
+ * `tsl-harness/mesh.ts`), for which that linear form IS `gl_FragCoord.z` — it is
+ * not the general perspective expansion. The same GLSL-`gl_FragCoord.z`-vs-TSL-
+ * `depth` pairing already ships in the gsplat pick shaders, where it is
+ * undocumented.
  *
  * Source-of-truth for GLSL3; the WebGPU counterpart lives in `./pick.tsl` and is
  * referenced through the `ShaderSource.webgpu` factory below.

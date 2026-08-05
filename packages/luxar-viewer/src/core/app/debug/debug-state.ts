@@ -111,9 +111,16 @@ export interface PartitionDebugInfo {
 export interface DebugState {
   totalPoints: number;
   totalGSplats: number;
-  /** Total visible line segments across all line meshes. */
+  /**
+   * Line segments summed over ALL line meshes, hidden ones included — the
+   * per-node `lineMeshes` entries carry `visible` for filtering.
+   */
   totalLines: number;
-  /** Total visible TRIANGLES across all mesh nodes. */
+  /**
+   * Current-draw-range TRIANGLES summed over ALL mesh nodes. Like every
+   * aggregate above, a hidden node still counts (its draw range is intact) —
+   * the per-node `meshNodes` entries carry `visible` for filtering.
+   */
   totalTriangles: number;
   totalElements: number;
   pointClouds: PointCloudInfo[];
