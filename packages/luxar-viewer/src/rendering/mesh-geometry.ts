@@ -47,6 +47,15 @@ export interface MeshGeometryConfig {
    * vertex buffer on every slice move (freshly allocated buffer) — #1245.
    */
   positionChanged: boolean;
+  /**
+   * The projection's `displayDims.join()`. Compared against the key the geometry last
+   * uploaded (`geometry.userData.meshUploadedKey`); a difference forces the position
+   * re-upload even when `positionChanged` is false, which repairs a commit that was
+   * superseded after its projection advanced the loader's key but before it uploaded.
+   * Optional: callers that omit it (the placeholder factory, unit tests) keep the
+   * pure-`positionChanged` behavior.
+   */
+  positionKey?: string;
   /** Per-vertex colors in their native dtype, or `null` for the white default. */
   colors: MeshColorArray | null;
   /** Channels per color entry when `colors` is present. */
@@ -360,7 +369,17 @@ export function updateMeshGeometry(
   const positionAttr = geometry.getAttribute('position') as THREE.BufferAttribute | undefined;
   // `input.positionChanged`, NOT array identity — the projection reuses one buffer, so
   // identity is stable across a `displayDims` change and would suppress the re-upload.
-  if (positionAttr && input.positionChanged) {
+  //
+  // The upload ALSO fires when the geometry has not yet uploaded this `displayDims` key
+  // (`keyChanged`): a commit can be superseded after its projection advanced the
+  // loader's `displayDimsKey` but before it uploaded, and the next same-key commit then
+  // reads `positionChanged === false` even though the geometry still holds the old
+  // frame. A projection-time flag cannot see that gap; the geometry-stamped key can.
+  // The key is stamped only where the upload happens, so an aborted commit leaves it
+  // untouched and the next real commit refreshes.
+  const storedKey = geometry.userData.meshUploadedKey as string | undefined;
+  const keyChanged = input.positionKey !== undefined && input.positionKey !== storedKey;
+  if (positionAttr && (input.positionChanged || keyChanged)) {
     if (positionAttr.array.length === input.position.length) {
       // Already the same buffer when the geometry bound the projection scratch
       // directly (the steady state after the first commit), in which case the copy
@@ -385,6 +404,11 @@ export function updateMeshGeometry(
       attributesRebuilt = true;
     }
     positionRebound = true;
+    // Stamp the key the geometry now holds, ONLY where the upload actually ran — so an
+    // aborted commit (which never reaches here) leaves the last-uploaded key lagging and
+    // the next real commit's `keyChanged` still fires. Only when a key was provided, so
+    // the placeholder factory / unit-test callers stay byte-identical to before.
+    if (input.positionKey !== undefined) geometry.userData.meshUploadedKey = input.positionKey;
   }
 
   // Install the `color` attribute exactly once, on the first commit. The node is

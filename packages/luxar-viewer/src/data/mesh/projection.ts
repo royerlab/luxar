@@ -87,6 +87,16 @@ export interface ProjectedMeshData {
   positionChanged: boolean;
 
   /**
+   * The `displayDims.join()` these positions were extracted for. The commit stamps it
+   * on the geometry and re-uploads whenever it differs from the geometry's last-uploaded
+   * key — so an aborted commit (which advanced the loader's `displayDimsKey` but never
+   * uploaded) is still repaired by the next commit at that `displayDims`.
+   * `positionChanged` alone cannot: it is a projection-time signal and reads false on
+   * the epoch after a superseded re-extraction.
+   */
+  positionKey: string;
+
+  /**
    * Display-space AABB over the vertices the emitted index references, or `null` when
    * nothing is drawn.
    *
@@ -346,6 +356,7 @@ export function projectMeshTo3D(
       side: winding.side,
       usedFastPath: false,
       positionChanged,
+      positionKey: displayDimsKey,
       bounds: null,
       undecidableReason: winding.undecidableReason,
     };
@@ -370,6 +381,7 @@ export function projectMeshTo3D(
       side: winding.side,
       usedFastPath: true,
       positionChanged,
+      positionKey: displayDimsKey,
       // Computed even here: nothing is culled on the fast path, but a vertex no
       // triangle references still inflates the whole-buffer box.
       bounds: computeMeshProjectionBounds(position, indices),
@@ -408,6 +420,7 @@ export function projectMeshTo3D(
     side: winding.side,
     usedFastPath: false,
     positionChanged,
+    positionKey: displayDimsKey,
     bounds: computeMeshProjectionBounds(position, indices),
     undecidableReason: winding.undecidableReason,
   };

@@ -79,6 +79,10 @@ export function commitMeshGeometry(
     // Explicit rather than inferred from array identity: the position buffer is
     // reused across epochs, so identity no longer signals a displayDims change.
     positionChanged: projected.positionChanged,
+    // The displayDims key these positions were extracted for. The geometry re-uploads
+    // when this differs from the key it last uploaded, which repairs a superseded
+    // commit whose projection advanced the loader's key but never uploaded (#1245).
+    positionKey: projected.positionKey,
     indices: projected.indices,
     // Projected AABB over the INDEXED vertices — `computeMeshBounds` sets the
     // geometry's box and sphere from it, the same way `computeLineBounds` consumes the
