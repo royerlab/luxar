@@ -302,6 +302,39 @@ export class LayerApplyEngine {
     this.applyComposed(layer);
   }
 
+  /**
+   * Push the three mesh shading values (§6.2) to the layer's own leaf material.
+   *
+   * Deliberately NOT routed through {@link applyComposed}, which is what every other
+   * control here uses. Two reasons, and both are the point:
+   *
+   * 1. **These do not compose along the ancestry.** `opacity`/`gamma`/`intensity`
+   *    multiply and `offset` sums, so an ancestor's value has to fold into a
+   *    descendant's. A shade floor is a per-surface appearance choice with no
+   *    composition rule — multiplying two ambients would mean nothing — so there is
+   *    nothing for `composeEffective` to compute.
+   * 2. **Only mesh materials have the setters.** `applyComposed` fans out to every data
+   *    leaf under a group layer; here a non-mesh leaf simply has no `updateAmbient`, so
+   *    the optional-chaining below is the whole type gate. The panel already hides the
+   *    sliders off a mesh layer, so this is the second line of defense rather than the
+   *    first.
+   *
+   * `alphaCutoff` also rides to the PICK material, because the pick pass applies the
+   * identical cutout (§6.5): a threshold that moved on screen but not in the pick
+   * buffer would make a freshly-dissolved region still hoverable.
+   */
+  applyMeshAppearance(layer: LayerInfo): void {
+    const obj = this.getMesh(layer.path);
+    if (!obj) return;
+    const mat = this.getLeafMaterial(obj);
+    if (!mat) return;
+    mat.updateAmbient?.(layer.ambient);
+    mat.updateShadeExponent?.(layer.shadeExponent);
+    mat.updateAlphaCutoff?.(layer.alphaCutoff);
+    syncMeshPickAppearance(obj as THREE.Mesh, { alphaCutoff: layer.alphaCutoff });
+    this.deps.requestRender();
+  }
+
   applyBlendingMode(layer: LayerInfo): void {
     this.applyComposed(layer);
   }

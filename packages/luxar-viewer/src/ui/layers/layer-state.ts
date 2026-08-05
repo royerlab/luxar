@@ -17,6 +17,7 @@ import { log, Modules } from '../../utils/log';
 // use and re-exported below so every existing `./layer-state` consumer keeps
 // working unchanged.
 import { computeUniforms, computeDisplayRange } from '../../rendering/display-range';
+import { MESH_DEFAULTS } from '../../rendering/materials/mesh/appearance';
 
 /**
  * Geometry type of a layer.
@@ -204,6 +205,25 @@ export interface LayerInfo {
   opacity: number;
   /** Absorption coefficient κ (≥ 0; only meaningful in volumetric mode) */
   absorption: number;
+  /**
+   * Mesh shade floor (0–1) — the §6.2 headlight's `ambient`. Only meaningful on a
+   * mesh layer, where it is what keeps a silhouette readable rather than black; `1.0`
+   * collapses the shade term and reproduces the other three types' emissive look.
+   */
+  ambient: number;
+  /**
+   * Mesh headlight falloff exponent (> 0) — the §6.2 `shade_exponent`. `1.0` is the
+   * plain linear wrap. Mesh-only, like the two around it.
+   */
+  shadeExponent: number;
+  /**
+   * Mesh `opaque`-mode cutout threshold (0–1) — the §6.2 `alpha_cutoff`.
+   *
+   * Only meaningful in `opaque`, which is a NARROWER condition than the other two
+   * (they apply in every mesh mode), so the panel gates its slider on the mode as well
+   * as the type — the same shape as absorption's volumetric gate.
+   */
+  alphaCutoff: number;
   /** Current display-range minimum (maps to intensity+offset in shader) */
   displayMin: number;
   /** Current display-range maximum */
@@ -483,6 +503,15 @@ export class LayerStateManager {
           // each layer's live values per ancestry node, so a composed
           // init would multiply ancestor κ in twice.
           absorption: (node.attrs.absorption as number) ?? 1.0,
+          // RAW, and defaulted from the material's own constants rather than
+          // re-spelled here: these are the values `MeshMaterial` starts at when the
+          // attr is absent, so the slider must open on the same number the surface is
+          // already rendering with. They do NOT compose along the ancestry (unlike
+          // opacity/gamma) — a shade floor is a per-surface appearance choice, not a
+          // multiplicative attr, and the writer never stamps them on a group.
+          ambient: (node.attrs.ambient as number) ?? MESH_DEFAULTS.ambient,
+          shadeExponent: (node.attrs.shade_exponent as number) ?? MESH_DEFAULTS.shadeExponent,
+          alphaCutoff: (node.attrs.alpha_cutoff as number) ?? MESH_DEFAULTS.alphaCutoff,
           displayMin,
           displayMax,
           dataMin,

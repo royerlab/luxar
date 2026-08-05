@@ -137,6 +137,50 @@ only on large meshes. The `2^27` vertex cap that keeps the pick vote key alias-f
 arithmetic pinned next to the stride it constrains, since mesh is the one type whose
 bound is _enforced_ rather than structural.
 
+Registration went where production actually registers picks, which turned out not to
+be the node factory: `initPicking` traverses the finished scene to decide whether any
+node declares labels and only then constructs the `PickingSystem`, so on a first load
+the factory has nothing to register with and `NodeFactory.registerExistingSceneNodes`
+is the pass that runs. That pass was a three-way `else if` chain and is now a
+`Record<GeometryTypeName, …>` — a fifth geometry type becomes a compile error at one
+table instead of a branch someone forgets, which is exactly the failure this would
+otherwise have shipped: a mesh unpickable in every real scene, appearing to work only
+on a second dataset load. It also had no direct test at all; it has seven now.
+
+The hover/label path needed no changes, which is worth stating because it was checked
+rather than assumed: the writer validates labels per-VERTEX — the granularity mesh
+picks at — `LabelLoader` reads `<path>/label_offsets` lazily with no type dispatch,
+and `buildPickResultHandler` takes `(nodePath, elementId)`.
+
+#### Mesh gets its Layers-panel shading controls, and the debug surface learns to count it
+
+**Ambient** and **Shade falloff** parameterize the §6.2 headlight; **Alpha cutoff** is
+the `opaque` cutout threshold. These are the first controls in the panel gated on the
+geometry TYPE rather than the blending mode — mesh is the only type that shades, so on
+a points layer they would be controls that visibly do nothing. Alpha cutoff carries a
+mode gate on top (the cutout exists only in `opaque`), and its drag also reaches the
+mesh's pick material, since the pick pass applies the identical cutout.
+
+They are the one control group that does not compose along the ancestry, and are
+applied through their own path rather than through `applyComposed`: a shade floor is a
+per-surface appearance choice with no composition rule — multiplying two ambients
+would mean nothing — so a group layer over meshes does not offer them.
+
+`window.__luxarDebug.getState()` gained `meshNodes` and `totalTriangles`, which had
+been simply absent: three hand-written arms counted points, gsplats and lines, each
+selecting on `InstancedBufferGeometry`, and a mesh is the one type that draws from a
+plain indexed `BufferGeometry`. The triangle count comes from the **draw range**, not
+the index length, because that is what the nD slice compaction narrows — reading
+`index.count` would report the whole surface no matter where the slice sits, which is
+the number a debug driver most needs to be honest about.
+
+And a real defect next door: `getDrawOrder()` was reporting **0 elements for every
+mesh**. Mesh reached that walk fine, but the element count fell through to a local
+`visiblePointCount ?? visibleSplatCount ?? visibleSegmentCount ?? 0` chain — a partial
+copy of the shared per-type reader with `visibleTriangleCount` missing, so the count
+read as "absent" rather than as an error. Present, plausible and wrong is the worst
+shape for a diagnostic. Both now go through one reader.
+
 #### Demos — the biodiversity globe is `opaque`, so it stops painting over its own data (#1227)
 
 The globe was `volumetric` with a heavy absorption, which read well in isolation

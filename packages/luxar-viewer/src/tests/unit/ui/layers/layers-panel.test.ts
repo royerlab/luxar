@@ -1411,13 +1411,164 @@ describe('LayersPanel — blend select drives the leaf material', () => {
    * ("Absorption1.00"), so match the first span, not the whole label.
    */
   function findAbsorptionGroup(root: HTMLElement): HTMLElement | null {
+    return findControlGroup(root, 'Absorption');
+  }
+
+  /** Find a control group by its label text. */
+  function findControlGroup(root: HTMLElement, labelText: string): HTMLElement | null {
     const groups = Array.from(root.querySelectorAll('.luxar-layers-panel__control-group'));
     for (const group of groups) {
       const label = group.querySelector('.luxar-layers-panel__control-label span');
-      if (label?.textContent === 'Absorption') return group as HTMLElement;
+      if (label?.textContent === labelText) return group as HTMLElement;
     }
     return null;
   }
+
+  /** A mesh leaf whose material records the three shading setters. */
+  function mountMeshLayer(
+    container: HTMLElement,
+    animationController: AnimationController,
+    blendingMode = 'opaque'
+  ) {
+    const calls = {
+      ambient: vi.fn(),
+      shadeExponent: vi.fn(),
+      alphaCutoff: vi.fn(),
+      pickAlphaCutoff: vi.fn(),
+    };
+    const stubMat: Record<string, unknown> = {
+      userData: { blendingMode },
+      uniforms: { uOpacity: { value: 1.0 } },
+      defines: {},
+      updateIntensity: vi.fn(),
+      updateOffset: vi.fn(),
+      updateGamma: vi.fn(),
+      updateOpacity: vi.fn(),
+      applyBlendingMode: vi.fn(),
+      updateAmbient: calls.ambient,
+      updateShadeExponent: calls.shadeExponent,
+      updateAlphaCutoff: calls.alphaCutoff,
+    };
+    stubMat.clone = vi.fn(() => stubMat);
+
+    const mesh = new THREE.Mesh(new THREE.BufferGeometry(), stubMat as unknown as THREE.Material);
+    mesh.name = '/cloud';
+    mesh.userData.nodeType = 'mesh';
+    mesh.userData._layerMaterialCloned = true;
+    mesh.userData.pickNode = new THREE.Mesh(mesh.geometry, {
+      setPickMode: vi.fn(),
+      setPickSide: vi.fn(),
+      updateOpacityUniform: vi.fn(),
+      updateAlphaCutoff: calls.pickAlphaCutoff,
+    } as unknown as THREE.Material);
+    const rootGroup = new THREE.Group();
+    rootGroup.add(mesh);
+
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(rootGroup, makeLayeredSceneGraph('mesh', { blending_mode: blendingMode }));
+    panel.show();
+    panel.layerState.select('/cloud', 'single');
+    return { panel, calls };
+  }
+
+  it('mesh shading sliders: shown for a mesh layer and hidden for every other type', () => {
+    // TYPE-gated, which is new for this panel — every other control here is universal
+    // or mode-gated. Mesh is the only SHADED geometry type, so on a points layer these
+    // three have no uniform to write and would be controls that visibly do nothing.
+    mountMeshLayer(container, animationController);
+    for (const label of ['Ambient', 'Shade falloff', 'Alpha cutoff']) {
+      const group = findControlGroup(container, label);
+      expect(group, `${label} control should exist`).not.toBeNull();
+      expect(group!.style.display, `${label} should be visible on a mesh layer`).not.toBe('none');
+    }
+
+    // The converse, on a fresh panel over a POINTS layer.
+    document.body.innerHTML = '';
+    const other = document.createElement('div');
+    document.body.appendChild(other);
+    const stubMat: Record<string, unknown> = {
+      userData: { blendingMode: 'additive' },
+      uniforms: { uOpacity: { value: 1.0 } },
+      defines: {},
+      updateIntensity: vi.fn(),
+      updateOffset: vi.fn(),
+      updateGamma: vi.fn(),
+      updateOpacity: vi.fn(),
+      applyBlendingMode: vi.fn(),
+    };
+    stubMat.clone = vi.fn(() => stubMat);
+    const points = new THREE.Points(
+      new THREE.BufferGeometry(),
+      stubMat as unknown as THREE.Material
+    );
+    points.name = '/cloud';
+    const rootGroup = new THREE.Group();
+    rootGroup.add(points);
+    const panel2 = new LayersPanel(other, animationController);
+    panel2.initFromScene(rootGroup, makeLayeredSceneGraph('points'));
+    panel2.show();
+    panel2.layerState.select('/cloud', 'single');
+    for (const label of ['Ambient', 'Shade falloff', 'Alpha cutoff']) {
+      expect(findControlGroup(other, label)!.style.display, `${label} on points`).toBe('none');
+    }
+  });
+
+  it('mesh Alpha cutoff is gated on the MODE as well as the type', () => {
+    // Narrower than the other two: the cutout only exists in `opaque`, so in any other
+    // mesh mode the threshold is read by no branch of the fragment shader. And the gate
+    // must move on the dropdown CLICK, not on the next selection refresh.
+    mountMeshLayer(container, animationController);
+    const cutoff = findControlGroup(container, 'Alpha cutoff')!;
+    const ambient = findControlGroup(container, 'Ambient')!;
+    expect(cutoff.style.display).not.toBe('none');
+
+    const select = findBlendSelect(container)!;
+    select.value = 'additive';
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+    expect(cutoff.style.display).toBe('none');
+    // ...while the two that apply in every mesh mode stay put.
+    expect(ambient.style.display).not.toBe('none');
+
+    select.value = 'opaque';
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+    expect(cutoff.style.display).not.toBe('none');
+  });
+
+  it('dragging each mesh slider reaches its material setter with the slider value', () => {
+    const { panel, calls } = mountMeshLayer(container, animationController);
+
+    const drag = (label: string, value: number): void => {
+      const group = findControlGroup(container, label)!;
+      const input = group.querySelector('input[type="range"]') as HTMLInputElement;
+      input.value = String(value);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+
+    drag('Ambient', 0.7);
+    expect(calls.ambient).toHaveBeenCalledWith(expect.closeTo(0.7, 6));
+    expect(panel.layerState.getLayer('/cloud')!.ambient).toBeCloseTo(0.7, 6);
+
+    drag('Shade falloff', 2.5);
+    expect(calls.shadeExponent).toHaveBeenCalledWith(expect.closeTo(2.5, 6));
+    expect(panel.layerState.getLayer('/cloud')!.shadeExponent).toBeCloseTo(2.5, 6);
+
+    drag('Alpha cutoff', 0.8);
+    expect(calls.alphaCutoff).toHaveBeenCalledWith(expect.closeTo(0.8, 6));
+    expect(panel.layerState.getLayer('/cloud')!.alphaCutoff).toBeCloseTo(0.8, 6);
+  });
+
+  it('the cutoff drag also reaches the PICK material, so a dissolved region stops being hoverable', () => {
+    // The pick pass applies the IDENTICAL cutout (§6.5). A threshold that moved on
+    // screen but not in the pick buffer would leave a freshly-dissolved region still
+    // hoverable — the exact defect the shared cutout exists to prevent, arriving
+    // through the panel instead of through the loader.
+    const { calls } = mountMeshLayer(container, animationController);
+    const group = findControlGroup(container, 'Alpha cutoff')!;
+    const input = group.querySelector('input[type="range"]') as HTMLInputElement;
+    input.value = '0.9';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(calls.pickAlphaCutoff).toHaveBeenCalledWith(expect.closeTo(0.9, 6));
+  });
 
   it('absorption slider: hidden outside volumetric, revealed by the mode switch, drives updateAbsorption', () => {
     const updateAbsorption = vi.fn();
