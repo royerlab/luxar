@@ -20,7 +20,7 @@ import type { LoadedPointsData, DataLoader } from '../data/data-loader-types';
 import type { PointsMetadata } from '../types/points';
 import type { LinesMetadata, LinesDataLoader } from '../types/lines';
 import type { GSplatsMetadata, GSplatsDataLoader } from '../types/gsplats';
-import { isPooledGeometry } from '../types/geometry-capabilities';
+import { isGeometryType, isPooledGeometry } from '../types/geometry-capabilities';
 import { log, Modules } from '../utils/log';
 import type { PickingSystem } from './picking/picking-system';
 import {
@@ -43,11 +43,75 @@ import {
   createGSplatsNode as createGSplatsNodeImpl,
   createEmptyGSplatsNode as createEmptyGSplatsNodeImpl,
 } from './node-factory/create-gsplats-node';
-import { createEmptyMeshNode as createEmptyMeshNodeImpl } from './node-factory/create-mesh-node';
+import {
+  createEmptyMeshNode as createEmptyMeshNodeImpl,
+  resolveRequestedMeshMode,
+} from './node-factory/create-mesh-node';
 import type { MeshDataLoader, MeshMetadata } from '../types/mesh';
+import { isMeshPickAwareMaterial } from './picking/mesh/pick-mode';
+import type { GeometryTypeName } from '../types/format-contract';
 // Picking materials are constructed via `materialManager.create*PickingMaterial`
 // helpers so the GLSL vs. TSL dispatch on `caps.apiSurface` lives in one place. The
 // concrete types are still imported elsewhere (e.g. material-sync-helpers).
+
+/**
+ * Per-geometry-type pick-material constructor, for the retro-registration pass.
+ *
+ * A `Record<GeometryTypeName, …>` rather than an `else if` chain because this pass is
+ * the one production actually runs (see {@link NodeFactory.registerExistingSceneNodes}),
+ * so a type missing from it is unpickable everywhere — a silent omission with no
+ * compile error and, until this was table-driven, no test that would have failed.
+ * As a table, a new geometry type is a `TS2739` here.
+ *
+ * Each builder reads whatever its type's pick material needs off the visual node:
+ * points need the geometry's `radiusScale` (the 80%-radius pick footprint derives from
+ * it), mesh needs the node opacity and cutout threshold (they are its coverage term).
+ * Lines and gsplats need only the id.
+ */
+const PICK_MATERIAL_BUILDERS: Record<
+  GeometryTypeName,
+  (obj: THREE.Mesh, pickId: number) => THREE.Material
+> = {
+  points: (obj, pickId) =>
+    materialManager.createPointPickingMaterial({
+      nodeId: pickId,
+      radiusScale: (obj.geometry?.userData?.radiusScale as number | undefined) ?? 1.0,
+    }),
+  lines: (_obj, pickId) => materialManager.createLinePickingMaterial({ nodeId: pickId }),
+  gsplats: (_obj, pickId) => materialManager.createGSplatPickingMaterial({ nodeId: pickId }),
+  mesh: (obj, pickId) => {
+    const attrs = (obj.userData?.attrs ?? {}) as MeshMetadata;
+    return materialManager.createMeshPickingMaterial({
+      nodeId: pickId,
+      opacity: attrs.opacity ?? 1.0,
+      alphaCutoff: attrs.alpha_cutoff,
+    });
+  },
+};
+
+/**
+ * Copy the visual material's per-epoch state onto a mesh's freshly-created pick
+ * material.
+ *
+ * Only mesh needs this: it is the one type whose pick pass mirrors the visual
+ * material's face culling and blending-derived behaviour (spec §6.5). The picking
+ * system re-pushes both on every pick render, so this governs only the window before
+ * the first one — but that window contains the first hover, which is exactly when a
+ * user would notice picking a face that isn't drawn.
+ *
+ * Reads `material.side` rather than the authored `double_sided`, because by the time
+ * this runs the commit path may already have forced `DoubleSide` for an undecidable
+ * `displayDims` frame.
+ */
+function syncMeshPickMaterialToVisual(obj: THREE.Mesh): void {
+  const pickMaterial = (obj.userData?.pickNode as THREE.Mesh | undefined)?.material;
+  if (!pickMaterial || Array.isArray(pickMaterial)) return;
+  if (!isMeshPickAwareMaterial(pickMaterial)) return;
+  const visual = obj.material as THREE.Material | THREE.Material[] | undefined;
+  const single = Array.isArray(visual) ? visual[0] : visual;
+  if (single) pickMaterial.setPickSide(single.side);
+  pickMaterial.setPickMode(resolveRequestedMeshMode((obj.userData?.attrs ?? {}) as MeshMetadata));
+}
 
 export class NodeFactory {
   private pickingSystem: PickingSystem | null = null;
@@ -72,46 +136,43 @@ export class NodeFactory {
 
   /**
    * Retroactively register already-loaded scene nodes with the picking system.
-   * Called after initPicking() since the scene is loaded before picking is wired up.
+   *
+   * **This — not the per-node factory — is the path production actually takes.** The
+   * scene loads before picking is wired up (`initPicking` traverses the finished
+   * scene to decide whether any node declares labels, and only then constructs the
+   * `PickingSystem` and calls `setPickingSystem`), so at node-creation time
+   * `this.pickingSystem` is still null on a first load. A geometry type wired into
+   * `createEmptyXNode` but missing HERE is unpickable in every real scene, and appears
+   * to work only on a SECOND dataset load. Hence the table above rather than an
+   * `else if` chain: adding a geometry type is a compile error at one place instead of
+   * a branch someone forgets.
    */
   registerExistingSceneNodes(root: THREE.Object3D): void {
     if (!this.pickingSystem) return;
 
     root.traverse((obj) => {
-      const nodeType = obj.userData?.nodeType as string | undefined;
-      if (!nodeType || obj.userData.pickId != null) return; // skip non-data or already registered
+      const nodeType = obj.userData?.nodeType;
+      // Skip non-data nodes and already-registered ones. The `instanceof` gate is
+      // load-bearing rather than defensive: the pick node SHARES `obj.geometry`, so an
+      // object without one would register a pick node with nothing to draw.
+      if (!isGeometryType(nodeType) || obj.userData.pickId != null) return;
+      if (!(obj instanceof THREE.Mesh)) return;
 
-      if (nodeType === 'points' && obj instanceof THREE.Mesh) {
-        const pickId = this.pickingSystem!.allocatePickId();
-        obj.userData.pickId = pickId;
-        const radiusScale = obj.geometry?.userData?.radiusScale ?? 1.0;
-        const pickMaterial = materialManager.createPointPickingMaterial({
-          nodeId: pickId,
-          radiusScale,
-        });
-        materialManager.register(pickMaterial);
-        // Shares the visual geometry (instance-spanning, footprint-expanded
-        // bounds), so the pick node culls safely — same as lines/gsplats.
-        const pickNode = new THREE.Mesh(obj.geometry, pickMaterial);
-        pickNode.matrixWorld.copy(obj.matrixWorld);
-        this.pickingSystem!.registerNode(obj, pickNode, pickId);
-      } else if (nodeType === 'lines' && obj instanceof THREE.Mesh) {
-        const pickId = this.pickingSystem!.allocatePickId();
-        obj.userData.pickId = pickId;
-        const pickMaterial = materialManager.createLinePickingMaterial({ nodeId: pickId });
-        materialManager.register(pickMaterial);
-        const pickNode = new THREE.Mesh(obj.geometry, pickMaterial);
-        pickNode.matrixWorld.copy(obj.matrixWorld);
-        this.pickingSystem!.registerNode(obj, pickNode, pickId);
-      } else if (nodeType === 'gsplats' && obj instanceof THREE.Mesh) {
-        const pickId = this.pickingSystem!.allocatePickId();
-        obj.userData.pickId = pickId;
-        const pickMaterial = materialManager.createGSplatPickingMaterial({ nodeId: pickId });
-        materialManager.register(pickMaterial);
-        const pickNode = new THREE.Mesh(obj.geometry, pickMaterial);
-        pickNode.matrixWorld.copy(obj.matrixWorld);
-        this.pickingSystem!.registerNode(obj, pickNode, pickId);
-      }
+      const pickId = this.pickingSystem!.allocatePickId();
+      obj.userData.pickId = pickId;
+      const pickMaterial = PICK_MATERIAL_BUILDERS[nodeType](obj, pickId);
+      materialManager.register(pickMaterial);
+      // Shares the visual geometry — for the three instanced types that is the
+      // instance-spanning, footprint-expanded bounds, so the pick node culls safely;
+      // for mesh it is the indexed BufferGeometry, whose drawRange the slice
+      // compaction rewrites and which the picking system re-syncs per pick render.
+      const pickNode = new THREE.Mesh(obj.geometry, pickMaterial);
+      pickNode.matrixWorld.copy(obj.matrixWorld);
+      this.pickingSystem!.registerNode(obj, pickNode, pickId);
+      // Post-registration sync, for the one type whose pick material tracks the
+      // visual material's per-epoch state. AFTER registerNode, which is what stamps
+      // `userData.pickNode`.
+      if (nodeType === 'mesh') syncMeshPickMaterialToVisual(obj);
     });
 
     log.info(
