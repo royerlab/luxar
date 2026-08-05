@@ -12,8 +12,11 @@ Import type aliases, protocols, enums, and validation helpers from the package
 root (not the submodules):
 
 ```python
+import numpy as np
+
 from luxar.typing_utils import PositionArray, BlendingMode, validate_positions
 
+raw = np.random.rand(100, 3)         # any (N, D) numpy array
 positions = validate_positions(raw)  # runtime check -> Float32Array
 mode = BlendingMode.ADDITIVE         # str-backed enum member (mode == "additive")
 ```
