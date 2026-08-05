@@ -11,7 +11,7 @@
  */
 
 import * as zarr from '../zarr';
-import { readArray } from '../zarr';
+import { abortOptions, readArray } from '../zarr';
 import { log, Modules } from '../../utils/log';
 import { ArrayRefRegistry } from './ref-registry';
 import type { ArrayMetadata, EncodingMetadata } from './types';
@@ -33,13 +33,17 @@ export class ArrayDecoder {
    * @param attrs - Array metadata from .zattrs
    * @param expectedElements - Expected total elements (for validation)
    * @param zarrRootLoc - Zarr root location for resolving array_ref paths (required for array_ref)
+   * @param signal - Optional per-update abort signal, forwarded into every chunk
+   *   read (including a resolved array_ref target's) so a superseded caller's
+   *   full-array decode stops downloading instead of running to completion.
    * @returns Decoded Float32Array
    */
   async decode(
     zarrArray: zarr.Array<zarr.DataType, zarr.Readable>,
     attrs: ArrayMetadata,
     expectedElements?: number,
-    zarrRootLoc?: zarr.Location<zarr.Readable>
+    zarrRootLoc?: zarr.Location<zarr.Readable>,
+    signal?: AbortSignal
   ): Promise<Float32Array> {
     const enc = attrs.encoding;
     ArrayDecoder.validateEncodingMetadata(enc);
@@ -66,7 +70,7 @@ export class ArrayDecoder {
       }
 
       // Load the single value
-      const rawData = await readArray(zarrArray);
+      const rawData = await readArray(zarrArray, undefined, abortOptions(signal));
       const rawArray = rawData.data;
       const data =
         rawArray instanceof Float32Array
@@ -95,7 +99,7 @@ export class ArrayDecoder {
             'This will fail if the reference is not already cached.'
         );
       }
-      return this.decodeArrayRef(enc.target!, enc.hash, expectedElements, zarrRootLoc);
+      return this.decodeArrayRef(enc.target!, enc.hash, expectedElements, zarrRootLoc, signal);
     }
 
     // Zarrita cannot materialize empty arrays with `readArray()` in Node. Direct
@@ -107,7 +111,7 @@ export class ArrayDecoder {
     }
 
     // Load raw data from zarr (needed for LUT, quantization, dtype)
-    const rawData = await readArray(zarrArray);
+    const rawData = await readArray(zarrArray, undefined, abortOptions(signal));
     const rawArray = rawData.data;
 
     // Convert raw zarr data to Float32Array safely.
@@ -604,7 +608,8 @@ export class ArrayDecoder {
     targetPath: string,
     hash: string | undefined,
     expectedElements?: number,
-    zarrRootLoc?: zarr.Location<zarr.Readable>
+    zarrRootLoc?: zarr.Location<zarr.Readable>,
+    signal?: AbortSignal
   ): Promise<Float32Array> {
     // Fast path: check cache by hash
     if (hash) {
@@ -630,7 +635,13 @@ export class ArrayDecoder {
     const targetAttrs = targetArray.attrs as unknown as ArrayMetadata;
 
     // Recursively decode target (it may also be encoded, e.g., LUT or quantized)
-    const decoded = await this.decode(targetArray, targetAttrs, expectedElements, zarrRootLoc);
+    const decoded = await this.decode(
+      targetArray,
+      targetAttrs,
+      expectedElements,
+      zarrRootLoc,
+      signal
+    );
 
     // Cache by hash for future references
     if (hash) {

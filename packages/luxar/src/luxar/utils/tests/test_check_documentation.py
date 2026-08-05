@@ -314,15 +314,29 @@ def test_ten_line_window_still_accepted_so_the_rule_stays_a_superset() -> None:
     assert cd.DocumentationChecker._has_jsdoc_above(line_comment, len(line_comment) - 1)
 
 
-def test_a_plain_block_comment_also_counts_as_jsdoc() -> None:
-    # Condition 1 checks only that the nearest non-blank line closes a block comment,
-    # so an ordinary /* ... */ implementation comment above an export counts too.
-    # That is looser than "has JSDoc" strictly means. Pinned rather than tightened:
-    # the rule is deliberately a SUPERSET of the old window so it can only remove
-    # findings, and narrowing it is a separate decision with its own blast radius
-    # (eight files newly failed when the strict form was tried alone).
-    lines = ["/* not really jsdoc */", "export type T = string;"]
-    assert cd.DocumentationChecker._has_jsdoc_above(lines, len(lines) - 1)
+def test_a_plain_block_comment_does_not_count_as_jsdoc() -> None:
+    # Condition 1 walks back to the block opener and requires `/**`, so an
+    # ordinary /* ... */ implementation comment above an export does NOT satisfy
+    # the gate (the old form checked only the closer, letting any block comment
+    # count as documentation). The window rule can't rescue these either: no
+    # `/**` appears anywhere. The rule stays a superset of the ORIGINAL window
+    # heuristic — the tightening only narrows the NEW directly-above arm.
+    single = ["/* not really jsdoc */", "export type T = string;"]
+    assert not cd.DocumentationChecker._has_jsdoc_above(single, len(single) - 1)
+
+    multi = [
+        "/*",
+        " * a long implementation note,",
+        " * not a doc comment",
+        " */",
+        "export type T = string;",
+    ]
+    assert not cd.DocumentationChecker._has_jsdoc_above(multi, len(multi) - 1)
+
+    # Sanity on the accepting side: a single-line JSDoc directly above passes
+    # through the same opener walk.
+    jsdoc = ["/** Doc. */", "export type T = string;"]
+    assert cd.DocumentationChecker._has_jsdoc_above(jsdoc, len(jsdoc) - 1)
 
 
 def test_undocumented_export_is_still_undocumented() -> None:

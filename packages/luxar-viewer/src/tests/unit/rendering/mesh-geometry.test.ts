@@ -294,6 +294,39 @@ describe('updateMeshGeometry', () => {
     expect(Array.from(color.array)).toEqual([1, 1, 1, 1, 1, 1, 1, 1, 1]);
   });
 
+  it('installs authored colors for a one-vertex mesh, where counts cannot tell', () => {
+    // A 1-vertex mesh has the SAME vertex count as the placeholder, so the
+    // count-mismatch test can never fire for it — first-commit detection has to
+    // come from the explicit installed marker, or the authored color silently
+    // stays placeholder white.
+    const g = placeholder();
+    const rebuilt = updateMeshGeometry(g, {
+      position: new Float32Array(3),
+      positionChanged: true,
+      indices: new Uint32Array([0, 0, 0]),
+      colors: new Uint8Array([255, 0, 0]),
+      colorComponents: 3,
+      vertexCount: 1,
+      faceCount: 1,
+    });
+    const color = g.getAttribute('color') as THREE.BufferAttribute;
+    expect(color.itemSize).toBe(4); // uint8 RGB padded, i.e. the AUTHORED attribute
+    expect(Array.from(color.array).slice(0, 4)).toEqual([255, 0, 0, 255]);
+    expect(rebuilt).toBe(true);
+
+    // Installed once: the marker keeps the next commit from re-binding it.
+    updateMeshGeometry(g, {
+      position: new Float32Array(3),
+      positionChanged: false,
+      indices: new Uint32Array([0, 0, 0]),
+      colors: new Uint8Array([255, 0, 0]),
+      colorComponents: 3,
+      vertexCount: 1,
+      faceCount: 1,
+    });
+    expect(g.getAttribute('color')).toBe(color);
+  });
+
   it('leaves the color buffer untouched on a subsequent slice move', () => {
     // The guard is keyed off vertexCount, so once colors are installed (count 3) a
     // later slice move at the SAME vertexCount must NOT re-create/re-upload the
@@ -404,6 +437,21 @@ describe('applyMeshIndices — the index buffer is allocated once per node', () 
     // correctness bug — but unbounded growth between frames is not left to chance.
     updateMeshGeometry(g, { ...real, indices: new Uint32Array([0, 1, 2]) });
     expect(index.updateRanges).toHaveLength(1);
+  });
+
+  it('does not dirty the reused index buffer on a fully-culled epoch', () => {
+    // An empty epoch rewrites zero indices, so it must not set `needsUpdate` at
+    // all: with an EMPTY update-range list the WebGL backend uploads the WHOLE
+    // attribute, so flagging an update here would re-upload the full
+    // capacity-sized buffer on every scrub through empty slices. Only the draw
+    // range has to change.
+    const g = placeholder();
+    updateMeshGeometry(g, { ...real, indices: new Uint32Array([0, 1, 2]) });
+    const index = g.index!;
+    const versionBefore = index.version;
+    updateMeshGeometry(g, { ...real, indices: new Uint32Array(0) });
+    expect(index.version).toBe(versionBefore); // not dirtied → nothing uploads
+    expect(g.drawRange.count).toBe(0); // but nothing draws either
   });
 
   it('does not report an index rebind as a vertex-attribute rebuild', () => {

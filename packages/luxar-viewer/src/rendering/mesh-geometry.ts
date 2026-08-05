@@ -236,16 +236,24 @@ export function applyMeshIndices(
   // reveals a triangle — reintroducing exactly the per-move reallocation this avoids.
   const capacity = Math.max(faceCount * 3, indices.length);
   if (existing && dtypeMatches && existing.array.length >= capacity) {
-    (existing.array as Uint16Array | Uint32Array).set(indices);
     // Bound the upload to the prefix actually rewritten. Without this the whole
     // capacity buffer is re-uploaded every slice move, which for a large mesh with a
     // small visible set is far more bandwidth than the old reallocating path spent —
     // i.e. it would trade the leak for a per-move bandwidth regression. The classic
     // WebGL backend honours update ranges; the WebGPU backends ignore them and
     // re-upload in full, so this is an improvement there and neutral here.
-    existing.clearUpdateRanges();
-    if (indices.length > 0) existing.addUpdateRange(0, indices.length);
-    existing.needsUpdate = true;
+    //
+    // A fully-culled epoch rewrites NOTHING, so it must not set `needsUpdate` at
+    // all: on the WebGL backend an EMPTY update-range list means "upload the whole
+    // attribute", so flagging an update here would re-upload the entire
+    // capacity-sized buffer once per empty slice — the exact regression the ranges
+    // exist to prevent. Only `drawRange` (below) has to change to draw nothing.
+    if (indices.length > 0) {
+      (existing.array as Uint16Array | Uint32Array).set(indices);
+      existing.clearUpdateRanges();
+      existing.addUpdateRange(0, indices.length);
+      existing.needsUpdate = true;
+    }
   } else {
     geometry.setIndex(createMeshIndexAttribute(indices, vertexCount, faceCount));
   }
@@ -317,6 +325,9 @@ export function createMeshGeometry(input: MeshGeometryConfig): THREE.BufferGeome
       ? createMeshColorAttribute(input.colors, input.colorComponents ?? 3, input.vertexCount)
       : createMeshDefaultColorAttribute(input.vertexCount)
   );
+  // Stamped so `updateMeshGeometry` can tell authored colors from the placeholder
+  // WITHOUT comparing counts — see its color guard for why counts alone fail.
+  if (input.colors) geometry.userData.meshColorsInstalled = true;
   applyMeshIndices(geometry, input.indices, input.vertexCount, input.faceCount);
   if (input.bounds !== undefined) {
     computeMeshBounds(geometry, input.bounds);
@@ -417,14 +428,17 @@ export function updateMeshGeometry(
   // colors would never bind and an indexed draw would fetch `color` out of bounds
   // (black under WebGL2 robust access; a pipeline-validation failure on WebGPU).
   //
-  // Keyed off `vertexCount` for the SAME reason `createMeshIndexAttribute` keys the
-  // index dtype off it: the placeholder is 1-vertex (`colorAttr.count === 1`) and a
-  // real drawable mesh has N vertices, so `count !== vertexCount` is true exactly
-  // on the first commit and false on every subsequent slice move. That keeps the
-  // color buffer uploaded-once (the no-compaction doctrine — only the index rebuilds
-  // on a slice move) instead of re-uploading it on every scrub. Note `projectMeshTo3D`
-  // reallocates `position` on every call, so color must NOT be tied to position
-  // identity — that would re-upload color on every slice move.
+  // Keyed off `vertexCount` PLUS an explicit installed marker: the placeholder is
+  // 1-vertex (`colorAttr.count === 1`) and a real drawable mesh has N vertices, so
+  // `count !== vertexCount` catches the first commit of every mesh with more than
+  // one vertex — but a 1-VERTEX mesh with authored colors matches the placeholder's
+  // count and would keep the placeholder white forever on the count test alone.
+  // `userData.meshColorsInstalled` (stamped here and by `createMeshGeometry` when
+  // authored colors are bound) closes that hole while keeping the color buffer
+  // uploaded-once on every subsequent slice move (the no-compaction doctrine — only
+  // the index rebuilds on a slice move). Note `projectMeshTo3D` reuses one loader
+  // `position` buffer, so color must NOT be tied to position identity — that would
+  // re-upload color whenever position does.
   //
   // Format stability across the guard: the no-colors default-white path stays
   // `float32x3` at count N — a format-preserving rebind exactly like `position`'s
@@ -437,13 +451,16 @@ export function updateMeshGeometry(
   // This install rebinds a vertex attribute, so it sets `attributesRebuilt` to
   // drive the commit's WebGPU RenderObject eviction (see the @returns note).
   const colorAttr = geometry.getAttribute('color') as THREE.BufferAttribute | undefined;
-  if (!colorAttr || colorAttr.count !== input.vertexCount) {
+  const authoredColorsPending =
+    input.colors !== null && geometry.userData.meshColorsInstalled !== true;
+  if (!colorAttr || colorAttr.count !== input.vertexCount || authoredColorsPending) {
     geometry.setAttribute(
       'color',
       input.colors
         ? createMeshColorAttribute(input.colors, input.colorComponents ?? 3, input.vertexCount)
         : createMeshDefaultColorAttribute(input.vertexCount)
     );
+    if (input.colors) geometry.userData.meshColorsInstalled = true;
     attributesRebuilt = true;
   }
 

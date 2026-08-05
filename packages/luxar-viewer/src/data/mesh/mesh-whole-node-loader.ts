@@ -115,6 +115,15 @@ export class MeshWholeNodeLoader implements MeshDataLoader {
    */
   private generation = 0;
 
+  /**
+   * The signal of the fetch currently in flight, read by the RangeLoader's
+   * signal source so the colors path (`loadColorRanges`) aborts with the rest
+   * of the fetch. Set for exactly the duration of {@link fetch}; the shared
+   * in-flight latch means at most one fetch runs at a time, so a single slot
+   * (rather than a per-call token) is sufficient.
+   */
+  private _activeSignal: AbortSignal | null = null;
+
   constructor(
     private readonly path: string,
     private readonly attrs: MeshMetadata,
@@ -123,6 +132,7 @@ export class MeshWholeNodeLoader implements MeshDataLoader {
   ) {
     this.decoder = new ArrayDecoder(deps.arrayRefRegistry);
     this.rangeLoader = new RangeLoader(deps.arrayRefRegistry);
+    this.rangeLoader.setSignalSource(() => this._activeSignal);
     this.zarrStore = deps.zarrStore;
   }
 
@@ -202,9 +212,30 @@ export class MeshWholeNodeLoader implements MeshDataLoader {
       throw new LoaderError('Unexpected', this.path, new Error('mesh loader not initialized'));
     }
 
-    const { nVertices, nFaces, ndim } = pre;
     const opts = zarr.abortOptions(signal);
     const storeRoot = zarr.root(this.zarrStore);
+
+    // Publish the signal for the duration of the fetch, so the colors path —
+    // which goes through the RangeLoader and sources its abort signal from
+    // `setSignalSource` — aborts with everything else. Every other read below
+    // takes the signal as an explicit argument.
+    this._activeSignal = signal ?? null;
+    try {
+      return await this.fetchArrays(handles, pre, opts, storeRoot, signal);
+    } finally {
+      this._activeSignal = null;
+    }
+  }
+
+  /** The body of {@link fetch}, split out so the signal slot has one reset point. */
+  private async fetchArrays(
+    handles: MeshArrayHandles,
+    pre: MeshPreflightResult,
+    opts: ReturnType<typeof zarr.abortOptions>,
+    storeRoot: zarr.Location<zarr.Readable>,
+    signal?: AbortSignal
+  ): Promise<LoadedMeshData> {
+    const { nVertices, nFaces, ndim } = pre;
 
     // `vertices` and `normals` are both SemanticType.COORDINATE, which the
     // encoder may quantize (per-channel u16) or LUT-encode, so both must go
@@ -215,7 +246,8 @@ export class MeshWholeNodeLoader implements MeshDataLoader {
       handles.vertices,
       verticesAttrs,
       nVertices * ndim,
-      storeRoot
+      storeRoot,
+      signal
     );
     validateMaterializedLength(this.path, 'vertices', vertices.length, nVertices * ndim);
 
@@ -240,7 +272,8 @@ export class MeshWholeNodeLoader implements MeshDataLoader {
         handles.normals,
         handles.normals.attrs as unknown as ArrayMetadata,
         nVertices * 3,
-        storeRoot
+        storeRoot,
+        signal
       );
       validateMaterializedLength(this.path, 'normals', decoded.length, nVertices * 3);
       normals = decoded;
@@ -271,7 +304,8 @@ export class MeshWholeNodeLoader implements MeshDataLoader {
         handles.scalars,
         handles.scalars.attrs as unknown as ArrayMetadata,
         nVertices,
-        storeRoot
+        storeRoot,
+        signal
       );
       validateMaterializedLength(this.path, 'scalars', decoded.length, nVertices);
       scalars = decoded;

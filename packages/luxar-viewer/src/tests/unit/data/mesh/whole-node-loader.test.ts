@@ -53,6 +53,13 @@ class RecordingStore {
   /** Every key `get` was called with, in order. */
   readonly requested: string[] = [];
 
+  /**
+   * Keys whose `get` carried an `AbortSignal`, the way zarrita forwards one from
+   * `GetOptions.signal`. This is what lets a test prove the per-update signal was
+   * THREADED to a given read, rather than inferring it from timing.
+   */
+  readonly signaledKeys: string[] = [];
+
   constructor(private readonly entries: Map<string, Uint8Array>) {}
 
   /**
@@ -68,8 +75,16 @@ class RecordingStore {
   /** Reject any `get` for a key containing this substring, with this error. */
   rejectKeyContaining: { needle: string; error: Error } | null = null;
 
-  get(key: string): Promise<Uint8Array | undefined> {
+  get(key: string, opts?: { signal?: AbortSignal }): Promise<Uint8Array | undefined> {
     this.requested.push(key);
+    if (opts?.signal) {
+      this.signaledKeys.push(key);
+      // A real network store rejects an already-aborted request without issuing
+      // it; mirroring that here is what makes the pre-aborted test observable.
+      if (opts.signal.aborted) {
+        return Promise.reject(new DOMException('The operation was aborted.', 'AbortError'));
+      }
+    }
     // A zarr v2 chunk key's last segment is DOT-SEPARATED coords (`0.0`), so "has no
     // dot" does not identify one — the metadata allowlist is the reliable
     // discriminator, exactly as `chunkRequests()` uses below.
@@ -449,6 +464,61 @@ describe('MeshWholeNodeLoader — whole-node residency', () => {
     loader.dispose();
     await loader.loadMesh(VIEW);
     expect(store.chunkRequests().length).toBeGreaterThan(before);
+  });
+});
+
+describe('MeshWholeNodeLoader — the abort signal reaches EVERY payload read', () => {
+  // The regression this pins: the signal used to be threaded into the raw
+  // `faces` read only, so an aborted update kept downloading and decoding the
+  // much larger vertices buffer, the optional per-vertex arrays and the colors —
+  // up to the full node budget of wasted transfer per superseded update.
+  const FULL_ATTRS = meshAttrs({
+    has_normals: true,
+    normal_dims: [0, 1, 2],
+    has_colors: true,
+    has_scalars: true,
+  });
+  const fullArrays = () =>
+    tetArrays({
+      normals: { shape: [4, 3], dtype: '<f4', data: new Array(12).fill(0.5) },
+      colors: { shape: [4, 3], dtype: '|u1', data: new Array(12).fill(128) },
+      scalars: { shape: [4], dtype: '<f4', data: [1, 2, 3, 4] },
+    });
+
+  it('threads the signal into vertices, faces, normals, colors and scalars', async () => {
+    const store = buildStore(FULL_ATTRS, fullArrays());
+    const loader = makeLoader(store, FULL_ATTRS);
+    const controller = new AbortController();
+
+    const data = await loader.updateView(VIEW, undefined, controller.signal);
+    expect(data.faceCount).toBe(4);
+
+    // Every array's CHUNK read must have carried the signal — proven by the
+    // store, which records which requests arrived with one.
+    const signaledChunks = store.signaledKeys.filter(
+      (k) => !META_KEYS.has(k.slice(k.lastIndexOf('/') + 1))
+    );
+    for (const name of ['vertices', 'faces', 'normals', 'colors', 'scalars']) {
+      expect(
+        signaledChunks.some((k) => k.includes(`/${name}/`)),
+        `expected the ${name} chunk read to carry the abort signal`
+      ).toBe(true);
+    }
+  });
+
+  it('rejects a pre-aborted updateView with AbortError and caches nothing', async () => {
+    const store = buildStore(FULL_ATTRS, fullArrays());
+    const loader = makeLoader(store, FULL_ATTRS);
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(loader.updateView(VIEW, undefined, controller.signal)).rejects.toMatchObject({
+      name: 'AbortError',
+    });
+
+    // The failed fetch must not have latched: a later un-aborted update loads fine.
+    const data = await loader.updateView(VIEW);
+    expect(data.vertexCount).toBe(4);
   });
 });
 
