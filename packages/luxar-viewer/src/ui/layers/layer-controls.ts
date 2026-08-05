@@ -15,7 +15,7 @@
  */
 
 import type { BlendingMode } from '../../rendering';
-import { type LayerInfo, type LayerStateManager } from './layer-state';
+import { resolveLayerBlendingMode, type LayerInfo, type LayerStateManager } from './layer-state';
 import { RangeSlider } from './range-slider';
 import { LabeledSlider } from './labeled-slider';
 import {
@@ -346,7 +346,11 @@ export class LayerControls {
       this.controlsInteracting = true;
       const mode = this.blendSelect!.value as BlendingMode;
       this.deps.state.applyToSelected((l) => {
-        l.blendingMode = mode;
+        // Resolved PER LAYER, not once for the whole selection: a multi-select can mix
+        // types, and only mesh maps `volumetric` away. Storing the raw pick would make
+        // the panel claim a mode the mesh shader does not implement — see
+        // `resolveLayerBlendingMode`.
+        l.blendingMode = resolveLayerBlendingMode(l.type, mode);
       });
       for (const sel of this.deps.state.getSelected()) {
         this.deps.apply.applyBlendingMode(sel);

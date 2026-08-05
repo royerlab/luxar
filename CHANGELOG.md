@@ -257,6 +257,21 @@ vertices / 1.07M triangles across the two surfaces.
 `GEOMETRY_VALUES` in the demo registry gained `mesh` — a vocabulary that had never
 needed a fourth entry.
 
+#### A mesh layer now reports the mode it actually renders
+
+`volumetric` has no meaning for a zero-thickness surface, so the mesh material maps it
+to `opaque` and stamps the RESOLVED mode. The layers panel was storing the composed,
+UNresolved value — which made it disagree with the render in two visible ways at once: it
+showed the **Absorption** slider (which no mesh shader reads) and hid **Alpha cutoff**
+precisely when the cutout was active. The pick pass reads the material's resolved mode,
+so it was correct and only the UI was wrong.
+
+Resolved at the point of STORAGE rather than at each display gate, so every consumer —
+the Blend dropdown's own displayed value included — sees the mode that renders. A user
+who explicitly picks `volumetric` on a mesh sees it snap back to `opaque`, which is
+honest: it is what the surface is doing, and it matches the one-time warning the loader
+already emits. The three types that DO implement volumetric are untouched.
+
 #### Docs catch up with mesh
 
 Two viewer package READMEs had omitted mesh entirely. `rendering/README.md` gains a

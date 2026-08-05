@@ -1570,6 +1570,69 @@ describe('LayersPanel — blend select drives the leaf material', () => {
     expect(calls.pickAlphaCutoff).toHaveBeenCalledWith(expect.closeTo(0.9, 6));
   });
 
+  it('a mesh inheriting `volumetric` reports the RESOLVED mode, so the panel matches the render', () => {
+    // The UI/render mismatch this guards, raised in review of #1271. `volumetric` has no
+    // meaning for a zero-thickness surface, so the mesh material maps it to `opaque` and
+    // stamps the RESOLVED mode. With the unresolved value in `LayerInfo` the panel
+    // disagreed with the shader in two visible ways AT ONCE: it showed Absorption (which
+    // no mesh shader reads) and HID Alpha cutoff exactly when the cutout was active.
+    // The pick pass reads the material's resolved mode, so it was right and the UI wasn't.
+    const { panel } = mountMeshLayer(container, animationController, 'volumetric');
+
+    // Stored resolved, so every consumer — the Blend dropdown's own value included —
+    // sees what renders.
+    expect(panel.layerState.getLayer('/cloud')!.blendingMode).toBe('opaque');
+    expect(findBlendSelect(container)!.value).toBe('opaque');
+    // Alpha cutoff visible (the cutout IS active); Absorption hidden (nothing reads it).
+    expect(findControlGroup(container, 'Alpha cutoff')!.style.display).not.toBe('none');
+    expect(findAbsorptionGroup(container)!.style.display).toBe('none');
+  });
+
+  it('explicitly picking `volumetric` on a mesh snaps back to the mode that renders', () => {
+    // Same invariant through the dropdown rather than through inheritance. Resolving on
+    // WRITE is what makes the control honest: the surface cannot do volumetric, so the
+    // panel must not claim it does.
+    mountMeshLayer(container, animationController);
+    const select = findBlendSelect(container)!;
+    select.value = 'volumetric';
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+
+    expect(findControlGroup(container, 'Alpha cutoff')!.style.display).not.toBe('none');
+    expect(findAbsorptionGroup(container)!.style.display).toBe('none');
+  });
+
+  it('leaves `volumetric` alone on a non-mesh layer', () => {
+    // The converse — only mesh maps the mode away. A gsplat layer must keep it, or the
+    // resolution would silently disable volumetric rendering for the three types that
+    // do implement it.
+    const stubMat: Record<string, unknown> = {
+      userData: { blendingMode: 'volumetric' },
+      uniforms: { uOpacity: { value: 1.0 } },
+      defines: {},
+      updateIntensity: vi.fn(),
+      updateOffset: vi.fn(),
+      updateGamma: vi.fn(),
+      updateOpacity: vi.fn(),
+      updateAbsorption: vi.fn(),
+      applyBlendingMode: vi.fn(),
+    };
+    stubMat.clone = vi.fn(() => stubMat);
+    const mesh = new THREE.Mesh(new THREE.BufferGeometry(), stubMat as unknown as THREE.Material);
+    mesh.name = '/cloud';
+    const rootGroup = new THREE.Group();
+    rootGroup.add(mesh);
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(
+      rootGroup,
+      makeLayeredSceneGraph('gsplats', { blending_mode: 'volumetric' })
+    );
+    panel.show();
+    panel.layerState.select('/cloud', 'single');
+
+    expect(panel.layerState.getLayer('/cloud')!.blendingMode).toBe('volumetric');
+    expect(findAbsorptionGroup(container)!.style.display).not.toBe('none');
+  });
+
   it('absorption slider: hidden outside volumetric, revealed by the mode switch, drives updateAbsorption', () => {
     const updateAbsorption = vi.fn();
     const stubMat: Record<string, unknown> = {
