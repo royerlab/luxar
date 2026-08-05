@@ -54,7 +54,14 @@ export async function loadMeshNode(
   // Attach the placeholder BEFORE fetching, so an initial-load failure leaves a
   // recoverable scene state that `retryFailedLoader` can write into.
   const attrs = ctx.applyEffectiveAttrs(node) as unknown as MeshMetadata;
-  const placeholder = ctx.nodeFactory.createEmptyMeshNode(node.path, attrs, loader);
+  // The RAW leaf attrs ride along too: `resolveColormapWindow` needs both bags to
+  // tell a leaf-authored scalar window from an inherited ancestor gain (#936).
+  const placeholder = ctx.nodeFactory.createEmptyMeshNode(
+    node.path,
+    attrs,
+    loader,
+    node.attrs as Partial<MeshMetadata>
+  );
   parentThree.add(placeholder);
 
   try {

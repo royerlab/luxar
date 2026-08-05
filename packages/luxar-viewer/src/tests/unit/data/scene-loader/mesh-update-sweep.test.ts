@@ -42,6 +42,22 @@ vi.mock('../../../../rendering/material-manager', () => ({
       userData: {},
       updateCameraParams: vi.fn(),
     }),
+    // Mesh materials are per node like the rest. Note the absent
+    // `updateCameraParams`: a mesh draws real geometry, so it has no screen-space
+    // size and is deliberately not camera-aware — the stub mirrors that rather than
+    // padding the shape.
+    getMeshMaterial: vi.fn(() => ({
+      uniforms: {},
+      userData: {},
+      defines: {},
+      side: 0,
+      needsUpdate: false,
+      updateFlatNormal: vi.fn(),
+      updateColormapTexture: vi.fn(),
+      updateScalarRange: vi.fn(),
+      updateIntensity: vi.fn(),
+      updateOffset: vi.fn(),
+    })),
   },
   SOFT_DISPOSE_FLAG: Symbol.for('luxar.material.softDispose.test-mock'),
 }));

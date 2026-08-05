@@ -27,7 +27,8 @@ function makeCtx(): LifecycleCtx {
   return {
     registeredMaterials: new Set<THREE.Material & CameraAwareMaterial>(),
     ownedMaterials: new Set<THREE.Material & CameraAwareMaterial>(),
-    subscribedMaterials: new WeakSet<THREE.Material & CameraAwareMaterial>(),
+    staticMaterials: new Set<THREE.Material>(),
+    subscribedMaterials: new WeakSet<THREE.Material>(),
   };
 }
 

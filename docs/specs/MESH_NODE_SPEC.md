@@ -1,6 +1,6 @@
 # Mesh Node Specification
 
-**Status:** In delivery — Phases 0–1 landed (writer side; §11), viewer phases 2–6 still to come
+**Status:** In delivery — Phases 0–4 landed (writer side, cull kernels, drawable, shaded; §11), phases 5–6 still to come
 **Scope:** A fourth first-class geometry type — `mesh` — symmetric to Points, Lines and GSplats.
 **Non-goals:** LOD/decimation, spatial indexing, exact nD triangle clipping. See [§9](#9-explicitly-out-of-scope).
 **Target data:** isosurfaces and segmentation boundaries — 3D geometry whose hidden dimensions are
@@ -674,6 +674,20 @@ variant is needed; the alpha handling in §6.2 is unconditional.
 The other three geometry types are purely emissive and have no lighting whatsoever. A mesh without
 shading is a flat silhouette and effectively unreadable, so mesh is the first type to shade. The v1
 model is deliberately minimal and light-free:
+
+> ⚠️ **Two refinements the implementation forced, both now shipped.** (a) The derivative fallback's
+> `normalize(cross(dFdx(vViewPos), dFdy(vViewPos)))` is **explicitly forced** to `z >= 0` in both
+> backends. The cross product carries the sign of the fragment-space y axis, and GLSL's `dFdy` is
+> bottom-up while WGSL's `dpdy` is top-down — so "orientation-defined by the rasterized fragment, so it
+> always faces the viewer" is only true once enforced; unenforced, the flat variant collapses to
+> `uAmbient` on WebGPU alone, which the GLSL-compiling parity harness cannot see. (b) The stored-normal
+> view transform is written out as `viewMatrix · (modelNormalMatrix · n)` rather than through three's
+> `transformNormalToView`, whose `transformDirection` **normalizes**: since the writer accepts
+> zero-length normals with a warning (§3.5), that normalize would produce `NaN` and interpolate it
+> across every triangle touching the vertex, flat-shading all of them instead of distorting locally.
+> Also: because the `normal` attribute must not be bound/unbound per epoch (that grows or shrinks a live
+> geometry's WebGPU vertex layout), it is bound for the node's lifetime whenever `has_normals`; only the
+> shader variant swaps.
 
 - **Normal source:** the stored `normal` attribute is used **iff `shading == "smooth"` and the stored
   normals are valid for the active view** (present and `normal_dims == displayDims`, §3.4); otherwise —
@@ -1433,9 +1447,9 @@ Use `geometryDescriptorFor(node.type)`, which gates the lookup with `Object.hasO
 |---|---|---|
 | **0** ✅ *(done — §10.1)* | Single-source `GeometryKind` from the contract; collapse `LoaderRegistry`; unify the per-type pipeline; table-drive the dispatch switches | Landed as #1079 / #1099 / #1150, all behaviour-preserving. The `SceneGraphNodeType` local extension has since been deleted (#1220) — it is now plain `NodeTypeName` — so Phase 0 is fully landed |
 | **1** ✅ *(done — #1220)* | Writable contract (`node_types`/`geometry_types` + `NodeType.MESH`/`NODE_TYPE_MESH`) + `core/mesh.py` + adder + writer + validators + reader + `info` + the LOD/partition rejections (§8) | Landed as #1220, all in one PR: `scene.add_mesh(...)` writes a `.luxar.zarr`; `luxar info --stats` reports it; round-trip tests green; a mesh child of a lod/partition group **raises** (both rejections pinned by tests) |
-| **2** | Rust + TS cull kernels with parity tests | Kernels green in isolation, no viewer changes |
-| **3** | `mesh` → `loader_types` in `contract.yaml` (the switch-on — fires the three §10.2 compile errors) + `types/mesh.ts` + loader + node load + `mesh-geometry.ts` + one `LoaderByKind` entry + one `GEOMETRY_DESCRIPTORS` row + the `computeHiddenDimTolerance` arm | Mesh loads and renders **unshaded** (flat vertex color); E2E smoke green |
-| **4** | GLSL + TSL material pair + codegen snapshots + shading model | Shaded surface, both backends pixel-equivalent |
+| **2** ✅ *(done — #1232)* | Rust + TS cull kernels with parity tests | Kernels green in isolation, no viewer changes |
+| **3** ✅ *(done)* | `mesh` → `loader_types` in `contract.yaml` (the switch-on — fires the three §10.2 compile errors) + `types/mesh.ts` + loader + node load + `mesh-geometry.ts` + one `LoaderByKind` entry + one `GEOMETRY_DESCRIPTORS` row + the `computeHiddenDimTolerance` arm | Mesh loads and renders **unshaded** (flat vertex color); E2E smoke green |
+| **4** ✅ *(done)* | GLSL + TSL material pair + codegen snapshots + shading model | Shaded surface, both backends pixel-equivalent. Landed as the `mesh/` material stack (4 files + `appearance.ts`), 5 codegen variants (10 snapshot files), and the §6.2 headlight with its compile-time stored-normal/derivative variant. Two spec refinements were forced by the implementation and are folded back into §6.2: the derivative normal is **forced** viewer-facing rather than assumed so (`cross(dFdx, dFdy)` has the sign of the fragment-space y axis, and WGSL's `dpdy` is top-down where GLSL's `dFdy` is bottom-up), and the stored normal is transformed WITHOUT three's `transformNormalToView` (whose internal `normalize` turns a legitimately zero-length normal into a whole-triangle NaN, contradicting §3.5's locally-distorted contract). The `normal`/`aScalar` attributes are bound for the node's lifetime from the metadata rather than bound/unbound per epoch — the shader variant alone stops reading them, which keeps the attribute set (and hence the WebGPU vertex layout) fixed |
 | **5** | Picking pair, layers panel, monitor, stats, camera framing, debug | Full parity with the other three at the UI level |
 | **6** | Fixture + E2E spec + demo + docs + CHANGELOG | Shippable |
 

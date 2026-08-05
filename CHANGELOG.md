@@ -6,6 +6,64 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
+#### Mesh renders shaded — the fourth geometry type gets its material pair
+
+Until now a mesh loaded and drew with flat per-vertex colour, which for a surface
+is an unreadable silhouette. Mesh is the first geometry type in Luxar that
+**shades** — the other three are purely emissive per-element sprites with no
+notion of a surface orientation — so this adds the GLSL + TSL material pair and
+the light-free shading model of `docs/specs/MESH_NODE_SPEC.md` §6.2:
+
+```glsl
+shade = mix(uAmbient, 1.0, pow(saturate(dot(N, V) * 0.5 + 0.5), uShadeExponent));
+```
+
+`V` is the fixed view-space axis `(0, 0, 1)` — a camera headlight — so nothing is
+added to the scene graph and no light node exists. `uAmbient = 1.0` collapses the
+term and reproduces the emissive look of the other three.
+
+The normal comes from the stored `normal` attribute when `shading == "smooth"`
+**and** `normal_dims` equals the displayed axes, and from screen-space
+derivatives of the view position otherwise. That is a compile-time shader
+variant, not a runtime branch, because a declared-but-unbound `normal` reads
+`(0, 0, 0, 1)` rather than "absent" — there is no runtime value meaning "no
+normals". It is decided once per node and re-applied per epoch, since the
+`normal_dims == displayDims` half is view-dependent.
+
+Two things had to be enforced rather than assumed, and both would have failed on
+one backend only:
+
+- **The derivative normal is forced viewer-facing.** `cross(dFdx(P), dFdy(P))`
+  carries the sign of the fragment-space y axis, and GLSL's `dFdy` is bottom-up
+  where WGSL's `dpdy` is top-down. Unforced, the flat variant shades correctly on
+  WebGL and collapses to `uAmbient` everywhere on WebGPU — and the parity harness
+  compiles TSL *to GLSL*, so it could never see it.
+- **The stored normal is transformed without three's `transformNormalToView`**,
+  whose `transformDirection` normalizes. The writer accepts zero-length normals
+  with a warning (degenerate triangles legitimately produce them), and
+  `normalize(vec3(0))` is `NaN`, which interpolates across every triangle
+  touching that vertex and flat-shades all of them. Spelled out as
+  `viewMatrix · (modelNormalMatrix · n)`, shading near a degenerate vertex stays
+  locally distorted, which is what the spec promises.
+
+Mesh's blending defaults to **`opaque`**, unlike the siblings' `additive`: it is
+the only mode unconditionally correct without per-triangle depth sorting, and it
+is what a surface should look like. The default is applied viewer-side and never
+stamped by the writer, so an ancestor group's mode still wins. `volumetric`
+degrades to `opaque` with a one-time warning naming the node — a warning rather
+than a failure, because the mode can arrive by inheritance from a group the mesh
+knows nothing about. Under `opaque`, node `opacity` sweeps a hard alpha **cutout**
+rather than dimming the surface; a smooth fade means selecting `normal`.
+
+Also here: per-vertex `scalars` + `colormap` now work on a mesh (including the
+#936 rule where an authored gain becomes the LUT window instead of double-applying),
+and the mesh material is deliberately **not** camera-aware — a mesh has no
+screen-space size to recompute, so it is tracked for disposal in a separate
+registry instead of taking a per-frame no-op broadcast per node.
+
+Still to come: picking (mesh keys on `gl_VertexID`, so it needs its own material
+pair) and the Layers-panel appearance controls.
+
 #### Demos — the biodiversity globe is `opaque`, so it stops painting over its own data (#1227)
 
 The globe was `volumetric` with a heavy absorption, which read well in isolation

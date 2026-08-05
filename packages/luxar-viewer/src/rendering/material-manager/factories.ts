@@ -16,9 +16,11 @@ import type { BlendingMode } from '../../types/blending';
 import { PointMaterial } from '../materials/point/material-glsl';
 import { LineMaterial } from '../materials/line/material-glsl';
 import { GSplatMaterial } from '../materials/gsplat/material-glsl';
+import { MeshMaterial } from '../materials/mesh/material-glsl';
 import { PointTSLMaterial } from '../materials/point/material-tsl';
 import { LineTSLMaterial } from '../materials/line/material-tsl';
 import { GSplatTSLMaterial } from '../materials/gsplat/material-tsl';
+import { MeshTSLMaterial } from '../materials/mesh/material-tsl';
 import { PointPickingMaterial } from '../picking/point/material';
 import { LinePickingMaterial } from '../picking/line/material';
 import { GSplatPickingMaterial } from '../picking/gsplat/material';
@@ -105,6 +107,33 @@ export interface GSplatMaterialProperties {
 }
 
 /**
+ * Mesh material properties driving the constructor config.
+ *
+ * The compositing half matches its three siblings field for field. What differs is
+ * named rather than quietly omitted, because each omission is a §9 exclusion or a
+ * §2.2 structural difference rather than an oversight:
+ *
+ * - no `absorption` — that uniform exists only for `volumetric`, and a
+ *   zero-thickness surface has no path length for it to attenuate over (§6.3);
+ * - no `radiusScale` / `truncationRadius` — both normalize a per-element extent,
+ *   and a triangle's extent is its own vertices;
+ * - `blendingMode` defaults to `'opaque'`, not `'additive'` — the only mode
+ *   unconditionally correct without per-triangle depth sorting (§6.3);
+ * - `flatNormal` is new: mesh is the first shaded type, and the stored-normal vs
+ *   derivative-normal choice is a compile-time shader variant the caller resolves
+ *   once per node.
+ */
+export interface MeshMaterialProperties {
+  blendingMode: BlendingMode;
+  opacity: number;
+  gamma: number;
+  intensity: number;
+  offset: number;
+  /** Shade from screen-space derivatives instead of the stored `normal` attribute. */
+  flatNormal?: boolean;
+}
+
+/**
  * The material backend tag used in cache keys and as the index into
  * the factory tables. `'tsl'` selects the `NodeMaterial`-derived
  * implementation built for WebGPURenderer; `'glsl'` selects the
@@ -131,6 +160,7 @@ export const VISUAL_FACTORIES = {
   point: { glsl: PointMaterial, tsl: PointTSLMaterial },
   line: { glsl: LineMaterial, tsl: LineTSLMaterial },
   gsplat: { glsl: GSplatMaterial, tsl: GSplatTSLMaterial },
+  mesh: { glsl: MeshMaterial, tsl: MeshTSLMaterial },
 } as const;
 
 /**
