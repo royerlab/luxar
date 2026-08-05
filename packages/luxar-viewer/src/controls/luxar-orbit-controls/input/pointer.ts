@@ -16,10 +16,21 @@ import * as THREE from 'three';
 import { computeArcballRotation } from '../math/trackball';
 import { computeZoomScale } from '../math/zoom';
 
+/** The gesture the orbit controls are currently performing. */
 export type ControlAction = 'rotate' | 'pan' | 'zoom' | 'none';
 
+/** Event names the orbit controls dispatch through the orchestrator. */
 export type ControlEventName = 'change' | 'start' | 'end';
 
+/**
+ * State and callbacks the pointer/touch handlers need, built once per call
+ * by the `LuxarOrbitControls` orchestrator. Read-only flags and speeds are
+ * copied by value; mutable object refs (pointer array/map, the rotate/pan/
+ * dolly start vectors, rotationDelta) are shared so mutation flows back to
+ * the instance; primitive state (`state`, zoom delta) is read/written via
+ * accessors. Touch entry points and `pan`/`dispatch` are cross-cutting
+ * callbacks the orchestrator supplies.
+ */
 export interface OrbitInputCtx {
   // Read-only flags
   enabled: boolean;
@@ -111,6 +122,14 @@ export function mouseAction(button: number, shiftKey: boolean, ctx: OrbitInputCt
   return 'none';
 }
 
+/**
+ * Begin a pointer interaction. On the first pointer, captures it and attaches
+ * the move/up/cancel listeners; tracks the pointer in the array and position
+ * map (reusing an existing Vector2 for the same id to avoid allocation).
+ * Touch pointers are routed to `onTouchStart`; otherwise the mouse button +
+ * shift state selects rotate/pan/zoom and seeds the matching start point.
+ * Dispatches `start` when a gesture became active. No-op while disabled.
+ */
 export function handlePointerDown(ctx: OrbitInputCtx, event: PointerEvent): void {
   if (!ctx.enabled) return;
 
@@ -157,6 +176,13 @@ export function handlePointerDown(ctx: OrbitInputCtx, event: PointerEvent): void
   }
 }
 
+/**
+ * Advance the active gesture from a pointer move. Updates the stored position
+ * and the pointer in the array; touch moves are delegated to `onTouchMove`.
+ * For a mouse: rotate accumulates an arcball quaternion into `rotationDelta`,
+ * pan feeds the client delta to `ctx.pan`, and zoom converts the vertical
+ * delta into a zoom-delta accumulation. No-op while disabled.
+ */
 export function handlePointerMove(ctx: OrbitInputCtx, event: PointerEvent): void {
   if (!ctx.enabled) return;
 
@@ -204,6 +230,12 @@ export function handlePointerMove(ctx: OrbitInputCtx, event: PointerEvent): void
   }
 }
 
+/**
+ * End a pointer interaction: remove the pointer from the array (via
+ * `setPointers`) and the position map. When no pointers remain, release the
+ * capture and detach the move/up/cancel listeners. Resets the gesture state
+ * to `'none'` and dispatches `end`.
+ */
 export function handlePointerUp(ctx: OrbitInputCtx, event: PointerEvent): void {
   // Remove this pointer. Use the filtered result directly — ctx.pointers
   // still references the pre-filter array after setPointers, so reading
@@ -227,6 +259,14 @@ export function handlePointerUp(ctx: OrbitInputCtx, event: PointerEvent): void {
   ctx.dispatch('end');
 }
 
+/**
+ * Handle a scroll wheel zoom. Ctrl/Meta+scroll is ceded to the window-level
+ * FOV handler for perspective cameras only (ortho has no FOV, so a pinch must
+ * still zoom there). Converts `deltaY` into a zoom-scale and accumulates a
+ * signed zoom delta (scroll up = zoom in), then dispatches `change` so the
+ * damped zoom is picked up in the next update. No-op while disabled or zoom
+ * is off.
+ */
 export function handleWheel(ctx: OrbitInputCtx, event: WheelEvent): void {
   if (!ctx.enabled || !ctx.enableZoom) return;
 

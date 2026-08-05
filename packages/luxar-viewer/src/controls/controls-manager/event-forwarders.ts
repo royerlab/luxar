@@ -11,6 +11,7 @@
 import * as THREE from 'three';
 import { EventGroup } from '../../utils/cross-layer/event-group';
 
+/** Events a control instance emits and the manager re-dispatches. */
 export type ControlEventName = 'change' | 'start' | 'end';
 
 type ControlEventMap = {
@@ -19,6 +20,7 @@ type ControlEventMap = {
   end: {};
 };
 
+/** A control instance viewed as a dispatcher of change/start/end events. */
 export type ControlEventDispatcher = THREE.EventDispatcher<ControlEventMap>;
 
 /**

@@ -11,12 +11,19 @@
 
 import { config } from '../../config';
 
+/** Scale-derived control parameters: orbit distance bounds and fly speed. */
 export interface ScaleLimits {
   minDist: number;
   maxDist: number;
   flySpeed: number;
 }
 
+/**
+ * Compute scale-aware min/max orbit distance and fly speed by multiplying the
+ * scene bounding-box `diagonal` by the per-parameter factors in
+ * `config.controls.scaleMultipliers`. Pure math — the caller owns the field
+ * writes, active-control mutation, and gating against stored auto-frame limits.
+ */
 export function deriveScaleLimits(diagonal: number): ScaleLimits {
   const m = config.controls.scaleMultipliers;
   return {
