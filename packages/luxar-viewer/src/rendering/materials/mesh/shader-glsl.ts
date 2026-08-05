@@ -36,22 +36,9 @@
  */
 
 import { GLSL_SANITIZE_FUNCTIONS } from '../_shared/glsl-lib';
+import { MESH_NORMAL_EPS_SQ } from './appearance';
 import type { ShaderSource } from '../_shared/shader-source';
 import { meshWebGPUFactory, buildMeshTSLNodesFromUniforms } from './shader-tsl';
-
-/**
- * Squared-length floor below which an interpolated stored normal is not trusted.
- *
- * Compared against `dot(N, N)`, so this is `(1e-6)²` — a normal shorter than one
- * part per million of unit length. Two sources produce them: a legitimately
- * degenerate triangle (the writer *warns* rather than rejecting zero-length normals,
- * spec §3.5), and interpolation across a triangle whose corner normals oppose, which
- * cancels to ~0 somewhere in between.
- *
- * Shared verbatim with the TSL twin so the two backends switch to the fallback on
- * exactly the same fragments.
- */
-export const MESH_NORMAL_EPS_SQ = '1e-12';
 
 /**
  * Vertex stage.
@@ -207,12 +194,19 @@ export const MESH_FRAGMENT_SHADER = /* glsl */ `
       highp vec3 N = derivativeNormal;
       #else
       highp float nn = dot(vNormal, vNormal);
-      // (2) AFFIRMATIVE on purpose — the stored normal is used only when
-      // \`nn >= eps\` is positively TRUE, never when \`nn < eps\` is false. NaN
-      // fails every comparison, so a corrupt store lands in the fallback here,
-      // whereas a \`nn < eps\` test would pass it through to normalize into NaN
-      // shading. Same rule as the spec's \`!(dot(N, N) >= eps)\` phrasing.
-      bool storedUsable = nn >= ${MESH_NORMAL_EPS_SQ};
+      // (2) AFFIRMATIVE on purpose — the stored normal is used only when the length
+      // test is positively TRUE, never when its negation is false. NaN fails every
+      // comparison, so a corrupt store lands in the fallback here, whereas a
+      // \`nn < eps\` test would pass it through to normalize into NaN shading.
+      //
+      // TWO-SIDED, which the spec's \`!(dot(N, N) >= eps)\` phrasing is not: an
+      // INFINITE normal component gives \`nn == inf\`, which satisfies \`>= eps\`, and
+      // then \`vNormal * inversesqrt(inf)\` is \`inf * 0.0\` = NaN — the same NaN
+      // shading the guard exists to prevent, arriving from the other end. The writer
+      // rejects non-finite normals, so this is the hand-crafted-zarr case every
+      // sibling shader sanitizes for. \`1e30\` is the finite-range convention already
+      // used by the TSL sanitizers.
+      bool storedUsable = nn >= ${MESH_NORMAL_EPS_SQ} && nn < 1e30;
       highp vec3 storedNormal = vNormal * inversesqrt(max(nn, ${MESH_NORMAL_EPS_SQ}));
       // (3) Flip the STORED normal only, and only when it survived the guard.
       storedNormal = gl_FrontFacing ? storedNormal : -storedNormal;

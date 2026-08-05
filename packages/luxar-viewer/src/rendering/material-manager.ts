@@ -27,7 +27,10 @@ import type { PointPickingMaterialConfig } from './picking/point/material';
 import type { LinePickingMaterialConfig } from './picking/line/material';
 import type { GSplatPickingMaterialConfig } from './picking/gsplat/material';
 import type { MegaShaderConfig } from './post-processing/mega/material';
-import type { CameraAwareMaterial } from './materials/_shared/camera-aware-material';
+import {
+  isCameraAwareMaterial,
+  type CameraAwareMaterial,
+} from './materials/_shared/camera-aware-material';
 import type { RendererCapabilities } from './renderer-capabilities';
 import { log, Modules } from '../utils/log';
 import {
@@ -142,14 +145,19 @@ export class MaterialManager {
   private createCount = 0;
   /**
    * Materials that entered through `register()` rather than a manager
-   * factory (per-node point/line/gsplat materials live in
-   * `registeredMaterials` only).
+   * factory (per-node point/line/gsplat/mesh materials live in
+   * `registeredMaterials` / `staticMaterials` only).
    *
-   * Examples: GPU-picking materials and colormap clones. These still
-   * need global camera uniforms and manager-level disposal, but they
-   * are tracked separately for leak diagnostics.
+   * Examples: GPU-picking materials and colormap clones. These need
+   * manager-level disposal — and global camera uniforms when they are
+   * camera-aware — but are tracked separately for leak diagnostics.
+   *
+   * Typed as plain `THREE.Material` because `register()` accepts one: a
+   * non-camera-aware entry (a mesh colormap clone) belongs in the leak
+   * diagnostic exactly as much as a camera-aware one, so this set must
+   * span both rather than silently omitting half of them.
    */
-  private ownedMaterials = new Set<THREE.Material & CameraAwareMaterial>();
+  private ownedMaterials = new Set<THREE.Material>();
   /**
    * Per-node materials that are tracked for disposal but take NO camera broadcast.
    *
@@ -367,6 +375,9 @@ export class MaterialManager {
       offset: props.offset,
       blendingMode: props.blendingMode,
       flatNormal: props.flatNormal,
+      ambient: props.ambient,
+      shadeExponent: props.shadeExponent,
+      alphaCutoff: props.alphaCutoff,
     });
     this.totalCreateMs += performance.now() - createStart;
     this.createCount++;
@@ -427,16 +438,34 @@ export class MaterialManager {
   }
 
   /**
-   * Register a material for global camera parameter updates.
+   * Register a material the manager did not construct, for lifecycle tracking and —
+   * where applicable — global camera-parameter updates.
    *
-   * Use this for non-cached materials such as per-node colormap clones and
-   * picking materials. Cached materials are registered internally by
-   * getPointMaterial()/getLineMaterial()/getGSplatMaterial().
+   * Use this for non-cached materials such as per-node colormap clones and picking
+   * materials. Materials from the four `getXMaterial` factories register themselves.
+   *
+   * Takes a plain `THREE.Material` and DISPATCHES on the capability rather than
+   * demanding it, which is the same `isCameraAwareMaterial` pattern the picking
+   * system already uses. A camera-aware material joins the broadcast registry and
+   * receives the current camera state immediately; one without a screen-space extent
+   * (a mesh material, whose size IS its geometry) is tracked for disposal only.
+   *
+   * Dispatching here rather than at the call site is deliberate: it leaves ONE public
+   * entry point that cannot be called wrongly. Requiring `& CameraAwareMaterial`
+   * instead pushed the problem outward — the layers panel's `LuxarMaterial` had to
+   * claim a method it never calls just to satisfy this signature, which made a
+   * perfectly valid non-camera-aware leaf material unrepresentable in the panel.
    */
-  register(material: THREE.Material & CameraAwareMaterial): void {
+  register(material: THREE.Material): void {
+    subscribeToDispose(material, this.lifecycleCtx);
+    if (!isCameraAwareMaterial(material)) {
+      // No screen-space size to recompute — see `staticMaterials`.
+      this.staticMaterials.add(material);
+      this.ownedMaterials.add(material);
+      return;
+    }
     this.registeredMaterials.add(material);
     this.ownedMaterials.add(material);
-    subscribeToDispose(material, this.lifecycleCtx);
     material.updateCameraParams(
       this.currentFov,
       this.currentResolution,
@@ -446,13 +475,14 @@ export class MaterialManager {
   }
 
   /**
-   * Drop a material from the global registry without disposing the
-   * underlying GPU object. The picking-material classes use this in
-   * their custom `dispose()` paths so the manager stops broadcasting
-   * camera updates to the material before the caller disposes it
-   * directly.
+   * Drop a material from every registry without disposing the underlying GPU object.
+   * The picking-material classes use this in their custom `dispose()` paths so the
+   * manager stops broadcasting camera updates before the caller disposes it directly.
+   *
+   * Widened to `THREE.Material` alongside {@link register}, so anything that can be
+   * registered can be unregistered — the pair must accept the same set.
    */
-  unregister(material: THREE.Material & CameraAwareMaterial): void {
+  unregister(material: THREE.Material): void {
     removeFromRegistries(material, this.lifecycleCtx);
   }
 

@@ -8,12 +8,17 @@
 import { describe, it, expect } from 'vitest';
 import {
   MESH_DEFAULTS,
+  MESH_NORMAL_EPS_SQ,
+  clampShadeExponent,
+  syncMeshEmissionDefines,
   MESH_SUPPORTED_BLENDING_MODES,
   resolveMeshBlendingMode,
   resolveMeshOutput,
 } from '../../../../../rendering/materials/mesh/appearance';
-import { MESH_NORMAL_EPS_SQ } from '../../../../../rendering/materials/mesh/shader-glsl';
-import { MESH_NORMAL_EPS_SQ_VALUE } from '../../../../../rendering/materials/mesh/shader-tsl';
+import {
+  MESH_FRAGMENT_SHADER,
+  MESH_VERTEX_SHADER,
+} from '../../../../../rendering/materials/mesh/shader-glsl';
 import { BLENDING_MODES } from '../../../../../types/blending';
 
 describe('resolveMeshBlendingMode', () => {
@@ -89,18 +94,87 @@ describe('MESH_DEFAULTS', () => {
 });
 
 describe('the normal-validity epsilon', () => {
-  it('is the SAME value in both backends', () => {
-    // The GLSL side needs a source string and the TSL side a number, so the constant
-    // exists twice. If they drift, the two backends switch to the derivative
-    // fallback on different fragments — a divergence that renders as a subtle
-    // shading difference nobody would trace back to a literal.
-    expect(Number(MESH_NORMAL_EPS_SQ)).toBe(MESH_NORMAL_EPS_SQ_VALUE);
+  it('reaches the emitted GLSL from the shared constant, not a hardcoded literal', () => {
+    // One constant now serves both backends (the TSL factory takes the number
+    // directly), so "do the two agree" is unrepresentable rather than merely tested.
+    // What CAN still go wrong is the GLSL side: it needs the value as source text, so
+    // a literal typed into the template string would compile fine and drift silently.
+    // Pin the interpolation instead — the guard must compare against exactly this
+    // value, and it must appear in the shader as a valid float literal.
+    const literal = String(MESH_NORMAL_EPS_SQ);
+    expect(literal).toMatch(/^\d(\.\d+)?e-\d+$/); // valid GLSL ES 3.0 exponent form
+    expect(MESH_FRAGMENT_SHADER).toContain(`nn >= ${literal}`);
+    expect(MESH_FRAGMENT_SHADER).toContain(`max(nn, ${literal})`);
   });
 
   it('is a squared length, i.e. small enough not to reject a unit normal', () => {
     // Compared against dot(N, N). A value anywhere near 1 would reject every
     // legitimate normal and shade the whole scene from derivatives.
-    expect(MESH_NORMAL_EPS_SQ_VALUE).toBeLessThan(1e-6);
-    expect(MESH_NORMAL_EPS_SQ_VALUE).toBeGreaterThan(0);
+    expect(MESH_NORMAL_EPS_SQ).toBeLessThan(1e-6);
+    expect(MESH_NORMAL_EPS_SQ).toBeGreaterThan(0);
+  });
+
+  it('is read by the FRAGMENT stage only — the vertex stage has no normal guard', () => {
+    // Placement check: the guard reads an INTERPOLATED normal, so it can only live
+    // downstream of the rasterizer. A vertex-stage copy would guard the wrong value
+    // (the un-interpolated per-vertex one) and silently let a cancelled-to-zero
+    // interior normal through.
+    expect(MESH_VERTEX_SHADER).not.toContain(String(MESH_NORMAL_EPS_SQ));
+  });
+});
+
+describe('clampShadeExponent — pow(0, y) is undefined for y <= 0', () => {
+  it('floors a zero or negative exponent, which the shade term would otherwise hit at the silhouette', () => {
+    // `wrap = saturate(N·V · 0.5 + 0.5)` is EXACTLY 0 for a fragment facing directly
+    // away, so `pow(wrap, 0)` is undefined GLSL — driver-dependent 1, 0 or NaN. The
+    // clamp keeps that fragment defined (pow(0, 0.001) == 0 → shades at `ambient`).
+    expect(clampShadeExponent(0)).toBeGreaterThan(0);
+    expect(clampShadeExponent(-3)).toBeGreaterThan(0);
+    expect(clampShadeExponent(0)).toBe(0.001);
+  });
+
+  it('passes sane values through and defaults when undefined', () => {
+    expect(clampShadeExponent(1.5)).toBe(1.5);
+    expect(clampShadeExponent(undefined)).toBe(MESH_DEFAULTS.shadeExponent);
+  });
+});
+
+describe('syncMeshEmissionDefines — at most one emission flag', () => {
+  it.each([
+    ['opaque', ['LUXAR_MESH_ALPHA_CUTOUT']],
+    ['rgb-contribution', ['LUXAR_MAX_RGB_CONTRIBUTION']],
+    ['alpha-weighted', []],
+    ['premultiplied-alpha', []],
+  ] as const)('%s → %j', (output, expected) => {
+    const defines: Record<string, unknown> = {};
+    syncMeshEmissionDefines(defines, output);
+    expect(Object.keys(defines).sort()).toEqual([...expected].sort());
+  });
+
+  it('clears a stale flag when the shape changes, and reports the change', () => {
+    const defines: Record<string, unknown> = {};
+    expect(syncMeshEmissionDefines(defines, 'opaque')).toBe(true);
+    expect(syncMeshEmissionDefines(defines, 'opaque')).toBe(false); // idempotent
+    expect(syncMeshEmissionDefines(defines, 'rgb-contribution')).toBe(true);
+    expect(Object.keys(defines)).toEqual(['LUXAR_MAX_RGB_CONTRIBUTION']);
+    expect(syncMeshEmissionDefines(defines, 'alpha-weighted')).toBe(true);
+    expect(Object.keys(defines)).toEqual([]);
+  });
+
+  it('leaves unrelated defines alone', () => {
+    const defines: Record<string, unknown> = { USE_COLORMAP: '', LUXAR_MESH_FLAT_NORMAL: '' };
+    syncMeshEmissionDefines(defines, 'opaque');
+    expect(defines.USE_COLORMAP).toBe('');
+    expect(defines.LUXAR_MESH_FLAT_NORMAL).toBe('');
+  });
+});
+
+describe('the normal guard is TWO-SIDED in both shader sources', () => {
+  it('rejects an infinite dot(N, N), not just a vanishing one', () => {
+    // `inf >= eps` is TRUE, and `inf * inversesqrt(inf)` is `inf * 0` = NaN — the
+    // guard's own failure mode arriving from the upper end. The writer rejects
+    // non-finite normals, so this is the hand-crafted-store case every sibling
+    // shader sanitizes for. Asserted on the SOURCE because no unit test can run GLSL.
+    expect(MESH_FRAGMENT_SHADER).toMatch(/nn < 1e30/);
   });
 });

@@ -25,7 +25,14 @@ import * as THREE from 'three';
 import { uniform, texture } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
 import { meshWebGPUFactory, type MeshTSLNodes } from './shader-tsl';
-import { MESH_DEFAULTS, resolveMeshBlendingMode, resolveMeshOutput } from './appearance';
+import {
+  MESH_DEFAULTS,
+  clampAppearanceFraction,
+  clampShadeExponent,
+  resolveMeshBlendingMode,
+  resolveMeshOutput,
+  syncMeshEmissionDefines,
+} from './appearance';
 import type { MeshMaterialConfig } from './material-glsl';
 import type { ColormapAwareMaterial } from '../_shared/colormap-aware-material';
 import { clampGamma, isGammaOne, isNoGOG } from '../_shared/uniform-helpers';
@@ -89,9 +96,11 @@ export class MeshTSLMaterial extends NodeMaterial implements ColormapAwareMateri
       uInvGamma: uniform(1.0 / gammaValue),
       uIntensity: uniform(materialConfig.intensity ?? 1.0),
       uOffset: uniform(materialConfig.offset ?? 0.0),
-      uAmbient: uniform(materialConfig.ambient ?? MESH_DEFAULTS.ambient),
-      uShadeExponent: uniform(materialConfig.shadeExponent ?? MESH_DEFAULTS.shadeExponent),
-      uAlphaCutoff: uniform(materialConfig.alphaCutoff ?? MESH_DEFAULTS.alphaCutoff),
+      uAmbient: uniform(clampAppearanceFraction(materialConfig.ambient, MESH_DEFAULTS.ambient)),
+      uShadeExponent: uniform(clampShadeExponent(materialConfig.shadeExponent)),
+      uAlphaCutoff: uniform(
+        clampAppearanceFraction(materialConfig.alphaCutoff, MESH_DEFAULTS.alphaCutoff)
+      ),
     };
 
     this.uniforms = {
@@ -136,9 +145,7 @@ export class MeshTSLMaterial extends NodeMaterial implements ColormapAwareMateri
     // right branch on its first build (mirrors the sibling TSL constructors).
     const resolved = resolveMeshBlendingMode(materialConfig.blendingMode ?? 'opaque');
     this.userData.blendingMode = resolved;
-    const output = resolveMeshOutput(resolved);
-    if (output === 'opaque') this.defines.LUXAR_MESH_ALPHA_CUTOUT = '';
-    if (output === 'rgb-contribution') this.defines.LUXAR_MAX_RGB_CONTRIBUTION = '';
+    syncMeshEmissionDefines(this.defines, resolveMeshOutput(resolved));
 
     // Capture explicit overrides BEFORE the first rebuild — see the field doc.
     this._explicitTransparent = materialConfig.transparent;
@@ -263,15 +270,17 @@ export class MeshTSLMaterial extends NodeMaterial implements ColormapAwareMateri
   }
 
   updateAmbient(ambient: number): void {
-    this.uniforms.uAmbient.value = ambient;
+    this.uniforms.uAmbient.value = clampAppearanceFraction(ambient, MESH_DEFAULTS.ambient);
   }
 
   updateShadeExponent(exponent: number): void {
-    this.uniforms.uShadeExponent.value = exponent;
+    // Clamped like `updateGamma` — `pow(0, y)` is undefined for y <= 0, and a
+    // face-away fragment has a wrap base of exactly 0 (see `clampShadeExponent`).
+    this.uniforms.uShadeExponent.value = clampShadeExponent(exponent);
   }
 
   updateAlphaCutoff(cutoff: number): void {
-    this.uniforms.uAlphaCutoff.value = cutoff;
+    this.uniforms.uAlphaCutoff.value = clampAppearanceFraction(cutoff, MESH_DEFAULTS.alphaCutoff);
   }
 
   /**
@@ -316,20 +325,9 @@ export class MeshTSLMaterial extends NodeMaterial implements ColormapAwareMateri
 
     const previousMode = this.userData.blendingMode as BlendingMode | undefined;
     const stateChanged = applyBlendingStateToMaterial(this, state);
-    let definesChanged = false;
-    for (const [flag, wanted] of [
-      ['LUXAR_MESH_ALPHA_CUTOUT', state.shaderOutputMode === 'opaque'],
-      ['LUXAR_MAX_RGB_CONTRIBUTION', state.shaderOutputMode === 'rgb-contribution'],
-    ] as const) {
-      const had = flag in this.defines;
-      if (wanted && !had) {
-        this.defines[flag] = '';
-        definesChanged = true;
-      } else if (!wanted && had) {
-        delete this.defines[flag];
-        definesChanged = true;
-      }
-    }
+    // One shared helper maintains the at-most-one-emission-define invariant for both
+    // backends — see `syncMeshEmissionDefines`.
+    const definesChanged = syncMeshEmissionDefines(this.defines, state.shaderOutputMode);
     this.userData.blendingMode = resolved;
     this.userData.depthTest = state.depthTest;
 

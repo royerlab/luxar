@@ -22,7 +22,14 @@
 
 import * as THREE from 'three';
 import { MESH_VERTEX_SHADER, MESH_FRAGMENT_SHADER } from './shader-glsl';
-import { MESH_DEFAULTS, resolveMeshBlendingMode, resolveMeshOutput } from './appearance';
+import {
+  MESH_DEFAULTS,
+  clampAppearanceFraction,
+  clampShadeExponent,
+  resolveMeshBlendingMode,
+  resolveMeshOutput,
+  syncMeshEmissionDefines,
+} from './appearance';
 import type { ColormapAwareMaterial } from '../_shared/colormap-aware-material';
 import { clampGamma, isGammaOne, isNoGOG } from '../_shared/uniform-helpers';
 import {
@@ -103,14 +110,16 @@ function meshDefines(
   gammaValue: number
 ): Record<string, string | number | boolean> {
   const output = resolveMeshOutput(config.blendingMode ?? 'opaque');
-  return {
+  const defines: Record<string, string | number | boolean> = {
     ...(config.colormapTexture ? { USE_COLORMAP: '' } : {}),
     ...(isGammaOne(gammaValue) ? { LUXAR_GAMMA_ONE: '' } : {}),
     ...(isNoGOG(config.intensity ?? 1.0, config.offset ?? 0.0) ? { LUXAR_NO_GOG: '' } : {}),
     ...(config.flatNormal ? { LUXAR_MESH_FLAT_NORMAL: '' } : {}),
-    ...(output === 'opaque' ? { LUXAR_MESH_ALPHA_CUTOUT: '' } : {}),
-    ...(output === 'rgb-contribution' ? { LUXAR_MAX_RGB_CONTRIBUTION: '' } : {}),
   };
+  // Seeded through the same helper `applyBlendingMode` uses, so the constructor and
+  // the runtime path cannot disagree about which flag a mode implies.
+  syncMeshEmissionDefines(defines, output);
+  return defines;
 }
 
 /** Mesh surface material — shaded, indexed triangles. */
@@ -130,11 +139,13 @@ export class MeshMaterial extends THREE.ShaderMaterial implements ColormapAwareM
         uInvGamma: { value: 1.0 / gammaValue },
         uIntensity: { value: materialConfig.intensity ?? 1.0 },
         uOffset: { value: materialConfig.offset ?? 0.0 },
-        uAmbient: { value: materialConfig.ambient ?? MESH_DEFAULTS.ambient },
-        uShadeExponent: {
-          value: materialConfig.shadeExponent ?? MESH_DEFAULTS.shadeExponent,
+        uAmbient: {
+          value: clampAppearanceFraction(materialConfig.ambient, MESH_DEFAULTS.ambient),
         },
-        uAlphaCutoff: { value: materialConfig.alphaCutoff ?? MESH_DEFAULTS.alphaCutoff },
+        uShadeExponent: { value: clampShadeExponent(materialConfig.shadeExponent) },
+        uAlphaCutoff: {
+          value: clampAppearanceFraction(materialConfig.alphaCutoff, MESH_DEFAULTS.alphaCutoff),
+        },
         ...(materialConfig.colormapTexture
           ? {
               uColormapTex: { value: materialConfig.colormapTexture },
@@ -250,12 +261,14 @@ export class MeshMaterial extends THREE.ShaderMaterial implements ColormapAwareM
 
   /** Headlight shade floor (1.0 = flat/emissive). Plain uniform write. */
   updateAmbient(ambient: number): void {
-    this.uniforms.uAmbient.value = ambient;
+    this.uniforms.uAmbient.value = clampAppearanceFraction(ambient, MESH_DEFAULTS.ambient);
   }
 
   /** Headlight wrap exponent. Plain uniform write. */
   updateShadeExponent(exponent: number): void {
-    this.uniforms.uShadeExponent.value = exponent;
+    // Clamped like `updateGamma` — `pow(0, y)` is undefined for y <= 0, and a
+    // face-away fragment has a wrap base of exactly 0 (see `clampShadeExponent`).
+    this.uniforms.uShadeExponent.value = clampShadeExponent(exponent);
   }
 
   /**
@@ -263,7 +276,7 @@ export class MeshMaterial extends THREE.ShaderMaterial implements ColormapAwareM
    * mode, where the coverage is applied by the framebuffer instead of compared.
    */
   updateAlphaCutoff(cutoff: number): void {
-    this.uniforms.uAlphaCutoff.value = cutoff;
+    this.uniforms.uAlphaCutoff.value = clampAppearanceFraction(cutoff, MESH_DEFAULTS.alphaCutoff);
   }
 
   /**
@@ -314,20 +327,9 @@ export class MeshMaterial extends THREE.ShaderMaterial implements ColormapAwareM
 
     const previousMode = this.userData.blendingMode as BlendingMode | undefined;
     const stateChanged = applyBlendingStateToMaterial(this, state);
-    let definesChanged = false;
-    for (const [flag, wanted] of [
-      ['LUXAR_MESH_ALPHA_CUTOUT', state.shaderOutputMode === 'opaque'],
-      ['LUXAR_MAX_RGB_CONTRIBUTION', state.shaderOutputMode === 'rgb-contribution'],
-    ] as const) {
-      const had = flag in this.defines;
-      if (wanted && !had) {
-        this.defines[flag] = '';
-        definesChanged = true;
-      } else if (!wanted && had) {
-        delete this.defines[flag];
-        definesChanged = true;
-      }
-    }
+    // One shared helper maintains the at-most-one-emission-define invariant for both
+    // backends — see `syncMeshEmissionDefines`.
+    const definesChanged = syncMeshEmissionDefines(this.defines, state.shaderOutputMode);
     this.userData.blendingMode = resolved;
     this.userData.depthTest = state.depthTest;
 

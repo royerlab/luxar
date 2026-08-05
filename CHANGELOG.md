@@ -61,6 +61,25 @@ and the mesh material is deliberately **not** camera-aware — a mesh has no
 screen-space size to recompute, so it is tracked for disposal in a separate
 registry instead of taking a per-frame no-op broadcast per node.
 
+That last point turned out to expose a latent mismatch worth its own note. The layers
+panel's `LuxarMaterial` contract required `CameraAwareMaterial`, which made a mesh
+material — a perfectly ordinary leaf material with the full layer-control surface —
+unrepresentable in the panel. The panel never called `updateCameraParams`, and its own
+`isLuxarMaterial` guard never checked for it, so the type had been over-claiming
+relative to the check that produces it. The requirement came off the interface, and
+`MaterialManager.register` now takes a plain `THREE.Material` and dispatches on
+`isCameraAwareMaterial` (the pattern the picking system already used) — which let three
+accreted `as Parameters<typeof register>[0]` casts go, restoring type checking at
+those call sites.
+
+The three shade knobs (`ambient`, `shade_exponent`, `alpha_cutoff`) are read from the
+node's composed attrs and clamped. They were already reachable through
+`add_mesh(**attrs)` and were being silently dropped; and they are fractions and an
+exponent rather than gains, so out-of-range values are meaningless rather than merely
+odd — `ambient = 1e9` whites out the surface, `alpha_cutoff = 1e9` discards every
+fragment, and `shade_exponent = 0` makes `pow(0, 0)` (undefined GLSL) at every
+face-away fragment, the same hazard `clampGamma` already exists for.
+
 Still to come: picking (mesh keys on `gl_VertexID`, so it needs its own material
 pair) and the Layers-panel appearance controls.
 

@@ -58,7 +58,12 @@ import { NodeMaterial } from 'three/webgpu';
 import { sanitizeAlpha, type TSLNode } from '../_shared/tsl-helpers';
 import { applyBlendingStateToMaterial, getCompleteBlendingState } from '../../blending-state';
 import type { BlendingMode } from '../../../types/blending';
-import { MESH_DEFAULTS, resolveMeshBlendingMode, resolveMeshOutput } from './appearance';
+import {
+  MESH_DEFAULTS,
+  MESH_NORMAL_EPS_SQ,
+  resolveMeshBlendingMode,
+  resolveMeshOutput,
+} from './appearance';
 
 // Type-erased constructor aliases — same rationale as the point/gsplat TSL
 // factories: TSL's typed `vec*` overloads reject many valid combinations of
@@ -79,14 +84,6 @@ const dot: (a: TSLNode, b: TSLNode) => TSLNode = _dot as TSLNode;
 const max: (a: TSLNode, b: TSLNode) => TSLNode = _max as TSLNode;
 const mix: (a: TSLNode, b: TSLNode, t: TSLNode) => TSLNode = _mix as TSLNode;
 const normalize: (v: TSLNode) => TSLNode = _normalize as TSLNode;
-
-/**
- * Squared-length floor below which an interpolated stored normal is not trusted —
- * the numeric twin of `MESH_NORMAL_EPS_SQ` in `shader-glsl.ts`. Kept as a JS number
- * here (the GLSL side needs a source string), and asserted equal by the unit tests
- * so the two backends can never switch to the fallback on different fragments.
- */
-export const MESH_NORMAL_EPS_SQ_VALUE = 1e-12;
 
 export interface MeshTSLConfig {
   /** Read `aScalar` + the LUT instead of the `color` attribute. */
@@ -288,13 +285,19 @@ export function meshWebGPUFactory(
       N = derivativeNormal;
     } else {
       const nn: TSLNode = dot(vNormal, vNormal).toVar();
-      // AFFIRMATIVE on purpose — the stored normal is used only when `nn >= eps` is
-      // positively TRUE. NaN fails every comparison, so a corrupt store lands in
+      // AFFIRMATIVE on purpose — the stored normal is used only when the length test
+      // is positively TRUE. NaN fails every comparison, so a corrupt store lands in
       // the fallback, whereas an `nn < eps` test would pass it through to normalize
       // into NaN shading (spec §3.5's `!(dot(N, N) >= eps)` phrasing).
-      const storedUsable: TSLNode = nn.greaterThanEqual(MESH_NORMAL_EPS_SQ_VALUE);
+      //
+      // TWO-SIDED, unlike that phrasing: an INFINITE normal component gives
+      // `nn == inf`, which satisfies `>= eps`, and `inf * inverseSqrt(inf)` is
+      // `inf * 0` = NaN — the guard's own failure mode arriving from the other end.
+      // `1e30` matches the finite-range convention in `_shared/tsl-helpers.ts`.
+      // GLSL twin: shader-glsl.ts.
+      const storedUsable: TSLNode = nn.greaterThanEqual(MESH_NORMAL_EPS_SQ).and(nn.lessThan(1e30));
       const storedNormal: TSLNode = vNormal
-        .mul(max(nn, float(MESH_NORMAL_EPS_SQ_VALUE)).inverseSqrt())
+        .mul(max(nn, float(MESH_NORMAL_EPS_SQ)).inverseSqrt())
         // Flip the STORED normal only. Without it a back fragment has
         // dot(N, V) < 0, so the wrap term lands in [0, 0.5) and the back side
         // shades with a dimmed inverted gradient collapsing toward uAmbient —

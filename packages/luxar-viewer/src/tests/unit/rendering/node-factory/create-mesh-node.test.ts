@@ -18,6 +18,7 @@ import {
   applyMeshSide,
 } from '../../../../rendering/node-factory/create-mesh-node';
 import { MeshMaterial } from '../../../../rendering/materials/mesh/material-glsl';
+import { MESH_DEFAULTS } from '../../../../rendering/materials/mesh/appearance';
 import type { MeshDataLoader, MeshMetadata } from '../../../../types/mesh';
 import { log } from '../../../../utils/log';
 
@@ -249,5 +250,53 @@ describe('createMeshMaterial — the viewer-side mode defaults', () => {
     expect(material.uniforms.uOffset.value).toBe(0);
     // The gain moved into the window instead of vanishing.
     expect(material.uniforms.uScalarScale.value).not.toBe(1);
+  });
+});
+
+describe('createMeshMaterial — authored shade knobs (§6.2)', () => {
+  it('reads ambient / shade_exponent / alpha_cutoff from the composed attrs', () => {
+    // These ride in through `add_mesh(**attrs)` (the writer never stamps them), so
+    // they were ALREADY reachable in the composed attrs and were being silently
+    // dropped. An authored value that does nothing is worse than one that is refused.
+    const m = createMeshMaterial(
+      { ...ATTRS, ambient: 0.75, shade_exponent: 4, alpha_cutoff: 0.125 } as MeshMetadata,
+      false
+    );
+    expect(m.uniforms.uAmbient.value).toBe(0.75);
+    expect(m.uniforms.uShadeExponent.value).toBe(4);
+    expect(m.uniforms.uAlphaCutoff.value).toBe(0.125);
+  });
+
+  it('clamps them, because they are FRACTIONS rather than gains', () => {
+    // `ambient` is the shade floor and `alpha_cutoff` is compared against a coverage
+    // already in [0, 1], so out-of-range values are meaningless, not merely odd:
+    // ambient = 1e9 multiplies the surface to white and cutoff = 1e9 discards every
+    // fragment, i.e. the mesh vanishes with no diagnostic. Both are author-reachable.
+    const hot = createMeshMaterial(
+      { ...ATTRS, ambient: 1e9, alpha_cutoff: 1e9, shade_exponent: 0 } as MeshMetadata,
+      false
+    );
+    expect(hot.uniforms.uAmbient.value).toBe(1);
+    expect(hot.uniforms.uAlphaCutoff.value).toBe(1);
+    // exponent 0 would make `pow(0, 0)` — undefined GLSL — at any face-away fragment.
+    expect(hot.uniforms.uShadeExponent.value).toBeGreaterThan(0);
+
+    const cold = createMeshMaterial(
+      { ...ATTRS, ambient: -5, alpha_cutoff: -5 } as MeshMetadata,
+      false
+    );
+    expect(cold.uniforms.uAmbient.value).toBe(0);
+    expect(cold.uniforms.uAlphaCutoff.value).toBe(0);
+  });
+
+  it('routes NaN/Inf to the documented default rather than a range boundary', () => {
+    // Matching the sibling shaders' sanitizer policy: corruption resolves loudly to
+    // the default, not to 0 or 1 — which would look like a deliberate setting.
+    const m = createMeshMaterial(
+      { ...ATTRS, ambient: NaN, alpha_cutoff: Infinity } as MeshMetadata,
+      false
+    );
+    expect(m.uniforms.uAmbient.value).toBe(MESH_DEFAULTS.ambient);
+    expect(m.uniforms.uAlphaCutoff.value).toBe(MESH_DEFAULTS.alphaCutoff);
   });
 });

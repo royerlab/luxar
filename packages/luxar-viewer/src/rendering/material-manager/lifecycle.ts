@@ -28,7 +28,7 @@ export { SOFT_DISPOSE_FLAG };
  */
 export interface LifecycleCtx {
   readonly registeredMaterials: Set<THREE.Material & CameraAwareMaterial>;
-  readonly ownedMaterials: Set<THREE.Material & CameraAwareMaterial>;
+  readonly ownedMaterials: Set<THREE.Material>;
   /**
    * Materials tracked for disposal that take NO camera broadcast.
    *
@@ -80,6 +80,6 @@ export function removeFromRegistries(material: THREE.Material, ctx: LifecycleCtx
   // exactly what we want: a plain `THREE.Material` can only ever be absent from the
   // camera-aware sets, so the delete is a no-op there rather than a type hole.
   ctx.registeredMaterials.delete(material as THREE.Material & CameraAwareMaterial);
-  ctx.ownedMaterials.delete(material as THREE.Material & CameraAwareMaterial);
+  ctx.ownedMaterials.delete(material);
   ctx.staticMaterials.delete(material);
 }

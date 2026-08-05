@@ -110,7 +110,7 @@ void main() {
 
 	nodeVar7 = ( ( nodeVarying3 * vec3( inversesqrt( max( nodeVar5, 1e-12 ) ) ) ) * vec3( nodeVar6 ) );
 
-	if ( ( nodeVar5 >= 1e-12 ) ) {
+	if ( ( ( nodeVar5 >= 1e-12 ) && ( nodeVar5 < 1e30 ) ) ) {
 
 		nodeVar8 = nodeVar7;
 

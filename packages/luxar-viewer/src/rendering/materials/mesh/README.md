@@ -24,13 +24,13 @@ Full design rationale: `docs/specs/MESH_NODE_SPEC.md` §6.
 
 ## Files
 
-| File               | Role                                                                                                        |
-| ------------------ | ----------------------------------------------------------------------------------------------------------- |
-| `shader-glsl.ts`   | Hand-written GLSL3 vertex + fragment pair, and the readable reference for the shading math                  |
-| `shader-tsl.ts`    | `meshWebGPUFactory` — the `NodeMaterial` twin, plus `buildMeshTSLNodesFromUniforms` for the harness         |
-| `material-glsl.ts` | `MeshMaterial` (`THREE.ShaderMaterial`) — uniforms, defines, `applyBlendingMode`, `clone`                   |
-| `material-tsl.ts`  | `MeshTSLMaterial` (`NodeMaterial`) — same surface, with graph rebuilds where the GLSL twin toggles a define |
-| `appearance.ts`    | `MESH_DEFAULTS`, the supported-mode list, and the mode → emission-shape map both backends read              |
+| File               | Role                                                                                                                                               |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `shader-glsl.ts`   | Hand-written GLSL3 vertex + fragment pair, and the readable reference for the shading math                                                         |
+| `shader-tsl.ts`    | `meshWebGPUFactory` — the `NodeMaterial` twin, plus `buildMeshTSLNodesFromUniforms` for the harness                                                |
+| `material-glsl.ts` | `MeshMaterial` (`THREE.ShaderMaterial`) — uniforms, defines, `applyBlendingMode`, `clone`                                                          |
+| `material-tsl.ts`  | `MeshTSLMaterial` (`NodeMaterial`) — same surface, with graph rebuilds where the GLSL twin toggles a define                                        |
+| `appearance.ts`    | `MESH_DEFAULTS`, the normal-validity epsilon, the supported-mode list, and the mode → emission-shape map — every value both backends must agree on |
 
 ## The shading model (§6.2)
 
@@ -53,9 +53,12 @@ cutout, dissolve.
    guard-dependent branch. The epsilon guard reads an interpolated varying, so
    branching on it is non-uniform control flow, where GLSL leaves `dFdx`/`dFdy`
    _undefined_. Only the cheap `gl_FrontFacing` flip may sit behind the guard.
-2. **The epsilon guard is affirmative**: the stored normal is used only when
-   `dot(N, N) >= eps` is positively true. `NaN` fails every comparison, so a
-   corrupt store lands in the fallback rather than normalizing into NaN shading.
+2. **The epsilon guard is affirmative and two-sided**: the stored normal is used
+   only when `eps <= dot(N, N) < 1e30` is positively true. `NaN` fails every
+   comparison, so a corrupt store lands in the fallback rather than normalizing into
+   NaN shading — and the upper bound matters for the same reason: an INFINITE normal
+   component satisfies `>= eps`, and `inf * inversesqrt(inf)` is `inf * 0` = NaN,
+   i.e. the guard's own failure mode arriving from the other end.
 3. **The two-sided flip applies to the stored normal only.** Without it a
    back-facing fragment has `dot(N, V) < 0`, the wrap term lands in `[0, 0.5)`,
    and the back side shades with a dimmed inverted gradient collapsing toward
@@ -105,6 +108,27 @@ re-applied per epoch by `applyMeshShading` because its
 | Coverage is `vAlpha * uOpacity`, not `intensity * uOpacity` | Mesh has no per-element intensity/amplitude/falloff scalar (§2.2).                                                                                                                                                                         |
 | `vAlpha` interpolates (no `flat` qualifier)                 | A splat's alpha is a per-**instance** constant, so `flat` is free there. A mesh vertex is not, so its opacity must vary across the face — like the line shader's `vAlpha` along a segment.                                                 |
 | `updateFlatNormal`                                          | Nothing else shades, so nothing else has a normal-source variant.                                                                                                                                                                          |
+
+## The appearance knobs are author-reachable, and clamped
+
+`ambient`, `shade_exponent` and `alpha_cutoff` are read from the node's composed
+attrs. The writer never stamps them — they arrive only when passed through
+`add_mesh(**attrs)` — but they _were_ already reachable that way, so reading them is
+the difference between an authored value that works and one that silently does
+nothing.
+
+All three are clamped at the material boundary, because they are **fractions and an
+exponent, not gains**:
+
+| Knob             | Clamp      | Why it is not merely tidiness                                                                                                                                |
+| ---------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `ambient`        | `[0, 1]`   | It is the shade floor. `1e9` multiplies the surface to white.                                                                                                |
+| `alpha_cutoff`   | `[0, 1]`   | Compared against a coverage already in `[0, 1]`. `1e9` discards every fragment — the mesh vanishes with no diagnostic.                                       |
+| `shade_exponent` | `>= 0.001` | `pow(wrap, 0)` where `wrap` is exactly 0 (any face-away fragment) is **undefined** GLSL — driver-dependent 1, 0 or NaN. Same hazard `clampGamma` exists for. |
+
+NaN/Inf route to the documented default rather than to a range boundary, matching the
+sibling shaders' sanitizer policy: corruption resolves loudly, not to a value that
+looks deliberate.
 
 ## What `opaque` does to `opacity`
 

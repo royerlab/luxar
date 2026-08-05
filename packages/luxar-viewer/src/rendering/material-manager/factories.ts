@@ -114,9 +114,14 @@ export interface GSplatMaterialProperties {
  * §2.2 structural difference rather than an oversight:
  *
  * - no `absorption` — that uniform exists only for `volumetric`, and a
- *   zero-thickness surface has no path length for it to attenuate over (§6.3);
+ *   zero-thickness surface has no path length for it to attenuate over (§6.3). The
+ *   `hasElementAlpha` flag goes with it: it gates nothing but the volumetric
+ *   `w(a) = −ln(1−a)` optical-depth map, and mesh's per-vertex alpha is a plain
+ *   coverage term in every mode it supports, so there is nothing to gate;
  * - no `radiusScale` / `truncationRadius` — both normalize a per-element extent,
  *   and a triangle's extent is its own vertices;
+ * - no camera surface at all (see `LuxarMeshMaterial`): a mesh's size IS its
+ *   geometry, so there is no screen-space extent to recompute per camera change;
  * - `blendingMode` defaults to `'opaque'`, not `'additive'` — the only mode
  *   unconditionally correct without per-triangle depth sorting (§6.3);
  * - `flatNormal` is new: mesh is the first shaded type, and the stored-normal vs
@@ -131,6 +136,16 @@ export interface MeshMaterialProperties {
   offset: number;
   /** Shade from screen-space derivatives instead of the stored `normal` attribute. */
   flatNormal?: boolean;
+  /**
+   * Headlight shade floor, clamped to `[0, 1]` (`1.0` = flat/emissive). Optional
+   * because the writer never stamps it — it reaches here only when an author passed
+   * it through `add_mesh(**attrs)`.
+   */
+  ambient?: number;
+  /** Headlight wrap exponent, clamped positive. */
+  shadeExponent?: number;
+  /** `opaque`-mode cutout threshold, clamped to `[0, 1]`. */
+  alphaCutoff?: number;
 }
 
 /**
