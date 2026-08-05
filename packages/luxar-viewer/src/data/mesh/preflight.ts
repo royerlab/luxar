@@ -119,7 +119,30 @@ export const MESH_ARRAY_NAMES: Record<keyof MeshArrayHandles, string> = {
   imageLabelBytes: 'image_label_bytes',
 };
 
-/** What Stage 1 established, for Stage 2 and the geometry builder to rely on. */
+/**
+ * What Stage 1 established.
+ *
+ * The first three fields are the ones Stage 2 reads: the loader destructures
+ * `{ nVertices, nFaces, ndim }` and every `validateMaterializedLength` call
+ * derives its expected length from them.
+ *
+ * The last two are deliberately NOT a source of truth, and it matters that this
+ * is stated, because the codebase's own rule is that a field no consumer reads
+ * is indistinguishable from a field that is wrong (see
+ * `scene-loader/geometry-descriptors.ts`). Both are byproducts of Stage 1
+ * VALIDATION — the checks are the point, the values are how a test can observe
+ * that the checks ran. Their real consumers read elsewhere on purpose:
+ *
+ * - `colorComponents` — the loader calls the shared `colorComponentsOf`, the same
+ *   helper the three sibling loaders use, rather than threading this through. The
+ *   two agree because Stage 1 has already rejected anything but 3 or 4, which is
+ *   the strictness `colorComponentsOf` (non-4 ⇒ 3) does not have on its own.
+ * - `normalDims` — the winding frame reaches `projectMeshTo3D` from the node's
+ *   `attrs.normal_dims` via the handler, since the projection runs per slice move
+ *   and does not hold a preflight.
+ *
+ * So: read these two in tests, not in production code.
+ */
 export interface MeshPreflightResult {
   /** Vertex count, `<= MAX_MESH_VERTICES` */
   nVertices: number;
@@ -127,9 +150,9 @@ export interface MeshPreflightResult {
   nFaces: number;
   /** Coordinate dimensionality; equals the `vertices` declared width */
   ndim: number;
-  /** Channels per color entry, when `colors` is present */
+  /** Channels per color entry, when `colors` is present. Observation only — see above. */
   colorComponents?: 3 | 4;
-  /** The validated `normal_dims`, when `normals` is present */
+  /** The validated `normal_dims`, when `normals` is present. Observation only — see above. */
   normalDims?: number[];
 }
 
