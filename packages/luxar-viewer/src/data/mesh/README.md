@@ -9,12 +9,12 @@ loading).
 
 ## Files
 
-| File                | Role                                                                                                                                                                                                                                             |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `mesh-loader.ts`    | `MeshLoader` — the whole-node loader. Opens metadata handles, runs Stage 1, fetches and decodes every array in full, runs Stage 2, then caches the result for the loader's lifetime. Implements `MeshDataLoader`.                                |
-| `mesh-preflight.ts` | Stage 1: the **metadata preflight**. Vertex cap, byte budget, shape/dtype cross-checks, `normal_dims` well-formedness — all decided from `.zarray`/`.zattrs` alone, with **no chunk fetched**. Also exports `parseDtype`.                        |
-| `mesh-validate.ts`  | Stage 2: post-decode value checks. Materialized lengths, and the two-sided face-index range check that runs on the **source-typed** values before the u32 coercion.                                                                              |
-| `projection.ts`     | `projectMesh` — display-space `position` extraction, the whole-triangle nD cull (via the B2 kernels), the no-hidden-dims fast path, and the winding post-pass. Also `resolveWinding` (pure, exhaustively tested) and `noticeUndecidableWinding`. |
+| File                        | Role                                                                                                                                                                                                                                                 |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `mesh-whole-node-loader.ts` | `MeshWholeNodeLoader` — the whole-node loader. Opens metadata handles, runs Stage 1, fetches and decodes every array in full, runs Stage 2, then caches the result for the loader's lifetime. Implements `MeshDataLoader`.                           |
+| `preflight.ts`              | Stage 1: the **metadata preflight**. Vertex cap, byte budget, shape/dtype cross-checks, `normal_dims` well-formedness — all decided from `.zarray`/`.zattrs` alone, with **no chunk fetched**. Also exports `parseDtype`.                            |
+| `validate.ts`               | Stage 2: post-decode value checks. Materialized lengths, and the two-sided face-index range check that runs on the **source-typed** values before the u32 coercion.                                                                                  |
+| `projection.ts`             | `projectMeshTo3D` — display-space `position` extraction, the whole-triangle nD cull (via the B2 kernels), the no-hidden-dims fast path, and the winding post-pass. Also `resolveWinding` (pure, exhaustively tested) and `noticeUndecidableWinding`. |
 
 ## Why this folder is so much smaller than `data/lines/`
 
@@ -26,7 +26,7 @@ across any cut, so the working set after a `displayDims` change is the whole mes
 regardless — an index would add machinery and skip nothing.
 
 That is a property of the geometry, not a v1 shortcut. If it ever stops holding,
-`MeshLoader` implements the full `MeshDataLoader` interface, so a spatial-index
+`MeshWholeNodeLoader` implements the full `MeshDataLoader` interface, so a spatial-index
 implementation drops in behind it with no caller change.
 
 ## The two-stage admission gate
@@ -123,7 +123,7 @@ length that reads as a slightly jagged edge; on a coarse mesh with a thin
 tolerance it can drop whole regions. Exact nD clipping is explicitly out of scope
 for v1 (spec §9).
 
-`projectMesh` takes its backend as a parameter; the caller selects it through
+`projectMeshTo3D` takes its backend as a parameter; the caller selects it through
 `pickBackend`, so `ndim > 16` runs the TypeScript reference. Note that
 `pickBackend` swaps the **whole module**, which is why both cull kernels must
 exist on `WasmModule` and in both backends.
@@ -166,13 +166,13 @@ _erasing the latch_. Fixing only the first leaves the duplicate fetches.
 
 ## Public surface
 
-`MeshLoader` implements `MeshDataLoader` (`types/mesh.ts`) — the same shape as the
+`MeshWholeNodeLoader` implements `MeshDataLoader` (`types/mesh.ts`) — the same shape as the
 Points/Lines/GSplats facades. Scene-loader code goes through
 `scene-loader/loaders/loader-factory.ts` rather than importing the concrete class.
 
 `updateView` never re-fetches. The mesh is resident in full, so a view change has
 no subset to fetch; it returns the same cached `LoadedMeshData` object, and what
-varies with the view is handled downstream by `projectMesh`. This is the one place
+varies with the view is handled downstream by `projectMeshTo3D`. This is the one place
 a reader might expect a re-fetch and find none.
 
 ## Not here yet

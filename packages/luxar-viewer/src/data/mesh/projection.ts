@@ -102,7 +102,7 @@ export interface ProjectedMeshData {
   /**
    * Set when the node asked for single-sided rendering but winding could not be
    * decided, carrying the reason. Threaded out to the caller rather than logged
-   * here so {@link resolveWinding} and {@link projectMesh} stay free of side
+   * here so {@link resolveWinding} and {@link projectMeshTo3D} stay free of side
    * effects — the projection runs on every slice move, so a warning emitted at
    * this depth would flood the console during a scrub.
    */
@@ -245,7 +245,7 @@ function reverseWinding(indices: Uint32Array, faceCount: number): void {
  * box into NaN (the cull already drops vertices with non-finite HIDDEN coordinates,
  * but a displayed axis is not filtered).
  */
-function boundsOfIndexed(
+function computeMeshProjectionBounds(
   position: Float32Array,
   indices: Uint32Array
 ): MeshProjectionBounds | null {
@@ -278,7 +278,7 @@ function boundsOfIndexed(
  *   `pickBackend` swaps the WHOLE module there — which is why both kernels must
  *   exist on `WasmModule` and in both backends.
  */
-export function projectMesh(
+export function projectMeshTo3D(
   data: LoadedMeshData,
   viewState: MeshViewState,
   normalDims: readonly number[] | undefined,
@@ -294,10 +294,17 @@ export function projectMesh(
   // does not fail as a node-scoped error, it traps and takes down the whole WASM
   // module. Points guards `slicePosition` and Lines guards `tolerance`; mesh reads
   // both, so it checks both.
-  validateProjectionInputs('projectMesh', vertices, displayDims, slicePosition, ndim, vertexCount);
+  validateProjectionInputs(
+    'projectMeshTo3D',
+    vertices,
+    displayDims,
+    slicePosition,
+    ndim,
+    vertexCount
+  );
   if (tolerance.length < ndim) {
     throw new Error(
-      `projectMesh: tolerance too short (got ${tolerance.length}, expected ≥ ${ndim})`
+      `projectMeshTo3D: tolerance too short (got ${tolerance.length}, expected ≥ ${ndim})`
     );
   }
 
@@ -365,7 +372,7 @@ export function projectMesh(
       positionChanged,
       // Computed even here: nothing is culled on the fast path, but a vertex no
       // triangle references still inflates the whole-buffer box.
-      bounds: boundsOfIndexed(position, indices),
+      bounds: computeMeshProjectionBounds(position, indices),
       undecidableReason: winding.undecidableReason,
     };
   }
@@ -401,7 +408,7 @@ export function projectMesh(
     side: winding.side,
     usedFastPath: false,
     positionChanged,
-    bounds: boundsOfIndexed(position, indices),
+    bounds: computeMeshProjectionBounds(position, indices),
     undecidableReason: winding.undecidableReason,
   };
 }

@@ -28,7 +28,7 @@ import { LinesProgressiveLoader } from '../../lines/lines-progressive-loader';
 export type { PointsSpatialIndexLoader } from '../../points/points-spatial-index-loader';
 import { LinesSpatialIndexLoader } from '../../lines/lines-spatial-index-loader';
 import { GSplatsSpatialIndexLoader } from '../../gsplats/gsplats-spatial-index-loader';
-import { MeshLoader } from '../../mesh/mesh-loader';
+import { MeshWholeNodeLoader } from '../../mesh/mesh-whole-node-loader';
 import { GSplatsProgressiveLoader } from '../../gsplats/gsplats-progressive-loader';
 import type { SceneNode } from '../../data-loader-types';
 import type { LinesDataLoader } from '../../../types/lines';
@@ -236,8 +236,8 @@ export function createMeshLoader(
   deps: LoaderFactoryDeps
 ): MeshDataLoader {
   const nodeLoc = resolveNodeLoc(node, loc, deps.zarrStore);
-  log.query(Modules.SCENE_LOADER, `Using MeshLoader for ${node.path}`);
-  return new MeshLoader(node.path, node.attrs as unknown as MeshMetadata, nodeLoc, {
+  log.query(Modules.SCENE_LOADER, `Using MeshWholeNodeLoader for ${node.path}`);
+  return new MeshWholeNodeLoader(node.path, node.attrs as unknown as MeshMetadata, nodeLoc, {
     zarrStore: deps.zarrStore,
     arrayRefRegistry: deps.arrayRefRegistry,
   });

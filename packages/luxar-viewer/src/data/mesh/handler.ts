@@ -52,7 +52,7 @@ export interface MeshHandlerCtx {
  * handler-level `isAlreadyCommitted` no-op fast path here. The mesh loader
  * is whole-node resident and returns the SAME `LoadedMeshData` reference on
  * every `updateView`; what varies with the slice is only the nD-slab cull,
- * which lives downstream in `processMeshData` → `projectMesh`. A
+ * which lives downstream in `processMeshData` → `projectMeshTo3D`. A
  * reference-identity short-circuit would therefore skip re-projection on
  * every slice move — exactly the freeze this sweep exists to prevent — and
  * `commitMeshGeometry` never stamps `committedData` anyway, so identity would

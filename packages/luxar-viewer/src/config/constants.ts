@@ -46,7 +46,7 @@ export const GSPLAT_DEFAULT_TRUNCATION_RADIUS = 2.75;
  * which resolves picks to the wrong node with nothing to signal it.
  *
  * Enforced by the loader's Stage-1 metadata preflight (see
- * `data/mesh/mesh-preflight.ts`), i.e. before any CHUNK is fetched, so an
+ * `data/mesh/preflight.ts`), i.e. before any CHUNK is fetched, so an
  * oversized declaration costs no geometry allocation.
  *
  * Precisely "no chunk", not "no allocation": the preflight has to read `.zarray`

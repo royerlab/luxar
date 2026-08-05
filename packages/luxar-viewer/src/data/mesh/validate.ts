@@ -3,7 +3,7 @@
  *
  * These are the checks that genuinely need the materialized arrays, so they run
  * after fetch + decode — but only ever on data Stage 1
- * (`mesh-preflight.ts`) already admitted, so the fetch they gate is bounded
+ * (`preflight.ts`) already admitted, so the fetch they gate is bounded
  * before it happens.
  *
  * Two things are checked, and each closes a hole the other cannot see.
@@ -50,7 +50,7 @@
  * node's shading. No sibling loader finite-scans its decoded positions either;
  * mesh matches that policy rather than inventing a stricter one.
  *
- * @module data/mesh/mesh-validate
+ * @module data/mesh/validate
  */
 
 import { LoaderError } from '../scene-loader/nodes/load-leaf-error-dispatch';

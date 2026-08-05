@@ -24,7 +24,7 @@
  */
 
 import * as THREE from 'three';
-import { buildMeshGeometry } from '../mesh-geometry';
+import { createMeshGeometry } from '../mesh-geometry';
 import { applyTransform } from './transforms';
 import type { MeshSide } from '../../data/mesh/projection';
 import type { MeshDataLoader, MeshMetadata, MeshUserData } from '../../types/mesh';
@@ -86,7 +86,7 @@ export function createEmptyMeshNode(
   attrs: MeshMetadata,
   loader: MeshDataLoader
 ): THREE.Mesh {
-  const geometry = buildMeshGeometry({
+  const geometry = createMeshGeometry({
     // One vertex and no indices: a valid, drawable-but-empty geometry. A truly
     // zero-vertex buffer makes `computeBoundingSphere` produce NaN bounds, which
     // the depth-sort coordinator and the raycaster both then refuse to use.

@@ -23,7 +23,7 @@
 
 import { getMeshBackend } from '../../../workers/data-worker/projection/in-process';
 import {
-  projectMesh,
+  projectMeshTo3D,
   noticeUndecidableWinding,
   type ProjectedMeshData,
 } from '../../mesh/projection';
@@ -89,7 +89,7 @@ export async function processMeshData(
   }
 
   const backend = await getMeshBackend(data.ndim);
-  const projected = projectMesh(
+  const projected = projectMeshTo3D(
     data,
     { ...viewState, tolerance },
     attrs.normal_dims,

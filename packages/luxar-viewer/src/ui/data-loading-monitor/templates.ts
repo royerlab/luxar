@@ -182,7 +182,7 @@ function loaderDisplay(type: LoaderMetrics['type']): { label: string; unit: stri
       // A new `LoaderType` member is a COMPILE error here, not a silent mislabel.
       // `point-spatial-index` used to share this arm, so any future loader type fell
       // through and was rendered as "points / pts" — and mesh is the concrete case
-      // waiting to hit it: `MeshLoader` has no `getMetrics` yet, so it is absent from
+      // waiting to hit it: `MeshWholeNodeLoader` has no `getMetrics` yet, so it is absent from
       // the union today, and whichever phase adds mesh metrics needs a label here.
       // Runtime behaviour is unchanged (an unknown type still renders as points) —
       // only the silence is gone.

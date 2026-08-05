@@ -5,13 +5,13 @@
  * The preflight is pure over (attrs, array metadata), so these tests hand it
  * hand-built handles rather than a store. That the preflight fetches no chunks
  * is a property of the LOADER calling it before any read, and is pinned in
- * `mesh-loader.test.ts` against a request-recording store — the two halves of
+ * `whole-node-loader.test.ts` against a request-recording store — the two halves of
  * the same guarantee, tested where each is actually decidable.
  */
 
 import { describe, it, expect } from 'vitest';
-import { preflightMesh, parseDtype } from '../../../../data/mesh/mesh-preflight';
-import type { MeshArrayHandles } from '../../../../data/mesh/mesh-preflight';
+import { preflightMesh, parseDtype } from '../../../../data/mesh/preflight';
+import type { MeshArrayHandles } from '../../../../data/mesh/preflight';
 import { LoaderError } from '../../../../data/scene-loader/nodes/load-leaf-error-dispatch';
 import { MAX_MESH_VERTICES, MESH_DECODE_BUDGET_BYTES } from '../../../../config/constants';
 import type * as zarr from '../../../../data/zarr';

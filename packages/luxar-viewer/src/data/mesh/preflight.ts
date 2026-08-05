@@ -18,7 +18,7 @@
  *
  * So everything decidable from metadata is checked here, first, and the
  * value-level checks that genuinely need materialized arrays run afterwards in
- * Stage 2 (`mesh-validate.ts`).
+ * Stage 2 (`validate.ts`).
  *
  * ## What is checked, and what each check prevents
  *
@@ -65,7 +65,7 @@
  * mis-shades every vertex it covers. A declared-undersized array is catchable
  * here from its shape alone.
  *
- * @module data/mesh/mesh-preflight
+ * @module data/mesh/preflight
  */
 
 import * as zarr from '../zarr';

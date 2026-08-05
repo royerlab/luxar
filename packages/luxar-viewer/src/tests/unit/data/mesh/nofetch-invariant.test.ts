@@ -1,7 +1,7 @@
 /**
  * The invariant Stage 1 exists for, over EVERY rejection reason it has.
  *
- * `mesh-loader.test.ts` asserts "no chunk fetched" on the twelve paths it happens to
+ * `whole-node-loader.test.ts` asserts "no chunk fetched" on the twelve paths it happens to
  * exercise. This enumerates all eighteen constructible reasons instead, because the
  * guarantee is a property of the STAGE, not of the paths someone thought to test — and
  * the gate has already been bypassed four times by cases nobody had written a test for.
@@ -12,7 +12,7 @@
 
 import { describe, it, expect } from 'vitest';
 import * as zarr from '../../../../data/zarr';
-import { MeshLoader } from '../../../../data/mesh/mesh-loader';
+import { MeshWholeNodeLoader } from '../../../../data/mesh/mesh-whole-node-loader';
 import { ArrayRefRegistry } from '../../../../data/array-decoder/decoder';
 import type { MeshMetadata } from '../../../../types/mesh';
 
@@ -279,10 +279,15 @@ const CASES: Array<[string, () => { store: S; attrs: MeshMetadata }]> = [
 describe('INVARIANT: no Stage-1 rejection reason fetches a chunk', () => {
   it.each(CASES)('%s', async (_label, make) => {
     const { store, attrs } = make();
-    const loader = new MeshLoader('/mesh', attrs, zarr.root(store as never).resolve('mesh'), {
-      zarrStore: store as never,
-      arrayRefRegistry: new ArrayRefRegistry(),
-    });
+    const loader = new MeshWholeNodeLoader(
+      '/mesh',
+      attrs,
+      zarr.root(store as never).resolve('mesh'),
+      {
+        zarrStore: store as never,
+        arrayRefRegistry: new ArrayRefRegistry(),
+      }
+    );
     let rejected = false;
     try {
       await loader.loadMesh({

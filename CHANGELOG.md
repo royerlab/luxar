@@ -188,7 +188,7 @@ opaque "not a function".
 #### Added — the mesh data path: whole-node loader, two-stage validation, nD cull
 
 The viewer half of the mesh vertical that turns the kernels above into loaded
-geometry: `types/mesh.ts`, and `data/mesh/` with a whole-node `MeshLoader`, the
+geometry: `types/mesh.ts`, and `data/mesh/` with a whole-node `MeshWholeNodeLoader`, the
 admission gate that guards it, and the display-space projection that drives the
 cull. `mesh` is still absent from `loader_types`, so nothing in the render path
 reaches this yet and a mesh still writes without drawing; wiring it up is the next
@@ -337,6 +337,36 @@ cut, so a continuous hidden spatial dimension renders a **thick slab** and the
 thickness is the only control. The dominant real case is discrete — a mesh's hidden
 dimensions are almost always time or channel.
 
+**Mesh names now follow the sibling geometry conventions, everywhere they diverged.**
+Four-fold symmetry is the whole point of the Track A groundwork, so the divergences were
+worth paying off rather than documenting:
+
+- `build*` is a `ui/` verb — it appears nowhere in `rendering/` or `data/`. The geometry
+  factories are `createMeshGeometry` / `createMeshColorAttribute` /
+  `createMeshDefaultColorAttribute` / `createMeshIndexAttribute` (after
+  `createPointsGeometry`), and three of them were also missing the type prefix that every
+  export in `point-geometry.ts` / `line-geometry.ts` / `gsplat-geometry.ts` carries.
+  `applyIndices` → `applyMeshIndices` for the same reason.
+- `MeshGeometryInput` → `MeshGeometryConfig`, after `InstancedLinesMeshConfig` /
+  `InstancedGSplatsMeshConfig` (minus the `Instanced` those two carry because a mesh is
+  not an instanced quad).
+- `projectMesh` → `projectMeshTo3D`, after `projectPointsTo3D` / `projectLinesTo3D` /
+  `projectGSplatsTo3D`; the private bounds helper → `computeMeshProjectionBounds`, after
+  `computeLinesProjectionBounds` / `computeGSplatsProjectionBounds`.
+- `MeshLoader` → `MeshWholeNodeLoader` in `mesh-whole-node-loader.ts`. The sibling loader
+  classes name their STRATEGY (`PointsSpatialIndexLoader`), and "whole-node" is already
+  this codebase's term for mesh's (spec §7). Naming it `MeshSpatialIndexLoader` would be
+  a lie — mesh deliberately has no index — but saying nothing was the asymmetry.
+- Inside `data/<type>/`, only loader files carry a type prefix; `projection.ts` and
+  `handler.ts` do not. So `mesh-preflight.ts` → `preflight.ts` and `mesh-validate.ts` →
+  `validate.ts`, and the test files drop the redundant prefix to match their siblings
+  (`spatial-index-loader.test.ts`, `projection.test.ts`).
+
+Two prefixes were checked and deliberately KEPT: `MeshDataLoader` (symmetric with
+`LinesDataLoader`) and `wasm/typescript/mesh-culling.ts` (which mirrors its Rust module
+`mesh_culling.rs`). And `LoaderType` still has no mesh member — mesh emits no monitor
+events until the metrics phase, so adding one now would be a slot with no producer.
+
 **Rendering is a plain indexed `BufferGeometry`, not the instanced-quad stack.** The
 other three render per-element sprites whose size and orientation are computed in the
 shader, so they need an `InstancedBufferGeometry` and an RGBA32F element texture. A
@@ -359,7 +389,7 @@ attribute-identity change WebGPU does not tolerate.
 
 **The projected position buffer is allocated once per node too, and re-extracted
 only when the displayed axes change.** Positions depend on `displayDims` alone, yet
-`projectMesh` allocated a fresh `vertexCount * 3` array on every call — so the
+`projectMeshTo3D` allocated a fresh `vertexCount * 3` array on every call — so the
 geometry's array-identity check never matched and every slice scrub copied and
 re-uploaded the whole vertex buffer and recomputed both bounds, defeating the "only the
 index changes on a pure slice move" design outright (#1245). The buffer now lives on
@@ -443,7 +473,7 @@ other three showed one, even though the converter was already populating `faceCo
 And `loaderDisplay`'s `default:` became a `satisfies never` guard: it previously shared
 an arm with points, so a future `LoaderType` member would have been rendered as
 "points / pts" in silence. Mesh is the concrete case waiting on that, since
-`MeshLoader` has no `getMetrics` yet.
+`MeshWholeNodeLoader` has no `getMetrics` yet.
 
 Two exclusions confirmed rather than assumed. Mesh stays out of slice prefetch
 because `prefetch()` has exactly three hardcoded call sites and no fourth was added —

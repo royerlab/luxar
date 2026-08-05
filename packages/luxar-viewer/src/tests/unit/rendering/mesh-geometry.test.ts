@@ -14,16 +14,16 @@ import { describe, it, expect, vi } from 'vitest';
 import * as THREE from 'three';
 import { log } from '../../../utils/log';
 import {
-  buildColorAttribute,
-  buildDefaultColorAttribute,
-  buildIndexAttribute,
-  buildMeshGeometry,
+  createMeshColorAttribute,
+  createMeshDefaultColorAttribute,
+  createMeshIndexAttribute,
+  createMeshGeometry,
   updateMeshGeometry,
 } from '../../../rendering/mesh-geometry';
 
-describe('buildColorAttribute — the WebGPU dtype rules', () => {
+describe('createMeshColorAttribute — the WebGPU dtype rules', () => {
   it('pads uint8 RGB to a 4-component normalized attribute', () => {
-    const attr = buildColorAttribute(new Uint8Array([255, 0, 0, 0, 255, 0]), 3, 2);
+    const attr = createMeshColorAttribute(new Uint8Array([255, 0, 0, 0, 255, 0]), 3, 2);
     expect(attr.itemSize).toBe(4);
     expect(attr.normalized).toBe(true);
     expect(attr.array).toBeInstanceOf(Uint8Array);
@@ -32,7 +32,7 @@ describe('buildColorAttribute — the WebGPU dtype rules', () => {
   });
 
   it('pads uint16 RGB with 65535, which also normalizes to 1.0', () => {
-    const attr = buildColorAttribute(new Uint16Array([65535, 0, 0]), 3, 1);
+    const attr = createMeshColorAttribute(new Uint16Array([65535, 0, 0]), 3, 1);
     expect(attr.itemSize).toBe(4);
     expect(attr.array).toBeInstanceOf(Uint16Array);
     expect(Array.from(attr.array)).toEqual([65535, 0, 0, 65535]);
@@ -45,14 +45,14 @@ describe('buildColorAttribute — the WebGPU dtype rules', () => {
       [new Uint8Array(6), 1],
       [new Uint16Array(6), 2],
     ] as const) {
-      const attr = buildColorAttribute(colors, 3, 2);
+      const attr = createMeshColorAttribute(colors, 3, 2);
       expect((attr.itemSize * bytesPerElement) % 4).toBe(0);
     }
   });
 
   it('leaves uint8 RGBA alone — already a valid 4-byte-stride format', () => {
     const src = new Uint8Array([1, 2, 3, 4]);
-    const attr = buildColorAttribute(src, 4, 1);
+    const attr = createMeshColorAttribute(src, 4, 1);
     expect(attr.itemSize).toBe(4);
     expect(attr.array).toBe(src); // no copy
     expect(attr.normalized).toBe(true);
@@ -63,33 +63,33 @@ describe('buildColorAttribute — the WebGPU dtype rules', () => {
     // to pad. Normalizing would also be wrong: float colours are authored in [0, 1]
     // already, and HDR values legitimately exceed 1.
     const src = new Float32Array([0.5, 0.25, 0.125]);
-    const attr = buildColorAttribute(src, 3, 1);
+    const attr = createMeshColorAttribute(src, 3, 1);
     expect(attr.itemSize).toBe(3);
     expect(attr.normalized).toBe(false);
     expect(attr.array).toBe(src);
   });
 });
 
-describe('buildDefaultColorAttribute', () => {
+describe('createMeshDefaultColorAttribute', () => {
   it('fills opaque white, not zeros', () => {
     // An UNBOUND color attribute reads the GL default (0, 0, 0, 1), so a bare
     // add_mesh(vertices, faces) surface would come out solid black the moment any
     // multiplicative shade term lands. Binding white is what keeps it visible.
-    const attr = buildDefaultColorAttribute(3);
+    const attr = createMeshDefaultColorAttribute(3);
     expect(attr.itemSize).toBe(3);
     expect(Array.from(attr.array)).toEqual([1, 1, 1, 1, 1, 1, 1, 1, 1]);
   });
 });
 
-describe('buildIndexAttribute', () => {
+describe('createMeshIndexAttribute', () => {
   it('uses Uint16Array below 65536 vertices', () => {
-    expect(buildIndexAttribute(new Uint32Array([0, 1, 2]), 100, 1).array).toBeInstanceOf(
+    expect(createMeshIndexAttribute(new Uint32Array([0, 1, 2]), 100, 1).array).toBeInstanceOf(
       Uint16Array
     );
   });
 
   it('uses Uint32Array at and above 65536 vertices', () => {
-    expect(buildIndexAttribute(new Uint32Array([0, 1, 2]), 65536, 1).array).toBeInstanceOf(
+    expect(createMeshIndexAttribute(new Uint32Array([0, 1, 2]), 65536, 1).array).toBeInstanceOf(
       Uint32Array
     );
   });
@@ -100,13 +100,13 @@ describe('buildIndexAttribute', () => {
     // epochs, defeating the buffer reuse — and re-binding a drawn geometry's index with
     // a different dtype is the attribute-identity change WebGPU does not tolerate.
     const sparse = new Uint32Array([0, 1, 2]); // max index 2, but a big node
-    expect(buildIndexAttribute(sparse, 200_000, 1).array).toBeInstanceOf(Uint32Array);
+    expect(createMeshIndexAttribute(sparse, 200_000, 1).array).toBeInstanceOf(Uint32Array);
     const dense = new Uint32Array([60000, 60001, 60002]); // large indices, small node
-    expect(buildIndexAttribute(dense, 65535, 1).array).toBeInstanceOf(Uint16Array);
+    expect(createMeshIndexAttribute(dense, 65535, 1).array).toBeInstanceOf(Uint16Array);
   });
 });
 
-describe('buildMeshGeometry', () => {
+describe('createMeshGeometry', () => {
   const input = () => ({
     position: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
     positionChanged: true,
@@ -117,7 +117,7 @@ describe('buildMeshGeometry', () => {
   });
 
   it('binds position, color and an index, and computes bounds', () => {
-    const g = buildMeshGeometry(input());
+    const g = createMeshGeometry(input());
     expect(g.getAttribute('position').itemSize).toBe(3);
     expect(g.getAttribute('color')).toBeDefined();
     expect(g.index?.count).toBe(3);
@@ -126,8 +126,8 @@ describe('buildMeshGeometry', () => {
   });
 
   it('always binds color, even with no colors array', () => {
-    // Bound-not-omitted is the contract; see buildDefaultColorAttribute.
-    expect(buildMeshGeometry(input()).getAttribute('color')).toBeDefined();
+    // Bound-not-omitted is the contract; see createMeshDefaultColorAttribute.
+    expect(createMeshGeometry(input()).getAttribute('color')).toBeDefined();
   });
 
   it('does NOT bind normal or aScalar in this phase', () => {
@@ -135,7 +135,7 @@ describe('buildMeshGeometry', () => {
     // with no consumer would mean picking its WebGPU-safe dtype with no shader to
     // validate against. They join the set at CREATION time in that phase, which is a
     // new build rather than a runtime mutation of a live geometry.
-    const g = buildMeshGeometry(input());
+    const g = createMeshGeometry(input());
     expect(g.getAttribute('normal')).toBeUndefined();
     expect(g.getAttribute('aScalar')).toBeUndefined();
   });
@@ -143,7 +143,7 @@ describe('buildMeshGeometry', () => {
 
 describe('updateMeshGeometry', () => {
   function seeded(): THREE.BufferGeometry {
-    return buildMeshGeometry({
+    return createMeshGeometry({
       position: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
       positionChanged: true,
       indices: new Uint32Array([0, 1, 2]),
@@ -158,7 +158,7 @@ describe('updateMeshGeometry', () => {
   // color-install guard must fire against it (unlike `seeded()`, which is already
   // 3-vertex).
   function placeholder(): THREE.BufferGeometry {
-    return buildMeshGeometry({
+    return createMeshGeometry({
       position: new Float32Array(3),
       positionChanged: true,
       indices: new Uint32Array(0),
@@ -298,7 +298,7 @@ describe('updateMeshGeometry', () => {
     // The guard is keyed off vertexCount, so once colors are installed (count 3) a
     // later slice move at the SAME vertexCount must NOT re-create/re-upload the
     // buffer — only the index rebuilds. Tying color to position identity would fail
-    // this, since `projectMesh` reallocates position every call.
+    // this, since `projectMeshTo3D` reallocates position every call.
     const g = placeholder();
     updateMeshGeometry(g, {
       position: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
@@ -328,10 +328,10 @@ describe('updateMeshGeometry', () => {
   });
 });
 
-describe('applyIndices — the index buffer is allocated once per node', () => {
+describe('applyMeshIndices — the index buffer is allocated once per node', () => {
   /** The one-vertex placeholder `createEmptyMeshNode` attaches. */
   function placeholder(): THREE.BufferGeometry {
-    return buildMeshGeometry({
+    return createMeshGeometry({
       position: new Float32Array(3),
       positionChanged: true,
       indices: new Uint32Array(0),

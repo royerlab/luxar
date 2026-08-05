@@ -22,9 +22,16 @@ import * as THREE from 'three';
 import { log, Modules } from '../utils/log';
 import type { MeshColorArray, MeshProjectionBounds } from '../types/mesh';
 
-/** What {@link buildMeshGeometry} needs to lay out the buffers. */
-export interface MeshGeometryInput {
-  /** Display-space positions (`vertexCount * 3`), from `projectMesh`. */
+/**
+ * Everything {@link createMeshGeometry} and {@link updateMeshGeometry} need to lay out
+ * the buffers.
+ *
+ * `*Config` after the sibling geometry modules' `InstancedLinesMeshConfig` /
+ * `InstancedGSplatsMeshConfig` — same role, minus the `Instanced` qualifier those two
+ * carry because a mesh is not an instanced quad.
+ */
+export interface MeshGeometryConfig {
+  /** Display-space positions (`vertexCount * 3`), from `projectMeshTo3D`. */
   position: Float32Array;
   /** Index buffer of visible triangles (`visibleFaceCount * 3`). */
   indices: Uint32Array;
@@ -51,7 +58,7 @@ export interface MeshGeometryInput {
    *
    * Not `indices.length / 3`: that is the currently-visible count, which changes
    * every slice move. The buffer is allocated once at the node's full face count and
-   * the visible prefix is drawn via `drawRange` — see {@link applyIndices}.
+   * the visible prefix is drawn via `drawRange` — see {@link applyMeshIndices}.
    */
   faceCount: number;
   /**
@@ -96,7 +103,7 @@ export interface MeshGeometryInput {
  * WebGPU refuses at size 3, and leaves it to the size-3 `w = 1.0` attribute default
  * for the ones it accepts.
  */
-export function buildColorAttribute(
+export function createMeshColorAttribute(
   colors: MeshColorArray,
   colorComponents: 3 | 4,
   vertexCount: number
@@ -137,7 +144,7 @@ export function buildColorAttribute(
  * this can stay size-3 and pick up `w = 1.0` from the attribute default. Mirrors
  * `create-points-node.ts`'s white fill.
  */
-export function buildDefaultColorAttribute(vertexCount: number): THREE.BufferAttribute {
+export function createMeshDefaultColorAttribute(vertexCount: number): THREE.BufferAttribute {
   const white = new Float32Array(vertexCount * 3);
   white.fill(1.0);
   return new THREE.BufferAttribute(white, 3, false);
@@ -155,17 +162,17 @@ export function buildDefaultColorAttribute(vertexCount: number): THREE.BufferAtt
  * The threshold is on `vertexCount`, not on the max index present: `vertexCount` is
  * fixed for the node, whereas the largest index actually drawn changes with the slice.
  * Keying off the observed maximum would let the dtype differ between epochs, which
- * would defeat the buffer reuse in {@link applyIndices} — and re-binding a drawn
+ * would defeat the buffer reuse in {@link applyMeshIndices} — and re-binding a drawn
  * geometry's index with a different dtype is exactly the kind of attribute-identity
  * change the WebGPU backend does not tolerate.
  */
-export function buildIndexAttribute(
+export function createMeshIndexAttribute(
   indices: Uint32Array,
   vertexCount: number,
   faceCount: number
 ): THREE.BufferAttribute {
   // Capacity is the node's FULL face count, not the visible one, so the buffer is
-  // allocated once for the node's lifetime — see `applyIndices` for why.
+  // allocated once for the node's lifetime — see `applyMeshIndices` for why.
   const capacity = Math.max(faceCount * 3, indices.length);
   const array = vertexCount < 65536 ? new Uint16Array(capacity) : new Uint32Array(capacity);
   array.set(indices);
@@ -175,7 +182,7 @@ export function buildIndexAttribute(
 /**
  * Point `geometry`'s index at `indices`, reusing the existing buffer when it can.
  *
- * ## Why not simply `setIndex(buildIndexAttribute(...))` every epoch
+ * ## Why not simply `setIndex(createMeshIndexAttribute(...))` every epoch
  *
  * Because that leaks GPU memory on every slice move. Three caches attribute buffers
  * in a `WeakMap` keyed by the attribute object and only ever calls `gl.deleteBuffer`
@@ -201,7 +208,7 @@ export function buildIndexAttribute(
  * CAPACITY, not what is drawn. `drawRange.count` is the drawn quantity — which is why
  * `camera-framing.ts` reads that instead.
  */
-export function applyIndices(
+export function applyMeshIndices(
   geometry: THREE.BufferGeometry,
   indices: Uint32Array,
   vertexCount: number,
@@ -231,7 +238,7 @@ export function applyIndices(
     if (indices.length > 0) existing.addUpdateRange(0, indices.length);
     existing.needsUpdate = true;
   } else {
-    geometry.setIndex(buildIndexAttribute(indices, vertexCount, faceCount));
+    geometry.setIndex(createMeshIndexAttribute(indices, vertexCount, faceCount));
   }
 
   // The tail past this range keeps stale indices, which is safe precisely because the
@@ -292,16 +299,16 @@ export function computeMeshBounds(
  * creation time in that later phase, which is a new build rather than a runtime
  * mutation of a live geometry.
  */
-export function buildMeshGeometry(input: MeshGeometryInput): THREE.BufferGeometry {
+export function createMeshGeometry(input: MeshGeometryConfig): THREE.BufferGeometry {
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.BufferAttribute(input.position, 3, false));
   geometry.setAttribute(
     'color',
     input.colors
-      ? buildColorAttribute(input.colors, input.colorComponents ?? 3, input.vertexCount)
-      : buildDefaultColorAttribute(input.vertexCount)
+      ? createMeshColorAttribute(input.colors, input.colorComponents ?? 3, input.vertexCount)
+      : createMeshDefaultColorAttribute(input.vertexCount)
   );
-  applyIndices(geometry, input.indices, input.vertexCount, input.faceCount);
+  applyMeshIndices(geometry, input.indices, input.vertexCount, input.faceCount);
   if (input.bounds !== undefined) {
     computeMeshBounds(geometry, input.bounds);
   } else {
@@ -346,7 +353,7 @@ export function buildMeshGeometry(input: MeshGeometryInput): THREE.BufferGeometr
  */
 export function updateMeshGeometry(
   geometry: THREE.BufferGeometry,
-  input: MeshGeometryInput
+  input: MeshGeometryConfig
 ): boolean {
   let attributesRebuilt = false;
   let positionRebound = false;
@@ -386,12 +393,12 @@ export function updateMeshGeometry(
   // colors would never bind and an indexed draw would fetch `color` out of bounds
   // (black under WebGL2 robust access; a pipeline-validation failure on WebGPU).
   //
-  // Keyed off `vertexCount` for the SAME reason `buildIndexAttribute` keys the
+  // Keyed off `vertexCount` for the SAME reason `createMeshIndexAttribute` keys the
   // index dtype off it: the placeholder is 1-vertex (`colorAttr.count === 1`) and a
   // real drawable mesh has N vertices, so `count !== vertexCount` is true exactly
   // on the first commit and false on every subsequent slice move. That keeps the
   // color buffer uploaded-once (the no-compaction doctrine — only the index rebuilds
-  // on a slice move) instead of re-uploading it on every scrub. Note `projectMesh`
+  // on a slice move) instead of re-uploading it on every scrub. Note `projectMeshTo3D`
   // reallocates `position` on every call, so color must NOT be tied to position
   // identity — that would re-upload color on every slice move.
   //
@@ -401,7 +408,7 @@ export function updateMeshGeometry(
   // non-float32-RGB colors change format ONCE on first install (placeholder
   // `float32x3` → e.g. `unorm8x4`) and never again, so there is no per-rebuild dtype
   // flip — the WebGPU attribute-identity hazard the surrounding code and
-  // `buildIndexAttribute` guard against.
+  // `createMeshIndexAttribute` guard against.
   //
   // This install rebinds a vertex attribute, so it sets `attributesRebuilt` to
   // drive the commit's WebGPU RenderObject eviction (see the @returns note).
@@ -410,13 +417,13 @@ export function updateMeshGeometry(
     geometry.setAttribute(
       'color',
       input.colors
-        ? buildColorAttribute(input.colors, input.colorComponents ?? 3, input.vertexCount)
-        : buildDefaultColorAttribute(input.vertexCount)
+        ? createMeshColorAttribute(input.colors, input.colorComponents ?? 3, input.vertexCount)
+        : createMeshDefaultColorAttribute(input.vertexCount)
     );
     attributesRebuilt = true;
   }
 
-  applyIndices(geometry, input.indices, input.vertexCount, input.faceCount);
+  applyMeshIndices(geometry, input.indices, input.vertexCount, input.faceCount);
 
   // Bounds track the VISIBLE set, so they refresh on EVERY epoch — a slice move
   // changes which vertices are indexed even when `position` is untouched. Cheap: the

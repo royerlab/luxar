@@ -3,7 +3,7 @@
  *
  * A mesh is whole-node resident: `MeshDataLoader.updateView` returns the SAME
  * `LoadedMeshData` on every call, and what actually depends on the view is the
- * nD-slab cull performed downstream in `processMeshData` → `projectMesh`. So
+ * nD-slab cull performed downstream in `processMeshData` → `projectMeshTo3D`. So
  * the mesh MUST be re-projected on every `SceneLoader.updateView`, not only at
  * initial load — otherwise the indexed triangle set freezes at the first
  * slice's answer and never tracks a slice move / tolerance change.

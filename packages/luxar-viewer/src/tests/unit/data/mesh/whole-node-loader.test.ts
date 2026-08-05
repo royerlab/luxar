@@ -16,7 +16,7 @@
 import { describe, it, expect } from 'vitest';
 import * as zarr from '../../../../data/zarr';
 import { ArrayRefRegistry } from '../../../../data/array-decoder/decoder';
-import { MeshLoader } from '../../../../data/mesh/mesh-loader';
+import { MeshWholeNodeLoader } from '../../../../data/mesh/mesh-whole-node-loader';
 import { LoaderError } from '../../../../data/scene-loader/nodes/load-leaf-error-dispatch';
 import { MESH_DECODE_BUDGET_BYTES } from '../../../../config/constants';
 import type { MeshMetadata, MeshViewState } from '../../../../types/mesh';
@@ -217,8 +217,8 @@ function tetArrays(overrides: Record<string, ArraySpec> = {}): Record<string, Ar
   };
 }
 
-function makeLoader(store: RecordingStore, attrs: MeshMetadata): MeshLoader {
-  return new MeshLoader('/mesh', attrs, zarr.root(store).resolve('mesh'), {
+function makeLoader(store: RecordingStore, attrs: MeshMetadata): MeshWholeNodeLoader {
+  return new MeshWholeNodeLoader('/mesh', attrs, zarr.root(store).resolve('mesh'), {
     zarrStore: store,
     arrayRefRegistry: new ArrayRefRegistry(),
   });
@@ -232,7 +232,7 @@ const VIEW: MeshViewState = {
 
 // ---------------------------------------------------------------------------
 
-describe('MeshLoader — the happy path', () => {
+describe('MeshWholeNodeLoader — the happy path', () => {
   it('loads a tetrahedron whole, in float32 / uint32', async () => {
     const store = buildStore(meshAttrs(), tetArrays());
     const data = await makeLoader(store, meshAttrs()).loadMesh(VIEW);
@@ -251,7 +251,7 @@ describe('MeshLoader — the happy path', () => {
   it('allocates the reusable projection buffer, sized for the node', async () => {
     // The loader owns this buffer because `updateView` hands back this same object for
     // the node's whole life and drops it on dispose — so it inherits exactly the right
-    // lifetime with no cache to invalidate. Without it `projectMesh` allocates a fresh
+    // lifetime with no cache to invalidate. Without it `projectMeshTo3D` allocates a fresh
     // `vertexCount * 3` array on every slice move and the geometry re-uploads the whole
     // vertex buffer each time (#1245). Mirrors the Points accumulator's target buffers.
     const store = buildStore(meshAttrs(), tetArrays());
@@ -341,7 +341,7 @@ describe('MeshLoader — the happy path', () => {
   });
 });
 
-describe('MeshLoader — whole-node residency', () => {
+describe('MeshWholeNodeLoader — whole-node residency', () => {
   it('fetches once and serves every later updateView from cache', async () => {
     const store = buildStore(meshAttrs(), tetArrays());
     const loader = makeLoader(store, meshAttrs());
@@ -452,7 +452,7 @@ describe('MeshLoader — whole-node residency', () => {
   });
 });
 
-describe('MeshLoader — Stage 1 rejects BEFORE any chunk is fetched', () => {
+describe('MeshWholeNodeLoader — Stage 1 rejects BEFORE any chunk is fetched', () => {
   /** Assert the load fails and the store was never asked for a chunk. */
   async function expectRejectedWithoutFetching(
     store: RecordingStore,
@@ -658,7 +658,7 @@ describe('MeshLoader — Stage 1 rejects BEFORE any chunk is fetched', () => {
   });
 });
 
-describe('MeshLoader — Stage 2 rejects on the materialized values', () => {
+describe('MeshWholeNodeLoader — Stage 2 rejects on the materialized values', () => {
   it('rejects a signed store’s -1 face index', async () => {
     const store = buildStore(meshAttrs(), {
       vertices: { shape: [4, 3], dtype: '<f4', data: TET_VERTICES },

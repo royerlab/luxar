@@ -10,7 +10,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { TypeScriptFallback } from '../../../../wasm/typescript';
-import { projectMesh } from '../../../../data/mesh/projection';
+import { projectMeshTo3D } from '../../../../data/mesh/projection';
 import type { LoadedMeshData, MeshViewState } from '../../../../types/mesh';
 
 const backend = new TypeScriptFallback();
@@ -60,7 +60,7 @@ describe('cull invariants over 1000 random meshes', () => {
 
       let prevCount = -1;
       for (const tol of [0.01, 0.1, 0.5, 1, 3, 10]) {
-        const r = projectMesh(mesh, vs(ndim, tol), undefined, true, backend);
+        const r = projectMeshTo3D(mesh, vs(ndim, tol), undefined, true, backend);
         totalTrials++;
 
         // LAW 1: every emitted index is a valid vertex ordinal.

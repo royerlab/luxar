@@ -56,7 +56,7 @@ describe('MESH_DECODE_BUDGET_BYTES', () => {
     // and 4 more DECODED, and the budget charges both. This test previously used the
     // stored-only form, which overstated the reachable vertex count by exactly 2x —
     // and it kept passing, because any figure below 134.2M satisfies the assertion.
-    // The empirical boundary is pinned in `mesh-budget-boundary.test.ts`; this one only
+    // The empirical boundary is pinned in `budget-boundary.test.ts`; this one only
     // has to establish which of the two gates binds.
     const bytesPerVertex3DFloat32 = 3 * 4 * 2;
     const maxVerticesFrom3DFloat32Budget = Math.floor(

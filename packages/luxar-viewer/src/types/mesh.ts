@@ -234,7 +234,7 @@ export interface LoadedMeshData {
    * the buffer inherits exactly the right lifetime with no separate cache to
    * invalidate.
    *
-   * Without it, `projectMesh` allocated a fresh `vertexCount * 3` buffer on every
+   * Without it, `projectMeshTo3D` allocated a fresh `vertexCount * 3` buffer on every
    * slice move — so the geometry's array-identity check never matched and every
    * scrub copied and re-uploaded the whole vertex buffer and recomputed bounds,
    * defeating the "only the index changes on a pure slice move" design (#1245).

@@ -11,7 +11,7 @@
 import { describe, it, expect } from 'vitest';
 import { TypeScriptFallback } from '../../../../wasm/typescript';
 import {
-  projectMesh,
+  projectMeshTo3D,
   resolveWinding,
   noticeUndecidableWinding,
 } from '../../../../data/mesh/projection';
@@ -69,11 +69,11 @@ function oneTriangleIn3D(): LoadedMeshData {
   };
 }
 
-describe('projectMesh — the whole-triangle cull', () => {
+describe('projectMeshTo3D — the whole-triangle cull', () => {
   it('keeps only the triangle whose vertices are all inside the slab', () => {
     const data = twoTrianglesIn4D();
     // Slice at w = 0 with a half-unit slab: triangle A (w=0) is in, B (w=10) out.
-    const result = projectMesh(
+    const result = projectMeshTo3D(
       data,
       viewState([0, 1, 2], [0, 0, 0, 0], [1e10, 1e10, 1e10, 0.5]),
       undefined,
@@ -89,7 +89,7 @@ describe('projectMesh — the whole-triangle cull', () => {
   it('keeps the OTHER triangle when the slice moves', () => {
     // The anti-vacuity half: a cull that always returned the first face would
     // pass the test above.
-    const result = projectMesh(
+    const result = projectMeshTo3D(
       twoTrianglesIn4D(),
       viewState([0, 1, 2], [0, 0, 0, 10], [1e10, 1e10, 1e10, 0.5]),
       undefined,
@@ -100,7 +100,7 @@ describe('projectMesh — the whole-triangle cull', () => {
   });
 
   it('keeps both when the slab spans both', () => {
-    const result = projectMesh(
+    const result = projectMeshTo3D(
       twoTrianglesIn4D(),
       viewState([0, 1, 2], [0, 0, 0, 5], [1e10, 1e10, 1e10, 6]),
       undefined,
@@ -112,7 +112,7 @@ describe('projectMesh — the whole-triangle cull', () => {
   });
 
   it('keeps none when the slab misses both, and emits an empty index buffer', () => {
-    const result = projectMesh(
+    const result = projectMeshTo3D(
       twoTrianglesIn4D(),
       viewState([0, 1, 2], [0, 0, 0, 100], [1e10, 1e10, 1e10, 0.5]),
       undefined,
@@ -129,7 +129,7 @@ describe('projectMesh — the whole-triangle cull', () => {
     // that OR-ed instead of AND-ing the three vertices, keeps it.
     const data = twoTrianglesIn4D();
     data.vertices[3] = 10; // move vertex 0 of triangle A off the slice
-    const result = projectMesh(
+    const result = projectMeshTo3D(
       data,
       viewState([0, 1, 2], [0, 0, 0, 0], [1e10, 1e10, 1e10, 0.5]),
       undefined,
@@ -143,7 +143,7 @@ describe('projectMesh — the whole-triangle cull', () => {
     for (const bad of [NaN, Infinity, -Infinity]) {
       const data = twoTrianglesIn4D();
       data.vertices[3] = bad;
-      const result = projectMesh(
+      const result = projectMeshTo3D(
         data,
         // A slab wide enough to admit everything finite — so only the
         // non-finite rule can remove this triangle.
@@ -161,7 +161,7 @@ describe('projectMesh — the whole-triangle cull', () => {
     // The kernel writes into a worst-case-sized scratch buffer. Handing over an
     // oversized buffer (or a view onto it) would upload the untouched tail and
     // draw stale triangles.
-    const result = projectMesh(
+    const result = projectMeshTo3D(
       twoTrianglesIn4D(),
       viewState([0, 1, 2], [0, 0, 0, 0], [1e10, 1e10, 1e10, 0.5]),
       undefined,
@@ -176,7 +176,7 @@ describe('projectMesh — the whole-triangle cull', () => {
   });
 
   it('extracts display-space positions for the displayed triple', () => {
-    const result = projectMesh(
+    const result = projectMeshTo3D(
       twoTrianglesIn4D(),
       viewState([0, 1, 2], [0, 0, 0, 0], [1e10, 1e10, 1e10, 0.5]),
       undefined,
@@ -189,7 +189,7 @@ describe('projectMesh — the whole-triangle cull', () => {
   });
 
   it('honours a permuted displayDims when extracting positions', () => {
-    const result = projectMesh(
+    const result = projectMeshTo3D(
       twoTrianglesIn4D(),
       // Display (w, x, y): vertex 3 is (0, 0, 1, 10) -> (10, 0, 0).
       viewState([3, 0, 1], [0, 0, 0, 0], [1e10, 1e10, 1e10, 1e10]),
@@ -201,7 +201,7 @@ describe('projectMesh — the whole-triangle cull', () => {
   });
 });
 
-describe('projectMesh — noPreimage', () => {
+describe('projectMeshTo3D — noPreimage', () => {
   it('emits an empty index buffer when the world slice has no local preimage', () => {
     // A discrete nd_transform can map the world slice to no local grid point on a
     // hidden dim. The three spatial-index loaders return an empty query for that;
@@ -211,11 +211,11 @@ describe('projectMesh — noPreimage', () => {
     const slice = viewState([0, 1, 2], [0, 0, 0, 0], [1e10, 1e10, 1e10, 0.5]);
 
     // Sanity: without the flag, triangle A at w = 0 IS visible at this slice.
-    const visible = projectMesh(data, slice, undefined, true, backend);
+    const visible = projectMeshTo3D(data, slice, undefined, true, backend);
     expect(visible.visibleFaceCount).toBe(1);
 
     // Same data + slice, but the slice has no local preimage → nothing belongs.
-    const culled = projectMesh(
+    const culled = projectMeshTo3D(
       twoTrianglesIn4D(),
       { ...slice, noPreimage: true } as MeshViewState,
       undefined,
@@ -227,9 +227,9 @@ describe('projectMesh — noPreimage', () => {
   });
 });
 
-describe('projectMesh — the no-hidden-dims fast path', () => {
+describe('projectMeshTo3D — the no-hidden-dims fast path', () => {
   it('skips the cull and indexes every face when displayDims covers ndim', () => {
-    const result = projectMesh(
+    const result = projectMeshTo3D(
       oneTriangleIn3D(),
       viewState([0, 1, 2], [0, 0, 0], [1e10, 1e10, 1e10]),
       undefined,
@@ -246,7 +246,7 @@ describe('projectMesh — the no-hidden-dims fast path', () => {
     // With no hidden dims there is no slab to fail, so slicePosition is
     // irrelevant here. Asserted so a future change that starts consulting it on
     // this path is caught.
-    const result = projectMesh(
+    const result = projectMeshTo3D(
       oneTriangleIn3D(),
       viewState([0, 1, 2], [999, 999, 999], [0, 0, 0]),
       undefined,
@@ -262,7 +262,7 @@ describe('projectMesh — the no-hidden-dims fast path', () => {
     // aliasing the loader's cached `faces` would let the winding post-pass mutate
     // the source of truth, corrupting every later rebuild.
     const data = oneTriangleIn3D();
-    const result = projectMesh(
+    const result = projectMeshTo3D(
       data,
       viewState([0, 1, 2], [0, 0, 0], [1e10, 1e10, 1e10]),
       undefined,
@@ -278,14 +278,14 @@ describe('projectMesh — the no-hidden-dims fast path', () => {
     // A displayDims change here leaves the mask all-ones but MUST re-derive
     // position — "fast path" means the cull is elided, not that no work happens.
     const data = oneTriangleIn3D();
-    const asIs = projectMesh(
+    const asIs = projectMeshTo3D(
       data,
       viewState([0, 1, 2], [0, 0, 0], [1e10, 1e10, 1e10]),
       undefined,
       true,
       backend
     );
-    const swapped = projectMesh(
+    const swapped = projectMeshTo3D(
       data,
       viewState([1, 0, 2], [0, 0, 0], [1e10, 1e10, 1e10]),
       undefined,
@@ -298,7 +298,7 @@ describe('projectMesh — the no-hidden-dims fast path', () => {
   });
 });
 
-describe('projectMesh — view-state guards', () => {
+describe('projectMeshTo3D — view-state guards', () => {
   // The cull kernel indexes slicePosition[dim] / tolerance[dim] for every hidden
   // dim < ndim, and the Rust crate is `panic = "abort"`: a short array does not
   // fail as a node-scoped error, it traps and takes down the whole WASM module.
@@ -306,7 +306,7 @@ describe('projectMesh — view-state guards', () => {
 
   it('rejects a slicePosition shorter than ndim', () => {
     expect(() =>
-      projectMesh(
+      projectMeshTo3D(
         twoTrianglesIn4D(),
         viewState([0, 1, 2], [0, 0, 0], [1e10, 1e10, 1e10, 1]),
         undefined,
@@ -318,7 +318,7 @@ describe('projectMesh — view-state guards', () => {
 
   it('rejects a tolerance shorter than ndim', () => {
     expect(() =>
-      projectMesh(
+      projectMeshTo3D(
         twoTrianglesIn4D(),
         viewState([0, 1, 2], [0, 0, 0, 0], [1e10, 1e10, 1e10]),
         undefined,
@@ -330,7 +330,7 @@ describe('projectMesh — view-state guards', () => {
 
   it('rejects a displayDims entry outside [0, ndim)', () => {
     expect(() =>
-      projectMesh(
+      projectMeshTo3D(
         oneTriangleIn3D(),
         viewState([0, 1, 7], [0, 0, 0], [1e10, 1e10, 1e10]),
         undefined,
@@ -344,7 +344,7 @@ describe('projectMesh — view-state guards', () => {
     const data = oneTriangleIn3D();
     data.vertices = new Float32Array(6); // 2 vertices' worth, not 3
     expect(() =>
-      projectMesh(
+      projectMeshTo3D(
         data,
         viewState([0, 1, 2], [0, 0, 0], [1e10, 1e10, 1e10]),
         undefined,
@@ -411,10 +411,10 @@ describe('resolveWinding', () => {
   });
 });
 
-describe('projectMesh — the winding post-pass', () => {
+describe('projectMeshTo3D — the winding post-pass', () => {
   it('swaps exactly two indices per face in an odd-parity epoch', () => {
     const data = oneTriangleIn3D();
-    const result = projectMesh(
+    const result = projectMeshTo3D(
       data,
       viewState([0, 2, 1], [0, 0, 0], [1e10, 1e10, 1e10]),
       [0, 1, 2],
@@ -428,7 +428,7 @@ describe('projectMesh — the winding post-pass', () => {
   });
 
   it('leaves winding alone in an even-parity epoch', () => {
-    const result = projectMesh(
+    const result = projectMeshTo3D(
       oneTriangleIn3D(),
       viewState([1, 2, 0], [0, 0, 0], [1e10, 1e10, 1e10]),
       [0, 1, 2],
@@ -442,7 +442,7 @@ describe('projectMesh — the winding post-pass', () => {
     // The reversal is keyed to the current displayDims parity, so it applies to
     // every index build in an odd-parity epoch — including a pure slice move on
     // a 4D mesh, where only the index buffer is rebuilt.
-    const result = projectMesh(
+    const result = projectMeshTo3D(
       twoTrianglesIn4D(),
       viewState([0, 2, 1], [0, 0, 0, 0], [1e10, 1e10, 1e10, 0.5]),
       [0, 1, 2],
@@ -454,7 +454,7 @@ describe('projectMesh — the winding post-pass', () => {
   });
 
   it('reports side "double" and does not reverse when winding is undecidable', () => {
-    const result = projectMesh(
+    const result = projectMeshTo3D(
       twoTrianglesIn4D(),
       // Displaying (x, w, y) — a different triple than the frame {0,1,2}.
       viewState([0, 3, 1], [0, 0, 0, 0], [1e10, 1e10, 0.5, 1e10]),
@@ -467,8 +467,8 @@ describe('projectMesh — the winding post-pass', () => {
   });
 });
 
-describe('projectMesh — position buffer reuse (#1245)', () => {
-  /** The loader-owned scratch, exactly as `MeshLoader` allocates it. */
+describe('projectMeshTo3D — position buffer reuse (#1245)', () => {
+  /** The loader-owned scratch, exactly as `MeshWholeNodeLoader` allocates it. */
   function withScratch(data: LoadedMeshData): LoadedMeshData {
     return {
       ...data,
@@ -481,7 +481,7 @@ describe('projectMesh — position buffer reuse (#1245)', () => {
     // must neither reallocate nor re-extract — and must tell the commit so, since a
     // reused buffer's identity can no longer signal it.
     const data = withScratch(twoTrianglesIn4D());
-    const first = projectMesh(
+    const first = projectMeshTo3D(
       data,
       viewState([0, 1, 2], [0, 0, 0, 0], [1e10, 1e10, 1e10, 0.5]),
       undefined,
@@ -491,7 +491,7 @@ describe('projectMesh — position buffer reuse (#1245)', () => {
     expect(first.positionChanged).toBe(true);
     expect(first.position).toBe(data.projection!.position);
 
-    const second = projectMesh(
+    const second = projectMeshTo3D(
       data,
       viewState([0, 1, 2], [0, 0, 0, 10], [1e10, 1e10, 1e10, 0.5]),
       undefined,
@@ -508,7 +508,7 @@ describe('projectMesh — position buffer reuse (#1245)', () => {
     // The other half: identity is stable, so ONLY the flag can tell the commit to
     // re-upload. Gating on identity here would leave the mesh in the stale frame.
     const data = withScratch(twoTrianglesIn4D());
-    projectMesh(
+    projectMeshTo3D(
       data,
       viewState([0, 1, 2], [0, 0, 0, 0], [1e10, 1e10, 1e10, 1e10]),
       undefined,
@@ -517,7 +517,7 @@ describe('projectMesh — position buffer reuse (#1245)', () => {
     );
     const before = Array.from(data.projection!.position.slice(9, 12));
 
-    const permuted = projectMesh(
+    const permuted = projectMeshTo3D(
       data,
       viewState([3, 0, 1], [0, 0, 0, 0], [1e10, 1e10, 1e10, 1e10]),
       undefined,
@@ -536,8 +536,8 @@ describe('projectMesh — position buffer reuse (#1245)', () => {
     // must be extracted — and reported — every call.
     const data = twoTrianglesIn4D();
     const view = viewState([0, 1, 2], [0, 0, 0, 0], [1e10, 1e10, 1e10, 0.5]);
-    const a = projectMesh(data, view, undefined, true, backend);
-    const b = projectMesh(data, view, undefined, true, backend);
+    const a = projectMeshTo3D(data, view, undefined, true, backend);
+    const b = projectMeshTo3D(data, view, undefined, true, backend);
     expect(a.positionChanged).toBe(true);
     expect(b.positionChanged).toBe(true);
     expect(b.position).not.toBe(a.position);
@@ -549,7 +549,7 @@ describe('projectMesh — position buffer reuse (#1245)', () => {
       ...twoTrianglesIn4D(),
       projection: { position: new Float32Array(3), displayDimsKey: null },
     };
-    const result = projectMesh(
+    const result = projectMeshTo3D(
       data,
       viewState([0, 1, 2], [0, 0, 0, 0], [1e10, 1e10, 1e10, 0.5]),
       undefined,
@@ -562,11 +562,11 @@ describe('projectMesh — position buffer reuse (#1245)', () => {
   });
 });
 
-describe('projectMesh — visible bounds (#1252)', () => {
+describe('projectMeshTo3D — visible bounds (#1252)', () => {
   it('spans only the vertices the emitted index references', () => {
     // The whole point: `position` holds all six vertices of both triangles, but only
     // triangle A survives the slab, so the box must exclude triangle B's z = 1 plane.
-    const result = projectMesh(
+    const result = projectMeshTo3D(
       twoTrianglesIn4D(),
       viewState([0, 1, 2], [0, 0, 0, 0], [1e10, 1e10, 1e10, 0.5]),
       undefined,
@@ -580,7 +580,7 @@ describe('projectMesh — visible bounds (#1252)', () => {
 
   it('follows the slice to the other triangle', () => {
     // Anti-vacuity: a box that always described triangle A would pass above.
-    const result = projectMesh(
+    const result = projectMeshTo3D(
       twoTrianglesIn4D(),
       viewState([0, 1, 2], [0, 0, 0, 10], [1e10, 1e10, 1e10, 0.5]),
       undefined,
@@ -593,7 +593,7 @@ describe('projectMesh — visible bounds (#1252)', () => {
   it('is null when nothing is drawn', () => {
     // "No drawn geometry" — the framing walk must skip it, not read a degenerate box
     // at the origin.
-    const result = projectMesh(
+    const result = projectMeshTo3D(
       twoTrianglesIn4D(),
       viewState([0, 1, 2], [0, 0, 0, 100], [1e10, 1e10, 1e10, 0.5]),
       undefined,
@@ -612,7 +612,7 @@ describe('projectMesh — visible bounds (#1252)', () => {
       vertices: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0, 500, 500, 500]),
       vertexCount: 4,
     };
-    const result = projectMesh(
+    const result = projectMeshTo3D(
       mesh,
       viewState([0, 1, 2], [0, 0, 0], [1e10, 1e10, 1e10]),
       undefined,
@@ -624,14 +624,14 @@ describe('projectMesh — visible bounds (#1252)', () => {
   });
 });
 
-describe('projectMesh — the two-sided dimension hazard', () => {
+describe('projectMeshTo3D — the two-sided dimension hazard', () => {
   // The dimension hazard runs in BOTH directions and the kernels fail differently at
   // each end: above 16 dims the Rust kernel calls `validate_ndim` and the crate is
   // `panic = "abort"`, so it takes down the whole WASM module rather than one node
   // (which is why `getMeshBackend` routes there to this backend); below 3 DISPLAY dims
   // a hardcoded sub-ndim of 3 has read `display_dims[2]` out of bounds in a sibling
   // kernel before (#881). Both ends are covered for the kernels in isolation; these pin
-  // `projectMesh` itself, whose fast-path choice, winding decision and index rebuild all
+  // `projectMeshTo3D` itself, whose fast-path choice, winding decision and index rebuild all
   // read the same two lengths.
 
   /** Two triangles in `ndim` dims: the first at hidden 0, the second at hidden 10. */
@@ -657,7 +657,7 @@ describe('projectMesh — the two-sided dimension hazard', () => {
 
   it('culls correctly at ndim = 20, past the WASM ceiling', () => {
     const ndim = 20;
-    const result = projectMesh(
+    const result = projectMeshTo3D(
       twoTrianglesInND(ndim),
       viewState([0, 1, 2], new Array(ndim).fill(0), new Array(ndim).fill(0.5)),
       undefined,
@@ -678,7 +678,7 @@ describe('projectMesh — the two-sided dimension hazard', () => {
       // Third vertex pushed off the hidden z slab.
       vertices: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 9]),
     };
-    const result = projectMesh(
+    const result = projectMeshTo3D(
       mesh,
       viewState([0, 1], [0, 0, 0], [1e10, 1e10, 0.5]),
       [0, 1, 2],
@@ -697,11 +697,11 @@ describe('projectMesh — the two-sided dimension hazard', () => {
     // wrong channel).
     //
     // It deliberately does NOT claim to test the kernel's zero-fill of the unused
-    // channel: `projectMesh` hands the kernel a freshly allocated Float32Array, which is
+    // channel: `projectMeshTo3D` hands the kernel a freshly allocated Float32Array, which is
     // already zeroed, so deleting that fill is unobservable from here. Verified by
     // mutation — the fill is pinned where it is actually observable, by the
     // `wasm/typescript-reference` tests that pass a pre-dirtied output buffer.
-    const result = projectMesh(
+    const result = projectMeshTo3D(
       oneTriangleIn3D(),
       viewState([0, 1], [0, 0, 0], [1e10, 1e10, 1e10]),
       [0, 1, 2],
@@ -717,7 +717,7 @@ describe('projectMesh — the two-sided dimension hazard', () => {
     // A winding frame needs 3 axes, so single-sided cannot be honoured — and an open
     // surface rendered inside-out vanishes entirely, which is why this falls back rather
     // than guessing.
-    const result = projectMesh(
+    const result = projectMeshTo3D(
       oneTriangleIn3D(),
       viewState([0, 1], [0, 0, 0], [1e10, 1e10, 1e10]),
       [0, 1, 2],
@@ -730,7 +730,7 @@ describe('projectMesh — the two-sided dimension hazard', () => {
 
   it('survives a single displayed dimension', () => {
     // 1D display is degenerate but must not read out of bounds or throw.
-    const result = projectMesh(
+    const result = projectMeshTo3D(
       oneTriangleIn3D(),
       viewState([0], [0, 0, 0], [1e10, 1e10, 1e10]),
       undefined,

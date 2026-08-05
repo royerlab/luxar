@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { preflightMesh } from '../../../../data/mesh/mesh-preflight';
+import { preflightMesh } from '../../../../data/mesh/preflight';
 import { MESH_DECODE_BUDGET_BYTES } from '../../../../config/constants';
 import type * as zarr from '../../../../data/zarr';
 import type { MeshMetadata } from '../../../../types/mesh';

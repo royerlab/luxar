@@ -11,11 +11,8 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import {
-  validateFaceIndices,
-  validateMaterializedLength,
-} from '../../../../data/mesh/mesh-validate';
-import type { FaceIndexSource } from '../../../../data/mesh/mesh-validate';
+import { validateFaceIndices, validateMaterializedLength } from '../../../../data/mesh/validate';
+import type { FaceIndexSource } from '../../../../data/mesh/validate';
 import { LoaderError } from '../../../../data/scene-loader/nodes/load-leaf-error-dispatch';
 
 const PATH = '/surface';
