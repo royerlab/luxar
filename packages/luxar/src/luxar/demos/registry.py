@@ -100,7 +100,9 @@ class DemoInfo:
 
     @property
     def local_data(self) -> Optional[str]:
-        """Local-data provisioning mode, or ``None`` if fully self-contained."""
+        """Local-data provisioning mode (``git-lfs`` / ``kaggle-auth`` /
+        ``manual-file``), or ``None`` when nothing has to be provisioned locally
+        — the demo may still download at runtime (see ``download_mb``)."""
         return self.requirements["local_data"]
 
 
