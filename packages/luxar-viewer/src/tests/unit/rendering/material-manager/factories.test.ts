@@ -41,16 +41,21 @@ describe('resolveMaterialBackend', () => {
 
 describe('VISUAL_FACTORIES / PICKING_FACTORIES / MEGA_SHADER_FACTORIES shape', () => {
   it('VISUAL_FACTORIES has one entry per geometry kind, each with both backends', () => {
-    expect(Object.keys(VISUAL_FACTORIES).sort()).toEqual(['gsplat', 'line', 'point']);
-    for (const kind of ['point', 'line', 'gsplat'] as const) {
+    expect(Object.keys(VISUAL_FACTORIES).sort()).toEqual(['gsplat', 'line', 'mesh', 'point']);
+    for (const kind of ['point', 'line', 'gsplat', 'mesh'] as const) {
       expect(typeof VISUAL_FACTORIES[kind].glsl).toBe('function');
       expect(typeof VISUAL_FACTORIES[kind].tsl).toBe('function');
       expect(VISUAL_FACTORIES[kind].glsl).not.toBe(VISUAL_FACTORIES[kind].tsl);
     }
   });
 
-  it('PICKING_FACTORIES has the same shape as VISUAL_FACTORIES', () => {
+  it('PICKING_FACTORIES covers the three types with a pick pair — mesh picking is a later phase', () => {
+    // Deliberately NOT four: mesh picking keys on `gl_VertexID` rather than an
+    // element-texture texel, so it needs its own pick material pair (spec §6.5) and
+    // lands with the picking phase. This asymmetry is the one place the two tables
+    // legitimately disagree, so it is asserted rather than left to drift.
     expect(Object.keys(PICKING_FACTORIES).sort()).toEqual(['gsplat', 'line', 'point']);
+    expect(Object.keys(PICKING_FACTORIES)).not.toContain('mesh');
     for (const kind of ['point', 'line', 'gsplat'] as const) {
       expect(typeof PICKING_FACTORIES[kind].glsl).toBe('function');
       expect(typeof PICKING_FACTORIES[kind].tsl).toBe('function');

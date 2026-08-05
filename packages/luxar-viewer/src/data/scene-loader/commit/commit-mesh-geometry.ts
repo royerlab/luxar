@@ -29,9 +29,9 @@ import type * as THREE from 'three';
 import { log, Modules } from '../../../utils/log';
 import { updateMeshGeometry } from '../../../rendering/mesh-geometry';
 import { invalidateRenderObjectFor } from './invalidate-render-object';
-import { applyMeshSide } from '../../../rendering/node-factory/create-mesh-node';
+import { applyMeshSide, applyMeshShading } from '../../../rendering/node-factory/create-mesh-node';
 import { stampLoadedViewVersion } from './stamp-view-version';
-import { isMeshUserData } from '../../../types/mesh';
+import { isMeshUserData, type MeshMetadata } from '../../../types/mesh';
 import type { StagedMeshCommit } from '../process/data-processor-mesh';
 import type { UpdateSession } from '../../../profiling/update-profiler';
 
@@ -90,6 +90,11 @@ export function commitMeshGeometry(
     bounds: projected.bounds,
     colors: data.colors,
     colorComponents: data.colorComponents,
+    // Uploaded once, like `color`: normals are authored in their own frame and are
+    // never re-projected (§3.4 — a frame mismatch drops to the derivative normal
+    // instead of re-deriving them), and scalars are view-independent by nature.
+    normals: data.normals,
+    scalars: data.scalars,
     vertexCount: data.vertexCount,
     // The node's TOTAL faces, which sizes the index buffer's capacity — not the
     // visible count, which changes every slice move and would reallocate (and leak)
@@ -101,6 +106,13 @@ export function commitMeshGeometry(
   // reflection keeps single-sided (the index post-pass restored winding), while an
   // undecidable frame forces double-sided regardless of what was authored.
   applyMeshSide(object, projected.side);
+
+  // The epoch's shading variant, for the same reason and from the same event: stored
+  // normals are only meaningful when `normal_dims` equals the displayed axes, so a
+  // `displayDims` change can flip a smooth-shaded node onto the derivative fallback
+  // and back (§3.4 / §6.2). Both are guarded on change, so a slice move costs
+  // nothing here.
+  applyMeshShading(object, object.userData.attrs as MeshMetadata, projected.storedNormalsUsable);
 
   // A first-commit vertex-attribute rebind (position grow / color install) leaves
   // three's cached WebGPU RenderObject pointing at the old vertex buffers; evict it

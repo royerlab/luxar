@@ -144,6 +144,24 @@ export interface MeshMetadata {
   offset?: number;
 
   /** Blending mode */
+  /**
+   * Headlight shade floor in `[0, 1]` — what a face-away fragment keeps (§6.2).
+   * `1.0` collapses the shade term and reproduces the emissive look of the other three
+   * geometry types.
+   *
+   * Optional and viewer-defaulted: the writer never stamps it, so it is present only
+   * when an author passed it through `add_mesh(**attrs)`. Declared here because it
+   * WAS already reachable that way and silently dropped — an authored value that does
+   * nothing is worse than one that is refused.
+   */
+  ambient?: number;
+
+  /** Headlight wrap exponent (§6.2). Clamped positive — `pow(0, 0)` is undefined GLSL. */
+  shade_exponent?: number;
+
+  /** `opaque`-mode alpha cutout threshold in `[0, 1]` (§6.2). */
+  alpha_cutoff?: number;
+
   blending_mode?: BlendingMode;
 
   /** Whether this node is exposed as a layer in the Layers panel */
@@ -381,6 +399,16 @@ export interface MeshUserData {
 
   /** Vertices that passed the nD slab test; diagnostic, not a draw bound */
   visibleVertexCount: number;
+
+  /**
+   * Marks the material as already node-owned, so the layers panel and the LOD
+   * cross-fade mutate it directly instead of cloning on first interaction.
+   *
+   * Always `true` for mesh, as for the other three types since their materials went
+   * per node: a mesh material carries the node's own shading variant and epoch
+   * `side`, so a shared one would let one node's appearance follow another's.
+   */
+  _layerMaterialCloned?: boolean;
 }
 
 /** Runtime guard for {@link MeshUserData}, mirroring `isPointsUserData`. */

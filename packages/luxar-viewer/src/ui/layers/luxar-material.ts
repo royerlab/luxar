@@ -12,12 +12,32 @@
  */
 
 import * as THREE from 'three';
-import type { CameraAwareMaterial } from '../../rendering';
 import type { BlendingMode } from '../../rendering';
 import { computeDisplayRange } from './layer-state';
 
-// Type guard target: does this material have our update* methods?
-export interface LuxarMaterial extends THREE.Material, CameraAwareMaterial {
+/**
+ * Type guard target: does this material have our update* methods?
+ *
+ * Deliberately does NOT extend `CameraAwareMaterial`, and that is a correction
+ * rather than a relaxation. Two independent reasons:
+ *
+ * 1. **The panel never calls `updateCameraParams`.** Camera uniforms are broadcast by
+ *    `MaterialManager`, not from here, so requiring the method described a
+ *    dependency this interface does not have.
+ * 2. **`isLuxarMaterial` never checked for it.** The guard tests `updateIntensity` +
+ *    `updateGamma` only, and `layer-apply.ts` casts to `LuxarMaterial` on the
+ *    strength of that — so the type was already over-claiming relative to the check
+ *    that produces it.
+ *
+ * Mesh is what surfaced this: it is a real leaf material with the full layer-control
+ * surface, but it draws actual geometry and therefore has no screen-space extent to
+ * recompute, so it has no `updateCameraParams` at all. The tempting fix was an empty
+ * one on the material; that would be a lie, and would also cost a per-frame call per
+ * node if it ever joined the broadcast registry. Materials that ARE camera-aware
+ * still declare it via `CameraAwareMaterial` and are detected with
+ * `isCameraAwareMaterial` where it matters (the picking system does exactly this).
+ */
+export interface LuxarMaterial extends THREE.Material {
   updateIntensity(v: number): void;
   updateOffset(v: number): void;
   updateGamma(v: number): void;

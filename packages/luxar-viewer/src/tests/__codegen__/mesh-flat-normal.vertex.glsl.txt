@@ -1,0 +1,111 @@
+#version 300 es
+
+// Three.js r184 - Node System
+
+
+// extensions
+
+
+// precision
+
+precision highp float;
+precision highp int;
+precision highp sampler2D;
+precision highp sampler3D;
+precision highp samplerCube;
+precision highp sampler2DArray;
+
+precision highp usampler2D;
+precision highp usampler3D;
+precision highp usamplerCube;
+precision highp usampler2DArray;
+
+precision highp isampler2D;
+precision highp isampler3D;
+precision highp isamplerCube;
+precision highp isampler2DArray;
+
+precision highp sampler2DShadow;
+precision highp sampler2DArrayShadow;
+precision highp samplerCubeShadow;
+
+
+// uniforms
+
+layout( std140 ) uniform render {
+	mat4 cameraViewMatrix;
+	mat4 cameraProjectionMatrix;
+};
+
+layout( std140 ) uniform object {
+	float nodeUniform0;
+	float nodeUniform1;
+	float nodeUniform2;
+	float nodeUniform3;
+	float nodeUniform4;
+	float nodeUniform5;
+	float nodeUniform6;
+	float nodeUniform7;
+	mat4 nodeUniform9;
+};
+
+
+// varyings
+out vec3 nodeVarying0;
+out float nodeVarying1;
+out vec3 nodeVarying2;
+
+
+// attributes
+layout( location = 0 ) in vec3 position;
+layout( location = 1 ) in vec4 color;
+
+
+// vars
+vec3 nodeVar0;
+vec3 nodeVar5;
+mat4 modelViewMatrix;
+vec4 nodeVar10;
+float nodeVar11;
+vec4 nodeVar12;
+
+// codes
+
+
+void main() {
+
+	// transforms
+
+
+	// flow
+	// code
+
+	nodeVar0 = vec3( 0.0, 0.0, 0.0 );
+	nodeVarying2 = nodeVar0;
+	nodeVar5 = vec3( 0.0, 0.0, 0.0 );
+	nodeVarying0 = nodeVar5;
+	nodeVarying1 = 1.0;
+	modelViewMatrix = ( cameraViewMatrix * nodeUniform9 );
+	nodeVar10 = ( modelViewMatrix * vec4( position, 1.0 ) );
+	nodeVarying0 = color.xyz;
+
+	if ( ( ( color.w < 1e30 ) && ( color.w > -1e30 ) ) ) {
+
+		nodeVar11 = min( max( color.w, 0.0 ), 1.0 );
+
+	} else {
+
+		nodeVar11 = 1.0;
+
+	}
+
+	nodeVarying1 = nodeVar11;
+	nodeVarying2 = nodeVar10.xyz;
+	nodeVar12 = ( cameraProjectionMatrix * nodeVar10 );
+
+	// result
+	gl_Position = nodeVar12;
+
+	gl_PointSize = 1.0;
+
+}

@@ -347,9 +347,7 @@ describe('PickingSystem — context-restore registration drop', () => {
     // Match what node-factory does: register the pick material with
     // materialManager at construction.
     const before = materialManager.getCacheStats().totalRegistered;
-    materialManager.register(
-      pickMaterial as unknown as Parameters<typeof materialManager.register>[0]
-    );
+    materialManager.register(pickMaterial);
     expect(materialManager.getCacheStats().totalRegistered).toBe(before + 1);
 
     const pickMesh = new THREE.Mesh(new THREE.BufferGeometry(), pickMaterial);
