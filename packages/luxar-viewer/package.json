@@ -122,6 +122,7 @@
     "dependency-cruiser": "^18.1.0",
     "eslint": "^10.8.0",
     "fast-check": "^4.9.0",
+    "glob": "^13.0.6",
     "globals": "^17.7.0",
     "jsdom": "^30.0.1",
     "knip": "^6.27.0",
