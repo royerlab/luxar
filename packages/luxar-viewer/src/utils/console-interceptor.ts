@@ -216,7 +216,7 @@ class ConsoleInterceptor {
     const message: BufferedMessage = {
       type,
       timestamp: new Date(),
-      args: [...args], // Clone args to prevent mutation
+      args: [...args], // Shallow-copy so later pushes don't mutate the record
       stack,
     };
 
