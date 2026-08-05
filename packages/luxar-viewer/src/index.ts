@@ -38,9 +38,12 @@
 export { LuxarApp, type LuxarAppOptions } from './core/app';
 export { bootstrapStandalone, type BootstrapOptions } from './core/bootstrap';
 
-// Programmatic embedder API — value/event types for the LuxarApp methods
-// (switchDataset, getDimensions/setDimensionValue, camera, resize, screenshot)
-// and the on(event, listener) surface.
+/**
+ * Programmatic embedder API — value/event types for the LuxarApp methods
+ * (switchDataset, getDimensions/setDimensionValue, camera, resize, screenshot)
+ * and the `on(event, listener)` surface. `LuxarEmbedderEventMap` names the
+ * event payloads; `Unsubscribe` is the disposer returned by `on`.
+ */
 export type {
   LuxarEmbedderEventMap,
   EmbedderDimensions,
@@ -50,6 +53,11 @@ export type {
   DimensionMetadata,
   Unsubscribe,
 } from './core/app/embedder/events';
+/**
+ * JSON-serializable snapshot of viewer state (camera placement + per-dimension
+ * slice position) so an external caller can reproduce a specific view across
+ * reloads, e.g. a "share view" link or a regression harness.
+ */
 export type { ViewerSnapshot } from './core/app/snapshot/viewer-snapshot';
 
 // URL parsing — useful for embedders that want to honor a few of the
@@ -60,19 +68,33 @@ export { normalizeDataSourceUrl, readUrlParams, type UrlParams } from './config/
 // (e.g. on uninstall) without grepping the codebase for prefixes.
 export { StorageKeys } from './utils/storage-keys';
 
-// Loader configuration — shape of the cache/prefetch flags accepted by
-// LuxarAppOptions.loaderConfig.
+/**
+ * Loader configuration — shape of the cache/prefetch flags accepted by
+ * `LuxarAppOptions.loaderConfig`.
+ */
 export type { LoaderConfig } from './data/data-loader-types';
 
-// Optional: zarr viewer-config shape (data authors may want to type their
-// own viewer_config metadata against this).
+/**
+ * Optional zarr viewer-config shape — data authors may type their own
+ * `viewer_config` metadata against this.
+ */
 export type { ZarrViewerConfig } from './types/zarr';
 
 // Rendering helpers exposed for embedders that build custom materials
 // or bespoke colormap pipelines on top of Luxar's geometry. These are
 // stable, side-effect-free utilities.
 export { getCompleteBlendingState, applyBlendingStateToMaterial } from './rendering/blending-state';
+/**
+ * Fully-resolved THREE blending pipeline state (blend equation, src/dst
+ * factors, depth-write) for a mode — the value produced by
+ * `getCompleteBlendingState` and applied via `applyBlendingStateToMaterial`.
+ */
 export type { CompleteBlendingState } from './rendering/blending-state';
+/**
+ * Union of the six canonical Luxar blending modes (additive, volumetric,
+ * normal, max, opaque, luminous) selectable per geometry node — a mesh node
+ * given `volumetric` warns and falls back to `opaque`.
+ */
 export type { BlendingMode } from './rendering/material-manager';
 export {
   supportsScalarColormap,
