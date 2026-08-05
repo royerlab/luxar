@@ -51,6 +51,7 @@ export function resolvePerfDataPort(env: NodeJS.ProcessEnv = process.env): numbe
  * @returns The dataset-server origin. The default has no trailing
  *   slash; an explicit `LUXAR_PERF_DATA_BASE` is returned verbatim.
  */
+/** Resolve the dataset-server origin for the perf specs from `LUXAR_PERF_DATA_BASE` / `LUXAR_PERF_DATA_PORT` (defaults to `http://localhost:9000`). */
 export function resolvePerfDataBase(env: NodeJS.ProcessEnv = process.env): string {
   return env.LUXAR_PERF_DATA_BASE ?? `http://localhost:${resolvePerfDataPort(env)}`;
 }

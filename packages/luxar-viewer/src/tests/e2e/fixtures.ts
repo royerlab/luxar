@@ -51,6 +51,7 @@ export const ALLOW_CONSOLE_ERRORS = 'allow-console-errors';
  * Keep the list narrow — it's safer to add a per-spec annotation than
  * to silence a broad pattern globally.
  */
+/** Console-error regex patterns the auto console-error fixture treats as environmental noise rather than test failures (see above). */
 export const DEFAULT_ALLOWED_CONSOLE_ERRORS: RegExp[] = [
   // Headless-Chromium occasionally drops the WebGL context under GPU
   // memory pressure mid-run; the viewer's recovery path logs but
@@ -145,4 +146,5 @@ export const test = base.extend({
 });
 
 export { expect } from '@playwright/test';
+/** Re-export of Playwright's core page/locator/browser types so specs import everything from this fixture module. */
 export type { Page, Locator, Browser, BrowserContext } from '@playwright/test';

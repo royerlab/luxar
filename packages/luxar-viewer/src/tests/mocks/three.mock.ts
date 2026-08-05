@@ -14,6 +14,11 @@ import { vi } from 'vitest';
 // Math Classes
 // ============================================================================
 
+/**
+ * Vitest mock of THREE.Vector2. Constructs a 2D vector with working
+ * set/copy/clone/add/sub/multiply(Scalar)/length/normalize/equals so tests can
+ * exercise real 2D vector arithmetic without pulling in the full THREE build.
+ */
 export const Vector2 = vi.fn().mockImplementation((x = 0, y = 0) => ({
   x,
   y,
@@ -66,6 +71,13 @@ export const Vector2 = vi.fn().mockImplementation((x = 0, y = 0) => ({
   }),
 }));
 
+/**
+ * Vitest mock of THREE.Vector3. A 3D vector with faithful implementations of
+ * the common operations (set/copy/clone/add/sub/dot/cross/normalize/distanceTo/
+ * fromArray/toArray). `applyMatrix4`/`applyQuaternion` are no-op passthroughs
+ * and `getWorldDirection` returns a fixed -Z; tests that need real transforms
+ * should not rely on those.
+ */
 export const Vector3 = vi.fn().mockImplementation((x = 0, y = 0, z = 0) => ({
   x,
   y,
@@ -165,6 +177,10 @@ export const Vector3 = vi.fn().mockImplementation((x = 0, y = 0, z = 0) => ({
   }),
 }));
 
+/**
+ * Vitest mock of THREE.Vector4. A minimal 4D vector supporting set/copy/clone;
+ * used mainly as a plain data holder (e.g. render-target viewport/scissor).
+ */
 export const Vector4 = vi.fn().mockImplementation((x = 0, y = 0, z = 0, w = 1) => ({
   x,
   y,
@@ -189,6 +205,11 @@ export const Vector4 = vi.fn().mockImplementation((x = 0, y = 0, z = 0, w = 1) =
   }),
 }));
 
+/**
+ * Vitest mock of THREE.Quaternion. Implements set/copy/clone plus real
+ * `setFromEuler` and Hamilton-product `multiply`, so orientation math in tests
+ * behaves like the real class.
+ */
 export const Quaternion = vi.fn().mockImplementation((x = 0, y = 0, z = 0, w = 1) => ({
   x,
   y,
@@ -249,6 +270,10 @@ export const Quaternion = vi.fn().mockImplementation((x = 0, y = 0, z = 0, w = 1
   }),
 }));
 
+/**
+ * Vitest mock of THREE.Euler. Holds x/y/z angles plus rotation `order` and
+ * supports set/copy/clone; consumed by the Quaternion mock's `setFromEuler`.
+ */
 export const Euler = vi.fn().mockImplementation((x = 0, y = 0, z = 0, order = 'XYZ') => ({
   x,
   y,
@@ -273,6 +298,13 @@ export const Euler = vi.fn().mockImplementation((x = 0, y = 0, z = 0, order = 'X
   }),
 }));
 
+/**
+ * Vitest mock of THREE.Matrix4. Backed by a real 16-element column-major
+ * `elements` array with working set/identity/copy/clone/multiply(Matrices) and
+ * make* factories. `compose`/`decompose` are simplified to only carry the
+ * translation column (rotation/scale are ignored), which is sufficient for the
+ * scene-graph matrix bookkeeping the tests exercise.
+ */
 export const Matrix4 = vi.fn().mockImplementation(() => {
   const elements = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
   return {
@@ -451,6 +483,15 @@ export const Matrix4 = vi.fn().mockImplementation(() => {
   };
 });
 
+/**
+ * Vitest mock of THREE.Box3, an axis-aligned bounding box. Implements
+ * set/expandByPoint/getCenter/getSize/clone/copy/makeEmpty/isEmpty against the
+ * real Vector3 min/max so bounds computations work in tests.
+ *
+ * Caveat: `expandByScalar` is a non-functional stub — it calls
+ * `Vector3.addScalar`, which this file's Vector3 mock does not implement, so
+ * calling it throws. Tests must not use it.
+ */
 export const Box3 = vi.fn().mockImplementation((min?: any, max?: any) => ({
   min: min || new (Vector3 as any)(Infinity, Infinity, Infinity),
   max: max || new (Vector3 as any)(-Infinity, -Infinity, -Infinity),
@@ -503,6 +544,11 @@ export const Box3 = vi.fn().mockImplementation((min?: any, max?: any) => ({
   }),
 }));
 
+/**
+ * Vitest mock of THREE.Color. Parses hex strings, packed hex numbers, or RGB
+ * triples into normalized r/g/b in [0,1] and supports set/setRGB/setHex/copy/
+ * clone/getHex, matching the real class closely enough for color-handling tests.
+ */
 export const Color = vi.fn().mockImplementation((r?: any, g?: number, b?: number) => {
   let _r = 0,
     _g = 0,
@@ -580,6 +626,13 @@ export const Color = vi.fn().mockImplementation((r?: any, g?: number, b?: number
 // Scene Graph Classes
 // ============================================================================
 
+/**
+ * Vitest mock of THREE.Object3D, the scene-graph node base class. Provides a
+ * real parent/children hierarchy with add/remove/clear, name/id lookups,
+ * traverse(Visible), matrix/matrixWorld updates, and clone/copy. This is the
+ * one full `class` in the mock (other node types extend it) so instanceof and
+ * subclassing behave; unlike the real class it omits event dispatch and layers.
+ */
 export class Object3D {
   position = new (Vector3 as any)();
   rotation = new (Euler as any)();
@@ -737,12 +790,20 @@ export class Object3D {
   });
 }
 
+/**
+ * Vitest mock of THREE.Group: an Object3D whose `type` is `'Group'`, used to
+ * bundle children under a single transform.
+ */
 export const Group = vi.fn().mockImplementation(() => {
   const obj = new Object3D();
   obj.type = 'Group';
   return obj;
 });
 
+/**
+ * Vitest mock of THREE.Scene: the root Object3D (`type` `'Scene'`) with the
+ * background/environment/fog/overrideMaterial fields stubbed to null.
+ */
 export const Scene = vi.fn().mockImplementation(() => {
   const obj = new Object3D();
   (obj as any).type = 'Scene';
@@ -758,6 +819,10 @@ export const Scene = vi.fn().mockImplementation(() => {
 // Camera Classes
 // ============================================================================
 
+/**
+ * Vitest mock of THREE.Camera: an Object3D carrying the matrixWorldInverse and
+ * projectionMatrix(Inverse) Matrix4s; base for the perspective/ortho mocks.
+ */
 export const Camera = vi.fn().mockImplementation(() => {
   const obj = new Object3D();
   (obj as any).type = 'Camera';
@@ -767,6 +832,11 @@ export const Camera = vi.fn().mockImplementation(() => {
   return obj;
 });
 
+/**
+ * Vitest mock of THREE.PerspectiveCamera. Stores fov/aspect/near/far/zoom and
+ * stubs updateProjectionMatrix and the view-offset/film-metric helpers; the
+ * projection matrix itself is not computed.
+ */
 export const PerspectiveCamera = vi
   .fn()
   .mockImplementation((fov = 50, aspect = 1, near = 0.1, far = 2000) => {
@@ -792,6 +862,11 @@ export const PerspectiveCamera = vi
     return cam;
   });
 
+/**
+ * Vitest mock of THREE.OrthographicCamera. Stores the left/right/top/bottom/
+ * near/far frustum extents and zoom and stubs updateProjectionMatrix and the
+ * view-offset helpers; the projection matrix itself is not computed.
+ */
 export const OrthographicCamera = vi
   .fn()
   .mockImplementation((left = -1, right = 1, top = 1, bottom = -1, near = 0.1, far = 2000) => {
@@ -817,6 +892,11 @@ export const OrthographicCamera = vi
 // Geometry Classes
 // ============================================================================
 
+/**
+ * Vitest mock of THREE.BufferAttribute. Wraps a typed array with a given
+ * itemSize and implements real per-component get/set X/Y/Z/W accessors plus
+ * clone/copy, so geometry-attribute reads and writes behave in tests.
+ */
 export const BufferAttribute = vi
   .fn()
   .mockImplementation((array: ArrayLike<number>, itemSize: number, normalized = false) => ({
@@ -882,6 +962,12 @@ export const BufferAttribute = vi
     needsUpdate: false,
   }));
 
+/**
+ * Vitest mock of THREE.BufferGeometry. Maintains a real attributes map with
+ * set/get/delete/hasAttribute, index, draw range, groups, and clone/copy; the
+ * computeBounding* helpers create placeholder Box3/sphere objects rather than
+ * computing true extents.
+ */
 export const BufferGeometry = vi.fn().mockImplementation(() => ({
   attributes: {} as Record<string, any>,
   index: null,
@@ -960,6 +1046,10 @@ export const BufferGeometry = vi.fn().mockImplementation(() => ({
   dispose: vi.fn(),
 }));
 
+/**
+ * Vitest mock of THREE.BoxGeometry: a BufferGeometry tagged `'BoxGeometry'`
+ * that records its width/height/depth parameters (no vertices are generated).
+ */
 export const BoxGeometry = vi.fn().mockImplementation((width = 1, height = 1, depth = 1) => {
   const geom = BufferGeometry();
   geom.type = 'BoxGeometry';
@@ -971,6 +1061,12 @@ export const BoxGeometry = vi.fn().mockImplementation((width = 1, height = 1, de
 // Material Classes
 // ============================================================================
 
+/**
+ * Vitest mock of THREE.Material. Exposes the common material flags plus
+ * clone/copy and a minimal EventDispatcher surface (addEventListener/
+ * removeEventListener/dispatchEvent) so that `dispose()` fires a synchronous
+ * `'dispose'` event — MaterialManager relies on this for automatic cleanup.
+ */
 export const Material = vi.fn().mockImplementation(() => ({
   type: 'Material',
   name: '',
@@ -1048,6 +1144,13 @@ export const Material = vi.fn().mockImplementation(() => ({
   }),
 }));
 
+/**
+ * Vitest mock of THREE.ShaderMaterial. Extends the Material mock with
+ * defines/uniforms/vertex+fragmentShader from its parameters and overrides
+ * `clone` to deep-copy shader source, uniform values (cloning clonable
+ * uniform objects), and the blending/side/depth flags — matching the real
+ * clone semantics the material tests depend on.
+ */
 export const ShaderMaterial = vi.fn().mockImplementation((parameters: any = {}) => {
   const mat = Material();
   mat.type = 'ShaderMaterial';
@@ -1111,6 +1214,10 @@ export const ShaderMaterial = vi.fn().mockImplementation((parameters: any = {}) 
   return mat;
 });
 
+/**
+ * Vitest mock of THREE.PointsMaterial: the Material mock with point-specific
+ * fields (color/map/alphaMap/size/sizeAttenuation), overridable via parameters.
+ */
 export const PointsMaterial = vi.fn().mockImplementation((parameters: any = {}) => {
   const mat = Material();
   mat.type = 'PointsMaterial';
@@ -1129,6 +1236,10 @@ export const PointsMaterial = vi.fn().mockImplementation((parameters: any = {}) 
 // Mesh and Points Classes
 // ============================================================================
 
+/**
+ * Vitest mock of THREE.Mesh: an Object3D (`type` `'Mesh'`) holding the supplied
+ * geometry and material references.
+ */
 export const Mesh = vi.fn().mockImplementation((geometry?: any, material?: any) => {
   const obj = new Object3D();
   (obj as any).type = 'Mesh';
@@ -1137,6 +1248,10 @@ export const Mesh = vi.fn().mockImplementation((geometry?: any, material?: any) 
   return obj;
 });
 
+/**
+ * Vitest mock of THREE.Points: an Object3D (`type` `'Points'`) holding the
+ * supplied geometry and material references.
+ */
 export const Points = vi.fn().mockImplementation((geometry?: any, material?: any) => {
   const obj = new Object3D();
   (obj as any).type = 'Points';
@@ -1149,6 +1264,13 @@ export const Points = vi.fn().mockImplementation((geometry?: any, material?: any
 // Renderer Classes
 // ============================================================================
 
+/**
+ * Vitest mock of THREE.WebGLRenderer. Returns a renderer-shaped object whose
+ * every draw/state method (render/setSize/clear/etc.) is a no-op spy, with a
+ * real (or created) canvas as `domElement` and a stub `getContext` reporting
+ * the requested context attributes. Lets rendering code run headlessly without
+ * a real WebGL context.
+ */
 export const WebGLRenderer = vi.fn().mockImplementation((parameters: any = {}) => {
   const canvas = parameters.canvas || document.createElement('canvas');
 
@@ -1238,6 +1360,11 @@ export const WebGLRenderer = vi.fn().mockImplementation((parameters: any = {}) =
 // Texture Classes
 // ============================================================================
 
+/**
+ * Vitest mock of THREE.Texture. A plain data holder carrying the standard
+ * wrap/filter/format/encoding fields and stubbed updateMatrix/clone/copy/
+ * dispose; no GPU upload happens.
+ */
 export const Texture = vi.fn().mockImplementation((image?: any) => ({
   id: Math.random(),
   uuid: Math.random().toString(36),
@@ -1273,6 +1400,13 @@ export const Texture = vi.fn().mockImplementation((image?: any) => ({
   dispose: vi.fn(),
 }));
 
+/**
+ * Vitest mock of THREE.WebGLRenderTarget. Holds width/height/depth plus a mock
+ * Texture and viewport/scissor vectors. On a size change `setSize` records the
+ * new dimensions, but it also writes through `texture.image` (which is `null`
+ * on this mock's Texture), so resizing currently throws — tests should
+ * construct render targets at their final size rather than resizing them.
+ */
 export const WebGLRenderTarget = vi
   .fn()
   .mockImplementation((width = 1, height = 1, options: any = {}) => ({
@@ -1307,6 +1441,11 @@ export const WebGLRenderTarget = vi
 // Utility Classes
 // ============================================================================
 
+/**
+ * Vitest mock of THREE.Frustum. Carries six planes but every intersection test
+ * (intersectsObject/Box/Sphere/containsPoint) returns true, so culling never
+ * hides geometry in tests.
+ */
 export const Frustum = vi.fn().mockImplementation(() => ({
   planes: [
     { normal: new (Vector3 as any)(), constant: 0 },
@@ -1325,6 +1464,11 @@ export const Frustum = vi.fn().mockImplementation(() => ({
   copy: vi.fn(),
 }));
 
+/**
+ * Vitest mock of THREE.Raycaster. Exposes the ray/near/far/params shape, but
+ * setFromCamera is a no-op and intersectObject(s) always return an empty array
+ * (no real intersection math).
+ */
 export const Raycaster = vi.fn().mockImplementation(() => ({
   ray: {
     origin: new (Vector3 as any)(),
@@ -1348,6 +1492,11 @@ export const Raycaster = vi.fn().mockImplementation(() => ({
   intersectObjects: vi.fn(() => []),
 }));
 
+/**
+ * Vitest mock of THREE's Timer (addons). Tracks delta/elapsed from
+ * performance.now() with a working reset/update/getDelta/getElapsed and
+ * timescale, so frame-timing code advances realistically in tests.
+ */
 export const Timer = vi.fn().mockImplementation(() => ({
   _previousTime: 0,
   _delta: 0,
@@ -1386,7 +1535,7 @@ export const Timer = vi.fn().mockImplementation(() => ({
 // Constants
 // ============================================================================
 
-// Blending modes
+/** THREE.js blending-mode constants (mirror the real numeric enum values). */
 export const NoBlending = 0;
 export const NormalBlending = 1;
 export const AdditiveBlending = 2;
@@ -1394,7 +1543,7 @@ export const SubtractiveBlending = 3;
 export const MultiplyBlending = 4;
 export const CustomBlending = 5;
 
-// Depth modes
+/** THREE.js depth-comparison-function constants. */
 export const NeverDepth = 0;
 export const AlwaysDepth = 1;
 export const LessDepth = 2;
@@ -1404,21 +1553,21 @@ export const GreaterEqualDepth = 5;
 export const GreaterDepth = 6;
 export const NotEqualDepth = 7;
 
-// Side
+/** THREE.js material face-side constants. */
 export const FrontSide = 0;
 export const BackSide = 1;
 export const DoubleSide = 2;
 
-// Colors
+/** THREE.js legacy vertex/face color-mode constants. */
 export const NoColors = 0;
 export const FaceColors = 1;
 export const VertexColors = 2;
 
-// Shading
+/** THREE.js shading-model constants. */
 export const FlatShading = 1;
 export const SmoothShading = 2;
 
-// Texture constants
+/** THREE.js texture mapping/wrapping/filtering constants. */
 export const UVMapping = 300;
 export const ClampToEdgeWrapping = 1001;
 export const RepeatWrapping = 1000;
@@ -1427,43 +1576,43 @@ export const NearestFilter = 1003;
 export const LinearFilter = 1006;
 export const LinearMipmapLinearFilter = 1008;
 
-// Pixel formats
+/** THREE.js texture pixel-format constants. */
 export const AlphaFormat = 1019;
 export const RGBFormat = 1022;
 export const RGBAFormat = 1023;
 
-// Pixel types
+/** THREE.js texture pixel-type constants. */
 export const UnsignedByteType = 1009;
 export const FloatType = 1015;
 export const HalfFloatType = 1016;
 
-// Encoding
+/** THREE.js legacy texture-encoding constants. */
 export const LinearEncoding = 3000;
 export const sRGBEncoding = 3001;
 
-// Color space (newer API)
+/** THREE.js color-space string constants (the newer color-management API). */
 export const NoColorSpace = '';
 export const SRGBColorSpace = 'srgb';
 export const LinearSRGBColorSpace = 'srgb-linear';
 
-// Tone mapping
+/** THREE.js tone-mapping-operator constants. */
 export const NoToneMapping = 0;
 export const LinearToneMapping = 1;
 export const ReinhardToneMapping = 2;
 export const CineonToneMapping = 3;
 export const ACESFilmicToneMapping = 4;
 
-// Shadow types
+/** THREE.js shadow-map-algorithm constants. */
 export const BasicShadowMap = 0;
 export const PCFShadowMap = 1;
 export const VSMShadowMap = 3;
 
-// Usage types
+/** THREE.js buffer-attribute usage-hint constants (GL enum values). */
 export const StaticDrawUsage = 35044;
 export const DynamicDrawUsage = 35048;
 export const StreamDrawUsage = 35040;
 
-// WebGL constants
+/** THREE.js GLSL-version constant selecting GLSL ES 3.00 shaders. */
 export const GLSL3 = '300 es';
 
 // ============================================================================

@@ -1243,6 +1243,7 @@ export async function assertNoShaderErrors(page: Page): Promise<void> {
   }
 }
 
+/** A single RGBA pixel sample (0-255 per channel) read back from a rendered element. */
 export interface SampledPixel {
   r: number;
   g: number;
@@ -1250,6 +1251,11 @@ export interface SampledPixel {
   a: number;
 }
 
+/**
+ * Summary statistics for a rendered element's pixels: sampled region size, the
+ * non-black threshold used, the count of pixels above it, and the brightest
+ * pixel found — used by E2E assertions to confirm something was actually drawn.
+ */
 export interface ElementPixelStats {
   width: number;
   height: number;

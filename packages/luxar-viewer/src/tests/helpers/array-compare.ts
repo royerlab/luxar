@@ -30,6 +30,7 @@
  *     yields `Inf - Inf = NaN` (not `> epsilon`) → equal, while `+Inf` vs `-Inf`
  *     or Inf vs finite yields `Inf > epsilon` → mismatch.
  */
+/** Compare two number arrays element-wise for equality within `epsilon` (0 = exact); NaN-vs-finite is a mismatch, NaN-vs-NaN is equal (see the note above for the full parity semantics). */
 export function arraysEqual(a: ArrayLike<number>, b: ArrayLike<number>, epsilon = 0): boolean {
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) {
