@@ -103,6 +103,17 @@ _ALLOWED_TOKENS = {
 
 
 def _resolve_encoding(mode: str) -> Any:
+    """Map an ``--encoding`` string to the ``EncodingMode`` enum.
+
+    Args:
+        mode: One of ``"auto"``, ``"precision"``, or ``"memory"``.
+
+    Returns:
+        The matching :class:`~luxar.encoding.EncodingMode` member.
+
+    Raises:
+        typer.BadParameter: If ``mode`` is not a recognised encoding name.
+    """
     from luxar.encoding import EncodingMode
 
     try:

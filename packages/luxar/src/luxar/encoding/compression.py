@@ -41,6 +41,7 @@ class _WidthAwareDefault:
     """
 
     def __repr__(self) -> str:  # pragma: no cover - cosmetic
+        """Human-readable marker so the sentinel is recognisable in logs/reprs."""
         return "<width-aware default compressor>"
 
 

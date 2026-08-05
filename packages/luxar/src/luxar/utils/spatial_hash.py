@@ -101,6 +101,13 @@ class SpatialHashGrid:
     """
 
     def __init__(self, cell_size: float, ndim: int):
+        """Create an empty grid with ``cell_size``-sided cells over ``ndim`` axes.
+
+        ``cell_size`` is floored at 1e-10 to keep ``1/cell_size`` finite; the
+        backing point array starts at 64 rows and grows by doubling. The
+        ``3^ndim`` neighbour-cell offsets used by :meth:`has_neighbor_within`
+        are precomputed here once.
+        """
         self._cell_size = max(cell_size, 1e-10)
         self._inv_cell_size = 1.0 / self._cell_size
         self._ndim = ndim
@@ -318,6 +325,12 @@ class BatchedSpatialHashGrid:
         unique_keys_t: Optional[torch.Tensor] = None,
         unique_starts_t: Optional[torch.Tensor] = None,
     ) -> None:
+        """Store prebuilt hash state. Do not call directly — use :meth:`from_points`.
+
+        Holds the always-present NumPy state (points, sorted point indices,
+        unique cell keys, and their per-cell start offsets) and, when
+        ``backend="torch"``, the mirrored torch tensors resident on ``device``.
+        """
         self._backend: Literal["numpy", "torch"] = backend
         self._device = device
         self._cell_size = float(cell_size)
@@ -627,6 +640,11 @@ class BatchedSpatialHashGrid:
     # ── Internal helpers ───────────────────────────────────────────
 
     def _normalise_query(self, query: Union[np.ndarray, torch.Tensor]) -> np.ndarray:
+        """Coerce ``query`` to a ``(Q, ndim)`` float32 NumPy array.
+
+        Accepts a NumPy array or torch tensor; raises ``ValueError`` if the
+        shape is not 2-D with a trailing dimension matching the grid's ndim.
+        """
         if isinstance(query, torch.Tensor):
             query_np = query.detach().cpu().numpy().astype(np.float32, copy=False)
         else:
@@ -673,6 +691,11 @@ class BatchedSpatialHashGrid:
     def _query_radius_numpy(
         self, query_np: np.ndarray, radius: float
     ) -> list[np.ndarray]:
+        """Per-query radius search over the NumPy state (used by both backends).
+
+        For each query point, gathers the ``3^D`` neighbour-cell shell and
+        keeps the candidate indices whose squared distance is ``< radius^2``.
+        """
         radius_sq = radius * radius
         result: list[np.ndarray] = []
         points_np = self._points_np
@@ -690,6 +713,12 @@ class BatchedSpatialHashGrid:
     def _query_knn_numpy(
         self, query_np: np.ndarray, k: int
     ) -> tuple[np.ndarray, np.ndarray]:
+        """Per-query k-NN over the NumPy state (the CPU-backend path).
+
+        Expands the cell shell until the k-th neighbour is provably correct,
+        then writes the ascending top-k distances / indices into each output
+        row (trailing slots left as ``+inf`` / ``-1`` when fewer than ``k``).
+        """
         Q = query_np.shape[0]
         N = self._n_points
         points_np = self._points_np
