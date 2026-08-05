@@ -728,6 +728,32 @@ describe('projectMeshTo3D — the two-sided dimension hazard', () => {
     expect(result.undecidableReason).toMatch(/2 displayed dimensions/);
   });
 
+  it('survives a genuinely 1-D mesh (ndim 1, one displayed dim)', () => {
+    // The true degenerate corner, and it is ADMISSIBLE end to end: the Python adder
+    // takes `ndim = vertices.shape[1]` with no floor, and the viewer's preflight allows
+    // `ndim >= 1`. A triangle in 1-D has no area, so nothing will be visible — but it
+    // must not trap the kernel or throw. (Whether either side should refuse `ndim < 2`
+    // outright is a writer-side question, flagged rather than changed here: the adder is
+    // not in this branch's diff.)
+    const mesh: LoadedMeshData = {
+      vertices: new Float32Array([0, 1, 2]),
+      faces: new Uint32Array([0, 1, 2]),
+      normals: null,
+      colors: null,
+      scalars: undefined,
+      vertexCount: 3,
+      faceCount: 1,
+      ndim: 1,
+    };
+    const result = projectMeshTo3D(mesh, viewState([0], [0], [1e10]), undefined, true, backend);
+    expect(result.usedFastPath).toBe(true); // displayDims covers ndim
+    expect(result.position).toHaveLength(9);
+    // x from dim 0; y and z flat, so the "triangle" is collinear.
+    expect(Array.from(result.position)).toEqual([0, 0, 0, 1, 0, 0, 2, 0, 0]);
+    expect(result.visibleFaceCount).toBe(1);
+    expect(result.bounds).toEqual({ min: [0, 0, 0], max: [2, 0, 0] });
+  });
+
   it('survives a single displayed dimension', () => {
     // 1D display is degenerate but must not read out of bounds or throw.
     const result = projectMeshTo3D(

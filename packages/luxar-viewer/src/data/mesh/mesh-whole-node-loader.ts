@@ -158,9 +158,24 @@ export class MeshWholeNodeLoader implements MeshDataLoader {
         if (!this.attrs[flag]) return;
         try {
           handles[slot] = await open(MESH_ARRAY_NAMES[slot]);
-        } catch {
-          // Leave the slot empty. The preflight turns a flag-with-no-array into
-          // an explicit rejection, which reports better than a bare open error.
+        } catch (error) {
+          // The CAUSE decides, exactly as it does for the required pair above (#1254).
+          //
+          // Swallowing every error here made a transient network failure while opening
+          // `normals`/`colors`/`scalars` indistinguishable from "the store's presence
+          // flag lies": the slot stayed empty, the preflight rejected with a
+          // flag-with-no-array message, and `Validation` told the failure record the
+          // problem was deterministic — so it was never retried. That is the exact
+          // opposite of the required-array path three lines up, which classifies.
+          //
+          // A transport failure is rethrown with its real kind so the retry arm can act
+          // on it. Anything else still leaves the slot empty on purpose, because the
+          // preflight's "declares has_normals but no normals array" reads far better
+          // than a bare open error.
+          const kind = classifyLoaderError(error);
+          if (kind === 'Network') {
+            throw new LoaderError(kind, this.path, error);
+          }
         }
       })
     );

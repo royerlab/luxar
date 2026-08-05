@@ -1,5 +1,5 @@
 /**
- * Six laws the whole-triangle cull must obey, over 1200 randomized nD meshes.
+ * Seven laws the whole-triangle cull must obey, over 1200 randomized nD meshes.
  *
  * The unit tests check named cases; this checks the LAWS, which is what survives a
  * reimplementation. Law 3 is the load-bearing one — every emitted triangle must be a
@@ -91,6 +91,28 @@ describe('cull invariants over 1000 random meshes', () => {
 
         // LAW 6: position buffer is always full-length (no compaction).
         expect(r.position.length).toBe(nv * 3);
+
+        // LAW 7: the reported bounds are EXACTLY the AABB of the indexed vertices —
+        // null iff nothing is drawn. Named cases can show the box excludes a culled
+        // triangle; only the sweep shows it never drifts, over every partial cull the
+        // 1200 trials produce. Recomputed here independently of the implementation.
+        if (r.visibleFaceCount === 0) {
+          expect(r.bounds, 'nothing drawn must report null bounds').toBeNull();
+        } else {
+          const min = [Infinity, Infinity, Infinity];
+          const max = [-Infinity, -Infinity, -Infinity];
+          for (const idx of r.indices) {
+            for (let c = 0; c < 3; c++) {
+              const v = r.position[idx * 3 + c];
+              if (!Number.isFinite(v)) continue;
+              if (v < min[c]) min[c] = v;
+              if (v > max[c]) max[c] = v;
+            }
+          }
+          expect(r.bounds, 'drawn geometry must report bounds').not.toBeNull();
+          expect(r.bounds!.min).toEqual(min);
+          expect(r.bounds!.max).toEqual(max);
+        }
       }
     }
     // Anti-vacuity: the cull must actually discriminate, or every law above is

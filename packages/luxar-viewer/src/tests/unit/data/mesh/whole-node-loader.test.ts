@@ -602,6 +602,114 @@ describe('MeshWholeNodeLoader — Stage 1 rejects BEFORE any chunk is fetched', 
     expect(store.chunkRequests()).toEqual([]);
   });
 
+  it('keeps a transient failure opening an OPTIONAL array retryable (#1254)', async () => {
+    // The asymmetry this closes: the required `vertices`/`faces` open classifies its
+    // cause, but the optional opens swallowed everything — so a network blip on
+    // `colors` became a flag-with-no-array `Validation` rejection, which the failure
+    // record treats as deterministic and never retries.
+    const attrs = meshAttrs({ has_colors: true });
+    const store = buildStore(attrs, tetArrays());
+    // No `/mesh/colors` in the store at all; the open fails with a network-shaped error.
+    store.rejectKeyContaining = {
+      needle: 'colors',
+      error: new Error('fetch failed: network unreachable'),
+    };
+
+    let thrown: unknown;
+    try {
+      await makeLoader(store, attrs).loadMesh(VIEW);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(LoaderError);
+    expect((thrown as LoaderError).kind).toBe('Network');
+  });
+
+  it('still reports a lying presence flag as deterministic Validation', async () => {
+    // The other half: a genuinely absent array must NOT become retryable. The slot
+    // stays empty and the preflight's flag-with-no-array message is what surfaces.
+    const attrs = meshAttrs({ has_colors: true });
+    const store = buildStore(attrs, tetArrays()); // has_colors, but no colors array
+
+    let thrown: unknown;
+    try {
+      await makeLoader(store, attrs).loadMesh(VIEW);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(LoaderError);
+    expect((thrown as LoaderError).kind).toBe('Validation');
+  });
+
+  it('budgets an array_ref target that is itself broadcast-encoded (#1253)', async () => {
+    // An ACCOUNTING hole, not (today) a live exhaustion path — the distinction is worth
+    // stating precisely, because the fix is justified either way but the severity is not.
+    //
+    // `ArrayDecoder.decodeArrayRef` recursively decodes the target with the TARGET's own
+    // attrs, so a `broadcasted` target declares ITS `n_elements` however modest the
+    // stub's `original_shape` is. Both the stored and per-chunk terms are tiny here (the
+    // target stores ONE row) and `broadcasted` is a known-budgetable encoding, so
+    // endpoint-only accounting admitted the node — verified by mutation: dropping the
+    // chain walk makes this load RESOLVE.
+    //
+    // What stops it becoming a 540 MB allocation (45M x 3 x 4 bytes) is that the
+    // broadcast branch reads `expectedElements ?? enc.n_elements`, and every mesh decode
+    // site passes an expectation derived from `n_vertices`. So the target's number is
+    // currently ignored at decode time, and Stage 2's length check would object after.
+    // That makes this defence-in-depth plus a truthfulness fix: the gate's own docstring
+    // promises the budget covers "what they decode to", and it did not. It also removes
+    // the standing trap that `expectedElements` is an OPTIONAL parameter — a future
+    // decode site that omits it would make the hole load-bearing.
+    const attrs = meshAttrs({ has_colors: true });
+    const store = buildStore(attrs, {
+      ...tetArrays(),
+      colors: {
+        shape: [0, 3],
+        dtype: '<f4',
+        attrs: { encoding: { name: 'array_ref', target: 'uniform', original_shape: [4, 3] } },
+      },
+    });
+    store.addArray('/uniform', {
+      shape: [1, 3],
+      chunks: [1, 3],
+      dtype: '<f4',
+      data: [1, 0, 0],
+      attrs: { encoding: { name: 'broadcasted', n_elements: 45_000_000 } },
+    });
+
+    await expect(makeLoader(store, attrs).loadMesh(VIEW)).rejects.toThrow(
+      /over the .* per-node budget/
+    );
+    // And refused from metadata alone: not one chunk of the 540 MB was read.
+    expect(store.chunkRequests()).toEqual([]);
+  });
+
+  it('still admits an array_ref to a broadcast target that FITS', async () => {
+    // The acceptance half — otherwise the check above could be "reject every
+    // broadcast target". A uniform colour shared by dedup across nodes is real writer
+    // output, and `add_mesh(..., colors=(1, 0, 0))` is a first-class API.
+    const attrs = meshAttrs({ has_colors: true });
+    const store = buildStore(attrs, {
+      ...tetArrays(),
+      colors: {
+        shape: [0, 3],
+        dtype: '<f4',
+        attrs: { encoding: { name: 'array_ref', target: 'uniform', original_shape: [4, 3] } },
+      },
+    });
+    store.addArray('/uniform', {
+      shape: [1, 3],
+      chunks: [1, 3],
+      dtype: '<f4',
+      data: [1, 0, 0],
+      attrs: { encoding: { name: 'broadcasted', n_elements: 4 } },
+    });
+
+    const data = await makeLoader(store, attrs).loadMesh(VIEW);
+    expect(data.colors).not.toBeNull();
+    expect(data.colorComponents).toBe(3);
+  });
+
   it('follows a legitimate array_ref — dedup is a real writer behaviour', async () => {
     // Rejecting array_ref outright is not free: `normals`/`colors`/`scalars` go
     // through write_colors/write_scalars with dedup ON, so two meshes sharing a colour

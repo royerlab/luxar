@@ -392,16 +392,31 @@ const MAX_ARRAY_REF_HOPS = 3;
  * `.zattrs` and no chunk. Cycles are bounded by both the hop limit and a seen-set, so
  * a store whose target points back at itself is refused rather than hanging.
  */
+/**
+ * What a resolved `array_ref` walk yields.
+ *
+ * `chain` is every array the walk OPENED (excluding the referring array itself), so the
+ * budget can charge each step's logical footprint. Returning only the endpoint hid the
+ * fact that intermediate steps carry their own encodings.
+ */
+interface RefChain {
+  /** The array whose stored bytes are actually fetched — the end of the chain. */
+  fetched: zarr.Array<zarr.DataType, zarr.Readable>;
+  /** Every array opened while walking, nearest-first. Empty when nothing was followed. */
+  chain: zarr.Array<zarr.DataType, zarr.Readable>[];
+}
+
 async function resolveRefTarget(
   path: string,
   name: string,
   array: zarr.Array<zarr.DataType, zarr.Readable>,
   storeRoot: zarr.Location<zarr.Readable> | undefined
-): Promise<zarr.Array<zarr.DataType, zarr.Readable>> {
+): Promise<RefChain> {
   const seen = new Set<string>();
+  const chain: zarr.Array<zarr.DataType, zarr.Readable>[] = [];
   let current = array;
   for (let hop = 0; hop <= MAX_ARRAY_REF_HOPS; hop++) {
-    if (!followsReference(current)) return current;
+    if (!followsReference(current)) return { fetched: current, chain };
     const encoding = ((current.attrs ?? {}) as unknown as ArrayMetadata).encoding;
 
     const target = encoding?.target;
@@ -428,6 +443,7 @@ async function resolveRefTarget(
     }
     try {
       current = await zarr.open(storeRoot.resolve(target), { kind: 'array' });
+      chain.push(current);
     } catch (error) {
       rejectMesh(
         path,
@@ -436,7 +452,7 @@ async function resolveRefTarget(
       );
     }
   }
-  return current;
+  return { fetched: current, chain };
 }
 
 /** Human-readable byte count for error messages. */
@@ -545,9 +561,10 @@ export async function preflightMesh(
     // is an `array_ref`: the referring array is a `(0, k)` stub, so charging it
     // budgets ~48 bytes for a read that can pull gigabytes. Metadata-only.
     assertBudgetableEncoding(path, name, array);
-    const fetched = await resolveRefTarget(path, name, array, storeRoot);
-    // The target may carry its own encoding, which must be budgetable too.
-    if (fetched !== array) assertBudgetableEncoding(path, name, fetched);
+    const { fetched, chain } = await resolveRefTarget(path, name, array, storeRoot);
+    // Every array on the chain may carry its own encoding, and each must be budgetable
+    // — not just the endpoint, since an intermediate hop's encoding decodes too.
+    for (const step of chain) assertBudgetableEncoding(path, name, step);
 
     const parsed = parseDtype(String(fetched.dtype));
     if (!parsed) {
@@ -558,14 +575,32 @@ export async function preflightMesh(
     if (stored === null) {
       rejectMesh(path, `${name} declares an unusable shape [${String(fetched.shape)}]`);
     }
-    // The LOGICAL layout still comes from the referring array: that is where
-    // `original_shape` records what the values mean for this node, and it is what
-    // the decoder materializes. The stored/chunk terms come from the target.
+    // The referring array's LOGICAL layout is what this NODE means by the values:
+    // `original_shape` records that, and the cross-checks below compare against it.
     const layout = logicalLayout(array);
     if (layout === null) {
       rejectMesh(path, `${name} declares an unusable logical shape`);
     }
-    accountedBytes += stored * parsed.itemSize + layout.count * DECODED_BYTES_PER_VALUE;
+    // But it is NOT necessarily what gets allocated. `ArrayDecoder.decodeArrayRef`
+    // recursively decodes the target with the TARGET's own attrs, so an encoding on the
+    // target expands to the target's numbers — a `broadcasted` target with a large
+    // `n_elements` materializes that many rows no matter how modest the stub's
+    // `original_shape` is. The decoder does compare the result against
+    // `expectedElements`, but only as a `log.warning` AFTER materializing, which is
+    // exactly the too-late-after-decode failure this stage exists to pre-empt.
+    //
+    // So the decoded term is charged at the LARGEST logical count anywhere on the
+    // resolved chain. Every step's layout must be accountable for the same reason the
+    // encoding set is closed: an unmeasured step is a hole, not a rounding error.
+    let decodedValues = layout.count;
+    for (const step of chain) {
+      const stepLayout = logicalLayout(step);
+      if (stepLayout === null) {
+        rejectMesh(path, `${name} references an array with an unusable logical shape`);
+      }
+      if (stepLayout.count > decodedValues) decodedValues = stepLayout.count;
+    }
+    accountedBytes += stored * parsed.itemSize + decodedValues * DECODED_BYTES_PER_VALUE;
 
     // Per-chunk term. Not redundant with the sum: zarr v2 does not require
     // `chunks <= shape`, so a `"shape": [100, 3]` array declaring

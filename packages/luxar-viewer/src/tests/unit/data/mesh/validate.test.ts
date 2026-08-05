@@ -104,9 +104,19 @@ describe('validateFaceIndices — the two wrap-around hazards', () => {
     expect(Number(BigInt.asUintN(32, wide[2]))).toBe(1);
   });
 
-  it('compares 64-bit values as BigInt, so a >2^53 index cannot round into range', () => {
-    // Converting to `number` first would round 2^53 + 1 to 2^53; the point is
-    // that no lossy conversion happens before the comparison.
+  it('range-checks a signed 64-bit source at the top of its range', () => {
+    // Covers the BigInt64Array branch with a value far above any legal index.
+    //
+    // This deliberately does NOT claim to prove "BigInt comparison is required". That
+    // claim was here and it is not constructible: `nVertices <= 2^27`, u64 -> double is
+    // exact below 2^53 and non-decreasing above, so `Number(v) >= 2^27` for every
+    // `v >= 2^27` and an out-of-range value stays out of range whichever way it is
+    // compared. Verified by mutation — replacing the BigInt comparison with a
+    // post-`Number()` one leaves this whole file green, which is exactly what a
+    // test asserting an unachievable premise looks like.
+    //
+    // The narrowing that IS lossy is the u32 store, and the test above pins that with
+    // 2^32 + 1 wrapping to 1.
     const huge = new BigInt64Array([0n, 1n, 2n ** 53n + 1n]);
     expectReject(() => validateFaceIndices(PATH, huge, 4, 3), /is outside \[0, 4\)/);
   });

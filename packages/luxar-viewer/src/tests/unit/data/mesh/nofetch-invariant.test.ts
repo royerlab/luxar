@@ -1,8 +1,8 @@
 /**
  * The invariant Stage 1 exists for, over EVERY rejection reason it has.
  *
- * `whole-node-loader.test.ts` asserts "no chunk fetched" on the twelve paths it happens to
- * exercise. This enumerates all eighteen constructible reasons instead, because the
+ * `whole-node-loader.test.ts` asserts "no chunk fetched" on the paths it happens to
+ * exercise. This enumerates all twenty constructible reasons instead, because the
  * guarantee is a property of the STAGE, not of the paths someone thought to test — and
  * the gate has already been bypassed four times by cases nobody had written a test for.
  *
@@ -232,6 +232,47 @@ const CASES: Array<[string, () => { store: S; attrs: MeshMetadata }]> = [
       });
       arr(e, '/mesh/faces', [4, 3], '<u4');
       arr(e, '/evil', [268435456, 3], '<f4', [268435456, 3]);
+      return { store: new S(e), attrs: a };
+    },
+  ],
+  [
+    // The chain-accounting case (#1253): the target's OWN broadcast expansion is what
+    // must be charged, not just the stub's declared logical shape.
+    'array_ref to a broadcast target over budget',
+    () => {
+      const a = A();
+      const e = base(a);
+      arr(e, '/mesh/vertices', [0, 3], '<f4', undefined, {
+        encoding: { name: 'array_ref', target: 'uniform', original_shape: [4, 3] },
+      });
+      arr(e, '/mesh/faces', [4, 3], '<u4');
+      arr(e, '/uniform', [1, 3], '<f4', [1, 3], {
+        encoding: { name: 'broadcasted', n_elements: 45_000_000 },
+      });
+      return { store: new S(e), attrs: a };
+    },
+  ],
+  [
+    // Boundary: the walker allows MAX_ARRAY_REF_HOPS opens and refuses the next. Three
+    // hops resolve; a fourth is the rejection. Untested before this pass.
+    'array_ref chain one hop too long',
+    () => {
+      const a = A();
+      const e = base(a);
+      arr(e, '/mesh/vertices', [0, 3], '<f4', undefined, {
+        encoding: { name: 'array_ref', target: 'h1', original_shape: [4, 3] },
+      });
+      arr(e, '/mesh/faces', [4, 3], '<u4');
+      for (const [from, to] of [
+        ['h1', 'h2'],
+        ['h2', 'h3'],
+        ['h3', 'h4'],
+      ] as const) {
+        arr(e, `/${from}`, [0, 3], '<f4', undefined, {
+          encoding: { name: 'array_ref', target: to, original_shape: [4, 3] },
+        });
+      }
+      arr(e, '/h4', [4, 3], '<f4', [4, 3]);
       return { store: new S(e), attrs: a };
     },
   ],
