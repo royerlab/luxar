@@ -93,6 +93,10 @@ function makeRetryCtx(overrides: Partial<RetryCtx> = {}): RetryCtx & {
   const commitLinesGeometry = vi.fn();
   const processGSplatsData = vi.fn().mockResolvedValue(null);
   const commitGSplatsGeometry = vi.fn();
+  // Mesh's processor never resolves null (no worker projection to decline), so the
+  // stub returns a staged shape rather than the null the other two use.
+  const processMeshData = vi.fn().mockResolvedValue({ path: '/m', data: {}, projected: {} });
+  const commitMeshGeometry = vi.fn();
 
   const ctx: RetryCtx = {
     registry: new LoaderRegistry(),
@@ -104,6 +108,8 @@ function makeRetryCtx(overrides: Partial<RetryCtx> = {}): RetryCtx & {
     commitLinesGeometry,
     processGSplatsData,
     commitGSplatsGeometry,
+    processMeshData,
+    commitMeshGeometry,
     ...overrides,
   };
   return Object.assign(ctx, {

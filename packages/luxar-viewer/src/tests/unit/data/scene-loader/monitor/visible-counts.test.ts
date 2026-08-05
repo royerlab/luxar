@@ -37,7 +37,7 @@ describe('updateVisibleCountsInMonitor', () => {
     // (nothing to assert — just must not throw)
   });
 
-  it('aggregates all three geometry types symmetrically', () => {
+  it('aggregates all four geometry types symmetrically', () => {
     const monitor = makeMonitor();
     const root = new THREE.Group();
 
@@ -45,12 +45,16 @@ describe('updateVisibleCountsInMonitor', () => {
     root.add(meshWith({ nodeType: 'points', visiblePointCount: 80 }));
     root.add(meshWith({ nodeType: 'lines', visibleSegmentCount: 30 }));
     root.add(meshWith({ nodeType: 'gsplats', visibleSplatCount: 1000 }));
+    // Counted in TRIANGLES — the drawn primitive, the same choice `lines` makes in
+    // counting segments rather than vertices.
+    root.add(meshWith({ nodeType: 'mesh', visibleTriangleCount: 640 }));
 
     updateVisibleCountsInMonitor(root, monitor);
 
     expect(monitor.updateVisibleCount).toHaveBeenCalledWith('points', 200);
     expect(monitor.updateVisibleCount).toHaveBeenCalledWith('lines', 30);
     expect(monitor.updateVisibleCount).toHaveBeenCalledWith('gsplats', 1000);
+    expect(monitor.updateVisibleCount).toHaveBeenCalledWith('mesh', 640);
   });
 
   it('treats missing visible-count userData as zero', () => {
@@ -64,6 +68,18 @@ describe('updateVisibleCountsInMonitor', () => {
     expect(monitor.updateVisibleCount).toHaveBeenCalledWith('points', 0);
     expect(monitor.updateVisibleCount).toHaveBeenCalledWith('lines', 0);
     expect(monitor.updateVisibleCount).toHaveBeenCalledWith('gsplats', 0);
+    expect(monitor.updateVisibleCount).toHaveBeenCalledWith('mesh', 0);
+  });
+
+  it('reports a mesh by path as well as by type', () => {
+    const monitor = makeMonitor();
+    const root = new THREE.Group();
+    root.add(meshWith({ nodeType: 'mesh', visibleTriangleCount: 12 }, '/surface'));
+
+    updateVisibleCountsInMonitor(root, monitor);
+
+    const map = monitor.updateVisibleCountsByPath.mock.calls[0][0] as Map<string, number>;
+    expect(map.get('/surface')).toBe(12);
   });
 
   it('excludes hidden meshes (inactive substitutive-LOD levels)', () => {

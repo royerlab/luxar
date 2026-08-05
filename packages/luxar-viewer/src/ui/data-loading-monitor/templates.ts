@@ -177,7 +177,16 @@ function loaderDisplay(type: LoaderMetrics['type']): { label: string; unit: stri
     case 'gsplats-spatial-index':
       return { label: 'gsplats', unit: 'splats' };
     case 'point-spatial-index':
+      return { label: 'points', unit: 'pts' };
     default:
+      // A new `LoaderType` member is a COMPILE error here, not a silent mislabel.
+      // `point-spatial-index` used to share this arm, so any future loader type fell
+      // through and was rendered as "points / pts" — and mesh is the concrete case
+      // waiting to hit it: `MeshWholeNodeLoader` has no `getMetrics` yet, so it is absent from
+      // the union today, and whichever phase adds mesh metrics needs a label here.
+      // Runtime behaviour is unchanged (an unknown type still renders as points) —
+      // only the silence is gone.
+      void (type satisfies never);
       return { label: 'points', unit: 'pts' };
   }
 }
@@ -1740,6 +1749,21 @@ export function nodeStatsContent(node: SceneGraphNode): { text: string; title: s
       text: formatNumber(node.splatCount),
       title: `${node.splatCount.toLocaleString()} Gaussian splats${visibleSuffix(node.visibleSplatCount, node.splatCount)}`,
     };
+  }
+  if (node.type === 'mesh' && node.faceCount !== undefined) {
+    // Triangles, matching the drawn-primitive convention the arms above use — `lines`
+    // reports segments rather than vertices for the same reason. Vertices ride along in
+    // the tooltip exactly as they do for lines, since for a mesh both numbers are
+    // interesting (the vertex:face ratio is what tells a welded surface from a soup).
+    //
+    // No `visibleSuffix`: the converter has no per-node visible-face field to feed it.
+    // The per-type visible TOTAL is reported separately via `updateVisibleCount('mesh')`
+    // — see `monitor/visible-counts.ts`.
+    let title = `${node.faceCount.toLocaleString()} triangles`;
+    if (node.vertexCount !== undefined) {
+      title += `, ${node.vertexCount.toLocaleString()} vertices`;
+    }
+    return { text: formatNumber(node.faceCount), title };
   }
   if (node.type === 'group' && node.children.length > 0 && !node.kind) {
     // Plain groups show child count. Specialized groups (kind=lod /

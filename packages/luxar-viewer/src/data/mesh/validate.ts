@@ -3,7 +3,7 @@
  *
  * These are the checks that genuinely need the materialized arrays, so they run
  * after fetch + decode — but only ever on data Stage 1
- * (`mesh-preflight.ts`) already admitted, so the fetch they gate is bounded
+ * (`preflight.ts`) already admitted, so the fetch they gate is bounded
  * before it happens.
  *
  * Two things are checked, and each closes a hole the other cannot see.
@@ -50,7 +50,7 @@
  * node's shading. No sibling loader finite-scans its decoded positions either;
  * mesh matches that policy rather than inventing a stricter one.
  *
- * @module data/mesh/mesh-validate
+ * @module data/mesh/validate
  */
 
 import { LoaderError } from '../scene-loader/nodes/load-leaf-error-dispatch';
@@ -127,9 +127,20 @@ export function validateFaceIndices(
   const out = new Uint32Array(expectedLength);
 
   if (faces instanceof BigInt64Array || faces instanceof BigUint64Array) {
-    // Compared as BigInt throughout: converting a 64-bit index to `number`
-    // first would round anything above 2^53 and could land a hostile value
-    // back inside range before it is ever tested.
+    // Compared as BigInt throughout, so the comparison is exact rather than
+    // performed on a lossy conversion.
+    //
+    // Being precise about what this does and does not buy, because the obvious
+    // justification does not survive checking: a huge `u64` cannot round back INTO
+    // `[0, nVertices)`. `nVertices <= MAX_MESH_VERTICES` (2^27), u64 -> double is exact
+    // below 2^53, and above that it is non-decreasing — so `Number(v) >= 2^27` for any
+    // `v >= 2^27`, and an out-of-range value stays out of range either way. This is
+    // therefore exactness on principle, not a live hole being plugged; it stops
+    // mattering only if the vertex cap ever rises past 2^53.
+    //
+    // What IS load-bearing is that the check runs BEFORE the `Number(v)` narrowing
+    // below: an index at or above 2^32 wraps when stored into the `Uint32Array`, and
+    // the wrapped value can very much be in range.
     const limit = BigInt(nVertices);
     for (let i = 0; i < expectedLength; i++) {
       const v = faces[i];

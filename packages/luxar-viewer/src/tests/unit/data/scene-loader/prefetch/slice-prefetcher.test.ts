@@ -59,6 +59,12 @@ vi.mock('../../../../../data/scene-loader/loaders/loader-factory', () => {
     createProgressiveGSplatsLoader: vi.fn((node: SceneNode) =>
       record('createProgressiveGSplatsLoader', node)
     ),
+    // Present so the module mock satisfies `geometry-descriptors.ts`, which imports
+    // every factory. Deliberately NOT wired to `record`: mesh has no slice prefetch
+    // (whole-node resident), so these must never be called — see the prefetch
+    // exclusion test below.
+    createMeshLoader: vi.fn(),
+    createProgressiveMeshLoader: vi.fn(),
   };
 });
 
@@ -296,5 +302,20 @@ describe('SlicePrefetcher', () => {
     prefetcher.prefetch(view, 10); // retried — not poisoned
     await flushAsync();
     expect(shadowLoaders.get('/splats')!.updateView).toHaveBeenCalledTimes(1);
+  });
+
+  it('never prefetches a mesh node — mesh is whole-node resident', () => {
+    // The exclusion is structural rather than a flag: `prefetch()` has exactly three
+    // hardcoded `prefetchNode(path, 'points' | 'lines' | 'gsplats', ...)` call sites
+    // and mesh is left out by simply not adding a fourth. Confirmed here rather than
+    // assumed, because "it works because nobody wrote the line" is precisely the kind
+    // of invariant a later refactor table-drives away without noticing — a mesh
+    // shadow loader would fetch the WHOLE mesh on every slice move.
+    graph.children = [{ ...makeNode('/surface'), type: 'mesh' }];
+    registry.loaders.clear();
+    registry.gsplatLoaders.clear();
+    prefetcher.prefetch(view, 10);
+    expect(factoryCalls).toHaveLength(0);
+    expect(shadowLoaders.has('/surface')).toBe(false);
   });
 });

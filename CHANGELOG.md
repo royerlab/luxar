@@ -188,7 +188,7 @@ opaque "not a function".
 #### Added — the mesh data path: whole-node loader, two-stage validation, nD cull
 
 The viewer half of the mesh vertical that turns the kernels above into loaded
-geometry: `types/mesh.ts`, and `data/mesh/` with a whole-node `MeshLoader`, the
+geometry: `types/mesh.ts`, and `data/mesh/` with a whole-node `MeshWholeNodeLoader`, the
 admission gate that guards it, and the display-space projection that drives the
 cull. `mesh` is still absent from `loader_types`, so nothing in the render path
 reaches this yet and a mesh still writes without drawing; wiring it up is the next
@@ -282,7 +282,8 @@ Four things in there are easy to get wrong, and each is pinned:
   a bare `n_elements`, and stops the branch hijacking an array carrying both keys.
 
 At the default budget the ceiling binds long before the vertex cap: a 3D float32
-mesh runs out of bytes at ~44.7M vertices against a cap of 134.2M. The cap is still
+mesh runs out of bytes at ~22.4M vertices against a cap of 134.2M — half the
+stored-only arithmetic, since the decoded term is charged too. The cap is still
 checked, and checked first, so a nonsensical declaration is told about pick-key
 aliasing rather than blamed for bytes.
 
@@ -297,6 +298,189 @@ odd-parity epoch, initial load included. When the displayed triple is a *differe
 triple than the frame, or the mesh declares no frame at all, projected orientation
 is per-triangle data-dependent and no index post-pass can fix it: the epoch renders
 double-sided with a one-time notice naming the node.
+
+#### Added — mesh renders: the `loader_types` switch-on
+
+`mesh` joins `loader_types` in the format contract, which is the moment it becomes
+viewer-drawable. A mesh now loads and draws — **unshaded**, with flat per-vertex
+colour. The shading model, picking, and Layers-panel appearance controls land in
+later phases (`docs/specs/MESH_NODE_SPEC.md` §11), so in this phase a mesh ignores
+`blending_mode`, `opacity`, `intensity`, `gamma` and `offset`; that is stated in
+`create-mesh-node.ts` because it otherwise reads as a bug.
+
+Flipping the contract fires exactly the three compile errors the split was designed
+to fire, and no others — measured before writing any code: 6 `tsc` errors across
+`tolerance-computer.ts`, `geometry-descriptors.ts` and `loader-registry.ts`, plus one
+vitest failure and one pytest failure, both deliberate pins. The Python pin
+`test_mesh_is_writable_but_not_yet_drawable` asked in its own docstring to be MOVED
+rather than deleted when this happened, and it was.
+
+**Mesh needed its own tolerance arm, and could not borrow any of the other three.**
+Every existing strategy derives from that type's per-element extent, and a mesh has
+none. Two halves, each with a specific failure mode if copied:
+
+- *Not Lines' `0` for hidden continuous dims.* Lines get away with zero because
+  segment clipping interpolates through the slab — a segment crossing the slice
+  yields an intersection even at zero thickness. Mesh culls whole triangles with no
+  interpolation, so `0` reduces membership to exact float equality with the slice
+  plane and the node renders **nothing**. This is the most tempting wrong answer,
+  because Lines is the nearest structural sibling; a test asserts mesh and lines
+  disagree here rather than merely checking mesh's value.
+- *Not the quarter-cell query reach for hidden discrete dims.* Mesh's slab is a
+  membership gate applied after fetch, not a chunk-fetch reach, so it takes the
+  half-cell. It is also the only arm that ignores `discreteRole`: mesh issues no
+  range query, so membership is the only rule it has, and honouring a `'query'` role
+  would hand a fetch reach to the one caller asking about visibility.
+
+Be honest about the continuous arm: with per-vertex cull there is no true planar
+cut, so a continuous hidden spatial dimension renders a **thick slab** and the
+thickness is the only control. The dominant real case is discrete — a mesh's hidden
+dimensions are almost always time or channel.
+
+**Mesh names now follow the sibling geometry conventions, everywhere they diverged.**
+Four-fold symmetry is the whole point of the Track A groundwork, so the divergences were
+worth paying off rather than documenting:
+
+- `build*` is a `ui/` verb — it appears nowhere in `rendering/` or `data/`. The geometry
+  factories are `createMeshGeometry` / `createMeshColorAttribute` /
+  `createMeshDefaultColorAttribute` / `createMeshIndexAttribute` (after
+  `createPointsGeometry`), and three of them were also missing the type prefix that every
+  export in `point-geometry.ts` / `line-geometry.ts` / `gsplat-geometry.ts` carries.
+  `applyIndices` → `applyMeshIndices` for the same reason.
+- `MeshGeometryInput` → `MeshGeometryConfig`, after `InstancedLinesMeshConfig` /
+  `InstancedGSplatsMeshConfig` (minus the `Instanced` those two carry because a mesh is
+  not an instanced quad).
+- `projectMesh` → `projectMeshTo3D`, after `projectPointsTo3D` / `projectLinesTo3D` /
+  `projectGSplatsTo3D`; the private bounds helper → `computeMeshProjectionBounds`, after
+  `computeLinesProjectionBounds` / `computeGSplatsProjectionBounds`.
+- `MeshLoader` → `MeshWholeNodeLoader` in `mesh-whole-node-loader.ts`. The sibling loader
+  classes name their STRATEGY (`PointsSpatialIndexLoader`), and "whole-node" is already
+  this codebase's term for mesh's (spec §7). Naming it `MeshSpatialIndexLoader` would be
+  a lie — mesh deliberately has no index — but saying nothing was the asymmetry.
+- Inside `data/<type>/`, only loader files carry a type prefix; `projection.ts` and
+  `handler.ts` do not. So `mesh-preflight.ts` → `preflight.ts` and `mesh-validate.ts` →
+  `validate.ts`, and the test files drop the redundant prefix to match their siblings
+  (`spatial-index-loader.test.ts`, `projection.test.ts`).
+
+Two prefixes were checked and deliberately KEPT: `MeshDataLoader` (symmetric with
+`LinesDataLoader`) and `wasm/typescript/mesh-culling.ts` (which mirrors its Rust module
+`mesh_culling.rs`). And `LoaderType` still has no mesh member — mesh emits no monitor
+events until the metrics phase, so adding one now would be a slot with no producer.
+
+**Rendering is a plain indexed `BufferGeometry`, not the instanced-quad stack.** The
+other three render per-element sprites whose size and orientation are computed in the
+shader, so they need an `InstancedBufferGeometry` and an RGBA32F element texture. A
+triangle is already geometry. Consequences: no GPU buffer pool (nothing churns —
+vertex buffers are uploaded once per `displayDims` epoch), no depth-sort registration
+(an opaque surface gets correct occlusion from the depth buffer), and no capacity
+clamp (mesh is bounded by `MAX_MESH_VERTICES` at the loader instead of by texture
+dimensions).
+
+Mesh is also the first type to feed colours to **vertex attributes** rather than an
+element texture, which is why the dtype rules matter: three r184's WebGPU backend
+exposes no 3-component 8/16-bit vertex format and requires `arrayStride` to be a
+multiple of 4, so a size-3 `uint8` colour attribute (3-byte stride) fails
+`createRenderPipeline` and the mesh renders nothing on WebGPU while looking correct
+on WebGL. RGB `uint8`/`uint16` colours are therefore padded to RGBA with an opaque
+alpha; `float32` binds natively. The index dtype keys on `vertexCount`, not the
+largest index present, because `vertexCount` is fixed for the node while the largest
+index drawn changes with the slice, and a dtype that differs between epochs is the
+attribute-identity change WebGPU does not tolerate.
+
+**The projected position buffer is allocated once per node too, and re-extracted
+only when the displayed axes change.** Positions depend on `displayDims` alone, yet
+`projectMeshTo3D` allocated a fresh `vertexCount * 3` array on every call — so the
+geometry's array-identity check never matched and every slice scrub copied and
+re-uploaded the whole vertex buffer and recomputed both bounds, defeating the "only the
+index changes on a pure slice move" design outright (#1245). The buffer now lives on
+`LoadedMeshData.projection`, allocated by the loader: `updateView` returns that same
+object for the node's whole life and drops it on dispose, so the buffer inherits exactly
+the right lifetime with no separate cache to invalidate. This is the Mesh counterpart of
+the Points accumulator's reusable target buffers, keeping the four geometry types
+symmetric on where reuse lives.
+
+Reuse makes array identity useless as a change signal, and dangerously so in both
+directions: with a reused buffer the identity is stable while the contents change on a
+`displayDims` change (so the upload is suppressed and the mesh stays in the stale frame),
+and with a freshly allocated one it always differs (so the whole mesh re-uploads every
+slice move). The projection therefore reports `positionChanged` explicitly and the
+geometry gates on that. Worth knowing when reading the tests: after the first commit the
+geometry's `position` attribute IS the loader's buffer, so only an integration test
+through process -> commit can exercise the identity trap — a unit test that constructs
+its own geometry cannot reach it.
+
+**The index buffer is allocated once per node and drawn through `drawRange`.**
+Replacing `geometry.index` on every slice move leaks its GPU buffer: three caches
+attribute buffers in a `WeakMap` keyed by the attribute object and only calls
+`gl.deleteBuffer` from `WebGLAttributes.remove()`, which runs on geometry disposal
+(for whichever index is current then) and when the *wireframe* attribute is replaced —
+never when `index` itself is swapped. The orphaned attribute's `WeakMap` entry is
+collected and its GPU buffer is never freed, so a timelapse scrub orphaned one index
+buffer per move. Mesh is the only type that rewrites its index per epoch (the other
+three update pooled attributes in place), so nothing in the tree had hit this.
+
+The buffer is now sized from the node's total `faceCount` and the visible prefix drawn
+with `setDrawRange`. Reuse requires the buffer to already be at that FULL capacity
+rather than merely large enough for the current epoch — the placeholder is born with a
+zero-length index, so a first epoch that happens to be fully culled would otherwise
+fit in it and force a reallocation on the next epoch that reveals a triangle. The
+upload is bounded to the rewritten prefix via update ranges, so reuse does not trade
+the leak for a per-move bandwidth regression (the classic WebGL backend honours them;
+the WebGPU ones re-upload in full regardless). Because the attribute object is then
+stable, a slice move also rebinds nothing, so it leaves three's cached `RenderObject`
+alone and does not participate in the `attributesRebuilt` eviction contract.
+
+One consequence for readers of counts: `index.count` is the capacity and
+`drawRange.count` is what is drawn, which is why `camera-framing.ts` reads the latter —
+taking the former would give a fully-culled mesh a non-zero primitive count and frame a
+scene that draws nothing.
+
+**Camera framing was silently blind to a mesh.** `computeSceneBoundingBox` gates on
+`InstancedBufferGeometry`, which a mesh never is — so a mesh-only scene returned an
+empty box and zero primitives, and the camera framed nothing. That was a live bug
+introduced by making mesh drawable, and the file's own docstring had predicted it
+verbatim ("a geometry type rendered from a plain `BufferGeometry` still contributes
+nothing to the bounds — and therefore frames the camera wrongly, silently"). Mesh now
+has its own arm, counting DRAWN triangles from the index rather than the authored
+`n_faces`, so a culled mesh reports what is on screen. A prose warning was not enough
+to stop this happening once; the lesson is that only a compile error is.
+
+**Framing a mesh reads the drawn vertices, not the whole position buffer.** Counting
+drawn triangles while taking bounds from `computeBoundingBox()` was internally
+inconsistent: under the no-compaction design the position buffer always holds every
+vertex of the whole nD mesh, so the box spanned vertices whose triangles the slab cull
+removed — and vertices no triangle references at all. A 4D surface that translates over
+time framed its ENTIRE trajectory, pulling the camera out (and inflating the derived
+scene scale and zoom limits) while the drawn slice sat small and off-centre. The
+projection now returns the AABB of the vertices its emitted index references, as a
+`MeshProjectionBounds` — the Mesh member of the `LinesProjectionBounds` /
+`GSplatsProjectionBounds` family — and `computeMeshBounds` sets the geometry's box and
+sphere from it, exactly as `computeLineBounds` consumes the lines projection's
+precomputed bounds. Camera framing therefore needs no mesh-specific bounds path at all:
+it reads `geometry.boundingBox` as it always has. Mesh's bounds carry no per-element
+extent term, and that absence is the point — lines expand by `maxWidth` and gsplats by
+`maxRowNorm` because their elements are sprites larger than their centers, whereas a
+triangle's extent IS its vertices.
+
+These bounds are TIGHTER than a whole-buffer scan and correct for every consumer, not
+just framing: frustum culling and the raycast broad phase become exact over what is
+actually drawn. The two states the first round of tests pinned — fully visible and
+fully culled — are exactly the two where the defect cannot show, so the partial-cull
+case is now covered where the mechanism lives.
+
+The monitor's scene tree gained its mesh arm too — it rendered a blank count while the
+other three showed one, even though the converter was already populating `faceCount`.
+And `loaderDisplay`'s `default:` became a `satisfies never` guard: it previously shared
+an arm with points, so a future `LoaderType` member would have been rendered as
+"points / pts" in silence. Mesh is the concrete case waiting on that, since
+`MeshWholeNodeLoader` has no `getMetrics` yet.
+
+Two exclusions confirmed rather than assumed. Mesh stays out of slice prefetch
+because `prefetch()` has exactly three hardcoded call sites and no fourth was added —
+now pinned by a test, since "it works because nobody wrote the line" is what a later
+refactor table-drives away. And `createProgressiveMeshLoader` **rejects** with an
+explanation instead of falling back to the single-LOD loader: mesh has no LOD path at
+all, and the descriptor table requires the factory for every drawable kind.
 
 #### Fixed — a `kind=lod` group could be given a display type nothing can load
 

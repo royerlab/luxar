@@ -59,15 +59,40 @@ export interface SceneBoundingBoxResult {
 }
 
 /**
+ * Triangles a mesh geometry actually draws.
+ *
+ * `drawRange`, not `index.count`. Mesh allocates its index buffer once at the node's
+ * full face-count capacity and draws the visible prefix via `drawRange`
+ * (`rendering/mesh-geometry.ts` explains why: replacing `geometry.index` per epoch
+ * leaks its GPU buffer). So `index.count` is the capacity — reading it here would
+ * report every face as on-screen and, worse, give a fully-culled mesh a non-zero
+ * count, which is exactly the "contributes bounds while drawing nothing" bug the
+ * count guard exists to prevent.
+ *
+ * `drawRange.count` defaults to `Infinity` on a geometry nobody has set it on, so the
+ * fallback keeps this finite rather than poisoning `primitiveCount`.
+ */
+function drawnTriangleCount(geometry: THREE.BufferGeometry): number {
+  const drawn = geometry.drawRange.count;
+  if (Number.isFinite(drawn)) return drawn / 3;
+  return (geometry.index?.count ?? 0) / 3;
+}
+
+/**
  * Walk `scene` and aggregate the world-space bounding box of every
  * renderable primitive. Points, Lines, and GSplats all render as
- * `THREE.Mesh + InstancedBufferGeometry`, so a single shape covers
- * them:
+ * `THREE.Mesh + InstancedBufferGeometry`, so one shape covers those three;
+ * Mesh renders a plain indexed `BufferGeometry` and needs its own:
  *
  *   - `THREE.Mesh` with `InstancedBufferGeometry` and
  *     `userData.nodeType` in {'points', 'lines', 'gsplats'} —
  *     bounding box from the geometry, `instanceCount` for the
  *     primitive count.
+ *   - `THREE.Mesh` with `userData.nodeType === 'mesh'` — bounding box from the
+ *     geometry (which a mesh commit sets from the projection's INDEXED-vertex
+ *     bounds, so it already excludes culled geometry — see `computeMeshBounds`),
+ *     and the DRAWN TRIANGLE count (`drawRange.count / 3`, see
+ *     {@link drawnTriangleCount}) for the primitive count.
  *   - `THREE.InstancedMesh` — bounding box from the geometry, plus
  *     the count from `mesh.count` for the primitive count.
  *
@@ -76,12 +101,13 @@ export interface SceneBoundingBoxResult {
  * box of `box.isEmpty() === true` actually means "no visible
  * geometry."
  *
- * The `nodeType` list below is NOT the geometry vocabulary and widening it
- * alone would be a false fix: the arm also requires an
- * `InstancedBufferGeometry`, so a geometry type rendered from a plain
- * `BufferGeometry` still contributes nothing to the bounds — and therefore
- * frames the camera wrongly, silently. Such a type needs its own arm here (the
- * `THREE.InstancedMesh` branch is the shape to copy), not an extra literal.
+ * The instanced arm's `nodeType` list is NOT the geometry vocabulary, and widening
+ * it alone would be a false fix: that arm also requires an
+ * `InstancedBufferGeometry`, so a type rendered from a plain `BufferGeometry`
+ * would still contribute nothing and frame the camera wrongly, silently. This
+ * warning was left by the groundwork phase and it described a real bug — a
+ * mesh-only scene returned empty bounds and zero primitives until the mesh arm
+ * below was added. Any future non-instanced type needs its own arm too.
  *
  * Pure with respect to the scene — does NOT mutate object world
  * matrices; the caller should call `scene.updateMatrixWorld(true)`
@@ -101,8 +127,15 @@ export function computeSceneBoundingBox(scene: THREE.Scene): SceneBoundingBoxRes
       object instanceof THREE.Mesh &&
       object.geometry instanceof THREE.InstancedBufferGeometry &&
       (nodeType === 'points' || nodeType === 'lines' || nodeType === 'gsplats');
+    // Mesh's own arm: a plain indexed `BufferGeometry`, so it matches neither of the
+    // two branches above. Deliberately not folded into the instanced test — see the
+    // false-fix note in the docstring.
+    const isLuxarMesh =
+      object instanceof THREE.Mesh &&
+      !(object.geometry instanceof THREE.InstancedBufferGeometry) &&
+      nodeType === 'mesh';
 
-    if (!isInstancedMesh && !isLuxarInstancedMesh) return;
+    if (!isInstancedMesh && !isLuxarInstancedMesh && !isLuxarMesh) return;
 
     const geometry = object.geometry;
     if (!geometry.boundingBox) {
@@ -110,9 +143,15 @@ export function computeSceneBoundingBox(scene: THREE.Scene): SceneBoundingBoxRes
     }
     if (!geometry.boundingBox) return;
 
-    const instanceCount = isInstancedMesh
-      ? object.count
-      : ((geometry as THREE.InstancedBufferGeometry).instanceCount ?? 0);
+    // Primitives, counted per type in the unit each type actually draws: instances for
+    // the instanced-quad types, and DRAWN TRIANGLES for a mesh. Reading what is drawn
+    // rather than `n_faces` is what makes a culled mesh report what is on screen — the
+    // draw range is the only thing a slice change rewrites.
+    const instanceCount = isLuxarMesh
+      ? drawnTriangleCount(geometry)
+      : isInstancedMesh
+        ? object.count
+        : ((geometry as THREE.InstancedBufferGeometry).instanceCount ?? 0);
     if (instanceCount <= 0) return;
     primitiveCount += instanceCount;
 

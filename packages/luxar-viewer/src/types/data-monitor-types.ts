@@ -507,9 +507,9 @@ export interface SceneGraphNode {
    * there the primary element is whatever the per-element attribute arrays are
    * indexed by. The two conventions answer different questions.)
    *
-   * Stays `undefined` until the mesh loader lands (MESH_NODE_SPEC.md §11 phase 3);
-   * no mesh node can reach the monitor before then, and `elementCountOf` already
-   * treats a missing count as 0.
+   * Populated from the node's `n_faces` attr by `scene-graph-converter.ts` now that
+   * the mesh loader has landed. Still optional: `elementCountOf` treats a missing
+   * count as 0, so a store that omits the attr degrades to zero rather than NaN.
    */
   faceCount?: number;
   /** Number of visible splats after nD slicing (for gsplats nodes) */

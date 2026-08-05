@@ -68,6 +68,8 @@ describe('computeSceneStats', () => {
       totalSegments: 0,
       gsplatsObjects: 0,
       totalGSplats: 0,
+      meshObjects: 0,
+      totalTriangles: 0,
       spatialIndexed: 0,
     });
   });
@@ -200,5 +202,38 @@ describe('computeSceneStats', () => {
     expect(stats.totalSegments).toBe(75);
     expect(stats.gsplatsObjects).toBe(1);
     expect(stats.totalGSplats).toBe(50);
+  });
+
+  it('counts mesh objects and sums their committed triangle counts', () => {
+    const scene = new THREE.Group();
+    const mesh = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial());
+    mesh.userData = { nodeType: 'mesh', visibleTriangleCount: 1200 };
+    scene.add(mesh);
+    const stats = computeSceneStats(scene)!;
+    expect(stats.meshObjects).toBe(1);
+    expect(stats.totalTriangles).toBe(1200);
+  });
+
+  it('does NOT count a mesh toward spatialIndexed, even if the attr is present', () => {
+    // `spatialIndexed` means "nodes that can skip chunks on a slice change". Mesh has
+    // no spatial index by design, so counting it would inflate that metric — and a
+    // corrupt store setting the attr must not change the answer.
+    const scene = new THREE.Group();
+    const mesh = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial());
+    mesh.userData = {
+      nodeType: 'mesh',
+      visibleTriangleCount: 5,
+      attrs: { has_spatial_index: true },
+    };
+    scene.add(mesh);
+    expect(computeSceneStats(scene)!.spatialIndexed).toBe(0);
+  });
+
+  it('treats a missing visibleTriangleCount as 0 rather than NaN', () => {
+    const scene = new THREE.Group();
+    const mesh = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial());
+    mesh.userData = { nodeType: 'mesh' };
+    scene.add(mesh);
+    expect(computeSceneStats(scene)!.totalTriangles).toBe(0);
   });
 });
