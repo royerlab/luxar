@@ -12,7 +12,12 @@
  */
 
 import * as THREE from 'three';
-import { materialManager, type LuxarPointMaterial } from './material-manager';
+import {
+  materialManager,
+  type BlendingMode,
+  type LuxarMeshPickingMaterial,
+  type LuxarPointMaterial,
+} from './material-manager';
 import { type InstancedLinesMeshConfig } from './line-geometry';
 import { type InstancedGSplatsMeshConfig } from './gsplat-geometry';
 import { getElementTexture, markElementTextureFullDirty } from './element-storage';
@@ -99,9 +104,21 @@ const PICK_MATERIAL_BUILDERS: Record<
  * the first one — but that window contains the first hover, which is exactly when a
  * user would notice picking a face that isn't drawn.
  *
- * Reads `material.side` rather than the authored `double_sided`, because by the time
- * this runs the commit path may already have forced `DoubleSide` for an undecidable
- * `displayDims` frame.
+ * Every value is read from the LIVE VISUAL MATERIAL rather than from the node attrs,
+ * and that distinction is the point on the context-restore path:
+ *
+ * - `side` — by the time this runs the commit may already have forced `DoubleSide` for
+ *   an undecidable `displayDims` frame, so the authored `double_sided` is stale.
+ * - `blendingMode` — `userData.blendingMode` is the mode the material RESOLVED, which
+ *   for a `volumetric`-by-inheritance mesh is already `opaque`. Re-deriving it from
+ *   attrs would hand the pick pass a mode the shader is not in.
+ * - `uOpacity` / `uAlphaCutoff` — these can have been dragged in the layers panel
+ *   since load. `rebuildAfterContextRestore` re-runs this pass with FRESH pick
+ *   materials (the old ones were compiled against the dead context) while the visual
+ *   material survives with the user's edits, so seeding from attrs would silently
+ *   revert the pick coverage to the authored values. Rare — it needs a context loss
+ *   *and* a prior slider edit — and it self-heals on the next panel edit, which is
+ *   exactly the kind of thing that never gets found later.
  */
 function syncMeshPickMaterialToVisual(obj: THREE.Mesh): void {
   const pickMaterial = (obj.userData?.pickNode as THREE.Mesh | undefined)?.material;
@@ -109,8 +126,20 @@ function syncMeshPickMaterialToVisual(obj: THREE.Mesh): void {
   if (!isMeshPickAwareMaterial(pickMaterial)) return;
   const visual = obj.material as THREE.Material | THREE.Material[] | undefined;
   const single = Array.isArray(visual) ? visual[0] : visual;
-  if (single) pickMaterial.setPickSide(single.side);
-  pickMaterial.setPickMode(resolveRequestedMeshMode((obj.userData?.attrs ?? {}) as MeshMetadata));
+  if (!single) return;
+  pickMaterial.setPickSide(single.side);
+  // The RESOLVED mode the material stamped, not the authored one.
+  pickMaterial.setPickMode(
+    (single.userData?.blendingMode as BlendingMode | undefined) ??
+      resolveRequestedMeshMode((obj.userData?.attrs ?? {}) as MeshMetadata)
+  );
+  const uniforms = (single as THREE.Material & { uniforms?: Record<string, { value?: unknown }> })
+    .uniforms;
+  const pick = pickMaterial as LuxarMeshPickingMaterial;
+  const liveOpacity = uniforms?.uOpacity?.value;
+  if (typeof liveOpacity === 'number') pick.updateOpacityUniform(liveOpacity);
+  const liveCutoff = uniforms?.uAlphaCutoff?.value;
+  if (typeof liveCutoff === 'number') pick.updateAlphaCutoff(liveCutoff);
 }
 
 export class NodeFactory {

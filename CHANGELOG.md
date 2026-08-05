@@ -181,6 +181,60 @@ copy of the shared per-type reader with `visibleTriangleCount` missing, so the c
 read as "absent" rather than as an error. Present, plausible and wrong is the worst
 shape for a diagnostic. Both now go through one reader.
 
+#### The mesh `opaque` default now actually fires (#1272)
+
+Spec §6.3's central asymmetry — mesh defaults to `opaque` where the three emissive
+types default to `additive` — had never worked on the production load path. The chain
+is `applyEffectiveAttrs` → `composeAttrs` → `normalizeBlendingMode`, and
+`normalizeBlendingMode(undefined)` returns `'additive'`, so a composed `blending_mode`
+was **never** undefined by the time a material saw it. `createMeshNode`'s
+`(attrs.blending_mode as BlendingMode) ?? 'opaque'` was dead code: every mesh in every
+real scene rendered additive, the alpha cutout never compiled, and — once the panel
+controls landed — the Alpha-cutoff slider was hidden for a default-config mesh because
+its layer reported `additive`.
+
+Fixed where the information still exists. `composeAttrs` now takes the default an
+entirely-unset chain resolves to, supplied per geometry type from a new
+`DEFAULT_BLENDING_MODES` table, and every compose site passes the leaf's own type: the
+loader's `applyEffectiveAttrs`, and both of the layers panel's (the `LayerInfo` init
+and `composeEffective` — the panel is a second place the default has to be right, since
+it pushes its composed mode onto the material). Nearest-setter-wins is untouched: an
+ancestor that DID set a mode still wins, because the default is consulted only when the
+walk found nothing. That is what keeps `group(blending_mode="additive")` working for its
+mesh children, which is why §6.3 forbids the writer from stamping the mode at all.
+
+Found by rendering a written mesh end to end for the first time — no unit test could
+see it, because they all hand `resolveRequestedMeshMode` an attrs object directly rather
+than one that has been through composition.
+
+#### Mesh gets its first real fixtures, and an end-to-end render spec
+
+`test_mesh.luxar.zarr` and `test_mesh_nd.luxar.zarr`, plus
+`src/tests/e2e/mesh-rendering.spec.ts`. Everything about mesh had been tested one layer
+down — cull kernels by parity, the material pair by codegen snapshot and a GLSL↔TSL
+pixel harness, the loader/commit/panel/debug paths by unit test with stub materials —
+and none of that covers the wiring: that a mesh authored by the Python writer arrives
+through the loader, commits, gets the right shader variant, and puts pixels on screen.
+The first run of that spec found the `opaque` bug above and two more.
+
+The fixture is a **welded, closed icosphere** rather than a cube or a grid, and each
+property is load-bearing: welded so `gl_VertexID` is a genuine many-to-one pick target
+(de-indexed it would be 960 vertices instead of 162, making the shared-vertex pick
+semantics untestable); closed so an nD slab cull exposes interior back faces, which is
+what the `gl_FrontFacing` flip exists for; and smooth non-axis-aligned normals so a
+build that ignored `shading` would render visibly differently — on a cube the stored and
+derivative normals agree per face.
+
+Two smaller defects fell out of the same run. The debug surface read shader variants
+with `!!defines?.FLAG`, and a GLSL define's conventional value is the **empty string**
+(three emits a bare `#define`), so `!!''` reported every variant as off while the shader
+was compiled with it. The **existing lines arm had the same bug** — `hasColormap` had
+always been false in production — and its unit test passed only because the fixture used
+`1` where production uses `''`: a vacuous assertion, now fixed on both sides. Separately,
+the mesh pick material is now seeded from the visual material's **live uniforms** rather
+than the authored attrs, so a WebGL context restore after a layers-panel drag no longer
+reverts pick coverage to the load-time values.
+
 #### Demos — the biodiversity globe is `opaque`, so it stops painting over its own data (#1227)
 
 The globe was `volumetric` with a heavy absorption, which read well in isolation
