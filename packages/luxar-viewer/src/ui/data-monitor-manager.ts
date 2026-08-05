@@ -233,12 +233,9 @@ export class DataMonitorManager {
   }
 }
 
-// Export convenient accessor functions.
 // Note: getDataMonitor / showDataMonitor / hideDataMonitor /
 // toggleDataMonitor were removed — production code calls the
-// event-bus ('panel-cycle' / 'panel-hide') instead. cycleDataMonitor
-// is kept because data-monitor-integration tests import it
-// directly to drive the cycle behavior.
+// event-bus ('panel-cycle' / 'panel-hide') instead.
 /**
  * Advance the data-loading monitor panel through its display states via the
  * shared {@link DataMonitorManager} singleton.
