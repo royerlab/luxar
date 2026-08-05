@@ -60,6 +60,12 @@ export interface LayerApplyEngineDeps {
   getSceneGraph: () => SceneNode | null;
   state: LayerStateManager;
   requestRender: () => void;
+  /**
+   * Marks the cached GPU pick buffer dirty so it re-renders after a panel edit
+   * changed a mesh's pick coverage (opacity/cutoff/blending). No-op when picking
+   * is inactive.
+   */
+  invalidatePickBuffer?: () => void;
 }
 
 export class LayerApplyEngine {
@@ -257,7 +263,13 @@ export class LayerApplyEngine {
       // Written OUTSIDE the LOD-fade branch above on purpose: a mesh cannot be inside
       // a LOD group (§9 refuses it), so that branch is unreachable here — but keeping
       // the sync unconditional means it stays correct if that ever changes.
-      syncMeshPickAppearance(obj as THREE.Mesh, { opacity: eff.opacity });
+      //
+      // When the sync actually touched a mesh pick material, invalidate the cached
+      // pick buffer: a stationary-camera layers-panel edit invalidates nothing else,
+      // so hover would otherwise keep naming vertices of the pre-edit coverage.
+      if (syncMeshPickAppearance(obj as THREE.Mesh, { opacity: eff.opacity })) {
+        this.deps.invalidatePickBuffer?.();
+      }
       // All three geometry-material families implement it (gsplats
       // phase 1, points phase 3, lines phase 4); optional-chained for
       // non-Luxar materials.
@@ -332,7 +344,9 @@ export class LayerApplyEngine {
     mat.updateAmbient?.(layer.ambient);
     mat.updateShadeExponent?.(layer.shadeExponent);
     mat.updateAlphaCutoff?.(layer.alphaCutoff);
-    syncMeshPickAppearance(obj as THREE.Mesh, { alphaCutoff: layer.alphaCutoff });
+    if (syncMeshPickAppearance(obj as THREE.Mesh, { alphaCutoff: layer.alphaCutoff })) {
+      this.deps.invalidatePickBuffer?.();
+    }
     this.deps.requestRender();
   }
 

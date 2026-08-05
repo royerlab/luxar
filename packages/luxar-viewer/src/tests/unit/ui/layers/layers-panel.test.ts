@@ -2104,6 +2104,159 @@ describe('LayersPanel — blend select drives the leaf material', () => {
 
     expect(pickMat.updateOpacityUniform).not.toHaveBeenCalled();
   });
+
+  it('a mesh opacity edit invalidates the cached pick buffer (stationary-camera hover would otherwise keep stale ids)', () => {
+    // The layers panel triggers none of the camera/resize/commit paths that mark
+    // the cached pick buffer dirty, so a stationary-camera opacity edit on a mesh
+    // would leave the buffer showing the pre-edit coverage. Whenever the sync
+    // actually touched a mesh pick material, the panel must mark it dirty.
+    const invalidate = vi.fn();
+    const pickMat: Record<string, unknown> = {
+      setPickMode: vi.fn(),
+      setPickSide: vi.fn(),
+      updateOpacityUniform: vi.fn(),
+      updateAlphaCutoff: vi.fn(),
+    };
+    const visualMat: Record<string, unknown> = {
+      userData: { blendingMode: 'opaque' },
+      uniforms: { uOpacity: { value: 1.0 } },
+      defines: {},
+      updateIntensity: vi.fn(),
+      updateOffset: vi.fn(),
+      updateGamma: vi.fn(),
+      updateOpacity: vi.fn(),
+      applyBlendingMode: vi.fn(),
+    };
+    visualMat.clone = vi.fn(() => visualMat);
+
+    const mesh = new THREE.Mesh(new THREE.BufferGeometry(), visualMat as unknown as THREE.Material);
+    mesh.name = '/cloud';
+    mesh.userData._layerMaterialCloned = true;
+    mesh.userData.nodeType = 'mesh';
+    mesh.userData.pickNode = new THREE.Mesh(mesh.geometry, pickMat as unknown as THREE.Material);
+    const rootGroup = new THREE.Group();
+    rootGroup.add(mesh);
+
+    const panel = new LayersPanel(container, animationController);
+    panel.setPickBufferInvalidator(invalidate);
+    panel.initFromScene(rootGroup, makeLayeredSceneGraph('mesh'));
+    panel.show();
+    panel.layerState.select('/cloud', 'single');
+
+    invalidate.mockClear();
+    panel.layerState.applyToSelected((l) => {
+      l.opacity = 0.3;
+    });
+    const layer = panel.layerState.getLayer('/cloud')!;
+    (
+      panel as unknown as { applyEngine: { applyOpacity(l: unknown): void } }
+    ).applyEngine.applyOpacity(layer);
+
+    expect(invalidate).toHaveBeenCalled();
+  });
+
+  it('a mesh alpha-cutoff edit invalidates the cached pick buffer (§6.5 cutout must move in the pick pass too)', () => {
+    // The cutout threshold rides to the pick material via `applyMeshAppearance`
+    // (not `applyComposed`), so it needs its own invalidation wiring: a cutoff that
+    // moved on screen but not in the cached pick buffer would leave a freshly-cut
+    // region still hoverable.
+    const invalidate = vi.fn();
+    const pickMat: Record<string, unknown> = {
+      setPickMode: vi.fn(),
+      setPickSide: vi.fn(),
+      updateOpacityUniform: vi.fn(),
+      updateAlphaCutoff: vi.fn(),
+    };
+    const visualMat: Record<string, unknown> = {
+      userData: { blendingMode: 'opaque' },
+      uniforms: { uOpacity: { value: 1.0 } },
+      defines: {},
+      updateIntensity: vi.fn(),
+      updateOffset: vi.fn(),
+      updateGamma: vi.fn(),
+      updateOpacity: vi.fn(),
+      updateAmbient: vi.fn(),
+      updateShadeExponent: vi.fn(),
+      updateAlphaCutoff: vi.fn(),
+      applyBlendingMode: vi.fn(),
+    };
+    visualMat.clone = vi.fn(() => visualMat);
+
+    const mesh = new THREE.Mesh(new THREE.BufferGeometry(), visualMat as unknown as THREE.Material);
+    mesh.name = '/cloud';
+    mesh.userData._layerMaterialCloned = true;
+    mesh.userData.nodeType = 'mesh';
+    mesh.userData.pickNode = new THREE.Mesh(mesh.geometry, pickMat as unknown as THREE.Material);
+    const rootGroup = new THREE.Group();
+    rootGroup.add(mesh);
+
+    const panel = new LayersPanel(container, animationController);
+    panel.setPickBufferInvalidator(invalidate);
+    panel.initFromScene(rootGroup, makeLayeredSceneGraph('mesh'));
+    panel.show();
+    panel.layerState.select('/cloud', 'single');
+
+    invalidate.mockClear();
+    panel.layerState.applyToSelected((l) => {
+      l.alphaCutoff = 0.5;
+    });
+    const layer = panel.layerState.getLayer('/cloud')!;
+    (
+      panel as unknown as { applyEngine: { applyMeshAppearance(l: unknown): void } }
+    ).applyEngine.applyMeshAppearance(layer);
+
+    expect(invalidate).toHaveBeenCalled();
+  });
+
+  it('a non-mesh opacity edit does not touch the pick buffer', () => {
+    // The converse: a points/lines/gsplat pick material is not mesh-pick-aware, so
+    // the sync is a no-op and there is nothing new to render. Invalidating the
+    // buffer anyway would churn an offscreen render on every non-mesh slider drag.
+    const invalidate = vi.fn();
+    const pickMat: Record<string, unknown> = { updateOpacityUniform: vi.fn() };
+    const visualMat: Record<string, unknown> = {
+      userData: { blendingMode: 'additive' },
+      uniforms: { uOpacity: { value: 1.0 } },
+      defines: {},
+      updateIntensity: vi.fn(),
+      updateOffset: vi.fn(),
+      updateGamma: vi.fn(),
+      updateOpacity: vi.fn(),
+      applyBlendingMode: vi.fn(),
+    };
+    visualMat.clone = vi.fn(() => visualMat);
+
+    const points = new THREE.Points(
+      new THREE.BufferGeometry(),
+      visualMat as unknown as THREE.Material
+    );
+    points.name = '/cloud';
+    points.userData._layerMaterialCloned = true;
+    points.userData.nodeType = 'points';
+    points.userData.pickNode = new THREE.Mesh(
+      points.geometry,
+      pickMat as unknown as THREE.Material
+    );
+    const rootGroup = new THREE.Group();
+    rootGroup.add(points);
+
+    const panel = new LayersPanel(container, animationController);
+    panel.setPickBufferInvalidator(invalidate);
+    panel.initFromScene(rootGroup, makeLayeredSceneGraph('points'));
+    panel.show();
+    panel.layerState.select('/cloud', 'single');
+
+    invalidate.mockClear();
+    panel.layerState.applyToSelected((l) => {
+      l.opacity = 0.3;
+    });
+    const layer = panel.layerState.getLayer('/cloud')!;
+    (
+      panel as unknown as { applyEngine: { applyOpacity(l: unknown): void } }
+    ).applyEngine.applyOpacity(layer);
+
+    expect(invalidate).not.toHaveBeenCalled();
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -75,6 +75,7 @@ export class LayersPanel {
     getSceneGraph: () => this.sceneGraph,
     state: this.state,
     requestRender: () => this.requestRender(),
+    invalidatePickBuffer: () => this.pickBufferInvalidator?.(),
   });
 
   /** The controls section (sliders/selects/LOD readout) below the list. */
@@ -109,6 +110,13 @@ export class LayersPanel {
    * scene loads and after dispose.
    */
   private failedLoadsProvider: FailedLoadsProviderPort | null = null;
+
+  /**
+   * Late-bound accessor to the current PickingSystem's `markDirty`, injected by
+   * the app. Kept as a callback (not a captured PickingSystem) so it survives the
+   * per-dataset picking re-creation. Null before wiring / in tests.
+   */
+  private pickBufferInvalidator: (() => void) | null = null;
 
   /**
    * Cheap change-detector for the failed set (JSON of sorted `[path, reason]`
@@ -275,6 +283,11 @@ export class LayersPanel {
     this.failedLoadsProvider = provider;
     this.lastFailedLoadsSignature = null;
     this.updateRowErrorStates();
+  }
+
+  /** Inject a callback that marks the GPU pick buffer dirty (PickingSystem.markDirty). Late-bound so it survives per-dataset picking re-creation. */
+  setPickBufferInvalidator(fn: (() => void) | null): void {
+    this.pickBufferInvalidator = fn;
   }
 
   dispose(): void {

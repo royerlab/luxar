@@ -342,15 +342,20 @@ export function createEmptyMeshNode(
  * screen while leaving every triangle pickable.
  *
  * A no-op for a node with no pick material (picking disabled, or a test-built node).
+ *
+ * Returns whether a real mesh pick material was updated, so callers can invalidate
+ * the cached pick buffer for meshes only — the other geometry types (whose pick
+ * coverage this never touches) get `false` and skip the needless offscreen re-render.
  */
 export function syncMeshPickAppearance(
   object: THREE.Mesh,
   values: { opacity?: number; alphaCutoff?: number }
-): void {
+): boolean {
   const pickMaterial = (object.userData.pickNode as THREE.Mesh | undefined)?.material;
-  if (!pickMaterial || Array.isArray(pickMaterial)) return;
-  if (!isMeshPickAwareMaterial(pickMaterial)) return;
+  if (!pickMaterial || Array.isArray(pickMaterial)) return false;
+  if (!isMeshPickAwareMaterial(pickMaterial)) return false;
   const pick = pickMaterial as LuxarMeshPickingMaterial;
   if (values.opacity !== undefined) pick.updateOpacityUniform(values.opacity);
   if (values.alphaCutoff !== undefined) pick.updateAlphaCutoff(values.alphaCutoff);
+  return true;
 }
