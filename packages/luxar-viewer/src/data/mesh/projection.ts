@@ -40,7 +40,12 @@
 import { log, Modules } from '../../utils/log';
 import { validateProjectionInputs } from '../../workers/data-worker/validation';
 import type { WasmModule } from '../../wasm/types';
-import type { LoadedMeshData, MeshProjectionBounds, MeshViewState } from '../../types/mesh';
+import type {
+  LoadedMeshData,
+  MeshProjectionBounds,
+  MeshProjectionTargetBuffers,
+  MeshViewState,
+} from '../../types/mesh';
 
 /** Which faces of the surface an epoch must draw. */
 export type MeshSide = 'front' | 'double';
@@ -329,6 +334,30 @@ function computeMeshProjectionBounds(
 }
 
 /**
+ * The fast path's display-space bounds, measured once per `displayDims` epoch.
+ *
+ * Falls back to computing without caching when the node has no loader-owned
+ * projection slot (the unit-test and placeholder callers), so behaviour is identical
+ * either way — only the repeat cost differs.
+ */
+function fastPathBounds(
+  scratch: MeshProjectionTargetBuffers | undefined,
+  position: Float32Array,
+  indices: Uint32Array,
+  displayDimsKey: string
+): MeshProjectionBounds | null {
+  if (scratch && scratch.fastPathBoundsKey === displayDimsKey && scratch.fastPathBounds) {
+    return scratch.fastPathBounds;
+  }
+  const bounds = computeMeshProjectionBounds(position, indices);
+  if (scratch) {
+    scratch.fastPathBounds = bounds;
+    scratch.fastPathBoundsKey = displayDimsKey;
+  }
+  return bounds;
+}
+
+/**
  * Project a loaded mesh into display space for one view state.
  *
  * @param backend - WASM module or the TypeScript reference, already selected for
@@ -437,7 +466,14 @@ export function projectMeshTo3D(
       positionKey: displayDimsKey,
       // Computed even here: nothing is culled on the fast path, but a vertex no
       // triangle references still inflates the whole-buffer box.
-      bounds: computeMeshProjectionBounds(position, indices),
+      //
+      // CACHED per `displayDims` epoch, unlike the cull path below. Nothing is culled
+      // here, so the emitted index is `faces` verbatim and the box depends only on
+      // `position` — it cannot change between sweeps at one `displayDims`. The
+      // recompute is O(faces) (measured 26 ms at 5M faces), and a 3D mesh in a scene
+      // with navigable dimensions elsewhere is swept on every scrub frame, so leaving
+      // it in overran the frame budget to re-derive an identical box.
+      bounds: fastPathBounds(positionScratch, position, indices, displayDimsKey),
       undecidableReason: winding.undecidableReason,
     };
   }

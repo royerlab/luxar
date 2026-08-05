@@ -857,7 +857,11 @@ v1 supports `opaque`, `normal`, `additive`, `luminous`, and `max`.
 `volumetric` is **not supported**: it is an emission–absorption model over per-element optical depth and
 has no meaning for an opaque surface. The observable behavior is a **one-time warning naming the node,
 then an `opaque` fallback**, applied in `createMeshNode` — a warning rather than a load failure, for the
-inheritance reason at the end of this section.
+inheritance reason at the end of this section. An **explicitly-authored** per-node
+`blending_mode='volumetric'` is additionally refused at authoring time (`add_mesh` and the
+`Mesh.blending_mode` setter raise) — that case is never an inheritance, so the fail-fast rejection and
+the viewer fallback coexist: the fallback remains the handler for a mode inherited from an ancestor and
+for pre-existing stores.
 
 `normal` on a mesh is drawn **without per-triangle depth sorting** in v1. The depth-sort coordinator
 sorts *instances* via `aSortedIndex`; the mesh analog is permuting triangle triples in the index
