@@ -315,6 +315,47 @@ describe('processMeshData — membership tolerance', () => {
     expect(staged.projected.visibleFaceCount).toBe(0);
   });
 
+  it('DRAWS a triangle inside the continuous slab — the arm’s reason for existing', async () => {
+    // The positive direction of the trap the continuous arm exists for, and the one
+    // direction nothing asserted: the three unit tests in `tolerance-computer.test.ts`
+    // pin the NUMBER the arm returns, so replacing the arm with Lines' `0` fails them —
+    // but it left every mesh BEHAVIOUR suite green, including this describe block,
+    // whose continuous cases all assert culls. The documented consequence of `0` is
+    // "the node renders nothing", and that was pinned nowhere.
+    //
+    // Triangle at w = 0.4, slice at w = 0, step 1 ⇒ slab = step × 1 cell = 1, so
+    // |0.4| ≤ 1 and it draws. The ride-along tolerance is passed as 0 so it cannot
+    // rescue the assertion: the recomputed mesh slab is the only thing that can make
+    // this triangle visible.
+    const inside = await processMeshData(
+      '/surface',
+      loadedAtW(0.4),
+      viewWithDim(0, { name: 'w', discrete: false, step: 1 }),
+      { normal_dims: undefined, double_sided: true }
+    );
+    expect(inside.projected.visibleFaceCount).toBe(1);
+
+    // Exactly on the slab edge. Both kernels compare with `>=` / `<=` against
+    // `fround(slice ± tolerance)`, so the edge is INCLUSIVE — a vertex one cell away
+    // still draws rather than flickering out at the boundary.
+    const onEdge = await processMeshData(
+      '/surface',
+      loadedAtW(1),
+      viewWithDim(0, { name: 'w', discrete: false, step: 1 }),
+      { normal_dims: undefined, double_sided: true }
+    );
+    expect(onEdge.projected.visibleFaceCount).toBe(1);
+
+    // Absent dimension metadata takes the same arm through its `slabCells` fallback
+    // (VIEW carries no `dimensions`), so a store with no per-dim step still draws
+    // instead of silently culling everything.
+    const noMetadata = await processMeshData('/surface', loadedAtW(0.4), VIEW, {
+      normal_dims: undefined,
+      double_sided: true,
+    });
+    expect(noMetadata.projected.visibleFaceCount).toBe(1);
+  });
+
   it('extend_to_all keeps an extended dim slice-invariant', async () => {
     // Triangle at w = 1000, far outside any finite slab. Without extend_to_all the
     // half-cell membership (0.5 × 10 = 5) culls it; naming 'w' in extend_to_all lifts
