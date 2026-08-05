@@ -17,6 +17,7 @@ import type { DataLoader, GeometryKind } from '../../data-loader-types';
 import { LOADER_TYPES } from '../../../types/format-contract';
 import type { LinesDataLoader } from '../../../types/lines';
 import type { GSplatsDataLoader } from '../../../types/gsplats';
+import type { MeshDataLoader } from '../../../types/mesh';
 
 import { log, Modules } from '../../../utils/log';
 import { classifyLoaderError, type LoaderErrorKind } from '../nodes/load-leaf-error-dispatch';
@@ -24,7 +25,7 @@ import { classifyLoaderError, type LoaderErrorKind } from '../nodes/load-leaf-er
 /**
  * Which loader interface belongs to which geometry kind.
  *
- * The three loader interfaces are structurally distinct, so this mapping is
+ * The loader interfaces are structurally distinct, so this mapping is
  * what keeps the kind-keyed store honest: `register`/`loadersOf` are generic in
  * `K`, so `register('points', path, someLinesLoader)` is a compile error rather
  * than a silent mis-route through the wrong update path.
@@ -45,11 +46,12 @@ export type LoaderByKind = {
   points: DataLoader;
   lines: LinesDataLoader;
   gsplats: GSplatsDataLoader;
+  mesh: MeshDataLoader;
 };
 
 /**
  * Any geometry loader — derived from {@link LoaderByKind} rather than listing
- * the three interfaces again, so the two cannot drift apart.
+ * the interfaces again, so the two cannot drift apart.
  */
 export type AnyDataLoader = LoaderByKind[GeometryKind];
 
@@ -94,7 +96,7 @@ export interface FailedLoaderInfo {
 export const MAX_AUTO_RETRY_ATTEMPTS = 3;
 
 /**
- * Registry that manages all geometry loaders (Points, Lines, GSplats)
+ * Registry that manages all geometry loaders (Points, Lines, GSplats, Mesh)
  * and tracks loading failures for retry/recovery.
  */
 export class LoaderRegistry {
@@ -145,6 +147,11 @@ export class LoaderRegistry {
     return this.loadersOf('gsplats');
   }
 
+  /** Mesh loaders indexed by scene path */
+  get meshLoaders(): Map<string, MeshDataLoader> {
+    return this.loadersOf('mesh');
+  }
+
   /** Error tracking for failed loaders */
   readonly failedLoaders = new Map<string, FailedLoaderInfo>();
 
@@ -193,6 +200,18 @@ export class LoaderRegistry {
    */
   registerGSplatsLoader(path: string, loader: GSplatsDataLoader): void {
     this.register('gsplats', path, loader);
+  }
+
+  /**
+   * Register a mesh loader for a given path.
+   */
+  registerMeshLoader(path: string, loader: MeshDataLoader): void {
+    this.register('mesh', path, loader);
+  }
+
+  /** Peer of {@link unregister}, kept for call-site readability. */
+  unregisterMeshLoader(path: string): void {
+    this.unregister('mesh', path);
   }
 
   /** Peer of {@link unregister}, kept for call-site readability. */

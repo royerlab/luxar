@@ -106,6 +106,19 @@ def add_mesh_impl(
             raise ValueError(
                 f"Vertices must have shape (V, D), got shape {vert_arr.shape}"
             )
+        # A floor of 2 dimensions, which the sibling adders deliberately do NOT have.
+        # Points and Lines are meaningful in 1D — a scatter along an axis, segments with
+        # length — so they take whatever width they are given. A TRIANGLE needs two
+        # dimensions to enclose any area: in 1D every face is collinear, so the mesh
+        # writes and loads successfully and then renders nothing at all, with no
+        # diagnostic anywhere. Refusing at the adder is the only place that can say why.
+        if vert_arr.shape[1] < 2:
+            raise ValueError(
+                f"Vertices must have at least 2 dimensions, got shape {vert_arr.shape}. "
+                "A triangle needs two dimensions to have any area — in 1D every face is "
+                "collinear and the surface renders nothing. Use Points or Lines for "
+                "1D data."
+            )
 
         # Apply dim_order before validation. Vertices are coordinates and get
         # reordered like every other geometry type's positions; `faces` is INDEX

@@ -14,6 +14,7 @@
 import type { DataLoader } from '../../data-loader-types';
 import type { LinesDataLoader } from '../../../types/lines';
 import type { GSplatsDataLoader } from '../../../types/gsplats';
+import type { MeshDataLoader } from '../../../types/mesh';
 import type { LoaderMonitor } from '../../../types/data-monitor-types';
 import type { SceneLoaderMonitorPort } from '../../scene-loader-monitor-port';
 
@@ -23,7 +24,7 @@ import type { SceneLoaderMonitorPort } from '../../scene-loader-monitor-port';
  */
 export function connectLoaderToMonitor(
   path: string,
-  loader: DataLoader | LinesDataLoader | GSplatsDataLoader,
+  loader: DataLoader | LinesDataLoader | GSplatsDataLoader | MeshDataLoader,
   monitor: SceneLoaderMonitorPort | null
 ): void {
   if (!monitor) return;

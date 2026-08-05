@@ -28,6 +28,9 @@ import {
   commitGSplatsGeometry as commitGSplatsGeometryHelper,
   type StagedGSplatsCommit,
 } from './scene-loader/process/data-processor-gsplats';
+import { commitMeshGeometry as commitMeshGeometryHelper } from './scene-loader/commit/commit-mesh-geometry';
+import { processMeshData as processMeshDataHelper } from './scene-loader/process/data-processor-mesh';
+import type { StagedMeshCommit } from './scene-loader/process/data-processor-mesh';
 import type { LoaderFactoryDeps } from './scene-loader/loaders/loader-factory';
 import { commitPointsGeometry as commitPointsGeometryHelper } from './scene-loader/commit/commit-points-geometry';
 import {
@@ -41,6 +44,7 @@ import { runLinesRefinement } from './lines/lod-refinement';
 import { loadAndStage as pointsLoadAndStage, label as pointsLabel } from './points/handler';
 import { loadAndStage as linesLoadAndStage, label as linesLabel } from './lines/handler';
 import { loadAndStage as gsplatsLoadAndStage, label as gsplatsLabel } from './gsplats/handler';
+import { loadAndStage as meshLoadAndStage, label as meshLabel } from './mesh/handler';
 
 export type { StagedLinesCommit } from './scene-loader/process/data-processor-lines';
 export type { StagedGSplatsCommit } from './scene-loader/process/data-processor-gsplats';
@@ -92,6 +96,7 @@ import { SliceCache } from '../cache/slice-cache';
 import type { CacheBudgets } from '../cache/heap-budget';
 import type { LinesDataLoader, LinesViewState, LoadedLinesData } from '../types/lines';
 import type { GSplatsDataLoader, GSplatsViewState, LoadedGSplatsData } from '../types/gsplats';
+import type { LoadedMeshData, MeshDataLoader, MeshMetadata, MeshViewState } from '../types/mesh';
 import { clearCommittedData } from '../types/committed-data';
 import { releaseDepthSortNode } from '../rendering/depth-sort-coordinator';
 import { GPUBufferPool } from '../rendering/gpu-buffer-pool';
@@ -194,6 +199,9 @@ export class SceneLoader {
   }
   private get gsplatLoaders() {
     return this.registry.gsplatLoaders;
+  }
+  private get meshLoaders() {
+    return this.registry.meshLoaders;
   }
   private get failedLoaders() {
     return this.registry.failedLoaders;
@@ -702,7 +710,7 @@ export class SceneLoader {
    */
   private async runLoaderUpdates<TLoader, TStaged>(
     loaders: Map<string, TLoader>,
-    loaderType: 'Points' | 'Lines' | 'GSplats',
+    loaderType: 'Points' | 'Lines' | 'GSplats' | 'Mesh',
     updateFn: (path: string, loader: TLoader, session: UpdateSession) => Promise<TStaged | null>
   ): Promise<Array<{ staged: TStaged | null; session: UpdateSession }>> {
     return runLoaderUpdatesHelper(loaders, loaderType, updateFn, {
@@ -820,7 +828,11 @@ export class SceneLoader {
         tolerance: viewState.tolerance ? [...viewState.tolerance] : [...this.viewState.tolerance],
       };
 
-      const totalLoaders = this.loaders.size + this.linesLoaders.size + this.gsplatLoaders.size;
+      const totalLoaders =
+        this.loaders.size +
+        this.linesLoaders.size +
+        this.gsplatLoaders.size +
+        this.meshLoaders.size;
       log.update(
         Modules.SCENE_LOADER,
         `Updating view v${currentVersion} for ${totalLoaders} loaders`
@@ -844,7 +856,7 @@ export class SceneLoader {
 
       // Per-type handler-ctx construction lives in
       // scene-loader/update-view/build-update-ctxs.ts.
-      const { pointsCtx, linesCtx, gsplatsCtx } = buildUpdateCtxs({
+      const { pointsCtx, linesCtx, gsplatsCtx, meshCtx } = buildUpdateCtxs({
         rootGroup: this.rootGroup,
         viewStateQueue: this.viewStateQueue,
         clearFailure: (path) => this.failedLoaders.delete(path),
@@ -872,11 +884,16 @@ export class SceneLoader {
         (path, loader, session) => gsplatsLoadAndStage(path, loader, session, gsplatsCtx)
       );
 
+      const meshTask = this.runLoaderUpdates(this.meshLoaders, meshLabel, (path, loader, session) =>
+        meshLoadAndStage(path, loader, session, meshCtx)
+      );
+
       // Wait for ALL loaders to complete (load + process)
-      const [pointsStaged, linesStaged, gsplatsStaged] = await Promise.all([
+      const [pointsStaged, linesStaged, gsplatsStaged, meshStaged] = await Promise.all([
         pointsTask,
         linesTask,
         gsplatsTask,
+        meshTask,
       ]);
 
       // S6: predictive prefetch now lives inside each loader-task
@@ -889,7 +906,7 @@ export class SceneLoader {
       // Stage 2: Atomic commit — ALL geometry mutations in one sync block.
       // Implementation in scene-loader/update-view/atomic-commit.ts.
       // ================================================================
-      runAtomicCommit(pointsStaged, linesStaged, gsplatsStaged, {
+      runAtomicCommit(pointsStaged, linesStaged, gsplatsStaged, meshStaged, {
         gpuBufferPool: this._gpuBufferPool,
         nodeFactory: this.nodeFactory,
         // When this update was superseded mid-flight, skip the geometry
@@ -900,6 +917,7 @@ export class SceneLoader {
           this.updatePointsGeometry(path, data, session),
         commitLinesGeometry: (staged, session) => this.commitLinesGeometry(staged, session),
         commitGSplatsGeometry: (staged, session) => this.commitGSplatsGeometry(staged, session),
+        commitMeshGeometry: (staged, session) => this.commitMeshGeometry(staged, session),
       });
 
       // Post-commit bookkeeping is meaningful only for a committed frame. A
@@ -1246,6 +1264,43 @@ export class SceneLoader {
   }
 
   /**
+   * Project + stage a mesh for commit.
+   *
+   * Implementation lives in `scene-loader/process/data-processor-mesh.ts`. Async
+   * only because backend selection is, so unlike the lines/gsplats twins this never
+   * resolves to `null` — there is no worker projection that can decline.
+   */
+  private processMeshData(
+    path: string,
+    data: LoadedMeshData,
+    viewState: MeshViewState,
+    attrs: Pick<MeshMetadata, 'normal_dims' | 'double_sided' | 'extend_to_all'>
+  ): Promise<StagedMeshCommit> {
+    return processMeshDataHelper(path, data, viewState, attrs);
+  }
+
+  /**
+   * Commit mesh geometry (synchronous).
+   *
+   * Implementation lives in `scene-loader/commit/commit-mesh-geometry.ts`. Takes no
+   * GPU buffer pool: a mesh's vertex buffers are uploaded once per `displayDims`
+   * epoch and never resized, so there is nothing for the pool to recycle.
+   */
+  private commitMeshGeometry(
+    staged: StagedMeshCommit,
+    session?: UpdateSession,
+    loadedViewVersion: number = this._updateVersion
+  ): void {
+    commitMeshGeometryHelper(
+      { rootGroup: this.rootGroup, currentVersion: this._updateVersion },
+      staged,
+      session,
+      loadedViewVersion
+    );
+    this._requestRender?.();
+  }
+
+  /**
    * Build the per-call NodeBuildCtx for the initial-load leaf helpers.
    * Snapshots viewState + factoryDeps so a concurrent updateView can't
    * mutate state mid-flight. Never passes `this`.
@@ -1319,6 +1374,10 @@ export class SceneLoader {
         this.processGSplatsData(path, data, viewState, session),
       commitGSplatsGeometry: (staged, session, loadedViewVersion) =>
         this.commitGSplatsGeometry(staged, session, loadedViewVersion),
+      processMeshData: (path, data, viewState, attrs) =>
+        this.processMeshData(path, data, viewState, attrs),
+      commitMeshGeometry: (staged, session, loadedViewVersion) =>
+        this.commitMeshGeometry(staged, session, loadedViewVersion),
     };
   }
 
@@ -1339,7 +1398,7 @@ export class SceneLoader {
    */
   private connectLoaderToMonitor(
     path: string,
-    loader: DataLoader | LinesDataLoader | GSplatsDataLoader
+    loader: DataLoader | LinesDataLoader | GSplatsDataLoader | MeshDataLoader
   ): void {
     connectLoaderToMonitorHelper(path, loader, this.monitor);
   }
@@ -1562,6 +1621,8 @@ export class SceneLoader {
       commitLinesGeometry: (staged) => this.commitLinesGeometry(staged),
       processGSplatsData: (path, data, vs) => this.processGSplatsData(path, data, vs),
       commitGSplatsGeometry: (staged) => this.commitGSplatsGeometry(staged),
+      processMeshData: (path, data, vs, attrs) => this.processMeshData(path, data, vs, attrs),
+      commitMeshGeometry: (staged) => this.commitMeshGeometry(staged),
     };
   }
 

@@ -1,12 +1,12 @@
 /**
  * Per-type handler-context construction for `updateView`.
  *
- * The three update branches (Points / Lines / GSplats) feed into
- * `data/{points,lines,gsplats}/handler.ts::loadAndStage`. Each handler
+ * The four update branches (Points / Lines / GSplats / Mesh) feed into
+ * `data/{points,lines,gsplats,mesh}/handler.ts::loadAndStage`. Each handler
  * needs a small per-type ctx that shares most fields (rootGroup,
  * viewStateQueue, clearFailure, currentVersion, deriveNodeViewState)
  * plus a few type-specific bits (updateVersion for the version-gated
- * info log, the extendedToleranceCache shared between Points + GSplats).
+ * info log, the extendedToleranceCache shared between Points + GSplats + Mesh).
  *
  * Centralising the construction here keeps `updateView` focused on
  * orchestration and avoids three near-identical literal blocks in the
@@ -19,6 +19,7 @@ import type { DeriveOpts, DerivedNodeViewState } from '../view-state/derive-node
 import type { PointsHandlerCtx } from '../../points/handler';
 import type { LinesHandlerCtx } from '../../lines/handler';
 import type { GSplatsHandlerCtx } from '../../gsplats/handler';
+import type { MeshHandlerCtx } from '../../mesh/handler';
 
 /**
  * Common inputs every per-type handler ctx shares.
@@ -47,13 +48,14 @@ export interface UpdateCtxsInput {
 }
 
 /**
- * Build the three per-type handler ctx objects from a shared input.
- * Returns them as `{ pointsCtx, linesCtx, gsplatsCtx }`.
+ * Build the four per-type handler ctx objects from a shared input.
+ * Returns them as `{ pointsCtx, linesCtx, gsplatsCtx, meshCtx }`.
  */
 export function buildUpdateCtxs(input: UpdateCtxsInput): {
   pointsCtx: PointsHandlerCtx;
   linesCtx: LinesHandlerCtx;
   gsplatsCtx: GSplatsHandlerCtx;
+  meshCtx: MeshHandlerCtx;
 } {
   const pointsCtx: PointsHandlerCtx = {
     rootGroup: input.rootGroup,
@@ -86,5 +88,14 @@ export function buildUpdateCtxs(input: UpdateCtxsInput): {
     frameBudgetMs: input.frameBudgetMs,
     deriveNodeViewState: input.deriveNodeViewState,
   };
-  return { pointsCtx, linesCtx, gsplatsCtx };
+  const meshCtx: MeshHandlerCtx = {
+    rootGroup: input.rootGroup,
+    clearFailure: input.clearFailure,
+    currentVersion: input.currentVersion,
+    extendedToleranceCache: input.extendedToleranceCache,
+    signal: input.signal,
+    frameBudgetMs: input.frameBudgetMs,
+    deriveNodeViewState: input.deriveNodeViewState,
+  };
+  return { pointsCtx, linesCtx, gsplatsCtx, meshCtx };
 }

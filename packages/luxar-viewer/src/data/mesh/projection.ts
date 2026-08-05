@@ -40,7 +40,7 @@
 import { log, Modules } from '../../utils/log';
 import { validateProjectionInputs } from '../../workers/data-worker/validation';
 import type { WasmModule } from '../../wasm/types';
-import type { LoadedMeshData, MeshViewState } from '../../types/mesh';
+import type { LoadedMeshData, MeshProjectionBounds, MeshViewState } from '../../types/mesh';
 
 /** Which faces of the surface an epoch must draw. */
 export type MeshSide = 'front' | 'double';
@@ -72,6 +72,51 @@ export interface ProjectedMeshData {
 
   /** True when the cull was skipped because there are no hidden dimensions */
   usedFastPath: boolean;
+
+  /**
+   * True when `position` was (re)extracted this epoch — i.e. `displayDims` changed,
+   * or this is the first projection.
+   *
+   * Reported explicitly because the position buffer is REUSED across epochs
+   * (`LoadedMeshData.projection`), so its array identity can no longer signal a
+   * change. Consumers must gate the re-upload and the bounds recompute on this
+   * rather than on identity; using identity with a reused buffer silently stops
+   * re-uploading after an axis permutation, and using it with a freshly allocated
+   * buffer re-uploads the whole mesh on every slice move (#1245).
+   */
+  positionChanged: boolean;
+
+  /**
+   * The `displayDims.join()` these positions were extracted for. The commit stamps it
+   * on the geometry and re-uploads whenever it differs from the geometry's last-uploaded
+   * key — so an aborted commit (which advanced the loader's `displayDimsKey` but never
+   * uploaded) is still repaired by the next commit at that `displayDims`.
+   * `positionChanged` alone cannot: it is a projection-time signal and reads false on
+   * the epoch after a superseded re-extraction.
+   */
+  positionKey: string;
+
+  /**
+   * Display-space AABB over the vertices the emitted index references, or `null` when
+   * nothing is drawn.
+   *
+   * Same role as `LinesProjectionBounds` / `GSplatsProjectionBounds`: the projection
+   * computes it and `computeMeshBounds` sets the geometry's box and sphere from it.
+   * Bounding the INDEXED vertices rather than the whole position buffer is the point —
+   * under no-compaction `position` holds every vertex of the whole nD mesh, so a 4D
+   * surface that translates over time would otherwise frame its entire trajectory
+   * (#1252).
+   */
+  bounds: MeshProjectionBounds | null;
+
+  /**
+   * Set when the node asked for single-sided rendering but winding could not be
+   * decided, carrying the reason. Threaded out to the caller rather than logged
+   * here so {@link resolveWinding} and {@link projectMeshTo3D} stay free of side
+   * effects — the projection runs on every slice move, so a warning emitted at
+   * this depth would flood the console during a scrub.
+   */
+  undecidableReason?: string;
 }
 
 /** How the winding of the displayed projection relates to the authored frame. */
@@ -201,6 +246,40 @@ function reverseWinding(indices: Uint32Array, faceCount: number): void {
 }
 
 /**
+ * AABB of the display-space vertices `indices` references.
+ *
+ * Walks the INDEX rather than the position buffer, which is what makes it exclude
+ * culled and wholly-unreferenced vertices. Returns `null` for an empty index — "no
+ * drawn geometry", which the framing walk must skip rather than treat as a point at
+ * the origin. Non-finite coordinates are skipped so one bad vertex cannot poison the
+ * box into NaN (the cull already drops vertices with non-finite HIDDEN coordinates,
+ * but a displayed axis is not filtered).
+ */
+function computeMeshProjectionBounds(
+  position: Float32Array,
+  indices: Uint32Array
+): MeshProjectionBounds | null {
+  const min: [number, number, number] = [Infinity, Infinity, Infinity];
+  const max: [number, number, number] = [-Infinity, -Infinity, -Infinity];
+  let seen = 0;
+  for (let i = 0; i < indices.length; i++) {
+    const base = indices[i] * 3;
+    const x = position[base];
+    const y = position[base + 1];
+    const z = position[base + 2];
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) continue;
+    if (x < min[0]) min[0] = x;
+    if (y < min[1]) min[1] = y;
+    if (z < min[2]) min[2] = z;
+    if (x > max[0]) max[0] = x;
+    if (y > max[1]) max[1] = y;
+    if (z > max[2]) max[2] = z;
+    seen++;
+  }
+  return seen > 0 ? { min, max } : null;
+}
+
+/**
  * Project a loaded mesh into display space for one view state.
  *
  * @param backend - WASM module or the TypeScript reference, already selected for
@@ -209,7 +288,7 @@ function reverseWinding(indices: Uint32Array, faceCount: number): void {
  *   `pickBackend` swaps the WHOLE module there — which is why both kernels must
  *   exist on `WasmModule` and in both backends.
  */
-export function projectMesh(
+export function projectMeshTo3D(
   data: LoadedMeshData,
   viewState: MeshViewState,
   normalDims: readonly number[] | undefined,
@@ -225,17 +304,63 @@ export function projectMesh(
   // does not fail as a node-scoped error, it traps and takes down the whole WASM
   // module. Points guards `slicePosition` and Lines guards `tolerance`; mesh reads
   // both, so it checks both.
-  validateProjectionInputs('projectMesh', vertices, displayDims, slicePosition, ndim, vertexCount);
+  validateProjectionInputs(
+    'projectMeshTo3D',
+    vertices,
+    displayDims,
+    slicePosition,
+    ndim,
+    vertexCount
+  );
   if (tolerance.length < ndim) {
     throw new Error(
-      `projectMesh: tolerance too short (got ${tolerance.length}, expected ≥ ${ndim})`
+      `projectMeshTo3D: tolerance too short (got ${tolerance.length}, expected ≥ ${ndim})`
     );
   }
 
-  const position = new Float32Array(vertexCount * 3);
-  backend.extract_3d_positions(vertices, new Uint32Array(displayDims), ndim, vertexCount, position);
+  // Reuse the loader-owned buffer when there is one, and re-extract only when the
+  // displayed axis triple actually changed — positions depend on `displayDims` alone,
+  // so a pure slice move must not touch them (the whole point of #1245).
+  const positionScratch = data.projection;
+  const displayDimsKey = displayDims.join();
+  const reusable =
+    positionScratch && positionScratch.position.length === vertexCount * 3 ? positionScratch : null;
+  const position = reusable ? reusable.position : new Float32Array(vertexCount * 3);
+  // Without a reusable buffer the array is newly allocated and therefore always
+  // stale, so it must be extracted every call.
+  const positionChanged = !reusable || reusable.displayDimsKey !== displayDimsKey;
+  if (positionChanged) {
+    backend.extract_3d_positions(
+      vertices,
+      new Uint32Array(displayDims),
+      ndim,
+      vertexCount,
+      position
+    );
+    if (reusable) reusable.displayDimsKey = displayDimsKey;
+  }
 
   const winding = resolveWinding(displayDims, normalDims, doubleSided);
+
+  // A discrete nd_transform maps this world slice to no local grid point on some
+  // hidden dimension, so nothing in this node belongs to the slice. Mirror the
+  // spatial-index loaders (points/lines/gsplats), which return an empty query for
+  // `noPreimage` rather than culling against the fractional inverse position — the
+  // latter would leak triangles from a neighbouring category. See ViewState.noPreimage.
+  if (viewState.noPreimage) {
+    return {
+      position,
+      indices: new Uint32Array(0),
+      visibleFaceCount: 0,
+      visibleVertexCount: 0,
+      side: winding.side,
+      usedFastPath: false,
+      positionChanged,
+      positionKey: displayDimsKey,
+      bounds: null,
+      undecidableReason: winding.undecidableReason,
+    };
+  }
 
   // §5.5 fast path: with no hidden dimensions the mask is trivially all-ones, so
   // the cull is skipped and the index buffer is used verbatim.
@@ -255,10 +380,23 @@ export function projectMesh(
       visibleVertexCount: vertexCount,
       side: winding.side,
       usedFastPath: true,
+      positionChanged,
+      positionKey: displayDimsKey,
+      // Computed even here: nothing is culled on the fast path, but a vertex no
+      // triangle references still inflates the whole-buffer box.
+      bounds: computeMeshProjectionBounds(position, indices),
+      undecidableReason: winding.undecidableReason,
     };
   }
 
-  const mask = new Uint8Array(vertexCount);
+  // Reused when the loader supplied buffers of the right size, allocated otherwise. Both
+  // of these are rewritten in full every cull, so there is no staleness to track — the
+  // only thing reuse buys is not producing garbage proportional to the mesh on every
+  // slice move (#1245's argument, applied to the two buffers it did not cover).
+  const mask =
+    positionScratch && positionScratch.mask.length === vertexCount
+      ? positionScratch.mask
+      : new Uint8Array(vertexCount);
   const visibleVertexCount = backend.mesh_vertex_visibility_mask(
     vertices,
     new Float32Array(viewState.slicePosition),
@@ -272,22 +410,32 @@ export function projectMesh(
   // Worst-case sized: every face could survive. The kernel returns how many
   // actually did, and the result is sliced to exactly that — an oversized buffer
   // uploaded whole would draw stale triangles from its untouched tail.
-  const scratch = new Uint32Array(faceCount * 3);
+  const scratch =
+    positionScratch && positionScratch.faceScratch.length === faceCount * 3
+      ? positionScratch.faceScratch
+      : new Uint32Array(faceCount * 3);
   const visibleFaceCount = backend.compact_visible_faces(faces, mask, faceCount, scratch);
   const indices = scratch.subarray(0, visibleFaceCount * 3);
   if (winding.reverse) reverseWinding(indices, visibleFaceCount);
 
   return {
     position,
-    // A copy, not the subarray view: the view shares `scratch`'s whole buffer,
-    // and `THREE.BufferAttribute` uploads `array.buffer` — so handing over the
-    // view would upload the full worst-case allocation, including the stale
-    // tail past `visibleFaceCount * 3`.
+    // A copy, not the subarray view — and now REQUIRED rather than merely tidy.
+    // `scratch` is loader-owned and reused by the NEXT epoch, so a view onto it would
+    // alias data the next projection overwrites, silently changing indices a caller
+    // still holds. (The original reason — that `THREE.BufferAttribute` uploads
+    // `array.buffer`, so a view would upload the whole worst-case allocation — no longer
+    // applies: `applyMeshIndices` always `set`s into its own capacity buffer. The copy
+    // survives because reuse gave it a better reason.)
     indices: new Uint32Array(indices),
     visibleFaceCount,
     visibleVertexCount,
     side: winding.side,
     usedFastPath: false,
+    positionChanged,
+    positionKey: displayDimsKey,
+    bounds: computeMeshProjectionBounds(position, indices),
+    undecidableReason: winding.undecidableReason,
   };
 }
 

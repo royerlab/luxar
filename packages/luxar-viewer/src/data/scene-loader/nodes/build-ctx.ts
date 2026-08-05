@@ -1,6 +1,7 @@
 /**
  * Narrow context shared by the per-geometry leaf loaders
- * (`load-points-node`, `load-lines-node`, `load-gsplats-node`).
+ * (`load-points-node`, `load-lines-node`, `load-gsplats-node`,
+ * `load-mesh-node`).
  *
  * Bundles the snapshot of orchestrator state that the leaves read
  * (`viewState`, `factoryDeps`, registry, nodeFactory) plus the
@@ -23,11 +24,18 @@ import type {
   GSplatsViewState,
   LoadedGSplatsData,
 } from '../../../types/gsplats';
+import type {
+  LoadedMeshData,
+  MeshDataLoader,
+  MeshMetadata,
+  MeshViewState,
+} from '../../../types/mesh';
 import type { UpdateSession } from '../../../profiling/update-profiler';
 import type { DerivedNodeViewState, DeriveOpts } from '../view-state/derive-node-view-state';
 import type { StagedLinesCommit } from '../process/data-processor-lines';
 import type { StagedPointsCommit } from '../process/data-processor-points';
 import type { StagedGSplatsCommit } from '../process/data-processor-gsplats';
+import type { StagedMeshCommit } from '../process/data-processor-mesh';
 
 export interface NodeBuildCtx {
   /** Shared loader bookkeeping (registration + failure recording). */
@@ -72,7 +80,7 @@ export interface NodeBuildCtx {
   /** Wire a loader to the data-loading monitor when one is connected. */
   connectLoaderToMonitor(
     path: string,
-    loader: DataLoader | LinesDataLoader | GSplatsDataLoader
+    loader: DataLoader | LinesDataLoader | GSplatsDataLoader | MeshDataLoader
   ): void;
   /**
    * Kick the progressive refinement orchestrator if no update holds the
@@ -149,6 +157,22 @@ export interface NodeBuildCtx {
   ): Promise<StagedGSplatsCommit | null>;
   commitGSplatsGeometry(
     staged: StagedGSplatsCommit,
+    session?: UpdateSession,
+    loadedViewVersion?: number
+  ): void;
+  /**
+   * Project + stage a loaded mesh. Async only because backend selection is; there
+   * is no worker RPC to decline, so unlike the lines/gsplats processors this one
+   * never resolves to `null` and callers need no staged null-check.
+   */
+  processMeshData(
+    path: string,
+    data: LoadedMeshData,
+    viewState: MeshViewState,
+    attrs: Pick<MeshMetadata, 'normal_dims' | 'double_sided' | 'extend_to_all'>
+  ): Promise<StagedMeshCommit>;
+  commitMeshGeometry(
+    staged: StagedMeshCommit,
     session?: UpdateSession,
     loadedViewVersion?: number
   ): void;

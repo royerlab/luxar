@@ -1100,7 +1100,7 @@ Files:
 
 | Concern | File |
 |---|---|
-| Loader | `data/mesh/mesh-loader.ts` |
+| Loader | `data/mesh/mesh-whole-node-loader.ts` |
 | Node load | `data/scene-loader/nodes/load-mesh-node.ts` |
 | Projection/process | `data/scene-loader/process/data-processor-mesh.ts` |
 | Commit | `data/scene-loader/commit/commit-mesh-geometry.ts` |

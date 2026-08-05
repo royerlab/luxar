@@ -47,12 +47,25 @@ describe('MESH_DECODE_BUDGET_BYTES', () => {
   });
 
   it('is the binding constraint in practice, not the vertex cap', () => {
-    // Worth pinning because it is counter-intuitive: the cap is 134.2M vertices,
-    // but a 3D float32 mesh runs out of BUDGET at ~44.7M. So a legitimately
-    // growing mesh always hits the budget first, and the cap exists for hostile
-    // or nonsensical declarations (where it gives the accurate diagnosis) rather
-    // than for real ones.
-    const maxVerticesFrom3DFloat32Budget = Math.floor(MESH_DECODE_BUDGET_BYTES / (3 * 4));
+    // Worth pinning because it is counter-intuitive: the cap is 134.2M vertices, but a
+    // 3D float32 mesh runs out of BUDGET at ~22.4M. So a legitimately growing mesh
+    // always hits the budget first, and the cap exists for hostile or nonsensical
+    // declarations (where it gives the accurate diagnosis) rather than for real ones.
+    //
+    // The divisor is `3 * 4 * 2`, not `3 * 4`: a float32 vertex costs 4 bytes STORED
+    // and 4 more DECODED, and the budget charges both. This test previously used the
+    // stored-only form, which overstated the reachable vertex count by exactly 2x —
+    // and it kept passing, because any figure below 134.2M satisfies the assertion.
+    // The empirical boundary is pinned in `budget-boundary.test.ts`; this one only
+    // has to establish which of the two gates binds.
+    const bytesPerVertex3DFloat32 = 3 * 4 * 2;
+    const maxVerticesFrom3DFloat32Budget = Math.floor(
+      MESH_DECODE_BUDGET_BYTES / bytesPerVertex3DFloat32
+    );
     expect(maxVerticesFrom3DFloat32Budget).toBeLessThan(MAX_MESH_VERTICES);
+    // Pin the magnitude too, so a future budget change that flips which gate binds is
+    // a failure here rather than a silently stale comment.
+    expect(maxVerticesFrom3DFloat32Budget).toBeGreaterThan(20_000_000);
+    expect(maxVerticesFrom3DFloat32Budget).toBeLessThan(25_000_000);
   });
 });

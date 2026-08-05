@@ -28,7 +28,7 @@ const NOOP_SESSION: UpdateSession = {
  */
 export async function runLoaderUpdates<TLoader, TStaged>(
   loaders: Map<string, TLoader>,
-  loaderType: 'Points' | 'Lines' | 'GSplats',
+  loaderType: 'Points' | 'Lines' | 'GSplats' | 'Mesh',
   updateFn: (path: string, loader: TLoader, session: UpdateSession) => Promise<TStaged | null>,
   ctx: {
     profiler: UpdateProfiler | null;

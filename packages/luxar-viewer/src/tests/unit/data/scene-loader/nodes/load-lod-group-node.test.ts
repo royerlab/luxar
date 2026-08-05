@@ -222,6 +222,8 @@ function makeCtx(registry?: LODGroupRegistry): NodeBuildCtx {
     processPointsData,
     commitPointsGeometry: vi.fn(),
     commitGSplatsGeometry: vi.fn(),
+    processMeshData: vi.fn(),
+    commitMeshGeometry: vi.fn(),
   };
 }
 

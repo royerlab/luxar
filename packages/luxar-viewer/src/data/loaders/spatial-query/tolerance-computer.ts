@@ -2,15 +2,19 @@
  * Canonical tolerance computer used by all geometry-specific spatial-index loaders.
  *
  * Each geometry type has slightly different requirements for hidden (non-displayed)
- * dimensions. Discrete dims share ONE rule across all three geometries
+ * dimensions. Discrete dims share ONE rule across the three *query-path* geometries
  * ({@link discreteDimTolerance}); only the spatial/continuous branch differs:
  * - **Points**: `maxRadius` for spatial dims (selected via the `spatialExtendDims`
  *   option, the per-dimension flag array carried by `EffectiveRadiusConfig`).
  * - **Lines**: 0 for spatial dims (segment bounding boxes already include line
  *   width extent).
  * - **GSplats**: `step × gsplatsDefaultTolerance` (default 3σ) for continuous dims.
+ * - **Mesh**: `step × meshSlabTolerance` (default one cell) for continuous dims,
+ *   and the half-cell MEMBERSHIP rule for discrete ones — the only type that does
+ *   not use the quarter-cell query reach. See the mesh note below; it is the one
+ *   arm where copying a neighbour silently renders nothing.
  *
- * Discrete dims (all geometries): a "quarter-cell" `0.25 × step` for the QUERY
+ * Discrete dims (the query-path geometries): a "quarter-cell" `0.25 × step` for the QUERY
  * role (chunk-fetch reach). This is deliberately `< 0.5 × step`: a query on
  * category `k` must not reach the `k±1` cell even though chunk bounds are
  * padded on the write side (see `io/ordering.py` barrier padding). The two
@@ -24,8 +28,36 @@
  *
  * Displayed dimensions always get infinite tolerance (1e10) regardless of type.
  *
- * Called from `SpatialQueryBuilder` (geometry-aware QUERY path) and from
- * `data-processor-lines.ts` (lines projection clipping, MEMBERSHIP role).
+ * Called from `SpatialQueryBuilder` (geometry-aware QUERY path), from
+ * `data-processor-lines.ts` (lines projection clipping, MEMBERSHIP role), and from
+ * `data-processor-mesh.ts` (mesh slab membership — always the MEMBERSHIP role).
+ *
+ * ## Mesh cannot reuse any of the other three rules
+ *
+ * Every existing strategy is derived from that type's **per-element extent**, and
+ * a mesh has none: a triangle's extent comes from its own three vertices
+ * (`docs/specs/MESH_NODE_SPEC.md` §2.2). Both halves of the mesh arm are therefore
+ * chosen rather than inherited, and each has a specific failure mode if copied:
+ *
+ * - **Not Lines' `0` for spatial dims.** Lines get away with zero because segment
+ *   clipping *interpolates through* the slab — a segment crossing the slice yields
+ *   an intersection even at zero thickness. Mesh culls whole triangles with no
+ *   interpolation, so a tolerance of `0` reduces membership to **exact float
+ *   equality with the slice plane** and the node renders **nothing**. This is the
+ *   single most tempting wrong answer here, because Lines is the nearest structural
+ *   sibling.
+ * - **Not the quarter-cell query reach for discrete dims.** Mesh's slab test is a
+ *   MEMBERSHIP gate applied after fetch (the node is whole-node resident, §7), not
+ *   a chunk-fetch reach, so it wants the half-cell — exactly like the lines
+ *   clipping slab. The `'query'` default is deliberately `< 0.5 × step` and would
+ *   drop on-grid geometry.
+ *
+ * Be honest about what the continuous arm means: with per-vertex cull there is no
+ * such thing as a true planar cut, so a continuous hidden spatial dimension renders
+ * a **thick slab** ("the surface near this slice"), and the slab thickness is the
+ * only control. A mesh whose hidden dims are continuous and spatial is a poor fit
+ * for this node type until exact nD clipping exists (§9). The dominant real case is
+ * discrete — a mesh's hidden dimensions are almost always time or channel.
  *
  * @module data/tolerance-computer
  */
@@ -56,6 +88,20 @@ export interface ToleranceOptions {
    * @default 3.0
    */
   gsplatsDefaultTolerance?: number;
+
+  /**
+   * Slab thickness multiplier for mesh hidden CONTINUOUS dimensions, in cells.
+   * Tolerance = `step * meshSlabTolerance`.
+   *
+   * The mesh sibling of {@link gsplatsDefaultTolerance}, but it means something
+   * different: a gsplat's `3.0` captures 3σ of a real per-element extent, whereas
+   * a mesh has no extent, so this number *invents* a slab thickness. One cell is
+   * the neutral choice — it admits a triangle whose vertices straddle the slice by
+   * up to a voxel. It must never be `0`: see the module docstring.
+   *
+   * @default 1.0
+   */
+  meshSlabTolerance?: number;
 
   /**
    * Flags per dimension indicating whether it is spatial (true) or discrete (false).
@@ -199,6 +245,8 @@ function computeHiddenDimTolerance(
       return computeLinesHiddenTolerance(dimInfo, options);
     case 'gsplats':
       return computeGSplatsHiddenTolerance(dimInfo, options);
+    case 'mesh':
+      return computeMeshHiddenTolerance(dimInfo, options);
   }
 }
 
@@ -271,4 +319,34 @@ function computeGSplatsHiddenTolerance(
     return dimInfo.step * defaultTol;
   }
   return defaultTol;
+}
+
+/**
+ * Mesh hidden dimension tolerance.
+ *
+ * Discrete dims get the **half-cell membership** rule, not the quarter-cell query
+ * reach the other three default to: a mesh is whole-node resident, so this slab is
+ * a per-element visibility gate applied after fetch, exactly like the lines
+ * projection-clipping slab. This is the dominant real case — a mesh's hidden
+ * dimensions are almost always time or channel.
+ *
+ * Continuous dims get `step × meshSlabTolerance` (default one cell). Emphatically
+ * **not** Lines' `0`, which would reduce whole-triangle membership to exact float
+ * equality with the slice plane and render nothing. See the module docstring.
+ *
+ * Unlike its three siblings this function ignores `options.discreteRole`. There is
+ * no query role to serve: mesh has no spatial index and issues no range query, so
+ * the membership rule is the only rule it has. Honouring a `'query'` role here
+ * would mean quietly returning a fetch reach to the one caller that is asking about
+ * visibility.
+ */
+function computeMeshHiddenTolerance(
+  dimInfo: DimensionInfo | undefined,
+  options: ToleranceOptions
+): number {
+  if (dimInfo?.discrete) {
+    return discreteDimMembershipTolerance(dimInfo);
+  }
+  const slabCells = options.meshSlabTolerance ?? 1.0;
+  return dimInfo?.step ? dimInfo.step * slabCells : slabCells;
 }

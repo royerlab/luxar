@@ -42,8 +42,8 @@ export type GeometryTypeName = 'points' | 'lines' | 'gsplats' | 'mesh';
 //     not the vocabulary — key dispatch tables on this, not on
 //     GeometryTypeName, so a not-yet-drawable type cannot resolve to no
 //     loader. See contract.yaml::loader_types. ---
-export const LOADER_TYPES: readonly LoaderTypeName[] = ['points', 'lines', 'gsplats'];
-export type LoaderTypeName = 'points' | 'lines' | 'gsplats';
+export const LOADER_TYPES: readonly LoaderTypeName[] = ['points', 'lines', 'gsplats', 'mesh'];
+export type LoaderTypeName = 'points' | 'lines' | 'gsplats' | 'mesh';
 
 // --- specialized-group kinds ---
 export const NODE_KINDS: readonly NodeKind[] = ['lod', 'partition'];
