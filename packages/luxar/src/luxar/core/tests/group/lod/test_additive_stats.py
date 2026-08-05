@@ -95,6 +95,16 @@ class TestAdditiveLevelStatsFunction:
         for s in per_level:
             assert "energy_fraction_cum" not in s
 
+    def test_negative_inf_total_stamps_no_energy(self) -> None:
+        # -Inf falls to the positivity check rather than the explicit +Inf
+        # one; pin it separately so neither half of the guard can regress.
+        per_level, ref, parent = self._stats([1.0, float("-inf")], [5, 7], **self._KW)
+
+        assert ref is None
+        assert "reference_energy" not in parent
+        for s in per_level:
+            assert "energy_fraction_cum" not in s
+
     def test_single_level_ladder_fraction_is_one(self) -> None:
         # A lone level owns all the energy, so its cumulative fraction is 1.0.
         per_level, ref, parent = self._stats([5.0], [7], **self._KW)
