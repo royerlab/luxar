@@ -288,15 +288,28 @@ all three fixture nodes committing with identical triangle/vertex counts and ide
 shader variants, and **pixel-identical output** — 105,822 lit pixels on both backends,
 mean lit channel differing by 0.14%.
 
-One claim is deliberately NOT upgraded to "verified", and the reason is more useful
-than the claim would have been. Removing the forced viewer-facing `z >= 0` flip from
-the TSL derivative normal produced byte-identical pixels, so the A/B cannot see it —
-because the fixture's only flat-shaded node is nearly EDGE-ON, where `N.z ≈ 0` and
-flipping the sign of ~0 leaves `wrap = 0.5` unchanged. The metric is structurally
-blind, not the code correct-by-luck. Closing it needs one fixture change — a
-flat-shaded quad FACING the camera, which the parity harness already has and only
-`forceWebGL` keeps off the WGSL path — rather than more probing. Recorded in the spec's
-phase table with that next step spelled out.
+It also **corrected an overstatement of our own**, which is the more useful half. The
+§6.2 notes claimed an unforced derivative normal "would collapse to `uAmbient`
+everywhere on WebGPU". That is a spec-derived RISK, not an observed behaviour. The
+fixture gained a `flat_facing` node — a flat-shaded quad FACE-ON, where `N.z ≈ ±1` makes
+the sign flip the difference between full brightness and the ambient floor — and with
+the `z >= 0` flip REMOVED, real WebGPU still renders it identically to WebGL.
+
+The metric is demonstrably sensitive rather than blind: a control run with every mesh
+hidden drops from 93,851 lit pixels to 56,700, so the quad contributes 37,151 and lifts
+the mean lit channel from 40 to 116. (The original edge-on `flat_patch` could not have
+shown this either way — `N.z ≈ 0` there, and flipping the sign of ~0 leaves
+`wrap = 0.5` unchanged. That is precisely why the fixture needed a face-on node.)
+
+So: on Chrome + Apple Silicon the two derivative conventions **coincide** and the flip
+is inert. It stays, because it costs one instruction, is correct under either
+convention, and neither shading-language spec promises they agree — insurance, not a fix
+for an observed bug. The shader comments, the `rendering/` README and the spec now say
+exactly that instead of asserting a failure nobody has seen.
+
+Still arguments rather than measurements: the provoking-vertex convention and the
+surface-depth value, both because reading the pick buffer's ids and depth from outside
+the app is not cheaply reachable.
 
 #### Demos — the biodiversity globe is `opaque`, so it stops painting over its own data (#1227)
 

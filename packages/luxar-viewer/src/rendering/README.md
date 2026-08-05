@@ -320,7 +320,12 @@ _to_ GLSL):
 
 - `cross(dFdx(P), dFdy(P))` carries the sign of the fragment-space y axis, and GLSL's
   `dFdy` is bottom-up where WGSL's `dpdy` is top-down. The derivative normal is
-  therefore **forced** viewer-facing (`z >= 0`) rather than assumed to be.
+  therefore **forced** viewer-facing (`z >= 0`), which makes it convention-independent.
+  Measured, so this is not overstated: on Chrome + Apple Silicon a real-WebGPU A/B with
+  the flip REMOVED renders a face-on flat quad identically to WebGL, so the conventions
+  coincide there and the flip is currently inert on that platform. Kept because it costs
+  one instruction, is correct under either convention, and neither spec promises they
+  agree — insurance, not a fix for an observed bug.
 - Three's `transformNormalToView` normalizes internally, and the writer accepts
   zero-length normals with a warning (degenerate triangles legitimately produce them) —
   `normalize(vec3(0))` is NaN, which then interpolates across every triangle touching
