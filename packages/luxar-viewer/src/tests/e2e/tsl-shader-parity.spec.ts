@@ -1692,6 +1692,117 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     assertCrossingBandCentered(tslResult.pixels, 'line-pick-crossing-reversed TSL');
   });
 
+  // ---------------------------------------------------------------------------
+  // Mesh — the first SHADED geometry type (MESH_NODE_SPEC.md §6.2).
+  //
+  // Parity here covers more than the usual GOG/emission chain: the shade term reads
+  // a NORMAL, and the two ways of obtaining one are the two ways the backends can
+  // diverge. The stored-normal path depends on the view-space transform and the
+  // `gl_FrontFacing` flip; the derivative path depends on the sign of
+  // `cross(dFdx, dFdy)`, which is convention-dependent (GLSL's fragment y is
+  // bottom-up, WGSL's is top-down) and therefore FORCED viewer-facing in both
+  // shaders rather than assumed.
+  //
+  // Note the limit of this harness: it drives `WebGPURenderer({ forceWebGL: true })`,
+  // so the TSL side is compiled to GLSL. That catches graph-shape and math
+  // divergence — the whole point — but NOT a WGSL-only convention difference. The
+  // sign forcing above is what makes that untested axis safe by construction rather
+  // than by luck.
+  for (const variant of ['mesh', 'mesh-additive', 'mesh-max', 'mesh-colormap'] as const) {
+    test(`${variant}: shaded surface parity across backends`, async ({ page }) => {
+      await bootHarness(page);
+
+      const glslPixels = await runGLSL(page, variant);
+      const tslResult = await runTSL(page, variant);
+
+      assertBothRendered(glslPixels, tslResult.pixels, variant);
+      const diff = meanAbsDiff(glslPixels, tslResult.pixels);
+      const samplePx = (px: number[], x: number, y: number) =>
+        `${px[(y * 64 + x) * 4]},${px[(y * 64 + x) * 4 + 1]},${px[(y * 64 + x) * 4 + 2]},${px[(y * 64 + x) * 4 + 3]}`;
+      const samples = [
+        [32, 32],
+        [8, 8],
+        [56, 56],
+      ]
+        .map(
+          ([x, y]) =>
+            `  (${x},${y}) GLSL=${samplePx(glslPixels, x, y)} TSL=${samplePx(tslResult.pixels, x, y)}`
+        )
+        .join('\n');
+      expect(
+        diff,
+        `${variant} parity: mean abs diff ${diff.toFixed(2)} on 0-255 scale.\nSamples:\n${samples}`
+      ).toBeLessThan(2.0);
+    });
+  }
+
+  test('mesh-flat-normal: the derivative variant is lit, and DIFFERS from the smooth one', async ({
+    page,
+  }) => {
+    await bootHarness(page);
+
+    const flatGLSL = await runGLSL(page, 'mesh-flat-normal');
+    const flatTSL = await runTSL(page, 'mesh-flat-normal');
+    const smoothGLSL = await runGLSL(page, 'mesh');
+
+    assertBothRendered(flatGLSL, flatTSL.pixels, 'mesh-flat-normal');
+    expect(
+      meanAbsDiff(flatGLSL, flatTSL.pixels),
+      'mesh-flat-normal: cross-backend parity'
+    ).toBeLessThan(2.0);
+
+    // (1) LIT, not collapsed to `uAmbient`. This is the assertion that catches a
+    // derivative normal pointing AWAY from the camera: with V = +z_view, a
+    // back-pointing normal drives the wrap term to 0 and every fragment shades at
+    // the ambient floor (0.25 of the base colour). The fixture's quad faces the
+    // camera head-on, so a correct flat build shades at ~1.0.
+    const litMean = (px: number[]): number => {
+      let sum = 0;
+      let n = 0;
+      for (let i = 0; i < px.length; i += 4) {
+        if (px[i + 3] > 0) {
+          sum += Math.max(px[i], px[i + 1], px[i + 2]);
+          n++;
+        }
+      }
+      return n > 0 ? sum / n : 0;
+    };
+    const flatBrightness = litMean(flatGLSL);
+    expect(
+      flatBrightness,
+      `flat variant collapsed toward the ambient floor (mean lit channel ${flatBrightness.toFixed(1)}) — ` +
+        'the derivative normal is facing away from the camera'
+    ).toBeGreaterThan(120);
+
+    // (2) DIFFERENT from the smooth variant. The fixture's stored normals fan
+    // outward while its geometric normal is uniformly +z, so a build that ignored
+    // `shading` and always shaded from derivatives would render these two
+    // identically — this is the anti-vacuity guard for the whole variant mechanism.
+    expect(
+      meanAbsDiff(flatGLSL, smoothGLSL),
+      'flat and smooth rendered identically — the shading variant is not reaching the shader'
+    ).toBeGreaterThan(2.0);
+  });
+
+  test('mesh-rgb: a size-3 colour attribute still renders, with alpha defaulting to 1.0', async ({
+    page,
+  }) => {
+    await bootHarness(page);
+
+    const glslPixels = await runGLSL(page, 'mesh-rgb');
+    const tslResult = await runTSL(page, 'mesh-rgb');
+
+    // The assertion that matters is simply that anything drew AT ALL. The shader
+    // reads `color` as a vec4 whatever the attribute's width, relying on the
+    // graphics API to fill a size-3 attribute's missing components with (0, 0, 0, 1)
+    // — and under the `opaque` cutout a `w` that defaulted to 0 instead would fail
+    // `a < uAlphaCutoff` on every fragment and the surface would silently vanish.
+    // That is the whole "1.0 for RGB data" contract the sibling shaders document,
+    // obtained here from the attribute default rather than a CPU-side pad.
+    assertBothRendered(glslPixels, tslResult.pixels, 'mesh-rgb');
+    expect(meanAbsDiff(glslPixels, tslResult.pixels), 'mesh-rgb: parity').toBeLessThan(2.0);
+  });
+
   test('mega with USE_VIGNETTE matches across backends', async ({ page }) => {
     await bootHarness(page);
 

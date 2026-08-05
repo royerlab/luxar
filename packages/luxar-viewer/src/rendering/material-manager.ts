@@ -10,9 +10,11 @@ import * as THREE from 'three';
 import { PointMaterial } from './materials/point/material-glsl';
 import { LineMaterial } from './materials/line/material-glsl';
 import { GSplatMaterial } from './materials/gsplat/material-glsl';
+import { MeshMaterial } from './materials/mesh/material-glsl';
 import { PointTSLMaterial } from './materials/point/material-tsl';
 import { LineTSLMaterial } from './materials/line/material-tsl';
 import { GSplatTSLMaterial } from './materials/gsplat/material-tsl';
+import { MeshTSLMaterial } from './materials/mesh/material-tsl';
 import type { PointPickingMaterial } from './picking/point/material';
 import type { LinePickingMaterial } from './picking/line/material';
 import type { GSplatPickingMaterial } from './picking/gsplat/material';
@@ -25,7 +27,10 @@ import type { PointPickingMaterialConfig } from './picking/point/material';
 import type { LinePickingMaterialConfig } from './picking/line/material';
 import type { GSplatPickingMaterialConfig } from './picking/gsplat/material';
 import type { MegaShaderConfig } from './post-processing/mega/material';
-import type { CameraAwareMaterial } from './materials/_shared/camera-aware-material';
+import {
+  isCameraAwareMaterial,
+  type CameraAwareMaterial,
+} from './materials/_shared/camera-aware-material';
 import type { RendererCapabilities } from './renderer-capabilities';
 import { log, Modules } from '../utils/log';
 import {
@@ -37,6 +42,7 @@ import {
   type PointMaterialProperties,
   type LineMaterialProperties,
   type GSplatMaterialProperties,
+  type MeshMaterialProperties,
   type MaterialBackend,
 } from './material-manager/factories';
 import {
@@ -60,6 +66,7 @@ export {
   type PointMaterialProperties,
   type LineMaterialProperties,
   type GSplatMaterialProperties,
+  type MeshMaterialProperties,
   type MaterialBackend,
 };
 
@@ -75,6 +82,13 @@ export {
 export type LuxarPointMaterial = PointMaterial | PointTSLMaterial;
 export type LuxarLineMaterial = LineMaterial | LineTSLMaterial;
 export type LuxarGSplatMaterial = GSplatMaterial | GSplatTSLMaterial;
+/**
+ * Same union shape as its three siblings, with one member of the shared surface
+ * absent on purpose: no `updateCameraParams`. A mesh has no screen-space size to
+ * recompute, so it is not camera-aware and does not join the camera broadcast — see
+ * `LifecycleCtx.staticMaterials`.
+ */
+export type LuxarMeshMaterial = MeshMaterial | MeshTSLMaterial;
 
 /**
  * Per-geometry-type picking material returned by
@@ -131,14 +145,29 @@ export class MaterialManager {
   private createCount = 0;
   /**
    * Materials that entered through `register()` rather than a manager
-   * factory (per-node point/line/gsplat materials live in
-   * `registeredMaterials` only).
+   * factory (per-node point/line/gsplat/mesh materials live in
+   * `registeredMaterials` / `staticMaterials` only).
    *
-   * Examples: GPU-picking materials and colormap clones. These still
-   * need global camera uniforms and manager-level disposal, but they
-   * are tracked separately for leak diagnostics.
+   * Examples: GPU-picking materials and colormap clones. These need
+   * manager-level disposal — and global camera uniforms when they are
+   * camera-aware — but are tracked separately for leak diagnostics.
+   *
+   * Typed as plain `THREE.Material` because `register()` accepts one: a
+   * non-camera-aware entry (a mesh colormap clone) belongs in the leak
+   * diagnostic exactly as much as a camera-aware one, so this set must
+   * span both rather than silently omitting half of them.
    */
-  private ownedMaterials = new Set<THREE.Material & CameraAwareMaterial>();
+  private ownedMaterials = new Set<THREE.Material>();
+  /**
+   * Per-node materials that are tracked for disposal but take NO camera broadcast.
+   *
+   * Mesh materials only, and structurally so: a mesh draws real geometry, so it has
+   * no screen-space extent to recompute from fov/resolution and therefore no
+   * `updateCameraParams`. Adding an empty one just to fit `registeredMaterials`
+   * would be a lie that also costs a per-frame call per node — see
+   * {@link LifecycleCtx.staticMaterials}.
+   */
+  private staticMaterials = new Set<THREE.Material>();
   private currentFov = (60 * Math.PI) / 180; // Current FOV in radians (or frustumHeight for ortho)
   private currentResolution = new THREE.Vector2(1920, 1080); // Use reasonable default
   private currentIsOrtho = false;
@@ -153,6 +182,7 @@ export class MaterialManager {
     return {
       registeredMaterials: this.registeredMaterials,
       ownedMaterials: this.ownedMaterials,
+      staticMaterials: this.staticMaterials,
       subscribedMaterials: this.subscribedMaterials,
     };
   }
@@ -312,6 +342,54 @@ export class MaterialManager {
   }
 
   /**
+   * Create a mesh material — PER NODE, no LRU cache.
+   *
+   * Per node for a different reason than its three siblings: they carry the node's
+   * own element texture, so sharing would rebind one node's data onto another's
+   * mesh. A mesh material holds no per-node texture at all — but it does hold two
+   * pieces of per-node state that make sharing wrong anyway: the `flatNormal`
+   * compile-time variant (a function of that node's `shading` and its normals'
+   * validity for the active view) and `side` (re-applied per epoch by
+   * `applyMeshSide`). Sharing would let one node's shading model and face-sidedness
+   * follow another's.
+   *
+   * Deliberately does NOT enter `registeredMaterials`: a mesh has no screen-space
+   * size, so it has no `updateCameraParams` to broadcast to. It is tracked in
+   * `staticMaterials` instead, which keeps disposal and the stats counters honest
+   * without a per-frame no-op call per node. There is no fourth empty
+   * `meshMaterialCache` either — the three vestigial maps exist only to keep
+   * `getCacheStats()`'s historical shape, and adding to them would be inventing a
+   * cache that never existed.
+   *
+   * Dispatches to `MeshTSLMaterial` when the active renderer reports
+   * `caps.apiSurface === 'webgpu'`, otherwise the GLSL `MeshMaterial`.
+   */
+  getMeshMaterial(props: MeshMaterialProperties): LuxarMeshMaterial {
+    const backend = resolveMaterialBackend(this.caps);
+
+    const createStart = performance.now();
+    const material = new VISUAL_FACTORIES.mesh[backend]({
+      opacity: props.opacity,
+      gamma: props.gamma,
+      intensity: props.intensity,
+      offset: props.offset,
+      blendingMode: props.blendingMode,
+      flatNormal: props.flatNormal,
+      ambient: props.ambient,
+      shadeExponent: props.shadeExponent,
+      alphaCutoff: props.alphaCutoff,
+    });
+    this.totalCreateMs += performance.now() - createStart;
+    this.createCount++;
+
+    this.staticMaterials.add(material);
+    subscribeToDispose(material, this.lifecycleCtx);
+
+    log.info(Modules.RENDERER, `Created per-node mesh material (${backend})`);
+    return material;
+  }
+
+  /**
    * Create a per-mesh point picking material, dispatching on
    * `caps.apiSurface`. The returned material is NOT cached — picking
    * materials have per-mesh lifetimes; the NodeFactory disposes
@@ -360,16 +438,34 @@ export class MaterialManager {
   }
 
   /**
-   * Register a material for global camera parameter updates.
+   * Register a material the manager did not construct, for lifecycle tracking and —
+   * where applicable — global camera-parameter updates.
    *
-   * Use this for non-cached materials such as per-node colormap clones and
-   * picking materials. Cached materials are registered internally by
-   * getPointMaterial()/getLineMaterial()/getGSplatMaterial().
+   * Use this for non-cached materials such as per-node colormap clones and picking
+   * materials. Materials from the four `getXMaterial` factories register themselves.
+   *
+   * Takes a plain `THREE.Material` and DISPATCHES on the capability rather than
+   * demanding it, which is the same `isCameraAwareMaterial` pattern the picking
+   * system already uses. A camera-aware material joins the broadcast registry and
+   * receives the current camera state immediately; one without a screen-space extent
+   * (a mesh material, whose size IS its geometry) is tracked for disposal only.
+   *
+   * Dispatching here rather than at the call site is deliberate: it leaves ONE public
+   * entry point that cannot be called wrongly. Requiring `& CameraAwareMaterial`
+   * instead pushed the problem outward — the layers panel's `LuxarMaterial` had to
+   * claim a method it never calls just to satisfy this signature, which made a
+   * perfectly valid non-camera-aware leaf material unrepresentable in the panel.
    */
-  register(material: THREE.Material & CameraAwareMaterial): void {
+  register(material: THREE.Material): void {
+    subscribeToDispose(material, this.lifecycleCtx);
+    if (!isCameraAwareMaterial(material)) {
+      // No screen-space size to recompute — see `staticMaterials`.
+      this.staticMaterials.add(material);
+      this.ownedMaterials.add(material);
+      return;
+    }
     this.registeredMaterials.add(material);
     this.ownedMaterials.add(material);
-    subscribeToDispose(material, this.lifecycleCtx);
     material.updateCameraParams(
       this.currentFov,
       this.currentResolution,
@@ -379,13 +475,14 @@ export class MaterialManager {
   }
 
   /**
-   * Drop a material from the global registry without disposing the
-   * underlying GPU object. The picking-material classes use this in
-   * their custom `dispose()` paths so the manager stops broadcasting
-   * camera updates to the material before the caller disposes it
-   * directly.
+   * Drop a material from every registry without disposing the underlying GPU object.
+   * The picking-material classes use this in their custom `dispose()` paths so the
+   * manager stops broadcasting camera updates before the caller disposes it directly.
+   *
+   * Widened to `THREE.Material` alongside {@link register}, so anything that can be
+   * registered can be unregistered — the pair must accept the same set.
    */
-  unregister(material: THREE.Material & CameraAwareMaterial): void {
+  unregister(material: THREE.Material): void {
     removeFromRegistries(material, this.lifecycleCtx);
   }
 
@@ -394,9 +491,16 @@ export class MaterialManager {
     // Union of both registries so an ownedMaterials-only entry (e.g. a
     // register()-entered material) can't leak its GPU program at
     // teardown.
-    const materials = new Set([...this.registeredMaterials, ...this.ownedMaterials]);
+    const materials = new Set<THREE.Material>([
+      ...this.registeredMaterials,
+      ...this.ownedMaterials,
+      // Mesh materials live only here (no camera broadcast), so omitting this set
+      // would leak their GPU programs at teardown.
+      ...this.staticMaterials,
+    ]);
     this.registeredMaterials.clear();
     this.ownedMaterials.clear();
+    this.staticMaterials.clear();
     for (const material of materials) {
       material.dispose();
     }
@@ -434,6 +538,7 @@ export class MaterialManager {
     return buildCacheStats({
       ownedMaterials: this.ownedMaterials,
       registeredMaterials: this.registeredMaterials,
+      staticMaterials: this.staticMaterials,
       totalCreateMs: this.totalCreateMs,
       createCount: this.createCount,
     });

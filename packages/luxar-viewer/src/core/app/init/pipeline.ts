@@ -253,8 +253,12 @@ export async function runInitPipeline(
       // Register a fade's clone-on-first-use material so it keeps receiving
       // per-frame camera-uniform updates (an unregistered gsplat clone would
       // project with stale camera params).
-      registerMaterial: (material) =>
-        materialManager.register(material as Parameters<typeof materialManager.register>[0]),
+      // No cast: `register` takes a plain `THREE.Material` and dispatches on
+      // camera-awareness internally. The `as Parameters<typeof register>[0]` that used
+      // to sit here existed only to satisfy an `& CameraAwareMaterial` requirement the
+      // manager no longer imposes — and being self-referential, it would have silently
+      // accepted anything the parameter type later became.
+      registerMaterial: (material) => materialManager.register(material),
     });
   });
   // Wake the render loop after EVERY geometry commit (forwarded to each
