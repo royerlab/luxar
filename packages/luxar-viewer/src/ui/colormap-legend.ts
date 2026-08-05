@@ -11,7 +11,11 @@ import { UIComponent } from './overlay-widgets/ui-component';
 import type { LayerStateManager, LayerInfo } from './layers/layer-state';
 import { BUILTIN_COLORMAPS } from '../rendering/colormap-data';
 
+/**
+ * Construction options for {@link ColormapLegend}.
+ */
 export interface ColormapLegendConfig {
+  /** Source of the layer list, colormaps, ranges, and change notifications the legend reflects. */
   layerState: LayerStateManager;
 }
 
@@ -39,6 +43,13 @@ function drawColormapGradient(canvas: HTMLCanvasElement, colormapName: string): 
   }
 }
 
+/**
+ * Bottom-right overlay listing each visible layer's colormap gradient, name, and
+ * data range (toggled with the J key). Subscribes to the {@link LayerStateManager}
+ * and rebuilds its entries reactively, but only re-renders the DOM when the
+ * visible layers, their colormaps, or their data ranges (displayMin/displayMax)
+ * actually change (guarded by a cheap content hash over those fields).
+ */
 export class ColormapLegend extends UIComponent<ColormapLegendConfig> {
   // `declare` skips the implicit `= undefined` initializer. With
   // useDefineForClassFields=true, a regular field declaration would run
