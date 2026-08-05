@@ -381,6 +381,16 @@ export interface MeshUserData {
 
   /** Vertices that passed the nD slab test; diagnostic, not a draw bound */
   visibleVertexCount: number;
+
+  /**
+   * Marks the material as already node-owned, so the layers panel and the LOD
+   * cross-fade mutate it directly instead of cloning on first interaction.
+   *
+   * Always `true` for mesh, as for the other three types since their materials went
+   * per node: a mesh material carries the node's own shading variant and epoch
+   * `side`, so a shared one would let one node's appearance follow another's.
+   */
+  _layerMaterialCloned?: boolean;
 }
 
 /** Runtime guard for {@link MeshUserData}, mirroring `isPointsUserData`. */

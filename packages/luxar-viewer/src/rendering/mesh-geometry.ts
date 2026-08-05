@@ -60,6 +60,32 @@ export interface MeshGeometryConfig {
   colors: MeshColorArray | null;
   /** Channels per color entry when `colors` is present. */
   colorComponents?: 3 | 4;
+  /**
+   * Per-vertex normals (`vertexCount * 3`), or `null` when the node has none.
+   *
+   * Whether the `normal` attribute exists at all is decided ONCE, at creation, from
+   * this being non-null — see {@link createMeshGeometry}. The placeholder factory
+   * passes a 1-vertex stub when the node's metadata says `has_normals`, so a
+   * normal-bearing mesh binds the attribute before any data arrives and the first
+   * commit only replaces its contents.
+   *
+   * Always bound when the node HAS normals, even during epochs whose `displayDims`
+   * make them meaningless (§3.4). That is a deliberate trade: the alternative —
+   * unbinding on a frame change — would mutate a live geometry's attribute SET,
+   * which the WebGPU backend bakes into its render pipeline. The unused buffer costs
+   * `V * 12` bytes of VRAM; the shader variant is what actually stops reading it.
+   */
+  normals?: Float32Array | null;
+  /**
+   * Per-vertex scalars for the colormap path (`vertexCount`), or `null`/absent when
+   * the node has none. Bound as `aScalar`. Same creation-time set rule as `normals`.
+   *
+   * Already `float32` by the time it reaches here (the loader decodes to
+   * `Float32Array`), which is also the only itemSize-1 vertex format three r184 can
+   * bind on both backends: it has no format for a `Uint8Array` or a native
+   * `Float16Array` at itemSize 1 (§6.1.1).
+   */
+  scalars?: Float32Array | null;
   /** Vertices in the buffers (NOT the visible count — nothing is compacted). */
   vertexCount: number;
   /**
@@ -309,12 +335,11 @@ export function computeMeshBounds(
  * drawn geometry's attribute set is silently broken on the WebGPU backend, where
  * attribute identity is baked into the render pipeline.
  *
- * `normal` and `aScalar` are **not** bound in this phase. Nothing reads them yet —
- * the shading model and the scalar colormap path arrive with the material pair — and
- * binding an attribute with no consumer would mean deciding its WebGPU-safe dtype
- * before there is a shader to validate the choice against. They join the set at
- * creation time in that later phase, which is a new build rather than a runtime
- * mutation of a live geometry.
+ * `normal` and `aScalar` join the set here — never later — which is why the
+ * placeholder factory passes 1-vertex stubs for them whenever the node's METADATA
+ * says the arrays exist. Their presence is a per-node constant (`has_normals` /
+ * `has_scalars`), so the set stays fixed for the geometry's whole life even though
+ * whether the shader *reads* `normal` varies per `displayDims` epoch.
  */
 export function createMeshGeometry(input: MeshGeometryConfig): THREE.BufferGeometry {
   const geometry = new THREE.BufferGeometry();
@@ -328,6 +353,17 @@ export function createMeshGeometry(input: MeshGeometryConfig): THREE.BufferGeome
   // Stamped so `updateMeshGeometry` can tell authored colors from the placeholder
   // WITHOUT comparing counts — see its color guard for why counts alone fail.
   if (input.colors) geometry.userData.meshColorsInstalled = true;
+  if (input.normals) {
+    geometry.setAttribute('normal', new THREE.BufferAttribute(input.normals, 3, false));
+  }
+  if (input.scalars) {
+    geometry.setAttribute('aScalar', new THREE.BufferAttribute(input.scalars, 1, false));
+    // The scalar-presence stamp every geometry type uses, and the signal
+    // `supportsScalarColormap('mesh', …)` fails closed on. Deliberately the same
+    // mechanism as points/lines even though mesh binds a real attribute it could
+    // probe for: one rule means one way to be wrong.
+    geometry.userData.hasScalars = true;
+  }
   applyMeshIndices(geometry, input.indices, input.vertexCount, input.faceCount);
   if (input.bounds !== undefined) {
     computeMeshBounds(geometry, input.bounds);
@@ -337,6 +373,43 @@ export function createMeshGeometry(input: MeshGeometryConfig): THREE.BufferGeome
     geometry.computeBoundingSphere();
   }
   return geometry;
+}
+
+/**
+ * Bring one already-bound `float32` vertex attribute up to date, in place where
+ * possible.
+ *
+ * Shared by `normal` and `aScalar`, which have identical lifecycles: both are
+ * per-node-constant in EXISTENCE (decided at creation from the metadata) and
+ * uploaded-once in CONTENT (a slice move rebuilds only the index).
+ *
+ * Three cases, and the first two are the point of the helper:
+ * - the attribute is not bound → do nothing. The node has no such array; adding one
+ *   now would grow a live geometry's attribute set.
+ * - no data this epoch → do nothing. Keeps whatever is bound (the 1-vertex
+ *   placeholder stub, or the last real upload).
+ * - lengths agree → copy + flag for re-upload. Lengths differ → rebind, which is the
+ *   expected first commit (placeholder stub → real buffer) and reports
+ *   `attributesRebuilt` so the caller evicts three's cached WebGPU `RenderObject`.
+ *
+ * @returns `true` when a `setAttribute` rebind happened.
+ */
+function replaceVertexAttribute(
+  geometry: THREE.BufferGeometry,
+  name: 'normal' | 'aScalar',
+  data: Float32Array | null | undefined,
+  itemSize: 1 | 3,
+  vertexCount: number
+): boolean {
+  const existing = geometry.getAttribute(name) as THREE.BufferAttribute | undefined;
+  if (!existing || !data) return false;
+  if (existing.count === vertexCount && existing.array.length === data.length) {
+    if (existing.array !== data) (existing.array as Float32Array).set(data);
+    existing.needsUpdate = true;
+    return false;
+  }
+  geometry.setAttribute(name, new THREE.BufferAttribute(data, itemSize, false));
+  return true;
 }
 
 /**
@@ -461,6 +534,22 @@ export function updateMeshGeometry(
         : createMeshDefaultColorAttribute(input.vertexCount)
     );
     if (input.colors) geometry.userData.meshColorsInstalled = true;
+    attributesRebuilt = true;
+  }
+
+  // `normal` and `aScalar` follow the same install-once rule as `color`, with one
+  // difference that matters: they are only ever REPLACED, never added or removed.
+  // Whether each exists was fixed at creation from the node's metadata
+  // (`has_normals` / `has_scalars`), so a commit that finds the attribute absent
+  // must leave it absent — adding one here would grow a live geometry's attribute
+  // set, which the WebGPU backend bakes into its cached vertex layout at first draw
+  // and never rebuilds. Conversely a frame change that makes stored normals
+  // meaningless must NOT unbind them: the shader variant stops reading the
+  // attribute instead (§3.4, and `MeshGeometryConfig.normals`).
+  if (replaceVertexAttribute(geometry, 'normal', input.normals, 3, input.vertexCount)) {
+    attributesRebuilt = true;
+  }
+  if (replaceVertexAttribute(geometry, 'aScalar', input.scalars, 1, input.vertexCount)) {
     attributesRebuilt = true;
   }
 

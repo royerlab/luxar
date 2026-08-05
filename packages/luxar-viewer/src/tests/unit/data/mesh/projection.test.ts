@@ -13,6 +13,7 @@ import { TypeScriptFallback } from '../../../../wasm/typescript';
 import {
   projectMeshTo3D,
   resolveWinding,
+  storedNormalsUsable,
   noticeUndecidableWinding,
 } from '../../../../data/mesh/projection';
 import type { LoadedMeshData, MeshViewState } from '../../../../types/mesh';
@@ -895,5 +896,72 @@ describe('noticeUndecidableWinding', () => {
     noticeUndecidableWinding('/a', 'reason', seen);
     noticeUndecidableWinding('/b', 'reason', seen);
     expect(Array.from(seen)).toEqual(['/a', '/b']);
+  });
+});
+
+describe('storedNormalsUsable — ORDERED equality, unlike resolveWinding', () => {
+  it('accepts only an exact ordered match', () => {
+    expect(storedNormalsUsable([0, 1, 2], [0, 1, 2])).toBe(true);
+    expect(storedNormalsUsable([1, 2, 3], [1, 2, 3])).toBe(true);
+  });
+
+  it('REJECTS a permutation of the same triple that resolveWinding calls decidable', () => {
+    // The whole reason this is a separate function. `resolveWinding` treats
+    // [1,0,2] and [0,1,2] as the SAME winding frame — a uniform reflection every
+    // triangle shares, fixable by one index swap. A normal is not uniform: its three
+    // components are positionally bound to normal_dims, so the same permutation swaps
+    // x and y in every stored normal and tilts the entire shade field. Nothing in the
+    // stored data records that, and re-deriving it needs the (V, D, 3) full frame the
+    // spec rejected for v1 — so §3.4 requires exact ordered equality.
+    expect(storedNormalsUsable([1, 0, 2], [0, 1, 2])).toBe(false);
+    // ...while winding still considers that epoch decidable (a reversal fixes it),
+    // which is precisely the divergence a single shared helper would have erased.
+    expect(resolveWinding([1, 0, 2], [0, 1, 2], false).side).toBe('front');
+    expect(resolveWinding([1, 0, 2], [0, 1, 2], false).reverse).toBe(true);
+  });
+
+  it('rejects a DIFFERENT triple', () => {
+    expect(storedNormalsUsable([1, 2, 3], [0, 1, 2])).toBe(false);
+  });
+
+  it('rejects a mesh with no stored normals, so one flag answers the whole rule', () => {
+    expect(storedNormalsUsable([0, 1, 2], undefined)).toBe(false);
+    expect(storedNormalsUsable([0, 1, 2], [0, 1])).toBe(false);
+  });
+
+  it('rejects a non-3D view — a normal frame needs three axes', () => {
+    expect(storedNormalsUsable([0, 1], [0, 1, 2])).toBe(false);
+  });
+});
+
+describe('projectMeshTo3D — storedNormalsUsable is reported per epoch', () => {
+  it('is threaded out on all three return paths', () => {
+    // Every path must carry it: the fast path (no hidden dims), the cull path, and
+    // the noPreimage early return. A path that forgot it would report `undefined`,
+    // which the commit reads as falsy and silently pins that node to flat shading.
+    const data = twoTrianglesIn4D();
+    const matching = viewState([0, 1, 2], [0, 0, 0, 0], [0, 0, 0, 0.5]);
+    expect(projectMeshTo3D(data, matching, [0, 1, 2], true, backend).storedNormalsUsable).toBe(
+      true
+    );
+    expect(projectMeshTo3D(data, matching, [1, 2, 3], true, backend).storedNormalsUsable).toBe(
+      false
+    );
+
+    const fast = oneTriangleIn3D();
+    const fastState = viewState([0, 1, 2], [0, 0, 0], [0, 0, 0]);
+    const fastResult = projectMeshTo3D(fast, fastState, [0, 1, 2], true, backend);
+    expect(fastResult.usedFastPath).toBe(true);
+    expect(fastResult.storedNormalsUsable).toBe(true);
+
+    const empty = projectMeshTo3D(
+      data,
+      { ...matching, noPreimage: true } as MeshViewState,
+      [0, 1, 2],
+      true,
+      backend
+    );
+    expect(empty.visibleFaceCount).toBe(0);
+    expect(empty.storedNormalsUsable).toBe(true);
   });
 });

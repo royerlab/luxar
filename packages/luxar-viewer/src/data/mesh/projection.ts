@@ -70,6 +70,20 @@ export interface ProjectedMeshData {
    */
   side: MeshSide;
 
+  /**
+   * Whether this epoch's displayed axes are the frame the stored normals were
+   * authored in — see {@link storedNormalsUsable}.
+   *
+   * Sits next to `side` because it is the same kind of quantity: a per-epoch
+   * consequence of `displayDims` that the material must be told about, not a
+   * property of the node. `side` decides which faces draw; this decides which
+   * normal the shade term reads.
+   *
+   * `false` on a node with no stored normals at all, so a consumer needs only this
+   * one flag (plus the view-independent `shading`) to pick the shader variant.
+   */
+  storedNormalsUsable: boolean;
+
   /** True when the cull was skipped because there are no hidden dimensions */
   usedFastPath: boolean;
 
@@ -210,6 +224,41 @@ export function resolveWinding(
 }
 
 /**
+ * Whether the stored per-vertex normals are meaningful for this epoch's displayed
+ * axes (spec §3.4).
+ *
+ * ## Why this is ORDERED equality, where {@link resolveWinding} uses set equality
+ *
+ * The two ask different questions of the same two triples, and conflating them
+ * would be a real bug in both directions.
+ *
+ * Winding asks *"can a uniform index reversal fix the projected orientation"*, which
+ * only needs the displayed axes to be the same SET as the frame — a permutation
+ * within that set reverses every triangle identically, so parity alone decides.
+ *
+ * A normal is a 3-vector whose components are positionally bound to
+ * `normal_dims[0..2]`. Reordering the displayed axes therefore permutes which
+ * component means which screen direction: `[0,1,2] → [1,0,2]` leaves the frame
+ * unchanged as a set while swapping x and y in every stored normal, tilting the
+ * whole shade field. Nothing in the stored data records that, and re-deriving it
+ * would mean permuting the normal columns per epoch — the `(V, D, 3)` full-frame
+ * design §3.4 explicitly rejected for v1. So the answer is the strict one the spec
+ * states: stored normals are used **iff `normal_dims` equals the active
+ * `displayDims`**, in order.
+ *
+ * The cost of being strict is bounded and correct: a mismatched epoch falls back to
+ * the screen-space-derivative flat normal, which is exactly right for the projected
+ * geometry — just faceted rather than smoothed.
+ */
+export function storedNormalsUsable(
+  displayDims: readonly number[],
+  normalDims: readonly number[] | undefined
+): boolean {
+  if (!normalDims || normalDims.length !== 3 || displayDims.length !== 3) return false;
+  return normalDims.every((d, i) => d === displayDims[i]);
+}
+
+/**
  * Whether mapping `frame` onto `order` is an odd permutation.
  *
  * Counts inversions rather than composing cycles: for three elements that is
@@ -341,6 +390,8 @@ export function projectMeshTo3D(
   }
 
   const winding = resolveWinding(displayDims, normalDims, doubleSided);
+  // Per-epoch, like `side`: which normal the shade term may read (spec §3.4).
+  const normalsUsable = storedNormalsUsable(displayDims, normalDims);
 
   // A discrete nd_transform maps this world slice to no local grid point on some
   // hidden dimension, so nothing in this node belongs to the slice. Mirror the
@@ -354,6 +405,7 @@ export function projectMeshTo3D(
       visibleFaceCount: 0,
       visibleVertexCount: 0,
       side: winding.side,
+      storedNormalsUsable: normalsUsable,
       usedFastPath: false,
       positionChanged,
       positionKey: displayDimsKey,
@@ -379,6 +431,7 @@ export function projectMeshTo3D(
       visibleFaceCount: faceCount,
       visibleVertexCount: vertexCount,
       side: winding.side,
+      storedNormalsUsable: normalsUsable,
       usedFastPath: true,
       positionChanged,
       positionKey: displayDimsKey,
@@ -431,6 +484,7 @@ export function projectMeshTo3D(
     visibleFaceCount,
     visibleVertexCount,
     side: winding.side,
+    storedNormalsUsable: normalsUsable,
     usedFastPath: false,
     positionChanged,
     positionKey: displayDimsKey,

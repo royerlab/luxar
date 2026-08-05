@@ -184,6 +184,19 @@ const SHADERS = [
   // distinct generated code no other variant pins.
   'gsplat-volumetric',
   'gsplat-colormap',
+  // Mesh — the five visual variants this phase ships (MESH_NODE_SPEC.md §6.4).
+  // `mesh` is the `opaque` DEFAULT (unlike the siblings, whose default is the
+  // alpha-weighted `additive`), so it pins the hard alpha-cutout emission;
+  // `mesh-additive` pins the alpha-weighted one the translucent modes share and
+  // `mesh-max` the premultiplied one. `mesh-flat-normal` is the derivative-shaded
+  // build, whose generated code must contain NEITHER the `normal` attribute nor its
+  // varying, and `mesh-colormap` the LUT path. `mesh-pick` arrives with the picking
+  // phase — mesh picking keys on `gl_VertexID` and needs its own material pair.
+  'mesh',
+  'mesh-additive',
+  'mesh-max',
+  'mesh-flat-normal',
+  'mesh-colormap',
 ] as const;
 
 test.describe('TSL → generated-shader snapshots', () => {

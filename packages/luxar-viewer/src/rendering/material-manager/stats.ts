@@ -17,6 +17,8 @@
 export interface StatsCtx {
   readonly ownedMaterials: Set<unknown>;
   readonly registeredMaterials: Set<unknown>;
+  /** Tracked-for-disposal materials that take no camera broadcast (mesh). */
+  readonly staticMaterials: Set<unknown>;
   readonly totalCreateMs: number;
   readonly createCount: number;
 }
@@ -25,7 +27,12 @@ export interface StatsCtx {
 export function getCacheStats(ctx: StatsCtx) {
   return {
     ownedMaterials: ctx.ownedMaterials.size,
-    totalRegistered: ctx.registeredMaterials.size,
+    /**
+     * Every material the manager is tracking, camera-aware or not — so a leak in
+     * mesh materials is as visible here as one in the other three types. Materials
+     * in `staticMaterials` are counted but never receive `updateCameraParams`.
+     */
+    totalRegistered: ctx.registeredMaterials.size + ctx.staticMaterials.size,
     /**
      * Cumulative wall-clock ms spent inside `new XMaterial(...)`
      * calls. Excludes WebGL program compilation, which happens lazily
