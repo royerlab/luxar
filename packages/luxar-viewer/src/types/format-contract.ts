@@ -9,20 +9,40 @@
  * half is luxar/src/luxar/typing_utils/_format_contract.py).
  */
 
-// --- scene (.luxar.zarr) format version ---
+/**
+ * Current `.luxar.zarr` scene format version — the version the Python writer emits and this build treats as current.
+ */
 export const SCENE_FORMAT_VERSION = '0.1';
+/**
+ * Scene format versions declared loadable by this build.
+ */
 export const SUPPORTED_SCENE_VERSIONS: readonly string[] = ['0.1', '0.2', '0.3'];
+/**
+ * Union of the supported scene format version strings.
+ */
 export type SceneFormatVersion = '0.1' | '0.2' | '0.3';
 
-// --- standalone gsplats (.gsplats.zarr) node-tree format version ---
+/**
+ * Current standalone `.gsplats.zarr` node-tree format version — the version the Python writer emits and this build treats as current.
+ */
 export const GSPLATS_FORMAT_VERSION = '3.3';
+/**
+ * Standalone gsplats node-tree format versions this build can load; the loader matches a store on-disk format_version against this allowlist.
+ */
 export const SUPPORTED_GSPLATS_FORMAT_VERSIONS: readonly string[] = ['3.0', '3.1', '3.2', '3.3'];
+/**
+ * Union of the supported standalone gsplats format version strings.
+ */
 export type GSplatsFormatVersion = '3.0' | '3.1' | '3.2' | '3.3';
 
-// --- root-header format_type identifying a standalone gsplats store ---
+/**
+ * Root-header `format_type` value identifying a standalone gsplats store.
+ */
 export const FORMAT_TYPE_GSPLATS = 'gsplats_zarr';
 
-// --- scene-graph node types ---
+/**
+ * All scene-graph node type names.
+ */
 export const NODE_TYPES: readonly NodeTypeName[] = [
   'scene',
   'group',
@@ -31,25 +51,44 @@ export const NODE_TYPES: readonly NodeTypeName[] = [
   'gsplats',
   'mesh',
 ];
+/**
+ * Union of the scene-graph node type names.
+ */
 export type NodeTypeName = 'scene' | 'group' | 'points' | 'lines' | 'gsplats' | 'mesh';
 
-// --- leaf geometry types (the element-bearing subset of NODE_TYPES) ---
+/**
+ * Leaf geometry types — the element-bearing subset of NODE_TYPES.
+ */
 export const GEOMETRY_TYPES: readonly GeometryTypeName[] = ['points', 'lines', 'gsplats', 'mesh'];
+/**
+ * Union of the leaf geometry type names.
+ */
 export type GeometryTypeName = 'points' | 'lines' | 'gsplats' | 'mesh';
 
-// --- viewer-drawable geometry types: the subset of GEOMETRY_TYPES that has a
-//     loader, a GEOMETRY_DESCRIPTORS row and a tolerance arm. A CAPABILITY,
-//     not the vocabulary — key dispatch tables on this, not on
-//     GeometryTypeName, so a not-yet-drawable type cannot resolve to no
-//     loader. See contract.yaml::loader_types. ---
+/**
+ * Viewer-drawable geometry types: the subset of `GEOMETRY_TYPES` that has a
+ * loader, a `GEOMETRY_DESCRIPTORS` row and a tolerance arm. A CAPABILITY, not
+ * the vocabulary — key dispatch tables on this, not on `GeometryTypeName`, so a
+ * not-yet-drawable type cannot resolve to no loader. See contract.yaml::loader_types.
+ */
 export const LOADER_TYPES: readonly LoaderTypeName[] = ['points', 'lines', 'gsplats', 'mesh'];
+/**
+ * Union of the viewer-drawable geometry type names.
+ */
 export type LoaderTypeName = 'points' | 'lines' | 'gsplats' | 'mesh';
 
-// --- specialized-group kinds ---
+/**
+ * Specialized-group kinds (lod, partition).
+ */
 export const NODE_KINDS: readonly NodeKind[] = ['lod', 'partition'];
+/**
+ * Union of the specialized-group kind names.
+ */
 export type NodeKind = 'lod' | 'partition';
 
-// --- on-disk array encoding scheme names ---
+/**
+ * All on-disk array encoding scheme names.
+ */
 export const ENCODING_NAMES: readonly EncodingName[] = [
   'none',
   'broadcasted',
@@ -79,6 +118,9 @@ export const ENCODING_NAMES: readonly EncodingName[] = [
   'uint32',
   'uint64',
 ];
+/**
+ * Union of the on-disk array encoding scheme names.
+ */
 export type EncodingName =
   | 'none'
   | 'broadcasted'
@@ -108,7 +150,9 @@ export type EncodingName =
   | 'uint32'
   | 'uint64';
 
-// --- canonical metadata attribute keys ---
+/**
+ * Canonical metadata attribute keys.
+ */
 export const ATTR_KEYS: readonly AttrKey[] = [
   'format_version',
   'format_type',
@@ -118,6 +162,9 @@ export const ATTR_KEYS: readonly AttrKey[] = [
   'position_bounds',
   'kind',
 ];
+/**
+ * Union of the canonical metadata attribute key names.
+ */
 export type AttrKey =
   | 'format_version'
   | 'format_type'
@@ -127,7 +174,9 @@ export type AttrKey =
   | 'position_bounds'
   | 'kind';
 
-// --- canonical gsplats array names ---
+/**
+ * Canonical gsplats array names.
+ */
 export const ARRAY_NAMES: readonly ArrayName[] = [
   'centers',
   'amplitudes',
@@ -136,6 +185,9 @@ export const ARRAY_NAMES: readonly ArrayName[] = [
   'cholesky_factors_offdiag',
   'colors',
 ];
+/**
+ * Union of the canonical gsplats array names.
+ */
 export type ArrayName =
   | 'centers'
   | 'amplitudes'

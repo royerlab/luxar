@@ -58,5 +58,5 @@ export const config: AppConfig = {
   defaultZarrPath: '',
 } as const;
 
-// Export types
+/** Re-exported config types for consumers importing from `config`. */
 export type { AppConfig, RenderingSettings } from './types';
