@@ -28,8 +28,25 @@ import {
 import { handleTouchStart, handleTouchMove } from './luxar-orbit-controls/input/touch';
 import { attachKeyboardPan } from './luxar-orbit-controls/input/keyboard';
 
+/**
+ * Re-export of the pointer-interaction state discriminant used internally by
+ * the orbit input handlers (`'rotate' | 'pan' | 'zoom' | 'none'`).
+ *
+ * Surfaced here so consumers can reference the active gesture without
+ * reaching into the `./luxar-orbit-controls/input/pointer` module.
+ */
 export type { ControlAction };
 
+/**
+ * Optional construction parameters for {@link LuxarOrbitControls}.
+ *
+ * Every field is optional and falls back to a built-in default (matching
+ * three.js `OrbitControls` where applicable — e.g. `maxDistance`/`maxZoom`
+ * default to `Infinity`). Groups: interaction feel (`enableDamping`,
+ * `dampingFactor`, `*Speed`), gesture toggles (`enableRotate`/`Pan`/`Zoom`),
+ * auto-rotation, zoom/distance constraints, and `trackballRadius` for the
+ * virtual-trackball rotation.
+ */
 export interface LuxarOrbitControlsConfig {
   enableDamping?: boolean;
   dampingFactor?: number;
@@ -49,6 +66,29 @@ export interface LuxarOrbitControlsConfig {
   trackballRadius?: number;
 }
 
+/**
+ * Unified orbit/ortho camera controls with quaternion rotation and
+ * exponential damping.
+ *
+ * Combines the damping, pan, and zoom math of three.js `OrbitControls` with
+ * the gimbal-lock-free quaternion rotation of a virtual-trackball
+ * `ArcballControls`, and works with both `PerspectiveCamera` and
+ * `OrthographicCamera`. Pointer gestures accumulate into per-frame delta
+ * buffers (rotation/pan/zoom/roll) that are applied fractionally and decayed
+ * each {@link update}, giving the smooth "weighted" feel; Shift+scroll
+ * view-axis roll feeds the same damped buffers, while auto-rotation is
+ * applied directly in the same update step.
+ *
+ * This same class backs both the manager's orbit (3D) and ortho (2D) modes,
+ * each with its own instance — `ControlsManager` disposes and reconstructs a
+ * fresh instance on every orbit↔ortho switch, which is why the manager
+ * persists its stored distance/zoom limits across that recreation.
+ * {@link reinitialize} re-derives the internal distance and orientation from
+ * the live camera after external camera edits, and
+ * {@link saveState}/{@link reset} snapshot and restore the full pose.
+ *
+ * @see {@link ControlsManager} which owns and switches between control modes
+ */
 export class LuxarOrbitControls extends THREE.EventDispatcher<{
   change: {};
   start: {};

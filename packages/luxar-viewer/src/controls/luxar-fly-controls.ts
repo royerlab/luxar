@@ -52,6 +52,14 @@ import {
 } from './luxar-fly-controls/physics';
 import { attachListeners } from './luxar-fly-controls/listeners';
 
+/**
+ * Optional construction parameters for {@link LuxarFlyControls}.
+ *
+ * Any field left unset falls back to the corresponding `config.controls.fly`
+ * default. Speeds are physical rates (units/second for movement, radians for
+ * rotation/look); `inertialMode` and the two damping factors together set how
+ * quickly velocity bleeds off (higher damping = more momentum/glide).
+ */
 export interface LuxarFlyControlsConfig {
   movementSpeed?: number; // Units per second
   rotationSpeed?: number; // Radians per second for arrow keys
@@ -65,6 +73,28 @@ export interface LuxarFlyControlsConfig {
   externalInputManagement?: boolean;
 }
 
+/**
+ * First-person "fly" camera controls with quaternion orientation and
+ * inertial physics.
+ *
+ * Drives the camera from keyboard (WASD movement, arrow-key look, Q/E roll,
+ * Shift boost) and mouse (left-drag strafe, right-drag look, scroll to move,
+ * Shift+scroll to roll). In the default inertial mode, motion is integrated
+ * as damped velocity each frame rather than applied instantly, so
+ * `inertialMode` and the damping factors control how much the camera glides;
+ * when `inertialMode` is false, mouse strafe / scroll / roll are applied
+ * directly, while keyboard motion and mouse-drag look stay velocity-integrated.
+ * Rotation uses a quaternion, so there is no gimbal lock and orientation is
+ * unbounded.
+ *
+ * Input listeners are attached at construction. Set `externalInputManagement`
+ * to have the caller forward key events via {@link handleKeyDown} /
+ * {@link handleKeyUp} instead of registering global keyboard listeners; mouse
+ * input is always handled internally. Call {@link update} once per frame with
+ * the elapsed delta to advance the physics.
+ *
+ * @see {@link ControlsManager} which owns and switches between control modes
+ */
 export class LuxarFlyControls extends THREE.EventDispatcher<{
   change: {};
   start: {};
