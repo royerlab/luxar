@@ -353,13 +353,62 @@ class DocumentationChecker:
             if not ts_file.name.endswith(".test.ts"):
                 self._check_typescript_jsdoc(ts_file, package_name)
 
+    @staticmethod
+    def _has_jsdoc_above(lines: list[str], index: int) -> bool:
+        """Whether the declaration at ``index`` looks documented.
+
+        Two accepting conditions, deliberately OR-ed so this is a strict SUPERSET
+        of the historical rule:
+
+        1. The nearest preceding non-blank line closes a block comment whose
+           opener is ``/**`` — i.e. a JSDoc comment sits directly above the
+           declaration, however LONG it is. Scanning back to the opener (rather
+           than accepting any ``*/``) keeps a plain ``/* ... */`` implementation
+           comment from counting as documentation, which the old rule never
+           credited either.
+        2. A ``/**`` appears anywhere in the 10 preceding lines — the original
+           heuristic, kept verbatim.
+
+        Condition 1 exists because condition 2 alone penalises thorough
+        documentation: any symbol whose doc comment ran past ten lines scored as
+        undocumented, so the cheapest way to raise a file's coverage was to write
+        SHORTER docs. ``types/mesh.ts`` scored 67% with every one of its six exports
+        documented, purely because two of the comments were long.
+
+        Condition 2 is kept rather than replaced because condition 1 alone is
+        stricter in the other direction, and measurably so: it rejects three shapes
+        the old rule accepted — an export directly beneath the imports (where the
+        ``/**`` in range was the MODULE docstring), a class member beneath a
+        previous member's closing brace, and a ``//``-style comment above the
+        declaration. Those are arguably real findings, but they are pre-existing
+        leniency in this metric and not a mesh change's business to surface; eight
+        files newly failed when condition 1 was applied alone. Narrowing them is a
+        separate, deliberate tightening.
+
+        OR-ing the two means this change can only ever REMOVE findings, so it cannot
+        mask a documentation gap that was previously reported.
+        """
+        j = index - 1
+        while j >= 0 and lines[j].strip() == "":
+            j -= 1
+        if j >= 0 and lines[j].strip().endswith("*/"):
+            # Walk back to the line that OPENS this block (block comments do not
+            # nest in TS) and require the JSDoc opener. A code line with a
+            # trailing `/* c */` opens on itself and fails the startswith, which
+            # is correct — that is not documentation.
+            k = j
+            while k >= 0 and "/*" not in lines[k]:
+                k -= 1
+            if k >= 0 and lines[k].lstrip().startswith("/**"):
+                return True
+        return any("/**" in lines[k] for k in range(max(0, index - 10), index))
+
     def _check_typescript_jsdoc(self, ts_file: Path, package_name: str):
         """Check TypeScript file for JSDoc coverage."""
         content = ts_file.read_text()
 
         # Count exported functions/classes
         export_pattern = r"^export (function|class|interface|type|const)"
-        jsdoc_pattern = r"/\*\*"
 
         lines = content.split("\n")
         export_count = 0
@@ -368,11 +417,8 @@ class DocumentationChecker:
         for i, line in enumerate(lines):
             if re.match(export_pattern, line):
                 export_count += 1
-                # Check if there's a JSDoc comment before (within 10 lines)
-                for j in range(max(0, i - 10), i):
-                    if re.search(jsdoc_pattern, lines[j]):
-                        jsdoc_count += 1
-                        break
+                if self._has_jsdoc_above(lines, i):
+                    jsdoc_count += 1
 
         if export_count > 0:
             coverage = (jsdoc_count / export_count) * 100

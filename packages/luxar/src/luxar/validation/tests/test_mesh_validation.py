@@ -154,6 +154,12 @@ def test_vertex_cap_is_the_alias_free_bound() -> None:
     ``n_vertices - 1``, so admitting exactly ``2^27`` vertices keeps every ordinal
     strictly below the ``2^27`` stride. An off-by-one here reintroduces cross-node
     pick aliasing for exactly one vertex, which no rendering test would catch.
+
+    MIRROR: ``MAX_MESH_VERTICES`` in
+    ``packages/luxar-viewer/src/config/constants.ts`` must hold this value — the
+    viewer's Stage-1 loader preflight is the twin of this write-time gate, and a
+    viewer test pins that side. If the two drift, ``add_mesh`` can emit a store
+    Luxar's own viewer then refuses.
     """
     assert MAX_MESH_VERTICES == 2**27
     assert MAX_MESH_VERTICES - 1 < 2**27
