@@ -54,6 +54,7 @@ import {
 } from './preflight';
 import { validateFaceIndices, validateMaterializedLength } from './validate';
 import type { FaceIndexSource } from './validate';
+import { combineSignals } from '../../workers/worker-pool/timeout/combine-signals';
 import type { UpdateSession } from '../../profiling/update-profiler';
 import type {
   LoadedMeshData,
@@ -105,6 +106,28 @@ export class MeshWholeNodeLoader implements MeshDataLoader {
   private inFlight: Promise<LoadedMeshData> | null = null;
 
   /**
+   * Aborts the in-flight reads when the loader is torn down.
+   *
+   * The generation token below stops a post-dispose completion from
+   * repopulating the cache, but on its own it lets the transfer RUN to
+   * completion first — for a near-budget mesh that is up to half a gigabyte
+   * fetched and decoded for nothing, concurrently with whatever replaced the
+   * node. Aborting the reads stops the spend, not just the publish.
+   * Replaced (not just aborted) on {@link dispose} so the reuse-after-dispose
+   * path starts with a live signal.
+   */
+  private aborter = new AbortController();
+
+  /**
+   * The signal governing the current fetch, sourced by the shared
+   * {@link RangeLoader} through its thunk — that loader takes its abort signal
+   * from a callback rather than a parameter, so the colour path picks this up
+   * without any signature change. Single-flight (`inFlight`) makes one field
+   * sufficient.
+   */
+  private fetchSignal: AbortSignal | null = null;
+
+  /**
    * Bumped by {@link dispose}, so a fetch that settles afterwards cannot write its
    * result back into a loader that has been torn down.
    *
@@ -115,15 +138,6 @@ export class MeshWholeNodeLoader implements MeshDataLoader {
    */
   private generation = 0;
 
-  /**
-   * The signal of the fetch currently in flight, read by the RangeLoader's
-   * signal source so the colors path (`loadColorRanges`) aborts with the rest
-   * of the fetch. Set for exactly the duration of {@link fetch}; the shared
-   * in-flight latch means at most one fetch runs at a time, so a single slot
-   * (rather than a per-call token) is sufficient.
-   */
-  private _activeSignal: AbortSignal | null = null;
-
   constructor(
     private readonly path: string,
     private readonly attrs: MeshMetadata,
@@ -132,7 +146,7 @@ export class MeshWholeNodeLoader implements MeshDataLoader {
   ) {
     this.decoder = new ArrayDecoder(deps.arrayRefRegistry);
     this.rangeLoader = new RangeLoader(deps.arrayRefRegistry);
-    this.rangeLoader.setSignalSource(() => this._activeSignal);
+    this.rangeLoader.setSignalSource(() => this.fetchSignal);
     this.zarrStore = deps.zarrStore;
   }
 
@@ -169,22 +183,15 @@ export class MeshWholeNodeLoader implements MeshDataLoader {
         try {
           handles[slot] = await open(MESH_ARRAY_NAMES[slot]);
         } catch (error) {
-          // The CAUSE decides, exactly as it does for the required pair above (#1254).
-          //
-          // Swallowing every error here made a transient network failure while opening
-          // `normals`/`colors`/`scalars` indistinguishable from "the store's presence
-          // flag lies": the slot stayed empty, the preflight rejected with a
-          // flag-with-no-array message, and `Validation` told the failure record the
-          // problem was deterministic — so it was never retried. That is the exact
-          // opposite of the required-array path three lines up, which classifies.
-          //
-          // A transport failure is rethrown with its real kind so the retry arm can act
-          // on it. Anything else still leaves the slot empty on purpose, because the
-          // preflight's "declares has_normals but no normals array" reads far better
-          // than a bare open error.
-          const kind = classifyLoaderError(error);
-          if (kind === 'Network') {
-            throw new LoaderError(kind, this.path, error);
+          // A genuine not-found means the presence flag disagrees with the store:
+          // leave the slot empty and let the preflight turn the flag-with-no-array
+          // into an explicit rejection, which reports better than a bare open error.
+          // But a TRANSIENT open failure (network blip, abort) must NOT be recorded
+          // as deterministic `Validation` — the retry policy skips that kind, so the
+          // node would never recover on reconnect. Route it through
+          // `classifyLoaderError`, exactly as the required vertices/faces open does.
+          if (!zarr.isNotFoundError(error)) {
+            throw new LoaderError(classifyLoaderError(error), this.path, error);
           }
         }
       })
@@ -212,30 +219,9 @@ export class MeshWholeNodeLoader implements MeshDataLoader {
       throw new LoaderError('Unexpected', this.path, new Error('mesh loader not initialized'));
     }
 
+    const { nVertices, nFaces, ndim } = pre;
     const opts = zarr.abortOptions(signal);
     const storeRoot = zarr.root(this.zarrStore);
-
-    // Publish the signal for the duration of the fetch, so the colors path —
-    // which goes through the RangeLoader and sources its abort signal from
-    // `setSignalSource` — aborts with everything else. Every other read below
-    // takes the signal as an explicit argument.
-    this._activeSignal = signal ?? null;
-    try {
-      return await this.fetchArrays(handles, pre, opts, storeRoot, signal);
-    } finally {
-      this._activeSignal = null;
-    }
-  }
-
-  /** The body of {@link fetch}, split out so the signal slot has one reset point. */
-  private async fetchArrays(
-    handles: MeshArrayHandles,
-    pre: MeshPreflightResult,
-    opts: ReturnType<typeof zarr.abortOptions>,
-    storeRoot: zarr.Location<zarr.Readable>,
-    signal?: AbortSignal
-  ): Promise<LoadedMeshData> {
-    const { nVertices, nFaces, ndim } = pre;
 
     // `vertices` and `normals` are both SemanticType.COORDINATE, which the
     // encoder may quantize (per-channel u16) or LUT-encode, so both must go
@@ -350,20 +336,29 @@ export class MeshWholeNodeLoader implements MeshDataLoader {
    * the latch each call would start its own full-mesh fetch — the exact
    * duplicate-work the whole-node design exists to avoid.
    *
-   * One consequence of sharing that fetch: only the FIRST caller's `signal`
-   * reaches the reads. A later caller joining an in-flight fetch cannot abort it
-   * and will receive the mesh even if its own update was superseded. That is
+   * One consequence of sharing that fetch: the reads run under the FIRST
+   * caller's `signal` combined with the loader-lifetime one ({@link dispose}
+   * aborts the latter). A later caller joining an in-flight fetch cannot abort
+   * it and will receive the mesh even if its own update was superseded. That is
    * benign here in a way it would not be for the range-query siblings — a
    * superseded caller gets data it no longer needs, never data for the wrong
    * query, because there is only one thing to fetch and it does not depend on the
    * view. The wasted work is bounded by one mesh, once per loader.
+   *
+   * The combined signal reaches EVERY read: the raw `faces` read directly, the
+   * decoder-routed arrays through {@link ArrayDecoder.decode}'s signal
+   * parameter, and the shared colour path through the {@link RangeLoader}
+   * signal-source thunk wired in the constructor.
    */
   private load(signal?: AbortSignal): Promise<LoadedMeshData> {
     if (this.data) return Promise.resolve(this.data);
     if (this.inFlight) return this.inFlight;
 
     const generation = this.generation;
-    const mine: Promise<LoadedMeshData> = this.fetch(signal)
+    const scope = combineSignals(signal, this.aborter.signal);
+    const fetchSignal = scope?.signal ?? this.aborter.signal;
+    this.fetchSignal = fetchSignal;
+    const mine: Promise<LoadedMeshData> = this.fetch(fetchSignal)
       .then((data) => {
         // Only publish if this loader has not been disposed since the fetch began.
         // The caller still receives the data — it is view-independent, so it is not
@@ -372,6 +367,10 @@ export class MeshWholeNodeLoader implements MeshDataLoader {
         return data;
       })
       .finally(() => {
+        scope?.dispose();
+        // Only clear what is still OURS — a dispose-then-reload may have installed
+        // a replacement fetch's signal before this stale completion lands.
+        if (this.fetchSignal === fetchSignal) this.fetchSignal = null;
         // Clear the latch only if it is still OURS. `dispose()` nulls `inFlight`
         // while this promise may still be pending, so a stale completion landing
         // after a replacement load has begun would otherwise wipe the NEW load's
@@ -417,6 +416,12 @@ export class MeshWholeNodeLoader implements MeshDataLoader {
    */
   dispose(): void {
     this.generation++;
+    // Abort the in-flight reads, not just the publish: the generation bump
+    // alone lets a near-budget transfer run to completion for a loader nothing
+    // will ever read. A fresh controller replaces the tripped one so the
+    // re-initialize path below starts with a live signal.
+    this.aborter.abort();
+    this.aborter = new AbortController();
     this.handles = null;
     this.preflight = null;
     this.data = null;

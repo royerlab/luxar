@@ -190,6 +190,41 @@ def add_gsplats_multi_lod_impl(
 
         leaf = GSplatLeaf(additive_sublods=sublods)
 
+        # Pairing: the additive sub-LODs already carry per-level
+        # ``energy_fraction_cum`` stamps (from ``make_additive_lod``), so the
+        # leaf MUST ride the paired absolute ``reference_energy`` the resolver
+        # stamped onto the substitutive level — the viewer's display-gate needs
+        # both halves or it falls back to counting elements. Propagate ONLY what
+        # the resolver already computed (do not recompute it) via ``level_stats``,
+        # the allowed leaf attr the writer persists onto the parent gsplats group.
+        leaf_stats: Dict[str, Any] = {}
+        if result.n_substitutive >= 1:
+            # Route each copied value through the SAME JSON-safety guard the
+            # mirror writer ``_meta_to_node_attrs`` uses: a non-finite float
+            # (NaN/±Inf) in ``level_stats`` would land in .zattrs as a bare
+            # NaN/Infinity token the viewer's strict JSON.parse rejects. Skip
+            # any key whose value is not strictly JSON-safe (do not fabricate).
+            from ....io._compiler.gsplat_tree import json_safe_value
+
+            src_stats = result.substitutive_levels[0].stats
+            for key in ("reference_energy", "quality", "energy_kind"):
+                if key in src_stats:
+                    ok, safe = json_safe_value(src_stats[key])
+                    if ok:
+                        leaf_stats[key] = safe
+        if leaf_stats:
+            caller_level_stats = attrs.get("level_stats")
+            if caller_level_stats is None:
+                attrs["level_stats"] = leaf_stats
+            else:
+                # Caller keys win; fill only the missing half of the pairing.
+                # The caller dict rides through the same JSON-safety guard as
+                # the copied values: a non-finite caller float (NaN/±Inf) is
+                # dropped — the resolver's finite value then shows through —
+                # instead of reaching .zattrs as a bare NaN token.
+                _, safe_caller = json_safe_value(caller_level_stats)
+                attrs["level_stats"] = {**leaf_stats, **(safe_caller or {})}
+
         n_splats = result.n_splats
         ndim = sublods[0].centers.shape[1]
         aprint(

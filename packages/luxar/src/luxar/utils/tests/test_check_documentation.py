@@ -315,28 +315,26 @@ def test_ten_line_window_still_accepted_so_the_rule_stays_a_superset() -> None:
 
 
 def test_a_plain_block_comment_does_not_count_as_jsdoc() -> None:
-    # Condition 1 walks back to the block opener and requires `/**`, so an
-    # ordinary /* ... */ implementation comment above an export does NOT satisfy
-    # the gate (the old form checked only the closer, letting any block comment
-    # count as documentation). The window rule can't rescue these either: no
-    # `/**` appears anywhere. The rule stays a superset of the ORIGINAL window
-    # heuristic — the tightening only narrows the NEW directly-above arm.
-    single = ["/* not really jsdoc */", "export type T = string;"]
-    assert not cd.DocumentationChecker._has_jsdoc_above(single, len(single) - 1)
+    # Condition 1 walks back from the closing */ to the block's opener and
+    # requires /** — an ordinary /* ... */ implementation comment above an export
+    # is not documentation, and the historical 10-line window never credited it
+    # either (it greps for the JSDoc opener specifically). So rejecting it keeps
+    # the rule a strict superset of the old one while closing the loophole where
+    # any block comment would count.
+    lines = ["/* not really jsdoc */", "export type T = string;"]
+    assert not cd.DocumentationChecker._has_jsdoc_above(lines, len(lines) - 1)
 
-    multi = [
-        "/*",
-        " * a long implementation note,",
-        " * not a doc comment",
-        " */",
-        "export type T = string;",
-    ]
-    assert not cd.DocumentationChecker._has_jsdoc_above(multi, len(multi) - 1)
+    multiline = ["/*", " * plain block, not jsdoc", " */", "export type T = string;"]
+    assert not cd.DocumentationChecker._has_jsdoc_above(multiline, len(multiline) - 1)
 
-    # Sanity on the accepting side: a single-line JSDoc directly above passes
-    # through the same opener walk.
-    jsdoc = ["/** Doc. */", "export type T = string;"]
-    assert cd.DocumentationChecker._has_jsdoc_above(jsdoc, len(jsdoc) - 1)
+    # A trailing block comment on a CODE line opens on itself and fails the
+    # JSDoc-opener requirement too.
+    trailing = ["const x = 1; /* c */", "export type T = string;"]
+    assert not cd.DocumentationChecker._has_jsdoc_above(trailing, len(trailing) - 1)
+
+    # A one-line JSDoc still counts: the closer's own line is the opener.
+    oneliner = ["/** Doc. */", "export type T = string;"]
+    assert cd.DocumentationChecker._has_jsdoc_above(oneliner, len(oneliner) - 1)
 
 
 def test_undocumented_export_is_still_undocumented() -> None:

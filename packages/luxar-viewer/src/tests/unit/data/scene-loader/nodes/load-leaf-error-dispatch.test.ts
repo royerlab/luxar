@@ -104,6 +104,9 @@ describe('classifyLoaderError', () => {
   it.each([
     ['fetch failed', 'Network'],
     ['http 503 bad gateway', 'Network'],
+    // zarrita's FetchStore phrasing for a transient 5xx: "Unexpected response
+    // status ...". The word "un<expected>" must NOT tip it into Validation.
+    ['Unexpected response status 503 Service Unavailable', 'Network'],
     ['invalid chunk header', 'Decode'],
     ['failed to parse metadata', 'Decode'],
     ['validation failed', 'Validation'],

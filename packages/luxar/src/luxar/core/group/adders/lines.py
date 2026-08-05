@@ -729,7 +729,24 @@ def add_lines_multi_lod_wrapper_impl(
         breakpoints_kind=breakpoints_kind_of(counts),
         energy_kind="lines-tube-volume",
     )
-    attrs.setdefault("level_stats", parent_level_stats)
+    caller_level_stats = attrs.get("level_stats")
+    if caller_level_stats is None:
+        attrs["level_stats"] = parent_level_stats
+    elif "reference_energy" in parent_level_stats:
+        # The ladder stamped energy_fraction_cum on every sub-LOD, so the parent
+        # must carry the paired reference_energy (both-or-neither); a caller dict
+        # that omits it would silently break the pairing. The caller dict rides
+        # through the writer's JSON-safety guard: a non-finite caller value
+        # (NaN/±Inf) is dropped — the computed reference_energy then shows
+        # through — instead of reaching .zattrs as a bare NaN token the viewer's
+        # strict JSON.parse rejects. Finite caller keys still win.
+        from ....io._compiler.gsplat_tree import json_safe_value
+
+        _, safe_caller = json_safe_value(caller_level_stats)
+        attrs["level_stats"] = {
+            "reference_energy": parent_level_stats["reference_energy"],
+            **(safe_caller or {}),
+        }
 
     level_slices: List[Dict[str, Any]] = []
     for level_i, level_polylines in enumerate(polyline_levels):

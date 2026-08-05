@@ -645,8 +645,8 @@ export class LODGroupRegistry {
     // Bound resident LOD geometry against the shared GPU-pool byte budget
     // (one VRAM authority). Retention keeps loaded levels resident so
     // re-shows are free; this LRU-evicts only hidden levels when over budget —
-    // off-screen / furthest-from-camera first — so no per-swap release, hence
-    // no reload churn.
+    // hidden-layer (undrawable) first, then off-screen / furthest-from-camera —
+    // so no per-swap release, hence no reload churn.
     this.enforceByteBudget(camera, FRUSTUM_SCRATCH, displayDims);
     return changed;
   }

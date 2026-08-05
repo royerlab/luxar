@@ -361,10 +361,11 @@ class DocumentationChecker:
         of the historical rule:
 
         1. The nearest preceding non-blank line closes a block comment whose
-           OPENER is ``/**`` — i.e. a JSDoc comment sits directly above the
-           declaration, however LONG it is. The opener check matters: without it
-           any ``/* ... */`` implementation comment satisfies the documentation
-           gate, and the metric stops measuring JSDoc at all.
+           opener is ``/**`` — i.e. a JSDoc comment sits directly above the
+           declaration, however LONG it is. Scanning back to the opener (rather
+           than accepting any ``*/``) keeps a plain ``/* ... */`` implementation
+           comment from counting as documentation, which the old rule never
+           credited either.
         2. A ``/**`` appears anywhere in the 10 preceding lines — the original
            heuristic, kept verbatim.
 
@@ -391,16 +392,15 @@ class DocumentationChecker:
         while j >= 0 and lines[j].strip() == "":
             j -= 1
         if j >= 0 and lines[j].strip().endswith("*/"):
-            # Walk up to the line that OPENS the block and require `/**`. The
-            # opener line is the first one at or above the closer containing
-            # `/*` (interior lines of a conventional block hold only `*`-prefixed
-            # text). A plain `/* ... */` comment fails here and falls through to
-            # the window rule, so this arm accepts JSDoc and only JSDoc.
-            for k in range(j, -1, -1):
-                if "/*" in lines[k]:
-                    if "/**" in lines[k]:
-                        return True
-                    break
+            # Walk back to the line that OPENS this block (block comments do not
+            # nest in TS) and require the JSDoc opener. A code line with a
+            # trailing `/* c */` opens on itself and fails the startswith, which
+            # is correct — that is not documentation.
+            k = j
+            while k >= 0 and "/*" not in lines[k]:
+                k -= 1
+            if k >= 0 and lines[k].lstrip().startswith("/**"):
+                return True
         return any("/**" in lines[k] for k in range(max(0, index - 10), index))
 
     def _check_typescript_jsdoc(self, ts_file: Path, package_name: str):

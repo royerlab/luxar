@@ -11,7 +11,7 @@
  */
 
 import * as zarr from '../zarr';
-import { abortOptions, readArray } from '../zarr';
+import { readArray, abortOptions } from '../zarr';
 import { log, Modules } from '../../utils/log';
 import { ArrayRefRegistry } from './ref-registry';
 import type { ArrayMetadata, EncodingMetadata } from './types';
@@ -33,9 +33,9 @@ export class ArrayDecoder {
    * @param attrs - Array metadata from .zattrs
    * @param expectedElements - Expected total elements (for validation)
    * @param zarrRootLoc - Zarr root location for resolving array_ref paths (required for array_ref)
-   * @param signal - Optional per-update abort signal, forwarded into every chunk
-   *   read (including a resolved array_ref target's) so a superseded caller's
-   *   full-array decode stops downloading instead of running to completion.
+   * @param signal - Optional abort signal forwarded to every chunk read this
+   *   decode performs (including a resolved array_ref target's), so a caller
+   *   tearing down mid-fetch can stop the transfer rather than just discard it
    * @returns Decoded Float32Array
    */
   async decode(
@@ -43,7 +43,7 @@ export class ArrayDecoder {
     attrs: ArrayMetadata,
     expectedElements?: number,
     zarrRootLoc?: zarr.Location<zarr.Readable>,
-    signal?: AbortSignal
+    signal?: AbortSignal | null
   ): Promise<Float32Array> {
     const enc = attrs.encoding;
     ArrayDecoder.validateEncodingMetadata(enc);
@@ -609,7 +609,7 @@ export class ArrayDecoder {
     hash: string | undefined,
     expectedElements?: number,
     zarrRootLoc?: zarr.Location<zarr.Readable>,
-    signal?: AbortSignal
+    signal?: AbortSignal | null
   ): Promise<Float32Array> {
     // Fast path: check cache by hash
     if (hash) {

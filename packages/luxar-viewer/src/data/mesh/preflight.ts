@@ -70,8 +70,8 @@
 
 import * as zarr from '../zarr';
 import { MAX_MESH_VERTICES, MESH_DECODE_BUDGET_BYTES } from '../../config/constants';
-import type { ArrayMetadata } from '../array-decoder/decoder';
-import { LoaderError } from '../scene-loader/nodes/load-leaf-error-dispatch';
+import { ArrayDecoder, type ArrayMetadata } from '../array-decoder/decoder';
+import { LoaderError, classifyLoaderError } from '../scene-loader/nodes/load-leaf-error-dispatch';
 import type { MeshMetadata } from '../../types/mesh';
 import type { EncodingName } from '../../types/format-contract';
 
@@ -369,6 +369,75 @@ function assertBudgetableEncoding(
 }
 
 /**
+ * Refuse an `array_ref` whose resolved target is `broadcasted`.
+ *
+ * The budget charges the target's STORED and per-chunk terms plus the referring
+ * stub's LOGICAL count. That accounting is only sound when the target decodes to
+ * roughly its stored size. A `broadcasted` target breaks it: it physically stores
+ * one `(1, K)` row — a few bytes of stored/chunk term — but `ArrayDecoder` expands
+ * it to one row PER logical element at fetch time, so a wide row behind a small
+ * stub sails under the ceiling and then allocates gigabytes. That is exactly the
+ * "too late after decode" exhaustion the preflight exists to prevent.
+ *
+ * Refusing it costs nothing legitimate: the encoder broadcast-encodes a uniform
+ * array at priority 1, BEFORE dedup is consulted, so the writer never emits an
+ * `array_ref` that points at a `broadcasted` target.
+ */
+function assertRefTargetDecodesInPlace(
+  path: string,
+  name: string,
+  fetched: zarr.Array<zarr.DataType, zarr.Readable>
+): void {
+  const encodingName = ((fetched.attrs ?? {}) as unknown as ArrayMetadata).encoding?.name;
+  if (encodingName === 'broadcasted') {
+    rejectMesh(
+      path,
+      `${name} is an array_ref to a '${encodingName}' target. A broadcast target ` +
+        'stores one row but decodes to one row per logical element, so its stored ' +
+        'and chunk sizes say nothing about what the fetch would allocate — the ' +
+        'per-node budget cannot bound it. Refused rather than admitted blind.'
+    );
+  }
+}
+
+/**
+ * The number of float32 values the decoder will materialize from a RESOLVED
+ * `array_ref` target, upper-bounded from metadata alone.
+ *
+ * Every decoder path allocates one output value per STORED value —
+ * `Float32Array(stored_count)` — with a single exception: a row-mode LUT expands
+ * each stored index into `k` values, `k` taken from the target's `original_shape`
+ * (see `ArrayDecoder.decodeLUT`, which allocates `n x k`). So the bound is
+ * `stored_count` for every encoding but a row-mode LUT, and `stored_count x k`
+ * for that one. `broadcasted` is refused before this is reached — its size is
+ * driven by the caller's `expectedElements`, not the target's own metadata, so it
+ * cannot be bounded here at all.
+ *
+ * This deliberately multiplies the target's STORED count by `k` rather than reading
+ * `original_shape[0]`: `n` is the target's real stored index count, and a hostile
+ * store can declare an `original_shape` whose leading extent disagrees with it —
+ * charging the declared rows would then under-count the `n x k` the decoder
+ * actually allocates.
+ */
+function targetDecodedFloatCount(fetched: zarr.Array<zarr.DataType, zarr.Readable>): number | null {
+  const storedCount = elementCount(fetched.shape);
+  if (storedCount === null) return null;
+  const encoding = ((fetched.attrs ?? {}) as unknown as ArrayMetadata).encoding;
+  const name = encoding?.name;
+  const isLut = name === 'lut_uint8' || name === 'lut_uint16';
+  // Row mode is the default when `lut_mode` is absent (the Python encoder omits it
+  // for 1-D arrays); only 'scalar' is 1:1. Mirrors `ArrayDecoder`'s k/mode logic.
+  if (isLut && encoding?.lut_mode !== 'scalar') {
+    const original = encoding?.original_shape;
+    const k = Array.isArray(original) && original.length > 1 ? original[1] : 1;
+    if (!Number.isInteger(k) || k < 1) return null;
+    const total = storedCount * k;
+    return Number.isFinite(total) ? total : null;
+  }
+  return storedCount;
+}
+
+/**
  * Whether this array's bytes live in ANOTHER array, so the budget must follow a
  * reference to find them.
  *
@@ -415,31 +484,16 @@ const MAX_ARRAY_REF_HOPS = 3;
  * `.zattrs` and no chunk. Cycles are bounded by both the hop limit and a seen-set, so
  * a store whose target points back at itself is refused rather than hanging.
  */
-/**
- * What a resolved `array_ref` walk yields.
- *
- * `chain` is every array the walk OPENED (excluding the referring array itself), so the
- * budget can charge each step's logical footprint. Returning only the endpoint hid the
- * fact that intermediate steps carry their own encodings.
- */
-interface RefChain {
-  /** The array whose stored bytes are actually fetched — the end of the chain. */
-  fetched: zarr.Array<zarr.DataType, zarr.Readable>;
-  /** Every array opened while walking, nearest-first. Empty when nothing was followed. */
-  chain: zarr.Array<zarr.DataType, zarr.Readable>[];
-}
-
 async function resolveRefTarget(
   path: string,
   name: string,
   array: zarr.Array<zarr.DataType, zarr.Readable>,
   storeRoot: zarr.Location<zarr.Readable> | undefined
-): Promise<RefChain> {
+): Promise<zarr.Array<zarr.DataType, zarr.Readable>> {
   const seen = new Set<string>();
-  const chain: zarr.Array<zarr.DataType, zarr.Readable>[] = [];
   let current = array;
   for (let hop = 0; hop <= MAX_ARRAY_REF_HOPS; hop++) {
-    if (!followsReference(current)) return { fetched: current, chain };
+    if (!followsReference(current)) return current;
     const encoding = ((current.attrs ?? {}) as unknown as ArrayMetadata).encoding;
 
     const target = encoding?.target;
@@ -466,17 +520,57 @@ async function resolveRefTarget(
     }
     try {
       current = await zarr.open(storeRoot.resolve(target), { kind: 'array' });
-      chain.push(current);
     } catch (error) {
-      rejectMesh(
-        path,
-        `${name} is an array_ref to '${target}', which could not be opened: ` +
-          `${error instanceof Error ? error.message : String(error)}`
-      );
+      // A genuinely absent/misdeclared target is a deterministic `Validation`
+      // rejection. A transient failure opening its metadata (network, abort) is
+      // NOT — persisting it as `Validation` would have the retry policy treat a
+      // flaky network as permanent and never re-fetch on reconnect. Propagate the
+      // real kind, matching the required-array open in the loader.
+      if (!zarr.isNotFoundError(error)) {
+        throw new LoaderError(classifyLoaderError(error), path, error);
+      }
+      rejectMesh(path, `${name} is an array_ref to '${target}', which was not found in the store.`);
     }
   }
-  return { fetched: current, chain };
+  return current;
 }
+
+/**
+ * Dtypes an UNENCODED `colors` array may use — §3.2's `uint8/uint16/float32`,
+ * in both spellings (zarrita reports friendly names, a raw `.zarray` carries
+ * numpy typestrings).
+ *
+ * Colours are the one mesh array whose dtype is MEANING-BEARING at the GPU: the
+ * shared colour path preserves the native type on its direct branch, and the
+ * renderer's normalization is defined per dtype (uint8 as 0–255, uint16 as
+ * 0–65535, float32 read as-is in [0, 1]). An unencoded `int32` or `int64`
+ * colours array has no defined normalization — it widens to a float buffer
+ * whose 0–255-ish values all clamp ≥ 1.0 and shade the mesh flat white, with
+ * nothing to say why. Every other array is decoder-routed to value-preserving
+ * `Float32Array`, where any recognised dtype is fine — which is why this check
+ * exists for colours alone.
+ *
+ * ENCODED colours are exempt: their stored dtype holds codes (LUT indices,
+ * quantized levels), and the decode path materializes a defined buffer
+ * regardless — the closed {@link ENCODING_BUDGET_KIND} vocabulary already
+ * bounds what "encoded" can mean.
+ */
+const UNENCODED_COLOR_DTYPES = new Set([
+  'uint8',
+  '|u1',
+  '<u1',
+  '>u1',
+  '=u1',
+  'uint16',
+  '|u2',
+  '<u2',
+  '>u2',
+  '=u2',
+  'float32',
+  '<f4',
+  '>f4',
+  '=f4',
+]);
 
 /** Human-readable byte count for error messages. */
 function mib(bytes: number): string {
@@ -594,10 +688,29 @@ export async function preflightMesh(
     // is an `array_ref`: the referring array is a `(0, k)` stub, so charging it
     // budgets ~48 bytes for a read that can pull gigabytes. Metadata-only.
     assertBudgetableEncoding(path, name, array);
-    const { fetched, chain } = await resolveRefTarget(path, name, array, storeRoot);
-    // Every array on the chain may carry its own encoding, and each must be budgetable
-    // — not just the endpoint, since an intermediate hop's encoding decodes too.
-    for (const step of chain) assertBudgetableEncoding(path, name, step);
+    const fetched = await resolveRefTarget(path, name, array, storeRoot);
+    // The ENDPOINT is the only hop these two gates can fire on, and that is worth
+    // stating rather than defending with a loop over every step:
+    //
+    //  - `assertRefTargetDecodesInPlace` refuses a `broadcasted` target. `broadcasted`
+    //    is not a `followsRef` encoding, so `resolveRefTarget` STOPS the moment it
+    //    reaches one — a broadcast array is therefore always `fetched`, never an
+    //    interior hop.
+    //  - `assertBudgetableEncoding` refuses an unaccountable encoding. An interior hop
+    //    is by construction one the resolve loop chose to follow, i.e. `array_ref`,
+    //    which the table lists as `followsRef` and is accountable by definition.
+    //
+    // A chain-wide loop here therefore cannot reject anything this does not; verified by
+    // mutation in both directions. The walk itself still earns its keep through the cycle
+    // and hop-cap refusals inside `resolveRefTarget`.
+    //
+    // `fetched !== array` is what keeps a legitimately broadcast NODE-LOCAL colour array
+    // out of this refusal: `colors=(1, 3)` makes the colours array itself `broadcasted`
+    // with no ref involved (#1238), and refusing that would reject real writer output.
+    if (fetched !== array) {
+      assertBudgetableEncoding(path, name, fetched);
+      assertRefTargetDecodesInPlace(path, name, fetched);
+    }
 
     const parsed = parseDtype(String(fetched.dtype));
     if (!parsed) {
@@ -614,24 +727,27 @@ export async function preflightMesh(
     if (layout === null) {
       rejectMesh(path, `${name} declares an unusable logical shape`);
     }
-    // But it is NOT necessarily what gets allocated. `ArrayDecoder.decodeArrayRef`
-    // recursively decodes the target with the TARGET's own attrs, so an encoding on the
-    // target expands to the target's numbers — a `broadcasted` target with a large
-    // `n_elements` materializes that many rows no matter how modest the stub's
-    // `original_shape` is. The decoder does compare the result against
-    // `expectedElements`, but only as a `log.warning` AFTER materializing, which is
-    // exactly the too-late-after-decode failure this stage exists to pre-empt.
+    // But it is NOT necessarily what gets allocated, and the ENDPOINT is where that
+    // difference lives. `ArrayDecoder.decodeArrayRef` recurses with the TARGET's own
+    // attrs, so the target's encoding expands to the target's numbers however modest the
+    // stub's `original_shape` is — a row-mode LUT allocates `stored_indices x k`, with
+    // `k` from the TARGET's `original_shape`. Charge the larger of the stub's own
+    // requirement and the target's true decode size.
     //
-    // So the decoded term is charged at the LARGEST logical count anywhere on the
-    // resolved chain. Every step's layout must be accountable for the same reason the
-    // encoding set is closed: an unmeasured step is a hole, not a rounding error.
+    // Interior hops are deliberately NOT charged, and this is the correction worth
+    // recording: `decodeArrayRef` passes `expectedElements` through UNCHANGED and reads
+    // nothing from an interior stub but `encoding.target`. So an interior stub's
+    // `original_shape` drives no allocation whatsoever. Summing over the chain would
+    // charge bytes that are never allocated, which does not merely waste budget — it can
+    // FALSELY REJECT a legitimate node whose interior stub describes a large logical
+    // view. The chain is still walked, for the cycle and hop-cap refusals below.
     let decodedValues = layout.count;
-    for (const step of chain) {
-      const stepLayout = logicalLayout(step);
-      if (stepLayout === null) {
-        rejectMesh(path, `${name} references an array with an unusable logical shape`);
+    if (fetched !== array) {
+      const targetDecoded = targetDecodedFloatCount(fetched);
+      if (targetDecoded === null) {
+        rejectMesh(path, `${name}'s array_ref target declares an unusable shape`);
       }
-      if (stepLayout.count > decodedValues) decodedValues = stepLayout.count;
+      decodedValues = Math.max(decodedValues, targetDecoded);
     }
     accountedBytes += stored * parsed.itemSize + decodedValues * DECODED_BYTES_PER_VALUE;
 
@@ -748,6 +864,20 @@ export async function preflightMesh(
   let colorComponents: 3 | 4 | undefined;
   if (arrays.colors) {
     colorComponents = checkLayout('colors', arrays.colors, nVertices, [3, 4]).components as 3 | 4;
+    // Same predicate the colour loader's direct branch uses, so this gate covers
+    // exactly the loads whose native dtype reaches the GPU (see
+    // UNENCODED_COLOR_DTYPES for why colours alone need it).
+    const colorAttrs = (arrays.colors.attrs ?? {}) as unknown as ArrayMetadata;
+    const colorDtype = String(arrays.colors.dtype);
+    if (!ArrayDecoder.isEncoded(colorAttrs) && !UNENCODED_COLOR_DTYPES.has(colorDtype)) {
+      rejectMesh(
+        path,
+        `colors has dtype '${colorDtype}'; an unencoded colors array must be uint8, ` +
+          'uint16 or float32 (§3.2) — the dtypes with a defined colour ' +
+          'normalization. Anything else mis-shades every vertex with nothing to ' +
+          'say why.'
+      );
+    }
   }
   if (arrays.scalars) checkLayout('scalars', arrays.scalars, nVertices, [1]);
 
