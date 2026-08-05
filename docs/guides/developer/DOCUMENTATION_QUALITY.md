@@ -131,15 +131,15 @@ can never regress.
 
 ### Current debt snapshot
 
-At the time of writing the baseline holds 70 findings, broken down by check:
+With Phase 1 complete, the baseline holds 61 findings, broken down by check:
 
 | Count | Check | What it means |
 |------:|-------|---------------|
 | 37 | JSDoc coverage | Exported-symbol JSDoc below the 70% floor, in `packages/luxar-viewer/src/`. |
 | 24 | Docstring coverage | File docstring coverage below the 70% floor, in `packages/luxar/src/luxar/`. |
-| 4 | Quick Start section | README missing a `## Quick Start` / `## Getting Started` section. |
-| 3 | Module docstring | Python file missing a module docstring. |
-| 2 | Code examples | README missing a `python` or `typescript` fenced code example (other fences, e.g. `bash`, do not count). |
+
+The Phase 1 categories (*Quick Start section*, *Module docstring*, *Code
+examples*) are now at zero and are held there by the ratchet.
 
 These counts are a **snapshot** and will drift as the tree changes; do not
 trust the prose. The authoritative live breakdown comes from re-measuring:
@@ -151,13 +151,14 @@ hatch run python scripts/check_documentation.py --no-baseline --json | \
   [print(f'{v:4d}  {k}') for k,v in sorted(c.items(), key=lambda x:-x[1])]"
 ```
 
-### Phase 1 — Structural README + module docstrings
+### Phase 1 — Structural README + module docstrings ✅ done
 
 The 4 *Quick Start section*, 2 *Code examples* and 3 *Module docstring*
-findings (9 items). These are quick, mechanical, and high-signal: add the
+findings (9 items). These were quick, mechanical, and high-signal: added the
 missing `## Quick Start` section and a `python`/`typescript` fenced example to
-each README, and a module docstring to each flagged `*.py` file. **Target:**
-zero findings remain in all three of these check categories.
+each README, and a module docstring to each flagged `*.py` file. All three of
+these check categories are now at zero, and the baseline has been tightened so
+they cannot regress.
 
 ### Phase 2 — Python docstring coverage
 

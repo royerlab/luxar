@@ -1,3 +1,15 @@
+"""Gaussian splatting subsystem: fitting, calibration, LOD, tiling, and lifting.
+
+Public entry points for turning a volume into oriented Gaussian splats
+(``fit_gaussian_splats`` / ``GaussianSplatFitter``), calibrating the splat count
+``K`` (``calibrate``), building level-of-detail topologies (``make_additive_lod``,
+``make_substitutive_lod``, ``make_lod_pyramid``), tiling large volumes, seeding,
+and lifting points/lines to splats. The heavy dependencies (torch, scipy) are
+optional and loaded lazily: the package imports without them, and the entry
+points that need them fail only when first used (the callable exports raise a
+clear install hint; an unexpected internal import error propagates loudly).
+"""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Optional
