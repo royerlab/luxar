@@ -185,6 +185,119 @@ Both kernels are declared on the `WasmModule` interface and listed in the
 reported as stale (and falls back to TypeScript) instead of failing later with an
 opaque "not a function".
 
+#### Added — the mesh data path: whole-node loader, two-stage validation, nD cull
+
+The viewer half of the mesh vertical that turns the kernels above into loaded
+geometry: `types/mesh.ts`, and `data/mesh/` with a whole-node `MeshLoader`, the
+admission gate that guards it, and the display-space projection that drives the
+cull. `mesh` is still absent from `loader_types`, so nothing in the render path
+reaches this yet and a mesh still writes without drawing; wiring it up is the next
+step.
+
+**Whole-node, deliberately.** `lines-spatial-index-loader.ts` runs to ~1400 lines
+because line datasets reach tens of millions of vertices and a slice change
+genuinely needs only a fraction of them, so a dual chunk index earns its
+complexity. Mesh faces share vertices across any cut, so the working set after a
+`displayDims` change is the whole mesh regardless — an index would add machinery
+and skip nothing. Consequently `updateView` never re-fetches: it returns the same
+cached mesh, and only the index buffer downstream changes with the view.
+
+**Admission runs in two stages, and the split is what makes it work.** The writer's
+validators protect only stores Luxar produced, while the viewer loads arbitrary
+`?src=` URLs. Because the loader fetches everything up front, a check that runs
+after decode arrives too late — a hostile store can declare enormous arrays and
+exhaust tab memory before the per-node `LoaderError` containment is reachable. So
+Stage 1 decides everything it can from `.zarray`/`.zattrs` alone, with no chunk
+fetched: the `2^27` vertex cap, a 512 MiB `MESH_DECODE_BUDGET_BYTES` ceiling,
+shape/dtype cross-checks, `normal_dims` well-formedness, and presence flags that
+must agree with the store. Stage 2 then checks what needs materialized arrays.
+Tests assert the no-fetch property against a store that records every key it is
+asked for, rather than against a proxy for it.
+
+Four things in there are easy to get wrong, and each is pinned:
+
+- **`faces` is read raw, never through `ArrayDecoder`.** The decoder yields
+  `Float32Array`, whose 24-bit mantissa cannot represent every index a
+  2^27-vertex mesh may carry — it would silently round anything above 16,777,216.
+- **The face-index range check is two-sided and runs pre-coercion**, because each
+  side of the integer→u32 cast hides its own wrap-around: a signed store's `-1`
+  passes a one-sided `< V` test and becomes `0xffffffff`, while a 64-bit store's
+  `2^32 + 1` survives a post-cast check by wrapping to `1`, landing inside range,
+  and rewriting topology instead of trapping. 64-bit values are compared as
+  `BigInt` so nothing above 2^53 can round into range first.
+- **The byte budget charges what arrays DECODE to, not only what they store.** The
+  stored side can be arbitrarily smaller than the allocation, so a stored-only
+  budget is wrong in the dangerous direction: a broadcast array stores one row and
+  expands to `n_elements` rows (a ~12-byte declaration can materialize gigabytes),
+  every decoder-routed array yields a `Float32Array` (a `uint8` store decodes at
+  4x), and `faces` widens to u32 whatever narrow dtype the `INDEX` encoder chose.
+  The decoded term is also the only thing bounding `ndim`, which has no cap of its
+  own — `n_vertices: 4, ndim: 2^26` passes every count check on a trivial stored
+  footprint. The stored term still reads the *declared* dtype (an external `int64`
+  costs 8 bytes per index), and the largest single chunk buffer is SUMMED in rather
+  than checked alone: a chunk buffer exists during decode alongside the arrays, and
+  zarr v2's `chunks > shape` allowance makes "just under budget on both terms
+  separately, near 2x together" directly constructible. An oversized chunk is *also*
+  rejected on its own, so one array can never exceed the ceiling even where the sum
+  would fit.
+- **The budget fails CLOSED on an encoding it does not recognise.** Four separate
+  bypasses turned out to be one category — *the bytes the loader fetches are not the
+  bytes the handle declares* — and fixing them one at a time kept yielding a fifth,
+  because an unrecognised encoding fell through to "use the stored shape". The budget
+  now keys a `Record<EncodingName, ...>` off the contract's `ENCODING_NAMES`, so adding
+  a contract encoding is a compile error at the mesh preflight and an unknown one at
+  runtime is refused rather than admitted. It paid for itself on first compile by
+  catching a missing `uint64` entry.
+- **An `array_ref` is budgeted at its TARGET, not at the stub pointing to it.**
+  `ArrayDecoder` resolves `encoding.target` against the store root and reads that array
+  in full, while the referring array is a `(0, k)` stub — so a 48-byte declaration could
+  pull an unbounded array, and the throw only came from Stage 2, after the allocation.
+  Stage 1 now follows the chain metadata-only, with a hop limit and a seen-set so a
+  cyclic store is refused rather than hung. Refusing `array_ref` outright was not an
+  option: `normals`/`colors`/`scalars` are written with dedup ON, so meshes sharing a
+  colour array legitimately produce a ref. This is the same class as the broadcast
+  bypass above and was missed by that fix — which is why the budget is now expressed as
+  "charge the array whose bytes are fetched" rather than as a list of encodings.
+- **The in-flight latch is identity-guarded, and that is a separate fix from the
+  generation token.** `load()` collapses concurrent callers onto one fetch, and
+  `dispose()` nulls the latch while the old promise may still be pending — so an
+  unconditional clear on completion lets a stale settle wipe a REPLACEMENT load's
+  latch, after which every `updateView` (a slice scrub, precisely what the latch
+  exists for) starts another whole-mesh fetch. The generation token stops a stale
+  completion *publishing* into a disposed loader; the identity check stops it
+  *erasing the latch*. Fixing only the first leaves the duplicate fetches.
+- **An open failure is classified, not assumed deterministic.** Wrapping any
+  `vertices`/`faces` open error as `kind: 'Validation'` would have the failure record
+  treat a transient network fault as permanent and never retry it. Routed through
+  `classifyLoaderError`, matching the sibling node loaders.
+- **Shapes are checked logically, and "logical" has three sources.**
+  `encoding.n_elements` (broadcast) first, then `encoding.original_shape` (LUT /
+  per-channel quantization), then the stored shape. Consulting only
+  `original_shape` rejects a uniform colour, because the broadcast encoder stamps
+  `n_elements` and *not* `original_shape`: `add_mesh(..., colors=(1, 0, 0))` and any
+  incidentally-uniform colour array both land as `shape: [1, 3]` and look like a
+  1-row array. The broadcast branch is gated on the encoding NAME as well as the
+  count — stricter than needed for writer-produced stores (only the two broadcast
+  encoders stamp `n_elements`), but it stops a hostile store covering V vertices with
+  a bare `n_elements`, and stops the branch hijacking an array carrying both keys.
+
+At the default budget the ceiling binds long before the vertex cap: a 3D float32
+mesh runs out of bytes at ~44.7M vertices against a cap of 134.2M. The cap is still
+checked, and checked first, so a nonsensical declaration is told about pick-key
+aliasing rather than blamed for bytes.
+
+**Winding is resolved against the authored frame.** `sorted(normal_dims)` is the
+axis triple the stored face order is front-facing in. When the displayed triple
+equals that frame with odd parity, display space is a reflection and every
+projected triangle is uniformly reversed, so two of each triangle's three indices
+are swapped — without it a `double_sided: false` mesh renders inside-out, and an
+open surface vanishes. That reversal is keyed to the current `displayDims` parity
+rather than to the *event* of it changing, so it runs on every index build in an
+odd-parity epoch, initial load included. When the displayed triple is a *different*
+triple than the frame, or the mesh declares no frame at all, projected orientation
+is per-triangle data-dependent and no index post-pass can fix it: the epoch renders
+double-sided with a one-time notice naming the node.
+
 #### Fixed — a `kind=lod` group could be given a display type nothing can load
 
 The LOD path only ever *derived* `display_type` from its finest child, with no

@@ -268,6 +268,85 @@ def test_multiline_signature_with_docstring_counts_as_documented(
     assert f"Docstring coverage::{rel}" not in keys
 
 
+def test_long_jsdoc_directly_above_counts_as_documented() -> None:
+    # The TypeScript twin of the multi-line-signature bug above: a JSDoc block
+    # longer than the 10-line lookback window put its `/**` opener out of range, so
+    # a fully-documented export was miscounted. The metric then penalised thorough
+    # docs — the cheapest way to raise a file's coverage was to write SHORTER ones.
+    lines = (
+        ["/**"]
+        + [f" * line {i}" for i in range(20)]
+        + [" */", "export type T = string;"]
+    )
+    assert cd.DocumentationChecker._has_jsdoc_above(lines, len(lines) - 1)
+
+
+def test_blank_lines_between_jsdoc_and_export_are_skipped() -> None:
+    lines = ["/**", " * Doc.", " */", "", "", "export interface I {}"]
+    assert cd.DocumentationChecker._has_jsdoc_above(lines, len(lines) - 1)
+
+
+def test_ten_line_window_still_accepted_so_the_rule_stays_a_superset() -> None:
+    # The lookback window is kept OR-ed with the directly-above check, not replaced.
+    # Requiring the immediately-preceding line to close a block comment alone is
+    # stricter in the other direction and rejects three shapes the window accepts —
+    # an export beneath the imports (crediting the MODULE docstring), a member
+    # beneath a previous member's closing brace, and a `//`-style comment. Those are
+    # pre-existing leniency in this metric; narrowing them is a separate decision,
+    # so the rule must only ever REMOVE findings.
+    brace = [
+        "/**",
+        " * Doc for something else.",
+        " */",
+        "  method() {}",
+        "}",
+        "export const c = 1;",
+    ]
+    assert cd.DocumentationChecker._has_jsdoc_above(brace, len(brace) - 1)
+
+    line_comment = [
+        "/**",
+        " * Doc.",
+        " */",
+        "// Export type definitions",
+        "export type T = 1;",
+    ]
+    assert cd.DocumentationChecker._has_jsdoc_above(line_comment, len(line_comment) - 1)
+
+
+def test_a_plain_block_comment_does_not_count_as_jsdoc() -> None:
+    # Condition 1 walks back from the closing */ to the block's opener and
+    # requires /** — an ordinary /* ... */ implementation comment above an export
+    # is not documentation, and the historical 10-line window never credited it
+    # either (it greps for the JSDoc opener specifically). So rejecting it keeps
+    # the rule a strict superset of the old one while closing the loophole where
+    # any block comment would count.
+    lines = ["/* not really jsdoc */", "export type T = string;"]
+    assert not cd.DocumentationChecker._has_jsdoc_above(lines, len(lines) - 1)
+
+    multiline = ["/*", " * plain block, not jsdoc", " */", "export type T = string;"]
+    assert not cd.DocumentationChecker._has_jsdoc_above(multiline, len(multiline) - 1)
+
+    # A trailing block comment on a CODE line opens on itself and fails the
+    # JSDoc-opener requirement too.
+    trailing = ["const x = 1; /* c */", "export type T = string;"]
+    assert not cd.DocumentationChecker._has_jsdoc_above(trailing, len(trailing) - 1)
+
+    # A one-line JSDoc still counts: the closer's own line is the opener.
+    oneliner = ["/** Doc. */", "export type T = string;"]
+    assert cd.DocumentationChecker._has_jsdoc_above(oneliner, len(oneliner) - 1)
+
+
+def test_undocumented_export_is_still_undocumented() -> None:
+    # Anti-vacuity: the two accepting conditions must not accept everything.
+    lines = (
+        ["import { x } from './x';"]
+        + ["const y = 1;"] * 12
+        + ["export type T = string;"]
+    )
+    assert not cd.DocumentationChecker._has_jsdoc_above(lines, len(lines) - 1)
+
+
 def test_low_coverage_below_threshold_is_flagged(tmp_path: Path) -> None:
     # Module docstring present so ONLY the coverage check can fire; three
     # undocumented functions sit at 0% -> well below the 70% floor.
