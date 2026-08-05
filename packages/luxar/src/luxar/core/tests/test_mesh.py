@@ -293,6 +293,26 @@ def test_mesh_accepts_the_blending_modes_it_does_support(tmp_path) -> None:
             assert mesh is not None
 
 
+def test_mesh_blending_mode_setter_also_rejects_volumetric(tmp_path) -> None:
+    """The post-add mutation path, which the adder check alone cannot cover.
+
+    ``Node.blending_mode`` (and the chaining ``set_blending_mode``) is a public
+    setter that persists straight to zarr, so without the :class:`Mesh` override a
+    caller could add a mesh with a supported mode and flip it to ``volumetric``
+    one line later — re-opening exactly the door the adder closes.
+    """
+    with LuxarZarrCompiler(tmp_path / "setter.luxar.zarr") as compiler:
+        scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+        mesh = scene.add_mesh("surface", _V, _F, blending_mode="normal")
+        with pytest.raises(ValueError, match="volumetric"):
+            mesh.blending_mode = "volumetric"
+        with pytest.raises(ValueError, match="volumetric"):
+            mesh.set_blending_mode("volumetric")
+        # The supported modes still flow through the base validation unchanged.
+        mesh.blending_mode = "additive"
+        assert mesh.blending_mode == "additive"
+
+
 def test_mesh_under_a_lod_group_is_rejected(tmp_path) -> None:
     """Refused at ADD time, before any array lands on disk.
 
