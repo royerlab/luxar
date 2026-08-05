@@ -53,11 +53,29 @@ export interface EffectiveAttrs {
  * whose effective attributes we want. Unset values are treated as identity:
  * opacity/gamma/intensity = 1, offset = 0. A set `blending_mode` at any
  * level overrides the cumulative choice; the winning string is validated
- * through `normalizeBlendingMode` (unset chain → 'additive', unknown
- * string → 'normal' + one-time warning), so every consumer of
- * `EffectiveAttrs` sees a canonical mode.
+ * through `normalizeBlendingMode` (unknown string → 'normal' + one-time warning), so
+ * every consumer of `EffectiveAttrs` sees a canonical mode.
+ *
+ * `defaultBlendingMode` is what an entirely UNSET chain resolves to, and this is the
+ * only place the "nothing in the ancestry set a mode" fact still survives. Callers
+ * that pass nothing get `'additive'`, which is what the three emissive types want;
+ * **mesh passes `'opaque'`** (spec §6.3).
+ *
+ * Threading it here rather than defaulting at the material is not a style choice — it
+ * is the difference between working and not. `normalizeBlendingMode(undefined)`
+ * returns `'additive'`, so a composed `blending_mode` was NEVER undefined by the time
+ * a material saw it, which made `createMeshNode`'s
+ * `(attrs.blending_mode as BlendingMode) ?? 'opaque'` dead code: every mesh rendered
+ * `additive`, §6.3's whole asymmetry was inert, and the alpha cutout never compiled.
+ * Found by the first end-to-end render of a written mesh.
+ *
+ * Nearest-setter-wins is preserved exactly: an ancestor that DID set a mode still
+ * wins, because the default is consulted only when the loop found nothing.
  */
-export function composeAttrs(chainRootToLeaf: readonly ComposableAttrs[]): EffectiveAttrs {
+export function composeAttrs(
+  chainRootToLeaf: readonly ComposableAttrs[],
+  defaultBlendingMode: BlendingMode = 'additive'
+): EffectiveAttrs {
   let opacity = 1.0;
   let absorption = 1.0;
   let gamma = 1.0;
@@ -86,7 +104,8 @@ export function composeAttrs(chainRootToLeaf: readonly ComposableAttrs[]): Effec
     gamma,
     intensity,
     offset,
-    blending_mode: normalizeBlendingMode(blending_mode),
+    blending_mode:
+      blending_mode === undefined ? defaultBlendingMode : normalizeBlendingMode(blending_mode),
   };
 }
 
@@ -142,8 +161,12 @@ export function collectAncestorAttrs(root: SceneNode, targetPath: string): Compo
 /**
  * Convenience: compose effective attrs for a target path in the scene graph.
  */
-export function getEffectiveAttrs(root: SceneNode, targetPath: string): EffectiveAttrs {
-  return composeAttrs(collectAncestorAttrs(root, targetPath));
+export function getEffectiveAttrs(
+  root: SceneNode,
+  targetPath: string,
+  defaultBlendingMode?: BlendingMode
+): EffectiveAttrs {
+  return composeAttrs(collectAncestorAttrs(root, targetPath), defaultBlendingMode);
 }
 
 /**

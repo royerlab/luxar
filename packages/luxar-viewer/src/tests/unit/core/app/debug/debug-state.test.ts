@@ -89,7 +89,12 @@ function makeLineMesh(
   const material = new THREE.ShaderMaterial({
     vertexShader: 'void main() {}',
     fragmentShader: 'void main() {}',
-    defines: options.hasColormap ? { USE_COLORMAP: 1 } : {},
+    // `''`, matching PRODUCTION (`this.defines.USE_COLORMAP = ''` in the line and
+    // mesh material wrappers — three emits a bare `#define FLAG` for an empty value).
+    // The fixture used to say `1`, which made the assertion below vacuous: the
+    // production read was `!!defines.USE_COLORMAP`, false for `''`, so it reported
+    // every colormapped line as un-colormapped and this test never noticed.
+    defines: options.hasColormap ? { USE_COLORMAP: '' } : {},
   });
   const mesh = new THREE.Mesh(geometry, material);
   mesh.userData = { nodeType: 'lines' };

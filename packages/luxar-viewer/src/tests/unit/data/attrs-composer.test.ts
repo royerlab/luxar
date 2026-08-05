@@ -6,6 +6,11 @@ import {
   getEffectiveAttrs,
 } from '../../../data/attrs-composer';
 import type { SceneNode } from '../../../data/data-loader-types';
+import {
+  DEFAULT_BLENDING_MODES,
+  defaultBlendingModeFor,
+} from '../../../types/geometry-capabilities';
+import { GEOMETRY_TYPES } from '../../../types/format-contract';
 
 describe('composeAttrs', () => {
   it('returns identity for empty chain', () => {
@@ -388,5 +393,55 @@ describe('composeAttrs — algebraic invariants (data.md H6)', () => {
         }
       )
     );
+  });
+});
+
+describe('composeAttrs — the per-type blending-mode default (spec §6.3)', () => {
+  it('an entirely unset chain resolves to the supplied default', () => {
+    // The regression this locks. `normalizeBlendingMode(undefined)` returns
+    // `'additive'`, which collapsed "nobody set a mode" into "somebody set additive" —
+    // so `createMeshNode`'s `?? 'opaque'` was DEAD CODE and every mesh rendered
+    // additive, with §6.3's asymmetry inert and the alpha cutout never compiled.
+    // Found by the first end-to-end render of a written mesh, not by any unit test.
+    expect(composeAttrs([{}, {}]).blending_mode).toBe('additive');
+    expect(composeAttrs([{}, {}], 'opaque').blending_mode).toBe('opaque');
+  });
+
+  it('keeps nearest-setter-wins intact — an authored mode beats the default', () => {
+    // The half that must NOT change. The default is a fallback, not an override: a
+    // mesh under `group(blending_mode="additive")` still renders additive, which is
+    // exactly why §6.3 forbids the writer from stamping the mode.
+    expect(composeAttrs([{ blending_mode: 'additive' }, {}], 'opaque').blending_mode).toBe(
+      'additive'
+    );
+    expect(composeAttrs([{}, { blending_mode: 'max' }], 'opaque').blending_mode).toBe('max');
+    // ...and the NEAREST setter still wins over a farther one.
+    expect(
+      composeAttrs([{ blending_mode: 'additive' }, { blending_mode: 'normal' }], 'opaque')
+        .blending_mode
+    ).toBe('normal');
+  });
+
+  it('still normalizes an unknown authored mode rather than falling back to the default', () => {
+    // A garbage string is a different case from an ABSENT one: it goes to `'normal'`
+    // with a one-time warning (someone tried to set something), where absence takes the
+    // type default. Conflating them would silently turn a typo into a mesh's `opaque`.
+    expect(composeAttrs([{ blending_mode: 'nonsense' }], 'opaque').blending_mode).toBe('normal');
+  });
+
+  it('defaults per GEOMETRY TYPE, mesh being the only one that is not additive', () => {
+    // Driven off the table so a fifth geometry type joins automatically. The assertion
+    // is that mesh is the ONLY exception — if a second type ever needs a non-additive
+    // default that is a deliberate decision, made at the table.
+    const exceptions = GEOMETRY_TYPES.filter((t) => DEFAULT_BLENDING_MODES[t] !== 'additive');
+    expect(exceptions).toEqual(['mesh']);
+    expect(DEFAULT_BLENDING_MODES.mesh).toBe('opaque');
+  });
+
+  it('defaultBlendingModeFor falls back to additive for a non-geometry type', () => {
+    // A group carries no default of its own — its children decide.
+    expect(defaultBlendingModeFor('group')).toBe('additive');
+    expect(defaultBlendingModeFor(undefined)).toBe('additive');
+    expect(defaultBlendingModeFor('mesh')).toBe('opaque');
   });
 });

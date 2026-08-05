@@ -140,6 +140,37 @@ describe('registerExistingSceneNodes', () => {
     expect(pick.uniforms.uSurfaceDepth.value).toBe(0);
   });
 
+  it('prefers the visual material LIVE state over the node attrs', () => {
+    // The context-restore case. `rebuildAfterContextRestore` re-runs this pass with
+    // FRESH pick materials (the old ones were compiled against the dead context) while
+    // the visual material survives carrying whatever the user dragged in the layers
+    // panel. Seeding from `userData.attrs` there would silently revert the pick
+    // coverage to the authored values — a mesh you had faded would go back to being
+    // pickable at its original threshold, self-healing only on the next panel edit.
+    const { stub, registered } = stubPickingSystem();
+    factory.setPickingSystem(stub);
+    const root = new THREE.Group();
+    const node = makeNode('mesh', '/surface');
+    // Authored values...
+    node.userData.attrs = { opacity: 1.0, alpha_cutoff: 0.5, blending_mode: 'opaque' };
+    // ...and a live material that disagrees with all three, as after a panel drag plus
+    // a volumetric-by-inheritance resolution.
+    (node.material as unknown as { uniforms: Record<string, { value: number }> }).uniforms = {
+      uOpacity: { value: 0.42 },
+      uAlphaCutoff: { value: 0.9 },
+    };
+    node.material.userData.blendingMode = 'additive';
+    root.add(node);
+
+    factory.registerExistingSceneNodes(root);
+
+    const pick = registered[0].pick.material as MeshPickingMaterial;
+    expect(pick.uniforms.uOpacity.value).toBeCloseTo(0.42);
+    expect(pick.uniforms.uAlphaCutoff.value).toBeCloseTo(0.9);
+    // The RESOLVED mode, not the authored one.
+    expect(pick.uniforms.uAlphaCutout.value).toBe(0);
+  });
+
   it('carries the mesh coverage inputs from the node attrs', () => {
     const { stub, registered } = stubPickingSystem();
     factory.setPickingSystem(stub);

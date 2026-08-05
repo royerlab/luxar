@@ -289,7 +289,13 @@ export function computeDebugState(ctx: DebugStateContext): DebugState {
         | (THREE.Material & { defines?: Record<string, unknown> })[]
         | undefined;
       const firstMat = Array.isArray(mat) ? mat[0] : mat;
-      const hasColormap = !!firstMat?.defines?.USE_COLORMAP;
+      // PRESENCE, not truthiness — see the mesh arm below. Production sets
+      // `defines.USE_COLORMAP = ''` (three emits a bare `#define`), and `!!''` is
+      // false, so this had ALWAYS reported `hasColormap: false` for a colormapped line
+      // node. Its unit test passed only because the fixture used `1` where production
+      // uses `''` — a vacuous assertion, found when the same read was written for mesh
+      // and checked against a real render.
+      const hasColormap = !!firstMat?.defines && 'USE_COLORMAP' in firstMat.defines;
       lineMeshes.push({
         name: object.name || 'unnamed',
         segmentCount,
@@ -330,14 +336,21 @@ export function computeDebugState(ctx: DebugStateContext): DebugState {
       // backend the wrappers mirror the same flags into `defines` for exactly this
       // reason (there is no GLSL preprocessor there), so this reads the same on both.
       const defines = firstMat?.defines;
+      // PRESENCE, not truthiness. A GLSL define's conventional value here is the empty
+      // string (`defines[flag] = ''`, which three emits as a bare `#define FLAG`), and
+      // `!!''` is false — so a truthiness test reports every mesh variant as OFF while
+      // the shader is compiled WITH it. Caught by the first end-to-end render: the
+      // `flat_patch` node carried `LUXAR_MESH_FLAT_NORMAL` in `defines` and still
+      // reported `flatNormal: false`.
+      const hasDefine = (flag: string): boolean => !!defines && flag in defines;
       meshNodes.push({
         name: object.name || 'unnamed',
         triangleCount,
         vertexCount: geometry?.getAttribute('position')?.count ?? 0,
         visible: object.visible,
-        flatNormal: !!defines?.LUXAR_MESH_FLAT_NORMAL,
-        alphaCutout: !!defines?.LUXAR_MESH_ALPHA_CUTOUT,
-        hasColormap: !!defines?.USE_COLORMAP,
+        flatNormal: hasDefine('LUXAR_MESH_FLAT_NORMAL'),
+        alphaCutout: hasDefine('LUXAR_MESH_ALPHA_CUTOUT'),
+        hasColormap: hasDefine('USE_COLORMAP'),
       });
     }
   });

@@ -28,7 +28,11 @@ import { supportsScalarColormap } from '../../rendering/material-colormap-helper
 import { noteDepthSortBlendingModeSwitch } from '../../rendering/depth-sort-coordinator';
 import { syncMeshPickAppearance } from '../../rendering/node-factory/create-mesh-node';
 import type { GeometryTypeName } from '../../types/format-contract';
-import { isDepthSortable, isGeometryType } from '../../types/geometry-capabilities';
+import {
+  defaultBlendingModeFor,
+  isDepthSortable,
+  isGeometryType,
+} from '../../types/geometry-capabilities';
 import {
   composeAttrs,
   collectAncestorNodes,
@@ -167,7 +171,12 @@ export class LayerApplyEngine {
           : (node.attrs.blending_mode as string | undefined),
       };
     });
-    return composeAttrs(chain);
+    // The LEAF'S type supplies the fallback for an ancestry that sets no mode (§6.3),
+    // matching `applyEffectiveAttrs` on the loader side. `ancestors` is root-to-leaf,
+    // so its last entry is the leaf itself; a group layer fans out per leaf, and each
+    // gets its own default.
+    const leaf = ancestors[ancestors.length - 1];
+    return composeAttrs(chain, defaultBlendingModeFor(leaf?.type));
   }
 
   private applyBlendingStateToMaterial(mat: LuxarMaterial, mode: string): void {

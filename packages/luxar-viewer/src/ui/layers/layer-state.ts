@@ -9,7 +9,7 @@ import type { SceneNode } from '../../data/data-loader-types';
 import { getEffectiveAttrs } from '../../data/attrs-composer';
 import type { BlendingMode } from '../../types/blending';
 import type { GeometryTypeName, NodeKind } from '../../types/format-contract';
-import { isGeometryType } from '../../types/geometry-capabilities';
+import { defaultBlendingModeFor, isGeometryType } from '../../types/geometry-capabilities';
 import { log, Modules } from '../../utils/log';
 // Pure display-window ↔ shader-uniform math now lives in the rendering layer
 // (`rendering/display-range`) so `rendering/` modules can import it without
@@ -506,7 +506,14 @@ export class LayerStateManager {
           // ancestor wins, normalized by composeAttrs) — the panel must
           // show the mode the material actually renders with, not the
           // node's own (possibly absent / malformed) raw attr.
-          blendingMode: getEffectiveAttrs(root, node.path).blending_mode,
+          // Composed along the ancestry, with the LEAF'S OWN type default when nothing
+          // set a mode (§6.3: `opaque` for mesh, `additive` for the other three).
+          // Without the default the panel would init a mesh layer at `additive` and
+          // push that onto the material on the first edit, overriding the mode the
+          // loader chose — the panel is a second place the default has to be right,
+          // not just the loader.
+          blendingMode: getEffectiveAttrs(root, node.path, defaultBlendingModeFor(node.type))
+            .blending_mode,
           selected: false,
           colormap,
           supportsColormap,

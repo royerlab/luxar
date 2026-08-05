@@ -30,6 +30,7 @@
  */
 
 import { GEOMETRY_TYPES, type GeometryTypeName } from './format-contract';
+import type { BlendingMode } from './blending';
 
 /** Membership set for {@link isGeometryType}; `Set` so lookup is not a scan. */
 const GEOMETRY_TYPE_SET: ReadonlySet<string> = new Set(GEOMETRY_TYPES);
@@ -119,6 +120,42 @@ export const GEOMETRY_CAPABILITIES: Readonly<Record<GeometryTypeName, GeometryCa
     // Flip a flag here when the corresponding path lands — never at a call site.
     mesh: { lod: false, partition: false, pooled: false, depthSortable: false },
   });
+
+/**
+ * The blending mode a geometry type takes when NOTHING in its scene-graph ancestry
+ * sets one (spec §6.3).
+ *
+ * A separate table from {@link GEOMETRY_CAPABILITIES} because that one is boolean-only
+ * — `hasCapability` reads any field as a flag — and this is a mode string. Still a
+ * `Record<GeometryTypeName, …>`, so a new geometry type must state its default here
+ * rather than inherit one.
+ *
+ * The three emissive types default to `additive`. **Mesh defaults to `opaque`**, which
+ * is the only mode unconditionally correct without per-triangle depth sorting and is
+ * what a surface should look like. That asymmetry is applied viewer-side and never
+ * stamped by the writer: a stamped `blending_mode` would override an ancestor's under
+ * nearest-setter-wins, silently breaking `group(blending_mode="additive")` for its
+ * mesh children.
+ *
+ * Consumed by `composeAttrs`, which is the only place that still knows whether the
+ * ancestry set a mode at all — see `applyEffectiveAttrs` for why defaulting any later
+ * cannot work.
+ */
+export const DEFAULT_BLENDING_MODES: Readonly<Record<GeometryTypeName, BlendingMode>> =
+  Object.freeze({
+    points: 'additive',
+    lines: 'additive',
+    gsplats: 'additive',
+    mesh: 'opaque',
+  });
+
+/**
+ * The default blending mode for an untyped node-type value, or `'additive'` for
+ * anything that is not a geometry type (a group carries no default of its own).
+ */
+export function defaultBlendingModeFor(nodeType: unknown): BlendingMode {
+  return isGeometryType(nodeType) ? DEFAULT_BLENDING_MODES[nodeType] : 'additive';
+}
 
 /** Look up one capability of an untyped node-type value. Non-types are `false`. */
 function hasCapability(value: unknown, capability: keyof GeometryCapabilities): boolean {
