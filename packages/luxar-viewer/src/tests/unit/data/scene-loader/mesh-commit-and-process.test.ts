@@ -344,7 +344,12 @@ describe('process -> commit: the position buffer is uploaded once per epoch (#12
     const data = loaded();
     return {
       ...data,
-      projection: { position: new Float32Array(data.vertexCount * 3), displayDimsKey: null },
+      projection: {
+        position: new Float32Array(data.vertexCount * 3),
+        displayDimsKey: null,
+        mask: new Uint8Array(data.vertexCount),
+        faceScratch: new Uint32Array(data.faceCount * 3),
+      },
     };
   }
 
@@ -454,5 +459,68 @@ describe('process -> commit: geometry bounds cover only the drawn triangles (#12
     expect(mesh.geometry.boundingBox!.isEmpty()).toBe(true);
     expect(mesh.geometry.boundingSphere!.radius).toBe(-1);
     expect(mesh.geometry.boundingSphere!.center.toArray()).toEqual([0, 0, 0]);
+  });
+});
+
+describe('process -> commit: the vertex attribute set is frozen after the first commit', () => {
+  const loader = {} as MeshDataLoader;
+
+  function withScratch(): LoadedMeshData {
+    const d = loaded();
+    return {
+      ...d,
+      colors: new Uint8Array([255, 0, 0, 0, 255, 0, 0, 0, 255]),
+      colorComponents: 3,
+      projection: {
+        position: new Float32Array(d.vertexCount * 3),
+        displayDimsKey: null,
+        mask: new Uint8Array(d.vertexCount),
+        faceScratch: new Uint32Array(d.faceCount * 3),
+      },
+    };
+  }
+
+  it('rebinds nothing after the first commit, across slice moves AND axis permutations', async () => {
+    // Three r184's WebGPU backend keys a pipeline's vertex-buffer layout by attribute
+    // IDENTITY, and `getGeometryCacheKey` hashes only names/itemSize/normalized — so a
+    // rebind that the cache key cannot see leaves the draw reading the OLD buffer. The
+    // commit's `invalidateRenderObjectFor` covers the first-commit rebind; what must hold
+    // afterwards is that NO further rebind happens at all, or a scrub would evict the
+    // render object on every frame.
+    const root = new THREE.Group();
+    const mesh = createEmptyMeshNode('/surface', ATTRS, loader);
+    root.add(mesh);
+    const data = withScratch();
+
+    const epochs: MeshViewState[] = [
+      VIEW,
+      { ...VIEW, slicePosition: [0, 0, 0, 10] } as MeshViewState,
+      { ...VIEW, displayDims: [3, 0, 1] } as MeshViewState,
+      { ...VIEW, displayDims: [0, 1, 2], slicePosition: [0, 0, 0, 99] } as MeshViewState,
+    ];
+
+    const seen: { names: string[]; position: unknown; color: unknown }[] = [];
+    for (const view of epochs) {
+      const staged = await processMeshData('/surface', data, view, {
+        normal_dims: [0, 1, 2],
+        double_sided: true,
+      });
+      commitMeshGeometry({ rootGroup: root, currentVersion: 1 }, staged);
+      seen.push({
+        names: Object.keys(mesh.geometry.attributes).sort(),
+        position: mesh.geometry.getAttribute('position'),
+        color: mesh.geometry.getAttribute('color'),
+      });
+    }
+
+    // The attribute SET is identical at every epoch — nothing joins or leaves.
+    for (const s of seen) expect(s.names).toEqual(['color', 'position']);
+    // And every attribute OBJECT is the one installed by the first commit.
+    for (const s of seen.slice(1)) {
+      expect(s.position).toBe(seen[0].position);
+      expect(s.color).toBe(seen[0].color);
+    }
+    // The index attribute is likewise stable (its capacity buffer is allocated once).
+    expect(mesh.geometry.index).not.toBeNull();
   });
 });

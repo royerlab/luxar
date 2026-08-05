@@ -467,12 +467,58 @@ describe('projectMeshTo3D — the winding post-pass', () => {
   });
 });
 
+describe('projectMeshTo3D — the winding post-pass never touches the cached faces', () => {
+  it("leaves the loader's faces array byte-identical across repeated odd-parity epochs", () => {
+    // The failure this guards is intermittent, which is what makes it worth pinning
+    // separately from "does it reverse". `faces` lives on the cached `LoadedMeshData` for
+    // the node's whole life, so an in-place reversal would corrupt it — and reversing
+    // twice restores the original, so the corruption would appear and vanish depending
+    // on how many odd-parity projections had run. Now that `position` IS deliberately
+    // reused across epochs, the distinction between "reuse this" and "never touch that"
+    // has to be explicit.
+    const data = twoTrianglesIn4D();
+    const before = Array.from(data.faces);
+    // (0, 2, 1) is an odd permutation of the frame, so every epoch reverses.
+    for (let i = 0; i < 3; i++) {
+      const r = projectMeshTo3D(
+        data,
+        viewState([0, 2, 1], [0, 0, 0, 0], [1e10, 1e10, 1e10, 1e10]),
+        [0, 1, 2],
+        false,
+        backend
+      );
+      expect(r.side).toBe('front');
+      expect(Array.from(data.faces), `faces mutated after epoch ${i + 1}`).toEqual(before);
+    }
+  });
+
+  it('does the same on the CULL path, where the scratch buffer is involved', () => {
+    const data = twoTrianglesIn4D();
+    const before = Array.from(data.faces);
+    for (let i = 0; i < 3; i++) {
+      projectMeshTo3D(
+        data,
+        viewState([0, 2, 1], [0, 0, 0, 0], [1e10, 1e10, 1e10, 0.5]),
+        [0, 1, 2],
+        false,
+        backend
+      );
+      expect(Array.from(data.faces), `faces mutated after cull epoch ${i + 1}`).toEqual(before);
+    }
+  });
+});
+
 describe('projectMeshTo3D — position buffer reuse (#1245)', () => {
   /** The loader-owned scratch, exactly as `MeshWholeNodeLoader` allocates it. */
   function withScratch(data: LoadedMeshData): LoadedMeshData {
     return {
       ...data,
-      projection: { position: new Float32Array(data.vertexCount * 3), displayDimsKey: null },
+      projection: {
+        position: new Float32Array(data.vertexCount * 3),
+        displayDimsKey: null,
+        mask: new Uint8Array(data.vertexCount),
+        faceScratch: new Uint32Array(data.faceCount * 3),
+      },
     };
   }
 
@@ -547,7 +593,12 @@ describe('projectMeshTo3D — position buffer reuse (#1245)', () => {
     // Defensive: a stale scratch must not be written past its end.
     const data: LoadedMeshData = {
       ...twoTrianglesIn4D(),
-      projection: { position: new Float32Array(3), displayDimsKey: null },
+      projection: {
+        position: new Float32Array(3),
+        displayDimsKey: null,
+        mask: new Uint8Array(1),
+        faceScratch: new Uint32Array(3),
+      },
     };
     const result = projectMeshTo3D(
       data,
@@ -562,7 +613,70 @@ describe('projectMeshTo3D — position buffer reuse (#1245)', () => {
   });
 });
 
-describe('projectMeshTo3D — visible bounds (#1252)', () => {
+describe('projectMeshTo3D — the cull scratch buffers are reused too', () => {
+  /** Loader-owned buffers, exactly as `MeshWholeNodeLoader` allocates them. */
+  function targets(data: LoadedMeshData) {
+    return {
+      position: new Float32Array(data.vertexCount * 3),
+      displayDimsKey: null,
+      mask: new Uint8Array(data.vertexCount),
+      faceScratch: new Uint32Array(data.faceCount * 3),
+    };
+  }
+
+  it('writes through the supplied mask and face scratch instead of allocating', () => {
+    // `position` was the allocation #1245 named, but the cull also built a per-vertex mask
+    // and a WORST-CASE face-compaction buffer every epoch — 1 byte/vertex plus 12
+    // bytes/face, so ~12.5 MB of garbage per slice move on a 1M-face mesh. Both are
+    // rewritten in full each cull, so there is no staleness to track; reuse only stops
+    // the garbage.
+    const data: LoadedMeshData = { ...twoTrianglesIn4D() };
+    const t = targets(data);
+    data.projection = t;
+
+    const r = projectMeshTo3D(
+      data,
+      viewState([0, 1, 2], [0, 0, 0, 0], [1e10, 1e10, 1e10, 0.5]),
+      undefined,
+      true,
+      backend
+    );
+    expect(r.visibleFaceCount).toBe(1);
+    // The kernel wrote the SUPPLIED mask: vertices 0-2 in, 3-5 out.
+    expect(Array.from(t.mask)).toEqual([1, 1, 1, 0, 0, 0]);
+    // And the supplied scratch carries the compacted faces in its prefix.
+    expect(Array.from(t.faceScratch.subarray(0, 3))).toEqual([0, 1, 2]);
+  });
+
+  it('hands back a COPY, never a view onto the reused scratch', () => {
+    // Now load-bearing rather than tidy: the scratch outlives the call, so a view would
+    // alias whatever the NEXT projection writes — silently changing indices a caller
+    // still holds. Two epochs, and the first result must not move.
+    const data: LoadedMeshData = { ...twoTrianglesIn4D() };
+    data.projection = targets(data);
+
+    const first = projectMeshTo3D(
+      data,
+      viewState([0, 1, 2], [0, 0, 0, 0], [1e10, 1e10, 1e10, 0.5]),
+      undefined,
+      true,
+      backend
+    );
+    const snapshot = Array.from(first.indices);
+    expect(first.indices.buffer).not.toBe(data.projection!.faceScratch.buffer);
+
+    projectMeshTo3D(
+      data,
+      viewState([0, 1, 2], [0, 0, 0, 10], [1e10, 1e10, 1e10, 0.5]),
+      undefined,
+      true,
+      backend
+    );
+    expect(Array.from(first.indices), 'earlier epoch aliased the reused scratch').toEqual(snapshot);
+  });
+});
+
+describe('projectMeshTo3D — projected bounds (#1252)', () => {
   it('spans only the vertices the emitted index references', () => {
     // The whole point: `position` holds all six vertices of both triangles, but only
     // triangle A survives the slab, so the box must exclude triangle B's z = 1 plane.
@@ -728,13 +842,16 @@ describe('projectMeshTo3D — the two-sided dimension hazard', () => {
     expect(result.undecidableReason).toMatch(/2 displayed dimensions/);
   });
 
-  it('survives a genuinely 1-D mesh (ndim 1, one displayed dim)', () => {
-    // The true degenerate corner, and it is ADMISSIBLE end to end: the Python adder
-    // takes `ndim = vertices.shape[1]` with no floor, and the viewer's preflight allows
-    // `ndim >= 1`. A triangle in 1-D has no area, so nothing will be visible — but it
-    // must not trap the kernel or throw. (Whether either side should refuse `ndim < 2`
-    // outright is a writer-side question, flagged rather than changed here: the adder is
-    // not in this branch's diff.)
+  it('survives a 1-D mesh, which the gate now refuses upstream', () => {
+    // Both `add_mesh` and the Stage-1 preflight now refuse `ndim < 2`, so this is no
+    // longer reachable through the loader — a triangle needs two dimensions to enclose
+    // area, and in 1D the surface loads cleanly and draws nothing.
+    //
+    // The kernel path is still pinned here on purpose. `projectMeshTo3D` is called
+    // directly by the processor and the gate is a separate module, so "unreachable"
+    // depends on a caller elsewhere staying correct; and the Rust kernel is
+    // `panic = "abort"`, where a trap takes down the whole WASM module rather than one
+    // node. Defence in depth for a boundary whose failure mode is that severe.
     const mesh: LoadedMeshData = {
       vertices: new Float32Array([0, 1, 2]),
       faces: new Uint32Array([0, 1, 2]),

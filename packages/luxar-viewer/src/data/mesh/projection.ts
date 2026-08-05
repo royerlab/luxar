@@ -389,7 +389,14 @@ export function projectMeshTo3D(
     };
   }
 
-  const mask = new Uint8Array(vertexCount);
+  // Reused when the loader supplied buffers of the right size, allocated otherwise. Both
+  // of these are rewritten in full every cull, so there is no staleness to track — the
+  // only thing reuse buys is not producing garbage proportional to the mesh on every
+  // slice move (#1245's argument, applied to the two buffers it did not cover).
+  const mask =
+    positionScratch && positionScratch.mask.length === vertexCount
+      ? positionScratch.mask
+      : new Uint8Array(vertexCount);
   const visibleVertexCount = backend.mesh_vertex_visibility_mask(
     vertices,
     new Float32Array(viewState.slicePosition),
@@ -403,17 +410,23 @@ export function projectMeshTo3D(
   // Worst-case sized: every face could survive. The kernel returns how many
   // actually did, and the result is sliced to exactly that — an oversized buffer
   // uploaded whole would draw stale triangles from its untouched tail.
-  const scratch = new Uint32Array(faceCount * 3);
+  const scratch =
+    positionScratch && positionScratch.faceScratch.length === faceCount * 3
+      ? positionScratch.faceScratch
+      : new Uint32Array(faceCount * 3);
   const visibleFaceCount = backend.compact_visible_faces(faces, mask, faceCount, scratch);
   const indices = scratch.subarray(0, visibleFaceCount * 3);
   if (winding.reverse) reverseWinding(indices, visibleFaceCount);
 
   return {
     position,
-    // A copy, not the subarray view: the view shares `scratch`'s whole buffer,
-    // and `THREE.BufferAttribute` uploads `array.buffer` — so handing over the
-    // view would upload the full worst-case allocation, including the stale
-    // tail past `visibleFaceCount * 3`.
+    // A copy, not the subarray view — and now REQUIRED rather than merely tidy.
+    // `scratch` is loader-owned and reused by the NEXT epoch, so a view onto it would
+    // alias data the next projection overwrites, silently changing indices a caller
+    // still holds. (The original reason — that `THREE.BufferAttribute` uploads
+    // `array.buffer`, so a view would upload the whole worst-case allocation — no longer
+    // applies: `applyMeshIndices` always `set`s into its own capacity buffer. The copy
+    // survives because reuse gave it a better reason.)
     indices: new Uint32Array(indices),
     visibleFaceCount,
     visibleVertexCount,

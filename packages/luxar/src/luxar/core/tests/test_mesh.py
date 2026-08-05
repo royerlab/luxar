@@ -1006,3 +1006,26 @@ def test_mesh_node_properties_reflect_what_was_written(tmp_path) -> None:
         assert node.shading == "smooth"
         assert node.double_sided is False
         assert node.ordering == "none"
+
+
+def test_add_mesh_refuses_one_dimensional_vertices(tmp_path):
+    """A triangle needs two dimensions to enclose any area.
+
+    Deliberately stricter than `add_points` / `add_lines`, which take whatever width
+    they are given: a 1D scatter and 1D segments are both meaningful, a 1D triangle is
+    not. Without this the mesh writes and loads cleanly and then renders NOTHING, with no
+    diagnostic anywhere — every face is collinear. The viewer's Stage-1 preflight mirrors
+    this floor, so the two sides agree on what is admissible.
+    """
+    from luxar.core.dimensions import Dimension, Dimensions
+
+    dims = Dimensions(
+        [Dimension(name="x", unit="um", range=(0, 20), step=1.0, display=True)]
+    )
+    vertices = np.array([[0.0], [1.0], [2.0]], dtype=np.float32)
+    faces = np.array([[0, 1, 2]], dtype=np.uint32)
+
+    with LuxarZarrCompiler(tmp_path / "collinear.luxar.zarr") as compiler:
+        scene = compiler.create_scene(dimensions=dims)
+        with pytest.raises(ValueError, match="at least 2 dimensions"):
+            scene.add_mesh("line-ish", vertices, faces)

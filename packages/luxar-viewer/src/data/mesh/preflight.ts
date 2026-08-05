@@ -500,8 +500,18 @@ export async function preflightMesh(
   if (!Number.isInteger(nFaces) || nFaces < 1) {
     rejectMesh(path, `n_faces must be a positive integer, got ${String(nFaces)}`);
   }
-  if (!Number.isInteger(ndim) || ndim < 1) {
-    rejectMesh(path, `ndim must be a positive integer, got ${String(ndim)}`);
+  // A floor of 2, mirroring `add_mesh`'s vertex check rather than the generic
+  // "positive integer" the other counts get. A triangle needs two dimensions to enclose
+  // area; in 1D every face is collinear, so the node would load cleanly and draw nothing,
+  // with no diagnostic. This is deliberately stricter than Points/Lines, whose primitives
+  // ARE meaningful in 1D.
+  if (!Number.isInteger(ndim) || ndim < 2) {
+    rejectMesh(
+      path,
+      `ndim must be an integer of at least 2, got ${String(ndim)}. A triangle needs two ` +
+        'dimensions to have any area — in 1D every face is collinear and the surface ' +
+        'renders nothing.'
+    );
   }
   if (nVertices > MAX_MESH_VERTICES) {
     rejectMesh(

@@ -99,7 +99,7 @@ const CASES: Array<[string, () => { store: S; attrs: MeshMetadata }]> = [
     },
   ],
   [
-    'ndim zero',
+    'ndim below the 2-dimension floor',
     () => {
       const a = A({ ndim: 0 });
       const e = base(a);

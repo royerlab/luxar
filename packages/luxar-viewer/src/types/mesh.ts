@@ -289,6 +289,22 @@ export interface MeshProjectionTargetBuffers {
   position: Float32Array;
   /** `displayDims.join()` of what `position` holds; `null` before the first extract */
   displayDimsKey: string | null;
+  /**
+   * Per-vertex slab-membership mask (`vertexCount`), rewritten every cull.
+   *
+   * Unlike `position` this genuinely changes on every slice move, so there is nothing to
+   * skip — but there is also no reason to reallocate it each time. One byte per vertex is
+   * small per epoch and pure garbage at scrub rates.
+   */
+  mask: Uint8Array;
+  /**
+   * Worst-case face-compaction scratch (`faceCount * 3`), rewritten every cull.
+   *
+   * The largest per-epoch allocation the cull had: 12 bytes per face, so ~12 MB for a
+   * 1M-face mesh, discarded and reallocated on every slice move. Sized for the worst case
+   * because every face may survive; the kernel reports how many actually did.
+   */
+  faceScratch: Uint32Array;
 }
 
 // ============================================================================

@@ -335,12 +335,36 @@ describe('preflightMesh — (a) counts and the vote-key cap', () => {
     ['n_vertices', { n_vertices: 0 }],
     ['n_vertices', { n_vertices: 1.5 }],
     ['n_faces', { n_faces: 0 }],
-    ['ndim', { n_faces: 4, ndim: 0 }],
   ])('rejects a non-positive-integer %s', async (_field, override) => {
     await expectReject(
       () => preflightMesh(PATH, tetAttrs(override as Partial<MeshMetadata>), tetHandles()),
       /must be a positive integer/
     );
+  });
+
+  it.each([[0], [1], [1.5]])('rejects ndim %s — a triangle needs two dimensions', async (ndim) => {
+    // Stricter than the sibling counts on purpose, and stricter than Points/Lines: their
+    // primitives are meaningful in 1D, a triangle is not. In 1D every face is collinear,
+    // so without this the node loads cleanly and renders nothing with no diagnostic.
+    // Mirrors `add_mesh`'s own vertex-width check.
+    await expectReject(
+      () =>
+        preflightMesh(PATH, tetAttrs({ ndim } as Partial<MeshMetadata>), {
+          vertices: fakeArray([4, ndim], '<f4'),
+          faces: fakeArray([4, 3], '<u4'),
+        }),
+      /at least 2/
+    );
+  });
+
+  it('accepts ndim 2 — a planar mesh is legitimate', async () => {
+    // The acceptance half: the floor is 2, not 3. Flat triangles in a plane have area.
+    await expect(
+      preflightMesh(PATH, tetAttrs({ ndim: 2 }), {
+        vertices: fakeArray([4, 2], '<f4'),
+        faces: fakeArray([4, 3], '<u4'),
+      })
+    ).resolves.toBeDefined();
   });
 });
 

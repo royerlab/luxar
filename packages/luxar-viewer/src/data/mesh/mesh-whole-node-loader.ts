@@ -291,7 +291,12 @@ export class MeshWholeNodeLoader implements MeshDataLoader {
       // `updateView` hands back for the node's whole life and drops on dispose, so
       // the buffer gets exactly the node's lifetime without a separate cache — the
       // Mesh counterpart of the Points accumulator's reusable target buffers (#1245).
-      projection: { position: new Float32Array(nVertices * 3), displayDimsKey: null },
+      projection: {
+        position: new Float32Array(nVertices * 3),
+        displayDimsKey: null,
+        mask: new Uint8Array(nVertices),
+        faceScratch: new Uint32Array(nFaces * 3),
+      },
     };
 
     log.success(
