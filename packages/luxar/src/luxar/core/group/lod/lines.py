@@ -459,7 +459,7 @@ def make_additive_lod_lines(
             (polylines[int(i)].shape[0] for i in perm), dtype=np.int64, count=p
         )
         cum_verts = np.cumsum(poly_lengths)
-        breakpoints = []
+        breakpoints: List[int] = []
         for target in stream_cuts(n, chunk_verts)[:-1]:
             # first whole-polyline boundary whose cumulative vertices reach target
             bp = min(p, int(np.searchsorted(cum_verts, target, side="left")) + 1)
