@@ -248,6 +248,21 @@ describe('MeshLoader — the happy path', () => {
     expect(data.scalars).toBeUndefined();
   });
 
+  it('allocates the reusable projection buffer, sized for the node', async () => {
+    // The loader owns this buffer because `updateView` hands back this same object for
+    // the node's whole life and drops it on dispose — so it inherits exactly the right
+    // lifetime with no cache to invalidate. Without it `projectMesh` allocates a fresh
+    // `vertexCount * 3` array on every slice move and the geometry re-uploads the whole
+    // vertex buffer each time (#1245). Mirrors the Points accumulator's target buffers.
+    const store = buildStore(meshAttrs(), tetArrays());
+    const data = await makeLoader(store, meshAttrs()).loadMesh(VIEW);
+
+    expect(data.projection).toBeDefined();
+    expect(data.projection!.position).toHaveLength(4 * 3);
+    // Nothing extracted yet, so no epoch is recorded.
+    expect(data.projection!.displayDimsKey).toBeNull();
+  });
+
   it('widens a narrowed faces dtype, which is what the writer actually emits', async () => {
     // The INDEX encoder picks the smallest unsigned dtype that fits, so a small
     // mesh's faces land as uint8 on disk (verified against a written store).

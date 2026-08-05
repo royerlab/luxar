@@ -272,6 +272,11 @@ export class MeshLoader implements MeshDataLoader {
       vertexCount: nVertices,
       faceCount: nFaces,
       ndim,
+      // Allocated once here, reused by every projection epoch. This object is what
+      // `updateView` hands back for the node's whole life and drops on dispose, so
+      // the buffer gets exactly the node's lifetime without a separate cache — the
+      // Mesh counterpart of the Points accumulator's reusable target buffers (#1245).
+      projection: { position: new Float32Array(nVertices * 3), displayDimsKey: null },
     };
 
     log.success(

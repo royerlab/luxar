@@ -20,7 +20,7 @@
 
 import * as THREE from 'three';
 import { log, Modules } from '../utils/log';
-import type { MeshColorArray } from '../types/mesh';
+import type { MeshColorArray, MeshProjectionBounds } from '../types/mesh';
 
 /** What {@link buildMeshGeometry} needs to lay out the buffers. */
 export interface MeshGeometryInput {
@@ -28,6 +28,18 @@ export interface MeshGeometryInput {
   position: Float32Array;
   /** Index buffer of visible triangles (`visibleFaceCount * 3`). */
   indices: Uint32Array;
+  /**
+   * Whether `position` holds newly extracted values this epoch.
+   *
+   * Load-bearing, and not derivable here. The projection REUSES one
+   * loader-owned position buffer across epochs (`LoadedMeshData.projection`), so
+   * array identity can no longer answer "did the displayed axes change": the
+   * identity is stable while the contents change on a `displayDims` change, and
+   * unchanged on a pure slice move. Gating on identity therefore either stops
+   * re-uploading after an axis permutation (reused buffer) or re-uploads the whole
+   * vertex buffer on every slice move (freshly allocated buffer) — #1245.
+   */
+  positionChanged: boolean;
   /** Per-vertex colors in their native dtype, or `null` for the white default. */
   colors: MeshColorArray | null;
   /** Channels per color entry when `colors` is present. */
@@ -42,6 +54,18 @@ export interface MeshGeometryInput {
    * the visible prefix is drawn via `drawRange` — see {@link applyIndices}.
    */
   faceCount: number;
+  /**
+   * Projected AABB over the indexed vertices, or `null` when nothing is drawn.
+   *
+   * Mirrors `LineTexelSource.bounds` and the gsplat mesh config's `bounds`: the
+   * projection precomputes the box and {@link computeMeshBounds} sets the geometry's
+   * bounding box and sphere from it, instead of a `computeBoundingBox()` scan that
+   * would also span vertices the cull removed.
+   *
+   * Optional so the placeholder factory can build a geometry without a projection;
+   * `undefined` falls back to the scan, `null` means nothing is drawn.
+   */
+  bounds?: MeshProjectionBounds | null;
 }
 
 /**
@@ -216,6 +240,44 @@ export function applyIndices(
 }
 
 /**
+ * Set a mesh geometry's bounding box and sphere from the projection's precomputed
+ * bounds.
+ *
+ * The Mesh counterpart of `computeLineBounds` / the gsplat bounds pass, and the same
+ * shape: the projection already touched every vertex, so the commit sets the box from
+ * its result rather than paying a second O(N) `computeBoundingBox()` scan. No extent
+ * expansion, because a mesh has no per-element footprint to expand by — lines add
+ * `maxWidth` and gsplats `maxRowNorm` precisely because their elements are sprites
+ * larger than their centers.
+ *
+ * These bounds cover only the vertices the current index references, which is TIGHTER
+ * than `computeBoundingBox()` over the whole position buffer — and correct for both
+ * consumers: frustum culling and the raycast broad phase are exact over what is
+ * actually drawn, and camera framing stops covering culled geometry (#1252).
+ *
+ * `null` means nothing is drawn, which yields an empty box — and three's own
+ * `Box3.getBoundingSphere()` guards that case, calling `Sphere.makeEmpty()` for a
+ * radius of -1 that the frustum test correctly rejects. So there is ONE code path
+ * here, as in `computeLineBounds`. (The NaN hazard documented on
+ * `createEmptyMeshNode` is a different function: `BufferGeometry.computeBoundingSphere()`
+ * over a ZERO-vertex position buffer, which is why that placeholder carries one vertex.)
+ */
+export function computeMeshBounds(
+  geometry: THREE.BufferGeometry,
+  bounds: MeshProjectionBounds | null
+): void {
+  const box = bounds
+    ? new THREE.Box3(
+        new THREE.Vector3(bounds.min[0], bounds.min[1], bounds.min[2]),
+        new THREE.Vector3(bounds.max[0], bounds.max[1], bounds.max[2])
+      )
+    : new THREE.Box3();
+  geometry.boundingBox = box;
+  geometry.boundingSphere = new THREE.Sphere();
+  box.getBoundingSphere(geometry.boundingSphere);
+}
+
+/**
  * Build a fresh geometry for a mesh node.
  *
  * The attribute SET is decided here, once, and never changes afterwards —
@@ -240,8 +302,13 @@ export function buildMeshGeometry(input: MeshGeometryInput): THREE.BufferGeometr
       : buildDefaultColorAttribute(input.vertexCount)
   );
   applyIndices(geometry, input.indices, input.vertexCount, input.faceCount);
-  geometry.computeBoundingBox();
-  geometry.computeBoundingSphere();
+  if (input.bounds !== undefined) {
+    computeMeshBounds(geometry, input.bounds);
+  } else {
+    // No projected bounds supplied — the placeholder node. Scan the (1-vertex) buffer.
+    geometry.computeBoundingBox();
+    geometry.computeBoundingSphere();
+  }
   return geometry;
 }
 
@@ -282,10 +349,18 @@ export function updateMeshGeometry(
   input: MeshGeometryInput
 ): boolean {
   let attributesRebuilt = false;
+  let positionRebound = false;
   const positionAttr = geometry.getAttribute('position') as THREE.BufferAttribute | undefined;
-  if (positionAttr && positionAttr.array !== input.position) {
+  // `input.positionChanged`, NOT array identity — the projection reuses one buffer, so
+  // identity is stable across a `displayDims` change and would suppress the re-upload.
+  if (positionAttr && input.positionChanged) {
     if (positionAttr.array.length === input.position.length) {
-      (positionAttr.array as Float32Array).set(input.position);
+      // Already the same buffer when the geometry bound the projection scratch
+      // directly (the steady state after the first commit), in which case the copy
+      // is a self-copy and only the upload flag matters.
+      if (positionAttr.array !== input.position) {
+        (positionAttr.array as Float32Array).set(input.position);
+      }
       positionAttr.needsUpdate = true;
     } else {
       // A length change on a LIVE node means the vertex count changed, which the
@@ -302,8 +377,7 @@ export function updateMeshGeometry(
       // A new attribute object → three's cached WebGPU RenderObject is now stale.
       attributesRebuilt = true;
     }
-    geometry.computeBoundingBox();
-    geometry.computeBoundingSphere();
+    positionRebound = true;
   }
 
   // Install the `color` attribute exactly once, on the first commit. The node is
@@ -343,5 +417,17 @@ export function updateMeshGeometry(
   }
 
   applyIndices(geometry, input.indices, input.vertexCount, input.faceCount);
+
+  // Bounds track the VISIBLE set, so they refresh on EVERY epoch — a slice move
+  // changes which vertices are indexed even when `position` is untouched. Cheap: the
+  // projection already computed the AABB, so this only builds the box and sphere.
+  if (input.bounds !== undefined) {
+    computeMeshBounds(geometry, input.bounds);
+  } else if (positionRebound) {
+    // Legacy path for a caller that supplies no projected bounds.
+    geometry.computeBoundingBox();
+    geometry.computeBoundingSphere();
+  }
+
   return attributesRebuilt;
 }

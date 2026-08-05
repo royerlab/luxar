@@ -91,6 +91,8 @@ export function createEmptyMeshNode(
     // zero-vertex buffer makes `computeBoundingSphere` produce NaN bounds, which
     // the depth-sort coordinator and the raycaster both then refuse to use.
     position: new Float32Array(3),
+    // The placeholder's buffer is brand new, so it is trivially "changed".
+    positionChanged: true,
     indices: new Uint32Array(0),
     colors: null,
     vertexCount: 1,

@@ -223,6 +223,72 @@ export interface LoadedMeshData {
 
   /** Dimensionality for interpreting `vertices` */
   ndim: number;
+
+  /**
+   * Loader-owned scratch for the display-space projection, reused across epochs.
+   *
+   * The Mesh counterpart of the Points accumulator's reusable target buffers
+   * (`points-spatial-index-loader.ts` hands `positions3D` to the projection rather
+   * than letting it allocate). Mesh's home for it is here because `updateView`
+   * returns this same object for the node's whole life and drops it on dispose, so
+   * the buffer inherits exactly the right lifetime with no separate cache to
+   * invalidate.
+   *
+   * Without it, `projectMesh` allocated a fresh `vertexCount * 3` buffer on every
+   * slice move — so the geometry's array-identity check never matched and every
+   * scrub copied and re-uploaded the whole vertex buffer and recomputed bounds,
+   * defeating the "only the index changes on a pure slice move" design (#1245).
+   *
+   * `displayDimsKey` records which axis triple `position` currently holds, because
+   * once the buffer is reused its identity can no longer signal a change. Optional
+   * so a caller may still project without one (it then allocates, as before).
+   */
+  projection?: MeshProjectionTargetBuffers;
+}
+
+/**
+ * Display-space AABB of a mesh projection, over the vertices the emitted index
+ * actually references.
+ *
+ * The Mesh member of the `<Geometry>ProjectionBounds` family
+ * (`LinesProjectionBounds`, `GSplatsProjectionBounds`): same `min`/`max` 3-tuples,
+ * computed by the projection and consumed by `computeMeshBounds` to set the
+ * geometry's box and sphere.
+ *
+ * It carries NO per-element extent term, and that absence is the point. Lines add
+ * `maxWidth` and gsplats `maxRowNorm` because their elements are sprites whose
+ * rendered footprint exceeds their center. A triangle's extent IS its vertices, so a
+ * mesh needs no expansion — the same reason a mesh contributes zero padding to scene
+ * bounds on the write side.
+ *
+ * Bounding the INDEXED vertices rather than the whole position buffer is what makes
+ * this useful: under the no-compaction design `position` holds every vertex of the
+ * whole nD mesh, including those whose triangles the slab cull removed, so a 4D
+ * surface that translates over time would otherwise frame its entire trajectory
+ * (#1252).
+ */
+export interface MeshProjectionBounds {
+  /** AABB min corner over the indexed display-space vertices [x, y, z]. */
+  min: [number, number, number];
+  /** AABB max corner over the indexed display-space vertices [x, y, z]. */
+  max: [number, number, number];
+}
+
+/**
+ * Reusable projection output buffer plus the epoch it currently holds.
+ *
+ * Named after Points' `ProjectionTargetBuffers` (`data/points/projection.ts`), which
+ * is the same idea: the loader owns the output memory and the projection writes
+ * through it instead of allocating. Mesh carries one extra field its sibling does not
+ * need — `displayDimsKey` — because reuse makes buffer identity useless as a
+ * "did the displayed axes change" signal, and mesh must answer that to know whether
+ * to re-extract at all.
+ */
+export interface MeshProjectionTargetBuffers {
+  /** Display-space positions (`vertexCount * 3`), rewritten per `displayDims` epoch */
+  position: Float32Array;
+  /** `displayDims.join()` of what `position` holds; `null` before the first extract */
+  displayDimsKey: string | null;
 }
 
 // ============================================================================
@@ -299,19 +365,6 @@ export interface MeshUserData {
 
   /** Vertices that passed the nD slab test; diagnostic, not a draw bound */
   visibleVertexCount: number;
-
-  /**
-   * Display-space AABB of the vertices the current index references, or `null` when
-   * nothing is drawn. Absent until the first commit.
-   *
-   * Read by `camera-framing.ts` in preference to `geometry.boundingBox`, which spans
-   * the WHOLE position buffer: under the no-compaction design that includes vertices
-   * whose triangles the slab cull removed, so framing a 4D surface that moves over
-   * time on it covers the entire trajectory rather than the drawn slice (#1252). The
-   * geometry's own bounds stay whole-buffer on purpose — over-inclusive is
-   * conservative-correct for frustum culling and the raycast broad phase.
-   */
-  visibleBounds?: { min: [number, number, number]; max: [number, number, number] } | null;
 }
 
 /** Runtime guard for {@link MeshUserData}, mirroring `isPointsUserData`. */

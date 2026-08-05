@@ -357,6 +357,28 @@ largest index present, because `vertexCount` is fixed for the node while the lar
 index drawn changes with the slice, and a dtype that differs between epochs is the
 attribute-identity change WebGPU does not tolerate.
 
+**The projected position buffer is allocated once per node too, and re-extracted
+only when the displayed axes change.** Positions depend on `displayDims` alone, yet
+`projectMesh` allocated a fresh `vertexCount * 3` array on every call — so the
+geometry's array-identity check never matched and every slice scrub copied and
+re-uploaded the whole vertex buffer and recomputed both bounds, defeating the "only the
+index changes on a pure slice move" design outright (#1245). The buffer now lives on
+`LoadedMeshData.projection`, allocated by the loader: `updateView` returns that same
+object for the node's whole life and drops it on dispose, so the buffer inherits exactly
+the right lifetime with no separate cache to invalidate. This is the Mesh counterpart of
+the Points accumulator's reusable target buffers, keeping the four geometry types
+symmetric on where reuse lives.
+
+Reuse makes array identity useless as a change signal, and dangerously so in both
+directions: with a reused buffer the identity is stable while the contents change on a
+`displayDims` change (so the upload is suppressed and the mesh stays in the stale frame),
+and with a freshly allocated one it always differs (so the whole mesh re-uploads every
+slice move). The projection therefore reports `positionChanged` explicitly and the
+geometry gates on that. Worth knowing when reading the tests: after the first commit the
+geometry's `position` attribute IS the loader's buffer, so only an integration test
+through process -> commit can exercise the identity trap — a unit test that constructs
+its own geometry cannot reach it.
+
 **The index buffer is allocated once per node and drawn through `drawRange`.**
 Replacing `geometry.index` on every slice move leaks its GPU buffer: three caches
 attribute buffers in a `WeakMap` keyed by the attribute object and only calls
@@ -400,14 +422,21 @@ vertex of the whole nD mesh, so the box spanned vertices whose triangles the sla
 removed — and vertices no triangle references at all. A 4D surface that translates over
 time framed its ENTIRE trajectory, pulling the camera out (and inflating the derived
 scene scale and zoom limits) while the drawn slice sat small and off-centre. The
-projection now returns the AABB of the vertices its emitted index references, the
-commit stamps it on `userData`, and the framing walk prefers it — falling back to the
-geometry box when a node has no stamp yet, so absence stays conservative rather than
-reading as empty. The geometry's own bounds deliberately stay whole-buffer:
-over-inclusive is conservative-correct for frustum culling and the raycast broad phase.
-The two states the first round of tests pinned — fully visible and fully culled — are
-exactly the two where this cannot show, so the partial-cull case is now covered on both
-sides.
+projection now returns the AABB of the vertices its emitted index references, as a
+`MeshProjectionBounds` — the Mesh member of the `LinesProjectionBounds` /
+`GSplatsProjectionBounds` family — and `computeMeshBounds` sets the geometry's box and
+sphere from it, exactly as `computeLineBounds` consumes the lines projection's
+precomputed bounds. Camera framing therefore needs no mesh-specific bounds path at all:
+it reads `geometry.boundingBox` as it always has. Mesh's bounds carry no per-element
+extent term, and that absence is the point — lines expand by `maxWidth` and gsplats by
+`maxRowNorm` because their elements are sprites larger than their centers, whereas a
+triangle's extent IS its vertices.
+
+These bounds are TIGHTER than a whole-buffer scan and correct for every consumer, not
+just framing: frustum culling and the raycast broad phase become exact over what is
+actually drawn. The two states the first round of tests pinned — fully visible and
+fully culled — are exactly the two where the defect cannot show, so the partial-cull
+case is now covered where the mechanism lives.
 
 The monitor's scene tree gained its mesh arm too — it rendered a blank count while the
 other three showed one, even though the converter was already populating `faceCount`.

@@ -76,7 +76,14 @@ export function commitMeshGeometry(
   const { data, projected } = staged;
   const attributesRebuilt = updateMeshGeometry(object.geometry, {
     position: projected.position,
+    // Explicit rather than inferred from array identity: the position buffer is
+    // reused across epochs, so identity no longer signals a displayDims change.
+    positionChanged: projected.positionChanged,
     indices: projected.indices,
+    // Projected AABB over the INDEXED vertices — `computeMeshBounds` sets the
+    // geometry's box and sphere from it, the same way `computeLineBounds` consumes the
+    // lines projection's precomputed bounds (#1252).
+    bounds: projected.bounds,
     colors: data.colors,
     colorComponents: data.colorComponents,
     vertexCount: data.vertexCount,
@@ -100,11 +107,6 @@ export function commitMeshGeometry(
 
   object.userData.visibleTriangleCount = projected.visibleFaceCount;
   object.userData.visibleVertexCount = projected.visibleVertexCount;
-  // Bounds over the vertices the index actually references, for camera framing. The
-  // geometry's own box spans the whole position buffer (correct to keep — conservative
-  // bounds are safe for frustum culling), which would frame a moving 4D surface's
-  // entire trajectory instead of the drawn slice (#1252).
-  object.userData.visibleBounds = projected.visibleBounds;
 
   stampLoadedViewVersion(object.userData, loadedViewVersion ?? currentVersion);
 

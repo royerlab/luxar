@@ -109,6 +109,7 @@ describe('buildIndexAttribute', () => {
 describe('buildMeshGeometry', () => {
   const input = () => ({
     position: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
+    positionChanged: true,
     indices: new Uint32Array([0, 1, 2]),
     colors: null,
     vertexCount: 3,
@@ -144,6 +145,7 @@ describe('updateMeshGeometry', () => {
   function seeded(): THREE.BufferGeometry {
     return buildMeshGeometry({
       position: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
+      positionChanged: true,
       indices: new Uint32Array([0, 1, 2]),
       colors: null,
       vertexCount: 3,
@@ -158,6 +160,7 @@ describe('updateMeshGeometry', () => {
   function placeholder(): THREE.BufferGeometry {
     return buildMeshGeometry({
       position: new Float32Array(3),
+      positionChanged: true,
       indices: new Uint32Array(0),
       colors: null,
       vertexCount: 1,
@@ -172,6 +175,7 @@ describe('updateMeshGeometry', () => {
     const positionBefore = g.getAttribute('position');
     updateMeshGeometry(g, {
       position: positionBefore.array as Float32Array,
+      positionChanged: true,
       indices: new Uint32Array([]),
       colors: null,
       vertexCount: 3,
@@ -195,6 +199,7 @@ describe('updateMeshGeometry', () => {
     const before = g.boundingSphere!.radius;
     updateMeshGeometry(g, {
       position: new Float32Array([0, 0, 0, 100, 0, 0, 0, 100, 0]),
+      positionChanged: true,
       indices: new Uint32Array([0, 1, 2]),
       colors: null,
       vertexCount: 3,
@@ -208,6 +213,7 @@ describe('updateMeshGeometry', () => {
     const sphere = g.boundingSphere;
     updateMeshGeometry(g, {
       position: g.getAttribute('position').array as Float32Array,
+      positionChanged: true,
       indices: new Uint32Array([0, 1, 2]),
       colors: null,
       vertexCount: 3,
@@ -226,6 +232,7 @@ describe('updateMeshGeometry', () => {
       const g = placeholder();
       updateMeshGeometry(g, {
         position: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
+        positionChanged: true,
         indices: new Uint32Array([0, 1, 2]),
         colors: null,
         vertexCount: 3,
@@ -235,6 +242,7 @@ describe('updateMeshGeometry', () => {
 
       updateMeshGeometry(g, {
         position: new Float32Array(18),
+        positionChanged: true,
         indices: new Uint32Array([0, 1, 2]),
         colors: null,
         vertexCount: 6,
@@ -253,6 +261,7 @@ describe('updateMeshGeometry', () => {
     const g = placeholder();
     const rebuilt = updateMeshGeometry(g, {
       position: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
+      positionChanged: true,
       indices: new Uint32Array([0, 1, 2]),
       colors: new Uint8Array([255, 0, 0, 0, 255, 0, 0, 0, 255]),
       colorComponents: 3,
@@ -273,6 +282,7 @@ describe('updateMeshGeometry', () => {
     const g = placeholder();
     updateMeshGeometry(g, {
       position: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
+      positionChanged: true,
       indices: new Uint32Array([0, 1, 2]),
       colors: null,
       vertexCount: 3,
@@ -292,6 +302,7 @@ describe('updateMeshGeometry', () => {
     const g = placeholder();
     updateMeshGeometry(g, {
       position: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
+      positionChanged: true,
       indices: new Uint32Array([0, 1, 2]),
       colors: new Uint8Array([255, 0, 0, 0, 255, 0, 0, 0, 255]),
       colorComponents: 3,
@@ -302,6 +313,7 @@ describe('updateMeshGeometry', () => {
     const versionBefore = colorBefore.version;
     const rebuilt = updateMeshGeometry(g, {
       position: new Float32Array([0, 0, 0, 2, 0, 0, 0, 2, 0]),
+      positionChanged: true,
       indices: new Uint32Array([2, 1, 0]),
       colors: new Uint8Array([255, 0, 0, 0, 255, 0, 0, 0, 255]),
       colorComponents: 3,
@@ -321,6 +333,7 @@ describe('applyIndices — the index buffer is allocated once per node', () => {
   function placeholder(): THREE.BufferGeometry {
     return buildMeshGeometry({
       position: new Float32Array(3),
+      positionChanged: true,
       indices: new Uint32Array(0),
       colors: null,
       vertexCount: 1,
@@ -330,6 +343,9 @@ describe('applyIndices — the index buffer is allocated once per node', () => {
 
   const real = {
     position: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
+    // These cases are about the INDEX buffer; position is grown once on the first
+    // call, so the flag stays true throughout rather than modelling an epoch.
+    positionChanged: true,
     colors: null,
     vertexCount: 3,
     faceCount: 1,

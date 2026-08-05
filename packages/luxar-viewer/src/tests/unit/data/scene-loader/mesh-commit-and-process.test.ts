@@ -335,3 +335,124 @@ describe('processMeshData — membership tolerance', () => {
     expect(withExtend.projected.visibleFaceCount).toBe(1);
   });
 });
+
+describe('process -> commit: the position buffer is uploaded once per epoch (#1245)', () => {
+  const loader = {} as MeshDataLoader;
+
+  /** Loaded data carrying the loader-owned projection scratch, as production does. */
+  function withScratch(): LoadedMeshData {
+    const data = loaded();
+    return {
+      ...data,
+      projection: { position: new Float32Array(data.vertexCount * 3), displayDimsKey: null },
+    };
+  }
+
+  async function commitAt(root: THREE.Group, data: LoadedMeshData, view: MeshViewState) {
+    const staged = await processMeshData('/surface', data, view, {
+      normal_dims: [0, 1, 2],
+      double_sided: true,
+    });
+    commitMeshGeometry({ rootGroup: root, currentVersion: 1 }, staged);
+  }
+
+  it('binds the reused buffer, then re-uploads only when displayDims changes', async () => {
+    // This is the production path the unit tests could not reach: after the first
+    // commit the geometry's `position` attribute IS the loader's reused buffer, so
+    // array identity matches from then on. Gating the upload on identity would
+    // suppress EVERY later upload — including after an axis permutation, leaving the
+    // mesh in the stale frame while the rest of the scene moves.
+    const root = new THREE.Group();
+    const mesh = createEmptyMeshNode('/surface', ATTRS, loader);
+    root.add(mesh);
+    const data = withScratch();
+
+    await commitAt(root, data, VIEW);
+    const positionAttr = mesh.geometry.getAttribute('position') as THREE.BufferAttribute;
+    // The attribute now wraps the loader's buffer — hence identity is useless below.
+    expect(positionAttr.array).toBe(data.projection!.position);
+    const afterFirst = positionAttr.version;
+
+    // A pure slice move: same displayDims, so positions cannot have changed.
+    await commitAt(root, data, { ...VIEW, slicePosition: [0, 0, 0, 10] } as MeshViewState);
+    expect(mesh.geometry.getAttribute('position')).toBe(positionAttr);
+    expect(positionAttr.version).toBe(afterFirst);
+
+    // An axis permutation: positions are re-extracted into the same buffer, so the
+    // upload MUST be re-flagged.
+    await commitAt(root, data, { ...VIEW, displayDims: [3, 0, 1] } as MeshViewState);
+    expect(mesh.geometry.getAttribute('position')).toBe(positionAttr);
+    expect(positionAttr.version).toBeGreaterThan(afterFirst);
+  });
+});
+
+describe('process -> commit: geometry bounds cover only the drawn triangles (#1252)', () => {
+  const loader = {} as MeshDataLoader;
+
+  /** Two independent triangles in 4D: one at w = 0 near the origin, one at w = 10 far away. */
+  function twoTriangles(): LoadedMeshData {
+    return {
+      // prettier-ignore
+      vertices: new Float32Array([
+        0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0,
+        900, 900, 900, 10, 901, 900, 900, 10, 900, 901, 900, 10,
+      ]),
+      faces: new Uint32Array([0, 1, 2, 3, 4, 5]),
+      normals: null,
+      colors: null,
+      scalars: undefined,
+      vertexCount: 6,
+      faceCount: 2,
+      ndim: 4,
+    };
+  }
+
+  async function commitAt(root: THREE.Group, data: LoadedMeshData, w: number) {
+    const staged = await processMeshData(
+      '/surface',
+      data,
+      { ...VIEW, slicePosition: [0, 0, 0, w] } as MeshViewState,
+      { normal_dims: [0, 1, 2], double_sided: true }
+    );
+    commitMeshGeometry({ rootGroup: root, currentVersion: 1 }, staged);
+  }
+
+  it('bounds the DRAWN triangle, not the whole position buffer', async () => {
+    // The regression. `position` holds all six vertices, so `computeBoundingBox()`
+    // would span out to 900 — framing a 4D surface's whole trajectory rather than the
+    // slice on screen. The mechanism is the projection's bounds reaching
+    // `computeMeshBounds`, so the assertion belongs on the geometry, where camera
+    // framing (and frustum culling, and the raycast broad phase) all read it.
+    const root = new THREE.Group();
+    const mesh = createEmptyMeshNode('/surface', ATTRS, loader);
+    root.add(mesh);
+
+    await commitAt(root, twoTriangles(), 0);
+    expect(mesh.geometry.boundingBox!.max.toArray()).toEqual([1, 1, 0]);
+  });
+
+  it('follows the slice to the far triangle', async () => {
+    // Anti-vacuity: a box that always described the near triangle would pass above.
+    const root = new THREE.Group();
+    const mesh = createEmptyMeshNode('/surface', ATTRS, loader);
+    root.add(mesh);
+
+    await commitAt(root, twoTriangles(), 10);
+    expect(mesh.geometry.boundingBox!.min.toArray()).toEqual([900, 900, 900]);
+  });
+
+  it('empties the box and the sphere when nothing is drawn', async () => {
+    // Three's own empty-box guard supplies the sphere: `Box3.getBoundingSphere()` calls
+    // `Sphere.makeEmpty()`, i.e. center (0,0,0) and radius -1, which the frustum test
+    // rejects. Asserted so a future "simplification" that derives the sphere some other
+    // way cannot silently produce a NaN center.
+    const root = new THREE.Group();
+    const mesh = createEmptyMeshNode('/surface', ATTRS, loader);
+    root.add(mesh);
+
+    await commitAt(root, twoTriangles(), 999);
+    expect(mesh.geometry.boundingBox!.isEmpty()).toBe(true);
+    expect(mesh.geometry.boundingSphere!.radius).toBe(-1);
+    expect(mesh.geometry.boundingSphere!.center.toArray()).toEqual([0, 0, 0]);
+  });
+});

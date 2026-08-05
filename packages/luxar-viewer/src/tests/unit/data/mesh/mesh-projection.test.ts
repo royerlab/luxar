@@ -467,6 +467,101 @@ describe('projectMesh — the winding post-pass', () => {
   });
 });
 
+describe('projectMesh — position buffer reuse (#1245)', () => {
+  /** The loader-owned scratch, exactly as `MeshLoader` allocates it. */
+  function withScratch(data: LoadedMeshData): LoadedMeshData {
+    return {
+      ...data,
+      projection: { position: new Float32Array(data.vertexCount * 3), displayDimsKey: null },
+    };
+  }
+
+  it('reuses the loader buffer and reports no change on a pure slice move', () => {
+    // The heart of #1245. Positions depend on `displayDims` alone, so moving the slice
+    // must neither reallocate nor re-extract — and must tell the commit so, since a
+    // reused buffer's identity can no longer signal it.
+    const data = withScratch(twoTrianglesIn4D());
+    const first = projectMesh(
+      data,
+      viewState([0, 1, 2], [0, 0, 0, 0], [1e10, 1e10, 1e10, 0.5]),
+      undefined,
+      true,
+      backend
+    );
+    expect(first.positionChanged).toBe(true);
+    expect(first.position).toBe(data.projection!.position);
+
+    const second = projectMesh(
+      data,
+      viewState([0, 1, 2], [0, 0, 0, 10], [1e10, 1e10, 1e10, 0.5]),
+      undefined,
+      true,
+      backend
+    );
+    // Same buffer, no re-extract — but the CULL still ran, so the index changed.
+    expect(second.position).toBe(first.position);
+    expect(second.positionChanged).toBe(false);
+    expect(Array.from(second.indices)).toEqual([3, 4, 5]);
+  });
+
+  it('re-extracts into the same buffer when displayDims changes', () => {
+    // The other half: identity is stable, so ONLY the flag can tell the commit to
+    // re-upload. Gating on identity here would leave the mesh in the stale frame.
+    const data = withScratch(twoTrianglesIn4D());
+    projectMesh(
+      data,
+      viewState([0, 1, 2], [0, 0, 0, 0], [1e10, 1e10, 1e10, 1e10]),
+      undefined,
+      true,
+      backend
+    );
+    const before = Array.from(data.projection!.position.slice(9, 12));
+
+    const permuted = projectMesh(
+      data,
+      viewState([3, 0, 1], [0, 0, 0, 0], [1e10, 1e10, 1e10, 1e10]),
+      undefined,
+      true,
+      backend
+    );
+    expect(permuted.position).toBe(data.projection!.position);
+    expect(permuted.positionChanged).toBe(true);
+    // Vertex 3 is (0, 0, 1, 10): displaying (w, x, y) puts 10 in x.
+    expect(Array.from(permuted.position.slice(9, 12))).toEqual([10, 0, 0]);
+    expect(Array.from(permuted.position.slice(9, 12))).not.toEqual(before);
+  });
+
+  it('allocates and always reports changed when no scratch is supplied', () => {
+    // The fallback path. A freshly allocated buffer is stale by construction, so it
+    // must be extracted — and reported — every call.
+    const data = twoTrianglesIn4D();
+    const view = viewState([0, 1, 2], [0, 0, 0, 0], [1e10, 1e10, 1e10, 0.5]);
+    const a = projectMesh(data, view, undefined, true, backend);
+    const b = projectMesh(data, view, undefined, true, backend);
+    expect(a.positionChanged).toBe(true);
+    expect(b.positionChanged).toBe(true);
+    expect(b.position).not.toBe(a.position);
+  });
+
+  it('ignores a scratch sized for a different vertex count', () => {
+    // Defensive: a stale scratch must not be written past its end.
+    const data: LoadedMeshData = {
+      ...twoTrianglesIn4D(),
+      projection: { position: new Float32Array(3), displayDimsKey: null },
+    };
+    const result = projectMesh(
+      data,
+      viewState([0, 1, 2], [0, 0, 0, 0], [1e10, 1e10, 1e10, 0.5]),
+      undefined,
+      true,
+      backend
+    );
+    expect(result.position).toHaveLength(18);
+    expect(result.position).not.toBe(data.projection!.position);
+    expect(result.positionChanged).toBe(true);
+  });
+});
+
 describe('projectMesh — visible bounds (#1252)', () => {
   it('spans only the vertices the emitted index references', () => {
     // The whole point: `position` holds all six vertices of both triangles, but only
@@ -480,7 +575,7 @@ describe('projectMesh — visible bounds (#1252)', () => {
     );
     expect(result.visibleFaceCount).toBe(1);
     // Triangle A is (0,0,0), (1,0,0), (0,1,0); triangle B sits at z = 1.
-    expect(result.visibleBounds).toEqual({ min: [0, 0, 0], max: [1, 1, 0] });
+    expect(result.bounds).toEqual({ min: [0, 0, 0], max: [1, 1, 0] });
   });
 
   it('follows the slice to the other triangle', () => {
@@ -492,7 +587,7 @@ describe('projectMesh — visible bounds (#1252)', () => {
       true,
       backend
     );
-    expect(result.visibleBounds).toEqual({ min: [0, 0, 1], max: [1, 1, 1] });
+    expect(result.bounds).toEqual({ min: [0, 0, 1], max: [1, 1, 1] });
   });
 
   it('is null when nothing is drawn', () => {
@@ -506,7 +601,7 @@ describe('projectMesh — visible bounds (#1252)', () => {
       backend
     );
     expect(result.visibleFaceCount).toBe(0);
-    expect(result.visibleBounds).toBeNull();
+    expect(result.bounds).toBeNull();
   });
 
   it('is computed on the fast path too, so an unreferenced vertex cannot inflate it', () => {
@@ -525,7 +620,7 @@ describe('projectMesh — visible bounds (#1252)', () => {
       backend
     );
     expect(result.usedFastPath).toBe(true);
-    expect(result.visibleBounds).toEqual({ min: [0, 0, 0], max: [1, 1, 0] });
+    expect(result.bounds).toEqual({ min: [0, 0, 0], max: [1, 1, 0] });
   });
 });
 

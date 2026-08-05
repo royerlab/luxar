@@ -40,7 +40,7 @@
 import { log, Modules } from '../../utils/log';
 import { validateProjectionInputs } from '../../workers/data-worker/validation';
 import type { WasmModule } from '../../wasm/types';
-import type { LoadedMeshData, MeshViewState } from '../../types/mesh';
+import type { LoadedMeshData, MeshProjectionBounds, MeshViewState } from '../../types/mesh';
 
 /** Which faces of the surface an epoch must draw. */
 export type MeshSide = 'front' | 'double';
@@ -74,21 +74,30 @@ export interface ProjectedMeshData {
   usedFastPath: boolean;
 
   /**
-   * Display-space AABB of the vertices the emitted index actually references, or
-   * `null` when nothing is drawn.
+   * True when `position` was (re)extracted this epoch — i.e. `displayDims` changed,
+   * or this is the first projection.
    *
-   * NOT the same as the geometry's bounding box, and the difference is the point.
-   * Under the no-compaction design `position` always holds EVERY vertex of the whole
-   * nD mesh, so `computeBoundingBox()` spans vertices whose triangles the slab cull
-   * removed — and vertices no triangle references at all. Framing a 4D surface that
-   * translates over time on that box pulls the camera out to cover the whole
-   * trajectory while the drawn slice sits small and off-centre (#1252).
-   *
-   * Consumed by `camera-framing.ts` through `userData`. Deliberately NOT written to
-   * `geometry.boundingSphere`: over-inclusive bounds are conservative-correct for
-   * frustum culling and the raycast broad phase, so those keep the whole-buffer box.
+   * Reported explicitly because the position buffer is REUSED across epochs
+   * (`LoadedMeshData.projection`), so its array identity can no longer signal a
+   * change. Consumers must gate the re-upload and the bounds recompute on this
+   * rather than on identity; using identity with a reused buffer silently stops
+   * re-uploading after an axis permutation, and using it with a freshly allocated
+   * buffer re-uploads the whole mesh on every slice move (#1245).
    */
-  visibleBounds: { min: [number, number, number]; max: [number, number, number] } | null;
+  positionChanged: boolean;
+
+  /**
+   * Display-space AABB over the vertices the emitted index references, or `null` when
+   * nothing is drawn.
+   *
+   * Same role as `LinesProjectionBounds` / `GSplatsProjectionBounds`: the projection
+   * computes it and `computeMeshBounds` sets the geometry's box and sphere from it.
+   * Bounding the INDEXED vertices rather than the whole position buffer is the point —
+   * under no-compaction `position` holds every vertex of the whole nD mesh, so a 4D
+   * surface that translates over time would otherwise frame its entire trajectory
+   * (#1252).
+   */
+  bounds: MeshProjectionBounds | null;
 
   /**
    * Set when the node asked for single-sided rendering but winding could not be
@@ -239,7 +248,7 @@ function reverseWinding(indices: Uint32Array, faceCount: number): void {
 function boundsOfIndexed(
   position: Float32Array,
   indices: Uint32Array
-): { min: [number, number, number]; max: [number, number, number] } | null {
+): MeshProjectionBounds | null {
   const min: [number, number, number] = [Infinity, Infinity, Infinity];
   const max: [number, number, number] = [-Infinity, -Infinity, -Infinity];
   let seen = 0;
@@ -292,8 +301,27 @@ export function projectMesh(
     );
   }
 
-  const position = new Float32Array(vertexCount * 3);
-  backend.extract_3d_positions(vertices, new Uint32Array(displayDims), ndim, vertexCount, position);
+  // Reuse the loader-owned buffer when there is one, and re-extract only when the
+  // displayed axis triple actually changed — positions depend on `displayDims` alone,
+  // so a pure slice move must not touch them (the whole point of #1245).
+  const positionScratch = data.projection;
+  const displayDimsKey = displayDims.join();
+  const reusable =
+    positionScratch && positionScratch.position.length === vertexCount * 3 ? positionScratch : null;
+  const position = reusable ? reusable.position : new Float32Array(vertexCount * 3);
+  // Without a reusable buffer the array is newly allocated and therefore always
+  // stale, so it must be extracted every call.
+  const positionChanged = !reusable || reusable.displayDimsKey !== displayDimsKey;
+  if (positionChanged) {
+    backend.extract_3d_positions(
+      vertices,
+      new Uint32Array(displayDims),
+      ndim,
+      vertexCount,
+      position
+    );
+    if (reusable) reusable.displayDimsKey = displayDimsKey;
+  }
 
   const winding = resolveWinding(displayDims, normalDims, doubleSided);
 
@@ -310,7 +338,8 @@ export function projectMesh(
       visibleVertexCount: 0,
       side: winding.side,
       usedFastPath: false,
-      visibleBounds: null,
+      positionChanged,
+      bounds: null,
       undecidableReason: winding.undecidableReason,
     };
   }
@@ -333,9 +362,10 @@ export function projectMesh(
       visibleVertexCount: vertexCount,
       side: winding.side,
       usedFastPath: true,
+      positionChanged,
       // Computed even here: nothing is culled on the fast path, but a vertex no
       // triangle references still inflates the whole-buffer box.
-      visibleBounds: boundsOfIndexed(position, indices),
+      bounds: boundsOfIndexed(position, indices),
       undecidableReason: winding.undecidableReason,
     };
   }
@@ -370,7 +400,8 @@ export function projectMesh(
     visibleVertexCount,
     side: winding.side,
     usedFastPath: false,
-    visibleBounds: boundsOfIndexed(position, indices),
+    positionChanged,
+    bounds: boundsOfIndexed(position, indices),
     undecidableReason: winding.undecidableReason,
   };
 }
