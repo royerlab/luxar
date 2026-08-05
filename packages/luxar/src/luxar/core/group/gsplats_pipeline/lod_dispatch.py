@@ -218,7 +218,12 @@ def add_gsplats_multi_lod_impl(
                 attrs["level_stats"] = leaf_stats
             else:
                 # Caller keys win; fill only the missing half of the pairing.
-                attrs["level_stats"] = {**leaf_stats, **caller_level_stats}
+                # The caller dict rides through the same JSON-safety guard as
+                # the copied values: a non-finite caller float (NaN/±Inf) is
+                # dropped — the resolver's finite value then shows through —
+                # instead of reaching .zattrs as a bare NaN token.
+                _, safe_caller = json_safe_value(caller_level_stats)
+                attrs["level_stats"] = {**leaf_stats, **(safe_caller or {})}
 
         n_splats = result.n_splats
         ndim = sublods[0].centers.shape[1]

@@ -386,6 +386,30 @@ class TestAdditiveLevelStatsPairingLines:
         # … and the missing half of the pairing is restored.
         assert stored["reference_energy"] > 0
 
+    def test_non_finite_caller_reference_energy_is_replaced(self, tmp_path) -> None:
+        # A NaN rides the caller dict straight into .zattrs as a bare NaN token
+        # (invalid strict JSON — the viewer's JSON.parse then rejects the whole
+        # attrs document), so it must be dropped and the computed finite value
+        # must show through instead.
+        out = tmp_path / "t.luxar.zarr"
+        verts = _segments(1500, seed=0)
+        with LuxarZarrCompiler(out) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_lines(
+                "curves",
+                verts,
+                0.8,
+                line_type="segments",
+                additive_lod=dict(counts="stream:300", method="random", seed=0),
+                level_stats={"caller_key": 123, "reference_energy": float("nan")},
+            )
+
+        grp = zarr.open(str(out), mode="r")["curves"]
+        stored = dict(grp.attrs["level_stats"])
+        assert stored["caller_key"] == 123
+        assert np.isfinite(stored["reference_energy"])
+        assert stored["reference_energy"] > 0
+
 
 class TestSubstitutiveLinesGuards:
     def test_mutually_exclusive_with_partition(self, tmp_path) -> None:

@@ -535,16 +535,20 @@ def add_points_multi_lod_wrapper_impl(
     caller_level_stats = attrs.get("level_stats")
     if caller_level_stats is None:
         attrs["level_stats"] = parent_level_stats
-    elif (
-        "reference_energy" not in caller_level_stats
-        and "reference_energy" in parent_level_stats
-    ):
+    elif "reference_energy" in parent_level_stats:
         # The ladder stamped energy_fraction_cum on every sub-LOD, so the parent
         # must carry the paired reference_energy (both-or-neither); a caller dict
-        # that omits it would silently break the pairing.
+        # that omits it would silently break the pairing. The caller dict rides
+        # through the writer's JSON-safety guard: a non-finite caller value
+        # (NaN/±Inf) is dropped — the computed reference_energy then shows
+        # through — instead of reaching .zattrs as a bare NaN token the viewer's
+        # strict JSON.parse rejects. Finite caller keys still win.
+        from ....io._compiler.gsplat_tree import json_safe_value
+
+        _, safe_caller = json_safe_value(caller_level_stats)
         attrs["level_stats"] = {
-            **caller_level_stats,
             "reference_energy": parent_level_stats["reference_energy"],
+            **(safe_caller or {}),
         }
 
     aprint(
