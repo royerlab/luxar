@@ -55,7 +55,13 @@ export function classifyLoaderError(error: unknown): LoaderErrorKind {
     msg.includes('fetch') ||
     msg.includes('network') ||
     msg.includes('timeout') ||
-    msg.includes('http ')
+    msg.includes('http ') ||
+    // zarrita's FetchStore throws "Unexpected response status 503 ..." for any
+    // non-OK HTTP response (5xx, 429, etc.) — transient and retryable. Matched
+    // here, ahead of the Validation branch below, because that branch keys on
+    // 'expected' and the word "un<expected>" would otherwise mis-file a 5xx as a
+    // deterministic Validation failure the retry policy never re-attempts.
+    msg.includes('response status')
   ) {
     return 'Network';
   }

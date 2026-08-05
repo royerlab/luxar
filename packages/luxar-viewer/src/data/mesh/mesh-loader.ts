@@ -158,9 +158,17 @@ export class MeshLoader implements MeshDataLoader {
         if (!this.attrs[flag]) return;
         try {
           handles[slot] = await open(MESH_ARRAY_NAMES[slot]);
-        } catch {
-          // Leave the slot empty. The preflight turns a flag-with-no-array into
-          // an explicit rejection, which reports better than a bare open error.
+        } catch (error) {
+          // A genuine not-found means the presence flag disagrees with the store:
+          // leave the slot empty and let the preflight turn the flag-with-no-array
+          // into an explicit rejection, which reports better than a bare open error.
+          // But a TRANSIENT open failure (network blip, abort) must NOT be recorded
+          // as deterministic `Validation` — the retry policy skips that kind, so the
+          // node would never recover on reconnect. Route it through
+          // `classifyLoaderError`, exactly as the required vertices/faces open does.
+          if (!zarr.isNotFoundError(error)) {
+            throw new LoaderError(classifyLoaderError(error), this.path, error);
+          }
         }
       })
     );

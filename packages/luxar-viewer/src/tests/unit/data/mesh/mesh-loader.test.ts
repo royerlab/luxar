@@ -633,6 +633,165 @@ describe('MeshLoader — Stage 1 rejects BEFORE any chunk is fetched', () => {
     expect(store.chunkRequests()).toEqual([]);
   });
 
+  it('refuses an array_ref whose TARGET is broadcast-encoded, before any chunk', async () => {
+    // #1253 — the dual of the huge-physical-target case above. The budget resolves the
+    // ref to the target it fetches and charges the target's STORED and per-chunk terms,
+    // but a `broadcasted` target stores ONE (1, K) row — a few bytes — and the decoder
+    // expands it to one row per logical element at fetch time. So a wide row behind a
+    // small stub sails under the ceiling on the stored/chunk terms, then allocates
+    // gigabytes on decode: exactly the "too late after decode" exhaustion the gate
+    // exists to prevent. Here the row is wide enough that the broadcast would allocate
+    // ~4.8 GB, yet the stored (~100 MB) and chunk (~100 MB) terms both fit the budget.
+    const wide = 100_000_000;
+    const attrs = meshAttrs();
+    const store = buildStore(attrs, {
+      vertices: {
+        shape: [0, 3],
+        dtype: '<f4',
+        attrs: { encoding: { name: 'array_ref', target: 'evil', original_shape: [4, 3] } },
+      },
+      faces: { shape: [4, 3], dtype: '<u4', data: TET_FACES },
+    });
+    store.addArray('/evil', {
+      shape: [1, wide],
+      chunks: [1, wide],
+      dtype: '|u1',
+      attrs: { encoding: { name: 'broadcasted', n_elements: 4 } },
+    });
+
+    await expect(makeLoader(store, attrs).loadMesh(VIEW)).rejects.toThrow(
+      /array_ref to a 'broadcasted' target/
+    );
+    // Rejected on metadata alone — neither the stub nor the target's chunk was fetched.
+    expect(store.chunkRequests()).toEqual([]);
+    // The stored and per-chunk terms really do fit, which is what makes the extra check
+    // load-bearing rather than redundant with the byte budget.
+    expect(wide * 1).toBeLessThan(MESH_DECODE_BUDGET_BYTES);
+  });
+
+  it('refuses an array_ref to a row-mode LUT target that decodes far past the ceiling', async () => {
+    // #1253, the second attrs-driven expansion. The writer legitimately dedups to a
+    // LUT-encoded array (two meshes sharing an identical scalars/colors array), so an
+    // `array_ref` -> `lut_*` target cannot be refused outright — it must be budgeted.
+    // But a row-mode LUT allocates `stored_indices x k` floats, k taken from the
+    // TARGET's `original_shape`. Charging the stub's tiny logical count (as before)
+    // let a small index array behind a wide `k` sail under the ceiling and then
+    // allocate gigabytes — the same bypass as the broadcast case, one encoding over.
+    const n = 100_000;
+    const k = 10_000; // 100k x 10k x 4 B ~= 4 GB decoded
+    const attrs = meshAttrs();
+    const store = buildStore(attrs, {
+      vertices: {
+        shape: [0, 3],
+        dtype: '<f4',
+        attrs: { encoding: { name: 'array_ref', target: 'evil', original_shape: [4, 3] } },
+      },
+      faces: { shape: [4, 3], dtype: '<u4', data: TET_FACES },
+    });
+    store.addArray('/evil', {
+      shape: [n],
+      chunks: [n],
+      dtype: '|u1',
+      // A faithful, decodable LUT: one k-wide code vector, every index 0 — so without
+      // the target-decode charge this is admitted and `decodeLUT` really does allocate
+      // n x k floats (~4 GB), not merely throw on missing metadata.
+      attrs: {
+        encoding: {
+          name: 'lut_uint8',
+          lut_mode: 'row',
+          lut: new Array(k).fill(0),
+          original_shape: [n, k],
+          original_dtype: 'float32',
+        },
+      },
+    });
+
+    await expect(makeLoader(store, attrs).loadMesh(VIEW)).rejects.toThrow(
+      /account for .* over the/
+    );
+    // Rejected on the resolved target's decode size, on metadata alone — no chunk read.
+    expect(store.chunkRequests()).toEqual([]);
+    // Stored (~100 KB) and per-chunk (~100 KB) both fit; only the k-expanded decode
+    // term catches it, which is what makes charging the TARGET's decode load-bearing.
+    expect(n * 1).toBeLessThan(MESH_DECODE_BUDGET_BYTES);
+  });
+
+  it('a genuinely MISSING array_ref target stays a deterministic Validation rejection', async () => {
+    // The other side of #1254's fix: a target that simply is not in the store is a real,
+    // permanent defect, so it is `Validation` (retry policy skips it) and reports it as
+    // not found — distinct from a transient open failure, which stays retryable below.
+    const attrs = meshAttrs();
+    const store = buildStore(attrs, {
+      vertices: {
+        shape: [0, 3],
+        dtype: '<f4',
+        attrs: { encoding: { name: 'array_ref', target: 'absent', original_shape: [4, 3] } },
+      },
+      faces: { shape: [4, 3], dtype: '<u4', data: TET_FACES },
+    });
+    let thrown: unknown;
+    try {
+      await makeLoader(store, attrs).loadMesh(VIEW);
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(LoaderError);
+    expect((thrown as LoaderError).kind).toBe('Validation');
+    expect((thrown as LoaderError).message).toMatch(/was not found in the store/);
+    expect(store.chunkRequests()).toEqual([]);
+  });
+
+  it('classifies a TRANSIENT open of an OPTIONAL array as Network, not Validation', async () => {
+    // #1254, first site. The optional-array open loop used to swallow EVERY error and
+    // leave the slot empty, after which the preflight reported the flag-with-no-array as
+    // `Validation` — which the retry policy treats as deterministic and never re-fetches.
+    // A network blip fetching `normals`' metadata must instead surface its retryable kind.
+    const attrs = meshAttrs({ has_normals: true, normal_dims: [0, 1, 2] });
+    const store = buildStore(
+      attrs,
+      tetArrays({ normals: { shape: [4, 3], dtype: '<f4', data: new Array(12).fill(0) } })
+    );
+    store.rejectKeyContaining = { needle: '/normals/', error: new Error('network request failed') };
+    let thrown: unknown;
+    try {
+      await makeLoader(store, attrs).loadMesh(VIEW);
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(LoaderError);
+    expect((thrown as LoaderError).kind).toBe('Network');
+  });
+
+  it('classifies a TRANSIENT open of an array_ref TARGET as Network, not Validation', async () => {
+    // #1254, second site. `resolveRefTarget` used to convert EVERY `zarr.open` failure on
+    // the target into a `Validation` rejection, so a timeout opening the target's metadata
+    // was persisted as deterministic and never retried. Only a genuine not-found should be
+    // deterministic; a transient must surface its retryable kind.
+    const attrs = meshAttrs();
+    const store = buildStore(attrs, {
+      vertices: {
+        shape: [0, 3],
+        dtype: '<f4',
+        attrs: { encoding: { name: 'array_ref', target: 'shared', original_shape: [4, 3] } },
+      },
+      faces: { shape: [4, 3], dtype: '<u4', data: TET_FACES },
+    });
+    store.addArray('/shared', {
+      shape: [4, 3],
+      dtype: '<f4',
+      data: [1, 0, 0, 0, 1, 0, 0, 0, 1, 1, 1, 0],
+    });
+    store.rejectKeyContaining = { needle: '/shared/', error: new Error('network request failed') };
+    let thrown: unknown;
+    try {
+      await makeLoader(store, attrs).loadMesh(VIEW);
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(LoaderError);
+    expect((thrown as LoaderError).kind).toBe('Network');
+  });
+
   it('a missing faces array — a mesh without one is not a mesh', async () => {
     const attrs = meshAttrs();
     const store = buildStore(attrs, {

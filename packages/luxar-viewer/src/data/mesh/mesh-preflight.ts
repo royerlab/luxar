@@ -70,7 +70,7 @@
 import * as zarr from '../zarr';
 import { MAX_MESH_VERTICES, MESH_DECODE_BUDGET_BYTES } from '../../config/constants';
 import type { ArrayMetadata } from '../array-decoder/decoder';
-import { LoaderError } from '../scene-loader/nodes/load-leaf-error-dispatch';
+import { LoaderError, classifyLoaderError } from '../scene-loader/nodes/load-leaf-error-dispatch';
 import type { MeshMetadata } from '../../types/mesh';
 import type { EncodingName } from '../../types/format-contract';
 
@@ -330,6 +330,75 @@ function assertBudgetableEncoding(
 }
 
 /**
+ * Refuse an `array_ref` whose resolved target is `broadcasted`.
+ *
+ * The budget charges the target's STORED and per-chunk terms plus the referring
+ * stub's LOGICAL count. That accounting is only sound when the target decodes to
+ * roughly its stored size. A `broadcasted` target breaks it: it physically stores
+ * one `(1, K)` row — a few bytes of stored/chunk term — but `ArrayDecoder` expands
+ * it to one row PER logical element at fetch time, so a wide row behind a small
+ * stub sails under the ceiling and then allocates gigabytes. That is exactly the
+ * "too late after decode" exhaustion the preflight exists to prevent.
+ *
+ * Refusing it costs nothing legitimate: the encoder broadcast-encodes a uniform
+ * array at priority 1, BEFORE dedup is consulted, so the writer never emits an
+ * `array_ref` that points at a `broadcasted` target.
+ */
+function assertRefTargetDecodesInPlace(
+  path: string,
+  name: string,
+  fetched: zarr.Array<zarr.DataType, zarr.Readable>
+): void {
+  const encodingName = ((fetched.attrs ?? {}) as unknown as ArrayMetadata).encoding?.name;
+  if (encodingName === 'broadcasted') {
+    rejectMesh(
+      path,
+      `${name} is an array_ref to a '${encodingName}' target. A broadcast target ` +
+        'stores one row but decodes to one row per logical element, so its stored ' +
+        'and chunk sizes say nothing about what the fetch would allocate — the ' +
+        'per-node budget cannot bound it. Refused rather than admitted blind.'
+    );
+  }
+}
+
+/**
+ * The number of float32 values the decoder will materialize from a RESOLVED
+ * `array_ref` target, upper-bounded from metadata alone.
+ *
+ * Every decoder path allocates one output value per STORED value —
+ * `Float32Array(stored_count)` — with a single exception: a row-mode LUT expands
+ * each stored index into `k` values, `k` taken from the target's `original_shape`
+ * (see `ArrayDecoder.decodeLUT`, which allocates `n x k`). So the bound is
+ * `stored_count` for every encoding but a row-mode LUT, and `stored_count x k`
+ * for that one. `broadcasted` is refused before this is reached — its size is
+ * driven by the caller's `expectedElements`, not the target's own metadata, so it
+ * cannot be bounded here at all.
+ *
+ * This deliberately multiplies the target's STORED count by `k` rather than reading
+ * `original_shape[0]`: `n` is the target's real stored index count, and a hostile
+ * store can declare an `original_shape` whose leading extent disagrees with it —
+ * charging the declared rows would then under-count the `n x k` the decoder
+ * actually allocates.
+ */
+function targetDecodedFloatCount(fetched: zarr.Array<zarr.DataType, zarr.Readable>): number | null {
+  const storedCount = elementCount(fetched.shape);
+  if (storedCount === null) return null;
+  const encoding = ((fetched.attrs ?? {}) as unknown as ArrayMetadata).encoding;
+  const name = encoding?.name;
+  const isLut = name === 'lut_uint8' || name === 'lut_uint16';
+  // Row mode is the default when `lut_mode` is absent (the Python encoder omits it
+  // for 1-D arrays); only 'scalar' is 1:1. Mirrors `ArrayDecoder`'s k/mode logic.
+  if (isLut && encoding?.lut_mode !== 'scalar') {
+    const original = encoding?.original_shape;
+    const k = Array.isArray(original) && original.length > 1 ? original[1] : 1;
+    if (!Number.isInteger(k) || k < 1) return null;
+    const total = storedCount * k;
+    return Number.isFinite(total) ? total : null;
+  }
+  return storedCount;
+}
+
+/**
  * Maximum `array_ref` hops the preflight will follow before refusing.
  *
  * A target may itself be encoded — including as another `array_ref` — and
@@ -392,11 +461,15 @@ async function resolveRefTarget(
     try {
       current = await zarr.open(storeRoot.resolve(target), { kind: 'array' });
     } catch (error) {
-      rejectMesh(
-        path,
-        `${name} is an array_ref to '${target}', which could not be opened: ` +
-          `${error instanceof Error ? error.message : String(error)}`
-      );
+      // A genuinely absent/misdeclared target is a deterministic `Validation`
+      // rejection. A transient failure opening its metadata (network, abort) is
+      // NOT — persisting it as `Validation` would have the retry policy treat a
+      // flaky network as permanent and never re-fetch on reconnect. Propagate the
+      // real kind, matching the required-array open in the loader.
+      if (!zarr.isNotFoundError(error)) {
+        throw new LoaderError(classifyLoaderError(error), path, error);
+      }
+      rejectMesh(path, `${name} is an array_ref to '${target}', which was not found in the store.`);
     }
   }
   return current;
@@ -509,8 +582,12 @@ export async function preflightMesh(
     // budgets ~48 bytes for a read that can pull gigabytes. Metadata-only.
     assertBudgetableEncoding(path, name, array);
     const fetched = await resolveRefTarget(path, name, array, storeRoot);
-    // The target may carry its own encoding, which must be budgetable too.
-    if (fetched !== array) assertBudgetableEncoding(path, name, fetched);
+    // The target may carry its own encoding, which must be budgetable too, and it
+    // must not be one whose decoded size dwarfs its stored size (see below).
+    if (fetched !== array) {
+      assertBudgetableEncoding(path, name, fetched);
+      assertRefTargetDecodesInPlace(path, name, fetched);
+    }
 
     const parsed = parseDtype(String(fetched.dtype));
     if (!parsed) {
@@ -521,14 +598,30 @@ export async function preflightMesh(
     if (stored === null) {
       rejectMesh(path, `${name} declares an unusable shape [${String(fetched.shape)}]`);
     }
-    // The LOGICAL layout still comes from the referring array: that is where
-    // `original_shape` records what the values mean for this node, and it is what
-    // the decoder materializes. The stored/chunk terms come from the target.
-    const layout = logicalLayout(array);
-    if (layout === null) {
+    // The DECODED term must be what the decoder actually materializes. For a plain
+    // node-local array that is the stub's own logical count — which is where
+    // `original_shape` records what the values mean for this node (and what bounds a
+    // huge `ndim`). For an `array_ref` it is the RESOLVED TARGET's decode size, which
+    // is NOT the stub's claimed count: a lying `(0, k)` stub can front a target whose
+    // OWN encoding expands on decode — a row-mode LUT allocates `stored_indices x k`,
+    // k taken from the TARGET's `original_shape` — so charging the stub's count would
+    // repeat the "tiny stored, gigabytes decoded" bypass this budget exists to close,
+    // one encoding removed. Charge the larger of the stub's requirement and the
+    // target's true decode size. (A `broadcasted` target is refused above; its size
+    // is caller-driven, so it cannot be bounded from the target's metadata.)
+    const stubLayout = logicalLayout(array);
+    if (stubLayout === null) {
       rejectMesh(path, `${name} declares an unusable logical shape`);
     }
-    accountedBytes += stored * parsed.itemSize + layout.count * DECODED_BYTES_PER_VALUE;
+    let decodedCount = stubLayout.count;
+    if (fetched !== array) {
+      const targetDecoded = targetDecodedFloatCount(fetched);
+      if (targetDecoded === null) {
+        rejectMesh(path, `${name}'s array_ref target declares an unusable shape`);
+      }
+      decodedCount = Math.max(decodedCount, targetDecoded);
+    }
+    accountedBytes += stored * parsed.itemSize + decodedCount * DECODED_BYTES_PER_VALUE;
 
     // Per-chunk term. Not redundant with the sum: zarr v2 does not require
     // `chunks <= shape`, so a `"shape": [100, 3]` array declaring
