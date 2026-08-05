@@ -13,9 +13,11 @@
  *   8. Camera transform
  *   9. Change-detection event
  *
- * Returns true when the camera actually moved (useful for
- * render-on-demand). Uses module-local scratch vectors/quaternions to
- * preserve the orchestrator's no-allocation pattern on the hot path.
+ * Returns true when the camera actually moved — including an
+ * orthographic zoom-only frame, which changes the view without touching
+ * position or orientation (useful for render-on-demand). Uses
+ * module-local scratch vectors/quaternions to preserve the
+ * orchestrator's no-allocation pattern on the hot path.
  */
 
 import * as THREE from 'three';
@@ -27,6 +29,13 @@ const _IDENTITY_QUAT = new THREE.Quaternion();
 const _v2 = new THREE.Vector3();
 const _q1 = new THREE.Quaternion();
 
+/**
+ * State and callbacks {@link runUpdateStep} needs, projected from the
+ * `LuxarOrbitControls` orchestrator. Object refs (orientation, the
+ * rotation/pan deltas, target, last-frame position/quaternion) are mutated
+ * in place; scalar accumulators (roll/zoom delta, distance) are read/written
+ * through accessors so the orchestrator keeps ownership of the fields.
+ */
 export interface OrbitUpdateCtx {
   enableRotate: boolean;
   enableDamping: boolean;
@@ -58,7 +67,27 @@ export interface OrbitUpdateCtx {
   dispatch: (type: 'change') => void;
 }
 
+/**
+ * Run one per-frame orbit update: apply auto-rotation, then the damped
+ * rotation / roll / pan / zoom deltas, clamp distance (and ortho zoom), write
+ * the transform to the camera, and detect movement. With damping enabled each
+ * delta is applied by `dampingFactor` and decayed by the complement; without
+ * it each is applied fully and reset.
+ *
+ * @param deltaTime - Seconds since the last frame (defaults to 1/60), keeping
+ *   auto-rotation frame-rate independent.
+ * @returns true if the camera position, orientation, or orthographic zoom
+ *   changed this frame (a `change` event is dispatched in that case) —
+ *   useful for render-on-demand. Ortho zoom mutates only `camera.zoom`,
+ *   so it is tracked separately from the position/orientation compare.
+ */
 export function runUpdateStep(ctx: OrbitUpdateCtx, deltaTime?: number): boolean {
+  // Ortho zoom lives on camera.zoom (steps 5/7 mutate it in place without
+  // moving the camera), so snapshot it here for the step-9 change test —
+  // consumers like the scene manager's material refresh and pick-buffer
+  // invalidation rely on `change` firing for the damped zoom tail.
+  const zoomBefore = ctx.camera instanceof THREE.OrthographicCamera ? ctx.camera.zoom : null;
+
   // 1. Auto-rotation: around the camera's screen-up axis (always appears vertical to the viewer)
   // Speed=1.0 → one full rotation in 60 seconds (matches THREE.js OrbitControls convention)
   if (ctx.autoRotate && ctx.enableRotate) {
@@ -142,7 +171,8 @@ export function runUpdateStep(ctx: OrbitUpdateCtx, deltaTime?: number): boolean 
   // 9. Change detection
   const moved =
     !ctx.camera.position.equals(ctx.lastPosition) ||
-    !ctx.camera.quaternion.equals(ctx.lastQuaternion);
+    !ctx.camera.quaternion.equals(ctx.lastQuaternion) ||
+    (zoomBefore !== null && (ctx.camera as THREE.OrthographicCamera).zoom !== zoomBefore);
 
   if (moved) {
     ctx.dispatch('change');

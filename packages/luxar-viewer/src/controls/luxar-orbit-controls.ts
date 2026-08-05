@@ -243,7 +243,8 @@ export class LuxarOrbitControls extends THREE.EventDispatcher<{
   /**
    * Update controls. Call every frame.
    * @param deltaTime - Optional time since last frame (seconds). Used for frame-rate independent auto-rotation.
-   * @returns true if camera moved (useful for render-on-demand).
+   * @returns true if the view changed — camera position, orientation, or
+   *   orthographic zoom (useful for render-on-demand).
    */
   public update(deltaTime?: number): boolean {
     return runUpdateStep(this.makeUpdateCtx(), deltaTime);

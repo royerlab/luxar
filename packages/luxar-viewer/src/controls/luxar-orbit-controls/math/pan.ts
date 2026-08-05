@@ -15,6 +15,13 @@ import type { LuxarCamera } from '../../../utils/camera-utils';
 // `_v` scratch the orchestrator uses for its other math.
 const _v = new THREE.Vector3();
 
+/**
+ * Inputs {@link applyPan} needs to convert a pointer delta into a world-space
+ * pan: the camera (perspective or orthographic), the current orbit distance
+ * (scales perspective pan by frustum height at the target), the pan-speed
+ * multiplier, whether panning is screen-space or world-up locked, and the DOM
+ * element whose size normalizes pixel deltas.
+ */
 export interface PanCtx {
   camera: LuxarCamera;
   distance: number;
@@ -34,7 +41,12 @@ export function applyPanLeft(
   out.add(_v);
 }
 
-/** Accumulate a pan along the camera's Y axis (or world up if non-screen-space). */
+/**
+ * Accumulate a vertical pan (scaled by `distance`). In screen-space mode this
+ * follows the camera's Y axis; otherwise it uses `cameraUp × cameraX`, the
+ * ground-plane direction orthogonal to the world up, so world-up-locked panning
+ * slides across the horizontal plane rather than tilting out of it.
+ */
 export function applyPanUp(
   out: THREE.Vector3,
   distance: number,
