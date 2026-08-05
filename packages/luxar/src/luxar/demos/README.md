@@ -694,7 +694,20 @@ Two-channel scikit-image `cells3d` fluorescence volume (membranes + nuclei) fitt
 
 **Requires**: Git LFS data (default) or `scikit-image` + GPU (with `--recompute`).
 
-**Demonstrates**: Per-channel `layer=True` gsplats nodes with built-in BOP LUTs applied at display time (interactive colormap switching in the Layers panel, press L), shared amplitude-weighted centroid alignment, volumetric blending, ACES tone-mapping. The lightweight, no-download sibling of `organoid_multichannel` and `kidney_multichannel_layers`.
+**Demonstrates**: Per-channel `layer=True` gsplats nodes with built-in BOP LUTs applied at display time (interactive colormap switching in the Layers panel, press L), shared amplitude-weighted centroid alignment, volumetric blending, ACES tone-mapping. The lightweight, no-download sibling of `organoid_multichannel` and `kidney_multichannel_layers`. Its **mesh** counterpart on the same data is `mesh_isosurface_cells3d` — run both to compare the two representations side by side.
+
+---
+
+#### demo_mesh_isosurface_cells3d.py - Cells3D Isosurfaces (the reference Mesh demo)
+Marching-cubes **isosurfaces** of the same two-channel scikit-image `cells3d` volume — membranes and nuclei — as two shaded, toggleable mesh layers. Isosurfaces and segmentation boundaries are the named target data for the Mesh geometry type (`docs/specs/MESH_NODE_SPEC.md` §1): routine outputs of the pipelines Luxar already serves, which before Mesh could only be approximated by a dense point cloud.
+
+Deliberately the same dataset as the gsplat demo above, because the pairing is the lesson: splats approximate the whole intensity field and need no threshold, while an isosurface picks ONE level set and renders it as an opaque surface with real occlusion and silhouettes. Neither is the better answer — they answer different questions.
+
+**Run**: `luxar demo run mesh_isosurface_cells3d`
+
+**Requires**: `scikit-image` + `scipy` (both in the `demos` extra). **No GPU and no fitting step** — marching cubes is CPU-only and takes about two seconds, which makes this the cheapest end-to-end demo of any Luxar geometry type.
+
+**Demonstrates**: Mesh as the only **shaded** geometry type — per-vertex marching-cubes gradient normals written with an explicit `normal_dims`, lit by the §6.2 view-anchored headlight, so nuclei inside membranes are genuinely occluded rather than summed. `opaque` blending by default (unlike the other three types' `additive`), the mesh-only **Ambient** / **Shade falloff** Layers-panel sliders, per-channel `layer=True` toggling, physical units via marching_cubes' `spacing` (the dataset is 4.5x anisotropic in Z), and scale: ~537K vertices / 1.07M triangles across the two surfaces.
 
 ---
 
