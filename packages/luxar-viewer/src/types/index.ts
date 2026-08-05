@@ -6,19 +6,19 @@
  * @module types
  */
 
-// Blending modes (canonical mode set — SSOT)
+/** Blending modes (canonical mode set — SSOT). */
 export type { BlendingMode } from './blending';
 export { BLENDING_MODES } from './blending';
 
-// Dimension types
+/** Dimension metadata types. */
 export type { DimensionMetadata, SimpleDims } from './dims';
 export { initializeDims, getDimensionRanges } from './dims';
 
-// Points types
+/** Points geometry types. */
 export type { PointsMetadata, PointsViewState, PointsDataLoader, PointsUserData } from './points';
 export { isPointsMetadata, isPointsUserData } from './points';
 
-// Lines types
+/** Lines geometry types. */
 export type {
   OrderingMetadata,
   LineType,
@@ -33,7 +33,7 @@ export type {
 } from './lines';
 export { isLinesMetadata, isLinesUserData, isValidLineType } from './lines';
 
-// GSplats types
+/** GSplats geometry types. */
 export type {
   ValueRange,
   CoordinateBounds,
@@ -52,7 +52,7 @@ export {
   CHOLESKY_SIZES,
 } from './gsplats';
 
-// Committed-data stamp (memoized-concat no-op contract)
+/** Committed-data stamp (memoized-concat no-op contract). */
 export type { CommittedDataUserData } from './committed-data';
 export {
   hasCommittedData,
@@ -61,6 +61,6 @@ export {
   clearCommittedData,
 } from './committed-data';
 
-// Zarr types
+/** Zarr scene/node attribute types. */
 export type { ZarrSceneAttrs, ZarrNodeAttrs } from './zarr';
 export { hasContentsMethod } from './zarr';

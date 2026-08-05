@@ -81,6 +81,15 @@ export function normalizeDataSourceUrl(rawSrc: string | null): string | null {
   return trimmed;
 }
 
+/**
+ * All URL parameters recognized by the viewer, as a typed snapshot.
+ *
+ * Produced once by {@link readUrlParams} and threaded through the app; every
+ * consumer that wants a URL-derived value accepts the relevant field via
+ * options rather than reading `window.location` itself. Adding a new
+ * recognized parameter means adding a field here and a line to
+ * {@link readUrlParams}.
+ */
 export interface UrlParams {
   /** Dataset source URL (`?src=...`). Null when not provided. */
   src: string | null;
@@ -289,16 +298,30 @@ function normalizeRendererParam(raw: string | null): 'webgl' | 'webgpu' | null {
   return null;
 }
 
+/**
+ * Minimal read-only view of `window.location` this module needs to rewrite the
+ * `src` query parameter. Narrowed to an interface so callers (and tests) can
+ * supply a plain object instead of a real `Location`.
+ */
 export interface BrowserUrlLocation {
   pathname: string;
   search: string;
   hash?: string;
 }
 
+/**
+ * Minimal `window.history` surface used to replace the current URL without a
+ * navigation. Narrowed to just `replaceState` for testability.
+ */
 export interface BrowserUrlHistory {
   replaceState(data: unknown, unused: string, url?: string | URL | null): void;
 }
 
+/**
+ * The browser environment {@link replaceBrowserDataSourceUrl} writes into:
+ * a {@link BrowserUrlLocation} to read from and a {@link BrowserUrlHistory} to
+ * write to. Defaults to the real `window`; injectable in tests.
+ */
 export interface BrowserUrlWriter {
   location: BrowserUrlLocation;
   history: BrowserUrlHistory;

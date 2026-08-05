@@ -10,6 +10,12 @@
 
 import { getErrorStack, isGenuineError } from './format-error';
 
+/**
+ * One captured console call held in the interceptor's ring buffer: the
+ * console method that produced it, when it fired, the raw arguments (the array
+ * is shallow-copied so later pushes don't mutate the record; element objects
+ * stay shared), and an optional error stack extracted from the args.
+ */
 export interface BufferedMessage {
   type: 'log' | 'warn' | 'error' | 'info' | 'debug';
   timestamp: Date;
@@ -210,7 +216,7 @@ class ConsoleInterceptor {
     const message: BufferedMessage = {
       type,
       timestamp: new Date(),
-      args: [...args], // Clone args to prevent mutation
+      args: [...args], // Shallow-copy so later pushes don't mutate the record
       stack,
     };
 
@@ -405,5 +411,5 @@ export function disposeConsoleInterceptor(): void {
   ConsoleInterceptor.disposeInstance();
 }
 
-// Also export the type for the singleton
+/** The interceptor class type, re-exported for typing the singleton proxy. */
 export type { ConsoleInterceptor };

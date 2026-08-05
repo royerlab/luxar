@@ -3,9 +3,6 @@
   "failures": [
     "JSDoc coverage::packages/luxar-viewer/src/cache/chunk-prefetcher.ts",
     "JSDoc coverage::packages/luxar-viewer/src/cache/multi-level-caching-store.ts",
-    "JSDoc coverage::packages/luxar-viewer/src/config/index.ts",
-    "JSDoc coverage::packages/luxar-viewer/src/config/types.ts",
-    "JSDoc coverage::packages/luxar-viewer/src/config/url-params.ts",
     "JSDoc coverage::packages/luxar-viewer/src/controls/controls-manager.ts",
     "JSDoc coverage::packages/luxar-viewer/src/controls/luxar-fly-controls.ts",
     "JSDoc coverage::packages/luxar-viewer/src/controls/luxar-orbit-controls.ts",
@@ -21,8 +18,6 @@
     "JSDoc coverage::packages/luxar-viewer/src/rendering/index.ts",
     "JSDoc coverage::packages/luxar-viewer/src/rendering/node-factory.ts",
     "JSDoc coverage::packages/luxar-viewer/src/scene/scene-dims-manager.ts",
-    "JSDoc coverage::packages/luxar-viewer/src/types/format-contract.ts",
-    "JSDoc coverage::packages/luxar-viewer/src/types/index.ts",
     "JSDoc coverage::packages/luxar-viewer/src/ui/colormap-legend.ts",
     "JSDoc coverage::packages/luxar-viewer/src/ui/data-monitor-manager.ts",
     "JSDoc coverage::packages/luxar-viewer/src/ui/dataset-browser.ts",
@@ -34,8 +29,6 @@
     "JSDoc coverage::packages/luxar-viewer/src/ui/performance-monitor.ts",
     "JSDoc coverage::packages/luxar-viewer/src/ui/recording-panel.ts",
     "JSDoc coverage::packages/luxar-viewer/src/ui/rendering-controls.ts",
-    "JSDoc coverage::packages/luxar-viewer/src/utils/console-interceptor.ts",
-    "JSDoc coverage::packages/luxar-viewer/src/utils/storage-keys.ts",
     "JSDoc coverage::packages/luxar-viewer/src/workers/data-worker.ts",
     "JSDoc coverage::packages/luxar-viewer/src/workers/sort-worker.ts"
   ]

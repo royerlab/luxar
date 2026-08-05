@@ -302,8 +302,21 @@ def _ts_str(value: str) -> str:
     return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
 
 
-def _ts_const(name: str, values: List[str], elem_type: str = "string") -> str:
-    """Emit ``export const NAME: readonly T[] = [...]``.
+def _ts_jsdoc(doc: str) -> str:
+    """Render a JSDoc block (``/** ... */``) with a trailing newline.
+
+    One ``*`` line per line of ``doc`` (blank input lines become a bare `` *``).
+    The block sits directly above the declaration it documents, which is what
+    the JSDoc-coverage gate (``scripts/check_documentation.py``) credits.
+    """
+    body = "".join(f" * {line}\n" if line else " *\n" for line in doc.split("\n"))
+    return f"/**\n{body} */\n"
+
+
+def _ts_const(
+    name: str, values: List[str], elem_type: str = "string", doc: str = ""
+) -> str:
+    """Emit ``export const NAME: readonly T[] = [...]``, optionally JSDoc'd.
 
     ``elem_type`` mirrors :func:`_py_tuple`'s parameter of the same name. Pass
     the paired union alias so callers can iterate the array *and* index a
@@ -314,22 +327,28 @@ def _ts_const(name: str, values: List[str], elem_type: str = "string") -> str:
     those are matched against untrusted values read off disk, and
     ``readonly T[].includes(someString)`` is a type error in TypeScript. Python
     can narrow the same tuples because ``x in tup`` is not type-checked there.
+
+    ``doc`` — when non-empty — prepends a JSDoc block so the generated export is
+    counted as documented by the JSDoc-coverage gate.
     """
+    prefix = _ts_jsdoc(doc) if doc else ""
     lhs = f"export const {name}: readonly {elem_type}[] = "
     inline = f"{lhs}[{', '.join(_ts_str(v) for v in values)}];"
     if len(inline) <= TS_WIDTH:
-        return inline
+        return prefix + inline
     body = "".join(f"  {_ts_str(v)},\n" for v in values)
-    return f"{lhs}[\n{body}];"
+    return prefix + f"{lhs}[\n{body}];"
 
 
-def _ts_union(name: str, values: List[str]) -> str:
+def _ts_union(name: str, values: List[str], doc: str = "") -> str:
+    """Emit ``export type NAME = 'a' | 'b' | ...``, optionally prefixed by JSDoc."""
+    prefix = _ts_jsdoc(doc) if doc else ""
     inline = f"export type {name} = {' | '.join(_ts_str(v) for v in values)};"
     if len(inline) <= TS_WIDTH:
-        return inline
+        return prefix + inline
     body = "".join(f"  | {_ts_str(v)}\n" for v in values)
     # Replace the final newline with a semicolon terminator.
-    return f"export type {name} =\n{body.rstrip()};"
+    return prefix + f"export type {name} =\n{body.rstrip()};"
 
 
 def render_typescript(c: Dict[str, Any]) -> str:
@@ -356,42 +375,43 @@ def render_typescript(c: Dict[str, Any]) -> str:
         " */\n"
     )
 
+    loader_doc = (
+        "Viewer-drawable geometry types: the subset of `GEOMETRY_TYPES` that has a\n"
+        "loader, a `GEOMETRY_DESCRIPTORS` row and a tolerance arm. A CAPABILITY, not\n"
+        "the vocabulary — key dispatch tables on this, not on `GeometryTypeName`, so a\n"
+        "not-yet-drawable type cannot resolve to no loader. See contract.yaml::loader_types."
+    )
     blocks = [
-        "// --- scene (.luxar.zarr) format version ---\n"
-        f"export const SCENE_FORMAT_VERSION = {_ts_str(scene['current'])};\n"
-        f"{_ts_const('SUPPORTED_SCENE_VERSIONS', scene['supported'])}\n"
-        f"{_ts_union('SceneFormatVersion', scene['supported'])}",
-        "// --- standalone gsplats (.gsplats.zarr) node-tree format version ---\n"
-        f"export const GSPLATS_FORMAT_VERSION = {_ts_str(gsplats['current'])};\n"
-        f"{_ts_const('SUPPORTED_GSPLATS_FORMAT_VERSIONS', gsplats['supported'])}\n"
-        f"{_ts_union('GSplatsFormatVersion', gsplats['supported'])}",
-        "// --- root-header format_type identifying a standalone gsplats store ---\n"
-        f"export const FORMAT_TYPE_GSPLATS = {_ts_str(c['format_type_gsplats'])};",
-        "// --- scene-graph node types ---\n"
-        f"{_ts_const('NODE_TYPES', node_types, 'NodeTypeName')}\n"
-        f"{_ts_union('NodeTypeName', node_types)}",
-        "// --- leaf geometry types (the element-bearing subset of NODE_TYPES) ---\n"
-        f"{_ts_const('GEOMETRY_TYPES', geometry_types, 'GeometryTypeName')}\n"
-        f"{_ts_union('GeometryTypeName', geometry_types)}",
-        "// --- viewer-drawable geometry types: the subset of GEOMETRY_TYPES that has a\n"
-        "//     loader, a GEOMETRY_DESCRIPTORS row and a tolerance arm. A CAPABILITY,\n"
-        "//     not the vocabulary — key dispatch tables on this, not on\n"
-        "//     GeometryTypeName, so a not-yet-drawable type cannot resolve to no\n"
-        "//     loader. See contract.yaml::loader_types. ---\n"
-        f"{_ts_const('LOADER_TYPES', loader_types, 'LoaderTypeName')}\n"
-        f"{_ts_union('LoaderTypeName', loader_types)}",
-        "// --- specialized-group kinds ---\n"
-        f"{_ts_const('NODE_KINDS', node_kinds, 'NodeKind')}\n"
-        f"{_ts_union('NodeKind', node_kinds)}",
-        "// --- on-disk array encoding scheme names ---\n"
-        f"{_ts_const('ENCODING_NAMES', encodings, 'EncodingName')}\n"
-        f"{_ts_union('EncodingName', encodings)}",
-        "// --- canonical metadata attribute keys ---\n"
-        f"{_ts_const('ATTR_KEYS', attr_keys, 'AttrKey')}\n"
-        f"{_ts_union('AttrKey', attr_keys)}",
-        "// --- canonical gsplats array names ---\n"
-        f"{_ts_const('ARRAY_NAMES', array_names, 'ArrayName')}\n"
-        f"{_ts_union('ArrayName', array_names)}",
+        _ts_jsdoc(
+            "Current `.luxar.zarr` scene format version — the version the Python writer emits and this build treats as current."
+        )
+        + f"export const SCENE_FORMAT_VERSION = {_ts_str(scene['current'])};\n"
+        + f"{_ts_const('SUPPORTED_SCENE_VERSIONS', scene['supported'], doc='Scene format versions declared loadable by this build.')}\n"
+        + f"{_ts_union('SceneFormatVersion', scene['supported'], doc='Union of the supported scene format version strings.')}",
+        _ts_jsdoc(
+            "Current standalone `.gsplats.zarr` node-tree format version — the version the Python writer emits and this build treats as current."
+        )
+        + f"export const GSPLATS_FORMAT_VERSION = {_ts_str(gsplats['current'])};\n"
+        + f"{_ts_const('SUPPORTED_GSPLATS_FORMAT_VERSIONS', gsplats['supported'], doc='Standalone gsplats node-tree format versions this build can load; the loader matches a store on-disk format_version against this allowlist.')}\n"
+        + f"{_ts_union('GSplatsFormatVersion', gsplats['supported'], doc='Union of the supported standalone gsplats format version strings.')}",
+        _ts_jsdoc(
+            "Root-header `format_type` value identifying a standalone gsplats store."
+        )
+        + f"export const FORMAT_TYPE_GSPLATS = {_ts_str(c['format_type_gsplats'])};",
+        f"{_ts_const('NODE_TYPES', node_types, 'NodeTypeName', doc='All scene-graph node type names.')}\n"
+        f"{_ts_union('NodeTypeName', node_types, doc='Union of the scene-graph node type names.')}",
+        f"{_ts_const('GEOMETRY_TYPES', geometry_types, 'GeometryTypeName', doc='Leaf geometry types — the element-bearing subset of NODE_TYPES.')}\n"
+        f"{_ts_union('GeometryTypeName', geometry_types, doc='Union of the leaf geometry type names.')}",
+        f"{_ts_const('LOADER_TYPES', loader_types, 'LoaderTypeName', doc=loader_doc)}\n"
+        f"{_ts_union('LoaderTypeName', loader_types, doc='Union of the viewer-drawable geometry type names.')}",
+        f"{_ts_const('NODE_KINDS', node_kinds, 'NodeKind', doc='Specialized-group kinds (lod, partition).')}\n"
+        f"{_ts_union('NodeKind', node_kinds, doc='Union of the specialized-group kind names.')}",
+        f"{_ts_const('ENCODING_NAMES', encodings, 'EncodingName', doc='All on-disk array encoding scheme names.')}\n"
+        f"{_ts_union('EncodingName', encodings, doc='Union of the on-disk array encoding scheme names.')}",
+        f"{_ts_const('ATTR_KEYS', attr_keys, 'AttrKey', doc='Canonical metadata attribute keys.')}\n"
+        f"{_ts_union('AttrKey', attr_keys, doc='Union of the canonical metadata attribute key names.')}",
+        f"{_ts_const('ARRAY_NAMES', array_names, 'ArrayName', doc='Canonical gsplats array names.')}\n"
+        f"{_ts_union('ArrayName', array_names, doc='Union of the canonical gsplats array names.')}",
     ]
 
     return header + "\n" + "\n\n".join(blocks) + "\n"
