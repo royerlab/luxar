@@ -53,6 +53,13 @@ class RecordingStore {
   /** Every key `get` was called with, in order. */
   readonly requested: string[] = [];
 
+  /**
+   * The `AbortSignal` (if any) each request carried, keyed by request key.
+   * zarrita forwards `GetOptions.signal` to `store.get(key, { signal })`, so
+   * this is where "the abort signal reaches the reads" is actually observable.
+   */
+  readonly signals = new Map<string, AbortSignal | undefined>();
+
   constructor(private readonly entries: Map<string, Uint8Array>) {}
 
   /**
@@ -63,13 +70,21 @@ class RecordingStore {
    */
   failFacesRead: number | null = null;
   parkFacesRead: number | null = null;
+  /**
+   * Set when a parked faces read is issued: calling it settles that read with
+   * the real bytes, so a test can hold a load in flight past a `dispose()` and
+   * then let it complete — the only way to exercise the publish guard
+   * deterministically now that `dispose()` aborts reads still on the wire.
+   */
+  releaseParkedFacesRead: (() => void) | null = null;
   private facesReads = 0;
 
   /** Reject any `get` for a key containing this substring, with this error. */
   rejectKeyContaining: { needle: string; error: Error } | null = null;
 
-  get(key: string): Promise<Uint8Array | undefined> {
+  get(key: string, opts?: { signal?: AbortSignal }): Promise<Uint8Array | undefined> {
     this.requested.push(key);
+    this.signals.set(key, opts?.signal);
     // A zarr v2 chunk key's last segment is DOT-SEPARATED coords (`0.0`), so "has no
     // dot" does not identify one — the metadata allowlist is the reliable
     // discriminator, exactly as `chunkRequests()` uses below.
@@ -81,7 +96,10 @@ class RecordingStore {
         return Promise.reject(new Error('simulated read failure'));
       }
       if (this.facesReads === this.parkFacesRead) {
-        return new Promise(() => {}); // never settles
+        // Parked until the test releases it (or forever, if it never does).
+        return new Promise((resolve) => {
+          this.releaseParkedFacesRead = () => resolve(this.entries.get(key));
+        });
       }
     }
     if (this.rejectKeyContaining && key.includes(this.rejectKeyContaining.needle)) {
@@ -384,17 +402,18 @@ describe('MeshLoader — whole-node residency', () => {
     // for) starts another whole-mesh fetch.
     //
     // Driven by ORDINAL rather than by timing, because microtask ordering will not
-    // reliably keep the replacement in flight past the original's completion: read #1
-    // of `faces` fails fast (settling the original), and read #2 parks forever
-    // (holding the replacement in flight). Promise IDENTITY is then the observable —
-    // a third call must JOIN the replacement rather than start its own fetch.
+    // reliably keep the replacement in flight past the original's completion:
+    // `dispose()` aborts the original's reads, so the original settles (with an
+    // AbortError) before it ever reaches `faces`, and the replacement's own faces
+    // read — the FIRST one issued — parks forever, holding it in flight. Promise
+    // IDENTITY is then the observable — a third call must JOIN the replacement
+    // rather than start its own fetch.
     const store = buildStore(meshAttrs(), tetArrays());
-    store.failFacesRead = 1;
-    store.parkFacesRead = 2;
+    store.parkFacesRead = 1;
     const loader = makeLoader(store, meshAttrs());
 
     const first = loader.loadMesh(VIEW);
-    loader.dispose(); // mid-flight, before `first` settles
+    loader.dispose(); // mid-flight, before `first` settles — aborts its reads
     const replacement = loader.loadMesh(VIEW);
 
     await expect(first).rejects.toThrow(); // the stale completion runs its cleanup
@@ -403,8 +422,9 @@ describe('MeshLoader — whole-node residency', () => {
     // Same promise: the latch survived the stale settle. With an unconditional
     // clear, `third` is a brand-new fetch instead.
     expect(third).toBe(replacement);
-    // And no third `faces` read was issued.
-    expect(store.requested.filter((k) => k.endsWith('/faces/0.0'))).toHaveLength(2);
+    // Only the replacement ever reached `faces` (the aborted original settled
+    // at its vertices read), and no third read was issued for it.
+    expect(store.requested.filter((k) => k.endsWith('/faces/0.0'))).toHaveLength(1);
     void replacement.catch(() => {}); // parked forever; keep it from surfacing
   });
 
@@ -413,10 +433,23 @@ describe('MeshLoader — whole-node residency', () => {
     // onto a torn-down loader, pinning a whole mesh nothing will ever read. The
     // awaiting caller still gets its data — view-independent, so not wrong — but the
     // loader must not retain it.
+    //
+    // `dispose()` also aborts reads still on the wire (pinned below), so reaching
+    // the publish guard requires a read that is ISSUED before the dispose and
+    // SETTLES after it: the faces read is parked, disposed over, then released.
     const store = buildStore(meshAttrs(), tetArrays());
+    store.parkFacesRead = 1;
     const loader = makeLoader(store, meshAttrs());
     const inFlight = loader.loadMesh(VIEW);
+    await new Promise<void>((resolve) => {
+      const poll = (): void => {
+        if (store.releaseParkedFacesRead) resolve();
+        else setTimeout(poll, 0);
+      };
+      poll();
+    });
     loader.dispose();
+    store.releaseParkedFacesRead!();
     await expect(inFlight).resolves.toBeDefined();
 
     // If the cache had been repopulated, this second load would be served from it
@@ -434,6 +467,68 @@ describe('MeshLoader — whole-node residency', () => {
     loader.dispose();
     await loader.loadMesh(VIEW);
     expect(store.chunkRequests().length).toBeGreaterThan(before);
+  });
+
+  it('every chunk read carries an abort signal, not just the faces one', async () => {
+    // A signal that reaches only one of the arrays is cancellation theatre: the
+    // decoder-routed reads (vertices, normals, scalars) and the shared colour
+    // path are where the bytes are, so those are the reads that must be
+    // stoppable. Observable at the store, because zarrita forwards
+    // `GetOptions.signal` into `store.get`.
+    const attrs = meshAttrs({
+      has_normals: true,
+      normal_dims: [0, 1, 2],
+      has_colors: true,
+      has_scalars: true,
+      shading: 'smooth',
+    });
+    const store = buildStore(
+      attrs,
+      tetArrays({
+        normals: { shape: [4, 3], dtype: '<f4', data: new Array(12).fill(0) },
+        colors: { shape: [4, 3], dtype: '|u1', data: new Array(12).fill(128) },
+        scalars: { shape: [4], dtype: '<f4', data: [0, 0.25, 0.5, 1] },
+      })
+    );
+    await makeLoader(store, attrs).loadMesh(VIEW);
+
+    const chunkKeys = store.chunkRequests();
+    // All five data arrays were actually read…
+    for (const name of ['vertices', 'faces', 'normals', 'colors', 'scalars']) {
+      expect(chunkKeys.some((k) => k.includes(`/${name}/`))).toBe(true);
+    }
+    // …and every one of those reads carried a signal.
+    for (const key of chunkKeys) {
+      expect(store.signals.get(key), `chunk read ${key} carried no abort signal`).toBeDefined();
+    }
+  });
+
+  it('dispose() trips the signal governing the in-flight reads', async () => {
+    // The generation token stops the post-dispose PUBLISH; this pins that the
+    // TRANSFER is stopped too — a near-budget mesh otherwise fetches and decodes
+    // half a gigabyte for a loader nothing will ever read. The fake store cannot
+    // observe a mid-read cancellation (it ignores the signal), so the assertion
+    // is on the signal the read was handed.
+    const store = buildStore(meshAttrs(), tetArrays());
+    store.parkFacesRead = 1;
+    const loader = makeLoader(store, meshAttrs());
+    const inFlight = loader.loadMesh(VIEW);
+
+    // Wait until the parked faces read has been issued.
+    await new Promise<void>((resolve) => {
+      const poll = (): void => {
+        if (store.requested.some((k) => k.endsWith('/faces/0.0'))) resolve();
+        else setTimeout(poll, 0);
+      };
+      poll();
+    });
+    const signal = store.signals.get('/mesh/faces/0.0');
+    expect(signal).toBeDefined();
+    expect(signal!.aborted).toBe(false);
+
+    loader.dispose();
+    expect(signal!.aborted).toBe(true);
+    void inFlight.catch(() => {}); // parked forever; keep it from surfacing
   });
 });
 
