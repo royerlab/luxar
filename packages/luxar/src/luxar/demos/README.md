@@ -707,7 +707,7 @@ Deliberately the same dataset as the gsplat demo above, because the pairing is t
 
 **Requires**: `scikit-image` + `scipy` (both in the `demos` extra). **No GPU and no fitting step** — marching cubes is CPU-only and takes about two seconds, which makes this the cheapest end-to-end demo of any Luxar geometry type.
 
-**Demonstrates**: Mesh as the only **shaded** geometry type — per-vertex marching-cubes gradient normals written with an explicit `normal_dims`, lit by the §6.2 view-anchored headlight, so nuclei inside membranes are genuinely occluded rather than summed. `opaque` blending by default (unlike the other three types' `additive`), the mesh-only **Ambient** / **Shade falloff** Layers-panel sliders, per-channel `layer=True` toggling, physical units via marching_cubes' `spacing` (the dataset is 4.5x anisotropic in Z), and scale: ~537K vertices / 1.07M triangles across the two surfaces.
+**Demonstrates**: Mesh as the only **shaded** geometry type — per-vertex marching-cubes gradient normals written with an explicit `normal_dims`, lit by the §6.2 view-anchored headlight, so nuclei inside membranes are genuinely occluded rather than summed. `opaque` blending by default (unlike the other three types' `additive`), the mesh-only **Ambient** / **Shade falloff** Layers-panel sliders, per-channel `layer=True` toggling, physical units via marching_cubes' `spacing` (the dataset's voxels are mildly anisotropic — 0.29 µm in Z vs 0.26 µm in-plane, ~1.1x), and scale: ~537K vertices / 1.07M triangles across the two surfaces.
 
 ---
 

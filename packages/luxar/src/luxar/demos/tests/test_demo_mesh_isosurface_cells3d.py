@@ -6,15 +6,17 @@ analytic isosurface, so the extracted mesh can be checked against geometry
 instead of against a recorded snapshot of itself.
 
 What is worth pinning here is not "marching cubes works" (that is scikit-image's
-job) but the three things the DEMO is responsible for, each of which would render
+job) but the things the DEMO is responsible for, each of which would render
 a plausible-looking but wrong surface:
 
 * vertices come out in **physical units**, via marching_cubes' ``spacing`` — a
   demo that forgot it would emit a mesh in voxel indices, silently anisotropic by
-  the 4.5x Z/XY ratio of this dataset;
+  the dataset's 0.29 / 0.26 = 1.115x Z/XY voxel ratio (a ~10% Z error);
 * the mesh is **welded**, so it is a surface rather than a triangle soup;
 * the normals are **unit-length and outward**, which is what the shading model
-  reads and what ``normal_dims`` promises.
+  reads and what ``normal_dims`` promises;
+* the face **winding agrees with those normals**, so the surface is front-facing
+  from outside rather than shading inverted.
 """
 
 from __future__ import annotations
@@ -68,7 +70,7 @@ def test_vertices_are_in_physical_units_not_voxel_indices(ball_surface) -> None:
     """The `spacing` argument is load-bearing, and its absence is invisible.
 
     Dropping it yields a mesh in voxel indices: geometrically similar, and wrong
-    by the dataset's 0.29 / 0.26 anisotropy — a 4.5x Z squash relative to the
+    by the dataset's 0.29 / 0.26 anisotropy — a ~10% Z squash relative to the
     physical shape, which reads as a plausible flattened cell rather than as a bug.
 
     Asserted against an independent no-spacing extraction of the SAME volume, so
@@ -117,12 +119,14 @@ def test_the_mesh_is_welded(ball_surface) -> None:
 def test_normals_are_unit_length_and_point_outward(ball_surface) -> None:
     """The shading model renormalizes, but the ORIENTATION it cannot fix.
 
-    marching_cubes' default ``gradient_direction="descent"`` points normals toward
-    decreasing intensity — outward from a bright object. If that ever flipped,
-    every surface would shade as though lit from behind: the §6.2 headlight's wrap
-    term would land in [0, 0.5) and the whole mesh would collapse toward its
-    ambient floor. For a centred ball, "outward" is checkable exactly: the normal
-    must agree with the vertex's own direction from the centre.
+    marching_cubes' interpolated gradient normals point toward decreasing
+    intensity — outward from a bright object — regardless of
+    ``gradient_direction`` (that flag controls face winding, not the normal
+    sign). If that ever flipped, every surface would shade as though lit from
+    behind: the §6.2 headlight's wrap term would land in [0, 0.5) and the whole
+    mesh would collapse toward its ambient floor. For a centred ball, "outward"
+    is checkable exactly: the normal must agree with the vertex's own direction
+    from the centre.
     """
     vertices, _faces, normals = ball_surface
 
@@ -139,4 +143,38 @@ def test_normals_are_unit_length_and_point_outward(ball_surface) -> None:
     assert alignment.mean() > 0.9, (
         f"normals point inward on average (alignment {alignment.mean():.2f}) — "
         "the surface would shade as if lit from behind"
+    )
+
+
+def test_face_winding_agrees_with_normals(ball_surface) -> None:
+    """Face winding must match the outward normals, not just the normals alone.
+
+    The outward-normals test above looks at the ``normals`` array in isolation,
+    which is why the winding bug slipped: marching_cubes computes those normals
+    the same way for both ``gradient_direction`` values, so they stay outward
+    either way. The flag flips only the FACE WINDING. Under the old ``"descent"``
+    default the right-hand-rule winding normal points opposite the stored
+    normals — dot ~-0.999 for ~100% of faces — so every exterior triangle is
+    back-facing and the fragment shader negates the normal, inverting the
+    shading. This pins winding-vs-normal consistency, and fails before the
+    ``gradient_direction="ascent"`` fix.
+    """
+    vertices, faces, normals = ball_surface
+
+    tris = vertices[faces]
+    winding = np.cross(tris[:, 1] - tris[:, 0], tris[:, 2] - tris[:, 0])
+    winding /= np.linalg.norm(winding, axis=1, keepdims=True) + 1e-12
+
+    face_normals = normals[faces].mean(axis=1)
+    face_normals /= np.linalg.norm(face_normals, axis=1, keepdims=True) + 1e-12
+
+    dots = np.einsum("ij,ij->i", winding, face_normals)
+    assert dots.mean() > 0.5, (
+        f"face winding disagrees with normals (mean dot {dots.mean():.3f}) — "
+        "exterior triangles are back-facing and shade inverted"
+    )
+    negative_fraction = float(np.mean(dots < 0.0))
+    assert negative_fraction < 0.01, (
+        f"{negative_fraction:.1%} of faces wind opposite their normals — "
+        "expected essentially none after the ascent fix"
     )
