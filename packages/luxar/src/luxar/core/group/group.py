@@ -403,7 +403,7 @@ class Group(Node):
             **attrs: Additional attributes — ``opacity``, ``intensity``,
                 ``gamma``, ``colormap``, ``layer``, ``visible``, ``transform``,
                 ``nd_transform``, ``blending_mode``. Note ``volumetric`` blending
-                has no meaning for an opaque surface.
+                is rejected — it has no meaning for an opaque surface.
 
         Returns:
             The created Mesh node.
