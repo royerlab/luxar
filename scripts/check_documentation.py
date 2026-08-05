@@ -360,8 +360,12 @@ class DocumentationChecker:
         Two accepting conditions, deliberately OR-ed so this is a strict SUPERSET
         of the historical rule:
 
-        1. The nearest preceding non-blank line closes a block comment — i.e. a doc
-           comment sits directly above the declaration, however LONG it is.
+        1. The nearest preceding non-blank line closes a block comment whose
+           opener is ``/**`` — i.e. a JSDoc comment sits directly above the
+           declaration, however LONG it is. Scanning back to the opener (rather
+           than accepting any ``*/``) keeps a plain ``/* ... */`` implementation
+           comment from counting as documentation, which the old rule never
+           credited either.
         2. A ``/**`` appears anywhere in the 10 preceding lines — the original
            heuristic, kept verbatim.
 
@@ -388,7 +392,15 @@ class DocumentationChecker:
         while j >= 0 and lines[j].strip() == "":
             j -= 1
         if j >= 0 and lines[j].strip().endswith("*/"):
-            return True
+            # Walk back to the line that OPENS this block (block comments do not
+            # nest in TS) and require the JSDoc opener. A code line with a
+            # trailing `/* c */` opens on itself and fails the startswith, which
+            # is correct — that is not documentation.
+            k = j
+            while k >= 0 and "/*" not in lines[k]:
+                k -= 1
+            if k >= 0 and lines[k].lstrip().startswith("/**"):
+                return True
         return any("/**" in lines[k] for k in range(max(0, index - 10), index))
 
     def _check_typescript_jsdoc(self, ts_file: Path, package_name: str):

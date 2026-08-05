@@ -314,15 +314,27 @@ def test_ten_line_window_still_accepted_so_the_rule_stays_a_superset() -> None:
     assert cd.DocumentationChecker._has_jsdoc_above(line_comment, len(line_comment) - 1)
 
 
-def test_a_plain_block_comment_also_counts_as_jsdoc() -> None:
-    # Condition 1 checks only that the nearest non-blank line closes a block comment,
-    # so an ordinary /* ... */ implementation comment above an export counts too.
-    # That is looser than "has JSDoc" strictly means. Pinned rather than tightened:
-    # the rule is deliberately a SUPERSET of the old window so it can only remove
-    # findings, and narrowing it is a separate decision with its own blast radius
-    # (eight files newly failed when the strict form was tried alone).
+def test_a_plain_block_comment_does_not_count_as_jsdoc() -> None:
+    # Condition 1 walks back from the closing */ to the block's opener and
+    # requires /** — an ordinary /* ... */ implementation comment above an export
+    # is not documentation, and the historical 10-line window never credited it
+    # either (it greps for the JSDoc opener specifically). So rejecting it keeps
+    # the rule a strict superset of the old one while closing the loophole where
+    # any block comment would count.
     lines = ["/* not really jsdoc */", "export type T = string;"]
-    assert cd.DocumentationChecker._has_jsdoc_above(lines, len(lines) - 1)
+    assert not cd.DocumentationChecker._has_jsdoc_above(lines, len(lines) - 1)
+
+    multiline = ["/*", " * plain block, not jsdoc", " */", "export type T = string;"]
+    assert not cd.DocumentationChecker._has_jsdoc_above(multiline, len(multiline) - 1)
+
+    # A trailing block comment on a CODE line opens on itself and fails the
+    # JSDoc-opener requirement too.
+    trailing = ["const x = 1; /* c */", "export type T = string;"]
+    assert not cd.DocumentationChecker._has_jsdoc_above(trailing, len(trailing) - 1)
+
+    # A one-line JSDoc still counts: the closer's own line is the opener.
+    oneliner = ["/** Doc. */", "export type T = string;"]
+    assert cd.DocumentationChecker._has_jsdoc_above(oneliner, len(oneliner) - 1)
 
 
 def test_undocumented_export_is_still_undocumented() -> None:
