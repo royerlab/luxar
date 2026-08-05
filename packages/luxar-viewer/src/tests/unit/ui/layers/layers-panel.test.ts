@@ -1864,6 +1864,217 @@ describe('LayersPanel — blend select drives the leaf material', () => {
     expect(updateAbsorption).toHaveBeenCalledWith(0.5);
   });
 
+  it('a plain group over a mesh keeps the mesh OPAQUE after a non-blend edit', () => {
+    // Defect (#1275), fail-first vs the pre-fix liveLayerAttrs: a PLAIN group
+    // (no authored blending_mode) used to emit its DISPLAYED-but-defaulted
+    // `additive` mode into the composition chain, so ANY non-blend edit on the
+    // group (opacity/gamma/range) flipped a contained mesh from its own `opaque`
+    // default to `additive` (glow, depth-write off). With ownership gating
+    // (`blendingModeExplicit`) the group emits NO mode, so composeEffective falls back
+    // to the mesh leaf's own type-default `opaque`.
+    const applyBlendingMode = vi.fn();
+    const stubMat: Record<string, unknown> = {
+      userData: { blendingMode: 'opaque' },
+      uniforms: { uOpacity: { value: 1.0 } },
+      defines: {},
+      updateIntensity: vi.fn(),
+      updateOffset: vi.fn(),
+      updateGamma: vi.fn(),
+      updateOpacity: vi.fn(),
+      updateAbsorption: vi.fn(),
+      applyBlendingMode,
+    };
+    stubMat.clone = vi.fn(() => stubMat);
+
+    const mesh = new THREE.Mesh(new THREE.BufferGeometry(), stubMat as unknown as THREE.Material);
+    mesh.name = '/grp/mesh';
+    mesh.userData.nodeType = 'mesh';
+    const rootGroup = new THREE.Group();
+    rootGroup.add(mesh);
+
+    // A PLAIN group (layer=true) that authored NO blending_mode, over a
+    // non-layer mesh leaf that authored none either.
+    const graph = {
+      name: 'root',
+      path: '/',
+      type: 'group',
+      attrs: {},
+      children: [
+        {
+          name: 'grp',
+          path: '/grp',
+          type: 'group',
+          attrs: { layer: true },
+          children: [
+            {
+              name: 'mesh',
+              path: '/grp/mesh',
+              type: 'mesh',
+              attrs: {},
+              children: [],
+            },
+          ],
+        },
+      ],
+    } as unknown as SceneNode;
+
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(rootGroup, graph);
+    panel.show();
+    panel.layerState.select('/grp', 'single');
+
+    // A NON-blend edit on the group, then push it through the apply engine.
+    applyBlendingMode.mockClear();
+    panel.layerState.applyToSelected((l) => {
+      l.opacity = 0.8;
+    });
+    const grpLayer = panel.layerState.getLayer('/grp')!;
+    (
+      panel as unknown as { applyEngine: { applyOpacity(l: unknown): void } }
+    ).applyEngine.applyOpacity(grpLayer);
+
+    expect(applyBlendingMode).toHaveBeenCalledWith('opaque');
+    expect(applyBlendingMode).not.toHaveBeenCalledWith('additive');
+  });
+
+  it("a plain group preserves a non-layer mesh's AUTHORED blending_mode on a non-blend edit", () => {
+    // Regression guard (fail-first vs the unconditional subtree-drop): a plain
+    // group (no authored/owned mode) must NOT suppress a descendant's authored
+    // mode. A mesh authored `additive` under such a group used to snap to its
+    // `opaque` type-default on any non-blend edit, because composeEffective
+    // dropped the descendant mode (i>layerDepth, non-layer) AND the group
+    // emitted none. The drop now fires only when the edited layer OWNS a mode.
+    const applyBlendingMode = vi.fn();
+    const stubMat: Record<string, unknown> = {
+      userData: { blendingMode: 'additive' },
+      uniforms: { uOpacity: { value: 1.0 } },
+      defines: {},
+      updateIntensity: vi.fn(),
+      updateOffset: vi.fn(),
+      updateGamma: vi.fn(),
+      updateOpacity: vi.fn(),
+      updateAbsorption: vi.fn(),
+      applyBlendingMode,
+    };
+    stubMat.clone = vi.fn(() => stubMat);
+
+    const mesh = new THREE.Mesh(new THREE.BufferGeometry(), stubMat as unknown as THREE.Material);
+    mesh.name = '/grp/mesh';
+    mesh.userData.nodeType = 'mesh';
+    const rootGroup = new THREE.Group();
+    rootGroup.add(mesh);
+
+    // PLAIN group (owns no mode) over a non-layer mesh that AUTHORED `additive`.
+    const graph = {
+      name: 'root',
+      path: '/',
+      type: 'group',
+      attrs: {},
+      children: [
+        {
+          name: 'grp',
+          path: '/grp',
+          type: 'group',
+          attrs: { layer: true },
+          children: [
+            {
+              name: 'mesh',
+              path: '/grp/mesh',
+              type: 'mesh',
+              attrs: { blending_mode: 'additive' },
+              children: [],
+            },
+          ],
+        },
+      ],
+    } as unknown as SceneNode;
+
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(rootGroup, graph);
+    panel.show();
+    panel.layerState.select('/grp', 'single');
+
+    applyBlendingMode.mockClear();
+    panel.layerState.applyToSelected((l) => {
+      l.opacity = 0.8;
+    });
+    const grpLayer = panel.layerState.getLayer('/grp')!;
+    (
+      panel as unknown as { applyEngine: { applyOpacity(l: unknown): void } }
+    ).applyEngine.applyOpacity(grpLayer);
+
+    expect(applyBlendingMode).toHaveBeenCalledWith('additive');
+    expect(applyBlendingMode).not.toHaveBeenCalledWith('opaque');
+  });
+
+  it('picking a mode on a PLAIN group broadcasts it to the leaf (group now OWNS it)', () => {
+    // Locks the dropdown handler's `l.blendingModeExplicit = true` (mutant-kill: delete
+    // that line and this fails). A plain group owns no mode at init, so
+    // liveLayerAttrs would emit nothing and the pick would be dropped — the leaf
+    // would fall back to its `additive` points default instead of the picked mode.
+    const applyBlendingMode = vi.fn();
+    const stubMat: Record<string, unknown> = {
+      userData: { blendingMode: 'additive' },
+      uniforms: { uOpacity: { value: 1.0 } },
+      defines: {},
+      updateIntensity: vi.fn(),
+      updateOffset: vi.fn(),
+      updateGamma: vi.fn(),
+      updateOpacity: vi.fn(),
+      updateAbsorption: vi.fn(),
+      applyBlendingMode,
+    };
+    stubMat.clone = vi.fn(() => stubMat);
+
+    const points = new THREE.Points(
+      new THREE.BufferGeometry(),
+      stubMat as unknown as THREE.Material
+    );
+    points.name = '/grp/pts';
+    const rootGroup = new THREE.Group();
+    rootGroup.add(points);
+
+    // PLAIN group (owns no mode) over a non-layer points leaf that authored none.
+    const graph = {
+      name: 'root',
+      path: '/',
+      type: 'group',
+      attrs: {},
+      children: [
+        {
+          name: 'grp',
+          path: '/grp',
+          type: 'group',
+          attrs: { layer: true },
+          children: [
+            {
+              name: 'pts',
+              path: '/grp/pts',
+              type: 'points',
+              attrs: {},
+              children: [],
+            },
+          ],
+        },
+      ],
+    } as unknown as SceneNode;
+
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(rootGroup, graph);
+    panel.show();
+    panel.layerState.select('/grp', 'single');
+    // Precondition: a plain group owns no mode until the user picks one.
+    expect(panel.layerState.getLayer('/grp')!.blendingModeExplicit).toBe(false);
+
+    applyBlendingMode.mockClear();
+    const select = findBlendSelect(container)!;
+    select.value = 'max';
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+
+    expect(panel.layerState.getLayer('/grp')!.blendingModeExplicit).toBe(true);
+    expect(applyBlendingMode).toHaveBeenCalledWith('max');
+  });
+
   it('the blending-mode subtree rule does NOT swallow a leaf-authored opacity/gamma/intensity/offset', () => {
     // The subtree rule drops a `blending_mode` authored on a non-layer
     // descendant so the layer's single Blend control wins. It must stay scoped
@@ -1940,8 +2151,10 @@ describe('LayersPanel — blend select drives the leaf material', () => {
     grpLayer.opacity = 0.4;
     grpLayer.gamma = 1.5;
     grpLayer.blendingMode = 'max';
-    // A user pick is explicit — same as the real Blend-select handler — so the
-    // wrapper's mode overrides the part's authored one (#1272).
+    // A user picking a mode on the group OWNS it (the dropdown handler /
+    // setBlendingMode set this in production) — so the wrapper's mode overrides
+    // the part's authored one. A plain group that never authored/picked a mode
+    // emits none (see the ownership tests in layer-state.test.ts).
     grpLayer.blendingModeExplicit = true;
     (
       panel as unknown as { applyEngine: { applyBlendingMode(l: unknown): void } }

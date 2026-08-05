@@ -159,11 +159,20 @@ describe('liveLayerAttrs', () => {
     expect(attrs.blending_mode).toBe('normal');
   });
 
-  it('omits blending_mode when the layer mode is a non-explicit per-type default (#1272)', () => {
-    const attrs = liveLayerAttrs(
-      makeLayer({ blendingMode: 'additive', blendingModeExplicit: false })
+  it('emits blending_mode only when the layer OWNS one (blendingModeExplicit)', () => {
+    // A plain group over a mesh does NOT own a blend mode — its `blendingMode`
+    // is a displayed/inherited value only, so it must NOT be injected into the
+    // composition chain (which would override a contained mesh's `opaque`; #1272).
+    const groupAttrs = liveLayerAttrs(
+      makeLayer({ type: 'group', blendingMode: 'additive', blendingModeExplicit: false })
     );
-    expect(attrs.blending_mode).toBeUndefined();
+    expect(groupAttrs.blending_mode).toBeUndefined();
+
+    // Once it owns one (authored on disk, or the user picked it), it emits.
+    const ownedAttrs = liveLayerAttrs(
+      makeLayer({ type: 'group', blendingMode: 'max', blendingModeExplicit: true })
+    );
+    expect(ownedAttrs.blending_mode).toBe('max');
   });
 
   it('clamps gamma to the allowed range', () => {

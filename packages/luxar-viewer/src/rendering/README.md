@@ -295,8 +295,9 @@ See `materials/mesh/README.md` and `docs/specs/MESH_NODE_SPEC.md` §6.2.
 - **`opaque` by default**, unlike the siblings' `additive`: the only mode
   unconditionally correct without per-triangle depth sorting (§9 defers that), and what
   a surface should look like. The default is per geometry type
-  (`DEFAULT_BLENDING_MODES`) and applied at COMPOSE time — the one place that still
-  knows whether the scene-graph ancestry set a mode at all.
+  (`defaultBlendingMode` in `types/geometry-capabilities`) and applied by each consumer
+  when the composed `blending_mode` is `undefined` — composition itself preserves the
+  unset state, so "nothing in the ancestry set a mode" survives to the consumer.
 
 **Key features:**
 

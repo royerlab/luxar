@@ -128,16 +128,20 @@ export class LayerApplyEngine {
    * node in the chain.
    *
    * `layerPath` is the layer whose control was just used. Inside that layer's
-   * own subtree the LAYER owns `blending_mode`: a mode authored on a
+   * own subtree — and ONLY when the edited layer actually OWNS a mode
+   * (`blendingModeExplicit`) — the LAYER owns `blending_mode`: a mode authored on a
    * descendant that is not itself a layer is dropped. `blending_mode` is
    * nearest-setter-wins and a layer exposes exactly one Blend control, so
    * without this a `kind=partition` / `kind=lod` layer whose parts carry
    * their own stamped mode has an inert control — every part shadows the
    * wrapper (the `graft_gsplat_node` stamping bug, and every scene already
-   * written by it). A nested node that IS a layer keeps its live value: it
-   * has its own control. Only `blending_mode` is affected — the
-   * multiplicative attrs still compose and `offset` still sums, so a part's
-   * authored opacity/gamma/κ is preserved.
+   * written by it). A wrapper that owns NO mode has no control value to impose,
+   * so it must NOT suppress its descendants' authored modes — otherwise a plain
+   * `layer=true` group over a mesh authored `additive` would snap the mesh to
+   * its `opaque` type-default on any non-blend edit (#1275). A nested node that
+   * IS a layer keeps its live value: it has its own control. Only
+   * `blending_mode` is affected — the multiplicative attrs still compose and
+   * `offset` still sums, so a part's authored opacity/gamma/κ is preserved.
    *
    * `identityLayerWindow` substitutes the IDENTITY for the edited layer's own
    * display window (intensity/offset) — used by `applyComposed` for a leaf
@@ -156,6 +160,10 @@ export class LayerApplyEngine {
     // Required, not optional: an omitted `layerPath` would silently disable the
     // subtree rule below and re-open the inert-Blend-control bug.
     const layerDepth = ancestors.findIndex((n) => n.path === layerPath);
+    // The subtree-drop suppresses descendant authored modes so the edited
+    // layer's Blend control wins — but only when that layer actually OWNS a
+    // mode. A wrapper owning none has nothing to impose (see doc comment; #1275).
+    const editedLayerOwnsMode = this.deps.state.getLayer(layerPath)?.blendingModeExplicit ?? false;
     const chain: ComposableAttrs[] = ancestors.map((node, i) => {
       const layerInfo = this.deps.state.getLayer(node.path);
       if (layerInfo) {
@@ -172,9 +180,10 @@ export class LayerApplyEngine {
         gamma: node.attrs.gamma as number | undefined,
         intensity: node.attrs.intensity as number | undefined,
         offset: node.attrs.offset as number | undefined,
-        blending_mode: insideLayerSubtree
-          ? undefined
-          : (node.attrs.blending_mode as string | undefined),
+        blending_mode:
+          insideLayerSubtree && editedLayerOwnsMode
+            ? undefined
+            : (node.attrs.blending_mode as string | undefined),
       };
     });
     return composeAttrs(chain);

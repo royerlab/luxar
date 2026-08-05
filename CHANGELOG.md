@@ -209,6 +209,30 @@ init. Nearest-setter-wins is untouched either way, which is what keeps
 `group(blending_mode="additive")` working for its mesh children and why §6.3 forbids the
 writer from stamping the mode at all.
 
+#### Blend-mode ownership finishes the job: groups stop overriding what they never set (#1275)
+
+The explicit flag above stopped a plain group layer from *emitting* its displayed
+default, but two paths still let a non-owning layer overwrite a descendant's mode:
+
+- **The subtree-drop in `composeEffective` fired unconditionally.** The drop exists so
+  an owning wrapper's Blend control wins over its parts' stamped modes (the
+  `graft_gsplat_node` case). But a wrapper that owns no mode has no control value to
+  impose, so dropping was pure loss: a mesh authored `additive` under a plain
+  `layer=true` group snapped to its `opaque` type-default on any non-blend group edit.
+  The drop is now gated on the same ownership flag.
+- **Ownership was initialized from the COMPOSED ancestry, not the node's own attr.** A
+  layer that merely inherits an ancestor's mode must not re-emit it as its own setter:
+  the re-emitted copy is a snapshot of disk state, sits nearer the leaf, and would
+  shadow the ancestor layer's next live pick. Ownership now reads the node's own
+  `blending_mode` (or a user pick) — an inherited mode still displays, but the layer is
+  not a setter. The same rule means an unauthored geometry leaf does not own its
+  per-type default, so a group layer's Blend pick actually reaches it.
+
+The Absorption and Alpha-cutoff gates also read the **mesh-resolved** mode through
+`resolveLayerBlendingMode`: a mesh resolves `volumetric` → `opaque`, so Absorption (a
+control no mesh shader reads) stays hidden and Alpha cutoff shows exactly when the
+cutout is compiled — even if a stored layer mode reaches the gates unresolved.
+
 #### Mesh gets its first real fixtures, and an end-to-end render spec
 
 `test_mesh.luxar.zarr` and `test_mesh_nd.luxar.zarr`, plus

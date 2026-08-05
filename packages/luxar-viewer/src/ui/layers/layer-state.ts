@@ -242,12 +242,21 @@ export interface LayerInfo {
   /** Blending mode */
   blendingMode: BlendingMode;
   /**
-   * Whether a blend mode is set EXPLICITLY for this layer — authored somewhere
-   * in its composed ancestry, or chosen by the user via the panel. When false,
-   * `blendingMode` is merely the per-type default shown in the dropdown, and the
-   * live-attrs path must NOT push it onto descendants (that would override each
-   * leaf's own per-type default — e.g. force a mesh under a plain group layer to
-   * the group's `additive` default instead of its own `opaque`; see #1272).
+   * Whether this layer OWNS a blend mode — authored on the node ITSELF on disk,
+   * or chosen by the user via the panel. When false, `blendingMode` is merely the
+   * inherited/defaulted value shown in the dropdown, and the layer must not act
+   * as a `blending_mode` SETTER: `liveLayerAttrs` emits the attr only when this
+   * is true (a plain group layer would otherwise push its `additive` placeholder
+   * onto a mesh leaf and bury the mesh's own `opaque` default — #1272), and
+   * `composeEffective`'s subtree-drop fires only when this is true (a wrapper
+   * owning no mode has no control value to impose, so it must not suppress a
+   * descendant's authored mode — #1275).
+   *
+   * Deliberately the node's OWN attr, not the composed ancestry: a layer that
+   * merely INHERITS an ancestor's mode must not re-emit it as its own setter —
+   * the panel snapshot would go stale the moment the ancestor layer's live pick
+   * diverges from disk, and the re-emitted copy (being nearer the leaf) would
+   * shadow the ancestor's newer choice.
    */
   blendingModeExplicit: boolean;
   /** Whether this layer is selected in the list */
@@ -547,12 +556,12 @@ export class LayerStateManager {
           // not the node's own (possibly absent / malformed) raw attr. An
           // unset chain composes to `undefined`; show the per-type default
           // (mesh → opaque, emissive → additive) the material would use — but
-          // leave it NON-explicit so it is not pushed onto descendants (a
+          // leave it NON-owned so it is not pushed onto descendants (a
           // plain group layer merely displays `additive` as a neutral default;
           // each descendant keeps its own default until the control is used).
           //
           // Then RESOLVED for the layer's type, which is a separate concern from the
-          // default and applies to an EXPLICIT mode too: a mesh cannot render
+          // default and applies to an OWNED mode too: a mesh cannot render
           // `volumetric`, so its material maps that to `opaque` and stamps the resolved
           // value. Without this wrap the panel showed Absorption (which no mesh shader
           // reads) and hid Alpha cutoff exactly when the cutout was active. A no-op for
@@ -561,7 +570,13 @@ export class LayerStateManager {
             layerType,
             composedBlendingMode ?? defaultBlendingMode(node.type)
           ),
-          blendingModeExplicit: composedBlendingMode !== undefined,
+          // Ownership reads the node's OWN attr — see the `LayerInfo` doc for why the
+          // composed ancestry would be wrong (stale-snapshot shadowing) and why a
+          // merely-inherited or defaulted mode must not make this layer a setter.
+          // Uses `node.attrs`, so a composite kind=lod/partition wrapper (whose
+          // display type is a geometry name but whose node authored no mode) stays
+          // non-owning, exactly like a plain group.
+          blendingModeExplicit: node.attrs.blending_mode != null,
           selected: false,
           colormap,
           supportsColormap,
@@ -751,6 +766,8 @@ export class LayerStateManager {
     const layer = this.layers.get(path);
     if (!layer) return;
     layer.blendingMode = mode;
+    // The user explicitly picked a mode ⇒ this layer now OWNS one, so
+    // `liveLayerAttrs` may emit it as a composition setter (even a group).
     layer.blendingModeExplicit = true;
     this.notify();
   }
