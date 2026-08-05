@@ -80,8 +80,62 @@ odd — `ambient = 1e9` whites out the surface, `alpha_cutoff = 1e9` discards ev
 fragment, and `shade_exponent = 0` makes `pow(0, 0)` (undefined GLSL) at every
 face-away fragment, the same hazard `clampGamma` already exists for.
 
-Still to come: picking (mesh keys on `gl_VertexID`, so it needs its own material
-pair) and the Layers-panel appearance controls.
+Still to come: the Layers-panel appearance controls.
+
+#### Mesh is pickable — the fourth pick material pair
+
+Hovering a mesh now resolves to a **vertex**, whose ordinal indexes the per-vertex
+label CSR directly. Mesh could not reuse a sibling's pick material, because its
+element id is a built-in rather than an attribute: it has no per-triangle depth
+sort, so there is no `aSortedIndex` to indirect through and the id is
+`gl_VertexID`. Under an indexed draw that is the ordinal of the vertex in the
+`vertices` array — which is also why vertex, not face, is the granularity: a slice
+move rewrites only the index buffer, so a face ordinal would be renumbered on every
+slice change while a vertex ordinal is invariant.
+
+Three things the pick pass has to copy from the visual material, each of which is a
+real defect if it drifts:
+
+- **The alpha cutout, identically.** Without it a hole you can see through still
+  rasterizes at true surface depth — becoming pickable _and_ occluding picks of the
+  nodes visible through it.
+- **The face culling.** The siblings' quads are view-facing, so their pick
+  materials can pin `DoubleSide`. A mesh's back faces may be culled on screen, and
+  `side` is a property of the current `displayDims` epoch (an undecidable frame
+  forces double-sided), so it is synced per epoch and per pick render.
+- **The node opacity.** It is half the coverage term, so dragging the layers-panel
+  opacity slider below the cutoff must dissolve the surface in the pick buffer too,
+  not just on screen.
+
+Both mode-dependent behaviours — the cutout, and real projected depth vs
+brightness-as-depth — are **runtime uniforms rather than shader defines**, so a
+blending-mode switch from the layers panel is a uniform write instead of a
+mid-hover recompile. That is why `mesh-pick` is one codegen snapshot variant
+covering every mode, and a second snapshot appearing would mean a build flag had
+crept back in.
+
+Two backend divergences are handled rather than hoped away. A `flat` varying is
+sourced from ONE triangle corner, and OpenGL ES fixes that to the **last** vertex
+where the WGSL `@interpolate(flat)` three emits samples the **first** — so the same
+click would report different vertices on the two backends. `WEBGL_provoking_vertex`
+aligns them where it exists; where it does not, the contract stands as "_a_ corner
+of the front-most triangle under the cursor", which is the honest answer anyway
+since the cursor is over the face. (The context-wide flip is safe because every
+other `flat` varying in the shipped materials is a per-_instance_ constant,
+identical at all corners.) Separately, the two backends write different
+surface-depth _values_ — `gl_FragCoord.z` versus a linear view-space depth — which
+is benign because both are monotone in distance and the pick buffer's depth only
+ever orders fragments within one render; that pairing already shipped undocumented
+in the gsplat pick shaders and is now written down.
+
+The 16-bit element-id split is now single-sourced as `luxarElementIdSplit(uint)`:
+`luxarElementIdParts()` became a one-line wrapper over it and mesh calls it
+directly off `gl_VertexID`. Two copies of that mask-and-shift could drift, and the
+only symptom would be picks resolving to the wrong vertex past 65,536 — silent, and
+only on large meshes. The `2^27` vertex cap that keeps the pick vote key alias-free
+(already enforced at write time and in the loader's metadata preflight) now has the
+arithmetic pinned next to the stride it constrains, since mesh is the one type whose
+bound is _enforced_ rather than structural.
 
 #### Demos — the biodiversity globe is `opaque`, so it stops painting over its own data (#1227)
 

@@ -26,6 +26,7 @@ import { log, Modules } from '../../utils/log';
 import { getColormapTexture } from '../../rendering/colormap-textures';
 import { supportsScalarColormap } from '../../rendering/material-colormap-helpers';
 import { noteDepthSortBlendingModeSwitch } from '../../rendering/depth-sort-coordinator';
+import { syncMeshPickAppearance } from '../../rendering/node-factory/create-mesh-node';
 import type { GeometryTypeName } from '../../types/format-contract';
 import { isDepthSortable, isGeometryType } from '../../types/geometry-capabilities';
 import {
@@ -237,6 +238,17 @@ export class LayerApplyEngine {
       } else {
         mat.updateOpacity(eff.opacity);
       }
+      // A mesh's PICK material reads the same coverage the visual one does — node
+      // opacity times per-vertex alpha (§6.5) — so it has to move with the slider.
+      // Without this, dragging opacity below the `opaque` cutoff would dissolve the
+      // surface on screen while leaving every triangle pickable, and hover tooltips
+      // would keep naming vertices of an invisible mesh. A no-op for the other three
+      // types, whose pick materials derive coverage from their own element data.
+      //
+      // Written OUTSIDE the LOD-fade branch above on purpose: a mesh cannot be inside
+      // a LOD group (§9 refuses it), so that branch is unreachable here — but keeping
+      // the sync unconditional means it stays correct if that ever changes.
+      syncMeshPickAppearance(obj as THREE.Mesh, { opacity: eff.opacity });
       // All three geometry-material families implement it (gsplats
       // phase 1, points phase 3, lines phase 4); optional-chained for
       // non-Luxar materials.

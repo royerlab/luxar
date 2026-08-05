@@ -67,7 +67,8 @@ describe('createEmptyMeshNode — the attribute set is complete from birth', () 
     const node = createEmptyMeshNode(
       '/surface',
       { ...ATTRS, has_normals: true, has_scalars: true, colormap: 'viridis' },
-      loader
+      loader,
+      null
     );
     expect(node.geometry.getAttribute('normal')).toBeDefined();
     expect(node.geometry.getAttribute('aScalar')).toBeDefined();
@@ -80,33 +81,35 @@ describe('createEmptyMeshNode — the attribute set is complete from birth', () 
     // The other half of the same invariant — an unconditional bind would upload
     // V*12 + V*4 bytes of zeros for every mesh that has no normals or scalars, and
     // would make the smooth variant read (0,0,0) as though it were data.
-    const node = createEmptyMeshNode('/surface', ATTRS, loader);
+    const node = createEmptyMeshNode('/surface', ATTRS, loader, null);
     expect(node.geometry.getAttribute('normal')).toBeUndefined();
     expect(node.geometry.getAttribute('aScalar')).toBeUndefined();
     expect(node.geometry.userData.hasScalars).toBeUndefined();
   });
 
   it('always binds `color`, so a bare add_mesh is white and not GL-default black', () => {
-    const node = createEmptyMeshNode('/surface', ATTRS, loader);
+    const node = createEmptyMeshNode('/surface', ATTRS, loader, null);
     const color = node.geometry.getAttribute('color');
     expect(color).toBeDefined();
     expect(Array.from(color.array as Float32Array)).toEqual([1, 1, 1]);
   });
 
   it('marks the material node-owned so the layers panel mutates it in place', () => {
-    expect(createEmptyMeshNode('/surface', ATTRS, loader).userData._layerMaterialCloned).toBe(true);
+    expect(createEmptyMeshNode('/surface', ATTRS, loader, null).userData._layerMaterialCloned).toBe(
+      true
+    );
   });
 
   it("starts on the AUTHORED side, which the first commit's epoch may override", () => {
     expect(
       (
-        createEmptyMeshNode('/s', { ...ATTRS, double_sided: true }, loader)
+        createEmptyMeshNode('/s', { ...ATTRS, double_sided: true }, loader, null)
           .material as THREE.Material
       ).side
     ).toBe(THREE.DoubleSide);
     expect(
       (
-        createEmptyMeshNode('/s', { ...ATTRS, double_sided: false }, loader)
+        createEmptyMeshNode('/s', { ...ATTRS, double_sided: false }, loader, null)
           .material as THREE.Material
       ).side
     ).toBe(THREE.FrontSide);
@@ -119,10 +122,11 @@ describe('createEmptyMeshNode — the attribute set is complete from birth', () 
     const smooth = createEmptyMeshNode(
       '/s',
       { ...ATTRS, shading: 'smooth', has_normals: true, normal_dims: [0, 1, 2] },
-      loader
+      loader,
+      null
     );
     expect(hasFlat(smooth.material as THREE.Material)).toBe(false);
-    const flat = createEmptyMeshNode('/s', ATTRS, loader);
+    const flat = createEmptyMeshNode('/s', ATTRS, loader, null);
     expect(hasFlat(flat.material as THREE.Material)).toBe(true);
   });
 });
@@ -136,7 +140,7 @@ describe('applyMeshShading — the per-epoch correction', () => {
   };
 
   it('flips a smooth node to flat when the epoch frame stops matching, and back', () => {
-    const node = createEmptyMeshNode('/s', smoothAttrs, loader);
+    const node = createEmptyMeshNode('/s', smoothAttrs, loader, null);
     expect(hasFlat(node.material as THREE.Material)).toBe(false);
 
     applyMeshShading(node, smoothAttrs, false); // displayDims moved off the frame
@@ -148,14 +152,14 @@ describe('applyMeshShading — the per-epoch correction', () => {
 
   it('never flips an explicitly FLAT node, whatever the projection reports', () => {
     // `shading` is view-independent, so a flat node is statically the flat variant.
-    const node = createEmptyMeshNode('/s', ATTRS, loader);
+    const node = createEmptyMeshNode('/s', ATTRS, loader, null);
     applyMeshShading(node, ATTRS, true);
     expect(hasFlat(node.material as THREE.Material)).toBe(true);
   });
 
   it('costs no program recompile when the variant is unchanged', () => {
     // It runs on EVERY commit, including every slice move.
-    const node = createEmptyMeshNode('/s', smoothAttrs, loader);
+    const node = createEmptyMeshNode('/s', smoothAttrs, loader, null);
     const material = node.material as THREE.Material;
     const before = material.version;
     applyMeshShading(node, smoothAttrs, true);
@@ -166,7 +170,7 @@ describe('applyMeshShading — the per-epoch correction', () => {
 
 describe('applyMeshSide', () => {
   it('only touches the material when the side actually changes', () => {
-    const node = createEmptyMeshNode('/s', { ...ATTRS, double_sided: false }, loader);
+    const node = createEmptyMeshNode('/s', { ...ATTRS, double_sided: false }, loader, null);
     const material = node.material as THREE.Material;
     const before = material.version;
     applyMeshSide(node, 'front');

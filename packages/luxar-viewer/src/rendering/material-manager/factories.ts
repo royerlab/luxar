@@ -27,6 +27,8 @@ import { GSplatPickingMaterial } from '../picking/gsplat/material';
 import { PointPickingTSLMaterial } from '../picking/point/material-tsl';
 import { LinePickingTSLMaterial } from '../picking/line/material-tsl';
 import { GSplatPickingTSLMaterial } from '../picking/gsplat/material-tsl';
+import { MeshPickingMaterial } from '../picking/mesh/material';
+import { MeshPickingTSLMaterial } from '../picking/mesh/material-tsl';
 import { MegaShaderMaterial } from '../post-processing/mega/material';
 import { MegaShaderTSLMaterial } from '../post-processing/mega/material-tsl';
 import type { RendererCapabilities } from '../renderer-capabilities';
@@ -189,6 +191,7 @@ export const PICKING_FACTORIES = {
   point: { glsl: PointPickingMaterial, tsl: PointPickingTSLMaterial },
   line: { glsl: LinePickingMaterial, tsl: LinePickingTSLMaterial },
   gsplat: { glsl: GSplatPickingMaterial, tsl: GSplatPickingTSLMaterial },
+  mesh: { glsl: MeshPickingMaterial, tsl: MeshPickingTSLMaterial },
 } as const;
 
 /**

@@ -157,7 +157,7 @@ describe('commitMeshGeometry', () => {
 
   function sceneWithMesh(path: string): { root: THREE.Group; mesh: THREE.Mesh } {
     const root = new THREE.Group();
-    const mesh = createEmptyMeshNode(path, ATTRS, loader);
+    const mesh = createEmptyMeshNode(path, ATTRS, loader, null);
     root.add(mesh);
     return { root, mesh };
   }
@@ -186,7 +186,7 @@ describe('commitMeshGeometry', () => {
       ...ATTRS,
       transform: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 5, 6, 7, 1],
     };
-    const mesh = createEmptyMeshNode('/surface', withTransform, loader);
+    const mesh = createEmptyMeshNode('/surface', withTransform, loader, null);
     expect(mesh.position.toArray()).toEqual([5, 6, 7]);
   });
 
@@ -196,7 +196,7 @@ describe('commitMeshGeometry', () => {
     // color attribute stayed count 1 (the placeholder) and authored colors never
     // rendered.
     const root = new THREE.Group();
-    const mesh = createEmptyMeshNode('/surface', ATTRS_COLORS, loader);
+    const mesh = createEmptyMeshNode('/surface', ATTRS_COLORS, loader, null);
     root.add(mesh);
 
     const staged = await processMeshData('/surface', loadedWithColors(), VIEW, {
@@ -409,7 +409,7 @@ describe('process -> commit: the position buffer is uploaded once per epoch (#12
     // suppress EVERY later upload — including after an axis permutation, leaving the
     // mesh in the stale frame while the rest of the scene moves.
     const root = new THREE.Group();
-    const mesh = createEmptyMeshNode('/surface', ATTRS, loader);
+    const mesh = createEmptyMeshNode('/surface', ATTRS, loader, null);
     root.add(mesh);
     const data = withScratch();
 
@@ -470,7 +470,7 @@ describe('process -> commit: geometry bounds cover only the drawn triangles (#12
     // `computeMeshBounds`, so the assertion belongs on the geometry, where camera
     // framing (and frustum culling, and the raycast broad phase) all read it.
     const root = new THREE.Group();
-    const mesh = createEmptyMeshNode('/surface', ATTRS, loader);
+    const mesh = createEmptyMeshNode('/surface', ATTRS, loader, null);
     root.add(mesh);
 
     await commitAt(root, twoTriangles(), 0);
@@ -480,7 +480,7 @@ describe('process -> commit: geometry bounds cover only the drawn triangles (#12
   it('follows the slice to the far triangle', async () => {
     // Anti-vacuity: a box that always described the near triangle would pass above.
     const root = new THREE.Group();
-    const mesh = createEmptyMeshNode('/surface', ATTRS, loader);
+    const mesh = createEmptyMeshNode('/surface', ATTRS, loader, null);
     root.add(mesh);
 
     await commitAt(root, twoTriangles(), 10);
@@ -493,7 +493,7 @@ describe('process -> commit: geometry bounds cover only the drawn triangles (#12
     // rejects. Asserted so a future "simplification" that derives the sphere some other
     // way cannot silently produce a NaN center.
     const root = new THREE.Group();
-    const mesh = createEmptyMeshNode('/surface', ATTRS, loader);
+    const mesh = createEmptyMeshNode('/surface', ATTRS, loader, null);
     root.add(mesh);
 
     await commitAt(root, twoTriangles(), 999);
@@ -529,7 +529,7 @@ describe('process -> commit: the vertex attribute set is frozen after the first 
     // afterwards is that NO further rebind happens at all, or a scrub would evict the
     // render object on every frame.
     const root = new THREE.Group();
-    const mesh = createEmptyMeshNode('/surface', ATTRS, loader);
+    const mesh = createEmptyMeshNode('/surface', ATTRS, loader, null);
     root.add(mesh);
     const data = withScratch();
 
@@ -601,7 +601,7 @@ describe('process -> commit: the shading variant follows the epoch (§3.4)', () 
     // mesh would then keep reading normals authored for other axes, silently shading
     // against a tilted frame with no diagnostic anywhere.
     const root = new THREE.Group();
-    const mesh = createEmptyMeshNode('/surface', SMOOTH, loader);
+    const mesh = createEmptyMeshNode('/surface', SMOOTH, loader, null);
     root.add(mesh);
     const data = withNormals();
 
@@ -628,7 +628,7 @@ describe('process -> commit: the shading variant follows the epoch (§3.4)', () 
     // The commit calls this on every epoch, and a variant flip recompiles the
     // program, so an unguarded write would pay that on every frame of a scrub.
     const root = new THREE.Group();
-    const mesh = createEmptyMeshNode('/surface', SMOOTH, loader);
+    const mesh = createEmptyMeshNode('/surface', SMOOTH, loader, null);
     root.add(mesh);
     const data = withNormals();
 

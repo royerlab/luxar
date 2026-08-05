@@ -305,10 +305,9 @@ export class NodeFactory {
    * the raw bag is optional here, and it defaults to `attrs`, which is right
    * whenever no ancestor authored a gain.
    *
-   * Still takes no `pickingSystem`, unlike all three: mesh picking keys on
-   * `gl_VertexID` rather than an element-texture texel, so it needs its own pick
-   * material pair (spec §6.5), which lands with the picking phase. Threading the
-   * system in now would make picking look wired when nothing reads it.
+   * Registers a pick node like the three siblings do, with its own pick material
+   * pair: mesh picking keys on `gl_VertexID` rather than an element-texture texel
+   * (spec §6.5), so it could not reuse theirs.
    */
   createEmptyMeshNode(
     path: string,
@@ -316,7 +315,7 @@ export class NodeFactory {
     loader: MeshDataLoader,
     leafAttrs?: Partial<MeshMetadata>
   ): THREE.Mesh {
-    return createEmptyMeshNodeImpl(path, attrs, loader, leafAttrs);
+    return createEmptyMeshNodeImpl(path, attrs, loader, this.pickingSystem, leafAttrs);
   }
 
   // ============================================================================
