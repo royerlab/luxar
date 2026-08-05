@@ -31,6 +31,13 @@ class TestStreamCuts:
         assert stream_cuts(8, 8) == [8]
         assert stream_cuts(5, 8) == [5]
 
+    @pytest.mark.parametrize("chunk", [1, 500])
+    def test_empty_n_is_a_single_empty_level(self, chunk: int) -> None:
+        # n == 0 falls in the `n <= chunk` branch, so the contract is a single
+        # cut of 0 (one empty level) — NOT an empty list. A downstream ladder
+        # builder can therefore always assume at least one cut.
+        assert stream_cuts(0, chunk) == [0]
+
     def test_sliver_tail_folds_into_the_previous_cut(self) -> None:
         # Without the fold this would end [.., 64, 66] — a 2-element level.
         assert stream_cuts(66, 8) == [8, 16, 32, 66]
