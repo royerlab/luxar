@@ -1803,6 +1803,57 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     expect(meanAbsDiff(glslPixels, tslResult.pixels), 'mesh-rgb: parity').toBeLessThan(2.0);
   });
 
+  test('mesh-pick: the cutout discards the same fragments on both backends', async ({ page }) => {
+    await bootHarness(page);
+
+    const glslPixels = await runGLSL(page, 'mesh-pick');
+    const tslResult = await runTSL(page, 'mesh-pick');
+
+    assertBothRendered(glslPixels, tslResult.pixels, 'mesh-pick');
+    expect(meanAbsDiff(glslPixels, tslResult.pixels), 'mesh-pick: parity').toBeLessThan(2.0);
+  });
+
+  test('mesh-pick: the cutout is REAL — turning it off recovers the discarded corner', async ({
+    page,
+  }) => {
+    // The anti-vacuity guard for the pick cutout, and the reason
+    // `mesh-pick-commutative` exists as a registry entry at all.
+    //
+    // The two entries differ ONLY in `uAlphaCutout` / `uSurfaceDepth`. The fixture's
+    // fourth corner carries alpha 0.25, below the 0.5 cutoff, so the `opaque` entry
+    // must discard a region the commutative one keeps. Without this the parity test
+    // above would pass just as happily against a pick shader that never discarded
+    // anything — a hole that stayed pickable, which is precisely the §6.5 defect the
+    // cutout exists to prevent.
+    await bootHarness(page);
+
+    const covered = (px: number[]): number => {
+      let n = 0;
+      for (let i = 0; i < px.length; i += 4) if (px[i] > 0) n++;
+      return n;
+    };
+
+    for (const backend of ['glsl', 'tsl'] as const) {
+      const run = async (name: string): Promise<number[]> =>
+        backend === 'glsl' ? runGLSL(page, name) : (await runTSL(page, name)).pixels;
+      const cutoutPixels = await run('mesh-pick');
+      const noCutoutPixels = await run('mesh-pick-commutative');
+
+      const withCutout = covered(cutoutPixels);
+      const withoutCutout = covered(noCutoutPixels);
+      expect(
+        withoutCutout,
+        `${backend}: the no-cutout pick must cover the whole quad`
+      ).toBeGreaterThan(0);
+      expect(
+        withCutout,
+        `${backend}: the cutout discarded nothing (covered ${withCutout} of ${withoutCutout} pixels) — ` +
+          'the alpha cutout is not reaching the pick fragment, so a hole in the visual ' +
+          'surface would stay pickable'
+      ).toBeLessThan(withoutCutout);
+    }
+  });
+
   test('mega with USE_VIGNETTE matches across backends', async ({ page }) => {
     await bootHarness(page);
 

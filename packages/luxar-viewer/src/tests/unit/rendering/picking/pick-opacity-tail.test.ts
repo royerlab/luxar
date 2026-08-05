@@ -1,5 +1,5 @@
 /**
- * Pick-material opacity-tail tripwire (all three geometry types).
+ * Pick-material opacity-tail tripwire (all FOUR geometry types).
  *
  * THREE's NodeMaterial appends `DiffuseColor.w *= material.opacity` to every
  * generated fragment — visible in the codegen snapshots as
@@ -34,6 +34,10 @@ import {
   buildGSplatPickTSLNodesFromUniforms,
   gsplatPickWebGPUFactory,
 } from '../../../../rendering/picking/gsplat/pick.tsl';
+import {
+  buildMeshPickTSLNodesFromUniforms,
+  meshPickWebGPUFactory,
+} from '../../../../rendering/picking/mesh/pick.tsl';
 
 /** Build each pick material, optionally reusing a caller-supplied material. */
 const build = (out?: () => THREE.NodeMaterial) =>
@@ -41,6 +45,11 @@ const build = (out?: () => THREE.NodeMaterial) =>
     ['point', pointPickWebGPUFactory(buildPointPickTSLNodesFromUniforms({}), out?.())],
     ['line', linePickWebGPUFactory(buildLinePickTSLNodesFromUniforms({}), {}, out?.())],
     ['gsplat', gsplatPickWebGPUFactory(buildGSplatPickTSLNodesFromUniforms({}), out?.())],
+    // Mesh reaches this tripwire for the same reason and with one extra twist: its
+    // element id is a VERTEX ordinal off `gl_VertexID`, bounded only by the vertex
+    // count rather than by a texture-layout capacity, so the high half is populated
+    // on any mesh past 65,535 vertices — an ordinary size, not an extreme one.
+    ['mesh', meshPickWebGPUFactory(buildMeshPickTSLNodesFromUniforms({}), out?.())],
   ] as const;
 
 describe('pick-material opacity tail is identity (element-id high half rides in alpha)', () => {

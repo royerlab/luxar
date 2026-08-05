@@ -159,7 +159,7 @@ function makeEmptySceneGraph(): SceneNode {
 }
 
 function makeLayeredSceneGraph(
-  leafType: 'points' | 'gsplats' | 'lines' = 'points',
+  leafType: 'points' | 'gsplats' | 'lines' | 'mesh' = 'points',
   extraLeafAttrs: Record<string, unknown> = {}
 ): SceneNode {
   // Single layered data node — mirrors what the Python API emits
@@ -1790,6 +1790,108 @@ describe('LayersPanel — blend select drives the leaf material', () => {
     // left to the fade's next frame.
     expect(mesh.userData._lodFadeBase).toBeCloseTo(0.6, 6);
     expect(updateOpacity).not.toHaveBeenCalled();
+  });
+
+  it('an opacity edit on a MESH also moves its pick material, so a dissolved surface stops being pickable', () => {
+    // The wiring test, not a unit test of either half. A mesh's pick pass computes
+    // the SAME coverage as its visual shader — node opacity times per-vertex alpha
+    // (spec §6.5) — and in the default `opaque` mode compares it against the cutout
+    // threshold. So an opacity edit that dissolves the surface on screen must dissolve
+    // it in the pick buffer too.
+    //
+    // Fail-first check: deleting the `syncMeshPickAppearance` call from
+    // `applyComposed` leaves this red while every material-level test stays green,
+    // which is exactly the gap that let an unwired `applyMeshShading` pass 865 tests.
+    const updateOpacityUniform = vi.fn();
+    const pickMat: Record<string, unknown> = {
+      setPickMode: vi.fn(),
+      setPickSide: vi.fn(),
+      updateOpacityUniform,
+      updateAlphaCutoff: vi.fn(),
+    };
+    const visualMat: Record<string, unknown> = {
+      userData: { blendingMode: 'opaque' },
+      uniforms: { uOpacity: { value: 1.0 } },
+      defines: {},
+      updateIntensity: vi.fn(),
+      updateOffset: vi.fn(),
+      updateGamma: vi.fn(),
+      updateOpacity: vi.fn(),
+      applyBlendingMode: vi.fn(),
+    };
+    visualMat.clone = vi.fn(() => visualMat);
+
+    const mesh = new THREE.Mesh(new THREE.BufferGeometry(), visualMat as unknown as THREE.Material);
+    mesh.name = '/cloud';
+    mesh.userData._layerMaterialCloned = true;
+    mesh.userData.nodeType = 'mesh';
+    // How `registerNode` leaves it: the pick node hangs off the main node's userData,
+    // which is the only handle the panel has to reach the pick material.
+    mesh.userData.pickNode = new THREE.Mesh(mesh.geometry, pickMat as unknown as THREE.Material);
+    const rootGroup = new THREE.Group();
+    rootGroup.add(mesh);
+
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(rootGroup, makeLayeredSceneGraph('mesh'));
+    panel.show();
+    panel.layerState.select('/cloud', 'single');
+
+    updateOpacityUniform.mockClear();
+    panel.layerState.applyToSelected((l) => {
+      l.opacity = 0.3;
+    });
+    const layer = panel.layerState.getLayer('/cloud')!;
+    (
+      panel as unknown as { applyEngine: { applyOpacity(l: unknown): void } }
+    ).applyEngine.applyOpacity(layer);
+
+    expect(updateOpacityUniform).toHaveBeenCalledWith(0.3);
+  });
+
+  it('leaves the other three types alone — they have no mesh pick surface to sync', () => {
+    // The converse, so the call above cannot be "fixed" by widening it to every type:
+    // a points/lines/gsplat pick material derives coverage from its own element data,
+    // and pushing a node opacity into it would double-apply.
+    const pickMat: Record<string, unknown> = { updateOpacityUniform: vi.fn() };
+    const visualMat: Record<string, unknown> = {
+      userData: { blendingMode: 'additive' },
+      uniforms: { uOpacity: { value: 1.0 } },
+      defines: {},
+      updateIntensity: vi.fn(),
+      updateOffset: vi.fn(),
+      updateGamma: vi.fn(),
+      updateOpacity: vi.fn(),
+      applyBlendingMode: vi.fn(),
+    };
+    visualMat.clone = vi.fn(() => visualMat);
+
+    const points = new THREE.Points(
+      new THREE.BufferGeometry(),
+      visualMat as unknown as THREE.Material
+    );
+    points.name = '/cloud';
+    points.userData._layerMaterialCloned = true;
+    points.userData.nodeType = 'points';
+    points.userData.pickNode = new THREE.Mesh(
+      points.geometry,
+      pickMat as unknown as THREE.Material
+    );
+    const rootGroup = new THREE.Group();
+    rootGroup.add(points);
+
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(rootGroup, makeLayeredSceneGraph('points'));
+    panel.show();
+    panel.layerState.select('/cloud', 'single');
+    panel.layerState.applyToSelected((l) => {
+      l.opacity = 0.3;
+    });
+    const layer = panel.layerState.getLayer('/cloud')!;
+    (
+      panel as unknown as { applyEngine: { applyOpacity(l: unknown): void } }
+    ).applyEngine.applyOpacity(layer);
+
+    expect(pickMat.updateOpacityUniform).not.toHaveBeenCalled();
   });
 });
 
