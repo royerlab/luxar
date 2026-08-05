@@ -28,6 +28,7 @@ import * as THREE from 'three';
 import type { SceneNode } from '../../../../data/data-loader-types';
 import type { AnimationController } from '../../../../scene/animation/animation-controller';
 import type { FailedLoadsProviderPort } from '../../../../data/scene-loader-monitor-port';
+import { MESH_DEFAULTS } from '../../../../rendering/materials/mesh/appearance';
 
 // `showToast` lives in src/ui/toast; mock so the empty-scene branch
 // is observable.
@@ -1568,6 +1569,51 @@ describe('LayersPanel — blend select drives the leaf material', () => {
     input.value = '0.9';
     input.dispatchEvent(new Event('input', { bubbles: true }));
     expect(calls.pickAlphaCutoff).toHaveBeenCalledWith(expect.closeTo(0.9, 6));
+  });
+
+  it('reset restores the mesh shading values on the surface AND the pick material', () => {
+    // The mesh shading uniforms are applied through applyMeshAppearance, which is NOT
+    // routed through applyComposed (they have no composition rule). So `resetAllLayers`
+    // must call applyMeshAppearance explicitly — otherwise the surface keeps the dragged
+    // uAmbient/uShadeExponent/uAlphaCutoff (on both the visual AND pick materials) while
+    // the readouts show the reset defaults (#1283).
+    const { panel, calls } = mountMeshLayer(container, animationController);
+
+    const drag = (label: string, value: number): void => {
+      const group = findControlGroup(container, label)!;
+      const input = group.querySelector('input[type="range"]') as HTMLInputElement;
+      input.value = String(value);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+
+    // Move all three away from their authored defaults.
+    drag('Ambient', 0.7);
+    drag('Shade falloff', 2.5);
+    drag('Alpha cutoff', 0.8);
+    // Sanity: the layer state actually moved before we reset.
+    expect(panel.layerState.getLayer('/cloud')!.ambient).toBeCloseTo(0.7, 6);
+    expect(panel.layerState.getLayer('/cloud')!.shadeExponent).toBeCloseTo(2.5, 6);
+    expect(panel.layerState.getLayer('/cloud')!.alphaCutoff).toBeCloseTo(0.8, 6);
+
+    // Only the reset-driven setter calls should be observed below.
+    calls.ambient.mockClear();
+    calls.shadeExponent.mockClear();
+    calls.alphaCutoff.mockClear();
+    calls.pickAlphaCutoff.mockClear();
+
+    panel.resetAllLayers();
+
+    // The scene graph has no ambient/shade_exponent/alpha_cutoff attrs, so reset
+    // falls back to MESH_DEFAULTS — and those must reach the material, not just the row.
+    expect(calls.ambient).toHaveBeenCalledWith(expect.closeTo(MESH_DEFAULTS.ambient, 6));
+    expect(calls.shadeExponent).toHaveBeenCalledWith(
+      expect.closeTo(MESH_DEFAULTS.shadeExponent, 6)
+    );
+    expect(calls.alphaCutoff).toHaveBeenCalledWith(expect.closeTo(MESH_DEFAULTS.alphaCutoff, 6));
+    // The pick material applies the identical cutout, so it must reset too.
+    expect(calls.pickAlphaCutoff).toHaveBeenCalledWith(
+      expect.closeTo(MESH_DEFAULTS.alphaCutoff, 6)
+    );
   });
 
   it('a mesh inheriting `volumetric` reports the RESOLVED mode, so the panel matches the render', () => {
