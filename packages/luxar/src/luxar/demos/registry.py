@@ -45,7 +45,9 @@ CATEGORY_VALUES = frozenset(
         "synthetic",
     }
 )
-GEOMETRY_VALUES = frozenset({"points", "lines", "gsplats", "mixed", "points+lines"})
+GEOMETRY_VALUES = frozenset(
+    {"points", "lines", "gsplats", "mesh", "mixed", "points+lines"}
+)
 COMPUTE_VALUES = frozenset({"light", "medium", "heavy"})
 GPU_VALUES = frozenset({"none", "optional", "required"})
 LOCAL_DATA_VALUES = frozenset({None, "git-lfs", "kaggle-auth", "manual-file"})

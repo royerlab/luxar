@@ -235,6 +235,28 @@ the mesh pick material is now seeded from the visual material's **live uniforms*
 than the authored attrs, so a WebGL context restore after a layers-panel drag no longer
 reverts pick coverage to the load-time values.
 
+#### Mesh gets its reference demo: isosurfaces of a real fluorescence volume
+
+`luxar demo run mesh_isosurface_cells3d` — marching-cubes isosurfaces of the
+two-channel scikit-image `cells3d` volume (membranes + nuclei) as two shaded,
+toggleable mesh layers. Isosurfaces and segmentation boundaries are the named target
+data for Mesh: routine outputs of the pipelines Luxar already serves, which before
+Mesh could only be approximated by a dense point cloud.
+
+Deliberately the **same dataset** as `gsplats_3d_cells3d_multichannel`, because the
+pairing is the lesson. Splats approximate the whole intensity field and need no
+threshold; an isosurface picks one level set and renders it as an opaque surface with
+real occlusion and silhouettes. Neither is the better answer — they answer different
+questions, and seeing the same nuclei both ways is the fastest way to feel the
+difference.
+
+No GPU and no fitting step: marching cubes is CPU-only and takes about two seconds,
+which makes this the cheapest end-to-end demo of any Luxar geometry type. ~537K
+vertices / 1.07M triangles across the two surfaces.
+
+`GEOMETRY_VALUES` in the demo registry gained `mesh` — a vocabulary that had never
+needed a fourth entry.
+
 #### Demos — the biodiversity globe is `opaque`, so it stops painting over its own data (#1227)
 
 The globe was `volumetric` with a heavy absorption, which read well in isolation
