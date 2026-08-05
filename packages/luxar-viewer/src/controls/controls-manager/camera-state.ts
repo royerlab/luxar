@@ -16,6 +16,12 @@ import { LuxarOrbitControls } from '../luxar-orbit-controls';
 import type { LuxarFlyControls } from '../luxar-fly-controls';
 import type { LuxarCamera } from '../../utils/camera-utils';
 
+/**
+ * State {@link saveCameraState} / {@link restoreCameraState} share with the
+ * `ControlsManager`: the camera, the active control instance, scene scale and
+ * the minimum pivot depth, plus the manager-owned snapshot vectors (position,
+ * rotation, up, target) they read from and write into in place.
+ */
 export interface CameraStateCtx {
   camera: LuxarCamera;
   currentControls: LuxarOrbitControls | LuxarFlyControls | null;
@@ -35,6 +41,14 @@ export interface CameraStateCtx {
   savedTarget: THREE.Vector3;
 }
 
+/**
+ * Snapshot the camera's position, rotation, and up into the manager's saved
+ * fields, plus a target. For orbit/ortho the target is the explicit orbit
+ * target; for fly it is re-derived along the current view ray — reusing the
+ * previous pivot's depth while the camera still faces it (within a ~60° cone)
+ * and floored at `minPivotDepth`, otherwise a scene-scale point ahead. This
+ * keeps a no-movement mode round-trip pivot-exact and scale-free.
+ */
 export function saveCameraState(ctx: CameraStateCtx): void {
   ctx.savedCameraPosition.copy(ctx.camera.position);
   ctx.savedCameraRotation.copy(ctx.camera.rotation);
@@ -68,6 +82,12 @@ export function saveCameraState(ctx: CameraStateCtx): void {
   }
 }
 
+/**
+ * Push the saved target into a freshly created orbit/ortho control, then
+ * `reinitialize()` + `update()` so orientation and distance are re-derived
+ * from the live camera (the constructor starts at target (0,0,0)). A no-op
+ * for fly controls, which initialize themselves from the camera.
+ */
 export function restoreCameraState(ctx: CameraStateCtx): void {
   if (ctx.currentControls instanceof LuxarOrbitControls) {
     // Set the target, then re-derive orientation from the current camera state

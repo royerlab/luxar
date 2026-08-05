@@ -288,6 +288,35 @@ describe('runUpdateStep — step 9: change detection + dispatch', () => {
     expect(ctx.lastPosition.equals(ctx.camera.position)).toBe(true);
     expect(ctx.lastQuaternion.equals(ctx.camera.quaternion)).toBe(true);
   });
+
+  it('dispatches "change" for an ortho zoom-only frame (position unchanged)', () => {
+    const orthoCam = new THREE.OrthographicCamera(-5, 5, 5, -5, 0.1, 1000);
+    orthoCam.position.set(0, 0, 5);
+    orthoCam.updateMatrixWorld();
+    const { ctx, state } = makeCtx({
+      camera: orthoCam,
+      lastPosition: new THREE.Vector3(0, 0, 5),
+    });
+    state.zoomDelta = -0.5; // ortho zoom mutates camera.zoom, not position
+    const moved = runUpdateStep(ctx);
+    // Sanity: distance (and thus position) is untouched by ortho zoom.
+    expect(state.distance).toBeCloseTo(5, 5);
+    expect(moved).toBe(true);
+    expect(ctx.dispatch).toHaveBeenCalledWith('change');
+  });
+
+  it('returns false for an ortho camera at rest', () => {
+    const orthoCam = new THREE.OrthographicCamera(-5, 5, 5, -5, 0.1, 1000);
+    orthoCam.position.set(0, 0, 5);
+    orthoCam.updateMatrixWorld();
+    const { ctx } = makeCtx({
+      camera: orthoCam,
+      lastPosition: new THREE.Vector3(0, 0, 5),
+    });
+    runUpdateStep(ctx); // settle lastPosition/lastQuaternion
+    const moved = runUpdateStep(ctx);
+    expect(moved).toBe(false);
+  });
 });
 
 describe('runUpdateStep — step 4: pan damping', () => {

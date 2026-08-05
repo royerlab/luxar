@@ -10,8 +10,14 @@
  * manager as the dispatch site (Non-Goal 2).
  */
 
+/** Which mouse drag, if any, is currently in progress in fly mode. */
 export type FlyMouseAction = 'none' | 'strafe' | 'rotate';
 
+/**
+ * Per-direction translation input, each field 0 (released) or 1 (held).
+ * Driven by WASD (+ Alt/Meta for up/down) and consumed by the physics step
+ * as the movement axis.
+ */
 export interface FlyMoveState {
   forward: number;
   back: number;
@@ -21,12 +27,23 @@ export interface FlyMoveState {
   down: number;
 }
 
+/**
+ * Rotation input from the arrow keys and Q/E, each field in {-1, 0, 1}.
+ * Consumed by the physics step as pitch/yaw/roll about the camera's local
+ * axes.
+ */
 export interface FlyLookState {
   horizontal: number; // -1 for left, 1 for right
   vertical: number; // -1 for up, 1 for down
   roll: number; // -1 for Q (roll left), 1 for E (roll right)
 }
 
+/**
+ * State and callbacks the keyboard handlers need. The orchestrator owns the
+ * `moveState`/`lookState` records (mutated in place); the speed-boost flag
+ * is written via `setSpeedBoost`, and `dispatch` routes `change` back
+ * through the orchestrator.
+ */
 export interface FlyKeyboardCtx {
   enabled: boolean;
   moveState: FlyMoveState;
@@ -35,6 +52,13 @@ export interface FlyKeyboardCtx {
   dispatch: (type: 'change') => void;
 }
 
+/**
+ * Set movement/look state from a keydown. WASD sets translation (Alt/Meta+W/S
+ * switch to up/down), Q/E set roll, arrow keys set continuous look, and Shift
+ * engages speed boost. `preventDefault` is called for arrow keys always and
+ * for WASDQE unless the user is typing in an input/textarea/contenteditable.
+ * Dispatches `change`; no-op while disabled.
+ */
 export function handleKeyDown(ctx: FlyKeyboardCtx, event: KeyboardEvent): void {
   if (!ctx.enabled) return;
 
@@ -125,6 +149,12 @@ export function handleKeyDown(ctx: FlyKeyboardCtx, event: KeyboardEvent): void {
   ctx.dispatch('change');
 }
 
+/**
+ * Clear the movement/look state a key was driving on keyup. W/S clear both
+ * their forward/back and up/down components (covering an Alt release mid-hold),
+ * A/D and Q/E clear their axes, Shift releases speed boost, and arrow keys
+ * zero the matching look axis. Dispatches `change`; no-op while disabled.
+ */
 export function handleKeyUp(ctx: FlyKeyboardCtx, event: KeyboardEvent): void {
   if (!ctx.enabled) return;
 

@@ -16,6 +16,12 @@ import type { LuxarCamera } from '../../../utils/camera-utils';
 const _v0 = new THREE.Vector3();
 const _q0 = new THREE.Quaternion();
 
+/**
+ * State and callbacks the wheel handler needs, projected from the
+ * `LuxarFlyControls` orchestrator. Object refs (camera, orientation,
+ * velocity, angularVelocity) are mutated in place; `dispatch` routes the
+ * `change` event back through the orchestrator.
+ */
 export interface FlyWheelCtx {
   enabled: boolean;
   inertialMode: boolean;
@@ -30,6 +36,14 @@ export interface FlyWheelCtx {
   dispatch: (type: 'change') => void;
 }
 
+/**
+ * Handle a scroll wheel event. Ctrl/Meta+scroll is left unhandled (ceded to
+ * the upstream FOV handler). The sign of `deltaY` drives either roll about
+ * the viewing axis (Shift held) or forward/backward motion (plain scroll):
+ * inertial mode adds an angular/linear velocity impulse, non-inertial mode
+ * applies the rotation or translation directly. Dispatches `change`; no-op
+ * while disabled.
+ */
 export function handleWheel(ctx: FlyWheelCtx, event: WheelEvent): void {
   if (!ctx.enabled) return;
 

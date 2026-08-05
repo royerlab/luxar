@@ -11,6 +11,12 @@
 import { type OrbitInputCtx, pointerNDC } from './pointer';
 import { computeArcballRotation } from '../math/trackball';
 
+/**
+ * Set the gesture from the current touch count. One finger starts rotate (or
+ * pan if rotation is disabled), seeding the matching start point; two fingers
+ * start a combined dolly-pan, seeding `dollyStart` with the pinch distance
+ * and `panStart` with the two-finger midpoint.
+ */
 export function handleTouchStart(ctx: OrbitInputCtx): void {
   if (ctx.pointers.length === 1) {
     // Single finger: rotate (or pan if rotation disabled)
@@ -35,6 +41,13 @@ export function handleTouchStart(ctx: OrbitInputCtx): void {
   }
 }
 
+/**
+ * Advance the active touch gesture. One-finger rotate accumulates an arcball
+ * quaternion into `rotationDelta`; one-finger pan feeds the client delta to
+ * `ctx.pan`. Two fingers do dolly + pan together: the change in pinch
+ * distance accumulates a zoom delta (pinch-out = zoom in), and the change in
+ * finger midpoint drives the pan.
+ */
 export function handleTouchMove(ctx: OrbitInputCtx, _event: PointerEvent): void {
   const state = ctx.getState();
   if (ctx.pointers.length === 1 && state === 'rotate') {

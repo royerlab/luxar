@@ -15,6 +15,12 @@ import { config } from '../../config';
 import type { LuxarCamera } from '../../utils/camera-utils';
 import type { ControlsManagerConfig } from '../controls-manager';
 
+/**
+ * The narrow view of `ControlsManager` state each control factory reads:
+ * the camera and DOM element to bind, the manager config (feel/toggles), the
+ * scene scale, and any auto-frame-derived distance/zoom limits that take
+ * precedence over scale-derived defaults.
+ */
 export interface ControlsCreationCtx {
   camera: LuxarCamera;
   domElement: HTMLElement;
@@ -24,6 +30,7 @@ export interface ControlsCreationCtx {
   storedZoomLimits: { min: number; max: number } | null;
 }
 
+/** LEFT/MIDDLE/RIGHT mouse-button → action mapping (null = unbound). */
 export type MouseButtonMap = {
   LEFT: THREE.MOUSE | null;
   MIDDLE: THREE.MOUSE | null;
@@ -43,6 +50,12 @@ export function naturalDragButtonMap(enabled: boolean): MouseButtonMap {
     : { LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.ROTATE };
 }
 
+/**
+ * Build the orbit (3D) control instance. Distance limits are chosen as stored
+ * auto-frame limits, else scale-derived from `sceneScale`, else config
+ * defaults. Enables Shift+scroll view-axis roll, and applies the natural-drag
+ * button map when configured (the class default is the mouse-friendly map).
+ */
 export function createOrbitControls(ctx: ControlsCreationCtx): LuxarOrbitControls {
   const m = config.controls.scaleMultipliers;
 
@@ -83,6 +96,11 @@ export function createOrbitControls(ctx: ControlsCreationCtx): LuxarOrbitControl
   return controls;
 }
 
+/**
+ * Build the fly control instance from the config's fly speeds/damping, with
+ * `externalInputManagement` enabled so keyboard input is routed through the
+ * InputContextManager rather than registered on `window`.
+ */
 export function createFlyControls(ctx: ControlsCreationCtx): LuxarFlyControls {
   return new LuxarFlyControls(ctx.camera, ctx.domElement, {
     movementSpeed: ctx.config.flyMovementSpeed,
@@ -96,6 +114,14 @@ export function createFlyControls(ctx: ControlsCreationCtx): LuxarFlyControls {
   });
 }
 
+/**
+ * Build the ortho (2D) control instance — the same `LuxarOrbitControls` class
+ * with rotation disabled. Zoom limits come from stored auto-frame limits or
+ * wide defaults, each mapped to the OPPOSITE distance factor (ortho zoom ~
+ * 1/distance); feel knobs match orbit so switching modes doesn't flip the
+ * feel. Remaps left-click to pan (Napari/Maps convention) and enables
+ * Shift+scroll view-axis roll.
+ */
 export function createOrthoControls(ctx: ControlsCreationCtx): LuxarOrbitControls {
   const m = config.controls.scaleMultipliers;
 

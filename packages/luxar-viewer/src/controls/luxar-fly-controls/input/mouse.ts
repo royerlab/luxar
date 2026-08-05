@@ -15,6 +15,13 @@ import type { FlyMouseAction } from './keyboard';
 const _v0 = new THREE.Vector3();
 const _v1 = new THREE.Vector3();
 
+/**
+ * State and callbacks the mouse handlers need, projected from the
+ * `LuxarFlyControls` orchestrator. Object refs (camera, orientation,
+ * velocity, angularVelocity) are mutated in place; primitive drag state
+ * (active action, last mouse X/Y) is read/written through accessors, and
+ * `dispatch` routes events back through the orchestrator.
+ */
 export interface FlyMouseCtx {
   enabled: boolean;
   inertialMode: boolean;
@@ -36,6 +43,12 @@ export interface FlyMouseCtx {
   dispatch: (type: 'change' | 'start' | 'end') => void;
 }
 
+/**
+ * Begin a mouse drag: left button (0) starts a strafe, right button (2)
+ * starts a rotate. Records the button as the active action, seeds the last
+ * mouse position, prevents the default, and dispatches `start`. No-op while
+ * disabled or for any other button.
+ */
 export function handleMouseDown(ctx: FlyMouseCtx, event: MouseEvent): void {
   if (!ctx.enabled) return;
 
@@ -55,6 +68,11 @@ export function handleMouseDown(ctx: FlyMouseCtx, event: MouseEvent): void {
   }
 }
 
+/**
+ * End a mouse drag when the released button matches the active action
+ * (left↔strafe, right↔rotate): clears the active action and dispatches
+ * `end`. Ignores releases that don't match the in-progress gesture.
+ */
 export function handleMouseUp(ctx: FlyMouseCtx, event: MouseEvent): void {
   if (!ctx.enabled) return;
 
@@ -65,6 +83,14 @@ export function handleMouseUp(ctx: FlyMouseCtx, event: MouseEvent): void {
   }
 }
 
+/**
+ * Apply the active drag to the camera from the pointer delta since the last
+ * move. Rotate (right-drag) adds a pitch/yaw angular impulse about the
+ * camera's local axes; strafe (left-drag) translates in the camera's
+ * screen plane — as a velocity impulse in inertial mode, or directly on
+ * `camera.position` otherwise. Dispatches `change`; no-op when disabled or
+ * no drag is active.
+ */
 export function handleMouseMove(ctx: FlyMouseCtx, event: MouseEvent): void {
   const action = ctx.getActiveMouseAction();
   if (!ctx.enabled || action === 'none') return;
