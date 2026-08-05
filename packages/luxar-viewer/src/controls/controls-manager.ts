@@ -41,8 +41,25 @@ import {
   type ControlEventDispatcher,
 } from './controls-manager/event-forwarders';
 import { deriveScaleLimits } from './controls-manager/scene-scale';
+
+/**
+ * Re-export of the control-mode discriminant (`'orbit' | 'fly' | 'ortho'`).
+ *
+ * Surfaced from the manager module so callers can name the active mode
+ * without importing from the internal `./types` module.
+ */
 export type { ControlType };
 
+/**
+ * Feel/behavior parameters for the three camera control modes.
+ *
+ * Populated with config-derived defaults by {@link ControlsManager} and
+ * updated live through its setters. Fields are grouped by mode: `autoRotate*`
+ * and `naturalDrag` apply to orbit, `orbit*` to both orbit and ortho (the same
+ * `LuxarOrbitControls` class backs both, and the live setters mutate whichever
+ * instance is current), and `fly*` to fly mode. All fields are optional; unset
+ * fields fall back to the manager's config defaults.
+ */
 export interface ControlsManagerConfig {
   autoRotate?: boolean;
   autoRotateSpeed?: number;
@@ -76,6 +93,24 @@ interface ControlsManagerEventMap {
 
 type ActiveControls = LuxarOrbitControls | LuxarFlyControls;
 
+/**
+ * Coordinates the three camera control modes behind one stable interface.
+ *
+ * Owns the currently active control instance (orbit, fly, or ortho), swaps
+ * between them on request, and preserves camera position/orientation/target
+ * across each swap so switching modes never jumps the view. Also brokers the
+ * per-frame update tick (feeding delta time from an internal
+ * `THREE.Timer`), forwards `change`/`start`/`end` events from the active
+ * control, and persists scale-derived and auto-frame limits so they survive
+ * control recreation.
+ *
+ * Emits `change` (with the new `controlType` on a mode switch), `start`, and
+ * `end`. Most setters mutate the live control instance in place when its type
+ * matches, so config changes apply immediately without a mode switch.
+ *
+ * @see {@link LuxarOrbitControls} for the orbit/ortho implementation
+ * @see {@link LuxarFlyControls} for the fly implementation
+ */
 export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventMap> {
   private camera: LuxarCamera;
   private domElement: HTMLElement;

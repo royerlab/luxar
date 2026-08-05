@@ -3,9 +3,6 @@
   "failures": [
     "JSDoc coverage::packages/luxar-viewer/src/cache/chunk-prefetcher.ts",
     "JSDoc coverage::packages/luxar-viewer/src/cache/multi-level-caching-store.ts",
-    "JSDoc coverage::packages/luxar-viewer/src/controls/controls-manager.ts",
-    "JSDoc coverage::packages/luxar-viewer/src/controls/luxar-fly-controls.ts",
-    "JSDoc coverage::packages/luxar-viewer/src/controls/luxar-orbit-controls.ts",
     "JSDoc coverage::packages/luxar-viewer/src/core/app.ts",
     "JSDoc coverage::packages/luxar-viewer/src/data/dims-to-view-state.ts",
     "JSDoc coverage::packages/luxar-viewer/src/data/index.ts",
