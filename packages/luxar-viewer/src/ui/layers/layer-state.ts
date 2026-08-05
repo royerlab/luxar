@@ -17,7 +17,7 @@ import { log, Modules } from '../../utils/log';
 // use and re-exported below so every existing `./layer-state` consumer keeps
 // working unchanged.
 import { computeUniforms, computeDisplayRange } from '../../rendering/display-range';
-import { MESH_DEFAULTS } from '../../rendering/materials/mesh/appearance';
+import { MESH_DEFAULTS, resolveMeshBlendingMode } from '../../rendering/materials/mesh/appearance';
 
 /**
  * Geometry type of a layer.
@@ -324,6 +324,30 @@ export type LayerChangeListener = () => void;
  * Walks the SceneNode tree to collect nodes with `layer: true`,
  * tracks selection, and provides mutators that notify listeners.
  */
+/**
+ * The blending mode a layer of `type` will ACTUALLY render with.
+ *
+ * For mesh this is not the composed value: `volumetric` has no meaning for a
+ * zero-thickness surface, so the mesh material maps it to `opaque` and stamps the
+ * RESOLVED mode into `userData.blendingMode` (spec §6.3). Storing the unresolved value
+ * in `LayerInfo` made the panel disagree with the render in two visible ways at once —
+ * it showed the Absorption slider (which no mesh shader reads) and HID the Alpha-cutoff
+ * slider precisely when the cutout was active. The pick pass reads the material's
+ * resolved mode, so it was correct and the UI was not.
+ *
+ * Resolved at the point of STORAGE rather than at each display gate, so every consumer
+ * of `LayerInfo.blendingMode` — the Blend dropdown's own displayed value included — sees
+ * the mode that renders. A user who explicitly picks `volumetric` on a mesh sees the
+ * dropdown snap back to `opaque`, which is honest: it is what the surface is doing, and
+ * it matches the one-time warning the loader already emits.
+ */
+export function resolveLayerBlendingMode(
+  type: LayerType | undefined,
+  mode: BlendingMode
+): BlendingMode {
+  return type === 'mesh' ? resolveMeshBlendingMode(mode) : mode;
+}
+
 export class LayerStateManager {
   /** Ordered list of layer paths (insertion order from scene graph walk) */
   private layerOrder: string[] = [];
@@ -526,7 +550,17 @@ export class LayerStateManager {
           // leave it NON-explicit so it is not pushed onto descendants (a
           // plain group layer merely displays `additive` as a neutral default;
           // each descendant keeps its own default until the control is used).
-          blendingMode: composedBlendingMode ?? defaultBlendingMode(node.type),
+          //
+          // Then RESOLVED for the layer's type, which is a separate concern from the
+          // default and applies to an EXPLICIT mode too: a mesh cannot render
+          // `volumetric`, so its material maps that to `opaque` and stamps the resolved
+          // value. Without this wrap the panel showed Absorption (which no mesh shader
+          // reads) and hid Alpha cutoff exactly when the cutout was active. A no-op for
+          // the default path, since `defaultBlendingMode('mesh')` is already `opaque`.
+          blendingMode: resolveLayerBlendingMode(
+            layerType,
+            composedBlendingMode ?? defaultBlendingMode(node.type)
+          ),
           blendingModeExplicit: composedBlendingMode !== undefined,
           selected: false,
           colormap,
