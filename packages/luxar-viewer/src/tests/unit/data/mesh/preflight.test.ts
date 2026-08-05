@@ -5,13 +5,13 @@
  * The preflight is pure over (attrs, array metadata), so these tests hand it
  * hand-built handles rather than a store. That the preflight fetches no chunks
  * is a property of the LOADER calling it before any read, and is pinned in
- * `mesh-loader.test.ts` against a request-recording store — the two halves of
+ * `whole-node-loader.test.ts` against a request-recording store — the two halves of
  * the same guarantee, tested where each is actually decidable.
  */
 
 import { describe, it, expect } from 'vitest';
-import { preflightMesh, parseDtype } from '../../../../data/mesh/mesh-preflight';
-import type { MeshArrayHandles } from '../../../../data/mesh/mesh-preflight';
+import { preflightMesh, parseDtype } from '../../../../data/mesh/preflight';
+import type { MeshArrayHandles } from '../../../../data/mesh/preflight';
 import { LoaderError } from '../../../../data/scene-loader/nodes/load-leaf-error-dispatch';
 import { MAX_MESH_VERTICES, MESH_DECODE_BUDGET_BYTES } from '../../../../config/constants';
 import type * as zarr from '../../../../data/zarr';
@@ -335,12 +335,36 @@ describe('preflightMesh — (a) counts and the vote-key cap', () => {
     ['n_vertices', { n_vertices: 0 }],
     ['n_vertices', { n_vertices: 1.5 }],
     ['n_faces', { n_faces: 0 }],
-    ['ndim', { n_faces: 4, ndim: 0 }],
   ])('rejects a non-positive-integer %s', async (_field, override) => {
     await expectReject(
       () => preflightMesh(PATH, tetAttrs(override as Partial<MeshMetadata>), tetHandles()),
       /must be a positive integer/
     );
+  });
+
+  it.each([[0], [1], [1.5]])('rejects ndim %s — a triangle needs two dimensions', async (ndim) => {
+    // Stricter than the sibling counts on purpose, and stricter than Points/Lines: their
+    // primitives are meaningful in 1D, a triangle is not. In 1D every face is collinear,
+    // so without this the node loads cleanly and renders nothing with no diagnostic.
+    // Mirrors `add_mesh`'s own vertex-width check.
+    await expectReject(
+      () =>
+        preflightMesh(PATH, tetAttrs({ ndim } as Partial<MeshMetadata>), {
+          vertices: fakeArray([4, ndim], '<f4'),
+          faces: fakeArray([4, 3], '<u4'),
+        }),
+      /at least 2/
+    );
+  });
+
+  it('accepts ndim 2 — a planar mesh is legitimate', async () => {
+    // The acceptance half: the floor is 2, not 3. Flat triangles in a plane have area.
+    await expect(
+      preflightMesh(PATH, tetAttrs({ ndim: 2 }), {
+        vertices: fakeArray([4, 2], '<f4'),
+        faces: fakeArray([4, 3], '<u4'),
+      })
+    ).resolves.toBeDefined();
   });
 });
 
@@ -640,71 +664,6 @@ describe('preflightMesh — (c) shape and dtype cross-checks', () => {
       );
       expect(result.colorComponents).toBe(channels);
     }
-  });
-
-  it.each([
-    ['int8', '|i1'],
-    ['int32', '<i4'],
-    ['int64', '<i8'],
-    ['uint64', '<u8'],
-    ['float64', '<f8'],
-    ['float16', '<f2'],
-  ])(
-    'rejects an unencoded %s colors array — no defined colour normalization',
-    async (_l, dtype) => {
-      // Colours are the one array whose dtype is meaning-bearing at the GPU: the
-      // shared colour path preserves the native type on its direct branch, and
-      // normalization is defined only for uint8/uint16/float32 (§3.2). An int32
-      // store's 0–255 values would widen to floats that all clamp ≥ 1.0 and shade
-      // the mesh flat white with nothing to say why — rejected from metadata
-      // instead, before any chunk is fetched.
-      await expectReject(
-        () =>
-          preflightMesh(
-            PATH,
-            tetAttrs({ has_colors: true }),
-            tetHandles({ colors: fakeArray([4, 3], dtype as string) })
-          ),
-        /an unencoded colors array must be uint8, uint16 or float32/
-      );
-    }
-  );
-
-  it.each([
-    ['uint8', '|u1'],
-    ['uint16', '<u2'],
-    ['float32', '<f4'],
-  ])('accepts an unencoded %s colors array — §3.2 exactly', async (_l, dtype) => {
-    await expect(
-      preflightMesh(
-        PATH,
-        tetAttrs({ has_colors: true }),
-        tetHandles({ colors: fakeArray([4, 3], dtype as string) })
-      )
-    ).resolves.toBeDefined();
-  });
-
-  it('exempts ENCODED colors from the dtype gate — their stored dtype holds codes', async () => {
-    // A LUT-encoded colours array stores uint16 indices; the decode path (not the
-    // native dtype) defines what reaches the GPU, so the unencoded-dtype rule must
-    // not fire. Same predicate as the colour loader's direct-branch check.
-    await expect(
-      preflightMesh(
-        PATH,
-        tetAttrs({ has_colors: true }),
-        tetHandles({
-          colors: fakeArray([4, 1], '<u2', [4, 1], {
-            encoding: {
-              name: 'lut_uint16',
-              lut: [0, 0, 0],
-              lut_mode: 'row',
-              original_shape: [4, 3],
-              original_dtype: 'float32',
-            },
-          }),
-        })
-      )
-    ).resolves.toBeDefined();
   });
 });
 

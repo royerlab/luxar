@@ -18,7 +18,7 @@
  *
  * So everything decidable from metadata is checked here, first, and the
  * value-level checks that genuinely need materialized arrays run afterwards in
- * Stage 2 (`mesh-validate.ts`).
+ * Stage 2 (`validate.ts`).
  *
  * ## What is checked, and what each check prevents
  *
@@ -37,10 +37,11 @@
  *
  * At the default 512 MiB budget the **byte budget is far tighter than the vertex
  * cap**, and it is worth knowing which error to expect. A 3D float32 mesh runs
- * out of budget at ~44.7M vertices and a uint16-quantized one at ~89.5M, both
+ * out of budget at ~22.4M vertices and a uint16-quantized one at ~29.8M, both
  * well under `2^27` (134.2M) — so in practice no mesh reaches the cap by growing
- * legitimately; `2^27` vertices of quantized 3D coordinates alone declare 768
- * MiB.
+ * legitimately. (Those figures halve the stored-only arithmetic because the decoded
+ * term is charged too: a float32 vertex costs 4 bytes stored AND 4 decoded. The
+ * float32 number is measured, not derived — see the boundary test.)
  *
  * The cap is still checked, and checked **first**, for two reasons. It gives a
  * hostile or nonsensical declaration (`n_vertices: 2^30`) the message that names
@@ -64,7 +65,7 @@
  * mis-shades every vertex it covers. A declared-undersized array is catchable
  * here from its shape alone.
  *
- * @module data/mesh/mesh-preflight
+ * @module data/mesh/preflight
  */
 
 import * as zarr from '../zarr';
@@ -118,7 +119,30 @@ export const MESH_ARRAY_NAMES: Record<keyof MeshArrayHandles, string> = {
   imageLabelBytes: 'image_label_bytes',
 };
 
-/** What Stage 1 established, for Stage 2 and the geometry builder to rely on. */
+/**
+ * What Stage 1 established.
+ *
+ * The first three fields are the ones Stage 2 reads: the loader destructures
+ * `{ nVertices, nFaces, ndim }` and every `validateMaterializedLength` call
+ * derives its expected length from them.
+ *
+ * The last two are deliberately NOT a source of truth, and it matters that this
+ * is stated, because the codebase's own rule is that a field no consumer reads
+ * is indistinguishable from a field that is wrong (see
+ * `scene-loader/geometry-descriptors.ts`). Both are byproducts of Stage 1
+ * VALIDATION — the checks are the point, the values are how a test can observe
+ * that the checks ran. Their real consumers read elsewhere on purpose:
+ *
+ * - `colorComponents` — the loader calls the shared `colorComponentsOf`, the same
+ *   helper the three sibling loaders use, rather than threading this through. The
+ *   two agree because Stage 1 has already rejected anything but 3 or 4, which is
+ *   the strictness `colorComponentsOf` (non-4 ⇒ 3) does not have on its own.
+ * - `normalDims` — the winding frame reaches `projectMeshTo3D` from the node's
+ *   `attrs.normal_dims` via the handler, since the projection runs per slice move
+ *   and does not hold a preflight.
+ *
+ * So: read these two in tests, not in production code.
+ */
 export interface MeshPreflightResult {
   /** Vertex count, `<= MAX_MESH_VERTICES` */
   nVertices: number;
@@ -126,9 +150,9 @@ export interface MeshPreflightResult {
   nFaces: number;
   /** Coordinate dimensionality; equals the `vertices` declared width */
   ndim: number;
-  /** Channels per color entry, when `colors` is present */
+  /** Channels per color entry, when `colors` is present. Observation only — see above. */
   colorComponents?: 3 | 4;
-  /** The validated `normal_dims`, when `normals` is present */
+  /** The validated `normal_dims`, when `normals` is present. Observation only — see above. */
   normalDims?: number[];
 }
 
@@ -174,6 +198,21 @@ export function parseDtype(dtype: string): { itemSize: number; integer: boolean 
   if (kind === 'f') return { itemSize: width, integer: false };
   return null;
 }
+
+/**
+ * What "shape check" actually means here, stated precisely because it is more lenient
+ * than the spec's `(V, D)` wording suggests.
+ *
+ * A shape is reduced to (rows, components) = (product / trailing extent, trailing
+ * extent), so `[2, 2, 3]` and `[4, 1, 1, 1, 3]` are both accepted for a 4-vertex 3D
+ * mesh. That is deliberate rather than sloppy: the decoder returns a FLAT typed array,
+ * and C-order flattening makes those declarations byte-identical to `[4, 3]` — verified
+ * end to end, same buffer and same `vertexCount`. Insisting on exactly 2-D would refuse
+ * stores that are equivalent in every way the loader can observe.
+ *
+ * What it still refuses is anything whose flattened size or trailing extent disagrees
+ * with `n_vertices`/`ndim`, which is the part that would mis-stride the slab kernel.
+ */
 
 /** Product of a shape's extents, or `null` when the shape is unusable. */
 function elementCount(shape: readonly number[] | undefined): number | null {
@@ -399,6 +438,27 @@ function targetDecodedFloatCount(fetched: zarr.Array<zarr.DataType, zarr.Readabl
 }
 
 /**
+ * Whether this array's bytes live in ANOTHER array, so the budget must follow a
+ * reference to find them.
+ *
+ * Reads {@link ENCODING_BUDGET_KIND} rather than testing for `'array_ref'` directly,
+ * and that indirection is the point: with a literal test the table's *values* were
+ * decorative — only its key set was consulted — so a future ref-following encoding
+ * added as `followsRef` would have been silently treated as `handledByLayout` and
+ * walked right past the ceiling. That is the same "two places encode one fact" shape
+ * as the four bypasses the table exists to prevent, so the table is now the single
+ * source of truth for both questions it answers.
+ */
+function followsReference(array: zarr.Array<zarr.DataType, zarr.Readable>): boolean {
+  const encodingName = ((array.attrs ?? {}) as unknown as ArrayMetadata).encoding?.name;
+  if (encodingName === undefined) return false;
+  return (
+    Object.hasOwn(ENCODING_BUDGET_KIND, encodingName) &&
+    ENCODING_BUDGET_KIND[encodingName as EncodingName] === 'followsRef'
+  );
+}
+
+/**
  * Maximum `array_ref` hops the preflight will follow before refusing.
  *
  * A target may itself be encoded — including as another `array_ref` — and
@@ -433,10 +493,10 @@ async function resolveRefTarget(
   const seen = new Set<string>();
   let current = array;
   for (let hop = 0; hop <= MAX_ARRAY_REF_HOPS; hop++) {
+    if (!followsReference(current)) return current;
     const encoding = ((current.attrs ?? {}) as unknown as ArrayMetadata).encoding;
-    if (encoding?.name !== 'array_ref') return current;
 
-    const target = encoding.target;
+    const target = encoding?.target;
     if (typeof target !== 'string' || target.length === 0) {
       rejectMesh(path, `${name} declares an array_ref with no target path.`);
     }
@@ -557,8 +617,18 @@ export async function preflightMesh(
   if (!Number.isInteger(nFaces) || nFaces < 1) {
     rejectMesh(path, `n_faces must be a positive integer, got ${String(nFaces)}`);
   }
-  if (!Number.isInteger(ndim) || ndim < 1) {
-    rejectMesh(path, `ndim must be a positive integer, got ${String(ndim)}`);
+  // A floor of 2, mirroring `add_mesh`'s vertex check rather than the generic
+  // "positive integer" the other counts get. A triangle needs two dimensions to enclose
+  // area; in 1D every face is collinear, so the node would load cleanly and draw nothing,
+  // with no diagnostic. This is deliberately stricter than Points/Lines, whose primitives
+  // ARE meaningful in 1D.
+  if (!Number.isInteger(ndim) || ndim < 2) {
+    rejectMesh(
+      path,
+      `ndim must be an integer of at least 2, got ${String(ndim)}. A triangle needs two ` +
+        'dimensions to have any area — in 1D every face is collinear and the surface ' +
+        'renders nothing.'
+    );
   }
   if (nVertices > MAX_MESH_VERTICES) {
     rejectMesh(
@@ -619,8 +689,24 @@ export async function preflightMesh(
     // budgets ~48 bytes for a read that can pull gigabytes. Metadata-only.
     assertBudgetableEncoding(path, name, array);
     const fetched = await resolveRefTarget(path, name, array, storeRoot);
-    // The target may carry its own encoding, which must be budgetable too, and it
-    // must not be one whose decoded size dwarfs its stored size (see below).
+    // The ENDPOINT is the only hop these two gates can fire on, and that is worth
+    // stating rather than defending with a loop over every step:
+    //
+    //  - `assertRefTargetDecodesInPlace` refuses a `broadcasted` target. `broadcasted`
+    //    is not a `followsRef` encoding, so `resolveRefTarget` STOPS the moment it
+    //    reaches one — a broadcast array is therefore always `fetched`, never an
+    //    interior hop.
+    //  - `assertBudgetableEncoding` refuses an unaccountable encoding. An interior hop
+    //    is by construction one the resolve loop chose to follow, i.e. `array_ref`,
+    //    which the table lists as `followsRef` and is accountable by definition.
+    //
+    // A chain-wide loop here therefore cannot reject anything this does not; verified by
+    // mutation in both directions. The walk itself still earns its keep through the cycle
+    // and hop-cap refusals inside `resolveRefTarget`.
+    //
+    // `fetched !== array` is what keeps a legitimately broadcast NODE-LOCAL colour array
+    // out of this refusal: `colors=(1, 3)` makes the colours array itself `broadcasted`
+    // with no ref involved (#1238), and refusing that would reject real writer output.
     if (fetched !== array) {
       assertBudgetableEncoding(path, name, fetched);
       assertRefTargetDecodesInPlace(path, name, fetched);
@@ -635,30 +721,35 @@ export async function preflightMesh(
     if (stored === null) {
       rejectMesh(path, `${name} declares an unusable shape [${String(fetched.shape)}]`);
     }
-    // The DECODED term must be what the decoder actually materializes. For a plain
-    // node-local array that is the stub's own logical count — which is where
-    // `original_shape` records what the values mean for this node (and what bounds a
-    // huge `ndim`). For an `array_ref` it is the RESOLVED TARGET's decode size, which
-    // is NOT the stub's claimed count: a lying `(0, k)` stub can front a target whose
-    // OWN encoding expands on decode — a row-mode LUT allocates `stored_indices x k`,
-    // k taken from the TARGET's `original_shape` — so charging the stub's count would
-    // repeat the "tiny stored, gigabytes decoded" bypass this budget exists to close,
-    // one encoding removed. Charge the larger of the stub's requirement and the
-    // target's true decode size. (A `broadcasted` target is refused above; its size
-    // is caller-driven, so it cannot be bounded from the target's metadata.)
-    const stubLayout = logicalLayout(array);
-    if (stubLayout === null) {
+    // The referring array's LOGICAL layout is what this NODE means by the values:
+    // `original_shape` records that, and the cross-checks below compare against it.
+    const layout = logicalLayout(array);
+    if (layout === null) {
       rejectMesh(path, `${name} declares an unusable logical shape`);
     }
-    let decodedCount = stubLayout.count;
+    // But it is NOT necessarily what gets allocated, and the ENDPOINT is where that
+    // difference lives. `ArrayDecoder.decodeArrayRef` recurses with the TARGET's own
+    // attrs, so the target's encoding expands to the target's numbers however modest the
+    // stub's `original_shape` is — a row-mode LUT allocates `stored_indices x k`, with
+    // `k` from the TARGET's `original_shape`. Charge the larger of the stub's own
+    // requirement and the target's true decode size.
+    //
+    // Interior hops are deliberately NOT charged, and this is the correction worth
+    // recording: `decodeArrayRef` passes `expectedElements` through UNCHANGED and reads
+    // nothing from an interior stub but `encoding.target`. So an interior stub's
+    // `original_shape` drives no allocation whatsoever. Summing over the chain would
+    // charge bytes that are never allocated, which does not merely waste budget — it can
+    // FALSELY REJECT a legitimate node whose interior stub describes a large logical
+    // view. The chain is still walked, for the cycle and hop-cap refusals below.
+    let decodedValues = layout.count;
     if (fetched !== array) {
       const targetDecoded = targetDecodedFloatCount(fetched);
       if (targetDecoded === null) {
         rejectMesh(path, `${name}'s array_ref target declares an unusable shape`);
       }
-      decodedCount = Math.max(decodedCount, targetDecoded);
+      decodedValues = Math.max(decodedValues, targetDecoded);
     }
-    accountedBytes += stored * parsed.itemSize + decodedCount * DECODED_BYTES_PER_VALUE;
+    accountedBytes += stored * parsed.itemSize + decodedValues * DECODED_BYTES_PER_VALUE;
 
     // Per-chunk term. Not redundant with the sum: zarr v2 does not require
     // `chunks <= shape`, so a `"shape": [100, 3]` array declaring

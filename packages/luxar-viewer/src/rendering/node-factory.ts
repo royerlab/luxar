@@ -43,6 +43,8 @@ import {
   createGSplatsNode as createGSplatsNodeImpl,
   createEmptyGSplatsNode as createEmptyGSplatsNodeImpl,
 } from './node-factory/create-gsplats-node';
+import { createEmptyMeshNode as createEmptyMeshNodeImpl } from './node-factory/create-mesh-node';
+import type { MeshDataLoader, MeshMetadata } from '../types/mesh';
 // Picking materials are constructed via `materialManager.create*PickingMaterial`
 // helpers so the GLSL vs. TSL dispatch on `caps.apiSurface` lives in one place. The
 // concrete types are still imported elsewhere (e.g. material-sync-helpers).
@@ -290,6 +292,21 @@ export class NodeFactory {
     loader: GSplatsDataLoader
   ): THREE.Mesh {
     return createEmptyGSplatsNodeImpl(path, nodeAttrs, attrs, loader, this.pickingSystem);
+  }
+
+  /**
+   * Create an empty placeholder for a mesh node — a plain `THREE.Mesh` with an
+   * indexed `BufferGeometry`, not an instanced quad.
+   *
+   * Takes no `nodeAttrs` and no `pickingSystem`, unlike its three siblings. No
+   * `nodeAttrs` because that second bag exists to tell a leaf-authored colormap
+   * window from an inherited ancestor gain, and mesh has no colormap path in this
+   * phase. No `pickingSystem` because mesh picking uses `gl_VertexID` rather than an
+   * element-texture texel and needs its own pick material pair, which arrives with
+   * the shading phase — threading the system in now would look like picking works.
+   */
+  createEmptyMeshNode(path: string, attrs: MeshMetadata, loader: MeshDataLoader): THREE.Mesh {
+    return createEmptyMeshNodeImpl(path, attrs, loader);
   }
 
   // ============================================================================

@@ -33,11 +33,11 @@
  *
  * ## Two-stage admission
  *
- * Every fetch is gated. `mesh-preflight.ts` (Stage 1) runs on metadata alone,
- * before a single chunk is requested; `mesh-validate.ts` (Stage 2) runs on the
+ * Every fetch is gated. `preflight.ts` (Stage 1) runs on metadata alone,
+ * before a single chunk is requested; `validate.ts` (Stage 2) runs on the
  * materialized values. See those modules for why the split is load-bearing.
  *
- * @module data/mesh/mesh-loader
+ * @module data/mesh/mesh-whole-node-loader
  */
 
 import * as zarr from '../zarr';
@@ -51,9 +51,9 @@ import {
   preflightMesh,
   type MeshArrayHandles,
   type MeshPreflightResult,
-} from './mesh-preflight';
-import { validateFaceIndices, validateMaterializedLength } from './mesh-validate';
-import type { FaceIndexSource } from './mesh-validate';
+} from './preflight';
+import { validateFaceIndices, validateMaterializedLength } from './validate';
+import type { FaceIndexSource } from './validate';
 import { combineSignals } from '../../workers/worker-pool/timeout/combine-signals';
 import type { UpdateSession } from '../../profiling/update-profiler';
 import type {
@@ -83,7 +83,7 @@ const OPTIONAL_ARRAYS = [
   ['imageLabelBytes', 'has_image_labels'],
 ] as const satisfies readonly (readonly [keyof MeshArrayHandles, keyof MeshMetadata])[];
 
-export class MeshLoader implements MeshDataLoader {
+export class MeshWholeNodeLoader implements MeshDataLoader {
   private readonly decoder: ArrayDecoder;
   private readonly rangeLoader: RangeLoader;
   private readonly zarrStore: zarr.Readable;
@@ -241,7 +241,7 @@ export class MeshLoader implements MeshDataLoader {
     // two-sided range check. Routing it through the decoder would hand back a
     // Float32Array, whose 24-bit mantissa cannot represent every index a
     // 2^27-vertex mesh may carry — it would silently round indices above
-    // 16,777,216. See mesh-validate.ts.
+    // 16,777,216. See validate.ts.
     const rawFaces = await zarr.readArray(handles.faces, undefined, opts);
     const faces = validateFaceIndices(
       this.path,
@@ -279,7 +279,7 @@ export class MeshLoader implements MeshDataLoader {
         [{ start: 0, end: nVertices }],
         this.rangeLoader,
         this.zarrStore,
-        `[MeshLoader] ${this.path}`
+        `[MeshWholeNodeLoader] ${this.path}`
       )) as MeshColorArray;
       validateMaterializedLength(this.path, 'colors', colors.length, nVertices * colorComponents);
     }
@@ -307,6 +307,16 @@ export class MeshLoader implements MeshDataLoader {
       vertexCount: nVertices,
       faceCount: nFaces,
       ndim,
+      // Allocated once here, reused by every projection epoch. This object is what
+      // `updateView` hands back for the node's whole life and drops on dispose, so
+      // the buffer gets exactly the node's lifetime without a separate cache — the
+      // Mesh counterpart of the Points accumulator's reusable target buffers (#1245).
+      projection: {
+        position: new Float32Array(nVertices * 3),
+        displayDimsKey: null,
+        mask: new Uint8Array(nVertices),
+        faceScratch: new Uint32Array(nFaces * 3),
+      },
     };
 
     log.success(

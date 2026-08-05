@@ -14,6 +14,7 @@ import {
 import type { DataLoader } from '../../../../../data/data-loader-types';
 import type { LinesDataLoader } from '../../../../../types/lines';
 import type { GSplatsDataLoader } from '../../../../../types/gsplats';
+import type { MeshDataLoader } from '../../../../../types/mesh';
 import type { GeometryKind } from '../../../../../data/data-loader-types';
 import { LOADER_TYPES } from '../../../../../types/format-contract';
 
@@ -326,9 +327,11 @@ describe('LoaderRegistry — kind-keyed surface', () => {
     const points = makeStub<DataLoader>();
     const lines = makeStub<LinesDataLoader>();
     const gsplats = makeStub<GSplatsDataLoader>();
+    const mesh = makeStub<MeshDataLoader>();
     r.register('points', '/p', points);
     r.register('lines', '/l', lines);
     r.register('gsplats', '/g', gsplats);
+    r.register('mesh', '/m', mesh);
     // One loader per drawable kind was registered above, so the expected total is
     // `LOADER_TYPES.length` — not `GEOMETRY_TYPES.length`, which also counts
     // types with no loader to register.
@@ -336,7 +339,7 @@ describe('LoaderRegistry — kind-keyed surface', () => {
 
     r.disposeAll();
 
-    for (const stub of [points, lines, gsplats]) {
+    for (const stub of [points, lines, gsplats, mesh]) {
       expect(stub.dispose).toHaveBeenCalledTimes(1);
     }
     expect(r.totalLoaderCount).toBe(0);

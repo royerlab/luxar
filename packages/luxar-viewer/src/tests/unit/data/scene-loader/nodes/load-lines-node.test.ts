@@ -106,6 +106,8 @@ function makeCtx(overrides: Partial<NodeBuildCtx> = {}): NodeBuildCtx & {
     processPointsData,
     commitPointsGeometry: vi.fn(),
     commitGSplatsGeometry: vi.fn(),
+    processMeshData: vi.fn(),
+    commitMeshGeometry: vi.fn(),
     ...overrides,
   };
   return Object.assign(ctx, {

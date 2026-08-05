@@ -53,8 +53,8 @@ GEOMETRY_TYPES: Final[tuple[GeometryTypeName, ...]] = (
 # --- viewer-drawable geometry types (the subset of GEOMETRY_TYPES with a
 #     loader / descriptor row / tolerance arm; a CAPABILITY, not the
 #     vocabulary — see contract.yaml::loader_types) ---
-LoaderTypeName = Literal["points", "lines", "gsplats"]
-LOADER_TYPES: Final[tuple[LoaderTypeName, ...]] = ("points", "lines", "gsplats")
+LoaderTypeName = Literal["points", "lines", "gsplats", "mesh"]
+LOADER_TYPES: Final[tuple[LoaderTypeName, ...]] = ("points", "lines", "gsplats", "mesh")
 
 # --- specialized-group kinds ---
 NodeKind = Literal["lod", "partition"]

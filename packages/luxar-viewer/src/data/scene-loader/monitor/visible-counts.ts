@@ -23,6 +23,7 @@ import * as THREE from 'three';
 import { isPointsUserData } from '../../../types/points';
 import { isLinesUserData } from '../../../types/lines';
 import { isGSplatsUserData } from '../../../types/gsplats';
+import { isMeshUserData } from '../../../types/mesh';
 import type { SceneLoaderMonitorPort } from '../../scene-loader-monitor-port';
 import { GEOMETRY_TYPES, type GeometryTypeName } from '../../../types/format-contract';
 
@@ -41,18 +42,15 @@ const VISIBLE_COUNT_READERS: Record<GeometryTypeName, (userData: unknown) => num
   points: (ud) => (isPointsUserData(ud) ? (ud.visiblePointCount ?? 0) : undefined),
   lines: (ud) => (isLinesUserData(ud) ? (ud.visibleSegmentCount ?? 0) : undefined),
   gsplats: (ud) => (isGSplatsUserData(ud) ? (ud.visibleSplatCount ?? 0) : undefined),
-  // Mesh has no loader yet (MESH_NODE_SPEC.md §11 phase 3), so no object3D in the
-  // scene carries mesh visible-count userData and this reader can never match.
-  // `undefined` is the honest return — it means "not this type's userData", which
-  // is exactly the state of affairs — and it keeps the walk's first-match-wins
-  // logic unchanged. Replace with a real `isMeshUserData` guard when the loader
-  // lands; the compile error that brought you here is the reminder.
-  mesh: () => undefined,
+  // Triangles, matching the element noun the rest of the mesh path uses — and the
+  // same choice `lines` makes above in counting segments rather than vertices: this
+  // family reports the DRAWN PRIMITIVE per type.
+  mesh: (ud) => (isMeshUserData(ud) ? (ud.visibleTriangleCount ?? 0) : undefined),
 };
 
 /**
- * Traverse `rootGroup`, sum the per-mesh visible-counts userData for all
- * three geometry types symmetrically, and push the totals (plus a
+ * Traverse `rootGroup`, sum the per-object visible-counts userData for all
+ * four geometry types symmetrically, and push the totals (plus a
  * per-path breakdown) to `monitor`. No-op when either argument is null.
  */
 export function updateVisibleCountsInMonitor(

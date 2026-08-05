@@ -203,6 +203,11 @@ function logSceneStats(scene: THREE.Group): void {
   log.info(Modules.LUXAR, `  - Total segments loaded: ${stats.totalSegments.toLocaleString()}`);
   log.info(Modules.LUXAR, `  - GSplats objects: ${stats.gsplatsObjects}`);
   log.info(Modules.LUXAR, `  - Total gsplats loaded: ${stats.totalGSplats.toLocaleString()}`);
+  log.info(Modules.LUXAR, `  - Mesh objects: ${stats.meshObjects}`);
+  log.info(Modules.LUXAR, `  - Total triangles drawn: ${stats.totalTriangles.toLocaleString()}`);
+  // The denominator deliberately EXCLUDES mesh: it counts nodes that could have a
+  // spatial index, and mesh has none by design (MESH_NODE_SPEC.md §7). Including it
+  // would make the ratio read as a missing index rather than an absent capability.
   log.info(
     Modules.LUXAR,
     `  - Using spatial index: ${stats.spatialIndexed}/${stats.pointsObjects + stats.linesObjects + stats.gsplatsObjects}`

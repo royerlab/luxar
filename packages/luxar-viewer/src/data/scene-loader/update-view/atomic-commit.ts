@@ -1,7 +1,7 @@
 /**
  * Atomic commit stage of `updateView`.
  *
- * After Stage 1 (parallel async load + process) finishes, all three
+ * After Stage 1 (parallel async load + process) finishes, all four
  * per-type staged-commit arrays are passed in here. The body runs as
  * a single synchronous block — JS is single-threaded so no
  * requestAnimationFrame can fire during it, which means every mesh
@@ -21,6 +21,7 @@ import type { NodeFactory } from '../../../rendering/node-factory';
 import type { LoadedPointsData } from '../../data-loader-types';
 import type { StagedLinesCommit } from '../process/data-processor-lines';
 import type { StagedGSplatsCommit } from '../process/data-processor-gsplats';
+import type { StagedMeshCommit } from '../process/data-processor-mesh';
 
 export interface AtomicCommitInput<TStaged> {
   staged: TStaged | null;
@@ -44,6 +45,7 @@ export interface AtomicCommitCtx {
   updatePointsGeometry(path: string, data: LoadedPointsData, session?: UpdateSession): void;
   commitLinesGeometry(staged: StagedLinesCommit, session?: UpdateSession): void;
   commitGSplatsGeometry(staged: StagedGSplatsCommit, session?: UpdateSession): void;
+  commitMeshGeometry(staged: StagedMeshCommit, session?: UpdateSession): void;
 }
 
 /**
@@ -56,10 +58,11 @@ export function runAtomicCommit(
   pointsStaged: AtomicCommitInput<{ path: string; data: LoadedPointsData }>[],
   linesStaged: AtomicCommitInput<StagedLinesCommit>[],
   gsplatsStaged: AtomicCommitInput<StagedGSplatsCommit>[],
+  meshStaged: AtomicCommitInput<StagedMeshCommit>[],
   ctx: AtomicCommitCtx
 ): void {
   // Commits run inside each per-node session so the GPU-upload step
-  // ("Update Buffers") shows up under Points/Lines/GSplats in the
+  // ("Update Buffers") shows up under Points/Lines/GSplats/Mesh in the
   // Performance tab. Always end the session afterwards — including
   // the staged === null case (loader failed or marked skipped) so
   // every opened session is closed exactly once.
@@ -74,7 +77,7 @@ export function runAtomicCommit(
   // throwing implementation can't leak the already-opened sessions.
   // Superseded mid-flight: skip all geometry mutations, but the session-end
   // sweep below MUST still run (G5/G6). `if (staged && !aborted)` keeps the
-  // skip all-or-nothing across the three geometry types.
+  // skip all-or-nothing across the four geometry types.
   const aborted = ctx.signal?.aborted ?? false;
 
   // Per-node fault isolation: ONE malformed node's throwing commit must
@@ -120,10 +123,20 @@ export function runAtomicCommit(
         session.end();
       }
     }
+    for (const { staged, session } of meshStaged) {
+      try {
+        if (staged && !aborted) ctx.commitMeshGeometry(staged, session);
+      } catch (err) {
+        commitErrors.push(err);
+      } finally {
+        session.end();
+      }
+    }
   } finally {
     for (const { session } of pointsStaged) session.end();
     for (const { session } of linesStaged) session.end();
     for (const { session } of gsplatsStaged) session.end();
+    for (const { session } of meshStaged) session.end();
   }
 
   // Invalidate cached pick buffer after geometry changes (skip when aborted —
@@ -131,7 +144,13 @@ export function runAtomicCommit(
   // frame). Runs BEFORE the error re-throw: the sibling commits that
   // succeeded did change geometry, so the pick cache must go stale even on
   // a partially-failing pass.
-  if (!aborted && (pointsStaged.length > 0 || linesStaged.length > 0 || gsplatsStaged.length > 0)) {
+  if (
+    !aborted &&
+    (pointsStaged.length > 0 ||
+      linesStaged.length > 0 ||
+      gsplatsStaged.length > 0 ||
+      meshStaged.length > 0)
+  ) {
     ctx.nodeFactory.markPickingDirty();
   }
 
