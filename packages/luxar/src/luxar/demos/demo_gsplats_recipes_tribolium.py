@@ -184,6 +184,7 @@ _GREY = (0.72, 0.74, 0.78)  # flat — a single undifferentiated leaf
 
 
 def _hsv(h: float, s: float, v: float) -> tuple[float, float, float]:
+    """HSV (hue wrapped to [0, 1)) to an RGB float triple."""
     r, g, b = colorsys.hsv_to_rgb(h % 1.0, s, v)
     return (float(r), float(g), float(b))
 
@@ -201,6 +202,7 @@ def _level_shades(hue: float, n_levels: int) -> list[tuple[float, float, float]]
 
 
 def _color_array(rgb: tuple[float, float, float], n: int) -> np.ndarray:
+    """Tile one ``rgb`` into an ``(n, 3)`` float32 per-splat colour array."""
     return np.tile(np.asarray(rgb, dtype=np.float32), (n, 1))
 
 
@@ -252,6 +254,7 @@ def _recolor_leaf_by_shades(leaf: GSplatLeaf, hue: float) -> GSplatLeaf:
 
 
 def _arc_mid(arc: tuple[float, float]) -> float:
+    """Midpoint hue of a ``[lo, hi)`` hue arc."""
     return 0.5 * (arc[0] + arc[1])
 
 
@@ -324,6 +327,7 @@ def paint_recipe(result: GSplatData | GSplatNode) -> GSplatData | GSplatNode:
 
 
 def _params() -> RecipeParams:
+    """Shared ``RecipeParams`` (from the module knobs) for every recipe build."""
     return RecipeParams(
         n_lods=N_LODS,
         additive_method=ADDITIVE_METHOD,  # type: ignore[arg-type]
@@ -588,6 +592,7 @@ EMBRYO_EXTENT: float = 1.0
 
 
 def main() -> None:
+    """Load the base fit, build all six recipes, and compose/serve the gallery."""
     aprint("=" * 70)
     aprint("GSplats Demo: lod --recipe gallery — Tribolium castaneum Embryo")
     aprint("=" * 70)

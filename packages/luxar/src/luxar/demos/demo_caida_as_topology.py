@@ -849,6 +849,12 @@ def build_scene(
     tier1: np.ndarray,
     max_edges: int,
 ) -> tuple[int, int, int, int]:
+    """Build and write the Points + Lines scene to ``output_path``.
+
+    Returns the four integer counts ``(n_nodes, n_edges_kept, n_comms,
+    n_tier1)``, where ``n_edges_kept`` is the edge count after the
+    ``max_edges`` cap.
+    """
     (
         node_positions,
         node_colors,
@@ -1010,6 +1016,7 @@ def build_scene(
 
 
 def _int_arg(argv: list[str], flag: str, default: int) -> int:
+    """Parse ``--flag N`` / ``--flag=N`` from argv as an int, else ``default``."""
     for i, arg in enumerate(argv):
         if arg == flag and i + 1 < len(argv):
             return int(argv[i + 1])
@@ -1019,6 +1026,7 @@ def _int_arg(argv: list[str], flag: str, default: int) -> int:
 
 
 def _path_arg(argv: list[str], flag: str) -> Path | None:
+    """Parse ``--flag PATH`` / ``--flag=PATH`` from argv, else ``None``."""
     for i, arg in enumerate(argv):
         if arg == flag and i + 1 < len(argv):
             return Path(argv[i + 1]).expanduser()
@@ -1028,11 +1036,13 @@ def _path_arg(argv: list[str], flag: str) -> Path | None:
 
 
 def _node_degrees(nodes: list[str], edges: pd.DataFrame) -> np.ndarray:
+    """Undirected degree per node (aligned with ``nodes``, missing → 0)."""
     counts = pd.concat([edges["asn_a"], edges["asn_b"]]).value_counts()
     return counts.reindex(nodes, fill_value=0).to_numpy(dtype=np.int32)
 
 
 def main() -> None:
+    """Fetch CAIDA data, compute the layout, and build/serve the scene."""
     argv = sys.argv[1:]
     max_edges = _int_arg(argv, "--max-edges", DEFAULT_MAX_EDGES)
     cache_dir = _path_arg(argv, "--cache-dir") or CACHE_DIR

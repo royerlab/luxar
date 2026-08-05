@@ -466,6 +466,7 @@ def _compute_esm3_embeddings(
     unreported = [p for p in quarantined if p not in already_reported_quarantine]
 
     def _quarantine_note(action: str) -> str:
+        """Format a quarantine notice for the not-yet-reported rejected copies."""
         return format_quarantine_notice(unreported, indent="  ", action=action)
 
     # Past the cache check, so the compute path is genuinely being taken: this
@@ -848,6 +849,7 @@ def generate_esm3_landscape(
 
             # Per-view color legends (each visible only on its coloring slot).
             def _legend_html(heading: str, items: list) -> str:
+                """Build an HTML color-swatch legend from (name, rgb) items."""
                 html = (
                     '<div style="font-size:1.2vh;line-height:1.5;'
                     'background:rgba(0,0,0,0.5);padding:0.5vh;border-radius:3px">'
@@ -910,6 +912,7 @@ def generate_esm3_landscape(
 
 
 def main() -> None:
+    """Parse args, report the cache state, and build/serve the landscape scene."""
     aprint("=" * 70)
     aprint("ESM-3 PROTEIN LANDSCAPE — Swiss-Prot Embeddings")
     aprint("=" * 70)

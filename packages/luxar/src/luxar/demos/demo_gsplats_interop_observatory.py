@@ -92,6 +92,7 @@ Arbol.max_depth = 5
 
 
 def _scene_arg(default: str = "rubin") -> str:
+    """Parse ``--scene NAME`` / ``--scene=NAME`` from argv, else ``default``."""
     for i, a in enumerate(sys.argv):
         if a == "--scene" and i + 1 < len(sys.argv):
             return sys.argv[i + 1]
@@ -134,6 +135,7 @@ def build_scene(scene_key: str = "rubin") -> Path:
 
 
 def main() -> None:
+    """Build (or serve-only) the selected observatory splat scene."""
     aprint("=" * 70)
     aprint("GSplats Interop Demo: Astronomical observatories (SuperSplat PLY)")
     aprint("=" * 70)

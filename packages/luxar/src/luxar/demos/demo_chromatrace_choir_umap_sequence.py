@@ -90,11 +90,13 @@ UNANNOTATED_SLOT_LABEL = "(unannotated)"
 
 
 def _hex_to_rgb_float(hex_str: str) -> tuple[float, float, float]:
+    """Convert a ``#rrggbb`` hex string to an RGB float triple in [0, 1]."""
     s = hex_str.lstrip("#")
     return (int(s[0:2], 16) / 255.0, int(s[2:4], 16) / 255.0, int(s[4:6], 16) / 255.0)
 
 
 def _find_data_files(explicit: Path | None) -> tuple[Path, Path]:
+    """Locate the parquet + colormap bundle, extracting a zip if necessary."""
     candidates: list[Path] = []
     if explicit is not None:
         candidates.append(explicit)
@@ -133,6 +135,7 @@ def _find_data_files(explicit: Path | None) -> tuple[Path, Path]:
 
 
 def _extract_zip(zip_path: Path) -> tuple[Path, Path]:
+    """Extract the parquet + colormap members from a bundle zip into the cache."""
     parquet = CACHE_DIR / "data" / PARQUET_NAME
     colormap = CACHE_DIR / "data" / COLORMAP_NAME
     if parquet.exists() and colormap.exists():
@@ -154,6 +157,9 @@ def _extract_zip(zip_path: Path) -> tuple[Path, Path]:
 def load_chromatrace_data(
     explicit: Path | None = None,
 ) -> tuple[np.ndarray, dict, dict, dict, list[dict]]:
+    """Load the CHOIR bundle, returning ``(coords, attributes, category_maps,
+    term_colors, groups)``: centered UMAP coords, per-cell categorical codes,
+    code→name category maps, the term→hex-color palette, and the group list."""
     parquet_path, colormap_path = _find_data_files(explicit)
 
     with asection("Loading Chromatrace CHOIR 3D UMAP"):
@@ -606,6 +612,7 @@ def build_sequence_scene(
 
 
 def main() -> None:
+    """Load the CHOIR data, build the sequence scene, and optionally serve it."""
     aprint("=" * 70)
     aprint("CHROMATRACE 3D UMAP — Sequential Cell-Type Walkthrough")
     aprint("=" * 70)
