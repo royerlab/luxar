@@ -351,6 +351,10 @@ export class LayerControls {
         // the panel claim a mode the mesh shader does not implement — see
         // `resolveLayerBlendingMode`.
         l.blendingMode = resolveLayerBlendingMode(l.type, mode);
+        // The user explicitly picked a mode ⇒ this layer now OWNS one, so
+        // `liveLayerAttrs` emits it as a composition setter (matters for a GROUP
+        // layer, which otherwise owns no mode and would drop the pick).
+        l.blendingModeSet = true;
       });
       for (const sel of this.deps.state.getSelected()) {
         this.deps.apply.applyBlendingMode(sel);
@@ -642,7 +646,11 @@ export class LayerControls {
   private syncAbsorptionVisibility(): void {
     if (!this.absorptionSlider) return;
     const primary = this.deps.state.getPrimarySelected();
-    const show = !!primary && primary.blendingMode === 'volumetric';
+    // Gate on the MESH-RESOLVED mode: a mesh resolves `volumetric` → `opaque`
+    // (it has no `updateAbsorption`), so absorption stays correctly hidden for a
+    // mesh; a real volumetric gsplat/points/lines still shows it.
+    const show =
+      !!primary && resolveLayerBlendingMode(primary.type, primary.blendingMode) === 'volumetric';
     this.absorptionSlider.setVisible(show);
   }
 
@@ -656,6 +664,8 @@ export class LayerControls {
    *
    * `alphaCutoff` carries the mode gate ON TOP: the cutout only exists in `opaque`, so
    * in any other mesh mode the threshold is read by no branch of the fragment shader.
+   * The gate is on the MESH-RESOLVED mode, so a mesh in a volumetric-inherited/selected
+   * mode (which a mesh resolves back to `opaque`) still shows its active cutout slider.
    *
    * A GROUP layer over meshes deliberately does NOT get these. Unlike opacity and
    * gamma, they do not compose along the ancestry (a shade floor is not a
@@ -667,7 +677,9 @@ export class LayerControls {
     const isMesh = primary?.type === 'mesh';
     this.ambientSlider?.setVisible(isMesh);
     this.shadeExponentSlider?.setVisible(isMesh);
-    this.alphaCutoffSlider?.setVisible(isMesh && primary.blendingMode === 'opaque');
+    this.alphaCutoffSlider?.setVisible(
+      isMesh && resolveLayerBlendingMode(primary.type, primary.blendingMode) === 'opaque'
+    );
   }
 
   /**

@@ -99,6 +99,12 @@ export function liveLayerAttrs(layer: LayerInfo): ComposableAttrs {
     gamma: clampGamma(layer.gamma),
     intensity,
     offset,
-    blending_mode: layer.blendingMode as string,
+    // blending_mode has NO identity value (unlike the multiplicative attrs above),
+    // so it is emitted as a composition setter ONLY when this layer OWNS a mode
+    // (`blendingModeSet`). Otherwise a plain group layer would inject its
+    // displayed-but-inherited mode into the ancestry chain and override a
+    // contained mesh's own `opaque` type-default (the setter-valued-vs-identity
+    // doctrine).
+    ...(layer.blendingModeSet ? { blending_mode: layer.blendingMode as string } : {}),
   };
 }

@@ -241,6 +241,14 @@ export interface LayerInfo {
   gamma: number;
   /** Blending mode */
   blendingMode: BlendingMode;
+  /**
+   * Whether this layer OWNS a blend mode (vs. merely displaying an inherited/
+   * defaulted one). A geometry leaf always owns its resolved mode; a plain group
+   * owns one only if it authored `blending_mode` on disk or the user picked one.
+   * `liveLayerAttrs` emits `blending_mode` as a composition setter ONLY when this
+   * is true, so a plain group over a mesh never overrides the mesh's own default.
+   */
+  blendingModeSet: boolean;
   /** Whether this layer is selected in the list */
   selected: boolean;
   /** Active colormap name (undefined = direct RGB colors) */
@@ -540,6 +548,13 @@ export class LayerStateManager {
             layerType,
             getEffectiveAttrs(root, node.path, defaultBlendingModeFor(node.type)).blending_mode
           ),
+          // A real geometry leaf always owns its resolved mode; a plain group owns
+          // one only if it authored `blending_mode` on disk. Uses `node.type` (NOT
+          // `layerType`) — a composite kind=lod/partition group's display type is a
+          // geometry name (e.g. `gsplats`), but its node type is `group`, so it emits
+          // a setter only if it authored one (correct: its descendants' own
+          // type-default matches). Consumed by `liveLayerAttrs`.
+          blendingModeSet: isGeometryType(node.type) || node.attrs.blending_mode != null,
           selected: false,
           colormap,
           supportsColormap,
@@ -729,6 +744,9 @@ export class LayerStateManager {
     const layer = this.layers.get(path);
     if (!layer) return;
     layer.blendingMode = mode;
+    // The user explicitly picked a mode ⇒ this layer now OWNS one, so
+    // `liveLayerAttrs` may emit it as a composition setter (even a group).
+    layer.blendingModeSet = true;
     this.notify();
   }
 
