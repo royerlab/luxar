@@ -19,6 +19,12 @@ function sanitizeKeySegment(segment: string): string {
 // subsequent read/write. Object.freeze makes such mutations throw in
 // strict mode and no-op in sloppy mode, locking the contract at
 // module load.
+/**
+ * Canonical `localStorage` keys the viewer reads or writes, frozen so embedders
+ * cannot mutate the namespacing contract. Static entries are `luxar.*` string
+ * literals; `rendering(sceneId)` builds a per-scene key with the scene id
+ * sanitized for safe use inside a key segment.
+ */
 export const StorageKeys = Object.freeze({
   /** Active theme id (`'dark' | 'light' | 'frosted-glass' | 'liquid-glass'`). */
   theme: 'luxar.theme',
