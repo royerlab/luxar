@@ -32,6 +32,7 @@ class Overlay:
     attrs: Dict[str, Any] = field(default_factory=dict)
 
     def __repr__(self) -> str:
+        """Compact ``<Overlay ...>`` summary: name, type, 2-dp screen position."""
         return (
             f"<Overlay '{self.name}' type={self.overlay_type} "
             f"pos=({self.position[0]:.2f}, {self.position[1]:.2f})>"
