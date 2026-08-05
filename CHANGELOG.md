@@ -257,6 +257,27 @@ vertices / 1.07M triangles across the two surfaces.
 `GEOMETRY_VALUES` in the demo registry gained `mesh` — a vocabulary that had never
 needed a fourth entry.
 
+#### Docs catch up with mesh
+
+Two viewer package READMEs had omitted mesh entirely. `rendering/README.md` gains a
+Mesh Material section — the odd one out on purpose (a plain indexed `BufferGeometry`
+rather than an instanced quad, not camera-aware, `opaque` by default) — naming the two
+hazards that fail on exactly one backend and that the parity harness structurally cannot
+see, since it compiles TSL *to* GLSL: the `dFdy`/`dpdy` sign, and
+`transformNormalToView`'s internal normalize turning a legal zero-length normal into a
+whole-triangle NaN. `data/README.md` gains the whole-node-loader section: why mesh does
+NOT stream (a surface is connected, so a chunk of triangles is not independently
+meaningful), why its admission gate has to run before any chunk is fetched, and why its
+nD tolerance arm cannot be inherited from Lines.
+
+Also corrected the stale "picking and the Layers-panel appearance controls land in later
+phases" line in `CLAUDE.md`, and the "three geometry types" scene-graph and architecture
+summaries there.
+
+Two `README.md` claims that still read "all three geometry types" were checked and
+deliberately LEFT: one is about volumetric blending physics and the other about the
+chunk-bounds spatial query, and mesh participates in neither by design.
+
 #### Demos — the biodiversity globe is `opaque`, so it stops painting over its own data (#1227)
 
 The globe was `volumetric` with a heavy absorption, which read well in isolation

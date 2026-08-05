@@ -277,9 +277,59 @@ Because `renderOrder` is compared **globally** across all transparent meshes, th
 
 Both run independent of the within-mesh re-sort hysteresis (cheap). The global scale orders all sorted-mode (effective `needsDepthSort`) meshes against each other — gsplats, points, and lines, mixed freely (multiple partitions, partition + leaf, multiple leaves); depth interleaving with geometry OUTSIDE the sorted set (commutative modes) stays out of scope (those keep `renderOrder` 0 and tie with the farthest sorted mesh). Even with a correct part order, elements whose footprints spill across a tile boundary can still interleave — only per-element / single-mesh sorting is exact there. Additive/luminous/max are commutative so their order is irrelevant.
 
-### 5. Material Manager
+### 5. Mesh Material
 
-Singleton manager for material creation across Points, Lines, and GSplats (ALL per node — each material binds its node's element texture; the historical Lines LRU died with the lines texture-storage migration). Runtime blending changes use `blending-state.ts` so UI updates apply the same complete THREE.js state as material creation.
+The odd one out, and deliberately so: **mesh is the only geometry type that shades.**
+The other three are soft, emissive, per-element sprites whose fragment stage computes a
+falloff and emits colour, with no notion of a surface orientation. A triangle has one.
+See `materials/mesh/README.md` and `docs/specs/MESH_NODE_SPEC.md` §6.2.
+
+**Structurally different from the three above:**
+
+- **A plain indexed `BufferGeometry`**, not an instanced quad — so there is no element
+  texture, no `texelFetch` prologue, no `aSortedIndex` indirection and no buffer pool.
+  Per-vertex data arrives in ordinary vertex attributes.
+- **Not camera-aware.** A mesh has no screen-space footprint to size, so there is no
+  resolution/FOV/near-cull uniform and no per-frame camera broadcast — the material
+  manager tracks it in `staticMaterials` (disposal only).
+- **`opaque` by default**, unlike the siblings' `additive`: the only mode
+  unconditionally correct without per-triangle depth sorting (§9 defers that), and what
+  a surface should look like. The default is per geometry type
+  (`DEFAULT_BLENDING_MODES`) and applied at COMPOSE time — the one place that still
+  knows whether the scene-graph ancestry set a mode at all.
+
+**Key features:**
+
+- **View-anchored headlight**, no scene light and no scene-graph change:
+  `shade = mix(uAmbient, 1, pow(saturate(dot(N, V) · 0.5 + 0.5), uShadeExponent))` with
+  `V` the fixed view axis `(0, 0, 1)`, so `dot(N, V)` reduces to `N.z`. `uAmbient = 1`
+  collapses the term and reproduces the emissive look of the other three.
+- **Two normal sources, chosen at COMPILE time** (`LUXAR_MESH_FLAT_NORMAL`): the stored
+  `normal` attribute when `shading == "smooth"` AND `normal_dims` equals the displayed
+  axes, else screen-space derivatives of the view position. A compile-time variant
+  rather than a runtime branch because a declared-but-unbound attribute reads
+  `(0, 0, 0, 1)` — there is no runtime value meaning "no normals".
+- **`opaque` is a hard alpha CUTOUT**, so node `opacity` sweeps a threshold rather than
+  dimming; a smooth fade means selecting `normal`.
+- **Three per-node appearance knobs** — `ambient`, `shade_exponent`, `alpha_cutoff` —
+  exposed as the mesh-only Layers-panel sliders.
+
+**Two hazards worth knowing before touching these shaders**, both of which fail on
+exactly one backend and neither of which the parity harness can see (it compiles TSL
+_to_ GLSL):
+
+- `cross(dFdx(P), dFdy(P))` carries the sign of the fragment-space y axis, and GLSL's
+  `dFdy` is bottom-up where WGSL's `dpdy` is top-down. The derivative normal is
+  therefore **forced** viewer-facing (`z >= 0`) rather than assumed to be.
+- Three's `transformNormalToView` normalizes internally, and the writer accepts
+  zero-length normals with a warning (degenerate triangles legitimately produce them) —
+  `normalize(vec3(0))` is NaN, which then interpolates across every triangle touching
+  that vertex. The transform is spelled out as
+  `viewMatrix · (modelNormalMatrix · n)` instead.
+
+### 6. Material Manager
+
+Singleton manager for material creation across Points, Lines, GSplats and Mesh (ALL per node — each instanced material binds its node's element texture; the historical Lines LRU died with the lines texture-storage migration). Runtime blending changes use `blending-state.ts` so UI updates apply the same complete THREE.js state as material creation.
 
 ```typescript
 // Get the per-node point material
@@ -331,7 +381,7 @@ materialManager.updateCameraParams(newFov, newResolution);
 - Disposal is automatic - no manual material cleanup needed
 - Thread-safe caching prevents duplicate material creation
 
-### 6. GPU Buffer Pool
+### 7. GPU Buffer Pool
 
 The `GPUBufferPool` manages geometry reuse for Points, Lines, and GSplats, eliminating per-frame GPU allocations.
 
@@ -342,7 +392,7 @@ The `GPUBufferPool` manages geometry reuse for Points, Lines, and GSplats, elimi
 - Count-based and byte-budget eviction (`gpuPoolMaxBytes`, `gpuPoolEvictBatchSize`)
 - Multi-type support: Points, Lines, and GSplats (all three carry a fixed scalar/alpha texel slot; lines stamp presence via `userData.hasScalars`)
 
-### 7. Adaptive DPR Manager
+### 8. Adaptive DPR Manager
 
 The `AdaptiveDPRManager` dynamically adjusts device pixel ratio based on real-time FPS, trading resolution for frame rate when needed. It is a facade over pure, timestamp-driven modules in `adaptive-dpr/` (FPS tracker, refresh-rate estimator, hysteresis tracker, probe controller, bounds ledger — see that folder's README).
 
@@ -367,15 +417,15 @@ The `AdaptiveDPRManager` dynamically adjusts device pixel ratio based on real-ti
 - Frames are not recorded while the rendering context is lost. Known limitation: under `?renderer=webgpu`, device loss is handled via a pipeline latch (unrecoverable this release), and WebGPU async pipeline-compile jank inside probe windows is not specially detected — the probe backoff bounds the damage
 - `?dpr=<value>` pins a fixed pixel ratio and locks adaptation off for the session (deterministic E2E/visual runs)
 
-### 8. Colormap Data
+### 9. Colormap Data
 
 `colormap-data.ts` contains the auto-generated lookup tables (LUTs) for all built-in colormaps (e.g., viridis, magma, turbo). Each LUT is a flat Uint8 array of RGBA values.
 
-### 9. Colormap Textures
+### 10. Colormap Textures
 
 `colormap-textures.ts` manages creation and caching of `THREE.DataTexture` instances from built-in and custom colormap LUTs. Built-in textures live for the app lifetime; custom LUT textures are bounded and can be disposed on dataset unload.
 
-### 10. Global EOG (Exposure-Offset-Gamma)
+### 11. Global EOG (Exposure-Offset-Gamma)
 
 Applied inside the mega-shader fragment before the tone-mapping operator, in a single fullscreen pass:
 

@@ -2,7 +2,7 @@
 
 Guidance for Claude Code when working with this repository.
 
-**Luxar** is a high-performance system for compiling and visualizing arbitrary-sized nD scientific scenes. It renders four first-class geometry types — **Points**, **Lines**, **Gaussian Splats**, and **Mesh** (triangle surfaces). Mesh is the newest and the only *shaded* one — the other three are purely emissive — via a light-free view-anchored headlight; picking and the Layers-panel appearance controls land in later phases (see `docs/specs/MESH_NODE_SPEC.md` §11). The contract still names the writable and drawable sets separately — `geometry_types` and `loader_types` — because a type becomes authorable before it becomes drawable; they simply agree on all four today.
+**Luxar** is a high-performance system for compiling and visualizing arbitrary-sized nD scientific scenes. It renders four first-class geometry types — **Points**, **Lines**, **Gaussian Splats**, and **Mesh** (triangle surfaces). Mesh is the newest and the only *shaded* one — the other three are purely emissive — via a light-free view-anchored headlight, and it is now feature-complete at the UI level: picking (at VERTEX granularity, keyed on `gl_VertexID` rather than an element-texture texel), the Layers-panel appearance controls, monitor/stats/debug counts. What remains is the docs pass and real-WebGPU verification (see `docs/specs/MESH_NODE_SPEC.md` §11). The contract still names the writable and drawable sets separately — `geometry_types` and `loader_types` — because a type becomes authorable before it becomes drawable; they simply agree on all four today.
 
 ## Quick Reference
 
@@ -1144,10 +1144,10 @@ Python Data -> Luxar Core -> Zarr Archive -> Luxar Viewer -> WebGL -> Display
 ```
 
 ### Scene Graph
-- Scene (root) contains Groups, Points, Lines, and GSplats
+- Scene (root) contains Groups, Points, Lines, GSplats, and Mesh
 - Groups can nest (hierarchical)
 - Transforms compose hierarchically (parent -> child)
-- Three geometry types: Points (soft-edged spheres), Lines (width-tapered curves), GSplats (oriented Gaussians)
+- Four geometry types: Points (soft-edged spheres), Lines (width-tapered curves), GSplats (oriented Gaussians), Mesh (shaded triangle surfaces)
 
 ### Performance Targets
 - 100K-10M elements for smooth interaction
