@@ -124,6 +124,17 @@ export class MeshWholeNodeLoader implements MeshDataLoader {
    * from a callback rather than a parameter, so the colour path picks this up
    * without any signature change. Single-flight (`inFlight`) makes one field
    * sufficient.
+   *
+   * NAMED DIFFERENTLY from its three siblings on purpose. Points, Lines and GSplats
+   * each hold `_activeSignal` and wire the identical
+   * `setSignalSource(() => this._activeSignal)` one line into their constructors, so
+   * this looks like a symmetry break — it is a lifetime difference. Their signal is
+   * per-UPDATE: set at the top of every `updateView` and cleared in its `finally`,
+   * live whenever the loader is doing anything. Mesh is whole-node resident, so it
+   * fetches ONCE and then serves every later `updateView` from `this.data` without
+   * any I/O; this field is live only for that single fetch and is `null` during the
+   * scrubs that make up almost all of a session. Calling it "active" would claim the
+   * opposite of what holds.
    */
   private fetchSignal: AbortSignal | null = null;
 
