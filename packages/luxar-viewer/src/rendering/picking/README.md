@@ -41,22 +41,33 @@ picking/
 │   ├── pick.tsl.ts
 │   └── shaders.ts
 │
+├── mesh/                        # idem for meshes, plus two files no sibling needs:
+│   ├── material.ts              #   NOT camera-aware; `side` synced from the visual
+│   ├── material-tsl.ts          #   material; element id from gl_VertexID
+│   ├── pick.tsl.ts
+│   ├── shaders.ts
+│   ├── pick-mode.ts             #   MeshPickAwareMaterial + the mode → (cutout, depth) map
+│   └── provoking-vertex.ts      #   aligns WebGL's flat provoking vertex with WebGPU's
+│
 ├── PICKING_DESIGN.md            # Backend readback strategy + 1-frame-latency rationale
-└── index.ts                     # Public barrel — re-exports the three picking
+└── index.ts                     # Public barrel — re-exports the four picking
                                  #   materials and PickingSystem + PickResult
 ```
 
 ## Per-geometry picking parity
 
-Each geometry has one GLSL wrapper and one TSL wrapper, both implementing the shared `CameraAwareMaterial` contract from `../materials/_shared/camera-aware-material.ts`. The TSL wrapper owns the `UniformNode`s and exposes them through `proxyIUniform` so `material.uniforms.uX.value = …` writes land directly on the node — symmetric with the visual `PointTSLMaterial` / `LineTSLMaterial` / `GSplatTSLMaterial` plumbing.
+Each geometry has one GLSL wrapper and one TSL wrapper. The first three implement the shared `CameraAwareMaterial` contract from `../materials/_shared/camera-aware-material.ts`; **mesh deliberately does not** — it has no screen-space footprint to size, so there is nothing for a camera broadcast to update (`material-manager.ts` routes it to `staticMaterials` instead, exactly as it does the visual mesh material). The TSL wrapper owns the `UniformNode`s and exposes them through `proxyIUniform` so `material.uniforms.uX.value = …` writes land directly on the node — symmetric with the visual `PointTSLMaterial` / `LineTSLMaterial` / `GSplatTSLMaterial` plumbing.
 
 | Geometry | GLSL wrapper            | TSL wrapper                | TSL factory          | Pick footprint vs visual                                    |
 | -------- | ----------------------- | -------------------------- | -------------------- | ----------------------------------------------------------- |
 | Points   | `PointPickingMaterial`  | `PointPickingTSLMaterial`  | `point/pick.tsl.ts`  | **80% radius** (biased toward the bright core)              |
 | Lines    | `LinePickingMaterial`   | `LinePickingTSLMaterial`   | `line/pick.tsl.ts`   | **Full width** (thin lines, super-Gaussian profile)         |
 | GSplats  | `GSplatPickingMaterial` | `GSplatPickingTSLMaterial` | `gsplat/pick.tsl.ts` | **1.5σ** truncation (vs the visual default 2.75σ), max-proj |
+| Mesh     | `MeshPickingMaterial`   | `MeshPickingTSLMaterial`   | `mesh/pick.tsl.ts`   | **Identical** — the same triangles, the same alpha cutout   |
 
-All three fragment shaders write `vec4(vNodeId, vElementId.x, brightness, vElementId.y)` — where `vNodeId` is the `uNodeId` uniform and `vElementId` is the ordering index split into two 16-bit halves by `luxarElementIdParts()` (low in `.x`, high in `.y`), both carried as `flat` varyings — and set `gl_FragDepth = 1.0 - clamp(brightness, 0, 1)` — brightness-as-depth, so the brightest overlapping fragment wins the depth test for hover-through-translucent stacks. The split exists because float32 has a 24-bit mantissa while a node's capacity reaches 2^25 on a 32768-texel device, so one channel could not represent large indices exactly; both halves are <= 65535 and the decoder recombines them. Vertex shaders mirror visual-side sanitization (`sanitizePositive` / `sanitizeNonNegative`) and near-plane culling so the pick footprint cannot diverge from the visible footprint.
+All four fragment shaders write `vec4(vNodeId, vElementId.x, brightness, vElementId.y)` — where `vNodeId` is the `uNodeId` uniform and `vElementId` is the ordering index split into two 16-bit halves by `luxarElementIdParts()` (low in `.x`, high in `.y`), both carried as `flat` varyings — and set `gl_FragDepth = 1.0 - clamp(brightness, 0, 1)` — brightness-as-depth, so the brightest overlapping fragment wins the depth test for hover-through-translucent stacks. The split exists because float32 has a 24-bit mantissa while a node's capacity reaches 2^25 on a 32768-texel device, so one channel could not represent large indices exactly; both halves are <= 65535 and the decoder recombines them. Vertex shaders mirror visual-side sanitization (`sanitizePositive` / `sanitizeNonNegative`) and near-plane culling so the pick footprint cannot diverge from the visible footprint.
+
+**Mesh diverges on three of those points, and each is documented where it happens** (`mesh/README.md`, spec §6.5): its `vElementId` is a per-VERTEX ordinal from `gl_VertexID` rather than an ordering index (there is no depth sort to indirect through, and a face ordinal would be renumbered on every slice change), it writes REAL projected depth under the `opaque`/`normal` surface modes instead of brightness-as-depth, and in `opaque` it applies the visual shader's alpha cutout so a hole you can see through is neither pickable nor depth-occluding. The 16-bit split itself is shared: `luxarElementIdParts()` is now a one-line wrapper over `luxarElementIdSplit(uint)`, which mesh calls directly.
 
 **Surface-mode exception (gsplats).** Brightness-as-depth is right for the commutative blending modes (additive/max/luminous), but under the depth-ordered surface modes — depth-sorted alpha-over (`normal`) and depth-written `opaque` — the user sees an occluding surface: brightest-wins could pick a brighter splat _behind_ that surface. The gsplat pick shaders therefore carry a `uSurfaceDepth` uniform: when 1, the fragment writes the real projected depth (`gl_FragCoord.z` / the TSL `depth` builtin) so the **front-most** splat wins. `PickingSystem.renderPickBuffer()` syncs the flag per node from the main material's `userData.blendingMode` via `setSurfacePickDepth(isNormalMode(mode) || isOpaqueMode(mode))` — only the gsplat pick wrappers implement the method; points/lines are unaffected.
 
@@ -93,14 +104,14 @@ WebGPU device loss is currently treated as unrecoverable — see `scene-manager.
 ## Subpackages
 
 - [`picking-system/`](./picking-system/README.md) — Pure helpers split from the orchestrator: `registration.ts`, `ray-aabb.ts`, `pick-render.ts` (vote), `settle-loop.ts` (pure decision), `settle-scheduler.ts` (rAF lifecycle), `lens-distortion.ts`. Each is independently unit-testable without a renderer.
-- [`point/`](./point/README.md), [`line/`](./line/README.md), [`gsplat/`](./gsplat/README.md) — Per-geometry picking sources. Each folder ships a four-file trio: `material.ts` (GLSL3), `material-tsl.ts` (WebGPU), `pick.tsl.ts` (TSL factory), `shaders.ts` (GLSL3 source + `ShaderSource`).
+- [`point/`](./point/README.md), [`line/`](./line/README.md), [`gsplat/`](./gsplat/README.md), [`mesh/`](./mesh/README.md) — Per-geometry picking sources. Each folder ships the same four files: `material.ts` (GLSL3), `material-tsl.ts` (WebGPU), `pick.tsl.ts` (TSL factory), `shaders.ts` (GLSL3 source + `ShaderSource`). `mesh/` adds two: `pick-mode.ts` and `provoking-vertex.ts`.
 
 ## See Also
 
 - `../README.md` — Rendering package overview (picking sits alongside the visual material stacks in the larger pipeline)
 - `../materials/_shared/camera-aware-material.ts` — Shared `CameraAwareMaterial` interface that all six picking materials implement
 - `../materials/_shared/shader-source.ts` — `ShaderSource` shape used by each `<geometry>/shaders.ts` to ship a GLSL+TSL pair
-- `../materials/_shared/glsl-lib.ts` — `GLSL_SANITIZE_FUNCTIONS` used in all three pick vertex shaders for parity with their visual counterparts
+- `../materials/_shared/glsl-lib.ts` — `GLSL_SANITIZE_FUNCTIONS` used in all four pick vertex shaders for parity with their visual counterparts, and `GLSL_ELEMENT_ID_SPLIT`, the single source of the 16-bit id split (mesh injects it alone; the other three get it inside `GLSL_SORTED_INDEX`)
 - `../post-processing/hdr/pixel-utils.ts` — `readPixelsCompactAsync` (unified WebGL2/WebGPU readback)
 - `../post-processing/mega/shader.glsl.ts` — GLSL `applyDistortion` that `picking-system/lens-distortion.ts` must stay byte-for-byte equivalent to
 - `../../tests/e2e/harnesses/tsl-harness.ts` — Imports `POINT_PICK_SOURCE` / `LINE_PICK_SOURCE` / `GSPLAT_PICK_SOURCE` directly from each `<geometry>/shaders.ts` to drive the GLSL/TSL parity tests

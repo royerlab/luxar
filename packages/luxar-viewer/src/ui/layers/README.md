@@ -4,7 +4,7 @@ Napari-inspired per-layer control panel for Luxar scenes.
 
 ## Overview
 
-The Layers panel exposes scene graph nodes marked with `layer=True` (set in the Python API) as controllable layers in the viewer. Data nodes (`points`, `lines`, `gsplats`) and container `group` nodes may both be exposed as layers; for groups, controls apply to every data descendant. Specialized groups (`kind: 'lod'`, `kind: 'partition'`) appear under their resolved `display_type` rather than as `group`, and carry an extra badge (and, for LOD groups, an inline level selector). Each layer provides:
+The Layers panel exposes scene graph nodes marked with `layer=True` (set in the Python API) as controllable layers in the viewer. Data nodes (`points`, `lines`, `gsplats`, `mesh`) and container `group` nodes may both be exposed as layers; for groups, controls apply to every data descendant. Specialized groups (`kind: 'lod'`, `kind: 'partition'`) appear under their resolved `display_type` rather than as `group`, and carry an extra badge (and, for LOD groups, an inline level selector). Each layer provides:
 
 - **Visibility toggle** (eye icon) — initial state taken from the node's `visible` attr (default `true`)
 - **Display range** [min, max] — maps to shader intensity/offset uniforms
@@ -12,8 +12,14 @@ The Layers panel exposes scene graph nodes marked with `layer=True` (set in the 
 - **Opacity**
 - **Blending mode** (additive, volumetric, normal, max, opaque, luminous)
 - **Absorption** (κ) — only shown when the layer's effective blending mode is `volumetric`; all three geometry types implement the emission–absorption math, and κ = 0 is exactly the additive limit. Since the 2026-08-02 ray-mass unification τ = κ · rayMass with rayMass the same peak-alpha-normalised quantity the additive branch emits, so κ is dimensionless and comparable across points, lines, gsplats and scene scales — one fixed **logarithmic** track (nominally 0.001–10) serves every layer; the former per-layer geometry-derived bounds are gone. Both ends still move (within hard clamps) to keep an AUTHORED κ outside the nominal span on the track, so the readout always shows a value the thumb can express. Position 0 is a dedicated stop for exactly κ = 0 (the geometric span starts one step in, so the floor round-trips). On a log track the component mirrors the readout into `aria-valuetext`, since the input's native value is a position. See `absorption-range.ts`.
-- **Colormap** (for gsplats with scalars/amplitudes, scalar-backed points/lines, and groups that fan out to such descendants)
+- **Ambient** / **Shade falloff** — **mesh only**, and the first controls here gated on the geometry TYPE rather than on the blending mode. They parameterize the §6.2 headlight `shade = mix(ambient, 1, pow(saturate(N·V·0.5+0.5), shadeExponent))`: `ambient` is the shade floor a face-away fragment keeps (what makes a silhouette readable rather than black; `1.0` collapses the term and reproduces the other three types' emissive look), and `shadeExponent` shapes the falloff between the head-on and edge-on extremes. Hidden for points/lines/gsplats because mesh is the only geometry type that SHADES — the others are emissive per-element sprites with no surface orientation, so there is no shade term for a floor to lift. Linear tracks, unlike κ's log one: a bounded fraction and a small exponent with a meaningful midpoint, not a scale-free coefficient spanning decades. The exponent's track starts at the material's own `0.001` clamp rather than 0, since `pow(0, 0)` is undefined in GLSL at exactly the face-away fragment.
+- **Alpha cutoff** — mesh only, AND only in `opaque` mode (the type gate plus a mode gate, the narrowest condition in the panel): that is the one mode whose fragment stage applies the hard cutout, so in any other mesh mode the threshold is read by no branch of the shader. The drag also reaches the mesh's PICK material, because the pick pass applies the identical cutout (§6.5) — a threshold that moved on screen but not in the pick buffer would leave a freshly-dissolved region still hoverable.
+- **Colormap** (for gsplats with scalars/amplitudes, scalar-backed points/lines/mesh, and groups that fan out to such descendants)
 - **Active level** (LOD groups, and partitions wrapping LOD groups) — `auto` or lock to a specific level
+
+A mesh layer's `blendingMode` is stored **resolved**, not as composed: `volumetric` has no meaning for a zero-thickness surface, so the mesh material maps it to `opaque` and stamps the resolved mode — and `resolveLayerBlendingMode` applies the same mapping before the value reaches `LayerInfo`. Without that, the panel disagreed with the render in two visible ways at once: it showed **Absorption** (which no mesh shader reads) and hid **Alpha cutoff** precisely when the cutout was active. Resolving at the point of storage rather than at each display gate means every consumer — the Blend dropdown's own displayed value included — sees the mode that renders, so explicitly picking `volumetric` on a mesh snaps back to `opaque`.
+
+The three mesh shading values are the one control group that does **not** compose along the ancestry, and are applied through their own `applyMeshAppearance` rather than through `applyComposed`: a shade floor is a per-surface appearance choice with no composition rule (multiplying two ambients would mean nothing), and the writer never stamps them on a group. A group layer over meshes therefore does not offer them, since a group control would have to mean "set all descendants" — a different verb from every other control here.
 
 Rendering attributes compose along the scene graph per the Luxar composition spec: `opacity`, `absorption`, `gamma`, and `intensity` multiply through ancestors; `offset` adds; `blending_mode` takes the nearest ancestor's choice — except inside the edited layer's own subtree, where the layer's single Blend control wins (see [Blending mode inside a layer's subtree](#blending-mode-inside-a-layers-subtree)). Every panel mutation recomposes the effective attributes for each affected data-leaf (the layer itself, or every data descendant of a group layer) using live panel state for `layer=true` nodes and authoring-time zarr attrs for the rest. Colormap is the one exception — it applies per-leaf rather than composing.
 
@@ -105,7 +111,7 @@ Press **L** to toggle the Layers panel (Escape closes when focus is inside the p
 - **Arrow Up / Arrow Down** move the keyboard focus through rows (and select on simple navigation)
 - **Enter / Space** select the focused row (honouring Ctrl/Cmd/Shift modifiers)
 - The bound labels on either side of the display-range slider are click-to-edit and scroll-to-adjust (hold **Shift** for finer increments)
-- Controls below the list (display range, gamma, opacity, absorption, blend, colormap) apply to all selected layers; the absorption, colormap, and **Active level** controls auto-hide when the primary selected layer doesn't support them
+- Controls below the list (display range, gamma, opacity, absorption, the three mesh shading sliders, blend, colormap) apply to all selected layers; the absorption, mesh-shading, colormap, and **Active level** controls auto-hide when the primary selected layer doesn't support them
 
 ## Architecture
 
@@ -116,7 +122,7 @@ layer-controls.ts  LayerControls — the controls section (sliders, blend/colorm
 layer-apply.ts     LayerApplyEngine — attr composition + scene/material application
 luxar-material.ts  LuxarMaterial contract + colormap-vs-direct routing helpers
 range-slider.ts    Dual-thumb [min, max] slider (click-to-edit + scroll-adjust bounds)
-labeled-slider.ts  Single-thumb labeled slider (gamma, opacity, absorption); linear or log track
+labeled-slider.ts  Single-thumb labeled slider (gamma, opacity, absorption, mesh shading); linear or log track
 absorption-range.ts κ slider log-track bounds (fixed nominal span, widened onto authored κ) + κ readout format
 attrs-utils.ts     Pure helpers: clampGamma, blending-state mapping, liveLayerAttrs
 ```

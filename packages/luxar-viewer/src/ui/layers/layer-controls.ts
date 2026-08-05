@@ -15,7 +15,7 @@
  */
 
 import type { BlendingMode } from '../../rendering';
-import { type LayerInfo, type LayerStateManager } from './layer-state';
+import { resolveLayerBlendingMode, type LayerInfo, type LayerStateManager } from './layer-state';
 import { RangeSlider } from './range-slider';
 import { LabeledSlider } from './labeled-slider';
 import {
@@ -31,6 +31,7 @@ import { COLORMAP_CATEGORIES } from '../../rendering/colormap-data';
 import { SceneLoaderManager } from '../../data/scene-loader-manager';
 import type { LODGroupRegistry } from '../../scene/lod-group-registry';
 import { displayedQualityFraction } from '../../scene/lod-display-gate';
+import { MESH_DEFAULTS } from '../../rendering/materials/mesh/appearance';
 import { clampGamma } from './attrs-utils';
 import { clamp } from '../gui/format/value-formatting';
 import type { LayerApplyEngine } from './layer-apply';
@@ -55,6 +56,15 @@ export class LayerControls {
   private gammaSlider: LabeledSlider | null = null;
   private opacitySlider: LabeledSlider | null = null;
   private absorptionSlider: LabeledSlider | null = null;
+  /**
+   * Mesh-only appearance sliders (spec §6.2). Hidden for every other geometry type —
+   * mesh is the only SHADED type, so a shade floor and a falloff exponent have nothing
+   * to act on elsewhere. `alphaCutoff` is gated more narrowly still: only in `opaque`,
+   * the one mode that applies the cutout.
+   */
+  private ambientSlider: LabeledSlider | null = null;
+  private shadeExponentSlider: LabeledSlider | null = null;
+  private alphaCutoffSlider: LabeledSlider | null = null;
   private blendSelect: HTMLSelectElement | null = null;
   private colormapSelect: HTMLSelectElement | null = null;
   /**
@@ -120,6 +130,12 @@ export class LayerControls {
     this.opacitySlider = null;
     this.absorptionSlider?.dispose();
     this.absorptionSlider = null;
+    this.ambientSlider?.dispose();
+    this.ambientSlider = null;
+    this.shadeExponentSlider?.dispose();
+    this.shadeExponentSlider = null;
+    this.alphaCutoffSlider?.dispose();
+    this.alphaCutoffSlider = null;
     this.blendSelect = null;
     this.colormapSelect = null;
     this.lodLevelSelect = null;
@@ -234,6 +250,83 @@ export class LayerControls {
     });
     this.absorptionSlider.setVisible(false);
 
+    // --- Mesh shading (§6.2) ------------------------------------------------
+    //
+    // Three sliders, all hidden unless the primary selection is a MESH layer (see
+    // syncMeshAppearanceVisibility). Mesh is the only shaded geometry type, so these
+    // are the first controls in this panel that are type-gated rather than mode-gated.
+    //
+    // Linear tracks, unlike absorption's log one: all three are bounded fractions or a
+    // small exponent with a meaningful midpoint, not a scale-free coefficient spanning
+    // decades.
+    this.ambientSlider = new LabeledSlider({
+      container: this.controlsEl,
+      label: 'Ambient',
+      min: 0,
+      max: 1,
+      step: 0.01,
+      initialValue: MESH_DEFAULTS.ambient,
+      // The clamp the material would apply anyway, applied here so the READOUT cannot
+      // show a value the surface is not using.
+      constrain: (v) => Math.min(1, Math.max(0, v)),
+      onChange: (val) => {
+        this.controlsInteracting = true;
+        this.deps.state.applyToSelected((l) => {
+          l.ambient = val;
+        });
+        for (const sel of this.deps.state.getSelected()) {
+          this.deps.apply.applyMeshAppearance(sel);
+        }
+        this.controlsInteracting = false;
+      },
+    });
+    this.ambientSlider.setVisible(false);
+
+    this.shadeExponentSlider = new LabeledSlider({
+      container: this.controlsEl,
+      label: 'Shade falloff',
+      // The floor is the material's own clamp, not 0: `pow(wrap, 0)` is undefined in
+      // GLSL at a face-away fragment, where `wrap` is exactly 0. Starting the track at
+      // the clamp means the slider cannot ask for a value the material must refuse.
+      min: 0.001,
+      max: 4,
+      step: 0.05,
+      initialValue: MESH_DEFAULTS.shadeExponent,
+      constrain: (v) => Math.max(0.001, v),
+      onChange: (val) => {
+        this.controlsInteracting = true;
+        this.deps.state.applyToSelected((l) => {
+          l.shadeExponent = val;
+        });
+        for (const sel of this.deps.state.getSelected()) {
+          this.deps.apply.applyMeshAppearance(sel);
+        }
+        this.controlsInteracting = false;
+      },
+    });
+    this.shadeExponentSlider.setVisible(false);
+
+    this.alphaCutoffSlider = new LabeledSlider({
+      container: this.controlsEl,
+      label: 'Alpha cutoff',
+      min: 0,
+      max: 1,
+      step: 0.01,
+      initialValue: MESH_DEFAULTS.alphaCutoff,
+      constrain: (v) => Math.min(1, Math.max(0, v)),
+      onChange: (val) => {
+        this.controlsInteracting = true;
+        this.deps.state.applyToSelected((l) => {
+          l.alphaCutoff = val;
+        });
+        for (const sel of this.deps.state.getSelected()) {
+          this.deps.apply.applyMeshAppearance(sel);
+        }
+        this.controlsInteracting = false;
+      },
+    });
+    this.alphaCutoffSlider.setVisible(false);
+
     // Blending mode
     const blendGroup = document.createElement('div');
     blendGroup.className = 'luxar-layers-panel__control-group';
@@ -253,9 +346,17 @@ export class LayerControls {
       this.controlsInteracting = true;
       const mode = this.blendSelect!.value as BlendingMode;
       this.deps.state.applyToSelected((l) => {
-        l.blendingMode = mode;
-        // A user pick is EXPLICIT — so it propagates to descendants and is no
-        // longer treated as a replaceable per-type default (see #1272).
+        // Resolved PER LAYER, not once for the whole selection: a multi-select can mix
+        // types, and only mesh maps `volumetric` away. Storing the raw pick would make
+        // the panel claim a mode the mesh shader does not implement — see
+        // `resolveLayerBlendingMode`.
+        l.blendingMode = resolveLayerBlendingMode(l.type, mode);
+        // A user pick is EXPLICIT — the layer now OWNS a mode, so `liveLayerAttrs`
+        // emits it as a composition setter and `composeEffective` lets it win over the
+        // subtree (matters for a GROUP layer, which otherwise owns no mode and would
+        // drop the pick; see #1272/#1275). Still explicit even when the resolution
+        // changed the value: the user DID choose, and the choice was honoured as far
+        // as the surface can express it.
         l.blendingModeExplicit = true;
       });
       for (const sel of this.deps.state.getSelected()) {
@@ -264,6 +365,9 @@ export class LayerControls {
       // Switching to/from volumetric must reveal/hide the κ slider
       // immediately, not on the next selection refresh.
       this.syncAbsorptionVisibility();
+      // Same for the cutoff slider, whose gate includes the mode: leaving `opaque`
+      // must hide it on the click, not on the next selection change.
+      this.syncMeshAppearanceVisibility();
       this.controlsInteracting = false;
     });
     blendGroup.appendChild(blendLabel);
@@ -475,10 +579,19 @@ export class LayerControls {
       this.absorptionSlider.setValue(primary.absorption);
     }
 
+    // Mesh shading: seat all three thumbs on the layer's live values. Pushed
+    // unconditionally, before the visibility gate below — a hidden slider still has to
+    // hold the right value, or selecting a mesh layer would briefly show the previous
+    // layer's numbers.
+    this.ambientSlider?.setValue(primary.ambient);
+    this.shadeExponentSlider?.setValue(primary.shadeExponent);
+    this.alphaCutoffSlider?.setValue(primary.alphaCutoff);
+
     if (this.blendSelect) {
       this.blendSelect.value = primary.blendingMode;
     }
     this.syncAbsorptionVisibility();
+    this.syncMeshAppearanceVisibility();
 
     if (this.colormapSelect) {
       if (primary.supportsColormap) {
@@ -536,8 +649,40 @@ export class LayerControls {
   private syncAbsorptionVisibility(): void {
     if (!this.absorptionSlider) return;
     const primary = this.deps.state.getPrimarySelected();
-    const show = !!primary && primary.blendingMode === 'volumetric';
+    // Gate on the MESH-RESOLVED mode: a mesh resolves `volumetric` → `opaque`
+    // (it has no `updateAbsorption`), so absorption stays correctly hidden for a
+    // mesh; a real volumetric gsplat/points/lines still shows it.
+    const show =
+      !!primary && resolveLayerBlendingMode(primary.type, primary.blendingMode) === 'volumetric';
     this.absorptionSlider.setVisible(show);
+  }
+
+  /**
+   * Show the three mesh shading sliders only when they can do something.
+   *
+   * TYPE-gated, which is new for this panel — every other control here is either
+   * universal or mode-gated. Mesh is the only geometry type that shades (§6.2), so on a
+   * points/lines/gsplat layer these three have no uniform to write and would be
+   * controls that visibly do nothing.
+   *
+   * `alphaCutoff` carries the mode gate ON TOP: the cutout only exists in `opaque`, so
+   * in any other mesh mode the threshold is read by no branch of the fragment shader.
+   * The gate is on the MESH-RESOLVED mode, so a mesh in a volumetric-inherited/selected
+   * mode (which a mesh resolves back to `opaque`) still shows its active cutout slider.
+   *
+   * A GROUP layer over meshes deliberately does NOT get these. Unlike opacity and
+   * gamma, they do not compose along the ancestry (a shade floor is not a
+   * multiplicative attr), so a group control would have to mean "set all descendants",
+   * which is a different verb from every other control in this panel.
+   */
+  private syncMeshAppearanceVisibility(): void {
+    const primary = this.deps.state.getPrimarySelected();
+    const isMesh = primary?.type === 'mesh';
+    this.ambientSlider?.setVisible(isMesh);
+    this.shadeExponentSlider?.setVisible(isMesh);
+    this.alphaCutoffSlider?.setVisible(
+      isMesh && resolveLayerBlendingMode(primary.type, primary.blendingMode) === 'opaque'
+    );
   }
 
   /**

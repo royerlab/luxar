@@ -184,19 +184,26 @@ const SHADERS = [
   // distinct generated code no other variant pins.
   'gsplat-volumetric',
   'gsplat-colormap',
-  // Mesh — the five visual variants this phase ships (MESH_NODE_SPEC.md §6.4).
+  // Mesh — the six variants of MESH_NODE_SPEC.md §6.4.
   // `mesh` is the `opaque` DEFAULT (unlike the siblings, whose default is the
   // alpha-weighted `additive`), so it pins the hard alpha-cutout emission;
   // `mesh-additive` pins the alpha-weighted one the translucent modes share and
   // `mesh-max` the premultiplied one. `mesh-flat-normal` is the derivative-shaded
   // build, whose generated code must contain NEITHER the `normal` attribute nor its
-  // varying, and `mesh-colormap` the LUT path. `mesh-pick` arrives with the picking
-  // phase — mesh picking keys on `gl_VertexID` and needs its own material pair.
+  // varying, and `mesh-colormap` the LUT path.
+  //
+  // `mesh-pick` is ONE variant for every blending mode, which is itself the thing
+  // being pinned: both mode-dependent behaviours (the `opaque` cutout and the
+  // depth convention) are runtime uniforms rather than defines, so a layers-panel
+  // mode switch is a uniform write. `mesh-pick-commutative` exercises the other arm
+  // at RENDER time in the parity spec but generates byte-identical code, so it earns
+  // no snapshot of its own — if it ever needs one, a build flag has crept back in.
   'mesh',
   'mesh-additive',
   'mesh-max',
   'mesh-flat-normal',
   'mesh-colormap',
+  'mesh-pick',
 ] as const;
 
 test.describe('TSL → generated-shader snapshots', () => {
@@ -255,5 +262,39 @@ test.describe('TSL → generated-shader snapshots', () => {
     // The attribute itself: declared in the smooth vertex stage, absent in the flat one.
     expect(smooth.vertexShader).toMatch(/\bin\s+vec3\s+normal\s*;/);
     expect(flat.vertexShader).not.toMatch(/\bin\s+vec3\s+normal\s*;/);
+  });
+
+  test('mesh-pick keeps both mode behaviours as runtime uniforms, and binds no shading inputs', async ({
+    page,
+  }) => {
+    // Three §6.5 properties the snapshot pins byte-for-byte but only implicitly.
+    //
+    // (1) ONE variant per mode. Both mode-dependent behaviours must appear as
+    //     uniforms the generated code READS, not as absences a define produced —
+    //     otherwise a mode switch would recompile the pick program mid-hover.
+    // (2) The pick stage binds NEITHER `normal` NOR `aScalar`. They are shading
+    //     inputs with no bearing on which vertex was clicked, and on WebGPU an
+    //     attribute referenced by the graph is baked into the pipeline layout.
+    // (3) The element id comes from the vertex-index BUILT-IN, never from
+    //     `aSortedIndex` — mesh has no depth sort, so that attribute does not exist
+    //     on the geometry and a reference to it would read garbage.
+    await bootHarness(page);
+    const pick = await runTSL(page, 'mesh-pick');
+    const both = `${pick.vertexShader}\n${pick.fragmentShader}`;
+
+    // (1) Stated as an EQUALITY rather than a token grep, because the generated code
+    // names uniforms `nodeUniformN` — the JS-side names are gone, so grepping for
+    // `uAlphaCutout` would prove nothing. Two registry entries that differ ONLY in
+    // those two uniform values must generate the byte-identical shader. Turn either
+    // selector into a build flag and this diverges immediately.
+    const commutative = await runTSL(page, 'mesh-pick-commutative');
+    expect(commutative.vertexShader).toBe(pick.vertexShader);
+    expect(commutative.fragmentShader).toBe(pick.fragmentShader);
+    // (2) No shading attributes.
+    expect(pick.vertexShader).not.toMatch(/\bin\s+vec3\s+normal\s*;/);
+    expect(pick.vertexShader).not.toMatch(/\baScalar\b/);
+    // (3) The 16-bit split, off the built-in rather than an ordering attribute.
+    expect(both).not.toMatch(/\baSortedIndex\b/);
+    expect(both).toContain('65536');
   });
 });

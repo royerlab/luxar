@@ -26,13 +26,32 @@
 import * as THREE from 'three';
 import { createMeshGeometry } from '../mesh-geometry';
 import { applyTransform } from './transforms';
-import { materialManager, type BlendingMode, type LuxarMeshMaterial } from '../material-manager';
+import {
+  materialManager,
+  type BlendingMode,
+  type LuxarMeshMaterial,
+  type LuxarMeshPickingMaterial,
+} from '../material-manager';
+import { isMeshPickAwareMaterial } from '../picking/mesh/pick-mode';
+import type { PickingSystem } from '../picking/picking-system';
 import { getColormapTexture } from '../colormap-textures';
 import { supportsScalarColormap } from '../material-colormap-helpers';
 import { resolveColormapWindow } from '../display-range';
 import { log, Modules } from '../../utils/log';
 import type { MeshSide } from '../../data/mesh/projection';
 import type { MeshDataLoader, MeshMetadata, MeshUserData } from '../../types/mesh';
+
+/**
+ * The blending mode a mesh node asks for, defaulting to `opaque` (§6.3).
+ *
+ * The `?? 'opaque'` is the whole mesh-specific asymmetry — the three siblings all
+ * default to `additive` — so it lives in ONE place, read by both the visual material
+ * and the pick material. Two copies would be two chances for the pick pass to apply
+ * a cutout the screen does not, or vice versa.
+ */
+export function resolveRequestedMeshMode(attrs: MeshMetadata): BlendingMode {
+  return (attrs.blending_mode as BlendingMode | undefined) ?? 'opaque';
+}
 
 /** Map the projection's epoch decision onto a three.js side constant. */
 function threeSide(side: MeshSide): THREE.Side {
@@ -58,6 +77,20 @@ export function applyMeshSide(object: THREE.Mesh, side: MeshSide): void {
   if (material.side !== wanted) {
     material.side = wanted;
     material.needsUpdate = true;
+  }
+  // The pick pass must cull the same faces (§6.5). Not merely for tidiness: with
+  // the visual material on FrontSide and the pick material left DoubleSide, the
+  // interior faces of a sliced closed isosurface rasterize into the pick buffer at
+  // true surface depth — pickable where nothing is drawn, AND occluding picks of
+  // the nodes actually visible through the opening.
+  //
+  // Also pushed per pick render by `PickingSystem.renderPickBuffer`, which is what
+  // covers a runtime `material.side` write that does not come through here. Doing
+  // it in both places is deliberate: this one keeps the FIRST pick after a commit
+  // correct even if the render sync were ever narrowed.
+  const pickMaterial = (object.userData.pickNode as THREE.Mesh | undefined)?.material;
+  if (pickMaterial && !Array.isArray(pickMaterial) && isMeshPickAwareMaterial(pickMaterial)) {
+    pickMaterial.setPickSide(wanted);
   }
 }
 
@@ -128,7 +161,7 @@ export function createMeshMaterial(
 ): LuxarMeshMaterial {
   const composedIntensity = attrs.intensity ?? 1.0;
   const composedOffset = attrs.offset ?? 0.0;
-  const requestedMode = (attrs.blending_mode as BlendingMode | undefined) ?? 'opaque';
+  const requestedMode = resolveRequestedMeshMode(attrs);
 
   if (requestedMode === 'volumetric') {
     // Once per node, naming it — §6.3. A warning rather than a failure because the
@@ -213,6 +246,7 @@ export function createEmptyMeshNode(
   path: string,
   attrs: MeshMetadata,
   loader: MeshDataLoader,
+  pickingSystem: PickingSystem | null,
   leafAttrs?: Partial<MeshMetadata>
 ): THREE.Mesh {
   const geometry = createMeshGeometry({
@@ -269,5 +303,59 @@ export function createEmptyMeshNode(
 
   if (attrs.transform) applyTransform(mesh, attrs.transform);
 
+  if (pickingSystem) {
+    const pickId = pickingSystem.allocatePickId();
+    mesh.userData.pickId = pickId;
+    // The pick material reads the same coverage the visual one does, so it starts
+    // from the same node opacity and cutoff. Both are re-pushed by the layers panel
+    // through `syncMeshPickAppearance`; seeding them here keeps the FIRST pick
+    // (which can precede any panel interaction) consistent with the screen.
+    const pickMaterial = materialManager.createMeshPickingMaterial({
+      nodeId: pickId,
+      opacity: attrs.opacity ?? 1.0,
+      alphaCutoff: attrs.alpha_cutoff,
+    });
+    materialManager.register(pickMaterial);
+    // Share the same indexed BufferGeometry — only the material differs. The
+    // picking system re-syncs `geometry` from the main node every pick render, so a
+    // slice move's index rewrite (and the drawRange that rides with it) reaches the
+    // pick pass without any per-commit plumbing.
+    const pickNode = new THREE.Mesh(mesh.geometry, pickMaterial);
+    pickNode.matrixWorld.copy(mesh.matrixWorld);
+    pickingSystem.registerNode(mesh, pickNode, pickId);
+    // registerNode stamps `mesh.userData.pickNode`, which is how applyMeshSide and
+    // the appearance sync below find their way back here.
+    pickMaterial.setPickSide(material.side);
+    pickMaterial.setPickMode(resolveRequestedMeshMode(attrs));
+  }
+
   return mesh;
+}
+
+/**
+ * Push the coverage-affecting appearance values onto a node's pick material.
+ *
+ * `opacity` and `alpha_cutoff` are the two visual values the pick pass reads (they
+ * are the whole coverage term and the cutout threshold — §6.5), and the layers panel
+ * can change either at runtime. Without this the pick pass would keep the
+ * load-time values: dragging opacity below the cutoff would dissolve the mesh on
+ * screen while leaving every triangle pickable.
+ *
+ * A no-op for a node with no pick material (picking disabled, or a test-built node).
+ *
+ * Returns whether a real mesh pick material was updated, so callers can invalidate
+ * the cached pick buffer for meshes only — the other geometry types (whose pick
+ * coverage this never touches) get `false` and skip the needless offscreen re-render.
+ */
+export function syncMeshPickAppearance(
+  object: THREE.Mesh,
+  values: { opacity?: number; alphaCutoff?: number }
+): boolean {
+  const pickMaterial = (object.userData.pickNode as THREE.Mesh | undefined)?.material;
+  if (!pickMaterial || Array.isArray(pickMaterial)) return false;
+  if (!isMeshPickAwareMaterial(pickMaterial)) return false;
+  const pick = pickMaterial as LuxarMeshPickingMaterial;
+  if (values.opacity !== undefined) pick.updateOpacityUniform(values.opacity);
+  if (values.alphaCutoff !== undefined) pick.updateAlphaCutoff(values.alphaCutoff);
+  return true;
 }

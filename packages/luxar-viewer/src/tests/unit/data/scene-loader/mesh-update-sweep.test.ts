@@ -161,7 +161,7 @@ describe('SceneLoader.updateView — mesh re-projects on every sweep', () => {
       dispose: vi.fn(),
     } as unknown as MeshDataLoader;
 
-    const meshNode = createEmptyMeshNode('/mesh', ATTRS, meshLoader);
+    const meshNode = createEmptyMeshNode('/mesh', ATTRS, meshLoader, null);
     (sceneLoader as any).rootGroup.add(meshNode);
     (sceneLoader as any).registry.registerMeshLoader('/mesh', meshLoader);
 
@@ -211,7 +211,12 @@ describe('SceneLoader.updateView — mesh re-projects on every sweep', () => {
       dispose: vi.fn(),
     } as unknown as MeshDataLoader;
 
-    const meshNode = createEmptyMeshNode('/mesh', { ...ATTRS, extend_to_all: ['w'] }, meshLoader);
+    const meshNode = createEmptyMeshNode(
+      '/mesh',
+      { ...ATTRS, extend_to_all: ['w'] },
+      meshLoader,
+      null
+    );
     (sceneLoader as any).rootGroup.add(meshNode);
     (sceneLoader as any).registry.registerMeshLoader('/mesh', meshLoader);
 

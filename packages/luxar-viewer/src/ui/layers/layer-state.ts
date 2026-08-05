@@ -17,6 +17,7 @@ import { log, Modules } from '../../utils/log';
 // use and re-exported below so every existing `./layer-state` consumer keeps
 // working unchanged.
 import { computeUniforms, computeDisplayRange } from '../../rendering/display-range';
+import { MESH_DEFAULTS, resolveMeshBlendingMode } from '../../rendering/materials/mesh/appearance';
 
 /**
  * Geometry type of a layer.
@@ -204,6 +205,25 @@ export interface LayerInfo {
   opacity: number;
   /** Absorption coefficient κ (≥ 0; only meaningful in volumetric mode) */
   absorption: number;
+  /**
+   * Mesh shade floor (0–1) — the §6.2 headlight's `ambient`. Only meaningful on a
+   * mesh layer, where it is what keeps a silhouette readable rather than black; `1.0`
+   * collapses the shade term and reproduces the other three types' emissive look.
+   */
+  ambient: number;
+  /**
+   * Mesh headlight falloff exponent (> 0) — the §6.2 `shade_exponent`. `1.0` is the
+   * plain linear wrap. Mesh-only, like the two around it.
+   */
+  shadeExponent: number;
+  /**
+   * Mesh `opaque`-mode cutout threshold (0–1) — the §6.2 `alpha_cutoff`.
+   *
+   * Only meaningful in `opaque`, which is a NARROWER condition than the other two
+   * (they apply in every mesh mode), so the panel gates its slider on the mode as well
+   * as the type — the same shape as absorption's volumetric gate.
+   */
+  alphaCutoff: number;
   /** Current display-range minimum (maps to intensity+offset in shader) */
   displayMin: number;
   /** Current display-range maximum */
@@ -222,12 +242,21 @@ export interface LayerInfo {
   /** Blending mode */
   blendingMode: BlendingMode;
   /**
-   * Whether a blend mode is set EXPLICITLY for this layer — authored somewhere
-   * in its composed ancestry, or chosen by the user via the panel. When false,
-   * `blendingMode` is merely the per-type default shown in the dropdown, and the
-   * live-attrs path must NOT push it onto descendants (that would override each
-   * leaf's own per-type default — e.g. force a mesh under a plain group layer to
-   * the group's `additive` default instead of its own `opaque`; see #1272).
+   * Whether this layer OWNS a blend mode — authored on the node ITSELF on disk,
+   * or chosen by the user via the panel. When false, `blendingMode` is merely the
+   * inherited/defaulted value shown in the dropdown, and the layer must not act
+   * as a `blending_mode` SETTER: `liveLayerAttrs` emits the attr only when this
+   * is true (a plain group layer would otherwise push its `additive` placeholder
+   * onto a mesh leaf and bury the mesh's own `opaque` default — #1272), and
+   * `composeEffective`'s subtree-drop fires only when this is true (a wrapper
+   * owning no mode has no control value to impose, so it must not suppress a
+   * descendant's authored mode — #1275).
+   *
+   * Deliberately the node's OWN attr, not the composed ancestry: a layer that
+   * merely INHERITS an ancestor's mode must not re-emit it as its own setter —
+   * the panel snapshot would go stale the moment the ancestor layer's live pick
+   * diverges from disk, and the re-emitted copy (being nearer the leaf) would
+   * shadow the ancestor's newer choice.
    */
   blendingModeExplicit: boolean;
   /** Whether this layer is selected in the list */
@@ -304,6 +333,30 @@ export type LayerChangeListener = () => void;
  * Walks the SceneNode tree to collect nodes with `layer: true`,
  * tracks selection, and provides mutators that notify listeners.
  */
+/**
+ * The blending mode a layer of `type` will ACTUALLY render with.
+ *
+ * For mesh this is not the composed value: `volumetric` has no meaning for a
+ * zero-thickness surface, so the mesh material maps it to `opaque` and stamps the
+ * RESOLVED mode into `userData.blendingMode` (spec §6.3). Storing the unresolved value
+ * in `LayerInfo` made the panel disagree with the render in two visible ways at once —
+ * it showed the Absorption slider (which no mesh shader reads) and HID the Alpha-cutoff
+ * slider precisely when the cutout was active. The pick pass reads the material's
+ * resolved mode, so it was correct and the UI was not.
+ *
+ * Resolved at the point of STORAGE rather than at each display gate, so every consumer
+ * of `LayerInfo.blendingMode` — the Blend dropdown's own displayed value included — sees
+ * the mode that renders. A user who explicitly picks `volumetric` on a mesh sees the
+ * dropdown snap back to `opaque`, which is honest: it is what the surface is doing, and
+ * it matches the one-time warning the loader already emits.
+ */
+export function resolveLayerBlendingMode(
+  type: LayerType | undefined,
+  mode: BlendingMode
+): BlendingMode {
+  return type === 'mesh' ? resolveMeshBlendingMode(mode) : mode;
+}
+
 export class LayerStateManager {
   /** Ordered list of layer paths (insertion order from scene graph walk) */
   private layerOrder: string[] = [];
@@ -483,6 +536,15 @@ export class LayerStateManager {
           // each layer's live values per ancestry node, so a composed
           // init would multiply ancestor κ in twice.
           absorption: (node.attrs.absorption as number) ?? 1.0,
+          // RAW, and defaulted from the material's own constants rather than
+          // re-spelled here: these are the values `MeshMaterial` starts at when the
+          // attr is absent, so the slider must open on the same number the surface is
+          // already rendering with. They do NOT compose along the ancestry (unlike
+          // opacity/gamma) — a shade floor is a per-surface appearance choice, not a
+          // multiplicative attr, and the writer never stamps them on a group.
+          ambient: (node.attrs.ambient as number) ?? MESH_DEFAULTS.ambient,
+          shadeExponent: (node.attrs.shade_exponent as number) ?? MESH_DEFAULTS.shadeExponent,
+          alphaCutoff: (node.attrs.alpha_cutoff as number) ?? MESH_DEFAULTS.alphaCutoff,
           displayMin,
           displayMax,
           dataMin,
@@ -494,11 +556,27 @@ export class LayerStateManager {
           // not the node's own (possibly absent / malformed) raw attr. An
           // unset chain composes to `undefined`; show the per-type default
           // (mesh → opaque, emissive → additive) the material would use — but
-          // leave it NON-explicit so it is not pushed onto descendants (a
+          // leave it NON-owned so it is not pushed onto descendants (a
           // plain group layer merely displays `additive` as a neutral default;
           // each descendant keeps its own default until the control is used).
-          blendingMode: composedBlendingMode ?? defaultBlendingMode(node.type),
-          blendingModeExplicit: composedBlendingMode !== undefined,
+          //
+          // Then RESOLVED for the layer's type, which is a separate concern from the
+          // default and applies to an OWNED mode too: a mesh cannot render
+          // `volumetric`, so its material maps that to `opaque` and stamps the resolved
+          // value. Without this wrap the panel showed Absorption (which no mesh shader
+          // reads) and hid Alpha cutoff exactly when the cutout was active. A no-op for
+          // the default path, since `defaultBlendingMode('mesh')` is already `opaque`.
+          blendingMode: resolveLayerBlendingMode(
+            layerType,
+            composedBlendingMode ?? defaultBlendingMode(node.type)
+          ),
+          // Ownership reads the node's OWN attr — see the `LayerInfo` doc for why the
+          // composed ancestry would be wrong (stale-snapshot shadowing) and why a
+          // merely-inherited or defaulted mode must not make this layer a setter.
+          // Uses `node.attrs`, so a composite kind=lod/partition wrapper (whose
+          // display type is a geometry name but whose node authored no mode) stays
+          // non-owning, exactly like a plain group.
+          blendingModeExplicit: node.attrs.blending_mode != null,
           selected: false,
           colormap,
           supportsColormap,
@@ -687,7 +765,12 @@ export class LayerStateManager {
   setBlendingMode(path: string, mode: BlendingMode): void {
     const layer = this.layers.get(path);
     if (!layer) return;
-    layer.blendingMode = mode;
+    // Resolved at the point of STORAGE, same as the panel's dropdown handler:
+    // a mesh maps `volumetric` → `opaque`, and the Blend dropdown displays the
+    // stored value raw — see `resolveLayerBlendingMode`.
+    layer.blendingMode = resolveLayerBlendingMode(layer.type, mode);
+    // The user explicitly picked a mode ⇒ this layer now OWNS one, so
+    // `liveLayerAttrs` may emit it as a composition setter (even a group).
     layer.blendingModeExplicit = true;
     this.notify();
   }

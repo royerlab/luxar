@@ -89,10 +89,51 @@ function makeLineMesh(
   const material = new THREE.ShaderMaterial({
     vertexShader: 'void main() {}',
     fragmentShader: 'void main() {}',
-    defines: options.hasColormap ? { USE_COLORMAP: 1 } : {},
+    // `''`, matching PRODUCTION (`this.defines.USE_COLORMAP = ''` in the line and
+    // mesh material wrappers — three emits a bare `#define FLAG` for an empty value).
+    // The fixture used to say `1`, which made the assertion below vacuous: the
+    // production read was `!!defines.USE_COLORMAP`, false for `''`, so it reported
+    // every colormapped line as un-colormapped and this test never noticed.
+    defines: options.hasColormap ? { USE_COLORMAP: '' } : {},
   });
   const mesh = new THREE.Mesh(geometry, material);
   mesh.userData = { nodeType: 'lines' };
+  if (options.name !== undefined) mesh.name = options.name;
+  if (options.visible !== undefined) mesh.visible = options.visible;
+  return mesh;
+}
+
+/**
+ * A mesh node: a plain INDEXED BufferGeometry, not an instanced one.
+ *
+ * That asymmetry is the point — every other helper here builds an
+ * `InstancedBufferGeometry` and the count comes from `instanceCount`. A mesh has no
+ * instances, so the drawn count comes from the DRAW RANGE, which is what the nD slice
+ * compaction narrows.
+ */
+function makeMeshNode(
+  triangles: number,
+  vertices: number,
+  options: {
+    name?: string;
+    visible?: boolean;
+    drawTriangles?: number;
+    defines?: Record<string, number>;
+  } = {}
+): THREE.Mesh {
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(vertices * 3), 3));
+  geometry.setIndex(new THREE.BufferAttribute(new Uint32Array(triangles * 3), 1));
+  if (options.drawTriangles !== undefined) {
+    geometry.setDrawRange(0, options.drawTriangles * 3);
+  }
+  const material = new THREE.ShaderMaterial({
+    vertexShader: 'void main() {}',
+    fragmentShader: 'void main() {}',
+    defines: options.defines ?? {},
+  });
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.userData = { nodeType: 'mesh' };
   if (options.name !== undefined) mesh.name = options.name;
   if (options.visible !== undefined) mesh.visible = options.visible;
   return mesh;
@@ -403,6 +444,123 @@ describe('computeDebugState', () => {
     });
   });
 
+  describe('mesh node counting (four-geometry symmetry)', () => {
+    it('reports a mesh node with its drawn triangles and its vertex count', () => {
+      const scene = new THREE.Scene();
+      scene.add(makeMeshNode(40, 25, { name: 'surface' }));
+
+      const state = computeDebugState(makeContext(scene));
+      expect(state.meshNodes).toHaveLength(1);
+      expect(state.meshNodes[0].name).toBe('surface');
+      expect(state.meshNodes[0].triangleCount).toBe(40);
+      expect(state.meshNodes[0].vertexCount).toBe(25);
+      expect(state.totalTriangles).toBe(40);
+    });
+
+    it('reports the DRAW RANGE, not the whole index buffer', () => {
+      // The assertion that matters for an nD mesh. The slice compaction rewrites the
+      // index buffer in place and narrows `drawRange` (§5.4) — the vertex arrays and
+      // the index LENGTH stay put — so reading `index.count` would report the full
+      // surface no matter where the slice sits, which is precisely the number a debug
+      // driver must not be lied to about.
+      const scene = new THREE.Scene();
+      scene.add(makeMeshNode(100, 60, { name: 'sliced', drawTriangles: 12 }));
+
+      const state = computeDebugState(makeContext(scene));
+      expect(state.meshNodes[0].triangleCount).toBe(12);
+      expect(state.totalTriangles).toBe(12);
+      // The vertex count is deliberately NOT narrowed: it is the pick-id domain and is
+      // invariant across slices (there is no vertex compaction).
+      expect(state.meshNodes[0].vertexCount).toBe(60);
+    });
+
+    it('falls back to the index length when drawRange is the default Infinity', () => {
+      // `BufferGeometry.drawRange.count` starts at Infinity meaning "draw everything".
+      // Dividing that by 3 would report Infinity triangles.
+      const scene = new THREE.Scene();
+      scene.add(makeMeshNode(7, 9, { name: 'whole' }));
+      const state = computeDebugState(makeContext(scene));
+      expect(Number.isFinite(state.meshNodes[0].triangleCount)).toBe(true);
+      expect(state.meshNodes[0].triangleCount).toBe(7);
+    });
+
+    it('surfaces the two shader variants and the colormap flag', () => {
+      // Neither variant is readable from the geometry or the node attrs: the
+      // flat/smooth choice folds in the live displayDims and the cutout follows the
+      // composed blending mode. This is what an E2E assertion on shading state reads.
+      const scene = new THREE.Scene();
+      scene.add(
+        makeMeshNode(4, 6, {
+          name: 'flat',
+          defines: { LUXAR_MESH_FLAT_NORMAL: 1, LUXAR_MESH_ALPHA_CUTOUT: 1, USE_COLORMAP: 1 },
+        })
+      );
+      const state = computeDebugState(makeContext(scene));
+      expect(state.meshNodes[0].flatNormal).toBe(true);
+      expect(state.meshNodes[0].alphaCutout).toBe(true);
+      expect(state.meshNodes[0].hasColormap).toBe(true);
+    });
+
+    it('reports the smooth/non-cutout build as false rather than absent', () => {
+      const scene = new THREE.Scene();
+      scene.add(makeMeshNode(4, 6, { name: 'smooth' }));
+      const state = computeDebugState(makeContext(scene));
+      expect(state.meshNodes[0].flatNormal).toBe(false);
+      expect(state.meshNodes[0].alphaCutout).toBe(false);
+      expect(state.meshNodes[0].hasColormap).toBe(false);
+    });
+
+    it('carries the visible flag', () => {
+      const scene = new THREE.Scene();
+      scene.add(makeMeshNode(4, 6, { name: 'hidden', visible: false }));
+      expect(computeDebugState(makeContext(scene)).meshNodes[0].visible).toBe(false);
+    });
+
+    it('totalElements is points + gsplats + lines + TRIANGLES', () => {
+      // The four-way symmetry check, extending the three-way one above. A regression
+      // that dropped triangles from the sum surfaces here even with every per-type
+      // count correct.
+      const scene = new THREE.Scene();
+      scene.add(makePointCloud(100, { name: 'p' }));
+      scene.add(makeGSplatMesh(200, { name: 'g' }));
+      scene.add(makeLineMesh(300, { name: 'l' }));
+      scene.add(makeMeshNode(400, 250, { name: 'm' }));
+
+      const state = computeDebugState(makeContext(scene));
+      expect(state.totalTriangles).toBe(400);
+      expect(state.totalElements).toBe(1000);
+    });
+
+    it('does NOT count an instanced geometry stamped nodeType=mesh', () => {
+      // The guard that keeps the four arms disjoint. Every other type is selected by
+      // `InstancedBufferGeometry`; mesh is selected by its ABSENCE, so a scene where
+      // both matched would double-count. Not reachable from the loader — the assertion
+      // exists so the two selectors stay mutually exclusive if either is edited.
+      const scene = new THREE.Scene();
+      const geometry = new THREE.InstancedBufferGeometry();
+      geometry.instanceCount = 99;
+      geometry.setIndex(new THREE.BufferAttribute(new Uint32Array(30), 1));
+      const impostor = new THREE.Mesh(geometry);
+      impostor.userData = { nodeType: 'mesh' };
+      scene.add(impostor);
+
+      const state = computeDebugState(makeContext(scene));
+      expect(state.meshNodes).toEqual([]);
+      expect(state.totalTriangles).toBe(0);
+    });
+
+    it('skips a Mesh without nodeType=mesh userData', () => {
+      const scene = new THREE.Scene();
+      const geometry = new THREE.BufferGeometry();
+      geometry.setIndex(new THREE.BufferAttribute(new Uint32Array(30), 1));
+      scene.add(new THREE.Mesh(geometry));
+
+      const state = computeDebugState(makeContext(scene));
+      expect(state.totalTriangles).toBe(0);
+      expect(state.meshNodes).toEqual([]);
+    });
+  });
+
   describe('LOD / partition group reporting', () => {
     it('reports a kind=lod group with its active level', () => {
       const scene = new THREE.Scene();
@@ -486,6 +644,36 @@ describe('computeDrawOrder', () => {
 
   it('returns an empty array for a scene with no data meshes', () => {
     expect(computeDrawOrder(new THREE.Scene())).toEqual([]);
+  });
+
+  it('reports a MESH node with its committed triangle count, not 0', () => {
+    // Regression. Mesh reaches this walk (`DATA_NODE_TYPES` is `LOADER_TYPES`, which
+    // includes it), but the element count fell through to a local
+    // `visiblePointCount ?? visibleSplatCount ?? visibleSegmentCount ?? 0` chain — a
+    // partial copy of the shared per-type reader with `visibleTriangleCount` missing.
+    // So every mesh reported `elements: 0` while appearing in the report, which is the
+    // worst shape for a diagnostic: present, plausible, and wrong.
+    //
+    // Mesh is also the only type here whose geometry is NOT instanced, so it is the
+    // only one that takes the fallback path at all.
+    const scene = new THREE.Scene();
+    const geometry = new THREE.BufferGeometry();
+    geometry.setIndex(new THREE.BufferAttribute(new Uint32Array(90), 1));
+    const material = new THREE.MeshBasicMaterial();
+    material.transparent = false;
+    material.depthWrite = true;
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.userData = { nodeType: 'mesh', loader: {}, attrs: {}, visibleTriangleCount: 30 };
+    mesh.name = '/surface';
+    scene.add(mesh);
+
+    const order = computeDrawOrder(scene);
+    expect(order).toHaveLength(1);
+    expect(order[0].path).toBe('/surface');
+    expect(order[0].elements).toBe(30);
+    // `opaque` is the mesh default, so it belongs in the depth-first bucket.
+    expect(order[0].bucket).toBe('opaque');
+    expect(order[0].depthWrite).toBe(true);
   });
 
   it('reports bucket / depthWrite / renderOrder / elements per data mesh', () => {

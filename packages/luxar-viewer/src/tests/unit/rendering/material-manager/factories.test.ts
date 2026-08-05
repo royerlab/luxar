@@ -49,17 +49,24 @@ describe('VISUAL_FACTORIES / PICKING_FACTORIES / MEGA_SHADER_FACTORIES shape', (
     }
   });
 
-  it('PICKING_FACTORIES covers the three types with a pick pair — mesh picking is a later phase', () => {
-    // Deliberately NOT four: mesh picking keys on `gl_VertexID` rather than an
-    // element-texture texel, so it needs its own pick material pair (spec §6.5) and
-    // lands with the picking phase. This asymmetry is the one place the two tables
-    // legitimately disagree, so it is asserted rather than left to drift.
-    expect(Object.keys(PICKING_FACTORIES).sort()).toEqual(['gsplat', 'line', 'point']);
-    expect(Object.keys(PICKING_FACTORIES)).not.toContain('mesh');
-    for (const kind of ['point', 'line', 'gsplat'] as const) {
+  it('PICKING_FACTORIES has one entry per geometry kind, each with both backends', () => {
+    // The two tables agreed on three types through the material phase and now agree
+    // on four: mesh keys its pick ids on `gl_VertexID` rather than an
+    // element-texture texel (spec §6.5), which is why it needed its OWN pick pair
+    // rather than reusing a sibling's — not why it could go without one.
+    expect(Object.keys(PICKING_FACTORIES).sort()).toEqual(['gsplat', 'line', 'mesh', 'point']);
+    for (const kind of ['point', 'line', 'gsplat', 'mesh'] as const) {
       expect(typeof PICKING_FACTORIES[kind].glsl).toBe('function');
       expect(typeof PICKING_FACTORIES[kind].tsl).toBe('function');
+      expect(PICKING_FACTORIES[kind].glsl).not.toBe(PICKING_FACTORIES[kind].tsl);
     }
+  });
+
+  it('every VISUAL_FACTORIES kind has a matching PICKING_FACTORIES kind', () => {
+    // The invariant the two assertions above only imply. Stated directly so adding a
+    // fifth geometry type fails HERE — with a message naming the missing pick pair —
+    // rather than by rendering an unpickable node in production.
+    expect(Object.keys(PICKING_FACTORIES).sort()).toEqual(Object.keys(VISUAL_FACTORIES).sort());
   });
 
   it('MEGA_SHADER_FACTORIES exposes a flat {glsl, tsl} pair (no per-geometry split)', () => {
