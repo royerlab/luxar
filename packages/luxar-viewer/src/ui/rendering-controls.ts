@@ -30,6 +30,11 @@ import type { AdaptiveDPRManager } from '../rendering/adaptive-dpr-manager';
 import type { ZarrViewerConfig } from '../types/zarr';
 import { extractRenderingOverrides } from '../config/zarr-bridge/viewer-config-utils';
 
+/**
+ * Re-export of the cinematic-mode snapshot types so consumers can import them
+ * from the rendering-controls module: `CinematicSnapshot` is the captured set of
+ * cinematic effect values and `CinematicSnapshotKeys` its key union.
+ */
 export type { CinematicSnapshot, CinematicSnapshotKeys } from './rendering-controls/cinematic-mode';
 
 /**
@@ -39,8 +44,7 @@ export type { CinematicSnapshot, CinematicSnapshotKeys } from './rendering-contr
  * - Post-processing effects (bloom, noise, vignette, chromatic aberration, lens distortion)
  * - HDR intensity and tone mapping
  * - Anti-aliasing options (FXAA, MSAA, SSAA)
- * - Camera controls (orbit, fly, ortho modes with physics parameters)
- * - Point rendering (base size, near/far size, sharpness, saturation)
+ * - Camera field of view (FOV and FOV presets)
  * - Dynamic clipping planes for nD visualization
  *
  * Features:
@@ -105,7 +109,7 @@ export class RenderingControls {
   /** Cleanup callbacks collected during setup, called on dispose */
   private cleanupCallbacks: (() => void)[] = [];
 
-  /** Cinematic mode preset controller (lazily wired in `setAdaptiveDPRManager`). */
+  /** Cinematic mode preset controller (created in `setupControls` during construction). */
   private cinematic?: CinematicModeController;
 
   /**

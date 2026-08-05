@@ -23,11 +23,27 @@ const HISTORY = 48;
 type PerfMode = 'fps' | 'ms' | 'graph';
 const MODES: PerfMode[] = ['fps', 'ms', 'graph'];
 
+/**
+ * Hook the {@link PerformanceMonitor} uses to keep the render loop running while
+ * it is visible. The monitor needs continuous frames to measure FPS/frame-time,
+ * so it `request()`s a keep-alive when shown and `release()`s it when hidden or
+ * disposed, letting an otherwise on-demand render loop idle again afterward.
+ */
 export interface PerfKeepAlive {
+  /** Ask the render loop to stay awake (monitor became visible). */
   request: () => void;
+  /** Allow the render loop to idle again (monitor hidden/disposed). */
   release: () => void;
 }
 
+/**
+ * Compact, theme-matched performance readout (the vendored replacement for
+ * stats.js). Shows one metric at a time and cycles FPS → frame time (ms) → a
+ * scrolling graph on click, driven by the animation loop's `frame-start` /
+ * `frame-end` events (subscribed to only while visible). Preserves the original
+ * `#luxar-stats` element id and toggle/show/hide/dispose surface so the P-key
+ * InputHandler and control-rail gauge drive it unchanged.
+ */
 export class PerformanceMonitor {
   private readonly el: HTMLDivElement;
   private readonly numEl: HTMLSpanElement;

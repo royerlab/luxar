@@ -33,8 +33,11 @@ import { ScreenshotStrategy } from './recording-panel/screenshot-strategy';
 import { VideoRecordingStrategy } from './recording-panel/video-recording-strategy';
 import { OfflineCaptureStrategy } from './recording-panel/offline-capture-strategy';
 
-// Shared recording types live in `recording-panel/types.ts`. Re-exported
-// here for external consumers that import from the panel directly.
+/**
+ * Re-export of the shared recording types (defined in `recording-panel/types.ts`)
+ * so external consumers can import them directly from the panel module rather
+ * than reaching into its subdirectory.
+ */
 export type {
   RecordingMode,
   VideoResolution,

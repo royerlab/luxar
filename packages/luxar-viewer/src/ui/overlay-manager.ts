@@ -180,6 +180,15 @@ interface HoverOverlayEntry {
   lastRendered?: string;
 }
 
+/**
+ * Manages the screen-space overlay layer (text, image, and HTML overlays) drawn
+ * over the WebGL canvas but beneath the UI controls.
+ *
+ * Keeps a keyed set of overlay `div`s and their {@link OverlayConfig}s, applies
+ * anchor/blend/font styling, and updates visibility as scene dimensions change
+ * (subscribing to `sceneDimsManager`) so overlays appear only on the slice
+ * positions they belong to, with CSS-transition fades.
+ */
 export class OverlayManager {
   private overlayElements = new Map<string, HTMLDivElement>();
   private configs = new Map<string, OverlayConfig>();
