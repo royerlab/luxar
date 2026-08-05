@@ -20,12 +20,103 @@ import pytest
 import zarr
 
 from luxar.core.dimensions import Dimensions
+from luxar.core.group.lod.group import additive_level_stats
 from luxar.io.compiler import LuxarZarrCompiler
 
 
 def _sublod_stamps(grp) -> list[dict]:
     n = int(grp.attrs["n_additive_sublods"])
     return [dict(grp[f"additive_{i}"].attrs.get("lod_stats", {})) for i in range(n)]
+
+
+class TestAdditiveLevelStatsFunction:
+    """Direct unit tests for the pure ``additive_level_stats`` helper.
+
+    The writer-path classes below reach this only through the compiler and cover
+    just the usable/all-zero cases; these pin the function directly, including
+    the non-finite (NaN, +Inf) totals that must refuse to stamp rather than emit
+    a fabricated or non-JSON-safe energy.
+    """
+
+    _stats = staticmethod(additive_level_stats)
+
+    _KW = dict(
+        method="self_energy",
+        breakpoints_kind="counts",
+        energy_kind="points-luminance-volume",
+    )
+
+    def test_normal_ladder_stamps_fractions_and_reference(self) -> None:
+        # The happy path: fractions are cumulative, end at 1.0, and the kwargs
+        # round-trip verbatim into the stamps.
+        per_level, ref, parent = self._stats([1.0, 2.0, 1.0], [10, 20, 10], **self._KW)
+
+        fracs = [s["energy_fraction_cum"] for s in per_level]
+        assert all(a <= b for a, b in zip(fracs, fracs[1:])), fracs
+        assert fracs[-1] == pytest.approx(1.0)
+        assert ref == pytest.approx(4.0)
+        assert parent["reference_energy"] == pytest.approx(4.0)
+        assert [s["lod_cumulative_n"] for s in per_level] == [10, 30, 40]
+        assert parent["lod_n_lods"] == 3
+        assert parent["energy_kind"] == "points-luminance-volume"
+        for i, s in enumerate(per_level):
+            assert s["lod_method"] == "self_energy"
+            assert s["lod_level"] == i
+            assert s["lod_breakpoints_kind"] == "counts"
+        assert [s["lod_n_elements"] for s in per_level] == [10, 20, 10]
+
+    def test_zero_total_stamps_no_energy_but_keeps_counts(self) -> None:
+        # All-black / zero-radius input: no fabricated energy stamps, but the
+        # count/method bookkeeping still lands.
+        per_level, ref, parent = self._stats([0.0, 0.0], [5, 7], **self._KW)
+
+        assert ref is None
+        assert "reference_energy" not in parent
+        for s in per_level:
+            assert "energy_fraction_cum" not in s
+        assert [s["lod_cumulative_n"] for s in per_level] == [5, 12]
+        assert all(s["lod_method"] == "self_energy" for s in per_level)
+
+    def test_nan_total_stamps_no_energy(self) -> None:
+        # A NaN energy poisons the total; the guard must refuse to stamp.
+        per_level, ref, parent = self._stats([1.0, float("nan")], [5, 7], **self._KW)
+
+        assert ref is None
+        assert "reference_energy" not in parent
+        for s in per_level:
+            assert "energy_fraction_cum" not in s
+
+    def test_inf_total_stamps_no_energy(self) -> None:
+        # A +Inf energy makes fractions meaningless; the guard refuses to stamp.
+        per_level, ref, parent = self._stats([1.0, float("inf")], [5, 7], **self._KW)
+
+        assert ref is None
+        assert "reference_energy" not in parent
+        for s in per_level:
+            assert "energy_fraction_cum" not in s
+
+    def test_negative_inf_total_stamps_no_energy(self) -> None:
+        # -Inf falls to the positivity check rather than the explicit +Inf
+        # one; pin it separately so neither half of the guard can regress.
+        per_level, ref, parent = self._stats([1.0, float("-inf")], [5, 7], **self._KW)
+
+        assert ref is None
+        assert "reference_energy" not in parent
+        for s in per_level:
+            assert "energy_fraction_cum" not in s
+
+    def test_single_level_ladder_fraction_is_one(self) -> None:
+        # A lone level owns all the energy, so its cumulative fraction is 1.0.
+        per_level, ref, parent = self._stats([5.0], [7], **self._KW)
+
+        assert per_level[0]["energy_fraction_cum"] == pytest.approx(1.0)
+        assert ref == pytest.approx(5.0)
+        assert parent["reference_energy"] == pytest.approx(5.0)
+
+    def test_length_mismatch_raises(self) -> None:
+        # Mismatched lengths are an internal bug, not a degenerate input.
+        with pytest.raises(ValueError):
+            self._stats([1.0, 2.0], [10], **self._KW)
 
 
 class TestPointsAdditiveStamps:
