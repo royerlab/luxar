@@ -87,6 +87,11 @@ export function getBlendingState(mode: string, opacity: number = 1.0): BlendingS
  * scenes. Pulled into a pure function so the data-flow from
  * (display range, gamma, opacity, blending) → ComposableAttrs is
  * test-isolated from the DOM panel.
+ *
+ * `blending_mode` is emitted ONLY when explicit (authored in the composed
+ * ancestry or user-chosen); a layer merely showing its per-type default emits
+ * `undefined`, so composition falls through to each leaf's own per-type default
+ * rather than the layer's placeholder (see #1272).
  */
 export function liveLayerAttrs(layer: LayerInfo): ComposableAttrs {
   const { intensity, offset } = computeUniforms(layer.displayMin, layer.displayMax);
@@ -99,12 +104,11 @@ export function liveLayerAttrs(layer: LayerInfo): ComposableAttrs {
     gamma: clampGamma(layer.gamma),
     intensity,
     offset,
-    // blending_mode has NO identity value (unlike the multiplicative attrs above),
-    // so it is emitted as a composition setter ONLY when this layer OWNS a mode
-    // (`blendingModeSet`). Otherwise a plain group layer would inject its
-    // displayed-but-inherited mode into the ancestry chain and override a
-    // contained mesh's own `opaque` type-default (the setter-valued-vs-identity
-    // doctrine).
-    ...(layer.blendingModeSet ? { blending_mode: layer.blendingMode as string } : {}),
+    // Emit a blend mode ONLY when it is EXPLICIT (authored or user-chosen). A
+    // layer merely showing its per-type default (blendingModeExplicit === false)
+    // emits `undefined`, so composition falls through to each leaf's own per-type
+    // default rather than the layer's placeholder — otherwise a plain group layer
+    // over a mesh would push its `additive` default and revert the #1272 fix.
+    blending_mode: layer.blendingModeExplicit ? (layer.blendingMode as string) : undefined,
   };
 }

@@ -53,7 +53,8 @@ export class DataMonitorManager {
    * @param id - Unique identifier for this monitor
    * @param container - DOM container element
    * @param config - Optional monitor configuration
-   * @param setAsDefault - Whether to set this as the default monitor
+   * @param setAsDefault - Whether to set this as the default monitor; the first
+   *   monitor registered also becomes the default even when this is false
    * @returns The created DataLoadingMonitor instance
    */
   createMonitor(
@@ -232,12 +233,19 @@ export class DataMonitorManager {
   }
 }
 
-// Export convenient accessor functions.
 // Note: getDataMonitor / showDataMonitor / hideDataMonitor /
 // toggleDataMonitor were removed — production code calls the
-// event-bus ('panel-cycle' / 'panel-hide') instead. cycleDataMonitor
-// is kept because data-monitor-integration tests import it
-// directly to drive the cycle behavior.
+// event-bus ('panel-cycle' / 'panel-hide') instead.
+/**
+ * Advance the data-loading monitor panel through its display states via the
+ * shared {@link DataMonitorManager} singleton.
+ *
+ * Production code drives the panel through the cross-layer event bus
+ * ('panel-cycle'); this thin accessor is retained so integration tests can drive
+ * the cycle behavior directly.
+ *
+ * @param id Optional monitor id to cycle; defaults to the manager's default monitor.
+ */
 export function cycleDataMonitor(id?: string): void {
   DataMonitorManager.getInstance().cycleMonitor(id);
 }

@@ -1870,7 +1870,7 @@ describe('LayersPanel — blend select drives the leaf material', () => {
     // `additive` mode into the composition chain, so ANY non-blend edit on the
     // group (opacity/gamma/range) flipped a contained mesh from its own `opaque`
     // default to `additive` (glow, depth-write off). With ownership gating
-    // (`blendingModeSet`) the group emits NO mode, so composeEffective falls back
+    // (`blendingModeExplicit`) the group emits NO mode, so composeEffective falls back
     // to the mesh leaf's own type-default `opaque`.
     const applyBlendingMode = vi.fn();
     const stubMat: Record<string, unknown> = {
@@ -2008,7 +2008,7 @@ describe('LayersPanel — blend select drives the leaf material', () => {
   });
 
   it('picking a mode on a PLAIN group broadcasts it to the leaf (group now OWNS it)', () => {
-    // Locks the dropdown handler's `l.blendingModeSet = true` (mutant-kill: delete
+    // Locks the dropdown handler's `l.blendingModeExplicit = true` (mutant-kill: delete
     // that line and this fails). A plain group owns no mode at init, so
     // liveLayerAttrs would emit nothing and the pick would be dropped — the leaf
     // would fall back to its `additive` points default instead of the picked mode.
@@ -2064,14 +2064,14 @@ describe('LayersPanel — blend select drives the leaf material', () => {
     panel.show();
     panel.layerState.select('/grp', 'single');
     // Precondition: a plain group owns no mode until the user picks one.
-    expect(panel.layerState.getLayer('/grp')!.blendingModeSet).toBe(false);
+    expect(panel.layerState.getLayer('/grp')!.blendingModeExplicit).toBe(false);
 
     applyBlendingMode.mockClear();
     const select = findBlendSelect(container)!;
     select.value = 'max';
     select.dispatchEvent(new Event('change', { bubbles: true }));
 
-    expect(panel.layerState.getLayer('/grp')!.blendingModeSet).toBe(true);
+    expect(panel.layerState.getLayer('/grp')!.blendingModeExplicit).toBe(true);
     expect(applyBlendingMode).toHaveBeenCalledWith('max');
   });
 
@@ -2152,10 +2152,10 @@ describe('LayersPanel — blend select drives the leaf material', () => {
     grpLayer.gamma = 1.5;
     grpLayer.blendingMode = 'max';
     // A user picking a mode on the group OWNS it (the dropdown handler /
-    // setBlendingMode set this in production) — so it composes onto the leaf.
-    // A plain group that never authored/picked a mode emits none (see the
-    // `blendingModeSet` tests in layer-state.test.ts).
-    grpLayer.blendingModeSet = true;
+    // setBlendingMode set this in production) — so the wrapper's mode overrides
+    // the part's authored one. A plain group that never authored/picked a mode
+    // emits none (see the ownership tests in layer-state.test.ts).
+    grpLayer.blendingModeExplicit = true;
     (
       panel as unknown as { applyEngine: { applyBlendingMode(l: unknown): void } }
     ).applyEngine.applyBlendingMode(grpLayer);
@@ -2319,6 +2319,159 @@ describe('LayersPanel — blend select drives the leaf material', () => {
     ).applyEngine.applyOpacity(layer);
 
     expect(pickMat.updateOpacityUniform).not.toHaveBeenCalled();
+  });
+
+  it('a mesh opacity edit invalidates the cached pick buffer (stationary-camera hover would otherwise keep stale ids)', () => {
+    // The layers panel triggers none of the camera/resize/commit paths that mark
+    // the cached pick buffer dirty, so a stationary-camera opacity edit on a mesh
+    // would leave the buffer showing the pre-edit coverage. Whenever the sync
+    // actually touched a mesh pick material, the panel must mark it dirty.
+    const invalidate = vi.fn();
+    const pickMat: Record<string, unknown> = {
+      setPickMode: vi.fn(),
+      setPickSide: vi.fn(),
+      updateOpacityUniform: vi.fn(),
+      updateAlphaCutoff: vi.fn(),
+    };
+    const visualMat: Record<string, unknown> = {
+      userData: { blendingMode: 'opaque' },
+      uniforms: { uOpacity: { value: 1.0 } },
+      defines: {},
+      updateIntensity: vi.fn(),
+      updateOffset: vi.fn(),
+      updateGamma: vi.fn(),
+      updateOpacity: vi.fn(),
+      applyBlendingMode: vi.fn(),
+    };
+    visualMat.clone = vi.fn(() => visualMat);
+
+    const mesh = new THREE.Mesh(new THREE.BufferGeometry(), visualMat as unknown as THREE.Material);
+    mesh.name = '/cloud';
+    mesh.userData._layerMaterialCloned = true;
+    mesh.userData.nodeType = 'mesh';
+    mesh.userData.pickNode = new THREE.Mesh(mesh.geometry, pickMat as unknown as THREE.Material);
+    const rootGroup = new THREE.Group();
+    rootGroup.add(mesh);
+
+    const panel = new LayersPanel(container, animationController);
+    panel.setPickBufferInvalidator(invalidate);
+    panel.initFromScene(rootGroup, makeLayeredSceneGraph('mesh'));
+    panel.show();
+    panel.layerState.select('/cloud', 'single');
+
+    invalidate.mockClear();
+    panel.layerState.applyToSelected((l) => {
+      l.opacity = 0.3;
+    });
+    const layer = panel.layerState.getLayer('/cloud')!;
+    (
+      panel as unknown as { applyEngine: { applyOpacity(l: unknown): void } }
+    ).applyEngine.applyOpacity(layer);
+
+    expect(invalidate).toHaveBeenCalled();
+  });
+
+  it('a mesh alpha-cutoff edit invalidates the cached pick buffer (§6.5 cutout must move in the pick pass too)', () => {
+    // The cutout threshold rides to the pick material via `applyMeshAppearance`
+    // (not `applyComposed`), so it needs its own invalidation wiring: a cutoff that
+    // moved on screen but not in the cached pick buffer would leave a freshly-cut
+    // region still hoverable.
+    const invalidate = vi.fn();
+    const pickMat: Record<string, unknown> = {
+      setPickMode: vi.fn(),
+      setPickSide: vi.fn(),
+      updateOpacityUniform: vi.fn(),
+      updateAlphaCutoff: vi.fn(),
+    };
+    const visualMat: Record<string, unknown> = {
+      userData: { blendingMode: 'opaque' },
+      uniforms: { uOpacity: { value: 1.0 } },
+      defines: {},
+      updateIntensity: vi.fn(),
+      updateOffset: vi.fn(),
+      updateGamma: vi.fn(),
+      updateOpacity: vi.fn(),
+      updateAmbient: vi.fn(),
+      updateShadeExponent: vi.fn(),
+      updateAlphaCutoff: vi.fn(),
+      applyBlendingMode: vi.fn(),
+    };
+    visualMat.clone = vi.fn(() => visualMat);
+
+    const mesh = new THREE.Mesh(new THREE.BufferGeometry(), visualMat as unknown as THREE.Material);
+    mesh.name = '/cloud';
+    mesh.userData._layerMaterialCloned = true;
+    mesh.userData.nodeType = 'mesh';
+    mesh.userData.pickNode = new THREE.Mesh(mesh.geometry, pickMat as unknown as THREE.Material);
+    const rootGroup = new THREE.Group();
+    rootGroup.add(mesh);
+
+    const panel = new LayersPanel(container, animationController);
+    panel.setPickBufferInvalidator(invalidate);
+    panel.initFromScene(rootGroup, makeLayeredSceneGraph('mesh'));
+    panel.show();
+    panel.layerState.select('/cloud', 'single');
+
+    invalidate.mockClear();
+    panel.layerState.applyToSelected((l) => {
+      l.alphaCutoff = 0.5;
+    });
+    const layer = panel.layerState.getLayer('/cloud')!;
+    (
+      panel as unknown as { applyEngine: { applyMeshAppearance(l: unknown): void } }
+    ).applyEngine.applyMeshAppearance(layer);
+
+    expect(invalidate).toHaveBeenCalled();
+  });
+
+  it('a non-mesh opacity edit does not touch the pick buffer', () => {
+    // The converse: a points/lines/gsplat pick material is not mesh-pick-aware, so
+    // the sync is a no-op and there is nothing new to render. Invalidating the
+    // buffer anyway would churn an offscreen render on every non-mesh slider drag.
+    const invalidate = vi.fn();
+    const pickMat: Record<string, unknown> = { updateOpacityUniform: vi.fn() };
+    const visualMat: Record<string, unknown> = {
+      userData: { blendingMode: 'additive' },
+      uniforms: { uOpacity: { value: 1.0 } },
+      defines: {},
+      updateIntensity: vi.fn(),
+      updateOffset: vi.fn(),
+      updateGamma: vi.fn(),
+      updateOpacity: vi.fn(),
+      applyBlendingMode: vi.fn(),
+    };
+    visualMat.clone = vi.fn(() => visualMat);
+
+    const points = new THREE.Points(
+      new THREE.BufferGeometry(),
+      visualMat as unknown as THREE.Material
+    );
+    points.name = '/cloud';
+    points.userData._layerMaterialCloned = true;
+    points.userData.nodeType = 'points';
+    points.userData.pickNode = new THREE.Mesh(
+      points.geometry,
+      pickMat as unknown as THREE.Material
+    );
+    const rootGroup = new THREE.Group();
+    rootGroup.add(points);
+
+    const panel = new LayersPanel(container, animationController);
+    panel.setPickBufferInvalidator(invalidate);
+    panel.initFromScene(rootGroup, makeLayeredSceneGraph('points'));
+    panel.show();
+    panel.layerState.select('/cloud', 'single');
+
+    invalidate.mockClear();
+    panel.layerState.applyToSelected((l) => {
+      l.opacity = 0.3;
+    });
+    const layer = panel.layerState.getLayer('/cloud')!;
+    (
+      panel as unknown as { applyEngine: { applyOpacity(l: unknown): void } }
+    ).applyEngine.applyOpacity(layer);
+
+    expect(invalidate).not.toHaveBeenCalled();
   });
 });
 

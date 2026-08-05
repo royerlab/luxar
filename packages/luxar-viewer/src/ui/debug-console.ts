@@ -43,11 +43,19 @@ import {
   messageMatchesFilter,
 } from './debug-console/formatters';
 
+/**
+ * A single captured console entry as rendered by the {@link DebugConsole}.
+ */
 export interface ConsoleMessage {
+  /** Console severity/channel the message came in on. */
   type: 'log' | 'warn' | 'error' | 'info' | 'debug';
+  /** Wall-clock time the message was recorded. */
   timestamp: Date;
+  /** Original console arguments, preserved for re-formatting. */
   args: unknown[];
+  /** Flattened string form of `args`, used for filter/search matching. */
   formatted: string;
+  /** Stack trace, when available — captured for errors and warnings. */
   stack?: string;
 }
 

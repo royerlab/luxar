@@ -351,10 +351,13 @@ export class LayerControls {
         // the panel claim a mode the mesh shader does not implement — see
         // `resolveLayerBlendingMode`.
         l.blendingMode = resolveLayerBlendingMode(l.type, mode);
-        // The user explicitly picked a mode ⇒ this layer now OWNS one, so
-        // `liveLayerAttrs` emits it as a composition setter (matters for a GROUP
-        // layer, which otherwise owns no mode and would drop the pick).
-        l.blendingModeSet = true;
+        // A user pick is EXPLICIT — the layer now OWNS a mode, so `liveLayerAttrs`
+        // emits it as a composition setter and `composeEffective` lets it win over the
+        // subtree (matters for a GROUP layer, which otherwise owns no mode and would
+        // drop the pick; see #1272/#1275). Still explicit even when the resolution
+        // changed the value: the user DID choose, and the choice was honoured as far
+        // as the surface can express it.
+        l.blendingModeExplicit = true;
       });
       for (const sel of this.deps.state.getSelected()) {
         this.deps.apply.applyBlendingMode(sel);

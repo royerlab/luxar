@@ -237,6 +237,13 @@ export class LuxarApp {
 
       assignFromPartial();
 
+      // The layers panel edits a mesh's pick coverage (opacity/cutoff/blending)
+      // with a stationary camera, which nothing else invalidates — give it a
+      // late-bound hook to the current picking system so those edits refresh the
+      // cached pick buffer. `this.pickingSystem` is (re)assigned per dataset load,
+      // so read it lazily rather than capturing.
+      this.layersPanel?.setPickBufferInvalidator(() => this.pickingSystem?.markDirty());
+
       // Dataset routing: subsystems are wired up, fields are assigned —
       // the orchestrator delegates can now safely read `this.*`.
       if (await this.shouldShowBrowser(result.sceneSrc)) {

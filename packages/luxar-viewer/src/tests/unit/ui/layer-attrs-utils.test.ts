@@ -145,8 +145,7 @@ describe('liveLayerAttrs', () => {
       displayMin: 0,
       displayMax: 1,
       blendingMode: 'additive',
-      // A geometry leaf (type: 'points' here) always OWNS its resolved mode.
-      blendingModeSet: true,
+      blendingModeExplicit: true,
       colormap: 'viridis',
       isData: true,
       ...overrides,
@@ -160,19 +159,18 @@ describe('liveLayerAttrs', () => {
     expect(attrs.blending_mode).toBe('normal');
   });
 
-  it('emits blending_mode only when the layer OWNS one (blendingModeSet)', () => {
+  it('emits blending_mode only when the layer OWNS one (blendingModeExplicit)', () => {
     // A plain group over a mesh does NOT own a blend mode — its `blendingMode`
     // is a displayed/inherited value only, so it must NOT be injected into the
-    // composition chain (which would override a contained mesh's `opaque`).
+    // composition chain (which would override a contained mesh's `opaque`; #1272).
     const groupAttrs = liveLayerAttrs(
-      makeLayer({ type: 'group', blendingMode: 'additive', blendingModeSet: false })
+      makeLayer({ type: 'group', blendingMode: 'additive', blendingModeExplicit: false })
     );
-    expect('blending_mode' in groupAttrs).toBe(false);
     expect(groupAttrs.blending_mode).toBeUndefined();
 
     // Once it owns one (authored on disk, or the user picked it), it emits.
     const ownedAttrs = liveLayerAttrs(
-      makeLayer({ type: 'group', blendingMode: 'max', blendingModeSet: true })
+      makeLayer({ type: 'group', blendingMode: 'max', blendingModeExplicit: true })
     );
     expect(ownedAttrs.blending_mode).toBe('max');
   });

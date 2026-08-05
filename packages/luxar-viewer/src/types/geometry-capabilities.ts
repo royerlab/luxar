@@ -121,42 +121,6 @@ export const GEOMETRY_CAPABILITIES: Readonly<Record<GeometryTypeName, GeometryCa
     mesh: { lod: false, partition: false, pooled: false, depthSortable: false },
   });
 
-/**
- * The blending mode a geometry type takes when NOTHING in its scene-graph ancestry
- * sets one (spec §6.3).
- *
- * A separate table from {@link GEOMETRY_CAPABILITIES} because that one is boolean-only
- * — `hasCapability` reads any field as a flag — and this is a mode string. Still a
- * `Record<GeometryTypeName, …>`, so a new geometry type must state its default here
- * rather than inherit one.
- *
- * The three emissive types default to `additive`. **Mesh defaults to `opaque`**, which
- * is the only mode unconditionally correct without per-triangle depth sorting and is
- * what a surface should look like. That asymmetry is applied viewer-side and never
- * stamped by the writer: a stamped `blending_mode` would override an ancestor's under
- * nearest-setter-wins, silently breaking `group(blending_mode="additive")` for its
- * mesh children.
- *
- * Consumed by `composeAttrs`, which is the only place that still knows whether the
- * ancestry set a mode at all — see `applyEffectiveAttrs` for why defaulting any later
- * cannot work.
- */
-export const DEFAULT_BLENDING_MODES: Readonly<Record<GeometryTypeName, BlendingMode>> =
-  Object.freeze({
-    points: 'additive',
-    lines: 'additive',
-    gsplats: 'additive',
-    mesh: 'opaque',
-  });
-
-/**
- * The default blending mode for an untyped node-type value, or `'additive'` for
- * anything that is not a geometry type (a group carries no default of its own).
- */
-export function defaultBlendingModeFor(nodeType: unknown): BlendingMode {
-  return isGeometryType(nodeType) ? DEFAULT_BLENDING_MODES[nodeType] : 'additive';
-}
-
 /** Look up one capability of an untyped node-type value. Non-types are `false`. */
 function hasCapability(value: unknown, capability: keyof GeometryCapabilities): boolean {
   return isGeometryType(value) && GEOMETRY_CAPABILITIES[value][capability];
@@ -180,4 +144,32 @@ export function isPooledGeometry(nodeType: unknown): boolean {
 /** Whether `nodeType` registers element centers with the depth sorter. */
 export function isDepthSortable(nodeType: unknown): boolean {
   return hasCapability(nodeType, 'depthSortable');
+}
+
+/**
+ * Per-type default blending mode — the mode a leaf renders with when NO level
+ * of its scene-graph ancestry sets one. The three emissive primitives sum light
+ * (`additive`); `mesh` is the one shaded surface type and defaults to `opaque`
+ * (docs/specs/MESH_NODE_SPEC.md §6.3). Kept as its own table rather than a
+ * `GeometryCapabilities` column because that interface is boolean feature-flags
+ * and this is a value; the exhaustive `Record<GeometryTypeName, …>` still forces
+ * a decision when a geometry type is added. The material factories
+ * (`create-{points,lines,gsplats,mesh}-node.ts`) inline the same literal for
+ * their own statically-known type; this helper serves the runtime-dispatch sites
+ * (layers panel) where the type is a variable.
+ */
+const DEFAULT_BLENDING_MODE: Readonly<Record<GeometryTypeName, BlendingMode>> = Object.freeze({
+  points: 'additive',
+  lines: 'additive',
+  gsplats: 'additive',
+  mesh: 'opaque',
+});
+
+/**
+ * The blending mode a node of `nodeType` renders with when its ancestry sets
+ * none. Non-geometry node types (`group`/`scene`/`lod`/`partition`) fall back to
+ * `'additive'`, matching the historical composed default.
+ */
+export function defaultBlendingMode(nodeType: unknown): BlendingMode {
+  return isGeometryType(nodeType) ? DEFAULT_BLENDING_MODE[nodeType] : 'additive';
 }

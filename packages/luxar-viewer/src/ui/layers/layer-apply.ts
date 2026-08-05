@@ -29,7 +29,7 @@ import { noteDepthSortBlendingModeSwitch } from '../../rendering/depth-sort-coor
 import { syncMeshPickAppearance } from '../../rendering/node-factory/create-mesh-node';
 import type { GeometryTypeName } from '../../types/format-contract';
 import {
-  defaultBlendingModeFor,
+  defaultBlendingMode,
   isDepthSortable,
   isGeometryType,
 } from '../../types/geometry-capabilities';
@@ -60,6 +60,12 @@ export interface LayerApplyEngineDeps {
   getSceneGraph: () => SceneNode | null;
   state: LayerStateManager;
   requestRender: () => void;
+  /**
+   * Marks the cached GPU pick buffer dirty so it re-renders after a panel edit
+   * changed a mesh's pick coverage (opacity/cutoff/blending). No-op when picking
+   * is inactive.
+   */
+  invalidatePickBuffer?: () => void;
 }
 
 export class LayerApplyEngine {
@@ -123,7 +129,7 @@ export class LayerApplyEngine {
    *
    * `layerPath` is the layer whose control was just used. Inside that layer's
    * own subtree — and ONLY when the edited layer actually OWNS a mode
-   * (`blendingModeSet`) — the LAYER owns `blending_mode`: a mode authored on a
+   * (`blendingModeExplicit`) — the LAYER owns `blending_mode`: a mode authored on a
    * descendant that is not itself a layer is dropped. `blending_mode` is
    * nearest-setter-wins and a layer exposes exactly one Blend control, so
    * without this a `kind=partition` / `kind=lod` layer whose parts carry
@@ -157,7 +163,7 @@ export class LayerApplyEngine {
     // The subtree-drop suppresses descendant authored modes so the edited
     // layer's Blend control wins — but only when that layer actually OWNS a
     // mode. A wrapper owning none has nothing to impose (see doc comment; #1275).
-    const editedLayerOwnsMode = this.deps.state.getLayer(layerPath)?.blendingModeSet ?? false;
+    const editedLayerOwnsMode = this.deps.state.getLayer(layerPath)?.blendingModeExplicit ?? false;
     const chain: ComposableAttrs[] = ancestors.map((node, i) => {
       const layerInfo = this.deps.state.getLayer(node.path);
       if (layerInfo) {
@@ -180,12 +186,7 @@ export class LayerApplyEngine {
             : (node.attrs.blending_mode as string | undefined),
       };
     });
-    // The LEAF'S type supplies the fallback for an ancestry that sets no mode (§6.3),
-    // matching `applyEffectiveAttrs` on the loader side. `ancestors` is root-to-leaf,
-    // so its last entry is the leaf itself; a group layer fans out per leaf, and each
-    // gets its own default.
-    const leaf = ancestors[ancestors.length - 1];
-    return composeAttrs(chain, defaultBlendingModeFor(leaf?.type));
+    return composeAttrs(chain);
   }
 
   private applyBlendingStateToMaterial(mat: LuxarMaterial, mode: string): void {
@@ -266,14 +267,24 @@ export class LayerApplyEngine {
       // Written OUTSIDE the LOD-fade branch above on purpose: a mesh cannot be inside
       // a LOD group (§9 refuses it), so that branch is unreachable here — but keeping
       // the sync unconditional means it stays correct if that ever changes.
-      syncMeshPickAppearance(obj as THREE.Mesh, { opacity: eff.opacity });
+      //
+      // When the sync actually touched a mesh pick material, invalidate the cached
+      // pick buffer: a stationary-camera layers-panel edit invalidates nothing else,
+      // so hover would otherwise keep naming vertices of the pre-edit coverage.
+      if (syncMeshPickAppearance(obj as THREE.Mesh, { opacity: eff.opacity })) {
+        this.deps.invalidatePickBuffer?.();
+      }
       // All three geometry-material families implement it (gsplats
       // phase 1, points phase 3, lines phase 4); optional-chained for
       // non-Luxar materials.
       mat.updateAbsorption?.(eff.absorption);
       applyColorAdjustments(mat, eff.gamma, eff.intensity, eff.offset);
       const prevBlendingMode = mat.userData?.blendingMode as BlendingMode | undefined;
-      this.applyBlendingStateToMaterial(mat, eff.blending_mode);
+      // An unset ancestry composes to `undefined`; apply this leaf's per-type
+      // default (mesh → opaque, emissive → additive) — the same mode the
+      // material factory would have baked in.
+      const blendingMode = eff.blending_mode ?? defaultBlendingMode(leaf.type);
+      this.applyBlendingStateToMaterial(mat, blendingMode);
       // Depth sorting: a sortable layer switching blending mode may need
       // to start (TO an effective sorted mode: clear the noop stamp +
       // reprocess so the next commit registers with the SortWorker) or
@@ -282,7 +293,7 @@ export class LayerApplyEngine {
       // centers, lines segment midpoints) — see `depthSortable` in
       // `types/geometry-capabilities`.
       if (isDepthSortable(obj.userData?.nodeType)) {
-        noteDepthSortBlendingModeSwitch(obj as THREE.Mesh, eff.blending_mode, prevBlendingMode);
+        noteDepthSortBlendingModeSwitch(obj as THREE.Mesh, blendingMode, prevBlendingMode);
       }
     }
     this.deps.requestRender();
@@ -341,7 +352,9 @@ export class LayerApplyEngine {
     mat.updateAmbient?.(layer.ambient);
     mat.updateShadeExponent?.(layer.shadeExponent);
     mat.updateAlphaCutoff?.(layer.alphaCutoff);
-    syncMeshPickAppearance(obj as THREE.Mesh, { alphaCutoff: layer.alphaCutoff });
+    if (syncMeshPickAppearance(obj as THREE.Mesh, { alphaCutoff: layer.alphaCutoff })) {
+      this.deps.invalidatePickBuffer?.();
+    }
     this.deps.requestRender();
   }
 

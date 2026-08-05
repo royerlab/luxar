@@ -9,7 +9,7 @@ import type { SceneNode } from '../../data/data-loader-types';
 import { getEffectiveAttrs } from '../../data/attrs-composer';
 import type { BlendingMode } from '../../types/blending';
 import type { GeometryTypeName, NodeKind } from '../../types/format-contract';
-import { defaultBlendingModeFor, isGeometryType } from '../../types/geometry-capabilities';
+import { defaultBlendingMode, isGeometryType } from '../../types/geometry-capabilities';
 import { log, Modules } from '../../utils/log';
 // Pure display-window ↔ shader-uniform math now lives in the rendering layer
 // (`rendering/display-range`) so `rendering/` modules can import it without
@@ -242,13 +242,23 @@ export interface LayerInfo {
   /** Blending mode */
   blendingMode: BlendingMode;
   /**
-   * Whether this layer OWNS a blend mode (vs. merely displaying an inherited/
-   * defaulted one). A geometry leaf always owns its resolved mode; a plain group
-   * owns one only if it authored `blending_mode` on disk or the user picked one.
-   * `liveLayerAttrs` emits `blending_mode` as a composition setter ONLY when this
-   * is true, so a plain group over a mesh never overrides the mesh's own default.
+   * Whether this layer OWNS a blend mode — authored on the node ITSELF on disk,
+   * or chosen by the user via the panel. When false, `blendingMode` is merely the
+   * inherited/defaulted value shown in the dropdown, and the layer must not act
+   * as a `blending_mode` SETTER: `liveLayerAttrs` emits the attr only when this
+   * is true (a plain group layer would otherwise push its `additive` placeholder
+   * onto a mesh leaf and bury the mesh's own `opaque` default — #1272), and
+   * `composeEffective`'s subtree-drop fires only when this is true (a wrapper
+   * owning no mode has no control value to impose, so it must not suppress a
+   * descendant's authored mode — #1275).
+   *
+   * Deliberately the node's OWN attr, not the composed ancestry: a layer that
+   * merely INHERITS an ancestor's mode must not re-emit it as its own setter —
+   * the panel snapshot would go stale the moment the ancestor layer's live pick
+   * diverges from disk, and the re-emitted copy (being nearer the leaf) would
+   * shadow the ancestor's newer choice.
    */
-  blendingModeSet: boolean;
+  blendingModeExplicit: boolean;
   /** Whether this layer is selected in the list */
   selected: boolean;
   /** Active colormap name (undefined = direct RGB colors) */
@@ -508,6 +518,12 @@ export class LayerStateManager {
           }
         }
 
+        // Composed blend mode: `undefined` when NO ancestry level set one, else
+        // the canonical inherited/authored mode (#1272). The `undefined` case is
+        // exactly what tells us to fall back to the per-type default AND to leave
+        // the layer non-explicit so it does not impose that default on descendants.
+        const composedBlendingMode = getEffectiveAttrs(root, node.path).blending_mode;
+
         this.layerOrder.push(node.path);
         this.layers.set(node.path, {
           path: node.path,
@@ -535,26 +551,32 @@ export class LayerStateManager {
           dataMax,
           gamma: (node.attrs.gamma as number) ?? 1.0,
           // Blending mode is COMPOSED along the ancestry (nearest set
-          // ancestor wins, normalized by composeAttrs) — the panel must
-          // show the mode the material actually renders with, not the
-          // node's own (possibly absent / malformed) raw attr.
-          // Composed along the ancestry, with the LEAF'S OWN type default when nothing
-          // set a mode (§6.3: `opaque` for mesh, `additive` for the other three).
-          // Without the default the panel would init a mesh layer at `additive` and
-          // push that onto the material on the first edit, overriding the mode the
-          // loader chose — the panel is a second place the default has to be right,
-          // not just the loader.
+          // ancestor wins, normalized by composeAttrs) — a geometry leaf's
+          // dropdown must show the mode the material actually renders with,
+          // not the node's own (possibly absent / malformed) raw attr. An
+          // unset chain composes to `undefined`; show the per-type default
+          // (mesh → opaque, emissive → additive) the material would use — but
+          // leave it NON-owned so it is not pushed onto descendants (a
+          // plain group layer merely displays `additive` as a neutral default;
+          // each descendant keeps its own default until the control is used).
+          //
+          // Then RESOLVED for the layer's type, which is a separate concern from the
+          // default and applies to an OWNED mode too: a mesh cannot render
+          // `volumetric`, so its material maps that to `opaque` and stamps the resolved
+          // value. Without this wrap the panel showed Absorption (which no mesh shader
+          // reads) and hid Alpha cutoff exactly when the cutout was active. A no-op for
+          // the default path, since `defaultBlendingMode('mesh')` is already `opaque`.
           blendingMode: resolveLayerBlendingMode(
             layerType,
-            getEffectiveAttrs(root, node.path, defaultBlendingModeFor(node.type)).blending_mode
+            composedBlendingMode ?? defaultBlendingMode(node.type)
           ),
-          // A real geometry leaf always owns its resolved mode; a plain group owns
-          // one only if it authored `blending_mode` on disk. Uses `node.type` (NOT
-          // `layerType`) — a composite kind=lod/partition group's display type is a
-          // geometry name (e.g. `gsplats`), but its node type is `group`, so it emits
-          // a setter only if it authored one (correct: its descendants' own
-          // type-default matches). Consumed by `liveLayerAttrs`.
-          blendingModeSet: isGeometryType(node.type) || node.attrs.blending_mode != null,
+          // Ownership reads the node's OWN attr — see the `LayerInfo` doc for why the
+          // composed ancestry would be wrong (stale-snapshot shadowing) and why a
+          // merely-inherited or defaulted mode must not make this layer a setter.
+          // Uses `node.attrs`, so a composite kind=lod/partition wrapper (whose
+          // display type is a geometry name but whose node authored no mode) stays
+          // non-owning, exactly like a plain group.
+          blendingModeExplicit: node.attrs.blending_mode != null,
           selected: false,
           colormap,
           supportsColormap,
@@ -739,14 +761,14 @@ export class LayerStateManager {
     this.notify();
   }
 
-  /** Set blending mode for a layer */
+  /** Set blending mode for a layer. A user pick marks the mode EXPLICIT. */
   setBlendingMode(path: string, mode: BlendingMode): void {
     const layer = this.layers.get(path);
     if (!layer) return;
     layer.blendingMode = mode;
     // The user explicitly picked a mode ⇒ this layer now OWNS one, so
     // `liveLayerAttrs` may emit it as a composition setter (even a group).
-    layer.blendingModeSet = true;
+    layer.blendingModeExplicit = true;
     this.notify();
   }
 

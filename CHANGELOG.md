@@ -193,19 +193,45 @@ real scene rendered additive, the alpha cutout never compiled, and — once the 
 controls landed — the Alpha-cutoff slider was hidden for a default-config mesh because
 its layer reported `additive`.
 
-Fixed where the information still exists. `composeAttrs` now takes the default an
-entirely-unset chain resolves to, supplied per geometry type from a new
-`DEFAULT_BLENDING_MODES` table, and every compose site passes the leaf's own type: the
-loader's `applyEffectiveAttrs`, and both of the layers panel's (the `LayerInfo` init
-and `composeEffective` — the panel is a second place the default has to be right, since
-it pushes its composed mode onto the material). Nearest-setter-wins is untouched: an
-ancestor that DID set a mode still wins, because the default is consulted only when the
-walk found nothing. That is what keeps `group(blending_mode="additive")` working for its
-mesh children, which is why §6.3 forbids the writer from stamping the mode at all.
+**Found by rendering a written mesh end to end for the first time** — no unit test
+could have seen it, because they all hand `resolveRequestedMeshMode` an attrs object
+directly rather than one that has been through composition. The fixture and E2E spec
+that found it are the entry below.
 
-Found by rendering a written mesh end to end for the first time — no unit test could
-see it, because they all hand `resolveRequestedMeshMode` an attrs object directly rather
-than one that has been through composition.
+**Fixed in #1274**, which landed independently while this work was in review: rather
+than defaulting inside `composeAttrs`, it keeps `blending_mode` **undefined** through
+composition when no level sets one and lets each consumer apply its own per-type default
+via `defaultBlendingMode(nodeType)`. That is the better shape, and it covers a case the
+alternative did not: it tracks whether a layer's mode is EXPLICIT, so a group layer
+merely *displaying* a neutral default does not push it onto mesh descendants — which
+would otherwise flip a mesh under a plain `layer=true` group back to additive at panel
+init. Nearest-setter-wins is untouched either way, which is what keeps
+`group(blending_mode="additive")` working for its mesh children and why §6.3 forbids the
+writer from stamping the mode at all.
+
+#### Blend-mode ownership finishes the job: groups stop overriding what they never set (#1275)
+
+The explicit flag above stopped a plain group layer from *emitting* its displayed
+default, but two paths still let a non-owning layer overwrite a descendant's mode:
+
+- **The subtree-drop in `composeEffective` fired unconditionally.** The drop exists so
+  an owning wrapper's Blend control wins over its parts' stamped modes (the
+  `graft_gsplat_node` case). But a wrapper that owns no mode has no control value to
+  impose, so dropping was pure loss: a mesh authored `additive` under a plain
+  `layer=true` group snapped to its `opaque` type-default on any non-blend group edit.
+  The drop is now gated on the same ownership flag.
+- **Ownership was initialized from the COMPOSED ancestry, not the node's own attr.** A
+  layer that merely inherits an ancestor's mode must not re-emit it as its own setter:
+  the re-emitted copy is a snapshot of disk state, sits nearer the leaf, and would
+  shadow the ancestor layer's next live pick. Ownership now reads the node's own
+  `blending_mode` (or a user pick) — an inherited mode still displays, but the layer is
+  not a setter. The same rule means an unauthored geometry leaf does not own its
+  per-type default, so a group layer's Blend pick actually reaches it.
+
+The Absorption and Alpha-cutoff gates also read the **mesh-resolved** mode through
+`resolveLayerBlendingMode`: a mesh resolves `volumetric` → `opaque`, so Absorption (a
+control no mesh shader reads) stays hidden and Alpha cutoff shows exactly when the
+cutout is compiled — even if a stored layer mode reaches the gates unresolved.
 
 #### Mesh gets its first real fixtures, and an end-to-end render spec
 

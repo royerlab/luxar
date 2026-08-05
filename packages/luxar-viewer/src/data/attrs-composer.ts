@@ -9,7 +9,9 @@
  *   effective_intensity  = max(0, ∏ intensity_i)
  *   effective_offset     = Σ offset_i
  *   effective_blending   = nearest ancestor (root-to-leaf) that sets blending_mode,
- *                          else "additive"
+ *                          else undefined (each consumer applies its own per-type
+ *                          default: `additive` for points/lines/gsplats, `opaque`
+ *                          for mesh — docs/specs/MESH_NODE_SPEC.md §6.3)
  *
  * Note: the offset composition is additive per the spec. This is mathematically
  * different from chaining the shader's `color * I + O` model through successive
@@ -42,8 +44,12 @@ export interface EffectiveAttrs {
   gamma: number;
   intensity: number;
   offset: number;
-  /** Always canonical — `composeAttrs` runs `normalizeBlendingMode`. */
-  blending_mode: BlendingMode;
+  /**
+   * `undefined` when no level of the chain set a mode (each consumer applies
+   * its own per-type default); otherwise canonical — a set value (even a
+   * malformed one) is run through `normalizeBlendingMode`.
+   */
+  blending_mode: BlendingMode | undefined;
 }
 
 /**
@@ -52,30 +58,13 @@ export interface EffectiveAttrs {
  * The chain is ordered from the outermost ancestor (root) to the leaf node
  * whose effective attributes we want. Unset values are treated as identity:
  * opacity/gamma/intensity = 1, offset = 0. A set `blending_mode` at any
- * level overrides the cumulative choice; the winning string is validated
- * through `normalizeBlendingMode` (unknown string → 'normal' + one-time warning), so
- * every consumer of `EffectiveAttrs` sees a canonical mode.
- *
- * `defaultBlendingMode` is what an entirely UNSET chain resolves to, and this is the
- * only place the "nothing in the ancestry set a mode" fact still survives. Callers
- * that pass nothing get `'additive'`, which is what the three emissive types want;
- * **mesh passes `'opaque'`** (spec §6.3).
- *
- * Threading it here rather than defaulting at the material is not a style choice — it
- * is the difference between working and not. `normalizeBlendingMode(undefined)`
- * returns `'additive'`, so a composed `blending_mode` was NEVER undefined by the time
- * a material saw it, which made `createMeshNode`'s
- * `(attrs.blending_mode as BlendingMode) ?? 'opaque'` dead code: every mesh rendered
- * `additive`, §6.3's whole asymmetry was inert, and the alpha cutout never compiled.
- * Found by the first end-to-end render of a written mesh.
- *
- * Nearest-setter-wins is preserved exactly: an ancestor that DID set a mode still
- * wins, because the default is consulted only when the loop found nothing.
+ * level overrides the cumulative choice; a set winning string is validated
+ * through `normalizeBlendingMode` (unknown string → 'normal' + one-time
+ * warning), so every consumer sees a canonical mode. An unset chain yields
+ * `undefined` — each consumer then applies its own per-type default (spec
+ * §6.3: `additive` for points/lines/gsplats, `opaque` for mesh).
  */
-export function composeAttrs(
-  chainRootToLeaf: readonly ComposableAttrs[],
-  defaultBlendingMode: BlendingMode = 'additive'
-): EffectiveAttrs {
+export function composeAttrs(chainRootToLeaf: readonly ComposableAttrs[]): EffectiveAttrs {
   let opacity = 1.0;
   let absorption = 1.0;
   let gamma = 1.0;
@@ -104,8 +93,10 @@ export function composeAttrs(
     gamma,
     intensity,
     offset,
-    blending_mode:
-      blending_mode === undefined ? defaultBlendingMode : normalizeBlendingMode(blending_mode),
+    // Preserve the unset state: only a truly-unset chain yields `undefined`
+    // (consumers apply their per-type default). A set-but-malformed value
+    // (e.g. '') is NOT undefined, so it still normalizes → 'normal'.
+    blending_mode: blending_mode === undefined ? undefined : normalizeBlendingMode(blending_mode),
   };
 }
 
@@ -161,12 +152,8 @@ export function collectAncestorAttrs(root: SceneNode, targetPath: string): Compo
 /**
  * Convenience: compose effective attrs for a target path in the scene graph.
  */
-export function getEffectiveAttrs(
-  root: SceneNode,
-  targetPath: string,
-  defaultBlendingMode?: BlendingMode
-): EffectiveAttrs {
-  return composeAttrs(collectAncestorAttrs(root, targetPath), defaultBlendingMode);
+export function getEffectiveAttrs(root: SceneNode, targetPath: string): EffectiveAttrs {
+  return composeAttrs(collectAncestorAttrs(root, targetPath));
 }
 
 /**

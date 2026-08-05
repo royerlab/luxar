@@ -38,6 +38,16 @@ function releaseActiveTrap(): void {
   }
 }
 
+/**
+ * Show a user-facing error dialog over the viewport with the given message.
+ *
+ * Any dialog from a previous call is torn down first (its auto-dismiss timer
+ * cancelled and focus trap released) so failures never stack. The new dialog is
+ * dismissible by click, Escape, or an auto-timeout of
+ * `config.ui.timings.errorAutoDismissMs`, and traps keyboard focus while open.
+ *
+ * @param message Human-readable error text to display to the user.
+ */
 export function showError(message: string) {
   // Remove any existing error messages first — and cancel the timer
   // + release the focus trap that the previous showError() scheduled
@@ -163,6 +173,13 @@ export function showError(message: string) {
   activeReleaseTrap = trapFocus(errorDiv);
 }
 
+/**
+ * Programmatically dismiss the current error dialog, if any.
+ *
+ * Mirrors the click/Escape teardown path: cancels the pending auto-dismiss
+ * timer, releases the focus trap, and removes the dialog element. A no-op when
+ * no error is shown.
+ */
 export function clearError() {
   clearAutoDismissTimer();
   releaseActiveTrap();

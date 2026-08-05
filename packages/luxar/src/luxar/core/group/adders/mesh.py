@@ -66,6 +66,37 @@ def _reject_specialized_parent(parent_node: "Node", name: str) -> None:
         )
 
 
+def _reject_volumetric_blending(name: str, attrs: Dict[str, Any]) -> None:
+    """Refuse ``blending_mode='volumetric'`` on a mesh (spec §9).
+
+    The other §9 exclusions are refused already — LOD and partition by
+    :func:`_reject_specialized_parent`, the additive ladder by the viewer's
+    progressive-loader factory — but this one was documented and never enforced, so
+    a volumetric mesh wrote and loaded cleanly.
+
+    It cannot mean anything. Volumetric blending is emission-absorption integration
+    through a participating medium: the shader scales each element's contribution by
+    its extent along the view ray and maps ``absorption`` into optical depth over
+    that path length. A triangle is a zero-thickness surface, so its path length is
+    identically zero and there is no medium to absorb anything — the mode has no
+    per-element quantity to integrate. That makes it a caller mistake with no valid
+    interpretation, which is the same bar the LOD/partition refusals are held to, so
+    it raises rather than warns.
+
+    Refused at the ADDER rather than in ``validate_blending_mode``, which is
+    deliberately geometry-agnostic and shared by all four types.
+    """
+    if attrs.get("blending_mode") == "volumetric":
+        raise ValueError(
+            f"Cannot add mesh '{name}' with blending_mode='volumetric'. Volumetric "
+            "blending integrates emission and absorption along the view ray through a "
+            "participating medium, and a triangle is a zero-thickness surface: its "
+            "path length through the medium is zero, so there is nothing for "
+            "'absorption' to attenuate. Use 'normal' for an opaque surface, or "
+            "'additive' for a translucent one."
+        )
+
+
 def add_mesh_impl(
     group: "Group",
     *,
@@ -96,6 +127,7 @@ def add_mesh_impl(
         validate_node_name(name)
         (parent or group)._ensure_no_duplicate_child(name)
         _reject_specialized_parent(parent or group, name)
+        _reject_volumetric_blending(name, attrs)
 
         scene = group._find_scene()
 

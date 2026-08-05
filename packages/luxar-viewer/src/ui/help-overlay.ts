@@ -132,6 +132,15 @@ const HELP_TIPS: string[] = [
   'Right-click the Home button for deeper resets (origin, dimensions, rendering, layers).',
 ];
 
+/**
+ * Build and mount the keyboard-shortcut help overlay, rendering the grouped
+ * shortcut sections and closing tips defined in this module.
+ *
+ * Idempotent: if an overlay is already open it returns immediately rather than
+ * stacking a second one. Sets up a focus trap and a delayed
+ * click-outside-to-dismiss handler (the delay avoids catching the same click
+ * that opened it); {@link hideHelpOverlay} tears both down.
+ */
 export function showHelpOverlay() {
   // Prevent opening multiple overlays - if one exists, do nothing
   const existingHelp = document.getElementById('luxar-help-overlay');
@@ -288,6 +297,13 @@ export function showHelpOverlay() {
   activeHelpClickTimer = clickTimer;
 }
 
+/**
+ * Dismiss the help overlay opened by {@link showHelpOverlay}.
+ *
+ * Cancels the pending click-outside timer, releases the focus trap, and removes
+ * the overlay element, restoring focus to where it was before the overlay
+ * opened. A no-op when no overlay is present.
+ */
 export function hideHelpOverlay() {
   if (activeHelpClickTimer !== null) {
     clearTimeout(activeHelpClickTimer);

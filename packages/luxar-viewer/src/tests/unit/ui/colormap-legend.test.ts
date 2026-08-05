@@ -47,8 +47,7 @@ function makeLayer(overrides: Partial<LayerInfo> = {}): LayerInfo {
     dataMax: 1,
     gamma: 1,
     blendingMode: 'additive',
-    // A geometry leaf (type: 'points' here) always OWNS its resolved mode.
-    blendingModeSet: true,
+    blendingModeExplicit: true,
     selected: false,
     colormap: 'viridis',
     supportsColormap: true,
