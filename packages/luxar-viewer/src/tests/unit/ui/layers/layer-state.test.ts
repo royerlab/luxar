@@ -468,6 +468,17 @@ describe('LayerStateManager', () => {
       expect(mgr.getLayer('grp')!.blendingModeExplicit).toBe(true);
       expect(mgr.getLayer('grp')!.blendingMode).toBe('max');
     });
+
+    it('setBlendingMode stores the MESH-RESOLVED mode (volumetric → opaque)', () => {
+      // Same point-of-storage resolution as the panel's dropdown handler: the
+      // Blend dropdown displays the stored value raw, so a programmatic
+      // 'volumetric' on a mesh must not make the panel claim a mode the mesh
+      // shader does not implement.
+      mgr.initFromSceneGraph(makeGroupOverMesh({}));
+      mgr.setBlendingMode('grp/mesh', 'volumetric');
+      expect(mgr.getLayer('grp/mesh')!.blendingMode).toBe('opaque');
+      expect(mgr.getLayer('grp/mesh')!.blendingModeExplicit).toBe(true);
+    });
   });
 
   describe('resolveLayerBlendingMode locks the mode the control gates depend on', () => {

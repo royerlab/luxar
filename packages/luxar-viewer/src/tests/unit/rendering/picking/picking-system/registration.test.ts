@@ -111,17 +111,21 @@ describe('unregisterAllPickMaterials', () => {
     expect(materialManager.getCacheStats().totalRegistered).toBe(baseline - 2);
   });
 
-  it('skips materials that are not CameraAwareMaterial (no updateCameraParams)', () => {
-    // Plain material without the camera-aware tag — must NOT be
-    // touched by unregisterAllPickMaterials.
+  it('unregisters a non-camera-aware pick material (mesh pick, in staticMaterials)', () => {
+    // Plain material without the camera-aware tag stands in for the mesh pick
+    // material: register() routes it into staticMaterials (no
+    // updateCameraParams). It must STILL be unregistered — otherwise it leaks
+    // across every context-restore cycle (issue #1284).
     const plain = new THREE.MeshBasicMaterial();
+    materialManager.register(plain);
     const baseline = materialManager.getCacheStats().totalRegistered;
 
     const nodeMap = new Map<number, PickNodeEntry>();
     nodeMap.set(1, makeEntry(plain));
 
-    expect(() => unregisterAllPickMaterials(nodeMap)).not.toThrow();
-    expect(materialManager.getCacheStats().totalRegistered).toBe(baseline);
+    unregisterAllPickMaterials(nodeMap);
+
+    expect(materialManager.getCacheStats().totalRegistered).toBe(baseline - 1);
   });
 
   it('is a no-op for an empty nodeMap', () => {
