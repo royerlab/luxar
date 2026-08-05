@@ -1,4 +1,11 @@
-# fit_gsplats.py
+"""Fit Gaussian splats to a volume with PyTorch Adam and fixed-pool relocation.
+
+Provides ``GaussianSplatFitter`` (the configurable fitter class) and the
+``fit_gaussian_splats`` convenience function, which optimize a fixed pool of
+oriented Gaussians against an nD volume, periodically relocating the least
+informative splats to high-residual regions so optimizer tensor shapes stay
+constant. Runs on CPU, CUDA, or MPS.
+"""
 
 from __future__ import annotations
 

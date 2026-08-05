@@ -10,6 +10,19 @@ These demos are:
 - **Complete**: Generate → Serve → View → Cleanup workflow
 - **Copy-pasteable**: Can be used as templates for your own visualizations
 
+## Quick Start
+
+List the bundled demos, then run one by key or index — it generates the data
+and opens the viewer for you:
+
+```bash
+luxar demo              # list all demos (key, index, requirements)
+luxar demo run lorenz   # generate the Lorenz attractor demo and view it
+```
+
+Some demos need optional dependencies; run `luxar demo deps --install` to add
+them. See the sections below for the full CLI and dependency details.
+
 ## Running Demos (the `luxar demo` CLI)
 
 The easiest way to run any demo is the CLI (equivalent to the per-demo
