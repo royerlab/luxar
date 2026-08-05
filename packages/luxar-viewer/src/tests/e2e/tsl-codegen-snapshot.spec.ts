@@ -184,6 +184,19 @@ const SHADERS = [
   // distinct generated code no other variant pins.
   'gsplat-volumetric',
   'gsplat-colormap',
+  // Mesh — the five visual variants this phase ships (MESH_NODE_SPEC.md §6.4).
+  // `mesh` is the `opaque` DEFAULT (unlike the siblings, whose default is the
+  // alpha-weighted `additive`), so it pins the hard alpha-cutout emission;
+  // `mesh-additive` pins the alpha-weighted one the translucent modes share and
+  // `mesh-max` the premultiplied one. `mesh-flat-normal` is the derivative-shaded
+  // build, whose generated code must contain NEITHER the `normal` attribute nor its
+  // varying, and `mesh-colormap` the LUT path. `mesh-pick` arrives with the picking
+  // phase — mesh picking keys on `gl_VertexID` and needs its own material pair.
+  'mesh',
+  'mesh-additive',
+  'mesh-max',
+  'mesh-flat-normal',
+  'mesh-colormap',
 ] as const;
 
 test.describe('TSL → generated-shader snapshots', () => {
@@ -215,5 +228,32 @@ test.describe('TSL → generated-shader snapshots', () => {
       assertSnapshot(shader, 'vertex', result.vertexShader);
       assertSnapshot(shader, 'fragment', result.fragmentShader);
     }
+  });
+
+  test('mesh-flat-normal strips the ENTIRE stored-normal path from both stages', async ({
+    page,
+  }) => {
+    // The point of making the normal source a compile-time variant rather than a
+    // runtime branch: the flat build must not merely skip the stored normal, it must
+    // not CONTAIN it — no `normal` attribute, no varying carrying it, no epsilon
+    // guard, no `gl_FrontFacing` flip. A runtime branch would leave all four in the
+    // generated code (and keep the attribute in the vertex layout, which on WebGPU is
+    // baked into the pipeline).
+    //
+    // The snapshots already pin this byte-for-byte, but only implicitly — a reviewer
+    // reading a 111-line diff cannot see which absences are load-bearing. These
+    // assertions name them.
+    await bootHarness(page);
+    const flat = await runTSL(page, 'mesh-flat-normal');
+    const smooth = await runTSL(page, 'mesh');
+    const both = (r: TSLResult) => `${r.vertexShader}\n${r.fragmentShader}`;
+
+    for (const token of ['gl_FrontFacing', '1e-12']) {
+      expect(both(smooth), `smooth build must contain ${token}`).toContain(token);
+      expect(both(flat), `flat build must NOT contain ${token}`).not.toContain(token);
+    }
+    // The attribute itself: declared in the smooth vertex stage, absent in the flat one.
+    expect(smooth.vertexShader).toMatch(/\bin\s+vec3\s+normal\s*;/);
+    expect(flat.vertexShader).not.toMatch(/\bin\s+vec3\s+normal\s*;/);
   });
 });

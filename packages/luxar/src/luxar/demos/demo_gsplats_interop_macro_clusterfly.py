@@ -155,6 +155,7 @@ def build_scene() -> Path:
 
 
 def main() -> None:
+    """Build (or serve-only) the macro cluster fly scene."""
     aprint("=" * 70)
     aprint("GSplats Interop Demo: macro cluster fly (Dany Bittel)")
     aprint("=" * 70)

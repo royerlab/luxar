@@ -298,15 +298,25 @@ export class NodeFactory {
    * Create an empty placeholder for a mesh node — a plain `THREE.Mesh` with an
    * indexed `BufferGeometry`, not an instanced quad.
    *
-   * Takes no `nodeAttrs` and no `pickingSystem`, unlike its three siblings. No
-   * `nodeAttrs` because that second bag exists to tell a leaf-authored colormap
-   * window from an inherited ancestor gain, and mesh has no colormap path in this
-   * phase. No `pickingSystem` because mesh picking uses `gl_VertexID` rather than an
-   * element-texture texel and needs its own pick material pair, which arrives with
-   * the shading phase — threading the system in now would look like picking works.
+   * `attrs` is the COMPOSED effective attrs and `leafAttrs` the node's RAW ones —
+   * the same two-bag arrangement the three siblings use, needed for exactly one
+   * decision: telling a leaf-authored colormap window from an inherited ancestor
+   * gain (`resolveColormapWindow`). The order is reversed from the siblings' because
+   * the raw bag is optional here, and it defaults to `attrs`, which is right
+   * whenever no ancestor authored a gain.
+   *
+   * Still takes no `pickingSystem`, unlike all three: mesh picking keys on
+   * `gl_VertexID` rather than an element-texture texel, so it needs its own pick
+   * material pair (spec §6.5), which lands with the picking phase. Threading the
+   * system in now would make picking look wired when nothing reads it.
    */
-  createEmptyMeshNode(path: string, attrs: MeshMetadata, loader: MeshDataLoader): THREE.Mesh {
-    return createEmptyMeshNodeImpl(path, attrs, loader);
+  createEmptyMeshNode(
+    path: string,
+    attrs: MeshMetadata,
+    loader: MeshDataLoader,
+    leafAttrs?: Partial<MeshMetadata>
+  ): THREE.Mesh {
+    return createEmptyMeshNodeImpl(path, attrs, loader, leafAttrs);
   }
 
   // ============================================================================

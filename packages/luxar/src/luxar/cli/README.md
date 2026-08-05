@@ -18,6 +18,19 @@ luxar serve my_data.luxar.zarr --viewer
 luxar info my_data.luxar.zarr --stats
 ```
 
+The same commands are also available programmatically: `luxar.cli` exports the
+Typer `app`, which you can invoke directly (e.g. from a script or a test):
+
+```python
+from typer.testing import CliRunner
+
+from luxar.cli import app
+
+runner = CliRunner()
+result = runner.invoke(app, ["info", "my_data.luxar.zarr", "--stats"])
+print(result.stdout)
+```
+
 **What Each Does**:
 - `luxar demo` - Lists the bundled demos; `luxar demo run <key>` generates one and opens it in the viewer
 - `luxar serve --viewer` - Serves your data via HTTP alongside the viewer (add `--open` to launch the browser)

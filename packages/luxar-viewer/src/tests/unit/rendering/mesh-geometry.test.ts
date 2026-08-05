@@ -464,3 +464,106 @@ describe('applyMeshIndices — the index buffer is allocated once per node', () 
     expect(rebuilt).toBe(false);
   });
 });
+
+describe('the `normal` / `aScalar` attributes — replaced, never added or removed', () => {
+  /** A minimal 3-vertex config; `normals`/`scalars` are supplied per case. */
+  const cfg = (over: Record<string, unknown> = {}) => ({
+    position: new Float32Array(9),
+    positionChanged: true,
+    indices: new Uint32Array([0, 1, 2]),
+    colors: null,
+    vertexCount: 3,
+    faceCount: 1,
+    ...over,
+  });
+
+  it('binds them at CREATION when the arrays are supplied', () => {
+    const geometry = createMeshGeometry(
+      cfg({ normals: new Float32Array(9), scalars: new Float32Array(3) })
+    );
+    expect(geometry.getAttribute('normal').itemSize).toBe(3);
+    expect(geometry.getAttribute('aScalar').itemSize).toBe(1);
+    expect(geometry.userData.hasScalars).toBe(true);
+  });
+
+  it('never ADDS one that creation left out', () => {
+    // The WebGPU vertex layout is cached from the attribute set at first draw and
+    // never rebuilt, so growing the set on a later commit renders the node black on
+    // that backend only. Existence is a per-node constant (`has_normals` /
+    // `has_scalars`); a commit that finds the attribute missing must leave it missing.
+    const geometry = createMeshGeometry(cfg());
+    expect(geometry.getAttribute('normal')).toBeUndefined();
+    updateMeshGeometry(geometry, cfg({ normals: new Float32Array(9) }));
+    expect(geometry.getAttribute('normal')).toBeUndefined();
+  });
+
+  it('never REMOVES one when an epoch supplies no data', () => {
+    // The mirror case, and it is the one a `displayDims` change hits: a frame
+    // mismatch makes stored normals meaningless, but the fix is the shader VARIANT,
+    // not unbinding the attribute (§3.4).
+    const geometry = createMeshGeometry(cfg({ normals: new Float32Array(9) }));
+    updateMeshGeometry(geometry, cfg({ normals: null }));
+    expect(geometry.getAttribute('normal')).toBeDefined();
+  });
+
+  it('grows the 1-vertex placeholder stub on the first real commit, and reports it', () => {
+    // The expected first commit of every normal-bearing mesh: the placeholder is
+    // 1-vertex, the real buffer is N. A `setAttribute` rebind must report
+    // `attributesRebuilt` so the commit evicts three's cached WebGPU RenderObject.
+    const geometry = createMeshGeometry(
+      cfg({ position: new Float32Array(3), vertexCount: 1, normals: new Float32Array(3) })
+    );
+    const real = new Float32Array([0, 0, 1, 0, 1, 0, 1, 0, 0]);
+    const rebuilt = updateMeshGeometry(geometry, cfg({ normals: real }));
+    expect(rebuilt).toBe(true);
+    expect(geometry.getAttribute('normal').count).toBe(3);
+    expect(Array.from(geometry.getAttribute('normal').array as Float32Array)).toEqual([
+      0, 0, 1, 0, 1, 0, 1, 0, 0,
+    ]);
+  });
+
+  it('copies in place when a NEW array of the same length arrives — no rebind', () => {
+    // The re-fetch case (dispose/reload hands over fresh buffers): content genuinely
+    // changed, so it must copy and flag, but without rebinding the attribute object.
+    const geometry = createMeshGeometry(cfg({ normals: new Float32Array(9) }));
+    const attr = geometry.getAttribute('normal') as THREE.BufferAttribute;
+    const before = attr.version;
+    const next = new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]);
+    const rebuilt = updateMeshGeometry(geometry, cfg({ normals: next, positionChanged: false }));
+    expect(rebuilt).toBe(false);
+    expect(geometry.getAttribute('normal')).toBe(attr); // same object
+    expect(Array.from(attr.array as Float32Array)).toEqual([1, 0, 0, 0, 1, 0, 0, 0, 1]);
+    expect(attr.version).toBeGreaterThan(before);
+  });
+
+  it('re-uploads NOTHING when the same array arrives again — the steady state', () => {
+    // The whole-node loader serves one cached `LoadedMeshData` for the node's
+    // lifetime and the commit passes `data.normals` / `data.scalars` every epoch, so
+    // after the first commit the identity is ALWAYS equal. Flagging `needsUpdate`
+    // there would re-upload the entire normal (V·12 B) and scalar (V·4 B) buffers on
+    // every slice move, with no update ranges — real bandwidth during a scrub, and a
+    // contradiction of the no-compaction rule that only the index rebuilds.
+    //
+    // Observed through `attribute.version`, since `needsUpdate` is a write-only
+    // setter in three (it has no getter and just bumps `version`).
+    const normals = new Float32Array([0, 0, 1, 0, 1, 0, 1, 0, 0]);
+    const scalars = new Float32Array([0.25, 0.5, 0.75]);
+    const geometry = createMeshGeometry(cfg({ normals, scalars }));
+    const normalAttr = geometry.getAttribute('normal') as THREE.BufferAttribute;
+    const scalarAttr = geometry.getAttribute('aScalar') as THREE.BufferAttribute;
+    const normalVersion = normalAttr.version;
+    const scalarVersion = scalarAttr.version;
+
+    // Three consecutive slice moves: same arrays, only the visible index changes.
+    for (const indices of [
+      new Uint32Array([0, 1, 2]),
+      new Uint32Array([]),
+      new Uint32Array([0, 1, 2]),
+    ]) {
+      updateMeshGeometry(geometry, cfg({ normals, scalars, indices, positionChanged: false }));
+    }
+
+    expect(normalAttr.version, 'normal buffer re-uploaded on a slice move').toBe(normalVersion);
+    expect(scalarAttr.version, 'scalar buffer re-uploaded on a slice move').toBe(scalarVersion);
+  });
+});

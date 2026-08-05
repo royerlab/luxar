@@ -85,18 +85,24 @@ class DemoInfo:
 
     @property
     def download_mb(self) -> int:
+        """Approximate download size in megabytes, from ``requirements``."""
         return int(self.requirements["download_mb"])
 
     @property
     def compute(self) -> str:
+        """Compute-cost tier (``light`` / ``medium`` / ``heavy``)."""
         return str(self.requirements["compute"])
 
     @property
     def gpu(self) -> str:
+        """GPU requirement (``none`` / ``optional`` / ``required``)."""
         return str(self.requirements["gpu"])
 
     @property
     def local_data(self) -> Optional[str]:
+        """Local-data provisioning mode (``git-lfs`` / ``kaggle-auth`` /
+        ``manual-file``), or ``None`` when nothing has to be provisioned locally
+        — the demo may still download at runtime (see ``download_mb``)."""
         return self.requirements["local_data"]
 
 
@@ -212,6 +218,7 @@ def extract_demo_meta(path: Path) -> dict[str, Any]:
 
 
 def _iter_demo_paths() -> Iterator[Path]:
+    """Yield the ``demo_*.py`` script paths in sorted (stable) order."""
     yield from sorted(_DEMOS_DIR.glob("demo_*.py"))
 
 

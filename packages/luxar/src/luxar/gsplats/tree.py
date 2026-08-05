@@ -86,6 +86,11 @@ class GSplatLeaf:
     meta: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        """Reject an empty ladder and additive sub-LODs of mixed dimensionality.
+
+        The leaf's ``ndim`` is read from the first sub-LOD, so a mix would
+        silently mis-describe the rest; both are hard errors.
+        """
         if not self.additive_sublods:
             raise ValueError("GSplatLeaf must contain at least one AdditiveSubLOD")
         ndims = {int(sub.ndim) for sub in self.additive_sublods}
@@ -136,6 +141,11 @@ class GSplatLodGroup:
     meta: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        """Reject an empty group and children of mixed dimensionality.
+
+        The group's ``ndim`` is read from the first child, so a dimensionality
+        mix would silently mis-describe the rest; both are hard errors.
+        """
         if not self.children:
             raise ValueError("GSplatLodGroup must contain at least one child")
         ndims = {int(c.ndim) for c in self.children}
@@ -153,6 +163,7 @@ class GSplatLodGroup:
 
     @property
     def n_children(self) -> int:
+        """Number of substitutive levels (children) in the group."""
         return len(self.children)
 
     @property
@@ -195,6 +206,11 @@ class GSplatPartition:
     bsp_tree: Optional[Dict[str, Any]] = None
 
     def __post_init__(self) -> None:
+        """Reject an empty partition and parts of mixed dimensionality.
+
+        The partition's ``ndim`` is read from the first part, so a mix would
+        silently mis-describe the rest; both are hard errors.
+        """
         if not self.children:
             raise ValueError("GSplatPartition must contain at least one child")
         ndims = {int(c.ndim) for c in self.children}
@@ -550,6 +566,12 @@ def substitutive_levels_from_tree(
     from luxar.gsplats.gsplat_data import SubstitutiveLevel
 
     def leaf_to_level(leaf: GSplatLeaf, fallback_index: int) -> "SubstitutiveLevel":
+        """Rebuild a ``SubstitutiveLevel`` from a leaf, reading provenance from meta.
+
+        ``compression_factor`` / ``parent_method`` / ``level_index`` / ``stats``
+        come from the leaf's ``meta``; ``fallback_index`` is used when the leaf
+        carries no ``level_index``.
+        """
         meta = leaf.meta
         return SubstitutiveLevel(
             additive_sublods=list(leaf.additive_sublods),

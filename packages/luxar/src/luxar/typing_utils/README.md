@@ -6,6 +6,23 @@ The `typing_utils` package provides comprehensive type definitions, protocols, a
 
 This package centralizes all type-related code to ensure consistency and type safety. It follows a clear separation of concerns between different aspects of typing.
 
+## Quick Start
+
+Import type aliases, protocols, enums, and validation helpers from the package
+root (not the submodules):
+
+```python
+import numpy as np
+
+from luxar.typing_utils import PositionArray, BlendingMode, validate_positions
+
+raw = np.random.rand(100, 3)         # any (N, D) numpy array
+positions = validate_positions(raw)  # runtime check -> Float32Array
+mode = BlendingMode.ADDITIVE         # str-backed enum member (mode == "additive")
+```
+
+See [Usage Examples](#usage-examples) for protocols, enums, and constants.
+
 ## Modules
 
 ### `protocols.py`
@@ -143,13 +160,13 @@ def apply_transform(
 ```python
 from luxar.typing_utils import BlendingMode, PhysicalUnit
 
-# Type-safe string literals
-mode: BlendingMode = "additive"  # OK
-mode: BlendingMode = "invalid"   # Type error
+# str-backed enum members compare equal to their string value
+mode = BlendingMode.ADDITIVE        # mode == "additive"
+mode = BlendingMode("additive")     # look up a member from its string
 
-# Validation
-unit: PhysicalUnit = "um"
-if unit in ["nm", "um", "mm"]:
+# Validation: convert a string, rejecting unknown values
+unit = PhysicalUnit.validate("um")  # -> PhysicalUnit.MICROMETER
+if unit in (PhysicalUnit.NANOMETER, PhysicalUnit.MICROMETER, PhysicalUnit.MILLIMETER):
     # Handle metric units
     ...
 ```

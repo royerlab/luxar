@@ -107,6 +107,8 @@ def attr_to_colors(values):  # type: ignore[no-untyped-def]
 
 
 def main() -> None:
+    """Load the integrated cells, build the two-view UMAP scene, and optionally
+    launch the viewer (honors ``--no-serve``)."""
     aprint("=" * 70)
     aprint("ZEBRAHUB MULTIOME — Integrated 3D UMAP")
     aprint("=" * 70)

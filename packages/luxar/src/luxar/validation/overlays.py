@@ -461,6 +461,13 @@ class _HtmlSanitizer(HTMLParser):
     """
 
     def __init__(self) -> None:
+        """Initialise the parser with an empty output buffer and skip state.
+
+        ``convert_charrefs=True`` so character references in text are decoded
+        before escaping (attribute values are decoded by the parser regardless).
+        ``_skip_tag`` / ``_skip_depth`` track the currently-open content-dropping
+        element (0 = not skipping).
+        """
         super().__init__(convert_charrefs=True)
         self._out: list[str] = []
         # Name of the disallowed content-dropping tag we are inside, and its
@@ -469,10 +476,17 @@ class _HtmlSanitizer(HTMLParser):
         self._skip_depth: int = 0
 
     def get_output(self) -> str:
+        """Return the accumulated sanitized HTML as a single string."""
         return "".join(self._out)
 
     @staticmethod
     def _render_attrs(attrs: list[Tuple[str, Optional[str]]]) -> str:
+        """Render an allowlisted attribute string for a start tag.
+
+        Drops attributes not in ``ALLOWED_ATTRS`` and ``href``/``src`` values
+        with a dangerous scheme; escapes the surviving values. Returns a
+        leading-space-prefixed string, or ``""`` when nothing survives.
+        """
         parts: list[str] = []
         for name, value in attrs:
             if name not in ALLOWED_ATTRS:
@@ -492,9 +506,16 @@ class _HtmlSanitizer(HTMLParser):
         return (" " + " ".join(parts)) if parts else ""
 
     def _emit_start(self, tag: str, attrs: list[Tuple[str, Optional[str]]]) -> None:
+        """Append a start tag with its sanitized attributes to the output."""
         self._out.append(f"<{tag}{self._render_attrs(attrs)}>")
 
     def handle_starttag(self, tag: str, attrs: list[Tuple[str, Optional[str]]]) -> None:
+        """Handle a start tag: skip content-dropping tags, emit allowed ones.
+
+        While inside a content-dropping element the tag is swallowed (and its
+        nesting depth tracked); a disallowed non-raw tag is dropped but its
+        inner text is kept; an allowed tag is emitted with sanitized attrs.
+        """
         if self._skip_depth:
             if tag == self._skip_tag:
                 self._skip_depth += 1
@@ -530,6 +551,7 @@ class _HtmlSanitizer(HTMLParser):
             self._out.append(f"</{tag}>")
 
     def handle_data(self, data: str) -> None:
+        """Append HTML-escaped text, unless inside a content-dropping element."""
         if not self._skip_depth:
             self._out.append(
                 data.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")

@@ -241,6 +241,7 @@ def create_luxar_scene(channel_paths: list[Path], output_path: Path) -> Path:
 # Main
 # =============================================================================
 def main() -> None:
+    """Resolve the channel data, build the 4D scene, and optionally serve it."""
     aprint("=" * 70)
     aprint("GSplats Demo: 4D Two-Channel Neuromast Timelapse")
     aprint("=" * 70)
