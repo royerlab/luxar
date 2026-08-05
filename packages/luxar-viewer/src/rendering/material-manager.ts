@@ -21,11 +21,14 @@ import type { GSplatPickingMaterial } from './picking/gsplat/material';
 import type { PointPickingTSLMaterial } from './picking/point/material-tsl';
 import type { LinePickingTSLMaterial } from './picking/line/material-tsl';
 import type { GSplatPickingTSLMaterial } from './picking/gsplat/material-tsl';
+import type { MeshPickingMaterial } from './picking/mesh/material';
+import type { MeshPickingTSLMaterial } from './picking/mesh/material-tsl';
 import type { MegaShaderMaterial } from './post-processing/mega/material';
 import type { MegaShaderTSLMaterial } from './post-processing/mega/material-tsl';
 import type { PointPickingMaterialConfig } from './picking/point/material';
 import type { LinePickingMaterialConfig } from './picking/line/material';
 import type { GSplatPickingMaterialConfig } from './picking/gsplat/material';
+import type { MeshPickingMaterialConfig } from './picking/mesh/material';
 import type { MegaShaderConfig } from './post-processing/mega/material';
 import {
   isCameraAwareMaterial,
@@ -92,12 +95,19 @@ export type LuxarMeshMaterial = MeshMaterial | MeshTSLMaterial;
 
 /**
  * Per-geometry-type picking material returned by
- * `MaterialManager.create{Point,Line,GSplat}PickingMaterial`.
+ * `MaterialManager.create{Point,Line,GSplat,Mesh}PickingMaterial`.
  * Picking materials have a per-mesh lifetime (not cached).
  */
 export type LuxarPointPickingMaterial = PointPickingMaterial | PointPickingTSLMaterial;
 export type LuxarLinePickingMaterial = LinePickingMaterial | LinePickingTSLMaterial;
 export type LuxarGSplatPickingMaterial = GSplatPickingMaterial | GSplatPickingTSLMaterial;
+/**
+ * Like its three siblings, minus `updateCameraParams` — the mesh pick pass has no
+ * screen-space footprint to size, so it is not camera-aware and joins
+ * `staticMaterials` rather than the camera broadcast, exactly as the visual mesh
+ * material does.
+ */
+export type LuxarMeshPickingMaterial = MeshPickingMaterial | MeshPickingTSLMaterial;
 
 /**
  * The single post-processing mega-shader material managed by
@@ -408,6 +418,11 @@ export class MaterialManager {
   /** Same shape as `createPointPickingMaterial`, for gsplats. */
   createGSplatPickingMaterial(config: GSplatPickingMaterialConfig): LuxarGSplatPickingMaterial {
     return new PICKING_FACTORIES.gsplat[resolveMaterialBackend(this.caps)](config);
+  }
+
+  /** Same shape as `createPointPickingMaterial`, for meshes. */
+  createMeshPickingMaterial(config: MeshPickingMaterialConfig): LuxarMeshPickingMaterial {
+    return new PICKING_FACTORIES.mesh[resolveMaterialBackend(this.caps)](config);
   }
 
   /**

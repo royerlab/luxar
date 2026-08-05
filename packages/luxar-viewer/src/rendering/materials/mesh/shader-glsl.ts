@@ -178,16 +178,23 @@ export const MESH_FRAGMENT_SHADER = /* glsl */ `
     void main() {
       // (1) Derivative normal, UNCONDITIONALLY — see the module doc.
       highp vec3 derivativeNormal = normalize(cross(dFdx(vViewPos), dFdy(vViewPos)));
-      // Forced viewer-facing rather than assumed so. \`cross(dFdx, dFdy)\` carries the
-      // sign of the fragment-space y axis, and the two backends disagree about it:
-      // GLSL's \`dFdy\` is with respect to a BOTTOM-UP window coordinate while WGSL's
-      // \`dpdy\` is TOP-DOWN, so the identical surface yields +z on one and -z on the
-      // other. Left alone, the flat variant would shade correctly on WebGL and
-      // collapse to \`uAmbient\` everywhere on WebGPU — a §6.4 matching-output
-      // violation that no amount of GLSL-side testing can see. Since the headlight's
-      // V is the fixed view axis (0, 0, 1), "faces the viewer" is exactly
-      // \`z >= 0\`, so one sign flip makes the fallback convention-independent (and
-      // winding-independent, which is what §6.2 asserts about it).
+      // Forced viewer-facing rather than assumed so, which makes the fallback
+      // convention-INDEPENDENT. \`cross(dFdx, dFdy)\` carries the sign of the
+      // fragment-space y axis, and the two shading-language specs differ on it: GLSL's
+      // \`dFdy\` is with respect to a BOTTOM-UP window coordinate while WGSL's \`dpdy\`
+      // is TOP-DOWN. Under opposite conventions the identical surface yields +z on one
+      // backend and -z on the other, and an unforced flat variant would then shade
+      // correctly on one and collapse toward \`uAmbient\` on the other. Since the
+      // headlight's V is the fixed view axis (0, 0, 1), "faces the viewer" is exactly
+      // \`z >= 0\` and one sign flip settles it for either convention.
+      //
+      // MEASURED, so the comment does not overstate: on Chrome + Apple Silicon the two
+      // backends agree with the flip REMOVED — a face-on flat quad renders identically
+      // (37,151 lit pixels either way, byte-identical means), so the conventions
+      // coincide there and the flip is currently INERT on that platform. It is kept
+      // because it costs one instruction, is correct under either convention, and the
+      // GLSL/WGSL specs do not promise they agree; it is insurance, not a fix for an
+      // observed bug. It is also winding-independent, which is what §6.2 asserts.
       if (derivativeNormal.z < 0.0) derivativeNormal = -derivativeNormal;
 
       #ifdef LUXAR_MESH_FLAT_NORMAL

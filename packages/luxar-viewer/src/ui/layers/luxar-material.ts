@@ -49,6 +49,21 @@ export interface LuxarMaterial extends THREE.Material {
    * materials (VOLUMETRIC_BLENDING_SPEC.md).
    */
   updateAbsorption?(v: number): void;
+  /**
+   * The three §6.2 mesh shading knobs: the headlight's shade floor, its falloff
+   * exponent, and the `opaque`-mode cutout threshold.
+   *
+   * Optional, and — unlike `updateAbsorption` above — genuinely so rather than for
+   * legacy reasons: **only the mesh materials implement them**, because mesh is the
+   * only geometry type that shades. The other three are emissive per-element sprites
+   * with no surface orientation, so there is no shade term for a floor to lift.
+   *
+   * That makes the optional-chained call site in `applyMeshAppearance` the type gate:
+   * a points material simply has no `updateAmbient`.
+   */
+  updateAmbient?(v: number): void;
+  updateShadeExponent?(v: number): void;
+  updateAlphaCutoff?(v: number): void;
   updateColormapTexture?(texture: THREE.DataTexture | null): void;
   updateScalarRange?(min: number, max: number): void;
   /**

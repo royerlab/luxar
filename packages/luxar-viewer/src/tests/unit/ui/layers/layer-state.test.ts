@@ -4,6 +4,7 @@ import {
   computeUniforms,
   computeDisplayRange,
   isLayerEnabled,
+  resolveLayerBlendingMode,
 } from '../../../../ui/layers/layer-state';
 import type { SceneNode } from '../../../../data/data-loader-types';
 
@@ -365,7 +366,11 @@ describe('LayerStateManager', () => {
       expect(layer.blendingModeExplicit).toBe(false);
     });
 
-    it('marks the mode EXPLICIT when composed from an ancestor (#1272)', () => {
+    it('an ancestor-INHERITED mode displays but is NOT owned (#1275)', () => {
+      // The leaf's dropdown shows the composed 'max', but ownership reads the
+      // node's OWN attr: re-emitting an inherited mode as the leaf's own setter
+      // would freeze a snapshot that shadows the ancestor layer's next live
+      // pick (the nearer setter wins) — see the LayerInfo.blendingModeExplicit doc.
       const graph: SceneNode = {
         path: '',
         type: 'scene',
@@ -389,7 +394,9 @@ describe('LayerStateManager', () => {
         ],
       };
       mgr.initFromSceneGraph(graph);
-      expect(mgr.getLayer('grp/pts')!.blendingModeExplicit).toBe(true);
+      const leaf = mgr.getLayer('grp/pts')!;
+      expect(leaf.blendingMode).toBe('max');
+      expect(leaf.blendingModeExplicit).toBe(false);
     });
 
     it('marks the mode EXPLICIT after a user pick via setBlendingMode (#1272)', () => {
@@ -397,6 +404,100 @@ describe('LayerStateManager', () => {
       expect(mgr.getLayer('layer_0')!.blendingModeExplicit).toBe(false);
       mgr.setBlendingMode('layer_0', 'max');
       expect(mgr.getLayer('layer_0')!.blendingModeExplicit).toBe(true);
+    });
+  });
+
+  describe('blendingModeExplicit tracks OWNERSHIP (not the displayed mode)', () => {
+    /** scene → group (attrs) → mesh leaf. */
+    function makeGroupOverMesh(groupAttrs: Record<string, unknown>): SceneNode {
+      return {
+        path: '',
+        type: 'scene',
+        attrs: {},
+        hasSpatialIndex: false,
+        children: [
+          {
+            path: 'grp',
+            type: 'group',
+            attrs: { layer: true, ...groupAttrs },
+            hasSpatialIndex: false,
+            children: [
+              {
+                path: 'grp/mesh',
+                type: 'mesh',
+                attrs: { layer: true },
+                hasSpatialIndex: true,
+              },
+            ],
+          },
+        ],
+      };
+    }
+
+    it('a geometry leaf owns a mode only when IT authored one', () => {
+      // An unauthored leaf shows its per-type default but does not own it —
+      // owning would emit the default as a setter and block an ancestor group
+      // layer's Blend pick from ever reaching the leaf (nearest-setter-wins).
+      mgr.initFromSceneGraph(makeSceneGraph([{}]));
+      expect(mgr.getLayers()[0].blendingModeExplicit).toBe(false);
+      mgr.initFromSceneGraph(makeSceneGraph([{ blending_mode: 'max' }]));
+      expect(mgr.getLayers()[0].blendingModeExplicit).toBe(true);
+    });
+
+    it('a plain group that authored no blending_mode does NOT own one', () => {
+      mgr.initFromSceneGraph(makeGroupOverMesh({}));
+      const grp = mgr.getLayer('grp')!;
+      expect(grp.type).toBe('group');
+      expect(grp.blendingModeExplicit).toBe(false);
+      // The contained (unauthored) mesh leaf doesn't own one either — its
+      // `opaque` comes from the per-type fallback at apply time, not from the
+      // panel injecting a setter.
+      expect(mgr.getLayer('grp/mesh')!.blendingModeExplicit).toBe(false);
+      expect(mgr.getLayer('grp/mesh')!.blendingMode).toBe('opaque');
+    });
+
+    it('a group that authored blending_mode on disk DOES own one', () => {
+      mgr.initFromSceneGraph(makeGroupOverMesh({ blending_mode: 'max' }));
+      expect(mgr.getLayer('grp')!.blendingModeExplicit).toBe(true);
+    });
+
+    it('setBlendingMode makes a plain group own its mode', () => {
+      mgr.initFromSceneGraph(makeGroupOverMesh({}));
+      expect(mgr.getLayer('grp')!.blendingModeExplicit).toBe(false);
+      mgr.setBlendingMode('grp', 'max');
+      expect(mgr.getLayer('grp')!.blendingModeExplicit).toBe(true);
+      expect(mgr.getLayer('grp')!.blendingMode).toBe('max');
+    });
+
+    it('setBlendingMode stores the MESH-RESOLVED mode (volumetric → opaque)', () => {
+      // Same point-of-storage resolution as the panel's dropdown handler: the
+      // Blend dropdown displays the stored value raw, so a programmatic
+      // 'volumetric' on a mesh must not make the panel claim a mode the mesh
+      // shader does not implement.
+      mgr.initFromSceneGraph(makeGroupOverMesh({}));
+      mgr.setBlendingMode('grp/mesh', 'volumetric');
+      expect(mgr.getLayer('grp/mesh')!.blendingMode).toBe('opaque');
+      expect(mgr.getLayer('grp/mesh')!.blendingModeExplicit).toBe(true);
+    });
+  });
+
+  describe('resolveLayerBlendingMode locks the mode the control gates depend on', () => {
+    // The layer-controls absorption / alpha-cutoff visibility gates resolve the
+    // mode through this before comparing. A mesh maps `volumetric` → `opaque`
+    // (no absorption path; the cutout is active), while every other type keeps it.
+    it('resolves volumetric → opaque for a mesh (never shows a dead absorption slider)', () => {
+      expect(resolveLayerBlendingMode('mesh', 'volumetric')).toBe('opaque');
+    });
+
+    it('leaves volumetric alone for gsplats / points / lines', () => {
+      expect(resolveLayerBlendingMode('gsplats', 'volumetric')).toBe('volumetric');
+      expect(resolveLayerBlendingMode('points', 'volumetric')).toBe('volumetric');
+      expect(resolveLayerBlendingMode('lines', 'volumetric')).toBe('volumetric');
+    });
+
+    it('passes non-volumetric modes through unchanged for a mesh', () => {
+      expect(resolveLayerBlendingMode('mesh', 'opaque')).toBe('opaque');
+      expect(resolveLayerBlendingMode('mesh', 'additive')).toBe('additive');
     });
   });
 
@@ -495,6 +596,18 @@ describe('LayerStateManager', () => {
     // Finest leaf (n_splats=5000) wins → [0, 0.03], NOT the [0, 1] fallback.
     expect(layer.dataMax).toBeCloseTo(0.03, 5);
     expect(layer.displayMax).toBeCloseTo(0.03, 5);
+  });
+
+  it('a composite kind=partition group without an authored mode does NOT own one', () => {
+    // Ownership reads the NODE's own attrs, never the layer's display type: a
+    // kind=partition/lod wrapper's LayerInfo.type is its display_type (a
+    // geometry name, 'gsplats' here), but the wrapper authored no mode, so it
+    // must not become a `blending_mode` setter merely because its display type
+    // looks like a leaf.
+    mgr.initFromSceneGraph(makePartitionGraph({}));
+    const layer = mgr.getLayer('/g')!;
+    expect(layer.type).toBe('gsplats'); // display_type
+    expect(layer.blendingModeExplicit).toBe(false); // authored no mode
   });
 
   it('surfaces a descendant-authored palette on the wrapper layer', () => {

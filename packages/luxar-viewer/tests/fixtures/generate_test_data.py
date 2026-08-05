@@ -92,6 +92,8 @@ FIXTURE_NAMES: list[str] = [
     "test_lift_parity.luxar.zarr",
     "test_lut.luxar.zarr",
     "test_lut_u16.luxar.zarr",
+    "test_mesh.luxar.zarr",
+    "test_mesh_nd.luxar.zarr",
     "test_mixed.luxar.zarr",
     "test_nd_transforms.luxar.zarr",
     "test_overview.gsplats.zarr",
@@ -3437,6 +3439,313 @@ def generate_partition_layer_test() -> None:
         aprint("  partition layer: 1 layer row → 2 parts, blending_mode on the wrapper")
 
 
+def _icosphere(subdivisions: int = 2, radius: float = 1.0) -> tuple:
+    """A welded, closed icosphere: vertices, faces, and per-vertex unit normals.
+
+    Chosen over a cube or a grid for the mesh fixtures because it is the shape that
+    actually exercises the mesh path:
+
+    * **Welded** — vertices are SHARED between adjacent faces, so `gl_VertexID` is a
+      genuine many-to-one pick target rather than incidentally per-triangle. A
+      de-indexed mesh would make the shared-vertex pick semantics untestable.
+    * **Closed** — an nD slab cull removes front faces and EXPOSES the interior back
+      faces, which is what the `gl_FrontFacing` normal flip and the pick pass's
+      `side` sync exist for. A flat sheet never shows a back face.
+    * **Smooth normals that are not axis-aligned** — every vertex normal is its own
+      direction, so a build that ignored `shading` and always shaded from derivatives
+      would render visibly differently. On a cube the two agree per face.
+
+    Returns `(vertices, faces, normals)` — the normals are exactly the unit positions,
+    which is the analytic answer for a sphere and therefore a fixture whose expected
+    shading can be reasoned about rather than merely recorded.
+    """
+    t = (1.0 + 5.0**0.5) / 2.0
+    verts = np.array(
+        [
+            [-1, t, 0],
+            [1, t, 0],
+            [-1, -t, 0],
+            [1, -t, 0],
+            [0, -1, t],
+            [0, 1, t],
+            [0, -1, -t],
+            [0, 1, -t],
+            [t, 0, -1],
+            [t, 0, 1],
+            [-t, 0, -1],
+            [-t, 0, 1],
+        ],
+        dtype=np.float64,
+    )
+    faces = [
+        [0, 11, 5],
+        [0, 5, 1],
+        [0, 1, 7],
+        [0, 7, 10],
+        [0, 10, 11],
+        [1, 5, 9],
+        [5, 11, 4],
+        [11, 10, 2],
+        [10, 7, 6],
+        [7, 1, 8],
+        [3, 9, 4],
+        [3, 4, 2],
+        [3, 2, 6],
+        [3, 6, 8],
+        [3, 8, 9],
+        [4, 9, 5],
+        [2, 4, 11],
+        [6, 2, 10],
+        [8, 6, 7],
+        [9, 8, 1],
+    ]
+
+    # Subdivide, sharing each new edge midpoint between the two faces that own it —
+    # this is what keeps the result WELDED.
+    for _ in range(subdivisions):
+        cache: dict = {}
+        out = []
+
+        def midpoint(i: int, j: int) -> int:
+            key = (min(i, j), max(i, j))
+            if key not in cache:
+                nonlocal verts
+                m = (verts[i] + verts[j]) / 2.0
+                verts = np.vstack([verts, m[None, :]])
+                cache[key] = len(verts) - 1
+            return cache[key]
+
+        for a_i, b_i, c_i in faces:
+            ab = midpoint(a_i, b_i)
+            bc = midpoint(b_i, c_i)
+            ca = midpoint(c_i, a_i)
+            out += [[a_i, ab, ca], [b_i, bc, ab], [c_i, ca, bc], [ab, bc, ca]]
+        faces = out
+
+    # Project onto the sphere; the unit position IS the analytic normal.
+    lengths = np.linalg.norm(verts, axis=1, keepdims=True)
+    normals = (verts / lengths).astype(np.float32)
+    return (
+        (normals * radius).astype(np.float32),
+        np.asarray(faces, dtype=np.uint32),
+        normals,
+    )
+
+
+def generate_mesh_test() -> None:
+    """Baseline 3D mesh fixture: a shaded, labelled, coloured icosphere.
+
+        Covers, in one node, everything the mesh render path has that the other three
+        geometry types do not:
+
+        * stored per-vertex `normals` + `normal_dims` (the smooth-shading variant);
+        * per-vertex **RGBA** where the alpha varies — a band of vertices sits at 0.25,
+          BELOW the 0.5 `opaque` cutout default, so the fixture has a visible hole and the
+          cutout has something to act on. An all-opaque fixture would make the cutout
+          branch untestable;
+        * per-vertex `scalars` for the colormap path;
+        * per-vertex `labels`, so hover/pick resolves through the CSR at exactly the
+          vertex granularity the pick shader reports.
+
+    Four nodes, one axis each — `colors` and `colormap` are mutually exclusive on a
+    single node, so the direct-colour and LUT paths cannot share one:
+
+    * `sphere` — RGBA (with the sub-cutoff cap) + labels + smooth stored normals;
+    * `scalar_sphere` — the same geometry with `scalars` + `colormap` instead;
+    * `flat_patch` — authored `shading="flat"`, so a test can compare the two shading
+      variants inside ONE scene rather than across two fixtures. Nearly EDGE-ON to the
+      opening camera;
+    * `flat_facing` — also `shading="flat"`, but FACE-ON, which is what makes the
+      derivative normal's forced viewer-facing sign observable at all. See the comment
+      on its vertices for why edge-on cannot show it.
+    """
+    with asection("Generating Mesh Test"):
+        output = FIXTURES_DIR / "test_mesh.luxar.zarr"
+
+        vertices, faces, normals = _icosphere(subdivisions=2, radius=1.0)
+        n_v = len(vertices)
+
+        # RGBA. Hue follows the vertex position so the surface is readable; alpha is
+        # 1.0 except for the +z cap, which drops to 0.25 — under the cutout default
+        # (0.5) that cap is discarded, so the sphere has a hole you can see through.
+        colors = np.empty((n_v, 4), dtype=np.float32)
+        colors[:, 0] = (vertices[:, 0] + 1.0) / 2.0
+        colors[:, 1] = (vertices[:, 1] + 1.0) / 2.0
+        colors[:, 2] = (vertices[:, 2] + 1.0) / 2.0
+        colors[:, 3] = np.where(vertices[:, 2] > 0.75, 0.25, 1.0)
+
+        # Latitude, so the colormap has a monotone field to map.
+        scalars = ((vertices[:, 2] + 1.0) / 2.0).astype(np.float32)
+        labels = [f"vertex {i} (z={vertices[i, 2]:.2f})" for i in range(n_v)]
+
+        # A flat 2x2 quad patch, offset in x, authored shading="flat". Its normal is
+        # along X, which puts it nearly EDGE-ON to the opening camera: the two spheres
+        # stack vertically on screen and this patch sits to their right, so screen-up is
+        # ~+Y, screen-right ~+X, and the view axis ~Z.
+        patch_v = np.array(
+            [[2.0, -1, -1], [2.0, 1, -1], [2.0, 1, 1], [2.0, -1, 1]], dtype=np.float32
+        )
+        patch_f = np.array([[0, 1, 2], [0, 2, 3]], dtype=np.uint32)
+
+        # A second flat quad, this one FACE-ON: it lies in a z = const plane, so its
+        # normal is along Z — parallel to the view axis.
+        #
+        # That distinction is the whole reason this node exists, and it is not
+        # cosmetic. The derivative-normal path forces its result viewer-facing
+        # (`z >= 0`) because GLSL's `dFdy` is bottom-up where WGSL's `dpdy` is
+        # top-down, so `cross(dFdx, dFdy)` carries opposite sign on the two backends.
+        # EDGE-ON, that forcing is unobservable: `N.z ~= 0`, and flipping the sign of
+        # ~0 leaves `wrap = clamp(0 * 0.5 + 0.5) = 0.5` unchanged — measured on real
+        # WebGPU as byte-identical pixels with the flip removed, which is why the
+        # edge-on patch alone could not verify it. FACE-ON, `N.z ~= +/-1` and the flip
+        # is the difference between full brightness and the ambient floor.
+        facing_v = np.array(
+            [[-1.0, -1.0, 1.5], [1.0, -1.0, 1.5], [1.0, 1.0, 1.5], [-1.0, 1.0, 1.5]],
+            dtype=np.float32,
+        )
+        facing_f = np.array([[0, 1, 2], [0, 2, 3]], dtype=np.uint32)
+
+        dims = Dimensions(
+            [
+                Dimension("x", unit="units", display=True),
+                Dimension("y", unit="units", display=True),
+                Dimension("z", unit="units", display=True),
+            ]
+        )
+
+        with LuxarZarrCompiler(
+            output,
+            encoding_mode=EncodingMode.PRECISION,
+            compressor=None,
+            float16_allowed=False,
+        ) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+            # Direct-colour node: RGBA + labels + smooth stored normals.
+            scene.add_mesh(
+                "sphere",
+                vertices,
+                faces,
+                normals=normals,
+                normal_dims=[0, 1, 2],
+                colors=colors,
+                labels=labels,
+                shading="smooth",
+                layer=True,
+            )
+            # The colormap path needs its OWN node: `colors` and `colormap` are
+            # mutually exclusive by design (the shader reads the colour attribute or
+            # the LUT, never both), and `scalars` without a `colormap` is refused
+            # outright — a scalar field with nothing to map it through would leave
+            # USE_COLORMAP unset and the attribute unread.
+            scene.add_mesh(
+                "scalar_sphere",
+                vertices + np.array([0.0, 2.5, 0.0], np.float32),
+                faces,
+                normals=normals,
+                normal_dims=[0, 1, 2],
+                scalars=scalars,
+                colormap="viridis",
+                shading="smooth",
+                layer=True,
+            )
+            scene.add_mesh(
+                "flat_patch",
+                patch_v,
+                patch_f,
+                shading="flat",
+                layer=True,
+            )
+            scene.add_mesh(
+                "flat_facing",
+                facing_v,
+                facing_f,
+                shading="flat",
+                layer=True,
+            )
+
+        aprint(f"  Created {output}")
+        aprint(f"  Sphere: {n_v} vertices, {len(faces)} faces (welded, closed)")
+        aprint(
+            f"  Cutout cap: {int((colors[:, 3] < 0.5).sum())} vertices below alpha 0.5"
+        )
+
+
+def generate_mesh_nd_test() -> None:
+    """4D mesh fixture: two spheres separated along a hidden categorical dimension.
+
+    The mesh counterpart of `test_lines_categorical`, and it exercises the two things
+    that only an nD mesh can:
+
+    * the §5.4 **whole-triangle slab cull** — scrubbing `sel` must SWAP the two spheres
+      (A xor B), never accumulate both. Mesh has no interpolation and no per-element
+      extent, so its tolerance arm is its own (§5.2.1) and cannot be assumed from the
+      Lines behaviour;
+    * `drawRange` narrowing — the vertex arrays stay whole while the index buffer is
+      rewritten, which is exactly why the debug surface reports triangles from the
+      draw range rather than from `index.count`.
+
+    `normal_dims` is `[0, 1, 2]` while the scene has 4 dimensions, so the fixture also
+    covers the §3.4 rule that stored normals are used only when `normal_dims` equals
+    the DISPLAYED axes — displaying `(x, y, sel)` instead must fall back to derivatives.
+    """
+    with asection("Generating Mesh nD (categorical scrub) Test"):
+        output = FIXTURES_DIR / "test_mesh_nd.luxar.zarr"
+
+        vertices, faces, normals = _icosphere(subdivisions=1, radius=0.8)
+
+        def at(cx: float, sel: float) -> np.ndarray:
+            out = np.zeros((len(vertices), 4), dtype=np.float32)
+            out[:, 0] = vertices[:, 0] + cx
+            out[:, 1] = vertices[:, 1]
+            out[:, 2] = vertices[:, 2]
+            out[:, 3] = sel
+            return out
+
+        # Normals are 3-vectors over dims (0, 1, 2) even though the mesh is 4D — the
+        # `sel` axis has no orientation to describe.
+        dims = Dimensions(
+            [
+                Dimension("x", unit="units", display=True),
+                Dimension("y", unit="units", display=True),
+                Dimension("z", unit="units", display=True),
+                Dimension("sel", display=False, categories=["A", "B"]),
+            ]
+        )
+
+        with LuxarZarrCompiler(
+            output,
+            encoding_mode=EncodingMode.PRECISION,
+            compressor=None,
+            float16_allowed=False,
+        ) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+            scene.add_mesh(
+                "sphere_a",
+                at(-1.2, 0.0),
+                faces,
+                normals=normals,
+                normal_dims=[0, 1, 2],
+                colors=np.tile(
+                    np.array([[1.0, 0.35, 0.2]], np.float32), (len(vertices), 1)
+                ),
+                layer=True,
+            )
+            scene.add_mesh(
+                "sphere_b",
+                at(1.2, 1.0),
+                faces,
+                normals=normals,
+                normal_dims=[0, 1, 2],
+                colors=np.tile(
+                    np.array([[0.2, 0.6, 1.0]], np.float32), (len(vertices), 1)
+                ),
+                layer=True,
+            )
+
+        aprint(f"  Created {output}")
+        aprint(f"  Two spheres at sel=A / sel=B, {len(vertices)} vertices each")
+
+
 def generate_labelled_points_test() -> None:
     """Small labelled-points dataset for the hover-tooltip E2E spec.
 
@@ -3612,6 +3921,12 @@ def main() -> None:
         aprint("")
 
         generate_labelled_points_test()
+        aprint("")
+
+        generate_mesh_test()
+        aprint("")
+
+        generate_mesh_nd_test()
         aprint("")
 
         aprint("=" * 70)

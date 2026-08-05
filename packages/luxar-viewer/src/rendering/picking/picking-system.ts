@@ -38,6 +38,8 @@ import * as THREE from 'three';
 import type { PostProcessingManager } from '../post-processing/post-processing-manager';
 import { isCameraAwareMaterial } from '../materials/_shared/camera-aware-material';
 import { isSurfacePickAwareMaterial } from './gsplat/material';
+import { isMeshPickAwareMaterial } from './mesh/pick-mode';
+import { alignProvokingVertexWithWebGPU } from './mesh/provoking-vertex';
 import { isNormalMode, isOpaqueMode } from '../blending-state';
 import type { BlendingMode } from '../../types/blending';
 import {
@@ -214,6 +216,12 @@ export class PickingSystem {
         void this.performPick(x, y);
       },
     });
+
+    // Align the WebGL backend's `flat` provoking vertex with WebGPU's, so a mesh
+    // pick reports the same triangle corner on both. No-op on WebGPU and on any
+    // context without WEBGL_provoking_vertex — see picking/mesh/provoking-vertex.ts
+    // for why this context-wide flip is observable only by mesh.
+    alignProvokingVertexWithWebGPU(this.renderer);
 
     log.info(Modules.RENDERER, 'PickingSystem initialized (5x5 RGBA32F)');
   }
@@ -696,16 +704,28 @@ export class PickingSystem {
       // needsDepthSort): it is emissive, so phase 1 keeps additive-style
       // brightness picking — a heavily-absorbed back splat can still win
       // the pick if brightest; front-most-beyond-a-τ-threshold is a
-      // spec'd follow-up (VOLUMETRIC_BLENDING_SPEC.md §5.2). Only gsplat
-      // pick materials implement SurfacePickAwareMaterial; points/lines
-      // are unaffected.
-      if (isSurfacePickAwareMaterial(mat)) {
+      // spec'd follow-up (VOLUMETRIC_BLENDING_SPEC.md §5.2). Points and
+      // lines implement neither capability and are unaffected.
+      //
+      // MESH implements the richer MeshPickAwareMaterial instead, because
+      // its blending mode has a SECOND pick-pass consequence the boolean
+      // cannot carry — the `opaque` alpha cutout (see picking/mesh/
+      // pick-mode.ts). It also needs the epoch's face culling copied over,
+      // which no other pick material does: the siblings' quads are
+      // view-facing, but a mesh whose back faces are culled on screen must
+      // not rasterize them into the pick buffer at true surface depth.
+      if (isMeshPickAwareMaterial(mat) || isSurfacePickAwareMaterial(mat)) {
         // entry.main is typed Object3D — non-mesh mains have no material.
         const mainMat = (entry.main as THREE.Mesh).material as
           THREE.Material | THREE.Material[] | undefined;
         const single = Array.isArray(mainMat) ? mainMat[0] : mainMat;
         const mode = (single?.userData.blendingMode ?? 'additive') as BlendingMode;
-        mat.setSurfacePickDepth(isNormalMode(mode) || isOpaqueMode(mode));
+        if (isMeshPickAwareMaterial(mat)) {
+          mat.setPickMode(mode);
+          if (single) mat.setPickSide(single.side);
+        } else if (isSurfacePickAwareMaterial(mat)) {
+          mat.setSurfacePickDepth(isNormalMode(mode) || isOpaqueMode(mode));
+        }
       }
 
       this.pickScene.add(entry.pick);

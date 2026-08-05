@@ -26,6 +26,7 @@ vi.mock('../../../themes/theme-manager', () => ({
 import { ColormapLegend } from '../../../ui/colormap-legend';
 import { LayerStateManager, type LayerInfo } from '../../../ui/layers/layer-state';
 import type { SceneNode } from '../../../data/data-loader-types';
+import { MESH_DEFAULTS } from '../../../rendering/materials/mesh/appearance';
 
 function makeLayer(overrides: Partial<LayerInfo> = {}): LayerInfo {
   return {
@@ -35,6 +36,11 @@ function makeLayer(overrides: Partial<LayerInfo> = {}): LayerInfo {
     visible: true,
     opacity: 1,
     absorption: 1,
+    // Mesh appearance defaults. Present on every LayerInfo (the field set is uniform
+    // across types) and inert for a points layer, exactly like `absorption` above.
+    ambient: MESH_DEFAULTS.ambient,
+    shadeExponent: MESH_DEFAULTS.shadeExponent,
+    alphaCutoff: MESH_DEFAULTS.alphaCutoff,
     displayMin: 0,
     displayMax: 1,
     dataMin: 0,

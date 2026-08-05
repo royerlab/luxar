@@ -429,6 +429,35 @@ Material Assignment
 Scene Assembly
 ```
 
+### Mesh: the whole-node loader
+
+Three of the four geometry types stream: they carry a chunk-bounds spatial index, fetch
+the chunks a query intersects, and grow the visible set incrementally. **Mesh does not.**
+Its loader (`data/mesh/`) is whole-node — `ordering: 'none'`, no spatial index — and
+that is the correct shape rather than a gap (`docs/specs/MESH_NODE_SPEC.md` §7, §9): a
+surface is CONNECTED, so a chunk of triangles is not independently meaningful, and the
+index buffer references vertices anywhere in the array.
+
+Two consequences follow, and both are load-bearing:
+
+- **An admission gate runs before any chunk is fetched.** Because the loader reads every
+  array in full, a check that ran after decode would arrive too late — a hostile or
+  corrupt store can declare enormous arrays and exhaust the tab first. So
+  `data/mesh/preflight.ts` is a metadata-only Stage 1 (shapes, dtypes, encodings, and a
+  per-node byte budget summing stored bytes, decoded bytes and the largest single chunk
+  allocation), with the value-level checks that genuinely need materialized arrays in
+  Stage 2 (`validate.ts`).
+- **A slice move rewrites only the INDEX buffer.** The nD cull is per-vertex slab
+  membership with a whole-triangle decision (§5.4) — no interpolation, no vertex
+  compaction — so `compact_visible_faces` narrows `drawRange` while the vertex arrays
+  stay put. That is why a mesh pick id is a VERTEX ordinal: a face ordinal would be
+  renumbered on every slice change, while a vertex ordinal is invariant.
+
+Mesh also needs its **own tolerance arm** (`computeHiddenDimTolerance`, §5.2.1). Lines'
+spatial `0` works only because segment clipping interpolates through the slab; with no
+interpolation and no per-element extent, `0` would reduce membership to float equality
+and the node would render nothing.
+
 ### nD Slicing Algorithm
 
 For datasets with more than 3 dimensions, visibility depends on dimension type:

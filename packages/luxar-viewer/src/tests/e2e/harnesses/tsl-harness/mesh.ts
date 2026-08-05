@@ -1,12 +1,21 @@
 /**
- * Mesh shader family for the TSL ↔ GLSL parity harness: the five visual variants
- * of `docs/specs/MESH_NODE_SPEC.md` §6.4 that this phase ships — the `opaque`
- * default (alpha cutout), the alpha-weighted emission shared by
- * `additive`/`luminous`/`normal`, the `max` premultiply, the derivative
- * flat-normal build, and the colormap LUT build.
+ * Mesh shader family for the TSL ↔ GLSL parity harness: the six variants of
+ * `docs/specs/MESH_NODE_SPEC.md` §6.4 — the `opaque` default (alpha cutout), the
+ * alpha-weighted emission shared by `additive`/`luminous`/`normal`, the `max`
+ * premultiply, the derivative flat-normal build, the colormap LUT build, and
+ * `mesh-pick`.
  *
- * `mesh-pick` is deliberately absent: mesh picking keys on `gl_VertexID` and needs
- * its own material pair (§6.5), which lands with the picking phase.
+ * ## What the pick entries can and cannot show
+ *
+ * The harness renders to an `UnsignedByteType` target, so the pick pass's id
+ * channels — `nodeId` in R and the two 16-bit halves in G/A — clamp and quantize to
+ * 8 bits. The pick entries therefore test what survives that: whether the two
+ * backends **discard the same fragments** under the cutout, and whether they agree on
+ * the `brightness` channel. The id SPLIT is pinned elsewhere, by construction rather
+ * than by pixels — both backends route through one shared helper
+ * (`luxarElementIdSplit`, single-sourced in `glsl-lib.ts`), the codegen snapshot
+ * shows the TSL side's `/ 65536` and `- hi * 65536`, and a unit test round-trips the
+ * split against `voteWinner`'s recombination.
  *
  * ## The fixture is a tilted-normal quad, on purpose
  *
@@ -33,6 +42,11 @@ import {
   type MeshTSLConfig,
 } from '../../../../rendering/materials/mesh/shader-tsl';
 import { MESH_DEFAULTS } from '../../../../rendering/materials/mesh/appearance';
+import { MESH_PICK_SOURCE } from '../../../../rendering/picking/mesh/shaders';
+import {
+  meshPickWebGPUFactory,
+  buildMeshPickTSLNodesFromUniforms,
+} from '../../../../rendering/picking/mesh/pick.tsl';
 import type { RegistryEntry } from './types';
 import { buildColormapTexture } from './shared';
 
@@ -128,6 +142,26 @@ function meshUniforms(withColormap = false): Record<string, THREE.IUniform> {
 }
 
 /**
+ * Uniforms mirroring the production `MeshPickingMaterial` constructor.
+ *
+ * `nodeId` is 1 rather than a realistic id: the harness target is 8-bit, so anything
+ * above 1.0 saturates to the same 255 on both backends and the channel stops
+ * distinguishing anything. 1 keeps R at full scale while staying an honest value.
+ *
+ * @param surfaceMode `true` = the `opaque` default (cutout on, real depth);
+ *   `false` = a commutative mode (no cutout, brightness-as-depth).
+ */
+function meshPickUniforms(surfaceMode: boolean): Record<string, THREE.IUniform> {
+  return {
+    uNodeId: { value: 1 },
+    uOpacity: { value: 1.0 },
+    uAlphaCutoff: { value: MESH_DEFAULTS.alphaCutoff },
+    uAlphaCutout: { value: surfaceMode ? 1 : 0 },
+    uSurfaceDepth: { value: surfaceMode ? 1 : 0 },
+  };
+}
+
+/**
  * Build the TSL material for a variant, with blending neutralized for raw-pixel
  * parity against the harness's `ShaderMaterial` path — the parity spec compares
  * fragment output, not composite semantics (same treatment as the point entries).
@@ -211,5 +245,33 @@ export const MESH_SHADERS: Record<string, RegistryEntry> = {
     }),
     buildTSLMaterial: buildMeshTSL({ blendingMode: 'opaque', useColormap: true }),
     buildMesh: buildMeshObject(true),
+  },
+  // The pick pass in its DEFAULT state: `opaque`, so the cutout is on and the real
+  // projected depth is written. The RGBA fixture's 0.25-alpha corner is below the
+  // 0.5 cutoff, so part of the quad is discarded — which is the whole point of
+  // asserting parity here, since a backend that dropped the discard would fill it.
+  'mesh-pick': {
+    source: MESH_PICK_SOURCE,
+    buildUniforms: () => meshPickUniforms(true),
+    buildTSLMaterial: (uniforms) =>
+      meshPickWebGPUFactory(
+        buildMeshPickTSLNodesFromUniforms(uniforms)
+      ) as unknown as THREE.Material,
+    buildMesh: buildMeshObject(),
+  },
+  // The OTHER arm of both runtime uniforms: no cutout, brightness-as-depth. Not in
+  // the codegen snapshot list, and deliberately so — the branch is a runtime uniform
+  // (§6.5), so this generates the byte-identical shader `mesh-pick` snapshots and a
+  // second snapshot would only duplicate one. What it adds is the rendered proof
+  // that with the cutout OFF the low-alpha corner survives on BOTH backends, which
+  // is the assertion that would catch a build flag creeping back in.
+  'mesh-pick-commutative': {
+    source: MESH_PICK_SOURCE,
+    buildUniforms: () => meshPickUniforms(false),
+    buildTSLMaterial: (uniforms) =>
+      meshPickWebGPUFactory(
+        buildMeshPickTSLNodesFromUniforms(uniforms)
+      ) as unknown as THREE.Material,
+    buildMesh: buildMeshObject(),
   },
 };

@@ -1,0 +1,131 @@
+#version 300 es
+
+// Three.js r184 - Node System
+
+
+// extensions
+
+
+// precision
+
+precision highp float;
+precision highp int;
+precision highp sampler2D;
+precision highp sampler3D;
+precision highp samplerCube;
+precision highp sampler2DArray;
+
+precision highp usampler2D;
+precision highp usampler3D;
+precision highp usamplerCube;
+precision highp usampler2DArray;
+
+precision highp isampler2D;
+precision highp isampler3D;
+precision highp isamplerCube;
+precision highp isampler2DArray;
+
+precision highp sampler2DShadow;
+precision highp sampler2DArrayShadow;
+precision highp samplerCubeShadow;
+
+
+// structs
+
+layout( location = 0 ) out vec4 fragColor;
+
+
+
+// uniforms
+
+layout( std140 ) uniform object {
+	float nodeUniform0;
+	float nodeUniform1;
+	float nodeUniform2;
+	float nodeUniform3;
+	float nodeUniform4;
+	float nodeUniform5;
+	mat4 nodeUniform9;
+};
+
+layout( std140 ) uniform render {
+	float cameraNear;
+	float cameraFar;
+	mat4 cameraViewMatrix;
+	mat4 cameraProjectionMatrix;
+	mat4 cameraProjectionMatrixInverse;
+};
+
+
+// varyings
+in float nodeVarying0;
+flat  in float nodeVarying1;
+flat  in vec2 nodeVarying2;
+in vec4 v_clipSpace;
+
+
+// vars
+vec4 DiffuseColor;
+bool nodeVar0;
+float meshPickCoverage;
+float nodeVar3;
+float meshPickBrightness;
+vec4 Output;
+vec4 nodeVar4;
+float nodeVar5;
+vec4 nodeVar8;
+vec3 positionView;
+
+// codes
+
+
+void main() {
+
+	// flow
+	// code
+
+	nodeVar0 = ( int( nodeUniform0 ) == 1 );
+	meshPickCoverage = ( nodeVarying0 * nodeUniform1 );
+
+	if ( ( nodeVar0 && ( meshPickCoverage < nodeUniform2 ) ) ) {
+
+		discard;
+
+
+	}
+
+
+	if ( nodeVar0 ) {
+
+		nodeVar3 = 1.0;
+
+	} else {
+
+		nodeVar3 = meshPickCoverage;
+
+	}
+
+	meshPickBrightness = clamp( nodeVar3, 0.0, 1.0 );
+	DiffuseColor = vec4( nodeVarying1, nodeVarying2.x, meshPickBrightness, nodeVarying2.y );
+	DiffuseColor.w = ( DiffuseColor.w * nodeUniform4 );
+	nodeVar4 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
+	Output = nodeVar4;
+
+	if ( ( int( nodeUniform5 ) == 1 ) ) {
+
+		nodeVar8 = ( cameraProjectionMatrixInverse * v_clipSpace );
+		positionView = ( nodeVar8.xyz / vec3( nodeVar8.w ) );
+		nodeVar5 = ( ( positionView.z + cameraNear ) / ( cameraNear - cameraFar ) );
+
+	} else {
+
+		nodeVar5 = ( 1.0 - meshPickBrightness );
+
+	}
+
+	gl_FragDepth = nodeVar5;
+
+	// result
+	fragColor = nodeVar4;
+
+}

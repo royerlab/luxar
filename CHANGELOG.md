@@ -80,8 +80,277 @@ odd — `ambient = 1e9` whites out the surface, `alpha_cutoff = 1e9` discards ev
 fragment, and `shade_exponent = 0` makes `pow(0, 0)` (undefined GLSL) at every
 face-away fragment, the same hazard `clampGamma` already exists for.
 
-Still to come: picking (mesh keys on `gl_VertexID`, so it needs its own material
-pair) and the Layers-panel appearance controls.
+Still to come: the Layers-panel appearance controls.
+
+#### Mesh is pickable — the fourth pick material pair
+
+Hovering a mesh now resolves to a **vertex**, whose ordinal indexes the per-vertex
+label CSR directly. Mesh could not reuse a sibling's pick material, because its
+element id is a built-in rather than an attribute: it has no per-triangle depth
+sort, so there is no `aSortedIndex` to indirect through and the id is
+`gl_VertexID`. Under an indexed draw that is the ordinal of the vertex in the
+`vertices` array — which is also why vertex, not face, is the granularity: a slice
+move rewrites only the index buffer, so a face ordinal would be renumbered on every
+slice change while a vertex ordinal is invariant.
+
+Three things the pick pass has to copy from the visual material, each of which is a
+real defect if it drifts:
+
+- **The alpha cutout, identically.** Without it a hole you can see through still
+  rasterizes at true surface depth — becoming pickable _and_ occluding picks of the
+  nodes visible through it.
+- **The face culling.** The siblings' quads are view-facing, so their pick
+  materials can pin `DoubleSide`. A mesh's back faces may be culled on screen, and
+  `side` is a property of the current `displayDims` epoch (an undecidable frame
+  forces double-sided), so it is synced per epoch and per pick render.
+- **The node opacity.** It is half the coverage term, so dragging the layers-panel
+  opacity slider below the cutoff must dissolve the surface in the pick buffer too,
+  not just on screen.
+
+Both mode-dependent behaviours — the cutout, and real projected depth vs
+brightness-as-depth — are **runtime uniforms rather than shader defines**, so a
+blending-mode switch from the layers panel is a uniform write instead of a
+mid-hover recompile. That is why `mesh-pick` is one codegen snapshot variant
+covering every mode, and a second snapshot appearing would mean a build flag had
+crept back in.
+
+Two backend divergences are handled rather than hoped away. A `flat` varying is
+sourced from ONE triangle corner, and OpenGL ES fixes that to the **last** vertex
+where the WGSL `@interpolate(flat)` three emits samples the **first** — so the same
+click would report different vertices on the two backends. `WEBGL_provoking_vertex`
+aligns them where it exists; where it does not, the contract stands as "_a_ corner
+of the front-most triangle under the cursor", which is the honest answer anyway
+since the cursor is over the face. (The context-wide flip is safe because every
+other `flat` varying in the shipped materials is a per-_instance_ constant,
+identical at all corners.) Separately, the two backends write different
+surface-depth _values_ — `gl_FragCoord.z` versus a linear view-space depth — which
+is benign because both are monotone in distance and the pick buffer's depth only
+ever orders fragments within one render; that pairing already shipped undocumented
+in the gsplat pick shaders and is now written down.
+
+The 16-bit element-id split is now single-sourced as `luxarElementIdSplit(uint)`:
+`luxarElementIdParts()` became a one-line wrapper over it and mesh calls it
+directly off `gl_VertexID`. Two copies of that mask-and-shift could drift, and the
+only symptom would be picks resolving to the wrong vertex past 65,536 — silent, and
+only on large meshes. The `2^27` vertex cap that keeps the pick vote key alias-free
+(already enforced at write time and in the loader's metadata preflight) now has the
+arithmetic pinned next to the stride it constrains, since mesh is the one type whose
+bound is _enforced_ rather than structural.
+
+Registration went where production actually registers picks, which turned out not to
+be the node factory: `initPicking` traverses the finished scene to decide whether any
+node declares labels and only then constructs the `PickingSystem`, so on a first load
+the factory has nothing to register with and `NodeFactory.registerExistingSceneNodes`
+is the pass that runs. That pass was a three-way `else if` chain and is now a
+`Record<GeometryTypeName, …>` — a fifth geometry type becomes a compile error at one
+table instead of a branch someone forgets, which is exactly the failure this would
+otherwise have shipped: a mesh unpickable in every real scene, appearing to work only
+on a second dataset load. It also had no direct test at all; it has seven now.
+
+The hover/label path needed no changes, which is worth stating because it was checked
+rather than assumed: the writer validates labels per-VERTEX — the granularity mesh
+picks at — `LabelLoader` reads `<path>/label_offsets` lazily with no type dispatch,
+and `buildPickResultHandler` takes `(nodePath, elementId)`.
+
+#### Mesh gets its Layers-panel shading controls, and the debug surface learns to count it
+
+**Ambient** and **Shade falloff** parameterize the §6.2 headlight; **Alpha cutoff** is
+the `opaque` cutout threshold. These are the first controls in the panel gated on the
+geometry TYPE rather than the blending mode — mesh is the only type that shades, so on
+a points layer they would be controls that visibly do nothing. Alpha cutoff carries a
+mode gate on top (the cutout exists only in `opaque`), and its drag also reaches the
+mesh's pick material, since the pick pass applies the identical cutout.
+
+They are the one control group that does not compose along the ancestry, and are
+applied through their own path rather than through `applyComposed`: a shade floor is a
+per-surface appearance choice with no composition rule — multiplying two ambients
+would mean nothing — so a group layer over meshes does not offer them.
+
+`window.__luxarDebug.getState()` gained `meshNodes` and `totalTriangles`, which had
+been simply absent: three hand-written arms counted points, gsplats and lines, each
+selecting on `InstancedBufferGeometry`, and a mesh is the one type that draws from a
+plain indexed `BufferGeometry`. The triangle count comes from the **draw range**, not
+the index length, because that is what the nD slice compaction narrows — reading
+`index.count` would report the whole surface no matter where the slice sits, which is
+the number a debug driver most needs to be honest about.
+
+And a real defect next door: `getDrawOrder()` was reporting **0 elements for every
+mesh**. Mesh reached that walk fine, but the element count fell through to a local
+`visiblePointCount ?? visibleSplatCount ?? visibleSegmentCount ?? 0` chain — a partial
+copy of the shared per-type reader with `visibleTriangleCount` missing, so the count
+read as "absent" rather than as an error. Present, plausible and wrong is the worst
+shape for a diagnostic. Both now go through one reader.
+
+#### The mesh `opaque` default now actually fires (#1272)
+
+Spec §6.3's central asymmetry — mesh defaults to `opaque` where the three emissive
+types default to `additive` — had never worked on the production load path. The chain
+is `applyEffectiveAttrs` → `composeAttrs` → `normalizeBlendingMode`, and
+`normalizeBlendingMode(undefined)` returns `'additive'`, so a composed `blending_mode`
+was **never** undefined by the time a material saw it. `createMeshNode`'s
+`(attrs.blending_mode as BlendingMode) ?? 'opaque'` was dead code: every mesh in every
+real scene rendered additive, the alpha cutout never compiled, and — once the panel
+controls landed — the Alpha-cutoff slider was hidden for a default-config mesh because
+its layer reported `additive`.
+
+**Found by rendering a written mesh end to end for the first time** — no unit test
+could have seen it, because they all hand `resolveRequestedMeshMode` an attrs object
+directly rather than one that has been through composition. The fixture and E2E spec
+that found it are the entry below.
+
+**Fixed in #1274**, which landed independently while this work was in review: rather
+than defaulting inside `composeAttrs`, it keeps `blending_mode` **undefined** through
+composition when no level sets one and lets each consumer apply its own per-type default
+via `defaultBlendingMode(nodeType)`. That is the better shape, and it covers a case the
+alternative did not: it tracks whether a layer's mode is EXPLICIT, so a group layer
+merely *displaying* a neutral default does not push it onto mesh descendants — which
+would otherwise flip a mesh under a plain `layer=true` group back to additive at panel
+init. Nearest-setter-wins is untouched either way, which is what keeps
+`group(blending_mode="additive")` working for its mesh children and why §6.3 forbids the
+writer from stamping the mode at all.
+
+#### Blend-mode ownership finishes the job: groups stop overriding what they never set (#1275)
+
+The explicit flag above stopped a plain group layer from *emitting* its displayed
+default, but two paths still let a non-owning layer overwrite a descendant's mode:
+
+- **The subtree-drop in `composeEffective` fired unconditionally.** The drop exists so
+  an owning wrapper's Blend control wins over its parts' stamped modes (the
+  `graft_gsplat_node` case). But a wrapper that owns no mode has no control value to
+  impose, so dropping was pure loss: a mesh authored `additive` under a plain
+  `layer=true` group snapped to its `opaque` type-default on any non-blend group edit.
+  The drop is now gated on the same ownership flag.
+- **Ownership was initialized from the COMPOSED ancestry, not the node's own attr.** A
+  layer that merely inherits an ancestor's mode must not re-emit it as its own setter:
+  the re-emitted copy is a snapshot of disk state, sits nearer the leaf, and would
+  shadow the ancestor layer's next live pick. Ownership now reads the node's own
+  `blending_mode` (or a user pick) — an inherited mode still displays, but the layer is
+  not a setter. The same rule means an unauthored geometry leaf does not own its
+  per-type default, so a group layer's Blend pick actually reaches it.
+
+The Absorption and Alpha-cutoff gates also read the **mesh-resolved** mode through
+`resolveLayerBlendingMode`: a mesh resolves `volumetric` → `opaque`, so Absorption (a
+control no mesh shader reads) stays hidden and Alpha cutoff shows exactly when the
+cutout is compiled — even if a stored layer mode reaches the gates unresolved.
+
+#### Mesh gets its first real fixtures, and an end-to-end render spec
+
+`test_mesh.luxar.zarr` and `test_mesh_nd.luxar.zarr`, plus
+`src/tests/e2e/mesh-rendering.spec.ts`. Everything about mesh had been tested one layer
+down — cull kernels by parity, the material pair by codegen snapshot and a GLSL↔TSL
+pixel harness, the loader/commit/panel/debug paths by unit test with stub materials —
+and none of that covers the wiring: that a mesh authored by the Python writer arrives
+through the loader, commits, gets the right shader variant, and puts pixels on screen.
+The first run of that spec found the `opaque` bug above and two more.
+
+The fixture is a **welded, closed icosphere** rather than a cube or a grid, and each
+property is load-bearing: welded so `gl_VertexID` is a genuine many-to-one pick target
+(de-indexed it would be 960 vertices instead of 162, making the shared-vertex pick
+semantics untestable); closed so an nD slab cull exposes interior back faces, which is
+what the `gl_FrontFacing` flip exists for; and smooth non-axis-aligned normals so a
+build that ignored `shading` would render visibly differently — on a cube the stored and
+derivative normals agree per face.
+
+Two smaller defects fell out of the same run. The debug surface read shader variants
+with `!!defines?.FLAG`, and a GLSL define's conventional value is the **empty string**
+(three emits a bare `#define`), so `!!''` reported every variant as off while the shader
+was compiled with it. The **existing lines arm had the same bug** — `hasColormap` had
+always been false in production — and its unit test passed only because the fixture used
+`1` where production uses `''`: a vacuous assertion, now fixed on both sides. Separately,
+the mesh pick material is now seeded from the visual material's **live uniforms** rather
+than the authored attrs, so a WebGL context restore after a layers-panel drag no longer
+reverts pick coverage to the load-time values.
+
+#### Mesh gets its reference demo: isosurfaces of a real fluorescence volume
+
+`luxar demo run mesh_isosurface_cells3d` — marching-cubes isosurfaces of the
+two-channel scikit-image `cells3d` volume (membranes + nuclei) as two shaded,
+toggleable mesh layers. Isosurfaces and segmentation boundaries are the named target
+data for Mesh: routine outputs of the pipelines Luxar already serves, which before
+Mesh could only be approximated by a dense point cloud.
+
+Deliberately the **same dataset** as `gsplats_3d_cells3d_multichannel`, because the
+pairing is the lesson. Splats approximate the whole intensity field and need no
+threshold; an isosurface picks one level set and renders it as an opaque surface with
+real occlusion and silhouettes. Neither is the better answer — they answer different
+questions, and seeing the same nuclei both ways is the fastest way to feel the
+difference.
+
+No GPU and no fitting step: marching cubes is CPU-only and takes about two seconds,
+which makes this the cheapest end-to-end demo of any Luxar geometry type. ~537K
+vertices / 1.07M triangles across the two surfaces.
+
+`GEOMETRY_VALUES` in the demo registry gained `mesh` — a vocabulary that had never
+needed a fourth entry.
+
+#### A mesh layer now reports the mode it actually renders
+
+`volumetric` has no meaning for a zero-thickness surface, so the mesh material maps it
+to `opaque` and stamps the RESOLVED mode. The layers panel was storing the composed,
+UNresolved value — which made it disagree with the render in two visible ways at once: it
+showed the **Absorption** slider (which no mesh shader reads) and hid **Alpha cutoff**
+precisely when the cutout was active. The pick pass reads the material's resolved mode,
+so it was correct and only the UI was wrong.
+
+Resolved at the point of STORAGE rather than at each display gate, so every consumer —
+the Blend dropdown's own displayed value included — sees the mode that renders. A user
+who explicitly picks `volumetric` on a mesh sees it snap back to `opaque`, which is
+honest: it is what the surface is doing, and it matches the one-time warning the loader
+already emits. The three types that DO implement volumetric are untouched.
+
+#### Docs catch up with mesh
+
+Two viewer package READMEs had omitted mesh entirely. `rendering/README.md` gains a
+Mesh Material section — the odd one out on purpose (a plain indexed `BufferGeometry`
+rather than an instanced quad, not camera-aware, `opaque` by default) — naming the two
+hazards that fail on exactly one backend and that the parity harness structurally cannot
+see, since it compiles TSL *to* GLSL: the `dFdy`/`dpdy` sign, and
+`transformNormalToView`'s internal normalize turning a legal zero-length normal into a
+whole-triangle NaN. `data/README.md` gains the whole-node-loader section: why mesh does
+NOT stream (a surface is connected, so a chunk of triangles is not independently
+meaningful), why its admission gate has to run before any chunk is fetched, and why its
+nD tolerance arm cannot be inherited from Lines.
+
+Also corrected the stale "picking and the Layers-panel appearance controls land in later
+phases" line in `CLAUDE.md`, and the "three geometry types" scene-graph and architecture
+summaries there.
+
+Two `README.md` claims that still read "all three geometry types" were checked and
+deliberately LEFT: one is about volumetric blending physics and the other about the
+chunk-bounds spatial query, and mesh participates in neither by design.
+
+#### Mesh on real WebGPU: verified, with the remaining gap named precisely
+
+The mesh vertical shipped with a stated gap — the GLSL↔TSL parity harness drives
+`WebGPURenderer({ forceWebGL: true })`, so the real-WGSL path was never exercised. It
+is now: an A/B against native WebGPU (system Chrome channel, `?renderer=webgpu`,
+screenshot-then-decode with the WebGL arm as a control) shows `apiSurface: 'webgpu'`,
+all three fixture nodes committing with identical triangle/vertex counts and identical
+shader variants, and **pixel-identical output** — 105,822 lit pixels on both backends,
+mean lit channel differing by 0.14%.
+
+It also **corrected an overstatement of our own**, which is the more useful half. The
+§6.2 notes claimed an unforced derivative normal "would collapse to `uAmbient`
+everywhere on WebGPU". That is a spec-derived RISK, not an observed behaviour. The
+fixture gained a `flat_facing` node — a flat-shaded quad FACE-ON, where `N.z ≈ ±1` makes
+the sign flip the difference between full brightness and the ambient floor — and with
+the `z >= 0` flip REMOVED, real WebGPU still renders it identically to WebGL.
+
+The metric is demonstrably sensitive rather than blind: a control run with every mesh
+hidden drops from 93,851 lit pixels to 56,700, so the quad contributes 37,151 and lifts
+the mean lit channel from 40 to 116. (The original edge-on `flat_patch` could not have
+shown this either way — `N.z ≈ 0` there, and flipping the sign of ~0 leaves
+`wrap = 0.5` unchanged. That is precisely why the fixture needed a face-on node.)
+
+So: on Chrome + Apple Silicon the two derivative conventions **coincide** and the flip
+is inert. It stays, because it costs one instruction, is correct under either
+convention, and neither shading-language spec promises they agree — insurance, not a fix
+for an observed bug. The shader comments, the `rendering/` README and the spec now say
+exactly that instead of asserting a failure nobody has seen.
+
+Still arguments rather than measurements: the provoking-vertex convention and the
+surface-depth value, both because reading the pick buffer's ids and depth from outside
+the app is not cheaply reachable.
 
 #### Demos — the biodiversity globe is `opaque`, so it stops painting over its own data (#1227)
 

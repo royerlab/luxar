@@ -11,6 +11,7 @@ import {
   voteWinner,
   type VoteEntry,
 } from '../../../../../rendering/picking/picking-system/pick-render';
+import { MAX_MESH_VERTICES } from '../../../../../config/constants';
 import {
   configureElementTextureLayout,
   getElementTextureWidth,
@@ -261,6 +262,34 @@ describe('voteWinner', () => {
     } finally {
       resetElementTextureLayoutForTests();
     }
+  });
+
+  it('keeps the vote key alias-free AND exact for MESH, whose bound is enforced not structural', () => {
+    // The test above pins the three TEXTURE-FED types, whose elementId is bounded by
+    // `getMaxElementCapacityPerNode` — a STRUCTURAL bound, far under the stride.
+    //
+    // Mesh is the exception and needs its own pin (spec §6.5): its elementId is a
+    // vertex ordinal off `gl_VertexID`, bounded only by the node's vertex count. The
+    // stride's alias-free condition therefore rests on `MAX_MESH_VERTICES` being
+    // ENFORCED, which the loader's Stage-1 metadata preflight and the Python writer
+    // both do. This is the assertion that makes the arithmetic explicit, so raising
+    // either the cap or the stride fails here rather than merging votes in the field.
+    const maxVertexOrdinal = MAX_MESH_VERTICES - 1;
+    expect(
+      maxVertexOrdinal,
+      'the largest admitted vertex ordinal must clear the stride'
+    ).toBeLessThan(VOTE_KEY_STRIDE);
+
+    const worstKey = MAX_PICK_NODE_ID * VOTE_KEY_STRIDE + maxVertexOrdinal;
+    // (2^24 - 1) * 2^27 + (2^27 - 1) = 2^51 - 1. Asserted as the exact value rather
+    // than just "< MAX_SAFE_INTEGER" so the two-bits-of-headroom claim is visible.
+    expect(worstKey).toBe(2 ** 51 - 1);
+    expect(Number.isSafeInteger(worstKey)).toBe(true);
+    expect(worstKey + 1).not.toBe(worstKey);
+
+    // And the reason the cap is EXCLUSIVE: an ordinal AT the stride collides with
+    // element 0 of the next node, which is the vote merge the bound exists to prevent.
+    expect(1 * VOTE_KEY_STRIDE + MAX_MESH_VERTICES).toBe(2 * VOTE_KEY_STRIDE);
   });
 
   it('does not merge adjacent elements at the nodeId ceiling', () => {

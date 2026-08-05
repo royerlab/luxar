@@ -74,6 +74,37 @@ float perspectiveNearFade(int isOrtho, float viewZ, float nearCull) {
 `;
 
 /**
+ * The pick buffer's 16-bit element-id split, as a standalone function of an
+ * arbitrary index.
+ *
+ * Separate from {@link GLSL_SORTED_INDEX} because mesh needs the split WITHOUT
+ * the ordering attributes: its pick id is `gl_VertexID` (mesh has no depth sort
+ * and therefore no `aSortedIndex` indirection — spec §6.5), so injecting the
+ * whole sorted-index block would declare two attributes the geometry does not
+ * carry. Declaring an unbound attribute is not merely wasteful on WebGPU — the
+ * vertex-buffer layout is cached from the attribute set at first draw.
+ *
+ * The split itself must NOT be written twice. Both halves have to agree with
+ * `voteWinner`'s `high * 65536 + low` recombination exactly
+ * (`picking-system/pick-render.ts`), and a second copy is a place for the shift
+ * or the mask to drift where the only symptom is picks resolving to the wrong
+ * element past 65,536 — silent, and only on large nodes.
+ */
+export const GLSL_ELEMENT_ID_SPLIT = `
+// Element index split into two 16-bit halves, low in .x and high in .y.
+// The pick pass carries the index through an RGBA32F buffer, and float32
+// has a 24-bit mantissa — so a single float channel cannot represent
+// consecutive indices past 16,777,216, while a node's capacity reaches
+// 2^25 on a 32768-texel device. Both halves are <= 65535, hence exact,
+// and the pick decoder recombines them (see picking-system/pick-render.ts).
+// Kept in INT space: doing the split on a float would already have lost
+// the bit it is meant to preserve.
+vec2 luxarElementIdSplit(uint i) {
+  return vec2(float(i & 0xFFFFu), float(i >> 16u));
+}
+`;
+
+/**
  * Double-buffered draw-slot → storage-slot mapping (depth-sorting spec
  * §2.1 tier 3). Declares BOTH ordering attributes plus the slot selector,
  * and exposes `luxarSortedIndex()` as the single read point.
@@ -106,7 +137,7 @@ float perspectiveNearFade(int isOrtho, float viewZ, float nearCull) {
  * `;
  * ```
  */
-export const GLSL_SORTED_INDEX = `
+export const GLSL_SORTED_INDEX = `${GLSL_ELEMENT_ID_SPLIT}
 in uint aSortedIndex;
 in uint aSortedIndexB;
 uniform int uSortedIndexSlot;
@@ -115,16 +146,10 @@ uint luxarSortedIndex() {
   return uSortedIndexSlot == 1 ? aSortedIndexB : aSortedIndex;
 }
 
-// Storage index split into two 16-bit halves, low in .x and high in .y.
-// The pick pass carries the index through an RGBA32F buffer, and float32
-// has a 24-bit mantissa — so a single float channel cannot represent
-// consecutive indices past 16,777,216, while a node's capacity reaches
-// 2^25 on a 32768-texel device. Both halves are <= 65535, hence exact,
-// and the pick decoder recombines them (see picking-system/pick-render.ts).
-// Kept in INT space: doing the split on a float would already have lost
-// the bit it is meant to preserve.
+// The STORAGE slot's id parts — the id the rest of the pipeline (loaders,
+// selection) addresses elements by, not the transient draw slot. Mesh reads
+// the shared split directly instead, off gl_VertexID (spec §6.5).
 vec2 luxarElementIdParts() {
-  uint i = luxarSortedIndex();
-  return vec2(float(i & 0xFFFFu), float(i >> 16u));
+  return luxarElementIdSplit(luxarSortedIndex());
 }
 `;
