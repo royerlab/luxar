@@ -770,6 +770,26 @@ class TestAdditiveLodAxis:
         store = zarr.open(str(tmp_path / "t.luxar.zarr"), mode="r")
         assert store["splats"].attrs["n_additive_sublods"] == 2
 
+    def test_caller_level_stats_is_paired_and_nan_guarded(self, tmp_path) -> None:
+        """A caller ``level_stats`` keeps its own keys and gains the resolver's
+        ``reference_energy``; a non-finite caller value is dropped (it would land
+        in .zattrs as a bare NaN token the viewer's strict JSON.parse rejects)
+        so the computed finite value shows through instead."""
+        data = _make_flat_gsplat_data(n=8)
+        with LuxarZarrCompiler(tmp_path / "t.luxar.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_gsplats_from_data(
+                "splats",
+                data,
+                additive_lod=dict(n_lods=2),
+                level_stats={"caller_key": 123, "reference_energy": float("nan")},
+            )
+        grp = zarr.open(str(tmp_path / "t.luxar.zarr"), mode="r")["splats"]
+        stored = dict(grp.attrs["level_stats"])
+        assert stored["caller_key"] == 123
+        assert np.isfinite(stored["reference_energy"])
+        assert stored["reference_energy"] > 0
+
 
 class TestCombinedAxes:
     """Both ``lod_group=`` and ``additive_lod=`` together."""
