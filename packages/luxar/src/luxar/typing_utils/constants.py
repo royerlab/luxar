@@ -82,6 +82,10 @@ MAX_POINTS_WARNING: Final[int] = 100_000_000  # 100M points
 # It also keeps the writer's face-index check sufficient: with vertices capped
 # here, `max(faces) < n_vertices` guarantees every admitted index survives the
 # `.astype(np.uint32)` cast unchanged (2^27 is far below 2^32).
+#
+# MIRROR: MAX_MESH_VERTICES in packages/luxar-viewer/src/config/constants.ts must
+# hold this value — that is the loader-side gate this one is the fail-fast twin
+# of. If you change one, change the other; a viewer test pins that side.
 MAX_MESH_VERTICES: Final[int] = 2**27  # 134,217,728 — pick vote-key stride
 
 # Compression constants

@@ -1,0 +1,952 @@
+/**
+ * The whole-node mesh loader, against an in-memory zarr store that RECORDS every
+ * key it is asked for.
+ *
+ * That recording is the point of this file. The central claim of the two-stage
+ * admission gate is that Stage 1 rejects a hostile declaration *before any chunk
+ * is fetched* — and "before any chunk is fetched" is not something the preflight
+ * can prove about itself. Only a store that reports what was requested can, so
+ * these tests assert on the request log directly rather than on a proxy for it.
+ *
+ * The store is hand-built (raw, uncompressed zarr v2) rather than a Python
+ * fixture, because most of what needs testing here is stores the writer would
+ * never produce: signed indices, over-budget declarations, lying presence flags.
+ */
+
+import { describe, it, expect } from 'vitest';
+import * as zarr from '../../../../data/zarr';
+import { ArrayRefRegistry } from '../../../../data/array-decoder/decoder';
+import { MeshLoader } from '../../../../data/mesh/mesh-loader';
+import { LoaderError } from '../../../../data/scene-loader/nodes/load-leaf-error-dispatch';
+import { MESH_DECODE_BUDGET_BYTES } from '../../../../config/constants';
+import type { MeshMetadata, MeshViewState } from '../../../../types/mesh';
+
+// ---------------------------------------------------------------------------
+// A minimal in-memory zarr v2 store with a request log
+// ---------------------------------------------------------------------------
+
+/** Declaration for one array in the synthetic store. */
+interface ArraySpec {
+  shape: number[];
+  chunks?: number[];
+  /** numpy typestring, e.g. `'<f4'`, `'|u1'`, `'<i8'` */
+  dtype: string;
+  /** Values, written as ONE raw chunk. Omit to declare an array with no data. */
+  data?: ArrayLike<number> | ArrayLike<bigint>;
+  attrs?: Record<string, unknown>;
+}
+
+// Structurally satisfies `zarr.Readable` (a `get(key)` returning the bytes or
+// undefined) without an `implements` clause: that alias resolves to a type
+// without statically known members, which `implements` rejects (TS2422). The
+// loader takes a `zarr.Readable` parameter, so assignability is checked there —
+// where it actually matters — rather than asserted here.
+/**
+ * Zarr metadata filenames; anything else under an array path is a chunk fetch.
+ *
+ * `zarr.json` is included because zarrita probes for zarr **v3** metadata before
+ * falling back to v2, so a v2 store legitimately sees one request per node opened.
+ */
+const META_KEYS = new Set(['.zarray', '.zattrs', '.zgroup', '.zmetadata', 'zarr.json']);
+
+class RecordingStore {
+  /** Every key `get` was called with, in order. */
+  readonly requested: string[] = [];
+
+  /**
+   * The `AbortSignal` (if any) each request carried, keyed by request key.
+   * zarrita forwards `GetOptions.signal` to `store.get(key, { signal })`, so
+   * this is where "the abort signal reaches the reads" is actually observable.
+   */
+  readonly signals = new Map<string, AbortSignal | undefined>();
+
+  constructor(private readonly entries: Map<string, Uint8Array>) {}
+
+  /**
+   * Per-ordinal control over `faces` CHUNK reads, so a test can order two
+   * concurrent loads deterministically instead of hoping microtask timing
+   * cooperates. `failFacesRead` rejects the nth such read; `parkFacesRead` returns a
+   * promise that never settles, holding that load in flight indefinitely.
+   */
+  failFacesRead: number | null = null;
+  parkFacesRead: number | null = null;
+  /**
+   * Set when a parked faces read is issued: calling it settles that read with
+   * the real bytes, so a test can hold a load in flight past a `dispose()` and
+   * then let it complete — the only way to exercise the publish guard
+   * deterministically now that `dispose()` aborts reads still on the wire.
+   */
+  releaseParkedFacesRead: (() => void) | null = null;
+  private facesReads = 0;
+
+  /** Reject any `get` for a key containing this substring, with this error. */
+  rejectKeyContaining: { needle: string; error: Error } | null = null;
+
+  get(key: string, opts?: { signal?: AbortSignal }): Promise<Uint8Array | undefined> {
+    this.requested.push(key);
+    this.signals.set(key, opts?.signal);
+    // A zarr v2 chunk key's last segment is DOT-SEPARATED coords (`0.0`), so "has no
+    // dot" does not identify one — the metadata allowlist is the reliable
+    // discriminator, exactly as `chunkRequests()` uses below.
+    const base = key.slice(key.lastIndexOf('/') + 1);
+    const isFacesChunk = key.includes('/faces/') && !META_KEYS.has(base);
+    if (isFacesChunk) {
+      this.facesReads += 1;
+      if (this.facesReads === this.failFacesRead) {
+        return Promise.reject(new Error('simulated read failure'));
+      }
+      if (this.facesReads === this.parkFacesRead) {
+        // Parked until the test releases it (or forever, if it never does).
+        return new Promise((resolve) => {
+          this.releaseParkedFacesRead = () => resolve(this.entries.get(key));
+        });
+      }
+    }
+    if (this.rejectKeyContaining && key.includes(this.rejectKeyContaining.needle)) {
+      return Promise.reject(this.rejectKeyContaining.error);
+    }
+    return Promise.resolve(this.entries.get(key));
+  }
+
+  /**
+   * Keys that are NOT zarr metadata — i.e. chunk fetches.
+   *
+   * Deliberately a NEGATIVE classification: anything whose basename is not a
+   * known metadata filename counts as a chunk. Matching chunk keys positively
+   * (`/\d+(\.\d+)*$/`) would be tidier but could silently fail to notice a fetch
+   * spelled some other way, and a "no chunks were fetched" assertion that can
+   * miss a fetch is worth nothing.
+   *
+   * `zarr.json` is on the list because zarrita probes for zarr **v3** metadata
+   * before falling back to v2 — so a v2 store legitimately sees a `zarr.json`
+   * request per node it opens, with no chunk behind it.
+   */
+  chunkRequests(): string[] {
+    return this.requested.filter((k) => !META_KEYS.has(k.slice(k.lastIndexOf('/') + 1)));
+  }
+
+  /**
+   * Add an array at an arbitrary path — used for `array_ref` targets, which live
+   * OUTSIDE the mesh node (a deduplicated array is shared across nodes).
+   */
+  addArray(arrayPath: string, spec: ArraySpec): void {
+    writeArray(this.entries, arrayPath, spec);
+  }
+}
+
+/**
+ * Typed-array constructors, keyed by numpy typestring.
+ *
+ * The signature takes a LENGTH, not the values: chunks are allocated at the full
+ * chunk shape (edge chunks padded), so the buffer is sized from `chunks` and the
+ * data is `set` into it afterwards.
+ */
+const TYPED: Record<string, new (length: number) => ArrayBufferView> = {
+  '|u1': Uint8Array as never,
+  '|i1': Int8Array as never,
+  '<u2': Uint16Array as never,
+  '<i2': Int16Array as never,
+  '<u4': Uint32Array as never,
+  '<i4': Int32Array as never,
+  '<u8': BigUint64Array as never,
+  '<i8': BigInt64Array as never,
+  '<f4': Float32Array as never,
+  '<f8': Float64Array as never,
+};
+
+/**
+ * Write one array's metadata (+ optional single raw chunk) into an entry map.
+ *
+ * Shared by `buildStore` and {@link RecordingStore.addArray} so an `array_ref` target
+ * outside the mesh node is built exactly like a node-local array.
+ */
+function writeArray(entries: Map<string, Uint8Array>, arrayPath: string, spec: ArraySpec): void {
+  const enc = (o: unknown) => new TextEncoder().encode(JSON.stringify(o));
+  const chunks = spec.chunks ?? spec.shape;
+  entries.set(
+    `${arrayPath}/.zarray`,
+    enc({
+      zarr_format: 2,
+      shape: spec.shape,
+      chunks,
+      dtype: spec.dtype,
+      compressor: null,
+      filters: null,
+      fill_value: 0,
+      order: 'C',
+    })
+  );
+  entries.set(`${arrayPath}/.zattrs`, enc(spec.attrs ?? {}));
+  if (spec.data) {
+    const Ctor = TYPED[spec.dtype];
+    // Chunks are allocated at the full chunk shape, edge chunks padded, so the
+    // buffer must be chunk-sized even when the data is shorter.
+    const chunkElems = chunks.reduce((a, b) => a * b, 1);
+    const buf = new Ctor(chunkElems) as unknown as { set(v: unknown, o: number): void };
+    buf.set(spec.data as never, 0);
+    const view = buf as unknown as ArrayBufferView;
+    entries.set(
+      `${arrayPath}/${chunks.map(() => 0).join('.')}`,
+      new Uint8Array(view.buffer, view.byteOffset, view.byteLength).slice()
+    );
+  }
+}
+
+/** Build a store holding a single mesh node at `/mesh`. */
+function buildStore(attrs: MeshMetadata, arrays: Record<string, ArraySpec>): RecordingStore {
+  const entries = new Map<string, Uint8Array>();
+  const enc = (o: unknown) => new TextEncoder().encode(JSON.stringify(o));
+
+  entries.set('/.zgroup', enc({ zarr_format: 2 }));
+  entries.set('/mesh/.zgroup', enc({ zarr_format: 2 }));
+  entries.set('/mesh/.zattrs', enc(attrs));
+
+  for (const [name, spec] of Object.entries(arrays)) {
+    writeArray(entries, `/mesh/${name}`, spec);
+  }
+  return new RecordingStore(entries);
+}
+
+function meshAttrs(overrides: Partial<MeshMetadata> = {}): MeshMetadata {
+  return {
+    type: 'mesh',
+    n_vertices: 4,
+    n_faces: 4,
+    ndim: 3,
+    has_normals: false,
+    has_colors: false,
+    has_scalars: false,
+    shading: 'flat',
+    double_sided: true,
+    ordering: 'none',
+    ...overrides,
+  };
+}
+
+/** A welded tetrahedron: 4 vertices, 4 faces, every vertex shared by 3 faces. */
+const TET_VERTICES = [0, 0, 0, 10, 0, 0, 0, 10, 0, 0, 0, 10];
+const TET_FACES = [0, 1, 2, 0, 1, 3, 0, 2, 3, 1, 2, 3];
+
+function tetArrays(overrides: Record<string, ArraySpec> = {}): Record<string, ArraySpec> {
+  return {
+    vertices: { shape: [4, 3], dtype: '<f4', data: TET_VERTICES },
+    faces: { shape: [4, 3], dtype: '<u4', data: TET_FACES },
+    ...overrides,
+  };
+}
+
+function makeLoader(store: RecordingStore, attrs: MeshMetadata): MeshLoader {
+  return new MeshLoader('/mesh', attrs, zarr.root(store).resolve('mesh'), {
+    zarrStore: store,
+    arrayRefRegistry: new ArrayRefRegistry(),
+  });
+}
+
+const VIEW: MeshViewState = {
+  displayDims: [0, 1, 2],
+  slicePosition: [0, 0, 0],
+  tolerance: [1e10, 1e10, 1e10],
+} as MeshViewState;
+
+// ---------------------------------------------------------------------------
+
+describe('MeshLoader — the happy path', () => {
+  it('loads a tetrahedron whole, in float32 / uint32', async () => {
+    const store = buildStore(meshAttrs(), tetArrays());
+    const data = await makeLoader(store, meshAttrs()).loadMesh(VIEW);
+
+    expect(data.vertexCount).toBe(4);
+    expect(data.faceCount).toBe(4);
+    expect(data.ndim).toBe(3);
+    expect(Array.from(data.vertices)).toEqual(TET_VERTICES);
+    expect(data.faces).toBeInstanceOf(Uint32Array);
+    expect(Array.from(data.faces)).toEqual(TET_FACES);
+    expect(data.normals).toBeNull();
+    expect(data.colors).toBeNull();
+    expect(data.scalars).toBeUndefined();
+  });
+
+  it('widens a narrowed faces dtype, which is what the writer actually emits', async () => {
+    // The INDEX encoder picks the smallest unsigned dtype that fits, so a small
+    // mesh's faces land as uint8 on disk (verified against a written store).
+    const store = buildStore(
+      meshAttrs(),
+      tetArrays({ faces: { shape: [4, 3], dtype: '|u1', data: TET_FACES } })
+    );
+    const data = await makeLoader(store, meshAttrs()).loadMesh(VIEW);
+    expect(data.faces).toBeInstanceOf(Uint32Array);
+    expect(Array.from(data.faces)).toEqual(TET_FACES);
+  });
+
+  it('loads normals, colors and scalars when present', async () => {
+    const attrs = meshAttrs({
+      has_normals: true,
+      normal_dims: [0, 1, 2],
+      has_colors: true,
+      has_scalars: true,
+      shading: 'smooth',
+    });
+    const store = buildStore(
+      attrs,
+      tetArrays({
+        normals: { shape: [4, 3], dtype: '<f4', data: new Array(12).fill(0).map((_, i) => i) },
+        colors: { shape: [4, 3], dtype: '|u1', data: [255, 0, 0, 0, 255, 0, 0, 0, 255, 9, 9, 9] },
+        scalars: { shape: [4], dtype: '<f4', data: [0, 0.25, 0.5, 1] },
+      })
+    );
+    const data = await makeLoader(store, attrs).loadMesh(VIEW);
+
+    expect(data.normals?.length).toBe(12);
+    expect(data.colorComponents).toBe(3);
+    // Native dtype preserved — the GPU normalizes uint8 to [0,1] for free, at a
+    // third of float32's bytes. Widening here would defeat that.
+    expect(data.colors).toBeInstanceOf(Uint8Array);
+    expect(Array.from(data.colors!.slice(0, 3))).toEqual([255, 0, 0]);
+    expect(Array.from(data.scalars!)).toEqual([0, 0.25, 0.5, 1]);
+  });
+
+  it('loads a BROADCAST uniform colour end to end', async () => {
+    // The regression the review caught, exercised through the real loader rather
+    // than hand-built handles: `add_mesh(..., colors=(1, 0, 0))` writes ONE stored
+    // row with `n_elements: V` and no `original_shape`. Stage 1 has to accept it and
+    // the decoder has to expand it, or a first-class API produces a store the viewer
+    // refuses.
+    const attrs = meshAttrs({ has_colors: true });
+    const store = buildStore(
+      attrs,
+      tetArrays({
+        colors: {
+          shape: [1, 3],
+          dtype: '<f4',
+          data: [1, 0, 0],
+          attrs: { encoding: { name: 'broadcasted', n_elements: 4, original_dtype: 'float32' } },
+        },
+      })
+    );
+    const data = await makeLoader(store, attrs).loadMesh(VIEW);
+    expect(data.colorComponents).toBe(3);
+    // Expanded to one entry per vertex, all the same colour.
+    expect(data.colors!.length).toBe(4 * 3);
+    expect(Array.from(data.colors!)).toEqual([1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0]);
+  });
+
+  it('reports RGBA colours as 4 components', async () => {
+    const attrs = meshAttrs({ has_colors: true });
+    const store = buildStore(
+      attrs,
+      tetArrays({
+        colors: { shape: [4, 4], dtype: '|u1', data: new Array(16).fill(128) },
+      })
+    );
+    const data = await makeLoader(store, attrs).loadMesh(VIEW);
+    expect(data.colorComponents).toBe(4);
+    expect(data.colors!.length).toBe(16);
+  });
+});
+
+describe('MeshLoader — whole-node residency', () => {
+  it('fetches once and serves every later updateView from cache', async () => {
+    const store = buildStore(meshAttrs(), tetArrays());
+    const loader = makeLoader(store, meshAttrs());
+
+    const first = await loader.loadMesh(VIEW);
+    const chunksAfterFirst = store.chunkRequests().length;
+    expect(chunksAfterFirst).toBeGreaterThan(0);
+
+    const second = await loader.updateView({ ...VIEW, slicePosition: [5, 5, 5] });
+    const third = await loader.updateView({ ...VIEW, displayDims: [2, 1, 0] });
+
+    // Same object, not merely equal: a view change has no subset to fetch, so
+    // re-fetching would be pure duplicate work.
+    expect(second).toBe(first);
+    expect(third).toBe(first);
+    expect(store.chunkRequests().length).toBe(chunksAfterFirst);
+  });
+
+  it('collapses concurrent first loads onto ONE fetch', async () => {
+    // The scene-loader legitimately calls updateView while an initial loadMesh is
+    // still in flight (a slice scrub during load). Without the in-flight latch
+    // each call starts its own full-mesh fetch.
+    const store = buildStore(meshAttrs(), tetArrays());
+    const loader = makeLoader(store, meshAttrs());
+
+    const [a, b, c] = await Promise.all([
+      loader.loadMesh(VIEW),
+      loader.updateView(VIEW),
+      loader.updateView(VIEW),
+    ]);
+    expect(b).toBe(a);
+    expect(c).toBe(a);
+    // Exactly one read per data array (vertices + faces), not three.
+    expect(store.chunkRequests()).toEqual(['/mesh/vertices/0.0', '/mesh/faces/0.0']);
+  });
+
+  it('allows a fresh attempt after a failure rather than caching the rejection', async () => {
+    const store = buildStore(meshAttrs(), {
+      vertices: { shape: [4, 3], dtype: '<f4', data: TET_VERTICES },
+      // Declares 4 faces but the attrs say 4 — shape is fine; the VALUES are not.
+      faces: { shape: [4, 3], dtype: '<i4', data: [0, 1, 2, 0, 1, -1, 0, 2, 3, 1, 2, 3] },
+    });
+    const loader = makeLoader(store, meshAttrs());
+    await expect(loader.loadMesh(VIEW)).rejects.toThrow(LoaderError);
+    // A second attempt must re-run, not re-await the rejected promise forever.
+    await expect(loader.loadMesh(VIEW)).rejects.toThrow(LoaderError);
+    expect(store.chunkRequests().length).toBeGreaterThan(2);
+  });
+
+  it('a stale completion must not erase the REPLACEMENT load\u2019s in-flight latch', async () => {
+    // The race #1240 named. `dispose()` nulls `inFlight` while the old promise may
+    // still be pending; if that promise's cleanup clears the latch unconditionally it
+    // wipes the NEW load's latch when it settles — and from then until the new fetch
+    // publishes, every updateView (a slice scrub, precisely what the latch exists
+    // for) starts another whole-mesh fetch.
+    //
+    // Driven by ORDINAL rather than by timing, because microtask ordering will not
+    // reliably keep the replacement in flight past the original's completion:
+    // `dispose()` aborts the original's reads, so the original settles (with an
+    // AbortError) before it ever reaches `faces`, and the replacement's own faces
+    // read — the FIRST one issued — parks forever, holding it in flight. Promise
+    // IDENTITY is then the observable — a third call must JOIN the replacement
+    // rather than start its own fetch.
+    const store = buildStore(meshAttrs(), tetArrays());
+    store.parkFacesRead = 1;
+    const loader = makeLoader(store, meshAttrs());
+
+    const first = loader.loadMesh(VIEW);
+    loader.dispose(); // mid-flight, before `first` settles — aborts its reads
+    const replacement = loader.loadMesh(VIEW);
+
+    await expect(first).rejects.toThrow(); // the stale completion runs its cleanup
+    const third = loader.updateView(VIEW);
+
+    // Same promise: the latch survived the stale settle. With an unconditional
+    // clear, `third` is a brand-new fetch instead.
+    expect(third).toBe(replacement);
+    // Only the replacement ever reached `faces` (the aborted original settled
+    // at its vertices read), and no third read was issued for it.
+    expect(store.requested.filter((k) => k.endsWith('/faces/0.0'))).toHaveLength(1);
+    void replacement.catch(() => {}); // parked forever; keep it from surfacing
+  });
+
+  it('does not repopulate its cache from a fetch that settles after dispose', async () => {
+    // Without the generation token the in-flight completion writes `this.data` back
+    // onto a torn-down loader, pinning a whole mesh nothing will ever read. The
+    // awaiting caller still gets its data — view-independent, so not wrong — but the
+    // loader must not retain it.
+    //
+    // `dispose()` also aborts reads still on the wire (pinned below), so reaching
+    // the publish guard requires a read that is ISSUED before the dispose and
+    // SETTLES after it: the faces read is parked, disposed over, then released.
+    const store = buildStore(meshAttrs(), tetArrays());
+    store.parkFacesRead = 1;
+    const loader = makeLoader(store, meshAttrs());
+    const inFlight = loader.loadMesh(VIEW);
+    await new Promise<void>((resolve) => {
+      const poll = (): void => {
+        if (store.releaseParkedFacesRead) resolve();
+        else setTimeout(poll, 0);
+      };
+      poll();
+    });
+    loader.dispose();
+    store.releaseParkedFacesRead!();
+    await expect(inFlight).resolves.toBeDefined();
+
+    // If the cache had been repopulated, this second load would be served from it
+    // and issue no further chunk reads.
+    const before = store.chunkRequests().length;
+    await loader.loadMesh(VIEW);
+    expect(store.chunkRequests().length).toBeGreaterThan(before);
+  });
+
+  it('drops its cached data on dispose', async () => {
+    const store = buildStore(meshAttrs(), tetArrays());
+    const loader = makeLoader(store, meshAttrs());
+    await loader.loadMesh(VIEW);
+    const before = store.chunkRequests().length;
+    loader.dispose();
+    await loader.loadMesh(VIEW);
+    expect(store.chunkRequests().length).toBeGreaterThan(before);
+  });
+
+  it('every chunk read carries an abort signal, not just the faces one', async () => {
+    // A signal that reaches only one of the arrays is cancellation theatre: the
+    // decoder-routed reads (vertices, normals, scalars) and the shared colour
+    // path are where the bytes are, so those are the reads that must be
+    // stoppable. Observable at the store, because zarrita forwards
+    // `GetOptions.signal` into `store.get`.
+    const attrs = meshAttrs({
+      has_normals: true,
+      normal_dims: [0, 1, 2],
+      has_colors: true,
+      has_scalars: true,
+      shading: 'smooth',
+    });
+    const store = buildStore(
+      attrs,
+      tetArrays({
+        normals: { shape: [4, 3], dtype: '<f4', data: new Array(12).fill(0) },
+        colors: { shape: [4, 3], dtype: '|u1', data: new Array(12).fill(128) },
+        scalars: { shape: [4], dtype: '<f4', data: [0, 0.25, 0.5, 1] },
+      })
+    );
+    await makeLoader(store, attrs).loadMesh(VIEW);
+
+    const chunkKeys = store.chunkRequests();
+    // All five data arrays were actually read…
+    for (const name of ['vertices', 'faces', 'normals', 'colors', 'scalars']) {
+      expect(chunkKeys.some((k) => k.includes(`/${name}/`))).toBe(true);
+    }
+    // …and every one of those reads carried a signal.
+    for (const key of chunkKeys) {
+      expect(store.signals.get(key), `chunk read ${key} carried no abort signal`).toBeDefined();
+    }
+  });
+
+  it('dispose() trips the signal governing the in-flight reads', async () => {
+    // The generation token stops the post-dispose PUBLISH; this pins that the
+    // TRANSFER is stopped too — a near-budget mesh otherwise fetches and decodes
+    // half a gigabyte for a loader nothing will ever read. The fake store cannot
+    // observe a mid-read cancellation (it ignores the signal), so the assertion
+    // is on the signal the read was handed.
+    const store = buildStore(meshAttrs(), tetArrays());
+    store.parkFacesRead = 1;
+    const loader = makeLoader(store, meshAttrs());
+    const inFlight = loader.loadMesh(VIEW);
+
+    // Wait until the parked faces read has been issued.
+    await new Promise<void>((resolve) => {
+      const poll = (): void => {
+        if (store.requested.some((k) => k.endsWith('/faces/0.0'))) resolve();
+        else setTimeout(poll, 0);
+      };
+      poll();
+    });
+    const signal = store.signals.get('/mesh/faces/0.0');
+    expect(signal).toBeDefined();
+    expect(signal!.aborted).toBe(false);
+
+    loader.dispose();
+    expect(signal!.aborted).toBe(true);
+    void inFlight.catch(() => {}); // parked forever; keep it from surfacing
+  });
+});
+
+describe('MeshLoader — Stage 1 rejects BEFORE any chunk is fetched', () => {
+  /** Assert the load fails and the store was never asked for a chunk. */
+  async function expectRejectedWithoutFetching(
+    store: RecordingStore,
+    attrs: MeshMetadata,
+    pattern: RegExp
+  ): Promise<void> {
+    const loader = makeLoader(store, attrs);
+    await expect(loader.loadMesh(VIEW)).rejects.toThrow(pattern);
+    // THE claim of the two-stage design. An oversized or malformed declaration
+    // must cost no allocation, so not one chunk key may be requested — only the
+    // `.zarray` / `.zattrs` metadata the preflight legitimately reads.
+    expect(store.chunkRequests()).toEqual([]);
+    expect(store.requested.length).toBeGreaterThan(0);
+  }
+
+  it('n_vertices over the cap', async () => {
+    const n = 2 ** 30;
+    const attrs = meshAttrs({ n_vertices: n });
+    await expectRejectedWithoutFetching(
+      buildStore(attrs, {
+        vertices: { shape: [n, 3], dtype: '<f4', chunks: [1024, 3] },
+        faces: { shape: [4, 3], dtype: '<u4' },
+      }),
+      attrs,
+      /exceeds the maximum/
+    );
+  });
+
+  it('a declared footprint over the byte budget', async () => {
+    const n = 40_000_000;
+    const attrs = meshAttrs({ n_vertices: n, ndim: 4 });
+    await expectRejectedWithoutFetching(
+      buildStore(attrs, {
+        vertices: { shape: [n, 4], dtype: '<f4', chunks: [65536, 4] },
+        faces: { shape: [4, 3], dtype: '<u4' },
+      }),
+      attrs,
+      /account for .* over the/
+    );
+  });
+
+  it('a single chunk over the byte budget, on an otherwise tiny array', async () => {
+    const attrs = meshAttrs({ n_faces: 100 });
+    await expectRejectedWithoutFetching(
+      buildStore(attrs, {
+        vertices: { shape: [4, 3], dtype: '<f4' },
+        faces: { shape: [100, 3], dtype: '<u4', chunks: [268_435_456, 3] },
+      }),
+      attrs,
+      /declares a single chunk of/
+    );
+    expect(268_435_456 * 3 * 4).toBeGreaterThan(MESH_DECODE_BUDGET_BYTES);
+  });
+
+  it('a vertices width that disagrees with ndim', async () => {
+    const attrs = meshAttrs({ ndim: 4 });
+    await expectRejectedWithoutFetching(
+      buildStore(attrs, tetArrays()),
+      attrs,
+      /vertices describes/
+    );
+  });
+
+  it('a float faces dtype', async () => {
+    const attrs = meshAttrs();
+    await expectRejectedWithoutFetching(
+      buildStore(attrs, tetArrays({ faces: { shape: [4, 3], dtype: '<f4', data: TET_FACES } })),
+      attrs,
+      /an integer dtype is required/
+    );
+  });
+
+  it('an undersized colors array', async () => {
+    const attrs = meshAttrs({ has_colors: true });
+    await expectRejectedWithoutFetching(
+      buildStore(attrs, tetArrays({ colors: { shape: [2, 3], dtype: '|u1' } })),
+      attrs,
+      /colors describes/
+    );
+  });
+
+  it('has_normals set with no normals array in the store', async () => {
+    const attrs = meshAttrs({ has_normals: true, normal_dims: [0, 1, 2] });
+    await expectRejectedWithoutFetching(
+      buildStore(attrs, tetArrays()),
+      attrs,
+      /has_normals is set but its array\(s\) are missing/
+    );
+  });
+
+  it('malformed normal_dims', async () => {
+    const attrs = meshAttrs({ has_normals: true, normal_dims: [0, 1, 1] });
+    await expectRejectedWithoutFetching(
+      buildStore(attrs, tetArrays({ normals: { shape: [4, 3], dtype: '<f4' } })),
+      attrs,
+      /three DISTINCT dimensions/
+    );
+  });
+
+  it('classifies a TRANSIENT open failure as Network, not Validation', async () => {
+    // A hardcoded 'Validation' would have the failure record treat a flaky network as
+    // deterministic and never retry it — the kind is persisted precisely so retry
+    // policy can tell the two apart. Matches how the sibling node loaders route raw
+    // errors through `classifyLoaderError`.
+    const attrs = meshAttrs();
+    const store = buildStore(attrs, tetArrays());
+    store.rejectKeyContaining = {
+      needle: '/faces/',
+      error: new Error('network request failed'),
+    };
+    let thrown: unknown;
+    try {
+      await makeLoader(store, attrs).loadMesh(VIEW);
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(LoaderError);
+    expect((thrown as LoaderError).kind).toBe('Network');
+  });
+
+  it('an array_ref TARGET is budgeted, not the (0, k) stub that points at it', async () => {
+    // #1247. `ArrayDecoder` resolves `encoding.target` against the store root and
+    // reads THAT array in full, but the referring array is a stub the Python encoder
+    // writes at `(0, k)` — so budgeting the handle the loader opened charges ~48 bytes
+    // for a read that pulls gigabytes. Reproduced in the issue as a 44-second
+    // materialization of a ~3 GB fill-value chunk: exactly the exhaustion this gate
+    // exists to refuse, and the case its own docstring calls "too late after decode".
+    const huge = 268_435_456;
+    const attrs = meshAttrs();
+    const store = buildStore(attrs, {
+      vertices: {
+        shape: [0, 3],
+        dtype: '<f4',
+        attrs: {
+          encoding: { name: 'array_ref', target: 'evil', original_shape: [4, 3] },
+        },
+      },
+      faces: { shape: [4, 3], dtype: '<u4', data: TET_FACES },
+    });
+    // The target lives outside the mesh node, as a deduplicated array really does.
+    store.addArray('/evil', { shape: [huge, 3], chunks: [huge, 3], dtype: '<f4' });
+
+    await expect(makeLoader(store, attrs).loadMesh(VIEW)).rejects.toThrow(
+      /over the .* per-node budget/
+    );
+    // The whole point: the target's chunk was never requested.
+    expect(store.chunkRequests()).toEqual([]);
+  });
+
+  it('follows a legitimate array_ref — dedup is a real writer behaviour', async () => {
+    // Rejecting array_ref outright is not free: `normals`/`colors`/`scalars` go
+    // through write_colors/write_scalars with dedup ON, so two meshes sharing a colour
+    // array legitimately produce a ref the viewer must still load.
+    const attrs = meshAttrs({ has_colors: true });
+    const store = buildStore(attrs, {
+      ...tetArrays(),
+      colors: {
+        shape: [0, 3],
+        dtype: '<f4',
+        attrs: {
+          encoding: { name: 'array_ref', target: 'shared_colors', original_shape: [4, 3] },
+        },
+      },
+    });
+    store.addArray('/shared_colors', {
+      shape: [4, 3],
+      dtype: '<f4',
+      data: [1, 0, 0, 0, 1, 0, 0, 0, 1, 1, 1, 0],
+    });
+
+    const data = await makeLoader(store, attrs).loadMesh(VIEW);
+    expect(data.colors!.length).toBe(12);
+    expect(Array.from(data.colors!.slice(0, 3))).toEqual([1, 0, 0]);
+  });
+
+  it('refuses a CYCLIC array_ref chain instead of hanging', async () => {
+    const attrs = meshAttrs();
+    const store = buildStore(attrs, {
+      vertices: {
+        shape: [0, 3],
+        dtype: '<f4',
+        attrs: { encoding: { name: 'array_ref', target: 'loop_a', original_shape: [4, 3] } },
+      },
+      faces: { shape: [4, 3], dtype: '<u4', data: TET_FACES },
+    });
+    store.addArray('/loop_a', {
+      shape: [0, 3],
+      dtype: '<f4',
+      attrs: { encoding: { name: 'array_ref', target: 'loop_a', original_shape: [4, 3] } },
+    });
+
+    await expect(makeLoader(store, attrs).loadMesh(VIEW)).rejects.toThrow(/cyclic/);
+    expect(store.chunkRequests()).toEqual([]);
+  });
+
+  it('refuses an array_ref whose TARGET is broadcast-encoded, before any chunk', async () => {
+    // #1253 — the dual of the huge-physical-target case above. The budget resolves the
+    // ref to the target it fetches and charges the target's STORED and per-chunk terms,
+    // but a `broadcasted` target stores ONE (1, K) row — a few bytes — and the decoder
+    // expands it to one row per logical element at fetch time. So a wide row behind a
+    // small stub sails under the ceiling on the stored/chunk terms, then allocates
+    // gigabytes on decode: exactly the "too late after decode" exhaustion the gate
+    // exists to prevent. Here the row is wide enough that the broadcast would allocate
+    // ~4.8 GB, yet the stored (~100 MB) and chunk (~100 MB) terms both fit the budget.
+    const wide = 100_000_000;
+    const attrs = meshAttrs();
+    const store = buildStore(attrs, {
+      vertices: {
+        shape: [0, 3],
+        dtype: '<f4',
+        attrs: { encoding: { name: 'array_ref', target: 'evil', original_shape: [4, 3] } },
+      },
+      faces: { shape: [4, 3], dtype: '<u4', data: TET_FACES },
+    });
+    store.addArray('/evil', {
+      shape: [1, wide],
+      chunks: [1, wide],
+      dtype: '|u1',
+      attrs: { encoding: { name: 'broadcasted', n_elements: 4 } },
+    });
+
+    await expect(makeLoader(store, attrs).loadMesh(VIEW)).rejects.toThrow(
+      /array_ref to a 'broadcasted' target/
+    );
+    // Rejected on metadata alone — neither the stub nor the target's chunk was fetched.
+    expect(store.chunkRequests()).toEqual([]);
+    // The stored and per-chunk terms really do fit, which is what makes the extra check
+    // load-bearing rather than redundant with the byte budget.
+    expect(wide * 1).toBeLessThan(MESH_DECODE_BUDGET_BYTES);
+  });
+
+  it('refuses an array_ref to a row-mode LUT target that decodes far past the ceiling', async () => {
+    // #1253, the second attrs-driven expansion. The writer legitimately dedups to a
+    // LUT-encoded array (two meshes sharing an identical scalars/colors array), so an
+    // `array_ref` -> `lut_*` target cannot be refused outright — it must be budgeted.
+    // But a row-mode LUT allocates `stored_indices x k` floats, k taken from the
+    // TARGET's `original_shape`. Charging the stub's tiny logical count (as before)
+    // let a small index array behind a wide `k` sail under the ceiling and then
+    // allocate gigabytes — the same bypass as the broadcast case, one encoding over.
+    const n = 100_000;
+    const k = 10_000; // 100k x 10k x 4 B ~= 4 GB decoded
+    const attrs = meshAttrs();
+    const store = buildStore(attrs, {
+      vertices: {
+        shape: [0, 3],
+        dtype: '<f4',
+        attrs: { encoding: { name: 'array_ref', target: 'evil', original_shape: [4, 3] } },
+      },
+      faces: { shape: [4, 3], dtype: '<u4', data: TET_FACES },
+    });
+    store.addArray('/evil', {
+      shape: [n],
+      chunks: [n],
+      dtype: '|u1',
+      // A faithful, decodable LUT: one k-wide code vector, every index 0 — so without
+      // the target-decode charge this is admitted and `decodeLUT` really does allocate
+      // n x k floats (~4 GB), not merely throw on missing metadata.
+      attrs: {
+        encoding: {
+          name: 'lut_uint8',
+          lut_mode: 'row',
+          lut: new Array(k).fill(0),
+          original_shape: [n, k],
+          original_dtype: 'float32',
+        },
+      },
+    });
+
+    await expect(makeLoader(store, attrs).loadMesh(VIEW)).rejects.toThrow(
+      /account for .* over the/
+    );
+    // Rejected on the resolved target's decode size, on metadata alone — no chunk read.
+    expect(store.chunkRequests()).toEqual([]);
+    // Stored (~100 KB) and per-chunk (~100 KB) both fit; only the k-expanded decode
+    // term catches it, which is what makes charging the TARGET's decode load-bearing.
+    expect(n * 1).toBeLessThan(MESH_DECODE_BUDGET_BYTES);
+  });
+
+  it('a genuinely MISSING array_ref target stays a deterministic Validation rejection', async () => {
+    // The other side of #1254's fix: a target that simply is not in the store is a real,
+    // permanent defect, so it is `Validation` (retry policy skips it) and reports it as
+    // not found — distinct from a transient open failure, which stays retryable below.
+    const attrs = meshAttrs();
+    const store = buildStore(attrs, {
+      vertices: {
+        shape: [0, 3],
+        dtype: '<f4',
+        attrs: { encoding: { name: 'array_ref', target: 'absent', original_shape: [4, 3] } },
+      },
+      faces: { shape: [4, 3], dtype: '<u4', data: TET_FACES },
+    });
+    let thrown: unknown;
+    try {
+      await makeLoader(store, attrs).loadMesh(VIEW);
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(LoaderError);
+    expect((thrown as LoaderError).kind).toBe('Validation');
+    expect((thrown as LoaderError).message).toMatch(/was not found in the store/);
+    expect(store.chunkRequests()).toEqual([]);
+  });
+
+  it('classifies a TRANSIENT open of an OPTIONAL array as Network, not Validation', async () => {
+    // #1254, first site. The optional-array open loop used to swallow EVERY error and
+    // leave the slot empty, after which the preflight reported the flag-with-no-array as
+    // `Validation` — which the retry policy treats as deterministic and never re-fetches.
+    // A network blip fetching `normals`' metadata must instead surface its retryable kind.
+    const attrs = meshAttrs({ has_normals: true, normal_dims: [0, 1, 2] });
+    const store = buildStore(
+      attrs,
+      tetArrays({ normals: { shape: [4, 3], dtype: '<f4', data: new Array(12).fill(0) } })
+    );
+    store.rejectKeyContaining = { needle: '/normals/', error: new Error('network request failed') };
+    let thrown: unknown;
+    try {
+      await makeLoader(store, attrs).loadMesh(VIEW);
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(LoaderError);
+    expect((thrown as LoaderError).kind).toBe('Network');
+  });
+
+  it('classifies a TRANSIENT open of an array_ref TARGET as Network, not Validation', async () => {
+    // #1254, second site. `resolveRefTarget` used to convert EVERY `zarr.open` failure on
+    // the target into a `Validation` rejection, so a timeout opening the target's metadata
+    // was persisted as deterministic and never retried. Only a genuine not-found should be
+    // deterministic; a transient must surface its retryable kind.
+    const attrs = meshAttrs();
+    const store = buildStore(attrs, {
+      vertices: {
+        shape: [0, 3],
+        dtype: '<f4',
+        attrs: { encoding: { name: 'array_ref', target: 'shared', original_shape: [4, 3] } },
+      },
+      faces: { shape: [4, 3], dtype: '<u4', data: TET_FACES },
+    });
+    store.addArray('/shared', {
+      shape: [4, 3],
+      dtype: '<f4',
+      data: [1, 0, 0, 0, 1, 0, 0, 0, 1, 1, 1, 0],
+    });
+    store.rejectKeyContaining = { needle: '/shared/', error: new Error('network request failed') };
+    let thrown: unknown;
+    try {
+      await makeLoader(store, attrs).loadMesh(VIEW);
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(LoaderError);
+    expect((thrown as LoaderError).kind).toBe('Network');
+  });
+
+  it('a missing faces array — a mesh without one is not a mesh', async () => {
+    const attrs = meshAttrs();
+    const store = buildStore(attrs, {
+      vertices: { shape: [4, 3], dtype: '<f4', data: TET_VERTICES },
+    });
+    await expect(makeLoader(store, attrs).loadMesh(VIEW)).rejects.toThrow(LoaderError);
+    expect(store.chunkRequests()).toEqual([]);
+  });
+});
+
+describe('MeshLoader — Stage 2 rejects on the materialized values', () => {
+  it('rejects a signed store’s -1 face index', async () => {
+    const store = buildStore(meshAttrs(), {
+      vertices: { shape: [4, 3], dtype: '<f4', data: TET_VERTICES },
+      faces: { shape: [4, 3], dtype: '<i4', data: [0, 1, 2, 0, 1, -1, 0, 2, 3, 1, 2, 3] },
+    });
+    await expect(makeLoader(store, meshAttrs()).loadMesh(VIEW)).rejects.toThrow(/face index -1/);
+  });
+
+  it('rejects a 64-bit store’s 2^32 + 1 face index', async () => {
+    const bad = BigInt(2 ** 32) + 1n;
+    const store = buildStore(meshAttrs(), {
+      vertices: { shape: [4, 3], dtype: '<f4', data: TET_VERTICES },
+      faces: {
+        shape: [4, 3],
+        dtype: '<i8',
+        data: [0n, 1n, 2n, 0n, 1n, 3n, 0n, 2n, 3n, 1n, 2n, bad],
+      },
+    });
+    await expect(makeLoader(store, meshAttrs()).loadMesh(VIEW)).rejects.toThrow(
+      /face index 4294967297/
+    );
+  });
+
+  it('rejects an out-of-range index that Stage 1 could not see', async () => {
+    // Shape and dtype are both correct here, so only a value check catches it.
+    const store = buildStore(meshAttrs(), {
+      vertices: { shape: [4, 3], dtype: '<f4', data: TET_VERTICES },
+      faces: { shape: [4, 3], dtype: '<u4', data: [0, 1, 2, 0, 1, 3, 0, 2, 3, 1, 2, 99] },
+    });
+    await expect(makeLoader(store, meshAttrs()).loadMesh(VIEW)).rejects.toThrow(
+      /face index 99 .* \[0, 4\)/
+    );
+  });
+
+  it('fails as a Validation-kind LoaderError, so retry treats it as deterministic', async () => {
+    const store = buildStore(meshAttrs(), {
+      vertices: { shape: [4, 3], dtype: '<f4', data: TET_VERTICES },
+      faces: { shape: [4, 3], dtype: '<u4', data: [0, 1, 2, 0, 1, 3, 0, 2, 3, 1, 2, 99] },
+    });
+    let thrown: unknown;
+    try {
+      await makeLoader(store, meshAttrs()).loadMesh(VIEW);
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(LoaderError);
+    // A malformed store re-fetched on every reconnect would be pure noise; the
+    // kind is what stops that.
+    expect((thrown as LoaderError).kind).toBe('Validation');
+    expect((thrown as LoaderError).path).toBe('/mesh');
+  });
+});
