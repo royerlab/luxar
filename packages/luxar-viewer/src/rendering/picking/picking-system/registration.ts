@@ -8,7 +8,6 @@
  */
 
 import * as THREE from 'three';
-import { isCameraAwareMaterial } from '../../materials/_shared/camera-aware-material';
 import { materialManager } from '../../material-manager';
 
 /** Internal tracking of a registered node pair. */
@@ -49,13 +48,21 @@ export function disposePickMaterial(mesh: THREE.Mesh): void {
  * Unregister every pick material from `materialManager` without
  * disposing the underlying GPU object. Used after WebGL context-loss
  * — see `PickingSystem.clearRegistrationsForRebuild` for the contract.
+ *
+ * Calls `unregister` unconditionally on every non-null pick material.
+ * `materialManager.unregister` drops the material from ALL registries and is
+ * idempotent, so it is safe for both camera-aware entries (points/lines/gsplats,
+ * in `registeredMaterials`) and non-camera-aware ones (the mesh pick material,
+ * which has no `updateCameraParams` and lives in `staticMaterials`). Gating on
+ * `isCameraAwareMaterial` here would silently skip mesh pick materials and leak
+ * them across every context-restore cycle.
  */
 export function unregisterAllPickMaterials(nodeMap: ReadonlyMap<number, PickNodeEntry>): void {
   for (const entry of nodeMap.values()) {
     const material = (entry.pick as THREE.Mesh).material;
     const list = Array.isArray(material) ? material : [material];
     for (const m of list) {
-      if (m && isCameraAwareMaterial(m)) {
+      if (m) {
         materialManager.unregister(m);
       }
     }
