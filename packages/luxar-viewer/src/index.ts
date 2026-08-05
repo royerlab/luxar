@@ -92,8 +92,8 @@ export { getCompleteBlendingState, applyBlendingStateToMaterial } from './render
 export type { CompleteBlendingState } from './rendering/blending-state';
 /**
  * Union of the six canonical Luxar blending modes (additive, volumetric,
- * normal, max, opaque, luminous) selectable per geometry node — mesh nodes
- * refuse `volumetric`.
+ * normal, max, opaque, luminous) selectable per geometry node — a mesh node
+ * given `volumetric` warns and falls back to `opaque`.
  */
 export type { BlendingMode } from './rendering/material-manager';
 export {
