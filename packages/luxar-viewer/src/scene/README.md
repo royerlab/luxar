@@ -409,8 +409,9 @@ geometry — retention keeps loaded levels resident so swapping back is
 a sub-millisecond visibility toggle. Memory is bounded once per frame
 by `enforceResidentByteBudget`, which (only when the GPU pool's live
 resident byte total exceeds the shared budget) demotes evictable
-levels — off-screen first, then furthest-from-camera, then
-coldest-`lastVisibleTick`. The visible level of each group and eager
+levels — hidden-layer (undrawable) first, then off-screen, then
+furthest-from-camera, then coldest-`lastVisibleTick`. The visible
+level of each group and eager
 fallback levels (no `release` thunk) are never evicted. "Visible" here
 is **effective** visibility (`isEffectivelyVisible`): under a hidden
 ancestor — a layer toggled off — nothing of that group is on screen, so
@@ -1023,9 +1024,11 @@ _For implementation details, see the source files in this directory._
   The material-touching counterpart of `lod-blend.ts`'s pure math.
 - `lod-eviction.ts` — `enforceResidentByteBudget`: the VRAM-pressure
   policy — while the GPU pool reports over-budget, demote hidden LOD
-  levels off-screen-first / furthest-first / coldest-first. "Hidden" is
+  levels hidden-layer-first / off-screen-first / furthest-first /
+  coldest-first, clearing `visible` on each released level. "Hidden" is
   ancestor-aware (`utils/object-visibility.ts`), so a level under a
-  toggled-off layer is reclaimable.
+  toggled-off layer is reclaimable — and reclaimed before anything a
+  visible layer could still draw.
 - `lod-display-gate.ts` — The never-downgrade display gate for the
   registry: `shouldHoldPreviousDisplay` holds the previously-displayed
   level while a streaming upgrade is strictly worse than what is shown,

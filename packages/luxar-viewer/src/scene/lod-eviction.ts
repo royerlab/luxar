@@ -8,7 +8,8 @@
  * over the shared budget ceiling. "Hidden" is EFFECTIVE (ancestor-aware)
  * visibility — a level under a hidden layer is cold no matter what its own
  * ``visible`` flag says. Ranking prioritises what is furthest from
- * the visible: off-screen groups first, then descending camera distance, then
+ * the visible: levels under a hidden layer (undrawable, so coldest of all)
+ * first, then off-screen groups, then descending camera distance, then
  * coldest last-visible tick. Runs once per frame after all entries are
  * evaluated; eviction is rare (only under genuine VRAM pressure), preserving
  * the registry's no-churn retention property.
@@ -52,6 +53,10 @@ export interface EvictableChild {
    * the walk such a level looked permanently on-screen and was exempt from
    * eviction forever — hidden data that could not be drawn AND could not be
    * reclaimed.
+   *
+   * Demoting a level also clears this flag (``visible = false``): the released
+   * geometry is no longer ready, so leaving it ``visible`` would let a
+   * same-frame re-show of a hidden ancestor briefly expose stale buffers.
    */
   object?: VisibilityNode;
 }
@@ -84,12 +89,16 @@ const CAMERA_POS_SCRATCH = new THREE.Vector3();
  * once).
  *
  * Eviction order prioritises **what is furthest from the visible**: levels
- * whose group is entirely outside the camera frustum first, then by
- * descending camera distance, then coldest-last-visible-tick as the final
- * tiebreak (preserving the previous time-LRU behaviour when spatial keys
- * tie). This pairs with the off-screen selector gate: groups the camera
- * turned away from drop to coarsest *and* are the first to give back VRAM,
- * keeping the on-screen working set resident.
+ * under a hidden layer (effectively invisible ⇒ undrawable, so the coldest
+ * data of all) first, then levels whose group is entirely outside the camera
+ * frustum, then by descending camera distance, then coldest-last-visible-tick
+ * as the final tiebreak (preserving the previous time-LRU behaviour when
+ * spatial keys tie). Making hidden the PRIMARY key keeps a hidden layer that
+ * happens to sit in-frustum near the camera from ranking behind a visible
+ * layer's off-screen fine levels — undrawable geometry is always reclaimed
+ * before anything the viewer can still draw. This pairs with the off-screen
+ * selector gate: groups the camera turned away from drop to coarsest *and* are
+ * the first to give back VRAM, keeping the on-screen working set resident.
  *
  * Each ``release()`` moves that level's buffer active→pooled and
  * synchronously triggers the pool's byte-eviction pass, which disposes
@@ -122,9 +131,14 @@ export function enforceResidentByteBudget<E extends EvictableEntry>(opts: {
 
   camera.getWorldPosition(CAMERA_POS_SCRATCH);
 
-  // Collect evictable levels, tagging each with its group's off-screen flag
-  // and camera distance for spatial-priority ranking.
-  const evictable: { child: EvictableChild; offscreen: boolean; distance: number }[] = [];
+  // Collect evictable levels, tagging each with whether its group is hidden
+  // (undrawable), its off-screen flag, and camera distance for ranking.
+  const evictable: {
+    child: EvictableChild;
+    hidden: boolean;
+    offscreen: boolean;
+    distance: number;
+  }[] = [];
   for (const entry of entries) {
     const worldBox = computeWorldBox(entry);
     let offscreen = false;
@@ -170,12 +184,14 @@ export function enforceResidentByteBudget<E extends EvictableEntry>(opts: {
       // the same loader. The not-ready guard above misses it because a stale
       // RELOAD keeps ``ready=true`` while ``loading=true``.
       if (!child.loading && child.release && child.lastVisibleTick != null) {
-        evictable.push({ child, offscreen, distance });
+        evictable.push({ child, hidden: !ancestorsVisible, offscreen, distance });
       }
     }
   }
-  // Off-screen first, then furthest-first, then coldest-first.
+  // Hidden (undrawable) first, then off-screen, then furthest-first, then
+  // coldest-first.
   evictable.sort((a, b) => {
+    if (a.hidden !== b.hidden) return a.hidden ? -1 : 1;
     if (a.offscreen !== b.offscreen) return a.offscreen ? -1 : 1;
     if (a.distance !== b.distance) return b.distance - a.distance;
     return (a.child.lastVisibleTick ?? 0) - (b.child.lastVisibleTick ?? 0);
@@ -188,5 +204,10 @@ export function enforceResidentByteBudget<E extends EvictableEntry>(opts: {
   for (const { child } of evictable) {
     if (getResidentBytes() <= budget) break;
     child.release!(); // active→pooled; release's evictUnused() disposes the excess
+    // Released geometry is no longer ready. Clear the (possibly stale) visible
+    // flag so a same-frame re-show of a hidden ancestor cannot expose the stale
+    // buffer before the registry's gated reload commits. Safe because eviction
+    // never releases an EFFECTIVELY-visible level (the two guards above).
+    if (child.object) child.object.visible = false;
   }
 }

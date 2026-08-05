@@ -19,6 +19,7 @@ import {
   type EvictableEntry,
 } from '../../../scene/lod-eviction';
 import type { VisibilityNode } from '../../../utils/object-visibility';
+import type { BoundingBox } from '../../../scene/scene-manager/clipping/bounds-math';
 
 /** A ready, previously-shown child with a release spy and a visibility flag. */
 function child(visible: boolean, lastVisibleTick = 1): EvictableChild & { release: () => void } {
@@ -201,6 +202,110 @@ describe('enforceResidentByteBudget — hidden-layer (effective visibility)', ()
     expect(cold.release).toHaveBeenCalledTimes(1);
     expect(partner.release).not.toHaveBeenCalled();
     expect(displayed.release).not.toHaveBeenCalled();
+  });
+
+  it('clears object.visible when it releases a hidden-layer level (no stale-visible window)', () => {
+    // A hidden layer's level can carry a stale `visible === true` (the ancestor,
+    // not the level's own flag, hides it). Once demoted the buffer is released
+    // and no longer ready, so the flag MUST be cleared — otherwise a same-frame
+    // re-show of the layer would expose the stale geometry for one frame before
+    // the gated reload commits.
+    const layer: VisibilityNode = { visible: false };
+    const staleVisible = childUnder(layer, true, 1);
+    const children = [staleVisible];
+    const entry: EvictableEntry = {
+      children,
+      activeChildIndex: 0,
+      displayedChildIndex: 0,
+    };
+    expect(staleVisible.object?.visible).toBe(true);
+    run(entry, residentModel(children), 50);
+    expect(staleVisible.release).toHaveBeenCalledTimes(1);
+    expect(staleVisible.object?.visible).toBe(false);
+  });
+});
+
+describe('enforceResidentByteBudget — hidden-first ranking', () => {
+  /**
+   * A frustum that keeps only boxes reaching `x <= 0` in view: all six planes
+   * share normal (-1, 0, 0) with constant 0, so `intersectsBox` is true iff the
+   * box's `min.x <= 0`. Lets a test place one group in-frustum and another
+   * off-screen without wiring a real projection matrix.
+   */
+  function halfSpaceFrustum(): THREE.Frustum {
+    const f = new THREE.Frustum();
+    for (const p of f.planes) p.set(new THREE.Vector3(-1, 0, 0), 0);
+    return f;
+  }
+
+  /** A ready, previously-shown child under `layer` (same shape the panel toggle produces). */
+  function childUnder(
+    layer: VisibilityNode,
+    visible: boolean,
+    lastVisibleTick: number
+  ): EvictableChild & { release: () => void } {
+    return {
+      ready: true,
+      release: vi.fn() as unknown as () => void,
+      lastVisibleTick,
+      object: { visible, parent: layer },
+    };
+  }
+
+  function residentModel(children: readonly (EvictableChild & { release: () => void })[]) {
+    return () =>
+      children.reduce((sum, c) => {
+        const fired = (c.release as ReturnType<typeof vi.fn>).mock.calls.length > 0;
+        return sum + (fired ? 0 : 100);
+      }, 0);
+  }
+
+  it('evicts an in-frustum HIDDEN level before a VISIBLE layer’s off-screen level', () => {
+    // Pre-fix, off-screen was the primary key: the visible layer's off-screen
+    // fine level ranked FIRST and was reclaimed while the hidden (undrawable)
+    // in-frustum level — which the camera cannot draw at all — was spared.
+    // Post-fix, hidden is the primary key, so the undrawable data goes first.
+    const hiddenLayer: VisibilityNode = { visible: false };
+    const visibleLayer: VisibilityNode = { visible: true };
+
+    // Hidden layer, IN frustum (min.x <= 0). Its displayed level is the HOTTEST
+    // in the LRU (lastVisibleTick 5, re-stamped every frame while hidden), so
+    // only the hidden-first primary key — not the tick tiebreak — evicts it.
+    const hiddenNear = childUnder(hiddenLayer, true, 5);
+    const hiddenEntry: EvictableEntry = {
+      children: [hiddenNear],
+      activeChildIndex: 0,
+      displayedChildIndex: 0,
+    };
+    // Visible layer, OFF screen (min.x > 0): a cold non-displayed level (index 0,
+    // own flag false ⇒ evictable) plus the on-screen displayed level (protected).
+    const visibleCold = childUnder(visibleLayer, false, 1);
+    const visibleDisplayed = childUnder(visibleLayer, true, 2);
+    const visibleEntry: EvictableEntry = {
+      children: [visibleCold, visibleDisplayed],
+      activeChildIndex: 1,
+      displayedChildIndex: 1,
+    };
+
+    const boxes = new Map<EvictableEntry, BoundingBox>([
+      [hiddenEntry, { min: { x: -10, y: -1, z: -1 }, max: { x: -5, y: 1, z: 1 } }],
+      [visibleEntry, { min: { x: 5, y: -1, z: -1 }, max: { x: 10, y: 1, z: 1 } }],
+    ]);
+
+    // Two evictable 100-byte levels; budget frees exactly one.
+    const bytes = residentModel([hiddenNear, visibleCold]);
+    enforceResidentByteBudget({
+      entries: [hiddenEntry, visibleEntry],
+      camera: new THREE.Camera(),
+      frustum: halfSpaceFrustum(),
+      getResidentByteBudget: () => 100,
+      getResidentBytes: bytes,
+      computeWorldBox: (e) => boxes.get(e) ?? null,
+    });
+
+    expect(hiddenNear.release).toHaveBeenCalledTimes(1); // undrawable → first out
+    expect(visibleCold.release).not.toHaveBeenCalled(); // visible layer spared
+    expect(visibleDisplayed.release).not.toHaveBeenCalled();
   });
 });
 
