@@ -34,13 +34,20 @@ function safeFireSelect(cb: (url: string) => void | Promise<void>, url: string):
   }
 }
 
+/**
+ * Construction options for {@link DatasetBrowser} — where to mount the panel and
+ * how to react to selection/close, plus the context needed to pick the initial
+ * directory and resolve relative paths.
+ */
 export interface DatasetBrowserConfig {
+  /** Host element the browser panel is appended into. */
   container: HTMLElement;
   /**
    * Callback when a dataset is selected. Receives the full URL (not
-   * just the path). May be sync or async; the browser awaits/catches
-   * the returned Promise so an async load failure is logged + toasted
-   * rather than becoming an unhandled rejection.
+   * just the path). May be sync or async; the browser does NOT wait for
+   * the returned Promise — it fires the callback, attaches a `.catch`
+   * (so an async load failure is logged + toasted rather than becoming an
+   * unhandled rejection), and closes immediately.
    */
   onDatasetSelect: (fullUrl: string) => void | Promise<void>;
   onClose?: () => void;
@@ -51,7 +58,11 @@ export interface DatasetBrowserConfig {
 }
 
 /**
- * Interactive dataset browser panel.
+ * Interactive panel for browsing a server's directory tree and selecting a Zarr
+ * dataset to load. Wraps a {@link DirectoryNavigator} for the async listing,
+ * renders directory entries, and fires `onDatasetSelect` with the full dataset
+ * URL when a `.zarr` is chosen. Navigation uses a generation token so stale
+ * async responses from abandoned directories are discarded rather than rendered.
  */
 export class DatasetBrowser {
   private container: HTMLElement;
@@ -451,7 +462,7 @@ export class DatasetBrowser {
       return;
     }
 
-    // Sort entries: directories first, then files
+    // Sort entries: zarr datasets first, then directories, then files
     const sorted = [...entries].sort((a, b) => {
       if (a.type === b.type) return a.name.localeCompare(b.name);
       if (a.type === 'zarr') return -1;
