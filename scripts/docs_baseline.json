@@ -1,8 +1,6 @@
 {
   "_comment": "Documentation-debt baseline for scripts/check_documentation.py. Regenerate with: hatch run python scripts/check_documentation.py --update-baseline. Each entry is '<check_name>::<repo-relative-path>' (plus '::<detail>' for checks that can fail a file more than once). New findings not listed here fail the check.",
   "failures": [
-    "Code examples::packages/luxar/src/luxar/cli/README.md",
-    "Code examples::packages/luxar/src/luxar/tests/README.md",
     "Docstring coverage::packages/luxar/src/luxar/cli/lod.py",
     "Docstring coverage::packages/luxar/src/luxar/core/overlay.py",
     "Docstring coverage::packages/luxar/src/luxar/demos/demo_caida_as_topology.py",
@@ -63,13 +61,6 @@
     "JSDoc coverage::packages/luxar-viewer/src/utils/console-interceptor.ts",
     "JSDoc coverage::packages/luxar-viewer/src/utils/storage-keys.ts",
     "JSDoc coverage::packages/luxar-viewer/src/workers/data-worker.ts",
-    "JSDoc coverage::packages/luxar-viewer/src/workers/sort-worker.ts",
-    "Module docstring::packages/luxar/src/luxar/gsplats/__init__.py",
-    "Module docstring::packages/luxar/src/luxar/gsplats/fit_gsplats.py",
-    "Module docstring::packages/luxar/src/luxar/tests/__init__.py",
-    "Quick Start section::packages/luxar/src/luxar/colormaps/README.md",
-    "Quick Start section::packages/luxar/src/luxar/demos/README.md",
-    "Quick Start section::packages/luxar/src/luxar/tests/README.md",
-    "Quick Start section::packages/luxar/src/luxar/typing_utils/README.md"
+    "JSDoc coverage::packages/luxar-viewer/src/workers/sort-worker.ts"
   ]
 }

@@ -2,6 +2,30 @@
 
 Top-level test suite for the `luxar` package.
 
+## Quick Start
+
+Run the suite with Hatch (see [Running Tests](#running-tests) for more targets):
+
+```bash
+hatch run test
+```
+
+Tests here are plain PyTest functions with a one-line docstring. A typical
+package-level check looks like this:
+
+```python
+def test_luxar_advertises_a_version() -> None:
+    """The package exposes a version string at its root."""
+    import luxar
+
+    assert isinstance(luxar.__version__, str)
+```
+
+Checks that must guarantee a *pristine* interpreter — e.g. that a bare
+`import luxar` does not eagerly import torch — run the probe in a subprocess so
+another already-collected test module can't have imported the dependency first;
+see `test_lazy_imports.py`.
+
 ## Scope
 
 This directory contains package-level tests (e.g., import/export sanity, version

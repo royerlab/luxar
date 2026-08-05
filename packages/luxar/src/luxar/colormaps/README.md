@@ -2,6 +2,19 @@
 
 Colormap (CLUT) support for mapping scalar data to RGB colors in Luxar scenes.
 
+## Quick Start
+
+Resolve any colormap name to a `(256, 3)` uint8 lookup table:
+
+```python
+from luxar.colormaps import resolve_colormap
+
+lut = resolve_colormap("viridis")  # (256, 3) uint8, ready for scalar lookup
+```
+
+Names resolve in order: built-in colormaps first, then matplotlib and colorcet
+if installed. See [Usage](#usage) below for custom arrays and scene integration.
+
 ## Key Functions
 
 - `resolve_colormap(name_or_array)` — Resolve a colormap name or custom array to a `(256, 3)` uint8 LUT
