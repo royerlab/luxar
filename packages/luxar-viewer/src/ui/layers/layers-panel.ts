@@ -197,7 +197,8 @@ export class LayersPanel {
 
   /**
    * Reset every layer's parameters — visibility, display range, gamma,
-   * opacity, blending mode, and colormap — back to their authored defaults.
+   * opacity, blending mode, colormap, and the mesh shading values (Ambient,
+   * Shade falloff, Alpha cutoff) — back to their authored defaults.
    *
    * Re-derives the default state from the scene graph (the same walk
    * `initFromScene` uses) and pushes every parameter through the regular
@@ -216,6 +217,12 @@ export class LayersPanel {
       // applyColormap restores the authored colormap (or none) and then
       // recomposes opacity/gamma/intensity/offset/blending via applyComposed.
       this.applyEngine.applyColormap(layer);
+      // applyMeshAppearance restores the mesh-only shading uniforms (Ambient,
+      // Shade falloff, Alpha cutoff) on both the visual and pick materials.
+      // These are not composed, so applyComposed never touches them — without
+      // this call the surface keeps the dragged uniforms while the readouts
+      // show the reset defaults. Safe no-op on a non-mesh leaf.
+      this.applyEngine.applyMeshAppearance(layer);
     }
 
     // Rebuild the row list + controls so the panel reflects the fresh state
