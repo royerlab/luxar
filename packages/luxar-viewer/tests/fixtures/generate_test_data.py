@@ -3547,13 +3547,17 @@ def generate_mesh_test() -> None:
         * per-vertex `labels`, so hover/pick resolves through the CSR at exactly the
           vertex granularity the pick shader reports.
 
-    Three nodes, one axis each — `colors` and `colormap` are mutually exclusive on a
-        single node, so the direct-colour and LUT paths cannot share one:
+    Four nodes, one axis each — `colors` and `colormap` are mutually exclusive on a
+    single node, so the direct-colour and LUT paths cannot share one:
 
-        * `sphere` — RGBA (with the sub-cutoff cap) + labels + smooth stored normals;
-        * `scalar_sphere` — the same geometry with `scalars` + `colormap` instead;
-        * `flat_patch` — authored `shading="flat"`, so a test can compare the two shading
-          variants inside ONE scene rather than across two fixtures.
+    * `sphere` — RGBA (with the sub-cutoff cap) + labels + smooth stored normals;
+    * `scalar_sphere` — the same geometry with `scalars` + `colormap` instead;
+    * `flat_patch` — authored `shading="flat"`, so a test can compare the two shading
+      variants inside ONE scene rather than across two fixtures. Nearly EDGE-ON to the
+      opening camera;
+    * `flat_facing` — also `shading="flat"`, but FACE-ON, which is what makes the
+      derivative normal's forced viewer-facing sign observable at all. See the comment
+      on its vertices for why edge-on cannot show it.
     """
     with asection("Generating Mesh Test"):
         output = FIXTURES_DIR / "test_mesh.luxar.zarr"
@@ -3574,11 +3578,32 @@ def generate_mesh_test() -> None:
         scalars = ((vertices[:, 2] + 1.0) / 2.0).astype(np.float32)
         labels = [f"vertex {i} (z={vertices[i, 2]:.2f})" for i in range(n_v)]
 
-        # A flat 2x2 quad patch, offset in x, authored shading="flat".
+        # A flat 2x2 quad patch, offset in x, authored shading="flat". Its normal is
+        # along X, which puts it nearly EDGE-ON to the opening camera: the two spheres
+        # stack vertically on screen and this patch sits to their right, so screen-up is
+        # ~+Y, screen-right ~+X, and the view axis ~Z.
         patch_v = np.array(
             [[2.0, -1, -1], [2.0, 1, -1], [2.0, 1, 1], [2.0, -1, 1]], dtype=np.float32
         )
         patch_f = np.array([[0, 1, 2], [0, 2, 3]], dtype=np.uint32)
+
+        # A second flat quad, this one FACE-ON: it lies in a z = const plane, so its
+        # normal is along Z — parallel to the view axis.
+        #
+        # That distinction is the whole reason this node exists, and it is not
+        # cosmetic. The derivative-normal path forces its result viewer-facing
+        # (`z >= 0`) because GLSL's `dFdy` is bottom-up where WGSL's `dpdy` is
+        # top-down, so `cross(dFdx, dFdy)` carries opposite sign on the two backends.
+        # EDGE-ON, that forcing is unobservable: `N.z ~= 0`, and flipping the sign of
+        # ~0 leaves `wrap = clamp(0 * 0.5 + 0.5) = 0.5` unchanged — measured on real
+        # WebGPU as byte-identical pixels with the flip removed, which is why the
+        # edge-on patch alone could not verify it. FACE-ON, `N.z ~= +/-1` and the flip
+        # is the difference between full brightness and the ambient floor.
+        facing_v = np.array(
+            [[-1.0, -1.0, 1.5], [1.0, -1.0, 1.5], [1.0, 1.0, 1.5], [-1.0, 1.0, 1.5]],
+            dtype=np.float32,
+        )
+        facing_f = np.array([[0, 1, 2], [0, 2, 3]], dtype=np.uint32)
 
         dims = Dimensions(
             [
@@ -3627,6 +3652,13 @@ def generate_mesh_test() -> None:
                 "flat_patch",
                 patch_v,
                 patch_f,
+                shading="flat",
+                layer=True,
+            )
+            scene.add_mesh(
+                "flat_facing",
+                facing_v,
+                facing_f,
                 shading="flat",
                 layer=True,
             )

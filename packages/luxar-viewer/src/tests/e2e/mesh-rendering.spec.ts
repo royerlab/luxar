@@ -77,8 +77,8 @@ test.describe('Mesh rendering', () => {
   }) => {
     await page.goto(`/?src=${MESH}&debug`);
     await waitForLuxarReady(page);
-    // Three mesh nodes in the fixture; all three must commit.
-    await waitForMeshCommitted(page, 3);
+    // Four mesh nodes in the fixture; all four must commit.
+    await waitForMeshCommitted(page, 4);
 
     const nodes = await meshNodes(page);
     const byName = new Map(nodes.map((m) => [m.name.replace(/^\//, ''), m]));
@@ -117,19 +117,19 @@ test.describe('Mesh rendering', () => {
     // loader → projection → commit → material define.
     await page.goto(`/?src=${MESH}&debug`);
     await waitForLuxarReady(page);
-    await waitForMeshCommitted(page, 3);
+    await waitForMeshCommitted(page, 4);
 
     const byName = new Map((await meshNodes(page)).map((m) => [m.name.replace(/^\//, ''), m]));
     expect(byName.get('sphere')!.flatNormal, 'smooth node took the derivative path').toBe(false);
-    expect(byName.get('flat_patch')!.flatNormal, 'flat node took the stored-normal path').toBe(
-      true
-    );
+    for (const flat of ['flat_patch', 'flat_facing']) {
+      expect(byName.get(flat)!.flatNormal, `${flat} took the stored-normal path`).toBe(true);
+    }
   });
 
   test('the colormap node reads the LUT and the direct-colour node does not', async ({ page }) => {
     await page.goto(`/?src=${MESH}&debug`);
     await waitForLuxarReady(page);
-    await waitForMeshCommitted(page, 3);
+    await waitForMeshCommitted(page, 4);
 
     const byName = new Map((await meshNodes(page)).map((m) => [m.name.replace(/^\//, ''), m]));
     expect(byName.get('scalar_sphere')!.hasColormap).toBe(true);
@@ -147,7 +147,7 @@ test.describe('Mesh rendering', () => {
     // writer: reading the zarr attrs would show nothing at all.
     await page.goto(`/?src=${MESH}&debug`);
     await waitForLuxarReady(page);
-    await waitForMeshCommitted(page, 3);
+    await waitForMeshCommitted(page, 4);
 
     for (const node of await meshNodes(page)) {
       expect(node.alphaCutout, `${node.name} should be in the opaque cutout build`).toBe(true);
@@ -235,7 +235,7 @@ test.describe('Mesh rendering', () => {
     // from a bad readback.
     await page.goto(`/?src=${MESH}&debug`);
     await waitForLuxarReady(page);
-    await waitForMeshCommitted(page, 3);
+    await waitForMeshCommitted(page, 4);
     await renderOnce(page);
 
     const stats = await getElementPixelStats(page, 'canvas', 10);

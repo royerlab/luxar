@@ -268,13 +268,19 @@ export function meshWebGPUFactory(
     // differ between fragments of the same 2x2 quad. Orientation comes from the
     // rasterized fragment rather than the winding, so this always faces the viewer.
     const rawDerivative: TSLNode = normalize(cross(dFdx(vViewPos), dFdy(vViewPos))).toVar();
-    // Forced viewer-facing, not assumed so — and this is the one place the two
-    // backends would otherwise diverge outright. `cross(dFdx, dFdy)` carries the sign
-    // of the fragment-space y axis, and WGSL's `dpdy` is TOP-DOWN where GLSL's
-    // `dFdy` is bottom-up, so the same surface yields +z under WebGL and -z under
-    // WebGPU: the flat variant would collapse to `uAmbient` everywhere on one backend
-    // only. The headlight's V is the fixed view axis (0, 0, 1), so "faces the viewer"
-    // is exactly `z >= 0` and one sign flip settles it. GLSL twin: shader-glsl.ts.
+    // Forced viewer-facing, not assumed so, which makes the fallback
+    // convention-INDEPENDENT. `cross(dFdx, dFdy)` carries the sign of the
+    // fragment-space y axis, and the specs differ: WGSL's `dpdy` is TOP-DOWN where
+    // GLSL's `dFdy` is bottom-up, so under OPPOSITE conventions the same surface yields
+    // +z on one backend and -z on the other, and an unforced flat variant would
+    // collapse toward `uAmbient` on one of them. V is the fixed view axis (0, 0, 1), so
+    // "faces the viewer" is exactly `z >= 0`.
+    //
+    // MEASURED rather than assumed: on Chrome + Apple Silicon a real-WebGPU A/B with
+    // this flip REMOVED renders a face-on flat quad IDENTICALLY to WebGL, so the two
+    // conventions coincide there and the flip is inert on that platform. Kept anyway —
+    // one instruction, correct under either convention, and neither spec promises they
+    // agree. Insurance, not a fix for an observed bug. GLSL twin: shader-glsl.ts.
     const derivativeNormal: TSLNode = rawDerivative.z
       .lessThan(0.0)
       .select(rawDerivative.negate(), rawDerivative)
