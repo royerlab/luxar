@@ -765,7 +765,10 @@ export class LayerStateManager {
   setBlendingMode(path: string, mode: BlendingMode): void {
     const layer = this.layers.get(path);
     if (!layer) return;
-    layer.blendingMode = mode;
+    // Resolved at the point of STORAGE, same as the panel's dropdown handler:
+    // a mesh maps `volumetric` → `opaque`, and the Blend dropdown displays the
+    // stored value raw — see `resolveLayerBlendingMode`.
+    layer.blendingMode = resolveLayerBlendingMode(layer.type, mode);
     // The user explicitly picked a mode ⇒ this layer now OWNS one, so
     // `liveLayerAttrs` may emit it as a composition setter (even a group).
     layer.blendingModeExplicit = true;
