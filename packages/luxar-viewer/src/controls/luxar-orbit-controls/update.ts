@@ -27,6 +27,13 @@ const _IDENTITY_QUAT = new THREE.Quaternion();
 const _v2 = new THREE.Vector3();
 const _q1 = new THREE.Quaternion();
 
+/**
+ * State and callbacks {@link runUpdateStep} needs, projected from the
+ * `LuxarOrbitControls` orchestrator. Object refs (orientation, the
+ * rotation/pan deltas, target, last-frame position/quaternion) are mutated
+ * in place; scalar accumulators (roll/zoom delta, distance) are read/written
+ * through accessors so the orchestrator keeps ownership of the fields.
+ */
 export interface OrbitUpdateCtx {
   enableRotate: boolean;
   enableDamping: boolean;
@@ -58,6 +65,19 @@ export interface OrbitUpdateCtx {
   dispatch: (type: 'change') => void;
 }
 
+/**
+ * Run one per-frame orbit update: apply auto-rotation, then the damped
+ * rotation / roll / pan / zoom deltas, clamp distance (and ortho zoom), write
+ * the transform to the camera, and detect movement. With damping enabled each
+ * delta is applied by `dampingFactor` and decayed by the complement; without
+ * it each is applied fully and reset.
+ *
+ * @param deltaTime - Seconds since the last frame (defaults to 1/60), keeping
+ *   auto-rotation frame-rate independent.
+ * @returns true if the camera position or orientation changed this frame
+ *   (a `change` event is dispatched in that case) — useful for
+ *   render-on-demand.
+ */
 export function runUpdateStep(ctx: OrbitUpdateCtx, deltaTime?: number): boolean {
   // 1. Auto-rotation: around the camera's screen-up axis (always appears vertical to the viewer)
   // Speed=1.0 → one full rotation in 60 seconds (matches THREE.js OrbitControls convention)

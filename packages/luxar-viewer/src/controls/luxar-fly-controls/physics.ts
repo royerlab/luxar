@@ -24,6 +24,13 @@ const _v2 = new THREE.Vector3();
 const _v3 = new THREE.Vector3();
 const _q0 = new THREE.Quaternion();
 
+/**
+ * State the physics integrators read and mutate, projected from the
+ * `LuxarFlyControls` orchestrator: the camera and orientation quaternion,
+ * the translational/angular velocity accumulators, the current move/look
+ * input, and the mode/damping/speed knobs (including the transient
+ * speed-boost flag).
+ */
 export interface FlyPhysicsCtx {
   camera: LuxarCamera;
   orientation: THREE.Quaternion;
