@@ -49,6 +49,27 @@ const VISIBLE_COUNT_READERS: Record<GeometryTypeName, (userData: unknown) => num
 };
 
 /**
+ * The committed visible-element count for a node of ANY geometry type, or `undefined`
+ * when the userData belongs to none of them.
+ *
+ * Exported because the debug surface (`core/app/debug/debug-state.ts`) needs the same
+ * answer and used to re-derive it as a
+ * `visiblePointCount ?? visibleSplatCount ?? visibleSegmentCount ?? 0` chain — a
+ * partial copy of the table above, which is how it came to report **0 elements for
+ * every mesh**: `visibleTriangleCount` was simply not in the chain, and a missing
+ * field reads as "no count" rather than as an error. One reader, one answer.
+ *
+ * At most one entry can match: a node's userData carries exactly one `nodeType`.
+ */
+export function readVisibleElementCount(userData: unknown): number | undefined {
+  for (const t of GEOMETRY_TYPES) {
+    const count = VISIBLE_COUNT_READERS[t](userData);
+    if (count !== undefined) return count;
+  }
+  return undefined;
+}
+
+/**
  * Traverse `rootGroup`, sum the per-object visible-counts userData for all
  * four geometry types symmetrically, and push the totals (plus a
  * per-path breakdown) to `monitor`. No-op when either argument is null.
@@ -73,8 +94,11 @@ export function updateVisibleCountsInMonitor(
     if (!object.visible) return;
     if (object instanceof THREE.Mesh) {
       let visible: number | undefined;
-      // First matching type wins, as the former if/else chain did — a mesh's
-      // userData carries exactly one `nodeType`, so at most one reader matches.
+      // First matching type wins — a node's userData carries exactly one `nodeType`,
+      // so at most one reader matches. The loop stays here rather than calling
+      // `readVisibleElementCount` because this walk needs to know WHICH type matched
+      // (it accumulates per-type totals), while the debug surface only needs the
+      // number. Same table either way, so the two cannot disagree.
       for (const t of GEOMETRY_TYPES) {
         const count = VISIBLE_COUNT_READERS[t](object.userData);
         if (count !== undefined) {

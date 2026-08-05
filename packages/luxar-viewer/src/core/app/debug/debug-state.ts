@@ -18,6 +18,7 @@
 import * as THREE from 'three';
 import type { SimpleDims } from '../../../types/dims';
 import { LOADER_TYPES, type LoaderTypeName } from '../../../types/format-contract';
+import { readVisibleElementCount } from '../../../data/scene-loader/monitor/visible-counts';
 
 /** Per-mesh point-cloud info reported by getState(). */
 export interface PointCloudInfo {
@@ -41,6 +42,35 @@ export interface LineMeshInfo {
   name: string;
   segmentCount: number;
   visible: boolean;
+  hasColormap: boolean;
+}
+
+/**
+ * Per-node mesh (triangle-surface) info reported by getState().
+ *
+ * `triangleCount` counts the triangles ACTUALLY DRAWN this epoch, which for a mesh is
+ * `drawRange.count / 3` rather than an instance count: the nD slice compaction rewrites
+ * the index buffer and narrows `drawRange` (spec §5.4), leaving the vertex arrays
+ * untouched. Reading `index.count` instead would report the whole surface no matter
+ * where the slice sits — the one number a debug driver most needs to be honest about.
+ *
+ * `flatNormal` and `alphaCutout` are the two shader VARIANTS a mesh can be built in,
+ * surfaced because neither is visible from the geometry or the node attrs alone: the
+ * flat/smooth choice folds in the live `displayDims` (§3.4) and the cutout follows the
+ * composed blending mode. They are what an E2E test asserting "this mesh is shading
+ * from stored normals right now" has to read.
+ */
+export interface MeshNodeInfo {
+  name: string;
+  /** Triangles in the current draw range — what is on screen, not what was loaded. */
+  triangleCount: number;
+  /** Vertices bound on the geometry. Invariant across slices; the pick-id domain. */
+  vertexCount: number;
+  visible: boolean;
+  /** `true` when shading from screen-space derivatives instead of stored normals. */
+  flatNormal: boolean;
+  /** `true` in `opaque` mode: the fragment stage applies a hard alpha cutout. */
+  alphaCutout: boolean;
   hasColormap: boolean;
 }
 
@@ -83,11 +113,15 @@ export interface DebugState {
   totalGSplats: number;
   /** Total visible line segments across all line meshes. */
   totalLines: number;
+  /** Total visible TRIANGLES across all mesh nodes. */
+  totalTriangles: number;
   totalElements: number;
   pointClouds: PointCloudInfo[];
   gsplatMeshes: GSplatMeshInfo[];
   /** Per-mesh line summary. */
   lineMeshes: LineMeshInfo[];
+  /** Per-node mesh (triangle-surface) summary. */
+  meshNodes: MeshNodeInfo[];
   /** Substitutive LOD groups (kind=lod) with their active level. */
   lodGroups: LODGroupDebugInfo[];
   /** Partition groups (kind=partition) with part / visible-part counts. */
@@ -127,7 +161,12 @@ export interface DrawOrderEntry {
   depthWrite: boolean;
   /** Resolved `mesh.renderOrder` (ascending within a bucket → lowest drawn first). */
   renderOrder: number;
-  /** Element count for the mesh (points / splats / line segments). */
+  /**
+   * Drawn-primitive count for the node: points / segments / splats / TRIANGLES.
+   *
+   * Instanced types read `instanceCount`; mesh, which has no instances, reads the
+   * committed `visibleTriangleCount` through the shared per-type reader.
+   */
   elements: number;
 }
 
@@ -159,9 +198,11 @@ export function computeDebugState(ctx: DebugStateContext): DebugState {
   let totalPoints = 0;
   let totalGSplats = 0;
   let totalLines = 0;
+  let totalTriangles = 0;
   const pointClouds: PointCloudInfo[] = [];
   const gsplatMeshes: GSplatMeshInfo[] = [];
   const lineMeshes: LineMeshInfo[] = [];
+  const meshNodes: MeshNodeInfo[] = [];
   const lodGroups: LODGroupDebugInfo[] = [];
   const partitions: PartitionDebugInfo[] = [];
 
@@ -256,6 +297,49 @@ export function computeDebugState(ctx: DebugStateContext): DebugState {
         hasColormap,
       });
     }
+
+    // Mesh: a plain indexed BufferGeometry, NOT an instanced one — so the
+    // `instanceCount` every branch above reads does not exist here, and the
+    // `InstancedBufferGeometry` guard they use would exclude it. The drawn count comes
+    // from the DRAW RANGE, because that is what the nD slice compaction narrows (§5.4):
+    // `index.count` would report the whole surface regardless of the slice position.
+    if (
+      object instanceof THREE.Mesh &&
+      (object.userData as { nodeType?: string })?.nodeType === 'mesh' &&
+      !(object.geometry instanceof THREE.InstancedBufferGeometry)
+    ) {
+      const geometry = object.geometry;
+      const index = geometry?.index;
+      const drawCount = geometry?.drawRange?.count;
+      // `drawRange.count` defaults to Infinity ("draw everything"), so fall back to the
+      // index length rather than reporting Infinity/3 as a triangle count.
+      const indices =
+        typeof drawCount === 'number' && Number.isFinite(drawCount)
+          ? Math.min(drawCount, index?.count ?? 0)
+          : (index?.count ?? 0);
+      const triangleCount = Math.floor(indices / 3);
+      totalTriangles += triangleCount;
+      const mat = object.material as
+        | (THREE.Material & { defines?: Record<string, unknown> })
+        | (THREE.Material & { defines?: Record<string, unknown> })[]
+        | undefined;
+      const firstMat = Array.isArray(mat) ? mat[0] : mat;
+      // Read from the material's DEFINES rather than from the node attrs, because the
+      // variant is the resolved live state: the flat/smooth choice folds in the current
+      // `displayDims` and the cutout follows the composed blending mode. On the TSL
+      // backend the wrappers mirror the same flags into `defines` for exactly this
+      // reason (there is no GLSL preprocessor there), so this reads the same on both.
+      const defines = firstMat?.defines;
+      meshNodes.push({
+        name: object.name || 'unnamed',
+        triangleCount,
+        vertexCount: geometry?.getAttribute('position')?.count ?? 0,
+        visible: object.visible,
+        flatNormal: !!defines?.LUXAR_MESH_FLAT_NORMAL,
+        alphaCutout: !!defines?.LUXAR_MESH_ALPHA_CUTOUT,
+        hasColormap: !!defines?.USE_COLORMAP,
+      });
+    }
   });
 
   const dimensionsInfo = ctx.dims
@@ -279,11 +363,15 @@ export function computeDebugState(ctx: DebugStateContext): DebugState {
     totalPoints,
     totalGSplats,
     totalLines,
-    // Include lines in the cumulative element count.
-    totalElements: totalPoints + totalGSplats + totalLines,
+    totalTriangles,
+    // Every geometry type's DRAWN-primitive count, summed. Triangles join on the same
+    // footing as segments and splats: it is the primitive the mesh actually draws, and
+    // the noun the monitor and the visible-counts walk already use for it.
+    totalElements: totalPoints + totalGSplats + totalLines + totalTriangles,
     pointClouds,
     gsplatMeshes,
     lineMeshes,
+    meshNodes,
     lodGroups,
     partitions,
     gpuPool,
@@ -340,16 +428,12 @@ export function computeDrawOrder(scene: THREE.Object3D): DrawOrderEntry[] {
       const material = Array.isArray(object.material) ? object.material[0] : object.material;
 
       const geometry = object.geometry as THREE.BufferGeometry;
-      const userData = object.userData as {
-        visiblePointCount?: number;
-        visibleSplatCount?: number;
-        visibleSegmentCount?: number;
-      };
-      const fallbackCount =
-        userData.visiblePointCount ??
-        userData.visibleSplatCount ??
-        userData.visibleSegmentCount ??
-        0;
+      // The committed per-type count, read through the SHARED reader rather than a
+      // local `visiblePointCount ?? visibleSplatCount ?? visibleSegmentCount` chain.
+      // That chain was a partial copy of `VISIBLE_COUNT_READERS` and reported **0 for
+      // every mesh**, because `visibleTriangleCount` was not in it and a missing field
+      // reads as "no count" rather than as an error.
+      const fallbackCount = readVisibleElementCount(object.userData) ?? 0;
       const elements =
         geometry instanceof THREE.InstancedBufferGeometry && Number.isFinite(geometry.instanceCount)
           ? geometry.instanceCount
