@@ -383,14 +383,26 @@ export function createMeshGeometry(input: MeshGeometryConfig): THREE.BufferGeome
  * per-node-constant in EXISTENCE (decided at creation from the metadata) and
  * uploaded-once in CONTENT (a slice move rebuilds only the index).
  *
- * Three cases, and the first two are the point of the helper:
+ * Four cases, and only the last two touch the GPU:
  * - the attribute is not bound → do nothing. The node has no such array; adding one
  *   now would grow a live geometry's attribute set.
  * - no data this epoch → do nothing. Keeps whatever is bound (the 1-vertex
  *   placeholder stub, or the last real upload).
- * - lengths agree → copy + flag for re-upload. Lengths differ → rebind, which is the
- *   expected first commit (placeholder stub → real buffer) and reports
- *   `attributesRebuilt` so the caller evicts three's cached WebGPU `RenderObject`.
+ * - **already the same array** → do nothing, which is the STEADY STATE and the whole
+ *   reason this case is called out. The whole-node loader serves one cached
+ *   `LoadedMeshData` for the node's lifetime and the commit passes `data.normals` /
+ *   `data.scalars` on every epoch, so after the first-commit rebind the identity is
+ *   always equal. Flagging `needsUpdate` here would re-upload the entire normal
+ *   (`V·12` bytes) and scalar (`V·4` bytes) buffers on EVERY slice move, with no
+ *   update ranges — real bandwidth during a scrub at the 2^27-vertex cap, and a
+ *   direct contradiction of the uploaded-once contract above. Nothing mutates these
+ *   arrays in place (normals are never re-projected, §3.4; scalars are
+ *   view-independent), so identity-equal means the GPU copy is already current.
+ * - lengths agree but the array is NEW → copy + flag. That is a re-fetch after a
+ *   dispose/reload handing over fresh buffers, which genuinely needs the upload.
+ *
+ * Lengths differ → rebind, the expected first commit (placeholder stub → real
+ * buffer), reported so the caller evicts three's cached WebGPU `RenderObject`.
  *
  * @returns `true` when a `setAttribute` rebind happened.
  */
@@ -404,8 +416,13 @@ function replaceVertexAttribute(
   const existing = geometry.getAttribute(name) as THREE.BufferAttribute | undefined;
   if (!existing || !data) return false;
   if (existing.count === vertexCount && existing.array.length === data.length) {
-    if (existing.array !== data) (existing.array as Float32Array).set(data);
-    existing.needsUpdate = true;
+    // `needsUpdate` ONLY on a real content change — see the fourth case above. The
+    // steady state is identity-equal, and flagging it there re-uploads the whole
+    // buffer once per slice move.
+    if (existing.array !== data) {
+      (existing.array as Float32Array).set(data);
+      existing.needsUpdate = true;
+    }
     return false;
   }
   geometry.setAttribute(name, new THREE.BufferAttribute(data, itemSize, false));

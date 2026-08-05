@@ -522,15 +522,48 @@ describe('the `normal` / `aScalar` attributes — replaced, never added or remov
     ]);
   });
 
-  it('copies in place on a later epoch — no rebind, no RenderObject eviction', () => {
-    // A slice move must not rebind anything: the whole no-compaction design is that
-    // only the index buffer changes.
+  it('copies in place when a NEW array of the same length arrives — no rebind', () => {
+    // The re-fetch case (dispose/reload hands over fresh buffers): content genuinely
+    // changed, so it must copy and flag, but without rebinding the attribute object.
     const geometry = createMeshGeometry(cfg({ normals: new Float32Array(9) }));
-    const attr = geometry.getAttribute('normal');
+    const attr = geometry.getAttribute('normal') as THREE.BufferAttribute;
+    const before = attr.version;
     const next = new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]);
     const rebuilt = updateMeshGeometry(geometry, cfg({ normals: next, positionChanged: false }));
     expect(rebuilt).toBe(false);
     expect(geometry.getAttribute('normal')).toBe(attr); // same object
     expect(Array.from(attr.array as Float32Array)).toEqual([1, 0, 0, 0, 1, 0, 0, 0, 1]);
+    expect(attr.version).toBeGreaterThan(before);
+  });
+
+  it('re-uploads NOTHING when the same array arrives again — the steady state', () => {
+    // The whole-node loader serves one cached `LoadedMeshData` for the node's
+    // lifetime and the commit passes `data.normals` / `data.scalars` every epoch, so
+    // after the first commit the identity is ALWAYS equal. Flagging `needsUpdate`
+    // there would re-upload the entire normal (V·12 B) and scalar (V·4 B) buffers on
+    // every slice move, with no update ranges — real bandwidth during a scrub, and a
+    // contradiction of the no-compaction rule that only the index rebuilds.
+    //
+    // Observed through `attribute.version`, since `needsUpdate` is a write-only
+    // setter in three (it has no getter and just bumps `version`).
+    const normals = new Float32Array([0, 0, 1, 0, 1, 0, 1, 0, 0]);
+    const scalars = new Float32Array([0.25, 0.5, 0.75]);
+    const geometry = createMeshGeometry(cfg({ normals, scalars }));
+    const normalAttr = geometry.getAttribute('normal') as THREE.BufferAttribute;
+    const scalarAttr = geometry.getAttribute('aScalar') as THREE.BufferAttribute;
+    const normalVersion = normalAttr.version;
+    const scalarVersion = scalarAttr.version;
+
+    // Three consecutive slice moves: same arrays, only the visible index changes.
+    for (const indices of [
+      new Uint32Array([0, 1, 2]),
+      new Uint32Array([]),
+      new Uint32Array([0, 1, 2]),
+    ]) {
+      updateMeshGeometry(geometry, cfg({ normals, scalars, indices, positionChanged: false }));
+    }
+
+    expect(normalAttr.version, 'normal buffer re-uploaded on a slice move').toBe(normalVersion);
+    expect(scalarAttr.version, 'scalar buffer re-uploaded on a slice move').toBe(scalarVersion);
   });
 });
