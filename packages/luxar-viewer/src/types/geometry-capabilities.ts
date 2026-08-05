@@ -30,6 +30,7 @@
  */
 
 import { GEOMETRY_TYPES, type GeometryTypeName } from './format-contract';
+import type { BlendingMode } from './blending';
 
 /** Membership set for {@link isGeometryType}; `Set` so lookup is not a scan. */
 const GEOMETRY_TYPE_SET: ReadonlySet<string> = new Set(GEOMETRY_TYPES);
@@ -143,4 +144,32 @@ export function isPooledGeometry(nodeType: unknown): boolean {
 /** Whether `nodeType` registers element centers with the depth sorter. */
 export function isDepthSortable(nodeType: unknown): boolean {
   return hasCapability(nodeType, 'depthSortable');
+}
+
+/**
+ * Per-type default blending mode — the mode a leaf renders with when NO level
+ * of its scene-graph ancestry sets one. The three emissive primitives sum light
+ * (`additive`); `mesh` is the one shaded surface type and defaults to `opaque`
+ * (docs/specs/MESH_NODE_SPEC.md §6.3). Kept as its own table rather than a
+ * `GeometryCapabilities` column because that interface is boolean feature-flags
+ * and this is a value; the exhaustive `Record<GeometryTypeName, …>` still forces
+ * a decision when a geometry type is added. The material factories
+ * (`create-{points,lines,gsplats,mesh}-node.ts`) inline the same literal for
+ * their own statically-known type; this helper serves the runtime-dispatch sites
+ * (layers panel) where the type is a variable.
+ */
+const DEFAULT_BLENDING_MODE: Readonly<Record<GeometryTypeName, BlendingMode>> = Object.freeze({
+  points: 'additive',
+  lines: 'additive',
+  gsplats: 'additive',
+  mesh: 'opaque',
+});
+
+/**
+ * The blending mode a node of `nodeType` renders with when its ancestry sets
+ * none. Non-geometry node types (`group`/`scene`/`lod`/`partition`) fall back to
+ * `'additive'`, matching the historical composed default.
+ */
+export function defaultBlendingMode(nodeType: unknown): BlendingMode {
+  return isGeometryType(nodeType) ? DEFAULT_BLENDING_MODE[nodeType] : 'additive';
 }

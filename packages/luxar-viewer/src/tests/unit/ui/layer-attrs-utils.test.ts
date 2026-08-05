@@ -145,6 +145,7 @@ describe('liveLayerAttrs', () => {
       displayMin: 0,
       displayMax: 1,
       blendingMode: 'additive',
+      blendingModeExplicit: true,
       colormap: 'viridis',
       isData: true,
       ...overrides,
@@ -156,6 +157,13 @@ describe('liveLayerAttrs', () => {
     expect(attrs.opacity).toBe(0.7);
     expect(attrs.gamma).toBe(1.5);
     expect(attrs.blending_mode).toBe('normal');
+  });
+
+  it('omits blending_mode when the layer mode is a non-explicit per-type default (#1272)', () => {
+    const attrs = liveLayerAttrs(
+      makeLayer({ blendingMode: 'additive', blendingModeExplicit: false })
+    );
+    expect(attrs.blending_mode).toBeUndefined();
   });
 
   it('clamps gamma to the allowed range', () => {

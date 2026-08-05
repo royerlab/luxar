@@ -27,7 +27,11 @@ import { getColormapTexture } from '../../rendering/colormap-textures';
 import { supportsScalarColormap } from '../../rendering/material-colormap-helpers';
 import { noteDepthSortBlendingModeSwitch } from '../../rendering/depth-sort-coordinator';
 import type { GeometryTypeName } from '../../types/format-contract';
-import { isDepthSortable, isGeometryType } from '../../types/geometry-capabilities';
+import {
+  defaultBlendingMode,
+  isDepthSortable,
+  isGeometryType,
+} from '../../types/geometry-capabilities';
 import {
   composeAttrs,
   collectAncestorNodes,
@@ -243,7 +247,11 @@ export class LayerApplyEngine {
       mat.updateAbsorption?.(eff.absorption);
       applyColorAdjustments(mat, eff.gamma, eff.intensity, eff.offset);
       const prevBlendingMode = mat.userData?.blendingMode as BlendingMode | undefined;
-      this.applyBlendingStateToMaterial(mat, eff.blending_mode);
+      // An unset ancestry composes to `undefined`; apply this leaf's per-type
+      // default (mesh → opaque, emissive → additive) — the same mode the
+      // material factory would have baked in.
+      const blendingMode = eff.blending_mode ?? defaultBlendingMode(leaf.type);
+      this.applyBlendingStateToMaterial(mat, blendingMode);
       // Depth sorting: a sortable layer switching blending mode may need
       // to start (TO an effective sorted mode: clear the noop stamp +
       // reprocess so the next commit registers with the SortWorker) or
@@ -252,7 +260,7 @@ export class LayerApplyEngine {
       // centers, lines segment midpoints) — see `depthSortable` in
       // `types/geometry-capabilities`.
       if (isDepthSortable(obj.userData?.nodeType)) {
-        noteDepthSortBlendingModeSwitch(obj as THREE.Mesh, eff.blending_mode, prevBlendingMode);
+        noteDepthSortBlendingModeSwitch(obj as THREE.Mesh, blendingMode, prevBlendingMode);
       }
     }
     this.deps.requestRender();
