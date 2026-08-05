@@ -22,9 +22,45 @@ import {
 import { MESH_PICK_VERTEX_SHADER } from '../../../../../rendering/picking/mesh/shaders';
 import { MAX_MESH_VERTICES } from '../../../../../config/constants';
 
-/** The GLSL `luxarElementIdSplit`, in JS. Kept in lockstep by the tests below. */
+/**
+ * The GLSL `luxarElementIdSplit`, in JS — but DERIVED from the shader source rather
+ * than hand-copied.
+ *
+ * A hand-written copy is what this test originally had, and it was vacuous: swapping
+ * the two halves in the real GLSL left all eight assertions green, because the test was
+ * only ever round-tripping its own reimplementation against `voteWinner`. Since GLSL
+ * cannot be executed here, the source text is the only witness available — so parse the
+ * component ORDER out of it and let the round-trip below run on that.
+ *
+ * Caught by mutation (swap the halves → this now fails); see
+ * `assertGlslSplitOrder` for the assertion that pins it.
+ */
 function splitId(i: number): [low: number, high: number] {
-  return [i & 0xffff, i >>> 16];
+  const [firstIsLow] = glslSplitOrder();
+  const low = i & 0xffff;
+  const high = i >>> 16;
+  // `.x` feeds the G channel and `.y` the A channel (`vec4(nodeId, .x, brightness, .y)`),
+  // and `voteWinner` recombines as `A * 65536 + G` — so `.x` MUST be the low half.
+  return firstIsLow ? [low, high] : [high, low];
+}
+
+/**
+ * Read the `vec2(...)` component order out of the real GLSL helper.
+ *
+ * Returns `[firstIsLow]`: whether the FIRST component is the masked (low 16 bits)
+ * expression rather than the shifted (high) one.
+ */
+function glslSplitOrder(): [firstIsLow: boolean] {
+  const body = /vec2 luxarElementIdSplit\(uint i\)\s*\{([^}]*)\}/.exec(GLSL_ELEMENT_ID_SPLIT);
+  if (!body) throw new Error('luxarElementIdSplit not found in GLSL_ELEMENT_ID_SPLIT');
+  const call = /vec2\(([^,]+),([^)]+)\)/.exec(body[1]);
+  if (!call) throw new Error('no vec2(...) in luxarElementIdSplit');
+  const [, first, second] = call;
+  const isMask = (e: string) => /&\s*0xFFFFu/.test(e);
+  const isShift = (e: string) => />>\s*16u/.test(e);
+  if (isMask(first) && isShift(second)) return [true];
+  if (isShift(first) && isMask(second)) return [false];
+  throw new Error(`luxarElementIdSplit components are neither mask+shift: ${first} | ${second}`);
 }
 
 /** `voteWinner`'s recombination, verbatim (`pick-render.ts`). */
@@ -43,6 +79,16 @@ describe('the 16-bit split is single-sourced', () => {
     // unbound attribute is not merely wasteful on WebGPU — the vertex-buffer layout
     // is cached from the attribute set at first draw.
     expect(MESH_PICK_VERTEX_SHADER).not.toContain('aSortedIndex');
+  });
+
+  it('puts the LOW half in .x and the HIGH half in .y, which is what the readback assumes', () => {
+    // The assertion whose absence made this file vacuous. `voteWinner` decodes
+    // `Math.round(a) * 65536 + Math.round(g)` from `vec4(nodeId, .x, brightness, .y)` —
+    // so `.x` must be the masked low half and `.y` the shifted high half. Swap them and
+    // every pick id above 65,535 decodes to a different vertex, silently, on large
+    // meshes only. GLSL cannot be executed here, so the source text is the witness.
+    const [firstIsLow] = glslSplitOrder();
+    expect(firstIsLow, 'vec2 first component must be `i & 0xFFFFu` (the LOW half)').toBe(true);
   });
 
   it('the sorted-index block still carries the same helper, so the four types agree', () => {
