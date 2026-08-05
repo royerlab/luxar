@@ -118,3 +118,55 @@ hatch run python scripts/check_documentation.py --no-baseline      # legacy stri
 
 `--no-baseline` ignores the baseline entirely and fails on *any* finding — the
 original strict behavior, useful for measuring total debt.
+
+## Phased debt reduction
+
+The ratchet (see [The ratchet model](#the-ratchet-model)) holds the line at
+today's debt: it stops new findings but does not, on its own, remove the
+pre-existing ones. This plan pays that debt down in bounded phases,
+cheapest-first. Each phase ends by re-running the gate with `--update-baseline`
+and committing the smaller baseline (see [Regenerating and tightening the
+baseline](#regenerating-and-tightening-the-baseline)), so the reclaimed ground
+can never regress.
+
+### Current debt snapshot
+
+At the time of writing the baseline holds 70 findings, broken down by check:
+
+| Count | Check | What it means |
+|------:|-------|---------------|
+| 37 | JSDoc coverage | Exported-symbol JSDoc below the 70% floor, in `packages/luxar-viewer/src/`. |
+| 24 | Docstring coverage | File docstring coverage below the 70% floor, in `packages/luxar/src/luxar/`. |
+| 4 | Quick Start section | README missing a `## Quick Start` / `## Getting Started` section. |
+| 3 | Module docstring | Python file missing a module docstring. |
+| 2 | Code examples | README missing a `python` or `typescript` fenced code example (other fences, e.g. `bash`, do not count). |
+
+These counts are a **snapshot** and will drift as the tree changes; do not
+trust the prose. The authoritative live breakdown comes from re-measuring:
+
+```bash
+hatch run python scripts/check_documentation.py --no-baseline --json | \
+  python3 -c "import json,sys; from collections import Counter; \
+  c=Counter(f['check_name'] for f in json.load(sys.stdin)['findings'] if not f['passed']); \
+  [print(f'{v:4d}  {k}') for k,v in sorted(c.items(), key=lambda x:-x[1])]"
+```
+
+### Phase 1 — Structural README + module docstrings
+
+The 4 *Quick Start section*, 2 *Code examples* and 3 *Module docstring*
+findings (9 items). These are quick, mechanical, and high-signal: add the
+missing `## Quick Start` section and a `python`/`typescript` fenced example to
+each README, and a module docstring to each flagged `*.py` file. **Target:**
+zero findings remain in all three of these check categories.
+
+### Phase 2 — Python docstring coverage
+
+The 24 *Docstring coverage* findings. **Target:** every listed Python file
+reaches the 70% coverage floor. Drive it down in review-sized batches by
+package rather than one flag-day sweep, so each change stays readable.
+
+### Phase 3 — TypeScript JSDoc coverage
+
+The 37 *JSDoc coverage* findings, the largest bucket. **Target:** every listed
+viewer file reaches the 70% JSDoc floor. As with Phase 2, work package by
+package in review-sized batches.
