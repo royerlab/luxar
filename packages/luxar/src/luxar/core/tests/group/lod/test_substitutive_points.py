@@ -448,6 +448,35 @@ class TestSubstitutiveComposedWithAdditive:
         assert fracs[-1] == pytest.approx(1.0)
         assert dict(finest.attrs["level_stats"])["reference_energy"] > 0
 
+        # The pairing is both-or-neither for EVERY child of the composed lod
+        # group — including the coarse synthesised-gsplat children. A child that
+        # ladders (n_additive_sublods > 1) and stamps energy_fraction_cum on its
+        # sub-LODs MUST ride the paired reference_energy on its own leaf. Coarse
+        # levels too small to split stay a single flat leaf and don't stream, so
+        # they carry no fraction stamps and are skipped.
+        children = self._children(grp)
+        finest_name = children[-1]
+        coarse_checked = 0  # coarse (non-finest) laddered children actually asserted
+        for name in children:
+            child = grp[name]
+            child_n_sub = int(child.attrs.get("n_additive_sublods", 1))
+            if child_n_sub <= 1:
+                continue
+            sub_fracs = [
+                child[f"additive_{i}"]
+                .attrs.get("lod_stats", {})
+                .get("energy_fraction_cum")
+                for i in range(child_n_sub)
+            ]
+            if not all(f is not None for f in sub_fracs):
+                continue  # not fraction-stamped → no pairing obligation
+            assert dict(child.attrs["level_stats"])["reference_energy"] > 0, name
+            if name != finest_name:
+                coarse_checked += 1
+        # Vacuity floor: at least one COARSE laddered child was genuinely checked,
+        # so the loop can never silently assert nothing if stamps disappear.
+        assert coarse_checked >= 1
+
     def test_sublods_keep_their_spatial_index(self, composed) -> None:
         # Losing the per-sub-LOD index would regress frustum-culled range reads
         # on nD-sliced scenes.
@@ -557,6 +586,41 @@ class TestSubstitutiveComposedWithAdditive:
         else:
             finest = grp[sorted(k for k in grp.keys() if k.startswith("child_"))[-1]]
         assert int(finest.attrs["n_additive_sublods"]) == 3
+
+
+class TestAdditiveLevelStatsPairing:
+    """A caller-supplied ``level_stats`` must not break the energy pairing.
+
+    ``level_stats`` is a free-form key a caller can thread through the public
+    ``add_points(**attrs)``. When the additive ladder is fraction-stamped, the
+    parent must still receive the paired ``reference_energy`` (both-or-neither),
+    while the caller's own keys survive intact.
+    """
+
+    def test_caller_level_stats_without_reference_energy_gets_paired(
+        self, tmp_path
+    ) -> None:
+        out = tmp_path / "t.luxar.zarr"
+        rng = np.random.RandomState(7)
+        n = 80_000
+        pos = rng.normal(0, 20, (n, 3)).astype(np.float32)
+        with LuxarZarrCompiler(out) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_points(
+                "cloud",
+                pos,
+                radii=np.full(n, 1.0, dtype=np.float32),
+                additive_lod=dict(counts="stream:5000", method="random", seed=0),
+                level_stats={"caller_key": 123},
+            )
+
+        grp = zarr.open(str(out), mode="r")["cloud"]
+        assert int(grp.attrs["n_additive_sublods"]) > 1
+        stored = dict(grp.attrs["level_stats"])
+        # Caller's own key is preserved …
+        assert stored["caller_key"] == 123
+        # … and the missing half of the pairing is restored.
+        assert stored["reference_energy"] > 0
 
 
 class TestSubstitutiveLodGuards:

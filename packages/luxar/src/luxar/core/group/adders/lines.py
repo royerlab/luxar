@@ -729,7 +729,20 @@ def add_lines_multi_lod_wrapper_impl(
         breakpoints_kind=breakpoints_kind_of(counts),
         energy_kind="lines-tube-volume",
     )
-    attrs.setdefault("level_stats", parent_level_stats)
+    caller_level_stats = attrs.get("level_stats")
+    if caller_level_stats is None:
+        attrs["level_stats"] = parent_level_stats
+    elif (
+        "reference_energy" not in caller_level_stats
+        and "reference_energy" in parent_level_stats
+    ):
+        # The ladder stamped energy_fraction_cum on every sub-LOD, so the parent
+        # must carry the paired reference_energy (both-or-neither); a caller dict
+        # that omits it would silently break the pairing.
+        attrs["level_stats"] = {
+            **caller_level_stats,
+            "reference_energy": parent_level_stats["reference_energy"],
+        }
 
     level_slices: List[Dict[str, Any]] = []
     for level_i, level_polylines in enumerate(polyline_levels):
