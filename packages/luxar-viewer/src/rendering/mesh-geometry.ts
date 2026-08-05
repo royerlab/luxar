@@ -388,7 +388,11 @@ export function createMeshGeometry(input: MeshGeometryConfig): THREE.BufferGeome
  *   now would grow a live geometry's attribute set.
  * - no data this epoch → do nothing. Keeps whatever is bound (the 1-vertex
  *   placeholder stub, or the last real upload).
- * - lengths agree → copy + flag for re-upload. Lengths differ → rebind, which is the
+ * - lengths agree → copy + flag for re-upload, but ONLY when the array identity
+ *   actually differs (the dispose/reload re-fetch case). The identity-equal case is
+ *   the steady state — the loader serves one cached buffer per commit and nothing
+ *   mutates these arrays in place (normals are never re-projected, scalars are
+ *   view-independent) — so it needs no upload. Lengths differ → rebind, which is the
  *   expected first commit (placeholder stub → real buffer) and reports
  *   `attributesRebuilt` so the caller evicts three's cached WebGPU `RenderObject`.
  *
@@ -404,8 +408,10 @@ function replaceVertexAttribute(
   const existing = geometry.getAttribute(name) as THREE.BufferAttribute | undefined;
   if (!existing || !data) return false;
   if (existing.count === vertexCount && existing.array.length === data.length) {
-    if (existing.array !== data) (existing.array as Float32Array).set(data);
-    existing.needsUpdate = true;
+    if (existing.array !== data) {
+      (existing.array as Float32Array).set(data);
+      existing.needsUpdate = true;
+    }
     return false;
   }
   geometry.setAttribute(name, new THREE.BufferAttribute(data, itemSize, false));

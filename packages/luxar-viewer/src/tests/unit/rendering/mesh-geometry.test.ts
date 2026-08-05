@@ -533,4 +533,40 @@ describe('the `normal` / `aScalar` attributes — replaced, never added or remov
     expect(geometry.getAttribute('normal')).toBe(attr); // same object
     expect(Array.from(attr.array as Float32Array)).toEqual([1, 0, 0, 0, 1, 0, 0, 0, 1]);
   });
+
+  it('does NOT re-upload normal or aScalar when the SAME array is re-committed (#1267)', () => {
+    // The steady state: the whole-node loader serves one cached `LoadedMeshData` and
+    // passes the SAME `normals`/`scalars` arrays on every commit. Nothing mutates them
+    // in place, so an identity-equal re-commit must not bump the attribute `version`
+    // (which would be a whole-buffer re-upload of V·12 B + V·4 B per slice move). This
+    // pins the no-re-upload steady state. `needsUpdate` is setter-only in three, so
+    // `version` is the observable — same idiom as the sibling index tests.
+    const normals = new Float32Array([0, 0, 1, 0, 1, 0, 1, 0, 0]);
+    const scalars = new Float32Array([0.1, 0.2, 0.3]);
+    const geometry = createMeshGeometry(cfg({ normals, scalars }));
+    const normalVersionBefore = (geometry.getAttribute('normal') as THREE.BufferAttribute).version;
+    const scalarVersionBefore = (geometry.getAttribute('aScalar') as THREE.BufferAttribute).version;
+    updateMeshGeometry(geometry, cfg({ normals, scalars, positionChanged: false }));
+    expect((geometry.getAttribute('normal') as THREE.BufferAttribute).version).toBe(
+      normalVersionBefore
+    );
+    expect((geometry.getAttribute('aScalar') as THREE.BufferAttribute).version).toBe(
+      scalarVersionBefore
+    );
+  });
+
+  it('DOES re-upload when a fresh array of the same length arrives (#1267)', () => {
+    // The surviving branch: a dispose/reload re-fetch hands back a NEW array of the
+    // same length. Its contents must reach the GPU, so the copy-and-flag path runs and
+    // the attribute `version` increases.
+    const geometry = createMeshGeometry(cfg({ normals: new Float32Array(9) }));
+    const versionBefore = (geometry.getAttribute('normal') as THREE.BufferAttribute).version;
+    updateMeshGeometry(
+      geometry,
+      cfg({ normals: new Float32Array([0, 0, 1, 0, 1, 0, 1, 0, 0]), positionChanged: false })
+    );
+    expect((geometry.getAttribute('normal') as THREE.BufferAttribute).version).toBeGreaterThan(
+      versionBefore
+    );
+  });
 });
