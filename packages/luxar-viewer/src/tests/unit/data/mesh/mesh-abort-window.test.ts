@@ -50,7 +50,14 @@ function oneTriangleIn4D(): LoadedMeshData {
     vertexCount: 3,
     faceCount: 1,
     ndim: 4,
-    projection: { position: new Float32Array(3 * 3), displayDimsKey: null },
+    projection: {
+      position: new Float32Array(3 * 3),
+      displayDimsKey: null,
+      // Sized as the loader does (vertexCount, faceCount * 3). This test takes the CULL
+      // path — displayDims covers 3 of 4 dims — so both are genuinely written through.
+      mask: new Uint8Array(3),
+      faceScratch: new Uint32Array(1 * 3),
+    },
   };
 }
 
@@ -133,5 +140,91 @@ describe('mesh commit — the superseded-commit abort window (#1245 follow-up)',
     // Vertex 1 = (1,0,0,0); displaying [1,0,2] puts it at (0,1,0).
     expect(Array.from(attr.array.slice(3, 6))).toEqual([0, 1, 0]);
     expect(attr.version).toBeGreaterThan(v1);
+  });
+
+  it('leaves the index, draw range and bounds correct after the same abort', () => {
+    // The companion question, and one the scratch REUSE created: a superseded projection
+    // also writes the shared `mask` and `faceScratch`, so the next committed epoch
+    // inherits another epoch's leftovers. Position needed a commit-side key because its
+    // upload was gated on a projection-time flag; the index, draw range and bounds are
+    // recomputed unconditionally per commit, so the claim is they cannot desync that way.
+    //
+    // Two triangles with DISJOINT extents, and the final epoch shows the one no earlier
+    // committed epoch showed. That is what makes the assertions able to fail: a first
+    // draft used a single triangle, so the live epoch's bounds coincided with the first
+    // epoch's and gating the recompute on `positionChanged` passed — vacuous. Verified by
+    // mutation both ways round.
+    const data: LoadedMeshData = {
+      // Triangle A near the origin at w = 0; triangle B far away at w = 10.
+      // prettier-ignore
+      vertices: new Float32Array([
+        0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0,
+        900, 900, 0, 10, 901, 900, 0, 10, 900, 901, 0, 10,
+      ]),
+      faces: new Uint32Array([0, 1, 2, 3, 4, 5]),
+      normals: null,
+      colors: null,
+      scalars: undefined,
+      vertexCount: 6,
+      faceCount: 2,
+      ndim: 4,
+      projection: {
+        position: new Float32Array(6 * 3),
+        displayDimsKey: null,
+        mask: new Uint8Array(6),
+        faceScratch: new Uint32Array(2 * 3),
+      },
+    };
+    const geom = createMeshGeometry({
+      position: new Float32Array(3),
+      positionChanged: true,
+      indices: new Uint32Array(0),
+      colors: null,
+      vertexCount: 1,
+      faceCount: 0,
+    });
+
+    const commit = (p: ReturnType<typeof projectMeshTo3D>) =>
+      updateMeshGeometry(geom, {
+        position: p.position,
+        positionChanged: p.positionChanged,
+        positionKey: p.positionKey,
+        indices: p.indices,
+        colors: null,
+        vertexCount: 6,
+        faceCount: 2,
+        bounds: p.bounds,
+      });
+
+    // 1. Land triangle A.
+    commit(projectMeshTo3D(data, viewState([0, 1, 2], [0, 0, 0, 0]), undefined, true, backend));
+    expect(geom.drawRange.count).toBe(3);
+    expect(geom.boundingBox!.max.toArray()).toEqual([1, 1, 0]);
+
+    // 2. SUPERSEDED: a slice that culls everything, filling the shared scratch and mask
+    //    with an all-culled result. Never committed.
+    const dropped = projectMeshTo3D(
+      data,
+      viewState([0, 1, 2], [0, 0, 0, 55]),
+      undefined,
+      true,
+      backend
+    );
+    expect(dropped.visibleFaceCount).toBe(0);
+
+    // 3. The next real commit shows triangle B — bounds no earlier committed epoch had.
+    const live = projectMeshTo3D(
+      data,
+      viewState([0, 1, 2], [0, 0, 0, 10]),
+      undefined,
+      true,
+      backend
+    );
+    commit(live);
+    expect(live.visibleFaceCount).toBe(1);
+    expect(geom.drawRange.count).toBe(3);
+    expect(Array.from(geom.index!.array.subarray(0, 3))).toEqual([3, 4, 5]);
+    expect(geom.boundingBox!.min.toArray()).toEqual([900, 900, 0]);
+    expect(geom.boundingBox!.max.toArray()).toEqual([901, 901, 0]);
   });
 });
