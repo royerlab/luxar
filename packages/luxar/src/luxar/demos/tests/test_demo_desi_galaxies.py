@@ -330,8 +330,6 @@ class TestOrbitCentre:
         ).astype(np.float32)
 
     def test_camera_targets_the_origin(self, tmp_path) -> None:
-        from luxar.io.compiler import LuxarZarrCompiler  # noqa: F401  (import cost)
-
         positions = self._two_caps()
         # Guard the premise: a bbox centre really is offset from the observer, so
         # this test would fail against the old framing.
