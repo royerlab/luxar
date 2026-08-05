@@ -10,7 +10,7 @@
         test-e2e test-e2e-smoke test-perf-e2e \
         clean-all clean-python clean-viewer clean-examples clean-cache clean-setup enable-pre-commit run-pre-commit \
         check-all check-typescript check-rust check-knip check-wasm-deps setup-dev \
-        check-docs check-docs-verbose clean-docs build-docs build-typedoc serve-docs \
+        check-docs check-docs-verbose check-docs-external-links clean-docs build-docs build-typedoc serve-docs \
         demo run-demos run-examples serve-examples serve-dataset install-viewer-deps viewer build-viewer build-viewer-lib rebuild-viewer \
         install-rust build-wasm clean-wasm generate-readme-demos generate-readme-images generate-doc-images \
 	generate-gallery-datasets generate-gallery \
@@ -801,24 +801,30 @@ check-all:  ## All quality checks (Python/TS/Rust/Go) — WARNING: reformats tre
 	fi
 
 # Documentation checks
-check-docs:  ## Check documentation quality and coverage
-	@echo "📚 Checking Python documentation..."
-	$(HATCH) run python scripts/check_documentation.py
-	@echo "📚 Checking TypeScript JSDoc coverage..."
+check-docs:  ## Run the PR documentation gate (ratchets + warning-fatal Sphinx)
+	@echo "📚 Checking README/docstring/JSDoc completeness..."
+	$(HATCH) run docs:python scripts/check_documentation.py
 	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
 		echo "📦 Installing TypeScript dependencies first..."; \
-		cd packages/luxar-viewer && pnpm install; \
+		cd packages/luxar-viewer && pnpm install --frozen-lockfile; \
 	fi
-	cd packages/luxar-viewer && pnpm exec tsx scripts/check-jsdoc-coverage.ts --threshold=70
+	@echo "📘 Checking the TypeDoc warning baseline..."
+	cd packages/luxar-viewer && pnpm run test:typedoc-warnings && pnpm run typedoc:check-warnings
+	@echo "🔗 Building warning-fatal Sphinx docs (including internal links)..."
+	$(HATCH) run docs:build
 
-check-docs-verbose:  ## Check documentation with detailed output
+check-docs-verbose:  ## Run the documentation gate with verbose completeness output
 	@echo "📚 Checking documentation (verbose mode)..."
-	$(HATCH) run python scripts/check_documentation.py --verbose
+	$(HATCH) run docs:python scripts/check_documentation.py --verbose
 	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
 		echo "📦 Installing TypeScript dependencies first..."; \
-		cd packages/luxar-viewer && pnpm install; \
+		cd packages/luxar-viewer && pnpm install --frozen-lockfile; \
 	fi
-	cd packages/luxar-viewer && pnpm exec tsx scripts/check-jsdoc-coverage.ts --threshold=70 --verbose
+	cd packages/luxar-viewer && pnpm run test:typedoc-warnings && pnpm run typedoc:check-warnings
+	$(HATCH) run docs:build
+
+check-docs-external-links:  ## Opt-in external HTTP link audit (not a required CI gate)
+	$(HATCH) run docs:linkcheck
 
 clean-docs:  ## Clean built documentation
 	@echo "🧹 Cleaning documentation build artifacts..."

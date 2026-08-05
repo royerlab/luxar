@@ -16,14 +16,15 @@ permissions:
   contents: read
 
 jobs:
-  # Change detection: decide whether this ref's changes are DOCS/MARKDOWN-ONLY.
-  # When they are, the heavy jobs below skip their expensive steps but STILL RUN
-  # (checkout + this gate), so every check context (`python-tests (…)`,
-  # `typescript-tests`, `release-readiness`, `wheel-viewer`) reports an explicit
-  # green success
-  # instead of a grey "skipped" (which GitHub also counts as passing, but is
-  # easy to misread and fragile if those contexts ever become required).
-  # Any non-doc file (or a push to main, which has no PR base) => full CI.
+  # Change detection has two independent outputs:
+  # - docs_only: docs/Markdown-only refs may skip expensive language/build jobs.
+  # - docs_relevant: docs, documented Python/TypeScript source, or gate config
+  #   runs the dedicated documentation-quality checks.
+  #
+  # Heavy jobs still RUN when docs_only=true (checkout + an explicit no-op), so
+  # every required context reports green rather than relying on grey "skipped"
+  # semantics. The docs-quality job follows the same rule when docs_relevant is
+  # false. A push to main has no PR base, so it runs both full CI and docs checks.
   #
   # FAIL-SAFE: every dependent job carries `if: ${{ !cancelled() }}`. Without
   # it, a failure of THIS job (flaky checkout, runner outage) would skip the
@@ -36,6 +37,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       docs_only: ${{ steps.filter.outputs.docs_only }}
+      docs_relevant: ${{ steps.filter.outputs.docs_relevant }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -45,8 +47,9 @@ jobs:
         run: |
           base='${{ github.event.pull_request.base.sha }}'
           if [ -z "$base" ]; then
-            echo "push event (no PR base) -> full CI"
+            echo "push event (no PR base) -> full CI + documentation checks"
             echo "docs_only=false" >> "$GITHUB_OUTPUT"
+            echo "docs_relevant=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           git fetch -q origin "$base" 2>/dev/null || true
@@ -61,6 +64,18 @@ jobs:
           else
             echo "-> docs/markdown only: heavy steps will be skipped (checks still report)"
             echo "docs_only=true" >> "$GITHUB_OUTPUT"
+          fi
+
+          # Run the documentation gate for published docs, documented source,
+          # checker/baseline changes, and the build/workflow files that define
+          # the gate. Empty change output is treated as relevant (fail-safe).
+          docs_pattern='(^docs/|\.md$|\.rst$|^packages/luxar/src/luxar/.*\.py$|^packages/luxar-viewer/src/.*\.(ts|tsx)$|^scripts/(check_documentation\.py|docs_baseline\.json)$|^packages/luxar-viewer/(package\.json|typedoc\.json|typedoc-warnings-baseline\.json|tsconfig[^/]*\.json|scripts/check-typedoc-warnings(\.test)?\.mjs)$|^packages/luxar-viewer/pnpm-(lock|workspace)\.yaml$|^pyproject\.toml$|^Makefile$|^\.github/workflows/(ci|docs)\.yml$)'
+          if [ -z "$changed" ] || printf '%s\n' "$changed" | grep -qE "$docs_pattern"; then
+            echo "-> documentation-relevant changes: RUN docs-quality"
+            echo "docs_relevant=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "-> no documentation-relevant changes: docs-quality will report a no-op success"
+            echo "docs_relevant=false" >> "$GITHUB_OUTPUT"
           fi
 
   # Runner routing: prefer the self-hosted `obsidian` box, fall back to
@@ -206,6 +221,65 @@ jobs:
             sleep 30
           done
           echo "watchdog window over; jobs still queued but the heartbeat stayed fresh (busy box, not a dead one) — leaving the run alone"
+
+  docs-quality:
+    needs: changes
+    # Always report a stable check context. If change detection fails, its output
+    # is empty and every `!= 'false'` condition below runs the full gate.
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: No documentation-relevant changes
+        if: needs.changes.outputs.docs_relevant == 'false'
+        run: echo "No documentation-relevant changes; required check reports success."
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        id: setup-python-docs
+        if: needs.changes.outputs.docs_relevant != 'false'
+        with:
+          python-version: '3.12'
+
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        if: needs.changes.outputs.docs_relevant != 'false'
+        with:
+          package_json_file: packages/luxar-viewer/package.json
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        if: needs.changes.outputs.docs_relevant != 'false'
+        with:
+          node-version: '22'
+          cache: pnpm
+          cache-dependency-path: packages/luxar-viewer/pnpm-lock.yaml
+
+      - name: Install Hatch
+        if: needs.changes.outputs.docs_relevant != 'false'
+        run: pipx install --python "${{ steps.setup-python-docs.outputs.python-path }}" hatch
+
+      - name: Check pnpm overrides are single-sourced
+        if: needs.changes.outputs.docs_relevant != 'false'
+        run: node packages/luxar-viewer/scripts/check-overrides.mjs
+
+      - name: Install viewer dependencies
+        if: needs.changes.outputs.docs_relevant != 'false'
+        run: cd packages/luxar-viewer && pnpm install --frozen-lockfile
+
+      - name: Check README, docstring, and JSDoc completeness ratchet
+        if: needs.changes.outputs.docs_relevant != 'false'
+        run: hatch run docs:python scripts/check_documentation.py
+
+      - name: Check TypeDoc warning ratchet
+        if: needs.changes.outputs.docs_relevant != 'false'
+        run: |
+          cd packages/luxar-viewer
+          pnpm run test:typedoc-warnings
+          pnpm run typedoc:check-warnings
+
+      - name: Build warning-fatal Sphinx documentation
+        if: needs.changes.outputs.docs_relevant != 'false'
+        run: hatch run docs:build
 
   python-tests:
     needs: [changes, pick-runner]

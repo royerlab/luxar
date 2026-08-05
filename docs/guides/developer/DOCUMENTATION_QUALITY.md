@@ -1,84 +1,122 @@
 # Documentation Quality Gate
 
-`scripts/check_documentation.py` is a baseline-driven **ratchet** for
-documentation completeness. Pre-existing documentation debt is tolerated via a
-checked-in baseline, but any **new** missing README / docstring / JSDoc finding
-fails the check. This lets us stop the bleeding today and pay down debt over
-time without a flag-day rewrite.
+Luxar uses baseline-driven **ratchets** for documentation completeness and
+TypeDoc warnings. Pre-existing debt is tolerated through checked-in baselines,
+but a new finding fails the pull-request check unless its exact baseline entry
+is added explicitly and reviewed. Sphinx starts from a clean baseline: every
+warning is fatal.
 
-## What it checks
+The `docs-quality` CI job runs the full gate for pull requests that change:
 
-**Python** (`packages/luxar/src/luxar/`, one pass per top-level package):
+- `docs/**`, Markdown, or reStructuredText;
+- Python source under `packages/luxar/src/luxar/**`;
+- TypeScript source under `packages/luxar-viewer/src/**`; or
+- documentation checkers, baselines, build configuration, or workflows.
+
+The job reports success explicitly for unrelated changes, so it can remain a
+stable required check. If change detection fails, the job fails safe by running
+the documentation checks.
+
+## Required checks
+
+`make check-docs` mirrors the required CI gate:
+
+1. `scripts/check_documentation.py` checks README, Python docstring, TypeScript
+   JSDoc, and tracked repository-path completeness against
+   `scripts/docs_baseline.json`.
+2. TypeDoc converts and validates the viewer API without emitting output, then
+   compares normalized warning messages with
+   `packages/luxar-viewer/typedoc-warnings-baseline.json`.
+3. Sphinx builds the HTML documentation with `-W --keep-going`, so every
+   warning and broken internal reference is reported and the build fails.
+
+The required gate does **not** probe external HTTP links. Remote availability,
+rate limits, and anti-bot responses are not deterministic merge dependencies.
+Run `hatch run docs:linkcheck` when auditing external links. Any unavoidable
+exception must be a narrow, commented `linkcheck_ignore` entry in
+`docs/conf.py`; broad domain-wide or catch-all exceptions are not acceptable.
+
+## Completeness ratchet
+
+`scripts/check_documentation.py` has the following scope.
+
+### Python
+
+For `packages/luxar/src/luxar/`, one pass per top-level package:
 
 - `README.md` exists for each package.
-- README quality: has a `## Quick Start` / `## Getting Started` section, is at
-  least 500 characters, and contains a code example.
-- Every non-underscore `*.py` file (plus `__init__.py`) has a module docstring.
-- Docstring coverage is at least 70%, counting every `def`/`async def`/`class`
-  the file defines — methods and nested definitions included.
-- Both are measured from the parsed AST rather than a text heuristic, so a
-  shebang, a UTF-8 BOM, a PEP 263 encoding cookie and a multi-line signature
-  are all handled the way Python itself handles them.
-- A `*.py` file that cannot be parsed is reported as a `Python syntax` finding
-  (the run continues rather than crashing).
+- README quality: it has a `## Quick Start` / `## Getting Started` section, is
+  at least 500 characters, and contains a code example.
+- Every non-underscore `*.py` file, plus `__init__.py`, has a module docstring.
+- Docstring coverage is at least 70%, counting every `def`, `async def`, and
+  `class` the file defines, including methods and nested definitions.
+- Python is measured from the parsed AST, so shebangs, UTF-8 BOMs, PEP 263
+  encoding cookies, and multiline signatures are handled as Python handles
+  them. An unparseable file becomes a `Python syntax` finding rather than
+  crashing the run.
 
-**TypeScript** (`packages/luxar-viewer/src/`, one pass per package directory):
+### TypeScript
+
+For `packages/luxar-viewer/src/`, one pass per package directory:
 
 - `README.md` exists for each package.
 - JSDoc coverage across exported symbols
   (`export function|class|interface|type|const`) is at least 70%.
 
-Each finding is identified by a stable, portable key:
+### Repository paths
 
+For tracked package `README.md` files:
+
+- Backticked path-like references must resolve to tracked repository files.
+- Distinct broken references in one README receive distinct baseline keys.
+
+Each finding has a stable, portable key:
+
+```text
+<check_name>::<repo-relative-posix-path>[::<detail>]
 ```
-<check_name>::<repo-relative-posix-path>
-```
 
-The key deliberately **excludes** the human message, so volatile coverage
-percentages (e.g. "72%") never destabilize the baseline.
+The key excludes the human message, so volatile coverage percentages do not
+change baseline identity. The optional detail distinguishes checks that can
+fail more than once in one file, such as broken path references.
 
-> **Known limitation:** keys are *file-granular* — they omit the coverage
-> percentage, so once a file is baselined, further coverage decay *within* that
-> same file (e.g. adding more undocumented functions to an already-listed file)
-> is not caught. The ratchet prevents NEW under-documented files/symbols, not
-> intra-file regressions of already-baselined files.
+> **Known limitation:** coverage keys are file-granular. Once a low-coverage
+> file is baselined, further coverage decay inside that file is not a new key.
+> The ratchet prevents newly under-documented files and symbols but cannot yet
+> detect every intra-file regression.
 
-## The ratchet model
+### Completeness baseline
 
 The baseline lives at `scripts/docs_baseline.json`:
 
 ```json
 {
   "_comment": "Documentation-debt baseline ...",
-  "failures": ["<key>", "<key>", ...]
+  "failures": ["<key>", "<key>", "..."]
 }
 ```
 
-The `failures` list is sorted and human-diffable. On each run the checker
-computes the current failing keys and compares them to the baseline:
+The checker compares current failing keys with that list:
 
-- **New** = current − baseline → regressions. **These fail the check.**
-- **Still baselined** = current ∩ baseline → tolerated pre-existing debt.
-- **Fixed** = baseline − current → debt you paid down.
+- **New** = current − baseline: regressions; the check fails.
+- **Still baselined** = current ∩ baseline: tolerated existing debt.
+- **Fixed** = baseline − current: entries that should be removed.
 
-Exit code is `1` if and only if there are new findings; pre-existing debt does
-**not** fail the build.
+Exit code `1` means there are new findings. Existing baseline debt alone does
+not fail the build.
 
-### Regenerating and tightening the baseline
-
-Create or overwrite the baseline from the current state:
+Regenerate the baseline only after inspecting every addition and removal:
 
 ```bash
-hatch run python scripts/check_documentation.py --update-baseline
+hatch run docs:python scripts/check_documentation.py --update-baseline
 ```
 
-When you fix documentation debt, the checker reports the entries as *Fixed* and
-reminds you to tighten the baseline. Re-run `--update-baseline` and commit the
-smaller `docs_baseline.json` so the fixed items can never regress silently.
+When debt is fixed, commit the smaller baseline in the same pull request so the
+finding cannot silently return.
 
-## Machine-readable output
+### Machine-readable report
 
-`--json` prints a deterministic report to stdout instead of the human summary:
+`--json` prints a deterministic report and retains the ratchet exit status:
 
 ```json
 {
@@ -94,82 +132,114 @@ smaller `docs_baseline.json` so the fixed items can never regress silently.
     }
   ],
   "ratchet": {
-    "new": ["<key>", ...],
-    "fixed": ["<key>", ...],
-    "still_present": ["<key>", ...]
+    "new": ["<key>", "..."],
+    "fixed": ["<key>", "..."],
+    "still_present": ["<key>", "..."]
   }
 }
 ```
 
-Findings (both passed and failed) are sorted by `key`. The `ratchet` block
-classifies the current failures against the baseline (each list sorted); it is
-`null` only when no baseline is consulted. The exit code still honors the
-ratchet: `--json` exits `1` when `ratchet.new` is non-empty.
+Findings and ratchet lists are sorted. The `ratchet` field is `null` only when
+no baseline is consulted.
+
+## TypeDoc warning ratchet
+
+`pnpm run typedoc:check-warnings` uses TypeDoc's API to convert and validate the
+viewer without generating HTML. It records the warning **multiset**, normalizes
+checkout-specific paths and terminal escapes, and compares it with
+`packages/luxar-viewer/typedoc-warnings-baseline.json`.
+
+- A new warning or an increased duplicate count fails.
+- Removed warnings are reported and should be deleted from the baseline.
+- TypeDoc conversion or compiler errors always fail, regardless of the warning
+  baseline.
+- `--json` provides a machine-readable summary.
+
+Update the baseline only after reviewing the warning-set diff:
+
+```bash
+cd packages/luxar-viewer
+pnpm run typedoc:check-warnings -- --update-baseline
+```
+
+## Internal and external links
+
+The warning-fatal Sphinx HTML build is the deterministic internal-link gate. It
+validates the published RST/MyST document graph, references, and local assets.
+The completeness checker separately validates path-like references in package
+READMEs. Reference warnings are intentionally not suppressed in `docs/conf.py`.
+The one linkcheck-only local exception, `viewer/index.html`, is generated by
+TypeDoc after Sphinx; the deployment workflow separately fails if that API
+directory is empty.
+
+External URL checking is opt-in:
+
+```bash
+hatch run docs:linkcheck
+```
+
+A transient external failure does not block unrelated pull requests. Fix a
+genuine broken URL. If a site cannot be checked reliably, add the narrowest
+possible documented `linkcheck_ignore` entry in `docs/conf.py` so the exception
+is visible in review.
+
+## Phased debt reduction
+
+The completeness ratchet has already eliminated its structural README and
+Python docstring categories. On August 7, 2026, the remaining checked-in debt is
+**11 completeness findings**, all TypeScript JSDoc coverage, and **86 TypeDoc
+warnings**. Sphinx allows zero warnings.
+
+The counts are snapshots. The two baseline files and the commands below are the
+authoritative measurements. Every completed phase must commit a smaller
+baseline; a baseline must never grow merely to make CI green.
+
+| Phase | Completeness target | TypeDoc warning target |
+| --- | --- | --- |
+| 0 — enforce | No growth beyond 11 findings | No growth beyond 86 warnings |
+| 1 — finish completeness | Empty completeness baseline | At most 60 warnings |
+| 2 — TypeDoc burn-down | Empty completeness baseline | At most 30 warnings |
+| 3 — warning-free API | Empty completeness baseline | Empty warning baseline |
+
+### Completed completeness phases
+
+1. **Structural README and module gaps:** the 4 Quick Start, 2 code-example,
+   and 3 module-docstring findings were eliminated.
+2. **Python docstring coverage:** all 24 files reached the 70% floor.
+3. **TypeScript JSDoc coverage:** this phase started with 37 files and is being
+   reduced package by package; the remaining count is read from
+   `scripts/docs_baseline.json` and targets zero.
+
+### TypeDoc warning phases
+
+Reduce the warning multiset in review-sized package or warning-class batches.
+The current baseline consists primarily of unresolved comment links and
+referenced symbols that TypeDoc cannot include. The intermediate count targets
+bound each batch while allowing ownership to follow the affected packages.
 
 ## Local commands
 
 ```bash
-make check-docs                                          # run the gate
-hatch run python scripts/check_documentation.py          # ratchet mode (default)
-hatch run python scripts/check_documentation.py --json   # machine-readable
-hatch run python scripts/check_documentation.py --update-baseline  # (re)write baseline
-hatch run python scripts/check_documentation.py --no-baseline      # legacy strict mode
+make check-docs
+make check-docs-verbose
+
+# Completeness ratchet
+hatch run docs:python scripts/check_documentation.py
+hatch run docs:python scripts/check_documentation.py --json
+hatch run docs:python scripts/check_documentation.py --update-baseline
+hatch run docs:python scripts/check_documentation.py --no-baseline
+
+# TypeDoc warning ratchet
+cd packages/luxar-viewer
+pnpm run typedoc:check-warnings
+pnpm --silent run typedoc:check-warnings -- --json
+pnpm run typedoc:check-warnings -- --update-baseline
+
+# Sphinx internal-link/warning gate and optional external-link audit
+cd ../../
+hatch run docs:build
+hatch run docs:linkcheck
 ```
 
-`--no-baseline` ignores the baseline entirely and fails on *any* finding — the
-original strict behavior, useful for measuring total debt.
-
-## Phased debt reduction
-
-The ratchet (see [The ratchet model](#the-ratchet-model)) holds the line at
-today's debt: it stops new findings but does not, on its own, remove the
-pre-existing ones. This plan pays that debt down in bounded phases,
-cheapest-first. Each phase ends by re-running the gate with `--update-baseline`
-and committing the smaller baseline (see [Regenerating and tightening the
-baseline](#regenerating-and-tightening-the-baseline)), so the reclaimed ground
-can never regress.
-
-### Current debt snapshot
-
-With Phases 1 and 2 complete, the baseline holds 37 findings, all in one check:
-
-| Count | Check | What it means |
-|------:|-------|---------------|
-| 37 | JSDoc coverage | Exported-symbol JSDoc below the 70% floor, in `packages/luxar-viewer/src/`. |
-
-The Phase 1 categories (*Quick Start section*, *Module docstring*, *Code
-examples*) and the Phase 2 *Docstring coverage* category are now at zero and are
-held there by the ratchet.
-
-These counts are a **snapshot** and will drift as the tree changes; do not
-trust the prose. The authoritative live breakdown comes from re-measuring:
-
-```bash
-hatch run python scripts/check_documentation.py --no-baseline --json | \
-  python3 -c "import json,sys; from collections import Counter; \
-  c=Counter(f['check_name'] for f in json.load(sys.stdin)['findings'] if not f['passed']); \
-  [print(f'{v:4d}  {k}') for k,v in sorted(c.items(), key=lambda x:-x[1])]"
-```
-
-### Phase 1 — Structural README + module docstrings ✅ done
-
-The 4 *Quick Start section*, 2 *Code examples* and 3 *Module docstring*
-findings (9 items). These were quick, mechanical, and high-signal: added the
-missing `## Quick Start` section and a `python`/`typescript` fenced example to
-each README, and a module docstring to each flagged `*.py` file. All three of
-these check categories are now at zero, and the baseline has been tightened so
-they cannot regress.
-
-### Phase 2 — Python docstring coverage ✅ done
-
-The *Docstring coverage* findings. **Target:** every listed Python file reaches
-the 70% coverage floor. Driven down in review-sized batches by package rather
-than one flag-day sweep, so each change stayed readable: the core-library
-packages first, then the `demos/` and `tests/` batch. This category is now at
-zero and the baseline has been tightened so it cannot regress.
-
-### Phase 3 — TypeScript JSDoc coverage
-
-The 37 *JSDoc coverage* findings, the largest bucket. **Target:** every listed
-viewer file reaches the 70% JSDoc floor. As with Phase 2, work package by
-package in review-sized batches.
+`--no-baseline` ignores the completeness baseline and fails on any finding. It
+is useful for measuring total debt, not as the merge gate.

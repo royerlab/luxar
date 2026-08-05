@@ -16,7 +16,7 @@ scripts/
 
 | Script | Purpose |
 |--------|---------|
-| `check_documentation.py` | Baseline-driven ratchet over top-level package READMEs plus Python docstring and TypeScript JSDoc coverage (JSON output; fails only on NEW findings) |
+| `check_documentation.py` | Baseline-driven ratchet over package README paths/content plus Python docstring and TypeScript JSDoc coverage (JSON output; fails only on new findings) |
 | `check_demo_ladders.py` | Audit built demo scenes for missing or degenerate additive streaming ladders |
 | `check_version_consistency.py` | Verify the zero-padded Python CalVer and npm-normalized viewer version describe the same release |
 | `set_version.py` | Update the Python and viewer release versions together |
@@ -63,14 +63,15 @@ gate logic in CI.
 ### `check_documentation.py`
 
 Checks documentation coverage for the top-level Python and TypeScript packages.
-It is a read-only heuristic checker; it does **not** parse Markdown syntax, walk
-all nested subpackages, or modify files.
+It is a read-only checker; it does **not** fully parse Markdown syntax or walk
+all nested subpackages. It parses Python with the AST and validates backticked
+path-like references in tracked package READMEs.
 
 **Purpose:**
 - Require a README for each top-level package under `luxar/` and viewer `src/`
 - Require Quick Start/Getting Started headings and code examples in Python package READMEs
 - Flag low Python docstring and TypeScript JSDoc coverage
-- Surface documentation debt before it is promoted into a CI quality gate
+- Fail the required PR documentation gate on any new finding
 
 **Usage:**
 
@@ -102,10 +103,11 @@ hatch run python scripts/check_documentation.py --no-baseline
 - A Python file that cannot be parsed is reported as a `Python syntax` finding (the run continues rather than crashing)
 
 Existing documentation debt is captured in `scripts/docs_baseline.json`. A
-flagless run tolerates every baselined finding and fails (exit 1) only on NEW
-missing READMEs/docstrings/JSDoc, so `make check-docs` is a real ratchet rather
-than an all-or-nothing gate. As debt is paid down, regenerate/tighten the
-baseline with `--update-baseline` and commit the smaller file. See
+flagless run tolerates every baselined finding and fails (exit 1) only on new
+missing READMEs/docstrings/JSDoc or broken README path references. It is the
+completeness stage of `make check-docs` and the required `docs-quality` CI job.
+As debt is paid down, regenerate/tighten the baseline with `--update-baseline`
+and commit the smaller file. See
 `docs/guides/developer/DOCUMENTATION_QUALITY.md` for the full model.
 
 ---

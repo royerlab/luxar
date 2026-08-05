@@ -8,6 +8,16 @@ on:
       - 'packages/luxar/src/luxar/**'
       - 'packages/luxar-viewer/src/**'
       - 'packages/luxar-viewer/typedoc.json'
+      - 'packages/luxar-viewer/typedoc-warnings-baseline.json'
+      - 'packages/luxar-viewer/scripts/check-typedoc-warnings.mjs'
+      - 'packages/luxar-viewer/scripts/check-typedoc-warnings.test.mjs'
+      - 'packages/luxar-viewer/package.json'
+      - 'packages/luxar-viewer/tsconfig*.json'
+      - 'scripts/check_documentation.py'
+      - 'scripts/docs_baseline.json'
+      - 'pyproject.toml'
+      - 'packages/luxar-viewer/pnpm-lock.yaml'
+      - 'packages/luxar-viewer/pnpm-workspace.yaml'
       - '.github/workflows/docs.yml'
   workflow_dispatch: # Allow manual trigger from Actions UI
 
@@ -32,12 +42,9 @@ jobs:
           lfs: true
 
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        id: setup-python-docs
         with:
           python-version: '3.12'
-
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: '22'
 
       # Read the exact packageManager pin used by CI and both publish
       # workflows. This is load-bearing: the security pins are single-sourced
@@ -47,13 +54,32 @@ jobs:
         with:
           package_json_file: packages/luxar-viewer/package.json
 
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+          cache: pnpm
+          cache-dependency-path: packages/luxar-viewer/pnpm-lock.yaml
+
       - name: Install Hatch
-        run: pipx install hatch
+        run: pipx install --python "${{ steps.setup-python-docs.outputs.python-path }}" hatch
+
+      - name: Check pnpm overrides are single-sourced
+        run: node packages/luxar-viewer/scripts/check-overrides.mjs
 
       - name: Install viewer dependencies
         run: cd packages/luxar-viewer && pnpm install --frozen-lockfile
 
-      # Build Sphinx docs (Python API + guides + tutorials)
+      - name: Check documentation completeness ratchet
+        run: hatch run docs:python scripts/check_documentation.py
+
+      - name: Check TypeDoc warning ratchet
+        run: |
+          cd packages/luxar-viewer
+          pnpm run test:typedoc-warnings
+          pnpm run typedoc:check-warnings
+
+      # Build Sphinx docs (Python API + guides + tutorials). The Hatch script
+      # uses -W --keep-going, so every warning and broken internal reference is fatal.
       - name: Build Sphinx documentation
         run: hatch run docs:build
 

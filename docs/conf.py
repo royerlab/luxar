@@ -59,8 +59,23 @@ autodoc_default_options = {
 # Mock imports for packages that may not be installed (e.g., torch, optional deps)
 autodoc_mock_imports = ["torch", "torchvision", "pytorch3d", "scipy"]
 
-# Suppress warnings for missing references
-suppress_warnings = ["ref.any"]
+# Do not suppress reference warnings: the warning-fatal HTML build is the
+# deterministic internal-link gate. External HTTP checking is a separate,
+# opt-in linkcheck build because remote sites are not reliable CI dependencies.
+# Every exception below is narrow and records why linkcheck cannot verify it.
+linkcheck_ignore = [
+    # Literal examples emitted by autodoc; ``host`` and ``port`` are placeholders.
+    r"^http://host:port(?:/.*)?$",
+    # The repository is private, so unauthenticated linkcheck receives 404.
+    # Keep this to the two currently referenced endpoints; review new paths.
+    r"^https://github\.com/royerlab/luxar(?:/issues)?$",
+    # DOI resolves in browsers, but the AIP destination rejects automated probes.
+    r"^https://doi\.org/10\.1063/1\.1751381$",
+    # Khronos serves this page but rejects automated probes with HTTP 403.
+    r"^https://wikis\.khronos\.org/webgl/Debugging$",
+    # TypeDoc creates this target after Sphinx; linkcheck cannot see that output.
+    r"^viewer/index\.html$",
+]
 
 # Autosummary settings
 autosummary_generate = True

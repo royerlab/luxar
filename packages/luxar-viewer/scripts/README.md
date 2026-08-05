@@ -1,23 +1,24 @@
 # Viewer Build & Quality Scripts
 
 Developer scripts that sit outside `src/` — invoked by `pnpm` commands, CI,
-and humans pasting perf tables into commit bodies. Five jobs across six
-files: compile the Rust→WASM module, sanity-check the embeddable library
-bundle, audit JSDoc coverage on the TS source, keep the pnpm security pins
-single-sourced, and diff two perf-bench JSON captures into a Markdown table
-(the last of which is unit-tested).
+and humans pasting perf tables into commit bodies. They compile the Rust→WASM
+module, sanity-check the embeddable library bundle, ratchet TypeDoc warnings,
+audit JSDoc coverage, keep the pnpm security pins single-sourced, and diff
+perf-bench JSON captures into a Markdown table.
 
 ## Contents
 
 ```
 scripts/
 ├── build-wasm.sh             # Rust → WASM build via wasm-pack (pnpm build:wasm[:dev])
-├── check-lib-exports.mjs     # Post-build sanity check on dist/lib/ (pnpm build:lib:check)
-├── check-jsdoc-coverage.ts   # JSDoc coverage report over src/*.ts
-├── check-overrides.mjs       # pnpm overrides single-source guard (pnpm check:overrides)
-├── perf-diff.mjs             # Markdown delta table from two perf-bench JSON files
-├── perf-diff.test.mjs        # vitest unit tests for perf-diff's buildPerfDiff()
-└── perf/                     # perf-bench capture fixtures / helpers
+├── check-lib-exports.mjs          # Post-build sanity check on dist/lib/
+├── check-jsdoc-coverage.ts        # Standalone JSDoc coverage report
+├── check-overrides.mjs            # pnpm overrides single-source guard
+├── check-typedoc-warnings.mjs     # Baseline-driven TypeDoc warning ratchet
+├── check-typedoc-warnings.test.mjs # node:test coverage for the warning ratchet
+├── perf-diff.mjs                  # Markdown delta table from perf-bench JSON
+├── perf-diff.test.mjs             # tests for perf-diff's buildPerfDiff()
+└── perf/                          # perf-bench capture fixtures / helpers
 ```
 
 ## Build
@@ -62,6 +63,24 @@ pnpm build:lib:check   # → node scripts/check-lib-exports.mjs
 
 ## Quality
 
+### `check-typedoc-warnings.mjs`
+
+Runs TypeDoc conversion and validation without emitting HTML, normalizes
+checkout-specific paths, and compares the warning multiset with
+`../typedoc-warnings-baseline.json`. New warnings and increased duplicate
+counts fail; removed warnings are reported so the baseline can be tightened.
+TypeDoc conversion/compiler errors always fail independently of the baseline.
+
+```bash
+pnpm run typedoc:check-warnings
+pnpm --silent run typedoc:check-warnings -- --json
+pnpm run typedoc:check-warnings -- --update-baseline
+pnpm run test:typedoc-warnings
+```
+
+The warning baseline is an explicit reviewed allowlist, not a target count:
+the checker compares normalized warning messages as well as the total.
+
 ### `check-jsdoc-coverage.ts`
 
 Walks `src/**/*.ts` (excluding `*.test.ts`, `*.spec.ts`, `__tests__/`) and
@@ -70,6 +89,10 @@ declarations preceded within 15 lines by a `/**` block. Reports overall
 coverage, per-file failures below the threshold, and a per-package
 breakdown (grouped by top-level dir under `src/`). Exits non-zero when
 overall coverage is under the threshold.
+
+This remains a manual package-wide estimator. The required PR gate uses the
+file-level baseline policy in `scripts/check_documentation.py`; do not add this
+second percentage policy to CI.
 
 ```bash
 npx tsx scripts/check-jsdoc-coverage.ts                       # default threshold 70%
