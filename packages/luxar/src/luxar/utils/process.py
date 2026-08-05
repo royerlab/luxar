@@ -121,6 +121,7 @@ def _install_stop_handlers() -> dict[int, Any]:
 
 
 def _restore_handlers(previous: dict[int, Any]) -> None:
+    """Reinstall the signal handlers captured by :func:`_install_stop_handlers`."""
     for sig, old in previous.items():
         _safe(signal.signal, sig, old)
 
@@ -153,17 +154,21 @@ def _teardown(
     if pgid is not None:
 
         def send(sig: int) -> None:
+            """Deliver ``sig`` to the child's whole process group."""
             _killpg(pgid, sig)
 
         def alive() -> bool:
+            """True while any member of the child process group survives."""
             return _killpg(pgid, 0)
 
     else:
 
         def send(sig: int) -> None:
+            """Deliver ``sig`` to the single direct child PID."""
             _safe(proc.send_signal, sig)
 
         def alive() -> bool:
+            """True while the direct child PID is still running."""
             return proc.poll() is None
 
     try:
