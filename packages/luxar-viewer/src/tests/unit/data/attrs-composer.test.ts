@@ -15,7 +15,7 @@ describe('composeAttrs', () => {
     expect(e.gamma).toBe(1);
     expect(e.intensity).toBe(1);
     expect(e.offset).toBe(0);
-    expect(e.blending_mode).toBe('additive');
+    expect(e.blending_mode).toBeUndefined();
   });
 
   it('multiplies opacity/gamma/intensity through the chain', () => {
@@ -67,10 +67,12 @@ describe('composeAttrs', () => {
     ).toBe('normal');
   });
 
-  it("composes to 'additive' when no level in the chain sets a mode", () => {
-    expect(composeAttrs([]).blending_mode).toBe('additive');
-    expect(composeAttrs([{ opacity: 0.5 }, { gamma: 2 }]).blending_mode).toBe('additive');
-    expect(composeAttrs([{ blending_mode: undefined }]).blending_mode).toBe('additive');
+  it('leaves blending_mode undefined when no level in the chain sets a mode', () => {
+    // An unset chain composes to `undefined` — each consumer applies its own
+    // per-type default (mesh → opaque, emissive → additive; spec §6.3).
+    expect(composeAttrs([]).blending_mode).toBeUndefined();
+    expect(composeAttrs([{ opacity: 0.5 }, { gamma: 2 }]).blending_mode).toBeUndefined();
+    expect(composeAttrs([{ blending_mode: undefined }]).blending_mode).toBeUndefined();
   });
 
   it('clamps opacity to [0, 1]', () => {
@@ -250,7 +252,7 @@ describe('composeAttrs — algebraic invariants (data.md H6)', () => {
       gamma: 1.0,
       intensity: 1.0,
       offset: 0.0,
-      blending_mode: 'additive',
+      blending_mode: undefined,
     });
   });
 

@@ -137,8 +137,10 @@ const warnedUnknownModes = new Set<string>();
  * Normalize a raw `blending_mode` string to a canonical
  * {@link BlendingMode}.
  *
- * - `undefined` → `'additive'` (the composition identity —
- *   `composeAttrs`' default when no ancestor sets a mode).
+ * - `undefined` → `'additive'` (the emissive default). NOTE: `composeAttrs`
+ *   no longer funnels an unset chain here — it returns `undefined` and each
+ *   consumer applies its own per-type default (#1272); this arm is now only a
+ *   defensive fallback for any remaining caller that hands over an absent mode.
  * - A member of {@link BLENDING_MODES} → passed through unchanged.
  * - Anything else → `'normal'`, warning once per distinct string.
  *   `'normal'` matches `getCompleteBlendingState`'s fallthrough AND

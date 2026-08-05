@@ -1726,6 +1726,9 @@ describe('LayersPanel — blend select drives the leaf material', () => {
     grpLayer.opacity = 0.4;
     grpLayer.gamma = 1.5;
     grpLayer.blendingMode = 'max';
+    // A user pick is explicit — same as the real Blend-select handler — so the
+    // wrapper's mode overrides the part's authored one (#1272).
+    grpLayer.blendingModeExplicit = true;
     (
       panel as unknown as { applyEngine: { applyBlendingMode(l: unknown): void } }
     ).applyEngine.applyBlendingMode(grpLayer);

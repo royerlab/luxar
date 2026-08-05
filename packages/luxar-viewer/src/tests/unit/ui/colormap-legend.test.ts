@@ -41,6 +41,7 @@ function makeLayer(overrides: Partial<LayerInfo> = {}): LayerInfo {
     dataMax: 1,
     gamma: 1,
     blendingMode: 'additive',
+    blendingModeExplicit: true,
     selected: false,
     colormap: 'viridis',
     supportsColormap: true,
