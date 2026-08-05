@@ -16,6 +16,7 @@ _ANSI_ESCAPE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
 
 def _load_checker() -> ModuleType:
+    """Import ``scripts/check_demo_ladders.py`` as a module by file path."""
     script_path = Path(__file__).resolve().parents[5] / "scripts/check_demo_ladders.py"
     spec = importlib.util.spec_from_file_location("check_demo_ladders", script_path)
     if spec is None or spec.loader is None:
@@ -34,6 +35,7 @@ def _make_leaf(
     *,
     declared_total: int | None = None,
 ) -> zarr.Group:
+    """Write a minimal points leaf with the given additive-sublod sizes."""
     root = zarr.open_group(path, mode="w")
     leaf = root.create_group("leaf")
     total = declared_total if declared_total is not None else sum(sizes or [])
@@ -51,6 +53,9 @@ def _make_leaf(
 
 
 def _check(leaf: zarr.Group, **overrides: int | float) -> tuple[str, str]:
+    """Run ``checker.check_leaf`` with test-tuned defaults (``min_elements=0``
+    disables the skip guard so every fixture is audited) plus per-call
+    overrides."""
     options: dict[str, int | float] = {
         "min_elements": 0,
         "max_share": 0.6,
@@ -92,6 +97,8 @@ def test_absolute_level_cap_catches_large_balanced_increment(tmp_path: Path) -> 
 
 
 def test_large_unladdered_leaf_fails_but_small_leaf_skips(tmp_path: Path) -> None:
+    """A leaf above the min-elements floor fails; one AT the floor skips
+    (equality → skip)."""
     large = _make_leaf(
         tmp_path / "large.zarr", None, declared_total=checker.DEFAULT_MIN_ELEMENTS + 1
     )
@@ -104,6 +111,7 @@ def test_large_unladdered_leaf_fails_but_small_leaf_skips(tmp_path: Path) -> Non
 
 
 def test_declared_total_and_level_structure_are_validated(tmp_path: Path) -> None:
+    """A wrong declared total and a missing sublod level both fail the check."""
     wrong_total = _make_leaf(
         tmp_path / "wrong-total.zarr", [10, 20, 30], declared_total=99
     )
@@ -126,6 +134,7 @@ def test_scene_inventory_is_read_only(
     calls: list[bool] = []
 
     def fake_output_dir(*, create: bool = True) -> Path:
+        """Stand-in for ``get_demos_output_dir`` recording its ``create`` flag."""
         calls.append(create)
         return output_dir
 
@@ -139,6 +148,7 @@ def test_scene_inventory_is_read_only(
 def test_non_quiet_output_prints_scene_heading_once(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    """Non-quiet output names a healthy scene exactly once with a summary line."""
     scene_path = tmp_path / "valid-scene.luxar.zarr"
     _make_leaf(scene_path, [20, 20, 60])
 
@@ -161,6 +171,7 @@ def test_non_quiet_output_prints_scene_heading_once(
 def test_quiet_output_suppresses_healthy_scene_details(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    """Quiet mode omits a healthy scene's per-scene lines but keeps the summary."""
     scene_path = tmp_path / "valid-scene.luxar.zarr"
     _make_leaf(scene_path, [20, 20, 60])
 

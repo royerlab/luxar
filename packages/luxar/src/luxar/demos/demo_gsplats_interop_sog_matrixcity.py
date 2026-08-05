@@ -163,6 +163,7 @@ def build_scene() -> Path:
 
 
 def main() -> None:
+    """Build (or serve-only) the MatrixCity SOG overview-LOD scene."""
     aprint("=" * 70)
     aprint("GSplats Interop Demo: MatrixCity aerial (SOG, 13.6M) → Luxar LOD")
     aprint("=" * 70)

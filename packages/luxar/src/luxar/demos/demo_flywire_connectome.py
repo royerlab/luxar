@@ -557,6 +557,10 @@ def build_scene(
     neurons: pd.DataFrame,
     edges: pd.DataFrame,
 ) -> tuple[int, int]:
+    """Build the connectome scene (Points per super-class, Lines per NT).
+
+    Returns ``(n_neurons, n_edges)``.
+    """
     # Normalize edge widths against the *global* max synapse count so per-NT
     # layers share a consistent thickness scale.
     log_syn_max = (
@@ -713,6 +717,7 @@ def build_scene(
 
 
 def _int_arg(argv: list[str], flag: str, default: int) -> int:
+    """Parse ``--flag N`` / ``--flag=N`` from argv as an int, else ``default``."""
     for i, arg in enumerate(argv):
         if arg == flag and i + 1 < len(argv):
             return int(argv[i + 1])
@@ -722,6 +727,7 @@ def _int_arg(argv: list[str], flag: str, default: int) -> int:
 
 
 def _path_arg(argv: list[str], flag: str) -> Path | None:
+    """Parse ``--flag PATH`` / ``--flag=PATH`` from argv, else ``None``."""
     for i, arg in enumerate(argv):
         if arg == flag and i + 1 < len(argv):
             return Path(argv[i + 1]).expanduser()
@@ -731,6 +737,7 @@ def _path_arg(argv: list[str], flag: str) -> Path | None:
 
 
 def main() -> None:
+    """Fetch FlyWire data, load neurons + edges, and build/serve the scene."""
     argv = sys.argv[1:]
     min_syn = _int_arg(argv, "--min-synapses", DEFAULT_MIN_SYNAPSES)
     max_edges = _int_arg(argv, "--max-edges", DEFAULT_MAX_EDGES)

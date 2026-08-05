@@ -131,15 +131,15 @@ can never regress.
 
 ### Current debt snapshot
 
-With Phase 1 complete, the baseline holds 61 findings, broken down by check:
+With Phases 1 and 2 complete, the baseline holds 37 findings, all in one check:
 
 | Count | Check | What it means |
 |------:|-------|---------------|
 | 37 | JSDoc coverage | Exported-symbol JSDoc below the 70% floor, in `packages/luxar-viewer/src/`. |
-| 24 | Docstring coverage | File docstring coverage below the 70% floor, in `packages/luxar/src/luxar/`. |
 
 The Phase 1 categories (*Quick Start section*, *Module docstring*, *Code
-examples*) are now at zero and are held there by the ratchet.
+examples*) and the Phase 2 *Docstring coverage* category are now at zero and are
+held there by the ratchet.
 
 These counts are a **snapshot** and will drift as the tree changes; do not
 trust the prose. The authoritative live breakdown comes from re-measuring:
@@ -160,11 +160,13 @@ each README, and a module docstring to each flagged `*.py` file. All three of
 these check categories are now at zero, and the baseline has been tightened so
 they cannot regress.
 
-### Phase 2 — Python docstring coverage
+### Phase 2 — Python docstring coverage ✅ done
 
-The 24 *Docstring coverage* findings. **Target:** every listed Python file
-reaches the 70% coverage floor. Drive it down in review-sized batches by
-package rather than one flag-day sweep, so each change stays readable.
+The *Docstring coverage* findings. **Target:** every listed Python file reaches
+the 70% coverage floor. Driven down in review-sized batches by package rather
+than one flag-day sweep, so each change stayed readable: the core-library
+packages first, then the `demos/` and `tests/` batch. This category is now at
+zero and the baseline has been tightened so it cannot regress.
 
 ### Phase 3 — TypeScript JSDoc coverage
 
