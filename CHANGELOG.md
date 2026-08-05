@@ -278,6 +278,26 @@ Two `README.md` claims that still read "all three geometry types" were checked a
 deliberately LEFT: one is about volumetric blending physics and the other about the
 chunk-bounds spatial query, and mesh participates in neither by design.
 
+#### Mesh on real WebGPU: verified, with the remaining gap named precisely
+
+The mesh vertical shipped with a stated gap — the GLSL↔TSL parity harness drives
+`WebGPURenderer({ forceWebGL: true })`, so the real-WGSL path was never exercised. It
+is now: an A/B against native WebGPU (system Chrome channel, `?renderer=webgpu`,
+screenshot-then-decode with the WebGL arm as a control) shows `apiSurface: 'webgpu'`,
+all three fixture nodes committing with identical triangle/vertex counts and identical
+shader variants, and **pixel-identical output** — 105,822 lit pixels on both backends,
+mean lit channel differing by 0.14%.
+
+One claim is deliberately NOT upgraded to "verified", and the reason is more useful
+than the claim would have been. Removing the forced viewer-facing `z >= 0` flip from
+the TSL derivative normal produced byte-identical pixels, so the A/B cannot see it —
+because the fixture's only flat-shaded node is nearly EDGE-ON, where `N.z ≈ 0` and
+flipping the sign of ~0 leaves `wrap = 0.5` unchanged. The metric is structurally
+blind, not the code correct-by-luck. Closing it needs one fixture change — a
+flat-shaded quad FACING the camera, which the parity harness already has and only
+`forceWebGL` keeps off the WGSL path — rather than more probing. Recorded in the spec's
+phase table with that next step spelled out.
+
 #### Demos — the biodiversity globe is `opaque`, so it stops painting over its own data (#1227)
 
 The globe was `volumetric` with a heavy absorption, which read well in isolation
