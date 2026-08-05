@@ -327,6 +327,8 @@ export class MeshWholeNodeLoader implements MeshDataLoader {
         displayDimsKey: null,
         mask: new Uint8Array(nVertices),
         faceScratch: new Uint32Array(nFaces * 3),
+        fastPathBounds: null,
+        fastPathBoundsKey: null,
       },
     };
 

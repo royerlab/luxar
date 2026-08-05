@@ -305,6 +305,24 @@ export interface MeshProjectionTargetBuffers {
    * because every face may survive; the kernel reports how many actually did.
    */
   faceScratch: Uint32Array;
+  /**
+   * Fast-path bounds cache, and the `displayDims` epoch they were measured in.
+   *
+   * ONLY the no-hidden-dims fast path may use this, and the distinction is the whole
+   * reason it is a cache rather than a plain field. On that path nothing is culled, so
+   * the emitted index is the authored `faces` verbatim and the box depends solely on
+   * `position` — which changes only when `displayDims` does. On the CULL path the
+   * visible set changes with every slice move, so its box must be recomputed every
+   * epoch and this cache is never consulted.
+   *
+   * Worth having because the recompute is O(faces), not O(1): measured 5.3 ms at 1M
+   * faces and 26 ms at 5M, per sweep. A 3D mesh sitting in a scene that has navigable
+   * dimensions elsewhere gets swept on every scrub frame, so at 5M faces that alone
+   * overruns a 60 Hz frame budget while computing a box that cannot have changed.
+   */
+  fastPathBounds?: MeshProjectionBounds | null;
+  /** `displayDims.join()` that {@link fastPathBounds} was measured in; unset before the first */
+  fastPathBoundsKey?: string | null;
 }
 
 // ============================================================================
