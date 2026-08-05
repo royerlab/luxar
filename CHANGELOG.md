@@ -193,19 +193,21 @@ real scene rendered additive, the alpha cutout never compiled, and — once the 
 controls landed — the Alpha-cutoff slider was hidden for a default-config mesh because
 its layer reported `additive`.
 
-Fixed where the information still exists. `composeAttrs` now takes the default an
-entirely-unset chain resolves to, supplied per geometry type from a new
-`DEFAULT_BLENDING_MODES` table, and every compose site passes the leaf's own type: the
-loader's `applyEffectiveAttrs`, and both of the layers panel's (the `LayerInfo` init
-and `composeEffective` — the panel is a second place the default has to be right, since
-it pushes its composed mode onto the material). Nearest-setter-wins is untouched: an
-ancestor that DID set a mode still wins, because the default is consulted only when the
-walk found nothing. That is what keeps `group(blending_mode="additive")` working for its
-mesh children, which is why §6.3 forbids the writer from stamping the mode at all.
+**Found by rendering a written mesh end to end for the first time** — no unit test
+could have seen it, because they all hand `resolveRequestedMeshMode` an attrs object
+directly rather than one that has been through composition. The fixture and E2E spec
+that found it are the entry below.
 
-Found by rendering a written mesh end to end for the first time — no unit test could
-see it, because they all hand `resolveRequestedMeshMode` an attrs object directly rather
-than one that has been through composition.
+**Fixed in #1274**, which landed independently while this work was in review: rather
+than defaulting inside `composeAttrs`, it keeps `blending_mode` **undefined** through
+composition when no level sets one and lets each consumer apply its own per-type default
+via `defaultBlendingMode(nodeType)`. That is the better shape, and it covers a case the
+alternative did not: it tracks whether a layer's mode is EXPLICIT, so a group layer
+merely *displaying* a neutral default does not push it onto mesh descendants — which
+would otherwise flip a mesh under a plain `layer=true` group back to additive at panel
+init. Nearest-setter-wins is untouched either way, which is what keeps
+`group(blending_mode="additive")` working for its mesh children and why §6.3 forbids the
+writer from stamping the mode at all.
 
 #### Mesh gets its first real fixtures, and an end-to-end render spec
 

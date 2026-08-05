@@ -76,6 +76,39 @@ describe('validateFaceIndices — the happy path, in every dtype a store may use
       /face index 4 at position 2 is not an integer in \[0, 4\)/
     );
   });
+
+  it('carries indices above 2^24 through exactly — the reason faces skip the decoder', () => {
+    // The loader reads `faces` RAW rather than through `ArrayDecoder`, and says why: the
+    // decoder always yields `Float32Array`, whose 24-bit mantissa cannot represent every
+    // index a large mesh may carry. That rationale had no test, and it is not academic —
+    // 2^24 is 16,777,216 while the decode budget admits roughly 22.4M vertices, so the
+    // unrepresentable range is REACHABLE by a legitimate mesh, not just by the 2^27 cap.
+    //
+    // 2^24 + 1 is the first casualty: `new Float32Array([16777217])[0] === 16777216`, so a
+    // decoder-routed read would silently collapse it onto its neighbour and quietly
+    // re-point a triangle corner at the wrong vertex. Asserted on both an unsigned and a
+    // BigInt source, since those take different arms.
+    const above = 16_777_217; // 2^24 + 1
+    const nVertices = 20_000_000; // inside the budget, above the mantissa limit
+    expect(Math.fround(above)).toBe(16_777_216); // the hazard is real, not hypothetical
+
+    expect(
+      Array.from(
+        validateFaceIndices(PATH, new Uint32Array([above, above + 1, above + 2]), nVertices, 3)
+      )
+    ).toEqual([above, above + 1, above + 2]);
+
+    expect(
+      Array.from(
+        validateFaceIndices(
+          PATH,
+          new BigUint64Array([BigInt(above), BigInt(above + 1), BigInt(above + 2)]),
+          nVertices,
+          3
+        )
+      )
+    ).toEqual([above, above + 1, above + 2]);
+  });
 });
 
 describe('validateFaceIndices — the two wrap-around hazards', () => {

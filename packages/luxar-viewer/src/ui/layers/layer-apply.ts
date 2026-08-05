@@ -29,7 +29,7 @@ import { noteDepthSortBlendingModeSwitch } from '../../rendering/depth-sort-coor
 import { syncMeshPickAppearance } from '../../rendering/node-factory/create-mesh-node';
 import type { GeometryTypeName } from '../../types/format-contract';
 import {
-  defaultBlendingModeFor,
+  defaultBlendingMode,
   isDepthSortable,
   isGeometryType,
 } from '../../types/geometry-capabilities';
@@ -177,12 +177,7 @@ export class LayerApplyEngine {
           : (node.attrs.blending_mode as string | undefined),
       };
     });
-    // The LEAF'S type supplies the fallback for an ancestry that sets no mode (§6.3),
-    // matching `applyEffectiveAttrs` on the loader side. `ancestors` is root-to-leaf,
-    // so its last entry is the leaf itself; a group layer fans out per leaf, and each
-    // gets its own default.
-    const leaf = ancestors[ancestors.length - 1];
-    return composeAttrs(chain, defaultBlendingModeFor(leaf?.type));
+    return composeAttrs(chain);
   }
 
   private applyBlendingStateToMaterial(mat: LuxarMaterial, mode: string): void {
@@ -276,7 +271,11 @@ export class LayerApplyEngine {
       mat.updateAbsorption?.(eff.absorption);
       applyColorAdjustments(mat, eff.gamma, eff.intensity, eff.offset);
       const prevBlendingMode = mat.userData?.blendingMode as BlendingMode | undefined;
-      this.applyBlendingStateToMaterial(mat, eff.blending_mode);
+      // An unset ancestry composes to `undefined`; apply this leaf's per-type
+      // default (mesh → opaque, emissive → additive) — the same mode the
+      // material factory would have baked in.
+      const blendingMode = eff.blending_mode ?? defaultBlendingMode(leaf.type);
+      this.applyBlendingStateToMaterial(mat, blendingMode);
       // Depth sorting: a sortable layer switching blending mode may need
       // to start (TO an effective sorted mode: clear the noop stamp +
       // reprocess so the next commit registers with the SortWorker) or
@@ -285,7 +284,7 @@ export class LayerApplyEngine {
       // centers, lines segment midpoints) — see `depthSortable` in
       // `types/geometry-capabilities`.
       if (isDepthSortable(obj.userData?.nodeType)) {
-        noteDepthSortBlendingModeSwitch(obj as THREE.Mesh, eff.blending_mode, prevBlendingMode);
+        noteDepthSortBlendingModeSwitch(obj as THREE.Mesh, blendingMode, prevBlendingMode);
       }
     }
     this.deps.requestRender();

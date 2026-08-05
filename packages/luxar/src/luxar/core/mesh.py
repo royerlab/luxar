@@ -137,6 +137,41 @@ class Mesh(DataNode):
         return bool(self._metadata.get("double_sided", True))
 
     @property
+    def blending_mode(self) -> str:
+        """Get the blending mode for this node.
+
+        Re-declared (identically to :class:`Node`) only so the setter below can be
+        overridden — a property's getter and setter travel together.
+        """
+        from ..typing_utils.constants import DEFAULT_BLENDING_MODE
+
+        return str(self.attrs.get("blending_mode", DEFAULT_BLENDING_MODE))
+
+    @blending_mode.setter
+    def blending_mode(self, value: Any) -> None:
+        """Set the blending mode, refusing ``volumetric`` (spec §9).
+
+        The adder refuses an explicitly-authored ``blending_mode='volumetric'`` at
+        add time; without this override the inherited :class:`Node` setter (and
+        ``set_blending_mode``) would re-open the same door one line later, and the
+        invalid mode would persist to zarr. Every other mode delegates to the same
+        geometry-agnostic validation the base setter uses.
+        """
+        if value == "volumetric":
+            raise ValueError(
+                f"Cannot set blending_mode='volumetric' on mesh '{self.name}'. "
+                "Volumetric blending integrates emission and absorption along the "
+                "view ray through a participating medium, and a triangle is a "
+                "zero-thickness surface: its path length through the medium is "
+                "zero, so there is nothing for 'absorption' to attenuate. Use "
+                "'normal' for an opaque surface, or 'additive' for a translucent "
+                "one."
+            )
+        from ..validation.types import validate_blending_mode
+
+        self._persist_attr("blending_mode", validate_blending_mode(value))
+
+    @property
     def ordering(self) -> str:
         """Get spatial ordering method.
 

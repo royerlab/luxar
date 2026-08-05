@@ -9,7 +9,7 @@ import type { SceneNode } from '../../data/data-loader-types';
 import { getEffectiveAttrs } from '../../data/attrs-composer';
 import type { BlendingMode } from '../../types/blending';
 import type { GeometryTypeName, NodeKind } from '../../types/format-contract';
-import { defaultBlendingModeFor, isGeometryType } from '../../types/geometry-capabilities';
+import { defaultBlendingMode, isGeometryType } from '../../types/geometry-capabilities';
 import { log, Modules } from '../../utils/log';
 // Pure display-window ↔ shader-uniform math now lives in the rendering layer
 // (`rendering/display-range`) so `rendering/` modules can import it without
@@ -241,6 +241,15 @@ export interface LayerInfo {
   gamma: number;
   /** Blending mode */
   blendingMode: BlendingMode;
+  /**
+   * Whether a blend mode is set EXPLICITLY for this layer — authored somewhere
+   * in its composed ancestry, or chosen by the user via the panel. When false,
+   * `blendingMode` is merely the per-type default shown in the dropdown, and the
+   * live-attrs path must NOT push it onto descendants (that would override each
+   * leaf's own per-type default — e.g. force a mesh under a plain group layer to
+   * the group's `additive` default instead of its own `opaque`; see #1272).
+   */
+  blendingModeExplicit: boolean;
   /** Whether this layer is selected in the list */
   selected: boolean;
   /** Active colormap name (undefined = direct RGB colors) */
@@ -500,6 +509,12 @@ export class LayerStateManager {
           }
         }
 
+        // Composed blend mode: `undefined` when NO ancestry level set one, else
+        // the canonical inherited/authored mode (#1272). The `undefined` case is
+        // exactly what tells us to fall back to the per-type default AND to leave
+        // the layer non-explicit so it does not impose that default on descendants.
+        const composedBlendingMode = getEffectiveAttrs(root, node.path).blending_mode;
+
         this.layerOrder.push(node.path);
         this.layers.set(node.path, {
           path: node.path,
@@ -527,19 +542,26 @@ export class LayerStateManager {
           dataMax,
           gamma: (node.attrs.gamma as number) ?? 1.0,
           // Blending mode is COMPOSED along the ancestry (nearest set
-          // ancestor wins, normalized by composeAttrs) — the panel must
-          // show the mode the material actually renders with, not the
-          // node's own (possibly absent / malformed) raw attr.
-          // Composed along the ancestry, with the LEAF'S OWN type default when nothing
-          // set a mode (§6.3: `opaque` for mesh, `additive` for the other three).
-          // Without the default the panel would init a mesh layer at `additive` and
-          // push that onto the material on the first edit, overriding the mode the
-          // loader chose — the panel is a second place the default has to be right,
-          // not just the loader.
+          // ancestor wins, normalized by composeAttrs) — a geometry leaf's
+          // dropdown must show the mode the material actually renders with,
+          // not the node's own (possibly absent / malformed) raw attr. An
+          // unset chain composes to `undefined`; show the per-type default
+          // (mesh → opaque, emissive → additive) the material would use — but
+          // leave it NON-explicit so it is not pushed onto descendants (a
+          // plain group layer merely displays `additive` as a neutral default;
+          // each descendant keeps its own default until the control is used).
+          //
+          // Then RESOLVED for the layer's type, which is a separate concern from the
+          // default and applies to an EXPLICIT mode too: a mesh cannot render
+          // `volumetric`, so its material maps that to `opaque` and stamps the resolved
+          // value. Without this wrap the panel showed Absorption (which no mesh shader
+          // reads) and hid Alpha cutoff exactly when the cutout was active. A no-op for
+          // the default path, since `defaultBlendingMode('mesh')` is already `opaque`.
           blendingMode: resolveLayerBlendingMode(
             layerType,
-            getEffectiveAttrs(root, node.path, defaultBlendingModeFor(node.type)).blending_mode
+            composedBlendingMode ?? defaultBlendingMode(node.type)
           ),
+          blendingModeExplicit: composedBlendingMode !== undefined,
           selected: false,
           colormap,
           supportsColormap,
@@ -724,11 +746,12 @@ export class LayerStateManager {
     this.notify();
   }
 
-  /** Set blending mode for a layer */
+  /** Set blending mode for a layer. A user pick marks the mode EXPLICIT. */
   setBlendingMode(path: string, mode: BlendingMode): void {
     const layer = this.layers.get(path);
     if (!layer) return;
     layer.blendingMode = mode;
+    layer.blendingModeExplicit = true;
     this.notify();
   }
 

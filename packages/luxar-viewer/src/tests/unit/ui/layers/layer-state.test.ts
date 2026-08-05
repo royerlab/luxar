@@ -355,6 +355,49 @@ describe('LayerStateManager', () => {
       mgr.initFromSceneGraph(makeSceneGraph([{}]));
       expect(mgr.getLayers()[0].blendingMode).toBe('additive');
     });
+
+    it('leaves the mode NON-explicit when no ancestry level sets one (#1272)', () => {
+      // The per-type default is only a placeholder — it must NOT be pushed onto
+      // descendants via the live-attrs path, so the flag stays false.
+      mgr.initFromSceneGraph(makeSceneGraph([{}]));
+      const layer = mgr.getLayers()[0];
+      expect(layer.blendingMode).toBe('additive');
+      expect(layer.blendingModeExplicit).toBe(false);
+    });
+
+    it('marks the mode EXPLICIT when composed from an ancestor (#1272)', () => {
+      const graph: SceneNode = {
+        path: '',
+        type: 'scene',
+        attrs: {},
+        hasSpatialIndex: false,
+        children: [
+          {
+            path: 'grp',
+            type: 'group',
+            attrs: { blending_mode: 'max' },
+            hasSpatialIndex: false,
+            children: [
+              {
+                path: 'grp/pts',
+                type: 'points',
+                attrs: { layer: true },
+                hasSpatialIndex: true,
+              },
+            ],
+          },
+        ],
+      };
+      mgr.initFromSceneGraph(graph);
+      expect(mgr.getLayer('grp/pts')!.blendingModeExplicit).toBe(true);
+    });
+
+    it('marks the mode EXPLICIT after a user pick via setBlendingMode (#1272)', () => {
+      mgr.initFromSceneGraph(makeSceneGraph([{}]));
+      expect(mgr.getLayer('layer_0')!.blendingModeExplicit).toBe(false);
+      mgr.setBlendingMode('layer_0', 'max');
+      expect(mgr.getLayer('layer_0')!.blendingModeExplicit).toBe(true);
+    });
   });
 
   describe('absorption init is RAW (like opacity), not composed', () => {

@@ -13,8 +13,8 @@ import { TypeScriptFallback } from '../../../../wasm/typescript';
 import {
   projectMeshTo3D,
   resolveWinding,
-  storedNormalsUsable,
   noticeUndecidableWinding,
+  storedNormalsUsable,
 } from '../../../../data/mesh/projection';
 import type { LoadedMeshData, MeshViewState } from '../../../../types/mesh';
 
@@ -896,6 +896,70 @@ describe('noticeUndecidableWinding', () => {
     noticeUndecidableWinding('/a', 'reason', seen);
     noticeUndecidableWinding('/b', 'reason', seen);
     expect(Array.from(seen)).toEqual(['/a', '/b']);
+  });
+});
+
+describe('projectMeshTo3D — the fast-path bounds cache', () => {
+  /**
+   * A 3D mesh (no hidden dims, so every sweep takes the fast path) whose two triangles
+   * have DIFFERENT extents along x and y, so an axis swap must change the box.
+   */
+  function planar(): LoadedMeshData {
+    return {
+      // prettier-ignore
+      vertices: new Float32Array([
+        0, 0, 0,  8, 0, 0,  0, 2, 0,
+      ]),
+      faces: new Uint32Array([0, 1, 2]),
+      normals: null,
+      colors: null,
+      scalars: undefined,
+      vertexCount: 3,
+      faceCount: 1,
+      ndim: 3,
+      projection: {
+        position: new Float32Array(9),
+        displayDimsKey: null,
+        mask: new Uint8Array(3),
+        faceScratch: new Uint32Array(3),
+        fastPathBounds: null,
+        fastPathBoundsKey: null,
+      },
+    };
+  }
+  const view = (dd: number[]): MeshViewState =>
+    ({ displayDims: dd, slicePosition: [0, 0, 0], tolerance: [1e10, 1e10, 1e10] }) as MeshViewState;
+
+  it('returns the SAME bounds object on a repeat sweep at one displayDims', () => {
+    // The point of the cache: O(faces) work skipped when the box cannot have changed.
+    // Identity, not just equality — equality would also hold if it recomputed.
+    const d = planar();
+    const a = projectMeshTo3D(d, view([0, 1, 2]), undefined, true, backend);
+    const b = projectMeshTo3D(d, view([0, 1, 2]), undefined, true, backend);
+    expect(a.bounds).not.toBeNull();
+    expect(b.bounds).toBe(a.bounds);
+  });
+
+  it('INVALIDATES on an axis swap — the hazard a cache introduces', () => {
+    // x spans 8 and y spans 2, so swapping them must swap the box extents. Without the
+    // key guard the second sweep would serve the first epoch's box and the mesh would
+    // be framed and culled against the wrong extents.
+    const d = planar();
+    const first = projectMeshTo3D(d, view([0, 1, 2]), undefined, true, backend);
+    expect(first.bounds!.max[0]).toBe(8);
+    expect(first.bounds!.max[1]).toBe(2);
+
+    const swapped = projectMeshTo3D(d, view([1, 0, 2]), undefined, true, backend);
+    expect(swapped.bounds).not.toBe(first.bounds);
+    expect(swapped.bounds!.max[0]).toBe(2);
+    expect(swapped.bounds!.max[1]).toBe(8);
+  });
+
+  it('works with no projection slot at all — the placeholder/unit-test caller', () => {
+    const d = planar();
+    delete d.projection;
+    const p = projectMeshTo3D(d, view([0, 1, 2]), undefined, true, backend);
+    expect(p.bounds!.max[0]).toBe(8);
   });
 });
 
