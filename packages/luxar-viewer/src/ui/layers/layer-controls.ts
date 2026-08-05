@@ -254,6 +254,9 @@ export class LayerControls {
       const mode = this.blendSelect!.value as BlendingMode;
       this.deps.state.applyToSelected((l) => {
         l.blendingMode = mode;
+        // A user pick is EXPLICIT — so it propagates to descendants and is no
+        // longer treated as a replaceable per-type default (see #1272).
+        l.blendingModeExplicit = true;
       });
       for (const sel of this.deps.state.getSelected()) {
         this.deps.apply.applyBlendingMode(sel);

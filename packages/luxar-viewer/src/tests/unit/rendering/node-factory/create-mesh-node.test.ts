@@ -20,6 +20,8 @@ import {
 import { MeshMaterial } from '../../../../rendering/materials/mesh/material-glsl';
 import { MESH_DEFAULTS } from '../../../../rendering/materials/mesh/appearance';
 import type { MeshDataLoader, MeshMetadata } from '../../../../types/mesh';
+import { applyEffectiveAttrs } from '../../../../data/scene-loader/view-state/effective-attrs';
+import type { SceneNode } from '../../../../data/data-loader-types';
 import { log } from '../../../../utils/log';
 
 const ATTRS: MeshMetadata = {
@@ -250,6 +252,57 @@ describe('createMeshMaterial — the viewer-side mode defaults', () => {
     expect(material.uniforms.uOffset.value).toBe(0);
     // The gain moved into the window instead of vanishing.
     expect(material.uniforms.uScalarScale.value).not.toBe(1);
+  });
+});
+
+describe('createMeshMaterial — the §6.3 opaque default survives the composed load path (#1272)', () => {
+  // The raw-attrs tests above hand ATTRS (no blending_mode) straight to the
+  // factory, so its `?? 'opaque'` fallback fires. The REAL load path first
+  // runs the node through `applyEffectiveAttrs`, which used to stamp the
+  // composed default 'additive' onto an unset chain — killing the fallback and
+  // rendering every default mesh additive. Compose an actual scene graph to
+  // pin the whole path, not just the leaf factory.
+  it("keeps 'opaque' when no ancestor sets a mode", () => {
+    const meshLeaf: SceneNode = {
+      path: 'surface',
+      type: 'mesh',
+      attrs: { ...ATTRS, opacity: 1.0 },
+      hasSpatialIndex: false,
+    };
+    const root: SceneNode = {
+      path: '',
+      type: 'scene',
+      attrs: {},
+      hasSpatialIndex: false,
+      children: [meshLeaf],
+    };
+    const composed = applyEffectiveAttrs(root, meshLeaf) as unknown as MeshMetadata;
+    expect(createMeshMaterial(composed, false).userData.blendingMode).toBe('opaque');
+  });
+
+  it('honours an inherited mode set by an ancestor group', () => {
+    const meshLeaf: SceneNode = {
+      path: 'grp/surface',
+      type: 'mesh',
+      attrs: { ...ATTRS, opacity: 1.0 },
+      hasSpatialIndex: false,
+    };
+    const group: SceneNode = {
+      path: 'grp',
+      type: 'group',
+      attrs: { blending_mode: 'additive' },
+      hasSpatialIndex: false,
+      children: [meshLeaf],
+    };
+    const root: SceneNode = {
+      path: '',
+      type: 'scene',
+      attrs: {},
+      hasSpatialIndex: false,
+      children: [group],
+    };
+    const composed = applyEffectiveAttrs(root, meshLeaf) as unknown as MeshMetadata;
+    expect(createMeshMaterial(composed, false).userData.blendingMode).toBe('additive');
   });
 });
 

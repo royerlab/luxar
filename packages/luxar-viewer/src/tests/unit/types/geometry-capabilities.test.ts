@@ -9,6 +9,7 @@ import {
   supportsPartition,
   isPooledGeometry,
   isDepthSortable,
+  defaultBlendingMode,
 } from '../../../types/geometry-capabilities';
 
 /**
@@ -122,6 +123,24 @@ describe('geometry capabilities', () => {
         pooled: true,
         depthSortable: true,
       });
+    }
+  });
+});
+
+describe('defaultBlendingMode', () => {
+  it('defaults mesh to opaque (the one shaded surface type — spec §6.3)', () => {
+    expect(defaultBlendingMode('mesh')).toBe('opaque');
+  });
+
+  it('defaults the emissive primitives to additive', () => {
+    for (const t of ['points', 'lines', 'gsplats'] as const) {
+      expect(defaultBlendingMode(t), t).toBe('additive');
+    }
+  });
+
+  it('falls back to additive for non-geometry node types', () => {
+    for (const value of ['group', 'scene', undefined]) {
+      expect(defaultBlendingMode(value), String(value)).toBe('additive');
     }
   });
 });
