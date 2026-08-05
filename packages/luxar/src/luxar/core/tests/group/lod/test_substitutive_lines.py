@@ -349,6 +349,95 @@ class TestSubstitutiveLinesComposedWithAdditive:
         assert int(finest.attrs.get("n_additive_sublods", 1)) == 1
 
 
+class TestSubstitutiveLinesIndexedSuppressesAdditive:
+    """The ``indexed``-lines branch of ``add_lines_substitutive_lod_wrapper_impl``.
+
+    An ``indexed`` node carries an explicit edge list the additive multi-LOD
+    writer cannot preserve (it would fabricate phantom chains), so the streaming
+    ladder is suppressed. An EXPLICITLY requested ladder raises a ``UserWarning``
+    (``test_explicit_additive_warns_and_ladder_suppressed`` proves that path
+    end-to-end); a default (omitted) one is skipped quietly, with no warning.
+
+    This drives a real indexed geometry node end-to-end, proving the
+    ``line_type == "indexed"`` branch in ``adders/lines.py`` actually fires —
+    the existing ``test_lod_group.py`` tests only hand-feed the reason string
+    into ``compose_additive_under_substitutive`` directly.
+    """
+
+    @staticmethod
+    def _indexed_verts_and_edges(
+        n_seg: int = 300, seed: int = 0
+    ) -> tuple[np.ndarray, np.ndarray]:
+        verts = _segments(n_seg, seed=seed)
+        # One edge per vertex pair: [0, 1, 2, 3, …] — the same topology as
+        # `segments`, expressed as an explicit integer edge list.
+        indices = np.arange(verts.shape[0], dtype=np.int64)
+        return verts, indices
+
+    @staticmethod
+    def _assert_no_additive_ladder(grp) -> None:
+        children = sorted(k for k in grp.keys() if k.startswith("child_"))
+        assert children, "substitutive group must have children"
+        for name in children:
+            child = grp[name]
+            assert int(child.attrs.get("n_additive_sublods", 1)) == 1, name
+            assert not any(k.startswith("additive_") for k in child.keys()), name
+
+    def test_explicit_additive_warns_and_ladder_suppressed(self, tmp_path) -> None:
+        out = tmp_path / "t.luxar.zarr"
+        verts, indices = self._indexed_verts_and_edges()
+        with pytest.warns(UserWarning, match="edges are not preserved by the ladder"):
+            with LuxarZarrCompiler(out) as compiler:
+                scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+                scene.add_lines(
+                    "curves",
+                    verts,
+                    0.8,
+                    line_type="indexed",
+                    indices=indices,
+                    substitutive_lod=dict(
+                        compression_factor=2, levels=1, device="cpu", seed=0
+                    ),
+                    additive_lod=True,
+                )
+
+        grp = zarr.open(str(out), mode="r")["curves"]
+        assert grp.attrs["kind"] == "lod"
+        assert grp.attrs["display_type"] == "lines"
+        self._assert_no_additive_ladder(grp)
+
+    def test_default_additive_indexed_is_suppressed_quietly(self, tmp_path) -> None:
+        # With additive_lod omitted, an indexed node's ladder is skipped QUIETLY
+        # (an aprint info line, NOT a UserWarning). The load-bearing assertion
+        # here is the ABSENCE of a UserWarning (enforced by simplefilter below).
+        # At this vertex count (600 << the composed stream:39062-vertex default)
+        # the ladder would collapse to a single flat leaf regardless of whether
+        # the indexed-suppression branch ran, so `_assert_no_additive_ladder` is
+        # only a plain build-sanity check — it does NOT by itself prove
+        # suppression (test_explicit_additive_warns_and_ladder_suppressed does).
+        out = tmp_path / "t.luxar.zarr"
+        verts, indices = self._indexed_verts_and_edges()
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", UserWarning)
+            with LuxarZarrCompiler(out) as compiler:
+                scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+                scene.add_lines(
+                    "curves",
+                    verts,
+                    0.8,
+                    line_type="indexed",
+                    indices=indices,
+                    substitutive_lod=dict(
+                        compression_factor=2, levels=1, device="cpu", seed=0
+                    ),
+                )
+
+        grp = zarr.open(str(out), mode="r")["curves"]
+        assert grp.attrs["kind"] == "lod"
+        assert grp.attrs["display_type"] == "lines"
+        self._assert_no_additive_ladder(grp)
+
+
 class TestAdditiveLevelStatsPairingLines:
     """A caller-supplied ``level_stats`` must not break the energy pairing.
 
