@@ -1,18 +1,25 @@
 # Materials — Per-Geometry Material Stacks
 
-> The three-geometry material subtree: parallel Point / Line / GSplat stacks plus the shared infrastructure that keeps them symmetric. Every visual shader in Luxar ships from this folder as a GLSL3 `ShaderMaterial` + TSL `NodeMaterial` pair behind a single `ShaderSource`.
+> The per-geometry material subtree: parallel Point / Line / GSplat / Mesh stacks plus the shared infrastructure that keeps them symmetric. Every visual shader in Luxar ships from this folder as a GLSL3 `ShaderMaterial` + TSL `NodeMaterial` pair behind a single `ShaderSource`.
 
 ## Overview
 
 This is a pure container — no `.ts` files of its own. Its job is to organise
-the **six visual shader wrappers** (3 geometries × {GLSL, TSL}) into a
+the **eight visual shader wrappers** (4 geometries × {GLSL, TSL}) into a
 one-for-one symmetric layout: each geometry kind owns a leaf folder with the
 **same four-file shape** (`shader-glsl.ts`, `shader-tsl.ts`, `material-glsl.ts`,
-`material-tsl.ts`), implements the same `CameraAwareMaterial` /
-`ColormapAwareMaterial` contracts, exposes the same public update surface
-(`updateOpacity`, `updateGamma`, `applyBlendingMode`, `clone`, …), and is paired
-across backends by a single `ShaderSource` registry entry. The cross-cutting
-helpers live one level down in `_shared/`.
+`material-tsl.ts`), implements the same `ColormapAwareMaterial` contract, exposes
+the same public update surface (`updateOpacity`, `updateGamma`,
+`applyBlendingMode`, `clone`, …), and is paired across backends by a single
+`ShaderSource` registry entry. The cross-cutting helpers live one level down in
+`_shared/`.
+
+`CameraAwareMaterial` is the one contract only **three** of the four implement:
+Point / Line / GSplat compute a screen-space sprite extent and need
+fov/resolution/ortho broadcast to them every time the camera changes. A mesh's
+size _is_ its geometry, so it has nothing to recompute — it deliberately has no
+`updateCameraParams` and is tracked in the manager's `staticMaterials` registry
+instead of the camera-broadcast one.
 
 The dual-backend pattern is the load-bearing structural choice: `WebGLRenderer`
 dispatches the GLSL3 strings via `THREE.ShaderMaterial`; `WebGPURenderer`
@@ -38,7 +45,8 @@ materials/
 │                 #   camera-uniforms math, GLSL/TSL sanitisers, proxyIUniform
 ├── point/        # Point sprites — 4 files: shader-{glsl,tsl}, material-{glsl,tsl}
 ├── line/         # Thick lines — 4 files (instanced quad expansion in pixel space)
-└── gsplat/       # Gaussian splats — 4 files + math.ts (ray-integral helper)
+├── gsplat/       # Gaussian splats — 4 files + math.ts (ray-integral helper)
+└── mesh/         # Triangle surfaces — 4 files + appearance.ts (defaults + mode map)
 ```
 
 ## Subpackages
@@ -74,26 +82,40 @@ materials/
   vs max projection branches; backend-divergent additive blending documented
   in detail.
 
-## Three-Geometry Symmetry
+- [`mesh/`](./mesh/README.md) — The **shaded** one, and the only stack that
+  draws a plain indexed `BufferGeometry` rather than instanced quads. A
+  light-free view-anchored headlight
+  (`mix(ambient, 1, pow(saturate(N·V·0.5 + 0.5), exponent))`) over stored
+  view-space normals or a screen-space-derivative fallback, chosen as a
+  compile-time variant; per-vertex alpha as the sole coverage term; and a
+  three-way emission (hard cutout for the `opaque` default, premultiplied for
+  `max`, alpha-weighted otherwise). `appearance.ts` holds the defaults and the
+  mode→emission map both backends read.
 
-Per project memory ("Three-geometry symmetry rule"), Points / Lines / GSplats
-share **the same names, the same decomposition, the same shared helpers, and
-parallel tests**. The materials subtree is one of the strongest expressions of
-that rule:
+## Four-Geometry Symmetry
+
+Per project memory ("Three-geometry symmetry rule", now four), Points / Lines /
+GSplats / Mesh share **the same names, the same decomposition, the same shared
+helpers, and parallel tests**. The materials subtree is one of the strongest
+expressions of that rule — and where Mesh diverges, it does so by NAME rather
+than by omission (each bullet below records its own exception):
 
 - **Same file names per geometry**: each leaf is exactly
-  `{shader,material}-{glsl,tsl}.ts` (plus `math.ts` only where the geometry
-  has standalone numerical helpers — currently `gsplat/`).
+  `{shader,material}-{glsl,tsl}.ts` (plus a fifth module only where the geometry
+  has standalone helpers — `gsplat/math.ts`, `mesh/appearance.ts`).
 - **Same public surface**: `updateOpacity`, `updateGamma`, `updateIntensity`,
-  `updateOffset`, `updateCameraParams`, `applyBlendingMode`, `clone`,
-  `setColormapTexture`, `setScalarRange`.
+  `updateOffset`, `applyBlendingMode`, `clone`, `setColormapTexture`,
+  `setScalarRange` — plus `updateCameraParams` on the three instanced-quad
+  types, and `updateFlatNormal` on Mesh alone (nothing else shades).
 - **Same shared helpers** from `_shared/`: every wrapper consumes
   `clampGamma`, the sanitiser snippets, `CameraAwareMaterial`, and
   `ColormapAwareMaterial`. Point and GSplat additionally consume
   `computePointSizeFactor` / `computeMaxPointSize` / `computeFocalLength`
   from `camera-uniforms.ts`.
 - **Parallel picking counterparts** in `../picking/{point,line,gsplat}/` with
-  the same four-file shape.
+  the same four-file shape. Mesh's is still to come: its element ordinal is
+  `gl_VertexID` rather than an element-texture texel, so it needs its own pair
+  (MESH_NODE_SPEC.md §6.5).
 - **Single parity harness** (`tsl-shader-parity.spec.ts`) renders the same
   scene through both backends and pixel-compares for every geometry.
 
@@ -106,10 +128,12 @@ delegate cross-cutting concerns to `_shared/`, and add the parity test case.
 - `../README.md` — Rendering package overview; materials are components 2–4
   ("Point Material", "Line Material", "GSplat Material") of the larger pipeline
 - `../material-manager.ts` — `getPointMaterial` / `getLineMaterial` /
-  `getGSplatMaterial` dispatch on `caps.apiSurface` and broadcast camera
-  updates to every registered material via the `CameraAwareMaterial` interface
-- `../node-factory/` — `create-{points,lines,gsplats}-node.ts` are the callers
-  that pair these materials with their `InstancedBufferGeometry` siblings
+  `getGSplatMaterial` / `getMeshMaterial` dispatch on `caps.apiSurface`, and the
+  first three broadcast camera updates via the `CameraAwareMaterial` interface
+- `../node-factory/` — `create-{points,lines,gsplats}-node.ts` pair these
+  materials with their `InstancedBufferGeometry` siblings;
+  `create-mesh-node.ts` pairs the mesh material with a plain indexed
+  `BufferGeometry` and owns the shading-variant decision
 - `../picking/` — Picking subsystem mirrors this layout one-for-one
 - `../blending-state.ts` — `getCompleteBlendingState` /
   `applyBlendingStateToMaterial`, the single source of truth for THREE blending

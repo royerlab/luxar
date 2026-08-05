@@ -565,3 +565,82 @@ describe('process -> commit: the vertex attribute set is frozen after the first 
     expect(mesh.geometry.index).not.toBeNull();
   });
 });
+
+describe('process -> commit: the shading variant follows the epoch (§3.4)', () => {
+  const loader = {} as MeshDataLoader;
+
+  /** A smooth-shaded, normal-bearing mesh — the only configuration that reads normals. */
+  const SMOOTH: MeshMetadata = {
+    ...ATTRS,
+    shading: 'smooth',
+    has_normals: true,
+    normal_dims: [0, 1, 2],
+  };
+
+  function withNormals(): LoadedMeshData {
+    return { ...loaded(), normals: new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1]) };
+  }
+
+  const isFlatVariant = (mesh: THREE.Mesh): boolean => {
+    const defines = (mesh.material as THREE.ShaderMaterial).defines ?? {};
+    return 'LUXAR_MESH_FLAT_NORMAL' in defines;
+  };
+
+  async function commitAt(root: THREE.Group, data: LoadedMeshData, view: MeshViewState) {
+    const staged = await processMeshData('/surface', data, view, {
+      normal_dims: SMOOTH.normal_dims,
+      double_sided: true,
+    });
+    commitMeshGeometry({ rootGroup: root, currentVersion: 1 }, staged);
+  }
+
+  it('flips smooth -> flat when displayDims leaves the authored frame, and back', async () => {
+    // The WIRING test. `applyMeshShading` and `storedNormalsUsable` each have their own
+    // unit coverage, but the connection between them lives only in the commit — and
+    // deleting that one call broke NOTHING in the suite before this test existed. A
+    // mesh would then keep reading normals authored for other axes, silently shading
+    // against a tilted frame with no diagnostic anywhere.
+    const root = new THREE.Group();
+    const mesh = createEmptyMeshNode('/surface', SMOOTH, loader);
+    root.add(mesh);
+    const data = withNormals();
+
+    // displayDims == normal_dims: the stored normals are meaningful.
+    await commitAt(root, data, { ...VIEW, displayDims: [0, 1, 2] } as MeshViewState);
+    expect(isFlatVariant(mesh), 'smooth variant expected at the authored frame').toBe(false);
+
+    // A PERMUTATION of the same triple. Winding still calls this decidable, but a
+    // normal's components are positionally bound to normal_dims, so it must drop to
+    // the derivative fallback rather than shade against a tilted frame.
+    await commitAt(root, data, { ...VIEW, displayDims: [1, 0, 2] } as MeshViewState);
+    expect(isFlatVariant(mesh), 'permuted frame must fall back to derivatives').toBe(true);
+
+    // A DIFFERENT triple: likewise flat.
+    await commitAt(root, data, { ...VIEW, displayDims: [1, 2, 3] } as MeshViewState);
+    expect(isFlatVariant(mesh)).toBe(true);
+
+    // Back to the authored frame: the variant must recover, not latch.
+    await commitAt(root, data, { ...VIEW, displayDims: [0, 1, 2] } as MeshViewState);
+    expect(isFlatVariant(mesh), 'the variant must not latch flat').toBe(false);
+  });
+
+  it('costs no recompile across a pure slice move', async () => {
+    // The commit calls this on every epoch, and a variant flip recompiles the
+    // program, so an unguarded write would pay that on every frame of a scrub.
+    const root = new THREE.Group();
+    const mesh = createEmptyMeshNode('/surface', SMOOTH, loader);
+    root.add(mesh);
+    const data = withNormals();
+
+    await commitAt(root, data, { ...VIEW, displayDims: [0, 1, 2] } as MeshViewState);
+    const version = (mesh.material as THREE.Material).version;
+    for (const w of [1, 2, 3]) {
+      await commitAt(root, data, {
+        ...VIEW,
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, w],
+      } as MeshViewState);
+    }
+    expect((mesh.material as THREE.Material).version).toBe(version);
+  });
+});

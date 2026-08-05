@@ -17,6 +17,7 @@ import {
   type PointMaterialProperties,
 } from '../../../rendering/material-manager';
 import { PointMaterial } from '../../../rendering/materials/point/material-glsl';
+import { MeshMaterial } from '../../../rendering/materials/mesh/material-glsl';
 import type { RendererCapabilities } from '../../../rendering/renderer-capabilities';
 import * as THREE from 'three';
 
@@ -325,6 +326,77 @@ describe('MaterialManager', () => {
   // =========================================================================
   // GLOBAL UPDATES
   // =========================================================================
+
+  describe('getMeshMaterial — tracked for disposal, never camera-broadcast', () => {
+    const meshProps = {
+      blendingMode: 'opaque' as const,
+      opacity: 1.0,
+      gamma: 1.0,
+      intensity: 1.0,
+      offset: 0.0,
+    };
+
+    it('counts in the stats but receives no camera update', () => {
+      // A mesh draws real geometry, so it has no screen-space extent to recompute.
+      // It must still be COUNTED (a leak in mesh materials has to be as visible as
+      // one in the other three) while staying out of the per-frame broadcast.
+      const mesh = manager.getMeshMaterial(meshProps);
+      expect(manager.getCacheStats().totalRegistered).toBe(1);
+      expect(
+        (mesh as unknown as { updateCameraParams?: unknown }).updateCameraParams
+      ).toBeUndefined();
+      // The broadcast must not throw on a registry that contains a mesh material.
+      expect(() => manager.updateCameraParams(1.0, new THREE.Vector2(800, 600))).not.toThrow();
+    });
+
+    it('is disposed by manager.dispose() — the set is in the teardown union', () => {
+      // Mesh materials live ONLY in `staticMaterials`, so omitting that set from the
+      // dispose union would leak their GPU programs at teardown with nothing to
+      // notice it.
+      const mesh = manager.getMeshMaterial(meshProps);
+      manager.dispose();
+      expect(mesh.dispose).toHaveBeenCalled();
+      expect(manager.getCacheStats().totalRegistered).toBe(0);
+    });
+  });
+
+  describe('register — dispatches on camera-awareness rather than demanding it', () => {
+    it('tracks a NON-camera-aware material without calling updateCameraParams', () => {
+      // The layers panel clones a leaf material on first interaction and registers the
+      // clone. A mesh clone has no `updateCameraParams`, so a `register` that assumed
+      // the method would throw at exactly that moment — the panel's first click on a
+      // mesh layer. Dispatching inside the manager keeps one entry point that cannot
+      // be called wrongly.
+      const meshClone = new MeshMaterial({ opacity: 0.5 });
+      expect(() => manager.register(meshClone)).not.toThrow();
+      const stats = manager.getCacheStats();
+      expect(stats.ownedMaterials, 'a non-camera-aware entry still counts as owned').toBe(1);
+      expect(stats.totalRegistered).toBe(1);
+      // And it survives the broadcast, which must skip it.
+      expect(() => manager.updateCameraParams(1.0, new THREE.Vector2(800, 600))).not.toThrow();
+    });
+
+    it('still camera-updates a camera-aware registration immediately', () => {
+      // Asserted through the OBSERVABLE effect rather than a call spy: a clone
+      // registered mid-session must not wait for the next broadcast to learn the
+      // current viewport, so the uniform itself has to carry the manager's state.
+      manager.updateCameraParams(1.0, new THREE.Vector2(1234, 567));
+      const clone = new PointMaterial({ opacity: 0.5 });
+      expect((clone.uniforms.uResolution.value as THREE.Vector2).x).not.toBe(1234);
+      manager.register(clone);
+      expect((clone.uniforms.uResolution.value as THREE.Vector2).x).toBe(1234);
+      expect((clone.uniforms.uResolution.value as THREE.Vector2).y).toBe(567);
+    });
+
+    it('unregisters a non-camera-aware material too — register/unregister must pair', () => {
+      const meshClone = new MeshMaterial({ opacity: 0.5 });
+      manager.register(meshClone);
+      manager.unregister(meshClone);
+      const stats = manager.getCacheStats();
+      expect(stats.ownedMaterials).toBe(0);
+      expect(stats.totalRegistered).toBe(0);
+    });
+  });
 
   describe('Global Updates', () => {
     it('should update camera params for all materials', () => {
