@@ -124,6 +124,7 @@ def build_scene(scene_key: str = "hornedlizard") -> Path:
 
 
 def main() -> None:
+    """Build (or serve-only) the Scaniverse SPZ horned-lizard scene."""
     aprint("=" * 70)
     aprint("GSplats Interop Demo: Scaniverse SPZ captures (Niantic)")
     aprint("=" * 70)

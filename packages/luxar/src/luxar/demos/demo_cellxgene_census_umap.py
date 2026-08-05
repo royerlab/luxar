@@ -117,12 +117,14 @@ def _colors_for(field: str, codes: np.ndarray, labels: list[str]) -> np.ndarray:
 
 
 def normalize_coords(coords: np.ndarray, span: float = NORM_SPAN) -> np.ndarray:
+    """Center the cloud and rescale it to fill a cube of side ``span``."""
     c = coords - coords.mean(axis=0)
     c /= np.abs(c).max() + 1e-9
     return (c * (span / 2)).astype(np.float32)
 
 
 def load_cache(path: Path):
+    """Load the coords cache: returns (coords, per-coloring int codes, labels)."""
     # Gate the shipped LFS npz so an unpulled pointer gives the "git lfs pull"
     # message instead of a cryptic np.load zip error.
     z = np.load(require_local_data(path), allow_pickle=False)
@@ -141,6 +143,12 @@ def build_scene(
     levels: int = 4,
     seed: int = 0,
 ) -> int:
+    """Build the substitutive-LOD Points scene from the coords cache.
+
+    Optionally subsamples to ``max_cells``, stacks the three colorings along
+    the categorical ``coloring`` dimension, and returns the per-coloring cell
+    count.
+    """
     coords, codes, labels = load_cache(cache)
     n = len(coords)
     if max_cells and n > max_cells:
@@ -268,6 +276,7 @@ def build_scene(
 
 
 def main() -> None:
+    """Resolve the cache, build the scene, and optionally launch the viewer."""
     flags = parse_demo_flags()
     cache = Path(os.environ.get("CENSUS_UMAP_CACHE", DEFAULT_CACHE))
     if not cache.exists():

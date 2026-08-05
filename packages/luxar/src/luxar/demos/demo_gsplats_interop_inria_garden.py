@@ -163,6 +163,7 @@ def build_scene() -> Path:
 
 
 def main() -> None:
+    """Build (or serve-only) the range-extracted INRIA garden scene."""
     aprint("=" * 70)
     aprint("GSplats Interop Demo: full-quality INRIA garden (range-extracted PLY)")
     aprint("=" * 70)
