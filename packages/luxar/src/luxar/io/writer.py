@@ -238,8 +238,8 @@ class ZarrWriterProtocol(Protocol):
 
         Each level is a dict with ``positions`` plus optional
         ``colors`` / ``radii`` / ``sharpness`` / ``scalars`` / ``labels``.
-        See :func:`luxar.core.lod_points.make_additive_lod_points` for
-        the level-construction helper that produces the input.
+        See :func:`luxar.core.group.lod.points.make_additive_lod_points`
+        for the level-construction helper that produces the input.
         """
         ...
 
@@ -255,8 +255,9 @@ class ZarrWriterProtocol(Protocol):
 
         Each level is a dict with ``vertices`` + ``widths`` + ``segments``
         plus optional ``colors`` / ``sharpness`` / ``scalars`` / ``labels``
-        and ``n_polylines``. See
-        :func:`luxar.core.lod_lines.make_additive_lod_lines` for the
+        and ``n_polylines`` (summed into the returned metadata only — the
+        parent group does not stamp it). See
+        :func:`luxar.core.group.lod.lines.make_additive_lod_lines` for the
         helper that produces the input.
         """
         ...

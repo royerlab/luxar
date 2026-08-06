@@ -469,6 +469,12 @@ finest** order. The convenience writer (`additive_lod=` kwarg on
 `add_points` / `add_lines` / `add_gsplats_from_data`) emits the
 subgroups in this convention.
 
+**Ladder provenance:** the ordering method that built the ladder is not a
+top-level attr — it rides in the quality-stamp dicts, as `lod_method` inside
+the parent's `level_stats` and inside each subgroup's `lod_stats` (alongside
+`lod_level` / `lod_n_lods` / `lod_breakpoints_kind`). Readers treat absence as
+"unstamped".
+
 **Per-type unit:**
 
 - **Points** — per-element. Each subgroup contains a subset of
