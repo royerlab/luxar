@@ -9,6 +9,7 @@
 import { sceneDimsManager } from '../scene/scene-dims-manager';
 import { log, Modules } from '../utils/log';
 import { getViewerContainer } from '../utils/viewer-container';
+import { escapeHtml } from '../utils/escape-html';
 import { MAX_OVERLAY_HTML_CHARS, type OverlayConfig } from '../data/loaders';
 
 /** Font preset mappings to CSS font-family stacks */
@@ -148,16 +149,6 @@ const URL_NOISE_RE = /[\u0000-\u0020]/g;
  */
 function normalizeUrlForScheme(value: string): string {
   return value.replace(URL_NOISE_RE, '').toLowerCase();
-}
-
-/** Escape HTML entities to prevent XSS in template substitution. */
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
 }
 
 /** Hover overlay tracking entry. */

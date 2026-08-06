@@ -420,10 +420,9 @@ Advanced real-time monitoring system for spatial index-based data loading with p
 **Features:**
 
 - **Three-State UI**: Cycles through hidden → mini → expanded views
-- **Event-Driven Monitoring**: Tracks queries, loads, cache hits/misses, evictions
-- **Cache Analytics**: Detailed cache memory usage and hit rate statistics
-- **Performance Timeline**: Real-time graphing of loading performance
-- **Smart Recommendations**: AI-powered suggestions for optimization
+- **Event-Driven Monitoring**: Tracks queries, loads, and errors emitted by the spatial-index loaders
+- **Cache Analytics**: Detailed per-tier cache memory usage and hit-rate statistics (from the cache-stats provider, not monitor events)
+- **Smart Recommendations**: LoadingAdvisor suggestions for optimization
 - **Multi-Loader Support**: Monitors multiple data loaders simultaneously
 
 **UI States:**
@@ -442,7 +441,7 @@ DataMonitorManager.getInstance().createMonitor(id, container).connectLoader(path
 
 // Monitor receives events from loaders
 loader.addEventListener((event: MonitorEvent) => {
-  // Event types: query, load, cache-hit, cache-miss, evict, error
+  // Event types: query, load, error
 });
 ```
 
@@ -452,7 +451,6 @@ loader.addEventListener((event: MonitorEvent) => {
    - Global statistics (total points, memory, loaders)
    - Active loader list with real-time status
    - Key performance indicators
-   - Recent events stream
 
 **Design language ("quiet instrument")**: every metric value renders in
 the mono stack with tabular numerals (stable live ticking); labels share
@@ -472,19 +470,20 @@ See the "Refinement layer" section at the end of
      full metric cards on header click — keeps the tab scrollbar-free
      with 4 tiers
    - Cache memory usage with visual gauge
-   - Hit rate statistics (global and recent)
-   - Cached ranges count and average size
-   - Cache performance metrics (hits/sec, misses/sec)
-   - Memory breakdown by data type
+   - Per-tier hit-rate statistics (S-cache / L0 / L1 / L2) plus the effective demand hit-rate
+   - Per-tier eviction and I/O counts
 
-3. **Performance Tab**
-   - Real-time performance timeline graph
-   - Query latency tracking
-   - Load time analysis
-   - Bandwidth utilization
-   - Trend history
+3. **Memory Tab**
+   - GPU buffer-pool stats (allocations / reuses / evictions, per data type)
+   - Element-accumulator capacity and growth stats (rendered by `renderMemoryContent`)
 
-4. **Insights Tab**
+4. **Performance Tab**
+   - Collapsible hierarchical timing tree (`data-loading-monitor/timing-panel.ts`):
+     per-step and per-geometry-type view-update timings, rows over the frame
+     budget highlighted
+   - A "Profiler not connected" empty state until a profiler is attached
+
+5. **Insights Tab**
    - Smart recommendations from LoadingAdvisor
    - Severity-based alerts (error, warning, info)
    - Actionable optimization suggestions
@@ -494,7 +493,7 @@ See the "Refinement layer" section at the end of
 
 - **Event Cleanup**: Automatically removes events older than 5 minutes
 - **Rate Caching**: Calculations cached for 1 second to reduce CPU usage
-- **Timeline Batching**: Uses requestAnimationFrame with 10 FPS throttling
+- **Polling Updates**: A `PollingLoop` that re-schedules itself on a fixed interval via chained `setTimeout` (no `requestAnimationFrame`) drives periodic UI refreshes while the monitor is visible
 - **Efficient Updates**: Only re-renders changed UI sections
 
 **Integration with Scene Loading:**
@@ -513,10 +512,10 @@ const loader = new SceneLoader(config);
 
 - `query`: Spatial index query with cell/point counts
 - `load`: Data chunk loaded with memory usage
-- `cache-hit`: Data served from cache
-- `cache-miss`: Cache miss requiring network load
-- `evict`: Cache eviction due to memory pressure
 - `error`: Loading errors with details
+
+Cache hit/miss/eviction figures are read from the cache-stats provider
+snapshot (per tier), not emitted as monitor events.
 
 **Usage Example:**
 
@@ -541,16 +540,11 @@ remaining convenience accessor; it is kept for integration tests.
 ```typescript
 interface MonitorConfig {
   position: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
-  theme: 'dark' | 'light' | 'auto';
-  defaultView: 'compact' | 'detailed' | 'debug';
   updateInterval: number; // ms between UI updates
   maxEvents: number; // Maximum events to keep in history
-  showSpatialGrid: boolean; // Show spatial index visualization
-  showTimeline: boolean; // Show performance timeline
   showRecommendations: boolean; // Show LoadingAdvisor tips
   autoExpand: boolean; // Auto-expand on warnings
   enableProfiling: boolean; // Enable detailed profiling
-  sampleRate: number; // Sample 1 in N events for profiling
 }
 ```
 
@@ -558,7 +552,7 @@ interface MonitorConfig {
 
 - **Zero Configuration**: Automatic integration with scene loading
 - **Real-time Insights**: Immediate visibility into loading performance
-- **Smart Recommendations**: AI-powered optimization suggestions
+- **Smart Recommendations**: LoadingAdvisor suggestions for optimization
 - **Performance Optimized**: Minimal overhead with intelligent batching
 - **Developer Friendly**: Clean API and comprehensive documentation
 
@@ -694,7 +688,7 @@ Luxar viewer now features a **modular theming system** with runtime theme switch
 **Programmatically**:
 
 ```typescript
-import { ThemeManager } from '../themes';
+import { ThemeManager } from '../themes/theme-manager';
 
 // Switch themes
 ThemeManager.getInstance().setTheme('dark');
@@ -1206,13 +1200,15 @@ of the same name at this folder's root (plus the folder-module
   value/fraction/wrap math helpers for `dimension-sliders.ts`.
 - [`gui/`](./gui/README.md) — Custom GUI library implementation
   (`GUI`, `Folder`, `Controller`, per-type controllers, DOM plumbing,
-  formatting) re-exported by `gui.ts`.
+  formatting); `gui.ts` re-exports only the default `GUI` and `Controller`,
+  with the rest imported directly from leaf modules under `ui/gui/`.
 - [`help-overlay/`](./help-overlay/README.md) — Shared `focus-trap.ts`
   (Tab/Shift+Tab focus cycling) used by `help-overlay.ts` and
   `error-overlay.ts`.
 - [`layers/`](./layers/README.md) — Layers panel implementation
-  (`LayersPanel`, `LayerStateManager`, range/labeled sliders) re-exported
-  by `layers.ts`.
+  (`LayersPanel`, `LayerStateManager`, range/labeled sliders); `layers.ts`
+  re-exports only `LayersPanel`, with the rest imported directly from leaf
+  modules under `ui/layers/`.
 - [`overlay-widgets/`](./overlay-widgets/README.md) — Shared
   `UIComponent` base class for screen-space overlay widgets (scale bar,
   colormap legend).

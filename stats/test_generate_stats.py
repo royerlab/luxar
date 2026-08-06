@@ -1,6 +1,7 @@
 """Unit tests for stats/generate_stats.py measurement-completeness guard.
 
-Run explicitly (not part of the default suite):
+Collected by the default suite (``stats`` is on ``testpaths``); run in isolation
+with:
     hatch run pytest stats/test_generate_stats.py -q
 """
 
@@ -373,7 +374,6 @@ def test_weighted_coverage_drops_single_zero_language() -> None:
 # ---------------------------------------------------------------------------
 # get_git_statistics (HEAD-scoped, no checkout-transient fields — issue #764)
 # ---------------------------------------------------------------------------
-
 def _git_env(home: Path) -> dict[str, str]:
     """A clean, deterministic git env so commits work headless.
 

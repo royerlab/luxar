@@ -6,9 +6,8 @@ folder is part of the package's public API — external callers import
 parent folder. Everything here is reachable only through that façade.
 
 The orchestrator does not own logic — it owns wiring. The actual work is
-split into five thematic subfolders plus two top-level files: a
-context-aware key routing core (`context-manager.ts`) and a small
-test-only validation helper (`keyboard-validation.ts`). When
+split into five thematic subfolders plus one top-level file: a
+context-aware key routing core (`context-manager.ts`). When
 `InputHandler.init()` runs, it pulls dependencies from each subfolder and
 hands them a narrow `*Ctx` object — never `this` — so the subfolders stay
 unit-testable in isolation.
@@ -17,8 +16,7 @@ unit-testable in isolation.
 
 ```
 input-handler/
-├── context-manager.ts          # InputContextManager + InputContext + KeyBinding (the routing core)
-└── keyboard-validation.ts      # isNavigationKey + shouldBlockShortcut (test-only public surface)
+└── context-manager.ts          # InputContextManager + InputContext + KeyBinding (the routing core)
 ```
 
 - `context-manager.ts` — `InputContextManager` class plus the
@@ -28,10 +26,6 @@ input-handler/
   recursion cap. This is the routing table the orchestrator pushes
   contexts onto and the per-context bindings are registered into.
   Pure-function helpers live one level down in `context-manager/`.
-- `keyboard-validation.ts` — `isNavigationKey` and `shouldBlockShortcut`.
-  Pure event-shape helpers retained as a documented surface and exercised
-  only by `keyboard-validation.test.ts`; the live orchestrator uses the
-  context manager's own typing-gate path.
 
 ## Subpackages
 
@@ -55,16 +49,13 @@ input-handler/
   `FLY_CONTROLS`), and `animation-shortcuts.ts` (K / Home / End /
   Shift+↑ / Shift+↓ on `NAVIGATION`).
 - **`window-events/`** — `WindowEventHandler` class (`resize` + `wheel`
-  - `fullscreenchange`), `toggleFullscreen` body, and the documented
-    `calculateFovChange` helper that pins the `[fovMin, fovMax]` clamp.
+  - `fullscreenchange`) and the `toggleFullscreen` body.
 - **`dimension-navigation/`** — `computeDimensionStep` /
   `resolveSelectedDimension` for the `[`/`]` and digit bindings, plus
   the `calculateStepSize` / `calculateNextPosition` math, dim-index
-  helpers (`getNonDisplayedDimensions`, `mapKeyToDimension`),
-  human-readable formatting (`formatDimensionValue`,
-  `generateNavigationHelp`), and the four lifecycle bodies
-  (`initDimensionSliders`, `initAnimationManager`, `clearDimensionUI`,
-  `updateAllNDNodes`).
+  helpers (`getNonDisplayedDimensions`, `mapKeyToDimension`), and the
+  four lifecycle bodies (`initDimensionSliders`, `initAnimationManager`,
+  `clearDimensionUI`, `updateAllNDNodes`).
 - **`commands/`** — command bodies the orchestrator delegates to:
   `PanelCoordinator` (Escape priority flow + recording short-circuit +
   fullscreen-defer rule), `exportViewerState` (Ctrl+Shift+S clipboard

@@ -44,31 +44,7 @@ use crate::common::{
 #[wasm_bindgen]
 pub fn mahalanobis_distance(diff: &[f32], packed_l: &[f32], ndim: usize) -> f32 {
     validate_ndim(ndim, "mahalanobis_distance");
-
-    const EPSILON: f32 = 1e-10;
-
-    // Forward substitution: solve L · y = diff
-    // Using a small fixed-size array for common cases (up to 16 dims)
-    let mut y = [0.0f32; MAX_SUPPORTED_DIMS];
-
-    // Direct division (not reciprocal-multiply) keeps forward-substitution
-    // bit-consistent with the TS reference; rounding from `val * (1/diag)`
-    // would compound per dimension and silently drift at high ndim.
-    for i in 0..ndim {
-        let mut val = diff[i];
-        for j in 0..i {
-            val -= packed_l[packed_index(i, j)] * y[j];
-        }
-        let diag = packed_l[packed_index(i, i)];
-        y[i] = if diag > EPSILON { val / diag } else { 0.0 };
-    }
-
-    // OPTIMIZATION: Loop fusion - compute sum of squares directly
-    let mut sum_sq = 0.0f32;
-    for i in 0..ndim {
-        sum_sq += y[i] * y[i];
-    }
-    sum_sq.sqrt()
+    mahalanobis_distance_internal(diff, packed_l, ndim)
 }
 
 /// Compute the Cholesky factor of the marginal covariance for a subset of dimensions.

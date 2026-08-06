@@ -234,7 +234,7 @@ The geometry writers are NOT unit-tested in isolation (they have no standalone A
 - **test_compiler_integration.py** / **test_compiler_improvements.py** / **test_compiler_colormap.py** / **test_compiler_nd_bounds.py** — End-to-end scene creation, colormap/LUT handling, and nD bounds
 - **test_ordering_points.py** / **test_ordering_lines.py** / **test_ordering_gsplats.py** — Spatial ordering integration
 - **tests/_compiler/test_lines_authoring_lint.py** — indexed-layout boundaries and the warn-only exploded-chain heuristic (including graph false positives and partition warn-once behavior)
-- **gsplats/io/tests/test_save_load.py** and **gsplats/tests/test_gsplat_data_io.py** — GSplat leaf/ladder save-load round trips
+- **gsplats/io/tests/test_save_load.py** — GSplat leaf/ladder save-load round trips
 
 ## See Also
 

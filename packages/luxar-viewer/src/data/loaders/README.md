@@ -1,6 +1,6 @@
 # Unified Loader Architecture
 
-**Status**: All geometry loaders use RangeLoader + TransferableAccumulator.
+**Status**: All geometry loaders use RangeLoader plus the per-type accumulators under `data/accumulators/`.
 
 ## Overview
 
@@ -268,37 +268,6 @@ Lines and GSplats loaders always output Float32Array for colors. While Python's
 `LoadedLinesData.colors` and `LoadedGSplatsData.colors` only allow Float32Array.
 This is a design decision - updating would require type changes across the codebase.
 
-### TransferableAccumulator
-
-Enable zero-allocation + CPU offload:
-
-```typescript
-import { TransferableAccumulator, createPointsAccumulator, type PointsBuffers } from './loaders';
-
-// Create accumulator once (owns reusable buffers)
-const accumulator = createPointsAccumulator(10000);
-
-// For each update:
-// 1. Detach buffers for transfer to worker
-const buffers = accumulator.detach();
-const transferables = accumulator.getTransferables(buffers);
-
-// 2. Transfer to worker (zero-copy via Comlink)
-const result = await worker.projectPointsTo3D(
-  Comlink.transfer({ params, outputBuffers: buffers }, transferables)
-);
-
-// 3. Adopt returned buffers (zero-copy)
-accumulator.adopt(result.outputBuffers);
-```
-
-**Key Benefits**:
-
-- Zero-allocation in steady state (after initial warmup)
-- Zero-copy buffer transfer via `Comlink.transfer()`
-- Enables BOTH accumulator pattern AND worker CPU offload
-- Buffers cycle between main thread and worker without copying
-
 ### Other shared helpers
 
 Beyond the three top-level abstractions above, this folder also holds the
@@ -353,7 +322,7 @@ narrowly-scoped helpers each spatial-index loader composes:
   success and error paths so the active-query map never leaks), plus
   `makeInitialLoaderMetrics(type, path)` (the zeroed initial `LoaderMetrics`
   record every facade starts from), and
-  `buildSpatialIndexMetrics(chunkCount, chunkSize, queries, lastQueryCells, elementsLoaded)`
+  `buildSpatialIndexMetrics(chunkCount, queries, totalQueryCells, elementsLoaded)`
   (the chunk-index
   telemetry snapshot all three facades attach as `metrics.spatialIndex` for
   the monitor advisor). Pure helpers, unit-tested without a zarr
@@ -379,10 +348,11 @@ narrowly-scoped helpers each spatial-index loader composes:
   times across the three loaders.
 - **`aggregate-loader-metrics.ts`** — `aggregateLoaderMetrics(inner, path)`:
   pure roll-up of N per-LOD `LoaderMetrics` into one snapshot for a progressive
-  node. Counters are summed; `memoryLimit` is the max (a shared cap, not
-  additive); `avgQueryTime` / `avgLoadTime` are query/load-weighted means;
-  optional `spatialIndex` cell counts are summed with query-weighted rate means
-  (descriptive grid arrays from the first carrier); `optimization` is taken from
+  node. Counters are summed; `avgQueryTime` / `avgLoadTime` are query/load-weighted
+  means; optional `spatialIndex` cell counts (`occupiedCells` / `totalCells`) are
+  summed, its per-query rates are query-weighted means over the LODs that
+  actually report a `spatialIndex`, and `avgElementsPerCell` is cell-weighted
+  (a per-cell density); `optimization` is taken from
   the first reporter to avoid double-counting app-global singletons.
 - **`progressive-monitor-adapter.ts`** — `ProgressiveMonitorAdapter`: makes a
   progressive node (N inner per-LOD loaders) look like a SINGLE loader to the
@@ -404,7 +374,6 @@ src/data/loaders/
 ├── abort-error.ts                # isAbortError — realm-proof "superseded, not failed" classifier
 ├── chunk-bounds-loader.ts        # Shared chunk_bounds zarr probe (Points/Lines/GSplats)
 ├── color-loader.ts               # Shared color-range loader with native-dtype preservation
-├── transferable-accumulator.ts   # Zero-allocation + worker offload buffer pattern
 ├── loader-metrics.ts             # Pure helpers for load/query metric bookkeeping
 ├── spatial-facade.ts             # Shared loadX/updateView/metrics facade orchestration
 ├── monitor-events.ts             # LoaderEventEmitter — listener fan-out with error isolation
@@ -451,7 +420,6 @@ pnpm test src/tests/unit/data/loaders/
 
 # Run specific tests
 pnpm test src/tests/unit/data/loaders/spatial-query/spatial-query-builder.test.ts
-pnpm test src/tests/unit/data/loaders/transferable-accumulator.test.ts
 ```
 
 ### Test coverage
@@ -465,13 +433,6 @@ pnpm test src/tests/unit/data/loaders/transferable-accumulator.test.ts
   - `SpatialQueryBuilder` geometry-aware path (delegates to `computeTolerance`)
   - `SpatialQueryBuilder` pre-computed-tolerance path (used by points)
   - `SpatialQueryBuilder` extend-to-all short-circuit and `chunkSize` fallback
-
-- **transferable-accumulator.test.ts**
-  - Basic operations, capacity management
-  - Detach/adopt cycle for worker transfer
-  - Optional buffer enabling
-  - Points, Lines, GSplats factory functions
-  - Memory tracking statistics
 
 - **tolerance-computer.test.ts**
   - `computeTolerance` for points / lines / gsplats with displayed/hidden,
@@ -494,8 +455,9 @@ pnpm test src/tests/unit/data/loaders/transferable-accumulator.test.ts
 - **once-init.test.ts** — concurrent callers share in-flight promise;
   rejected init clears the cache so the next call retries.
 - **aggregate-loader-metrics.test.ts** — empty-array zeroed fallback,
-  counter summing, max-of `memoryLimit`, weighted-mean times, `spatialIndex`
-  roll-up, first-reporter `optimization`.
+  counter summing, query/load-weighted mean times (+ zero-when-no-queries/loads),
+  `spatialIndex` roll-up (summed cell counts, query-weighted per-query rates,
+  cell-weighted `avgElementsPerCell`), first-reporter `optimization`.
 - **progressive-monitor-adapter.test.ts** — event/active-query re-pathing to
   the parent node, `addEventListener` idempotency, `getMetrics` aggregation.
 - **concat-helpers.test.ts** (under `progressive/`) — required/optional

@@ -105,7 +105,6 @@ data/
 │   ├── chunk-bounds-loader.ts     # Shared chunk_bounds zarr probe
 │   ├── color-loader.ts            # Shared color-range loader (points, lines, gsplats)
 │   ├── extend-to-all-preflight.ts # Resolves extend_to_all dim names → indices
-│   ├── transferable-accumulator.ts # Zero-allocation buffer management
 │   ├── spatial-facade.ts          # Shared loadX/updateView facade orchestration (incl. S-cache restore/store)
 │   ├── loader-metrics.ts          # Shared latency / event metrics (per-geometry)
 │   ├── aggregate-loader-metrics.ts # Roll up per-loader metrics for the monitor
@@ -453,10 +452,13 @@ Two consequences follow, and both are load-bearing:
   stay put. That is why a mesh pick id is a VERTEX ordinal: a face ordinal would be
   renumbered on every slice change, while a vertex ordinal is invariant.
 
-Mesh also needs its **own tolerance arm** (`computeHiddenDimTolerance`, §5.2.1). Lines'
-spatial `0` works only because segment clipping interpolates through the slab; with no
-interpolation and no per-element extent, `0` would reduce membership to float equality
-and the node would render nothing.
+Mesh also needs its **own tolerance arm** (`computeMeshHiddenTolerance`, §5.2.1), and
+only for a CONTINUOUS hidden dimension: a discrete/categorical one takes the shared
+`discreteDimMembershipTolerance` like every other type. On a continuous axis, Lines'
+spatial `0` works because segment clipping interpolates through the slab; with no
+interpolation and no per-element extent, `0` reduces membership to exact float equality —
+a measure-zero condition, so effectively nothing renders. Mesh therefore takes
+`step x meshSlabTolerance` (one cell by default) instead.
 
 ### nD Slicing Algorithm
 
