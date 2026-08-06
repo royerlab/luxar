@@ -360,6 +360,15 @@ python = ["3.10", "3.11", "3.12"]
 [tool.hatch.envs.test.scripts]
 # `run` = full suite (local gate); `cov` deselects `slow` to match CI (fast,
 # coverage-checked). Use `run` locally for the complete pre-push run.
+#
+# These stay LIBRARY-ONLY on purpose — they do not pick up the `examples/tests`
+# and `stats` paths the default env's `test`/`test-cov` scripts run (nor
+# `testpaths`, which the explicit args below override). This env has
+# `features = ["test"]`, and `stats/generate_stats.py` needs the `tomli`
+# backport on 3.10, which lives in the `dev` extra; adding `stats` here would
+# break the 3.10 leg on import. The default env (`features = ["dev"]`) has it,
+# which is why `hatch run test-cov` — what CI runs on every matrix leg — can
+# collect it.
 run = "pytest {args:packages/luxar/src/luxar}"
 cov = "pytest -m 'not slow' --cov=luxar --cov-report=term-missing {args:packages/luxar/src/luxar}"
 
