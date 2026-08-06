@@ -87,7 +87,9 @@ convenience kwargs, but the semantics differ per geometry.
 ### Points (`points.py`)
 
 `resolve_additive_axis_points(spec)` normalizes the `additive_lod=` kwarg into a
-dict (`method` / `n_lods` / `counts` / `seed` / `salience_kind`) or `None`.
+dict (`method` / `n_lods` / `counts` / `seed` / `salience_kind`) or `None` — a
+thin wrapper over the shared `group.resolve_additive_axis(spec, "Points")` (one
+body, shared with Lines, so the two can't drift).
 The compiler (`_write_points_multi_lod`) then calls
 `make_additive_lod_points(...)`, which returns per-LOD-level index arrays.
 
@@ -184,7 +186,8 @@ during partial loads.
 - `salience_kind='energy'` uses the tube-volume score
   `mean_luminance × Σ(seg_length × width²)`.
 - `resolve_additive_axis_lines(spec)` is the `add_lines(..., additive_lod=...)`
-  resolver.
+  resolver — a thin wrapper over the shared
+  `group.resolve_additive_axis(spec, "Lines")` (one body, shared with Points).
 
 #### Lines substitutive (lift to gsplats)
 

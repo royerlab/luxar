@@ -557,10 +557,10 @@ import type {
 
 Key exports:
 
-- **`MonitorEvent` / `MonitorEventType` / `MonitorEventListener`** -- the event stream emitted by loaders: `query`, `load`, `cache-hit`, `cache-miss`, `evict`, `error`, `prefetch`.
+- **`MonitorEvent` / `MonitorEventType` / `MonitorEventListener`** -- the event stream emitted by loaders: `query`, `load`, `error`.
 - **`LoaderType`** -- `'point-spatial-index' | 'lines-spatial-index' | 'gsplats-spatial-index'`.
 - **`LoaderMonitor`** -- the `addEventListener` / `removeEventListener` / `getMetrics` / `getActiveQueries` surface implemented by spatial-index loaders.
-- **`LoaderMetrics`** -- per-loader counters (queries, loads, evictions), throughput (elements/bytes loaded — geometry-neutral: points / vertices / splats), avg query/load times, memory usage, plus optional `spatialIndex` (`SpatialIndexMetrics`, the chunk-index telemetry all three facades attach) and `optimization` (`OptimizationMetrics`) breakdowns. `OptimizationMetrics` surfaces accumulator pooling, worker offload, WASM acceleration, and GPU buffer pool stats.
+- **`LoaderMetrics`** -- per-loader counters (queries, loads, errors), throughput (elements/bytes loaded — geometry-neutral: points / vertices / splats), avg query/load times, memory usage, plus optional `spatialIndex` (`SpatialIndexMetrics`, the chunk-index telemetry all three facades attach) and `optimization` (`OptimizationMetrics`) breakdowns. `OptimizationMetrics` surfaces accumulator pooling, worker offload, WASM acceleration, and GPU buffer pool stats.
 - **`QueryInfo`** -- shape of an in-flight or recent query (id, status, ranges, fromCache).
 - **`GlobalStats`** -- aggregate dashboard numbers across all loaders (totals for points/segments/splats, queries-per-second, `recommendations`; per-tier cache hit rates live in `CacheMetrics`, not here).
 - **`Recommendation`** -- `{ id, severity, category, title, message, ... }` performance recommendations surfaced in the monitor UI.
@@ -569,8 +569,7 @@ Key exports:
 - **`SceneGraphNode` / `SceneGraphNodeType` / `SceneGraphState`** -- simplified scene-graph view used by the monitor's tree panel (separate from the runtime `SceneNode` in `data/data-loader-types.ts`). `SceneGraphState`'s per-type tallies (`nodesByType` / `totalByType` / `visibleByType`) are `GeometryCounters`, so they extend with the vocabulary rather than needing a field per type per counter.
 - **`GeometryCounters`** -- `Record<GeometryTypeName, number>`, the monitor's per-geometry-type aggregation shape. The element _nouns_ (points / segments / splats) deliberately stay on `GlobalStats`' named fields: each is rendered with its own label and DOM id, so they are presentation, not aggregation.
 - **`MemoryMetrics`** + **`GPUPoolStats`** + **`GPUPoolTypeStats`** + **`AccumulatorStats`** -- cross-layer memory contracts used by the Memory tab. `GPUPoolStats.byType` is broken down per geometry kind (`points`, `lines`, `gsplats`).
-- **`MonitorConfig`** / **`MonitorUIState`** -- display configuration and runtime UI state (active tab, time range, expand state).
-- **`TimelinePoint`** / **`GridCellState`** -- `@internal` reserved extension shapes; no current consumer.
+- **`MonitorConfig`** / **`MonitorUIState`** -- display configuration and runtime UI state (active tab, visibility, expand state).
 
 Import these types directly from `../types/data-monitor-types`.
 
