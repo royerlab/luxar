@@ -49,6 +49,19 @@ def run_import(
     # `--overwrite` removes the output first, so an output that IS the input (or a
     # directory containing it) would delete the source — `rmtree` on the parent takes
     # the whole tree with it — and only then discover there is nothing left to read.
+    # A non-positive or non-finite scale is never what anyone meant, and each fails
+    # silently rather than loudly: 0 collapses every triangle to a point (the faces are
+    # already welded and reindexed by then, so nothing downstream drops them), a negative
+    # value mirrors the mesh without negating its stored normals or reversing its
+    # winding, and NaN/inf poisons the bounding box the centring step reads.
+    if not np.isfinite(scale) or scale <= 0.0:
+        raise ValueError(
+            f"--scale must be a finite positive number; got {scale}. Zero collapses "
+            "every triangle, and a negative scale mirrors the mesh while leaving its "
+            "normals and triangle winding untouched, so it would light and cull from "
+            "the wrong side."
+        )
+
     source = input_path.resolve()
     destination = output_path.resolve()
     if destination == source or destination in source.parents:

@@ -49,16 +49,27 @@ and an `import_mesh()` that does exists-check → sniff → validate → read �
   rows are kept.
 - **OBJ indices are 1-based, and may be negative** (end-relative). Reading them as
   0-based shifts the whole surface by one vertex and still produces a valid-looking mesh.
-- **OBJ `vn` applies only where a face references it.** A pool whose length happens to
-  match the vertex count but which no `f` corner names is dropped: matching counts are a
+- **OBJ `vn` is indexed per CORNER, independently of `v`.** Every mainstream exporter
+  deduplicates the pool, so it is generally neither the same length as the positions nor
+  parallel to them. Requiring parallel indexing would throw away the normals of
+  essentially every smooth-shaded export, so vertices are split per distinct
+  (position, normal) pair instead — and welding, which keys on both, merges back the
+  pairs that agree, leaving only genuine creases split.
+- **OBJ `vn` applies only where a face references it.** A pool no `f` corner names is
+  dropped even when its length matches the vertex count: matching counts are a
   coincidence, and honouring them shades the surface with normals the exporter never
-  bound to a vertex.
+  bound to a vertex. A *partial* binding is dropped whole for the same reason.
 - **A glTF buffer URI is data from the file.** It must resolve inside the `.gltf`'s own
   directory; an absolute path or a `../` climb is refused rather than read.
 - **glTF node transforms are correctness, not polish.** Skip the graph and every part of
   a multi-part model stacks at the origin.
 - **glTF `byteStride`.** Interleaved POSITION+NORMAL is common; ignoring the stride
   decodes garbage rather than raising.
+- **A glTF accessor is bounded by its own `bufferView`, and indices by their own
+  primitive.** Views sit back to back in one buffer and primitives are concatenated into
+  one vertex array, so both over-runs land on *valid-looking* neighbouring data — one
+  attribute read as another, or a triangle stitched to the next primitive's geometry —
+  and neither raises if the bound is only the whole buffer or the assembled mesh.
 
 ## Deliberate omissions
 

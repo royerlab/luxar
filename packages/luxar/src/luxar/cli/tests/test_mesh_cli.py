@@ -90,6 +90,26 @@ class TestMeshImport:
         v = LuxarScene.load(out).get_mesh("mesh").vertices
         assert float(v.max() - v.min()) == pytest.approx(10.0, rel=1e-4)
 
+    @pytest.mark.parametrize("bad", ["0", "-1", "nan"])
+    def test_a_non_positive_scale_is_refused(
+        self, bad: str, fixtures: dict[str, Path], tmp_path: Path
+    ) -> None:
+        """Each of these fails SILENTLY rather than loudly if it is let through.
+
+        Zero collapses every triangle to a point (welding and the degenerate-face drop
+        both ran before the scale, so nothing downstream notices); a negative value
+        mirrors the mesh while leaving its stored normals and its triangle winding
+        untouched, so it lights and culls from the wrong side; NaN poisons the bounding
+        box the centring step reads.
+        """
+        out = tmp_path / f"bad{bad}.luxar.zarr"
+        result = runner.invoke(
+            app, ["mesh", "import", str(fixtures["ply"]), str(out), "--scale", bad]
+        )
+        assert result.exit_code == 1, result.stdout
+        assert "--scale" in result.stdout
+        assert not out.exists(), "a rejected scale must not leave a partial scene"
+
     def test_node_name_is_configurable(
         self, fixtures: dict[str, Path], tmp_path: Path
     ) -> None:

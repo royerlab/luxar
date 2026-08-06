@@ -174,16 +174,17 @@ def _read_accessor(doc: dict, buffers: list[bytes], index: int) -> NDArray:
             f"{len(buffers)} — the file is malformed; re-export it."
         )
     blob = buffers[buffer_index]
-    base = int(view.get("byteOffset", 0)) + int(accessor.get("byteOffset", 0))
-    stride = int(view.get("byteStride", 0)) or dtype.itemsize * ncomp
+    view_offset = int(view.get("byteOffset", 0))
+    # `byteLength` is required by the spec; the fallback only keeps a file that omits it
+    # readable.
+    view_length = int(view.get("byteLength", len(blob) - view_offset))
+    if view_offset < 0 or view_length < 0 or view_offset + view_length > len(blob):
+        raise ValueError(
+            f"glTF bufferView spans bytes {view_offset}..{view_offset + view_length} of "
+            f"a {len(blob)}-byte buffer — the file is malformed; re-export it."
+        )
+    base = view_offset + int(accessor.get("byteOffset", 0))
 
-    if stride == dtype.itemsize * ncomp:
-        # Tightly packed — one frombuffer.
-        flat = np.frombuffer(blob, dtype=dtype, count=count * ncomp, offset=base)
-        return flat.reshape(count, ncomp)
-
-    # Interleaved: take a strided view over raw bytes, then reinterpret each row.
-    #
     # The span is `(count - 1) * stride + element`, NOT `count * stride`: the last
     # element occupies only its own width, and the padding that would follow it need not
     # exist. Asking for `count * stride` over-reads by `stride - element` bytes, which is
@@ -191,12 +192,60 @@ def _read_accessor(doc: dict, buffers: list[bytes], index: int) -> NDArray:
     # and raises only when the interleaved view sits at the very end of the buffer. That
     # is exactly the layout a tightly-packed exporter produces.
     element = dtype.itemsize * ncomp
+    stride = int(view.get("byteStride", 0)) or element
     span = (count - 1) * stride + element if count else 0
+
+    # Bound the read by the referenced bufferView, not merely by the whole buffer. Views
+    # sit back to back inside one buffer, so an accessor whose count runs past the end of
+    # its OWN view still lands inside the buffer and reads the NEXT view's bytes —
+    # importing index data as positions, or one attribute as another, with no error at
+    # all. Only an accessor overrunning the final view raises today.
+    if base < view_offset or base + span > view_offset + view_length:
+        raise ValueError(
+            f"glTF accessor {index} reads {span} bytes at buffer offset {base}, outside "
+            f"its bufferView (bytes {view_offset}..{view_offset + view_length}) — the "
+            "file is malformed; re-export it."
+        )
+
+    if stride == element:
+        # Tightly packed — one frombuffer.
+        flat = np.frombuffer(blob, dtype=dtype, count=count * ncomp, offset=base)
+        return flat.reshape(count, ncomp)
+
+    # Interleaved: take a strided view over raw bytes, then reinterpret each row.
     window = np.frombuffer(blob, dtype=np.uint8, offset=base, count=span)
     rows = np.lib.stride_tricks.as_strided(
         window, shape=(count, element), strides=(stride, 1)
     )
     return np.ascontiguousarray(rows).view(dtype).reshape(count, ncomp)
+
+
+def _read_index_accessor(
+    doc: dict, buffers: list[bytes], index: int, n_positions: int
+) -> NDArray:
+    """Decode a primitive's index accessor, validated against its OWN vertex count.
+
+    The bound has to be checked HERE, before the caller adds the running vertex offset
+    that concatenates primitives into one mesh. Afterwards an out-of-range local index
+    is indistinguishable from a valid reference into a LATER primitive's vertices, so
+    ``TriangleMesh``'s global maximum check passes and the mesh silently stitches
+    triangles to the wrong geometry.
+    """
+    arr = _read_accessor(doc, buffers, index)
+    if arr.shape[1] != 1 or arr.dtype.kind != "u":
+        raise ValueError(
+            "glTF primitive indices must be a SCALAR accessor of unsigned integers "
+            f"(componentType 5121/5123/5125); got {arr.shape[1]} component(s) of "
+            f"{arr.dtype} — the file is malformed; re-export it."
+        )
+    flat: NDArray = arr.reshape(-1)
+    if flat.size and int(flat.max()) >= n_positions:
+        raise ValueError(
+            f"glTF primitive index {int(flat.max())} is out of range for the "
+            f"{n_positions} vertices its POSITION accessor declares — the file is "
+            "malformed; re-export it."
+        )
+    return flat
 
 
 def _node_matrix(node: dict) -> NDArray[np.float64]:
@@ -294,7 +343,7 @@ def read_gltf(path: Path) -> dict[str, object]:
                     col = c.astype(np.uint8)
 
             if "indices" in prim:
-                idx = _read_accessor(doc, buffers, prim["indices"]).reshape(-1)
+                idx = _read_index_accessor(doc, buffers, prim["indices"], pos.shape[0])
             else:
                 # No index: the primitive IS a soup. Welding happens downstream.
                 idx = np.arange(pos.shape[0], dtype=np.uint32)

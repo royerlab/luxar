@@ -14,6 +14,7 @@ entirely.
 
 from __future__ import annotations
 
+import base64
 import json
 import struct
 from dataclasses import dataclass
@@ -259,6 +260,52 @@ def write_obj_unreferenced_normals(path: Path, gt: GroundTruth) -> None:
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def write_obj_indexed_normals(path: Path, gt: GroundTruth) -> None:
+    """OBJ whose ``vn`` pool is indexed INDEPENDENTLY of the positions.
+
+    What every mainstream exporter writes: the pool is deduplicated, so its order has
+    nothing to do with the vertex order. Here it is simply reversed, which keeps the two
+    counts equal — the trap, since a reader that only compares counts then reads every
+    normal onto the wrong vertex.
+    """
+    lines = []
+    for v in gt.vertices:
+        lines.append(f"v {v[0]:.6f} {v[1]:.6f} {v[2]:.6f}")
+    for n in reversed(list(gt.normals)):
+        lines.append(f"vn {n[0]:.6f} {n[1]:.6f} {n[2]:.6f}")
+    total = len(gt.vertices)
+    for tri in gt.faces:
+        corners = [f"{int(i) + 1}//{total - int(i)}" for i in tri]
+        lines.append(" ".join(["f"] + corners))
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def write_obj_partial_normals(path: Path, gt: GroundTruth) -> None:
+    """OBJ where only SOME corners name a normal — the rest are bare ``f a b c``."""
+    lines = []
+    for v in gt.vertices:
+        lines.append(f"v {v[0]:.6f} {v[1]:.6f} {v[2]:.6f}")
+    for n in gt.normals:
+        lines.append(f"vn {n[0]:.6f} {n[1]:.6f} {n[2]:.6f}")
+    for k, tri in enumerate(gt.faces):
+        if k == 0:
+            lines.append(" ".join(["f"] + [str(int(i) + 1) for i in tri]))
+        else:
+            lines.append(" ".join(["f"] + [f"{int(i) + 1}//{int(i) + 1}" for i in tri]))
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def write_obj_out_of_range_index(path: Path, gt: GroundTruth) -> None:
+    """OBJ whose last face references a vertex the file never declares."""
+    lines = []
+    for v in gt.vertices:
+        lines.append(f"v {v[0]:.6f} {v[1]:.6f} {v[2]:.6f}")
+    for tri in gt.faces[:-1]:
+        lines.append(" ".join(["f"] + [str(int(i) + 1) for i in tri]))
+    lines.append(f"f 1 2 {len(gt.vertices) + 5}")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 def write_obj_quad(path: Path) -> None:
     """OBJ with a QUAD face, to exercise fan triangulation."""
     path.write_text("v 0 0 0\nv 1 0 0\nv 1 1 0\nv 0 1 0\nf 1 2 3 4\n", encoding="utf-8")
@@ -475,6 +522,123 @@ def write_gltf_dangling_accessor(path: Path) -> None:
         "accessors": [],
     }
     path.write_text(json.dumps(doc), encoding="utf-8")
+
+
+def _write_gltf_data_uri(
+    path: Path,
+    blob: bytes,
+    views: list[dict],
+    accessors: list[dict],
+    primitives: list[dict],
+) -> None:
+    """Write a .gltf whose single buffer is an inline base64 data URI."""
+    payload = base64.b64encode(blob).decode("ascii")
+    doc = {
+        "asset": {"version": "2.0"},
+        "scene": 0,
+        "scenes": [{"nodes": [0]}],
+        "nodes": [{"mesh": 0}],
+        "meshes": [{"primitives": primitives}],
+        "buffers": [
+            {
+                "byteLength": len(blob),
+                "uri": f"data:application/octet-stream;base64,{payload}",
+            }
+        ],
+        "bufferViews": views,
+        "accessors": accessors,
+    }
+    path.write_text(json.dumps(doc), encoding="utf-8")
+
+
+def write_gltf_index_past_primitive(path: Path, gt: GroundTruth) -> None:
+    """A .gltf with TWO primitives, the first indexing past its own ``POSITION`` count.
+
+    The bad index still lands inside the CONCATENATED vertex array once the second
+    primitive's vertices are appended, so range-checking only the merged mesh accepts it
+    and stitches the triangle onto the other primitive's geometry.
+    """
+    pos = gt.vertices.astype("<f4").tobytes()
+    good = gt.faces.reshape(-1).astype("<u4")
+    bad = good.copy()
+    bad[0] = len(gt.vertices)  # one past this primitive's last vertex
+    blob = pos + bad.tobytes() + good.tobytes()
+    views = [
+        {"buffer": 0, "byteOffset": 0, "byteLength": len(pos)},
+        {"buffer": 0, "byteOffset": len(pos), "byteLength": int(bad.nbytes)},
+        {
+            "buffer": 0,
+            "byteOffset": len(pos) + int(bad.nbytes),
+            "byteLength": int(good.nbytes),
+        },
+    ]
+    accessors = [
+        {
+            "bufferView": 0,
+            "componentType": 5126,
+            "count": len(gt.vertices),
+            "type": "VEC3",
+        },
+        {
+            "bufferView": 1,
+            "componentType": 5125,
+            "count": int(bad.size),
+            "type": "SCALAR",
+        },
+        {
+            "bufferView": 2,
+            "componentType": 5125,
+            "count": int(good.size),
+            "type": "SCALAR",
+        },
+    ]
+    _write_gltf_data_uri(
+        path,
+        blob,
+        views,
+        accessors,
+        [
+            {"attributes": {"POSITION": 0}, "indices": 1, "mode": 4},
+            {"attributes": {"POSITION": 0}, "indices": 2, "mode": 4},
+        ],
+    )
+
+
+def write_gltf_accessor_past_view(path: Path, gt: GroundTruth) -> None:
+    """A .gltf whose ``POSITION`` accessor reads past the end of its OWN bufferView.
+
+    The view is declared one vertex short of the accessor's count. What follows it in the
+    buffer is the index data, so a read bounded only by the whole BUFFER succeeds and
+    imports index bytes as a coordinate.
+    """
+    pos = gt.vertices.astype("<f4").tobytes()
+    idx = gt.faces.reshape(-1).astype("<u4")
+    blob = pos + idx.tobytes()
+    views = [
+        {"buffer": 0, "byteOffset": 0, "byteLength": len(pos) - 12},
+        {"buffer": 0, "byteOffset": len(pos), "byteLength": int(idx.nbytes)},
+    ]
+    accessors = [
+        {
+            "bufferView": 0,
+            "componentType": 5126,
+            "count": len(gt.vertices),
+            "type": "VEC3",
+        },
+        {
+            "bufferView": 1,
+            "componentType": 5125,
+            "count": int(idx.size),
+            "type": "SCALAR",
+        },
+    ]
+    _write_gltf_data_uri(
+        path,
+        blob,
+        views,
+        accessors,
+        [{"attributes": {"POSITION": 0}, "indices": 1, "mode": 4}],
+    )
 
 
 def write_gsplat_ply(path: Path) -> None:

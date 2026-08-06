@@ -23,14 +23,19 @@ from ._synthetic import (
     write_glb_mirrored,
     write_glb_no_scenes,
     write_glb_shared_child,
+    write_gltf_accessor_past_view,
     write_gltf_buffer_payload,
     write_gltf_dangling_accessor,
     write_gltf_draco,
     write_gltf_external_buffer,
+    write_gltf_index_past_primitive,
     write_gsplat_ply,
     write_obj_colors_0_1,
     write_obj_colors_0_255,
+    write_obj_indexed_normals,
     write_obj_negative_indices,
+    write_obj_out_of_range_index,
+    write_obj_partial_normals,
     write_obj_quad,
     write_obj_unreferenced_normals,
     write_ply_ascii,
@@ -217,6 +222,42 @@ class TestObj:
         WRITERS["obj"](tmp_path / "bound.obj", GT)
         assert import_mesh(tmp_path / "bound.obj").normals is not None
 
+    def test_independently_indexed_normals_are_kept(self, tmp_path: Path) -> None:
+        """`vn` is indexed per CORNER, and every real exporter deduplicates the pool.
+
+        So the pool is generally neither the same length as the positions nor parallel
+        to them, and a reader that requires parallel indexing drops the normals of
+        essentially every smooth-shaded export. The fixture reverses the pool — counts
+        still match, indexing does not — so requiring only equal counts reads every
+        normal onto the wrong vertex, and requiring parallelism throws them all away.
+        Neither is acceptable: split the vertices per (position, normal) pair instead.
+        """
+        p = tmp_path / "dedup.obj"
+        write_obj_indexed_normals(p, GT)
+        mesh = import_mesh(p)
+        assert mesh.normals is not None, "a deduplicated `vn` pool must still bind"
+        # Same surface, and each vertex carries the normal the file bound to it.
+        assert _sorted_face_set(mesh) == EXPECTED_FACES
+        for vertex, normal in zip(mesh.vertices, mesh.normals):
+            row = int(np.argmin(np.linalg.norm(GT.vertices - vertex, axis=1)))
+            np.testing.assert_allclose(normal, GT.normals[row], atol=1e-5)
+
+    def test_a_partial_normal_binding_is_dropped(self, tmp_path: Path) -> None:
+        # One face written as bare `f a b c`, the rest as `f a//a`. There is no normal
+        # for the unbound corners, and borrowing the positionally-matching pool entry
+        # would shade them by data the exporter never bound — so the pool goes whole.
+        p = tmp_path / "partial.obj"
+        write_obj_partial_normals(p, GT)
+        assert import_mesh(p).normals is None
+
+    def test_an_out_of_range_face_index_is_a_clean_error(self, tmp_path: Path) -> None:
+        # A ValueError, not the OverflowError/IndexError a bare cast would raise: only
+        # the former is what the CLI's error funnel catches.
+        p = tmp_path / "bad.obj"
+        write_obj_out_of_range_index(p, GT)
+        with pytest.raises(ValueError, match="malformed"):
+            import_mesh(p)
+
     def test_quad_face_is_triangulated(self, tmp_path: Path) -> None:
         p = tmp_path / "q.obj"
         write_obj_quad(p)
@@ -306,6 +347,36 @@ class TestGltf:
         p = tmp_path / "badnode.glb"
         write_glb_bad_node_index(p, GT)
         with pytest.raises(ValueError, match="out of range"):
+            import_mesh(p)
+
+    def test_an_index_past_its_own_primitive_is_refused(self, tmp_path: Path) -> None:
+        """Indices must be bounded per PRIMITIVE, before the concatenation offset.
+
+        Primitives are merged into one vertex array, so an index past the end of its own
+        primitive still lands inside the merged array and reads a LATER primitive's
+        vertices. The final range check on the assembled mesh therefore passes and the
+        triangle silently attaches to the wrong geometry.
+        """
+        p = tmp_path / "idx.gltf"
+        write_gltf_index_past_primitive(p, GT)
+        # Matched on the per-primitive wording, not merely "out of range": the assembled
+        # mesh's own range check carries that phrase too, and this fixture is built so
+        # that check PASSES (index 4 is valid against the 8 concatenated vertices).
+        with pytest.raises(ValueError, match="its POSITION accessor declares"):
+            import_mesh(p)
+
+    def test_an_accessor_past_its_bufferView_is_refused(self, tmp_path: Path) -> None:
+        """An accessor is bounded by its bufferView, not by the whole buffer.
+
+        Views sit back to back in one buffer, so an accessor that overruns its own view
+        reads the next view's bytes — here index data decoded as a coordinate — and a
+        read bounded only by the buffer never notices.
+        """
+        p = tmp_path / "over.gltf"
+        write_gltf_accessor_past_view(p, GT)
+        # "outside its bufferView", not just "bufferView": the dangling-reference message
+        # names `bufferViews[N]` and would otherwise match a fixture broken differently.
+        with pytest.raises(ValueError, match="outside its bufferView"):
             import_mesh(p)
 
     def test_interleaved_view_at_the_END_of_the_buffer_decodes(
