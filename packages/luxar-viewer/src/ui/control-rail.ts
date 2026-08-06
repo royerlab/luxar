@@ -18,7 +18,7 @@
  *   it auto-fades after a few seconds and any click/keypress dismisses it.
  *
  * The flyout + panel-popover lifecycle lives in {@link RailOverlay}
- * (rail-overlay.ts); this class owns the buttons, idle/collapse/fullscreen
+ * (control-rail/rail-overlay.ts); this class owns the buttons, idle/collapse/fullscreen
  * behaviour, and the active-state refresh that reads the overlay's open item.
  *
  * @module ui/control-rail
