@@ -183,10 +183,8 @@ def test_resolve_gpu_selection_no_cuda_raises(monkeypatch) -> None:
 
 
 def test_resolve_jobs_per_gpu_cpu(monkeypatch) -> None:
-    assert resolve_jobs_per_gpu([], task_voxels=4096, n_tasks=10, jobs_per_gpu=3) == {
-        -1: 3
-    }
-    auto = resolve_jobs_per_gpu([], task_voxels=4096, n_tasks=10, jobs_per_gpu="auto")
+    assert resolve_jobs_per_gpu([], task_voxels=4096, jobs_per_gpu=3) == {-1: 3}
+    auto = resolve_jobs_per_gpu([], task_voxels=4096, jobs_per_gpu="auto")
     assert set(auto) == {-1} and auto[-1] >= 1
 
 
@@ -195,15 +193,11 @@ def test_resolve_jobs_per_gpu_auto_scales_with_vram(monkeypatch) -> None:
     free = {0: 40 * _GB, 1: 8 * _GB}
     monkeypatch.setattr(metrics, "_gpu_free_memory", lambda dev: free[dev.index])
     # ~256^3 voxels working set.
-    workers = resolve_jobs_per_gpu(
-        [0, 1], task_voxels=256**3, n_tasks=1000, jobs_per_gpu="auto"
-    )
+    workers = resolve_jobs_per_gpu([0, 1], task_voxels=256**3, jobs_per_gpu="auto")
     assert workers[0] > workers[1] >= 1
     assert 4 <= workers[0] / workers[1] <= 6
 
 
 def test_resolve_jobs_per_gpu_explicit_uniform() -> None:
-    workers = resolve_jobs_per_gpu(
-        [0, 1, 2], task_voxels=1, n_tasks=100, jobs_per_gpu=2
-    )
+    workers = resolve_jobs_per_gpu([0, 1, 2], task_voxels=1, jobs_per_gpu=2)
     assert workers == {0: 2, 1: 2, 2: 2}

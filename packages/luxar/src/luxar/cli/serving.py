@@ -320,7 +320,6 @@ class DirectoryListingStaticFiles(StaticFiles):
 
 def create_server_app(
     path: str,
-    serve_viewer: bool = False,
     *,
     cors_origin: str = _DEFAULT_CORS_ORIGIN,
     allow_sensitive_path: bool = False,
@@ -332,7 +331,6 @@ def create_server_app(
 
     Args:
         path: Path to directory or Zarr dataset to serve
-        serve_viewer: Whether to include viewer static files (not used in basic tests)
         cors_origin: Allowed CORS origin. ``"local"`` allows loopback origins.
         allow_sensitive_path: If True, permit serving system directories.
 

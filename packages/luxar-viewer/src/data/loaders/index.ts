@@ -14,7 +14,6 @@
  * - **base-types.ts** — canonical shared types (`BaseViewState`, `LoadRange`, …).
  * - **color-loader.ts** — color-attribute encode/decode shared by all three
  *   spatial-index loaders.
- * - **transferable-accumulator.ts** — zero-allocation worker-transferable buffers.
  * - **chunk-bounds-loader.ts** — zarr chunk-bounds probe (layer below spatial-query).
  * - **loader-metrics.ts**, **monitor-events.ts**, **once-init.ts**,
  *   **extend-to-all-preflight.ts** — small cross-cutting helpers used by every
@@ -35,8 +34,6 @@ export {
   type LoaderDependencies,
   type BaseLoader,
   type SpatialDataLoader,
-  type AccumulatorBuffers,
-  type AccumulatorStats,
   type LoadedDataMetadata,
   hasDimensionMetadata,
   getDisplayDimCount,
@@ -77,21 +74,6 @@ export {
 } from './spatial-query/tolerance-computer';
 
 export { fetchChunkBoundsArray, type ChunkBoundsArray } from './chunk-bounds-loader';
-
-// Transferable accumulator (zero-allocation + worker offload)
-export {
-  TransferableAccumulator,
-  createPointsAccumulator,
-  createLinesAccumulator,
-  createGSplatsAccumulator,
-  type BufferShape,
-  type TransferableBuffers,
-  type PointsBuffers,
-  type LinesBuffers,
-  type GSplatsBuffers,
-  type WorkerProjectionRequest,
-  type WorkerProjectionResponse,
-} from './transferable-accumulator';
 
 // Color attributes
 export {

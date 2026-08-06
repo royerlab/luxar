@@ -246,18 +246,13 @@ describe('Data Monitor Integration', () => {
           path: '/test1',
           queries: 0,
           loads: 0,
-          cacheHits: 0,
-          cacheMisses: 0,
-          evictions: 0,
           errors: 0,
           elementsLoaded: 0,
           bytesLoaded: 0,
           visibleElements: 0,
           avgQueryTime: 0,
           avgLoadTime: 0,
-          cacheHitRate: 0,
           memoryUsed: 0,
-          memoryLimit: 500 * 1024 * 1024,
         })),
         getActiveQueries: vi.fn(() => []),
       };
@@ -288,7 +283,6 @@ describe('Data Monitor Integration', () => {
           path,
           queries: 0,
           loads: 0,
-          evictions: 0,
           errors: 0,
           elementsLoaded: 0,
           bytesLoaded: 0,
@@ -296,7 +290,6 @@ describe('Data Monitor Integration', () => {
           avgQueryTime: 0,
           avgLoadTime: 0,
           memoryUsed: 0,
-          memoryLimit: 500 * 1024 * 1024,
         })),
         getActiveQueries: vi.fn(() => []),
       });
@@ -448,18 +441,13 @@ describe('Data Monitor Integration', () => {
           path: '/test',
           queries: 0,
           loads: 0,
-          cacheHits: 0,
-          cacheMisses: 0,
-          evictions: 0,
           errors: 0,
           elementsLoaded: 0,
           bytesLoaded: 0,
           visibleElements: 0,
           avgQueryTime: 0,
           avgLoadTime: 0,
-          cacheHitRate: 0,
           memoryUsed: 0,
-          memoryLimit: 500 * 1024 * 1024,
         })),
         getActiveQueries: vi.fn(() => []),
       };
@@ -480,10 +468,10 @@ describe('Data Monitor Integration', () => {
         });
 
         (eventListener as (event: MonitorEvent) => void)({
-          type: 'cache-hit',
+          type: 'load',
           loader: 'point-spatial-index',
           timestamp: Date.now(),
-          data: { path: '/test' },
+          data: { path: '/test', memory: 8000 },
         });
       }
 
@@ -494,7 +482,7 @@ describe('Data Monitor Integration', () => {
       const events = monitor.getRecentEvents();
       expect(events.length).toBeGreaterThanOrEqual(2);
       expect(events.some((e) => e.type === 'query')).toBe(true);
-      expect(events.some((e) => e.type === 'cache-hit')).toBe(true);
+      expect(events.some((e) => e.type === 'load')).toBe(true);
     });
 
     it('should update metrics based on events', () => {
@@ -513,18 +501,13 @@ describe('Data Monitor Integration', () => {
           path: '/test',
           queries: 2,
           loads: 1,
-          cacheHits: 3,
-          cacheMisses: 2,
-          evictions: 0,
           errors: 0,
           elementsLoaded: 2000,
           bytesLoaded: 8000,
           visibleElements: 0,
           avgQueryTime: 15,
           avgLoadTime: 50,
-          cacheHitRate: 60,
           memoryUsed: 1024 * 1024,
-          memoryLimit: 500 * 1024 * 1024,
         })),
         getActiveQueries: vi.fn(() => []),
       };
@@ -555,41 +538,6 @@ describe('Data Monitor Integration', () => {
           loader: 'point-spatial-index',
           timestamp: Date.now(),
           data: { path: '/test', elements: 2000, memory: 8000, latency: 50 },
-        });
-
-        (eventListener as (event: MonitorEvent) => void)({
-          type: 'cache-hit',
-          loader: 'point-spatial-index',
-          timestamp: Date.now(),
-          data: { path: '/test' },
-        });
-
-        (eventListener as (event: MonitorEvent) => void)({
-          type: 'cache-hit',
-          loader: 'point-spatial-index',
-          timestamp: Date.now(),
-          data: { path: '/test' },
-        });
-
-        (eventListener as (event: MonitorEvent) => void)({
-          type: 'cache-hit',
-          loader: 'point-spatial-index',
-          timestamp: Date.now(),
-          data: { path: '/test' },
-        });
-
-        (eventListener as (event: MonitorEvent) => void)({
-          type: 'cache-miss',
-          loader: 'point-spatial-index',
-          timestamp: Date.now(),
-          data: { path: '/test' },
-        });
-
-        (eventListener as (event: MonitorEvent) => void)({
-          type: 'cache-miss',
-          loader: 'point-spatial-index',
-          timestamp: Date.now(),
-          data: { path: '/test' },
         });
       }
 

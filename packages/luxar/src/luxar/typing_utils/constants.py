@@ -50,7 +50,6 @@ SHARPNESS_DEFAULT: Final[float] = 0.5  # -> beta = 2 (Gaussian)
 COLOR_SDR_MIN: Final[float] = 0.0  # Standard dynamic range minimum
 COLOR_SDR_MAX: Final[float] = 1.0  # Standard dynamic range maximum
 COLOR_HDR_TYPICAL_MAX: Final[float] = 10.0  # Typical HDR maximum
-COLOR_HDR_THEORETICAL_MAX: Final[float] = float("inf")  # No theoretical limit
 
 # Chunk size constants (SINGLE SOURCE OF TRUTH - bytes, not elements)
 # Consumers (io, gsplats.io) convert to element counts based on array dtype
@@ -96,29 +95,14 @@ DEFAULT_COMPRESSOR: Final[str] = "blosc"  # Default compression algorithm
 
 # Transform matrix constants
 TRANSFORM_MATRIX_SIZE: Final[int] = 4  # 4x4 matrices
-TRANSFORM_MATRIX_ELEMENTS: Final[int] = 16  # Total elements when flattened
 
 # Dimension constants
 MAX_DISPLAYED_DIMENSIONS: Final[int] = 3  # Maximum dimensions shown in viewer
-MIN_DISPLAYED_DIMENSIONS: Final[int] = 1  # Minimum dimensions shown in viewer
-DEFAULT_DIMENSION_STEP_PERCENT: Final[float] = 0.01  # 1% of range for navigation
 
 # Categorical dimension constants
 MIN_CATEGORIES: Final[int] = 1  # Minimum categories for categorical dimensions
 MAX_CATEGORY_LABEL_LENGTH: Final[int] = 1024  # Maximum length for category labels
 CATEGORICAL_STEP: Final[float] = 1.0  # Step size for categorical dimensions (always 1)
-
-# Decimal precision for display
-POSITION_DISPLAY_DECIMALS: Final[int] = 3
-RADIUS_DISPLAY_DECIMALS: Final[int] = 3
-COLOR_DISPLAY_DECIMALS: Final[int] = 2
-
-# Physical units
-PHYSICAL_UNIT_DEFAULT: Final[str] = "au"  # Arbitrary units
-
-# Zarr metadata keys
-ZARR_METADATA_FILENAME: Final[str] = ".zmetadata"
-ZARR_ATTRS_KEY: Final[str] = ".zattrs"
 
 # Node type identifiers. These must cover `node_types` in
 # `format-contract/contract.yaml` exactly — `test_named_node_type_constants_match_contract`
@@ -154,47 +138,3 @@ MAX_POINT_RADIUS: Final[float] = 1000.0  # Maximum practical radius
 #: 3.0349``. Measured radial-weighted relative L2 of the lift: 1.96% at T=3.0,
 #: 16.91% at T=2.75. See ``lift.py`` for the derivation.
 DEFAULT_TRUNCATION_RADIUS: Final[float] = 2.75
-
-# Spatial index grid constants
-SPATIAL_INDEX_MAX_CELLS_DISCRETE: Final[int] = (
-    10000  # Maximum cells for discrete dimensions (safety cap)
-)
-SPATIAL_INDEX_MAX_CELLS_CONTINUOUS: Final[int] = (
-    10  # Maximum cells per continuous dimension
-)
-SPATIAL_INDEX_MIN_CELLS: Final[int] = 3  # Minimum cells per continuous dimension
-SPATIAL_INDEX_TARGET_POINTS_PER_CELL: Final[int] = (
-    10000  # Target points per cell for adaptive grid sizing
-)
-SPATIAL_INDEX_FALLBACK_CELLS: Final[int] = 2  # Cells for degenerate dimensions
-SPATIAL_INDEX_MIN_CELLS_SINGLE_DIM: Final[int] = (
-    10  # Minimum cells for single indexed dimension
-)
-SPATIAL_INDEX_MAX_CELLS_SINGLE_DIM: Final[int] = (
-    100  # Maximum cells for single indexed dimension
-)
-SPATIAL_INDEX_CHUNK_SIZE: Final[int] = 4096  # Chunk size for index datasets
-SPATIAL_INDEX_SINGLE_DIM_POINTS_DIVISOR: Final[int] = (
-    100  # Divisor for sqrt calculation in single-dimension grids
-)
-SPATIAL_INDEX_MULTI_DIM_MIN_TARGET: Final[int] = (
-    10  # Minimum target cells for multi-dimensional grids
-)
-SPATIAL_INDEX_MULTI_DIM_MAX_TARGET: Final[int] = (
-    1000  # Maximum target cells for multi-dimensional grids
-)
-SPATIAL_INDEX_MULTI_DIM_POINTS_DIVISOR: Final[int] = (
-    500  # Points divisor for multi-dimensional grid sizing
-)
-SPATIAL_INDEX_MULTI_DIM_MAX_CELLS_PER_DIM: Final[int] = (
-    20  # Maximum cells per dimension in multi-dimensional grids
-)
-
-# Validation messages
-VALIDATION_POSITIVE_REQUIRED: Final[str] = "Value must be positive"
-VALIDATION_SHAPE_MISMATCH: Final[str] = (
-    "Shape mismatch: expected {expected}, got {actual}"
-)
-VALIDATION_OUT_OF_RANGE: Final[str] = (
-    "Value {value} is outside valid range [{min}, {max}]"
-)

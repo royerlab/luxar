@@ -799,7 +799,6 @@ def add_lines_multi_lod_wrapper_impl(
     metadata = writer.write_lines_multi_lod(
         path,
         level_slices,
-        method=method,
         extend_to_all=extend_to_all,
         **attrs,
     )
