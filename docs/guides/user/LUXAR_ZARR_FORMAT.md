@@ -1618,5 +1618,7 @@ with LuxarZarrCompiler("output.luxar.zarr", enable_spatial_index=True) as compil
 ## Future Extensions (Planned)
 
 - Support for volumes
+- Material system with shading models (mesh ships one deliberately minimal,
+  light-free headlight — lights and richer shading models are still ahead)
 - Temporal interpolation for smooth animations
 - Multi-resolution spatial indices for LOD

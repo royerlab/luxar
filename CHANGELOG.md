@@ -467,14 +467,16 @@ per-vertex `normals`, `colors`, `scalars`, labels and image labels. `luxar info`
 reports vertex and face counts, `LuxarScene.get_mesh()` / `list_meshes()` read it
 back, and a mesh leaf contributes to scene bounds like any other geometry.
 
-**Writable, not yet renderable.** The viewer cannot draw a mesh yet — its loader,
-material and picking land in a later phase (`docs/specs/MESH_NODE_SPEC.md` §11).
-The format contract now names the two sets separately so neither side has to
-answer the other's question: `geometry_types` is the writable leaf vocabulary
-(which `mesh` joins now) and the new `loader_types` is the viewer-drawable subset
-(which it does not). Adding a type to `loader_types` without its viewer code is
-still a compile error at `LoaderByKind`, `GEOMETRY_DESCRIPTORS` and
-`computeHiddenDimTolerance`, exactly as before.
+**Writable first, renderable in the phases that followed.** At this point the
+viewer could not draw a mesh — its loader, shaded material and picking landed in
+the later phases described in the entries above (`docs/specs/MESH_NODE_SPEC.md`
+§11 tracks the whole sequence). The format contract names the two sets separately
+so neither side has to answer the other's question: `geometry_types` is the
+writable leaf vocabulary (which `mesh` joined here) and the new `loader_types` is
+the viewer-drawable subset (which it joined with the Phase-3 switch-on). Adding a
+type to `loader_types` without its viewer code is still a compile error at
+`LoaderByKind`, `GEOMETRY_DESCRIPTORS` and `computeHiddenDimTolerance`, exactly as
+before.
 
 Unlike the other three types a mesh has no per-element size — a triangle's extent
 comes from its own vertices — so it adds no extent padding to bounds. `normals`

@@ -83,9 +83,10 @@ import type { EncodingName } from '../../types/format-contract';
  * the node's presence flags say the array is absent.
  *
  * The label/image-label CSR arrays are included even though v1 does not fetch
- * them (picking lands in a later phase). They are part of the node's declared
- * footprint, so budgeting them from the start means the ceiling does not
- * silently loosen when the label loader arrives.
+ * them: picking resolves a vertex ordinal, which indexes the CSR without the
+ * loader having to read it, so the label loader is still to come. They are part
+ * of the node's declared footprint, so budgeting them from the start means the
+ * ceiling does not silently loosen when that loader arrives.
  */
 export interface MeshArrayHandles {
   vertices: zarr.Array<zarr.DataType, zarr.Readable>;

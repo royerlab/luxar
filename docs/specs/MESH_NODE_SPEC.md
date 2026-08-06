@@ -1149,6 +1149,11 @@ Most of the *dispatch* plumbing is now table-driven (§10), so this list is domi
 new mesh code rather than by edits to existing branches. The items that remain hand-written are
 called out as such.
 
+⚠️ This is the **planning** checklist, written before the phases ran, and its boxes were only
+partly ticked as each phase landed. An unticked box here does **not** mean the work is outstanding
+— most of the TypeScript / Rust / Tests rows below shipped in Phases 3–5. **§11 is the authoritative
+delivery record**; read this section as the original work breakdown, not as current status.
+
 **Python**
 
 - [x] `format-contract/contract.yaml` → `make gen-contract` — the writable-side edit (`node_types` +

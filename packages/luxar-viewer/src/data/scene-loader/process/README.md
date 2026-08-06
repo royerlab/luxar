@@ -122,7 +122,11 @@ per-type ctxs come from `update-view/build-update-ctxs.ts` instead.
 ## Invariants
 
 - **Process never mutates geometry.** Every `process*Data` function
-  returns a `Staged*Commit` (or `null` on skip).
+  returns a `Staged*Commit`. Only `processLinesData` /
+  `processGSplatsData` can also return `null`, and only on a skip: they
+  await a worker projection that can decline. `processPointsData` is
+  synchronous and `processMeshData` projects in-process, so neither has
+  anything to decline and both are non-nullable.
   The mesh's buffers are touched only inside the matching
   `commit-*-geometry.ts` helper during the atomic commit phase. This
   is what keeps multi-node updates frame-atomic.
