@@ -6,7 +6,6 @@ export interface DataLoadingPerformanceConfig {
   // Object pooling
   useAccumulators: boolean;
   initialAccumulatorCapacity: number;
-  accumulatorGrowthFactor: number;
 
   // Web Workers
   useWebWorkers: boolean;

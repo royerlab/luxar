@@ -173,41 +173,6 @@ export interface SpatialDataLoader<
 }
 
 // ============================================================================
-// Accumulator Support
-// ============================================================================
-
-/**
- * Base interface for transferable accumulators.
- *
- * Accumulators provide zero-allocation data loading by reusing buffers.
- * With TransferableAccumulator pattern, buffers can be transferred to/from workers
- * for combined zero-allocation + CPU offload benefits.
- *
- * @internal — preserved for future use; no current consumer.
- */
-export interface AccumulatorBuffers {
-  /** Whether buffers are currently detached (transferred to worker) */
-  isDetached: boolean;
-}
-
-/**
- * Statistics tracked by accumulators.
- */
-export interface AccumulatorStats {
-  /** Total allocations */
-  allocations: number;
-
-  /** Total bytes allocated */
-  bytesAllocated: number;
-
-  /** Buffer reuse count */
-  reuseCount: number;
-
-  /** Peak memory usage */
-  peakMemoryBytes: number;
-}
-
-// ============================================================================
 // Loaded Data Metadata
 // ============================================================================
 

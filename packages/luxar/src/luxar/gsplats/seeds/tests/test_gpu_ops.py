@@ -16,12 +16,9 @@ from luxar.gsplats.seeds.gpu_ops import (
     _conv1d_along_axis,
     _get_device,
     check_gpu_memory,
-    local_maxima_gpu,
     sample_amplitudes_gpu,
     should_use_gpu,
-    soft_blur_nd_gpu,
 )
-from luxar.gsplats.seeds.utils import local_maxima, soft_blur_nd
 
 
 class TestDeviceHelpers:
@@ -193,107 +190,6 @@ class TestSobelGradientGPU:
         assert result.shape == img_cpu.shape
 
 
-class TestLocalMaximaGPU:
-    """Test GPU peak detection."""
-
-    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
-    def test_local_maxima_2d_gpu_vs_cpu(self):
-        """GPU and CPU peak detection should find same peaks for 2D."""
-        # Create test image with known peaks
-        img_np = np.zeros((100, 100))
-        peak_locations = [(20, 20), (50, 50), (80, 80)]
-        for y, x in peak_locations:
-            img_np[y - 2 : y + 3, x - 2 : x + 3] = 1.0
-            img_np[y, x] = 2.0  # Make center brightest
-
-        # CPU version
-        cpu_peaks = local_maxima(img_np, radius=1, thresh=1.5, top_k=None)
-
-        # GPU version
-        img_gpu = torch.tensor(img_np, device="cuda", dtype=torch.float32)
-        gpu_peaks = local_maxima_gpu(img_gpu, radius=1, thresh=1.5, top_k=None)
-
-        # Should find same number of peaks
-        assert len(cpu_peaks) == len(gpu_peaks)
-        # Should find same peak locations (order may differ)
-        cpu_set = set(map(tuple, cpu_peaks))
-        gpu_set = set(map(tuple, gpu_peaks))
-        assert cpu_set == gpu_set
-
-    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
-    def test_local_maxima_3d_gpu_vs_cpu(self):
-        """GPU and CPU peak detection should find same peaks for 3D."""
-        # Create test volume with known peaks
-        img_np = np.zeros((50, 50, 50))
-        peak_locations = [(10, 10, 10), (25, 25, 25), (40, 40, 40)]
-        for z, y, x in peak_locations:
-            img_np[z - 1 : z + 2, y - 1 : y + 2, x - 1 : x + 2] = 1.0
-            img_np[z, y, x] = 2.0
-
-        # CPU version
-        cpu_peaks = local_maxima(img_np, radius=1, thresh=1.5, top_k=None)
-
-        # GPU version
-        img_gpu = torch.tensor(img_np, device="cuda", dtype=torch.float32)
-        gpu_peaks = local_maxima_gpu(img_gpu, radius=1, thresh=1.5, top_k=None)
-
-        # Should find same peaks
-        assert len(cpu_peaks) == len(gpu_peaks)
-        cpu_set = set(map(tuple, cpu_peaks))
-        gpu_set = set(map(tuple, gpu_peaks))
-        assert cpu_set == gpu_set
-
-    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
-    def test_local_maxima_top_k(self):
-        """GPU peak detection should respect top_k parameter."""
-        # Create image with many peaks
-        img_np = np.random.rand(100, 100)
-
-        img_gpu = torch.tensor(img_np, device="cuda", dtype=torch.float32)
-        peaks = local_maxima_gpu(img_gpu, radius=2, thresh=0.9, top_k=5)
-
-        # Should return at most 5 peaks
-        assert len(peaks) <= 5
-
-
-class TestSoftBlurGPU:
-    """Test GPU soft blur."""
-
-    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
-    def test_soft_blur_2d_gpu_vs_cpu(self):
-        """GPU and CPU blur should produce similar results for 2D."""
-        # Create test image
-        img_np = np.random.rand(100, 100).astype(np.float32)
-
-        # CPU version
-        cpu_result = soft_blur_nd(img_np)
-
-        # GPU version
-        img_gpu = torch.tensor(img_np, device="cuda")
-        gpu_result_tensor = soft_blur_nd_gpu(img_gpu)
-        gpu_result = gpu_result_tensor.cpu().numpy()
-
-        # Should be very close
-        assert np.allclose(cpu_result, gpu_result, atol=1e-5)
-
-    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
-    def test_soft_blur_3d_gpu_vs_cpu(self):
-        """GPU and CPU blur should produce similar results for 3D."""
-        # Create test volume
-        img_np = np.random.rand(50, 50, 50).astype(np.float32)
-
-        # CPU version
-        cpu_result = soft_blur_nd(img_np)
-
-        # GPU version
-        img_gpu = torch.tensor(img_np, device="cuda")
-        gpu_result_tensor = soft_blur_nd_gpu(img_gpu)
-        gpu_result = gpu_result_tensor.cpu().numpy()
-
-        # Should be very close
-        assert np.allclose(cpu_result, gpu_result, atol=1e-5)
-
-
 class TestSampleAmplitudesGPU:
     """Test GPU amplitude interpolation."""
 
@@ -403,32 +299,5 @@ class TestGPUPerformance:
         speedup = cpu_time / gpu_time
         print(
             f"\nSobel GPU speedup: {speedup:.2f}x (CPU: {cpu_time:.3f}s, GPU: {gpu_time:.3f}s)"
-        )
-        assert speedup > 2.0, f"Expected >2x speedup, got {speedup:.2f}x"
-
-    def test_peak_detection_gpu_faster_than_cpu(self):
-        """GPU peak detection should be faster than CPU for large volumes."""
-        import time
-
-        # Create large test volume
-        img_np = np.random.rand(200, 200, 200).astype(np.float32)
-
-        # CPU timing
-        t0 = time.time()
-        _cpu_peaks = local_maxima(img_np, radius=2, thresh=0.9, top_k=None)
-        cpu_time = time.time() - t0
-
-        # GPU timing
-        img_gpu = torch.tensor(img_np, device="cuda")
-        torch.cuda.synchronize()
-        t0 = time.time()
-        _gpu_peaks = local_maxima_gpu(img_gpu, radius=2, thresh=0.9, top_k=None)
-        torch.cuda.synchronize()
-        gpu_time = time.time() - t0
-
-        # GPU should be faster
-        speedup = cpu_time / gpu_time
-        print(
-            f"\nPeak detection GPU speedup: {speedup:.2f}x (CPU: {cpu_time:.3f}s, GPU: {gpu_time:.3f}s)"
         )
         assert speedup > 2.0, f"Expected >2x speedup, got {speedup:.2f}x"

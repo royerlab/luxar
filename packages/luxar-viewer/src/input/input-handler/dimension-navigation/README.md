@@ -9,8 +9,6 @@ nD dimension navigation math + UI lifecycle.
   `NavigationConfig` / `DEFAULT_NAV_CONFIG`. Pure step + boundary math.
 - `selection.ts` — `getNonDisplayedDimensions`, `mapKeyToDimension`,
   `getNextDimensionIndex`. Pure dim-index helpers.
-- `format.ts` — `formatDimensionValue` + `generateNavigationHelp` for
-  human-readable dimension display.
 - `setup.ts` — the four lifecycle bodies (`initDimensionSliders`,
   `initAnimationManager`, `clearDimensionUI`, `updateAllNDNodes`)
   extracted from the orchestrator, plus the `DimensionSlidersFactory`

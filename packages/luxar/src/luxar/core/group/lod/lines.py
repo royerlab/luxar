@@ -33,14 +33,21 @@ from typing import Any, List, Literal, Optional, Tuple, Union
 import numpy as np
 from numpy.typing import NDArray
 
+from .group import (
+    DEFAULT_ADDITIVE_METHOD,
+    DEFAULT_ADDITIVE_N_LODS,
+    resolve_additive_axis,
+)
 from .poisson_disk import poisson_disk_order
 from .spatial_uniform import stratified_grid_order
 
 #: Ordering methods supported on Lines additive LOD.
 LinesMethodName = Literal["random", "salience", "spatial-uniform", "poisson-disk"]
 
-DEFAULT_N_LODS: int = 4
-DEFAULT_METHOD: LinesMethodName = "random"
+# Aliases of the shared resolver's constants so the kwarg defaults below and
+# ``resolve_additive_axis_lines`` always agree.
+DEFAULT_N_LODS: int = DEFAULT_ADDITIVE_N_LODS
+DEFAULT_METHOD: LinesMethodName = DEFAULT_ADDITIVE_METHOD
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -530,85 +537,12 @@ def resolve_additive_axis_lines(spec: Any) -> Optional[dict]:
     """Translate the ``additive_lod=`` kwarg into a normalized dict.
 
     Same vocabulary as :func:`luxar.core.group.lod.points.resolve_additive_axis_points`.
+
+    Thin wrapper over the shared
+    :func:`luxar.core.group.lod.group.resolve_additive_axis` (one
+    implementation shared with Points so the two can't drift).
     """
-    if spec is None or spec is False:
-        return None
-    if spec is True:
-        return {
-            "method": DEFAULT_METHOD,
-            "n_lods": DEFAULT_N_LODS,
-            "counts": None,
-            "seed": None,
-            "salience_kind": "size",
-        }
-    if not isinstance(spec, dict):
-        raise TypeError(
-            f"additive_lod must be None, bool, or dict; got {type(spec).__name__}"
-        )
-    kwargs = dict(spec)
-    kwargs.pop("recompute", None)
-
-    method = kwargs.pop("method", DEFAULT_METHOD)
-    if method not in (
-        "random",
-        "salience",
-        "spatial-uniform",
-        "poisson-disk",
-    ):
-        raise ValueError(
-            "method must be one of 'random' / 'salience' / 'spatial-uniform' "
-            f"/ 'poisson-disk'; got {method!r}"
-        )
-
-    n_lods = int(kwargs.pop("n_lods", DEFAULT_N_LODS))
-    if n_lods < 1:
-        raise ValueError(f"n_lods must be >= 1, got {n_lods}")
-
-    counts = kwargs.pop("counts", None)
-    breakpoints = kwargs.pop("breakpoints", None)
-    if counts is not None and breakpoints is not None:
-        raise ValueError(
-            "additive_lod: pass either 'counts' OR 'breakpoints', not both"
-        )
-    if breakpoints is not None:
-        counts = breakpoints
-    if counts is not None and not isinstance(counts, str):
-        counts = [int(c) for c in counts]
-    if counts is not None:
-        # Validate everything size-independent here, at resolve time. Under a
-        # substitutive ladder the resolved spec is handed to a kind=lod group
-        # whose wrapper is created BEFORE its children are written, so deferring
-        # this to the children's writes would raise only after that group
-        # exists on disk — leaving a partial group (and a duplicate-name error
-        # on retry). Same messages as the write path's re-validation.
-        from ....utils.lod_breakpoints import validate_element_breakpoints
-
-        validate_element_breakpoints(counts)
-
-    seed = kwargs.pop("seed", None)
-    if seed is not None:
-        seed = int(seed)
-
-    salience_kind = kwargs.pop("salience_kind", "size")
-    if salience_kind not in ("size", "energy"):
-        raise ValueError(
-            f"salience_kind must be 'size' or 'energy'; got {salience_kind!r}"
-        )
-
-    if kwargs:
-        raise ValueError(
-            f"additive_lod for Lines: unrecognized keys "
-            f"{sorted(kwargs)}. Valid keys: method, n_lods, counts, "
-            f"breakpoints, seed, salience_kind, recompute."
-        )
-
-    return {
-        "method": method,
-        "n_lods": n_lods,
-        "counts": counts,
-        "seed": seed,
-        "salience_kind": salience_kind,
-    }
+    return resolve_additive_axis(spec, "Lines")
 
 
 LinesAdditiveSpec = Union[None, bool, dict]

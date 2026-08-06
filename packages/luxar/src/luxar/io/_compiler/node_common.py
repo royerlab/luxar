@@ -176,7 +176,6 @@ _ALLOWED_NODE_ATTRS: FrozenSet[str] = frozenset(
         # ordering.
         "bsp_tree",
         # Geometry-writer internal forwarding flags.
-        "grid_shape",
         "_skip_scene_bounds",
     }
 )
