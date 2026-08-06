@@ -123,10 +123,14 @@ per-type ctxs come from `update-view/build-update-ctxs.ts` instead.
 
 - **Process never mutates geometry.** Every `process*Data` function
   returns a `Staged*Commit`. Only `processLinesData` /
-  `processGSplatsData` can also return `null`, and only on a skip: they
-  await a worker projection that can decline. `processPointsData` is
-  synchronous and `processMeshData` projects in-process, so neither has
-  anything to decline and both are non-nullable.
+  `processGSplatsData` can also return `null`, and only on a
+  scene-graph precondition skip: they take the `rootGroup` and look the
+  target `THREE.Mesh` up themselves (they need its live `userData` /
+  `uTruncate` before projecting), so a missing root or a
+  missing/wrong-`nodeType` object has nothing to project against.
+  `processPointsData` and `processMeshData` take no `rootGroup` — their
+  callers do the lookup — so they have no precondition to fail and are
+  non-nullable.
   The mesh's buffers are touched only inside the matching
   `commit-*-geometry.ts` helper during the atomic commit phase. This
   is what keeps multi-node updates frame-atomic.

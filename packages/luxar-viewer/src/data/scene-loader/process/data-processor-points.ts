@@ -37,9 +37,11 @@ export type { StagedPointsCommit };
  * Stage loader-returned points data for commit.
  *
  * Synchronous and non-nullable, unlike the lines/gsplats processors: those are
- * async because they await a worker projection that can decline. Widening this
- * to match would force callers to `await` and null-check something that can
- * never be pending or absent.
+ * async because they await a worker projection, and nullable because they take
+ * the `rootGroup` and look the target `THREE.Mesh` up themselves (a missing root
+ * or wrong `nodeType` has nothing to project against). This one takes neither —
+ * the caller has already resolved the node — so widening it to match would force
+ * callers to `await` and null-check something that can never be pending or absent.
  */
 export function processPointsData(path: string, data: LoadedPointsData): StagedPointsCommit {
   return { path, data };
