@@ -28,15 +28,24 @@ test.describe('L2 persistence across page reload (R7)', () => {
     await waitForLuxarReady(page);
     await waitForCacheStable(page);
 
+    // L2 MUST contain entries after the warm-up load — this is the
+    // positive precondition for the persistence check. If L2 is never
+    // populated the whole feature is broken, so we assert it loudly
+    // here rather than silently skipping the reload comparison.
+    // L2 writes drain through a background OPFS queue and
+    // waitForCacheStable treats an all-zero first poll as "no L2" and
+    // returns early, so poll explicitly for the entries to land before
+    // asserting — this fails loudly if they never do, without racing
+    // the write queue on a cold context.
+    await page.waitForFunction(
+      () => ((window as any).__luxarDebug.cache.getStats().l2?.count ?? 0) > 0,
+      undefined,
+      { timeout: 15000 }
+    );
+
     const before = await page.evaluate(async () => (window as any).__luxarDebug.cache.getStats());
-    // L2 should contain entries after a clean first load (cache may
-    // be empty initially in this browser context, so the assertion
-    // tolerates a 0-count first run by exiting early — only the
-    // post-reload comparison is the regression guard).
-    if (!before.l2 || before.l2.count === 0) {
-      test.skip(true, 'No L2 entries cached on first load — cannot assert persistence');
-      return;
-    }
+    expect(before.l2).toBeDefined();
+    expect(before.l2.count).toBeGreaterThan(0);
 
     // Pass 2: full page reload. The same dataset's content hash must
     // match → L2 entries are preserved → after-reload count equals
@@ -45,14 +54,24 @@ test.describe('L2 persistence across page reload (R7)', () => {
     await waitForLuxarReady(page);
     await waitForCacheStable(page);
 
+    // The reload wipes in-memory L1, so any chunk that renders after it
+    // must have been READ back from persisted L2 — an L2 read is the one
+    // signal that proves persistence, and it cannot be faked by a
+    // re-download (which would only bump `count`) or by same-session L1
+    // hits. Poll for it, then assert, so a broken persistence path fails
+    // as a loud timeout rather than a silent pass.
+    await page.waitForFunction(
+      () => ((window as any).__luxarDebug.cache.getStats().l2?.reads ?? 0) > 0,
+      undefined,
+      { timeout: 15000 }
+    );
+
     const after = await page.evaluate(async () => (window as any).__luxarDebug.cache.getStats());
     expect(after.l2).toBeDefined();
-    // L2 count is preserved (no entries dropped during reload).
+    // L2 entries survive the reload (none dropped) and are read back
+    // from disk rather than re-fetched from the network.
     expect(after.l2.count).toBeGreaterThanOrEqual(before.l2.count);
-    // Hits-after-reload prove the cache served data without a fresh
-    // network round-trip: either L2 reads or L1 hits should reflect
-    // the warmed state.
-    expect(after.l2.reads + after.l1.hits).toBeGreaterThan(0);
+    expect(after.l2.reads).toBeGreaterThan(0);
   });
 
   test('?clear-cache invokes clearAll on init (S4)', async ({ page, browserName }) => {

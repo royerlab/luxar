@@ -2,6 +2,11 @@
 Tests for Gaussian splat rendering functions.
 """
 
+import contextlib
+from types import SimpleNamespace
+from unittest import mock
+from unittest.mock import PropertyMock
+
 import numpy as np
 import pytest
 
@@ -24,6 +29,31 @@ if HAS_TORCH:
         render_gaussians_pytorch,
     )
     from luxar.gsplats.utils.trils import pack_tril
+
+    @contextlib.contextmanager
+    def _force_mps_device():
+        """Make every tensor report device.type == 'mps' (keeping real CPU
+        storage) and turn a `.to(<that fake device>)` into a no-op, so the
+        MPS-only CPU fallback branch in group_by_box / group_by_box_gpu
+        executes on a CPU host. A fallback body that does nothing (e.g.
+        `pass`) leaves uniq/inv unbound and raises here — which is exactly
+        the mutation these tests must catch."""
+        fake_device = SimpleNamespace(type="mps")
+        orig_to = torch.Tensor.to
+
+        def fake_to(self, *args, **kwargs):
+            # Swallow the move back to the fake mps device in either the
+            # positional (`.to(device)`) or keyword (`.to(device=...)`) form.
+            if (args and args[0] is fake_device) or kwargs.get("device") is fake_device:
+                return self
+            return orig_to(self, *args, **kwargs)
+
+        with (
+            mock.patch.object(torch.Tensor, "device", new_callable=PropertyMock) as dev,
+            mock.patch.object(torch.Tensor, "to", fake_to),
+        ):
+            dev.return_value = fake_device
+            yield
 
 
 @pytest.fixture(autouse=True)
@@ -912,27 +942,45 @@ class TestMPSFallbackHandling:
         assert inv.device.type == "mps"
         assert uniq.shape[0] == 2
 
-    def test_mps_fallback_code_path_exists(self) -> None:
-        """Verify MPS fallback code path exists in group_by_box."""
-        import inspect
+    def test_group_by_box_mps_fallback_cpu(self) -> None:
+        """Drive the MPS CPU-fallback branch of group_by_box on a CPU host.
 
+        `_force_mps_device()` makes every tensor report device.type == 'mps'
+        while keeping real CPU storage, so the `if sizes.device.type == 'mps'`
+        branch runs and produces the same groupings as the plain CPU path. A
+        no-op fallback body (e.g. `pass`) would leave uniq/inv unbound and
+        raise UnboundLocalError, so this test genuinely exercises the branch.
+        """
         from luxar.gsplats.models.gsplats.rendering_core import group_by_box
 
-        source = inspect.getsource(group_by_box)
-        assert 'device.type == "mps"' in source, (
-            "group_by_box should have MPS fallback handling"
-        )
+        lo = torch.tensor([[0, 0], [10, 10], [0, 0]], dtype=torch.long)
+        hi = torch.tensor([[5, 5], [17, 13], [5, 5]], dtype=torch.long)
 
-    def test_mps_fallback_code_path_exists_gpu(self) -> None:
-        """Verify MPS fallback code path exists in group_by_box_gpu."""
-        import inspect
+        with _force_mps_device():
+            groups = group_by_box(lo, hi)
 
+        assert len(groups) == 2
+        assert (5, 5) in groups
+        assert (7, 3) in groups
+        assert len(groups[(5, 5)]) == 2
+
+    def test_group_by_box_gpu_mps_fallback_cpu(self) -> None:
+        """Drive the MPS CPU-fallback branch of group_by_box_gpu on a CPU host.
+
+        Same mechanism as ``test_group_by_box_mps_fallback_cpu``: the fake mps
+        device forces the fallback branch, and a no-op body would raise
+        UnboundLocalError instead of returning the unique sizes / inverse map.
+        """
         from luxar.gsplats.models.gsplats.rendering_core import group_by_box_gpu
 
-        source = inspect.getsource(group_by_box_gpu)
-        assert 'device.type == "mps"' in source, (
-            "group_by_box_gpu should have MPS fallback handling"
-        )
+        lo = torch.tensor([[0, 0], [10, 10], [0, 0]], dtype=torch.long)
+        hi = torch.tensor([[5, 5], [17, 13], [5, 5]], dtype=torch.long)
+
+        with _force_mps_device():
+            uniq, inv = group_by_box_gpu(lo, hi)
+
+        assert uniq.shape[0] == 2
+        assert inv.shape[0] == 3
 
 
 class TestMPSPeakFindingFallback:
