@@ -716,11 +716,12 @@ Mesh nodes contain triangle-surface data — isosurfaces, segmentation boundarie
 organ and cortical meshes. They are the only node type that describes a
 *connected, opaque surface* rather than a set of soft per-element primitives.
 
-⚠️ **Writable, not yet renderable.** The Python writer, reader and `luxar info`
-handle mesh nodes; the viewer's loader and material land in a later phase (see
-`docs/specs/MESH_NODE_SPEC.md` §11). The format contract distinguishes the two:
-`geometry_types` (the writable leaf vocabulary) includes `mesh`, while
-`loader_types` (the viewer-drawable subset) does not yet.
+Mesh is fully renderable: the Python writer, reader and `luxar info`, plus the
+viewer's loader, material, picking and appearance controls, have all landed (see
+`docs/specs/MESH_NODE_SPEC.md` §11). The format contract still names the two sets
+separately — `geometry_types` (the writable leaf vocabulary) and `loader_types`
+(the viewer-drawable subset) — because a type becomes authorable before it
+becomes drawable, but both include `mesh` today.
 
 Two structural differences from the other three types:
 
