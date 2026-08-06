@@ -191,9 +191,10 @@ def import_command(
         True,
         "--weld/--no-weld",
         help="Merge vertices that agree on position AND on normals/colours. On by "
-        "default because STL (always) and index-free glTF arrive as triangle soups, "
-        "which defeat per-vertex normals and give picking a different id per corner "
-        "per triangle. Hard edges survive: they differ in normal.",
+        "default because STL (always), index-free glTF, and any OBJ that indexes "
+        "normals independently of positions arrive with unshared vertices, which "
+        "defeat per-vertex normals and give picking a different id per corner per "
+        "triangle. Hard edges survive: they differ in normal.",
     ),
     keep_normals: bool = typer.Option(
         True,

@@ -32,6 +32,8 @@ from ._synthetic import (
     write_gsplat_ply,
     write_obj_colors_0_1,
     write_obj_colors_0_255,
+    write_obj_colors_partial,
+    write_obj_crease,
     write_obj_indexed_normals,
     write_obj_negative_indices,
     write_obj_out_of_range_index,
@@ -206,6 +208,22 @@ class TestObj:
         )
         assert int(cb.max()) < 255, "a 0..255 file must not clip to solid white"
 
+    def test_a_colourless_vertex_is_filled_white_in_the_file_s_convention(
+        self, tmp_path: Path
+    ) -> None:
+        """`v x y z` and `v x y z r g b` may be mixed in one file.
+
+        The fill for the colourless rows has to be white in whichever convention the file
+        uses. A fixed 1.0 is white only at 0..1: in a 0..255 file it is not scaled, so it
+        arrives as RGB(1, 1, 1) — black, the most visible possible wrong answer.
+        """
+        p = tmp_path / "partial-colour.obj"
+        write_obj_colors_partial(p, GT)
+        mesh = import_mesh(p)
+        assert mesh.colors is not None
+        row = int(np.argmin(np.linalg.norm(mesh.vertices - GT.vertices[0], axis=1)))
+        np.testing.assert_array_equal(mesh.colors[row], [255, 255, 255])
+
     def test_an_unreferenced_normal_pool_is_dropped(self, tmp_path: Path) -> None:
         """`vn` applies only where a face names it.
 
@@ -250,11 +268,46 @@ class TestObj:
         write_obj_partial_normals(p, GT)
         assert import_mesh(p).normals is None
 
-    def test_an_out_of_range_face_index_is_a_clean_error(self, tmp_path: Path) -> None:
+    def test_a_split_preserves_a_crease_and_still_welds_a_smooth_join(
+        self, tmp_path: Path
+    ) -> None:
+        """The pair that pins what the (position, normal) split is FOR.
+
+        Both files hold two triangles over four positions with one `vn` per FACE — the
+        shared corners carry a different normal in each face, which no per-vertex array
+        can express without duplicating them. `hard`: the crease must survive, so the
+        shared corners stay split (6 vertices) and each triangle is shaded by one normal.
+        `smooth`: both faces agree, so the split must weld all the way back down to 4.
+        Either half alone is passable by a broken reader — the pair is not.
+        """
+        hard, smooth = tmp_path / "hard.obj", tmp_path / "smooth.obj"
+        write_obj_crease(hard, hard=True)
+        write_obj_crease(smooth, hard=False)
+
+        mh, ms = import_mesh(hard), import_mesh(smooth)
+        assert mh.normals is not None and ms.normals is not None
+        assert mh.n_faces == 2 and ms.n_faces == 2
+        assert ms.n_vertices == 4, "an agreeing split must weld back to the shared list"
+        assert mh.n_vertices == 6, "a crease must keep its corners split"
+        for tri in mh.faces:
+            per_corner = mh.normals[np.asarray(tri)]
+            assert np.allclose(per_corner, per_corner[0]), (
+                "a flat-shaded face must be shaded by exactly one normal"
+            )
+        assert not np.allclose(
+            mh.normals[mh.faces[0][0]], mh.normals[mh.faces[1][0]]
+        ), "the two faces' normals must stay distinct"
+
+    @pytest.mark.parametrize("normal", [False, True])
+    def test_an_out_of_range_index_is_a_clean_error(
+        self, normal: bool, tmp_path: Path
+    ) -> None:
         # A ValueError, not the OverflowError/IndexError a bare cast would raise: only
-        # the former is what the CLI's error funnel catches.
+        # the former is what the CLI's error funnel catches. Both the `v` and the `vn`
+        # reference are checked — the `vn` one would otherwise index the normal pool
+        # out of bounds inside the split.
         p = tmp_path / "bad.obj"
-        write_obj_out_of_range_index(p, GT)
+        write_obj_out_of_range_index(p, GT, normal=normal)
         with pytest.raises(ValueError, match="malformed"):
             import_mesh(p)
 

@@ -163,8 +163,11 @@ def import_mesh(
             unwelded surface (always, for STL; often, for glTF without indices) has no
             shared vertices, which defeats per-vertex normals, trips the writer's
             authoring lint, and gives picking a different vertex ordinal for the same
-            corner depending on which triangle was hit. Pass False to preserve the
-            file's exact vertex list.
+            corner depending on which triangle was hit. Pass False to keep the vertex
+            list the reader produced. That is not always the file's own list: an OBJ
+            that indexes normals independently of positions has no per-vertex normal
+            array to begin with, so the reader splits vertices per distinct
+            (position, normal) pair and welding is what merges them back.
 
     Raises:
         FileNotFoundError: If ``path`` does not exist.

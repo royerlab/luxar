@@ -19,6 +19,7 @@ other means splitting vertices at material boundaries, which is a different feat
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 
 import numpy as np
@@ -59,11 +60,12 @@ def _bind_normals(
     Returns ``(vertex_sources, faces, normals)``: which position row each output vertex
     draws from, the faces reindexed onto those vertices, and the per-vertex normals.
     """
-    corners = [
-        (corner, ref)
-        for tri, refs in zip(faces, face_normal_refs)
-        for corner, ref in zip(tri, refs)
-    ]
+
+    def corners() -> Iterator[tuple[int, int]]:
+        """Every (position_ref, normal_ref) corner, lazily — this is 3F entries."""
+        for tri, refs in zip(faces, face_normal_refs):
+            yield from zip(tri, refs)
+
     identity = list(range(n_positions))
 
     # The pool must actually be REFERENCED, by EVERY corner. A `vn` block no face points
@@ -72,11 +74,11 @@ def _bind_normals(
     # per-vertex normals the file never asked for, shading the surface by data the
     # exporter left unbound. A partial binding is the same problem for the unbound
     # corners, so it is dropped whole rather than filled in.
-    if not normals_raw or not corners or any(ref == _UNBOUND for _, ref in corners):
+    if not normals_raw or not faces or any(ref == _UNBOUND for _, ref in corners()):
         return identity, faces, None
 
     if len(normals_raw) == n_positions and all(
-        ref == corner for corner, ref in corners
+        ref == corner for corner, ref in corners()
     ):
         # `f v//v` with one `vn` per `v`: the pool already IS a per-vertex array.
         return identity, faces, np.asarray(normals_raw, dtype=np.float32)
@@ -191,16 +193,24 @@ def read_obj(path: Path) -> dict[str, object]:
     # corner split duplicated them.
     per_vertex = [vertex_colors[i] for i in sources]
     colors = None
-    if any(c is not None for c in per_vertex):
-        filled = [c if c is not None else (1.0, 1.0, 1.0) for c in per_vertex]
-        raw = np.asarray(filled, dtype=np.float32)
+    present = [c for c in per_vertex if c is not None]
+    if present:
         # The `v x y z r g b` extension is unofficial and exporters disagree about the
         # range: MeshLab writes 0..1, several scanners write 0..255. Distinguish by the
         # observed peak, exactly as the PLY reader does for `red/green/blue` — assuming
         # 0..1 and scaling unconditionally would clip every nonzero channel of a 0..255
-        # file to 255, turning a coloured mesh into a white one.
-        peak = float(np.max(raw)) if raw.size else 0.0
-        scaled = raw * 255.0 if peak <= 1.0 else raw
+        # file to 255, turning a coloured mesh into a white one. Measured over the rows
+        # that HAVE colour, so the fill value below cannot skew the verdict.
+        unit_range = float(np.max(np.asarray(present, dtype=np.float32))) <= 1.0
+        # A `v` line may omit the colour while others carry it. Fill those with white in
+        # WHICHEVER convention the file uses — a fixed 1.0 is white only in the 0..1
+        # convention; in a 0..255 file it survives unscaled as RGB(1, 1, 1), i.e. black.
+        white = 1.0 if unit_range else 255.0
+        raw = np.asarray(
+            [c if c is not None else (white, white, white) for c in per_vertex],
+            dtype=np.float32,
+        )
+        scaled = raw * 255.0 if unit_range else raw
         colors = np.clip(scaled, 0, 255).astype(np.uint8)
 
     return {

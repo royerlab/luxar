@@ -295,14 +295,40 @@ def write_obj_partial_normals(path: Path, gt: GroundTruth) -> None:
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def write_obj_out_of_range_index(path: Path, gt: GroundTruth) -> None:
-    """OBJ whose last face references a vertex the file never declares."""
+def write_obj_out_of_range_index(
+    path: Path, gt: GroundTruth, *, normal: bool = False
+) -> None:
+    """OBJ whose last face references a ``v`` (or ``vn``) the file never declares."""
     lines = []
     for v in gt.vertices:
         lines.append(f"v {v[0]:.6f} {v[1]:.6f} {v[2]:.6f}")
+    if normal:
+        for n in gt.normals:
+            lines.append(f"vn {n[0]:.6f} {n[1]:.6f} {n[2]:.6f}")
     for tri in gt.faces[:-1]:
         lines.append(" ".join(["f"] + [str(int(i) + 1) for i in tri]))
-    lines.append(f"f 1 2 {len(gt.vertices) + 5}")
+    bad = len(gt.vertices) + 5
+    lines.append(f"f 1//1 2//2 3//{bad}" if normal else f"f 1 2 {bad}")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def write_obj_crease(path: Path, *, hard: bool) -> None:
+    """Two triangles sharing an edge, with `vn` indexed independently of `v`.
+
+    The pool holds ONE normal per face (3 ``v`` lines, 2 ``vn`` lines) — a flat-shaded
+    export, and the layout no per-vertex array can express: the two shared corners each
+    carry a different normal depending on which face is asking. ``hard=False`` gives both
+    faces the SAME normal, which is the sensitivity control: the split must then weld
+    back down to the bare 4 vertices rather than leaving duplicates behind.
+    """
+    positions = [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (1.0, 1.0, 0.0)]
+    second = (1.0, 0.0, 0.0) if hard else (0.0, 0.0, 1.0)
+    lines = [f"v {x:.6f} {y:.6f} {z:.6f}" for x, y, z in positions]
+    lines.append("vn 0.000000 0.000000 1.000000")
+    lines.append(f"vn {second[0]:.6f} {second[1]:.6f} {second[2]:.6f}")
+    # Corners 2 and 3 are shared by both faces, each time with its OWN face's normal.
+    lines.append("f 1//1 2//1 3//1")
+    lines.append("f 2//2 4//2 3//2")
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -748,13 +774,20 @@ def write_glb_interleaved_at_buffer_end(path: Path, gt: GroundTruth) -> None:
     hides the defect because index data follows the interleaved view in the same buffer
     and absorbs the over-read.
     """
-    stride = 24
-    packed = np.empty((len(gt.vertices), 6), dtype="<f4")
-    packed[:, :3] = gt.vertices
-    packed[:, 3:] = gt.normals
-    # Drop the trailing 12 bytes the last element does not need: the buffer ends exactly
-    # at the end of the final NORMAL.
-    inter = packed.tobytes()[: (len(gt.vertices) - 1) * stride + 24]
+    # 12 bytes position + 12 bytes normal + 8 bytes of padding. The padding is what makes
+    # this fixture bite: with a stride of exactly 24 there is nothing trailing the final
+    # element to omit, so trimming the buffer would be a no-op and the layout would be
+    # indistinguishable from `write_glb_interleaved`'s.
+    stride = 32
+    rows = b"".join(
+        gt.vertices[i].astype("<f4").tobytes()
+        + gt.normals[i].astype("<f4").tobytes()
+        + b"\0" * (stride - 24)
+        for i in range(len(gt.vertices))
+    )
+    # Drop the padding the LAST element does not need: the view ends exactly at the end
+    # of the final NORMAL, so a span of `count * stride` runs past it.
+    inter = rows[: (len(gt.vertices) - 1) * stride + 24]
     idx = gt.faces.reshape(-1).astype("<u4").tobytes()
     full = idx + inter  # indices FIRST, interleaved view at the very end
     doc = {
@@ -916,6 +949,23 @@ def write_obj_colors_0_255(path: Path, gt: GroundTruth) -> None:
         lines.append(
             f"v {v[0]:.6f} {v[1]:.6f} {v[2]:.6f} {int(c[0])} {int(c[1])} {int(c[2])}"
         )
+    for tri in gt.faces:
+        lines.append(" ".join(["f"] + [str(int(i) + 1) for i in tri]))
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def write_obj_colors_partial(path: Path, gt: GroundTruth) -> None:
+    """A 0..255-convention OBJ whose FIRST ``v`` line omits its colour.
+
+    Legal, and what a merged or partially-annotated export looks like. The omitted row
+    has to be filled with white in the file's OWN convention: a fixed 1.0 sentinel is
+    white at 0..1, but in a 0..255 file it is left unscaled and lands as RGB(1, 1, 1) —
+    black.
+    """
+    lines = []
+    for i, (v, c) in enumerate(zip(gt.vertices, OBJ_MID_COLORS)):
+        suffix = "" if i == 0 else f" {int(c[0])} {int(c[1])} {int(c[2])}"
+        lines.append(f"v {v[0]:.6f} {v[1]:.6f} {v[2]:.6f}{suffix}")
     for tri in gt.faces:
         lines.append(" ".join(["f"] + [str(int(i) + 1) for i in tri]))
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
