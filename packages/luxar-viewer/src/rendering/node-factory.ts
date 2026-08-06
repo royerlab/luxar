@@ -60,7 +60,20 @@ import type { GeometryTypeName } from '../types/format-contract';
 // concrete types are still imported elsewhere (e.g. material-sync-helpers).
 
 /**
- * Per-geometry-type pick-material constructor, for the retro-registration pass.
+ * How to give one geometry type a pick material, for the retro-registration pass.
+ *
+ * `build` constructs it; the optional `afterRegister` runs once the picking system has
+ * stamped `userData.pickNode`, for a type whose pick material has to copy state off its
+ * visual twin.
+ */
+interface PickMaterialRecipe {
+  build(obj: THREE.Mesh, pickId: number): THREE.Material;
+  /** Optional post-registration step. Runs AFTER `registerNode`. */
+  afterRegister?(obj: THREE.Mesh): void;
+}
+
+/**
+ * Per-geometry-type pick-material recipe, for the retro-registration pass.
  *
  * A `Record<GeometryTypeName, …>` rather than an `else if` chain because this pass is
  * the one production actually runs (see {@link NodeFactory.registerExistingSceneNodes}),
@@ -68,29 +81,41 @@ import type { GeometryTypeName } from '../types/format-contract';
  * compile error and, until this was table-driven, no test that would have failed.
  * As a table, a new geometry type is a `TS2739` here.
  *
- * Each builder reads whatever its type's pick material needs off the visual node:
- * points need the geometry's `radiusScale` (the 80%-radius pick footprint derives from
- * it), mesh needs the node opacity and cutout threshold (they are its coverage term).
- * Lines and gsplats need only the id.
+ * `afterRegister` is part of the table for the same reason `build` is. It began life as
+ * an `if (nodeType === 'mesh')` line inside the loop — which is precisely the branch the
+ * table exists to abolish, so the loop's compile-time guarantee stopped one step short
+ * of the claim made for it. As a table field, "does this type need a post-registration
+ * step?" is answered where the type is declared rather than in the traversal.
+ *
+ * Each recipe reads whatever its type's pick material needs off the visual node: points
+ * need the geometry's `radiusScale` (the 80%-radius pick footprint derives from it),
+ * mesh needs the node opacity and cutout threshold (they are its coverage term). Lines
+ * and gsplats need only the id.
  */
-const PICK_MATERIAL_BUILDERS: Record<
-  GeometryTypeName,
-  (obj: THREE.Mesh, pickId: number) => THREE.Material
-> = {
-  points: (obj, pickId) =>
-    materialManager.createPointPickingMaterial({
-      nodeId: pickId,
-      radiusScale: (obj.geometry?.userData?.radiusScale as number | undefined) ?? 1.0,
-    }),
-  lines: (_obj, pickId) => materialManager.createLinePickingMaterial({ nodeId: pickId }),
-  gsplats: (_obj, pickId) => materialManager.createGSplatPickingMaterial({ nodeId: pickId }),
-  mesh: (obj, pickId) => {
-    const attrs = (obj.userData?.attrs ?? {}) as MeshMetadata;
-    return materialManager.createMeshPickingMaterial({
-      nodeId: pickId,
-      opacity: attrs.opacity ?? 1.0,
-      alphaCutoff: attrs.alpha_cutoff,
-    });
+const PICK_MATERIAL_RECIPES: Record<GeometryTypeName, PickMaterialRecipe> = {
+  points: {
+    build: (obj, pickId) =>
+      materialManager.createPointPickingMaterial({
+        nodeId: pickId,
+        radiusScale: (obj.geometry?.userData?.radiusScale as number | undefined) ?? 1.0,
+      }),
+  },
+  lines: {
+    build: (_obj, pickId) => materialManager.createLinePickingMaterial({ nodeId: pickId }),
+  },
+  gsplats: {
+    build: (_obj, pickId) => materialManager.createGSplatPickingMaterial({ nodeId: pickId }),
+  },
+  mesh: {
+    build: (obj, pickId) => {
+      const attrs = (obj.userData?.attrs ?? {}) as MeshMetadata;
+      return materialManager.createMeshPickingMaterial({
+        nodeId: pickId,
+        opacity: attrs.opacity ?? 1.0,
+        alphaCutoff: attrs.alpha_cutoff,
+      });
+    },
+    afterRegister: syncMeshPickMaterialToVisual,
   },
 };
 
@@ -189,7 +214,8 @@ export class NodeFactory {
 
       const pickId = this.pickingSystem!.allocatePickId();
       obj.userData.pickId = pickId;
-      const pickMaterial = PICK_MATERIAL_BUILDERS[nodeType](obj, pickId);
+      const recipe = PICK_MATERIAL_RECIPES[nodeType];
+      const pickMaterial = recipe.build(obj, pickId);
       materialManager.register(pickMaterial);
       // Shares the visual geometry — for the three instanced types that is the
       // instance-spanning, footprint-expanded bounds, so the pick node culls safely;
@@ -198,10 +224,10 @@ export class NodeFactory {
       const pickNode = new THREE.Mesh(obj.geometry, pickMaterial);
       pickNode.matrixWorld.copy(obj.matrixWorld);
       this.pickingSystem!.registerNode(obj, pickNode, pickId);
-      // Post-registration sync, for the one type whose pick material tracks the
-      // visual material's per-epoch state. AFTER registerNode, which is what stamps
-      // `userData.pickNode`.
-      if (nodeType === 'mesh') syncMeshPickMaterialToVisual(obj);
+      // Post-registration step, declared per type in the table above rather than
+      // branched on here. Must run AFTER registerNode, which is what stamps
+      // `userData.pickNode` that the step reads.
+      recipe.afterRegister?.(obj);
     });
 
     log.info(
