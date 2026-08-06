@@ -70,7 +70,9 @@ export function colorComponentsOf(array: zarr.Array<zarr.DataType, zarr.Readable
  * contract and turns an omitted declaration into an immediate loud
  * throw naming the mismatch.
  *
- * No-op when `colors` is absent. Shared by all three geometry types.
+ * No-op when `colors` is absent. Shared by the three instanced-quad types
+ * (Points, Lines, GSplats); mesh checks its materialized lengths in its own
+ * loader instead.
  */
 export function assertColorLayout(
   colors: { length: number } | null | undefined,
