@@ -373,7 +373,7 @@ to ship after). Sequencing is at the bottom.
   signature (→ `--recipe {…}`), and the redundant two-terminal "View it"
   block (→ single `luxar serve … --viewer --open`). **Remaining:** verify a
   truly-fresh-machine `make setup-dev`, and optionally regenerate the gallery
-  media (`make generate-readme-images/videos`).
+  media (`make generate-readme-images`).
 - **R18 [LAUNCH] — Documentation: content pass + confirm it's publicly
   viewable.** The **hosting is already wired**: `.github/workflows/docs.yml`
   builds Sphinx (Python API) + typedoc (viewer) and deploys to **GitHub Pages**
@@ -392,8 +392,8 @@ to ship after). Sequencing is at the bottom.
 - **R19 [LAUNCH] — README refresh + showcase the newer/better demos (images +
   video).** Extends R11 (whose one open remainder was "regenerate the gallery
   media"). The pipeline exists: `make generate-readme-demos →
-  generate-readme-images / generate-readme-videos` (Playwright captures of the
-  live viewer → `docs/images/readme/*.{png,gif,webp}`).
+  generate-readme-images` (Playwright captures of the
+  live viewer → `docs/images/readme/*.png`).
   - **Curate a stronger gallery** from the newer/better datasets (H&E pathology
     gsplats, 4D *C. elegans* tracking, organoid multichannel, Gaia) — decide
     which few best convey the range (volumetric splats, nD navigation, scale).

@@ -321,7 +321,6 @@ MIN_NODE_MINOR := 22
 | `make serve-dataset` | Serve a specific dataset |
 | `make generate-readme-demos` | Generate only the demo datasets needed for README screenshots |
 | `make generate-readme-images` | Generate README screenshots using Playwright |
-| `make generate-readme-videos` | Generate README videos (GIF/WebP) using Playwright |
 
 ### Documentation
 
