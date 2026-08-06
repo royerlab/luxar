@@ -27,7 +27,10 @@ import {
   resetTranslucencyNoticesForTesting,
 } from '../../../../data/scene-loader/commit/commit-mesh-geometry';
 import { createEmptyMeshNode } from '../../../../rendering/node-factory/create-mesh-node';
+import { LayerApplyEngine } from '../../../../ui/layers/layer-apply';
 import { log } from '../../../../utils/log';
+import type { SceneNode } from '../../../../data/data-loader-types';
+import type { LayerInfo, LayerStateManager } from '../../../../ui/layers/layer-state';
 import type {
   LoadedMeshData,
   MeshDataLoader,
@@ -275,36 +278,51 @@ describe('commitMeshGeometry', () => {
   });
 });
 
+/**
+ * Commit one triangle into a fresh scene, optionally with per-vertex RGBA.
+ *
+ * `vertexAlpha` is the authored alpha byte on every vertex — `255` is the fully-opaque
+ * RGBA array that must NOT warn.
+ */
+async function commitOnce(
+  path: string,
+  attrs: MeshMetadata,
+  opts: {
+    rgba?: boolean;
+    vertexAlpha?: number;
+    mesh?: THREE.Mesh;
+    root?: THREE.Group;
+  } = {}
+): Promise<THREE.Mesh> {
+  const root = opts.root ?? new THREE.Group();
+  const mesh = opts.mesh ?? createEmptyMeshNode(path, attrs, {} as MeshDataLoader, null);
+  if (!opts.mesh) root.add(mesh);
+  const a = opts.vertexAlpha ?? 128;
+  const data: LoadedMeshData = opts.rgba
+    ? {
+        ...loaded(),
+        colors: new Uint8Array([255, 0, 0, a, 0, 255, 0, a, 0, 0, 255, a]),
+        colorComponents: 4,
+      }
+    : loaded();
+  const staged = await processMeshData(path, data, VIEW, {
+    normal_dims: [0, 1, 2],
+    double_sided: false,
+  });
+  commitMeshGeometry({ rootGroup: root, currentVersion: 1 }, staged);
+  return mesh;
+}
+
 describe('commitMeshGeometry — the unsorted-translucency notice (§6.3)', () => {
   const loader = {} as MeshDataLoader;
 
   beforeEach(() => {
     resetTranslucencyNoticesForTesting();
+    // A test that fails before its own `mockRestore` would otherwise leave the spy
+    // installed, and the next `spyOn` would inherit its recorded calls — one red test
+    // cascading into a second, unrelated one.
+    vi.restoreAllMocks();
   });
-
-  /** Commit one triangle into a fresh scene, optionally with per-vertex RGBA. */
-  async function commitOnce(
-    path: string,
-    attrs: MeshMetadata,
-    opts: { rgba?: boolean; mesh?: THREE.Mesh; root?: THREE.Group } = {}
-  ): Promise<THREE.Mesh> {
-    const root = opts.root ?? new THREE.Group();
-    const mesh = opts.mesh ?? createEmptyMeshNode(path, attrs, loader, null);
-    if (!opts.mesh) root.add(mesh);
-    const data: LoadedMeshData = opts.rgba
-      ? {
-          ...loaded(),
-          colors: new Uint8Array([255, 0, 0, 128, 0, 255, 0, 128, 0, 0, 255, 128]),
-          colorComponents: 4,
-        }
-      : loaded();
-    const staged = await processMeshData(path, data, VIEW, {
-      normal_dims: [0, 1, 2],
-      double_sided: false,
-    });
-    commitMeshGeometry({ rootGroup: root, currentVersion: 1 }, staged);
-    return mesh;
-  }
 
   it('fires for `normal` below the depthWrite threshold', async () => {
     const warn = vi.spyOn(log, 'warning').mockImplementation(() => {});
@@ -343,6 +361,21 @@ describe('commitMeshGeometry — the unsorted-translucency notice (§6.3)', () =
     await commitOnce('/opaque_rgba', { ...ATTRS, has_colors: true, opacity: 0.3 } as MeshMetadata, {
       rgba: true,
     });
+    expect(warn.mock.calls.map((c) => String(c[1])).some((m) => m.includes('§6.3'))).toBe(false);
+    warn.mockRestore();
+  });
+
+  it('stays silent for an RGBA array whose alpha is fully opaque', async () => {
+    // The channel COUNT is not the condition — the alpha VALUES are. A writer that
+    // always emits four channels, or a broadcast `(r, g, b, 255)`, gives an RGBA array
+    // that composites exactly like an RGB one, so `normal` is depth-correct and there
+    // is nothing to warn about.
+    const warn = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    await commitOnce(
+      '/opaque_alpha',
+      { ...ATTRS, has_colors: true, blending_mode: 'normal', opacity: 1.0 } as MeshMetadata,
+      { rgba: true, vertexAlpha: 255 }
+    );
     expect(warn.mock.calls.map((c) => String(c[1])).some((m) => m.includes('§6.3'))).toBe(false);
     warn.mockRestore();
   });
@@ -406,6 +439,114 @@ describe('commitMeshGeometry — the unsorted-translucency notice (§6.3)', () =
     }
     const hits = warn.mock.calls.map((c) => String(c[1])).filter((m) => m.includes('§6.3'));
     expect(hits).toHaveLength(1);
+    warn.mockRestore();
+  });
+});
+
+/**
+ * The panel half of the same notice.
+ *
+ * Beside the commit tests rather than under `tests/unit/ui/` because it is one contract:
+ * a mesh whose slice never moves never commits again, so the predicate is only useful if
+ * a panel edit REACHES it. Driven through the real {@link LayerApplyEngine} (and the
+ * real mesh material behind it) so removing either hook turns these red.
+ */
+describe('LayerApplyEngine — the panel half of the translucency notice (§6.3)', () => {
+  beforeEach(() => {
+    resetTranslucencyNoticesForTesting();
+    vi.restoreAllMocks();
+  });
+
+  function meshLayer(overrides: Partial<LayerInfo>): LayerInfo {
+    return {
+      path: '/surface',
+      name: 'surface',
+      type: 'mesh',
+      visible: true,
+      opacity: 1,
+      absorption: 0,
+      ambient: 0.1,
+      shadeExponent: 1,
+      alphaCutoff: 0,
+      displayMin: 0,
+      displayMax: 1,
+      dataMin: 0,
+      dataMax: 1,
+      gamma: 1,
+      blendingMode: 'opaque',
+      blendingModeExplicit: false,
+      selected: true,
+      ...overrides,
+    } as LayerInfo;
+  }
+
+  function engineFor(root: THREE.Group, layer: LayerInfo): LayerApplyEngine {
+    const sceneGraph = {
+      name: 'root',
+      path: '/',
+      type: 'group',
+      attrs: {},
+      children: [
+        { name: 'surface', path: layer.path, type: 'mesh', attrs: { layer: true }, children: [] },
+      ],
+    } as unknown as SceneNode;
+    return new LayerApplyEngine({
+      getRootGroup: () => root,
+      getSceneGraph: () => sceneGraph,
+      // `getLayer` is the only state these two paths reach.
+      state: {
+        getLayer: (p: string) => (p === layer.path ? layer : undefined),
+      } as unknown as LayerStateManager,
+      requestRender: () => {},
+    });
+  }
+
+  it('warns when the Blend control switches a loaded mesh to `normal`', async () => {
+    const root = new THREE.Group();
+    // Authored default `opaque` at a low opacity: silent through the commit.
+    await commitOnce('/surface', { ...ATTRS, opacity: 0.4 } as MeshMetadata, { root });
+    const warn = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    // What the Blend dropdown does: an EXPLICIT user pick, then one engine apply.
+    const layer = meshLayer({
+      opacity: 0.4,
+      blendingMode: 'normal',
+      blendingModeExplicit: true,
+    });
+    engineFor(root, layer).applyBlendingMode(layer);
+    const messages = warn.mock.calls.map((c) => String(c[1]));
+    expect(messages.some((m) => m.includes('/surface') && m.includes('§6.3'))).toBe(true);
+    warn.mockRestore();
+  });
+
+  it('warns when the Opacity slider drags an already-`normal` mesh below the threshold', async () => {
+    const root = new THREE.Group();
+    // `normal` but fully opaque, so the commit is silent — only the drag makes it
+    // translucent, and only the engine knows.
+    await commitOnce(
+      '/surface',
+      { ...ATTRS, blending_mode: 'normal', opacity: 1.0 } as MeshMetadata,
+      { root }
+    );
+    const warn = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    const layer = meshLayer({
+      opacity: 0.4,
+      blendingMode: 'normal',
+      blendingModeExplicit: true,
+    });
+    engineFor(root, layer).applyOpacity(layer);
+    const messages = warn.mock.calls.map((c) => String(c[1])).filter((m) => m.includes('§6.3'));
+    // Once, not once per slider tick.
+    expect(messages).toHaveLength(1);
+    warn.mockRestore();
+  });
+
+  it('stays silent when the panel leaves a mesh `opaque`', async () => {
+    const root = new THREE.Group();
+    await commitOnce('/surface', { ...ATTRS, opacity: 1.0 } as MeshMetadata, { root });
+    const warn = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    const layer = meshLayer({ opacity: 0.2, blendingMode: 'opaque', blendingModeExplicit: true });
+    engineFor(root, layer).applyOpacity(layer);
+    expect(warn.mock.calls.map((c) => String(c[1])).some((m) => m.includes('§6.3'))).toBe(false);
     warn.mockRestore();
   });
 });

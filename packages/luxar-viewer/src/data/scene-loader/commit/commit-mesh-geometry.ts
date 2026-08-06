@@ -27,7 +27,7 @@
 
 import type * as THREE from 'three';
 import { log, Modules } from '../../../utils/log';
-import { updateMeshGeometry } from '../../../rendering/mesh-geometry';
+import { hasTranslucentVertexAlpha, updateMeshGeometry } from '../../../rendering/mesh-geometry';
 import { invalidateRenderObjectFor } from './invalidate-render-object';
 import { applyMeshSide, applyMeshShading } from '../../../rendering/node-factory/create-mesh-node';
 import { normalModeDepthWrite } from '../../../rendering/blending-state';
@@ -74,11 +74,12 @@ export function resetTranslucencyNoticesForTesting(): void {
  * same predicate the material's own blending state keys on — so the warning and the
  * behaviour it warns about cannot drift apart.
  *
- * The per-vertex-RGBA arm is deliberately UNCONDITIONAL in opacity, because at
+ * The per-vertex-alpha arm is deliberately UNCONDITIONAL in opacity, because at
  * `opacity = 1` the failure is worse rather than absent: `depthWrite` is on while
  * `transparent` is true, so a translucent fragment writes depth and whatever is behind
  * it is depth-REJECTED. That is dropout, not mis-ordering, and the opacity arm cannot
- * see it.
+ * see it. It keys on alpha that is actually below opaque, not on the presence of a 4th
+ * channel — an all-opaque RGBA array composites exactly like an RGB one.
  *
  * Both inputs are read LIVE off the material rather than from the authored attrs: the
  * Layers panel can switch a node into `normal` or drag its opacity long after load,
@@ -95,16 +96,20 @@ export function noticeUnsortedTranslucency(object: THREE.Mesh, path: string): vo
   if (material.userData?.blendingMode !== 'normal') return;
 
   const opacity = material.uniforms?.uOpacity?.value ?? 1.0;
-  // Stamped at commit (below). NOT read off the geometry attribute: `mesh-geometry.ts`
-  // pads RGB to RGBA for uint8/uint16, so `itemSize === 4` is true for plenty of meshes
-  // that carry no authored alpha at all.
-  const hasVertexAlpha = object.userData.meshColorComponents === 4;
+  // The commit's scan (below), NOT the geometry attribute: `mesh-geometry.ts` pads RGB
+  // to RGBA for uint8/uint16, so `itemSize === 4` is true for plenty of meshes that
+  // carry no authored alpha at all — and an RGBA array whose alpha is uniformly opaque
+  // is not translucent either.
+  const hasVertexAlpha = object.userData.meshTranslucentVertexAlpha === true;
   if (normalModeDepthWrite(opacity) && !hasVertexAlpha) return;
 
   noticedTranslucency.add(object);
+  // Rounded: this opacity is usually a COMPOSED product (layer × ancestors), so the
+  // raw value prints as 0.6299999999999999 often enough to be worth two decimals.
+  const shownOpacity = opacity.toFixed(2);
   const cause = hasVertexAlpha
-    ? `per-vertex RGBA alpha${normalModeDepthWrite(opacity) ? '' : ` and opacity ${opacity}`}`
-    : `opacity ${opacity}`;
+    ? `per-vertex RGBA alpha${normalModeDepthWrite(opacity) ? '' : ` and opacity ${shownOpacity}`}`
+    : `opacity ${shownOpacity}`;
   log.warning(
     Modules.SCENE_LOADER,
     `Mesh ${path} renders translucent (${cause}) under blending_mode='normal', which ` +
@@ -196,11 +201,20 @@ export function commitMeshGeometry(
 
   // Warned here rather than at node creation because the two halves of the condition
   // are only both known here: the resolved mode lives on the material, while per-vertex
-  // RGBA is a property of the LOADED arrays (`MeshMetadata` carries `has_colors`, not a
-  // channel count) and so does not exist until the first commit.
+  // alpha is a property of the LOADED arrays (`MeshMetadata` carries `has_colors`, not a
+  // channel count, let alone the alpha values) and so does not exist until the first
+  // commit.
   // Stamped so the Layers panel can evaluate the same predicate later: a mode or
-  // opacity change after load has no access to `LoadedMeshData`.
-  object.userData.meshColorComponents = data.colorComponents;
+  // opacity change after load has no access to `LoadedMeshData`. Scanned ONCE per node
+  // — the colour array is uploaded once and never changes, while this runs on every
+  // slice move.
+  if (object.userData.meshTranslucentVertexAlpha === undefined) {
+    object.userData.meshTranslucentVertexAlpha = hasTranslucentVertexAlpha(
+      data.colors,
+      data.colorComponents,
+      data.vertexCount
+    );
+  }
   noticeUnsortedTranslucency(object, staged.path);
 
   // A first-commit vertex-attribute rebind (position grow / color install) leaves

@@ -143,9 +143,11 @@ the console rather than only here.
 
 Note the warning's two arms are not the same condition. The opacity arm keys on
 `normalModeDepthWrite` (`>= 0.99`), the threshold where `normal` actually stops
-depth-writing. The per-vertex-RGBA arm fires at **any** opacity, because at
+depth-writing. The per-vertex-alpha arm fires at **any** opacity, because at
 `opacity = 1` a translucent fragment still writes depth and rejects whatever is
-behind it — dropout rather than mis-ordering, and strictly worse.
+behind it — dropout rather than mis-ordering, and strictly worse. Both arms key on
+what is observable rather than on what was authored: an RGBA colour array whose
+alpha is uniformly opaque composites like an RGB one, so it stays silent.
 
 ## Testing
 
