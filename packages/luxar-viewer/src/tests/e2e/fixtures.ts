@@ -145,4 +145,5 @@ export const test = base.extend({
 });
 
 export { expect } from '@playwright/test';
+/** Re-export of Playwright's core page/locator/browser types so specs import everything from this fixture module. */
 export type { Page, Locator, Browser, BrowserContext } from '@playwright/test';

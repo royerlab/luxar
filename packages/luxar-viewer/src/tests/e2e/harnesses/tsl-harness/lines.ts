@@ -471,6 +471,11 @@ function capSuppressionEntry(suppression: number): RegistryEntry {
   };
 }
 
+/**
+ * Registry of line shader entries for the TSL↔GLSL parity harness, keyed by
+ * test name. Each entry carries the GLSL source and a `buildUniforms` factory;
+ * merged into `SHADER_REGISTRY` and driven by the parity/codegen specs.
+ */
 export const LINE_SHADERS: Record<string, RegistryEntry> = {
   // Line parity: instanced quad line with width, sharpness, GOG.
   // Ortho camera so screen-space conversion is deterministic.
