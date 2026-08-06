@@ -322,7 +322,7 @@ narrowly-scoped helpers each spatial-index loader composes:
   success and error paths so the active-query map never leaks), plus
   `makeInitialLoaderMetrics(type, path)` (the zeroed initial `LoaderMetrics`
   record every facade starts from), and
-  `buildSpatialIndexMetrics(chunkCount, chunkSize, queries, lastQueryCells, elementsLoaded)`
+  `buildSpatialIndexMetrics(chunkCount, queries, totalQueryCells, elementsLoaded)`
   (the chunk-index
   telemetry snapshot all three facades attach as `metrics.spatialIndex` for
   the monitor advisor). Pure helpers, unit-tested without a zarr
@@ -348,10 +348,11 @@ narrowly-scoped helpers each spatial-index loader composes:
   times across the three loaders.
 - **`aggregate-loader-metrics.ts`** — `aggregateLoaderMetrics(inner, path)`:
   pure roll-up of N per-LOD `LoaderMetrics` into one snapshot for a progressive
-  node. Counters are summed; `memoryLimit` is the max (a shared cap, not
-  additive); `avgQueryTime` / `avgLoadTime` are query/load-weighted means;
-  optional `spatialIndex` cell counts are summed with query-weighted rate means
-  (descriptive grid arrays from the first carrier); `optimization` is taken from
+  node. Counters are summed; `avgQueryTime` / `avgLoadTime` are query/load-weighted
+  means; optional `spatialIndex` cell counts (`occupiedCells` / `totalCells`) are
+  summed, its per-query rates are query-weighted means over the LODs that
+  actually report a `spatialIndex`, and `avgElementsPerCell` is cell-weighted
+  (a per-cell density); `optimization` is taken from
   the first reporter to avoid double-counting app-global singletons.
 - **`progressive-monitor-adapter.ts`** — `ProgressiveMonitorAdapter`: makes a
   progressive node (N inner per-LOD loaders) look like a SINGLE loader to the
@@ -454,8 +455,9 @@ pnpm test src/tests/unit/data/loaders/spatial-query/spatial-query-builder.test.t
 - **once-init.test.ts** — concurrent callers share in-flight promise;
   rejected init clears the cache so the next call retries.
 - **aggregate-loader-metrics.test.ts** — empty-array zeroed fallback,
-  counter summing, max-of `memoryLimit`, weighted-mean times, `spatialIndex`
-  roll-up, first-reporter `optimization`.
+  counter summing, query/load-weighted mean times (+ zero-when-no-queries/loads),
+  `spatialIndex` roll-up (summed cell counts, query-weighted per-query rates,
+  cell-weighted `avgElementsPerCell`), first-reporter `optimization`.
 - **progressive-monitor-adapter.test.ts** — event/active-query re-pathing to
   the parent node, `addEventListener` idempotency, `getMetrics` aggregation.
 - **concat-helpers.test.ts** (under `progressive/`) — required/optional
