@@ -492,8 +492,10 @@ Normals are optional: omit them and the shader derives a flat per-face normal
 from screen-space derivatives. `normal_dims` is required whenever you *do* pass
 them, because in nD there is no implicit "first three dimensions".
 
-LOD, spatial partitioning and `volumetric` blending are not supported and raise
-rather than silently degrading — see
+LOD, spatial partitioning and `volumetric` blending are not supported, and none
+of them degrades silently: `add_mesh` raises on all three, and a `volumetric`
+that reaches the viewer by *inheritance* from an ancestor group logs a warning
+naming the node and falls back to `opaque`. See
 [the mesh spec](docs/specs/MESH_NODE_SPEC.md) §9 for why, per exclusion.
 
 ---

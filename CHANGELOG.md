@@ -6,6 +6,29 @@ All notable changes to Luxar are documented in this file.
 
 ### August 2026
 
+#### Four geometry types, said consistently
+
+The docs still described Luxar as a three-geometry system in every place a
+newcomer meets it first: the `README.md` lead paragraph and capability table,
+`docs/index.rst`, `docs/concepts/architecture.rst` (which went further and listed
+"Triangle meshes" under *consider alternatives — use three.js*), the viewer guide,
+and the TypeScript API summary. All now name mesh, and `README.md` gains a Mesh
+section under Geometry Types covering `add_mesh`, the no-per-element-size and
+`opaque`-by-default differences, optional normals, and the §9 exclusions.
+`docs/api/core.rst` gained the missing `luxar.core.Mesh` autoclass entry.
+
+`LUXAR_ZARR_FORMAT.md` still carried a "writable, not yet renderable" warning and
+claimed `loader_types` excluded mesh — both untrue since the Phase-3 switch-on;
+`MESH_NODE_SPEC.md` §3.1 inlined the same stale `contract.yaml` quote, and its §8
+integration checklist still showed the whole TypeScript / Rust / test half
+unchecked. Corrected against the real contract and the shipped code. Three demo
+docstrings said "two of Luxar's three geometry types".
+
+Claims that count the *instanced-quad, depth-sorted, volumetric* families rather
+than the type vocabulary were checked and deliberately left at three — mesh takes
+part in none of those, and the `?debug` synthetic-scene bench injector genuinely
+still builds only points, lines and gsplats.
+
 #### Removed — unreachable accelerated gsplat code paths
 
 Three optimized paths existed and were maintained but could not be selected by

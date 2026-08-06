@@ -9,6 +9,6 @@ The ``luxar-viewer`` package provides:
 
 * **Scene Management** -- Loading and displaying Luxar Zarr scenes
 * **nD Navigation** -- Dimension sliders, keyboard navigation, animation
-* **Rendering** -- Points, Lines, and Gaussian Splats with HDR support
+* **Rendering** -- Points, Lines, Gaussian Splats, and Mesh with HDR support
 * **Caching** -- L0/L1/L2 cache hierarchy with OPFS persistence
 * **Configuration** -- Rendering settings, dimension controls, debug interface
