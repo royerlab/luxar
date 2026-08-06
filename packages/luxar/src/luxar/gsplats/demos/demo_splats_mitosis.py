@@ -14,6 +14,7 @@ import numpy as np
 from arbol import Arbol, aprint, asection
 from skimage import color, data, img_as_float32
 
+from luxar.gsplats.demos._demo_common import ellipse_polygon_from_L
 from luxar.gsplats.fit_gsplats import fit_gaussian_splats
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.models.gsplats.rendering_wrappers import render_gaussians_numpy
@@ -34,23 +35,6 @@ TRUNCATE_SIG = 3.0  # rendering support truncation (≈ ±3σ)
 
 # Setup Arbol
 Arbol.max_depth = 4
-
-
-def ellipse_polygon_from_L(
-    mu_yx: np.ndarray, L: np.ndarray, t: float = 2.0, n_pts: int = 64
-) -> np.ndarray:
-    """
-    2D oriented ellipse polygon for the contour (x-μ)^T Σ^{-1} (x-μ) = t^2, with Σ = L L^T.
-    Returns (n_pts, 2) polygon in (y, x).
-    """
-    Sigma = L @ L.T
-    evals, evecs = np.linalg.eigh(Sigma)  # principal axes
-    evals = np.clip(evals, 1e-12, None)
-    radii = t * np.sqrt(evals)  # radii along principal axes
-    theta = np.linspace(0, 2 * np.pi, n_pts, endpoint=False)
-    circle = np.stack([np.cos(theta), np.sin(theta)], axis=0)  # (2, n_pts)
-    pts = (evecs @ (radii[:, None] * circle)).T + mu_yx[None, :]
-    return pts.astype(np.float32)
 
 
 with asection("Human Mitosis Gaussian Splatting Demo"):
