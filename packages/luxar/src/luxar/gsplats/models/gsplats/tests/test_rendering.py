@@ -959,10 +959,12 @@ class TestMPSFallbackHandling:
         with _force_mps_device():
             groups = group_by_box(lo, hi)
 
-        assert len(groups) == 2
-        assert (5, 5) in groups
-        assert (7, 3) in groups
-        assert len(groups[(5, 5)]) == 2
+        # Exact groupings, member indices included — keying by box shape makes
+        # this independent of the order torch.unique returns the sizes in.
+        assert {key: idx.tolist() for key, idx in groups.items()} == {
+            (5, 5): [0, 2],
+            (7, 3): [1],
+        }
 
     def test_group_by_box_gpu_mps_fallback_cpu(self) -> None:
         """Drive the MPS CPU-fallback branch of group_by_box_gpu on a CPU host.
@@ -979,8 +981,11 @@ class TestMPSFallbackHandling:
         with _force_mps_device():
             uniq, inv = group_by_box_gpu(lo, hi)
 
-        assert uniq.shape[0] == 2
-        assert inv.shape[0] == 3
+        # Exact unique sizes, and `inv` must index them back to each input's
+        # own box shape (order-independent, so no reliance on unique's sort).
+        sizes = uniq.tolist()
+        assert sorted(sizes) == [[5, 5], [7, 3]]
+        assert [sizes[g] for g in inv.tolist()] == [[5, 5], [7, 3], [5, 5]]
 
 
 class TestMPSPeakFindingFallback:

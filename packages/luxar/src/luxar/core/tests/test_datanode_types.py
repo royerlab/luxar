@@ -37,8 +37,9 @@ class TestGeometryTypeParity:
             metadata={"n_points": 7, "n_vertices": 7, "n_splats": 7, "ndim": 3},
         )
         # Every type exposes the same four "has-X" booleans plus
-        # n_elements with the same integer semantics.
-        assert isinstance(node.n_elements, int)
+        # n_elements with the same integer semantics: each reads its own
+        # primary-count key and returns it as an int.
+        assert node.n_elements == 7
         assert hasattr(node, "has_colors")
         assert hasattr(node, "has_labels")
         assert hasattr(node, "has_image_labels")
