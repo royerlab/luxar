@@ -222,7 +222,6 @@ def run_batch_local(
     workers = resolve_jobs_per_gpu(
         gpu_indices,
         task_voxels=_task_voxels(manifest),
-        n_tasks=len(task_ids),
         jobs_per_gpu=jobs_per_gpu,
     )
     assignment = build_device_assignment(task_ids, workers)

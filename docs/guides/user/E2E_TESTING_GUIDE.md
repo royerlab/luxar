@@ -413,7 +413,8 @@ const spatialIndex = await page.evaluate(() => {
   const pointsLoader = sceneLoader ? [...sceneLoader.loaders.values()][0] : undefined;
   const metrics = pointsLoader?.getMetrics?.();
 
-  // Fields include gridShape, totalCells, avgCellsPerQuery, queryEfficiency.
+  // Fields: occupiedCells, totalCells, avgCellsPerQuery, avgElementsPerCell,
+  // queryEfficiency.
   // Note: `occupiedCells` is a number (chunk count), not an array.
   return metrics?.spatialIndex ?? null;
 });
