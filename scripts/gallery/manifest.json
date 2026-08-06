@@ -143,8 +143,9 @@
       "category": "microscopy",
       "script": "demo_mesh_isosurface_cells3d.py",
       "dataset": "datasets/demos/mesh_isosurface_cells3d.luxar.zarr",
+      "exposure": -1.5,
       "fillTarget": 0.84,
-      "note": "the first mesh tile. auto-exposure needs no override (it lands ~0.97 stops on the shaded surface), but the default 0.95 fill clips the slab off the bottom and both sides; 0.84 fits it whole at 82pct coverage"
+      "note": "the first SHADED tile, and both overrides exist because of that. auto-exposure lands +0.97 and washes the surface out: a headlit surface has N.L~1 on every visible facet, so its luminance histogram is only 0.06 wide (p10 0.840, p99 0.903), and driving that p99 to the 0.9 target parks the WHOLE subject in the ACES highlight rolloff, which desaturates toward white. Measured membrane saturation 0.28 against 0.85 authored; -1.5 restores 0.66. The blowout guard cannot catch this - it looks for a tail above a clip threshold, and a narrow distribution sitting at 0.87 has no tail. Emissive tiles are unaffected: only their bright cores reach the rolloff. Separately the default 0.95 fill clips the slab off the bottom and both sides; 0.84 fits it whole at 82pct coverage"
     },
     {
       "id": "gsplats_3d_organoid_multichannel",
