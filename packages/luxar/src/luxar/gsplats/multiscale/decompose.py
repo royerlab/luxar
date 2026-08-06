@@ -706,121 +706,6 @@ def _compute_max_abs_error(pred: torch.Tensor, target: torch.Tensor) -> float:
     return float(torch.max(torch.abs(pred - target)))
 
 
-def _compute_l1_loss(
-    pred: torch.Tensor, target: torch.Tensor, asymmetric_penalty: Optional[float]
-) -> torch.Tensor:
-    """
-    Compute L1 (Mean Absolute Error) loss with optional asymmetric penalty.
-
-    Parameters
-    ----------
-    pred : torch.Tensor
-        Predicted reconstruction
-    target : torch.Tensor
-        Target image
-    asymmetric_penalty : Optional[float]
-        Over-prediction penalty factor. Set to None for symmetric L1 loss.
-
-    Returns
-    -------
-    torch.Tensor
-        L1 loss value
-    """
-    l1_error = torch.abs(pred - target)
-    if asymmetric_penalty is not None:
-        # Asymmetric L1: heavily penalize over-prediction (pred > target)
-        # L1 + asymmetric penalty provides excellent robustness and stability
-        over_prediction_mask = pred > target
-        data = torch.mean(
-            torch.where(
-                over_prediction_mask,
-                asymmetric_penalty * l1_error,  # F times penalty for over-prediction
-                l1_error,  # Normal penalty for under-prediction
-            )
-        )
-    else:
-        data = F.l1_loss(pred, target)
-    return data
-
-
-def _compute_mse_loss(
-    pred: torch.Tensor, target: torch.Tensor, asymmetric_penalty: Optional[float]
-) -> torch.Tensor:
-    """
-    Compute MSE (Mean Squared Error) loss with optional asymmetric penalty.
-
-    Parameters
-    ----------
-    pred : torch.Tensor
-        Predicted reconstruction
-    target : torch.Tensor
-        Target image
-    asymmetric_penalty : Optional[float]
-        Over-prediction penalty factor. Set to None for symmetric MSE loss.
-
-    Returns
-    -------
-    torch.Tensor
-        MSE loss value
-    """
-    squared_error = (pred - target) ** 2
-    if asymmetric_penalty is not None:
-        # Asymmetric MSE: penalize over-prediction more heavily.
-        # Under-prediction is easy to fix (add energy), over-prediction is hard.
-        over_prediction_mask = pred > target
-        data = torch.mean(
-            torch.where(
-                over_prediction_mask,
-                asymmetric_penalty * squared_error,  # F times penalty
-                squared_error,  # Normal penalty
-            )
-        )
-    else:
-        data = F.mse_loss(pred, target)
-    return data
-
-
-def _compute_poisson_loss(
-    pred: torch.Tensor, target: torch.Tensor, asymmetric_penalty: Optional[float]
-) -> torch.Tensor:
-    """
-    Compute Poisson deviance loss with optional asymmetric penalty.
-
-    Parameters
-    ----------
-    pred : torch.Tensor
-        Predicted reconstruction
-    target : torch.Tensor
-        Target image
-    asymmetric_penalty : Optional[float]
-        Over-prediction penalty factor. Set to None for symmetric Poisson loss.
-
-    Returns
-    -------
-    torch.Tensor
-        Poisson deviance loss value
-    """
-    eps = 1e-8
-    Vc = torch.clamp(target, min=0.0)
-    Pc = torch.clamp(pred, min=eps)
-    dev = 2.0 * torch.sum(Pc - Vc + Vc * torch.log(torch.clamp(Vc / Pc, min=eps)))
-    data = dev / target.numel()
-
-    # Apply asymmetric penalty if specified
-    if asymmetric_penalty is not None:
-        over_prediction_mask = pred > target
-        # Compute additional penalty for over-prediction regions only
-        # This penalizes regions where we predict more intensity than target
-        over_prediction_dev = 2.0 * torch.sum(
-            over_prediction_mask
-            * (Pc - Vc + Vc * torch.log(torch.clamp(Vc / Pc, min=eps)))
-        )
-        # Add (F-1) times the over-prediction loss to get total F times penalty
-        data = data + (asymmetric_penalty - 1.0) * over_prediction_dev / target.numel()
-
-    return data
-
-
 def decomposition_loss(
     model: MultiScaleDecomposer,
     target: torch.Tensor,
@@ -869,6 +754,14 @@ def decomposition_loss(
         - 'total_loss': Combined loss
         - 'energy_scale_i': Energy fraction at scale i
     """
+    # Reuse the canonical loss kernels (function-local import to be defensive
+    # against import cycles, though none currently exists).
+    from luxar.gsplats.fitting.losses import (
+        _compute_l1_loss,
+        _compute_mse_loss,
+        _compute_poisson_loss,
+    )
+
     # Forward pass
     scales_list, upsampled_list, reconstruction = model()
 
