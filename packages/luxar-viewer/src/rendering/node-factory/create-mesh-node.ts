@@ -250,9 +250,17 @@ export function createEmptyMeshNode(
   leafAttrs?: Partial<MeshMetadata>
 ): THREE.Mesh {
   const geometry = createMeshGeometry({
-    // One vertex and no indices: a valid, drawable-but-empty geometry. A truly
-    // zero-vertex buffer makes `computeBoundingSphere` produce NaN bounds, which
-    // the depth-sort coordinator and the raycaster both then refuse to use.
+    // One vertex and no indices: a valid, drawable-but-empty geometry.
+    //
+    // The choice is conservative rather than forced, and it is worth saying so
+    // precisely because an earlier version of this comment claimed a zero-vertex buffer
+    // makes `computeBoundingSphere` produce NaN bounds. MEASURED against three r184,
+    // that is false in every direction: a 0-count `position` gives `radius = 0`, and an
+    // ABSENT `position` gives three's `radius = -1` "no geometry" sentinel. Neither is
+    // NaN. What one vertex does buy is that every attribute — including the
+    // always-bound default `color` — has `count >= 1`, so the geometry is
+    // non-degenerate for anything that divides by or iterates over the count, and its
+    // bounding sphere is a real sphere rather than the -1 sentinel.
     position: new Float32Array(3),
     // The placeholder's buffer is brand new, so it is trivially "changed".
     positionChanged: true,

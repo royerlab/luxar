@@ -61,7 +61,7 @@ class TestPhysicalUnits:
 
     def test_units_in_config_match_types(self) -> None:
         """Every unit in SUPPORTED_UNITS validates and round-trips unchanged."""
-        from luxar.config import SUPPORTED_UNITS
+        from luxar.typing_utils.config import SUPPORTED_UNITS
         from luxar.validation.types import validate_physical_unit
 
         assert SUPPORTED_UNITS, "SUPPORTED_UNITS is empty — the loop would be vacuous"

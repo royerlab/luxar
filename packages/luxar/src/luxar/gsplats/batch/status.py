@@ -116,14 +116,12 @@ def check_batch_status(output_dir: Path) -> BatchStatus:
 def format_status_report(
     status: BatchStatus,
     manifest: BatchManifest,
-    verbose: bool = False,
 ) -> str:
     """Format a human-readable status report.
 
     Args:
         status: Aggregated batch status.
         manifest: Batch manifest for context.
-        verbose: Include per-task details.
 
     Returns:
         Multi-line status string.
