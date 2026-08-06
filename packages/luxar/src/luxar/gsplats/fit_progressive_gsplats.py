@@ -133,7 +133,7 @@ def fit_progressive_gaussian_splats(
     asymmetric_penalty: Optional[
         float
     ] = 10.0,  # Intentionally higher than single-pass (1.0)
-    enable_dynamic_ops: bool = True,
+    enable_dynamic_ops: bool = False,
     cull_retention: float | None = 0.98,
     on_pass_complete: Optional[Callable[[int, AdditiveSubLOD, float], None]] = None,
     device: Optional[str] = None,
@@ -168,8 +168,11 @@ def fit_progressive_gaussian_splats(
         is reached or PSNR patience triggers.
     asymmetric_penalty : float, optional
         Asymmetric loss penalty factor (default 10.0).
-    enable_dynamic_ops : bool
-        Whether to enable dynamic splat relocation within each pass.
+    enable_dynamic_ops : bool, default=False
+        Whether to enable dynamic splat relocation within each pass. Off by
+        default for progressive fitting: each pass seeds directly at the
+        residual peaks, so relocation shows no measured quality benefit. Set
+        to ``True`` to opt in.
     cull_retention : float or None, default=0.98
         Post-fit cumulative culling on the final accumulated result.  Keeps the
         top splats that account for this fraction of total amplitude (0--1).
@@ -392,10 +395,12 @@ def fit_progressive_gaussian_splats(
             pass_kwargs["loss_type"] = "poisson"  # natural for sparse residuals
             pass_kwargs["lr"] = 0.03  # fine-detail splats converge faster
 
-        # Disable dynamic ops for progressive passes: seeds are already placed
-        # at residual peaks, and diverse benchmark showed no quality benefit
-        # from relocation (quality iteration 30).  Saves per-iteration overhead.
-        pass_enable_dynamic = False
+        # Relocation is OFF BY DEFAULT for progressive passes: seeds are already
+        # placed at residual peaks, and a diverse benchmark showed no quality
+        # benefit from relocation (quality iteration 30) while it adds
+        # per-iteration overhead.  A caller may opt in via
+        # ``enable_dynamic_ops=True``.
+        pass_enable_dynamic = enable_dynamic_ops
 
         # Adaptive iteration count: later passes fit progressively smaller
         # residuals and converge faster. Scale iterations with pass index.

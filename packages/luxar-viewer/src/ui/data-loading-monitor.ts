@@ -28,7 +28,6 @@ import type {
   NodeDrawOrder,
 } from '../types/data-monitor-types';
 
-// Performance timeline removed - now using hierarchical timing panel
 import { aggregateCacheMetrics } from './data-loading-monitor/metrics/cache';
 import { calculateRates } from './data-loading-monitor/metrics/rates';
 import { updateCacheTab } from './data-loading-monitor/tabs/cache';
@@ -198,7 +197,6 @@ export class DataLoadingMonitor {
     isVisible: false,
     isExpanded: false,
     activeTab: 'overview',
-    timeRange: MonitorTimings.defaultTimeRange,
   };
 
   // Polling-based update system (decoupled from event emission)
@@ -214,8 +212,6 @@ export class DataLoadingMonitor {
   private cachedRates = {
     queriesPerSec: 0,
     loadsPerSec: 0,
-    hitsPerSec: 0,
-    missesPerSec: 0,
     bandwidth: 0,
     lastCalculated: 0,
   };
@@ -308,16 +304,11 @@ export class DataLoadingMonitor {
     this.container = container;
     this.config = {
       position: 'top-right',
-      theme: 'dark',
-      defaultView: 'compact',
       updateInterval: MonitorTimings.defaultUpdateInterval,
       maxEvents: MonitorLimits.maxEvents,
-      showSpatialGrid: true,
-      showTimeline: true,
       showRecommendations: true,
       autoExpand: false,
       enableProfiling: true,
-      sampleRate: 1,
       ...config,
     };
 
@@ -903,10 +894,6 @@ export class DataLoadingMonitor {
         }
         break;
 
-      case 'evict':
-        metrics.evictions++;
-        break;
-
       case 'error':
         metrics.errors++;
         break;
@@ -954,7 +941,6 @@ export class DataLoadingMonitor {
       path,
       queries: 0,
       loads: 0,
-      evictions: 0,
       errors: 0,
       elementsLoaded: 0,
       bytesLoaded: 0,
@@ -962,7 +948,6 @@ export class DataLoadingMonitor {
       avgQueryTime: 0,
       avgLoadTime: 0,
       memoryUsed: 0,
-      memoryLimit: MonitorLimits.defaultMemoryLimit, // Will be overridden by actual loader limits
     };
   }
 
@@ -1026,11 +1011,6 @@ export class DataLoadingMonitor {
         if (tabId) {
           this.setActiveTab(tabId);
         }
-        break;
-      }
-      case 'setTimeRange': {
-        const select = target as HTMLSelectElement;
-        this.setTimeRange(select.value);
         break;
       }
       case 'clearL0':
@@ -2293,12 +2273,6 @@ export class DataLoadingMonitor {
     } else {
       log.warning(Modules.DATA_MONITOR, `Invalid tab: ${tab}`);
     }
-  }
-
-  public setTimeRange(range: string): void {
-    this.uiState.timeRange = parseInt(range);
-    // Timeline removed - time range is tracked but no longer used
-    this.updateUI();
   }
 
   /**

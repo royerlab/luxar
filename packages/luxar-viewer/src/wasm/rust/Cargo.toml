@@ -16,9 +16,6 @@ wasm-bindgen = "0.2"
 # Note: Manual SIMD (wide crate) was tested but showed no benefit over simple loops
 # when compiled to WASM. The compiler auto-vectorization is sufficient.
 
-[dev-dependencies]
-wasm-bindgen-test = "0.3"
-
 [profile.release]
 opt-level = 3           # Maximum optimization
 lto = true              # Link-time optimization

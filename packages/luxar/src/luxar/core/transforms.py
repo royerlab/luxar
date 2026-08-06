@@ -1,4 +1,4 @@
-"""luxar.transforms – Transform utilities for creating and manipulating 4x4 transformation matrices.
+"""luxar.core.transforms – Transform utilities for creating and manipulating 4x4 transformation matrices.
 
 This module provides convenient functions for creating common transformations
 used in 3D graphics, including translation, rotation, and scaling matrices.

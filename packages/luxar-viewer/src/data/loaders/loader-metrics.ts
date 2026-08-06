@@ -32,7 +32,6 @@ export function makeInitialLoaderMetrics(type: LoaderType, path: string): Loader
     path,
     queries: 0,
     loads: 0,
-    evictions: 0,
     errors: 0,
     elementsLoaded: 0,
     bytesLoaded: 0,
@@ -40,7 +39,6 @@ export function makeInitialLoaderMetrics(type: LoaderType, path: string): Loader
     avgQueryTime: 0,
     avgLoadTime: 0,
     memoryUsed: 0,
-    memoryLimit: 0,
   };
 }
 
@@ -51,8 +49,8 @@ export function makeInitialLoaderMetrics(type: LoaderType, path: string): Loader
  * points/gsplats pass their single chunk index; lines passes its SEGMENT
  * index (the queried side of its dual index).
  *
- * The grid-flavored field names are the metric shape's legacy vocabulary for
- * a chunk-based index: one "cell" = one chunk. `avgCellsPerQuery` is a TRUE
+ * The "cell" vocabulary is the metric shape's legacy naming for a chunk-based
+ * index: one "cell" = one chunk. `avgCellsPerQuery` is a TRUE
  * rolling mean — CUMULATIVE queried cells over cumulative query count. (The
  * historical points formula divided the LAST query's cell count by the
  * cumulative query count, which decayed ~1/n with session length and made
@@ -61,22 +59,17 @@ export function makeInitialLoaderMetrics(type: LoaderType, path: string): Loader
  */
 export function buildSpatialIndexMetrics(
   chunkCount: number,
-  chunkSize: number,
   queries: number,
   totalQueryCells: number,
   elementsLoaded: number
 ): SpatialIndexMetrics {
   const avgChunksPerQuery = queries > 0 ? totalQueryCells / queries : 0;
   return {
-    gridShape: [chunkCount],
-    gridOrigin: [0],
-    cellSize: [chunkSize],
     occupiedCells: chunkCount,
     totalCells: chunkCount,
     avgCellsPerQuery: avgChunksPerQuery,
     avgElementsPerCell: chunkCount > 0 ? elementsLoaded / chunkCount : 0,
     queryEfficiency: avgChunksPerQuery / Math.max(chunkCount, 1),
-    rangesInCache: 0, // Range-based per-loader cache is not used.
   };
 }
 

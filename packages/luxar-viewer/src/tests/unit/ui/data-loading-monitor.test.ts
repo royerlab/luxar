@@ -54,8 +54,6 @@ describe('DataLoadingMonitor', () => {
       // bag and the disposable lifecycle.
       const customMonitor = new DataLoadingMonitor(container, {
         position: 'top-left',
-        theme: 'light',
-        defaultView: 'detailed',
         maxEvents: 500,
       });
       // Config bag must store every option we asked for.
@@ -63,15 +61,11 @@ describe('DataLoadingMonitor', () => {
         customMonitor as unknown as {
           config: {
             position: string;
-            theme: string;
-            defaultView: string;
             maxEvents: number;
           };
         }
       ).config;
       expect(cfg.position).toBe('top-left');
-      expect(cfg.theme).toBe('light');
-      expect(cfg.defaultView).toBe('detailed');
       expect(cfg.maxEvents).toBe(500);
       // Sanity: dispose is wired even for the custom-constructed instance.
       expect(() => customMonitor.dispose()).not.toThrow();
@@ -88,18 +82,13 @@ describe('DataLoadingMonitor', () => {
           path: '/test',
           queries: 0,
           loads: 0,
-          cacheHits: 0,
-          cacheMisses: 0,
-          evictions: 0,
           errors: 0,
           elementsLoaded: 0,
           bytesLoaded: 0,
           visibleElements: 0,
           avgQueryTime: 0,
           avgLoadTime: 0,
-          cacheHitRate: 0,
           memoryUsed: 0,
-          memoryLimit: 500 * 1024 * 1024,
         })),
         getActiveQueries: vi.fn(() => []),
       };
@@ -137,18 +126,13 @@ describe('DataLoadingMonitor', () => {
           path: '/test',
           queries: 1,
           loads: 0,
-          cacheHits: 0,
-          cacheMisses: 0,
-          evictions: 0,
           errors: 0,
           elementsLoaded: 1000,
           bytesLoaded: 0,
           visibleElements: 0,
           avgQueryTime: 50,
           avgLoadTime: 0,
-          cacheHitRate: 0,
           memoryUsed: 0,
-          memoryLimit: 500 * 1024 * 1024,
         })),
         getActiveQueries: vi.fn(() => []),
       };
@@ -166,7 +150,7 @@ describe('DataLoadingMonitor', () => {
           // Simulate many events
           for (let i = 0; i < 2000; i++) {
             const event: MonitorEvent = {
-              type: 'cache-hit',
+              type: 'query',
               loader: 'point-spatial-index',
               timestamp: Date.now(),
               data: { path: '/test' },
@@ -180,18 +164,13 @@ describe('DataLoadingMonitor', () => {
           path: '/test',
           queries: 0,
           loads: 0,
-          cacheHits: 2000,
-          cacheMisses: 0,
-          evictions: 0,
           errors: 0,
           elementsLoaded: 0,
           bytesLoaded: 0,
           visibleElements: 0,
           avgQueryTime: 0,
           avgLoadTime: 0,
-          cacheHitRate: 100,
           memoryUsed: 0,
-          memoryLimit: 500 * 1024 * 1024,
         })),
         getActiveQueries: vi.fn(() => []),
       };
@@ -314,18 +293,13 @@ describe('DataLoadingMonitor', () => {
           path,
           queries: 10,
           loads: 5,
-          cacheHits: 0, // L0 cache removed
-          cacheMisses: 0, // L0 cache removed
-          evictions: 2,
           errors: 1,
           elementsLoaded: 10000,
           bytesLoaded: 40000,
           visibleElements: 0,
           avgQueryTime: 25,
           avgLoadTime: 100,
-          cacheHitRate: 0, // L0 cache removed
           memoryUsed: 1024 * 1024,
-          memoryLimit: 500 * 1024 * 1024,
         })),
         getActiveQueries: vi.fn(() => []),
       });
@@ -352,7 +326,6 @@ describe('DataLoadingMonitor', () => {
         path,
         queries: 0,
         loads: 0,
-        evictions: 0,
         errors: 0,
         elementsLoaded: 0,
         bytesLoaded: 0,
@@ -360,7 +333,6 @@ describe('DataLoadingMonitor', () => {
         avgQueryTime: 0,
         avgLoadTime: 0,
         memoryUsed: 0,
-        memoryLimit: 0,
       })),
       getActiveQueries: vi.fn(() => []),
     });
@@ -404,7 +376,6 @@ describe('DataLoadingMonitor', () => {
           path,
           queries: 0,
           loads: 0,
-          evictions: 0,
           errors: 0,
           elementsLoaded: 0,
           bytesLoaded: 0,
@@ -412,7 +383,6 @@ describe('DataLoadingMonitor', () => {
           avgQueryTime: 0,
           avgLoadTime: 0,
           memoryUsed: 0,
-          memoryLimit: 0,
         })),
         getActiveQueries: vi.fn(() => []),
       });
@@ -461,18 +431,13 @@ describe('DataLoadingMonitor', () => {
           path: '/test',
           queries: 1,
           loads: 0,
-          cacheHits: 0,
-          cacheMisses: 0,
-          evictions: 0,
           errors: 0,
           elementsLoaded: 500,
           bytesLoaded: 2000,
           visibleElements: 0,
           avgQueryTime: 75,
           avgLoadTime: 0,
-          cacheHitRate: 0,
           memoryUsed: 2000,
-          memoryLimit: 500 * 1024 * 1024,
         })),
         getActiveQueries: vi.fn(() => []),
       };
@@ -494,18 +459,13 @@ describe('DataLoadingMonitor', () => {
           path: '/test',
           queries: 100,
           loads: 90,
-          cacheHits: 0, // L0 cache removed
-          cacheMisses: 0, // L0 cache removed
-          evictions: 50,
           errors: 0,
           elementsLoaded: 90000,
           bytesLoaded: 360000,
           visibleElements: 0,
           avgQueryTime: 200,
           avgLoadTime: 150,
-          cacheHitRate: 0, // L0 cache removed
           memoryUsed: 450 * 1024 * 1024,
-          memoryLimit: 500 * 1024 * 1024,
         })),
         getActiveQueries: vi.fn(() => []),
       };
@@ -529,15 +489,9 @@ describe('DataLoadingMonitor', () => {
       expect(typeof spatialRec!.suggestion).toBe('string');
       expect(spatialRec!.suggestion!.toLowerCase()).toContain('spatial');
 
-      // L0 cache removed - no longer expect cache recommendations
-      // const cacheRec = recommendations.find((r) => r.message.toLowerCase().includes('cache'));
-      // expect(cacheRec).toBeDefined();
-
-      // Should warn about high memory usage
-      const memoryRec = recommendations.find((r) => r.message.toLowerCase().includes('memory'));
-      expect(memoryRec).toBeDefined();
-      expect(typeof memoryRec!.message).toBe('string');
-      expect(memoryRec!.message.toLowerCase()).toContain('memory');
+      // L0 cache removed - no longer expect cache recommendations.
+      // Per-loader memoryLimit removed - no longer expect a high-memory
+      // recommendation (the spatial-index loaders have no per-loader cap).
     });
   });
 
@@ -602,18 +556,13 @@ describe('DataLoadingMonitor', () => {
           path: '/test1',
           queries: 0,
           loads: 0,
-          cacheHits: 0,
-          cacheMisses: 0,
-          evictions: 0,
           errors: 0,
           elementsLoaded: 0,
           bytesLoaded: 0,
           visibleElements: 0,
           avgQueryTime: 0,
           avgLoadTime: 0,
-          cacheHitRate: 0,
           memoryUsed: 0,
-          memoryLimit: 500 * 1024 * 1024,
         })),
         getActiveQueries: vi.fn(() => []),
       };
@@ -626,18 +575,13 @@ describe('DataLoadingMonitor', () => {
           path: '/test2',
           queries: 0,
           loads: 0,
-          cacheHits: 0,
-          cacheMisses: 0,
-          evictions: 0,
           errors: 0,
           elementsLoaded: 0,
           bytesLoaded: 0,
           visibleElements: 0,
           avgQueryTime: 0,
           avgLoadTime: 0,
-          cacheHitRate: 0,
           memoryUsed: 0,
-          memoryLimit: 500 * 1024 * 1024,
         })),
         getActiveQueries: vi.fn(() => []),
       };
@@ -682,18 +626,13 @@ describe('DataLoadingMonitor', () => {
           path: '/test',
           queries: 1,
           loads: 0,
-          cacheHits: 0,
-          cacheMisses: 0,
-          evictions: 0,
           errors: 0,
           elementsLoaded: 100,
           bytesLoaded: 400,
           visibleElements: 0,
           avgQueryTime: 10,
           avgLoadTime: 0,
-          cacheHitRate: 0,
           memoryUsed: 1024,
-          memoryLimit: 500 * 1024 * 1024,
         })),
         getActiveQueries: vi.fn(() => []),
       };

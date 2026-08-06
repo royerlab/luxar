@@ -43,7 +43,7 @@ export function registerNavigationBindings(deps: KeyBindingsDeps): void {
 
   // Help overlay
   contextManager.registerBinding(InputContext.NAVIGATION, {
-    key: 'h',
+    key: config.input.keyboard.shortcuts.toggleHelp,
     handler: () => commands.toggleHelp(),
     preventDefault: true,
     description: 'Toggle help overlay',
@@ -51,7 +51,7 @@ export function registerNavigationBindings(deps: KeyBindingsDeps): void {
 
   // Dimension sliders
   contextManager.registerBinding(InputContext.NAVIGATION, {
-    key: 'n',
+    key: config.input.keyboard.shortcuts.toggleDimensions,
     handler: () => commands.toggleDimensionSliders(),
     preventDefault: true,
     description: 'Toggle dimension sliders',
@@ -59,7 +59,7 @@ export function registerNavigationBindings(deps: KeyBindingsDeps): void {
 
   // Dataset browser
   contextManager.registerBinding(InputContext.NAVIGATION, {
-    key: 'o',
+    key: config.input.keyboard.shortcuts.toggleDatasetBrowser,
     handler: () => window.dispatchEvent(new CustomEvent('open-dataset-browser')),
     preventDefault: true,
     description: 'Open dataset browser',
@@ -67,7 +67,7 @@ export function registerNavigationBindings(deps: KeyBindingsDeps): void {
 
   // Performance stats
   contextManager.registerBinding(InputContext.NAVIGATION, {
-    key: 'p',
+    key: config.input.keyboard.shortcuts.togglePerformance,
     handler: () => commands.togglePerformanceStats(),
     preventDefault: true,
     description: 'Toggle performance stats',
@@ -75,7 +75,7 @@ export function registerNavigationBindings(deps: KeyBindingsDeps): void {
 
   // Rendering controls (only without modifiers)
   contextManager.registerBinding(InputContext.NAVIGATION, {
-    key: 'r',
+    key: config.input.keyboard.shortcuts.toggleRendering,
     handler: (event) => {
       if (!event.metaKey && !event.ctrlKey && !event.shiftKey) {
         event.preventDefault();
@@ -88,7 +88,7 @@ export function registerNavigationBindings(deps: KeyBindingsDeps): void {
 
   // Scale bar overlay
   contextManager.registerBinding(InputContext.NAVIGATION, {
-    key: 'b',
+    key: config.input.keyboard.shortcuts.toggleScaleBar,
     handler: () => panels.getScaleBar()?.toggle(),
     preventDefault: true,
     description: 'Toggle scale bar',
@@ -145,7 +145,7 @@ export function registerNavigationBindings(deps: KeyBindingsDeps): void {
 
   // Debug console (Ctrl+L)
   contextManager.registerBinding(InputContext.NAVIGATION, {
-    key: 'l',
+    key: config.input.keyboard.shortcuts.toggleDebugConsole,
     modifiers: { ctrl: true },
     handler: () => {
       debugConsole.toggle();
@@ -173,7 +173,7 @@ export function registerNavigationBindings(deps: KeyBindingsDeps): void {
 
   // Recenter camera (F key, no modifiers)
   contextManager.registerBinding(InputContext.NAVIGATION, {
-    key: 'f',
+    key: config.input.keyboard.shortcuts.recenterCamera,
     handler: (event) => {
       if (!event.ctrlKey && !event.metaKey && !event.shiftKey) {
         event.preventDefault();
@@ -186,7 +186,7 @@ export function registerNavigationBindings(deps: KeyBindingsDeps): void {
 
   // Toggle control mode (V key, no modifiers)
   contextManager.registerBinding(InputContext.NAVIGATION, {
-    key: 'v',
+    key: config.input.keyboard.shortcuts.toggleControlMode,
     handler: (event) => {
       if (!event.ctrlKey && !event.metaKey && !event.shiftKey) {
         event.preventDefault();
@@ -199,7 +199,7 @@ export function registerNavigationBindings(deps: KeyBindingsDeps): void {
 
   // Toggle inertial mode (I key, no modifiers)
   contextManager.registerBinding(InputContext.NAVIGATION, {
-    key: 'i',
+    key: config.input.keyboard.shortcuts.toggleInertialMode,
     handler: (event) => {
       if (!event.ctrlKey && !event.metaKey && !event.shiftKey) {
         event.preventDefault();
@@ -212,7 +212,7 @@ export function registerNavigationBindings(deps: KeyBindingsDeps): void {
 
   // Toggle cinematic mode (C key, no modifiers)
   contextManager.registerBinding(InputContext.NAVIGATION, {
-    key: 'c',
+    key: config.input.keyboard.shortcuts.toggleCinematicMode,
     handler: (event) => {
       if (!event.ctrlKey && !event.metaKey && !event.shiftKey) {
         event.preventDefault();
@@ -225,7 +225,7 @@ export function registerNavigationBindings(deps: KeyBindingsDeps): void {
 
   // Fullscreen toggle (Space, context-aware)
   contextManager.registerBinding(InputContext.NAVIGATION, {
-    key: ' ',
+    key: config.input.keyboard.shortcuts.toggleFullscreen,
     handler: (event) => {
       if (commands.shouldHandleSpaceKey()) {
         event.preventDefault();
