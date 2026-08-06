@@ -343,19 +343,6 @@ class TestAddPointsAdditiveLod:
         sizes = [int(grp[f"additive_{i}"].attrs["n_points"]) for i in range(4)]
         assert sizes == [10, 20, 40, 30]
 
-    def test_default_method_lands_on_parent_attrs(self, tmp_path) -> None:
-        output = tmp_path / "t.luxar.zarr"
-        rng = np.random.RandomState(3)
-        positions = rng.rand(40, 3).astype(np.float32)
-
-        with LuxarZarrCompiler(output) as compiler:
-            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
-            scene.add_points("pts", positions, additive_lod=True)
-
-        store = zarr.open(str(output), mode="r")
-        grp = store["pts"]
-        assert grp.attrs["additive_lod_method"] == "random"
-
     def test_single_shot_path_still_works(self, tmp_path) -> None:
         """No ``additive_lod=`` → existing single-LOD layout."""
         output = tmp_path / "t.luxar.zarr"

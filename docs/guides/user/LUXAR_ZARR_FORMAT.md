@@ -460,7 +460,6 @@ frames once initial paint commits.
   "n_points": 10000,                // (or n_segments / n_splats — total across levels)
   "n_additive_sublods": 4,
   "position_bounds": { "min": [...], "max": [...] },
-  "additive_lod_method": "random",  // "random" / "salience" / "spatial-uniform"
   /* compositing attrs ride here */
 }
 ```
@@ -469,6 +468,12 @@ frames once initial paint commits.
 finest** order. The convenience writer (`additive_lod=` kwarg on
 `add_points` / `add_lines` / `add_gsplats_from_data`) emits the
 subgroups in this convention.
+
+**Ladder provenance:** the ordering method that built the ladder is not a
+top-level attr — it rides in the quality-stamp dicts, as `lod_method` inside
+the parent's `level_stats` and inside each subgroup's `lod_stats` (alongside
+`lod_level` / `lod_n_lods` / `lod_breakpoints_kind`). Readers treat absence as
+"unstamped".
 
 **Per-type unit:**
 
@@ -1053,7 +1058,6 @@ The spatial index stores metadata in the points group `.zattrs` and chunk bounds
   "ordering_max": [100.0, 100.0, 100.0],     // Bounds for curve normalization
   "ordering_bits_per_dim": 21,    // Bits per dimension (max 21 for uint64)
   "chunk_size": 10000,            // Points per chunk
-  "grid_shape": [8, 8, 8],        // Points-only: chunk grid extent per ordered dim
   "max_radius": 2.5               // Maximum point radius in dataset
 }
 ```
@@ -1063,7 +1067,7 @@ The spatial index stores metadata in the points group `.zattrs` and chunk bounds
 A geometry type with **one** ordering writes the ordering keys **flat** on the
 group (`ordering`, `ordering_dims`, `slice_dims`, `ordering_min`,
 `ordering_max`, `ordering_bits_per_dim`, `chunk_size`). Points and GSplats both
-do this and share that set; Points adds `grid_shape` on top of it.
+do this and share that set.
 
 A type with **more than one** ordering namespaces each into its own nested
 object instead, keeping a flat top-level `ordering` naming the curve. Lines is
