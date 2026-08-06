@@ -13,28 +13,39 @@ import { boundedConcurrencyStore } from '../utils/fetch-concurrency';
 import { LuxarDeltaCodec } from './codecs/luxar-delta';
 import type { AbsolutePath, AsyncReadable, GetOptions, Readable } from '@zarrita/storage';
 
+/** `@zarrita/storage` primitives (path, readable-store, and get-option types) re-exported so callers depend only on this facade. */
 export type { AbsolutePath, AsyncReadable, GetOptions, Readable };
 
+/** zarrita's array element data-type tag (e.g. `float32`, `uint8`). */
 export type DataType = zarrita.DataType;
+/** The concrete typed-array type backing a given zarrita {@link DataType}. */
 export type TypedArray<D extends DataType> = zarrita.TypedArray<D>;
+/** A zarrita slice selection (start/stop/step) for indexing into an array. */
 export type Slice = zarrita.Slice;
+/** A resolved location within a store, used to address groups and arrays. */
 export type Location<Store = Readable> = zarrita.Location<Store>;
+/** A zarr group (a node with child arrays/groups and attributes). */
 export type Group<Store extends Readable = Readable> = zarrita.Group<Store>;
+/** A zarr array node parameterized by element {@link DataType} and backing store. */
 export type Array<D extends DataType = DataType, Store extends Readable = Readable> = zarrita.Array<
   D,
   Store
 >;
+/** zarrita's HTTP fetch-backed store implementation. */
 export type FetchStore = zarrita.FetchStore;
 
+/** One entry from a listable store's contents: a node path and whether it is an array or group. */
 export interface StoreContentsEntry {
   path: string;
   kind: 'array' | 'group';
 }
 
+/** A store that may optionally expose a synchronous `contents()` listing (present after consolidated-metadata wrapping). */
 export type MaybeListableStore<Store extends Readable = Readable> = Store & {
   contents?: () => StoreContentsEntry[];
 };
 
+/** Options for {@link open}: node `kind`, whether to read attributes, and an optional abort `signal`. */
 export type OpenOptions = {
   kind?: 'array' | 'group';
   attrs?: boolean;
@@ -105,10 +116,22 @@ type OpenFacade = {
   ): Promise<Array<DataType, Store> | Group<Store>>;
 };
 
+/**
+ * Open a zarr node (array or group) at a location, overloaded on
+ * {@link OpenOptions.kind} so the return type narrows to the requested kind.
+ * Thin wrapper over `zarrita.open` behind the facade.
+ */
 export const open: OpenFacade = ((location, options) => {
   return zarrita.open(location, options as Parameters<typeof zarrita.open>[1]);
 }) as OpenFacade;
 
+/**
+ * Open a location as a zarr group.
+ *
+ * @param location - Location or store to open.
+ * @param options - Open options minus `kind` (forced to `'group'`).
+ * @returns The opened {@link Group}.
+ */
 export function openGroup<Store extends Readable>(
   location: Location<Store> | Store,
   options?: Omit<OpenOptions, 'kind'>
@@ -116,6 +139,13 @@ export function openGroup<Store extends Readable>(
   return open(location, { ...options, kind: 'group' });
 }
 
+/**
+ * Open a location as a zarr array.
+ *
+ * @param location - Location or store to open.
+ * @param options - Open options minus `kind` (forced to `'array'`).
+ * @returns The opened {@link Array}.
+ */
 export function openArray<Store extends Readable>(
   location: Location<Store> | Store,
   options?: Omit<OpenOptions, 'kind'>

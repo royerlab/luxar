@@ -367,7 +367,12 @@ export class SceneLoaderManager {
   }
 }
 
-// Export a convenient accessor function
+/**
+ * Convenience accessor for a managed {@link SceneLoader}.
+ *
+ * @param id - Loader id to look up; omit to return the manager's default loader.
+ * @returns The matching loader, or null if none is registered under that id.
+ */
 export function getSceneLoader(id?: string): SceneLoader | null {
   const manager = SceneLoaderManager.getInstance();
   return id ? manager.getLoader(id) : manager.getDefaultLoader();

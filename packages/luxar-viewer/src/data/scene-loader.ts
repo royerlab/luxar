@@ -46,7 +46,18 @@ import { loadAndStage as linesLoadAndStage, label as linesLabel } from './lines/
 import { loadAndStage as gsplatsLoadAndStage, label as gsplatsLabel } from './gsplats/handler';
 import { loadAndStage as meshLoadAndStage, label as meshLabel } from './mesh/handler';
 
+/**
+ * Staged-commit payload for a lines node: processed geometry held between the
+ * async load/process stage and the synchronous atomic commit. Re-exported so
+ * callers can reference it via `scene-loader` without reaching into the
+ * internal data-processor module.
+ */
 export type { StagedLinesCommit } from './scene-loader/process/data-processor-lines';
+/**
+ * Staged-commit payload for a gsplats node: processed geometry held between the
+ * async load/process stage and the synchronous atomic commit. Re-exported for
+ * the same reason as {@link StagedLinesCommit}.
+ */
 export type { StagedGSplatsCommit } from './scene-loader/process/data-processor-gsplats';
 import {
   DataLoader,
