@@ -1,6 +1,6 @@
 /**
  * Type descriptors for the control-rail items, flyout chips, and panel
- * popovers. Kept separate so both the {@link ControlRail} class (index.ts) and
+ * popovers. Kept separate so both the {@link ControlRail} class (control-rail.ts) and
  * the {@link RailOverlay} (rail-overlay.ts) can import them without a cycle.
  *
  * @module ui/control-rail/types
