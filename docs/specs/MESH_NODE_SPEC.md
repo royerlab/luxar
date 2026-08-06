@@ -104,7 +104,7 @@ radius-scale uniform.
 # format-contract/contract.yaml
 node_types:     ["scene", "group", "points", "lines", "gsplats", "mesh"]  # done (#1220)
 geometry_types: ["points", "lines", "gsplats", "mesh"]  # writable leaf subset — done (#1220)
-loader_types:   ["points", "lines", "gsplats"]          # viewer-drawable subset — ADD mesh in Phase 3
+loader_types:   ["points", "lines", "gsplats", "mesh"]  # viewer-drawable subset — done (Phase 3)
 ```
 
 There are **three** lists, and they answer three different questions (the split landed in #1220).
@@ -115,13 +115,13 @@ viewer-drawable subset that keys per-geometry dispatch. The generator enforces t
 non-empty and duplicate-free, and that `geometry_types` is free of the container types — so a half-done
 addition fails `check-contract` with a named error rather than drifting silently.
 
-`mesh` is **already in `node_types` and `geometry_types`** (#1220) — and #1220 also landed the whole
-Python writer vertical behind those entries (`core/mesh.py`, `add_mesh`, validators, compiler writer,
-reader, `info`; the Phase-1 checklist in §8) — so a mesh leaf is writable today.
-The one list it is deliberately *not* in yet is `loader_types`: adding it there is the Phase-3 switch-on,
-and it is what turns on the three §10.2 compile errors that map out the viewer work. Do **not** read
-"mesh is in both lists" as "the contract work is done" — the drawable half is a one-line `loader_types`
-edit that intentionally waits for Phase 3.
+`mesh` entered `node_types` and `geometry_types` first (#1220, which also landed the whole
+Python writer vertical behind those entries — `core/mesh.py`, `add_mesh`, validators, compiler writer,
+reader, `info`; the Phase-1 checklist in §8), so a mesh leaf was writable before it was drawable.
+`loader_types` followed as the Phase-3 switch-on, the one-line edit that fired the three §10.2 compile
+errors mapping out the viewer work. All three lists now contain `mesh`. They stay separate lists
+because the writable and drawable sets are answers to different questions and a *future* type will
+again be authorable before it is drawable — not because they currently disagree.
 
 `make gen-contract` regenerated both projections
 (`packages/luxar/src/luxar/typing_utils/_format_contract.py` and
@@ -129,7 +129,7 @@ edit that intentionally waits for Phase 3.
 check-contract` gates drift. As part of #1220 the `'mesh'` local extension in `data-monitor-types.ts`
 was deleted — `SceneGraphNodeType` is now plain `NodeTypeName` — and `NodeType.MESH = "mesh"` /
 `NODE_TYPE_MESH = "mesh"` were added to `luxar/typing_utils/enums.py` and `constants.py`. Adding `mesh`
-to `loader_types` in Phase 3 re-runs `gen-contract` for the viewer projection.
+to `loader_types` in Phase 3 re-ran `gen-contract` for the viewer projection.
 
 ### 3.2 Arrays
 

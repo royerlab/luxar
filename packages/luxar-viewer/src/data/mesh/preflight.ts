@@ -843,8 +843,9 @@ export async function preflightMesh(
   // NOT reachable through the loader, which opens an optional array only when its
   // flag is set, so asserting it here would be testing a state production cannot
   // construct. The label CSR arrays are checked as a PAIR for the same reason the
-  // others are checked at all: v1 never fetches them, but a `has_labels` with one
-  // array missing is a store that will fail confusingly the moment picking lands.
+  // others are checked at all: this loader never fetches them, but the hover path's
+  // shared label loader does, and a `has_labels` with one array missing is a store
+  // that fails confusingly there rather than here.
   for (const [flagName, flag, required] of [
     ['has_normals', attrs.has_normals, [arrays.normals] as const],
     ['has_colors', attrs.has_colors, [arrays.colors] as const],

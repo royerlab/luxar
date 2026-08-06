@@ -76,11 +76,15 @@ interface `DebugStateContext`, and the result-shape interfaces (`DebugState`,
 `computeDebugState` walks the scene graph once and tallies per-node detail for
 all four geometry types — Points, Lines, GSplats, Mesh — by inspecting
 `userData.nodeType`. For the three instanced-quad types it uses
-`InstancedBufferGeometry.instanceCount`
-as the source of truth, because pooled attribute arrays are over-allocated and
-`drawRange` only covers the 6-index base quad. Points additionally fall back
-to `userData.visiblePointCount` and then attribute count when `instanceCount`
-is absent.
+`InstancedBufferGeometry.instanceCount` as the source of truth, because pooled
+attribute arrays are over-allocated and `drawRange` only covers the 6-index base
+quad. Points additionally fall back to `userData.visiblePointCount` and then
+attribute count when `instanceCount` is absent. Mesh is the exception in both
+directions: it is a plain indexed `BufferGeometry` with no `instanceCount`, and
+its triangle count comes from `drawRange.count` (falling back to `index.count`
+when the range is the default `Infinity`) divided by three — the draw range is
+precisely what the nD slice compaction narrows, so `index.count` would report the
+whole surface regardless of slice position.
 
 The same traversal also summarises specialized-group containers by their
 `userData.kind`: `kind=lod` groups become `lodGroups[]` (level count + the
