@@ -687,7 +687,7 @@ Luxar viewer now features a **modular theming system** with runtime theme switch
 **Programmatically**:
 
 ```typescript
-import { ThemeManager } from '../themes';
+import { ThemeManager } from '../themes/theme-manager';
 
 // Switch themes
 ThemeManager.getInstance().setTheme('dark');
@@ -1198,13 +1198,15 @@ of the same name at this folder's root (plus the folder-modules
   value/fraction/wrap math helpers for `dimension-sliders.ts`.
 - [`gui/`](./gui/README.md) — Custom GUI library implementation
   (`GUI`, `Folder`, `Controller`, per-type controllers, DOM plumbing,
-  formatting) re-exported by `gui.ts`.
+  formatting); `gui.ts` re-exports only the default `GUI` and `Controller`,
+  with the rest imported directly from leaf modules under `ui/gui/`.
 - [`help-overlay/`](./help-overlay/README.md) — Shared `focus-trap.ts`
   (Tab/Shift+Tab focus cycling) used by `help-overlay.ts` and
   `error-overlay.ts`.
 - [`layers/`](./layers/README.md) — Layers panel implementation
-  (`LayersPanel`, `LayerStateManager`, range/labeled sliders) re-exported
-  by `layers.ts`.
+  (`LayersPanel`, `LayerStateManager`, range/labeled sliders); `layers.ts`
+  re-exports only `LayersPanel`, with the rest imported directly from leaf
+  modules under `ui/layers/`.
 - [`overlay-widgets/`](./overlay-widgets/README.md) — Shared
   `UIComponent` base class for screen-space overlay widgets (scale bar,
   colormap legend).

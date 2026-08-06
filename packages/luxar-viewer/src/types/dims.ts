@@ -105,8 +105,9 @@ export interface SimpleDims {
  * @returns Initialized SimpleDims object ready for use
  * @throws Error if the positions array structure is invalid
  *
- * @internal — re-exported from types/index.ts; no production call site outside
- * this module.
+ * @internal — no production call site; the only remaining caller is
+ * `src/tests/unit/types/dims.test.ts`, which imports it from this module
+ * directly (the `types` barrel that also re-exported it is gone).
  */
 export function initializeDims(
   numPoints: number,
@@ -225,10 +226,12 @@ export function initializeDims(
  * @param numPoints - Total number of points in the dataset
  * @returns Array of [min, max] tuples for each dimension
  *
- * @internal — re-exported from types/index.ts; no production call site outside
- * this module. Note `SceneDimsManager` has a same-named *method* that reads
- * cached ranges off the manager; the `sceneDimsManager.getDimensionRanges()`
- * calls in `ui/`, `core/` and `input/` are that method, not this function.
+ * @internal — no production call site; the only remaining caller is
+ * `src/tests/unit/types/dims.test.ts`, which imports it from this module
+ * directly (the `types` barrel that also re-exported it is gone). Note
+ * `SceneDimsManager` has a same-named *method* that reads cached ranges off
+ * the manager; the `sceneDimsManager.getDimensionRanges()` calls in `ui/`,
+ * `core/` and `input/` are that method, not this function.
  */
 export function getDimensionRanges(
   positions: Float32Array,
