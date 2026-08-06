@@ -7,9 +7,9 @@ Conforms to the section-trio pattern documented in [../../../README.md](../../..
 ## Contents
 
 - `data.ts` — `dataLoadingMonitorConfig: DataLoadingMonitorConfig`. Three nested groups:
-  - `timings` — `eventCleanupInterval` (30 s), `maxEventAge` (5 min), `ratesCacheTimeout` (1 s), `defaultUpdateInterval` (100 ms), `minRenderInterval` (100 ms), `timelinePointInterval` (200 ms), `defaultTimeRange` (60 s), `queryCleanupCheckInterval` (10), `maxQueryAge` (60 s).
-  - `thresholds` — `lowCacheHitRate` (30%), `highQueryTime` (100 ms), `highLoadTime` (500 ms), `highMemoryUsage` (0.8), `highErrorRate` (0.05), `lowQueryEfficiency` (0.5). Used to flag degraded monitor states.
-  - `limits` — `maxEvents` (1000), `maxTimelinePoints` (300), `maxAdvisorHistory` (100), `defaultMemoryLimit` (1 GiB), `rateCalculationWindow` (5 s), `bandwidthCalculationWindow` (1 s). Ring-buffer caps and sliding-window sizes for rate/bandwidth computation.
+  - `timings` — `eventCleanupInterval` (30 s), `maxEventAge` (5 min), `ratesCacheTimeout` (1 s), `defaultUpdateInterval` (100 ms), `queryCleanupCheckInterval` (10), `maxQueryAge` (60 s).
+  - `thresholds` — `highQueryTime` (100 ms), `highLoadTime` (500 ms), `highErrorRate` (0.05), `lowQueryEfficiency` (0.5). Used to flag degraded monitor states.
+  - `limits` — `maxEvents` (1000), `maxAdvisorHistory` (100), `rateCalculationWindow` (5 s), `bandwidthCalculationWindow` (1 s). Ring-buffer caps and sliding-window sizes for rate/bandwidth computation.
 - `types.ts` — `DataLoadingMonitorConfig` and its three sub-interfaces `MonitorTimings`, `MonitorThresholds`, `MonitorLimits`.
 
 ## Public API

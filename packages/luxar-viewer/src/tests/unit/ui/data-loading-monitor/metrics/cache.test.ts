@@ -22,8 +22,6 @@ import type {
 const ZERO_RATES: CacheRatesSnapshot = {
   queriesPerSec: 0,
   loadsPerSec: 0,
-  hitsPerSec: 0,
-  missesPerSec: 0,
   bandwidth: 0,
 };
 
@@ -33,7 +31,6 @@ function makeLoaderMetrics(overrides: Partial<LoaderMetrics> = {}): LoaderMetric
     path: '/p',
     queries: 0,
     loads: 0,
-    evictions: 0,
     errors: 0,
     elementsLoaded: 0,
     bytesLoaded: 0,
@@ -41,7 +38,6 @@ function makeLoaderMetrics(overrides: Partial<LoaderMetrics> = {}): LoaderMetric
     avgQueryTime: 0,
     avgLoadTime: 0,
     memoryUsed: 0,
-    memoryLimit: 0,
     ...overrides,
   };
 }
@@ -101,7 +97,6 @@ describe('aggregateCacheMetrics', () => {
     expect(result.totalCacheMemory).toBe(0);
     expect(result.memoryLimit).toBe(0);
     expect(result.totalEntries).toBe(0);
-    expect(result.recentHitRate).toBe(0);
     expect(result.l0).toBeUndefined();
     expect(result.l1).toBeUndefined();
     expect(result.l2).toBeUndefined();
@@ -208,8 +203,6 @@ describe('aggregateCacheMetrics', () => {
     expect(result.totalCacheMemory).toBe(1600);
     // L0 count 3 + L1 (5+10=15) + L2 (50) = 68
     expect(result.totalEntries).toBe(68);
-    // Hit-rate from L1 only: 80/(80+20) = 0.8
-    expect(result.recentHitRate).toBeCloseTo(0.8, 5);
     expect(result.l1?.hits).toBe(80);
     expect(result.network?.bandwidth).toBe(9999);
   });
@@ -255,64 +248,9 @@ describe('aggregateCacheMetrics', () => {
     });
   });
 
-  describe('rolling rates', () => {
-    it('hitsPerSecond / missesPerSecond come from rate-snapshot, not lifetime/60', () => {
-      const cacheStatsProvider = makeFullCacheProvider();
-      const rates: CacheRatesSnapshot = {
-        queriesPerSec: 0,
-        loadsPerSec: 0,
-        hitsPerSec: 5.5,
-        missesPerSec: 1.5,
-        bandwidth: 0,
-      };
-      const result = aggregateCacheMetrics({
-        l0Provider: null,
-        cacheStatsProvider,
-        loaders: new Map(),
-        metricsCache: new Map(),
-        rates,
-      });
-      expect(result.hitsPerSecond).toBe(5.5);
-      expect(result.missesPerSecond).toBe(1.5);
-    });
-
-    it('evictionsTotal field is the unmodified accumulator', () => {
-      const m = makeLoaderMetrics({ evictions: 7 });
-      const result = aggregateCacheMetrics({
-        l0Provider: null,
-        cacheStatsProvider: null,
-        loaders: new Map([['/p', { getMetrics: () => m } as never]]),
-        metricsCache: new Map(),
-        rates: ZERO_RATES,
-      });
-      expect(result.evictionsTotal).toBe(7);
-    });
-  });
-
-  it('without cacheStatsProvider: falls back to per-loader metrics for memory and entries', () => {
-    const m1 = makeLoaderMetrics({
-      path: '/p1',
-      memoryUsed: 100,
-      memoryLimit: 1000,
-      evictions: 2,
-      spatialIndex: {
-        gridShape: [],
-        gridOrigin: [],
-        cellSize: [],
-        occupiedCells: 0,
-        totalCells: 0,
-        avgCellsPerQuery: 0,
-        avgElementsPerCell: 0,
-        queryEfficiency: 0,
-        rangesInCache: 5,
-      },
-    });
-    const m2 = makeLoaderMetrics({
-      path: '/p2',
-      memoryUsed: 200,
-      memoryLimit: 2000,
-      evictions: 4,
-    });
+  it('without cacheStatsProvider: totalCacheMemory falls back to per-loader memoryUsed', () => {
+    const m1 = makeLoaderMetrics({ path: '/p1', memoryUsed: 100 });
+    const m2 = makeLoaderMetrics({ path: '/p2', memoryUsed: 200 });
     const loaders = new Map([
       ['/p1', makeLoader(m1)],
       ['/p2', makeLoader(m2)],
@@ -327,17 +265,17 @@ describe('aggregateCacheMetrics', () => {
       rates: ZERO_RATES,
     });
 
-    expect(result.memoryLimit).toBe(3000);
+    // No cache provider exposes a byte budget → no memory limit.
+    expect(result.memoryLimit).toBe(0);
     expect(result.totalCacheMemory).toBe(300);
-    expect(result.totalEntries).toBe(5); // only m1 has spatialIndex
-    expect(result.evictionsTotal).toBe(6);
+    expect(result.totalEntries).toBe(0);
     // metricsCache mutation: each loader's getMetrics() result was stored.
     expect(metricsCache.get('/p1')).toBe(m1);
     expect(metricsCache.get('/p2')).toBe(m2);
   });
 
   it('with cacheStatsProvider: loader memoryUsed is NOT double-counted into totalCacheMemory', () => {
-    const m1 = makeLoaderMetrics({ path: '/p1', memoryUsed: 999, memoryLimit: 5000 });
+    const m1 = makeLoaderMetrics({ path: '/p1', memoryUsed: 999 });
     const loaders = new Map([['/p1', makeLoader(m1)]]);
 
     const result = aggregateCacheMetrics({
@@ -351,9 +289,9 @@ describe('aggregateCacheMetrics', () => {
     // totalCacheMemory comes from L1+L2 (300 + 1000 = 1300), NOT
     // from the loader's memoryUsed when cacheStatsProvider is set.
     expect(result.totalCacheMemory).toBe(1300);
-    // memoryLimit falls back to the loader sum only because this stub exposes
-    // no per-tier maxSize (see the budget-driven test below).
-    expect(result.memoryLimit).toBe(5000);
+    // memoryLimit comes solely from per-tier byte budgets; this stub
+    // exposes no maxSize, so there is no limit.
+    expect(result.memoryLimit).toBe(0);
   });
 
   it('memoryLimit is the sum of per-tier budgets (maxSize) when the providers expose them', () => {
@@ -403,11 +341,11 @@ describe('aggregateCacheMetrics', () => {
       l0Provider,
       sliceProvider,
       cacheStatsProvider,
-      loaders: new Map([['/p', makeLoader(makeLoaderMetrics({ memoryLimit: 999 }))]]),
+      loaders: new Map([['/p', makeLoader(makeLoaderMetrics())]]),
       metricsCache: new Map(),
       rates: ZERO_RATES,
     });
-    // 200 (L0) + 1024 (S-cache) + 100 (L1) + 2048 (L2) — NOT the loader's 999.
+    // 200 (L0) + 1024 (S-cache) + 100 (L1) + 2048 (L2).
     expect(result.memoryLimit).toBe(200 + 1024 + 100 + 2048);
   });
 
@@ -415,8 +353,6 @@ describe('aggregateCacheMetrics', () => {
     const rates: CacheRatesSnapshot = {
       queriesPerSec: 12,
       loadsPerSec: 7,
-      hitsPerSec: 3,
-      missesPerSec: 1,
       bandwidth: 4096,
     };
     const result = aggregateCacheMetrics({
@@ -432,11 +368,22 @@ describe('aggregateCacheMetrics', () => {
   });
 
   it('memoryPercent = totalCacheMemory / memoryLimit × 100', () => {
-    const m1 = makeLoaderMetrics({ path: '/p', memoryUsed: 250, memoryLimit: 1000 });
+    // 250 bytes used against a 1000-byte L0 budget → 25%.
+    const l0Provider: L0Provider = {
+      getStats: () => ({
+        size: 250,
+        count: 1,
+        hits: 0,
+        misses: 0,
+        evictions: 0,
+        hitRate: 0,
+        maxSize: 1000,
+      }),
+    };
     const result = aggregateCacheMetrics({
-      l0Provider: null,
+      l0Provider,
       cacheStatsProvider: null,
-      loaders: new Map([['/p', makeLoader(m1)]]),
+      loaders: new Map(),
       metricsCache: new Map(),
       rates: ZERO_RATES,
     });
@@ -452,37 +399,6 @@ describe('aggregateCacheMetrics', () => {
       rates: ZERO_RATES,
     });
     expect(result.memoryPercent).toBe(0);
-  });
-
-  it('zero L1 accesses → recentHitRate is 0 (avoids divide-by-zero)', () => {
-    const cacheStatsProvider: CacheStatsProvider = {
-      getStats: () => ({
-        l1: {
-          metadataSize: 0,
-          chunksSize: 0,
-          metadataCount: 0,
-          chunksCount: 0,
-          hits: 0,
-          misses: 0,
-          evictions: 0,
-        },
-        l2: { size: 0, count: 0, reads: 0, writes: 0, misses: 0 },
-        network: { bytesTransferred: 0, requestCount: 0, bandwidth: 0 },
-      }),
-      clearL1: vi.fn(),
-      clearL2: vi.fn(),
-      clearAll: vi.fn(),
-      isEnabled: () => true,
-    };
-    const result = aggregateCacheMetrics({
-      l0Provider: null,
-      cacheStatsProvider,
-      loaders: new Map(),
-      metricsCache: new Map(),
-      rates: ZERO_RATES,
-    });
-    expect(result.recentHitRate).toBe(0);
-    expect(result.totalAccesses).toBe(0);
   });
 
   describe('effectiveDemandHitRate', () => {

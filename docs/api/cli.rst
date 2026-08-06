@@ -41,7 +41,7 @@ Key Functions
       import uvicorn
 
       # Create server app
-      app = create_server_app("/path/to/data.luxar.zarr", serve_viewer=False)
+      app = create_server_app("/path/to/data.luxar.zarr")
 
       # Run with uvicorn
       uvicorn.run(app, host="127.0.0.1", port=8000)

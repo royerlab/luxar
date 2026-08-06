@@ -1107,7 +1107,7 @@ def generate_hierarchical_transforms_test() -> None:
         # Final position should be [10, 5, 0] due to transform composition
 
         # Import transform functions
-        from luxar.transforms import translate
+        from luxar.core.transforms import translate
 
         # Child points at origin initially
         positions = np.array(
