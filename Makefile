@@ -12,7 +12,7 @@
         check-all check-typescript check-rust check-knip check-wasm-deps setup-dev \
         check-docs check-docs-verbose clean-docs build-docs build-typedoc serve-docs \
         demo run-demos run-examples serve-examples serve-dataset install-viewer-deps viewer build-viewer build-viewer-lib rebuild-viewer \
-        install-rust build-wasm clean-wasm generate-readme-demos generate-readme-images generate-doc-images generate-readme-videos \
+        install-rust build-wasm clean-wasm generate-readme-demos generate-readme-images generate-doc-images \
 	generate-gallery-datasets generate-gallery \
         stats stats-fast show-env prune-env shell build publish-test publish set-version release-check release \
         check-deps install-node install-pnpm install-hatch \
@@ -1511,34 +1511,6 @@ generate-doc-images: generate-readme-demos  ## Generate documentation screenshot
 	@echo ""
 	@echo "📁 Generated images in docs/images/docs/:"
 	@ls -la docs/images/docs/*.png 2>/dev/null || echo "   No images found"
-
-generate-readme-videos: generate-readme-demos  ## Generate README videos (GIF/WebP) using Playwright
-	@echo "🎬 Generating README videos..."
-	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-	@# Check for ffmpeg
-	@if ! command -v ffmpeg >/dev/null 2>&1; then \
-		echo "❌ ffmpeg is required for video conversion"; \
-		echo "   Install with: brew install ffmpeg (macOS) or apt-get install ffmpeg (Linux)"; \
-		exit 1; \
-	fi
-	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
-		echo "📦 Installing TypeScript dependencies first..."; \
-		cd packages/luxar-viewer && pnpm install; \
-	fi
-	@# Source nvm if available
-	@export NVM_DIR="$$HOME/.nvm"; \
-	if [ -s "$$NVM_DIR/nvm.sh" ]; then \
-		. "$$NVM_DIR/nvm.sh"; \
-	fi; \
-	cd packages/luxar-viewer && pnpm readme-videos
-	@echo ""
-	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-	@echo "✅ README videos generated!"
-	@echo ""
-	@echo "📁 Generated videos in docs/images/readme/:"
-	@ls -la docs/images/readme/*.gif docs/images/readme/*.webp 2>/dev/null || echo "   No videos found"
-	@echo ""
-	@echo "💡 Commit these videos to include them in the README"
 
 generate-gallery-datasets:  ## Generate the demo datasets for the gallery harness (idempotent)
 	@echo "🖼️  Generating gallery demo datasets..."
