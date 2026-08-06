@@ -38,7 +38,7 @@ Internal implementation package for `luxar.gsplats.gsplat_data.GSplatData` — s
 
 ## Ownership
 
-All ten domain mixins are inherited by `GSplatData` in `luxar.gsplats.gsplat_data`: eight (`RenderMixin`, `IOAdapterMixin`, `FilteringMixin`, `CullingMixin`, `LODViewsMixin`, `CompositionMixin`, `TransformsMixin`, `IntensityMixin`) as direct bases and the remaining two (`_GSplatDataOps`, `_SplatArrayMixin`) transitively, as the chain below shows. No two mixins define the same name, so the base order is free of MRO surprises; the mixins' `self.` calls resolve through `_GSplatDataOps`'s stubs. `GSplatData` itself keeps only construction (`__init__`), `truncation_radius` and `__repr__`.
+All ten domain mixins are inherited by `GSplatData` in `luxar.gsplats.gsplat_data`: eight (`RenderMixin`, `IOAdapterMixin`, `FilteringMixin`, `CullingMixin`, `LODViewsMixin`, `CompositionMixin`, `TransformsMixin`, `IntensityMixin`) as direct bases and the remaining two (`_GSplatDataOps`, `_SplatArrayMixin`) transitively, as the chain below shows. No two of the eight *direct* mixins define the same name, so their order in the bases list is free of MRO surprises. `_GSplatDataOps` deliberately re-declares thirteen of those names as raising stubs — that is how a mixin's `self.` calls type-check against members it does not own — and those stubs are safe because `_GSplatDataOps` is the common base of all eight, so C3 always linearizes it *after* every real implementation. Keep it that way: declaring `_GSplatDataOps` directly on `GSplatData` (or dropping it from one mixin) would let a stub win and turn `flattened()` / `filter()` into `NotImplementedError`. `GSplatData` itself keeps only construction (`__init__`), `truncation_radius` and `__repr__`.
 
 **Mixin inheritance chain**:
 ```
@@ -123,8 +123,10 @@ Tests live in the parent package's test suite (`packages/luxar/src/luxar/gsplats
 - **`test_culling.py`**: Contribution-based culling internals — per-splat deletion error, `cull_by_contribution` (`redundancy` / `error_budget`, quality preserved), nD support, the joint-compounding binary search, and `GSplatData.cull` integration.
 - **`test_spatial_partition.py`**: `GSplatData.to_spatial_partition` — spatial BSP into a `kind=partition` tree (max-elements/split-rule, splat preservation, `bsp_tree` provenance, on-disk round-trip, scene grafting).
 - **`test_spatial_axes.py`**: The shared spatial-axis auto-detection helpers (`spatial_axes_from_max_sigma`, `spatial_only_shift`).
+- **`test_map_helpers.py`**: `_map_substitutive` / `_map_additive` (`TransformsMixin`) directly — the per-level rebuild pivot every ladder-preserving op in the sibling mixins goes through.
+- **`test_filter_per_level.py`**: `FilteringMixin`'s per-level rebuild — that a filter applied to a laddered dataset keeps every level consistent.
 
-Run via: `hatch run pytest packages/luxar/src/luxar/gsplats/tests/test_gsplat_data.py packages/luxar/src/luxar/gsplats/tests/test_gsplat_data_lod.py packages/luxar/src/luxar/gsplats/tests/test_gsplat_data_tree_bridge.py packages/luxar/src/luxar/gsplats/tests/test_gsplat_data_aggregations.py packages/luxar/src/luxar/gsplats/tests/test_gsip_filters.py packages/luxar/src/luxar/gsplats/tests/test_gsplat_data_io.py packages/luxar/src/luxar/gsplats/tests/test_culling.py packages/luxar/src/luxar/gsplats/tests/test_spatial_partition.py packages/luxar/src/luxar/gsplats/tests/test_spatial_axes.py -v`
+Run via: `hatch run pytest packages/luxar/src/luxar/gsplats/tests/test_gsplat_data.py packages/luxar/src/luxar/gsplats/tests/test_gsplat_data_lod.py packages/luxar/src/luxar/gsplats/tests/test_gsplat_data_tree_bridge.py packages/luxar/src/luxar/gsplats/tests/test_gsplat_data_aggregations.py packages/luxar/src/luxar/gsplats/tests/test_gsip_filters.py packages/luxar/src/luxar/gsplats/tests/test_gsplat_data_io.py packages/luxar/src/luxar/gsplats/tests/test_culling.py packages/luxar/src/luxar/gsplats/tests/test_spatial_partition.py packages/luxar/src/luxar/gsplats/tests/test_spatial_axes.py packages/luxar/src/luxar/gsplats/tests/test_map_helpers.py packages/luxar/src/luxar/gsplats/tests/test_filter_per_level.py -v`
 
 ## See Also
 
