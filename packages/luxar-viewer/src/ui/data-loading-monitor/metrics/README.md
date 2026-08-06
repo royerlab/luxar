@@ -8,8 +8,8 @@ these helpers be unit-tested without DOM, timers, or tab state.
 
 ## Files
 
-| File       | Role                                                                                                                                  |
-| ---------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| File       | Role                                                                                                                    |
+| ---------- | ----------------------------------------------------------------------------------------------------------------------- |
 | `cache.ts` | Aggregates L0 / L1 / L2 / network stats from optional provider ports and refreshes the per-loader metrics snapshot map. |
 | `rates.ts` | Walks the monitor's event ring buffer once per call to compute per-second rolling rates (queries, loads) and bandwidth. |
 
