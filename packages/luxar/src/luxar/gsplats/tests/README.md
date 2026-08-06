@@ -8,24 +8,21 @@ The tests are organized following the "in-subpackage" pattern, where each subpac
 
 ```
 gsplats/
-├── tests/                          # Integration tests
+├── tests/                          # Integration/unit tests (~30 test_*.py modules)
 │   ├── __init__.py
-│   ├── test_batch.py               # Batch fitting orchestration
-│   ├── test_cholesky_dim_ops.py    # Cholesky dimension operations
-│   ├── test_culling.py             # Splat culling algorithms
-│   ├── test_fit_gsplats.py         # Full fitting pipeline (requires torch/scipy)
-│   ├── test_gpu_profile.py         # GPU profiling and benchmarks
-│   ├── test_gsplat_data.py         # GSplatData class tests
-│   ├── test_gsplats_integration.py # Integration tests
-│   ├── test_metrics.py             # Quality metrics (PSNR, SSIM, MSE)
-│   ├── test_progressive_fitting.py # Progressive fitting pipeline
-│   ├── test_slurm_gen.py           # Generated Slurm control-flow behavior
-│   ├── test_spatial_volume_filter.py # Spatial volume filtering
-│   ├── test_tiled_fitting.py       # Tiled fitting for large volumes
+│   ├── test_*.py                   # ~30 modules grouped by area: GSplatData I/O &
+│   │                               #   aggregations & LOD, fitting/tiled/progressive
+│   │                               #   fitting, calibration & reporting, culling &
+│   │                               #   filtering, spatial partition/axes, batch/local
+│   │                               #   runner/task pool, Slurm generation, metrics,
+│   │                               #   GPU profile, tree bridge. Run
+│   │                               #   `ls packages/luxar/src/luxar/gsplats/tests/`
+│   │                               #   for the current set.
 │   └── README.md                   # This file
 ├── fitting/
 │   └── tests/                      # Fitting pipeline unit tests
 │       ├── __init__.py
+│       ├── test_downscale.py           # Volume downscaling utilities
 │       ├── test_fitting_config.py      # Configuration validation
 │       ├── test_fitting_preprocessing.py # Data preprocessing
 │       ├── test_fitting_validation.py   # Input validation
@@ -33,6 +30,7 @@ gsplats/
 │       ├── test_losses.py               # Loss functions
 │       ├── test_optimization.py         # Optimization loop
 │       ├── test_results.py              # Result finalization
+│       ├── test_sorting.py             # Z-order (Morton) splat sorting
 │       └── test_visualization.py        # Visualization helpers
 ├── optim/
 │   └── tests/                      # Optimizer tests
@@ -41,7 +39,10 @@ gsplats/
 ├── utils/
 │   └── tests/                      # Utils-specific tests
 │       ├── __init__.py
-│       └── test_trils.py           # Triangular matrix operations
+│       ├── test_alpha.py           # Per-splat opacity (color alpha) conversions
+│       ├── test_device.py          # PyTorch device-selection helpers
+│       ├── test_trils.py           # Triangular matrix operations
+│       └── test_trils_properties.py # Property-based triangular-packing tests
 ├── models/
 │   ├── utils/tests/                # Model utility tests
 │   │   ├── __init__.py
@@ -54,6 +55,7 @@ gsplats/
 └── multiscale/
     └── tests/                      # Multiscale decomposition tests
         ├── __init__.py
+        ├── test_decompose_advanced.py  # Advanced decomposition (loss types, edge cases)
         ├── test_decomposition_basic.py
         └── test_energy_distribution.py
 ```
@@ -73,7 +75,7 @@ hatch run pytest packages/luxar/src/luxar/gsplats/utils/tests/test_trils.py
 Some tests require additional dependencies:
 
 - **PyTorch tests**: `test_lt_solver.py`, `test_inverse_softplus.py` (torch-dependent tests)
-- **SciPy tests**: `test_candidates.py` (scipy-dependent tests)
+- **SciPy tests**: SciPy-dependent seed/candidate tests
 
 These tests are designed to skip gracefully when dependencies are missing.
 
@@ -113,6 +115,7 @@ hatch run pytest --cov=luxar.gsplats packages/luxar/src/luxar/gsplats/ --cov-rep
 ### 2. Fitting Pipeline Tests (`fitting/tests/`)
 
 **Unit Tests for Modular Fitting Pipeline:**
+- `test_downscale.py` - Volume downscaling utilities
 - `test_fitting_config.py` - Configuration dataclass validation
 - `test_fitting_preprocessing.py` - Data preprocessing and normalization
 - `test_fitting_validation.py` - Input validation at API boundaries
@@ -120,6 +123,7 @@ hatch run pytest --cov=luxar.gsplats packages/luxar/src/luxar/gsplats/ --cov-rep
 - `test_losses.py` - Loss functions and regularization
 - `test_optimization.py` - Optimization loop and convergence
 - `test_results.py` - Result finalization and statistics
+- `test_sorting.py` - Z-order (Morton code) splat sorting during fitting
 - `test_visualization.py` - Visualization helpers (napari mocked)
 
 ### 3. Integration Tests (`tests/`)
