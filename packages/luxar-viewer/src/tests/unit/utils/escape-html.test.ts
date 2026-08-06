@@ -10,8 +10,8 @@
  *      the `&` in `&lt;`). This is a load-bearing contract: callers must
  *      escape exactly once.
  *
- * Also pins the apostrophe behavior (currently passes through unescaped —
- * see utils.md OOS3) so any future hardening is intentional.
+ * Also pins the apostrophe behavior (escaped to `&#39;` for defence against
+ * single-quoted-attribute injection) so any future change stays intentional.
  */
 
 import { describe, it, expect, test } from 'vitest';

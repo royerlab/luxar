@@ -175,10 +175,11 @@ export function createRendererCapabilities(
   const display = detectDisplayCapabilities();
 
   if (isWebGLRenderer(renderer)) {
-    // WebGL2 path: probe raw-GL for capabilities. This is the only
-    // place in the codebase that calls `getContext()` post-renderer
-    // (the canvas-side pre-renderer call in `scene-manager` and the
-    // probe in `webgpu-availability` are the documented exceptions).
+    // WebGL2 path: probe raw-GL for capabilities. Post-renderer
+    // `getContext()` calls are deliberately rare — this one, the
+    // `readBackbufferPixels` readback below, and the provoking-vertex
+    // probe in `rendering/picking/mesh` are the whole list (plus the
+    // canvas-side pre-renderer call in `scene-manager`).
     const gl = renderer.getContext() as WebGL2RenderingContext;
 
     const maxMSAASamplesRaw = gl.getParameter(gl.MAX_SAMPLES) as number | null;

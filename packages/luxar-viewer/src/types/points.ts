@@ -379,8 +379,7 @@ export interface ViewState {
  * `viewState: PointsViewState` is more self-documenting than the
  * generic `ViewState`).
  *
- * @internal — re-exported via types/index.ts for type-only consumers;
- * no runtime caller depends on this alias.
+ * @internal — a type-only documentation alias; no runtime caller depends on it.
  */
 export type PointsViewState = ViewState;
 

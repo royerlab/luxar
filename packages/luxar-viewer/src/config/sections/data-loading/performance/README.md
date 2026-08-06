@@ -7,7 +7,7 @@ Conforms to the section-trio pattern documented in [../../../README.md](../../..
 ## Contents
 
 - `data.ts` — `dataLoadingPerformanceConfig: DataLoadingPerformanceConfig`. Defines the four optimization pipelines:
-  - **Accumulators**: `useAccumulators` (true), `initialAccumulatorCapacity` (8192), `accumulatorGrowthFactor` (1.5) — multi-type accumulator with in-place projection/filtering to eliminate allocations in `projectTo3D`.
+  - **Accumulators**: `useAccumulators` (true), `initialAccumulatorCapacity` (8192) — multi-type accumulator with in-place projection/filtering to eliminate allocations in `projectTo3D`.
   - **Web Workers**: `useWebWorkers` (true), `workerCount` (0 = auto, `navigator.hardwareConcurrency - 1`), `workerProjectionTimeoutMs` (60000), `workerInitTimeoutMs` (10000). AABB spatial queries always stay on the main thread (faster than the worker roundtrip).
   - **GPU Buffer Pool**: `useGPUBufferPool` (true), `gpuPoolMaxSize` (20), `gpuPoolEvictionFrames` (300), `gpuPoolEvictBatchSize` (5), `gpuPoolMaxBytes` (single GPU-geometry byte budget shared by the pool + LOD retention; `null` = auto-size from `navigator.deviceMemory` clamped to [512 MB, 2 GB], `0` = disable, positive = pin; overridable at runtime via `?gpuBudgetMB=`).
   - Plus `enablePerformanceMonitoring` (false). (The former `materialCacheMaxSize` knob was removed with the LRU material cache — materials are per-node and disposed by node teardown.)

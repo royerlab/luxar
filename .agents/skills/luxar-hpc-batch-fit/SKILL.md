@@ -72,7 +72,7 @@ luxar gsplat batch-fit submit data.zarr.zip out/ -p gpu \
 ## Monitor → validate → merge
 
 ```bash
-luxar gsplat batch-fit status out/ -v          # per-task state (sacct/squeue + disk)
+luxar gsplat batch-fit status out/             # completed/running/pending/failed + merge state
 luxar gsplat batch-fit validate out/ --fix     # delete corrupt/stale tiles for re-fit
 luxar gsplat batch-fit merge out/              # (re)run merge -> kind=partition
 luxar gsplat batch-fit merge out/ --recipe stream --n-lods 6   # + per-part LOD as it streams
@@ -103,7 +103,7 @@ The local Mac cannot reach Bruno directly — relay through `obsidian`
 
 ```bash
 luxar gsplat batch-fit submit /hpc/projects/<grp>/data.zarr out/ -p gpu --tiling content --cal cal.json
-luxar gsplat batch-fit status out/ -v       # poll
+luxar gsplat batch-fit status out/          # poll
 luxar gsplat batch-fit validate out/ --fix  # clean failures, then re-submit to refill
 luxar gsplat batch-fit merge out/ --recipe stream --n-lods 6
 ```
