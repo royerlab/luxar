@@ -25,7 +25,7 @@ export interface ChunkPrefetcherOptions {
  * - Fire-and-forget pattern (non-blocking)
  * - Race-condition safe queue processing
  *
- * See: docs/CACHE_PREFETCHING_SPEC.md
+ * See: docs/guides/specs/CACHE_PREFETCHING_SPEC.md
  */
 export class ChunkPrefetcher {
   private store: MultiLevelCachingStore;
