@@ -86,6 +86,11 @@ const CONST_SHADER: ShaderSource = {
   },
 };
 
+/**
+ * Registry of post-processing shader entries for the TSL↔GLSL parity harness,
+ * keyed by test name. Each entry carries the GLSL source and a `buildUniforms`
+ * factory; merged into `SHADER_REGISTRY` and driven by the parity/codegen specs.
+ */
 export const POST_PROCESSING_SHADERS: Record<string, RegistryEntry> = {
   'const-rgb': {
     source: CONST_SHADER,
