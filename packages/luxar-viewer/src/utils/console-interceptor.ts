@@ -24,10 +24,9 @@ export interface BufferedMessage {
 }
 
 /**
- * Default ring-buffer capacity used until the bootstrap calls
- * {@link ConsoleInterceptor.setMaxBufferSize} with the config value. Kept as
- * an exported constant so consumers (config, tests) can reference the same
- * number without a magic literal.
+ * Fixed ring-buffer capacity (number of messages retained). Exported as a
+ * constant so consumers (tests) can reference the same number without a magic
+ * literal.
  */
 export const DEFAULT_MAX_BUFFER_SIZE = 10000;
 
@@ -40,15 +39,9 @@ class ConsoleInterceptor {
   /** Current write position in ring buffer */
   private bufferIndex = 0;
 
-  /** Maximum messages to buffer. The default mirrors
-   * `config.ui.debugConsole.interceptor.maxBufferSize` — importing `config`
-   * here is unsafe (this singleton is constructed at module-load time, before
-   * the config module is guaranteed to have finished evaluating). Instead, the
-   * bootstrap can call {@link setMaxBufferSize} after both modules are loaded
-   * to push the canonical value, keeping the two in sync without a manual edit.
+  /** Fixed maximum number of messages to buffer.
    *
    * @see {@link DEFAULT_MAX_BUFFER_SIZE} — the constant.
-   * @see {@link setMaxBufferSize} — the setter the config layer uses.
    */
   private maxBufferSize = DEFAULT_MAX_BUFFER_SIZE;
 
@@ -268,43 +261,6 @@ class ConsoleInterceptor {
     this.messageBuffer = [];
     this.bufferIndex = 0;
     this.hasWrapped = false;
-  }
-
-  /**
-   * Override the ring-buffer capacity. The config layer calls this once after
-   * both modules are loaded so the interceptor uses the canonical value from
-   * `config.ui.debugConsole.interceptor.maxBufferSize` without forcing a
-   * cycle-prone import at module-load time. Shrinking trims oldest-first to
-   * preserve chronological order; growing leaves existing messages intact and
-   * just allows more headroom before wrap.
-   *
-   * @param size - New maximum buffer size; must be a positive integer.
-   */
-  setMaxBufferSize(size: number): void {
-    if (!Number.isInteger(size) || size <= 0) {
-      this.originalConsole.warn(
-        `[ConsoleInterceptor] setMaxBufferSize ignored: expected positive integer, got ${size}`
-      );
-      return;
-    }
-    if (size === this.maxBufferSize) return;
-
-    // Reconstruct messages in chronological order first so we can trim from
-    // the head when shrinking (oldest-first eviction).
-    const chronological = this.getBufferedMessages();
-    if (chronological.length > size) {
-      this.messageBuffer = chronological.slice(chronological.length - size);
-    } else {
-      this.messageBuffer = chronological;
-    }
-    this.maxBufferSize = size;
-    this.hasWrapped = this.messageBuffer.length === size;
-    this.bufferIndex = this.hasWrapped ? 0 : this.messageBuffer.length;
-  }
-
-  /** Current ring-buffer capacity (for diagnostics / tests). */
-  getMaxBufferSize(): number {
-    return this.maxBufferSize;
   }
 
   /**

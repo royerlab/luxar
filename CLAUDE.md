@@ -169,7 +169,7 @@ export PATH="$HOME/.local/bin:$PATH"   # Add to ~/.bashrc to persist
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
 
 # 3. Verify the environment works
-python scripts/test_hpc_setup.py
+python scripts/check_hpc_setup.py
 
 # 4. Build the CUDA extension on a GPU node via Slurm
 make build-cuda SLURM=1                           # Auto-detect CUDA + GCC modules
@@ -670,7 +670,6 @@ hatch run python scripts/benchmarks/benchmark_seeding_gpu.py
 
 **GPU Support**:
 - Sobel gradients: All dimensions (1D-nD)
-- Peak detection: 2D/3D only (auto-fallback for others)
 - Interpolation: 2D/3D only (auto-fallback for others)
 - Deduplication: All dimensions
 - Expected speedup: substantial on large volumes (>100³), often orders of magnitude depending on GPU

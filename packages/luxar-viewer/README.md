@@ -51,6 +51,19 @@ await app.init({
 app.dispose(); // removes all listeners, GPU resources, UI
 ```
 
+### Utility classes
+
+The `styles.css` bundle also ships a Tailwind-like set of atomic utility
+classes for embedders to reuse — flexbox, justify/gap, padding/margin,
+text color/size/weight/align, surface, border, radius, shadow, backdrop
+blur, transition, display, position, overflow, cursor, opacity, and
+z-index groups. Every selector is namespaced under `.luxar-` (so it never
+collides with host-page styles) and resolves to the viewer's `--luxar-*`
+theme custom properties, so utilities pick up the active theme with no
+hardcoded colors or spacing. See
+[`src/styles/base/README.md`](src/styles/base/README.md) for the full
+group table.
+
 ### `LuxarAppOptions`
 
 | Option             | Type                  | Default         | Notes                                                                                                                                                                                                        |
@@ -432,7 +445,6 @@ pnpm bench:wasm      # Run WASM vs TypeScript benchmarks
 # Fixtures & Media
 pnpm test:generate-fixtures  # Generate test fixtures from Python
 pnpm readme-images   # Generate README screenshot images
-pnpm readme-videos   # Generate README video recordings
 
 # AI Debugging
 pnpm agent:debug     # Run Playwright agent driver (headless)

@@ -78,7 +78,6 @@ rendering/
 │       └── capture.ts                  # captureHDRPixels / captureHDRAsEXR / renderToImageData
 │
 ├── picking/                            # GPU picking materials + orchestration
-│   ├── index.ts                        # Picking barrel
 │   ├── picking-system.ts               # Orchestrator
 │   ├── PICKING_DESIGN.md               # Backend readback strategy + 1-frame-latency rationale
 │   ├── point/    { material, material-tsl, shaders (GLSL), pick.tsl (TSL) }
@@ -100,7 +99,7 @@ rendering/
 │   └── byte-budget-evictor.ts          # Cross-type byte-budget enforcement
 │
 ├── shaders/                            # Barrel only — re-exports GLSL constants from materials/<kind>/shader-glsl.ts
-│   └── index.ts                        # Keeps the tsl-shader-parity e2e harness's import path stable
+│   └── index.ts                        # Stable re-export spelling; no importer today (knip-ignored)
 │
 ├── index.ts                            # Public-API barrel
 └── README.md                           # This documentation
