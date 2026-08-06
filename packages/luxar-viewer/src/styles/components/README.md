@@ -17,7 +17,7 @@ chrome. Colors, spacing, radii, and shadows reference the
 | File                       | UI surface                                                                                                                                                        |
 | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `colormap-legend.css`      | Bottom-right overlay showing per-layer colormap gradients (`ui/colormap-legend.ts`).                                                                              |
-| `control-rail.css`         | Slim left-edge activity rail, its flyout, and panel popovers (`ui/control-rail/`).                                                                                |
+| `control-rail.css`         | Slim left-edge activity rail, its flyout, and panel popovers (`ui/control-rail.ts`).                                                                              |
 | `data-loading-monitor.css` | Real-time data-loading performance monitor with multi-state UI (`ui/data-loading-monitor.ts`).                                                                    |
 | `dataset-browser.css`      | Modal panel for navigating and selecting Zarr datasets (`ui/dataset-browser.ts`).                                                                                 |
 | `debug-console.css`        | In-app developer console for viewing intercepted browser console output (`ui/debug-console.ts`).                                                                  |
