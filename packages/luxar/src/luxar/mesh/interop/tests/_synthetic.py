@@ -458,3 +458,120 @@ def write_glb_shared_child(path: Path, gt: GroundTruth) -> None:
 def write_glb_bad_node_index(path: Path, gt: GroundTruth) -> None:
     """A child edge pointing past the end of the node array."""
     _glb_with_nodes(path, gt, [{"children": [99], "mesh": 0}], [0])
+
+
+def write_glb_interleaved_at_buffer_end(path: Path, gt: GroundTruth) -> None:
+    """Interleaved POSITION/NORMAL placed LAST in the buffer, with no trailing padding.
+
+    The layout that exposes an accessor span computed as ``count * stride`` instead of
+    ``(count - 1) * stride + element``: the final element occupies only its own width,
+    so the padding a naive span assumes simply is not there. ``write_glb_interleaved``
+    hides the defect because index data follows the interleaved view in the same buffer
+    and absorbs the over-read.
+    """
+    stride = 24
+    packed = np.empty((len(gt.vertices), 6), dtype="<f4")
+    packed[:, :3] = gt.vertices
+    packed[:, 3:] = gt.normals
+    # Drop the trailing 12 bytes the last element does not need: the buffer ends exactly
+    # at the end of the final NORMAL.
+    inter = packed.tobytes()[: (len(gt.vertices) - 1) * stride + 24]
+    idx = gt.faces.reshape(-1).astype("<u4").tobytes()
+    full = idx + inter  # indices FIRST, interleaved view at the very end
+    doc = {
+        "asset": {"version": "2.0"},
+        "scene": 0,
+        "scenes": [{"nodes": [0]}],
+        "nodes": [{"mesh": 0}],
+        "meshes": [
+            {
+                "primitives": [
+                    {
+                        "attributes": {"POSITION": 1, "NORMAL": 2},
+                        "indices": 0,
+                        "mode": 4,
+                    }
+                ]
+            }
+        ],
+        "buffers": [{"byteLength": len(full)}],
+        "bufferViews": [
+            {"buffer": 0, "byteOffset": 0, "byteLength": len(idx)},
+            {
+                "buffer": 0,
+                "byteOffset": len(idx),
+                "byteLength": len(inter),
+                "byteStride": stride,
+            },
+        ],
+        "accessors": [
+            {
+                "bufferView": 0,
+                "componentType": 5125,
+                "count": gt.faces.size,
+                "type": "SCALAR",
+            },
+            {
+                "bufferView": 1,
+                "byteOffset": 0,
+                "componentType": 5126,
+                "count": len(gt.vertices),
+                "type": "VEC3",
+            },
+            {
+                "bufferView": 1,
+                "byteOffset": 12,
+                "componentType": 5126,
+                "count": len(gt.vertices),
+                "type": "VEC3",
+            },
+        ],
+    }
+    json_chunk = json.dumps(doc).encode("utf-8")
+    json_chunk += b" " * (-len(json_chunk) % 4)
+    bin_chunk = full + b"\0" * (-len(full) % 4)
+    total = 12 + 8 + len(json_chunk) + 8 + len(bin_chunk)
+    out = struct.pack("<III", 0x46546C67, 2, total)
+    out += struct.pack("<II", len(json_chunk), 0x4E4F534A) + json_chunk
+    out += struct.pack("<II", len(bin_chunk), 0x004E4942) + bin_chunk
+    path.write_bytes(out)
+
+
+def write_glb_mirrored(path: Path, gt: GroundTruth) -> None:
+    """A GLB whose single node applies a reflecting scale of ``[-1, 1, 1]``."""
+    _glb_with_nodes(path, gt, [{"mesh": 0, "scale": [-1.0, 1.0, 1.0]}], [0])
+
+
+#: A MID-RANGE palette for the OBJ colour-convention fixtures.
+#:
+#: Deliberately not :attr:`GroundTruth.colors`, whose channels are all 0 or 255. Under
+#: the bug these fixtures exist to catch — scaling a 0..255 file by 255 and clipping —
+#: 255 maps back to 255 and 0 to 0, so an all-extremes palette produces the CORRECT
+#: answer through the wrong code path and the test cannot fail. Every channel here is
+#: strictly between 1 and 254, so 255x-and-clip lands on 255 and the difference shows.
+OBJ_MID_COLORS = np.array(
+    [[128, 64, 32], [10, 200, 90], [77, 77, 77], [3, 250, 128]], dtype=np.uint8
+)
+
+
+def write_obj_colors_0_255(path: Path, gt: GroundTruth) -> None:
+    """OBJ vertex colours in the 0..255 convention (scanners), not 0..1 (MeshLab)."""
+    lines = []
+    for v, c in zip(gt.vertices, OBJ_MID_COLORS):
+        lines.append(
+            f"v {v[0]:.6f} {v[1]:.6f} {v[2]:.6f} {int(c[0])} {int(c[1])} {int(c[2])}"
+        )
+    for tri in gt.faces:
+        lines.append(" ".join(["f"] + [str(int(i) + 1) for i in tri]))
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def write_obj_colors_0_1(path: Path, gt: GroundTruth) -> None:
+    """The same colours in the 0..1 convention."""
+    lines = []
+    for v, c in zip(gt.vertices, OBJ_MID_COLORS):
+        r, g, b = (float(x) / 255.0 for x in c)
+        lines.append(f"v {v[0]:.6f} {v[1]:.6f} {v[2]:.6f} {r:.6f} {g:.6f} {b:.6f}")
+    for tri in gt.faces:
+        lines.append(" ".join(["f"] + [str(int(i) + 1) for i in tri]))
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")

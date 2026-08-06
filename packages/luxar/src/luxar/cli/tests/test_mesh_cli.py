@@ -102,12 +102,23 @@ class TestMeshImport:
     def test_no_keep_normals_drops_them(
         self, fixtures: dict[str, Path], tmp_path: Path
     ) -> None:
+        """Both the on-disk result AND the exit code.
+
+        Without the exit-code assertions this test was vacuous. `_verify` runs AFTER the
+        scene is written, so a verification failure still leaves a correct store on disk
+        — the two disk assertions passed while the command exited 1. Which is exactly
+        what it was doing: `_verify` compared the read-back against the FILE's normals
+        rather than the ones actually written, so every `--no-keep-normals` import
+        reported "normals lost" on a completely successful import.
+        """
         kept, dropped = tmp_path / "k.luxar.zarr", tmp_path / "d.luxar.zarr"
-        runner.invoke(app, ["mesh", "import", str(fixtures["ply"]), str(kept)])
-        runner.invoke(
+        r1 = runner.invoke(app, ["mesh", "import", str(fixtures["ply"]), str(kept)])
+        assert r1.exit_code == 0, r1.stdout
+        r2 = runner.invoke(
             app,
             ["mesh", "import", str(fixtures["ply"]), str(dropped), "--no-keep-normals"],
         )
+        assert r2.exit_code == 0, r2.stdout
         assert LuxarScene.load(kept).get_mesh("mesh").normals is not None
         assert LuxarScene.load(dropped).get_mesh("mesh").normals is None
 

@@ -10,6 +10,7 @@ import pytest
 from .._stl import is_binary_stl
 from ..mesh_import import MESH_FORMATS, TriangleMesh, detect_mesh_format, import_mesh
 from ._synthetic import (
+    OBJ_MID_COLORS,
     SUFFIXES,
     WRITERS,
     make_ground_truth,
@@ -17,9 +18,13 @@ from ._synthetic import (
     write_glb_bad_node_index,
     write_glb_cyclic,
     write_glb_interleaved,
+    write_glb_interleaved_at_buffer_end,
+    write_glb_mirrored,
     write_glb_shared_child,
     write_gltf_draco,
     write_gsplat_ply,
+    write_obj_colors_0_1,
+    write_obj_colors_0_255,
     write_obj_negative_indices,
     write_obj_quad,
     write_ply_ascii,
@@ -134,6 +139,27 @@ class TestObj:
         write_obj_negative_indices(p, GT)
         assert _sorted_face_set(import_mesh(p)) == EXPECTED_FACES
 
+    def test_vertex_colors_in_both_conventions_agree(self, tmp_path: Path) -> None:
+        """`v x y z r g b` has no agreed range: MeshLab writes 0..1, scanners 0..255.
+
+        Assuming 0..1 and scaling unconditionally clips every nonzero channel of a
+        0..255 file to 255 — a coloured mesh imports white. Detect by observed peak,
+        the same rule the PLY reader already applies to `red/green/blue`.
+        """
+        a, b = tmp_path / "unit.obj", tmp_path / "byte.obj"
+        write_obj_colors_0_1(a, GT)
+        write_obj_colors_0_255(b, GT)
+        ca, cb = import_mesh(a).colors, import_mesh(b).colors
+        assert ca is not None and cb is not None
+        np.testing.assert_allclose(np.sort(ca, axis=0), np.sort(cb, axis=0), atol=1)
+        # Pin the VALUES, not merely that the two agree: the palette is mid-range on
+        # purpose, so a 255x-and-clip would drive every channel to 255 here. Asserting
+        # only agreement would still pass if BOTH readers were wrong the same way.
+        np.testing.assert_allclose(
+            np.sort(cb, axis=0), np.sort(OBJ_MID_COLORS, axis=0), atol=1
+        )
+        assert int(cb.max()) < 255, "a 0..255 file must not clip to solid white"
+
     def test_quad_face_is_triangulated(self, tmp_path: Path) -> None:
         p = tmp_path / "q.obj"
         write_obj_quad(p)
@@ -224,6 +250,59 @@ class TestGltf:
         write_glb_bad_node_index(p, GT)
         with pytest.raises(ValueError, match="out of range"):
             import_mesh(p)
+
+    def test_interleaved_view_at_the_END_of_the_buffer_decodes(
+        self, tmp_path: Path
+    ) -> None:
+        """The over-read `test_interleaved_accessors_decode` cannot see.
+
+        A valid accessor spans `(count - 1) * stride + element`, not `count * stride` —
+        the last element occupies only its own width and the padding after it need not
+        exist. Requesting the larger span reads past the buffer, which is invisible
+        while anything follows the view (index data, in the other fixture) and raises
+        only when the interleaved view is last. That is a tightly-packed exporter's
+        normal output.
+        """
+        p = tmp_path / "tail.glb"
+        write_glb_interleaved_at_buffer_end(p, GT)
+        mesh = import_mesh(p)
+        assert mesh.n_vertices == 4
+        assert mesh.normals is not None
+        np.testing.assert_allclose(np.linalg.norm(mesh.normals, axis=1), 1.0, atol=1e-5)
+
+    def test_a_reflecting_transform_reverses_winding(self, tmp_path: Path) -> None:
+        """A negative-determinant node must flip the index order.
+
+        `scale: [-1, 1, 1]` is routine for mirrored parts. Positions and normals get
+        transformed correctly, but leaving the index ORDER alone makes the face's
+        geometric winding disagree with its own normal — so the mirrored part faces away
+        and disappears under single-sided rendering.
+        """
+        plain, mirrored = tmp_path / "p.glb", tmp_path / "m.glb"
+        write_glb(plain, GT)
+        write_glb_mirrored(mirrored, GT)
+        a, b = import_mesh(plain), import_mesh(mirrored)
+
+        # The mirror really was applied: x is negated.
+        np.testing.assert_allclose(
+            np.sort(b.vertices[:, 0]), np.sort(-a.vertices[:, 0]), atol=1e-6
+        )
+
+        # And every face still winds consistently with its own geometry. Compare the
+        # signed volume contribution of each triangle: mirroring negates it, so a mesh
+        # whose winding was NOT flipped would keep the original sign.
+        def signed_volume(m) -> float:
+            t = m.vertices[m.faces]
+            return float(
+                np.sum(np.einsum("ij,ij->i", np.cross(t[:, 0], t[:, 1]), t[:, 2]))
+            )
+
+        va, vb = signed_volume(a), signed_volume(b)
+        assert abs(va) > 1e-6, "the ground truth must enclose volume for this to bite"
+        assert np.sign(vb) == np.sign(va), (
+            "reflecting the geometry without flipping the winding inverts the surface "
+            f"orientation (got {vb:.6f} against {va:.6f})"
+        )
 
     def test_draco_is_refused_by_name(self, tmp_path: Path) -> None:
         p = tmp_path / "draco.gltf"

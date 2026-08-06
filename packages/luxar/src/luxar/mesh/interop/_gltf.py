@@ -137,9 +137,18 @@ def _read_accessor(doc: dict, buffers: list[bytes], index: int) -> NDArray:
         return flat.reshape(count, ncomp)
 
     # Interleaved: take a strided view over raw bytes, then reinterpret each row.
-    window = np.frombuffer(blob, dtype=np.uint8, offset=base, count=stride * count)
+    #
+    # The span is `(count - 1) * stride + element`, NOT `count * stride`: the last
+    # element occupies only its own width, and the padding that would follow it need not
+    # exist. Asking for `count * stride` over-reads by `stride - element` bytes, which is
+    # invisible whenever anything follows the view in the same buffer — index data, say —
+    # and raises only when the interleaved view sits at the very end of the buffer. That
+    # is exactly the layout a tightly-packed exporter produces.
+    element = dtype.itemsize * ncomp
+    span = (count - 1) * stride + element if count else 0
+    window = np.frombuffer(blob, dtype=np.uint8, offset=base, count=span)
     rows = np.lib.stride_tricks.as_strided(
-        window, shape=(count, dtype.itemsize * ncomp), strides=(stride, 1)
+        window, shape=(count, element), strides=(stride, 1)
     )
     return np.ascontiguousarray(rows).view(dtype).reshape(count, ncomp)
 
@@ -245,6 +254,20 @@ def read_gltf(path: Path) -> dict[str, object]:
                 idx = np.arange(pos.shape[0], dtype=np.uint32)
             usable = (idx.shape[0] // 3) * 3
             faces = idx[:usable].reshape(-1, 3).astype(np.uint32) + offset
+
+            # A REFLECTING transform (negative determinant — e.g. `scale: [-1, 1, 1]`,
+            # which glTF exporters emit routinely for mirrored parts) reverses a
+            # triangle's geometric winding. Positions and normals above are transformed
+            # correctly, but the index ORDER is untouched, so the face's implied winding
+            # would now disagree with its own normal. Under single-sided rendering the
+            # mirrored part faces away and vanishes; with stored normals it lights from
+            # the wrong side.
+            #
+            # Swapping two of the three indices restores the winding. Done per primitive
+            # rather than globally because the sign is a property of that node's chain —
+            # a file can mirror one part and not another.
+            if np.linalg.det(world[:3, :3]) < 0:
+                faces = faces[:, [0, 2, 1]]
 
             vert_blocks.append(pos.astype(np.float32))
             norm_blocks.append(nrm)

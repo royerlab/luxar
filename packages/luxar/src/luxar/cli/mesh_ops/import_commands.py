@@ -102,16 +102,24 @@ def run_import(
                 colors=mesh.colors,
             )
 
-        _verify(output_path, name, mesh)
+        _verify(output_path, name, mesh, wrote_normals=normals is not None)
         aprint(f"✓ Wrote {output_path}")
     return mesh
 
 
-def _verify(output_path: Path, name: str, mesh: TriangleMesh) -> None:
-    """Read the node back and confirm the counts survived the write.
+def _verify(
+    output_path: Path, name: str, mesh: TriangleMesh, *, wrote_normals: bool
+) -> None:
+    """Read the node back and confirm what was WRITTEN survived the write.
 
     The mesh analogue of `gsplat import`'s format-version check. A write that silently
     dropped faces would otherwise only surface in the viewer.
+
+    ``wrote_normals`` is the state actually passed to ``add_mesh``, NOT
+    ``mesh.normals is not None``. Those differ under ``--no-keep-normals``, which reads
+    normals from the file and then deliberately does not write them — comparing against
+    the file would report "normals lost" on a completely successful import, exiting 1
+    after the scene was already on disk.
     """
     from luxar.io.reader import LuxarScene
 
@@ -124,10 +132,10 @@ def _verify(output_path: Path, name: str, mesh: TriangleMesh) -> None:
         )
     # Checked because it is the one attribute with no default: normals without
     # `normal_dims` cannot be oriented, and the pair is easy to break silently.
-    if (node.normals is None) != (mesh.normals is None):
+    if (node.normals is not None) != wrote_normals:
         raise RuntimeError(
-            f"Verification failed: normals {'lost' if mesh.normals is not None else 'invented'} "
-            "on the round trip"
+            "Verification failed: normals "
+            f"{'lost' if wrote_normals else 'invented'} on the round trip"
         )
     aprint(f"✓ Verified {got_v:,} vertices / {got_f:,} faces on disk")
 

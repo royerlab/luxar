@@ -107,9 +107,15 @@ def read_obj(path: Path) -> dict[str, object]:
     colors = None
     if any(c is not None for c in vertex_colors):
         filled = [c if c is not None else (1.0, 1.0, 1.0) for c in vertex_colors]
-        colors = np.clip(np.asarray(filled, dtype=np.float32) * 255.0, 0, 255).astype(
-            np.uint8
-        )
+        raw = np.asarray(filled, dtype=np.float32)
+        # The `v x y z r g b` extension is unofficial and exporters disagree about the
+        # range: MeshLab writes 0..1, several scanners write 0..255. Distinguish by the
+        # observed peak, exactly as the PLY reader does for `red/green/blue` — assuming
+        # 0..1 and scaling unconditionally would clip every nonzero channel of a 0..255
+        # file to 255, turning a coloured mesh into a white one.
+        peak = float(np.max(raw)) if raw.size else 0.0
+        scaled = raw * 255.0 if peak <= 1.0 else raw
+        colors = np.clip(scaled, 0, 255).astype(np.uint8)
 
     return {
         "vertices": vertices,
