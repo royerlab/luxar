@@ -100,34 +100,80 @@ def _load_buffers(doc: dict, base_dir: Path, glb_binary: bytes | None) -> list[b
             _, _, payload = uri.partition(",")
             buffers.append(base64.b64decode(payload))
         else:
-            target = base_dir / unquote(uri)
-            if not target.exists():
+            # A buffer URI is a RELATIVE reference to a file beside the .gltf. Resolve
+            # it and require it to stay inside that directory: `uri` comes from the
+            # file, so an absolute path or a `../` escape would otherwise let a crafted
+            # glTF read anything this process can and reinterpret those bytes as
+            # geometry or colour — which matters the moment models arrive from
+            # elsewhere rather than from the user's own disk.
+            root = base_dir.resolve()
+            target = (root / unquote(uri)).resolve()
+            if not target.is_relative_to(root):
                 raise ValueError(
-                    f"glTF buffer {i} points at {uri!r}, which does not exist next to "
-                    "the .gltf file. Use a .glb (self-contained) or keep the .bin beside it."
+                    f"glTF buffer {i} points at {uri!r}, which resolves outside the "
+                    "directory holding the .gltf file. Buffer URIs must be relative "
+                    "references to a file beside it; move the .bin next to the .gltf, "
+                    "or use a self-contained .glb."
+                )
+            # `is_file`, not `exists`: a URI naming a DIRECTORY otherwise reaches
+            # `read_bytes` and raises IsADirectoryError, which is not a ValueError and
+            # so escapes the CLI's error funnel as a raw traceback.
+            if not target.is_file():
+                raise ValueError(
+                    f"glTF buffer {i} points at {uri!r}, which is not a file next to "
+                    "the .gltf. Use a .glb (self-contained) or keep the .bin beside it."
                 )
             buffers.append(target.read_bytes())
     return buffers
 
 
+def _element(doc: dict, section: str, index: int) -> dict:
+    """One entry of a top-level glTF array, with the dangling reference named.
+
+    The same reason the node walk range-checks its child edges: a reference past the
+    end of ``accessors`` or ``bufferViews`` would otherwise raise ``IndexError`` (or
+    ``KeyError`` for a missing section), neither of which is a ``ValueError``, so a
+    corrupt file escapes the CLI's error funnel as a raw traceback.
+    """
+    entries = doc.get(section) or []
+    if index < 0 or index >= len(entries):
+        raise ValueError(
+            f"glTF references {section}[{index}], but the file declares "
+            f"{len(entries)} — the file is malformed; re-export it."
+        )
+    entry: dict = entries[index]
+    return entry
+
+
 def _read_accessor(doc: dict, buffers: list[bytes], index: int) -> NDArray:
     """Decode one accessor to an ``(count, ncomp)`` array, honouring ``byteStride``."""
-    accessor = doc["accessors"][index]
+    accessor = _element(doc, "accessors", index)
     if "sparse" in accessor:
         raise ValueError(
             "glTF sparse accessors are not supported. Re-export without sparse "
             "storage, or run the file through `gltf-transform resample`."
         )
     count = int(accessor["count"])
+    if accessor["type"] not in _TYPE_COUNTS:
+        raise ValueError(f"glTF accessor type {accessor['type']!r} is not supported")
+    component = int(accessor["componentType"])
+    if component not in _COMPONENT_TYPES:
+        raise ValueError(f"glTF accessor componentType {component} is not supported")
     ncomp = _TYPE_COUNTS[accessor["type"]]
-    dtype = np.dtype(_COMPONENT_TYPES[int(accessor["componentType"])])
+    dtype = np.dtype(_COMPONENT_TYPES[component])
 
     if "bufferView" not in accessor:
         # A bufferView-less accessor is defined to be all zeros.
         return np.zeros((count, ncomp), dtype=dtype)
 
-    view = doc["bufferViews"][int(accessor["bufferView"])]
-    blob = buffers[int(view.get("buffer", 0))]
+    view = _element(doc, "bufferViews", int(accessor["bufferView"]))
+    buffer_index = int(view.get("buffer", 0))
+    if buffer_index >= len(buffers):
+        raise ValueError(
+            f"glTF bufferView references buffer {buffer_index}, but the file declares "
+            f"{len(buffers)} — the file is malformed; re-export it."
+        )
+    blob = buffers[buffer_index]
     base = int(view.get("byteOffset", 0)) + int(accessor.get("byteOffset", 0))
     stride = int(view.get("byteStride", 0)) or dtype.itemsize * ncomp
 
@@ -198,9 +244,9 @@ def read_gltf(path: Path) -> dict[str, object]:
             name = _COMPRESSION_EXTENSIONS[ext]
             raise ValueError(
                 f"{path.name} requires {ext} ({name}-compressed geometry), which this "
-                f"reader cannot decode. Decompress first — e.g. "
-                f"`gltf-transform {'dedup' if name == 'Draco' else 'meshopt'} in.glb out.glb` "
-                "with the extension removed, or re-export from Blender with compression off."
+                "reader cannot decode. Decompress first — `gltf-transform copy in.glb "
+                "out.glb` decodes the geometry and writes it back uncompressed — or "
+                "re-export from Blender with compression off."
             )
 
     buffers = _load_buffers(doc, path.parent, glb_binary)
@@ -216,7 +262,7 @@ def read_gltf(path: Path) -> dict[str, object]:
 
     def emit(mesh_index: int, world: NDArray[np.float64]) -> None:
         nonlocal offset, skipped_modes
-        for prim in meshes[mesh_index].get("primitives", []):
+        for prim in _element(doc, "meshes", mesh_index).get("primitives", []):
             if int(prim.get("mode", 4)) != 4:
                 skipped_modes += 1
                 continue
@@ -312,8 +358,15 @@ def read_gltf(path: Path) -> dict[str, object]:
         for root in scenes[scene_index].get("nodes", []):
             walk(int(root), np.eye(4), frozenset())
     elif nodes:
+        # No usable `scenes` entry (a node library, or a `scene` index past the end).
+        # Fall back to the graph's OWN roots — the nodes no other node claims as a
+        # child — not to every node: walking all of them emits each descendant once
+        # per parent AND again as a root, at a different world transform each time, so
+        # `parent -> child(mesh)` imports the child twice with one untransformed copy.
+        claimed = {int(c) for node in nodes for c in node.get("children", [])}
         for i in range(len(nodes)):
-            walk(i, np.eye(4), frozenset())
+            if i not in claimed:
+                walk(i, np.eye(4), frozenset())
     else:
         # No node graph at all — take the meshes as authored.
         for i in range(len(meshes)):

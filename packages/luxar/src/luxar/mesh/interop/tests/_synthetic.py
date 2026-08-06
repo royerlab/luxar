@@ -134,6 +134,89 @@ def write_ply_quads(path: Path, gt: GroundTruth) -> None:
     path.write_text("\n".join(lines) + "\n", encoding="ascii")
 
 
+def write_ply_face_extras(
+    path: Path, gt: GroundTruth, *, binary: bool = True, texcoord_first: bool = False
+) -> None:
+    """A PLY whose ``face`` element carries more than just ``vertex_indices``.
+
+    A scalar is declared BEFORE the index list (a per-face flag or colour) and a second
+    ``texcoord`` list beside it — both legal, both common from any exporter that carries
+    UVs. ``texcoord_first`` puts that second list ahead of ``vertex_indices``, so which
+    list holds the topology cannot be answered by position.
+
+    A reader that assumes "the list comes first, scalars follow" consumes the wrong
+    bytes from row two onward and silently decodes garbage faces.
+    """
+    lists = [
+        "property list uchar float texcoord\n",
+        "property list uchar int vertex_indices\n",
+    ]
+    if not texcoord_first:
+        lists.reverse()
+    order = "binary_little_endian" if binary else "ascii"
+    header = (
+        "ply\n"
+        f"format {order} 1.0\n"
+        f"element vertex {len(gt.vertices)}\n"
+        "property float x\nproperty float y\nproperty float z\n"
+        f"element face {len(gt.faces)}\n"
+        "property uchar flags\n" + "".join(lists) + "end_header\n"
+    )
+
+    def _row_parts(tri: NDArray[np.uint32]) -> list[tuple[str, object]]:
+        """The row's list payloads, in the header's own order."""
+        parts: list[tuple[str, object]] = [
+            ("uv", np.zeros(6, dtype="<f4")),
+            ("idx", np.asarray(tri, dtype="<i4")),
+        ]
+        if not texcoord_first:
+            parts.reverse()
+        return parts
+
+    if not binary:
+        lines = [header.rstrip("\n")]
+        for v in gt.vertices:
+            lines.append(f"{v[0]:.6f} {v[1]:.6f} {v[2]:.6f}")
+        for tri in gt.faces:
+            row = ["7"]
+            for kind, values in _row_parts(tri):
+                arr = np.asarray(values)
+                row.append(str(arr.size))
+                row += [f"{v:.6f}" if kind == "uv" else str(int(v)) for v in arr]
+            lines.append(" ".join(row))
+        path.write_text("\n".join(lines) + "\n", encoding="ascii")
+        return
+
+    body = bytearray(gt.vertices.astype("<f4").tobytes())
+    for tri in gt.faces:
+        body += struct.pack("B", 7)  # the leading per-face scalar
+        for _kind, values in _row_parts(tri):
+            arr = np.asarray(values)
+            body += struct.pack("B", arr.size) + arr.tobytes()
+    path.write_bytes(header.encode("ascii") + bytes(body))
+
+
+def write_ply_truncated_ascii(path: Path, gt: GroundTruth) -> None:
+    """An ASCII PLY whose body stops short of the row count its header declares."""
+    lines = [
+        "ply",
+        "format ascii 1.0",
+        f"element vertex {len(gt.vertices)}",
+        "property float x",
+        "property float y",
+        "property float z",
+        f"element face {len(gt.faces)}",
+        "property list uchar int vertex_indices",
+        "end_header",
+    ]
+    for v in gt.vertices:
+        lines.append(f"{v[0]:.6f} {v[1]:.6f} {v[2]:.6f}")
+    # One face row where the header promised four.
+    tri = gt.faces[0]
+    lines.append(f"3 {tri[0]} {tri[1]} {tri[2]}")
+    path.write_text("\n".join(lines) + "\n", encoding="ascii")
+
+
 def write_obj(path: Path, gt: GroundTruth) -> None:
     """OBJ with 1-BASED indices and `v//vn` face triples."""
     lines = ["# synthetic tetrahedron"]
@@ -156,6 +239,23 @@ def write_obj_negative_indices(path: Path, gt: GroundTruth) -> None:
     for tri in gt.faces:
         # -n maps to index 0 when n vertices have been declared.
         lines.append(" ".join(["f"] + [str(int(i) - n) for i in tri]))
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def write_obj_unreferenced_normals(path: Path, gt: GroundTruth) -> None:
+    """An OBJ with a ``vn`` pool that no face references (plain ``f a b c`` corners).
+
+    The count happens to match the vertex count, which is the whole trap: OBJ normals
+    apply only where a face names them, so an unbound pool must be dropped rather than
+    treated as per-vertex data.
+    """
+    lines = []
+    for v in gt.vertices:
+        lines.append(f"v {v[0]:.6f} {v[1]:.6f} {v[2]:.6f}")
+    for _ in gt.vertices:
+        lines.append("vn 0.000000 0.000000 1.000000")
+    for tri in gt.faces:
+        lines.append(" ".join(["f"] + [str(int(i) + 1) for i in tri]))
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -362,6 +462,21 @@ def write_gltf_draco(path: Path) -> None:
     path.write_text(json.dumps(doc), encoding="utf-8")
 
 
+def write_gltf_dangling_accessor(path: Path) -> None:
+    """A .gltf whose primitive names an accessor the file never declares."""
+    doc = {
+        "asset": {"version": "2.0"},
+        "scene": 0,
+        "scenes": [{"nodes": [0]}],
+        "nodes": [{"mesh": 0}],
+        "meshes": [{"primitives": [{"attributes": {"POSITION": 7}, "mode": 4}]}],
+        "buffers": [],
+        "bufferViews": [],
+        "accessors": [],
+    }
+    path.write_text(json.dumps(doc), encoding="utf-8")
+
+
 def write_gsplat_ply(path: Path) -> None:
     """An INRIA Gaussian-splat PLY — the cross-importer case the sniffer must name."""
     props = [
@@ -535,6 +650,82 @@ def write_glb_interleaved_at_buffer_end(path: Path, gt: GroundTruth) -> None:
     out += struct.pack("<II", len(json_chunk), 0x4E4F534A) + json_chunk
     out += struct.pack("<II", len(bin_chunk), 0x004E4942) + bin_chunk
     path.write_bytes(out)
+
+
+def write_glb_no_scenes(path: Path, gt: GroundTruth) -> None:
+    """A GLB with a node hierarchy but NO ``scenes`` — a node library.
+
+    ``parent -> child(mesh)``, the child translated. With no scene to name the roots, a
+    reader that walks every node emits the child twice: once through its parent (moved)
+    and once as a root of its own (unmoved).
+    """
+    blob, views, accessors = _accessor_blob(gt)
+    doc = {
+        "asset": {"version": "2.0"},
+        "nodes": [
+            {"children": [1], "translation": [10.0, 0.0, 0.0]},
+            {"mesh": 0},
+        ],
+        "meshes": [
+            {
+                "primitives": [
+                    {
+                        "attributes": {"POSITION": 0, "NORMAL": 1},
+                        "indices": 2,
+                        "mode": 4,
+                    }
+                ]
+            }
+        ],
+        "buffers": [{"byteLength": len(blob)}],
+        "bufferViews": views,
+        "accessors": accessors,
+    }
+    json_chunk = json.dumps(doc).encode("utf-8")
+    json_chunk += b" " * (-len(json_chunk) % 4)
+    bin_chunk = blob + b"\0" * (-len(blob) % 4)
+    total = 12 + 8 + len(json_chunk) + 8 + len(bin_chunk)
+    out = struct.pack("<III", 0x46546C67, 2, total)
+    out += struct.pack("<II", len(json_chunk), 0x4E4F534A) + json_chunk
+    out += struct.pack("<II", len(bin_chunk), 0x004E4942) + bin_chunk
+    path.write_bytes(out)
+
+
+def write_gltf_external_buffer(path: Path, gt: GroundTruth, uri: str) -> None:
+    """A .gltf whose single buffer is an EXTERNAL file named by ``uri``.
+
+    Used both for the ordinary side-by-side ``.bin`` case and for the traversal cases —
+    an absolute path, or one that climbs out with ``..`` — which must be refused rather
+    than read and reinterpreted as geometry.
+    """
+    blob, views, accessors = _accessor_blob(gt)
+    doc = {
+        "asset": {"version": "2.0"},
+        "scene": 0,
+        "scenes": [{"nodes": [0]}],
+        "nodes": [{"mesh": 0}],
+        "meshes": [
+            {
+                "primitives": [
+                    {
+                        "attributes": {"POSITION": 0, "NORMAL": 1},
+                        "indices": 2,
+                        "mode": 4,
+                    }
+                ]
+            }
+        ],
+        "buffers": [{"byteLength": len(blob), "uri": uri}],
+        "bufferViews": views,
+        "accessors": accessors,
+    }
+    path.write_text(json.dumps(doc), encoding="utf-8")
+
+
+def write_gltf_buffer_payload(path: Path, gt: GroundTruth) -> None:
+    """The bytes :func:`write_gltf_external_buffer` expects to find at its ``uri``."""
+    blob, _views, _accessors = _accessor_blob(gt)
+    path.write_bytes(blob)
 
 
 def write_glb_mirrored(path: Path, gt: GroundTruth) -> None:

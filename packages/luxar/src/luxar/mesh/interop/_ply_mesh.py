@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import NamedTuple
 
 import numpy as np
 
@@ -44,20 +45,51 @@ _BYTE_ORDER = {
 }
 
 
+class PlyProperty(NamedTuple):
+    """One declared property, in the order the header declared it.
+
+    ``count_type`` is ``None`` for a plain scalar property and the list's length type
+    for a ``property list``, in which case ``type`` is the ITEM type.
+    """
+
+    name: str
+    type: str
+    count_type: str | None = None
+
+    @property
+    def is_list(self) -> bool:
+        return self.count_type is not None
+
+
 class PlyElement:
-    """One declared element: its name, its row count, and its property list."""
+    """One declared element: its name, its row count, and its properties IN ORDER.
+
+    Declaration order is the row layout — a ``face`` element may carry a scalar before
+    ``vertex_indices`` (a per-face flag) or a second list after it (Blender writes
+    ``texcoord`` that way). Splitting the properties into "scalars" and "lists" loses
+    that order, and a reader that then assumes list-first-scalars-after walks the body
+    at the wrong offsets, silently decoding one element's bytes as another's.
+    """
 
     def __init__(self, name: str, count: int) -> None:
         self.name = name
         self.count = count
-        #: ``(prop_name, scalar_type)`` for a plain property.
-        self.properties: list[tuple[str, str]] = []
-        #: ``(prop_name, count_type, item_type)`` for a ``property list``.
-        self.lists: list[tuple[str, str, str]] = []
+        #: Every property, in declaration order.
+        self.entries: list[PlyProperty] = []
+
+    @property
+    def properties(self) -> list[tuple[str, str]]:
+        """``(prop_name, scalar_type)`` for the plain properties, in order."""
+        return [(p.name, p.type) for p in self.entries if not p.is_list]
+
+    @property
+    def lists(self) -> list[PlyProperty]:
+        """The ``property list`` declarations, in order."""
+        return [p for p in self.entries if p.is_list]
 
     @property
     def has_lists(self) -> bool:
-        return bool(self.lists)
+        return any(p.is_list for p in self.entries)
 
 
 def parse_ply_header(raw: bytes) -> tuple[list[PlyElement], str, int]:
@@ -94,9 +126,11 @@ def parse_ply_header(raw: bytes) -> tuple[list[PlyElement], str, int]:
         elif parts[0] == "property" and elements:
             if parts[1] == "list":
                 # property list <count_type> <item_type> <name>
-                elements[-1].lists.append((parts[4], parts[2], parts[3]))
+                elements[-1].entries.append(
+                    PlyProperty(parts[4], parts[3], count_type=parts[2])
+                )
             else:
-                elements[-1].properties.append((parts[2], parts[1]))
+                elements[-1].entries.append(PlyProperty(parts[2], parts[1]))
     if not elements:
         raise ValueError("PLY header declares no elements")
     return elements, fmt, body_offset
@@ -106,6 +140,19 @@ def _scalar(fmt: str, ply_type: str) -> np.dtype:
     if ply_type not in _PLY_TYPES:
         raise ValueError(f"unknown PLY property type {ply_type!r}")
     return np.dtype(_BYTE_ORDER[fmt] + _PLY_TYPES[ply_type])
+
+
+def _index_list(element: PlyElement) -> str:
+    """Which of an element's lists holds its vertex indices.
+
+    By name when one of the conventional spellings is present, and only then by
+    position: an element carrying both ``texcoord`` and ``vertex_indices`` may declare
+    them in either order, and taking the first list would import UV data as topology.
+    """
+    for prop in element.lists:
+        if prop.name in ("vertex_indices", "vertex_index"):
+            return prop.name
+    return element.lists[0].name
 
 
 def _read_fixed_element(
@@ -126,33 +173,53 @@ def _read_fixed_element(
 def _read_list_element(
     buf: bytes, offset: int, element: PlyElement, fmt: str
 ) -> tuple[list[list[int]], int]:
-    """Read the FIRST list property of an element, row by row.
+    """Read an element that carries a ``property list``, row by row.
 
     Row-by-row rather than vectorized because a PLY list is variable-length: a `face`
     element may mix triangles and quads, so the stride is not knowable up front. Face
     counts are orders of magnitude below vertex counts, so this loop is not the cost.
+
+    Every property is consumed in DECLARATION order and only the vertex-index list's
+    rows are returned. Walking the declared order is what the format requires: a scalar may
+    precede the list (a per-face flag or colour) and a second list may follow it (an
+    exporter writing `texcoord` after `vertex_indices`). Assuming list-first would
+    consume the wrong bytes from row two onward, and the desynchronized offset then
+    decodes the rest of the file — including any following element — as garbage.
     """
-    name, count_type, item_type = element.lists[0]
-    count_dt = _scalar(fmt, count_type)
-    item_dt = _scalar(fmt, item_type)
-    # Any plain properties on the same element are skipped per row (rare, but legal —
-    # e.g. a per-face colour alongside `vertex_indices`).
-    trailing = np.dtype([(n, _scalar(fmt, t)) for n, t in element.properties])
+    wanted = _index_list(element)
+    # Dtypes resolved once, not per row: this loop runs per face.
+    plan = [
+        (
+            prop.name,
+            _scalar(fmt, prop.count_type) if prop.count_type else None,
+            _scalar(fmt, prop.type),
+        )
+        for prop in element.entries
+    ]
 
     rows: list[list[int]] = []
     for _ in range(element.count):
-        if offset + count_dt.itemsize > len(buf):
-            raise ValueError(f"PLY body truncated reading '{element.name}.{name}'")
-        n = int(np.frombuffer(buf, dtype=count_dt, count=1, offset=offset)[0])
-        offset += count_dt.itemsize
-        rows.append(
-            np.frombuffer(buf, dtype=item_dt, count=n, offset=offset)
-            .astype(int)
-            .tolist()
-        )
-        offset += item_dt.itemsize * n
-        if trailing.itemsize:
-            offset += trailing.itemsize
+        for name, count_dt, item_dt in plan:
+            if count_dt is None:
+                offset += item_dt.itemsize
+                if offset > len(buf):
+                    raise ValueError(
+                        f"PLY body truncated reading '{element.name}.{name}'"
+                    )
+                continue
+            if offset + count_dt.itemsize > len(buf):
+                raise ValueError(f"PLY body truncated reading '{element.name}.{name}'")
+            n = int(np.frombuffer(buf, dtype=count_dt, count=1, offset=offset)[0])
+            offset += count_dt.itemsize
+            if offset + item_dt.itemsize * n > len(buf):
+                raise ValueError(f"PLY body truncated reading '{element.name}.{name}'")
+            if name == wanted:
+                rows.append(
+                    np.frombuffer(buf, dtype=item_dt, count=n, offset=offset)
+                    .astype(int)
+                    .tolist()
+                )
+            offset += item_dt.itemsize * n
     return rows, offset
 
 
@@ -164,13 +231,32 @@ def _read_ascii_body(
     out: dict[str, tuple[np.ndarray | None, list[list[int]] | None]] = {}
     line = 0
     for element in elements:
+        # Checked up front so a truncated body raises a ValueError naming the element
+        # rather than an IndexError, which is not what the CLI's error funnel catches.
+        if line + element.count > len(tokens_by_line):
+            raise ValueError(
+                f"PLY body is truncated: element '{element.name}' declares "
+                f"{element.count} rows, only {max(0, len(tokens_by_line) - line)} remain"
+            )
         if element.has_lists:
+            wanted = _index_list(element)
             rows: list[list[int]] = []
             for _ in range(element.count):
                 parts = tokens_by_line[line]
                 line += 1
-                n = int(parts[0])
-                rows.append([int(v) for v in parts[1 : 1 + n]])
+                # Declaration order again — see `_read_list_element`. ASCII rows are
+                # whitespace-delimited rather than fixed-width, so the cursor walks
+                # tokens instead of bytes, but the rule is identical.
+                cursor = 0
+                for prop in element.entries:
+                    if not prop.is_list:
+                        cursor += 1
+                        continue
+                    n = int(parts[cursor])
+                    cursor += 1
+                    if prop.name == wanted:
+                        rows.append([int(v) for v in parts[cursor : cursor + n]])
+                    cursor += n
             out[element.name] = (None, rows)
         else:
             names = [n for n, _ in element.properties]

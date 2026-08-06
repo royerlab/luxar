@@ -20,6 +20,7 @@ from luxar.mesh.interop.tests._synthetic import (
     WRITERS,
     make_ground_truth,
     write_gsplat_ply,
+    write_ply_binary,
     write_stl_binary,
 )
 
@@ -155,6 +156,29 @@ class TestMeshImport:
             app, ["mesh", "import", str(fixtures["ply"]), str(out), "--overwrite"]
         )
         assert result.exit_code == 0, result.stdout
+
+    @pytest.mark.parametrize("as_parent", [False, True])
+    def test_an_output_that_would_destroy_the_input_is_refused(
+        self, as_parent: bool, tmp_path: Path
+    ) -> None:
+        """`--overwrite` deletes the output before the input is ever read.
+
+        So an output that IS the input — or a directory containing it, where `rmtree`
+        takes the whole tree — would remove the source and only then discover there is
+        nothing left to import. Both are refused up front, and the source is still there
+        afterwards.
+        """
+        source = tmp_path / "model" / "mesh.ply"
+        source.parent.mkdir()
+        write_ply_binary(source, GT)
+        target = source.parent if as_parent else source
+
+        result = runner.invoke(
+            app, ["mesh", "import", str(source), str(target), "--overwrite"]
+        )
+        assert result.exit_code == 1
+        assert "destroy the source" in result.stdout
+        assert source.exists(), "the input must survive a refused import"
 
     def test_a_gsplat_ply_names_the_other_command(self, tmp_path: Path) -> None:
         splats = tmp_path / "splats.ply"

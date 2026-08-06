@@ -41,8 +41,20 @@ and an `import_mesh()` that does exists-check → sniff → validate → read �
 - **A binary STL's 80-byte header may begin with `solid`.** Magic-word sniffing
   misclassifies real files; the discriminator is arithmetic — a binary STL is exactly
   `84 + 50n` bytes.
+- **A PLY row is laid out in property DECLARATION order.** A `face` element may carry a
+  scalar before `vertex_indices` (a per-face flag or colour) and a second list after it
+  (`texcoord`, from any exporter that carries UVs). Assuming list-first-scalars-after
+  consumes the wrong bytes from row two onward, which silently decodes garbage faces
+  rather than failing, so every property is walked in order and only the first list's
+  rows are kept.
 - **OBJ indices are 1-based, and may be negative** (end-relative). Reading them as
   0-based shifts the whole surface by one vertex and still produces a valid-looking mesh.
+- **OBJ `vn` applies only where a face references it.** A pool whose length happens to
+  match the vertex count but which no `f` corner names is dropped: matching counts are a
+  coincidence, and honouring them shades the surface with normals the exporter never
+  bound to a vertex.
+- **A glTF buffer URI is data from the file.** It must resolve inside the `.gltf`'s own
+  directory; an absolute path or a `../` climb is refused rather than read.
 - **glTF node transforms are correctness, not polish.** Skip the graph and every part of
   a multi-part model stacks at the origin.
 - **glTF `byteStride`.** Interleaved POSITION+NORMAL is common; ignoring the stride

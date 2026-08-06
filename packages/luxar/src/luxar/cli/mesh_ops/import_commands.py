@@ -22,10 +22,6 @@ from arbol import aprint, asection
 
 from ...mesh.interop import MESH_FORMATS, TriangleMesh, import_mesh
 
-# Typer renders a Literal as a choice list; spelled out rather than built from
-# MESH_FORMATS because Literal needs literal members.
-_FormatOption = str
-
 
 def _axis_names(ndim: int) -> list[str]:
     """Names for a 3D import. Mesh files are always 3D, so this is x/y/z."""
@@ -48,6 +44,19 @@ def run_import(
     """Read a mesh file and write it as a single-node Luxar scene."""
     from luxar import Dimension, Dimensions, LuxarZarrCompiler
     from luxar.core.viewer_config import ViewerConfig
+
+    # Checked BEFORE the deletion below, which is what makes it worth checking at all:
+    # `--overwrite` removes the output first, so an output that IS the input (or a
+    # directory containing it) would delete the source — `rmtree` on the parent takes
+    # the whole tree with it — and only then discover there is nothing left to read.
+    source = input_path.resolve()
+    destination = output_path.resolve()
+    if destination == source or destination in source.parents:
+        raise ValueError(
+            f"Output {output_path} is the input file itself, or a directory containing "
+            "it. Writing there would destroy the source under --overwrite; choose an "
+            "output path outside the input's tree."
+        )
 
     if output_path.exists():
         if not overwrite:

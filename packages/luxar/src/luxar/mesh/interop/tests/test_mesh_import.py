@@ -21,17 +21,24 @@ from ._synthetic import (
     write_glb_interleaved,
     write_glb_interleaved_at_buffer_end,
     write_glb_mirrored,
+    write_glb_no_scenes,
     write_glb_shared_child,
+    write_gltf_buffer_payload,
+    write_gltf_dangling_accessor,
     write_gltf_draco,
+    write_gltf_external_buffer,
     write_gsplat_ply,
     write_obj_colors_0_1,
     write_obj_colors_0_255,
     write_obj_negative_indices,
     write_obj_quad,
+    write_obj_unreferenced_normals,
     write_ply_ascii,
     write_ply_binary,
     write_ply_crease,
+    write_ply_face_extras,
     write_ply_quads,
+    write_ply_truncated_ascii,
     write_stl_ascii,
     write_stl_binary,
 )
@@ -120,6 +127,36 @@ class TestPly:
         assert mesh.n_faces == 2, "one quad must become two triangles, not one"
         assert mesh.n_vertices == 4
 
+    @pytest.mark.parametrize("binary", [True, False])
+    @pytest.mark.parametrize("texcoord_first", [False, True])
+    def test_face_properties_are_read_in_declaration_order(
+        self, binary: bool, texcoord_first: bool, tmp_path: Path
+    ) -> None:
+        """A `face` element may carry a scalar BEFORE its list, and a second list.
+
+        All legal and all common in the wild — a per-face flag ahead of
+        `vertex_indices`, and the `texcoord` list an exporter that carries UVs writes
+        beside it, in either order. Declaration order IS the row layout, so a reader
+        that assumes list-first-scalars-after consumes the wrong bytes from row two
+        onward; the binary arm decoded silently-wrong faces. The ascii arm walks tokens
+        instead of bytes but has the same rule, and the `texcoord_first` arm is why the
+        index list is chosen by NAME rather than by position — otherwise UV floats
+        import as topology.
+        """
+        p = tmp_path / f"extras{'bin' if binary else 'asc'}{int(texcoord_first)}.ply"
+        write_ply_face_extras(p, GT, binary=binary, texcoord_first=texcoord_first)
+        mesh = import_mesh(p)
+        assert mesh.n_faces == 4, "the extra properties desynchronized the face rows"
+        assert _sorted_face_set(mesh) == EXPECTED_FACES
+
+    def test_a_truncated_ascii_body_is_a_clean_error(self, tmp_path: Path) -> None:
+        # A ValueError, not an IndexError: only the former is what the CLI's error
+        # funnel catches, so anything else surfaces as a raw traceback.
+        p = tmp_path / "short.ply"
+        write_ply_truncated_ascii(p, GT)
+        with pytest.raises(ValueError, match="truncated"):
+            import_mesh(p)
+
     def test_normals_and_colors_survive(self, tmp_path: Path) -> None:
         p = tmp_path / "attrs.ply"
         write_ply_binary(p, GT)
@@ -163,6 +200,22 @@ class TestObj:
             np.sort(cb, axis=0), np.sort(OBJ_MID_COLORS, axis=0), atol=1
         )
         assert int(cb.max()) < 255, "a 0..255 file must not clip to solid white"
+
+    def test_an_unreferenced_normal_pool_is_dropped(self, tmp_path: Path) -> None:
+        """`vn` applies only where a face names it.
+
+        A pool whose count happens to equal the vertex count but which no `f` corner
+        references says nothing about which normal belongs to which vertex. Attaching it
+        anyway invents per-vertex normals the exporter never bound, and the surface is
+        then shaded by them — here every normal is +z, so the tetrahedron would light as
+        if it were flat. The `v//vn` fixture in `test_indices_are_one_based` is this
+        test's control: there the references exist and the normals are kept.
+        """
+        p = tmp_path / "unbound.obj"
+        write_obj_unreferenced_normals(p, GT)
+        assert import_mesh(p).normals is None
+        WRITERS["obj"](tmp_path / "bound.obj", GT)
+        assert import_mesh(tmp_path / "bound.obj").normals is not None
 
     def test_quad_face_is_triangulated(self, tmp_path: Path) -> None:
         p = tmp_path / "q.obj"
@@ -307,6 +360,57 @@ class TestGltf:
             "reflecting the geometry without flipping the winding inverts the surface "
             f"orientation (got {vb:.6f} against {va:.6f})"
         )
+
+    def test_a_scene_less_node_graph_is_walked_from_its_own_roots(
+        self, tmp_path: Path
+    ) -> None:
+        """`scenes` is optional, and its absence must not duplicate descendants.
+
+        Walking every node as a root emits a child once through its parent (with the
+        parent's transform) and again on its own (without it). Here that is the
+        tetrahedron twice, one copy of it 10 units from where the file put it.
+        """
+        p = tmp_path / "library.glb"
+        write_glb_no_scenes(p, GT)
+        mesh = import_mesh(p)
+        assert mesh.n_faces == GT.faces.shape[0], "the child was emitted twice"
+        # And through the parent, so the translation was applied.
+        np.testing.assert_allclose(
+            mesh.vertices.min(axis=0), [10.0, 0.0, 0.0], atol=1e-6
+        )
+
+    def test_a_dangling_accessor_reference_is_named(self, tmp_path: Path) -> None:
+        # Same reason the node walk range-checks its child edges: an IndexError is not
+        # a ValueError, so it escapes the CLI's error funnel as a raw traceback.
+        p = tmp_path / "dangling.gltf"
+        write_gltf_dangling_accessor(p)
+        with pytest.raises(ValueError, match="accessors"):
+            import_mesh(p)
+
+    def test_an_external_buffer_beside_the_gltf_loads(self, tmp_path: Path) -> None:
+        p = tmp_path / "external.gltf"
+        write_gltf_external_buffer(p, GT, "payload.bin")
+        write_gltf_buffer_payload(tmp_path / "payload.bin", GT)
+        assert import_mesh(p).n_faces == 4
+
+    @pytest.mark.parametrize("uri", ["../outside.bin", "/etc/passwd"])
+    def test_a_buffer_uri_may_not_escape_the_gltf_directory(
+        self, uri: str, tmp_path: Path
+    ) -> None:
+        """The anti-traversal control for the test above.
+
+        `uri` is data from the file, so a `..` climb or an absolute path would let a
+        crafted glTF read any file this process can and reinterpret its bytes as
+        geometry. The escape is refused before the read, not merely reported missing —
+        the `..` target here EXISTS.
+        """
+        write_gltf_buffer_payload(tmp_path / "outside.bin", GT)
+        nested = tmp_path / "model"
+        nested.mkdir()
+        p = nested / "escape.gltf"
+        write_gltf_external_buffer(p, GT, uri)
+        with pytest.raises(ValueError, match="outside the directory"):
+            import_mesh(p)
 
     def test_draco_is_refused_by_name(self, tmp_path: Path) -> None:
         p = tmp_path / "draco.gltf"

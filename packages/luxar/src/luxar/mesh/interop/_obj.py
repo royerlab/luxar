@@ -72,11 +72,18 @@ def read_obj(path: Path) -> dict[str, object]:
                         normal_refs.append(_resolve(int(fields[2]), len(normals_raw)))
                     else:
                         normal_refs.append(None)
-                for tri in fan_triangulate(corners):
-                    faces.append(tri)
-                    idx = [corners.index(t) for t in tri]
+                # Fan over CORNER POSITIONS, then map each to its vertex and normal.
+                # Fanning over the vertex indices themselves and looking them back up
+                # would attribute the wrong normal reference to a polygon that repeats
+                # a vertex, since the lookup finds the first occurrence.
+                for tri in fan_triangulate(list(range(len(corners)))):
+                    faces.append((corners[tri[0]], corners[tri[1]], corners[tri[2]]))
                     face_normal_refs.append(
-                        (normal_refs[idx[0]], normal_refs[idx[1]], normal_refs[idx[2]])
+                        (
+                            normal_refs[tri[0]],
+                            normal_refs[tri[1]],
+                            normal_refs[tri[2]],
+                        )
                     )
 
     if not positions:
@@ -96,12 +103,19 @@ def read_obj(path: Path) -> dict[str, object]:
     # vertices, so it is dropped and the shader derives flat normals instead.
     normals = None
     if normals_raw and len(normals_raw) == len(positions):
-        parallel = all(
-            ref is None or ref == corner
-            for tri, refs in zip(faces, face_normal_refs)
-            for corner, ref in zip(tri, refs)
-        )
-        if parallel:
+        refs = [
+            (corner, ref)
+            for tri, tri_refs in zip(faces, face_normal_refs)
+            for corner, ref in zip(tri, tri_refs)
+        ]
+        # The pool must actually be REFERENCED, and referenced index-parallel to the
+        # positions. A `vn` block no face points at (every corner written as plain
+        # `f 1 2 3`) says nothing about which vertex each normal belongs to — matching
+        # counts is a coincidence, and honouring it invents per-vertex normals the file
+        # never asked for, shading the surface by data the exporter left unbound.
+        referenced = any(ref is not None for _, ref in refs)
+        parallel = all(ref is None or ref == corner for corner, ref in refs)
+        if referenced and parallel:
             normals = np.asarray(normals_raw, dtype=np.float32)
 
     colors = None
