@@ -575,3 +575,57 @@ def write_obj_colors_0_1(path: Path, gt: GroundTruth) -> None:
     for tri in gt.faces:
         lines.append(" ".join(["f"] + [str(int(i) + 1) for i in tri]))
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+#: Two triangles meeting along the edge (1,0,0)-(0,1,0), authored the way every
+#: modelling package authors a CREASE: the shared corners appear twice, once per face,
+#: so each copy can carry its own normal. Position-only welding destroys exactly this.
+_CREASE_POSITIONS = np.array(
+    [
+        [0.0, 0.0, 0.0],
+        [1.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [1.0, 0.0, 0.0],  # duplicate of row 1
+        [1.0, 1.0, 0.0],
+        [0.0, 1.0, 0.0],  # duplicate of row 2
+    ],
+    dtype=np.float32,
+)
+_CREASE_FACES = np.array([[0, 1, 2], [3, 4, 5]], dtype=np.uint32)
+
+
+def write_ply_crease(path: Path, *, hard: bool) -> None:
+    """An indexed PLY with duplicated positions across a shared edge.
+
+    ``hard=True`` gives the two copies DIFFERENT normals (a crease — they must survive
+    welding as separate vertices). ``hard=False`` gives them the SAME normal (a smooth
+    join — they must weld). The pair is the sensitivity control for each other: a weld
+    that ignores attributes passes the smooth case and fails the hard one, and a weld
+    that never merges anything passes the hard case and fails the smooth one.
+    """
+    second = (1.0, 0.0, 0.0) if hard else (0.0, 0.0, 1.0)
+    normals = np.array(
+        [(0.0, 0.0, 1.0)] * 3 + [second] * 3,
+        dtype=np.float32,
+    )
+    lines = [
+        "ply",
+        "format ascii 1.0",
+        f"element vertex {len(_CREASE_POSITIONS)}",
+        "property float x",
+        "property float y",
+        "property float z",
+        "property float nx",
+        "property float ny",
+        "property float nz",
+        f"element face {len(_CREASE_FACES)}",
+        "property list uchar int vertex_indices",
+        "end_header",
+    ]
+    for v, n in zip(_CREASE_POSITIONS, normals):
+        lines.append(
+            f"{v[0]:.6f} {v[1]:.6f} {v[2]:.6f} {n[0]:.6f} {n[1]:.6f} {n[2]:.6f}"
+        )
+    for tri in _CREASE_FACES:
+        lines.append(f"3 {tri[0]} {tri[1]} {tri[2]}")
+    path.write_text("\n".join(lines) + "\n", encoding="ascii")

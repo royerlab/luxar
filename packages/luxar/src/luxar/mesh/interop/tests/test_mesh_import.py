@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 from .._stl import is_binary_stl
+from .._weld import weld_vertices
 from ..mesh_import import MESH_FORMATS, TriangleMesh, detect_mesh_format, import_mesh
 from ._synthetic import (
     OBJ_MID_COLORS,
@@ -29,6 +30,7 @@ from ._synthetic import (
     write_obj_quad,
     write_ply_ascii,
     write_ply_binary,
+    write_ply_crease,
     write_ply_quads,
     write_stl_ascii,
     write_stl_binary,
@@ -72,8 +74,10 @@ class TestReaderParity:
         mesh = import_mesh(path)
 
         assert mesh.source_format == fmt
-        # Welding is load-bearing: STL and index-free glTF arrive as 12-corner soups
-        # and must come back as the 4 shared vertices the tetrahedron actually has.
+        # Welding is load-bearing for STL, which arrives as a 12-corner soup and must
+        # come back as the 4 shared vertices the tetrahedron actually has. The other
+        # three fixtures are already indexed at 4, so this assertion is a WELD-NEUTRAL
+        # parity check for them — `TestWelding` is what exercises the key itself.
         assert mesh.n_vertices == 4, f"{fmt} did not weld to 4 shared vertices"
         assert mesh.n_faces == 4
         assert _sorted_face_set(mesh) == EXPECTED_FACES
@@ -358,4 +362,86 @@ class TestTriangleMeshInvariants:
                 vertices=np.zeros((3, 3), dtype=np.float32),
                 faces=np.array([[0, 1, 2]], dtype=np.uint32),
                 normals=np.zeros((2, 3), dtype=np.float32),
+            )
+
+
+class TestWelding:
+    """The weld key is position PLUS every per-vertex attribute, not position alone.
+
+    The two ``write_ply_crease`` arms are each other's sensitivity control, so neither
+    can pass vacuously: keying on position alone passes ``hard=False`` and fails
+    ``hard=True``; refusing to merge anything does the reverse.
+    """
+
+    def test_a_crease_survives_welding(self, tmp_path: Path) -> None:
+        path = tmp_path / "crease.ply"
+        write_ply_crease(path, hard=True)
+        mesh = import_mesh(path)
+
+        # Six distinct (position, normal) pairs, so nothing merges — the two copies of
+        # (1,0,0) and of (0,1,0) each keep their own face's normal.
+        assert mesh.n_vertices == 6
+        assert mesh.n_faces == 2
+        assert mesh.normals is not None
+        # And each triangle is still shaded by ONE normal, which is what a crease means.
+        for tri in mesh.faces:
+            face_normals = mesh.normals[np.asarray(tri)]
+            assert np.allclose(face_normals, face_normals[0]), (
+                "a welded-away crease leaves one triangle carrying the other's normal"
+            )
+        # The two faces must disagree, or the fixture is not a crease at all.
+        n0 = mesh.normals[mesh.faces[0][0]]
+        n1 = mesh.normals[mesh.faces[1][0]]
+        assert not np.allclose(n0, n1)
+
+    def test_a_smooth_join_still_welds(self, tmp_path: Path) -> None:
+        path = tmp_path / "smooth.ply"
+        write_ply_crease(path, hard=False)
+        mesh = import_mesh(path)
+
+        # Same positions, same faces — but every duplicate agrees on its normal, so the
+        # duplicates are redundant and must collapse to the 4 corners of the square.
+        assert mesh.n_vertices == 4
+        assert mesh.n_faces == 2
+
+    def test_colors_are_part_of_the_key_too(self) -> None:
+        # Normals are the famous case; a vertex-colour seam (a segmentation boundary,
+        # common in the isosurface data this importer targets) is the same bug.
+        vertices = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 1, 0]], np.float32)
+        faces = np.array([[0, 1, 2], [0, 1, 3]], np.uint32)
+        colors = np.array(
+            [[255, 0, 0], [255, 0, 0], [0, 255, 0], [0, 0, 255]], np.uint8
+        )
+        welded, remapped, extras = weld_vertices(
+            vertices, faces, extras={"colors": colors, "normals": None}
+        )
+        assert welded.shape[0] == 4, "differently-coloured duplicates must not merge"
+        assert extras["normals"] is None
+        assert remapped.shape == (2, 3)
+
+        # Control: with the colours in agreement the same geometry welds to 3.
+        agreed = colors.copy()
+        agreed[3] = agreed[2]
+        welded2, _, _ = weld_vertices(vertices, faces, extras={"colors": agreed})
+        assert welded2.shape[0] == 3
+
+    def test_position_only_input_is_unaffected(self) -> None:
+        # The STL path: no attributes at all, so the key degenerates to position and a
+        # soup still collapses. This is why the fix needed no per-format branch.
+        soup = np.array(
+            [[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 0], [1, 0, 0], [0, 0, 1]],
+            np.float32,
+        )
+        faces = np.array([[0, 1, 2], [3, 4, 5]], np.uint32)
+        welded, _, _ = weld_vertices(
+            soup, faces, extras={"normals": None, "colors": None}
+        )
+        assert welded.shape[0] == 4
+
+    def test_a_mismatched_attribute_length_is_named(self) -> None:
+        vertices = np.zeros((3, 3), np.float32)
+        faces = np.array([[0, 1, 2]], np.uint32)
+        with pytest.raises(ValueError, match="rows but there are 3 vertices"):
+            weld_vertices(
+                vertices, faces, extras={"colors": np.zeros((2, 3), np.uint8)}
             )

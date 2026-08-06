@@ -19,11 +19,16 @@ and an `import_mesh()` that does exists-check → sniff → validate → read �
 
 ## What the readers normalize, and why
 
-- **Welding** (`--no-weld` to skip). STL always, and glTF often, arrive as triangle
+- **Welding** (`--no-weld` to skip). STL always, and glTF sometimes, arrive as triangle
   soups with no shared vertices. Left that way, per-vertex normals cannot be averaged,
   the writer's authoring lint flags the node, and picking — which returns a *vertex*
   ordinal — reports a different id for the same corner depending on which triangle was
-  hit. Welding compares rounded positions but keeps full precision on the survivors.
+  hit. Two vertices merge only when their position **and every per-vertex attribute**
+  agree: the indexed formats express a hard edge as coincident positions carrying
+  different normals, so a position-only key would weld every crease in a CAD model
+  flat. STL supplies no normals at all, so its key degenerates to position and the soup
+  still collapses — no per-format special case is needed. The comparison is on rounded
+  values; the surviving rows keep full precision.
 - **Fan triangulation.** PLY and OBJ both allow polygons; quads are the common case
   from any modelling package. Taking the first three indices would drop half of each.
 - **Degenerate-face removal.** Welding can collapse a sliver triangle to a line.

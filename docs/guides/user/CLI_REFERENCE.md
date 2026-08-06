@@ -144,9 +144,12 @@ luxar mesh import            # Import a classical mesh file (PLY / OBJ / STL / g
 ```
 
 Vertices are welded and polygons fan-triangulated on the way in, because STL is always
-a triangle soup and glTF often is; an unwelded surface defeats per-vertex normals and
-makes picking report a different vertex per triangle for the same corner. Pass
-`--no-weld` to keep the file's exact vertex list.
+a triangle soup and glTF sometimes is; an unwelded surface defeats per-vertex normals
+and makes picking report a different vertex per triangle for the same corner. Welding
+merges two vertices only when their position *and* their normals and colours agree, so
+a hard edge — which every modelling package authors as coincident positions with
+different normals — survives the import instead of being flattened. Pass `--no-weld` to
+keep the file's exact vertex list.
 
 Draco- and meshopt-compressed glTF is refused by name rather than decoded — run the
 file through `gltf-transform` first.

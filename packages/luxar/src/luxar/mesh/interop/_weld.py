@@ -41,20 +41,35 @@ def weld_vertices(
     extras: dict[str, NDArray | None] | None = None,
     decimals: int = 6,
 ) -> tuple[NDArray[np.float32], NDArray[np.uint32], dict[str, NDArray | None]]:
-    """Merge duplicate vertex positions and reindex the faces onto the survivors.
+    """Merge duplicate vertices and reindex the faces onto the survivors.
+
+    Two vertices merge only when their position **and every supplied per-vertex
+    attribute** agree. Keying on position alone would be wrong for the indexed formats:
+    PLY, OBJ and glTF all express a HARD EDGE as coincident positions carrying
+    different normals (a cube's corner appears three times, once per face). Merging
+    those and keeping one side's normal turns every crease into arbitrarily-shaded
+    nonsense — the corruption is worst on exactly the CAD and modelling output people
+    would import first.
+
+    Including the attributes is what keeps STL working too, and is why the key is not
+    instead narrowed to soup-only inputs: ``_stl`` deliberately returns
+    ``normals=None`` (STL's normal is per-FACET, and no per-vertex choice is
+    non-arbitrary), so a soup's key degenerates to position and the soup welds as
+    before. The rule needs no per-format special case.
 
     Args:
         vertices: ``(V, D)`` positions.
         faces: ``(F, 3)`` indices into ``vertices``.
-        extras: Per-vertex arrays (normals, colors) to carry through. Each is reduced
-            to ONE representative row per welded group — the first occurrence — rather
-            than averaged. Averaging normals across a hard edge would round it off, and
-            a reader has no way to know which edges were meant to be hard; an importer
-            that silently smoothed a CAD model's chamfers would be worse than one that
-            picks a side.
+        extras: Per-vertex arrays (normals, colors) to carry through. They participate
+            in the merge key, so each welded group is attribute-IDENTICAL and taking
+            the first row is exact rather than a choice. Nothing is averaged: averaging
+            normals across a hard edge would round it off, and a reader cannot know
+            which edges were meant to be hard.
         decimals: Rounding applied before comparison. Coordinates that differ below
             this survive as one vertex. 6 is ~1 nm at metre scale and ~1e-4 of a unit
-            cube, comfortably below any format's own precision.
+            cube, comfortably below any format's own precision. Applied to the
+            attribute columns as well, so a normal that differs only in float noise
+            does not split a vertex that should weld.
 
     Returns:
         ``(welded_vertices, remapped_faces, welded_extras)``.
@@ -65,7 +80,22 @@ def weld_vertices(
     # Round for the comparison only — the SURVIVING rows keep full precision. Welding
     # on rounded values and then storing them would quantize every coordinate in the
     # file to `decimals`, which for a millimetre-scale scan is a visible loss.
-    keyed = np.round(vertices.astype(np.float64), decimals)
+    key_columns = [np.round(vertices.astype(np.float64), decimals)]
+    # Sorted by name so the key layout does not depend on dict insertion order — the
+    # grouping is identical either way, but a stable layout keeps `first_index`
+    # (and therefore the output vertex order) reproducible across callers.
+    for _, arr in sorted((extras or {}).items()):
+        if arr is None:
+            continue
+        column = np.atleast_2d(np.asarray(arr, dtype=np.float64))
+        if column.shape[0] != vertices.shape[0]:
+            raise ValueError(
+                f"per-vertex attribute has {column.shape[0]} rows but there are "
+                f"{vertices.shape[0]} vertices"
+            )
+        key_columns.append(np.round(column, decimals))
+
+    keyed = key_columns[0] if len(key_columns) == 1 else np.hstack(key_columns)
     _, first_index, inverse = np.unique(
         keyed, axis=0, return_index=True, return_inverse=True
     )

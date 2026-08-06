@@ -168,9 +168,10 @@ def import_command(
     weld: bool = typer.Option(
         True,
         "--weld/--no-weld",
-        help="Merge duplicate vertex positions. On by default because STL (always) and "
-        "index-free glTF arrive as triangle soups, which defeat per-vertex normals and "
-        "give picking a different id per corner per triangle.",
+        help="Merge vertices that agree on position AND on normals/colours. On by "
+        "default because STL (always) and index-free glTF arrive as triangle soups, "
+        "which defeat per-vertex normals and give picking a different id per corner "
+        "per triangle. Hard edges survive: they differ in normal.",
     ),
     keep_normals: bool = typer.Option(
         True,
