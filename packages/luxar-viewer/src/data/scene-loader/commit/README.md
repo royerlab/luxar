@@ -1,10 +1,10 @@
 # Geometry commit
 
 Synchronous GPU-commit step of the scene-loader pipeline. One module
-per first-class geometry kind (Points, Lines, GSplats) writes the
+per first-class geometry kind (Points, Lines, GSplats, Mesh) writes the
 already-projected buffers into the matching `THREE.Mesh` inside the
 root scene group, plus a shared renderer-cache eviction helper used
-by all three.
+by all four.
 
 Commit is the **atomic, synchronous tail** of an `updateView` cycle.
 By the time these functions run, the async work (nD slicing, worker
@@ -20,6 +20,7 @@ are allowed inside commit — by contract.
 | `commit-points-geometry.ts`   | Synchronous Points commit. GPU-buffer-pool path (zero-alloc on reuse) → fused texel write into the point data texture → dispose-and-recreate via `NodeFactory.createPointsGeometry`. Propagates the dtype-aware `radiusScale` onto `geometry.userData` and calls `syncPointMaterialWithGeometry` to push it into the material uniforms. (Sharpness needs no scale — it is authored natively in `[0, 1]`.)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | `commit-lines-geometry.ts`    | Synchronous Lines commit. Pool path via `acquireLinesGeometry` / `updateLinesGeometry` (the acquire declares `hasScalars`, deciding the scalar spec set up front — no lazy promotion remains, so the acquire's rebuild flag is the complete signal), fallback via `updateInstancedLinesMesh`. Updates `visibleSegmentCount`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `commit-gsplats-geometry.ts`  | Synchronous GSplats commit. Pool path passes the live `uTruncate` uniform into `updateGSplatsGeometry` so frustum-cull sizing matches the shader; fallback via `updateInstancedGSplatsMesh`. Updates `visibleSplatCount`. Reads `uTruncate` defensively with a `3.0` default.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `commit-mesh-geometry.ts`     | Synchronous Mesh commit. Much shorter than the other three by design, not because it is unfinished: a mesh has **no GPU buffer pool** (its vertex buffers are uploaded once per `displayDims` epoch and never resized), **no depth-sort registration** (an opaque surface gets occlusion from the depth buffer; §9), and **no capacity clamp** (its element ordinal is `gl_VertexID`, bounded at the loader's preflight). It finds the placeholder by name, updates the geometry in place via `updateMeshGeometry`, and applies the epoch's material `side`. |
 | `invalidate-render-object.ts` | Shared helper for geometry-identity changes. (1) Eagerly re-points `userData.pickNode.geometry` at the new mesh geometry (pick meshes share, never own, the geometry; without this a grow-swap leaves the pick mesh pinning the OLD geometry until the next pick). (2) On the WebGPU backend only (gated by `configureRenderObjectEviction`, off by default so classic WebGL — the production default — is unaffected), dispatches a tagged `'dispose'` event on the mesh's material so Three's `WebGPURenderer` evicts the cached `RenderObject` and rebuilds its `vertexBuffers` set against the geometry returned by the acquire (growth = release + reacquire, so a grow always returns a different geometry/buffer). The `SOFT_DISPOSE_FLAG` symbol tells `MaterialManager` to treat this as a cache-flush, not a real dispose. On classic WebGL that same event would destroy the compiled program (a per-commit shader recompile), so the dispatch is skipped there; the pick-geometry re-point in (1) stays unconditional. |
 | `noop-commit.ts`              | Shared "unchanged data" fast path: `StagedNoopCommit` + `isAlreadyCommitted` (reference-identity check against `mesh.userData.committedData`). When a loader returns the exact object the GPU already holds (progressive loaders memoize their LOD concatenation), the handler skips the process/upload steps and flows a stamp-only commit through the atomic stage — geometry untouched, `loadedViewVersion` still refreshed.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `stamp-view-version.ts`       | Shared commit-time stamps: `stampLoadedViewVersion` (which view version the committed geometry reflects — LOD freshness) and `stampLadderComplete` (the committed ladder state, read off `userData.loader` at commit time: `committedLadderComplete` from `hasMoreLODs`, plus `committedEnergyFraction` — the committed prefix's e(k) energy fraction from the quality stamps; 1 for non-progressive leaves, REMOVED on unstamped datasets — both feeding the never-downgrade display gate). All written by every commit, INCLUDING the stamp-only no-op branches.                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
@@ -29,21 +30,25 @@ are allowed inside commit — by contract.
 - **Synchronous only.** No `await`, no microtask hops. Commit runs
   inside the orchestrator's atomic stage so the visible scene
   transitions in one frame. Async projection lives in the sibling
-  `process/data-processor-{lines,gsplats}.ts` modules.
-- **Three-geometry symmetry.** Each commit module exports a single
-  `commit{Points|Lines|GSplats}Geometry` function with the same
-  shape: early-return on missing root or mismatched node type, log
-  on empty-data frames, branch on `gpuBufferPool` presence,
-  invalidate the renderer cache when the pool reports a buffer
-  rebuild, write the visible-count back onto `userData`. Filename
-  matches the single export.
-- **Why no `data-processor-points.ts`?** Points's facade folds
-  nD → 3D projection into `loadPoints()` itself, so the orchestrator
-  only commits — there is no async processing step. Lines (segment
-  clipping) and GSplats (Cholesky-factored projection) need per-frame
-  worker dispatches and so do have matching
-  `process/data-processor-{lines,gsplats}.ts` modules upstream of
-  commit.
+  `process/data-processor-{lines,gsplats,mesh}.ts` modules (Points stages
+  synchronously — its loader already returns display-space data).
+- **Per-geometry symmetry.** Each commit module exports a single
+  `commit{Points|Lines|GSplats|Mesh}Geometry` function; the filename
+  matches the single export. The three instanced-quad types share the
+  same shape: early-return on missing root or mismatched node type, log
+  on empty-data frames, branch on `gpuBufferPool` presence, invalidate
+  the renderer cache when the pool reports a buffer rebuild, write the
+  visible-count back onto `userData`. Mesh's is deliberately shorter —
+  it has no GPU buffer pool (vertex buffers are uploaded once per
+  `displayDims` epoch, never resized), so it updates the geometry in
+  place and applies the epoch's material `side`.
+- **`data-processor-points.ts` is a synchronous staging half.** Points's
+  loader folds nD → 3D projection into loading itself, so there is no
+  async worker projection step — unlike Lines (segment clipping) and
+  GSplats (Cholesky-factored projection), which run per-frame worker
+  dispatches upstream of commit. The points processor therefore only
+  stages loader output for the shared `process → commit` pair; the no-op
+  reference-identity fast path lives here in `commitPointsGeometry`.
 - **Pool-rebuild → render-object invalidation.** Whenever
   `gpuBufferPool.didLastAcquireRebuildAttributes()` returns `true`
   (grow-swap, pool swap, fresh allocation, or a lines scalar

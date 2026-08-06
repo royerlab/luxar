@@ -458,11 +458,12 @@ Represents 2D *surfaces* embedded in nD — the one thing the other three types
 cannot express. Points, Lines and GSplats are all soft, emissive, per-element
 primitives; a surface is connected, opaque and shaded.
 
-⚠️ **Writable, not yet renderable.** The Python writer, reader and `luxar info`
-handle mesh today; the viewer's loader, material and picking land in a later phase
-(`docs/specs/MESH_NODE_SPEC.md` §11). The format contract names the two sets
-separately — `geometry_types` (writable) vs `loader_types` (viewer-drawable) — so
-`mesh` is in the first and not yet the second.
+✅ **Writable and renderable.** The Python writer, reader and `luxar info` handle
+mesh, and so do the viewer's loader, shaded material and picking — the whole
+vertical ships today (`docs/specs/MESH_NODE_SPEC.md` §11). The format contract
+still names the two sets separately — `geometry_types` (writable) vs
+`loader_types` (viewer-drawable) — because a type becomes authorable before it
+becomes drawable; today both sets include `mesh`.
 
 **Key Features:**
 - nD `vertices` plus a `faces` triangle-index array (`(F, 3)` or flat `(3F,)`)

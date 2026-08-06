@@ -67,6 +67,14 @@ data/
 │   ├── lod-refinement.ts                # Sequential LOD-tier refinement helpers
 │   └── projection.ts                    # createEmptyGSplatsData only (nD→3D math lives in workers/data-worker/projection/gsplats.ts)
 │
+├── mesh/                          # Mesh geometry — whole-node loader (no spatial index, no LOD by design; MESH_NODE_SPEC §7/§9)
+│   ├── handler.ts                        # Per-kind dispatch entry (createLoader/deriveViewState/process/commit)
+│   ├── mesh-whole-node-loader.ts         # Whole-node loader — loads the entire mesh at once (`ordering: 'none'`, no chunk index)
+│   ├── preflight.ts                      # Metadata-only Stage 1 (shapes, dtypes, encodings, attribute presence)
+│   ├── projection.ts                     # nD → 3D: extract_3d_positions + whole-triangle nD cull + winding post-pass
+│   ├── validate.ts                       # Load-time mesh attribute/topology validation
+│   └── README.md                         # Mesh loader documentation
+│
 ├── transforms/                    # nD transform helpers
 │   └── nd-transform.ts            # Inverse-query for non-displayed dimensions
 │                                  #   Given a world-space query (slicePosition + tolerance) and a

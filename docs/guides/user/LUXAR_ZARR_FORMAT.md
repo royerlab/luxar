@@ -711,11 +711,11 @@ Mesh nodes contain triangle-surface data — isosurfaces, segmentation boundarie
 organ and cortical meshes. They are the only node type that describes a
 *connected, opaque surface* rather than a set of soft per-element primitives.
 
-⚠️ **Writable, not yet renderable.** The Python writer, reader and `luxar info`
-handle mesh nodes; the viewer's loader and material land in a later phase (see
-`docs/specs/MESH_NODE_SPEC.md` §11). The format contract distinguishes the two:
-`geometry_types` (the writable leaf vocabulary) includes `mesh`, while
-`loader_types` (the viewer-drawable subset) does not yet.
+✅ **Writable and renderable.** Mesh nodes are written, read and reported by
+`luxar info`, and the viewer loads, shades and picks them too — the whole
+vertical ships today (see `docs/specs/MESH_NODE_SPEC.md` §11). The format contract
+still distinguishes the two: `geometry_types` (the writable leaf vocabulary) and
+`loader_types` (the viewer-drawable subset) — and both now include `mesh`.
 
 Two structural differences from the other three types:
 
@@ -1617,7 +1617,6 @@ with LuxarZarrCompiler("output.luxar.zarr", enable_spatial_index=True) as compil
 
 ## Future Extensions (Planned)
 
-- Support for meshes, volumes
-- Material system with shading models
+- Support for volumes
 - Temporal interpolation for smooth animations
 - Multi-resolution spatial indices for LOD
