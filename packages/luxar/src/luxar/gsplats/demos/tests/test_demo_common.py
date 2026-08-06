@@ -277,9 +277,9 @@ def test_psnr_peak_is_range_not_max() -> None:
     """A fixed additive error matches 10*log10(range^2 / mse), with range != max.
 
     The floor is nonzero (3.0..7.0 -> range 4.0, max 7.0) precisely so this pins
-    the peak convention. Five of the six inline PSNRs in the sibling demos use
-    ``max**2``, which would give a different number here; the sixth
-    (``demo_performance_metrics``) uses a fixed peak of 1.0.
+    the peak convention. Every inline PSNR still computed in the sibling demos
+    uses ``max**2`` -- except ``demo_performance_metrics``, which uses a fixed
+    peak of 1.0 -- and each would give a different number here.
     """
     target = np.linspace(3.0, 7.0, 100).reshape(10, 10)
     error = 0.25
@@ -301,11 +301,12 @@ def test_psnr_promotes_integer_input() -> None:
     target = np.full((4, 4), 50, dtype=np.uint8)
     target[0, 0] = 200  # range == 150, max == 200
     rendered = np.full((4, 4), 51, dtype=np.uint8)
-    # Signed errors are +1 on fifteen pixels and -149 on the bright one. Under
-    # raw uint8 subtraction only that -149 wraps -- to 107, not 255 -- which
-    # nearly halves the MSE (1388.5 -> 716.5) and therefore *raises* the reported
-    # PSNR, 12.10 dB -> 14.97 dB. A silently optimistic score is the real hazard
-    # here, not an obviously broken one.
+    # Signed errors are +1 on fifteen pixels and -149 on the bright one. Drop the
+    # promotion and both steps wrap in uint8: the -149 difference becomes 107, and
+    # squaring 107 wraps again to 185, so the MSE collapses from 1388.5 to 12.5 and
+    # the reported PSNR *rises* from 12.10 dB to 32.55 dB -- silently, with no
+    # overflow warning. A quietly optimistic score is the real hazard here, not an
+    # obviously broken one.
     mse = (149.0**2 + 15 * 1.0**2) / 16.0
     expected = 10.0 * np.log10(150.0**2 / mse)
     assert psnr(rendered, target) == pytest.approx(expected, rel=1e-12)
