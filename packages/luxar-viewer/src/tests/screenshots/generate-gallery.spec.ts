@@ -10,13 +10,21 @@
  *     closed-loop dollies to a target screen coverage using an outlier-robust
  *     percentile bounding box of the lit pixels.
  *   - **Auto-exposure** — measures the composited frame (a Playwright
- *     screenshot, decoded in-page) and picks an exposure so the lit
- *     foreground's high percentile sits just below clipping (bright, not blown
- *     out). A per-demo `exposure` in the manifest overrides this.
- *   - **Seamless orbit** — ORBIT_FRAMES explicit per-angle screenshots over a
- *     full 2π (i/N·2π, so the loop is continuous), assembled by ffmpeg into a
- *     WebM master + animated WebP. Explicit frames because headless Playwright
- *     video does not reliably record the viewer's rAF repaints.
+ *     screenshot, decoded in-page) and picks an exposure in three phases:
+ *     (1) drive the lit foreground's p99 just below clipping (bright, not blown
+ *     out); (2) if the lit histogram turns out to be NARROW (p99 − p10 <
+ *     `NARROW_SPREAD_MAX` — a headlit shaded mesh, where p99 says nothing), re-
+ *     target the lit MEDIAN to `TARGET_MID` so the surface keeps its colour
+ *     instead of washing out in the ACES shoulder; (3) step down while the
+ *     subject is blown white or the background is lifted to grey. The decision
+ *     logic is `./exposure-policy` (pure, unit-tested); a per-demo `exposure`
+ *     in the manifest overrides the whole thing.
+ *   - **Seamless orbit** — ORBIT_FRAMES explicit per-angle screenshots of a
+ *     small-angle SINUSOIDAL ROCK (±ORBIT_AMPLITUDE_DEG about the subject's up
+ *     axis, one full period over the frame count, so the loop is continuous),
+ *     assembled by ffmpeg into a WebM master + animated WebP. Explicit frames
+ *     because headless Playwright video does not reliably record the viewer's
+ *     rAF repaints.
  *
  * The demo list is `scripts/gallery/manifest.json` (shared with the Python
  * dataset generator). Demos whose dataset is absent are skipped (not failed).
@@ -36,6 +44,15 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { execSync } from 'child_process';
 import { fileURLToPath } from 'url';
+import {
+  computeAutoExposure,
+  CLIP_LUMA,
+  CLIP_SAT_MAX,
+  HI_PERCENTILE,
+  LIT_THRESHOLD,
+  type AutoExposureResult,
+  type LumaStats,
+} from './exposure-policy';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(HERE, '../../../../..');
@@ -55,7 +72,7 @@ const VIEWER_URL = `http://localhost:${process.env.GALLERY_VITE_PORT ?? 5199}`;
 // angle = i/N·2π makes the loop seamless (no duplicated 0/2π frame).
 // Orbit motion: a small-angle SINUSOIDAL ROCK (±ORBIT_AMPLITUDE_DEG), not a full
 // 360° turn. A full turn at an affordable frame count has a large, jarring
-// inter-frame angle; a ±22° rock covers only ~4·amplitude of travel per cycle,
+// inter-frame angle; a ±20° rock covers only ~4·amplitude of travel per cycle,
 // so the SAME frames give a tiny (~1°) inter-frame angle → smooth, and it loops
 // seamlessly (sin returns to start). Each frame is a screenshot, so orbit frames
 // are captured at a reduced viewport (ORBIT_CAPTURE_PX) for speed; the still
@@ -90,32 +107,13 @@ const WEBP_WIDTH = 340;
 const WEBP_QUALITY = 32;
 const WEBP_FPS = 8;
 
-// Auto-exposure targets (on the 0..1 tone-mapped canvas). We drive the HIGH
-// PERCENTILE (not the mean): highlights should sit just below clipping so the
-// subject reads bright without blowing out. Mean-chasing runs away on additive
-// / bloom-heavy scenes (the faint haze keeps the mean low while the core
-// saturates), so a percentile target is far more robust across geometries.
-const TARGET_HI = 0.9; // desired p99 luminance of the lit foreground
-const HI_PERCENTILE = 0.99;
-const LIT_THRESHOLD = 0.04; // pixels dimmer than this are "background"
-const EXPOSURE_MIN = -6;
-const EXPOSURE_MAX = 8;
-const AUTO_EXPOSURE_ITERS = 3;
-// Clipping guard: after the p99 pass, if more than this fraction of the lit
-// subject is blown to near-white (bright AND desaturated), step exposure down
-// until it isn't. This is what actually kills the additive/HDR white-out that
-// a percentile target alone misses (the subject can have a huge blown core yet
-// a below-target p99). Mirrors scripts/gallery/score_exposure.py.
-const CLIP_LUMA = 0.95; // luma above this is "bright"
-const CLIP_SAT_MAX = 0.15; // saturation below this is "near-white"
-const CLIP_FRAC_MAX = 0.05; // > this blown fraction → step exposure down (user: <5%)
-const BG_LUMA_MAX = 0.1; // background (frame p10) must stay near-black; else too bright
-const CLIP_GUARD_ITERS = 8;
-const CLIP_GUARD_STEP = 0.5; // stops per guard step
+// Auto-exposure tuning constants and the exposure DECISION live in
+// ./exposure-policy (pure + unit-tested); this file owns only the IO —
+// applying an exposure and measuring the resulting frame.
 
 // Fill-to-screen: dolly so the subject fills this fraction of the frame's
 // smaller dimension. Measured from a screenshot using a PERCENTILE bounding
-// box of the lit pixels (2nd–98th pctile) so a few stray outlier points don't
+// box of the lit pixels (3rd–97th pctile) so a few stray outlier points don't
 // keep the whole scene tiny (the Gaia/asteroid failure mode). Runs BEFORE
 // exposure calibration — exposure depends on what's actually in frame.
 const FILL_TARGET = 0.95; // subject fills ~95% of the min dimension (fill more)
@@ -180,6 +178,10 @@ interface DemoEntry {
   // picks a lighter level sized to the framing, so the orbit video is feasible.
   lodFinest?: boolean;
   readme?: boolean;
+  // Free-text human annotation carried in the manifest (why a demo is framed a
+  // certain way, what still needs tuning). Declared so the manifest and this
+  // interface agree; the capture code never reads it.
+  note?: string;
 }
 
 function loadManifest(): DemoEntry[] {
@@ -509,18 +511,17 @@ async function setExposure(page: any, stops: number): Promise<void> {
 }
 
 /**
- * Return luminance stats of the "lit" (foreground) pixels: the high percentile
- * and the lit fraction. Measured from a Playwright screenshot (the true
- * composited frame) rather than `gl.readPixels` — the renderer runs with
+ * Return luminance stats of the "lit" (foreground) pixels: the low/median/high
+ * percentiles (the spread drives the flat-subject exposure pass) and the lit
+ * fraction. Measured from a Playwright screenshot (the true composited frame)
+ * rather than `gl.readPixels` — the renderer runs with
  * `preserveDrawingBuffer: false` and `renderOnce()` drives an async rAF loop,
  * so the default framebuffer is empty by the time an in-page readback runs.
  * The screenshot is decoded back inside the page (createImageBitmap → 2D
  * canvas at native resolution → getImageData) so no Node image dependency is
  * needed and the blown-fraction matches the final still.
  */
-async function measureLuminance(
-  page: any
-): Promise<{ hiLuma: number; litFraction: number; clippedFrac: number; bgLuma: number }> {
+async function measureLuminance(page: any): Promise<LumaStats> {
   const shot = await page.screenshot({ type: 'jpeg', quality: 70 });
   const b64 = shot.toString('base64');
   return await page.evaluate(
@@ -555,8 +556,10 @@ async function measureLuminance(
       const total = w * h;
       // Histogram the lit-pixel luma (1024 bins over [0,1]) instead of pushing
       // every luma into an array and sorting it — a native-resolution frame can
-      // be ~1M lit pixels and this runs up to ~16× per demo, so the array+sort
-      // was needless memory churn. The histogram gives p99 in O(n), no growth.
+      // be ~1M lit pixels and this runs up to 21× per demo (3 p99 iterations +
+      // 1 spread probe + MID_EXPOSURE_ITERS + CLIP_GUARD_ITERS, less the probe
+      // that the next phase reuses), so the array+sort was needless memory
+      // churn. The histogram gives every percentile in O(n), no growth.
       const BINS = 1024;
       const hist = new Int32Array(BINS); // lit-pixel luma
       const allHist = new Int32Array(BINS); // ALL-pixel luma (for background level)
@@ -592,9 +595,16 @@ async function measureLuminance(
       // the background (bloom/haze) to grey, bgLuma rises and the guard pulls
       // exposure back down (the white-blown clip check alone misses grey bgs).
       const bgLuma = pctile(allHist, total, 0.1);
-      if (litCount === 0) return { hiLuma: 0, litFraction: 0, clippedFrac: 0, bgLuma };
+      if (litCount === 0)
+        return { hiLuma: 0, loLuma: 0, midLuma: 0, litFraction: 0, clippedFrac: 0, bgLuma };
+      // loLuma/midLuma come from the SAME histogram as hiLuma — no extra pass
+      // over the pixels, no extra screenshot. hiLuma − loLuma is the lit
+      // histogram's spread, which tells a headlit (flat) subject apart from an
+      // emissive one; midLuma is the flat-subject exposure anchor.
       return {
         hiLuma: pctile(hist, litCount, hiPercentile),
+        loLuma: pctile(hist, litCount, 0.1),
+        midLuma: pctile(hist, litCount, 0.5),
         litFraction: litCount / total,
         clippedFrac: blown / litCount,
         bgLuma,
@@ -611,50 +621,28 @@ async function measureLuminance(
 }
 
 /**
- * Pick an exposure in two phases:
+ * Pick an exposure in three phases (the decision itself lives in
+ * `./exposure-policy::computeAutoExposure`; this only wires it to the page):
  *   1. Percentile pass — converge so the lit foreground's high percentile hits
  *      TARGET_HI (bright but not clipped). Exposure is ~log-linear in
  *      luminance, so a few log2 corrections converge.
-
- *   2. Guard — step exposure DOWN while EITHER >5% of the subject is blown to
+ *   2. Flat-subject pass — if the lit histogram's spread (p99 − p10) is under
+ *      NARROW_SPREAD_MAX, the subject has no internal dynamic range (a headlit
+ *      shaded mesh: N·L ≈ 1 everywhere) and p99 is a meaningless anchor, so
+ *      re-target the lit MEDIAN to TARGET_MID instead. An EMPIRICAL gate — see
+ *      NARROW_SPREAD_MAX for the measured margins; when it fires, the capture
+ *      log says so ("flat subject") so a sweep can spot a false positive.
+ *   3. Guard — step exposure DOWN while EITHER >5% of the subject is blown to
  *      white OR the background is lifted to grey (frame p10 above near-black).
  *      Phase 1 (p99 target) over-boosts sparse/bloomy scenes into a grey wash;
  *      the background term is what pulls those back to a black background.
- * Returns the chosen stops.
+ * Returns the chosen stops and whether phase 2 fired.
  */
-async function autoExpose(page: any): Promise<number> {
-  let stops = 1.0;
-  await setExposure(page, stops);
-  // Phase 1: percentile.
-  for (let iter = 0; iter < AUTO_EXPOSURE_ITERS; iter++) {
-    const { hiLuma, litFraction } = await measureLuminance(page);
-    if (litFraction < 0.0005 || hiLuma <= 0) {
-      stops = Math.min(EXPOSURE_MAX, stops + 2); // almost nothing lit — brighten
-      await setExposure(page, stops);
-      continue;
-    }
-    const correction = Math.log2(TARGET_HI / hiLuma);
-    const next = Math.max(EXPOSURE_MIN, Math.min(EXPOSURE_MAX, stops + correction));
-    if (Math.abs(next - stops) < 0.1) {
-      stops = next;
-      break;
-    }
-    stops = next;
-    await setExposure(page, stops);
-  }
-  // Phase 2: guard — pull exposure DOWN while EITHER the subject is blowing out
-  // (>5% white-blown) OR the background is lifted to grey (frame p10 not black).
-  // The background term is what actually fixes the "too bright / grey bg" cases
-  // that a white-blown check alone misses (bloom haze sits well below clip luma).
-  for (let iter = 0; iter < CLIP_GUARD_ITERS; iter++) {
-    const { clippedFrac, bgLuma } = await measureLuminance(page);
-    const tooBlown = clippedFrac > CLIP_FRAC_MAX;
-    const bgTooBright = bgLuma > BG_LUMA_MAX;
-    if ((!tooBlown && !bgTooBright) || stops <= EXPOSURE_MIN) break;
-    stops = Math.max(EXPOSURE_MIN, stops - CLIP_GUARD_STEP);
-    await setExposure(page, stops);
-  }
-  return stops;
+async function autoExpose(page: any): Promise<AutoExposureResult> {
+  return await computeAutoExposure({
+    apply: (s: number) => setExposure(page, s),
+    measure: () => measureLuminance(page),
+  });
 }
 
 /**
@@ -915,8 +903,9 @@ for (const demo of DEMOS) {
       await setExposure(page, demo.exposure);
       console.log(`[${demo.id}] exposure=${demo.exposure.toFixed(2)} stops (override)`);
     } else if (demo.autoExpose !== false) {
-      const exposure = await autoExpose(page);
-      console.log(`[${demo.id}] exposure=${exposure.toFixed(2)} stops (auto)`);
+      const { stops, flatSubject } = await autoExpose(page);
+      const how = flatSubject ? 'auto, flat subject' : 'auto';
+      console.log(`[${demo.id}] exposure=${stops.toFixed(2)} stops (${how})`);
     } else {
       console.log(`[${demo.id}] exposure=baked (autoExpose off)`);
     }
