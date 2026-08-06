@@ -234,6 +234,18 @@ def parse_demo_flags() -> dict:
     }
 
 
+def _flag_token(name: str) -> str:
+    """``--name`` for a flag called ``name``, tolerating pre-written dashes.
+
+    The helpers below prepend the ``--`` themselves, so a caller that passes
+    ``"--points"`` used to make them search for ``----points`` — a flag that
+    never matches, silently ignored, every run at the default (see the note in
+    ``demo_biodiversity_planetary_scale``). Normalising here removes that whole
+    class of silent no-op.
+    """
+    return f"--{name.lstrip('-')}"
+
+
 @overload
 def parse_int_arg(name: str, default: int, argv: Optional[list[str]] = ...) -> int: ...
 @overload
@@ -254,7 +266,7 @@ def parse_int_arg(
     demos.
     """
     args = list(sys.argv if argv is None else argv)
-    flag = f"--{name}"
+    flag = _flag_token(name)
     for i, arg in enumerate(args):
         raw: Optional[str] = None
         if arg.startswith(flag + "="):
@@ -273,16 +285,21 @@ def parse_int_arg(
 def parse_path_arg(name: str, argv: Optional[list[str]] = None) -> Optional[Path]:
     """Parse a path ``--name=PATH`` or ``--name PATH`` flag from argv.
 
-    Sibling of :func:`parse_int_arg` for path-valued flags (``--cache-dir`` and
-    similar). Expands a leading ``~``. Returns ``None`` when the flag is absent.
+    Sibling of :func:`parse_int_arg` for path-valued flags (``--cache-dir``,
+    ``--data``). Expands a leading ``~``. Returns ``None`` when the flag is
+    absent, and also when it carries an empty value (``--data=``), which would
+    otherwise resolve to the current directory.
     """
     args = list(sys.argv if argv is None else argv)
-    flag = f"--{name}"
+    flag = _flag_token(name)
     for i, arg in enumerate(args):
+        raw: Optional[str] = None
         if arg.startswith(flag + "="):
-            return Path(arg.split("=", 1)[1]).expanduser()
-        if arg == flag and i + 1 < len(args):
-            return Path(args[i + 1]).expanduser()
+            raw = arg.split("=", 1)[1]
+        elif arg == flag and i + 1 < len(args):
+            raw = args[i + 1]
+        if raw:
+            return Path(raw).expanduser()
     return None
 
 

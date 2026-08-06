@@ -143,6 +143,20 @@ def test_parse_int_arg_none_default_and_parse_path_arg():
     )
 
 
+def test_parse_args_tolerate_pre_written_dashes():
+    """A name passed as ``--points`` must not silently search for ``----points``."""
+    assert demo_utils.parse_int_arg("--points", 100, ["--points=4000"]) == 4000
+    assert demo_utils.parse_path_arg("--data", ["--data", "/tmp/foo"]) == Path(
+        "/tmp/foo"
+    )
+
+
+def test_parse_path_arg_empty_value_reads_as_absent():
+    """``--data=`` must not resolve to the current directory."""
+    assert demo_utils.parse_path_arg("data", ["--data="]) is None
+    assert demo_utils.parse_path_arg("data", ["--data", ""]) is None
+
+
 def test_stack_colorings_shapes_and_alignment():
     n = 5
     coords = np.arange(n * 3, dtype=np.float32).reshape(n, 3)
