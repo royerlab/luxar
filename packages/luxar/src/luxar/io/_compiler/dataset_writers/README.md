@@ -3,9 +3,12 @@
 Per-attribute zarr array serializers used by the compiler. Each function takes a
 zarr group plus one attribute array (positions, colors, radii, ...), routes it
 through the shared `ArrayEncoder`, and logs the resulting encoding. These are the
-canonical writers shared across all three geometry types — Points, Lines, and
-GSplats — so a given semantic type (e.g. `COLOR`, `POSITIVE_SCALAR`) is encoded
-identically everywhere.
+canonical writers, so a given semantic type is encoded identically wherever it
+appears: `write_colors` and `write_scalars` (colormap scalars) are shared by all
+four geometry types — Points, Lines, GSplats, and Mesh — while `write_positions`
+and `write_positive_scalar` serve the three per-element types. Mesh encodes its
+vertices, faces and normals through a direct `ArrayEncoder` call and has no
+POSITIVE_SCALAR attribute.
 
 ## Overview
 

@@ -20,9 +20,18 @@ section under Geometry Types covering `add_mesh`, the no-per-element-size and
 `LUXAR_ZARR_FORMAT.md` still carried a "writable, not yet renderable" warning and
 claimed `loader_types` excluded mesh — both untrue since the Phase-3 switch-on;
 `MESH_NODE_SPEC.md` §3.1 inlined the same stale `contract.yaml` quote, and its §8
-integration checklist still showed the whole TypeScript / Rust / test half
+integration checklist still showed most of the TypeScript / Rust / test half
 unchecked. Corrected against the real contract and the shipped code. Three demo
-docstrings said "two of Luxar's three geometry types".
+docstrings said "two of Luxar's three geometry types". A second pass found the
+same drift further in: the Python package `README.md` listed meshes as a
+*planned* geometry type, `core/README.md` repeated the stale "writable, not yet
+renderable" warning, the format guide's layer and per-element-label
+enumerations omitted mesh, the materials README said mesh picking was still to
+come, and `CITATION.cff`'s abstract named only three types; a third pass reached
+the layer below — the Python subpackage READMEs and module docstrings, the
+viewer package READMEs, shared-helper comments and source comments (picking
+system, data-loading monitor, layers material), the architecture diagrams, the
+gsplats format spec, the developer specs, and the visualization skill.
 
 Claims that count the *instanced-quad, depth-sorted, volumetric* families rather
 than the type vocabulary were checked and deliberately left at three — mesh takes

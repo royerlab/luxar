@@ -57,7 +57,7 @@ Enumeration types and configuration classes.
 
 **Key Enums:**
 - `BlendingMode`: Rendering blend modes (normal, additive, max, opaque, luminous, volumetric)
-- `NodeType`: Scene graph node types (scene, group, points, lines, gsplats)
+- `NodeType`: Scene graph node types (scene, group, points, lines, gsplats, mesh)
 - `PhysicalUnit`: Supported physical units (nm, um, mm, etc.)
 
 **Key Classes:**

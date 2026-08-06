@@ -22,7 +22,7 @@ Everything here is private to `LuxarApp` — only `app.ts` imports these files
 ```
 debug/
 ├── debug-interface.ts       # installDebugInterface() — populates window.__luxarDebug
-├── debug-state.ts           # computeDebugState() — pure scene-walking snapshot
+├── debug-state.ts           # computeDebugState() + computeDrawOrder() — pure scene walks
 ├── debug-cache-helpers.ts   # buildDebugCacheHelpers() — __luxarDebug.cache.* wrappers
 └── cache-stats-view.ts      # openCacheStatsView() — pops the data-monitor Cache tab
 ```
@@ -71,20 +71,23 @@ Pure helper behind `__luxarDebug.getState()`. Exports
 `computeDebugState(ctx: DebugStateContext): DebugState`, the input-surface
 interface `DebugStateContext`, and the result-shape interfaces (`DebugState`,
 `PointCloudInfo`, `GSplatMeshInfo`, `LineMeshInfo`, `MeshNodeInfo`,
-`GPUPoolDebugStats`, `LODGroupDebugInfo`, `PartitionDebugInfo`).
+`GPUPoolDebugStats`, `LODGroupDebugInfo`, `PartitionDebugInfo`). It also exports
+`computeDrawOrder(scene): DrawOrderEntry[]` and its `DrawOrderEntry` shape, the
+helper behind `__luxarDebug.getDrawOrder()`.
 
 `computeDebugState` walks the scene graph once and tallies per-node detail for
 all four geometry types — Points, Lines, GSplats, Mesh — by inspecting
 `userData.nodeType`. For the three instanced-quad types it uses
 `InstancedBufferGeometry.instanceCount` as the source of truth, because pooled
 attribute arrays are over-allocated and `drawRange` only covers the 6-index base
-quad. Points additionally fall back to `userData.visiblePointCount` and then
-attribute count when `instanceCount` is absent. Mesh is the exception in both
-directions: it is a plain indexed `BufferGeometry` with no `instanceCount`, and
-its triangle count comes from `drawRange.count` (falling back to `index.count`
-when the range is the default `Infinity`) divided by three — the draw range is
-precisely what the nD slice compaction narrows, so `index.count` would report the
-whole surface regardless of slice position.
+quad. Points additionally fall back to `userData.visiblePointCount` when the
+geometry is not instanced or its `instanceCount` is not finite, then to 0. Mesh
+is the exception in both directions: it is a plain indexed `BufferGeometry` with
+no `instanceCount`, and its triangle count comes from `drawRange.count`
+(falling back to `index.count` when the range is the default
+`Infinity`) divided by three — the draw range is precisely what the nD slice
+compaction narrows, so `index.count` would report the whole surface regardless
+of slice position.
 
 The same traversal also summarises specialized-group containers by their
 `userData.kind`: `kind=lod` groups become `lodGroups[]` (level count + the
@@ -156,6 +159,7 @@ Available once `installDebugInterface` runs (after `LuxarApp.init()`):
 | `sceneDimsManager`                                                                             | singleton                              | nD dimension state                                                                                                                                                                                                                                                                                    |
 | `workers.getQueueDepth()` / `workers.getStats()`                                               | `getWorkerPool()`                      | Backpressure diagnostic                                                                                                                                                                                                                                                                               |
 | `getState()`                                                                                   | `computeDebugState`                    | JSON-serialisable scene snapshot                                                                                                                                                                                                                                                                      |
+| `getDrawOrder()`                                                                               | `computeDrawOrder`                     | Per-mesh blending bucket, depthWrite, renderOrder and element count, in draw order                                                                                                                                                                                                                    |
 | `renderOnce()`                                                                                 | `animationController.startAnimation()` | Kick a frame for stable screenshots                                                                                                                                                                                                                                                                   |
 | `getSceneLoader()`                                                                             | `SceneLoaderManager.getInstance()`     | Cache inspection root                                                                                                                                                                                                                                                                                 |
 | `getPickingSystem()` / `getOverlayManager()`                                                   | port accessors                         | Live (survive reloads)                                                                                                                                                                                                                                                                                |

@@ -8,7 +8,7 @@ Big Picture: What is Luxar?
 
 Luxar is a **high-performance system for compiling and visualizing arbitrary-sized n-dimensional scenes** containing points, lines, Gaussian splats, and triangle meshes. It enables:
 
-* **Interactive exploration** of billion-primitive datasets (points, lines, splats, triangles) at 60 FPS
+* **Interactive exploration** of billion-primitive datasets (points, lines, splats; meshes to millions of triangles) at 60 FPS
 * **Arbitrary dimensionality** (3D, 4D, 5D, nD) with intuitive navigation
 * **Memory efficiency** through progressive loading and intelligent caching
 * **High quality rendering** with HDR support and post-processing effects
@@ -525,7 +525,7 @@ When to Use Luxar
 Luxar is Ideal For:
 ~~~~~~~~~~~~~~~~~~~
 
-* ✅ **Large datasets** (>100K primitives, up to billions of points/lines/splats/triangles)
+* ✅ **Large datasets** (>100K primitives, up to billions of points/lines/splats, or millions of triangles)
 * ✅ **nD scientific data** (microscopy time-series, multi-channel imaging)
 * ✅ **Interactive exploration** (need to navigate/inspect data)
 * ✅ **Remote visualization** (data on server, view in browser)
@@ -536,7 +536,7 @@ Consider Alternatives For:
 
 * ❌ **Small datasets** (<10K points) - overhead not worth it, use matplotlib/plotly
 * ❌ **Real-time streaming** - Luxar is for static datasets, not live data streams
-* ❌ **Mesh authoring / CAD** - Luxar *renders* triangle meshes (``add_mesh``), but it does not edit or generate them, and a mesh gets no level-of-detail or spatial partitioning (see ``docs/specs/MESH_NODE_SPEC.md`` §9), so one very large surface streams as a single unit
+* ❌ **Mesh authoring / CAD** - Luxar *renders* triangle meshes (``add_mesh``), but it does not edit or generate them, and a mesh gets no level-of-detail or spatial partitioning (see ``docs/specs/MESH_NODE_SPEC.md`` §9), so one very large surface loads whole and up front, with no progressive refinement
 * ❌ **2D plots** - Use specialized 2D libraries (bokeh, plotly)
 
 Common Workflows

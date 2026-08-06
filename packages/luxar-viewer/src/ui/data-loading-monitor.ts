@@ -2001,7 +2001,7 @@ export class DataLoadingMonitor {
     // Per-loader metrics drive genuine per-loader throughput only
     // (cumulative loaded, memory, query stats). Dataset totals and visible
     // counts are sourced from the scene graph below — symmetric across all
-    // three geometry types. Progressive multi-LOD nodes connect as a single
+    // four geometry types. Progressive multi-LOD nodes connect as a single
     // loader (their adapter re-paths inner events to the node path), so each
     // node contributes exactly one entry here — no per-LOD double-counting.
     const isSpatialType = (t: string | undefined): boolean =>

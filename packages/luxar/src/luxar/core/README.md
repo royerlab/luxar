@@ -45,7 +45,7 @@ with LuxarZarrCompiler('my_scene.luxar.zarr') as compiler:
 **Key Concepts:**
 - **Scene**: Root container defining dimensions
 - **Nodes**: Hierarchical organization (groups can contain groups/data)
-- **DataNodes**: Points, Lines, GSplats - the actual renderable data
+- **DataNodes**: Points, Lines, GSplats, Mesh - the actual renderable data
 - **Transforms**: 4x4 matrices for positioning/rotation/scaling
 - **Dimensions**: Support nD data with keyboard navigation
 
@@ -60,7 +60,7 @@ The root node of the scene hierarchy. Provides builder methods for constructing 
 - Scene-level dimension definitions
 - Broadcasting support for nD data
 - Hierarchical organization with groups
-- Support for Points, Lines, and GSplats data
+- Support for Points, Lines, GSplats, and Mesh data
 
 **Usage Example:**
 ```python
@@ -458,11 +458,12 @@ Represents 2D *surfaces* embedded in nD — the one thing the other three types
 cannot express. Points, Lines and GSplats are all soft, emissive, per-element
 primitives; a surface is connected, opaque and shaded.
 
-⚠️ **Writable, not yet renderable.** The Python writer, reader and `luxar info`
-handle mesh today; the viewer's loader, material and picking land in a later phase
-(`docs/specs/MESH_NODE_SPEC.md` §11). The format contract names the two sets
-separately — `geometry_types` (writable) vs `loader_types` (viewer-drawable) — so
-`mesh` is in the first and not yet the second.
+Mesh is fully renderable: the Python writer/reader/`luxar info`, the viewer's
+loader and shaded material pair, and vertex-granularity picking have all landed
+(`docs/specs/MESH_NODE_SPEC.md` §11). The format contract still names the two
+sets separately — `geometry_types` (the writable leaf vocabulary) and
+`loader_types` (the viewer-drawable subset) — because a type becomes authorable
+before it becomes drawable, but they agree on all four today.
 
 **Key Features:**
 - nD `vertices` plus a `faces` triangle-index array (`(F, 3)` or flat `(3F,)`)
@@ -810,7 +811,8 @@ Node (base class)
  └── DataNode (abstract base for data nodes)
       ├── Points (point data)
       ├── Lines (curve/line data)
-      └── GSplats (Gaussian splat data)
+      ├── GSplats (Gaussian splat data)
+      └── Mesh (triangle surface data)
 ```
 
 ## Dependencies

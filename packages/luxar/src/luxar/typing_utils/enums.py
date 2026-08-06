@@ -8,7 +8,7 @@ from enum import Enum
 
 
 class BlendingMode(str, Enum):
-    """Blending modes for points/lines/gsplats rendering.
+    """Blending modes for points/lines/gsplats/mesh (mesh refuses volumetric).
 
     These control how overlapping elements combine their colors:
 

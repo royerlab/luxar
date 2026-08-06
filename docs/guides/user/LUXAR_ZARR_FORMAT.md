@@ -878,8 +878,8 @@ uses the correct value.
 
 ## Layers (Viewer Panel)
 
-Any scene-graph node — `points`, `lines`, `gsplats`, or a container `group` —
-may be exposed as a layer in the viewer's Layers panel by setting
+Any scene-graph node — `points`, `lines`, `gsplats`, `mesh`, or a container
+`group` — may be exposed as a layer in the viewer's Layers panel by setting
 `layer: true` in its zarr attrs. The panel (toggled with **L**) provides
 per-layer visibility, display-range, gamma, opacity, absorption (volumetric
 mode's κ), blending mode, and colormap controls.
@@ -897,7 +897,7 @@ mode's κ), blending mode, and colormap controls.
 ### Group Layers (Composite)
 
 A `group` node marked `layer=true` acts as a composite layer: its controls
-fan out to every data descendant (points/lines/gsplats) beneath it.
+fan out to every data descendant (points/lines/gsplats/mesh) beneath it.
 Composition uses the rules described in *Rendering Attribute Composition*
 below — the group's live slider value replaces its authored zarr value in
 the root-to-leaf chain for each descendant.
@@ -1094,7 +1094,7 @@ consumers must treat missing and `"none"` identically.
 
 #### Per-Element Labels (CSR-style)
 
-Optional per-element string labels for hover tooltips (GPU picking). Available on all node types (points, lines, gsplats). When present, `.zattrs` includes `"has_labels": true`.
+Optional per-element string labels for hover tooltips (GPU picking). Available on all node types (points, lines, gsplats, mesh — mesh labels are per-vertex, since picking returns the vertex ordinal). When present, `.zattrs` includes `"has_labels": true`.
 
 **label_offsets/** Array:
 - **Shape:** `(N+1,)` where N = number of elements
@@ -1116,11 +1116,11 @@ Empty strings are treated as null labels (no tooltip shown on hover). Labels are
 #### Per-Element Image Labels (CSR-style)
 
 Optional per-element **image** labels for hover thumbnails, written via the
-`image_labels=` parameter of `add_points` / `add_lines` / `add_gsplats`
-(accepts pre-encoded bytes, PIL images, `(H, W[, C])` uint8 numpy arrays, or
-file paths; PIL images and numpy arrays are encoded to WebP, while bytes and
-file contents are stored as-is — a PNG file stays PNG). When present, `.zattrs`
-includes `"has_image_labels": true`.
+`image_labels=` parameter of `add_points` / `add_lines` / `add_gsplats` /
+`add_mesh` (accepts pre-encoded bytes, PIL images, `(H, W[, C])` uint8 numpy
+arrays, or file paths; PIL images and numpy arrays are encoded to WebP, while
+bytes and file contents are stored as-is — a PNG file stays PNG). When present,
+`.zattrs` includes `"has_image_labels": true`.
 
 **image_label_offsets/** Array:
 - **Shape:** `(N+1,)` where N = number of elements

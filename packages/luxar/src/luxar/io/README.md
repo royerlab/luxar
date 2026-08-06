@@ -36,7 +36,7 @@ print(f"Loaded {points['positions'].shape[0]} points")
 ## Purpose
 
 This package provides infrastructure for:
-- **Writing**: Progressive writing of Points, Lines, and GSplats data to Zarr archives
+- **Writing**: Progressive writing of Points, Lines, GSplats, and Mesh data to Zarr archives
 - **Reading**: Full read-only access to Luxar scenes via `LuxarScene`
 
 Both paths enable processing of TB-scale datasets on GB-scale machines.

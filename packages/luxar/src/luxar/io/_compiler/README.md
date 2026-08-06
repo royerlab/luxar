@@ -113,9 +113,11 @@ Points `radii` and Lines `widths`.
 ## Subpackages
 
 - **`dataset_writers/`** — Per-attribute zarr array serializers (`write_positions`,
-  `write_colors`, `write_positive_scalar`, ...): the canonical writers shared
-  across all three geometry types, each routing one attribute through the shared
-  `ArrayEncoder`.
+  `write_colors`, `write_positive_scalar`, ...), each routing one attribute through
+  the shared `ArrayEncoder`. `write_colors` and `write_scalars` are shared by all
+  four geometry types; `write_positions` and `write_positive_scalar` serve the three
+  per-element ones, since Mesh encodes vertices/faces/normals through a direct
+  `ArrayEncoder` call and has no positive-scalar attribute.
 - **`spatial_ordering/`** — Compiler glue to the space-filling-curve primitives in
   `luxar.io.ordering`. Each geometry gets a matched `build_*_ordering()` /
   `write_*_ordering_to_zarr()` pair for Points and Lines.

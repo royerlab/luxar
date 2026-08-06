@@ -191,7 +191,7 @@ SceneLoader is split into focused, testable modules:
 
 **Node Factories** (`scene-loader/nodes/`):
 
-- Creates THREE.js scene nodes (Points, Lines, GSplats) from loaded data
+- Creates THREE.js scene nodes (Points, Lines, GSplats, Mesh) from loaded data
 - Geometry creation with proper dtype handling (Float32, Uint8, Float16)
 - Material creation and colormap application
 - Transform application and validation
@@ -1236,7 +1236,7 @@ backend swaps or zarrita API moves stay isolated to this one file.
 | `collectAncestorNodes(root, path)` | Walk the scene graph and return the chain of ancestor `SceneNode`s.      |
 | `collectAncestorAttrs(root, path)` | Convenience — collect the chain as `ComposableAttrs[]`.                  |
 | `getEffectiveAttrs(root, path)`    | Compose the effective attrs for a target path in one call.               |
-| `collectDataDescendants(start)`    | Collect every data-leaf (points/lines/gsplats) under `start`.            |
+| `collectDataDescendants(start)`    | Collect every data-leaf (points/lines/gsplats/mesh) under `start`.       |
 
 ### Dims → ViewState (dims-to-view-state.ts)
 
