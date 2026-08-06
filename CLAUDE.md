@@ -670,7 +670,6 @@ hatch run python scripts/benchmarks/benchmark_seeding_gpu.py
 
 **GPU Support**:
 - Sobel gradients: All dimensions (1D-nD)
-- Peak detection: 2D/3D only (auto-fallback for others)
 - Interpolation: 2D/3D only (auto-fallback for others)
 - Deduplication: All dimensions
 - Expected speedup: substantial on large volumes (>100³), often orders of magnitude depending on GPU

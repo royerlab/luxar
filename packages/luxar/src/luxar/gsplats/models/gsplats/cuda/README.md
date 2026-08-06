@@ -162,7 +162,6 @@ cuda/
 │   └── dtype_traits.cuh                   # DTypeTraits for FP16/FP32 load abstraction
 ├── gsplat_model_cuda.py                   # Python model class (GaussianSplatModelCUDA)
 ├── build.py                               # Build script (torch.utils.cpp_extension)
-├── setup.py                               # Optional setuptools config
 ├── benchmark.py                           # Performance benchmarks
 ├── __init__.py
 ├── tests/
