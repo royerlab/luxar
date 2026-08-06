@@ -575,7 +575,7 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
 export PATH="$HOME/.local/bin:$PATH"
 
 # 4. Verify everything works
-python scripts/test_hpc_setup.py   # 8 smoke tests
+python scripts/check_hpc_setup.py   # 8 smoke tests
 
 # 5. Build the CUDA extension on a GPU node
 make build-cuda SLURM=1                            # Auto-detect everything
@@ -708,21 +708,20 @@ fitting tasks are grouped into each Slurm job to reduce scheduling overhead.
 
 ### Running smoke tests
 
-`scripts/test_hpc_setup.py` verifies the HPC environment:
+`scripts/check_hpc_setup.py` verifies the HPC environment:
 
 ```bash
-python scripts/test_hpc_setup.py
+python scripts/check_hpc_setup.py
 ```
 
 Tests: Python 3.10+ available, hatch installed and functional, hatch env show works, hatch uses Python >= 3.10, pnpm installed and functional, `~/.local/bin` in PATH, npm `--prefix` fallback works, hatch venv uses Python >= 3.10.
 
-`scripts/test_batch_plan_fixes.py` verifies the batch planning fixes:
-
-```bash
-hatch run python scripts/test_batch_plan_fixes.py
-```
-
-Tests: zarr.zip support, custom axes parsing, axes override validation, array selection consistency, auto-tile logic, cull_retention defaults, 6D slicing, manifest serialization, LD_LIBRARY_PATH handling.
+The batch-planning regression tests (zarr.zip support, custom axes parsing,
+axes override validation, array selection consistency, auto-tile logic,
+cull_retention defaults, 6D slicing, manifest serialization, LD_LIBRARY_PATH
+handling) live in the main pytest suite as
+`gsplats/tests/test_batch.py::TestBatchPlanRegression` and run with the rest of
+`hatch run test`.
 
 ---
 
