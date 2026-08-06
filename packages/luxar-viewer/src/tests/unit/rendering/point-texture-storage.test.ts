@@ -10,12 +10,13 @@ import { describe, it, expect, afterEach } from 'vitest';
 import * as THREE from 'three';
 import {
   POINT_FLOATS_PER_POINT,
+  POINT_TEXTURE_LAYOUT,
   configureElementTextureLayout,
   resetElementTextureLayoutForTests,
-  getPointTextureWidth,
-  getMaxPointCapacityPerNode,
+  getElementTextureWidth,
+  getMaxElementCapacityPerNode,
   clampPointCapacity,
-  pointTextureHeightForCapacity,
+  elementTextureHeightForCapacity,
 } from '../../../rendering/element-texture-layout';
 import {
   elementTexelCapacity,
@@ -53,18 +54,18 @@ describe('element-texture-layout — point bindings (3 texels/point)', () => {
   it('defaults to a multiple-of-3 width with a 4096² capacity bound', () => {
     // Width is forced to a multiple of 3 so a point's texels never
     // straddle a row: floor(4096 / 3) * 3 = 4095.
-    expect(getPointTextureWidth()).toBe(4095);
-    expect(getPointTextureWidth() % 3).toBe(0);
-    expect(getMaxPointCapacityPerNode()).toBe(Math.floor((4095 * 4096) / 3));
+    expect(getElementTextureWidth(POINT_TEXTURE_LAYOUT)).toBe(4095);
+    expect(getElementTextureWidth(POINT_TEXTURE_LAYOUT) % 3).toBe(0);
+    expect(getMaxElementCapacityPerNode(POINT_TEXTURE_LAYOUT)).toBe(Math.floor((4095 * 4096) / 3));
   });
 
   it('computes row-padded texture heights and clamps capacities', () => {
     configureElementTextureLayout(9); // width 9 → 3 points/row, bound 9*9/3 = 27
-    expect(getPointTextureWidth()).toBe(9);
-    expect(pointTextureHeightForCapacity(0)).toBe(1);
-    expect(pointTextureHeightForCapacity(3)).toBe(1);
-    expect(pointTextureHeightForCapacity(4)).toBe(2);
-    const max = getMaxPointCapacityPerNode();
+    expect(getElementTextureWidth(POINT_TEXTURE_LAYOUT)).toBe(9);
+    expect(elementTextureHeightForCapacity(0, POINT_TEXTURE_LAYOUT)).toBe(1);
+    expect(elementTextureHeightForCapacity(3, POINT_TEXTURE_LAYOUT)).toBe(1);
+    expect(elementTextureHeightForCapacity(4, POINT_TEXTURE_LAYOUT)).toBe(2);
+    const max = getMaxElementCapacityPerNode(POINT_TEXTURE_LAYOUT);
     expect(clampPointCapacity(max)).toBe(max);
     expect(clampPointCapacity(max + 1)).toBe(max);
   });
@@ -123,7 +124,7 @@ describe('attachPointStorage / writePointTexels — fused writer round-trip', ()
     const geometry = new THREE.InstancedBufferGeometry();
     const texture = attachPointStorage(geometry, 12); // bound = 6×6/3 = 12 → 6 rows
     expect(texture.image.height).toBe(6);
-    const rowFloats = getPointTextureWidth() * 4;
+    const rowFloats = getElementTextureWidth(POINT_TEXTURE_LAYOUT) * 4;
     expect(rowFloats).toBe(24);
 
     writePointTexels(texture, makeSource(4), 4); // 4 points = floats [0, 48) = rows 0,1

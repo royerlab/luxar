@@ -16,10 +16,6 @@ import {
   calculateNextPosition,
   NavigationConfig,
 } from '../../../../../input/input-handler/dimension-navigation/step-math';
-import {
-  formatDimensionValue,
-  generateNavigationHelp,
-} from '../../../../../input/input-handler/dimension-navigation/format';
 import { DimensionsBuilder } from '../../../../builders/test-data-builders';
 
 describe('nD Navigation Utilities', () => {
@@ -226,80 +222,6 @@ describe('nD Navigation Utilities', () => {
 
       expect(mapKeyToDimension('1', dims)).toBe(-1); // All displayed
       expect(mapKeyToDimension('4', dims)).toBe(-1); // Beyond ndim
-    });
-  });
-
-  describe('formatDimensionValue', () => {
-    it('should format discrete values as integers', () => {
-      const dims = new DimensionsBuilder()
-        .withNDimensions(2)
-        .withDimension(0, 'frame', '', [0, 100], { discrete: true })
-        .build();
-
-      expect(formatDimensionValue(5.7, 0, dims)).toBe('6');
-    });
-
-    it('should format continuous values with appropriate decimals', () => {
-      const dims = new DimensionsBuilder()
-        .withNDimensions(2)
-        .withDimension(0, 'x', '', [0, 1], { step: 0.01 })
-        .build();
-
-      expect(formatDimensionValue(0.123, 0, dims)).toBe('0.12');
-    });
-
-    it('should add units when available', () => {
-      const dims = new DimensionsBuilder()
-        .withNDimensions(2)
-        .withDimension(0, 'x', 'μm', [0, 100])
-        .build();
-
-      expect(formatDimensionValue(50.5, 0, dims)).toBe('50.50μm');
-    });
-
-    it('should use default formatting when no metadata', () => {
-      const dims = new DimensionsBuilder().withNDimensions(2).build();
-
-      expect(formatDimensionValue(3.14159, 0, dims)).toBe('3.14');
-    });
-  });
-
-  describe('generateNavigationHelp', () => {
-    it('should show current selection and available dimensions', () => {
-      const dims = new DimensionsBuilder()
-        .withNDimensions(5)
-        .withDisplayed(0, 1, 2)
-        .withDimension(3, 'time', 's', [0, 10])
-        .withDimension(4, 'channel', '', [0, 3])
-        .build();
-
-      dims.currentStep[3] = 5;
-      dims.currentStep[4] = 1;
-
-      const help = generateNavigationHelp(3, dims);
-
-      expect(help).toContain('Selected: time = 5.00s');
-      expect(help).toContain('Non-displayed dimensions:');
-      expect(help.some((line) => line.includes('[1] time'))).toBe(true);
-      expect(help.some((line) => line.includes('[2] channel'))).toBe(true);
-    });
-
-    it('should indicate when all dimensions are displayed', () => {
-      const dims = new DimensionsBuilder().withNDimensions(3).withDisplayed(0, 1, 2).build();
-
-      const help = generateNavigationHelp(-1, dims);
-
-      expect(help).toContain('All dimensions are displayed (3D view)');
-    });
-
-    it('should show navigation instructions', () => {
-      const dims = new DimensionsBuilder().withNDimensions(4).withDisplayed(0, 1, 2).build();
-
-      const help = generateNavigationHelp(-1, dims);
-
-      expect(help).toContain('Navigation:');
-      expect(help.some((line) => line.includes('[1-9] Select dimension'))).toBe(true);
-      expect(help.some((line) => line.includes('[ ]') && line.includes('Navigate'))).toBe(true);
     });
   });
 });

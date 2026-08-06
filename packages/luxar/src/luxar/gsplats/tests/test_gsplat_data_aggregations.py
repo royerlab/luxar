@@ -3,11 +3,11 @@
 Partition out from ``test_gsplat_data.py`` to keep that file focused on
 the core data API. This file covers:
 
-- Computed properties: ``TestVolumes``, ``TestMasses``,
+- Computed properties: ``TestVolumes``, ``TestPrincipalRadii``, ``TestMasses``,
   ``TestMarginalSigmas``, ``TestEccentricities``
 - Filtering / slicing: ``TestFilter``, ``TestFilterBy``, ``TestSliceBy``
-- Reshape ops: ``TestConcatenate``, ``TestPartition``,
-  ``TestEmbedDimension``, ``TestCombineAsNewDimension``
+- Reshape ops: ``TestConcatenate``, ``TestEmbedDimension``,
+  ``TestCombineAsNewDimension``
 """
 
 import numpy as np

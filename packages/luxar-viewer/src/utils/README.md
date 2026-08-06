@@ -31,7 +31,6 @@ Cross-cutting utility functions and helpers used throughout the Luxar viewer. Th
 - **Notifier Facade**: Dependency-inverted UI notification surface (toast, error, help overlay, loading indicator)
 - **EventGroup**: Group-scoped DOM event listener registration with one-call teardown
 - **Result<T, E>**: Discriminated-union return type for fallible operations
-- **WebGPU/WebGL2 Availability Probe**: Page-load-time backend detection (async + sync variants, cached)
 - **Camera Type Helpers**: Unified `LuxarCamera` union and type guards for perspective vs orthographic
 - **Effective Visibility**: `isEffectivelyVisible` — the single parent-chain walk answering "does this node actually render?" (`visible` is a LOCAL flag, so a hidden layer or a hidden LOD level leaves its descendants' flags true). Shared by the LOD load gate, LOD eviction, the pick pass, and the depth-sort scheduler
 - **Platform Detection**: Single `isMacPlatform()` helper for OS-conditional defaults
@@ -53,7 +52,6 @@ utils/
 ├── result.ts                # Result<T, E> + ok/err/isOk/isErr/match/mapOk/mapErr/unwrap/tryAsync
 ├── storage-keys.ts          # luxar.* localStorage key registry
 ├── viewer-container.ts      # mount-root registry (get/set/resetViewerContainer) + containing-block promotion
-├── webgpu-availability.ts   # getRendererAPI (async) + getRendererAPISync
 ├── cross-layer/             # Cross-layer plumbing (typed bus, notifier facade, listener group)
 │   ├── event-bus.ts         # Typed cross-layer pub/sub (LuxarEventMap, eventBus singleton)
 │   ├── event-group.ts       # DOM-listener group with single dispose() teardown
@@ -76,7 +74,7 @@ Ring buffer system for capturing and managing console output:
 **Core Features**:
 
 - **Lazy Proxy Singleton**: Importing `consoleInterceptor` is side-effect-free; patching is explicit via `.patch()`
-- **Ring Buffer**: Circular buffer that wraps cleanly on the fill boundary. Capacity defaults to `DEFAULT_MAX_BUFFER_SIZE` (10,000) and is reconfigurable via `setMaxBufferSize(n)` so the bootstrap can push the canonical `config.ui.debugConsole.interceptor.maxBufferSize` value without a load-time config import (`getMaxBufferSize()` reads it back)
+- **Ring Buffer**: Circular buffer that wraps cleanly on the fill boundary. Fixed capacity of `DEFAULT_MAX_BUFFER_SIZE` (10,000) messages
 - **Listener Set**: Real-time callbacks (`addListener` / `removeListener`) for live UI consumption
 - **Reversible**: `patch()` is idempotent (`isPatched` reports state); `dispose()` restores the original console methods; `disposeInstance()` resets the singleton between tests
 
@@ -224,15 +222,6 @@ The single DOM element the viewer mounts all overlays, panels, toasts, dialogs, 
 - `setViewerContainer(el)` — Adopt `el`; a non-`body` element is promoted to a containing block (`contain: layout`, plus `position: relative` when statically positioned) so the viewer's `position: fixed`/`absolute` overlays scope to it. Saves the element's prior inline `position`/`contain`.
 - `resetViewerContainer()` — Revert to `document.body` and restore exactly the inline styles `setViewerContainer` mutated.
 
-### webgpu-availability.ts - Backend Availability Probe
-
-Page-load-time graphics-API probe answering "what's available?" (vs `RendererCapabilities.apiSurface`, which answers "what did we pick?"). Used for diagnostics badges and feature flags. See `BROWSER_SUPPORT_POLICY.md` for the WebGPU/WebGL2 policy.
-
-- `RendererAPI` = `'webgpu' | 'webgl2' | 'unsupported'`
-- `getRendererAPI()` — Async, definitive. Requests a WebGPU adapter to confirm; result is cached after the first call.
-- `getRendererAPISync()` — Synchronous fast path. Returns `'webgpu'` if `navigator.gpu` exists at all (no adapter probe); else falls back to `'webgl2'` / `'unsupported'`.
-- `_resetCachedAPI()` — Test-only cache reset
-
 ## Console Interception
 
 ### Ring Buffer Implementation
@@ -241,14 +230,14 @@ Page-load-time graphics-API probe answering "what's available?" (vs `RendererCap
 class ConsoleInterceptor {
   private messageBuffer: BufferedMessage[] = [];
   private bufferIndex = 0;
-  private maxBufferSize = DEFAULT_MAX_BUFFER_SIZE; // 10000; reconfigurable via setMaxBufferSize()
+  private maxBufferSize = DEFAULT_MAX_BUFFER_SIZE; // fixed default 10,000
   private hasWrapped = false;
 }
 ```
 
 **Key Features**:
 
-- **Memory Efficient**: Bounded circular buffer (default 10,000, `setMaxBufferSize`-tunable) prevents memory leaks
+- **Memory Efficient**: Bounded circular buffer (fixed default 10,000) prevents memory leaks
 - **Early Capture**: Starts before any other code executes
 - **Original Preservation**: Maintains original console.\* functionality
 - **Stack Traces**: Automatic stack trace extraction for errors
@@ -405,7 +394,7 @@ class Panel {
 
 ### Console Buffer Management
 
-- **Bounded Size**: Ring buffer (default 10,000 messages, `setMaxBufferSize`-tunable) prevents unbounded memory growth; shrinking trims oldest-first to preserve chronological order
+- **Bounded Size**: Ring buffer (fixed default 10,000 messages) prevents unbounded memory growth
 - **Boundary-Safe Wrap**: When `length === maxBufferSize`, the next write goes to index 0 (not `maxBufferSize`, which would have grown the array and stranded the oldest entry)
 - **Listener Set**: `Set<callback>` for O(1) add/remove and snapshot iteration on emit
 
