@@ -1190,10 +1190,11 @@ Each sibling folder holds the private helpers for the public-API file
 of the same name at this folder's root (plus the folder-module
 `rail-panels/`). Most have their own README:
 
-- `control-rail/` — Internals for `control-rail.ts`, the always-visible
-  left-edge activity rail (`RailOverlay` flyout/popover lifecycle,
-  `RAIL_ICONS`, DOM helpers, item types); one button per panel, wired to
-  the exact commands the keyboard shortcuts fire. See §0 above.
+- [`control-rail/`](./control-rail/README.md) — Internals for
+  `control-rail.ts`, the always-visible left-edge activity rail
+  (`RailOverlay` flyout/popover lifecycle, `RAIL_ICONS`, DOM helpers,
+  item types); one button per panel, wired to the exact commands the
+  keyboard shortcuts fire. See §0 above.
 - [`data-loading-monitor/`](./data-loading-monitor/README.md) — Internals
   for `data-loading-monitor.ts` (templates, advisor, event queue,
   polling loop, timing panel; `metrics/` and `tabs/` helpers).
