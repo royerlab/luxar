@@ -23,6 +23,7 @@ import {
   GLSL_NEAR_FADE_FUNCTIONS,
   GLSL_SANITIZE_FUNCTIONS,
   GLSL_SORTED_INDEX,
+  GLSL_LINE_JOINT_CODE,
 } from '../../materials/_shared/glsl-lib';
 import { linePickWebGPUFactory, buildLinePickTSLNodesFromUniforms } from './pick.tsl';
 import { FALLOFF_FLOOR, FALLOFF_K } from '../../materials/_shared/falloff';
@@ -43,6 +44,7 @@ export const LINE_PICK_VERTEX_SHADER = /* glsl */ `
 
     // Draw-slot → storage-slot mapping (visual-shader parity).
     ${GLSL_SORTED_INDEX}
+    ${GLSL_LINE_JOINT_CODE}
 
     // Line data texture: RGBA32F, 6 texels/segment (see
     // rendering/line-geometry.ts for the texel layout).
@@ -88,15 +90,22 @@ export const LINE_PICK_VERTEX_SHADER = /* glsl */ `
       float aStartSharpness = texelFetch(uLineTex, ivec2(texel0.x + 2, texel0.y), 0).w;
       float aEndSharpness = texelFetch(uLineTex, ivec2(texel0.x + 3, texel0.y), 0).w;
       float aSegmentLength = lineT4.x;
-      float aStartCapSuppress = lineT4.y;
-      float aEndCapSuppress = lineT4.z;
+      float aStartJointCode = lineT4.y;
+      float aEndJointCode = lineT4.z;
 
       // Branchless: aQuadCorner.x ∈ {-1, +1} by construction.
       float t = aQuadCorner.x * 0.5 + 0.5;
       vT = t;
       vSegmentLength = aSegmentLength;
-      vCapSuppressStart = aStartCapSuppress;
-      vCapSuppressEnd = aEndCapSuppress;
+      // texel4.yz hold a per-endpoint joint CODE, not a [0, 1] scalar — reading
+      // it as one made brightness scale with the partner's slot index (a
+      // segment joining slot 399 reached capFactor 200.5), which both broke the
+      // brightness < 1e-4 discard for clipped endpoints and let high-slot
+      // segments win every gl_FragDepth comparison. Decode it the same way the
+      // visual vertex stage does; the pick pass carries no join geometry, so it
+      // stops at the code-implied cap.
+      vCapSuppressStart = luxarLineJointCapSuppression(aStartJointCode);
+      vCapSuppressEnd = luxarLineJointCapSuppression(aEndJointCode);
 
       // sanitize width/sharpness against negative/NaN/Inf. Sharpness is a
       // [0, 1] knob -> super-Gaussian exponent beta = 2^(6s - 2) (computed

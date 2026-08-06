@@ -166,3 +166,19 @@ export function perspectiveNearFadeStaticTSL(
     .greaterThanEqual(0.0)
     .select(float(0.0), smoothstep(uNearCull, uNearCull.mul(2.0), viewZ.negate()));
 }
+
+/**
+ * TSL counterpart of `GLSL_LINE_JOINT_CODE`'s
+ * `luxarLineJointCapSuppression` — the endpoint cap multiplier implied by a
+ * per-endpoint joint code (`texel4.yz`; see that GLSL block for the encoding
+ * and for why a slot-bearing code must suppress rather than keep the cap).
+ *
+ * Emitted as a node expression rather than a TSL `Fn()` so it composes inside
+ * the line factories' single traced vertex body, where a structural branch is
+ * deliberately avoided.
+ */
+export function tslLineJointCapSuppression(jointCode: TSLNode): TSLNode {
+  const isFreeEnd = jointCode.greaterThan(-0.5).and(jointCode.lessThan(0.5));
+  const isHub = jointCode.lessThan(-1.5).and(jointCode.greaterThan(-2.5));
+  return isFreeEnd.or(isHub).select(float(0.0), float(1.0));
+}

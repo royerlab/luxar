@@ -61,6 +61,7 @@ import {
   sanitizeNonNegative,
   type TSLNode,
   sortedIndexNode,
+  tslLineJointCapSuppression,
 } from '../../materials/_shared/tsl-helpers';
 import { getPlaceholderElementTexture } from '../../element-texture-layout';
 
@@ -202,8 +203,8 @@ export function linePickWebGPUFactory(
     const aStartSharpness: TSLNode = lineT2.w.toVar();
     const aEndSharpness: TSLNode = lineT3.w.toVar();
     const aSegmentLength: TSLNode = lineT4.x.toVar();
-    const aStartCapSuppress: TSLNode = lineT4.y.toVar();
-    const aEndCapSuppress: TSLNode = lineT4.z.toVar();
+    const aStartJointCode: TSLNode = lineT4.y.toVar();
+    const aEndJointCode: TSLNode = lineT4.z.toVar();
 
     // Branchless: aQuadCorner.x ∈ {-1, +1} by construction.
     const t: TSLNode = aQuadCorner.x.mul(0.5).add(0.5).toVar();
@@ -366,8 +367,14 @@ export function linePickWebGPUFactory(
     vPixelWidth.assign(rawPixelWidth);
     vWidthFade.assign(vWidthFadeVal);
     if (vViewZ) vViewZ.assign(mvPos.z);
-    vCapSuppressStart.assign(aStartCapSuppress);
-    vCapSuppressEnd.assign(aEndCapSuppress);
+    // texel4.yz hold a per-endpoint joint CODE, not a [0, 1] scalar. Reading
+    // it as one let capFactor scale with the partner's slot index (200.5 for a
+    // segment joining slot 399, -0.5 for a hub, 0.0 for a slice-clipped end).
+    // Decode it exactly as the GLSL twin does, via the shared helper, so the
+    // two backends agree; neither TSL path carries join geometry yet, so both
+    // stop at the code-implied cap.
+    vCapSuppressStart.assign(tslLineJointCapSuppression(aStartJointCode));
+    vCapSuppressEnd.assign(tslLineJointCapSuppression(aEndJointCode));
 
     return clipPosOut;
   });

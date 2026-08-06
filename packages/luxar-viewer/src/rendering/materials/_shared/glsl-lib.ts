@@ -153,3 +153,36 @@ vec2 luxarElementIdParts() {
   return luxarElementIdSplit(luxarSortedIndex());
 }
 `;
+
+/**
+ * Line joint-code helpers, shared by the visual and picking GLSL vertex stages
+ * (both build the same screen-space quad, so both must read the code the same
+ * way — see `rendering/line-geometry.ts` for the texel layout and
+ * `wasm/rust/src/lines_clipping.rs::compute_joint_codes` for the encoding).
+ *
+ * `texel4.yz` carry a per-endpoint joint code: `0` free polyline end, `-1`
+ * slice-clipped, `-2` degree->=3 hub, `+(slot + 1)` / `-(slot + 3)` naming the
+ * partner segment's storage slot and which of its endpoints is the shared one.
+ *
+ * `luxarLineJointKeepsCap` is true only for the two codes that want the soft
+ * endpoint cap kept — a free end and a hub, where several quads already stack.
+ * Everything else suppresses it: a slice-clipped endpoint because no neighbour
+ * will ever arrive there, and a slot-bearing code because a neighbouring quad
+ * does meet it. Defaulting a slot-bearing code the other way is the #780 bead
+ * chain (measured: an interior joint bottoms out at 0.5 instead of 1.0, and a
+ * dense polyline loses ~40% of its total brightness).
+ *
+ * Codes are exact small integers out of an RGBA32F texel fetched without
+ * filtering; the half-integer midpoints are for defensiveness only.
+ */
+export const GLSL_LINE_JOINT_CODE = `
+bool luxarLineJointKeepsCap(float jointCode) {
+  return (jointCode > -0.5 && jointCode < 0.5) || (jointCode < -1.5 && jointCode > -2.5);
+}
+
+// The endpoint cap multiplier implied by a joint code, before any join
+// geometry refines it from the partner's screen-space direction.
+float luxarLineJointCapSuppression(float jointCode) {
+  return luxarLineJointKeepsCap(jointCode) ? 0.0 : 1.0;
+}
+`;
