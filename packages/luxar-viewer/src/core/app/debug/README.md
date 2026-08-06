@@ -70,16 +70,19 @@ users see after enabling `?debug`.
 Pure helper behind `__luxarDebug.getState()`. Exports
 `computeDebugState(ctx: DebugStateContext): DebugState`, the input-surface
 interface `DebugStateContext`, and the result-shape interfaces (`DebugState`,
-`PointCloudInfo`, `GSplatMeshInfo`, `LineMeshInfo`, `GPUPoolDebugStats`,
-`LODGroupDebugInfo`, `PartitionDebugInfo`).
+`PointCloudInfo`, `GSplatMeshInfo`, `LineMeshInfo`, `MeshNodeInfo`,
+`GPUPoolDebugStats`, `LODGroupDebugInfo`, `PartitionDebugInfo`).
 
-`computeDebugState` walks the scene graph once and tallies per-mesh detail for
-three geometry types — Points, Lines, GSplats — by inspecting
-`userData.nodeType`. For each it uses `InstancedBufferGeometry.instanceCount`
-as the source of truth, because pooled attribute arrays are over-allocated and
-`drawRange` only covers the 6-index base quad. Points additionally fall back
-to `userData.visiblePointCount` and then attribute count when `instanceCount`
-is absent.
+`computeDebugState` walks the scene graph once and tallies per-node detail for
+all four geometry types by inspecting `userData.nodeType`. For the three
+instanced-quad types — Points, Lines, GSplats — it uses
+`InstancedBufferGeometry.instanceCount` as the source of truth, because pooled
+attribute arrays are over-allocated and `drawRange` only covers the 6-index
+base quad. Points additionally fall back to `userData.visiblePointCount` and
+then attribute count when `instanceCount` is absent. Mesh is not instanced, so
+its `meshNodes[]` entries count triangles from the current `drawRange` (falling
+back to the index length, since `drawRange.count` defaults to `Infinity`) and
+read the live shader variant flags off the material's `defines`.
 
 The same traversal also summarises specialized-group containers by their
 `userData.kind`: `kind=lod` groups become `lodGroups[]` (level count + the
@@ -92,7 +95,8 @@ For lines, the `hasColormap` flag is read structurally from
 running on the GLSL `ShaderMaterial` or the TSL `NodeMaterial` backend.
 
 The returned `DebugState` carries `totalPoints`, `totalGSplats`, `totalLines`,
-`totalElements` (their sum), the per-mesh arrays, `lodGroups`, `partitions`, an
+`totalTriangles`, `totalElements` (their sum), the per-node arrays
+(`pointClouds`, `gsplatMeshes`, `lineMeshes`, `meshNodes`), `lodGroups`, `partitions`, an
 optional `gpuPool` byte-stats block, `dimensions`, and a nested `camera`
 (`{position, fov}`) plus flat `cameraPosition` / `cameraFov` mirrors kept for
 back-compat.
