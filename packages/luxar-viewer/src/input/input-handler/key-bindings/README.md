@@ -7,10 +7,14 @@ Keyboard binding table split per context.
 - `navigation-bindings.ts` — every NAVIGATION-context application binding
   (orbit-mode UI shortcuts: H, P, R, V, I, F, C, B, T, G, N,
   M (cycle data loading monitor), O, [, ],
-  digit keys 1-9, Space, Escape, Ctrl+L, Ctrl+Shift+S). The colormap
-  legend (J), overlays (U), and layers panel (L) keys are read from
-  `config.input.keyboard.shortcuts` rather than hard-coded, so they
-  track the user's config.
+  digit keys 1-9, Space, Escape, Ctrl+L, Ctrl+Shift+S). The named
+  navigation shortcuts are driven by `config.input.keyboard.shortcuts`
+  rather than hard-coded, so they track the user's config; the
+  debug-console binding additionally applies a Ctrl modifier
+  structurally at the binding site. A handful with no config entry stay
+  hard-coded: dimension navigation (`[` / `]`), digit keys 1-9,
+  recording panel (T), screenshot (G), data monitor (M), Escape, and the
+  Ctrl+Shift+S state export.
 - `fly-bindings.ts` — FLY_CONTROLS-context fly-mode bindings (W/A/S/D/Q/E ×
   modifier combinations, arrow look keys ± Shift, Shift speed-boost).
 - `animation-shortcuts.ts` — `AnimationShortcuts` class for K / Home /
