@@ -218,9 +218,9 @@ export class MaterialManager {
    * fresh material that the node owns for its lifetime (the node
    * factory stamps `_layerMaterialCloned: true`, so LayersPanel /
    * LOD-cross-fade mutate it directly instead of clone-on-first-use).
-   * `pointMaterialCache` stays permanently empty — it remains in the
-   * lifecycle/stats context shapes shared with lines, where an empty
-   * map is a truthful no-op. Mirrors {@link getGSplatMaterial}.
+   * There is no material cache: every material is per-node, so
+   * `getCacheStats()` reports only registry size and create-time, never a
+   * cache size. Mirrors {@link getGSplatMaterial}.
    *
    * Dispatches to `PointTSLMaterial` (NodeMaterial / TSL) when the
    * active renderer reports `caps.apiSurface === 'webgpu'`, otherwise to the
@@ -267,9 +267,8 @@ export class MaterialManager {
    * that the node owns for its lifetime (the node factory stamps
    * `_layerMaterialCloned: true`, so LayersPanel / LOD-cross-fade
    * mutate it directly instead of clone-on-first-use).
-   * `lineMaterialCache` stays permanently empty — it remains in the
-   * lifecycle/stats context shapes, where an empty map is a truthful
-   * no-op. Mirrors {@link getPointMaterial} / {@link getGSplatMaterial}.
+   * There is no material cache: every material is per-node. Mirrors
+   * {@link getPointMaterial} / {@link getGSplatMaterial}.
    *
    * Dispatches to `LineTSLMaterial` (NodeMaterial / TSL) when the
    * active renderer reports `caps.apiSurface === 'webgpu'`, otherwise to the
@@ -313,9 +312,7 @@ export class MaterialManager {
    * fresh material that the node owns for its lifetime (the node
    * factory stamps `_layerMaterialCloned: true`, so LayersPanel /
    * LOD-cross-fade mutate it directly instead of clone-on-first-use).
-   * `gsplatMaterialCache` stays permanently empty — it remains in the
-   * lifecycle/stats context shapes shared with points/lines, where an
-   * empty map is a truthful no-op.
+   * There is no material cache: every material is per-node.
    *
    * Dispatches to `GSplatTSLMaterial` (NodeMaterial / TSL) when the
    * active renderer reports `caps.apiSurface === 'webgpu'`, otherwise to the
@@ -366,10 +363,10 @@ export class MaterialManager {
    * Deliberately does NOT enter `registeredMaterials`: a mesh has no screen-space
    * size, so it has no `updateCameraParams` to broadcast to. It is tracked in
    * `staticMaterials` instead, which keeps disposal and the stats counters honest
-   * without a per-frame no-op call per node. There is no fourth empty
-   * `meshMaterialCache` either — the three vestigial maps exist only to keep
-   * `getCacheStats()`'s historical shape, and adding to them would be inventing a
-   * cache that never existed.
+   * without a per-frame no-op call per node. There is no `meshMaterialCache`
+   * either: no type has a material cache — every material is per-node, so
+   * `getCacheStats()` reports only registry size and create-time, never a cache
+   * size.
    *
    * Dispatches to `MeshTSLMaterial` when the active renderer reports
    * `caps.apiSurface === 'webgpu'`, otherwise the GLSL `MeshMaterial`.

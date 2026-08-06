@@ -518,7 +518,7 @@ def _ladder_for_part(
 
 #: Per-part recipes — the recipes that have a single-part form (the building
 #: block of ``tiles``/``adaptive``), usable for streaming per-part assembly
-#: such as the tiled-batch merge. ``additive`` → a prefix-sum ladder
+#: such as the tiled-batch merge. ``stream`` → a prefix-sum ladder
 #: (tiles), ``levels`` → a coarse↔fine lod group (adaptive).
 PER_PART_RECIPES: tuple[str, ...] = ("stream", "levels")
 

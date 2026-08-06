@@ -517,7 +517,6 @@ hatch run pytest packages/luxar/src/luxar/gsplats/seeds/tests/test_generate_seed
 
 - **Main API**: See `fit_gsplats.py` for integration with fitting pipeline
 - **Decomposition**: See `multiscale/decompose.py` for multi-scale decomposition details
-- **Performance**: See `SEEDING_PERFORMANCE_ISSUE.md` for the superlinear scaling of edge detection at high seed counts
 - **Tests**: See `tests/` for usage examples and validation
 
 ## Version History
