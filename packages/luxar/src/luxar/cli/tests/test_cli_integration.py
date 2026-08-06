@@ -62,7 +62,7 @@ def test_server(sample_scene, available_port):
     from luxar.cli.main import create_server_app
 
     # Create server app
-    app = create_server_app(str(sample_scene), serve_viewer=False)
+    app = create_server_app(str(sample_scene))
 
     # Start server in background thread
     import uvicorn

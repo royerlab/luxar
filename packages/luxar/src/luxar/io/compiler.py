@@ -1,4 +1,4 @@
-"""luxar.compiler – Progressive Zarr compiler for memory-efficient scene building.
+"""luxar.io.compiler – Progressive Zarr compiler for memory-efficient scene building.
 
 This module provides the LuxarZarrCompiler class which implements progressive
 writing to Zarr stores, enabling handling of arbitrarily large datasets without

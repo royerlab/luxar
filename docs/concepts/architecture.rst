@@ -115,7 +115,7 @@ The server layer sits between storage and viewer, providing:
    import uvicorn
 
    # Create configured FastAPI app
-   app = create_server_app("/path/to/data.luxar.zarr", serve_viewer=False)
+   app = create_server_app("/path/to/data.luxar.zarr")
 
    # Run server
    uvicorn.run(app, host="127.0.0.1", port=8000)
