@@ -60,10 +60,12 @@ gsplats/
         └── test_energy_distribution.py
 ```
 
-The tree shows the largest test directories only. The remaining subpackages
-(`clahe/`, `fitting/dynamic_ops/`, `interop/`, `io/`, `lod/`, `planner/`,
-`preprocessing/`, `seeds/`, and the `models/gsplats/{cuda,metal}` backends)
-each carry their own `tests/` directory following the same pattern.
+The tree shows the largest test directories only. The other subpackages that
+carry their own `tests/` directory (`clahe/`, `fitting/dynamic_ops/`,
+`interop/`, `io/`, `lod/`, `planner/`, `preprocessing/`, `seeds/`, and the
+`models/gsplats/{cuda,metal}` backends) follow the same pattern. A few
+subpackages — `batch/`, `calibration/`, `rendering/` — have no `tests/`
+directory of their own and are exercised from the top-level `tests/`.
 
 ## Dependencies and Test Execution
 
@@ -79,10 +81,22 @@ hatch run pytest packages/luxar/src/luxar/gsplats/utils/tests/test_trils.py
 
 Some tests require additional dependencies:
 
-- **PyTorch tests**: `test_lt_solver.py`, `test_inverse_softplus.py` (torch-dependent tests)
+- **PyTorch tests**: the torch-dependent set spans the model, fitting, optim,
+  multiscale, culling, metrics and CUDA/Metal-backend tests. The
+  "(requires torch)" labels under [Test Categories](#test-categories) mark the
+  modules in `tests/` and `models/*/tests/`; the `fitting/`, `optim/` and
+  `multiscale/` unit tests and `utils/tests/test_device.py` are torch-only as
+  well, without carrying a label.
 - **SciPy tests**: `seeds/tests/` (seed generation uses scipy for peak detection and interpolation)
 
-These tests are designed to skip gracefully when dependencies are missing.
+Only some of these degrade gracefully. Modules that gate on a `HAS_TORCH` flag or
+`pytest.mark.skipif` — for example `test_fit_gsplats.py`, `test_tiled_fitting.py`,
+and the shared `conftest.py` fixtures — skip when torch is missing. Others
+(`test_metrics.py`, `test_gsplats_integration.py`, `test_culling.py`) import
+torch at module level, so without it they error during collection rather than
+skipping. `test_progressive_fitting.py` errors at collection too, but only
+transitively: its own `import torch` is function-local, and it is
+`luxar.gsplats.fit_progressive_gsplats` that imports torch at module level.
 
 ## Running Tests
 
@@ -145,7 +159,13 @@ hatch run pytest --cov=luxar.gsplats packages/luxar/src/luxar/gsplats/ --cov-rep
 - End-to-end integration tests for the gsplats pipeline
 
 **`test_gsplat_data.py`**:
-- GSplatData class tests (save/load, concatenation, merging)
+- Core GSplatData API (properties, validation, spatial ops, intensity ops)
+
+**`test_gsplat_data_io.py`**:
+- GSplatData I/O-facing surface (culling, `save()` `fitting_info` whitelist, channel-color merge)
+
+**`test_gsplat_data_aggregations.py`**:
+- GSplatData computed properties, filtering/slicing, and reshape ops (concatenation, embed/combine dimension)
 
 **`test_batch.py`**:
 - Batch manifest creation and serialization
@@ -158,23 +178,27 @@ hatch run pytest --cov=luxar.gsplats packages/luxar/src/luxar/gsplats/ --cov-rep
 - Literal Slurm log/output paths and preset arguments with spaces, quotes, shell metacharacters, and percent signs (Slurm filename patterns)
 - Rejection of output-directory line terminators that could split an sbatch directive
 
-**`test_cholesky_dim_ops.py`** (requires torch):
+**`test_cholesky_dim_ops.py`**:
 - Cholesky factor dimension operations and transformations
 
 **`test_culling.py`** (requires torch):
-- Splat culling algorithms (cumulative, redundancy, error-budget)
+- Per-splat deletion error and contribution-based culling
+- Redundancy mode, nD support, and joint-compounding binary search
+- The `GSplatData.cull` error-budget path
+  (cumulative/amplitude-percentile culling lives in
+  `test_gsplat_data_io.py::TestCullHeuristic`)
 
 **`test_gpu_profile.py`**:
 - GPU profiling and benchmark data handling
 
-**`test_metrics.py`**:
+**`test_metrics.py`** (requires torch):
 - Quality metrics computation (PSNR, SSIM, MSE)
 - Comparison between original and reconstructed volumes
 
 **`test_progressive_fitting.py`** (requires torch):
 - Progressive fitting pipeline with iterative residual refinement
 
-**`test_spatial_volume_filter.py`** (requires torch):
+**`test_spatial_volume_filter.py`**:
 - Spatial volume filtering for splat datasets
 
 **`test_tiled_fitting.py`** (requires torch):
@@ -200,7 +224,7 @@ hatch run pytest --cov=luxar.gsplats packages/luxar/src/luxar/gsplats/ --cov-rep
 - Parameter transformation and constraint enforcement
 - Forward pass rendering in 2D/3D
 - Gradient computation and optimization
-- Batched vs sequential rendering consistency
+- Voxel-size-aware eccentricity constraints in `_build_L()` (anisotropic voxels)
 - Edge cases and numerical stability
 
 **`test_rendering.py`** (requires torch):
@@ -218,7 +242,7 @@ hatch run pytest --cov=luxar.gsplats packages/luxar/src/luxar/gsplats/ --cov-rep
 - **Algorithmic patterns**: 90%+ pattern coverage (validation, arrays, distances)
 - **Input validation**: Comprehensive validation pattern tests
 - **Error handling**: Edge cases and error conditions covered
-- **GaussianSplatModel**: Complete class testing (35+ test methods)
+- **GaussianSplatModel**: Complete class testing (28 test methods)
 - **Optimization pipeline**: Full fit_gaussian_splats testing (25+ test methods)
 - **Rendering functions**: Comprehensive rendering tests (25+ test methods)
 

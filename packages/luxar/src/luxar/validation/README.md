@@ -60,6 +60,7 @@ Provides basic validation functions used for type guards, property validation, a
 - `validate_physical_unit()`: Validate physical unit strings
 - `validate_opacity()`: Validate opacity values (0.0-1.0)
 - `validate_absorption()`: Validate absorption coefficients (volumetric kappa; >= 0, finite)
+- `validate_truncation_radius()`: Validate a GSplat truncation radius `T` in sigmas (positive, finite, and within the float32-safe range MIN_TRUNCATION_RADIUS_FLOAT32-MAX_TRUNCATION_RADIUS_FLOAT32 where both `1 / (1 - exp(-T^2/2))` and `T^2` stay finite)
 - `validate_gamma()`: Validate gamma values (0.1-10.0)
 - `validate_intensity()`: Validate intensity values (INTENSITY_MIN-INTENSITY_MAX)
 - `validate_offset()`: Validate offset values (OFFSET_MIN-OFFSET_MAX)
@@ -69,10 +70,10 @@ Provides basic validation functions used for type guards, property validation, a
 - `validate_colormap()`: Validate a colormap name (resolved via `colormaps.registry`) or LUT array (N, 3)
 - `validate_category_indices()`: Validate category index arrays
 
-Note: of the above, only `validate_blending_mode` and `validate_category_indices`
-are re-exported at the package level. The others (`validate_intensity`,
-`validate_offset`, `validate_layer`, `validate_visible`, `validate_colormap`)
-are imported directly from `luxar.validation.types`.
+Note: all of the above are re-exported at the package level except
+`validate_intensity`, `validate_offset`, `validate_layer`, `validate_visible`
+and `validate_colormap`, which must be imported directly from
+`luxar.validation.types`.
 
 **Type Guards:**
 - `is_position_array()`: Check if object is valid position array
