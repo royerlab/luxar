@@ -28,10 +28,15 @@ names are distinct fully-qualified modules and stay that way.
 ```python
 from luxar.mesh import import_mesh
 
-mesh = import_mesh("bunny.ply")   # -> TriangleMesh (welded, triangulated)
-scene.add_mesh("Bunny", mesh.vertices, mesh.faces,
-               normals=mesh.normals, normal_dims=[0, 1, 2],
-               colors=mesh.colors)
+mesh = import_mesh("bunny.ply")  # -> TriangleMesh (welded, triangulated)
+scene.add_mesh(
+    "Bunny",
+    mesh.vertices,
+    mesh.faces,
+    normals=mesh.normals,
+    normal_dims=[0, 1, 2],
+    colors=mesh.colors,
+)
 ```
 
 ```bash

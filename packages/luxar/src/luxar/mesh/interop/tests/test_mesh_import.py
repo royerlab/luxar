@@ -14,7 +14,10 @@ from ._synthetic import (
     WRITERS,
     make_ground_truth,
     write_glb,
+    write_glb_bad_node_index,
+    write_glb_cyclic,
     write_glb_interleaved,
+    write_glb_shared_child,
     write_gltf_draco,
     write_gsplat_ply,
     write_obj_negative_indices,
@@ -187,6 +190,40 @@ class TestGltf:
             np.sort(import_mesh(packed).vertices, axis=0),
             atol=1e-6,
         )
+
+    def test_a_node_cycle_is_refused_rather_than_recursing(
+        self, tmp_path: Path
+    ) -> None:
+        """A malformed graph must not reach Python's recursion limit.
+
+        glTF node graphs are a strict forest, so a child edge back into an ancestor is
+        malformed. Before the ancestor check this recursed until `RecursionError` —
+        which is not a `ValueError`, so it escaped the CLI's error funnel entirely and
+        surfaced as a raw traceback instead of `Error: ...`.
+        """
+        p = tmp_path / "cycle.glb"
+        write_glb_cyclic(p, GT)
+        with pytest.raises(ValueError, match="cycle"):
+            import_mesh(p)
+
+    def test_a_shared_child_still_imports(self, tmp_path: Path) -> None:
+        """The anti-overcorrection control: a DAG is not a cycle.
+
+        Two parents pointing at one leaf is technically invalid glTF (nodes have at
+        most one parent) but is harmless here — it just emits the mesh twice, which is
+        what the file asks for. A global visited-set would have refused it; the check is
+        ancestor-scoped precisely so it does not.
+        """
+        p = tmp_path / "dag.glb"
+        write_glb_shared_child(p, GT)
+        mesh = import_mesh(p)
+        assert mesh.n_faces == 2 * GT.faces.shape[0]
+
+    def test_out_of_range_node_index_is_named(self, tmp_path: Path) -> None:
+        p = tmp_path / "badnode.glb"
+        write_glb_bad_node_index(p, GT)
+        with pytest.raises(ValueError, match="out of range"):
+            import_mesh(p)
 
     def test_draco_is_refused_by_name(self, tmp_path: Path) -> None:
         p = tmp_path / "draco.gltf"

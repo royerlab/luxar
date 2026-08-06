@@ -398,3 +398,63 @@ WRITERS = {
 
 #: Dialect name → the extension its writer emits.
 SUFFIXES = {"ply": ".ply", "obj": ".obj", "stl": ".stl", "gltf": ".glb"}
+
+
+def _glb_with_nodes(
+    path: Path, gt: GroundTruth, nodes: list[dict], roots: list[int]
+) -> None:
+    """A GLB carrying one mesh and a caller-supplied node graph.
+
+    Factored out so the malformed-graph fixtures below differ only in the graph, which
+    is the variable under test.
+    """
+    blob, views, accessors = _accessor_blob(gt)
+    doc = {
+        "asset": {"version": "2.0"},
+        "scene": 0,
+        "scenes": [{"nodes": roots}],
+        "nodes": nodes,
+        "meshes": [
+            {
+                "primitives": [
+                    {
+                        "attributes": {"POSITION": 0, "NORMAL": 1},
+                        "indices": 2,
+                        "mode": 4,
+                    }
+                ]
+            }
+        ],
+        "buffers": [{"byteLength": len(blob)}],
+        "bufferViews": views,
+        "accessors": accessors,
+    }
+    json_chunk = json.dumps(doc).encode("utf-8")
+    json_chunk += b" " * (-len(json_chunk) % 4)
+    bin_chunk = blob + b"\0" * (-len(blob) % 4)
+    total = 12 + 8 + len(json_chunk) + 8 + len(bin_chunk)
+    out = struct.pack("<III", 0x46546C67, 2, total)
+    out += struct.pack("<II", len(json_chunk), 0x4E4F534A) + json_chunk
+    out += struct.pack("<II", len(bin_chunk), 0x004E4942) + bin_chunk
+    path.write_bytes(out)
+
+
+def write_glb_cyclic(path: Path, gt: GroundTruth) -> None:
+    """A GLB whose node graph contains a cycle (0 -> 1 -> 0).
+
+    Malformed — glTF nodes form a forest — and the case that recursed to
+    ``RecursionError`` before the reader tracked ancestors.
+    """
+    _glb_with_nodes(path, gt, [{"children": [1], "mesh": 0}, {"children": [0]}], [0])
+
+
+def write_glb_shared_child(path: Path, gt: GroundTruth) -> None:
+    """Two parents pointing at one mesh-bearing leaf — a DAG, not a cycle."""
+    _glb_with_nodes(
+        path, gt, [{"children": [2]}, {"children": [2]}, {"mesh": 0}], [0, 1]
+    )
+
+
+def write_glb_bad_node_index(path: Path, gt: GroundTruth) -> None:
+    """A child edge pointing past the end of the node array."""
+    _glb_with_nodes(path, gt, [{"children": [99], "mesh": 0}], [0])

@@ -31,8 +31,6 @@ from urllib.parse import unquote
 import numpy as np
 from numpy.typing import NDArray
 
-from ._weld import fan_triangulate  # noqa: F401  (kept for symmetry with _obj)
-
 _GLB_MAGIC = 0x46546C67  # 'glTF'
 _CHUNK_JSON = 0x4E4F534A
 _CHUNK_BIN = 0x004E4942
@@ -254,22 +252,45 @@ def read_gltf(path: Path) -> dict[str, object]:
             face_blocks.append(faces)
             offset += pos.shape[0]
 
-    def walk(node_index: int, parent: NDArray[np.float64]) -> None:
+    def walk(
+        node_index: int, parent: NDArray[np.float64], ancestors: frozenset[int]
+    ) -> None:
+        # glTF node graphs are a strict forest — a node has at most one parent — so a
+        # child edge back into an ancestor is a malformed file. Without this the walk
+        # recurses until Python's stack limit and raises RecursionError, which is not
+        # a ValueError and so escapes the CLI's error funnel as a raw traceback.
+        #
+        # ANCESTOR-scoped rather than a global visited set: the same node reached twice
+        # by different paths is a DAG, technically invalid but harmless to us (it just
+        # emits the mesh twice, which is what the file asks for). Only a true cycle is
+        # unrecoverable, so only a true cycle is refused.
+        if node_index in ancestors:
+            raise ValueError(
+                f"{path.name}: node {node_index} is its own ancestor — the glTF node "
+                "graph has a cycle, which the format does not permit (nodes form a "
+                "forest). The file is malformed; re-export it."
+            )
+        if node_index < 0 or node_index >= len(nodes):
+            raise ValueError(
+                f"{path.name}: node index {node_index} is out of range "
+                f"({len(nodes)} nodes declared)"
+            )
         node = nodes[node_index]
         world = parent @ _node_matrix(node)
         if "mesh" in node:
             emit(int(node["mesh"]), world)
+        descended = ancestors | {node_index}
         for child in node.get("children", []):
-            walk(int(child), world)
+            walk(int(child), world, descended)
 
     scenes = doc.get("scenes", [])
     scene_index = int(doc.get("scene", 0))
     if scenes and scene_index < len(scenes):
         for root in scenes[scene_index].get("nodes", []):
-            walk(int(root), np.eye(4))
+            walk(int(root), np.eye(4), frozenset())
     elif nodes:
         for i in range(len(nodes)):
-            walk(i, np.eye(4))
+            walk(i, np.eye(4), frozenset())
     else:
         # No node graph at all — take the meshes as authored.
         for i in range(len(meshes)):
