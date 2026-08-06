@@ -92,7 +92,7 @@ function loadedAtW(w: number): LoadedMeshData {
 /** Build a 4D view (displayDims [0,1,2], hidden dim 3) with per-dim metadata. */
 function viewWithDim(
   toleranceW: number,
-  dim3: { name: string; discrete?: boolean; step?: number }
+  dim3: { name: string; discrete?: boolean; step?: number; unit?: string }
 ): MeshViewState {
   // Full DimensionMetadata objects (unit/scale are required fields) so a single
   // `as MeshViewState` cast suffices, matching the VIEW const above.
@@ -282,11 +282,10 @@ describe('processMeshData — the continuous-hidden-dim notice (§9 evidence gat
     // unit are in the message because the viewer has no spatial-unit vocabulary, so the
     // reader classifies "spatial Z" vs "benign time axis", not the code.
     const info = vi.spyOn(log, 'info').mockImplementation(() => {});
-    const view = viewWithDim(1.0, { name: 'z2', step: 1 });
     // A real unit, because the unit is half of what the message exists to convey — it
     // is what lets a reader tell a spatial axis from a temporal one. The test was named
     // for it and did not assert it.
-    (view.dimensions as { unit: string }[])[3].unit = 'um';
+    const view = viewWithDim(1.0, { name: 'z2', step: 1, unit: 'um' });
     await processMeshData('/continuous', loadedAtW(0), view, {
       normal_dims: [0, 1, 2],
       double_sided: false,
@@ -329,8 +328,11 @@ describe('processMeshData — the continuous-hidden-dim notice (§9 evidence gat
     });
 
     // Same node, different displayDims: dim 2 ("z") is now hidden and continuous.
-    const second = viewWithDim(1.0, { name: 'time', step: 1 });
-    (second as { displayDims: number[] }).displayDims = [0, 1, 3];
+    // Built as a new literal rather than mutated, because `displayDims` is readonly.
+    const second: MeshViewState = {
+      ...viewWithDim(1.0, { name: 'time', step: 1 }),
+      displayDims: [0, 1, 3],
+    };
     await processMeshData('/swaps', loadedAtW(0), second, {
       normal_dims: [0, 1, 2],
       double_sided: false,
