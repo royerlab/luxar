@@ -836,94 +836,16 @@ def create_lorenz_attractor(
     if warning:
         aprint(f"Performance warning: {warning}")
 
-    # Lorenz attractor parameters
-    sigma = 10.0
-    rho = 28.0
-    beta = 8.0 / 3.0
-    dt = 0.01
+    # Reuse the demo's own integrator so this fixture and `luxar demo run
+    # lorenz` trace the very same trajectory (the two scenes still differ in
+    # radii, brightness and overlays).
+    # Imported here (not at module top) to break the import cycle
+    # demos.demo_lorenz -> luxar.demos -> utils.demos.
+    from ..demos.demo_lorenz import lorenz_trajectory
 
-    # Initialize arrays
-    positions = np.zeros((n_points, 3), dtype=np.float32)
-
-    # Starting point (with small random perturbation if seed is provided)
-    rng = np.random.default_rng(seed)
-    x, y, z = 0.1, 0.0, 0.0
-    if seed is not None:
-        x += rng.uniform(-0.01, 0.01)
-
-    # Generate Lorenz attractor points
-    for i in range(n_points):
-        # Lorenz equations
-        dx = sigma * (y - x) * dt
-        dy = (x * (rho - z) - y) * dt
-        dz = (x * y - beta * z) * dt
-
-        x += dx
-        y += dy
-        z += dz
-
-        positions[i] = [x, y, z]
-
-    # Scale positions to fit nicely in view
-    positions *= 0.1
-
-    # Center the attractor at its center of mass
-    center_of_mass = np.mean(positions, axis=0)
-    positions -= center_of_mass
-
-    # Create time-based colors with smooth transitions
-    # Using HSV color space for smooth color transitions
-    t = np.linspace(0, 1, n_points)
-    hue = (t * 2) % 1.0  # Cycle through hues twice
-
-    # Convert HSV to RGB using vectorized operations
-    # Full saturation and value for vibrant colors
-    s, v = 1.0, 1.0
-
-    # HSV to RGB vectorized conversion
-    # Based on standard HSV→RGB algorithm, vectorized for performance
-    c = np.float32(v * s)  # Chroma
-    h_prime = hue * 6.0  # Hue in [0, 6) range
-    x_hsv = np.asarray(
-        c * (1 - np.abs(h_prime % 2 - 1)), dtype=np.float32
-    )  # Intermediate
-    m = np.float32(v - c)  # Match value
-
-    # Initialize RGB arrays
-    r = np.zeros(n_points, dtype=np.float32)
-    g = np.zeros(n_points, dtype=np.float32)
-    b = np.zeros(n_points, dtype=np.float32)
-
-    # Apply RGB values based on hue sector (0-5)
-    # Each sector represents 60° of the color wheel
-    sector = np.floor(h_prime).astype(int)
-
-    # Sector 0: Red to Yellow (R=max, G=rising, B=0)
-    mask = sector == 0
-    r[mask], g[mask], b[mask] = c, x_hsv[mask], 0.0
-
-    # Sector 1: Yellow to Green (R=falling, G=max, B=0)
-    mask = sector == 1
-    r[mask], g[mask], b[mask] = x_hsv[mask], c, 0.0
-
-    # Sector 2: Green to Cyan (R=0, G=max, B=rising)
-    mask = sector == 2
-    r[mask], g[mask], b[mask] = 0.0, c, x_hsv[mask]
-
-    # Sector 3: Cyan to Blue (R=0, G=falling, B=max)
-    mask = sector == 3
-    r[mask], g[mask], b[mask] = 0.0, x_hsv[mask], c
-
-    # Sector 4: Blue to Magenta (R=rising, G=0, B=max)
-    mask = sector == 4
-    r[mask], g[mask], b[mask] = x_hsv[mask], 0.0, c
-
-    # Sector 5: Magenta to Red (R=max, G=0, B=falling)
-    mask = sector == 5
-    r[mask], g[mask], b[mask] = c, 0.0, x_hsv[mask]
-
-    # Add match value to get final RGB (adjust for brightness)
-    colors = np.column_stack([r + m, g + m, b + m]).astype(np.float32)
+    positions = lorenz_trajectory(n_points, seed=seed)
+    # Cycle through hues twice for smooth time-based colour transitions.
+    colors = hsv_to_rgb((np.linspace(0, 1, n_points) * 2.0) % 1.0)
 
     # Create scene.
     # Imported here (not at module top) to break the import cycle
