@@ -43,11 +43,12 @@ The canonical consumers import directly from `../materials/<kind>/shader-glsl.ts
 - `../materials/gsplat/material-glsl.ts` — same for the gsplat pair.
 
 This barrel's re-exports exist as a stable spelling for out-of-tree consumers
-and regression harnesses (e.g. `src/tests/unit/rendering/shader-hot-path.test.ts`,
-`src/tests/e2e/tsl-shader-parity.spec.ts`) that compare these GLSL3 sources
-against their TSL `NodeMaterial` counterparts. Removing or renaming the
-barrel would force those harnesses to track the materials tree's internal
-layout.
+that may want to import these GLSL3 sources under one path regardless of future
+re-orgs of the materials tree. In-tree consumers currently import the canonical
+`../materials/<kind>/shader-glsl.ts` paths directly (e.g. the parity harness
+`src/tests/unit/rendering/shader-hot-path.test.ts`); removing or renaming the
+barrel would force any out-of-tree consumer to track the materials tree's
+internal layout.
 
 Picking shaders are not re-exported here — they live under
 `../picking/<kind>/shaders.ts` and are not part of the visual-material parity

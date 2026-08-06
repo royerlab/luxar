@@ -127,10 +127,11 @@ absorption-range.ts κ slider log-track bounds (fixed nominal span, widened onto
 attrs-utils.ts     Pure helpers: clampGamma, blending-state mapping, liveLayerAttrs
 ```
 
-The public entrypoint is `../layers.ts` (parent file); it re-exports
-`LayersPanel`, `LayerStateManager`, `RangeSlider`, the `computeUniforms` /
-`computeDisplayRange` math, and the `LayerInfo` / `DisplayUniforms` /
-`SelectionMode` types.
+The public entrypoint is `../layers.ts` (parent file); it re-exports only
+`LayersPanel`. The rest — `LayerStateManager`, the `computeUniforms` /
+`computeDisplayRange` math and the `LayerInfo` / `DisplayUniforms` /
+`SelectionMode` types (`./layers/layer-state`), and `RangeSlider`
+(`./layers/range-slider`) — are imported directly from their leaf modules.
 
 ## Display Range Mapping
 

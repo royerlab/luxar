@@ -465,7 +465,7 @@ derived from a value without more machinery than it is worth. Each carries a com
 pointing at the capability it corresponds to; do not widen them to
 `GeometryTypeName`.
 
-Not re-exported from `index.ts`; import directly from `../types/geometry-capabilities`.
+Import directly from `../types/geometry-capabilities`.
 
 ## Specialized Group Types
 
@@ -492,7 +492,7 @@ A `Group` whose `kind === 'partition'` is a compile-time decomposition of one la
 
 - **`PartitionGroupMetadata`** -- `{ type: 'group', kind: 'partition', display_type, max_elements, position_bounds?, ... }`. `position_bounds` is the union of the children's bounds so picking / framing / the scene-bounds cache can treat the layer as one entity. The loader matches the shape inline (`attrs.type === 'group' && attrs.kind === 'partition'`).
 
-Neither module is re-exported from `index.ts`; import directly from `../types/lod-group` / `../types/partition-group`.
+Import directly from `../types/lod-group` / `../types/partition-group`.
 
 ## Zarr Types
 
@@ -535,7 +535,7 @@ import {
 
 ## Animation Types
 
-Type definitions in `animation.ts` for FPS-based dimension animation. These types are **not re-exported** from `index.ts` -- import them directly from `../types/animation`.
+Type definitions in `animation.ts` for FPS-based dimension animation. Import them directly from `../types/animation`.
 
 ```typescript
 import type {
@@ -572,7 +572,7 @@ Key exports:
 - **`MonitorConfig`** / **`MonitorUIState`** -- display configuration and runtime UI state (active tab, time range, expand state).
 - **`TimelinePoint`** / **`GridCellState`** -- `@internal` reserved extension shapes; no current consumer.
 
-These types are **not** re-exported from `index.ts` -- import them directly from `../types/data-monitor-types`.
+Import these types directly from `../types/data-monitor-types`.
 
 ## Float16Array Type Declaration
 
@@ -837,7 +837,6 @@ The types package provides the type-safe foundation for all nD visualization ope
 
 ## File Index
 
-- `index.ts` -- Barrel re-exporting the public types and helpers (`DimensionMetadata`, `SimpleDims`, `initializeDims`, `getDimensionRanges`, the Points/Lines/GSplats interface families and their type guards, `ZarrSceneAttrs`/`ZarrNodeAttrs`, `hasContentsMethod`).
 - `dims.ts` -- `DimensionMetadata`, `SimpleDims`, `initializeDims()`, `getDimensionRanges()`.
 - `points.ts` -- `EffectiveRadiusConfig`, `PointsMetadata`, `LoadedPointsData`, `PointRange`, `PointsViewState`, `PointsDataLoader`, `PointsUserData`, `PositionArray` / `ColorArray` / `ScalarArray` aliases, and `isPointsMetadata` / `isPointsUserData` guards.
 - `lines.ts` -- `LineType`, `LinesMetadata`, `OrderingMetadata`, `SegmentRange`, `LoadedLinesData`, `ProcessedLinesData`, `ClippedSegment`, `LinesDataLoader`, `LinesViewState`, `LinesUserData`, and `isLinesMetadata` / `isLinesUserData` / `isValidLineType` guards.
