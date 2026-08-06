@@ -10,12 +10,13 @@ import { describe, it, expect, afterEach } from 'vitest';
 import * as THREE from 'three';
 import {
   LINE_FLOATS_PER_SEGMENT,
+  LINE_TEXTURE_LAYOUT,
   configureElementTextureLayout,
   resetElementTextureLayoutForTests,
-  getLineTextureWidth,
-  getMaxLineCapacityPerNode,
+  getElementTextureWidth,
+  getMaxElementCapacityPerNode,
   clampLineCapacity,
-  lineTextureHeightForCapacity,
+  elementTextureHeightForCapacity,
 } from '../../../rendering/element-texture-layout';
 import {
   elementTexelCapacity,
@@ -95,18 +96,18 @@ describe('element-texture-layout — line bindings (6 texels/segment)', () => {
   it('defaults to a multiple-of-6 width with a 4096² capacity bound', () => {
     // Width is forced to a multiple of 6 so a segment's texels never
     // straddle a row: floor(4096 / 6) * 6 = 4092.
-    expect(getLineTextureWidth()).toBe(4092);
-    expect(getLineTextureWidth() % 6).toBe(0);
-    expect(getMaxLineCapacityPerNode()).toBe(Math.floor((4092 * 4096) / 6));
+    expect(getElementTextureWidth(LINE_TEXTURE_LAYOUT)).toBe(4092);
+    expect(getElementTextureWidth(LINE_TEXTURE_LAYOUT) % 6).toBe(0);
+    expect(getMaxElementCapacityPerNode(LINE_TEXTURE_LAYOUT)).toBe(Math.floor((4092 * 4096) / 6));
   });
 
   it('computes row-padded texture heights and clamps capacities', () => {
     configureElementTextureLayout(12); // width 12 → 2 segments/row, bound 12*12/6 = 24
-    expect(getLineTextureWidth()).toBe(12);
-    expect(lineTextureHeightForCapacity(0)).toBe(1);
-    expect(lineTextureHeightForCapacity(2)).toBe(1);
-    expect(lineTextureHeightForCapacity(3)).toBe(2);
-    const max = getMaxLineCapacityPerNode();
+    expect(getElementTextureWidth(LINE_TEXTURE_LAYOUT)).toBe(12);
+    expect(elementTextureHeightForCapacity(0, LINE_TEXTURE_LAYOUT)).toBe(1);
+    expect(elementTextureHeightForCapacity(2, LINE_TEXTURE_LAYOUT)).toBe(1);
+    expect(elementTextureHeightForCapacity(3, LINE_TEXTURE_LAYOUT)).toBe(2);
+    const max = getMaxElementCapacityPerNode(LINE_TEXTURE_LAYOUT);
     expect(clampLineCapacity(max)).toBe(max);
     expect(clampLineCapacity(max + 1)).toBe(max);
   });
@@ -236,7 +237,7 @@ describe('attachLineStorage / writeLineTexels — fused writer round-trip', () =
     const geometry = new THREE.InstancedBufferGeometry();
     const texture = attachLineStorage(geometry, 24); // bound = 12×12/6 = 24 → 12 rows
     expect(texture.image.height).toBe(12);
-    const rowFloats = getLineTextureWidth() * 4;
+    const rowFloats = getElementTextureWidth(LINE_TEXTURE_LAYOUT) * 4;
     expect(rowFloats).toBe(48);
 
     writeLineTexels(texture, makeSource(4), 4); // 4 segments = floats [0, 96) = rows 0,1

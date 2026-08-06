@@ -18,7 +18,6 @@
     "src/types/format-contract.ts",
     "typedoc.json",
     "src/tests/builders/**",
-    "src/tests/mocks/**",
     "src/tests/e2e/helpers.ts",
     "src/tests/test-config.ts"
   ],

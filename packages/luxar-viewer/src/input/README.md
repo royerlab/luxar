@@ -37,19 +37,16 @@ input/
     │   ├── compute-step.ts                   # computeDimensionStep + resolveSelectedDimension
     │   ├── step-math.ts                      # calculateStepSize + calculateNextPosition
     │   ├── selection.ts                      # getNonDisplayedDimensions + mapKeyToDimension
-    │   ├── format.ts                         # formatDimensionValue + generateNavigationHelp
     │   └── setup.ts                          # initDimensionSliders / clearDimensionUI bodies
     ├── window-events/                        # Window/document-level listeners
     │   ├── window-event-handler.ts           # resize + wheel + fullscreenchange class
-    │   ├── fullscreen-toggle.ts              # toggleFullscreen body
-    │   └── fov-wheel-math.ts                 # calculateFovChange (documented; live wheel uses sceneManager.updateFOV)
-    ├── commands/                             # Command bodies the orchestrator delegates to
-    │   ├── panel-coordinator.ts              # PanelCoordinator (Escape flow)
-    │   ├── viewer-state-export.ts            # exportViewerState body
-    │   ├── control-mode.ts                   # toggleControlMode + toggleInertialMode + nextControlType
-    │   ├── focus-utils.ts                    # isTypingInInput + isFocusOnSceneCanvas
-    │   └── data-monitor-cycle.ts             # cycleDataMonitor body
-    └── keyboard-validation.ts                # isNavigationKey + shouldBlockShortcut (test-only public surface)
+    │   └── fullscreen-toggle.ts              # toggleFullscreen body
+    └── commands/                             # Command bodies the orchestrator delegates to
+        ├── panel-coordinator.ts              # PanelCoordinator (Escape flow)
+        ├── viewer-state-export.ts            # exportViewerState body
+        ├── control-mode.ts                   # toggleControlMode + toggleInertialMode + nextControlType
+        ├── focus-utils.ts                    # isTypingInInput + isFocusOnSceneCanvas
+        └── data-monitor-cycle.ts             # cycleDataMonitor body
 ```
 
 The depth encodes audience. `input-handler.ts` is public; everything
@@ -162,11 +159,10 @@ tests/unit/input/
     ├── window-events/
     │   ├── fullscreen-toggle.test.ts
     │   └── window-event-handler.test.ts
-    ├── commands/
-    │   ├── control-mode.test.ts
-    │   ├── data-monitor-cycle.test.ts
-    │   ├── focus-utils.test.ts
-    │   ├── panel-coordinator.test.ts
-    │   └── viewer-state-export.test.ts
-    └── keyboard-validation.test.ts
+    └── commands/
+        ├── control-mode.test.ts
+        ├── data-monitor-cycle.test.ts
+        ├── focus-utils.test.ts
+        ├── panel-coordinator.test.ts
+        └── viewer-state-export.test.ts
 ```
