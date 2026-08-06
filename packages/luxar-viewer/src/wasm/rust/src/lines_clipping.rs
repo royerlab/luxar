@@ -340,35 +340,6 @@ pub fn interpolate_clipped_positions(
     out_idx as u32
 }
 
-/// Linear interpolation helper (scalar).
-#[wasm_bindgen]
-pub fn lerp(a: f32, b: f32, t: f32) -> f32 {
-    a + t * (b - a)
-}
-
-/// Linear interpolation for 3D vectors.
-///
-/// Returns interpolated vector as [x, y, z].
-#[wasm_bindgen]
-pub fn lerp_vec3(a: &[f32], b: &[f32], t: f32) -> Vec<f32> {
-    vec![
-        a[0] + t * (b[0] - a[0]),
-        a[1] + t * (b[1] - a[1]),
-        a[2] + t * (b[2] - a[2]),
-    ]
-}
-
-/// Calculate 3D Euclidean distance.
-#[wasm_bindgen]
-pub fn distance_3d(a: &[f32], b: &[f32]) -> f32 {
-    // Match the TypeScript mirror: widen before subtraction/squaring so
-    // component deltas above sqrt(f32::MAX) stay finite.
-    let dx = b[0] as f64 - a[0] as f64;
-    let dy = b[1] as f64 - a[1] as f64;
-    let dz = b[2] as f64 - a[2] as f64;
-    (dx * dx + dy * dy + dz * dz).sqrt() as f32
-}
-
 /// Batch interpolate scalar attributes for visible segments.
 ///
 /// Interpolates values using t1/t2 parameters and compacts to visible-only output.
@@ -898,28 +869,6 @@ mod tests {
     }
 
     #[test]
-    fn test_lerp() {
-        assert_eq!(lerp(0.0, 10.0, 0.0), 0.0);
-        assert_eq!(lerp(0.0, 10.0, 1.0), 10.0);
-        assert_eq!(lerp(0.0, 10.0, 0.5), 5.0);
-    }
-
-    #[test]
-    fn test_lerp_vec3() {
-        let a = vec![0.0, 0.0, 0.0];
-        let b = vec![10.0, 20.0, 30.0];
-        let result = lerp_vec3(&a, &b, 0.5);
-        assert_eq!(result, vec![5.0, 10.0, 15.0]);
-    }
-
-    #[test]
-    fn test_distance_3d() {
-        let a = vec![0.0, 0.0, 0.0];
-        let b = vec![3.0, 4.0, 0.0];
-        assert_eq!(distance_3d(&a, &b), 5.0); // 3-4-5 triangle
-    }
-
-    #[test]
     fn test_interpolate_clipped_positions() {
         // 2 segments, 4D positions, display_dims=[0,1,2]
         // Segment 0: visible, t1=0.0, t2=0.5 (half clipped)
@@ -1036,17 +985,6 @@ mod tests {
         assert!((output_end[0] - 0.0).abs() < 1e-6);
         assert!((output_end[1] - 1.0).abs() < 1e-6);
         assert!((output_end[2] - 0.0).abs() < 1e-6);
-    }
-
-    #[test]
-    fn test_distance_3d_huge_coordinates_no_f32_overflow() {
-        let a = [-1e30f32, 0.0, 0.0];
-        let b = [1e30f32, 0.0, 0.0];
-        let distance = distance_3d(&a, &b);
-
-        assert!(distance.is_finite());
-        let expected = (b[0] as f64 - a[0] as f64) as f32;
-        assert_eq!(distance, expected);
     }
 
     #[test]

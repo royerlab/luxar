@@ -115,7 +115,8 @@ A triangle renders **iff all three of its vertices pass the nD slab test**. No
 clipping, no re-triangulation, no attribute interpolation — and no vertex
 compaction either: only the _index_ buffer is rebuilt on a slice change, so
 culled vertices cost nothing to draw and the loader gets to keep native-dtype
-colours (the alternative, `compact_by_mask`, is `&[f32]`-only).
+colours (a generic `&[f32]`-only mask compaction, as the former `compact_by_mask`
+was, could not).
 
 The price is a **ragged, triangle-quantized cut boundary** rather than a clean
 planar section. On a well-tessellated mesh with a tolerance comparable to the edge

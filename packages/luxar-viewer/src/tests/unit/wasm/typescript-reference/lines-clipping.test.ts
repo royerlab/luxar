@@ -1,9 +1,9 @@
 /**
  * Tests for `src/wasm/typescript/lines_clipping.ts`
  * (nD segment clipping: clip_segment_single, clip_segments_batch,
- * interpolate_clipped_positions, lerp / lerp_vec3 / distance_3d primitives,
- * interpolate_scalars_batch, interpolate_colors_batch,
- * calculate_segment_lengths, compute_cap_suppression).
+ * interpolate_clipped_positions, interpolate_scalars_batch,
+ * interpolate_colors_batch, calculate_segment_lengths,
+ * compute_cap_suppression).
  *
  * Extracted from `tests/unit/wasm/typescript-reference.test.ts` per the
  * restructuring plan (wasm.md O1 / Phase D9 — final phase): the 1714-line
@@ -16,9 +16,6 @@ import {
   clip_segment_single,
   clip_segments_batch,
   interpolate_clipped_positions,
-  lerp,
-  lerp_vec3,
-  distance_3d,
   interpolate_scalars_batch,
   interpolate_colors_batch,
   calculate_segment_lengths,
@@ -328,47 +325,6 @@ describe('lines_clipping: interpolate_clipped_positions', () => {
     expect(outputEnd[0]).toBeCloseTo(7.5, 5);
     expect(outputEnd[1]).toBeCloseTo(15.0, 5);
     expect(outputEnd[2]).toBeCloseTo(22.5, 5);
-  });
-});
-
-describe('lines_clipping: lerp', () => {
-  // [wasm.md/O5][P4] Was four anonymous expect() lines in a single it().
-  // Each case has independent observable identity (endpoints + midpoint +
-  // symmetric range), and an it.each surfaces the failing case.
-  it.each([
-    { a: 0, b: 10, t: 0, expected: 0 },
-    { a: 0, b: 10, t: 1, expected: 10 },
-    { a: 0, b: 10, t: 0.5, expected: 5 },
-    { a: -10, b: 10, t: 0.5, expected: 0 },
-  ])('lerp($a, $b, $t) === $expected', ({ a, b, t, expected }) => {
-    expect(lerp(a, b, t)).toBe(expected);
-  });
-});
-
-describe('lines_clipping: lerp_vec3', () => {
-  it('should interpolate 3D vectors', () => {
-    const a = new Float32Array([0, 0, 0]);
-    const b = new Float32Array([10, 20, 30]);
-
-    const result = lerp_vec3(a, b, 0.5);
-
-    expect(result[0]).toBe(5);
-    expect(result[1]).toBe(10);
-    expect(result[2]).toBe(15);
-  });
-});
-
-describe('lines_clipping: distance_3d', () => {
-  // wasm.md O7[P4]: parametrize the previously-bundled two distance_3d
-  // cases via it.each so a single failure surfaces by label rather than
-  // both being lumped under "should calculate Euclidean distance".
-  it.each([
-    { label: '3-4-5 triangle (exact integer root)', a: [0, 0, 0], b: [3, 4, 0], expected: 5 },
-    { label: 'unit diagonal sqrt(3)', a: [0, 0, 0], b: [1, 1, 1], expected: Math.sqrt(3) },
-  ])('Euclidean distance: $label', ({ a, b, expected }) => {
-    const va = new Float32Array(a);
-    const vb = new Float32Array(b);
-    expect(distance_3d(va, vb)).toBeCloseTo(expected, 5);
   });
 });
 

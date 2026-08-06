@@ -63,17 +63,10 @@ non-standard location.
 ### Projection
 
 - `extract_3d_positions()` — Extract display dimensions from nD positions
-- `calculate_bounds_3d()` — Compute 3D bounding box from nD data
-- `compact_by_mask()` — Remove invisible elements by boolean mask
-- `count_visible()` — Count non-zero mask values
-- `radii_to_visibility_mask()` — Convert effective radii to visibility mask
 
 ### Gaussian Splats
 
-- `compute_gsplats_attenuation()` — Gaussian attenuation from nD distance
-- `extract_visible_cholesky_3d()` — Extract 3D Cholesky factors from nD
-- `compact_attenuated_amplitudes()` — Remove fully attenuated splats
-- `extract_cholesky_submatrix()` — Extract raw Cholesky submatrix for specified dimensions
+- `project_gsplats_nd_to_3d()` — Fused single-pass nD→3D projection (attenuation, visibility, compaction)
 - `mahalanobis_distance()` — nD Mahalanobis distance
 
 ### Line Clipping
@@ -84,7 +77,6 @@ non-standard location.
 - `interpolate_scalars_batch()` / `interpolate_colors_batch()` — Interpolate attributes
 - `calculate_segment_lengths()` — Compute segment lengths for LOD
 - `compute_cap_suppression()` — Per-endpoint cap suppression in [0, 1] (clipped endpoints + interior polyline joints) for the shader cap factor
-- `lerp()` / `lerp_vec3()` / `distance_3d()` — Math helpers
 
 ### Mesh Culling
 

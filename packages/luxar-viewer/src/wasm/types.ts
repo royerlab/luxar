@@ -224,59 +224,6 @@ export interface WasmModule {
     output: Float32Array
   ): void;
 
-  /**
-   * Calculate axis-aligned bounding box for 3D positions.
-   *
-   * @param positions3d - 3D positions [numPoints * 3]
-   * @param numPoints - Number of points
-   * @param output - Output bounds [6]: [min_x, min_y, min_z, max_x, max_y, max_z]
-   * @returns Number of points processed
-   */
-  calculate_bounds_3d(positions3d: Float32Array, numPoints: number, output: Float32Array): number;
-
-  /**
-   * Compact arrays by removing elements where mask[i] == 0.
-   *
-   * @param input - Input array [count * stride]
-   * @param mask - Visibility mask [count] (1=keep, 0=remove)
-   * @param count - Number of elements
-   * @param stride - Elements per item (1 for scalar, 3 for vec3)
-   * @param output - Output compacted array [visibleCount * stride]
-   * @returns Number of visible elements in output
-   */
-  compact_by_mask(
-    input: Float32Array,
-    mask: Uint8Array,
-    count: number,
-    stride: number,
-    output: Float32Array
-  ): number;
-
-  /**
-   * Count visible elements (non-zero mask values).
-   *
-   * @param mask - Visibility mask [count]
-   * @param count - Number of elements
-   * @returns Number of visible elements
-   */
-  count_visible(mask: Uint8Array, count: number): number;
-
-  /**
-   * Create visibility mask from effective radii (radius > threshold is visible).
-   *
-   * @param radii - Effective radii [count]
-   * @param threshold - Minimum radius to be considered visible
-   * @param count - Number of elements
-   * @param output - Output visibility mask [count]
-   * @returns Number of visible elements
-   */
-  radii_to_visibility_mask(
-    radii: Float32Array,
-    threshold: number,
-    count: number,
-    output: Uint8Array
-  ): number;
-
   // ============================================================================
   // GSPLATS PROCESSING - nD to 3D conversion and attenuation
   // ============================================================================
@@ -293,92 +240,6 @@ export interface WasmModule {
    * @returns Mahalanobis distance
    */
   mahalanobis_distance(diff: Float32Array, packedL: Float32Array, ndim: number): number;
-
-  /**
-   * Extract a Cholesky submatrix for specified dimensions.
-   *
-   * @param packed - Full packed Cholesky [packedSize]
-   * @param keepDims - Indices of dimensions to keep (sorted) [subNdim]
-   * @param subNdim - Number of dimensions to keep
-   * @param output - Output packed submatrix [subPackedSize]
-   */
-  extract_cholesky_submatrix(
-    packed: Float32Array,
-    keepDims: Uint32Array,
-    subNdim: number,
-    output: Float32Array
-  ): void;
-
-  /**
-   * Compute attenuation factors for all GSplats based on hidden dimension distance.
-   *
-   * @param positions - Splat centers [splatCount * ndim]
-   * @param cholesky - Packed Cholesky factors [splatCount * packedSize]
-   * @param amplitudes - Splat amplitudes [splatCount]
-   * @param slicePosition - Current slice position [ndim]
-   * @param hiddenDims - Indices of hidden dimensions (sorted) [numHidden]
-   * @param ndim - Total dimensionality
-   * @param splatCount - Number of splats
-   * @param minAmplitude - Visibility threshold
-   * @param truncate - Truncation radius in sigmas for the shifted Gaussian
-   * @param outputVisibility - Output visibility mask [splatCount]
-   * @param outputAttenuation - Output attenuation factors [splatCount]
-   * @returns Number of visible splats
-   */
-  compute_gsplats_attenuation(
-    positions: Float32Array,
-    cholesky: Float32Array,
-    amplitudes: Float32Array,
-    slicePosition: Float32Array,
-    hiddenDims: Uint32Array,
-    ndim: number,
-    splatCount: number,
-    minAmplitude: number,
-    truncate: number,
-    outputVisibility: Uint8Array,
-    outputAttenuation: Float32Array
-  ): number;
-
-  /**
-   * Extract 3D Cholesky submatrices for visible splats.
-   *
-   * @param cholesky - Packed Cholesky factors [splatCount * packedSize]
-   * @param visibility - Visibility mask [splatCount]
-   * @param displayDims - Ordered display-axis dimension indices [1..=3]; their
-   *   requested order maps directly to renderer X/Y/Z (a permutation yields the
-   *   corresponding marginal, never a sorted one), and missing rows are
-   *   scale-matched-padded for 1D/2D data
-   * @param ndim - Total dimensionality
-   * @param splatCount - Number of splats
-   * @param output - Output 3D Cholesky factors [visibleCount * 6]
-   * @returns Number of visible splats processed
-   */
-  extract_visible_cholesky_3d(
-    cholesky: Float32Array,
-    visibility: Uint8Array,
-    displayDims: Uint32Array,
-    ndim: number,
-    splatCount: number,
-    output: Float32Array
-  ): number;
-
-  /**
-   * Compact amplitudes by visibility mask, applying attenuation.
-   *
-   * @param amplitudes - Original amplitudes [splatCount]
-   * @param attenuation - Attenuation factors [splatCount]
-   * @param visibility - Visibility mask [splatCount]
-   * @param splatCount - Number of splats
-   * @param output - Output attenuated amplitudes [visibleCount]
-   * @returns Number of visible splats
-   */
-  compact_attenuated_amplitudes(
-    amplitudes: Float32Array,
-    attenuation: Float32Array,
-    visibility: Uint8Array,
-    splatCount: number,
-    output: Float32Array
-  ): number;
 
   /**
    * Fused nD→3D GSplat projection in a single pass: discrete-visibility gate →
@@ -512,15 +373,6 @@ export interface WasmModule {
     outputStart: Float32Array,
     outputEnd: Float32Array
   ): number;
-
-  /** Linear interpolation helper (scalar) */
-  lerp(a: number, b: number, t: number): number;
-
-  /** Linear interpolation for 3D vectors */
-  lerp_vec3(a: Float32Array, b: Float32Array, t: number): Float32Array;
-
-  /** Calculate 3D Euclidean distance */
-  distance_3d(a: Float32Array, b: Float32Array): number;
 
   /**
    * Batch interpolate scalar attributes for visible segments.

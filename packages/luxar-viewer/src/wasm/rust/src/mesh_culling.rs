@@ -41,15 +41,16 @@
 //! vertices — bounded by the mesh size, which is already the resident working
 //! set.
 //!
-//! It also avoids `projection::compact_by_mask`, which is `&[f32]`-only and so
-//! could not compact the native `uint8`/`uint16` vertex colors the format
-//! permits without a widening pass.
+//! It also avoids a generic `&[f32]`-only mask compaction (as the former
+//! `projection::compact_by_mask` was), which could not compact the native
+//! `uint8`/`uint16` vertex colors the format permits without a widening pass.
 //!
 //! ## Buffer-shape contract
 //!
 //! `ndim`, `num_vertices` and `num_faces` are trusted, and are `debug_assert`ed
-//! rather than checked — matching every sibling kernel (`compact_by_mask`,
-//! `count_visible`). The loader is required to reconcile the declared shapes with
+//! rather than checked — matching the convention every sibling kernel used
+//! (e.g. the former `compact_by_mask` / `count_visible`). The loader is required
+//! to reconcile the declared shapes with
 //! the materialized array lengths before calling (`MESH_NODE_SPEC.md` §3.5
 //! Stage 2), so a mismatch is a caller bug, not untrusted input.
 //!
@@ -258,7 +259,8 @@ pub fn mesh_vertex_visibility_mask(
 /// Note the asymmetry with the `debug_assert`s above, which is deliberate:
 /// store-supplied *values* are range-checked in release builds, while *shape*
 /// parameters (`num_faces`, buffer sizes) the caller computed are trusted, as
-/// they are in every sibling kernel (`compact_by_mask`, `count_visible`).
+/// they were in every sibling kernel (e.g. the former `compact_by_mask` /
+/// `count_visible`).
 ///
 /// # Arguments
 /// * `faces` - Triangle vertex indices [num_faces * 3]
@@ -936,8 +938,8 @@ mod tests {
         assert_eq!(kept, 0);
     }
 
-    /// A non-1 truthy mask value counts as visible (`!= 0`, matching every
-    /// sibling mask consumer such as `compact_by_mask`).
+    /// A non-1 truthy mask value counts as visible (`!= 0`, the convention every
+    /// sibling mask consumer used, e.g. the former `compact_by_mask`).
     #[test]
     fn test_compact_treats_any_nonzero_mask_as_visible() {
         let faces = vec![0u32, 1, 2];

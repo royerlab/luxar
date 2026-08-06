@@ -28,14 +28,14 @@ make benchmark-wasm
 
 ### Categories
 
-| Category               | Operations                                                                                                                                                                                                                    | Notes                                                                                                                                                                    |
-| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **EFFECTIVE RADII**    | `calculate_effective_radii` — nD → 3D hypersphere projection for points visibility.                                                                                                                                           | Core hot path for 4D+ datasets.                                                                                                                                          |
-| **DEPTH SORT**         | `sort_splats_by_depth` — back-to-front ordering for correct alpha blending.                                                                                                                                                   | Budget: ≥ 50 M splats/s (enforced by `perf-budget.test.ts` in the opt-in perf suite, not the default unit tests). Reports absolute throughput.                           |
-| **DECODE**             | Nine tasks: `decode_quantized_u8`, `decode_quantized_u16`, `decode_log_scalar_u8`, `decode_log_scalar_u16`, `decode_lut_scalar_u8`, `decode_lut_scalar_u16`, `decode_lut_row_u8`, `decode_lut_row_u16`, `decode_broadcasted`. | Decodes compressed Python `luxar.encoding` arrays → Float32.                                                                                                             |
-| **PROJECTION**         | `extract_3d_positions`, `calculate_bounds_3d`, `compact_by_mask`, `count_visible`, `radii_to_visibility_mask`.                                                                                                                | nD → 3D projection helpers.                                                                                                                                              |
-| **LINES CLIPPING**     | `clip_segments_batch`, `interpolate_clipped_positions`, `interpolate_scalars_batch`, `interpolate_colors_batch`, `calculate_segment_lengths`, `compute_cap_suppression`, plus utilities.                                      | Batch nD → 3D clipping + attribute interpolation. Per-call utilities (`clip_segment_single`, `lerp`, `lerp_vec3`, `distance_3d`) marked `utility: true` (not hot paths). |
-| **GSPLATS PROCESSING** | `compute_gsplats_attenuation`, `extract_visible_cholesky_3d`, `compact_attenuated_amplitudes`, plus utilities.                                                                                                                | nD → 3D gsplat visibility + Cholesky submatrix extraction. Per-call utilities (`mahalanobis_distance`, `extract_cholesky_submatrix`) marked `utility: true`.             |
+| Category               | Operations                                                                                                                                                                                                                    | Notes                                                                                                                                          |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| **EFFECTIVE RADII**    | `calculate_effective_radii` — nD → 3D hypersphere projection for points visibility.                                                                                                                                           | Core hot path for 4D+ datasets.                                                                                                                |
+| **DEPTH SORT**         | `sort_splats_by_depth` — back-to-front ordering for correct alpha blending.                                                                                                                                                   | Budget: ≥ 50 M splats/s (enforced by `perf-budget.test.ts` in the opt-in perf suite, not the default unit tests). Reports absolute throughput. |
+| **DECODE**             | Nine tasks: `decode_quantized_u8`, `decode_quantized_u16`, `decode_log_scalar_u8`, `decode_log_scalar_u16`, `decode_lut_scalar_u8`, `decode_lut_scalar_u16`, `decode_lut_row_u8`, `decode_lut_row_u16`, `decode_broadcasted`. | Decodes compressed Python `luxar.encoding` arrays → Float32.                                                                                   |
+| **PROJECTION**         | `extract_3d_positions`.                                                                                                                                                                                                       | nD → 3D projection helper.                                                                                                                     |
+| **LINES CLIPPING**     | `clip_segments_batch`, `interpolate_clipped_positions`, `interpolate_scalars_batch`, `interpolate_colors_batch`, `calculate_segment_lengths`, `compute_cap_suppression`, plus a utility.                                      | Batch nD → 3D clipping + attribute interpolation. The per-call utility `clip_segment_single` is marked `utility: true` (not a hot path).       |
+| **GSPLATS PROCESSING** | `mahalanobis_distance` (per-call utility).                                                                                                                                                                                    | nD Mahalanobis distance, marked `utility: true`. The production gsplat projection runs through the fused `project_gsplats_nd_to_3d` kernel.    |
 
 ### Output
 
@@ -65,18 +65,18 @@ sort_splats_by_depth (312 M splats/s WASM)  15.67ms  3.20ms  4.9x
 ======================================================================
 
   Batch Functions (used in production):
-   Functions:        25
+   Functions:        18
    Average speedup:  3.7x
    Fastest speedup:  5.2x (decode_quantized_u16)
-   Slowest speedup:  2.1x (compact_by_mask)
+   Slowest speedup:  2.1x (extract_3d_positions)
 
   * Utility Functions (API completeness, not used in hot paths):
-   Functions:        6
+   Functions:        2
    Average speedup:  0.8x (expected <1x due to WASM call overhead)
 
   Note: Utility functions (*) exist for API completeness and testing.
   In production, batch functions inline the math, avoiding per-call overhead.
-  WASM call overhead dominates for trivial operations like lerp/distance.
+  WASM call overhead dominates for trivial per-call operations.
 ```
 
 ### Batch vs Utility Functions
@@ -84,7 +84,7 @@ sort_splats_by_depth (312 M splats/s WASM)  15.67ms  3.20ms  4.9x
 The benchmark separates **batch** (production hot paths) from **utility** (API completeness, per-call convenience) functions:
 
 - **Batch functions** (unmarked): Used in production. Process arrays of elements in one call, amortizing WASM call overhead. These drive the speedup summary.
-- **Utility functions** (`utility: true`): Exist for API completeness and testing. Not used in production hot paths — batch functions inline the math instead. Expected to show **<1x** speedup due to WASM call overhead dominating trivial operations (e.g., `lerp`, `distance_3d`).
+- **Utility functions** (`utility: true`): Exist for API completeness and testing. Not used in production hot paths — batch functions inline the math instead. Expected to show **<1x** speedup due to WASM call overhead dominating trivial per-call operations (e.g., `mahalanobis_distance`).
 
 ### Configuration
 
