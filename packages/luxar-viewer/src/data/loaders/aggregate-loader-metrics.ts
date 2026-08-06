@@ -20,7 +20,6 @@ function zeroedMetrics(type: LoaderType, path: string): LoaderMetrics {
     path,
     queries: 0,
     loads: 0,
-    evictions: 0,
     errors: 0,
     elementsLoaded: 0,
     bytesLoaded: 0,
@@ -28,7 +27,6 @@ function zeroedMetrics(type: LoaderType, path: string): LoaderMetrics {
     avgQueryTime: 0,
     avgLoadTime: 0,
     memoryUsed: 0,
-    memoryLimit: 0,
   };
 }
 
@@ -36,13 +34,11 @@ function zeroedMetrics(type: LoaderType, path: string): LoaderMetrics {
  * Aggregate the per-LOD metrics of a progressive loader's inner loaders into a
  * single {@link LoaderMetrics} representing the whole node.
  *
- * Counters (`queries` / `loads` / `evictions` / `errors` / `elementsLoaded` /
- * `bytesLoaded` / `visibleElements` / `memoryUsed`) are summed. `memoryLimit` is
- * the max across loaders (it's a shared cap, not additive). `avgQueryTime` /
+ * Counters (`queries` / `loads` / `errors` / `elementsLoaded` /
+ * `bytesLoaded` / `visibleElements` / `memoryUsed`) are summed. `avgQueryTime` /
  * `avgLoadTime` are weighted means by `queries` / `loads` respectively (so a
  * LOD that never queried doesn't skew the average). The optional
- * `spatialIndex` cell counts are summed with query-weighted rate means; the
- * descriptive grid arrays are taken from the first loader that carries them.
+ * `spatialIndex` cell counts are summed with query-weighted rate means.
  * `optimization` (mostly app-global singletons like WASM/GPU-pool) is taken
  * from the first loader that reports it to avoid double-counting.
  *
@@ -65,20 +61,17 @@ export function aggregateLoaderMetrics(inner: LoaderMetrics[], path: string): Lo
   let siCellsPerQueryWeighted = 0;
   let siPointsPerCellWeighted = 0;
   let siEfficiencyWeighted = 0;
-  let siRangesInCache = 0;
   let firstSpatialIndex: NonNullable<LoaderMetrics['spatialIndex']> | undefined;
   let firstOptimization: LoaderMetrics['optimization'] | undefined;
 
   for (const m of inner) {
     out.queries += m.queries;
     out.loads += m.loads;
-    out.evictions += m.evictions;
     out.errors += m.errors;
     out.elementsLoaded += m.elementsLoaded;
     out.bytesLoaded += m.bytesLoaded;
     out.visibleElements += m.visibleElements;
     out.memoryUsed += m.memoryUsed;
-    out.memoryLimit = Math.max(out.memoryLimit, m.memoryLimit);
 
     queryTimeWeighted += m.avgQueryTime * m.queries;
     loadTimeWeighted += m.avgLoadTime * m.loads;
@@ -91,7 +84,6 @@ export function aggregateLoaderMetrics(inner: LoaderMetrics[], path: string): Lo
       siCellsPerQueryWeighted += si.avgCellsPerQuery * m.queries;
       siPointsPerCellWeighted += si.avgElementsPerCell * m.queries;
       siEfficiencyWeighted += si.queryEfficiency * m.queries;
-      siRangesInCache += si.rangesInCache;
     }
     if (m.optimization && !firstOptimization) {
       firstOptimization = m.optimization;
@@ -103,17 +95,11 @@ export function aggregateLoaderMetrics(inner: LoaderMetrics[], path: string): Lo
 
   if (firstSpatialIndex) {
     out.spatialIndex = {
-      // Descriptive grid geometry is not additive — keep the first LOD's as
-      // representative; the per-LOD grids share the same coordinate frame.
-      gridShape: firstSpatialIndex.gridShape,
-      gridOrigin: firstSpatialIndex.gridOrigin,
-      cellSize: firstSpatialIndex.cellSize,
       occupiedCells: siCells,
       totalCells: siTotalCells,
       avgCellsPerQuery: out.queries > 0 ? siCellsPerQueryWeighted / out.queries : 0,
       avgElementsPerCell: out.queries > 0 ? siPointsPerCellWeighted / out.queries : 0,
       queryEfficiency: out.queries > 0 ? siEfficiencyWeighted / out.queries : 0,
-      rangesInCache: siRangesInCache,
     };
   }
   if (firstOptimization) {

@@ -13,7 +13,6 @@ function metrics(type: LoaderType, over: Partial<LoaderMetrics> = {}): LoaderMet
     path: '/n/additive_x',
     queries: 0,
     loads: 0,
-    evictions: 0,
     errors: 0,
     elementsLoaded: 0,
     bytesLoaded: 0,
@@ -21,7 +20,6 @@ function metrics(type: LoaderType, over: Partial<LoaderMetrics> = {}): LoaderMet
     avgQueryTime: 0,
     avgLoadTime: 0,
     memoryUsed: 0,
-    memoryLimit: 0,
     ...over,
   };
 }
@@ -41,7 +39,6 @@ describe('aggregateLoaderMetrics', () => {
         metrics('point-spatial-index', {
           queries: 2,
           loads: 1,
-          evictions: 3,
           errors: 1,
           elementsLoaded: 100,
           bytesLoaded: 500,
@@ -63,23 +60,11 @@ describe('aggregateLoaderMetrics', () => {
     expect(out.path).toBe('/points');
     expect(out.queries).toBe(5);
     expect(out.loads).toBe(3);
-    expect(out.evictions).toBe(3);
     expect(out.errors).toBe(1);
     expect(out.elementsLoaded).toBe(150);
     expect(out.bytesLoaded).toBe(750);
     expect(out.visibleElements).toBe(60);
     expect(out.memoryUsed).toBe(35);
-  });
-
-  it('takes the max memoryLimit (shared cap, not additive)', () => {
-    const out = aggregateLoaderMetrics(
-      [
-        metrics('lines-spatial-index', { memoryLimit: 100 }),
-        metrics('lines-spatial-index', { memoryLimit: 250 }),
-      ],
-      '/lines'
-    );
-    expect(out.memoryLimit).toBe(250);
   });
 
   it('computes a query-weighted mean avgQueryTime', () => {
@@ -101,5 +86,87 @@ describe('aggregateLoaderMetrics', () => {
       '/p'
     );
     expect(out.avgQueryTime).toBe(0);
+  });
+
+  it('computes a load-weighted mean avgLoadTime', () => {
+    // 20ms over 1 load + 60ms over 3 loads → (20*1 + 60*3) / 4 = 50
+    const out = aggregateLoaderMetrics(
+      [
+        metrics('gsplats-spatial-index', { loads: 1, avgLoadTime: 20 }),
+        metrics('gsplats-spatial-index', { loads: 3, avgLoadTime: 60 }),
+      ],
+      '/g'
+    );
+    expect(out.loads).toBe(4);
+    expect(out.avgLoadTime).toBeCloseTo(50);
+  });
+
+  it('avgLoadTime is 0 when there were no loads', () => {
+    const out = aggregateLoaderMetrics(
+      [
+        metrics('point-spatial-index', { avgLoadTime: 42 }),
+        metrics('point-spatial-index', { avgLoadTime: 99 }),
+      ],
+      '/p'
+    );
+    expect(out.loads).toBe(0);
+    expect(out.avgLoadTime).toBe(0);
+  });
+
+  it('rolls up spatialIndex: cell counts summed, rate metrics query-weighted', () => {
+    // out.queries = 1 + 3 = 4.
+    //   occupiedCells   = 10 + 6            = 16   (summed)
+    //   totalCells      = 20 + 12           = 32   (summed)
+    //   avgCellsPerQuery   = (2*1 + 4*3)/4  = 3.5  (query-weighted)
+    //   avgElementsPerCell = (100*1 + 200*3)/4 = 175 (query-weighted)
+    //   queryEfficiency    = (0.1*1 + 0.5*3)/4 = 0.4 (query-weighted)
+    const out = aggregateLoaderMetrics(
+      [
+        metrics('point-spatial-index', {
+          queries: 1,
+          spatialIndex: {
+            occupiedCells: 10,
+            totalCells: 20,
+            avgCellsPerQuery: 2,
+            avgElementsPerCell: 100,
+            queryEfficiency: 0.1,
+          },
+        }),
+        metrics('point-spatial-index', {
+          queries: 3,
+          spatialIndex: {
+            occupiedCells: 6,
+            totalCells: 12,
+            avgCellsPerQuery: 4,
+            avgElementsPerCell: 200,
+            queryEfficiency: 0.5,
+          },
+        }),
+      ],
+      '/p'
+    );
+    expect(out.spatialIndex).toBeDefined();
+    expect(out.spatialIndex!.occupiedCells).toBe(16);
+    expect(out.spatialIndex!.totalCells).toBe(32);
+    expect(out.spatialIndex!.avgCellsPerQuery).toBeCloseTo(3.5);
+    expect(out.spatialIndex!.avgElementsPerCell).toBeCloseTo(175);
+    expect(out.spatialIndex!.queryEfficiency).toBeCloseTo(0.4);
+  });
+
+  it('takes optimization from the FIRST loader that reports it (no double-counting)', () => {
+    const out = aggregateLoaderMetrics(
+      [
+        metrics('gsplats-spatial-index'), // no optimization
+        metrics('gsplats-spatial-index', {
+          optimization: { wasm: { loaded: true, queriesAccelerated: 5 } },
+        }),
+        metrics('gsplats-spatial-index', {
+          optimization: { wasm: { loaded: true, queriesAccelerated: 999 } },
+        }),
+      ],
+      '/g'
+    );
+    // The first REPORTING loader wins; the third's differing value is ignored.
+    expect(out.optimization?.wasm?.queriesAccelerated).toBe(5);
   });
 });

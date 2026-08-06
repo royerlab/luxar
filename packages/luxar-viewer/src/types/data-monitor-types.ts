@@ -22,16 +22,19 @@ export interface ElementRange {
 }
 
 /**
- * Event types emitted by data loaders
+ * Event types emitted by data loaders.
+ *
+ * These three are the only types any loader actually emits: `query`
+ * (the spatial-index loaders), `load` / `error` (the spatial facade).
+ * The cache tiers report their own hit/miss/eviction counters directly
+ * through the `CacheStatsProvider` snapshot rather than as monitor
+ * events, so there is no `cache-hit` / `cache-miss` / `evict` /
+ * `prefetch` event.
  */
 export type MonitorEventType =
   | 'query' // Spatial index or range query initiated
   | 'load' // Data loaded from source
-  | 'cache-hit' // Data found in cache
-  | 'cache-miss' // Data not in cache, needs loading
-  | 'evict' // Data evicted from cache
-  | 'error' // Loading or query error
-  | 'prefetch'; // Prefetch operation
+  | 'error'; // Loading or query error
 
 /**
  * Loader types in the system
@@ -87,7 +90,6 @@ export interface LoaderMetrics {
   // Basic counters
   queries: number;
   loads: number;
-  evictions: number;
   errors: number;
   // Performance metrics
   elementsLoaded: number; // Cumulative (for throughput calculation)
@@ -98,7 +100,6 @@ export interface LoaderMetrics {
   avgLoadTime: number;
   // Memory usage
   memoryUsed: number;
-  memoryLimit: number;
   // Spatial index specific metrics
   spatialIndex?: SpatialIndexMetrics;
   // Performance optimization metrics
@@ -146,16 +147,12 @@ export interface OptimizationMetrics {
  * Spatial index specific metrics
  */
 export interface SpatialIndexMetrics {
-  gridShape: number[];
-  gridOrigin: number[];
-  cellSize: number[];
   occupiedCells: number;
   totalCells: number;
   avgCellsPerQuery: number;
   avgElementsPerCell: number;
   queryEfficiency: number; // Points loaded / points in query region
   lastQueryBounds?: { min: number[]; max: number[] };
-  rangesInCache: number; // Number of cached range queries
 }
 
 /**
@@ -197,22 +194,17 @@ export interface Recommendation {
 export interface MonitorConfig {
   // Display settings
   position: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
-  theme: 'dark' | 'light' | 'auto';
-  defaultView: 'compact' | 'detailed' | 'debug';
 
   // Update settings
   updateInterval: number; // ms between UI updates
   maxEvents: number; // Maximum events to keep in history
 
   // Feature flags
-  showSpatialGrid: boolean;
-  showTimeline: boolean;
   showRecommendations: boolean;
   autoExpand: boolean; // Auto-expand on warnings
 
   // Performance
   enableProfiling: boolean;
-  sampleRate: number; // Sample 1 in N events for profiling
 }
 
 /**
@@ -249,9 +241,6 @@ export interface MonitorUIState {
   isVisible: boolean;
   isExpanded: boolean;
   activeTab: 'overview' | 'cache' | 'memory' | 'performance' | 'insights';
-  selectedLoader?: string;
-  timeRange: number; // Seconds of history to show
-  spatialViewDimensions?: [number, number]; // Which 2D slice to show (for future use)
 }
 
 /**
@@ -285,12 +274,6 @@ export interface CacheMetrics {
   memoryLimit: number;
   memoryPercent: number;
   totalEntries: number;
-  totalAccesses: number;
-  /**
-   * L1-only hit rate. Computed as `l1.hits / (l1.hits + l1.misses)`.
-   * Kept for dashboard compatibility.
-   */
-  recentHitRate: number;
   /**
    * Effective demand hit-rate across all cache tiers:
    * `(l0Hits + l1Hits + l2Hits) / (l0Hits + l1Hits + l2Hits + networkRequests)`.
@@ -298,12 +281,6 @@ export interface CacheMetrics {
    * (lets the UI distinguish "not wired up" from "0% hit rate").
    */
   effectiveDemandHitRate?: number;
-  /** Total evictions accumulated across loaders. */
-  evictionsTotal: number;
-  avgEntrySize: number;
-  reuseRatio: number;
-  hitsPerSecond: number;
-  missesPerSecond: number;
   avgAccessTime: number;
   queriesPerSec: number;
   loadsPerSec: number;
@@ -430,39 +407,6 @@ export type CacheStatusBadge =
   | 'unvalidated-external-dataset'
   | 'cache-errors-detected'
   | 'provider-missing';
-
-/**
- * Performance timeline data point
- *
- * @internal — reserved extension shape; no current consumer.
- */
-export interface TimelinePoint {
-  timestamp: number;
-  queryTime?: number;
-  loadTime?: number;
-  cacheHitRate?: number;
-  memoryUsed?: number;
-  elementsLoaded?: number;
-  loaderType?: LoaderType;
-  event?: MonitorEventType;
-}
-
-/**
- * Spatial grid cell state for visualization
- *
- * @internal — reserved extension shape; no current consumer.
- */
-export interface GridCellState {
-  x: number;
-  y: number;
-  z?: number;
-  isOccupied: boolean;
-  isCached: boolean;
-  isLoading: boolean;
-  isQueried: boolean;
-  points: number;
-  lastAccess?: number;
-}
 
 /**
  * Node type for scene graph display, single-sourced from the cross-language

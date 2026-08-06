@@ -973,7 +973,6 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     if (this.chunkIndex) {
       this.metrics.spatialIndex = buildSpatialIndexMetrics(
         this.chunkIndex.segmentIndex.chunkCount,
-        this.chunkIndex.segmentIndex.metadata.chunk_size ?? 0,
         this.metrics.queries,
         this.totalQueryCells,
         this.metrics.elementsLoaded

@@ -311,7 +311,6 @@ dataLoading: {
     // Object pooling (reuse buffers across updates)
     useAccumulators: true,
     initialAccumulatorCapacity: 8192,
-    accumulatorGrowthFactor: 1.5,
 
     // Web Workers (offload CPU work)
     useWebWorkers: true,

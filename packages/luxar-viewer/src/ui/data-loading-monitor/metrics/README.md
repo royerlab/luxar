@@ -10,8 +10,8 @@ these helpers be unit-tested without DOM, timers, or tab state.
 
 | File       | Role                                                                                                                                  |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `cache.ts` | Aggregates L0 / L1 / L2 / network stats from optional provider ports and walks the loader map to roll up memory limits and evictions. |
-| `rates.ts` | Walks the monitor's event ring buffer once per call to compute per-second rolling rates (queries, loads, hits, misses) and bandwidth. |
+| `cache.ts` | Aggregates L0 / L1 / L2 / network stats from optional provider ports and refreshes the per-loader metrics snapshot map. |
+| `rates.ts` | Walks the monitor's event ring buffer once per call to compute per-second rolling rates (queries, loads) and bandwidth. |
 
 ## Public surface
 
@@ -20,8 +20,6 @@ these helpers be unit-tested without DOM, timers, or tab state.
 export interface RatesSnapshot {
   queriesPerSec: number;
   loadsPerSec: number;
-  hitsPerSec: number;
-  missesPerSec: number;
   bandwidth: number;
   lastCalculated: number;
 }
@@ -39,11 +37,12 @@ export function aggregateCacheMetrics(params: AggregateCacheMetricsParams): Cach
 // for the rolling per-second fields.
 ```
 
-`cache.ts` also exports two small input-shape interfaces —
+`cache.ts` also exports three small input-shape interfaces —
 `CacheRatesSnapshot` (the subset of the rolling rates the aggregator
-reads: `queriesPerSec` / `loadsPerSec` / `hitsPerSec` / `missesPerSec`
-/ `bandwidth`) and `L0Provider` (`{ getStats(), clear?() }`, the port
-for the in-memory decompressed-chunk cache) — and re-exports
+reads: `queriesPerSec` / `loadsPerSec` / `bandwidth`), `L0Provider`
+(`{ getStats(), clear?() }`, the port for the in-memory
+decompressed-chunk cache), and `SliceProvider` (the same-shaped port
+for the SliceCache / "S-cache") — and re-exports
 `CacheTelemetryState` from `types/data-monitor-types` so existing
 consumers can import it from the same module that owns the aggregation.
 
@@ -63,9 +62,8 @@ consumers can import it from the same module that owns the aggregation.
   inferred from `cacheStatsProvider` presence + `isEnabled()`. With
   no provider the default is `not-wired` (not `enabled`) so
   `?no-cache` runs do not surface as enabled.
-- **`recentHitRate` is L1-only** despite the name (kept for back-
-  compat). For a true cross-tier demand hit rate, consumers should
-  read `effectiveDemandHitRate`, which combines L0 hits with the
+- **Cross-tier demand hit rate**: consumers read
+  `effectiveDemandHitRate`, which combines L0 hits with the
   L1 / L2 / network demand counters when available.
 - **Cache-status badges**: emitted into `CacheMetrics.status` and
   driven by telemetry state plus L2 health counters

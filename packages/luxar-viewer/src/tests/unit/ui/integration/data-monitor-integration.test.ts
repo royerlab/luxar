@@ -480,10 +480,10 @@ describe('Data Monitor Integration', () => {
         });
 
         (eventListener as (event: MonitorEvent) => void)({
-          type: 'cache-hit',
+          type: 'load',
           loader: 'point-spatial-index',
           timestamp: Date.now(),
-          data: { path: '/test' },
+          data: { path: '/test', memory: 8000 },
         });
       }
 
@@ -494,7 +494,7 @@ describe('Data Monitor Integration', () => {
       const events = monitor.getRecentEvents();
       expect(events.length).toBeGreaterThanOrEqual(2);
       expect(events.some((e) => e.type === 'query')).toBe(true);
-      expect(events.some((e) => e.type === 'cache-hit')).toBe(true);
+      expect(events.some((e) => e.type === 'load')).toBe(true);
     });
 
     it('should update metrics based on events', () => {
@@ -555,41 +555,6 @@ describe('Data Monitor Integration', () => {
           loader: 'point-spatial-index',
           timestamp: Date.now(),
           data: { path: '/test', elements: 2000, memory: 8000, latency: 50 },
-        });
-
-        (eventListener as (event: MonitorEvent) => void)({
-          type: 'cache-hit',
-          loader: 'point-spatial-index',
-          timestamp: Date.now(),
-          data: { path: '/test' },
-        });
-
-        (eventListener as (event: MonitorEvent) => void)({
-          type: 'cache-hit',
-          loader: 'point-spatial-index',
-          timestamp: Date.now(),
-          data: { path: '/test' },
-        });
-
-        (eventListener as (event: MonitorEvent) => void)({
-          type: 'cache-hit',
-          loader: 'point-spatial-index',
-          timestamp: Date.now(),
-          data: { path: '/test' },
-        });
-
-        (eventListener as (event: MonitorEvent) => void)({
-          type: 'cache-miss',
-          loader: 'point-spatial-index',
-          timestamp: Date.now(),
-          data: { path: '/test' },
-        });
-
-        (eventListener as (event: MonitorEvent) => void)({
-          type: 'cache-miss',
-          loader: 'point-spatial-index',
-          timestamp: Date.now(),
-          data: { path: '/test' },
         });
       }
 
