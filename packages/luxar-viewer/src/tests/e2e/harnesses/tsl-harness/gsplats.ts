@@ -242,6 +242,11 @@ function buildSurfacePickUniforms(surfaceDepth: 0 | 1): Record<string, THREE.IUn
   };
 }
 
+/**
+ * Registry of Gaussian-splat shader entries for the TSL↔GLSL parity harness,
+ * keyed by test name. Each entry carries the GLSL source and a `buildUniforms`
+ * factory; merged into `SHADER_REGISTRY` and driven by the parity/codegen specs.
+ */
 export const GSPLAT_SHADERS: Record<string, RegistryEntry> = {
   // GSplat parity: isotropic Gaussian splat at world origin with
   // identity Cholesky factor. Ortho camera for deterministic projection.

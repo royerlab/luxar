@@ -178,6 +178,11 @@ function buildMeshTSL(config: MeshTSLConfig) {
   };
 }
 
+/**
+ * Registry of mesh shader entries for the TSL↔GLSL parity harness, keyed by
+ * test name. Each entry carries the GLSL source and a `buildUniforms` factory;
+ * merged into `SHADER_REGISTRY` and driven by the parity/codegen specs.
+ */
 export const MESH_SHADERS: Record<string, RegistryEntry> = {
   // The DEFAULT build: `opaque`, i.e. the hard alpha cutout, shading from stored
   // normals. Note the mesh default differs from the siblings' `additive`.

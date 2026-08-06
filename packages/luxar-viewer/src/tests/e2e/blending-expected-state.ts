@@ -23,6 +23,11 @@
  * blending-modes.spec.ts overrides the points expectation to false.
  */
 
+/**
+ * Shape of one expected THREE material blend state: the numeric
+ * blending/blendEquation/blendSrc/blendDst plus the depthTest/depthWrite/
+ * transparent flags a blending-mode spec asserts against.
+ */
 export interface ExpectedBlendState {
   blending: number;
   blendEquation: number;
@@ -33,6 +38,12 @@ export interface ExpectedBlendState {
   transparent: boolean;
 }
 
+/**
+ * Expected THREE material state keyed by Luxar blending mode (additive,
+ * normal, ...) — the hard-coded numeric twin of `getCompleteBlendingState`,
+ * asserted by the blending-mode E2E specs (see the file header for why these
+ * values are duplicated as literals rather than imported).
+ */
 export const EXPECTED_BLEND_STATE: Record<string, ExpectedBlendState> = {
   additive: {
     blending: 2, // AdditiveBlending
