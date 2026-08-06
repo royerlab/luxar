@@ -137,7 +137,15 @@ under the default mode `opacity` does **not** dim a mesh — it sweeps the cutou
 threshold. On an RGB mesh (`vAlpha ≡ 1`) that is a hard step at the cutoff; with
 authored per-vertex alpha the surface **erodes** as more vertices fall below it.
 A smooth opacity fade means selecting `normal` and accepting its unsorted-
-translucency caveat (§6.3).
+translucency caveat (§6.3) — which the commit path now warns about once per node
+(`data/scene-loader/commit/commit-mesh-geometry.ts`), so the tradeoff is stated at
+the console rather than only here.
+
+Note the warning's two arms are not the same condition. The opacity arm keys on
+`normalModeDepthWrite` (`>= 0.99`), the threshold where `normal` actually stops
+depth-writing. The per-vertex-RGBA arm fires at **any** opacity, because at
+`opacity = 1` a translucent fragment still writes depth and rejects whatever is
+behind it — dropout rather than mis-ordering, and strictly worse.
 
 ## Testing
 

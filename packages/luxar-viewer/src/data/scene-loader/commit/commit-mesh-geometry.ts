@@ -30,10 +30,85 @@ import { log, Modules } from '../../../utils/log';
 import { updateMeshGeometry } from '../../../rendering/mesh-geometry';
 import { invalidateRenderObjectFor } from './invalidate-render-object';
 import { applyMeshSide, applyMeshShading } from '../../../rendering/node-factory/create-mesh-node';
+import { normalModeDepthWrite } from '../../../rendering/blending-state';
 import { stampLoadedViewVersion } from './stamp-view-version';
 import { isMeshUserData, type MeshMetadata } from '../../../types/mesh';
 import type { StagedMeshCommit } from '../process/data-processor-mesh';
 import type { UpdateSession } from '../../../profiling/update-profiler';
+
+/**
+ * Nodes already warned about unsorted translucency.
+ *
+ * Module-scoped so the notice is once per node for the lifetime of the tab rather than
+ * once per commit — `commitMeshGeometry` runs on EVERY slice move, and a per-call
+ * warning would flood the console during a scrub. Mirrors `noticedWinding` in
+ * `../process/data-processor-mesh`, the other one-time mesh notice, including the
+ * accepted tradeoff that a dataset switch may re-warn.
+ */
+const noticedTranslucency = new Set<string>();
+
+/** Test seam: forget which nodes have been warned about. */
+export function resetTranslucencyNoticesForTesting(): void {
+  noticedTranslucency.clear();
+}
+
+/**
+ * Warn once per node when `normal` is combined with translucency (spec §6.3).
+ *
+ * §6.3 promises this warning and names it as the mitigation for the per-triangle
+ * depth-sort exclusion (§9) — mesh sorts nothing, so triangles composite in index
+ * order. `opaque`, mesh's default, is unaffected: it depth-tests and depth-writes, so
+ * the depth buffer orders it correctly whatever the index order is.
+ *
+ * **The predicate is two independent clauses, and neither is `opacity < 1`.**
+ *
+ * The opacity arm reuses {@link normalModeDepthWrite} (the `>= 0.99` threshold)
+ * rather than testing `< 1` directly. That threshold is where `normal` mode actually
+ * turns `depthWrite` off, i.e. the observable onset of the artifact, and it is the
+ * same predicate the material's own blending state keys on — so the warning and the
+ * behaviour it warns about cannot drift apart.
+ *
+ * The per-vertex-RGBA arm is deliberately UNCONDITIONAL in opacity, because at
+ * `opacity = 1` the failure is worse rather than absent: `depthWrite` is on while
+ * `transparent` is true, so a translucent fragment writes depth and whatever is behind
+ * it is depth-REJECTED. That is dropout, not mis-ordering, and the opacity arm cannot
+ * see it.
+ *
+ * Both inputs are read LIVE off the material rather than from the authored attrs: the
+ * Layers panel can switch a node into `normal` or drag its opacity long after load,
+ * and `userData.blendingMode` is the RESOLVED mode (so an unsupported request that
+ * already fell back to `opaque` stays silent). `uniforms.uOpacity.value` is the same
+ * live-opacity read `ui/layers/layer-apply.ts` performs.
+ */
+function noticeUnsortedTranslucency(
+  object: THREE.Mesh,
+  path: string,
+  colorComponents: 3 | 4 | undefined
+): void {
+  if (noticedTranslucency.has(path)) return;
+
+  const material = object.material as
+    (THREE.Material & { uniforms?: { uOpacity?: { value?: number } } }) | undefined;
+  if (!material || Array.isArray(material)) return;
+  if (material.userData?.blendingMode !== 'normal') return;
+
+  const opacity = material.uniforms?.uOpacity?.value ?? 1.0;
+  const hasVertexAlpha = colorComponents === 4;
+  if (normalModeDepthWrite(opacity) && !hasVertexAlpha) return;
+
+  noticedTranslucency.add(path);
+  const cause = hasVertexAlpha
+    ? `per-vertex RGBA alpha${normalModeDepthWrite(opacity) ? '' : ` and opacity ${opacity}`}`
+    : `opacity ${opacity}`;
+  log.warning(
+    Modules.SCENE_LOADER,
+    `Mesh ${path} renders translucent (${cause}) under blending_mode='normal', which ` +
+      'is drawn WITHOUT per-triangle depth sorting (MESH_NODE_SPEC.md §6.3): triangles ' +
+      'composite in index order, so faces may show through each other incorrectly. Use ' +
+      "'opaque' (the mesh default, depth-correct at any opacity) unless the see-through " +
+      'look is the point.'
+  );
+}
 
 /** Host references the commit needs. */
 export interface MeshCommitCtx {
@@ -113,6 +188,12 @@ export function commitMeshGeometry(
   // and back (§3.4 / §6.2). Both are guarded on change, so a slice move costs
   // nothing here.
   applyMeshShading(object, object.userData.attrs as MeshMetadata, projected.storedNormalsUsable);
+
+  // Warned here rather than at node creation because the two halves of the condition
+  // are only both known here: the resolved mode lives on the material, while per-vertex
+  // RGBA is a property of the LOADED arrays (`MeshMetadata` carries `has_colors`, not a
+  // channel count) and so does not exist until the first commit.
+  noticeUnsortedTranslucency(object, staged.path, data.colorComponents);
 
   // A first-commit vertex-attribute rebind (position grow / color install) leaves
   // three's cached WebGPU RenderObject pointing at the old vertex buffers; evict it

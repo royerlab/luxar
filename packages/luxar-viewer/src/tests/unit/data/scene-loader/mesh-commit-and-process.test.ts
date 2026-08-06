@@ -21,7 +21,10 @@ import {
   processMeshData,
   resetWindingNoticesForTesting,
 } from '../../../../data/scene-loader/process/data-processor-mesh';
-import { commitMeshGeometry } from '../../../../data/scene-loader/commit/commit-mesh-geometry';
+import {
+  commitMeshGeometry,
+  resetTranslucencyNoticesForTesting,
+} from '../../../../data/scene-loader/commit/commit-mesh-geometry';
 import { createEmptyMeshNode } from '../../../../rendering/node-factory/create-mesh-node';
 import { log } from '../../../../utils/log';
 import type {
@@ -268,6 +271,109 @@ describe('commitMeshGeometry', () => {
     // allocated once per node), so what has to go to zero is the DRAW RANGE.
     expect(mesh.geometry.drawRange.count).toBe(0);
     expect(mesh.userData.visibleTriangleCount).toBe(0);
+  });
+});
+
+describe('commitMeshGeometry — the unsorted-translucency notice (§6.3)', () => {
+  const loader = {} as MeshDataLoader;
+
+  beforeEach(() => {
+    resetTranslucencyNoticesForTesting();
+  });
+
+  /** Commit one triangle into a fresh scene, optionally with per-vertex RGBA. */
+  async function commitOnce(
+    path: string,
+    attrs: MeshMetadata,
+    opts: { rgba?: boolean; mesh?: THREE.Mesh; root?: THREE.Group } = {}
+  ): Promise<THREE.Mesh> {
+    const root = opts.root ?? new THREE.Group();
+    const mesh = opts.mesh ?? createEmptyMeshNode(path, attrs, loader, null);
+    if (!opts.mesh) root.add(mesh);
+    const data: LoadedMeshData = opts.rgba
+      ? {
+          ...loaded(),
+          colors: new Uint8Array([255, 0, 0, 128, 0, 255, 0, 128, 0, 0, 255, 128]),
+          colorComponents: 4,
+        }
+      : loaded();
+    const staged = await processMeshData(path, data, VIEW, {
+      normal_dims: [0, 1, 2],
+      double_sided: false,
+    });
+    commitMeshGeometry({ rootGroup: root, currentVersion: 1 }, staged);
+    return mesh;
+  }
+
+  it('fires for `normal` below the depthWrite threshold', async () => {
+    const warn = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    await commitOnce('/translucent', {
+      ...ATTRS,
+      blending_mode: 'normal',
+      opacity: 0.5,
+    } as MeshMetadata);
+    const messages = warn.mock.calls.map((c) => String(c[1]));
+    expect(messages.some((m) => m.includes('/translucent') && m.includes('§6.3'))).toBe(true);
+    warn.mockRestore();
+  });
+
+  it('fires for per-vertex RGBA even at full node opacity', async () => {
+    // The arm the opacity test cannot cover, and the WORSE failure: at opacity 1
+    // `depthWrite` is on while `transparent` is true, so a translucent fragment
+    // writes depth and geometry behind it is depth-REJECTED rather than merely
+    // mis-ordered.
+    const warn = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    await commitOnce(
+      '/vertex_alpha',
+      { ...ATTRS, has_colors: true, blending_mode: 'normal', opacity: 1.0 } as MeshMetadata,
+      { rgba: true }
+    );
+    const messages = warn.mock.calls.map((c) => String(c[1]));
+    expect(messages.some((m) => m.includes('/vertex_alpha') && m.includes('RGBA'))).toBe(true);
+    warn.mockRestore();
+  });
+
+  it('stays SILENT for the opaque default, even with per-vertex RGBA', async () => {
+    // The anti-flood case, and the one that matters most in practice: mesh defaults
+    // to `opaque`, which depth-tests and depth-writes and is therefore correct at any
+    // opacity. A predicate that keyed on translucency alone would warn on every
+    // ordinary RGBA mesh — on EVERY slice move, since this runs per commit.
+    const warn = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    await commitOnce('/opaque_rgba', { ...ATTRS, has_colors: true, opacity: 0.3 } as MeshMetadata, {
+      rgba: true,
+    });
+    expect(warn.mock.calls.map((c) => String(c[1])).some((m) => m.includes('§6.3'))).toBe(false);
+    warn.mockRestore();
+  });
+
+  it('stays silent for `normal` at full opacity with no vertex alpha', async () => {
+    // Opaque-in-practice `normal`: depthWrite is on and nothing is translucent, so
+    // there is no ordering artifact to warn about.
+    const warn = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    await commitOnce('/solid_normal', {
+      ...ATTRS,
+      blending_mode: 'normal',
+      opacity: 1.0,
+    } as MeshMetadata);
+    expect(warn.mock.calls.map((c) => String(c[1])).some((m) => m.includes('§6.3'))).toBe(false);
+    warn.mockRestore();
+  });
+
+  it('warns ONCE per node across repeated commits', async () => {
+    // `commitMeshGeometry` runs on every slice move. Without the de-dup set a scrub
+    // through a hidden dimension would emit one warning per frame.
+    const root = new THREE.Group();
+    const attrs = { ...ATTRS, blending_mode: 'normal', opacity: 0.5 } as MeshMetadata;
+    const mesh = createEmptyMeshNode('/scrubbed', attrs, loader, null);
+    root.add(mesh);
+
+    const warn = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    for (let i = 0; i < 3; i++) {
+      await commitOnce('/scrubbed', attrs, { mesh, root });
+    }
+    const hits = warn.mock.calls.map((c) => String(c[1])).filter((m) => m.includes('§6.3'));
+    expect(hits).toHaveLength(1);
+    warn.mockRestore();
   });
 });
 
