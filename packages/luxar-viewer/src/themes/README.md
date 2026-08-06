@@ -164,7 +164,7 @@ There is no barrel; import each symbol directly from its module:
 - `darkTheme`, `lightTheme`, `frostedGlassTheme`, `liquidGlassTheme` from
   `./themes/{dark,light,frosted-glass,liquid-glass}.theme`
 
-Internal, imported directly by
-`theme-manager.ts`: `injectGlassFilters`, `removeGlassFilters`,
+Internal, imported directly by `theme-manager.ts`:
+`injectGlassFilters`, `removeGlassFilters`,
 `injectGlassRefractionLayers`, `removeGlassRefractionLayers`,
 `setupGlassRefractionObserver` from `./glass-filters`.

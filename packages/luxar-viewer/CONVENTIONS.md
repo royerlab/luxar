@@ -33,7 +33,7 @@ is a documented reason not to.
   `src/tests/unit/<area>/`. E2E tests use `.spec.ts` and live under
   `src/tests/e2e/`.
 - **Index/barrel files**: only when a subpackage genuinely has a stable
-  public surface (`config/index.ts`, `rendering/shaders/index.ts`). Internal
+  public surface (`config/index.ts`, `rendering/index.ts`). Internal
   scratch modules import directly from each other, not through a
   barrel, to avoid cyclic imports.
 - **Setup-module pattern**: when decomposing a large facade, sibling
