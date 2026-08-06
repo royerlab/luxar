@@ -439,6 +439,96 @@ const REMAP_STYLE: LineFixtureStyle = {
   endSharpness: 1.0,
 };
 
+/**
+ * A real degree-2 JOINT: two thick segments meeting at a shallow V, wired with
+ * slot-bearing joint codes so the miter block in both backends actually runs.
+ *
+ * Every other joint fixture carries only a SENTINEL code (0 free end, -1
+ * clipped, -2 hub), all of which the join block rejects before it fetches
+ * anything — so the whole screen-space miter path was structurally unreachable
+ * from the parity suite. This is the fixture that reaches it.
+ *
+ * Geometry, and why each number matters:
+ *   seg 0  (-0.6, -0.3) -> (0, 0)      seg 1  (0, 0) -> (0.6, -0.3)
+ *   turn = dot(dirIn, dirOut) = 0.6, so grow = sqrt(2/1.6) = 1.12 <= 2 (inside
+ *   the miter limit) and the axial reach is 6.4 * sqrt(0.25) = 3.2 px against a
+ *   half-segment of ~10.7 px — comfortably inside the overshoot guard, so the
+ *   joint IS mitred rather than falling back.
+ *   width 0.1 x uOrthoLineScale 64 = 6.4 px half-width, clear of the 2 px
+ *   rendered-width gate; a thinner line would skip the block and the fixture
+ *   would silently go vacuous again.
+ *
+ * Codes follow compute_joint_codes: segment 0's END meets segment 1's START, so
+ * seg0.endJointCode = +(1 + 1) = 2 and seg1.startJointCode = -(0 + 3) = -3.
+ */
+const JOIN_A_START: readonly [number, number, number] = [-0.6, -0.3, 0];
+const JOIN_SHARED: readonly [number, number, number] = [0, 0, 0];
+const JOIN_B_END: readonly [number, number, number] = [0.6, -0.3, 0];
+
+function buildJoinTexelSource(): LineTexelSource {
+  return {
+    startPositions: new Float32Array([...JOIN_A_START, ...JOIN_SHARED]),
+    endPositions: new Float32Array([...JOIN_SHARED, ...JOIN_B_END]),
+    startColors: new Float32Array([1, 0.5, 0.25, 1, 0.5, 0.25]),
+    endColors: new Float32Array([1, 0.5, 0.25, 1, 0.5, 0.25]),
+    startWidths: new Float32Array([0.1, 0.1]),
+    endWidths: new Float32Array([0.1, 0.1]),
+    startSharpness: new Float32Array([0.5, 0.5]),
+    endSharpness: new Float32Array([0.5, 0.5]),
+    segmentLengths: new Float32Array([0.671, 0.671]),
+    // seg0 free at its start, joining slot 1's START at its end;
+    // seg1 joining slot 0's END at its start, free at its end.
+    startJointCode: new Float32Array([0, -3]),
+    endJointCode: new Float32Array([2, 0]),
+  };
+}
+
+function buildJoinDataTexture(): THREE.DataTexture {
+  const tex = new THREE.DataTexture(new Float32Array(48), 6, 2, THREE.RGBAFormat, THREE.FloatType);
+  tex.magFilter = THREE.NearestFilter;
+  tex.minFilter = THREE.NearestFilter;
+  tex.generateMipmaps = false;
+  tex.flipY = false;
+  writeLineTexels(tex, buildJoinTexelSource(), 2);
+  return tex;
+}
+
+function buildJoinMesh(material: THREE.Material): THREE.Object3D {
+  const mesh = createInstancedLinesMesh({ ...buildJoinTexelSource(), segmentCount: 2 }, material);
+  mesh.frustumCulled = false;
+  return mesh;
+}
+
+/**
+ * @param join - the `uLineJoin` value. BOTH backends must be driven from this
+ * one number: GLSL reads it as a runtime uniform while the TSL factory bakes it
+ * into the graph (via `lineJoinStyleFromUniform` in the ShaderSource path), so
+ * a fixture that set only one of them would compare a mitred quad against an
+ * unmitred one and fail for the wrong reason.
+ */
+function joinEntry(join: number): RegistryEntry {
+  return {
+    source: LINE_SOURCE,
+    buildUniforms: () => ({
+      ...buildVisualLineUniforms(buildJoinDataTexture(), true),
+      uLineJoin: { value: join },
+    }),
+    buildDefines: () => ({ LUXAR_GAMMA_ONE: '', LUXAR_MAX_RGB_CONTRIBUTION: '' }),
+    buildTSLMaterial: (uniforms) => {
+      const material = lineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
+        blendingMode: 'max',
+        gammaOne: true,
+        isOrtho: true,
+        join: join > 0.5 ? 'miter' : 'none',
+      }) as unknown as THREE.Material;
+      material.transparent = false;
+      material.blending = THREE.NoBlending;
+      return material;
+    },
+    buildMesh: buildJoinMesh,
+  };
+}
+
 function jointCodeEntry(jointCode: number): RegistryEntry {
   const style: LineFixtureStyle = {
     startJointCode: jointCode,
@@ -519,6 +609,13 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
   'line-joint-free-end': jointCodeEntry(0.0),
   'line-joint-hub': jointCodeEntry(-2.0),
   'line-joint-clipped': jointCodeEntry(-1.0),
+  // The screen-space MITER (#790) on a real two-segment joint — the only
+  // fixtures whose joint codes name a partner, so the only ones that reach the
+  // join block at all. Pinned as a PAIR: `-miter` must match across backends,
+  // and the parity spec additionally requires it to DIFFER from `-none`, which
+  // is what proves the join is running rather than being silently skipped.
+  'line-join-miter': joinEntry(1.0),
+  'line-join-none': joinEntry(0.0),
   // Multi-row texture-orientation parity: the segment renders from
   // STORAGE SLOT 1 of a 2-row texture (row 0 is a green decoy). Both
   // backends must resolve the same row — a Y-flip mismatch between the

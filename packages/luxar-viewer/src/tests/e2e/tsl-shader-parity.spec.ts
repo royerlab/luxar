@@ -723,6 +723,73 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     }
   });
 
+  test('line join: the screen-space miter matches across backends AND changes pixels', async ({
+    page,
+  }) => {
+    await bootHarness(page);
+
+    // Both backends, both styles. `line-join-*` are the only line fixtures
+    // whose joint codes name a PARTNER, so they are the only ones that reach
+    // the miter block; every other joint fixture carries a sentinel the block
+    // rejects before it fetches anything.
+    const glslMiter = await runGLSL(page, 'line-join-miter');
+    const tslMiter = await runTSL(page, 'line-join-miter');
+    const glslNone = await runGLSL(page, 'line-join-none');
+    const tslNone = await runTSL(page, 'line-join-none');
+
+    assertBothRendered(glslMiter, tslMiter.pixels, 'line-join-miter');
+    assertBothRendered(glslNone, tslNone.pixels, 'line-join-none');
+
+    // 1. The two backends agree on the mitred quad. GLSL selects the style
+    //    with a runtime uniform and TSL bakes it into the graph, so this is
+    //    the assertion that keeps that deliberate asymmetry honest.
+    const miterDiff = meanAbsDiff(glslMiter, tslMiter.pixels);
+    expect(
+      miterDiff,
+      `line-join-miter: GLSL vs TSL mean abs diff ${miterDiff.toFixed(2)} on the 0-255 scale`
+    ).toBeLessThan(2.0);
+
+    // 2. ...and on the unmitred one, so a shared no-op cannot pass test 1.
+    const noneDiff = meanAbsDiff(glslNone, tslNone.pixels);
+    expect(
+      noneDiff,
+      `line-join-none: GLSL vs TSL mean abs diff ${noneDiff.toFixed(2)}`
+    ).toBeLessThan(2.0);
+
+    // 3. NON-VACUITY, and the reason this test exists: the miter must actually
+    //    CHANGE the image. If the join block were skipped — a mis-decoded
+    //    partner slot, a width gate that never opens, a graph variant built
+    //    with the wrong style — tests 1 and 2 would both pass while comparing
+    //    two identical unmitred renders.
+    //
+    //    COUNT strongly-changed pixels rather than taking a whole-frame mean.
+    //    The wedge this closes is ~theta*R^2/2 px on a 6.4 px half-width joint;
+    //    averaged over all 4096 pixels of the viewport that is a mean abs diff
+    //    of only ~0.5, indistinguishable from tolerance. Measured, the miter
+    //    moves 24 pixels by more than 32/255 (peak 254) out of ~460 covered, so
+    //    a floor of 10 has better than 2x margin while still being far above
+    //    anything a no-op could produce.
+    const strongly = (a: readonly number[], b: readonly number[]): number => {
+      let n = 0;
+      for (let i = 0; i < a.length; i += 4) {
+        let d = 0;
+        for (let c = 0; c < 4; c++) d = Math.max(d, Math.abs(a[i + c] - b[i + c]));
+        if (d > 32) n++;
+      }
+      return n;
+    };
+    const glslChanged = strongly(glslMiter, glslNone);
+    const tslChanged = strongly(tslMiter.pixels, tslNone.pixels);
+    expect(
+      glslChanged,
+      `GLSL: miter must visibly differ from none (got ${glslChanged} strongly-changed px) — a 0 here means the join block never ran`
+    ).toBeGreaterThan(10);
+    expect(
+      tslChanged,
+      `TSL: miter must visibly differ from none (got ${tslChanged} strongly-changed px) — a 0 here means the graph was built without join geometry`
+    ).toBeGreaterThan(10);
+  });
+
   // Multi-row texture-orientation parity (one per geometry type): the
   // element renders from STORAGE SLOT 1 of a 2-row data texture whose
   // row 0 is a green decoy parked away from the viewport centre. A

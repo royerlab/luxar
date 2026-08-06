@@ -61,9 +61,11 @@ import {
   sanitizeNonNegative,
   type TSLNode,
   sortedIndexNode,
+  tslLineJoin,
   tslLineJointCapSuppression,
 } from '../../materials/_shared/tsl-helpers';
 import { getPlaceholderElementTexture } from '../../element-texture-layout';
+import { resolveLineJoin, type LineJoinStyle } from '../../../types/line-join';
 
 /**
  * Pre-created TSL leaf nodes supplied by the wrapper class. Same
@@ -110,6 +112,13 @@ export interface LinePickTSLConfig {
    * false or undefined, only the perspective branch.
    */
   readonly isOrtho?: boolean;
+  /**
+   * Join style at degree-2 polyline joints (#790) — build-time, mirroring
+   * `LineTSLConfig.join`. MUST be resolved from the same authored attribute
+   * the visual factory gets: the pick pass builds the same screen-space quad,
+   * so a divergence makes a mitred corner unpickable.
+   */
+  readonly join?: LineJoinStyle;
 }
 
 export function linePickWebGPUFactory(
@@ -337,7 +346,50 @@ export function linePickWebGPUFactory(
         .and(segMaxPixelWidth.greaterThan(maxPW.mul(2.0)));
     }
 
-    const pixelOffset: TSLNode = perpendicular.mul(aQuadCorner.y).mul(clampedPixelWidth);
+    // Join geometry (#790) — visual-factory parity, so the pick quad is the
+    // SAME quad the eye sees at a mitred corner. Both ends are evaluated on
+    // every vertex to keep the two `flat` cap varyings segment-constant; see
+    // shader-tsl.ts / shader-glsl.ts.
+    const startOffset: TSLNode = vec2(perpendicular.mul(clampedPixelWidth)).toVar();
+    const endOffset: TSLNode = vec2(perpendicular.mul(clampedPixelWidth)).toVar();
+    const startJoinCap: TSLNode = float(-1.0).toVar();
+    const endJoinCap: TSLNode = float(-1.0).toVar();
+    if (resolveLineJoin(config.join) > 0.5) {
+      const shared = {
+        isOrtho: !!config.isOrtho,
+        uLineTex,
+        lineTexW,
+        uResolution,
+        nearCull,
+        selfSlot: int(aSortedIndex),
+        lineDir,
+        pixelLen,
+        clampedPixelWidth,
+      };
+      tslLineJoin({
+        ...shared,
+        atEnd: false,
+        reachesVertex: tA.lessThanEqual(0.0),
+        jointCode: aStartJointCode,
+        sharedNdc: ndcStart,
+        cornerOffset: startOffset,
+        capValue: startJoinCap,
+      });
+      tslLineJoin({
+        ...shared,
+        atEnd: true,
+        reachesVertex: tB.greaterThanEqual(1.0),
+        jointCode: aEndJointCode,
+        sharedNdc: ndcEnd,
+        cornerOffset: endOffset,
+        capValue: endJoinCap,
+      });
+    }
+    const cornerOffset: TSLNode = vec2(
+      aQuadCorner.x.greaterThan(0.0).select(endOffset, startOffset)
+    ).toVar();
+
+    const pixelOffset: TSLNode = cornerOffset.mul(aQuadCorner.y);
     const ndcOffset: TSLNode = pixelOffset.div(uResolution).mul(2.0);
     const expandedClip: TSLNode = vec4(
       clipPosBase.xy.add(ndcOffset.mul(clipPosBase.w)),
@@ -371,10 +423,15 @@ export function linePickWebGPUFactory(
     // it as one let capFactor scale with the partner's slot index (200.5 for a
     // segment joining slot 399, -0.5 for a hub, 0.0 for a slice-clipped end).
     // Decode it exactly as the GLSL twin does, via the shared helper, so the
-    // two backends agree; neither TSL path carries join geometry yet, so both
-    // stop at the code-implied cap.
-    vCapSuppressStart.assign(tslLineJointCapSuppression(aStartJointCode));
-    vCapSuppressEnd.assign(tslLineJointCapSuppression(aEndJointCode));
+    // two backends agree. Where the join block above reached a partner it
+    // supplies the refined SCREEN-space cap instead (cap >= 0); both are
+    // segment-constant, as `flat` requires.
+    vCapSuppressStart.assign(
+      startJoinCap.lessThan(0.0).select(tslLineJointCapSuppression(aStartJointCode), startJoinCap)
+    );
+    vCapSuppressEnd.assign(
+      endJoinCap.lessThan(0.0).select(tslLineJointCapSuppression(aEndJointCode), endJoinCap)
+    );
 
     return clipPosOut;
   });
@@ -415,13 +472,13 @@ export function linePickWebGPUFactory(
     // Per-endpoint cap lifted by its own suppression, combined with
     // min() — removes the intra-segment midpoint jump (visual twin;
     // a residual sub-width joint-seam step is documented there).
-    const startCap: TSLNode = mix(
+    const startJoinCap: TSLNode = mix(
       float(0.5).add(startRamp.mul(0.5)),
       float(1.0),
       vCapSuppressStart
     );
-    const endCap: TSLNode = mix(float(0.5).add(endRamp.mul(0.5)), float(1.0), vCapSuppressEnd);
-    const capFactor: TSLNode = min(startCap, endCap);
+    const endJoinCap: TSLNode = mix(float(0.5).add(endRamp.mul(0.5)), float(1.0), vCapSuppressEnd);
+    const capFactor: TSLNode = min(startJoinCap, endJoinCap);
 
     return capFactor
       .mul(perpFalloff)

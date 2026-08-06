@@ -7,7 +7,10 @@ import {
   getLineTexture,
 } from '../../../../../rendering/line-geometry';
 import { LINE_FLOATS_PER_SEGMENT } from '../../../../../rendering/element-texture-layout';
-import { GLSL_LINE_JOINT_CODE } from '../../../../../rendering/materials/_shared/glsl-lib';
+import {
+  GLSL_LINE_JOINT_CODE,
+  GLSL_LINE_JOIN,
+} from '../../../../../rendering/materials/_shared/glsl-lib';
 import {
   LINE_PICK_VERTEX_SHADER,
   LINE_PICK_FRAGMENT_SHADER,
@@ -113,6 +116,7 @@ describe('LineMaterial', () => {
         ['visual vertex', material.vertexShader],
         ['visual fragment', material.fragmentShader],
         ['shared joint-code block', GLSL_LINE_JOINT_CODE],
+        ['shared join-geometry block', GLSL_LINE_JOIN],
         ['pick vertex', LINE_PICK_VERTEX_SHADER],
         ['pick fragment', LINE_PICK_FRAGMENT_SHADER],
       ];

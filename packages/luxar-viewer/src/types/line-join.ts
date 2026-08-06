@@ -99,3 +99,22 @@ export function setLineJoinOverride(style: LineJoinStyle | null): void {
 export function resolveLineJoin(authored?: LineJoinStyle | null): number {
   return LINE_JOIN_UNIFORM[sessionOverride ?? authored ?? DEFAULT_LINE_JOIN];
 }
+
+/**
+ * Invert {@link LINE_JOIN_UNIFORM} — recover the style from a `uLineJoin`
+ * uniform value.
+ *
+ * The two backends encode the style differently on purpose: GLSL keeps it a
+ * runtime uniform (a `?lineJoin=` override must not recompile a program) while
+ * TSL bakes it into the graph, the same asymmetry the line factories already
+ * have for `uIsOrtho`. A `ShaderSource.webgpu` factory is handed the GLSL-shaped
+ * uniform RECORD, so it needs this to pick the matching graph variant.
+ *
+ * `undefined` (no such uniform in the record) returns `undefined`, which the
+ * factories treat as "unauthored" and resolve through the normal precedence —
+ * NOT as `'none'`.
+ */
+export function lineJoinStyleFromUniform(value: number | undefined): LineJoinStyle | undefined {
+  if (value === undefined) return undefined;
+  return value > 0.5 ? 'miter' : 'none';
+}

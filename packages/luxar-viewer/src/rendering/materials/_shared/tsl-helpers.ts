@@ -21,7 +21,25 @@
  */
 
 import type { IUniform } from 'three';
-import { attribute, float, int, smoothstep } from 'three/tsl';
+import {
+  If,
+  attribute,
+  cameraProjectionMatrix,
+  clamp,
+  dot,
+  float,
+  int,
+  ivec2,
+  length,
+  max,
+  min,
+  modelViewMatrix,
+  smoothstep,
+  sqrt,
+  vec2,
+  vec3,
+  vec4,
+} from 'three/tsl';
 
 /**
  * Loosely-typed TSL node alias. TSL's typed overloads return many
@@ -181,4 +199,210 @@ export function tslLineJointCapSuppression(jointCode: TSLNode): TSLNode {
   const isFreeEnd = jointCode.greaterThan(-0.5).and(jointCode.lessThan(0.5));
   const isHub = jointCode.lessThan(-1.5).and(jointCode.greaterThan(-2.5));
   return isFreeEnd.or(isHub).select(float(0.0), float(1.0));
+}
+
+/**
+ * Rendered half-width below which the join is skipped. The uncovered wedge has
+ * area ~theta*R^2/2 pixels, so under a couple of pixels it is sub-pixel and
+ * invisible — and a line that thin already sits on the 1.5 px floor with its
+ * intensity faded. Gating on width puts the cost only where the benefit is:
+ * million-segment scenes are thin-line scenes and skip the whole block.
+ * Shared with the GLSL twin's `joinMinHalfWidth`.
+ */
+export const LINE_JOIN_MIN_HALF_WIDTH = 2.0;
+
+/** Everything `tslLineJoin` needs from its calling vertex stage. */
+export interface TSLLineJoinArgs {
+  /** Build-time camera mode — the line graphs' `config.isOrtho`. */
+  readonly isOrtho: boolean;
+  /** The RGBA32F line texture node (6 texels/segment). */
+  readonly uLineTex: TSLNode;
+  /** Its width in texels — already `.toVar()`ed by the caller's prologue. */
+  readonly lineTexW: TSLNode;
+  /** Viewport resolution uniform node. */
+  readonly uResolution: TSLNode;
+  /** Scene-relative near-cull distance (already floored). */
+  readonly nearCull: TSLNode;
+  /** This segment's own STORAGE slot, as an int node (self-reference guard). */
+  readonly selfSlot: TSLNode;
+  /**
+   * Which end of the segment this call is for — a plain JS boolean, not a
+   * node: the caller evaluates BOTH ends unconditionally (see below), so the
+   * direction ternaries fold at graph-build time instead of emitting a
+   * `select()` that would materialise both arms per vertex.
+   */
+  readonly atEnd: boolean;
+  /** False when near-clipping moved this endpoint off its source vertex. */
+  readonly reachesVertex: TSLNode;
+  /** texel4.y at the start vertex, texel4.z at the end one. */
+  readonly jointCode: TSLNode;
+  /** NDC of the shared vertex (ndcStart / ndcEnd). */
+  readonly sharedNdc: TSLNode;
+  /** This segment's unit direction in pixel space. */
+  readonly lineDir: TSLNode;
+  readonly pixelLen: TSLNode;
+  readonly clampedPixelWidth: TSLNode;
+  /**
+   * OUT — a vec2 `.toVar()` the caller pre-set to `perpendicular *
+   * clampedPixelWidth`. Overwritten with the miter point only where the join
+   * actually applies, so every skipped path keeps the shipped expansion.
+   */
+  readonly cornerOffset: TSLNode;
+  /**
+   * OUT — a float `.toVar()` the caller pre-set to -1.0 ("no partner reached,
+   * keep the code-implied cap"). Set to the screen-space suppression wherever
+   * a partner IS reached.
+   */
+  readonly capValue: TSLNode;
+}
+
+/**
+ * Screen-space miter join at degree-2 polyline joints (#790) — TSL counterpart
+ * of `GLSL_LINE_JOIN`'s `luxarLineJoin`, shared by the visual and picking line
+ * factories so a pick footprint keeps matching the visible one.
+ *
+ * Two segments meeting at a turn of angle theta leave an uncovered circular
+ * sector of that angle on the OUTSIDE of the bend and double-cover a lens on
+ * the inside. No per-endpoint intensity scalar can close the outer wedge —
+ * nothing rasterises there to shade — so this rotates the quad's end edge onto
+ * the shared miter edge and the two quads TILE.
+ *
+ * STRUCTURAL DIFFERENCE FROM THE GLSL TWIN, and it is deliberate: the join
+ * STYLE is a build-time graph variant here (the caller simply does not call
+ * this when the style is `none`), exactly as the line factories already treat
+ * `config.isOrtho`, whereas GLSL keeps `uLineJoin` a runtime uniform so a
+ * `?lineJoin=` override never recompiles a program. The parity harness compares
+ * pixels, not mechanisms.
+ *
+ * Emits real `If` blocks rather than `select()`: `select()` evaluates both
+ * arms, which would pay the partner texel fetch and projection on every vertex
+ * of every thin line and throw away the width gate's entire point.
+ */
+export function tslLineJoin(args: TSLLineJoinArgs): void {
+  const {
+    isOrtho,
+    uLineTex,
+    lineTexW,
+    uResolution,
+    nearCull,
+    selfSlot,
+    atEnd,
+    reachesVertex,
+    jointCode,
+    sharedNdc,
+    lineDir,
+    pixelLen,
+    clampedPixelWidth,
+    cornerOffset,
+    capValue,
+  } = args;
+
+  // Sentinels: 0 free end, -1 slice-clipped, -2 degree->=3 hub. Only a
+  // slot-bearing code names a partner; the sign carries which of the partner's
+  // endpoints is the shared one (+(slot + 1) its START, -(slot + 3) its END).
+  //
+  // The self-reference is rejected rather than assumed away: the texel writer
+  // already clamps a code naming an unwritten slot and the kernel never emits
+  // one, but that guarantee comes from a DIFFERENT module, and a texel writer
+  // is not the only producer (the TSL parity harness writes codes by hand). A
+  // quad mitered against itself has no partner to tile with, so its rotated
+  // end edge rasterises as a flap sticking out of the tube — the exact failure
+  // this change exists to remove.
+  const partnerSharesItsStart: TSLNode = jointCode.greaterThan(0.0);
+  const partnerSlot: TSLNode = partnerSharesItsStart
+    .select(int(jointCode).sub(int(1)), int(jointCode.negate()).sub(int(3)))
+    .toVar();
+  const namesAPartner: TSLNode = jointCode
+    .greaterThan(0.5)
+    .or(jointCode.lessThan(-2.5))
+    .and(partnerSlot.notEqual(selfSlot));
+
+  const gate: TSLNode = clampedPixelWidth
+    .greaterThan(float(LINE_JOIN_MIN_HALF_WIDTH))
+    .and(reachesVertex)
+    .and(namesAPartner);
+
+  If(gate, () => {
+    // Only the partner's FAR endpoint is needed — the near one is this vertex,
+    // already projected. One texel fetch, one projection.
+    const partnerBase: TSLNode = partnerSlot.mul(int(6)).toVar();
+    const pTexelX: TSLNode = partnerBase.mod(lineTexW).toVar();
+    const pTexelY: TSLNode = partnerBase.div(lineTexW).toVar();
+    const partnerFar: TSLNode = vec3(
+      partnerSharesItsStart.select(
+        uLineTex.load(ivec2(pTexelX.add(int(1)), pTexelY)),
+        uLineTex.load(ivec2(pTexelX, pTexelY))
+      )
+    ).toVar();
+
+    // Project into the same pixel space the quad expansion works in, mirroring
+    // the main path's wGuard (ortho: w == 1 exactly, the guard is inert).
+    const mvFar: TSLNode = modelViewMatrix.mul(vec4(partnerFar, 1.0)).toVar();
+    const clipFar: TSLNode = cameraProjectionMatrix.mul(mvFar).toVar();
+    const wGuardFar: TSLNode = isOrtho ? float(1.0) : nearCull;
+    const farPx: TSLNode = vec2(
+      clipFar.xy.div(max(clipFar.w, wGuardFar)).mul(uResolution.mul(0.5))
+    ).toVar();
+    const sharedPx: TSLNode = vec2(sharedNdc.mul(uResolution.mul(0.5))).toVar();
+
+    // The partner runs FROM the shared vertex TO its far endpoint when it
+    // shares its start, and the other way when it shares its end.
+    const partnerDelta: TSLNode = vec2(
+      partnerSharesItsStart.select(farPx.sub(sharedPx), sharedPx.sub(farPx))
+    ).toVar();
+    // (partnerSharesItsStart stays a runtime node — it is decoded from the
+    // per-endpoint joint code, unlike `atEnd` which the caller fixes.)
+    const partnerLen: TSLNode = length(partnerDelta).toVar();
+    const partnerInFront: TSLNode = isOrtho
+      ? float(1.0).greaterThan(0.0)
+      : mvFar.z.negate().greaterThanEqual(nearCull);
+
+    If(partnerInFront.and(partnerLen.greaterThan(0.0001)).and(pixelLen.greaterThan(0.0001)), () => {
+      // CANONICAL operand order — incoming edge first, outgoing second — so
+      // both segments meeting here evaluate the same expression and take the
+      // same branch. A branch disagreement leaves one diagonal edge with
+      // nothing to tile against, which rasterises as a flap.
+      const partnerDir: TSLNode = vec2(partnerDelta.div(partnerLen)).toVar();
+      const dirIn: TSLNode = atEnd ? lineDir : partnerDir;
+      const dirOut: TSLNode = atEnd ? partnerDir : lineDir;
+      const turn: TSLNode = dot(dirIn, dirOut).toVar();
+
+      // The endpoint cap, DERIVED rather than stored: the kernel's old
+      // scalar was clamp(-dot(away_a, away_b), 0, 1), which with
+      // away_mine = -lineDir and away_partner = +partnerDir is exactly
+      // clamp(dot(lineDir, partnerDir), 0, 1) — the same dot the miter limit
+      // needs anyway. Deriving it frees texel4.yz to carry the partner code,
+      // and it is measured in SCREEN space, so unlike the stored data-space
+      // angle it tracks the camera (#795).
+      capValue.assign(clamp(turn, 0.0, 1.0));
+
+      // Miter limit |M|/R = sqrt(2/(1 + turn)) <= 2 (theta <= 120 deg), and
+      // an overshoot guard on the AXIAL reach R*tan(theta/2), NOT on |M|
+      // (which is ~R always): gating on the magnitude would disable the join
+      // on every polyline whose segments are shorter than twice the tube
+      // radius — exactly the dense-curve case this issue is about. Both
+      // tests read operands identical from either side, so the two quads
+      // always agree on whether this joint is mitred.
+      const grow: TSLNode = sqrt(float(2.0).div(max(turn.add(1.0), float(1e-6)))).toVar();
+      const axialReach: TSLNode = clampedPixelWidth
+        .mul(sqrt(max(grow.mul(grow).sub(1.0), float(0.0))))
+        .toVar();
+      If(
+        grow.lessThanEqual(2.0).and(axialReach.lessThanEqual(min(pixelLen, partnerLen).mul(0.5))),
+        () => {
+          // Intersection of the two segments' +R offset lines. It reduces to
+          // R * perp at a collinear joint, so a straight polyline is
+          // unchanged. The miter point lies ON this segment's own +R offset
+          // line, which is why the resulting trapezoid keeps vPerpNorm an
+          // exact perpendicular coordinate and the super-Gaussian
+          // cross-section is untouched. A mitred joint tiles exactly, so
+          // nothing may dim it.
+          const perpIn: TSLNode = vec2(dirIn.y.negate(), dirIn.x);
+          const perpOut: TSLNode = vec2(dirOut.y.negate(), dirOut.x);
+          cornerOffset.assign(perpIn.add(perpOut).mul(clampedPixelWidth.div(turn.add(1.0))));
+          capValue.assign(float(1.0));
+        }
+      );
+    });
+  });
 }
