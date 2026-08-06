@@ -1,7 +1,8 @@
 """Luxar Demos - Self-contained demonstration scripts.
 
 This package contains executable demo scripts that showcase Luxar's capabilities.
-Each demo is completely self-contained with all generation code in a single file.
+Each demo keeps the code that makes it distinctive in its own file, and reaches
+into this package for the shared plumbing helpers re-exported below.
 
 To run a demo:
     hatch run python packages/luxar/src/luxar/demos/demo_lorenz.py
