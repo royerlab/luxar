@@ -6,13 +6,13 @@ This guide explains the fundamental ideas, design philosophy, and architectural 
 Big Picture: What is Luxar?
 ----------------------------
 
-Luxar is a **high-performance system for compiling and visualizing arbitrary-sized n-dimensional scenes** containing points, lines, and Gaussian splats. It enables:
+Luxar is a **high-performance system for compiling and visualizing arbitrary-sized n-dimensional scenes** containing points, lines, Gaussian splats, and triangle meshes. It enables:
 
 * **Interactive exploration** of billion-primitive datasets (points, lines, splats) at 60 FPS
 * **Arbitrary dimensionality** (3D, 4D, 5D, nD) with intuitive navigation
 * **Memory efficiency** through progressive loading and intelligent caching
 * **High quality rendering** with HDR support and post-processing effects
-* **Multi-primitive scenes**: Points, lines, and Gaussian splats
+* **Multi-primitive scenes**: Points, lines, Gaussian splats, and triangle meshes (the meshes are shaded; the other three are emissive)
 
 **Key Innovation**: Combine spatial indexing with nD hypersphere slicing to enable interactive exploration of datasets that don't fit in memory.
 
@@ -536,7 +536,6 @@ Consider Alternatives For:
 
 * ❌ **Small datasets** (<10K points) - overhead not worth it, use matplotlib/plotly
 * ❌ **Real-time streaming** - Luxar is for static datasets, not live data streams
-* ❌ **Triangle meshes** - Luxar is for points, lines, and Gaussian splats (use three.js for meshes)
 * ❌ **2D plots** - Use specialized 2D libraries (bokeh, plotly)
 
 Common Workflows

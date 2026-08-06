@@ -1,6 +1,6 @@
 /**
  * Shared color-attribute helpers used by the points, lines, and gsplats
- * spatial-index loaders.
+ * spatial-index loaders and by the mesh whole-node loader.
  *
  * Color arrays carry extra structure compared to position/scalar arrays:
  *
@@ -13,8 +13,10 @@
  *     `original_dtype` attribute that records what shape the GPU expects.
  *     After decoding to Float32 we cast back to that type.
  *
- * Shared by all three spatial-index loaders so the encode/decode
- * logic doesn't drift between Points, Lines, and GSplats.
+ * Shared by every geometry loader so the encode/decode logic doesn't drift
+ * between Points, Lines, GSplats and Mesh. (`assertColorLayout` below is the
+ * exception — it guards the three instanced-quad types; a mesh checks its
+ * materialized lengths in its own loader instead.)
  *
  * @module data/loaders/color-attribute-utils
  */
@@ -68,7 +70,9 @@ export function colorComponentsOf(array: zarr.Array<zarr.DataType, zarr.Readable
  * contract and turns an omitted declaration into an immediate loud
  * throw naming the mismatch.
  *
- * No-op when `colors` is absent. Shared by all three geometry types.
+ * No-op when `colors` is absent. Shared by the three instanced-quad types
+ * (Points, Lines, GSplats); mesh checks its materialized lengths in its own
+ * loader instead.
  */
 export function assertColorLayout(
   colors: { length: number } | null | undefined,
