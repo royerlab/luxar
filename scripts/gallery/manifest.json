@@ -137,6 +137,16 @@
       "dataset": "datasets/demos/gsplats_3d_cells3d_multichannel.luxar.zarr"
     },
     {
+      "id": "mesh_isosurface_cells3d",
+      "title": "Cells3D Isosurfaces",
+      "geometry": "mesh",
+      "category": "microscopy",
+      "script": "demo_mesh_isosurface_cells3d.py",
+      "dataset": "datasets/demos/mesh_isosurface_cells3d.luxar.zarr",
+      "fillTarget": 0.84,
+      "note": "the first mesh tile. auto-exposure needs no override (it lands ~0.97 stops on the shaded surface), but the default 0.95 fill clips the slab off the bottom and both sides; 0.84 fits it whole at 82pct coverage"
+    },
+    {
       "id": "gsplats_3d_organoid_multichannel",
       "title": "Multichannel 3D Organoid",
       "geometry": "gsplats",
