@@ -144,15 +144,25 @@ def require_lod_display_type(display_type: object, context: str) -> None:
     """
     if display_type in GEOMETRY_TYPES and not supports_lod(display_type):
         valid = " / ".join(repr(t) for t in lod_capable_types())
+        # The per-mechanism explanation is MESH-SPECIFIC and is appended only for
+        # mesh. This guard also fires for any future LOD-less geometry type, and
+        # for those an explanation about surfaces and QEM decimation would be a
+        # confidently wrong diagnostic — worse than a generic one, because it reads
+        # as though it were about the type the caller actually named.
+        detail = (
+            " For mesh the two flavours differ: the ADDITIVE prefix ladder reduces "
+            "a set of independent elements, which a connected surface is not, so it "
+            "cannot apply; SUBSTITUTIVE levels would work unchanged and are only "
+            "missing a producer (the mesh analog is QEM decimation, which does not "
+            "exist yet)."
+            if display_type == "mesh"
+            else ""
+        )
         raise ValueError(
             f"{context}: display_type for a kind=lod group must be one of "
             f"{valid}, got {display_type!r}. A geometry type is excluded until it "
-            "has an LOD ladder. For mesh the two flavours differ: the ADDITIVE "
-            "prefix ladder reduces a set of independent elements, which a "
-            "connected surface is not, so it cannot apply; SUBSTITUTIVE levels "
-            "would work unchanged and are only missing a producer (the mesh "
-            "analog is QEM decimation, which does not exist yet). Writing this "
-            "would produce a kind=lod group no viewer path can load."
+            f"has an LOD ladder.{detail} Writing this would produce a kind=lod "
+            "group no viewer path can load."
         )
 
 
