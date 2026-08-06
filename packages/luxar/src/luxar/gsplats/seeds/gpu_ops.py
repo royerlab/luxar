@@ -4,8 +4,6 @@ GPU-accelerated operations for seed generation using PyTorch.
 
 This module provides GPU implementations of core operations used in seeding:
 - Sobel gradient computation
-- Peak detection via max pooling
-- Soft blur via separable convolutions
 - Amplitude interpolation via grid sampling
 
 All operations use pure PyTorch (no kornia/faiss dependencies) for minimal
@@ -253,135 +251,6 @@ def _compute_nd_sobel_magnitude_gpu(V_tensor: torch.Tensor) -> torch.Tensor:
     return torch.sqrt(grad_sq_sum)
 
 
-def local_maxima_gpu(
-    img: torch.Tensor,
-    radius: int,
-    thresh: float,
-    top_k: Optional[int] = None,
-) -> np.ndarray:
-    """
-    Find local maxima in n-dimensional image on GPU using max pooling.
-
-    This is substantially faster than scipy.ndimage.maximum_filter for large
-    volumes (often orders of magnitude on GPU; varies by hardware).
-
-    Parameters
-    ----------
-    img : torch.Tensor
-        Input n-dimensional image on GPU.
-    radius : int
-        Half-width of the L∞ neighborhood (hypercube). Minimum value is 1.
-    thresh : float
-        Minimum intensity threshold for peak detection.
-    top_k : int, optional
-        Maximum number of strongest peaks to return. If None, returns all peaks.
-
-    Returns
-    -------
-    np.ndarray
-        Array of shape (N, ndim) containing integer coordinates of detected peaks.
-
-    Notes
-    -----
-    Implementation uses F.max_pool for peak detection:
-    - Pad image to handle boundaries
-    - Apply max pooling with kernel_size = 2*radius + 1
-    - Compare original with max-pooled to find local maxima
-    - Apply threshold mask
-    - Optionally select top_k strongest peaks
-
-    This replaces scipy.ndimage.maximum_filter which runs on CPU.
-    """
-    # Ensure minimum neighborhood size
-    if radius < 1:
-        radius = 1
-
-    kernel_size = 2 * radius + 1
-    ndim = img.ndim
-
-    # Check dimensionality support upfront
-    if ndim not in [2, 3]:
-        raise NotImplementedError(
-            f"GPU peak detection only supports 2D and 3D volumes. "
-            f"Got {ndim}D volume. Use device='cpu' for {ndim}D volumes."
-        )
-
-    # Add batch and channel dimensions for pooling: (B, C, D0, D1, ...)
-    img_batch = img.unsqueeze(0).unsqueeze(0)
-
-    # Pad image to handle boundaries (replicate mode matches scipy 'nearest')
-    padding = [radius] * (2 * ndim)  # [pad_left, pad_right] * ndim
-    img_padded = F.pad(img_batch, padding, mode="replicate")
-
-    # Apply max pooling based on dimensionality
-    if ndim == 2:
-        max_pooled = F.max_pool2d(
-            img_padded, kernel_size=kernel_size, stride=1, padding=0
-        )
-    elif ndim == 3:
-        max_pooled = F.max_pool3d(
-            img_padded, kernel_size=kernel_size, stride=1, padding=0
-        )
-
-    # Remove batch/channel dimensions
-    max_pooled = max_pooled.squeeze(0).squeeze(0)
-
-    # Find peaks: voxel equals neighborhood maximum AND exceeds threshold
-    peaks_mask = (img == max_pooled) & (img >= thresh)
-
-    # Extract coordinates
-    coords = torch.nonzero(peaks_mask, as_tuple=False)
-
-    # Handle empty result
-    if coords.numel() == 0:
-        return np.zeros((0, ndim), dtype=np.intp)
-
-    # Optionally limit to top_k strongest peaks
-    if top_k is not None and len(coords) > top_k:
-        vals = img[tuple(coords.T)]
-        _, keep_indices = torch.topk(vals, k=top_k)
-        coords = coords[keep_indices]
-
-    # Convert to numpy and return
-    return coords.cpu().numpy()
-
-
-def soft_blur_nd_gpu(img: torch.Tensor) -> torch.Tensor:
-    """
-    Apply soft separable blur on GPU to reduce noise before peak detection.
-
-    Uses a 3-point kernel [0.25, 0.5, 0.25] applied separably along each axis.
-    This is substantially faster than scipy.ndimage.convolve1d for large
-    volumes (GPU-dependent).
-
-    Parameters
-    ----------
-    img : torch.Tensor
-        Input n-dimensional image on GPU.
-
-    Returns
-    -------
-    torch.Tensor
-        Blurred image with same shape as input.
-
-    Notes
-    -----
-    The kernel [0.25, 0.5, 0.25] is a normalized tent filter:
-    - Smooths high-frequency noise
-    - Preserves peak locations
-    - Separable application is O(3*ndim*N) instead of O(3^ndim * N)
-
-    This replaces scipy.ndimage.convolve1d which runs on CPU.
-    """
-    kernel_1d = torch.tensor([0.25, 0.5, 0.25], device=img.device)
-
-    result = img
-    for axis in range(img.ndim):
-        result = _conv1d_along_axis(result, kernel_1d, axis, padding="same")
-
-    return result
-
-
 def sample_amplitudes_gpu(
     V: torch.Tensor, coords: torch.Tensor, mode: str = "bilinear"
 ) -> torch.Tensor:
@@ -482,7 +351,7 @@ def estimate_gpu_memory_needed(V: np.ndarray, operation: str = "sobel") -> int:
     V : np.ndarray
         Input volume.
     operation : str
-        Operation type: 'sobel', 'blur', 'maxpool', 'interpolation'.
+        Operation type: 'sobel', 'interpolation'.
 
     Returns
     -------
@@ -493,18 +362,12 @@ def estimate_gpu_memory_needed(V: np.ndarray, operation: str = "sobel") -> int:
     -----
     Rough estimates:
     - Sobel: 5x volume size (input + ndim gradients + output)
-    - Blur: 3x volume size (input + intermediate + output)
-    - Max pool: 3x volume size (input + padded + output)
     - Interpolation: 2x volume size (input + output)
     """
     base_size = V.nbytes
 
     if operation == "sobel":
         return base_size * 5
-    elif operation == "blur":
-        return base_size * 3
-    elif operation == "maxpool":
-        return base_size * 3
     elif operation == "interpolation":
         return base_size * 2
     else:

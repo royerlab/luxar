@@ -127,10 +127,11 @@ absorption-range.ts κ slider log-track bounds (fixed nominal span, widened onto
 attrs-utils.ts     Pure helpers: clampGamma, blending-state mapping, liveLayerAttrs
 ```
 
-The public entrypoint is `../layers.ts` (parent file); it re-exports
-`LayersPanel`, `LayerStateManager`, `RangeSlider`, the `computeUniforms` /
-`computeDisplayRange` math, and the `LayerInfo` / `DisplayUniforms` /
-`SelectionMode` types.
+The public entrypoint is `../layers.ts` (parent file); it re-exports only
+`LayersPanel`. The rest — `LayerStateManager`, the `computeUniforms` /
+`computeDisplayRange` math and the `LayerInfo` / `DisplayUniforms` /
+`SelectionMode` types (`./layers/layer-state`), and `RangeSlider`
+(`./layers/range-slider`) — are imported directly from their leaf modules.
 
 ## Display Range Mapping
 
@@ -218,5 +219,5 @@ control.
 | `labeled-slider.ts`                        | `LabeledSlider` — single-thumb labeled input component (gamma, opacity, absorption); `linear` or `log` track                     |
 | `absorption-range.ts`                      | `absorptionSliderRange` / `formatAbsorption` — κ track bounds (fixed log span, widened onto authored κ) + readout format         |
 | `attrs-utils.ts`                           | `clampGamma`, `getBlendingState`, `liveLayerAttrs` — pure helpers (no DOM)                                                       |
-| `../layers.ts`                             | Public entrypoint — re-exports the layers surface                                                                                |
+| `../layers.ts`                             | Public entrypoint — re-exports `LayersPanel`                                                                                     |
 | `../../styles/components/layers-panel.css` | Themed CSS styles                                                                                                                |

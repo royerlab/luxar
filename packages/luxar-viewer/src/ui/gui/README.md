@@ -16,7 +16,7 @@ This custom GUI library provides a clean, themeable control panel for the Luxar 
 ## Usage
 
 ```typescript
-import { GUI } from '../ui/gui';
+import GUI from '../ui/gui';
 
 // Create GUI panel
 const gui = new GUI({
@@ -134,8 +134,9 @@ gui/
 ```
 
 The public entry point lives one level up at [`../gui.ts`](../gui.ts),
-which re-exports `GUI` (default and named) along with `Folder`,
-`Controller`, and the concrete controller classes.
+which re-exports only the default `GUI` and `Controller`. The concrete
+controller classes and the option/callback types are imported directly from
+their leaf modules under this folder.
 
 ## Subpackages
 
@@ -147,4 +148,7 @@ which re-exports `GUI` (default and named) along with `Folder`,
 ## See Also
 
 - [`../rendering-controls/`](../rendering-controls/README.md) — Primary consumer of this library.
-- [`../gui.ts`](../gui.ts) — Public re-export module that this folder backs.
+- [`../gui.ts`](../gui.ts) — Public re-export module that this folder backs;
+  it re-exports only the default `GUI` and `Controller`. The per-type
+  controllers and option/callback types are imported directly from their leaf
+  modules under `ui/gui/`.
