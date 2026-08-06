@@ -832,7 +832,7 @@ Node (base class)
 ## Testing
 
 Tests are located in `core/tests/`:
-- `test_datanode_types.py` - DataNode types: Lines and GSplats
+- `test_datanode_types.py` - DataNode types: cross-type parity matrix, Lines and GSplats
 - `test_dimension_metadata.py` - Dimension functionality (current Dimension class)
 - `test_dimensions.py` - Scene-level dimensions
 - `test_extend_to_all.py` - extend_to_all functionality in Scene.add_points()

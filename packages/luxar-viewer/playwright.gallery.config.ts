@@ -1,7 +1,7 @@
 /**
  * Playwright configuration for the Luxar gallery harness.
  *
- * Captures a still PNG + orbit video (WebP/GIF) for every demo in
+ * Captures a still PNG + orbit video (WebP/WebM) for every demo in
  * scripts/gallery/manifest.json that has a dataset on disk.
  *
  * Usage:

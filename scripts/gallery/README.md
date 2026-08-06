@@ -1,7 +1,7 @@
 # Gallery harness
 
-Manifest-driven tooling that captures a **still PNG + seamless 360° orbit video
-(WebP + GIF)** for every demo, so we can generate the full set and then curate
+Manifest-driven tooling that captures a **still PNG + seamlessly-looping orbit
+video (WebP + WebM)** for every demo, so we can generate the full set and then curate
 the best for the README gallery (TODO **R19**).
 
 ## Files
@@ -28,7 +28,7 @@ make generate-gallery ONLY=desi_galaxies    # a subset
 GALLERY_ONLY=lorenz pnpm gallery
 ```
 
-Output lands in `docs/images/gallery/<id>.{png,webp,gif}`. That directory is
+Output lands in `docs/images/gallery/<id>.{png,webp,webm}`. That directory is
 **gitignored** — it's a review staging area. Once you pick the winners, copy
 them into `docs/images/readme/` (which **is** committed) and wire them into the
 README gallery table.
@@ -55,4 +55,4 @@ capture hints `exposure`, `fill`, `dimensionNav` (`{key, steps}` for nD),
 ## Requirements
 
 - Datasets: run the generator first (heavy demos download data / fit splats).
-- `ffmpeg` on `PATH` for the WebP/GIF conversion.
+- `ffmpeg` on `PATH` for the WebP/WebM conversion.

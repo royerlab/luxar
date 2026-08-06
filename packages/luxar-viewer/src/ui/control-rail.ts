@@ -18,20 +18,20 @@
  *   it auto-fades after a few seconds and any click/keypress dismisses it.
  *
  * The flyout + panel-popover lifecycle lives in {@link RailOverlay}
- * (rail-overlay.ts); this class owns the buttons, idle/collapse/fullscreen
+ * (control-rail/rail-overlay.ts); this class owns the buttons, idle/collapse/fullscreen
  * behaviour, and the active-state refresh that reads the overlay's open item.
  *
  * @module ui/control-rail
  */
 
-import { getViewerContainer } from '../../utils/viewer-container';
-import { isDocumentFullscreen } from '../../utils/fullscreen';
-import { RailOverlay } from './rail-overlay';
-import { isPanelVisible, escapeHtml } from './dom-helpers';
-import type { ControlRailItem } from './types';
+import { getViewerContainer } from '../utils/viewer-container';
+import { isDocumentFullscreen } from '../utils/fullscreen';
+import { RailOverlay } from './control-rail/rail-overlay';
+import { isPanelVisible, escapeHtml } from './control-rail/dom-helpers';
+import type { ControlRailItem } from './control-rail/types';
 
-export type { ControlRailItem, ControlRailPopover, ControlRailToggle } from './types';
-export { RAIL_ICONS } from './icons';
+export type { ControlRailItem, ControlRailPopover, ControlRailToggle } from './control-rail/types';
+export { RAIL_ICONS } from './control-rail/icons';
 
 const HINT_STORAGE_KEY = 'luxar-control-rail-hint-dismissed';
 /** First-run hint fades away on its own if the user never interacts. */
