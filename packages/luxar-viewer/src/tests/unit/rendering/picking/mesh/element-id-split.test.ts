@@ -19,7 +19,10 @@ import {
   GLSL_ELEMENT_ID_SPLIT,
   GLSL_SORTED_INDEX,
 } from '../../../../../rendering/materials/_shared/glsl-lib';
-import { MESH_PICK_VERTEX_SHADER } from '../../../../../rendering/picking/mesh/shaders';
+import {
+  MESH_PICK_VERTEX_SHADER,
+  MESH_PICK_FRAGMENT_SHADER,
+} from '../../../../../rendering/picking/mesh/shaders';
 import { MAX_MESH_VERTICES } from '../../../../../config/constants';
 
 /**
@@ -32,8 +35,8 @@ import { MAX_MESH_VERTICES } from '../../../../../config/constants';
  * cannot be executed here, the source text is the only witness available — so parse the
  * component ORDER out of it and let the round-trip below run on that.
  *
- * Caught by mutation (swap the halves → this now fails); see
- * `assertGlslSplitOrder` for the assertion that pins it.
+ * Caught by mutation (swap the halves → this now fails); see the
+ * "puts the LOW half in .x" test below for the assertion that pins it.
  */
 function splitId(i: number): [low: number, high: number] {
   const [firstIsLow] = glslSplitOrder();
@@ -89,6 +92,22 @@ describe('the 16-bit split is single-sourced', () => {
     // meshes only. GLSL cannot be executed here, so the source text is the witness.
     const [firstIsLow] = glslSplitOrder();
     expect(firstIsLow, 'vec2 first component must be `i & 0xFFFFu` (the LOW half)').toBe(true);
+  });
+
+  it('the fragment stage routes .x to G and .y to A — the write site the readback decodes', () => {
+    // Pinning the helper's internal order (above) is only half the contract: swapping
+    // the two components at the WRITE site instead — `vec4(vNodeId, vElementId.y,
+    // brightness, vElementId.x)` — would leave the helper assertion green while
+    // `voteWinner`'s `A * 65536 + G` decodes every id above 65,535 to the wrong
+    // vertex, exactly the mutation the helper test cannot see. The TSL twin's write
+    // order is pinned by the `mesh-pick.fragment.glsl.txt` codegen snapshot.
+    const write =
+      /fragColor\s*=\s*vec4\(\s*vNodeId\s*,\s*vElementId\.(\w)\s*,\s*brightness\s*,\s*vElementId\.(\w)\s*\)/.exec(
+        MESH_PICK_FRAGMENT_SHADER
+      );
+    expect(write, 'pick-encoding write not found in the fragment shader').not.toBeNull();
+    expect(write![1], 'the G channel must carry the LOW half (.x)').toBe('x');
+    expect(write![2], 'the A channel must carry the HIGH half (.y)').toBe('y');
   });
 
   it('the sorted-index block still carries the same helper, so the four types agree', () => {
