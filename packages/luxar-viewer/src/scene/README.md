@@ -531,7 +531,7 @@ The scene manager supports automatic per-frame clipping plane adjustment:
 
 1. Each frame, computes a bounding sphere from the cached scene bounds (with safety margin)
 2. Near plane = `max(minNearForRadius(R), distToCenter - R)` where `R` is the safety-expanded radius and `minNearForRadius(R) = max(MIN_NEAR_PLANE, R * MIN_NEAR_RADIUS_FACTOR)` is a scale-aware floor -- smoothly transitions to that floor as the camera enters the sphere
-3. Far plane = `distToCenter + radius` -- distance to farthest point on the sphere
+3. Far plane = `distToCenter + R` -- distance to farthest point on the sphere
 4. The bounds cache is invalidated on scene load/clear; zero per-frame scene-graph traversal in steady state
 
 **Benefits:**

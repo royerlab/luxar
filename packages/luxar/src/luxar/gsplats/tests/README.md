@@ -60,6 +60,11 @@ gsplats/
         └── test_energy_distribution.py
 ```
 
+The tree shows the largest test directories only. The remaining subpackages
+(`clahe/`, `fitting/dynamic_ops/`, `interop/`, `io/`, `lod/`, `planner/`,
+`preprocessing/`, `seeds/`, and the `models/gsplats/{cuda,metal}` backends)
+each carry their own `tests/` directory following the same pattern.
+
 ## Dependencies and Test Execution
 
 ### Core Tests (Always Available)
@@ -75,7 +80,7 @@ hatch run pytest packages/luxar/src/luxar/gsplats/utils/tests/test_trils.py
 Some tests require additional dependencies:
 
 - **PyTorch tests**: `test_lt_solver.py`, `test_inverse_softplus.py` (torch-dependent tests)
-- **SciPy tests**: SciPy-dependent seed/candidate tests
+- **SciPy tests**: `seeds/tests/` (seed generation uses scipy for peak detection and interpolation)
 
 These tests are designed to skip gracefully when dependencies are missing.
 

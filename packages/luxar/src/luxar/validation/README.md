@@ -618,6 +618,7 @@ Tests are located in `validation/tests/`:
 - `test_points_validation.py` - Points-specific validation tests
 - `test_lines_validation.py` - Lines-specific validation tests
 - `test_gsplats_validation.py` - GSplats-specific validation tests
+- `test_mesh_validation.py` - Mesh-specific validation tests
 - `test_colormap_validation.py` - Colormap validation tests
 - `test_overlay_validation.py` - Overlay parameter validation tests (`overlays.py`)
 
