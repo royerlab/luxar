@@ -52,8 +52,8 @@ interface LineFixtureStyle {
   readonly endWidth?: number;
   readonly startSharpness?: number;
   readonly endSharpness?: number;
-  readonly startCapSuppression?: number;
-  readonly endCapSuppression?: number;
+  readonly startJointCode?: number;
+  readonly endJointCode?: number;
 }
 
 function lineTexelSource(
@@ -77,8 +77,8 @@ function lineTexelSource(
     startSharpness: new Float32Array([style.startSharpness ?? 0.5]),
     endSharpness: new Float32Array([style.endSharpness ?? 0.5]),
     segmentLengths: new Float32Array([1.0]),
-    startCapSuppression: new Float32Array([style.startCapSuppression ?? 0]),
-    endCapSuppression: new Float32Array([style.endCapSuppression ?? 0]),
+    startJointCode: new Float32Array([style.startJointCode ?? 0]),
+    endJointCode: new Float32Array([style.endJointCode ?? 0]),
     startScalars: scalars ? new Float32Array([scalars[0]]) : undefined,
     endScalars: scalars ? new Float32Array([scalars[1]]) : undefined,
     startAlphas: alphas ? new Float32Array([alphas[0]]) : undefined,
@@ -139,8 +139,8 @@ function buildLineDataTextureMultiRow(): THREE.DataTexture {
       startSharpness: new Float32Array([0.5, ...real.startSharpness]),
       endSharpness: new Float32Array([0.5, ...real.endSharpness]),
       segmentLengths: new Float32Array([0.4, ...real.segmentLengths]),
-      startCapSuppression: new Float32Array([0, ...real.startCapSuppression]),
-      endCapSuppression: new Float32Array([0, ...real.endCapSuppression]),
+      startJointCode: new Float32Array([0, ...real.startJointCode]),
+      endJointCode: new Float32Array([0, ...real.endJointCode]),
     },
     2
   );
@@ -284,8 +284,8 @@ const SORTED_PERMUTED_LINES: LineTexelSource = {
   startSharpness: new Float32Array([0.5, 0.5, 0.5, 0.5]),
   endSharpness: new Float32Array([0.5, 0.5, 0.5, 0.5]),
   segmentLengths: new Float32Array([0.5, 0.5, 0.5, 0.5]),
-  startCapSuppression: new Float32Array([0, 0, 0, 0]),
-  endCapSuppression: new Float32Array([0, 0, 0, 0]),
+  startJointCode: new Float32Array([0, 0, 0, 0]),
+  endJointCode: new Float32Array([0, 0, 0, 0]),
 };
 
 /**
@@ -439,10 +439,10 @@ const REMAP_STYLE: LineFixtureStyle = {
   endSharpness: 1.0,
 };
 
-function capSuppressionEntry(suppression: number): RegistryEntry {
+function jointCodeEntry(jointCode: number): RegistryEntry {
   const style: LineFixtureStyle = {
-    startCapSuppression: suppression,
-    endCapSuppression: suppression,
+    startJointCode: jointCode,
+    endJointCode: jointCode,
   };
   return {
     source: LINE_SOURCE,
@@ -507,13 +507,18 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
     },
     buildMesh: buildLineInstancedMesh,
   },
-  // Rendered cap-suppression ladder: identical line/colour at s=0, 0.5,
-  // and 1. The parity spec samples the start endpoint and requires the
-  // fractional case to land strictly between the soft cap and fully lifted
-  // cap on BOTH backends — catching storage/shader boolean quantisation.
-  'line-cap-zero': capSuppressionEntry(0.0),
-  'line-cap-fractional': capSuppressionEntry(0.5),
-  'line-cap-full': capSuppressionEntry(1.0),
+  // Rendered endpoint-cap ladder over the JOINT CODES that decide it
+  // (texel4.yz; see GLSL_LINE_JOINT_CODE). A free end and a hub keep the soft
+  // cap, a slice-clipped endpoint suppresses it — so the parity spec requires
+  // free-end and hub to match each other and clipped to be visibly brighter, on
+  // BOTH backends. This replaces a ladder of 0.0 / 0.5 / 1.0 that fed the slot
+  // a continuous suppression scalar: 0.5 is not a representable code (it decodes
+  // to neither predicate, rendering identically to the fully-suppressed case)
+  // and 1.0 decodes to a partner reference to storage slot 0 — itself, in a
+  // single-segment fixture, which the kernel can never emit.
+  'line-joint-free-end': jointCodeEntry(0.0),
+  'line-joint-hub': jointCodeEntry(-2.0),
+  'line-joint-clipped': jointCodeEntry(-1.0),
   // Multi-row texture-orientation parity: the segment renders from
   // STORAGE SLOT 1 of a 2-row texture (row 0 is a green decoy). Both
   // backends must resolve the same row — a Y-flip mismatch between the

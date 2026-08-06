@@ -33,6 +33,7 @@ import {
 } from '../../blending-state';
 import type { BlendingMode } from '../../../types/blending';
 import { computeScalarRangeUniforms, scalarRangeUniformEntries } from '../_shared/scalar-range';
+import { resolveLineJoin, type LineJoinStyle } from '../../../types/line-join';
 
 // `isGammaOne` and `isNoGOG` both live in `../_shared/uniform-helpers`
 // (shared across all three geometry types). Re-exported here so
@@ -79,6 +80,12 @@ export interface LineMaterialConfig {
   colormapTexture?: THREE.DataTexture;
   /** Scalar data range [min, max] for normalization before LUT lookup */
   scalarRange?: [number, number];
+  /**
+   * Join style at degree-2 polyline joints (#790). Omitted ⇒ the session
+   * override if one is set, else {@link DEFAULT_LINE_JOIN}. See
+   * `types/line-join.ts` for the cost/fidelity ladder.
+   */
+  join?: LineJoinStyle;
 }
 
 /**
@@ -166,6 +173,12 @@ export class LineMaterial
         // per-vertex tan() and one divide. Updated in updateCameraParams.
         uPerspectiveLineScale: { value: 1.0 },
         uOrthoLineScale: { value: 1.0 },
+        // Join style at degree-2 polyline joints (#790): 0 none, 1 miter —
+        // see types/line-join.ts for the styles and the override precedence.
+        // A live uniform rather than a define so the session override costs no
+        // recompile, and so an A/B can measure both styles on one identical
+        // frame.
+        uLineJoin: { value: resolveLineJoin(materialConfig.join) },
         // Colormap uniforms (only when USE_COLORMAP define is set)
         ...(materialConfig.colormapTexture
           ? {
@@ -440,6 +453,7 @@ export class LineMaterial
     cloned.uniforms.uNearCull.value = this.uniforms.uNearCull.value;
     cloned.uniforms.uMaxLinePixelWidth.value = this.uniforms.uMaxLinePixelWidth.value;
     cloned.uniforms.uPerspectiveLineScale.value = this.uniforms.uPerspectiveLineScale.value;
+    cloned.uniforms.uLineJoin.value = this.uniforms.uLineJoin.value;
     cloned.uniforms.uOrthoLineScale.value = this.uniforms.uOrthoLineScale.value;
     cloned.uniforms.uInvGamma.value = this.uniforms.uInvGamma.value;
     // The active ordering slot must ride along: a clone taken while the

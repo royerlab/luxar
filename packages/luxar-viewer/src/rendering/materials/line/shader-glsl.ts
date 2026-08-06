@@ -53,6 +53,7 @@ import {
   GLSL_SANITIZE_FUNCTIONS,
   GLSL_NEAR_FADE_FUNCTIONS,
   GLSL_SORTED_INDEX,
+  GLSL_LINE_JOINT_CODE,
 } from '../_shared/glsl-lib';
 import {
   ALPHA_CLAMP,
@@ -79,6 +80,7 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
     // Uint32Array attributes → bound via vertexAttribIPointer, matching
     // the uint declarations.
     ${GLSL_SORTED_INDEX}
+    ${GLSL_LINE_JOINT_CODE}
 
     // Line data texture: RGBA32F, 6 texels/segment (see
     // rendering/line-geometry.ts for the texel layout). Replaces the
@@ -95,6 +97,9 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
     // and one division. See updateCameraParams in line-material.ts.
     uniform float uPerspectiveLineScale; // = resolution.y / tan(fov * 0.5)
     uniform float uOrthoLineScale;       // = 2 * resolution.y / frustumHeight
+    // Join style at degree-2 polyline joints (#790): 0 none, 1 miter.
+    // See types/line-join.ts and the join block in main().
+    uniform float uLineJoin;
 
     // Colormap uniforms (only active when USE_COLORMAP is defined)
     #ifdef USE_COLORMAP
@@ -118,6 +123,19 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
     flat out float vCapSuppressEnd;
     out mediump float vAlpha; // per-endpoint opacity, interpolated along t (texel5.zw; 1.0 for RGB data)
 
+    // Project a node-local position into the same pixel
+    // space the quad expansion works in. Returns xy = pixel coords (offset
+    // by a constant that cancels in the differences below) and z =
+    // view-space depth, so the caller can reject a partner that is behind
+    // the camera. Mirrors the wGuard logic of the main path.
+    vec3 luxarLinePixelPos(vec3 localPos, float nearCullValue) {
+      vec4 mv = modelViewMatrix * vec4(localPos, 1.0);
+      vec4 clip = projectionMatrix * mv;
+      float wG = (uIsOrtho == 1) ? 1.0 : nearCullValue;
+      vec2 ndc = clip.xy / max(clip.w, wG);
+      return vec3(ndc * (0.5 * uResolution), -mv.z);
+    }
+
     void main() {
       // === Line-texture fetch prologue ===
       // texelFetch reads reconstruct the per-segment values into the exact
@@ -139,16 +157,39 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
       vec3 aEndPos = lineT1.xyz;
       float aEndWidth = lineT1.w;
       float aSegmentLength = lineT4.x;
-      float aStartCapSuppress = lineT4.y;
-      float aEndCapSuppress = lineT4.z;
+      float aStartJointCode = lineT4.y;
+      float aEndJointCode = lineT4.z;
 
       // Position along segment: 0 = start, 1 = end. Branchless because
       // aQuadCorner.x ∈ {-1, +1} by construction.
       float t = aQuadCorner.x * 0.5 + 0.5;
       vT = t;
       vSegmentLength = aSegmentLength;
-      vCapSuppressStart = aStartCapSuppress;
-      vCapSuppressEnd = aEndCapSuppress;
+      // Endpoint cap default, before the join block below may refine it.
+      //
+      // ONLY a free end (code 0) and a degree->=3 hub (code -2) keep the soft
+      // cap. Everything else suppresses it: a slice-clipped endpoint (-1)
+      // because no neighbour will ever arrive there, and a slot-bearing code
+      // because a neighbouring quad DOES meet it.
+      //
+      // Defaulting a slot-bearing code to "keep the cap" would be the #780 bead
+      // chain all over again, and not only under join style 'none': the join
+      // block is also skipped for every line below the rendered-width gate, so
+      // thin-line scenes — the million-segment ones — would lose the #785 fix
+      // entirely. Measured, an interior joint bottoms out at 0.5 instead of 1.0
+      // and a dense polyline (segment length <= width) loses ~40% of its total
+      // brightness.
+      //
+      // The default is exact for the straight and gentle joints that dominate
+      // real polyline data, and those are projection-invariant so no camera can
+      // change the answer. Where the block DOES run it replaces this with the
+      // screen-space value, which is exact at any angle. The residual gap is a
+      // SHARP bend on a line too thin to be mitered: it keeps full intensity on
+      // both quads over their sub-pixel overlap lens instead of half each. That
+      // is a ~1 px speck slightly too bright, against the alternative of dimming
+      // every joint in the scene.
+      vCapSuppressStart = luxarLineJointCapSuppression(aStartJointCode);
+      vCapSuppressEnd = luxarLineJointCapSuppression(aEndJointCode);
 
       // Project endpoints to view space first — the bothBehind near-cull
       // test reads view-space depth, and culling BEFORE the colormap
@@ -419,9 +460,137 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
       // GPU interpolates this across the quad, giving 0 at centerline
       vPerpNorm = aQuadCorner.y;
 
-      // Expand quad by perpendicular offset in pixel space, then convert to clip space
-      // pixelOffset is in pixels, convert to NDC then to clip space
-      vec2 pixelOffset = perpendicular * aQuadCorner.y * clampedPixelWidth;
+      // The corner's offset direction+magnitude in pixel space. Default is
+      // the shipped behaviour: perpendicular to this segment's own projected
+      // direction, magnitude = the clamped pixel half-width.
+      vec2 cornerOffset = perpendicular * clampedPixelWidth;
+
+      // === Join geometry at degree-2 polyline joints (#790) ===
+      //
+      // Two segments meeting at a turn of angle theta leave an uncovered
+      // circular sector of that angle on the OUTSIDE of the bend and
+      // double-cover a lens on the inside: dark ticks along the convex edge of
+      // any thick curve, bright ticks along the concave one. No per-endpoint
+      // intensity scalar can close the outer wedge, because nothing rasterises
+      // there to shade.
+      //
+      // uLineJoin selects the strategy (types/line-join.ts):
+      //   0 none   leave the quads alone (the pre-#790 behaviour)
+      //   1 miter  rotate this quad's end edge onto the shared miter edge so the
+      //            two quads TILE. Coverage becomes a partition, so there is
+      //            nothing to sum and every blending mode is correct by
+      //            construction, with no axial profile and no cap dimming.
+      //
+      // The wedge has area ~theta*R^2/2 pixels, so below a couple of pixels of
+      // half-width it is sub-pixel and invisible - and a line that thin already
+      // sits on the 1.5 px floor with its intensity faded. Gating on width puts
+      // the cost only where the benefit is: million-segment scenes are
+      // thin-line scenes and skip this entirely.
+      float joinMinHalfWidth = 2.0;
+      if (uLineJoin > 0.5 && clampedPixelWidth > joinMinHalfWidth) {
+        bool atEnd = aQuadCorner.x > 0.0;
+        // A near-clipped endpoint was moved onto the nearCull plane, so it is
+        // no longer AT its source vertex and no neighbour meets it there.
+        bool reachesVertex = atEnd ? (tB >= 1.0) : (tA <= 0.0);
+        float jointCode = atEnd ? aEndJointCode : aStartJointCode;
+        // Sentinels: 0 free end, -1 slice-clipped, -2 degree->=3 hub. Only a
+        // slot-bearing code names a partner. The texel writer already clamped
+        // any code naming an UNWRITTEN slot back to the free-end sentinel, and
+        // the kernel never emits a self-reference.
+        //
+        // The self-reference is still rejected here rather than assumed away.
+        // It costs one integer compare inside a block already gated on rendered
+        // width, and it guards the one failure mode this whole change exists to
+        // remove: a quad mitered against itself has no partner to tile with, so
+        // its rotated end edge rasterises as a flap sticking out of the tube.
+        // The guarantee also comes from a DIFFERENT module than the consumer —
+        // and a texel writer is not the only producer. The TSL parity harness
+        // writes joint codes by hand, and did in fact carry a fixture that
+        // decoded to slot 0 (itself) in a single-segment scene until this
+        // review re-specified it.
+        bool partnerSharesItsStart = jointCode > 0.0;
+        int partnerSlot =
+          partnerSharesItsStart ? int(jointCode) - 1 : int(-jointCode) - 3;
+        bool namesAPartner =
+          (jointCode > 0.5 || jointCode < -2.5) && partnerSlot != lineBase / 6;
+        if (reachesVertex && namesAPartner) {
+          // Decode: +(slot + 1) => the partner's START is the shared vertex;
+          // -(slot + 3) => its END is.
+          int partnerBase = partnerSlot * 6;
+          ivec2 pTexel = ivec2(partnerBase % lineTexW, partnerBase / lineTexW);
+
+          // Only the partner's FAR endpoint is needed - the near one is this
+          // vertex, already projected. One texelFetch, one projection.
+          vec3 partnerFar = partnerSharesItsStart
+            ? texelFetch(uLineTex, ivec2(pTexel.x + 1, pTexel.y), 0).xyz
+            : texelFetch(uLineTex, pTexel, 0).xyz;
+          vec3 farPx = luxarLinePixelPos(partnerFar, nearCull);
+          vec2 sharedPx =
+            (atEnd ? ndcEnd : ndcStart) * (0.5 * uResolution);
+          // The partner runs FROM the shared vertex TO its far endpoint when it
+          // shares its start, and the other way when it shares its end.
+          vec2 partnerDelta = partnerSharesItsStart
+            ? (farPx.xy - sharedPx)
+            : (sharedPx - farPx.xy);
+          float partnerLen = length(partnerDelta);
+          bool partnerInFront = (uIsOrtho == 1) || (farPx.z >= nearCull);
+
+          if (partnerInFront && partnerLen > 0.0001 && pixelLen > 0.0001) {
+            vec2 partnerDir = partnerDelta / partnerLen;
+            // CANONICAL operand order - incoming edge first, outgoing second -
+            // so both segments meeting here evaluate the same expression and,
+            // crucially, take the same branch. A branch disagreement leaves one
+            // diagonal edge with nothing to tile against, which rasterises as a
+            // flap sticking out of the tube.
+            vec2 dirIn = atEnd ? lineDir : partnerDir;
+            vec2 dirOut = atEnd ? partnerDir : lineDir;
+            vec2 perpIn = vec2(-dirIn.y, dirIn.x);
+            vec2 perpOut = vec2(-dirOut.y, dirOut.x);
+            float turn = dot(dirIn, dirOut);
+
+            // The endpoint cap, DERIVED here rather than stored. The kernel's
+            // old scalar was clamp(-dot(away_a, away_b), 0, 1) with each away
+            // vector pointing from the shared vertex back along its segment;
+            // away_mine = -lineDir and away_partner = +partnerDir, so it is
+            // exactly clamp(dot(lineDir, partnerDir), 0, 1) - the same dot the
+            // miter limit needs anyway. Deriving it frees texel4.yz to carry
+            // the partner code, and it is measured in SCREEN space, so unlike
+            // the stored data-space angle it tracks the camera (#795).
+            float suppression = clamp(turn, 0.0, 1.0);
+
+            // Miter limit: |M| / R = 1 / cos(theta/2) = sqrt(2 / (1 + turn)),
+            // so bail past 2x (theta > 120 deg). The overshoot guard tests the
+            // AXIAL reach, |M . dir| = R * tan(theta/2), NOT |M| (which is ~R
+            // always): gating on the magnitude disables the join on every
+            // polyline whose segments are shorter than twice the tube radius,
+            // i.e. exactly the dense-curve case this issue is about. Both tests
+            // read the same operands from either side, so the two quads always
+            // agree on whether this joint is mitred.
+            float grow = sqrt(2.0 / max(1.0 + turn, 1e-6));
+            float axialReach = clampedPixelWidth * sqrt(max(grow * grow - 1.0, 0.0));
+            if (grow <= 2.0 && axialReach <= 0.5 * min(pixelLen, partnerLen)) {
+              // Intersection of the two segments' +R offset lines. It reduces
+              // to R * perp at a collinear joint, so a straight polyline is
+              // unchanged. The miter point lies ON this segment's own +R offset
+              // line, which is why the resulting trapezoid keeps vPerpNorm an
+              // exact perpendicular coordinate and the super-Gaussian
+              // cross-section is untouched.
+              cornerOffset = (perpIn + perpOut) * (clampedPixelWidth / (1.0 + turn));
+              // A mitred joint tiles exactly, so nothing may dim it.
+              suppression = 1.0;
+            }
+            if (atEnd) {
+              vCapSuppressEnd = suppression;
+            } else {
+              vCapSuppressStart = suppression;
+            }
+          }
+        }
+      }
+
+      // Expand quad by the corner offset in pixel space, then convert to clip
+      // space. pixelOffset is in pixels, convert to NDC then to clip space
+      vec2 pixelOffset = cornerOffset * aQuadCorner.y;
       vec2 ndcOffset = pixelOffset / uResolution * 2.0;
       clipPos.xy += ndcOffset * clipPos.w;
 
@@ -515,7 +684,8 @@ export const LINE_FRAGMENT_SHADER = /* glsl */ `
       //   slice-clipped endpoint, or a straight-through interior joint
       //   whose neighbouring quad TILES rather than overlaps (nothing
       //   there to add the missing half back). Computed once per commit
-      //   in compute_cap_suppression (wasm/rust/src/lines_clipping.rs).
+      //   from the joint code in the vertex stage (see compute_joint_codes,
+      //   wasm/rust/src/lines_clipping.rs).
       float distFromStart = vT * vSegmentLength;
       float distFromEnd = (1.0 - vT) * vSegmentLength;
       // dist / vWidthAtT is a scale-free ratio (both world units), so

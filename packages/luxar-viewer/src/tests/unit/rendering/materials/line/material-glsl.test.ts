@@ -7,6 +7,11 @@ import {
   getLineTexture,
 } from '../../../../../rendering/line-geometry';
 import { LINE_FLOATS_PER_SEGMENT } from '../../../../../rendering/element-texture-layout';
+import { GLSL_LINE_JOINT_CODE } from '../../../../../rendering/materials/_shared/glsl-lib';
+import {
+  LINE_PICK_VERTEX_SHADER,
+  LINE_PICK_FRAGMENT_SHADER,
+} from '../../../../../rendering/picking/line/shaders';
 
 // Mock THREE.ShaderMaterial
 vi.mock('three', async () => {
@@ -94,6 +99,29 @@ describe('LineMaterial', () => {
   });
 
   describe('shaders', () => {
+    it('carries no backtick in any line GLSL source (template-literal guard)', () => {
+      // The GLSL sources are template literals, so a single backtick anywhere in
+      // them -- including inside a comment, where it reads as ordinary prose
+      // quoting -- closes the string early and turns the rest of the module into
+      // a parse error. It is a genuinely expensive mistake to diagnose: Vite
+      // reports it far from the cause, and a stale dev-server cache keeps serving
+      // the broken module afterwards. It happened four times while this file was
+      // being written, so pin every line GLSL source, including the shared block
+      // and the picking pair (whose sources are assembled the same way).
+      const material = new LineMaterial();
+      const sources: Array<[string, string]> = [
+        ['visual vertex', material.vertexShader],
+        ['visual fragment', material.fragmentShader],
+        ['shared joint-code block', GLSL_LINE_JOINT_CODE],
+        ['pick vertex', LINE_PICK_VERTEX_SHADER],
+        ['pick fragment', LINE_PICK_FRAGMENT_SHADER],
+      ];
+      for (const [label, src] of sources) {
+        expect(src, `${label} must contain no backtick`).not.toContain('`');
+        expect(src.length, `${label} should be non-empty`).toBeGreaterThan(0);
+      }
+    });
+
     it('should have correct vertex shader with screen-space expansion', () => {
       const material = new LineMaterial();
 
@@ -111,8 +139,8 @@ describe('LineMaterial', () => {
       expect(material.vertexShader).toContain('vec3 aEndPos = lineT1.xyz');
       expect(material.vertexShader).toContain('float aEndWidth = lineT1.w');
       expect(material.vertexShader).toContain('float aSegmentLength = lineT4.x');
-      expect(material.vertexShader).toContain('float aStartCapSuppress = lineT4.y');
-      expect(material.vertexShader).toContain('float aEndCapSuppress = lineT4.z');
+      expect(material.vertexShader).toContain('float aStartJointCode = lineT4.y');
+      expect(material.vertexShader).toContain('float aEndJointCode = lineT4.z');
       // The interleaved era's per-instance attribute declarations are gone.
       expect(material.vertexShader).not.toContain('in vec3 aStartPos;');
       expect(material.vertexShader).not.toContain('in vec3 aStartColor;');
@@ -443,8 +471,8 @@ describe('createInstancedLinesMesh', () => {
       startSharpness: new Float32Array([1.0, 1.0]),
       endSharpness: new Float32Array([1.0, 1.0]),
       segmentLengths: new Float32Array([1.0, 1.414]),
-      startCapSuppression: new Float32Array([0, 0]),
-      endCapSuppression: new Float32Array([0, 0]),
+      startJointCode: new Float32Array([0, 0]),
+      endJointCode: new Float32Array([0, 0]),
       segmentCount: 2,
     };
 
@@ -485,7 +513,7 @@ describe('createInstancedLinesMesh', () => {
     expect(Array.from(data.subarray(o + 8, o + 12))).toEqual([0, 1, 0, 1]);
     // texel 3: endColor.rgb, endSharpness
     expect(Array.from(data.subarray(o + 12, o + 16))).toEqual([0, 1, 0, 1]);
-    // texel 4: segmentLength, startCapSuppression, endCapSuppression
+    // texel 4: segmentLength, startJointCode, endJointCode
     expect(data[o + 16]).toBeCloseTo(1.414, 5);
     expect(data[o + 17]).toBe(0);
     expect(data[o + 18]).toBe(0);
@@ -505,8 +533,8 @@ describe('createInstancedLinesMesh', () => {
       startSharpness: new Float32Array([1.0]),
       endSharpness: new Float32Array([1.0]),
       segmentLengths: new Float32Array([17.32]),
-      startCapSuppression: new Float32Array([0]),
-      endCapSuppression: new Float32Array([0]),
+      startJointCode: new Float32Array([0]),
+      endJointCode: new Float32Array([0]),
       segmentCount: 1,
     };
 
@@ -535,8 +563,8 @@ describe('createInstancedLinesMesh', () => {
       startSharpness: new Float32Array([1.0]),
       endSharpness: new Float32Array([1.0]),
       segmentLengths: new Float32Array([10]),
-      startCapSuppression: new Float32Array([0]),
-      endCapSuppression: new Float32Array([0]),
+      startJointCode: new Float32Array([0]),
+      endJointCode: new Float32Array([0]),
       segmentCount: 1,
     };
 

@@ -693,7 +693,7 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     ).toBeLessThan(2.0);
   });
 
-  test('line cap suppression renders fractional values instead of quantising to a flag', async ({
+  test('line endpoint cap follows the joint code identically on both backends', async ({
     page,
   }) => {
     await bootHarness(page);
@@ -701,25 +701,25 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     for (const backend of ['GLSL', 'TSL'] as const) {
       const render = async (name: string): Promise<number[]> =>
         backend === 'GLSL' ? runGLSL(page, name) : (await runTSL(page, name)).pixels;
-      const zeroPixels = await render('line-cap-zero');
-      const fractionalPixels = await render('line-cap-fractional');
-      const fullPixels = await render('line-cap-full');
-      const zero = capEndpointContribution(zeroPixels);
-      const fractional = capEndpointContribution(fractionalPixels);
-      const full = capEndpointContribution(fullPixels);
+      const freeEnd = capEndpointContribution(await render('line-joint-free-end'));
+      const hub = capEndpointContribution(await render('line-joint-hub'));
+      const clipped = capEndpointContribution(await render('line-joint-clipped'));
 
+      // A free end (code 0) and a degree->=3 hub (code -2) both KEEP the soft
+      // cap, so they must render the same endpoint.
       expect(
-        fractional,
-        `${backend}: fractional cap must be visibly brighter than s=0 (got ${zero}, ${fractional}, ${full})`
-      ).toBeGreaterThan(zero + 15);
+        Math.abs(hub - freeEnd),
+        `${backend}: free end and hub both keep the cap (got ${freeEnd}, ${hub})`
+      ).toBeLessThan(4);
+      // A slice-clipped endpoint (code -1) suppresses the cap entirely, so it is
+      // visibly brighter. This is the assertion that catches a backend reading
+      // the code as a [0, 1] scalar: it would scale the cap by the code instead
+      // of switching on it, and -1 would drive the endpoint to black rather than
+      // full brightness.
       expect(
-        full,
-        `${backend}: s=1 cap must be visibly brighter than s=0.5 (got ${zero}, ${fractional}, ${full})`
-      ).toBeGreaterThan(fractional + 15);
-      expect(
-        fractional,
-        `${backend}: s=0.5 endpoint should stay near the midpoint of s=0 and s=1`
-      ).toBeCloseTo((zero + full) * 0.5, -1);
+        clipped,
+        `${backend}: clipped endpoint must be brighter than a kept cap (got ${freeEnd}, ${hub}, ${clipped})`
+      ).toBeGreaterThan(freeEnd + 15);
     }
   });
 

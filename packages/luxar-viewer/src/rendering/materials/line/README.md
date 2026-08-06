@@ -6,8 +6,8 @@ This folder holds the four-file material stack that renders one of Luxar's
 four first-class geometry types. Each line segment is drawn as an instanced
 screen-space quad expanded perpendicular to its pixel-space direction; the
 fragment stage shades a shifted-truncated super-Gaussian perpendicular
-cross-section, with per-endpoint cap suppression keeping interior polyline
-joints continuous. Both backends share
+cross-section, with a per-endpoint joint code keeping interior polyline joints
+continuous and driving the screen-space miter join. Both backends share
 the same `LineMaterialConfig` shape and the same update / clone / blending
 semantics — `MaterialManager.getLineMaterial` dispatches on
 `RendererCapabilities.apiSurface`, so call sites never see the divergence.
@@ -66,11 +66,12 @@ colormapped nodes — and writes `vec4(rgb, intensity × vAlpha × uOpacity)`
 (`vAlpha` is the per-endpoint opacity, `1.0` for RGB data). Under
 `LUXAR_VOLUMETRIC` the output switches to the emission–absorption branch
 described below.
-The `capFactor` joint trick (next section) is **independent** of the
+The `capFactor` joint machinery (next section) is **independent** of the
 perpendicular falloff — only `perpFalloff` changed when the kernel was swapped
-to the super-Gaussian.
+to the super-Gaussian, and the miter join leaves it untouched too (the mitred
+trapezoid's edges stay on the segment's own ±R offset lines).
 
-## The cap factor and its suppression
+## The endpoint cap and the joint code
 
 Each segment fades to `0.5` at its true endpoints (a per-endpoint ramp
 `0.5 + 0.5 × dist / vWidthAtT`), giving a soft cap at a free polyline end
@@ -79,47 +80,54 @@ vertex-side because with only 4 vertices per quad, a vertex-side
 `min(t, 1−t) × segLen / width` collapses to `0.5` everywhere — there's no
 vertex at the body midpoint to interpolate from.
 
-**That dimming is only correct where a neighbouring quad overlaps the
+**That dimming is only correct where a neighbouring quad meets the
 endpoint.** The quad spans exactly `[start, end]` — there is no longitudinal
 extension — so two collinear segments _tile_ rather than overlap. A fragment
 just inside segment A gets `0.5 + 0.5·d/w` from A and nothing at all from B
 (it is outside B's quad), so the two halves never sum back to 1.0 and every
 interior joint became a dark notch of axial length `2 × width` bottoming out
-at 50% — thick polylines rendered as bead chains (issue #780). The overlap
-premise _does_ hold at a sharp bend, where the two rectangles cover a lens on
-the inner side of the turn, and at a branch point, where three or more quads
-stack around the hub.
+at 50% — thick polylines rendered as bead chains (issue #780).
 
-So the endpoint dimming is gated by a per-endpoint **suppression scalar** in
-`[0, 1]` (texel4.yz). Each endpoint's ramp is lifted by its own suppression
-and the two caps combine with `min()`:
+So the endpoint dimming is gated by a per-endpoint **joint code** (texel4.yz).
+Each endpoint's ramp is lifted by its own value and the two caps combine with
+`min()`:
 `capFactor = min(mix(startRamp, 1.0, suppressStart), mix(endRamp, 1.0, suppressEnd))`
 — evaluated independently per endpoint (not keyed on the nearest one), which
 makes the cap field continuous **within** each segment: the nearest-endpoint
 pick used to jump at the midpoint of segments shorter than `2 × width` when
-the two suppressions differ, the routine case for a polyline's first/last
-segment (issue #796). The old form was exactly continuous **across** the
-joint seam, so the `min()` form _relocates_ the discontinuity rather than
-leaving one behind: a strictly smaller step at the seam, appearing only when
-a segment is shorter than one width (its far-end ramp cannot reach `1.0`
-before the neighbour takes over) — at worst `0.5 × (1 − clamp(L/w))` (far
-end fully free, joint fully suppressed), scaling with `(1 − s_far)` in
-general, always ≤ the old midpoint jump, and zero for `L ≥ width`.
-Polyline-wide C⁰ continuity would need join geometry, not a per-endpoint
-scalar:
+the two values differ, the routine case for a polyline's first/last segment
+(issue #796). The old form was exactly continuous **across** the joint seam,
+so the `min()` form _relocates_ the discontinuity rather than leaving one
+behind: a strictly smaller step at the seam, appearing only when a segment is
+shorter than one width, and zero for `L ≥ width`.
 
-| Endpoint                        | Suppression                                             | Why                                                                          |
-| ------------------------------- | ------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| Slice-clipped                   | `1.0`                                                   | the real endpoint is outside the slice; no neighbour will arrive to sum with |
-| Straight-through interior joint | `1.0`                                                   | quads tile, nothing overlaps, nothing to compensate                          |
-| Bend (turn angle θ)             | `clamp(-dot(awayA, awayB), 0, 1)` = `cos θ` for θ < 90° | overlap area grows with θ, so blend towards the dimmed regime                |
-| 90° or sharper                  | `0.0`                                                   | quads genuinely overlap; `0.5 + 0.5` is what makes the joint flat            |
-| Branch point (3+ segments)      | `0.0`                                                   | suppressing would stack the quads into a bright nub                          |
-| Free polyline end               | `0.0`                                                   | keep the soft cap                                                            |
+The code is a small exact integer, not a scalar — it says what KIND of
+endpoint this is, and at an ordinary two-segment joint, WHICH segment it
+joins:
 
-(The "tile"/"overlap" reasoning in this table is stated for the
-**data-space** angle; whether the quads actually tile or overlap on screen
-depends on the projected angle — see the projection caveat below.)
+| Code          | Endpoint                  | Cap  | Why                                                              |
+| ------------- | ------------------------- | ---- | ---------------------------------------------------------------- |
+| `0`           | Free polyline end         | kept | nothing meets it; the soft cap is the point                      |
+| `-1`          | Slice-clipped             | none | the real endpoint is outside the slice; no neighbour will arrive |
+| `-2`          | Degree-≥3 hub             | kept | several quads already stack here; suppressing stacks them bright |
+| `+(slot + 1)` | Joins `slot` at its START | none | a neighbouring quad meets this endpoint                          |
+| `-(slot + 3)` | Joins `slot` at its END   | none | same, with the partner's other endpoint shared                   |
+
+`slot` is the partner's index in the visible stream, which is exactly its
+line-texture **storage** slot. `aSortedIndex` maps draw→storage and the
+partner is read directly rather than through that permutation, so a
+depth-sort re-ordering needs no bookkeeping. The sign carries which of the
+partner's endpoints is shared rather than a packed `(slot << 1) | bit`,
+because a bare slot stays inside float32's 2²⁴ exact-integer range at the
+11.17M per-node segment ceiling while the packed form reaches 22.35M and
+would silently lose precision on a 16384-class device.
+
+**A slot-bearing code suppresses the cap.** Defaulting it the other way is
+the #780 bead chain again, and not only under join style `none`: the join
+block is also skipped for every line below the rendered-width gate, so
+thin-line scenes — the million-segment ones — would lose the fix entirely.
+Measured, an interior joint bottoms out at 0.5 instead of 1.0 and a dense
+polyline loses ~40% of its total brightness.
 
 Joints are matched by vertex **index**, not by position: a chain whose
 segments each carry their own duplicate copy of the shared point (what
@@ -128,34 +136,72 @@ it keeps the cap at every joint and still shows the notch. Author connected
 geometry as `line_type="polyline"` to get continuous joints — position
 matching would also fuse two unrelated lines that merely touch.
 
-The scalar is computed once per commit, off the main thread, by
-`compute_cap_suppression` (`wasm/rust/src/lines_clipping.rs`, with the
-uncapped TypeScript reference in `wasm/typescript/lines-clipping.ts`). It
-only pairs endpoints that both actually _reach_ the shared vertex, so a
-culled or slice-trimmed neighbour does not anchor a joint. Because the
-suppression is a plain scalar multiplier on the intensity chain, it behaves
-identically in every blending mode.
+The code is computed once per commit, off the main thread, by
+`compute_joint_codes` (`wasm/rust/src/lines_clipping.rs`, with the uncapped
+TypeScript reference in `wasm/typescript/lines-clipping.ts` — that mirror is
+the production backend above 16 dimensions, not just a fallback). It only
+pairs endpoints that both actually _reach_ the shared vertex, so a culled or
+slice-trimmed neighbour does not anchor a joint. It is purely topological: it
+reads connectivity and the clip parameters, never positions, so the bend
+angle is the shader's business.
 
-**Known limitation — the suppression angle is data-space, the overlap is
-screen-space.** `compute_cap_suppression` measures the bend from the dot
-product of segment directions in display/data space, once per data commit;
-but the quads are expanded perpendicular to the **projected** segment
-direction, so whether two quads tile or overlap depends on the camera, and
-the scalar is never revisited as the camera moves. A sharp 3D bend viewed
-nearly in its own plane projects almost straight, keeps suppression `0`, and
-stays notched (exactly what every joint did before suppression existed — not
-a regression); a gentle 3D bend that happens to project sharp keeps
-suppression near `1` while the quads genuinely do overlap, summing to up to
-~2× body brightness over a width-sized lens that moves as the camera orbits.
-Straight joints are projection-invariant, so the bead-chain case the scalar
-targets is correct under every camera. A true fix needs a screen-space
-(per-frame) suppression, a design change at odds with the once-per-commit
-worker architecture — the trade-off is discussed in #795.
+## Join geometry (`uLineJoin`)
 
-The other known artifact is the **outer-side miter wedge**: at a sharp
-bend the two quads leave a small uncovered wedge on the outside of the turn.
-Closing it needs real join geometry (extending the quads longitudinally by a
-half-width), which is tracked separately (#790).
+At a turn of angle θ two quads leave an uncovered circular sector of that
+angle on the OUTSIDE of the bend and double-cover a lens on the inside: dark
+ticks along the convex edge of a thick curve, bright ticks along the concave
+one (issue #790). No per-endpoint intensity scalar can close the outer wedge
+— nothing rasterises there to shade — so it needs geometry.
+
+`uLineJoin` selects the strategy (`types/line-join.ts`; precedence is
+`?lineJoin=` > the node's authored `join` attribute > `miter`):
+
+| Style   | Per-vertex cost           | Wedge     | Blending modes           |
+| ------- | ------------------------- | --------- | ------------------------ |
+| `none`  | zero                      | left open | n/a                      |
+| `miter` | +1 texel fetch, 1 project | **exact** | all six, by construction |
+
+`miter` rotates the quad's end edge onto the shared miter edge, so the two
+quads TILE: coverage becomes a partition, and with nothing to sum there is no
+axial profile and no per-mode special case. The miter point is the
+intersection of the two segments' `+R` offset lines,
+`M = R·(perpIn + perpOut) / (1 + turn)`, which reduces to `R·perp` at a
+collinear joint — so straight polylines are untouched — and lies ON this
+segment's own `±R` offset line, so `vPerpNorm` stays an exact perpendicular
+coordinate and the super-Gaussian cross-section is unchanged.
+
+Both sides of a joint must take the same branch, or one rotated edge has
+nothing to tile against and rasterises as a flap. The guards are therefore
+computed from operands that are identical on either side — the shared
+vertex's width and depth, and `min()` over the two lengths — with the
+directions read in a canonical order (incoming edge first):
+
+- miter limit `grow = sqrt(2/(1+turn)) ≤ 2` (θ ≤ 120°)
+- overshoot on the **axial** reach `R·tan(θ/2) ≤ ½·min(pixelLen, partnerLen)`
+  — not on `|M|`, which is ≈R always and would disable the join on every
+  polyline whose segments are shorter than twice the tube radius, i.e.
+  exactly the dense-curve case
+- the partner must be in front of the near plane, and this endpoint must
+  actually reach its source vertex (`tA ≤ 0` / `tB ≥ 1`)
+- a **rendered-width gate** of 2 px: the wedge has area ~θ·R²/2, so below
+  that it is sub-pixel and the line is already pinned to the 1.5 px floor
+  with its intensity faded. The cost then lands only where the benefit is —
+  million-segment scenes are thin-line scenes and skip the block entirely.
+
+Where the block runs it also DERIVES the endpoint cap, as
+`clamp(dot(lineDir, partnerDir), 0, 1)` — algebraically the same quantity the
+kernel used to store, but measured in SCREEN space, per frame. That is what
+retires the old "the angle is data-space, the overlap is screen-space"
+limitation (#795): a gentle 3D bend that projects sharp is now seen as sharp.
+Where the block is skipped, the code-implied cap above applies instead, which
+is exact for the straight and gentle joints that dominate real polyline data
+and are projection-invariant anyway.
+
+**Currently the miter geometry lives on the visual GLSL path only.** The TSL
+factory and both picking shaders decode the joint code identically — so the
+endpoint cap agrees across all four — but do not yet build the join. Until
+they do, a mitred joint is a pixel-level difference between the WebGL2 visual
+path and the other three.
 
 ## Geometry and storage layout
 
