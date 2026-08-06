@@ -452,10 +452,13 @@ Two consequences follow, and both are load-bearing:
   stay put. That is why a mesh pick id is a VERTEX ordinal: a face ordinal would be
   renumbered on every slice change, while a vertex ordinal is invariant.
 
-Mesh also needs its **own tolerance arm** (`computeHiddenDimTolerance`, §5.2.1). Lines'
-spatial `0` works only because segment clipping interpolates through the slab; with no
-interpolation and no per-element extent, `0` would reduce membership to float equality
-and the node would render nothing.
+Mesh also needs its **own tolerance arm** (`computeMeshHiddenTolerance`, §5.2.1), and
+only for a CONTINUOUS hidden dimension: a discrete/categorical one takes the shared
+`discreteDimMembershipTolerance` like every other type. On a continuous axis, Lines'
+spatial `0` works because segment clipping interpolates through the slab; with no
+interpolation and no per-element extent, `0` reduces membership to exact float equality —
+a measure-zero condition, so effectively nothing renders. Mesh therefore takes
+`step x meshSlabTolerance` (one cell by default) instead.
 
 ### nD Slicing Algorithm
 
