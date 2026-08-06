@@ -394,14 +394,15 @@ to ship after). Sequencing is at the bottom.
   media"). The pipeline exists: `make generate-readme-demos →
   generate-readme-images` for the stills (Playwright captures of the live
   viewer → `docs/images/readme/*.png`) and `make generate-gallery` for the
-  orbit videos (→ `docs/images/readme/gallery/*.{webm,webp}`).
+  orbit videos (→ `docs/images/gallery/*.{webm,webp}`, gitignored staging;
+  curated picks get copied into `docs/images/readme/gallery/`).
   - **Curate a stronger gallery** from the newer/better datasets (H&E pathology
     gsplats, 4D *C. elegans* tracking, organoid multichannel, Gaia) — decide
     which few best convey the range (volumetric splats, nD navigation, scale).
   - **Regenerate** stills + short loops via the Playwright pipeline; refresh the
     README gallery section + captions; ensure everything renders on GitHub.
   - ✅ **Gallery harness built** (2026-07-13): a manifest-driven capture tool that
-    produces a still PNG **and** a 30 s 360° orbit video (WebP+GIF) for every
+    produces a still PNG **and** a seamlessly-looping orbit video (WebP+WebM) for every
     demo in one pass — auto-center + fill-to-frame, chrome hidden, robust
     screenshot-based auto-exposure (percentile target; per-demo override). SSOT
     is `scripts/gallery/manifest.json` (~20 curated demos spanning
