@@ -306,8 +306,8 @@ class CompositionMixin(_GSplatDataOps):
         equals the flat concatenation with no double-count.
 
         With ``recipe`` (one of
-        :data:`~luxar.gsplats.lod.recipes.PER_PART_RECIPES`: ``additive`` →
-        ``partitioned`` topology, ``substitutive`` → ``mosaic``) each part is
+        :data:`~luxar.gsplats.lod.recipes.PER_PART_RECIPES`: ``stream`` →
+        ``tiles`` topology, ``levels`` → ``adaptive``) each part is
         given its OWN LOD via :func:`~luxar.gsplats.lod.recipes.build_part_lod`
         (clamped to the part's splat count), so the output is a partition whose
         every child carries a ladder/lod-group — the fit-time equivalent of a

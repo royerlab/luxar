@@ -36,7 +36,7 @@ class TransformsMixin(_GSplatDataOps):
         ``fn`` maps a single-substitutive-level view (``n_substitutive == 1``)
         to a transformed single-level ``GSplatData``; per-level metadata
         (compression_factor / parent_method / level_index / stats) is preserved.
-        Mirrors :meth:`filter_by`'s per-level rebuild (decision 6) so spatial
+        Mirrors :meth:`filter_by`'s per-level rebuild so spatial
         and intensity ops never silently collapse the substitutive LOD ladder
         to the finest level. Callers guard with ``if self.n_substitutive > 1``.
         """
