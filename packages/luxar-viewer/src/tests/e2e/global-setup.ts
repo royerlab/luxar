@@ -51,8 +51,24 @@ const REQUIRED_DATASETS = [
  *     repository, so the specs' `/packages/luxar-viewer/tests/fixtures/...` URLs 404 even
  *     though the files exist. One HTTP probe settles this; probing all ~47 would add 47
  *     round-trips to every run to re-answer the same question about the serving root.
+ *
+ * **Skipped for the smoke subset**, which is the whole point of `LUXAR_E2E_NO_FIXTURES`.
+ * Smoke is an explicit five-file allowlist chosen so that none of them reads
+ * `tests/fixtures/`, and its CI job generates datasets at runtime via `make run-examples`
+ * and pulls no Git LFS. Requiring fixtures there would abort the one suite deliberately
+ * built not to need them — i.e. it would contradict, in the same change, the contract
+ * this file's own README documents.
+ *
+ * A flag set by the two smoke scripts, rather than a spec-list inspection: Playwright's
+ * `FullConfig` does not expose which files the CLI filter selected, and re-deriving the
+ * allowlist here would put a second copy of it one edit away from disagreeing with
+ * `package.json`. The flag lives on the same line as the file list, so they move together.
  */
 async function assertGeneratedFixtures(projectRoot: string, dataBaseURL: string): Promise<void> {
+  if (process.env.LUXAR_E2E_NO_FIXTURES === '1') {
+    console.log('⏭️  Skipping the generated-fixture check (LUXAR_E2E_NO_FIXTURES=1)');
+    return;
+  }
   const fixturesDir = path.join(projectRoot, FIXTURES_REPO_RELATIVE_PATH);
   const expected = parseGeneratedFixtureNames(path.join(fixturesDir, 'generate_test_data.py'));
   const missing = expected.filter((name) => !fs.existsSync(path.join(fixturesDir, name)));

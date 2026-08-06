@@ -58,6 +58,13 @@ global setup fails fast, naming `pnpm test:generate-fixtures`. Both harnesses
 read the manifest through `tools/fixture-manifest.ts` so they cannot disagree
 about which fixtures exist.
 
+**Except for smoke**, which sets `LUXAR_E2E_NO_FIXTURES=1` to skip the check.
+Its five specs are chosen precisely so none of them touches `tests/fixtures/`,
+and its CI job generates datasets at runtime with no LFS — so requiring
+fixtures there would break the one suite built not to need them. The flag is
+set on the same `package.json` line as the file list, so the two move together
+rather than drifting apart.
+
 ## Folder Layout
 
 ```
