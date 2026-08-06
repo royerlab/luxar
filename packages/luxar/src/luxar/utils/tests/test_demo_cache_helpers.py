@@ -172,6 +172,21 @@ def test_parse_path_arg_empty_value_reads_as_absent():
     )
 
 
+def test_parse_path_arg_rejects_a_following_option_as_the_value(capsys):
+    """``--data --no-tsp`` is a missing value, not a path called ``--no-tsp``."""
+    assert demo_utils.parse_path_arg("data", ["--data", "--no-tsp"]) is None
+    out = capsys.readouterr().out
+    assert "--data" in out and "--no-tsp" in out
+
+    # The scan continues past the value-less occurrence.
+    assert demo_utils.parse_path_arg(
+        "data", ["--data", "--no-tsp", "--data", "/tmp/foo"]
+    ) == Path("/tmp/foo")
+
+    # The explicit ``=`` form stays literal — that really is the path asked for.
+    assert demo_utils.parse_path_arg("data", ["--data=--odd"]) == Path("--odd")
+
+
 def test_parse_path_arg_reads_sys_argv_by_default(monkeypatch):
     """``argv=None`` scans the real ``sys.argv``."""
     monkeypatch.setattr(sys, "argv", ["prog", "--data=/tmp/bar"])

@@ -189,7 +189,7 @@ Demo scene generators, precomputed data helpers, and viewer launch utilities.
 - `load_precomputed_bundle()`: Load a precomputed bundle zip (timelapse demos)
 - `parse_demo_flags()`: Parse the common demo CLI flags (`--recompute`, `--no-serve`, `--serve-only`)
 - `parse_int_arg(name, default, argv=None)`: Parse an integer `--name=VALUE` / `--name VALUE` flag; warns and falls back to `default` on a malformed value
-- `parse_path_arg(name, argv=None)`: Parse a path `--name=PATH` / `--name PATH` flag, expanding `~`; returns `None` when the flag is absent
+- `parse_path_arg(name, argv=None)`: Parse a path `--name=PATH` / `--name PATH` flag, expanding `~`; returns `None` when the flag is absent or left without a value
 - `is_lfs_pointer()`: Check if a file is a Git LFS pointer (not actual data)
 
 **Features:**

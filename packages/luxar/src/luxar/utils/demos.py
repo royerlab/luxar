@@ -289,6 +289,11 @@ def parse_path_arg(name: str, argv: Optional[list[str]] = None) -> Optional[Path
     absent. An empty value (``--data=``) is not treated as a hit — the scan
     skips it and keeps looking, so a lone ``--data=`` reads as absent instead of
     resolving to the current directory (and a later non-empty occurrence wins).
+
+    In the space form the next token must not itself look like an option:
+    ``--data --no-tsp`` is a missing value, not a path named ``--no-tsp``, so it
+    warns and keeps scanning rather than handing the demo a bogus file to open.
+    The ``=`` form stays literal (``--data=--odd`` really does mean that path).
     """
     args = list(sys.argv if argv is None else argv)
     flag = _flag_token(name)
@@ -297,6 +302,9 @@ def parse_path_arg(name: str, argv: Optional[list[str]] = None) -> Optional[Path
         if arg.startswith(flag + "="):
             raw = arg.split("=", 1)[1]
         elif arg == flag and i + 1 < len(args):
+            if args[i + 1].startswith("--"):
+                aprint(f"Ignoring {flag}: followed by {args[i + 1]!r}, not a path")
+                continue
             raw = args[i + 1]
         if raw:
             return Path(raw).expanduser()
