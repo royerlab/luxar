@@ -82,11 +82,11 @@ import type { EncodingName } from '../../types/format-contract';
  * `.zarray` + `.zattrs` and nothing else. Optional entries are `undefined` when
  * the node's presence flags say the array is absent.
  *
- * The label/image-label CSR arrays are included even though v1 does not fetch
- * them: picking resolves a vertex ordinal, which indexes the CSR without the
- * loader having to read it, so the label loader is still to come. They are part
- * of the node's declared footprint, so budgeting them from the start means the
- * ceiling does not silently loosen when that loader arrives.
+ * The label/image-label CSR arrays are included even though this loader never
+ * fetches them: picking resolves a vertex ordinal that indexes the CSR directly,
+ * and the shared lazy `loaders/picking/label-loader.ts` reads the arrays on first
+ * hover. They are still part of the node's declared footprint, so budgeting them
+ * keeps the ceiling honest about what the node ultimately pulls.
  */
 export interface MeshArrayHandles {
   vertices: zarr.Array<zarr.DataType, zarr.Readable>;
@@ -841,8 +841,9 @@ export async function preflightMesh(
   // NOT reachable through the loader, which opens an optional array only when its
   // flag is set, so asserting it here would be testing a state production cannot
   // construct. The label CSR arrays are checked as a PAIR for the same reason the
-  // others are checked at all: v1 never fetches them, but a `has_labels` with one
-  // array missing is a store that will fail confusingly the moment picking lands.
+  // others are checked at all: this loader never fetches them, but a `has_labels`
+  // with one array missing is a store whose first hover would fail confusingly
+  // inside the lazy label loader instead of here, at load.
   for (const [flagName, flag, required] of [
     ['has_normals', attrs.has_normals, [arrays.normals] as const],
     ['has_colors', attrs.has_colors, [arrays.colors] as const],
