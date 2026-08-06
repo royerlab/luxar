@@ -80,9 +80,9 @@ The kernels share a small bag of tricks documented inline:
 visible as u32;` instead of an `if/else`.
 - **Fixed-size lookup arrays** in place of `HashSet<u32>` for `display_dims`
   (see `lines_clipping.rs`, `effective_radii.rs`).
-- **Stride-specialised fast paths** for `stride == 1` and `stride == 3` (as the
-  former `projection.rs::compact_by_mask` used, now folded into the fused
-  gsplat/lines compaction).
+- **Unrolled fixed-width copies** in the compaction loops rather than a generic
+  stride loop (see `lines_clipping.rs::interpolate_colors_batch`, which unrolls
+  the three colour channels).
 
 Manual SIMD via the `wide` crate was benchmarked and dropped: LLVM
 auto-vectorisation under `wasm-opt -O3 --enable-simd` matches or beats it on

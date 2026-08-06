@@ -724,6 +724,51 @@ mod tests {
         assert_eq!(col4[3], 0.9, "alpha of first visible splat preserved");
     }
 
+    /// Visibility-gate boundaries of the fused kernel, migrated from the
+    /// per-kernel attenuation tests: the gate is `attenuated >= min_amplitude`,
+    /// and a NaN center must CULL the splat (`f32::max` ignores NaN) rather
+    /// than emit a NaN amplitude. The TypeScript twin pins the same two cases.
+    #[test]
+    fn test_fused_visibility_gate_boundaries() {
+        // One splat, identity Cholesky, sliced at the origin.
+        let project = |positions: &[f32], ndim: usize, hidden: &[u32], amp: f32, min_amp: f32| {
+            let packed_size = (ndim * (ndim + 1)) / 2;
+            let mut cholesky = vec![0.0f32; packed_size];
+            for i in 0..ndim {
+                cholesky[packed_index(i, i)] = 1.0;
+            }
+            let mut out_amps = vec![0.0f32; 1];
+            let count = project_gsplats_nd_to_3d(
+                positions,
+                &cholesky,
+                &[amp],
+                &[1.0, 1.0, 1.0],
+                &[1u8],
+                &vec![0.0f32; ndim],
+                hidden,
+                &[0u32, 1, 2],
+                ndim,
+                1,
+                3,
+                min_amp,
+                3.0,
+                &mut [0.0f32; 3],
+                &mut [0.0f32; 6],
+                &mut out_amps,
+                &mut [0.0f32; 3],
+            );
+            (count, out_amps[0])
+        };
+
+        // No hidden dims → attenuation short-circuits to 1, so the emitted
+        // amplitude is the raw one and the gate is exercised at its boundary.
+        assert_eq!(project(&[0.0, 0.0, 0.0], 3, &[], 0.25, 0.25), (1, 0.25));
+        assert_eq!(project(&[0.0, 0.0, 0.0], 3, &[], 0.25, 0.2500001).0, 0);
+
+        // NaN center → NaN Mahalanobis distance → `max(0.0)` yields 0, culled.
+        assert_eq!(project(&[0.0, 0.0, 0.0, f32::NAN], 4, &[3], 1.0, 1e-6).0, 0);
+    }
+
     /// Regression: a 2D scene gives `display_dims.len() == 2`; the display
     /// marginal used to be computed with a hardcoded sub_ndim of 3, reading
     /// `display_dims[2]` out of bounds and panicking (wasm: `unreachable`).

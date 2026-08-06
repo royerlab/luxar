@@ -379,7 +379,14 @@ export function project_gsplats_nd_to_3d(
       // `.subarray(0, numContinuous)` view would allocate once PER SPLAT here.
       const mahalDist = mahalanobisDistanceInternal(diff, hiddenCholesky, numContinuous, _fusedY);
       const rawExp = Math.exp(-0.5 * mahalDist * mahalDist);
-      attenuation = Math.max(0.0, invOneMinusC * (rawExp - shiftC));
+      // Clamp at 0 with a comparison rather than Math.max: Rust's `f32::max`
+      // IGNORES NaN and returns 0.0, while `Math.max(0, NaN)` is NaN. A NaN
+      // anywhere in a splat's center/covariance would otherwise make this
+      // backend emit it with a NaN amplitude (`NaN < minAmplitude` is false —
+      // the #725 silent-corruption mode) while WASM culled it. `NaN > 0` is
+      // false, so the two twins now agree on every input.
+      const shifted = invOneMinusC * (rawExp - shiftC);
+      attenuation = shifted > 0.0 ? shifted : 0.0;
     }
 
     // (3) Visibility decision.

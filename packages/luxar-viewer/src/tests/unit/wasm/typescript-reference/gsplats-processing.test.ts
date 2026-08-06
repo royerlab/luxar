@@ -105,6 +105,66 @@ describe('gsplats_processing: computeMarginalCholesky', () => {
 });
 
 /**
+ * Visibility-gate contracts of the fused kernel. Migrated here from the
+ * per-kernel attenuation tests that went with `compute_gsplats_attenuation`:
+ * the gate is now inlined in `project_gsplats_nd_to_3d`, so it needs pinning
+ * through the surviving entry point.
+ */
+describe('gsplats_processing: fused visibility gate', () => {
+  // One splat, `ndim` dims, all-visible discrete gate; returns [count, amplitude].
+  const project = (
+    positions: number[],
+    ndim: number,
+    continuousHiddenDims: number[],
+    amplitude: number,
+    minAmplitude: number
+  ): [number, number] => {
+    const packedSize = (ndim * (ndim + 1)) / 2;
+    const cholesky = new Float32Array(packedSize);
+    for (let i = 0; i < ndim; i++) cholesky[(i * (i + 1)) / 2 + i] = 1.0; // identity L
+    const outAmplitudes = new Float32Array(1);
+    const count = project_gsplats_nd_to_3d(
+      new Float32Array(positions),
+      cholesky,
+      new Float32Array([amplitude]),
+      new Float32Array([1, 1, 1]),
+      new Uint8Array([1]),
+      new Float32Array(ndim), // slice at the origin
+      new Uint32Array(continuousHiddenDims),
+      new Uint32Array([0, 1, 2]),
+      ndim,
+      1,
+      3,
+      minAmplitude,
+      3.0,
+      new Float32Array(3),
+      new Float32Array(6),
+      outAmplitudes,
+      new Float32Array(3)
+    );
+    return [count, outAmplitudes[0]];
+  };
+
+  it('keeps a splat whose attenuated amplitude sits EXACTLY on minAmplitude', () => {
+    // No hidden dims → the `numContinuous === 0` short-circuit forces
+    // attenuation = 1, so the emitted amplitude is the raw one and the gate is
+    // tested at its boundary. The gate is `>= minAmplitude`; a mutant flipping
+    // it to a strict `>` drops this splat.
+    expect(project([0, 0, 0], 3, [], 0.25, 0.25)).toEqual([1, 0.25]);
+    // One ulp of headroom below the threshold and it must go.
+    expect(project([0, 0, 0], 3, [], 0.25, 0.2500001)[0]).toBe(0);
+  });
+
+  it('culls a splat whose hidden-dim position is NaN (WASM parity)', () => {
+    // A NaN center makes the Mahalanobis distance NaN. Rust clamps with
+    // `f32::max`, which ignores NaN and yields attenuation 0 → culled. This
+    // backend must agree: emitting the splat instead would push a NaN amplitude
+    // to the GPU (`NaN < minAmplitude` is false), the #725 corruption mode.
+    expect(project([0, 0, 0, Number.NaN], 4, [3], 1.0, 1e-6)[0]).toBe(0);
+  });
+});
+
+/**
  * Fewer than 3 display dims (2D / 1D scenes).
  *
  * These live in the TS-only suite ON PURPOSE. The cross-language parity tests in
