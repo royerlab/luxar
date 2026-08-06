@@ -1,6 +1,6 @@
 # Unified Loader Architecture
 
-**Status**: All geometry loaders use RangeLoader + TransferableAccumulator.
+**Status**: All geometry loaders use RangeLoader plus the per-type accumulators under `data/accumulators/`.
 
 ## Overview
 
@@ -268,37 +268,6 @@ Lines and GSplats loaders always output Float32Array for colors. While Python's
 `LoadedLinesData.colors` and `LoadedGSplatsData.colors` only allow Float32Array.
 This is a design decision - updating would require type changes across the codebase.
 
-### TransferableAccumulator
-
-Enable zero-allocation + CPU offload:
-
-```typescript
-import { TransferableAccumulator, createPointsAccumulator, type PointsBuffers } from './loaders';
-
-// Create accumulator once (owns reusable buffers)
-const accumulator = createPointsAccumulator(10000);
-
-// For each update:
-// 1. Detach buffers for transfer to worker
-const buffers = accumulator.detach();
-const transferables = accumulator.getTransferables(buffers);
-
-// 2. Transfer to worker (zero-copy via Comlink)
-const result = await worker.projectPointsTo3D(
-  Comlink.transfer({ params, outputBuffers: buffers }, transferables)
-);
-
-// 3. Adopt returned buffers (zero-copy)
-accumulator.adopt(result.outputBuffers);
-```
-
-**Key Benefits**:
-
-- Zero-allocation in steady state (after initial warmup)
-- Zero-copy buffer transfer via `Comlink.transfer()`
-- Enables BOTH accumulator pattern AND worker CPU offload
-- Buffers cycle between main thread and worker without copying
-
 ### Other shared helpers
 
 Beyond the three top-level abstractions above, this folder also holds the
@@ -405,7 +374,6 @@ src/data/loaders/
 ├── abort-error.ts                # isAbortError — realm-proof "superseded, not failed" classifier
 ├── chunk-bounds-loader.ts        # Shared chunk_bounds zarr probe (Points/Lines/GSplats)
 ├── color-loader.ts               # Shared color-range loader with native-dtype preservation
-├── transferable-accumulator.ts   # Zero-allocation + worker offload buffer pattern
 ├── loader-metrics.ts             # Pure helpers for load/query metric bookkeeping
 ├── spatial-facade.ts             # Shared loadX/updateView/metrics facade orchestration
 ├── monitor-events.ts             # LoaderEventEmitter — listener fan-out with error isolation
@@ -452,7 +420,6 @@ pnpm test src/tests/unit/data/loaders/
 
 # Run specific tests
 pnpm test src/tests/unit/data/loaders/spatial-query/spatial-query-builder.test.ts
-pnpm test src/tests/unit/data/loaders/transferable-accumulator.test.ts
 ```
 
 ### Test coverage
@@ -466,13 +433,6 @@ pnpm test src/tests/unit/data/loaders/transferable-accumulator.test.ts
   - `SpatialQueryBuilder` geometry-aware path (delegates to `computeTolerance`)
   - `SpatialQueryBuilder` pre-computed-tolerance path (used by points)
   - `SpatialQueryBuilder` extend-to-all short-circuit and `chunkSize` fallback
-
-- **transferable-accumulator.test.ts**
-  - Basic operations, capacity management
-  - Detach/adopt cycle for worker transfer
-  - Optional buffer enabling
-  - Points, Lines, GSplats factory functions
-  - Memory tracking statistics
 
 - **tolerance-computer.test.ts**
   - `computeTolerance` for points / lines / gsplats with displayed/hidden,
