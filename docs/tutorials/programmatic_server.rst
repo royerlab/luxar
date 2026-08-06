@@ -35,7 +35,7 @@ application with CORS headers and a health endpoint already configured.
    import uvicorn
 
    # Create a FastAPI app serving a single Zarr dataset
-   app = create_server_app("/path/to/scene.luxar.zarr", serve_viewer=False)
+   app = create_server_app("/path/to/scene.luxar.zarr")
 
    # Start the server
    uvicorn.run(app, host="127.0.0.1", port=8000)
@@ -47,10 +47,6 @@ application with CORS headers and a health endpoint already configured.
    ``.zarr`` directory, that dataset is served at the root. If it points to a
    regular directory, all contents (including multiple ``.zarr`` datasets) are
    served, and the root returns a JSON directory listing.
-
-``serve_viewer`` (bool, default ``False``)
-   When ``True``, the built-in Luxar viewer static files are bundled into the
-   app so the browser can render the data directly.
 
 ``cors_origin`` (str, keyword-only, default ``"local"``)
    Which browser origins may fetch data via CORS:
@@ -121,7 +117,7 @@ The pattern below mirrors the approach used in the Luxar test suite itself
 
    def test_server_health(sample_zarr_path):
        """Verify that the server starts and reports healthy."""
-       app = create_server_app(str(sample_zarr_path), serve_viewer=False)
+       app = create_server_app(str(sample_zarr_path))
        host, port = "127.0.0.1", 9123
        base_url = f"http://{host}:{port}"
 
@@ -161,7 +157,7 @@ The pattern below mirrors the approach used in the Luxar test suite itself
 
    def test_scene_metadata(sample_zarr_path):
        """Check that scene-level metadata is valid."""
-       app = create_server_app(str(sample_zarr_path), serve_viewer=False)
+       app = create_server_app(str(sample_zarr_path))
        host, port = "127.0.0.1", 9124
        base_url = f"http://{host}:{port}"
 
@@ -207,7 +203,7 @@ respective names. The root path returns a JSON directory listing.
    # Assume /data/ contains:
    #   /data/neurons.luxar.zarr/
    #   /data/vasculature.luxar.zarr/
-   app = create_server_app("/data", serve_viewer=False)
+   app = create_server_app("/data")
 
    # After starting the server on port 8000 (see above for the threading
    # pattern), the root returns a listing:
@@ -267,7 +263,7 @@ authentication middleware, or other services.
 
 
    # Mount Luxar as a sub-application
-   luxar_app = create_server_app("/data/scenes", serve_viewer=True)
+   luxar_app = create_server_app("/data/scenes")
    main_app.mount("/data", luxar_app)
 
    # After starting main_app:
@@ -275,7 +271,14 @@ authentication middleware, or other services.
    # - GET /data/health          -> Luxar health check
    # - GET /data/.zattrs         -> Zarr metadata
    # - GET /data/neurons.luxar.zarr/   -> dataset files (if /data/scenes/ is a directory)
-   # - GET /data/                -> Luxar viewer (serve_viewer=True)
+   # - GET /data/                -> JSON directory listing
+
+.. note::
+
+   ``create_server_app()`` serves data only -- it does not bundle the browser
+   viewer. To serve the interactive Luxar viewer alongside a dataset, use the
+   CLI instead: ``luxar serve <data.luxar.zarr> --viewer`` (which spins up the
+   viewer static files via the internal ``_serve_viewer`` helper).
 
 You can also mount multiple independent Luxar apps at different paths:
 

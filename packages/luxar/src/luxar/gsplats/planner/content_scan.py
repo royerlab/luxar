@@ -78,7 +78,6 @@ def scan_content(
     downsample: int = 1,
     threshold_rel: float = 0.1,
     threshold_abs: Optional[float] = None,
-    device: Optional[str] = None,
 ) -> ContentField:
     """Compute a coarse feature-density field over ``volume`` (CPU, one pass).
 

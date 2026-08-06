@@ -6,6 +6,7 @@
  */
 
 import * as THREE from 'three';
+import type { PooledGeometryType } from '../../types/data-monitor-types';
 
 /**
  * A pooled THREE geometry, plus the metadata the pool needs to decide
@@ -20,11 +21,14 @@ export interface PooledBuffer {
   geometry: THREE.BufferGeometry | THREE.InstancedBufferGeometry;
   capacity: number;
   /**
-   * Spelled out rather than `GeometryTypeName`: only POOLED geometry types have
-   * buffers here (see `pooled` in `types/geometry-capabilities`). A type
-   * rendered from a plain `BufferGeometry` never reaches the pool.
+   * `PooledGeometryType`, NOT `GeometryTypeName`: only POOLED geometry types have
+   * buffers here (see `pooled` in `types/geometry-capabilities`). A type rendered from
+   * a plain `BufferGeometry` — `mesh` — never reaches the pool, so **do not widen this
+   * to the geometry vocabulary when a geometry type is added.** Keyed off the shared
+   * union rather than spelled out, so adding a POOLED type is a compile error while
+   * adding a non-pooled one correctly requires no change here.
    */
-  type: 'points' | 'lines' | 'gsplats';
+  type: PooledGeometryType;
   inUse: boolean;
   lastUsedFrame: number;
 }
@@ -63,11 +67,13 @@ export interface PoolStats {
    * eviction queue is stretching across many frames" scenarios.
    */
   deferredEvictions: number;
-  byType: {
-    points: TypePoolStats;
-    lines: TypePoolStats;
-    gsplats: TypePoolStats;
-  };
+  /**
+   * Per-pooled-type breakdown. `Record<PooledGeometryType, …>` for the same reason as
+   * `type` above, and matching its already-keyed sibling
+   * `GPUPoolStats.byType` in `types/data-monitor-types.ts` — the two were a keyed
+   * record and a hand-written triple describing the same thing.
+   */
+  byType: Record<PooledGeometryType, TypePoolStats>;
 }
 
 /**

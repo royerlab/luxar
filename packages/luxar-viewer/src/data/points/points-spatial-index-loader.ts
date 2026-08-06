@@ -1304,7 +1304,6 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
     if (this.chunkIndex) {
       this.metrics.spatialIndex = buildSpatialIndexMetrics(
         this.chunkIndex.metadata.total_chunks,
-        this.chunkIndex.metadata.chunk_size,
         this.metrics.queries,
         this.totalQueryCells,
         this.metrics.elementsLoaded
