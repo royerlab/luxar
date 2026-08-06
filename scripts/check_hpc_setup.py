@@ -6,10 +6,10 @@ Validates that the Makefile install-hatch and install-pnpm targets work correctl
 on systems where global installs require root (e.g. HPC login nodes).
 
 Run with:
-    python scripts/test_hpc_setup.py
+    python scripts/check_hpc_setup.py
 
 Or via hatch (after initial bootstrap):
-    hatch run python scripts/test_hpc_setup.py
+    hatch run python scripts/check_hpc_setup.py
 """
 
 import os

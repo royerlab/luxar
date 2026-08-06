@@ -1596,6 +1596,24 @@ class TestUnknownRenderAttrRejected:
             root = zarr.open_group(str(zarr_path), mode="r")
             assert "pts" not in root
 
+    def test_retired_grid_shape_keyword_rejected(self) -> None:
+        """``grid_shape=`` used to be a real ``add_points`` parameter whose value
+        nothing ever read — it was persisted as a dead attr and ignored. Now that
+        the parameter is gone, it arrives through ``**attrs`` and must fail fast
+        (on the flat path and on the additive-ladder path alike) instead of
+        quietly landing back on disk.
+        """
+        for kwargs in ({}, {"additive_lod": True}):
+            with tempfile.TemporaryDirectory() as tmpdir:
+                zarr_path, compiler, scene = self._scene(tmpdir)
+                with pytest.raises(
+                    ValueError, match="Unknown node attribute 'grid_shape'"
+                ):
+                    scene.add_points("pts", self.POS, grid_shape=(8, 8, 8), **kwargs)
+                compiler.finalize()
+                root = zarr.open_group(str(zarr_path), mode="r")
+                assert "pts" not in root
+
     def test_unknown_attr_rejected_on_lines_and_gsplats(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             zarr_path, compiler, scene = self._scene(tmpdir)

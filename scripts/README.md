@@ -27,7 +27,7 @@ scripts/
 | `gen_census_umap.py` | Build the large CELLxGENE Census scVI/UMAP cache on a CUDA/RAPIDS environment |
 | `generate_builtin_colormaps.py` | Regenerate built-in colormap LUTs (Python + TS) |
 | `build_cuda_slurm.py` | Submit a CUDA extension build job to Slurm |
-| `test_hpc_setup.py` | Smoke-test the HPC/venv-fallback dev environment |
+| `check_hpc_setup.py` | Smoke-test the HPC/venv-fallback dev environment |
 | `calibrate_gsplat_demos.py` | Run `luxar gsplat cal` on every gsplat demo's volume(s) |
 | `update_demo_max_splats.py` | Apply calibrated K\* to each demo's `MAX_SPLATS` constant |
 | `add_additive_lod_to_demos.py` | Add an additive LOD ladder to each gsplat demo baseline |
@@ -35,7 +35,6 @@ scripts/
 | `benchmark_progressive_psnr.py` | Benchmark progressive gsplat fitting (PSNR/SSIM) |
 | `refit_gsplat_demos.sh` | Force-refit every gsplat demo (sequential) |
 | `run_demo_recompute.sh` | Sequential demo recompute from scratch |
-| `test_batch_plan_fixes.py`, `test_cholesky_fix.py` | Ad-hoc regression check scripts |
 
 ## Demo Ladder Structural Gate
 
@@ -235,14 +234,14 @@ python scripts/build_cuda_slurm.py --partition gpu
 python scripts/build_cuda_slurm.py --partition gpu --dry-run
 ```
 
-### `test_hpc_setup.py`
+### `check_hpc_setup.py`
 
 Smoke-tests the HPC / no-sudo dev environment created by `make setup-dev`
 (venv-fallback detection, tool locations, PATH). Run after bootstrapping a
 cluster login node:
 
 ```bash
-python scripts/test_hpc_setup.py
+python scripts/check_hpc_setup.py
 ```
 
 ---
