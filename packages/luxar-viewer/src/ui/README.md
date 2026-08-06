@@ -51,6 +51,7 @@ ui/
 ├── loading-indicator.ts                # Loading spinner (was helpers.showLoading*)
 ├── error-overlay.ts                    # Error dialog (was helpers.showError/clearError)
 ├── help-overlay.ts                     # Keyboard shortcuts panel (was helpers.show/hideHelp)
+├── control-rail.ts                     # Always-visible left activity rail (helpers in control-rail/)
 ├── toast.ts                            # Brief auto-dismiss notifications
 ├── ui-cleanup.ts                       # App-teardown helper
 │
@@ -104,8 +105,8 @@ ui/
 │   └── ui-component.ts
 ├── help-overlay/                       # Help overlay's private helper
 │   └── focus-trap.ts                   # Tab/Shift+Tab focus trap (also used by error-overlay)
-├── control-rail/                       # Always-visible left activity rail (folder module)
-│   ├── index.ts (ControlRail), rail-overlay.ts (flyout + popover lifecycle),
+├── control-rail/                       # Control rail's private helpers (orchestrator: ../control-rail.ts)
+│   ├── rail-overlay.ts (flyout + popover lifecycle),
 │   │ icons.ts (RAIL_ICONS), dom-helpers.ts, types.ts
 ├── rail-panels/                        # Rich popovers hosted by the control rail
 │   ├── settings-popover.ts, performance-popover.ts,
@@ -130,7 +131,7 @@ Coordination-heavy UI classes (`recording-panel.ts`, `data-loading-monitor.ts`, 
 
 ### 0. Control Rail
 
-The always-visible discoverability affordance (`ui/control-rail/`) — a slim
+The always-visible discoverability affordance (`ui/control-rail.ts`) — a slim
 vertical activity rail docked to the left edge. Luxar's panels are otherwise
 keyboard-triggered, so the rail is the one visible entry point: one recognizable
 icon per panel (Help, Home, Navigation, Dimensions, Rendering, Layers,
@@ -1180,12 +1181,13 @@ _For implementation details, see the source files in this directory._
 ## Subpackages
 
 Each sibling folder holds the private helpers for the public-API file
-of the same name at this folder's root (plus the folder-modules
-`control-rail/` and `rail-panels/`). Most have their own README:
+of the same name at this folder's root (plus the folder-module
+`rail-panels/`). Most have their own README:
 
-- `control-rail/` — Always-visible left-edge activity rail
-  (`ControlRail`, `RailOverlay` flyout/popover lifecycle, `RAIL_ICONS`,
-  DOM helpers); one button per panel, wired to the exact commands the
+- [`control-rail/`](./control-rail/README.md) — Internals for
+  `control-rail.ts`, the always-visible left-edge activity rail
+  (`RailOverlay` flyout/popover lifecycle, `RAIL_ICONS`, DOM helpers,
+  item types); one button per panel, wired to the exact commands the
   keyboard shortcuts fire. See §0 above.
 - [`data-loading-monitor/`](./data-loading-monitor/README.md) — Internals
   for `data-loading-monitor.ts` (templates, advisor, event queue,

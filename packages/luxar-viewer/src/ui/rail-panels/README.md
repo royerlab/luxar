@@ -1,6 +1,6 @@
 # rail-panels
 
-Rich control popovers hosted by the left **control rail** (`ui/control-rail/`).
+Rich control popovers hosted by the left **control rail** (`ui/control-rail.ts`).
 
 The rail's chip flyout (View options) only holds on/off toggles. When a rail
 button needs sliders, dropdowns, or a mode selector, it opens a **panel popover**
