@@ -27,6 +27,12 @@ from typing import (
 
 import numpy as np
 
+# Runtime (not TYPE_CHECKING) import: ``_node``'s annotation below is a CLASS
+# annotation, so ``typing.get_type_hints(GSplatData)`` must be able to resolve
+# it. ``tree`` only pulls numpy and ``utils.spatial_axes`` at module level and
+# reaches back into ``gsplat_data`` lazily, so this direction is cycle-free.
+from luxar.gsplats.tree import GSplatNode
+
 from .metrics import _SplatArrayMixin
 
 if TYPE_CHECKING:
@@ -35,7 +41,6 @@ if TYPE_CHECKING:
         GSplatData,
         SubstitutiveLevel,
     )
-    from luxar.gsplats.tree import GSplatNode
 
 
 class _GSplatDataOps(_SplatArrayMixin):
@@ -52,7 +57,7 @@ class _GSplatDataOps(_SplatArrayMixin):
     # centers/amplitudes/cholesky_factors declared on _SplatArrayMixin).
     colors: Optional[np.ndarray]
     stats: Dict[str, Any]
-    _node: "GSplatNode"
+    _node: GSplatNode
 
     # ── Derived matrix views (real on GSplatData) ──────────────────────────
     @property

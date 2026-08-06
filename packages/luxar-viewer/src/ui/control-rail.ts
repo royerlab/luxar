@@ -31,9 +31,11 @@ import { isPanelVisible, escapeHtml } from './control-rail/dom-helpers';
 import type { ControlRailItem } from './control-rail/types';
 
 /**
- * The item-descriptor types callers need to declare a rail entry. Re-exported
- * here so `ui/control-rail` is the single import path for the whole subsystem
- * and callers never reach into `control-rail/` themselves.
+ * The item-descriptor types callers need to declare a rail entry, re-exported
+ * so `ui/control-rail` is the intended import path for the subsystem.
+ * `RAIL_ICONS` rides along for the same reason, though `help-overlay.ts` and
+ * `rail-panels/home-popover.ts` still reach it directly via
+ * `control-rail/icons` — keep this re-export either way.
  */
 export type { ControlRailItem, ControlRailPopover, ControlRailToggle } from './control-rail/types';
 export { RAIL_ICONS } from './control-rail/icons';
