@@ -17,6 +17,7 @@ import { buildDefaultCamera } from './shared';
 // graph has evaluated), so the cycle is benign under ESM live bindings.
 import { SHADER_REGISTRY } from './index';
 
+/** Edge length (px) of the square offscreen render target the parity harness draws into. */
 export const HARNESS_SIZE = 64;
 
 /**

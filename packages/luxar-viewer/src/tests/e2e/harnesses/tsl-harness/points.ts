@@ -353,6 +353,11 @@ function buildSortedPermutedMesh(material: THREE.Material): THREE.Object3D {
   return mesh;
 }
 
+/**
+ * Registry of point shader entries for the TSL↔GLSL parity harness, keyed by
+ * test name. Each entry carries the GLSL source and a `buildUniforms` factory;
+ * merged into `SHADER_REGISTRY` and driven by the parity/codegen specs.
+ */
 export const POINT_SHADERS: Record<string, RegistryEntry> = {
   // Point parity: full PointMaterial sprite + GOG + super-Gaussian falloff.
   // Uniforms mirror the production PointMaterial constructor; ortho mode
