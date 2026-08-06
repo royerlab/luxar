@@ -71,7 +71,7 @@ import type { RendererCapabilities } from '../renderer-capabilities';
  */
 export type { BlendingMode };
 
-/** Point material properties driving cache key + constructor config. */
+/** Point material properties driving the constructor config. */
 export interface PointMaterialProperties {
   blendingMode: BlendingMode;
   opacity: number;
@@ -84,7 +84,7 @@ export interface PointMaterialProperties {
   radiusScale?: number;
 }
 
-/** Line material properties driving cache key + constructor config. */
+/** Line material properties driving the constructor config. */
 export interface LineMaterialProperties {
   blendingMode: BlendingMode;
   opacity: number;
@@ -95,7 +95,7 @@ export interface LineMaterialProperties {
   offset: number;
 }
 
-/** GSplat material properties driving cache key + constructor config. */
+/** GSplat material properties driving the constructor config. */
 export interface GSplatMaterialProperties {
   blendingMode: BlendingMode;
   opacity: number;
@@ -151,8 +151,8 @@ export interface MeshMaterialProperties {
 }
 
 /**
- * The material backend tag used in cache keys and as the index into
- * the factory tables. `'tsl'` selects the `NodeMaterial`-derived
+ * The material backend tag used as the index into the factory
+ * tables. `'tsl'` selects the `NodeMaterial`-derived
  * implementation built for WebGPURenderer; `'glsl'` selects the
  * `ShaderMaterial`-derived implementation for `THREE.WebGLRenderer`.
  */
