@@ -704,7 +704,6 @@ make check-deps    # Verify installation
 | Build viewer | `make build-viewer` |
 | Run examples | `make run-examples` |
 | Generate README images | `make generate-readme-images` |
-| Generate README videos | `make generate-readme-videos` |
 
 ### Python Development
 

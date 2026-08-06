@@ -33,7 +33,7 @@ def test_every_geometry_writer_stamps_ndim(tmp_path) -> None:
     The viewer's points chunk-index loader cross-checks ``chunk_bounds``
     dimensionality against this attr and skips the check when it is absent, so a
     writer that forgets the stamp silently disables a correctness gate. Asserted
-    across all three types in one place so a new geometry cannot omit it.
+    across all four types in one place so a new geometry cannot omit it.
     """
     import numpy as np
 
@@ -60,7 +60,15 @@ def test_every_geometry_writer_stamps_ndim(tmp_path) -> None:
                 np.array([1.0, 0.0, 1.0, 0.0, 0.0, 1.0], dtype=np.float32), (n, 1)
             ),
         )
+        scene.add_mesh(
+            "msh",
+            vertices=rng.rand(n, 3).astype(np.float32),
+            faces=np.arange(n - (n % 3), dtype=np.uint32).reshape(-1, 3),
+        )
 
     root = zarr.open_group(store, "r")
-    stamped = {name: dict(root[name].attrs).get("ndim") for name in ("pts", "lns", "spl")}
-    assert stamped == {"pts": 3, "lns": 3, "spl": 3}, stamped
+    stamped = {
+        name: dict(root[name].attrs).get("ndim")
+        for name in ("pts", "lns", "spl", "msh")
+    }
+    assert stamped == {"pts": 3, "lns": 3, "spl": 3, "msh": 3}, stamped

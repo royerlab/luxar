@@ -85,7 +85,6 @@
     "test:e2e:debug": "playwright test --debug",
     "test:e2e:report": "playwright show-report",
     "readme-images": "playwright test --config playwright.screenshots.config.ts generate-readme-images",
-    "readme-videos": "playwright test --config playwright.videos.config.ts",
     "gallery": "playwright test --config playwright.gallery.config.ts",
     "doc-images": "playwright test --config playwright.screenshots.config.ts generate-doc-images",
     "agent:debug": "tsx tools/agent-driver.ts",
