@@ -2,10 +2,6 @@
  * Comprehensive tests for RenderingControls class
  * Tests cover all synchronization bugs found and fixed
  *
- * NOTE: Pure-function tests for input utilities (isNavigationKey, calculateFovChange,
- * shouldBlockShortcut) live in:
- *   - src/tests/unit/controls/input-validation.test.ts
- *   - src/tests/unit/input/input-handler.test.ts
  * This file focuses on RenderingControls state management, persistence, and sync.
  */
 
