@@ -1,10 +1,14 @@
-"""Tests for GSplatData save / cull / channel-merge operations.
+"""Tests for GSplatData cull / save-whitelist / channel-merge operations.
 
 Split out from ``test_gsplat_data.py`` to keep that file focused on
 the core data API. This file covers the I/O-facing surface area:
 
-- ``TestCullHeuristic`` — amplitude/cumulative/redundancy/error-budget culling
-- ``TestSaveWhitelist`` — fields that round-trip through zarr
+- ``TestCullHeuristic`` — cumulative, amplitude-percentile, combined, and
+  auto-selected culling, plus error paths (redundancy and error-budget culling
+  are torch-backed and live in ``test_culling.py``)
+- ``TestSaveWhitelist`` — which ``stats`` keys the ``save()`` ``fitting_info``
+  whitelist keeps versus drops, asserted against the whitelist logic itself
+  (no ``save()`` call, no zarr write)
 - ``TestMergeWithChannelColors`` — multi-dataset channel-color merge
 """
 
@@ -99,7 +103,11 @@ class TestCullHeuristic:
 
 
 class TestSaveWhitelist:
-    """Verify save() preserves quality metrics in fitting_info."""
+    """Verify the ``save()`` ``fitting_info`` whitelist keeps the quality metrics.
+
+    Asserted against a local copy of the whitelist rather than through a real
+    ``save()`` call — see the module docstring.
+    """
 
     def test_quality_metrics_included(self):
         """Check that save() whitelist includes all quality metrics from finalize_results."""
