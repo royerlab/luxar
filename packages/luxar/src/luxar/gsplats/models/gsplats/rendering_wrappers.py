@@ -5,7 +5,6 @@ NumPy and PyTorch wrapper functions for Gaussian rendering.
 This module provides user-friendly wrappers around the core rendering engine:
 - render_gaussians_numpy: NumPy interface accepting GSplatData
 - render_gaussians_pytorch: PyTorch interface accepting GSplatData
-- render_gaussians_batched: Batched rendering
 
 All wrappers work directly with GSplatData for clean, type-safe rendering.
 """
@@ -144,43 +143,3 @@ def render_gaussians_pytorch(
         )
 
     return rendered
-
-
-def render_gaussians_batched(
-    shape: Sequence[int],
-    centers: torch.Tensor,
-    Ls: torch.Tensor,
-    amps: torch.Tensor,
-    truncate: float = DEFAULT_TRUNCATION_RADIUS,
-    intensity_floor: Optional[float] = 1e-5,
-    chunk_size: Optional[int] = None,
-) -> torch.Tensor:
-    """
-    Batched wrapper for render_gaussians - identical functionality.
-
-    Parameters
-    ----------
-    shape : Sequence[int]
-        Output shape.
-    centers : torch.Tensor, shape (N, d)
-        Center positions.
-    Ls : torch.Tensor, shape (N, d, d)
-        Cholesky factors.
-    amps : torch.Tensor, shape (N,)
-        Amplitudes.
-    truncate : float, default=DEFAULT_TRUNCATION_RADIUS
-        Truncation radius.
-    intensity_floor : float or None, default=1e-5
-        Minimum intensity for amplitude-aware culling.
-        Pass ``None`` (or a non-positive value) to disable culling entirely.
-    chunk_size : int, optional
-        Chunk size for memory management.
-
-    Returns
-    -------
-    torch.Tensor
-        Rendered output.
-    """
-    return render_gaussians(
-        shape, centers, Ls, amps, truncate, intensity_floor, chunk_size
-    )
