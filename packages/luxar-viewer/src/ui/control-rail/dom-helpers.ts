@@ -13,10 +13,11 @@ export function isPanelVisible(selector: string, scope: ParentNode): boolean {
   return s.visibility !== 'hidden' && Number(s.opacity) > 0.01;
 }
 
-/** Escape a string for safe interpolation into tooltip `innerHTML`. */
-export function escapeHtml(s: string): string {
-  return s.replace(
-    /[&<>"]/g,
-    (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c] ?? c
-  );
-}
+/**
+ * Escape a string for safe interpolation into tooltip `innerHTML`.
+ *
+ * Re-exports the canonical {@link escapeHtml} (escapes `&<>"'` — the
+ * single-quote superset), which is safe in the text/`<kbd>` interpolation
+ * positions used by `index.ts` and `rail-overlay.ts`.
+ */
+export { escapeHtml } from '../../utils/escape-html';
