@@ -271,6 +271,57 @@ describe('commitMeshGeometry', () => {
   });
 });
 
+describe('processMeshData — the continuous-hidden-dim notice (§9 evidence gate)', () => {
+  beforeEach(() => {
+    resetWindingNoticesForTesting();
+  });
+
+  it('reports a continuous hidden dim, naming it and its unit', async () => {
+    // The measurement behind §9's deferral of exact nD clipping: a continuous hidden
+    // dim is exactly when the whole-triangle slab stops being a true cut. The name and
+    // unit are in the message because the viewer has no spatial-unit vocabulary, so the
+    // reader classifies "spatial Z" vs "benign time axis", not the code.
+    const info = vi.spyOn(log, 'info').mockImplementation(() => {});
+    await processMeshData('/continuous', loadedAtW(0), viewWithDim(1.0, { name: 'z2', step: 1 }), {
+      normal_dims: [0, 1, 2],
+      double_sided: false,
+    });
+    const messages = info.mock.calls.map((c) => String(c[1]));
+    const hit = messages.find((m) => m.includes('/continuous') && m.includes('§5.2.1'));
+    expect(hit).toBeDefined();
+    expect(hit).toContain('z2');
+    info.mockRestore();
+  });
+
+  it('stays silent when the hidden dim is discrete — the dominant real case', async () => {
+    // Time/channel hidden dims get a TRUE cut from the half-cell membership rule, so
+    // there is nothing to report. If this fired here the signal would be worthless:
+    // almost every mesh in the wild has a discrete hidden dim or none at all.
+    const info = vi.spyOn(log, 'info').mockImplementation(() => {});
+    await processMeshData(
+      '/discrete',
+      loadedAtW(0),
+      viewWithDim(0.5, { name: 't', discrete: true, step: 1 }),
+      { normal_dims: [0, 1, 2], double_sided: false }
+    );
+    expect(info.mock.calls.map((c) => String(c[1])).some((m) => m.includes('§5.2.1'))).toBe(false);
+    info.mockRestore();
+  });
+
+  it('reports once per node, not once per slice move', async () => {
+    const info = vi.spyOn(log, 'info').mockImplementation(() => {});
+    for (let i = 0; i < 3; i++) {
+      await processMeshData('/scrub', loadedAtW(0), viewWithDim(1.0, { name: 'z2', step: 1 }), {
+        normal_dims: [0, 1, 2],
+        double_sided: false,
+      });
+    }
+    const hits = info.mock.calls.map((c) => String(c[1])).filter((m) => m.includes('§5.2.1'));
+    expect(hits).toHaveLength(1);
+    info.mockRestore();
+  });
+});
+
 describe('processMeshData — membership tolerance', () => {
   beforeEach(() => {
     resetWindingNoticesForTesting();

@@ -27,6 +27,7 @@ import {
   noticeUndecidableWinding,
   type ProjectedMeshData,
 } from '../../mesh/projection';
+import { log, Modules } from '../../../utils/log';
 import { computeTolerance } from '../../loaders';
 import { EXTEND_TO_ALL_TOLERANCE } from '../view-state/extend-tolerance';
 import type { LoadedMeshData, MeshMetadata, MeshViewState } from '../../../types/mesh';
@@ -103,10 +104,77 @@ export async function processMeshData(
     noticeUndecidableWinding(path, projected.undecidableReason, noticedWinding);
   }
 
+  noticeContinuousHiddenDim(path, viewState, data.ndim, extendDims);
+
   return { path, data, projected };
+}
+
+/**
+ * Nodes already reported as having a continuous hidden dimension.
+ *
+ * Same rationale as {@link noticedWinding}: this runs on every slice move.
+ */
+const noticedContinuousHidden = new Set<string>();
+
+/**
+ * Report — once per node, at `info` — a mesh whose hidden dims include a CONTINUOUS one.
+ *
+ * This is the measurement behind spec §9's deferral of exact nD triangle clipping. §5
+ * culls whole triangles by per-vertex slab membership, which is a true cut when the
+ * hidden dims are discrete (time, channel — the dominant real case, and why the cheap
+ * kernel was chosen) but only a THICK SLAB when a hidden dim is continuous and spatial.
+ * Exact clipping would fix that, at roughly 1500 LOC across two backends.
+ *
+ * The spec's promotion condition is "if continuous hidden spatial dims turn out to be a
+ * real use case" — which was unfalsifiable, because nothing measured it. This line is
+ * the experiment. Promote exact clipping when it starts appearing on real data; leave it
+ * deferred while it does not.
+ *
+ * **It reports the dimension's name and unit rather than judging "spatial" itself.**
+ * Units in Luxar are free-form strings and there is no spatial-unit vocabulary in the
+ * viewer; inventing one for a diagnostic would be a taxonomy that is wrong at the edges
+ * and load-bearing nowhere else. A continuous hidden dim is the exact trigger for the
+ * slab approximation either way — the name and unit are what let a reader tell the case
+ * that matters (a continuous Z) from the benign one (a continuous time axis, where a
+ * slab is a reasonable thing to want).
+ *
+ * `info`, not `warning`: nothing is wrong. The slab is the documented behaviour, and the
+ * node renders correctly under it.
+ */
+function noticeContinuousHiddenDim(
+  path: string,
+  viewState: MeshViewState,
+  ndim: number,
+  extendDims: readonly string[]
+): void {
+  if (noticedContinuousHidden.has(path)) return;
+  const dims = viewState.dimensions;
+  if (!dims) return;
+
+  const displayed = new Set(viewState.displayDims);
+  const extended = new Set(extendDims);
+  const continuous: string[] = [];
+  for (let i = 0; i < ndim && i < dims.length; i++) {
+    const dim = dims[i];
+    // An extended dim has an infinite slab, so the approximation cannot bite there.
+    if (displayed.has(i) || dim?.discrete || extended.has(dim?.name ?? '')) continue;
+    continuous.push(`${dim?.name ?? `dim${i}`}${dim?.unit ? ` [${dim.unit}]` : ''}`);
+  }
+  if (continuous.length === 0) return;
+
+  noticedContinuousHidden.add(path);
+  log.info(
+    Modules.SCENE_LOADER,
+    `Mesh ${path} has continuous hidden dimension(s) ${continuous.join(', ')}. Triangles ` +
+      'are culled by whole-triangle slab membership, not clipped, so the surface shown is ' +
+      'a slab of finite thickness rather than an exact cross-section ' +
+      '(MESH_NODE_SPEC.md §5.2.1). Correct and intended; noted because exact nD clipping ' +
+      'is deferred until this configuration shows up on real data (§9).'
+  );
 }
 
 /** Test seam: forget which nodes have been warned about. */
 export function resetWindingNoticesForTesting(): void {
   noticedWinding.clear();
+  noticedContinuousHidden.clear();
 }
