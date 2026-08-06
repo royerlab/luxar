@@ -1639,6 +1639,42 @@ class TestUnknownRenderAttrRejected:
             assert "lns" not in root
             assert "splats" not in root
 
+    def test_line_join_style_round_trips_and_rejects_a_typo(self) -> None:
+        """``join=`` (issue #790) persists verbatim, stays absent when
+        unauthored, and rejects an unrecognised VALUE.
+
+        The key allowlist and the value check are separate gates and both
+        matter: ``jion=`` is caught by the former, ``join="mitre"`` only by the
+        latter. Without the value check a typo would write cleanly and render
+        with the default join, giving the author nothing to go on.
+        """
+        for style in ("none", "miter"):
+            with tempfile.TemporaryDirectory() as tmpdir:
+                zarr_path, compiler, scene = self._scene(tmpdir)
+                scene.add_lines("lns", self.POS, 0.5, join=style)
+                compiler.finalize()
+                root = zarr.open_group(str(zarr_path), mode="r")
+                assert root["lns"].attrs["join"] == style
+
+        # Unauthored: the writer must NOT bake a default into the file — the
+        # default belongs to the viewer, where a ?lineJoin= override can still
+        # win over it.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path, compiler, scene = self._scene(tmpdir)
+            scene.add_lines("lns", self.POS, 0.5)
+            compiler.finalize()
+            root = zarr.open_group(str(zarr_path), mode="r")
+            assert "join" not in root["lns"].attrs
+
+        # A misspelled STYLE fails fast and leaves nothing on disk.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path, compiler, scene = self._scene(tmpdir)
+            with pytest.raises(ValueError, match="Unknown line join style"):
+                scene.add_lines("lns", self.POS, 0.5, join="mitre")
+            compiler.finalize()
+            root = zarr.open_group(str(zarr_path), mode="r")
+            assert "lns" not in root
+
     def test_typo_of_structural_key_rejected_without_structural_suggestion(
         self,
     ) -> None:

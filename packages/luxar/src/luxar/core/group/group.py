@@ -303,6 +303,15 @@ class Group(Node):
                 - ``absorption`` (float >= 0): absorption coefficient kappa,
                   read by the ``"volumetric"`` blending mode; kappa=0 renders
                   like additive. Defaults to 1.0.
+                - ``join`` (str): join style at degree-2 polyline joints --
+                  ``"miter"`` (the default) or ``"none"``. Without join
+                  geometry a turn leaves an uncovered wedge on the outside of
+                  the bend and a double-covered lens inside; ``"miter"``
+                  rotates each quad's end edge onto the shared miter edge so
+                  the two tile exactly. Gated in-shader by rendered width and
+                  a miter limit, so ``"none"`` is rarely worth authoring. An
+                  unrecognised value is rejected rather than silently treated
+                  as ``"none"``.
 
         Returns:
             The created Lines node

@@ -131,6 +131,11 @@ KNOWN_RENDER_ATTRS: FrozenSet[str] = frozenset(
         "colormap",
         "gamma",
         "intensity",
+        # Lines-only join style at degree-2 polyline joints (issue #790).
+        # Advertised here rather than hidden in ``_ALLOWED_NODE_ATTRS``
+        # because it is a real appearance knob a user authors, so it belongs
+        # in the "known render attributes" hint a typo prints.
+        "join",
         "layer",
         "offset",
         "opacity",
@@ -495,6 +500,19 @@ def validate_render_attrs(
         from ...validation.types import validate_blending_mode
 
         validate_blending_mode(attrs["blending_mode"])
+
+    if "join" in attrs:
+        # The KEY allowlist above catches ``jion=``; this catches ``join="mitre"``.
+        # Both matter: an unrecognised style is far more likely a typo than a
+        # request for no joins, and the file would otherwise write cleanly and
+        # render with the default, giving the author nothing to go on.
+        from ...typing_utils.constants import LINE_JOIN_STYLES
+
+        if attrs["join"] not in LINE_JOIN_STYLES:
+            raise ValueError(
+                f"Unknown line join style {attrs['join']!r}. "
+                f"Expected one of {sorted(LINE_JOIN_STYLES)}."
+            )
 
     if "absorption" in attrs:
         from ...validation.types import validate_absorption

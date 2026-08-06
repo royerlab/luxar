@@ -40,6 +40,11 @@ COMPOSITING_ATTRS = frozenset(
         "intensity",
         "offset",
         "blending_mode",
+        # Lines-only, but compositing for the same reason blending_mode is: the
+        # user thinks of the wrapper as their layer, so a partitioned / LOD
+        # lines node must not silently drop back to the default join style on
+        # every internal child.
+        "join",
         "layer",
         "visible",
         "nd_transform",
