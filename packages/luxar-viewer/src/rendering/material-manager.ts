@@ -146,7 +146,7 @@ export class MaterialManager {
   private subscribedMaterials = new WeakSet<THREE.Material & CameraAwareMaterial>();
   /**
    * Diagnostic: cumulative wall-clock time spent constructing
-   * materials (Point/Line/GSplat). Useful as a proxy for "how much
+   * materials (Point/Line/GSplat/Mesh). Useful as a proxy for "how much
    * time does the user spend waiting for material-creation work" —
    * first-use stutter shows up as a single large delta on the
    * affected animation frame. Exposed in `getCacheStats()`.

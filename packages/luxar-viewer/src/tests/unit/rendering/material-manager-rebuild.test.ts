@@ -2,7 +2,7 @@
  * Unit tests for MaterialManager.rebuildAfterContextRestore.
  *
  * The rebuild path is tested in isolation: we don't need a real WebGL
- * context. All three material kinds are PER NODE now (the line-material
+ * context. All four material kinds are PER NODE now (the line-material
  * LRU — the last cached kind — died with the lines texture-storage
  * migration), so there is nothing left for the rebuild to clear; what it
  * MUST NOT do is disturb the camera-update registry or dispose live
