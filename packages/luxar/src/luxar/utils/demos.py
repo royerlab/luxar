@@ -13,7 +13,7 @@ import shutil
 import sys
 import zipfile
 from pathlib import Path, PurePosixPath
-from typing import Any, Callable, NamedTuple, Optional, Union
+from typing import Any, Callable, NamedTuple, Optional, Union, overload
 
 import numpy as np
 from arbol import aprint, asection
@@ -234,25 +234,56 @@ def parse_demo_flags() -> dict:
     }
 
 
-def parse_int_arg(name: str, default: int, argv: Optional[list[str]] = None) -> int:
+@overload
+def parse_int_arg(name: str, default: int, argv: Optional[list[str]] = ...) -> int: ...
+@overload
+def parse_int_arg(
+    name: str, default: None, argv: Optional[list[str]] = ...
+) -> Optional[int]: ...
+def parse_int_arg(
+    name: str, default: Optional[int], argv: Optional[list[str]] = None
+) -> Optional[int]:
     """Parse an integer ``--name=VALUE`` or ``--name VALUE`` flag from argv.
 
     A tiny shared replacement for the ad-hoc ``sys.argv`` scanning every demo
     re-implements (``--points``, ``--sample``, ``--grid``, ``--frames``,
     ``--resolution``, …). Accepts both ``--name=8000`` and ``--name 8000``.
-    Returns ``default`` when the flag is absent or unparseable.
+    Returns ``default`` when the flag is absent. A malformed/unparseable value
+    (e.g. ``--points=abc``) warns and returns ``default`` rather than raising —
+    this fall-back-to-default behaviour is the single shared policy across all
+    demos.
     """
     args = list(sys.argv if argv is None else argv)
     flag = f"--{name}"
     for i, arg in enumerate(args):
-        try:
-            if arg.startswith(flag + "="):
-                return int(arg.split("=", 1)[1])
-            if arg == flag and i + 1 < len(args):
-                return int(args[i + 1])
-        except (ValueError, IndexError):
-            return default
+        raw: Optional[str] = None
+        if arg.startswith(flag + "="):
+            raw = arg.split("=", 1)[1]
+        elif arg == flag and i + 1 < len(args):
+            raw = args[i + 1]
+        if raw is not None:
+            try:
+                return int(raw)
+            except ValueError:
+                aprint(f"Ignoring malformed {flag}={raw!r}; using {default}")
+                return default
     return default
+
+
+def parse_path_arg(name: str, argv: Optional[list[str]] = None) -> Optional[Path]:
+    """Parse a path ``--name=PATH`` or ``--name PATH`` flag from argv.
+
+    Sibling of :func:`parse_int_arg` for path-valued flags (``--cache-dir`` and
+    similar). Expands a leading ``~``. Returns ``None`` when the flag is absent.
+    """
+    args = list(sys.argv if argv is None else argv)
+    flag = f"--{name}"
+    for i, arg in enumerate(args):
+        if arg.startswith(flag + "="):
+            return Path(arg.split("=", 1)[1]).expanduser()
+        if arg == flag and i + 1 < len(args):
+            return Path(args[i + 1]).expanduser()
+    return None
 
 
 # =============================================================================

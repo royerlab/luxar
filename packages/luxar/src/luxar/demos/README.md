@@ -1082,6 +1082,7 @@ from luxar.demos import (
     require_module,      # gate an OPTIONAL dependency at its point of use (see #7)
     parse_demo_flags,    # --recompute / --no-serve / --serve-only
     parse_int_arg,       # --points=N / --sample N integer flags
+    parse_path_arg,      # --cache-dir PATH / --data=PATH path flags (expands ~)
     hsv_to_rgb,          # vectorized rainbow / hue-ramp colouring
     detect_device, warn_if_no_cuda_gpu,          # GPU/MPS/CPU
     load_precomputed_gsplats, load_precomputed_bundle,  # LFS-shipped gsplat data

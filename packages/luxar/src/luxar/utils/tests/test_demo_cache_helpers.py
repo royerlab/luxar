@@ -125,6 +125,24 @@ def test_parse_int_arg_equals_space_and_default():
     assert demo_utils.parse_int_arg("points", 100, ["--points=bad"]) == 100
 
 
+def test_parse_int_arg_none_default_and_parse_path_arg():
+    # A None default returns None when the flag is absent, and still parses.
+    assert demo_utils.parse_int_arg("max", None, ["--other=1"]) is None
+    assert demo_utils.parse_int_arg("max", None, ["--max=5"]) == 5
+
+    # parse_path_arg: absent → None; both flag forms parse (and expand ~).
+    assert demo_utils.parse_path_arg("cache-dir", ["--x"]) is None
+    assert demo_utils.parse_path_arg("cache-dir", ["--cache-dir=/tmp/foo"]) == Path(
+        "/tmp/foo"
+    )
+    assert demo_utils.parse_path_arg("cache-dir", ["--cache-dir", "/tmp/foo"]) == Path(
+        "/tmp/foo"
+    )
+    assert demo_utils.parse_path_arg("cache-dir", ["--cache-dir=~/foo"]) == (
+        Path.home() / "foo"
+    )
+
+
 def test_stack_colorings_shapes_and_alignment():
     n = 5
     coords = np.arange(n * 3, dtype=np.float32).reshape(n, 3)
