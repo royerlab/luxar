@@ -266,34 +266,6 @@ void validate_splat_tensors_3d(
         "Metal 3D kernels currently support at most uint32_t splats");
 }
 
-void validate_splat_L_tensors_3d(
-    const torch::Tensor& centers,
-    const torch::Tensor& Ls,
-    const torch::Tensor& amps,
-    const std::vector<int64_t>& shape
-) {
-    validate_shape_3d(shape);
-
-    TORCH_CHECK(centers.device().is_mps() && Ls.device().is_mps() && amps.device().is_mps(),
-        "3D Metal tensors must be on MPS device");
-    TORCH_CHECK(centers.scalar_type() == torch::kFloat32
-            && Ls.scalar_type() == torch::kFloat32
-            && amps.scalar_type() == torch::kFloat32,
-        "3D Metal tensors must be float32");
-    TORCH_CHECK(centers.is_contiguous() && Ls.is_contiguous() && amps.is_contiguous(),
-        "3D Metal tensors must be contiguous");
-
-    TORCH_CHECK(centers.dim() == 2 && centers.size(1) == 3,
-        "centers must have shape (N, 3)");
-    TORCH_CHECK(Ls.dim() == 3 && Ls.size(1) == 3 && Ls.size(2) == 3,
-        "Ls must have shape (N, 3, 3)");
-    TORCH_CHECK(amps.dim() == 1, "amps must have shape (N,)");
-    TORCH_CHECK(Ls.size(0) == centers.size(0) && amps.size(0) == centers.size(0),
-        "centers, Ls, and amps batch dimensions must match");
-    TORCH_CHECK(centers.size(0) <= std::numeric_limits<uint32_t>::max(),
-        "Metal 3D kernels currently support at most uint32_t splats");
-}
-
 // ============================================================================
 // Optional: Compute Conic from L in Metal
 // ============================================================================

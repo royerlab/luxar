@@ -21,7 +21,8 @@ have. All three are removed:
   path still serves production and shares the same threadgroup-reduction backward
   (the raw-parameter reparameterization VJP is handled by PyTorch autograd); the
   earlier fwd+bwd micro-optimization measured on the raw variant is the only thing
-  lost.
+  lost. The already-dead `validate_splat_L_tensors_3d` validator in the same
+  bindings file went with it.
 - The GPU seeding helpers `local_maxima_gpu` / `soft_blur_nd_gpu` in
   `gsplats/seeds/gpu_ops.py`, which had only test callers — the CPU siblings have
   no `device=` dispatch and `seed_from_peaks` does its own GPU intensity sampling

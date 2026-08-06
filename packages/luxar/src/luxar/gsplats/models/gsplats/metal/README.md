@@ -42,16 +42,18 @@ outputs after no-op distutils rebuilds so repeated imports do not auto-compile.
 Python
   GaussianSplatModelMetal
   MetalSplatFunction
-  L factors handed directly to native kernels
+  L factors converted to packed conics once per forward, then handed to the
+  native kernels
 
 C++/Objective-C++ extension
-  forward_splat_3d(centers, Ls, amps, ...)          # constrained/fallback path
-  backward_splat_3d(grad_output, centers, Ls, amps, ...)
+  forward_splat_3d(centers, conic, amps, ...)
+  backward_splat_3d(grad_output, centers, conic, amps, ...)
+  compute_conic_metal(Ls)                     # optional Metal L -> conic helper
 
 Metal kernels
   zero_float_buffer
-  rasterize_forward_splat_centric_3d          # constrained/fallback L path
-  rasterize_backward_splat_centric_3d         # constrained/fallback L path
+  rasterize_forward_splat_centric_3d
+  rasterize_backward_splat_centric_3d
   compute_conic_from_L_3d                     # helper/validation path, not the hot path
 ```
 
@@ -61,7 +63,7 @@ The forward kernel mirrors the optimized CUDA organization:
 
 ```text
 one Metal threadgroup = one Gaussian splat
-thread 0 computes L -> conic and AABB
+thread 0 loads the splat's precomputed conic and derives its AABB
 64 threads cooperate over that splat's AABB
 output uses atomic float add
 ```
@@ -77,12 +79,11 @@ Backward also uses one threadgroup per splat:
 ```text
 threads accumulate local d_center / d_conic / d_amp
 threadgroup reduction combines partials
-thread 0 applies the analytic d_conic -> d_L VJP
-thread 0 writes that splat's gradients once
+thread 0 writes that splat's d_center / d_conic / d_amp once
 ```
 
-The raw-parameter reparameterization VJP is handled by PyTorch autograd, not
-in-kernel.
+The conic -> L and raw-parameter reparameterization VJPs are handled by PyTorch
+autograd, not in-kernel.
 
 This removes the previous voxel-centric global CAS atomics into parameter
 gradients.  Forward still needs output atomics because different splats can
@@ -145,8 +146,8 @@ Observed on Apple M4 Max, PyTorch 2.11, macOS 15.7.5, workload
 | New splat-centric Metal forward | ~1.5-1.6 ms | ~1.3-1.4 GVox/s |
 
 The backward kernel shares the same splat-centric threadgroup-reduction
-structure (replacing the old voxel-centric global atomics), with the
-raw-parameter reparameterization VJP handled by PyTorch autograd.
+structure (replacing the old voxel-centric global atomics), with the conic -> L
+and raw-parameter reparameterization VJPs handled by PyTorch autograd.
 
 Large-output GVox/s is only one view of splatting performance because the actual
 work scales with splat AABB volume and overlap.  The rewrite's most important
