@@ -1361,16 +1361,79 @@ A reviewer should treat a `| 'mesh'` appearing in any of those five as a defect.
 Each of these is a deliberate exclusion, not an oversight. Each should surface clearly — an error, or
 for `volumetric` the named one-time warning + `opaque` fallback of §6.3 — rather than silently misbehave.
 
+> **Two code follow-ups this section currently OVERSTATES its own compliance on**, both
+> noted here rather than silently carried:
+>
+> 1. **§6.3's translucent-`normal` warning is not implemented.** §6.3 promises "the loader
+>    logs a one-time warning naming the node" when `normal` is combined with `opacity < 1`
+>    or per-vertex alpha — the mitigation that makes the per-triangle-depth-sort exclusion
+>    acceptable. Only comments reference it; no `log.warning` exists. Until it lands, that
+>    one exclusion *does* silently misbehave, contrary to the paragraph above.
+> 2. **The `add_mesh` refusal message justifies refusing substitutive LOD with additive's
+>    reason.** It reads "the additive/substitutive ladder reduces independent elements (a
+>    surface is connected)", which is true of the additive flavour and false of the
+>    substitutive one — see the two rows below. The refusal itself is correct (no producer
+>    exists yet); only its stated reason is wrong, and it is user-facing.
+
 | Excluded | Why | Natural follow-up |
 |---|---|---|
-| **LOD / decimation** | The additive/substitutive ladder machinery assumes independent elements. The mesh analog is QEM decimation — a project, not a line item. | `luxar mesh lod` with QEM levels feeding the existing `kind=lod` group |
-| **`kind=partition`** | Cheap in principle (BSP over face centroids) but needs vertex duplication at part boundaries. | The **first** follow-up — highest value for large meshes |
+| **Additive LOD ladder** | A prefix of an index buffer is a **holed** surface, not a coarse one. That is the difference from a splat prefix, which genuinely is a sparser approximation of the same field — so the ladder degrades gracefully there and produces a *wrong picture* here. The legitimate refinement scheme is a progressive mesh (base mesh + vertex-split records), which cannot use the prefix-count ladder at all: different data structure, not a widening. | Not a LOD in any form. A deliberate progressive-draw effect IS worth exposing — see **§9.1** — but off the `additive` code path |
+| **Substitutive LOD levels** | Nothing structural, and the machinery makes no independence assumption: a level is an independently-authored `(vertices, faces)` pair, selected by `coverage_fraction`. What is missing is only the PRODUCER. Per-level picking is already solved — the LOD registry hides inactive levels and the picking system skips hidden nodes, so each level is its own pick domain with its own per-vertex label CSR. | `luxar mesh lod` with QEM levels. Viewer side is a two-line widening: flip `GEOMETRY_CAPABILITIES.mesh.lod` and extend `LodGroupMetadata.display_type`. **The cheapest of the LOD family by a wide margin** |
+| **`kind=partition`** | BSP over face centroids, needing vertex duplication at part boundaries plus a per-part split of the per-vertex label CSR. **Bookkeeping, not correctness:** with stored normals split verbatim a duplicated boundary vertex carries an identical position AND normal in both parts, so nothing seams under §6.2's shading — and the derivative variant is per-fragment off the rasterized triangle, hence part-agnostic by construction. Seams arrive only with something RECOMPUTED per part: area-averaged normals, tangent frames, UVs, baked AO. | Highest value for large meshes. Revisit the seam question the moment shading gains any per-part recomputation |
 | **Exact nD triangle clipping** | ~1500 LOC across two backends. §5 covers the dominant real case (hidden dims are discrete — time/channel) for ~10% of the cost, but gives only a **thick slab**, never a true cut, when a hidden dim is continuous and spatial (§5.2.1). | Slot in behind the same `MeshDataLoader.updateView`; the mask kernel becomes the fast pre-pass. **Promote this if continuous hidden spatial dims turn out to be a real use case** |
-| **Per-triangle depth sorting** | Index-buffer permutation, not instance permutation. | Extend the depth-sort coordinator with an index-permutation path |
-| **Spatial index** | See §7. | Mirror the lines dual-index loader over faces |
-| **`volumetric` blending** | No meaning for an opaque surface. | — |
+| **Per-triangle depth sorting** | Index-buffer permutation, not instance permutation. The coordinator's double-buffered ordering and chunked apply already exist, and the mesh problem is the *easier* one (permute F triples by face centroid; no per-element extent, no texture indirection). **This is the weakest exclusion in the table**, and the only one with a live user-visible consequence: §6.3's translucent-`normal` warning is its mitigation. | Extend the depth-sort coordinator with an index-permutation path |
+| **Spatial index** | Not merely "see §7": a chunk of faces is not independently meaningful, because the index buffer references vertices anywhere in the array — so a connected surface cannot be *partially* loaded. Moot in practice as well, since the 512 MiB per-node byte budget binds first (≈22.4M vertices for a 3D float32 mesh, measured), well under §7's ≤-few-million-triangle expectation. | Mirror the lines dual-index loader over faces |
+| **`volumetric` blending** | Not about opacity — about **path length**. Emission–absorption integrates κ over the distance a ray spends inside a participating medium, and a triangle is zero-thickness, so τ = 0 however translucent the surface is. The adjacent feature that DOES make sense — volume rendering bounded by a mesh's front and back faces — is a different thing entirely and is not what this excludes. | — |
 | **Worker projection** | Measure first (§7). | — |
 | **Mesh import formats** (PLY/OBJ/STL/glTF) | Independent of the node type. | `luxar mesh import`, mirroring `gsplat import` |
+
+### 9.1 Reveal ladders — an additive prefix as an EFFECT, never as a LOD
+
+An additive prefix over a mesh is a legitimate thing to *offer*, as a deliberate
+progressive-draw effect: a surface that grows in. It is not a level of detail, and the
+distinction has to survive into the naming, because the existing additive machinery
+assumes *prefix ≈ approximation* and that assumption is false for a surface.
+
+**The mechanism is nearly free.** A reveal is successive `drawRange` extents over a
+reordered index buffer — precisely what §5.4's slice compaction already does. No new
+viewer machinery. Picking follows for free: a narrowed `drawRange` means unrevealed
+triangles are not rasterized, so they are not pickable, which is the consistent answer.
+
+**The hard rule: a mesh reveal ladder must NOT carry `energy_fraction_cum` stamps.**
+
+`energyCompensation` (`scene/lod-blend.ts`) multiplies a leaf's brightness by `1/e(k)`
+while an additive ladder is incomplete, and it is gated on
+`BLENDABLE_MODES = {additive, luminous, volumetric}` — **not on geometry type**. Mesh
+supports `additive` and `luminous` (§6.3), so a stamped mesh reveal in either mode would
+be brightened. That is right for a splat prefix, which genuinely is dimmer than the whole,
+and backwards for a mesh prefix, which is not dimmer but *holed*: the result is a surface
+with gaps that also glows. Mesh's `opaque` default escapes this today by luck, not design.
+
+Omitting the stamp is both the cheapest fix and the honest encoding, because the stamp's
+meaning — "this prefix is dim, compensate for it" — is a false statement about a holed
+surface. `energyCompensation` already returns exactly `1` for an absent `e`, leaving the
+leaf byte-identical. LOD **cross-fade** is gated on the same set and follows the same rule.
+
+**Not a concern:** `coverage_fraction` auto-selection. That selector chooses between
+*substitutive levels*; an additive ladder inside a leaf streams to completion and is never
+distance-selected. A reveal cannot be picked as a distant stand-in because nothing picks it.
+
+**Consequences to state plainly rather than bury:**
+
+- **Every intermediate frame is a wrong picture, not an approximate one.** Under `opaque`
+  with depth writes you see interior back faces through the gaps — correctly lit by the
+  `gl_FrontFacing` flip, so it reads as a hollow shell. For a deliberate reveal that is
+  arguably the appeal; as a quality ladder it is indefensible.
+- **It must converge to 100%.** A splat ladder may legitimately stop early against a
+  bandwidth budget. A mesh reveal that stops early leaves a permanently broken model.
+- **The reveal ORDER is the whole effect.** Area-descending reads as blocky-then-refined;
+  region-growing from a seed reads as the surface growing; contribution-ordered — the
+  splat metric — reads as confetti, because a mesh triangle has no "contribution" to
+  order by. Whoever ships this is choosing an aesthetic, not an error metric, which is a
+  different kind of decision from QEM's and should not reuse its vocabulary.
+
+**Naming.** Keep it off the `additive` code path — `reveal` / `progressive_draw` — so it
+cannot inherit machinery that assumes a prefix approximates the whole.
 
 **Pre-existing gap noticed during this spec's review, since closed by #1220:**
 `POINTS_/LINES_/GSPLATS_RESERVED_ATTRS` had omitted `has_image_labels` even though all three writers
