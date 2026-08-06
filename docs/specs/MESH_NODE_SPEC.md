@@ -1258,10 +1258,10 @@ A reviewer should treat a `| 'mesh'` appearing in any of those five as a defect.
       rendered; `AGENTS.md` carries the same sentence. The README followed later, in the
       vocabulary pass that also corrected `LUXAR_ZARR_FORMAT.md`'s stale
       "writable, not yet renderable" note
-- [ ] Package READMEs: `core/` and `io/_compiler/geometry_writers/` were updated in #1220; the viewer
-      ones (`data/mesh/`, `rendering/materials/mesh/`, `rendering/picking/mesh/`) arrive with their
-      packages
-- [ ] `CHANGELOG.md`
+- [x] Package READMEs: `core/` and `io/_compiler/geometry_writers/` were updated in #1220; the viewer
+      ones landed with their packages — `data/mesh/`, `rendering/materials/mesh/` and
+      `rendering/picking/mesh/` all exist
+- [x] `CHANGELOG.md` — "Mesh renders shaded — the fourth geometry type gets its material pair"
 
 **Tests**
 
