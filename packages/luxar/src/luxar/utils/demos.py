@@ -237,11 +237,10 @@ def parse_demo_flags() -> dict:
 def _flag_token(name: str) -> str:
     """``--name`` for a flag called ``name``, tolerating pre-written dashes.
 
-    The helpers below prepend the ``--`` themselves, so a caller that passes
-    ``"--points"`` used to make them search for ``----points`` — a flag that
-    never matches, silently ignored, every run at the default (see the note in
-    ``demo_biodiversity_planetary_scale``). Normalising here removes that whole
-    class of silent no-op.
+    :func:`parse_int_arg` and :func:`parse_path_arg` prepend the ``--``
+    themselves, so a caller that passes ``"--points"`` used to make them search
+    for ``----points`` — a flag that never matches, silently ignored, every run
+    at the default. Normalising here removes that silent no-op for both helpers.
     """
     return f"--{name.lstrip('-')}"
 
@@ -260,10 +259,10 @@ def parse_int_arg(
     A tiny shared replacement for the ad-hoc ``sys.argv`` scanning every demo
     re-implements (``--points``, ``--sample``, ``--grid``, ``--frames``,
     ``--resolution``, …). Accepts both ``--name=8000`` and ``--name 8000``.
-    Returns ``default`` when the flag is absent. A malformed/unparseable value
-    (e.g. ``--points=abc``) warns and returns ``default`` rather than raising —
-    this fall-back-to-default behaviour is the single shared policy across all
-    demos.
+    Returns ``default`` when the flag is absent. The first occurrence is
+    decisive, even if malformed: a malformed/unparseable value (e.g.
+    ``--points=abc``) warns and returns ``default`` rather than raising — the
+    shared helpers never abort a run over a mistyped flag.
     """
     args = list(sys.argv if argv is None else argv)
     flag = _flag_token(name)
@@ -287,8 +286,9 @@ def parse_path_arg(name: str, argv: Optional[list[str]] = None) -> Optional[Path
 
     Sibling of :func:`parse_int_arg` for path-valued flags (``--cache-dir``,
     ``--data``). Expands a leading ``~``. Returns ``None`` when the flag is
-    absent, and also when it carries an empty value (``--data=``), which would
-    otherwise resolve to the current directory.
+    absent. An empty value (``--data=``) is not treated as a hit — the scan
+    skips it and keeps looking, so a lone ``--data=`` reads as absent instead of
+    resolving to the current directory (and a later non-empty occurrence wins).
     """
     args = list(sys.argv if argv is None else argv)
     flag = _flag_token(name)

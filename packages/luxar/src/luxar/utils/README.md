@@ -187,7 +187,9 @@ Demo scene generators, precomputed data helpers, and viewer launch utilities.
 - `warn_if_no_cuda_gpu()`: Print a warning if no CUDA GPU is available
 - `load_precomputed_gsplats()`: Load precomputed GSplat data from Git LFS or cache
 - `load_precomputed_bundle()`: Load a precomputed bundle zip (timelapse demos)
-- `parse_demo_flags()`: Parse common demo CLI flags (--recompute, --device, etc.)
+- `parse_demo_flags()`: Parse the common demo CLI flags (`--recompute`, `--no-serve`, `--serve-only`)
+- `parse_int_arg(name, default, argv=None)`: Parse an integer `--name=VALUE` / `--name VALUE` flag; warns and falls back to `default` on a malformed value
+- `parse_path_arg(name, argv=None)`: Parse a path `--name=PATH` / `--name PATH` flag, expanding `~`; returns `None` when the flag is absent
 - `is_lfs_pointer()`: Check if a file is a Git LFS pointer (not actual data)
 
 **Features:**
