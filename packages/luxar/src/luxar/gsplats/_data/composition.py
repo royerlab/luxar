@@ -8,7 +8,7 @@ color merge), promoting one into a higher-dimensional space, and assembling
 from __future__ import annotations
 
 import warnings
-from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Sequence, cast
 
 import numpy as np
 
@@ -94,7 +94,8 @@ class CompositionMixin(_GSplatDataOps):
                     f"Substitutive-level count mismatch: dataset 0 has "
                     f"{n_sub}, dataset {i} has {ds.n_substitutive}. "
                     f"concatenate() requires a uniform substitutive hierarchy; "
-                    f"flatten() the inputs first to merge mismatched pyramids."
+                    f"call flattened() on the inputs first to merge mismatched "
+                    f"pyramids."
                 )
 
         merged_stats: Dict[str, Any] = {
@@ -153,7 +154,7 @@ class CompositionMixin(_GSplatDataOps):
     def combine_as_new_dimension(
         cls,
         datasets: "list[GSplatData]",
-        values: "np.ndarray | list[float] | None" = None,
+        values: "np.ndarray | Sequence[float | np.ndarray] | None" = None,
         sigma: float = 0.0,
     ) -> "GSplatData":
         """Combine datasets by embedding each into a new dimension, then concatenating.
