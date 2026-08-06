@@ -381,7 +381,8 @@ narrowly-scoped helpers each spatial-index loader composes:
   pure roll-up of N per-LOD `LoaderMetrics` into one snapshot for a progressive
   node. Counters are summed; `avgQueryTime` / `avgLoadTime` are query/load-weighted
   means; optional `spatialIndex` cell counts (`occupiedCells` / `totalCells`) are
-  summed with query-weighted rate means; `optimization` is taken from
+  summed, its per-query rates are query-weighted means, and `avgElementsPerCell`
+  is cell-weighted (a per-cell density); `optimization` is taken from
   the first reporter to avoid double-counting app-global singletons.
 - **`progressive-monitor-adapter.ts`** — `ProgressiveMonitorAdapter`: makes a
   progressive node (N inner per-LOD loaders) look like a SINGLE loader to the
@@ -494,8 +495,8 @@ pnpm test src/tests/unit/data/loaders/transferable-accumulator.test.ts
   rejected init clears the cache so the next call retries.
 - **aggregate-loader-metrics.test.ts** — empty-array zeroed fallback,
   counter summing, query/load-weighted mean times (+ zero-when-no-queries/loads),
-  `spatialIndex` roll-up (summed cell counts + query-weighted rate means),
-  first-reporter `optimization`.
+  `spatialIndex` roll-up (summed cell counts, query-weighted per-query rates,
+  cell-weighted `avgElementsPerCell`), first-reporter `optimization`.
 - **progressive-monitor-adapter.test.ts** — event/active-query re-pathing to
   the parent node, `addEventListener` idempotency, `getMetrics` aggregation.
 - **concat-helpers.test.ts** (under `progressive/`) — required/optional

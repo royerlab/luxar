@@ -38,7 +38,10 @@ function zeroedMetrics(type: LoaderType, path: string): LoaderMetrics {
  * `bytesLoaded` / `visibleElements` / `memoryUsed`) are summed. `avgQueryTime` /
  * `avgLoadTime` are weighted means by `queries` / `loads` respectively (so a
  * LOD that never queried doesn't skew the average). The optional
- * `spatialIndex` cell counts are summed with query-weighted rate means.
+ * `spatialIndex` cell counts are summed; its per-query rates
+ * (`avgCellsPerQuery` / `queryEfficiency`) are query-weighted means, while
+ * `avgElementsPerCell` is weighted by `occupiedCells` (it is a per-cell
+ * density — cell-weighting recovers total elements / total cells).
  * `optimization` (mostly app-global singletons like WASM/GPU-pool) is taken
  * from the first loader that reports it to avoid double-counting.
  *
@@ -82,7 +85,7 @@ export function aggregateLoaderMetrics(inner: LoaderMetrics[], path: string): Lo
       siCells += si.occupiedCells;
       siTotalCells += si.totalCells;
       siCellsPerQueryWeighted += si.avgCellsPerQuery * m.queries;
-      siPointsPerCellWeighted += si.avgElementsPerCell * m.queries;
+      siPointsPerCellWeighted += si.avgElementsPerCell * si.occupiedCells;
       siEfficiencyWeighted += si.queryEfficiency * m.queries;
     }
     if (m.optimization && !firstOptimization) {
@@ -98,7 +101,9 @@ export function aggregateLoaderMetrics(inner: LoaderMetrics[], path: string): Lo
       occupiedCells: siCells,
       totalCells: siTotalCells,
       avgCellsPerQuery: out.queries > 0 ? siCellsPerQueryWeighted / out.queries : 0,
-      avgElementsPerCell: out.queries > 0 ? siPointsPerCellWeighted / out.queries : 0,
+      // Cell-weighted, not query-weighted: each LOD's value is elements/cell,
+      // so weighting by its cell count pools to total elements / total cells.
+      avgElementsPerCell: siCells > 0 ? siPointsPerCellWeighted / siCells : 0,
       queryEfficiency: out.queries > 0 ? siEfficiencyWeighted / out.queries : 0,
     };
   }

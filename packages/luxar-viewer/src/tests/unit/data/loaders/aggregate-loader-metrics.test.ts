@@ -113,12 +113,13 @@ describe('aggregateLoaderMetrics', () => {
     expect(out.avgLoadTime).toBe(0);
   });
 
-  it('rolls up spatialIndex: cell counts summed, rate metrics query-weighted', () => {
+  it('rolls up spatialIndex: cell counts summed, per-query rates query-weighted, density cell-weighted', () => {
     // out.queries = 1 + 3 = 4.
     //   occupiedCells   = 10 + 6            = 16   (summed)
     //   totalCells      = 20 + 12           = 32   (summed)
     //   avgCellsPerQuery   = (2*1 + 4*3)/4  = 3.5  (query-weighted)
-    //   avgElementsPerCell = (100*1 + 200*3)/4 = 175 (query-weighted)
+    //   avgElementsPerCell = (100*10 + 200*6)/16 = 137.5 (cell-weighted:
+    //     pools back to total elements / total occupied cells)
     //   queryEfficiency    = (0.1*1 + 0.5*3)/4 = 0.4 (query-weighted)
     const out = aggregateLoaderMetrics(
       [
@@ -149,7 +150,7 @@ describe('aggregateLoaderMetrics', () => {
     expect(out.spatialIndex!.occupiedCells).toBe(16);
     expect(out.spatialIndex!.totalCells).toBe(32);
     expect(out.spatialIndex!.avgCellsPerQuery).toBeCloseTo(3.5);
-    expect(out.spatialIndex!.avgElementsPerCell).toBeCloseTo(175);
+    expect(out.spatialIndex!.avgElementsPerCell).toBeCloseTo(137.5);
     expect(out.spatialIndex!.queryEfficiency).toBeCloseTo(0.4);
   });
 
