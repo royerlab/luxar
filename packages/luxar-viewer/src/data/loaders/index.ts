@@ -3,6 +3,8 @@
  *
  * Foundation for the unified spatial-index loader architecture, shared by the
  * Points, Lines, and GSplats loaders, plus label-picking and overlay loaders.
+ * The mesh whole-node loader is not spatial-indexed but still consumes the
+ * `RangeLoader` and the color helpers from here.
  *
  * Subpackages:
  * - **spatial-query/** — chunk-bounds probe, tolerance computer, AABB query
