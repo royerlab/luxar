@@ -5,6 +5,7 @@
  * covers four distinct TS-fallback areas (wasm.md O12 → renamed to
  * `tsfallback-edges.test.ts` to match):
  *   - decode_quantized/decode_log_scalar boundaries (degenerate ranges)
+ *   - decode_lut_* out-of-range indices + empty inputs
  *   - mahalanobis_distance ndim=1 (forward-sub identity)
  *   - clip_segment_single parallel-segment + lines-clipping edges
  *

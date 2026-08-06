@@ -43,7 +43,7 @@ non-standard location.
 
 - `calculate_effective_radii()` — Radius when sliced through higher dimensions
   (per-element nD visibility/culling otherwise lives INSIDE the projection
-  kernels: `clip_segments_batch` for Lines, the attenuation/fused kernel for
+  kernels: `clip_segments_batch` for Lines, the fused projection kernel for
   GSplats). Mesh is the exception: its cull is a standalone pair, below, because
   it produces an index buffer rather than compacted per-element attributes.
 

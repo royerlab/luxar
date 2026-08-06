@@ -204,7 +204,7 @@ export interface WasmModule {
   ): void;
 
   // ============================================================================
-  // PROJECTION FUNCTIONS - nD to 3D projection and bounds calculation
+  // PROJECTION FUNCTIONS - nD to 3D projection
   // ============================================================================
 
   /**
@@ -245,7 +245,7 @@ export interface WasmModule {
    * Fused nD→3D GSplat projection in a single pass: discrete-visibility gate →
    * continuous attenuation (marginal Cholesky + shifted Gaussian) → visibility
    * (`amplitude * attenuation >= minAmplitude`) → COMPACTED outputs. Replaces the
-   * 6-call pipeline (`compute_gsplats_attenuation` + `extract_3d_positions` +
+   * former 6-call pipeline (`compute_gsplats_attenuation` + `extract_3d_positions` +
    * `compact_by_mask` ×2 + `extract_visible_cholesky_3d` +
    * `compact_attenuated_amplitudes`), eliminating ~5 passes and the repeated
    * large-array boundary copies. Bit-identical visible set + values.

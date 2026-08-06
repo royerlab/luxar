@@ -5,7 +5,7 @@
 //! - nD visibility computation for Points, Lines, and GSplats
 //! - Effective radius calculation for nD hypersphere slicing
 //! - Data decoding (quantized, log-space, LUT)
-//! - nD to 3D projection and bounds calculation
+//! - nD to 3D projection
 //!
 //! ## Performance Optimizations
 //!
@@ -33,7 +33,7 @@
 //!
 //! - `effective_radii` - Effective radius calculation for nD slicing
 //! - `decode` - Data decoding (quantized, LUT, log-space)
-//! - `projection` - nD to 3D projection and bounds
+//! - `projection` - nD to 3D projection
 //! - `gsplats_processing` - GSplat nD->3D projection, attenuation, Cholesky
 //! - `lines_clipping` - Line segment clipping for nD slicing
 //! - `mesh_culling` - Whole-triangle nD visibility culling for mesh surfaces

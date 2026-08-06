@@ -1,5 +1,5 @@
 /**
- * Tests for `src/wasm/typescript/gsplats_processing.ts`
+ * Tests for `src/wasm/typescript/gsplats-processing.ts`
  * (Mahalanobis distance, marginal Cholesky, fused nD→3D projection).
  *
  * Extracted from `tests/unit/wasm/typescript-reference.test.ts` per the
@@ -161,6 +161,124 @@ describe('gsplats_processing: fused visibility gate', () => {
     // backend must agree: emitting the splat instead would push a NaN amplitude
     // to the GPU (`NaN < minAmplitude` is false), the #725 corruption mode.
     expect(project([0, 0, 0, Number.NaN], 4, [3], 1.0, 1e-6)[0]).toBe(0);
+  });
+});
+
+/**
+ * Dense compaction of the fused kernel — the TS twin of
+ * `gsplats_processing.rs::test_fused_compaction_stride`.
+ *
+ * Here and not only in `wasm-vs-typescript.test.ts` for the same reason as the
+ * display-dims block below: those cases are `skipIf(!wasmFilesExist)` and vanish
+ * without a built WASM artifact, while this backend is the production path for
+ * ndim > 16. Without this, the discrete gate, the RGBA alpha stride and the
+ * dense-slot bookkeeping would be unpinned on the TS side.
+ */
+describe('gsplats_processing: dense compaction stride (TS reference)', () => {
+  // Same fixture as the Rust test: 4 splats, dim 3 the continuous hidden
+  // slicing dim (slice at 0). splat1 is far off-slice in dim 3 (attenuated
+  // below minAmplitude) and splat2 is discrete-gated, so the surviving pair
+  // splat0/splat3 is NON-CONTIGUOUS — the only arrangement in which the dense
+  // output slot diverges from the loop index.
+  const ndim = 4;
+  const splatCount = 4;
+  // prettier-ignore
+  const positions = new Float32Array([
+    0, 0, 0, 0, // splat0 (on slice)
+    1, 1, 1, 50, // splat1 (far in dim3 → attenuated out)
+    2, 2, 2, 0, // splat2 (discrete-gated)
+    3, 1, 2, 0.3, // splat3 (near slice → visible)
+  ]);
+  const one = [2, 1, 3, 0, 0, 2, 0.5, 0.5, 0, 4];
+  const cholesky = new Float32Array([...one, ...one, ...one, ...one]);
+  const amplitudes = new Float32Array([1.0, 0.5, 1.0, 0.8]);
+  const discreteVisibility = new Uint8Array([1, 1, 0, 1]);
+
+  // Attenuated amplitude of splat3: hidden dim 3 of the factor above
+  // marginalizes to Σ₃₃ = 0.5² + 0.5² + 0² + 4² = 16.5, so the 1×1 factor is
+  // √16.5 = 4.0620192 and D = 0.3 / 4.0620192 = 0.0738549. The shifted Gaussian
+  // at truncate = 3 (shiftC = e^-4.5) is
+  // (exp(-D²/2) - shiftC) / (1 - shiftC) = 0.9972458, so the raw 0.8 emerges as
+  // 0.7977967. splat0 sits on the slice, so attenuation is exactly 1.
+  const SPLAT3_AMPLITUDE = 0.7977967;
+
+  const project = (colorComponents: number, colors: number[]) => {
+    const centers = new Float32Array(splatCount * 3);
+    const chol = new Float32Array(splatCount * 6);
+    const outColors = new Float32Array(splatCount * colorComponents);
+    const amps = new Float32Array(splatCount);
+    const count = project_gsplats_nd_to_3d(
+      positions,
+      cholesky,
+      amplitudes,
+      new Float32Array(colors),
+      discreteVisibility,
+      new Float32Array(ndim), // slice at the origin
+      new Uint32Array([3]), // dim 3 is the continuous hidden dim
+      new Uint32Array([0, 1, 2]),
+      ndim,
+      splatCount,
+      colorComponents,
+      0.001,
+      3.0,
+      centers,
+      chol,
+      amps,
+      outColors
+    );
+    return { count, centers, chol, amps, outColors };
+  };
+
+  it('compacts a non-contiguous visible pair at both RGB and RGBA stride', () => {
+    // prettier-ignore
+    const rgb = project(3, [
+      0.1, 0.2, 0.3, // splat0
+      0.4, 0.5, 0.6, // splat1
+      0.7, 0.8, 0.9, // splat2
+      0.15, 0.25, 0.35, // splat3
+    ]);
+
+    expect(rgb.count).toBe(2);
+    // Centers in display order for splat0, splat3 — splat3 lands in slot 1,
+    // not slot 3.
+    expect(Array.from(rgb.centers.subarray(0, 6))).toEqual([0, 0, 0, 3, 1, 2]);
+    // Display marginal over dims [0,1,2] of the shared factor: Σ_S =
+    // [[4,2,0],[2,10,0],[0,0,4]] → packed [2,1,3,0,0,2]. Checked at dense slots
+    // 0 AND 1 — slot 1 stays all-zero if the out index misses the compaction.
+    // Colour stride cannot affect it, so the RGB run alone pins it.
+    const expectedChol = [2, 1, 3, 0, 0, 2];
+    for (let s = 0; s < rgb.count; s++) {
+      for (let k = 0; k < expectedChol.length; k++) {
+        expect(rgb.chol[s * 6 + k]).toBeCloseTo(expectedChol[k], 6);
+      }
+    }
+    const expectedRgb = [0.1, 0.2, 0.3, 0.15, 0.25, 0.35];
+    for (let k = 0; k < expectedRgb.length; k++) {
+      expect(rgb.outColors[k]).toBeCloseTo(expectedRgb[k], 6);
+    }
+    expect(rgb.amps[0]).toBe(1.0);
+    // Same 1e-5-grade band as the Rust twin: tight enough to reject a wrong
+    // exponent (exp(-D²) would give 0.7955994) and the raw-L33 shortcut that
+    // skips the marginalization (4 → 0.7977279), loose enough for f32 rounding.
+    expect(rgb.amps[1]).toBeCloseTo(SPLAT3_AMPLITUDE, 5);
+
+    // ---- RGBA: alpha rides along in the same dense slot at stride 4 ----
+    // prettier-ignore
+    const rgba = project(4, [
+      0.1, 0.2, 0.3, 0.9, // splat0 (alpha 0.9 ≠ r 0.1)
+      0.4, 0.5, 0.6, 0.6, // splat1
+      0.7, 0.8, 0.9, 0.3, // splat2
+      0.15, 0.25, 0.35, 0.85, // splat3
+    ]);
+
+    expect(rgba.count).toBe(2);
+    expect(Array.from(rgba.centers.subarray(0, 6))).toEqual([0, 0, 0, 3, 1, 2]);
+    const expectedRgba = [0.1, 0.2, 0.3, 0.9, 0.15, 0.25, 0.35, 0.85];
+    for (let k = 0; k < expectedRgba.length; k++) {
+      expect(rgba.outColors[k]).toBeCloseTo(expectedRgba[k], 6);
+    }
+    expect(rgba.amps[0]).toBe(1.0);
+    expect(rgba.amps[1]).toBeCloseTo(SPLAT3_AMPLITUDE, 5);
   });
 });
 

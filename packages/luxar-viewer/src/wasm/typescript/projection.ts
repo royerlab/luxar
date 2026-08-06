@@ -1,5 +1,5 @@
 /**
- * nD to 3D projection and bounds calculation.
+ * nD to 3D projection.
  *
  * TypeScript reference implementation matching projection.rs
  */

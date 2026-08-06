@@ -24,7 +24,7 @@ src/
 ├── mesh_culling.rs         — whole-triangle nD slab culling for indexed surfaces
 ├── gsplats_processing.rs   — Mahalanobis distance, marginal Cholesky, attenuation
 ├── effective_radii.rs      — Pythagorean radius shrinkage when slicing through hidden dims
-├── projection.rs           — extract 3D positions, bounds, compact-by-mask
+├── projection.rs           — extract 3D positions through display_dims
 ├── depth_sort.rs           — back-to-front splat ordering (depth-sorting Phase 2)
 └── decode.rs               — quantized / log / LUT / broadcast decoders
 ```
@@ -76,8 +76,6 @@ The kernels share a small bag of tricks documented inline:
 - **Loop fusion** — visibility and norm computation collapsed into a single
   pass over the per-element inner loop (see
   `gsplats_processing.rs::mahalanobis_distance_internal`).
-- **Branchless mask writes** — `output_mask[i] = visible as u8; count +=
-visible as u32;` instead of an `if/else`.
 - **Fixed-size lookup arrays** in place of `HashSet<u32>` for `display_dims`
   (see `lines_clipping.rs`, `effective_radii.rs`).
 - **Unrolled fixed-width copies** in the compaction loops rather than a generic

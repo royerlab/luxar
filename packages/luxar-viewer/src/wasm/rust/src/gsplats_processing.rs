@@ -672,13 +672,19 @@ mod tests {
         }
         // Attenuation is APPLIED to the emitted amplitudes: splat0 sits on the
         // slice (dim3 = 0) so it keeps its raw amplitude exactly, while splat3
-        // is off-slice (dim3 = 0.3) so its amplitude is strictly attenuated
-        // below the raw 0.8 (and still above min_amp, hence visible). Guards a
-        // mutant that writes the raw amplitude or the bare attenuation factor.
+        // is off-slice (dim3 = 0.3) and lands on an exact known value. Hidden
+        // dim 3 of the factor [2,1,3,0,0,2,0.5,0.5,0,4] marginalizes to
+        // Σ₃₃ = 0.5² + 0.5² + 0² + 4² = 16.5, i.e. a 1×1 factor √16.5 =
+        // 4.0620192, so D = 0.3 / 4.0620192 = 0.0738549 and the shifted
+        // Gaussian at truncate = 3 (shiftC = e^-4.5) is
+        // (exp(-D²/2) - shiftC) / (1 - shiftC) = 0.9972458 → 0.8 · that.
+        // The 1e-5 tolerance covers f32/libm variation yet still rejects both a
+        // wrong exponent (exp(-D²) would give 0.7955994) and the raw-L33
+        // shortcut that skips the marginalization (L33 = 4 → 0.7977279).
         assert_eq!(a3[0], 1.0, "on-slice splat0 keeps its raw amplitude");
         assert!(
-            a3[1] > 0.0 && a3[1] < 0.8,
-            "off-slice splat3 amplitude strictly attenuated, got {}",
+            (a3[1] - 0.7977967).abs() < 1e-5,
+            "off-slice splat3 attenuated amplitude, got {}",
             a3[1]
         );
 
