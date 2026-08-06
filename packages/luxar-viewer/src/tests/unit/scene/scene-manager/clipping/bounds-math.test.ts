@@ -4,8 +4,6 @@
 
 import { describe, it, expect } from 'vitest';
 import {
-  calculateBoundingBoxFromPositions,
-  mergeBoundingBoxes,
   getBoundingBoxCenter,
   getBoundingBoxSize,
   getBoundingBoxMaxDimension,
@@ -17,9 +15,6 @@ import {
   SPHERE_SAFETY_EXPANSION,
   MIN_NEAR_PLANE,
   minNearForRadius,
-  isValidBoundingBox,
-  expandBoundingBox,
-  isPointInBoundingBox,
   getBoundingBoxDiagonal,
   transformBoundingBox,
   BoundingBox,
@@ -27,106 +22,6 @@ import {
 } from '../../../../../scene/scene-manager/clipping/bounds-math';
 
 describe('bounds-math', () => {
-  describe('calculateBoundingBoxFromPositions', () => {
-    it('should calculate correct bounds from positions', () => {
-      const positions = new Float32Array([
-        0,
-        0,
-        0, // Point 1
-        1,
-        2,
-        3, // Point 2
-        -1,
-        -2,
-        -3, // Point 3
-        5,
-        5,
-        5, // Point 4
-      ]);
-
-      const box = calculateBoundingBoxFromPositions(positions);
-
-      expect(box.min).toEqual({ x: -1, y: -2, z: -3 });
-      expect(box.max).toEqual({ x: 5, y: 5, z: 5 });
-    });
-
-    it('should handle empty positions', () => {
-      const box = calculateBoundingBoxFromPositions([]);
-
-      expect(box.min).toEqual({ x: 0, y: 0, z: 0 });
-      expect(box.max).toEqual({ x: 0, y: 0, z: 0 });
-    });
-
-    it('should handle single point', () => {
-      const positions = [3, 4, 5];
-      const box = calculateBoundingBoxFromPositions(positions);
-
-      expect(box.min).toEqual({ x: 3, y: 4, z: 5 });
-      expect(box.max).toEqual({ x: 3, y: 4, z: 5 });
-    });
-
-    // G1: points colinear along one axis → that axis spans, the others are
-    // zero-extent. Exercises the per-axis min/max independence.
-    it('produces a zero-extent box on the unpopulated axes for a line of points', () => {
-      const positions = [0, 0, 0, 5, 0, 0, 10, 0, 0]; // colinear along x
-      const box = calculateBoundingBoxFromPositions(positions);
-      expect(box.min).toEqual({ x: 0, y: 0, z: 0 });
-      expect(box.max).toEqual({ x: 10, y: 0, z: 0 });
-    });
-
-    // G1: very large / very small finite magnitudes are preserved (no
-    // overflow or premature clamping).
-    it('preserves extreme finite magnitudes', () => {
-      const positions = [1e30, -1e-30, 0, -1e30, 1e-30, 0];
-      const box = calculateBoundingBoxFromPositions(positions);
-      expect(box.min.x).toBe(-1e30);
-      expect(box.max.x).toBe(1e30);
-      expect(box.min.y).toBe(-1e-30);
-      expect(box.max.y).toBe(1e-30);
-    });
-
-    // G1: NaN is not guarded — Math.min/Math.max propagate it, so the affected
-    // axis becomes NaN while the others stay finite. Document this so callers
-    // know to sanitise input upstream.
-    it('propagates NaN to the affected axis only (no input sanitisation)', () => {
-      const box = calculateBoundingBoxFromPositions([NaN, 0, 0, 1, 2, 3]);
-      expect(Number.isNaN(box.min.x)).toBe(true);
-      expect(Number.isNaN(box.max.x)).toBe(true);
-      // y/z axes are unaffected.
-      expect(box.min.y).toBe(0);
-      expect(box.max.z).toBe(3);
-    });
-
-    // G1: ±Infinity inputs flow through to the bounds.
-    it('carries Infinity through to the bounds', () => {
-      const box = calculateBoundingBoxFromPositions([Infinity, 0, 0, -Infinity, 0, 0]);
-      expect(box.max.x).toBe(Infinity);
-      expect(box.min.x).toBe(-Infinity);
-    });
-  });
-
-  describe('mergeBoundingBoxes', () => {
-    it('should merge multiple boxes correctly', () => {
-      const boxes: BoundingBox[] = [
-        { min: { x: 0, y: 0, z: 0 }, max: { x: 1, y: 1, z: 1 } },
-        { min: { x: -1, y: -1, z: -1 }, max: { x: 0.5, y: 0.5, z: 0.5 } },
-        { min: { x: 2, y: 2, z: 2 }, max: { x: 3, y: 3, z: 3 } },
-      ];
-
-      const merged = mergeBoundingBoxes(boxes);
-
-      expect(merged.min).toEqual({ x: -1, y: -1, z: -1 });
-      expect(merged.max).toEqual({ x: 3, y: 3, z: 3 });
-    });
-
-    it('should handle empty array', () => {
-      const merged = mergeBoundingBoxes([]);
-
-      expect(merged.min).toEqual({ x: 0, y: 0, z: 0 });
-      expect(merged.max).toEqual({ x: 0, y: 0, z: 0 });
-    });
-  });
-
   describe('getBoundingBoxCenter', () => {
     it('should calculate center correctly', () => {
       const box: BoundingBox = {
@@ -625,138 +520,6 @@ describe('bounds-math', () => {
         // exactly 1 unit. A jump/discontinuity would break this.
         expect(nears[i - 1] - nears[i]).toBeCloseTo(1, 6);
       }
-    });
-  });
-
-  describe('isValidBoundingBox', () => {
-    it('should validate non-zero boxes', () => {
-      const valid: BoundingBox = {
-        min: { x: 0, y: 0, z: 0 },
-        max: { x: 1, y: 1, z: 1 },
-      };
-
-      expect(isValidBoundingBox(valid)).toBe(true);
-    });
-
-    it('should reject zero-volume boxes', () => {
-      const invalid: BoundingBox = {
-        min: { x: 5, y: 5, z: 5 },
-        max: { x: 5, y: 5, z: 5 },
-      };
-
-      expect(isValidBoundingBox(invalid)).toBe(false);
-    });
-
-    it('should accept boxes with single non-zero dimension', () => {
-      const line: BoundingBox = {
-        min: { x: 0, y: 0, z: 0 },
-        max: { x: 10, y: 0, z: 0 },
-      };
-
-      expect(isValidBoundingBox(line)).toBe(true);
-    });
-  });
-
-  describe('expandBoundingBox', () => {
-    it('should expand box by margin', () => {
-      const box: BoundingBox = {
-        min: { x: -1, y: -1, z: -1 },
-        max: { x: 1, y: 1, z: 1 },
-      };
-
-      const expanded = expandBoundingBox(box, 2);
-
-      expect(expanded.min).toEqual({ x: -3, y: -3, z: -3 });
-      expect(expanded.max).toEqual({ x: 3, y: 3, z: 3 });
-    });
-
-    it('should shrink box with negative margin', () => {
-      const box: BoundingBox = {
-        min: { x: -5, y: -5, z: -5 },
-        max: { x: 5, y: 5, z: 5 },
-      };
-
-      const shrunk = expandBoundingBox(box, -1);
-
-      expect(shrunk.min).toEqual({ x: -4, y: -4, z: -4 });
-      expect(shrunk.max).toEqual({ x: 4, y: 4, z: 4 });
-    });
-
-    // G6: zero margin is the identity (every coordinate unchanged).
-    it('is a no-op for zero margin', () => {
-      const box: BoundingBox = { min: { x: -1, y: 2, z: -3 }, max: { x: 4, y: 5, z: 6 } };
-      const same = expandBoundingBox(box, 0);
-      expect(same.min).toEqual(box.min);
-      expect(same.max).toEqual(box.max);
-    });
-
-    // G6: every axis grows by 2*margin in extent (margin added to both faces).
-    it('grows every axis extent by exactly 2*margin', () => {
-      const box: BoundingBox = { min: { x: 0, y: 0, z: 0 }, max: { x: 10, y: 20, z: 30 } };
-      const margin = 7;
-      const expanded = expandBoundingBox(box, margin);
-      const before = getBoundingBoxSize(box);
-      const after = getBoundingBoxSize(expanded);
-      expect(after.x).toBeCloseTo(before.x + 2 * margin, 10);
-      expect(after.y).toBeCloseTo(before.y + 2 * margin, 10);
-      expect(after.z).toBeCloseTo(before.z + 2 * margin, 10);
-    });
-
-    // G6: a negative margin larger than the half-extent inverts the box
-    // (min > max). expandBoundingBox does not guard this — document the
-    // behaviour so callers know they must pass a safe margin.
-    it('inverts the box (min > max) when a shrink margin exceeds the half-extent', () => {
-      const box: BoundingBox = { min: { x: 0, y: 0, z: 0 }, max: { x: 4, y: 4, z: 4 } };
-      const inverted = expandBoundingBox(box, -3); // half-extent is 2
-      expect(inverted.min.x).toBe(3);
-      expect(inverted.max.x).toBe(1);
-      expect(inverted.min.x).toBeGreaterThan(inverted.max.x);
-    });
-  });
-
-  describe('isPointInBoundingBox', () => {
-    const box: BoundingBox = {
-      min: { x: -1, y: -1, z: -1 },
-      max: { x: 1, y: 1, z: 1 },
-    };
-
-    it('should detect points inside box', () => {
-      expect(isPointInBoundingBox({ x: 0, y: 0, z: 0 }, box)).toBe(true);
-      expect(isPointInBoundingBox({ x: 0.5, y: 0.5, z: 0.5 }, box)).toBe(true);
-      expect(isPointInBoundingBox({ x: -0.5, y: -0.5, z: -0.5 }, box)).toBe(true);
-    });
-
-    it('should detect points on boundaries', () => {
-      expect(isPointInBoundingBox({ x: 1, y: 0, z: 0 }, box)).toBe(true);
-      expect(isPointInBoundingBox({ x: -1, y: -1, z: -1 }, box)).toBe(true);
-    });
-
-    it('should detect points outside box', () => {
-      expect(isPointInBoundingBox({ x: 2, y: 0, z: 0 }, box)).toBe(false);
-      expect(isPointInBoundingBox({ x: 0, y: 2, z: 0 }, box)).toBe(false);
-      expect(isPointInBoundingBox({ x: 0, y: 0, z: -2 }, box)).toBe(false);
-    });
-
-    // W4: NaN/Infinity points. All comparisons against NaN are false, so a
-    // NaN on any axis means "not inside". +Infinity is outside any finite box.
-    it('returns false for points with NaN on any axis', () => {
-      expect(isPointInBoundingBox({ x: NaN, y: 0, z: 0 }, box)).toBe(false);
-      expect(isPointInBoundingBox({ x: 0, y: NaN, z: 0 }, box)).toBe(false);
-      expect(isPointInBoundingBox({ x: 0, y: 0, z: NaN }, box)).toBe(false);
-    });
-
-    it('returns false for points at ±Infinity', () => {
-      expect(isPointInBoundingBox({ x: Infinity, y: 0, z: 0 }, box)).toBe(false);
-      expect(isPointInBoundingBox({ x: 0, y: -Infinity, z: 0 }, box)).toBe(false);
-    });
-
-    // W4: degenerate (zero-extent) box — a point exactly on the collapsed
-    // axis is still "inside" because the bounds use inclusive <= / >=.
-    it('treats a point on the collapsed axis of a flat (zero-extent) box as inside', () => {
-      const slab: BoundingBox = { min: { x: 0, y: 0, z: 5 }, max: { x: 10, y: 10, z: 5 } };
-      expect(isPointInBoundingBox({ x: 5, y: 5, z: 5 }, slab)).toBe(true);
-      // Off the plane → outside.
-      expect(isPointInBoundingBox({ x: 5, y: 5, z: 5.0001 }, slab)).toBe(false);
     });
   });
 
