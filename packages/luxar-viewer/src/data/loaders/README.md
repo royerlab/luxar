@@ -381,8 +381,9 @@ narrowly-scoped helpers each spatial-index loader composes:
   pure roll-up of N per-LOD `LoaderMetrics` into one snapshot for a progressive
   node. Counters are summed; `avgQueryTime` / `avgLoadTime` are query/load-weighted
   means; optional `spatialIndex` cell counts (`occupiedCells` / `totalCells`) are
-  summed, its per-query rates are query-weighted means, and `avgElementsPerCell`
-  is cell-weighted (a per-cell density); `optimization` is taken from
+  summed, its per-query rates are query-weighted means over the LODs that
+  actually report a `spatialIndex`, and `avgElementsPerCell` is cell-weighted
+  (a per-cell density); `optimization` is taken from
   the first reporter to avoid double-counting app-global singletons.
 - **`progressive-monitor-adapter.ts`** — `ProgressiveMonitorAdapter`: makes a
   progressive node (N inner per-LOD loaders) look like a SINGLE loader to the

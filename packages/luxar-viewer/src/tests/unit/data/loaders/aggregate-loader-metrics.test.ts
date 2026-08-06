@@ -154,6 +154,33 @@ describe('aggregateLoaderMetrics', () => {
     expect(out.spatialIndex!.queryEfficiency).toBeCloseTo(0.4);
   });
 
+  it('excludes non-reporting LODs from the per-query rate denominators', () => {
+    // A LOD with no chunk index reports no `spatialIndex` but still counts
+    // queries. Folding those into the denominator would dilute both rates
+    // (here: 3/7 of their true value) and could fire a spurious
+    // low-efficiency recommendation.
+    const out = aggregateLoaderMetrics(
+      [
+        metrics('point-spatial-index', {
+          queries: 3,
+          spatialIndex: {
+            occupiedCells: 10,
+            totalCells: 10,
+            avgCellsPerQuery: 4,
+            avgElementsPerCell: 50,
+            queryEfficiency: 0.4,
+          },
+        }),
+        // No spatialIndex, but 4 queries of its own.
+        metrics('point-spatial-index', { queries: 4 }),
+      ],
+      '/p'
+    );
+    expect(out.queries).toBe(7);
+    expect(out.spatialIndex!.avgCellsPerQuery).toBeCloseTo(4);
+    expect(out.spatialIndex!.queryEfficiency).toBeCloseTo(0.4);
+  });
+
   it('takes optimization from the FIRST loader that reports it (no double-counting)', () => {
     const out = aggregateLoaderMetrics(
       [

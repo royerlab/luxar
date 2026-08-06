@@ -39,8 +39,10 @@ function zeroedMetrics(type: LoaderType, path: string): LoaderMetrics {
  * `avgLoadTime` are weighted means by `queries` / `loads` respectively (so a
  * LOD that never queried doesn't skew the average). The optional
  * `spatialIndex` cell counts are summed; its per-query rates
- * (`avgCellsPerQuery` / `queryEfficiency`) are query-weighted means, while
- * `avgElementsPerCell` is weighted by `occupiedCells` (it is a per-cell
+ * (`avgCellsPerQuery` / `queryEfficiency`) are query-weighted means over the
+ * LODs that actually report a `spatialIndex` (a LOD without a chunk index
+ * still counts queries, so `out.queries` would be the wrong denominator),
+ * while `avgElementsPerCell` is weighted by `occupiedCells` (it is a per-cell
  * density — cell-weighting recovers total elements / total cells).
  * `optimization` (mostly app-global singletons like WASM/GPU-pool) is taken
  * from the first loader that reports it to avoid double-counting.
@@ -61,6 +63,9 @@ export function aggregateLoaderMetrics(inner: LoaderMetrics[], path: string): Lo
   // spatialIndex accumulators
   let siCells = 0;
   let siTotalCells = 0;
+  // Queries from the reporting LODs only — the denominator for the per-query
+  // rate means (see the doc comment).
+  let siQueries = 0;
   let siCellsPerQueryWeighted = 0;
   let siPointsPerCellWeighted = 0;
   let siEfficiencyWeighted = 0;
@@ -82,6 +87,7 @@ export function aggregateLoaderMetrics(inner: LoaderMetrics[], path: string): Lo
     if (m.spatialIndex) {
       const si = m.spatialIndex;
       hasSpatialIndex = true;
+      siQueries += m.queries;
       siCells += si.occupiedCells;
       siTotalCells += si.totalCells;
       siCellsPerQueryWeighted += si.avgCellsPerQuery * m.queries;
@@ -100,11 +106,11 @@ export function aggregateLoaderMetrics(inner: LoaderMetrics[], path: string): Lo
     out.spatialIndex = {
       occupiedCells: siCells,
       totalCells: siTotalCells,
-      avgCellsPerQuery: out.queries > 0 ? siCellsPerQueryWeighted / out.queries : 0,
+      avgCellsPerQuery: siQueries > 0 ? siCellsPerQueryWeighted / siQueries : 0,
       // Cell-weighted, not query-weighted: each LOD's value is elements/cell,
       // so weighting by its cell count pools to total elements / total cells.
       avgElementsPerCell: siCells > 0 ? siPointsPerCellWeighted / siCells : 0,
-      queryEfficiency: out.queries > 0 ? siEfficiencyWeighted / out.queries : 0,
+      queryEfficiency: siQueries > 0 ? siEfficiencyWeighted / siQueries : 0,
     };
   }
   if (firstOptimization) {
