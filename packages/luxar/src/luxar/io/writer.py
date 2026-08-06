@@ -231,8 +231,6 @@ class ZarrWriterProtocol(Protocol):
         path: NodePath,
         levels: list,
         *,
-        method: str = "random",
-        grid_shape: Optional[tuple] = None,
         extend_to_all: Optional[Union[list, str]] = None,
         **attrs: Any,
     ) -> dict:
@@ -250,7 +248,6 @@ class ZarrWriterProtocol(Protocol):
         path: NodePath,
         levels: list,
         *,
-        method: str = "random",
         extend_to_all: Optional[Union[list, str]] = None,
         **attrs: Any,
     ) -> dict:

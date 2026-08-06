@@ -188,12 +188,8 @@ def main():
             # Add all points as a single cloud
             # The spatial index will automatically reorder them for efficiency
             if not args.no_spatial_index:
-                # Use a grid that balances query performance and memory
-                # For 5D data: 8×8×8×5×3 = 7680 potential cells
-                grid_shape = (8, 8, 8, 5, 3)
-                aprint(f"🔍 Using spatial index grid: {grid_shape}")
+                aprint("🔍 Using spatial index for locality-aware chunking")
             else:
-                grid_shape = None
                 aprint("⚠️ Spatial indexing disabled for comparison")
 
             scene.add_points(
@@ -201,7 +197,6 @@ def main():
                 positions,
                 colors=colors,
                 radii=radii,
-                grid_shape=grid_shape,
                 opacity=0.8,
                 gamma=1.2,
             )
@@ -211,7 +206,7 @@ def main():
                 title="Spatial Index Navigation",
                 body=(
                     "A 5D clustered point cloud built with a "
-                    "<code>grid_shape</code> spatial index, which reorders "
+                    "spatial index, which reorders "
                     "points by locality so only relevant chunks load per slice. "
                     "Press <code>4</code> then <code>[</code>/<code>]</code> "
                     "for time, <code>5</code> then <code>[</code>/<code>]</code> "
