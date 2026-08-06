@@ -6,7 +6,7 @@ This example demonstrates:
 - Clustered point distributions across (x, y, z, time, channel) space
 - How spatial indices enable loading only relevant points per slice
 - Comparing indexed vs non-indexed performance with --no-spatial-index flag
-- Grid-based spatial partitioning for multi-dimensional queries
+- Locality-preserving chunk ordering for multi-dimensional queries
 
 Educational value:
 - Learn how spatial indices improve performance for nD point clouds
